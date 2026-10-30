@@ -11,6 +11,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -560,9 +561,12 @@ func (r *rig) setHold(on bool) {
 		r.t.Fatal(err)
 	}
 	defer c.Close(context.Background())
-	tag, err := c.Exec(context.Background(), `UPDATE public.personal_subject SET hold = $3 WHERE tenant_id = $1::uuid AND subject_ref = $2`, r.id.String(), pSubject, on)
-	if err != nil || tag.RowsAffected() != 1 {
-		r.t.Fatalf("set hold: rows=%d err=%v", tag.RowsAffected(), err)
+	q := `INSERT INTO public.personal_hold (tenant_id, subject_ref) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`
+	if !on {
+		q = `DELETE FROM public.personal_hold WHERE tenant_id = $1::uuid AND subject_ref = $2`
+	}
+	if _, err := c.Exec(context.Background(), q, r.id.String(), pSubject); err != nil {
+		r.t.Fatalf("set hold: err=%v", err)
 	}
 }
 
@@ -728,7 +732,7 @@ func TestLegalHoldSetDuringPurgeIsSeen(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tx.Exec(ctx, `UPDATE public.personal_subject SET hold = true WHERE tenant_id = $1::uuid AND subject_ref = $2`, r.id.String(), pSubject); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO public.personal_hold (tenant_id, subject_ref) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`, r.id.String(), pSubject); err != nil {
 			t.Fatal(err)
 		}
 		type out struct {
@@ -754,6 +758,127 @@ func TestLegalHoldSetDuringPurgeIsSeen(t *testing.T) {
 			t.Fatalf("purge after the hold committed = %+v, %v; want blocked by hold", o.res, o.err)
 		}
 		for _, id := range []string{"p2-held", "p3-open"} {
+			if !r.hasEvent(id) {
+				t.Fatalf("event %s was deleted despite the hold", id)
+			}
+		}
+	})
+}
+
+const adminAcct = "0b6f1c1e-3a52-4c1e-9d0a-5b7f2e8a41c3"
+
+// An account under hold that is only the Requester of an event (ADR-0005 rule 11; T-0587): the partition
+// holding the event and every later one are kept, and the hold is reported.
+func TestLegalHoldOnActorAccountBlocksPurge(t *testing.T) {
+	each(t, func(t *testing.T, r *rig) {
+		ctx := context.Background()
+		cut, parts := rollover(t, r)
+		owner, err := store.OpenMaintenance(ctx, store.Config{DSN: r.d.OwnerDSN()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(owner.Close)
+		purger := audit.NewPurger(owner).WithPartitions(parts)
+		r.append(r.id, "p1a")
+		cut.cut()
+		adminEvent := audit.Event{ID: "p2-admin", Kind: "operation.step.applied", At: time.Now(), Component: "test", Outcome: audit.Success,
+			Actor: authority.Chain{Requester: authority.Principal{ID: adminAcct, Kind: authority.Human}}}
+		r.appendEvent(adminEvent)
+		cut.cut()
+		r.append(r.id, "p3-open")
+		r.sign()
+
+		c, err := r.d.Admin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close(ctx)
+		if _, err := c.Exec(ctx, `INSERT INTO public.personal_hold (tenant_id, subject_ref) VALUES ($1::uuid, $2)`, r.id.String(), "acct:"+adminAcct); err != nil {
+			t.Fatal(err)
+		}
+		res, err := purger.Purge(ctx, r.id, audit.PurgeRequest{Before: time.Now(), WithoutArchive: true, Actor: human})
+		if err != nil || res.BlockedByHold == nil || res.BlockedByHold.HeldSubjects != 1 {
+			t.Fatalf("purge = %+v, %v; want blocked by the held account", res, err)
+		}
+		for _, id := range []string{"p2-admin", "p3-open"} {
+			if !r.hasEvent(id) {
+				t.Fatalf("event %s was deleted despite the hold on the actor", id)
+			}
+		}
+	})
+}
+
+// A hold on a person with no personal_subject row, set concurrently (uncommitted) with a running purge, is
+// waited for and then seen: none of the person's events is deleted (T-0587).
+func TestLegalHoldRawInsertSerialisesWithPurge(t *testing.T) {
+	each(t, func(t *testing.T, r *rig) {
+		ctx := context.Background()
+		cut, parts := rollover(t, r)
+		owner, err := store.OpenMaintenance(ctx, store.Config{DSN: r.d.OwnerDSN()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(owner.Close)
+		purger := audit.NewPurger(owner).WithPartitions(parts)
+		r.append(r.id, "p1a")
+		cut.cut()
+		// Targets the person but carries no value: no personal_subject row exists for them.
+		r.appendEvent(audit.Event{ID: "p2-rowless", Kind: "operation.step.applied", At: time.Now(), Actor: human, Component: "test", Outcome: audit.Success,
+			Target: authority.TargetRef{Connection: pConn, GUID: pGUID, Class: "user"}})
+		cut.cut()
+		r.append(r.id, "p3-open")
+		r.sign()
+		if v, s := r.personalCounts(pSubject); v != 0 || s != 0 {
+			t.Fatalf("setup: subject has %d values, %d salts; want none", v, s)
+		}
+
+		// A raw INSERT as the runtime role, not personal.SetHold: the database trigger must serialise it. The
+		// tenant transaction (store.WithTenant sets the tenant) stays open, uncommitted, until released.
+		inserted := make(chan struct{})
+		release := make(chan bool) // true commits the hold, false rolls it back
+		holdDone := make(chan error, 1)
+		go func() {
+			holdDone <- r.db.WithTenant(ctx, r.id, func(ctx context.Context, tx store.Tx) error {
+				if _, err := tx.Exec(ctx, `INSERT INTO public.personal_hold (tenant_id, subject_ref) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`, r.id.String(), pSubject); err != nil {
+					return err
+				}
+				close(inserted)
+				if !<-release {
+					return errors.New("hold rolled back by the test")
+				}
+				return nil
+			})
+		}()
+		select {
+		case <-inserted:
+		case err := <-holdDone:
+			t.Fatalf("hold insert: %v", err)
+		}
+		type out struct {
+			res audit.PurgeResult
+			err error
+		}
+		done := make(chan out, 1)
+		go func() {
+			res, err := purger.Purge(ctx, r.id, audit.PurgeRequest{Before: time.Now(), WithoutArchive: true, Actor: human})
+			done <- out{res, err}
+		}()
+		select {
+		case o := <-done:
+			release <- false
+			<-holdDone
+			t.Fatalf("purge finished while a hold was uncommitted: %+v, %v", o.res, o.err)
+		case <-time.After(1500 * time.Millisecond):
+		}
+		release <- true
+		if err := <-holdDone; err != nil {
+			t.Fatal(err)
+		}
+		o := <-done
+		if o.err != nil || o.res.BlockedByHold == nil {
+			t.Fatalf("purge after the hold committed = %+v, %v; want blocked by hold", o.res, o.err)
+		}
+		for _, id := range []string{"p2-rowless", "p3-open"} {
 			if !r.hasEvent(id) {
 				t.Fatalf("event %s was deleted despite the hold", id)
 			}

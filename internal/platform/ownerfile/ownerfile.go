@@ -1,11 +1,14 @@
-// Package ownerfile creates and verifies local files that only the component's service identity may
-// touch: the rights baseline and shrink-record files (contract §8.3a, TM-D23 rule 8, T-0537).
+// Package ownerfile creates and repairs files that only the running service identity may read or
+// write (connector contract §8.3a: the shrink baseline).
 //
-// On Unix that is mode 0600 owned by the effective uid. On Windows Go's modes are no-ops and new files
-// inherit the parent ACL (ProgramData grants BUILTIN\Users read), so the file is created with an
-// explicit PROTECTED DACL granting access to the service identity and SYSTEM only, and owned by the
-// service identity. Check re-verifies owner and DACL on every load, so a file that was pre-created by
-// someone else or later widened (an extra ACE for Users) is refused with ErrUnsafe.
+// POSIX: mode 0600, owned by the effective uid. Windows: Go ignores permission bits there, so the
+// file would inherit the parent directory's ACL; instead the file gets an explicit, protected
+// (non-inheriting) DACL granting FILE_ALL_ACCESS to the process token's user SID and to SYSTEM only,
+// built with the typed security-descriptor API (never SDDL strings).
+//
+// An existing file is trusted only if it is a regular file (no symlink, no reparse point) owned by
+// the service identity (Windows: also SYSTEM or BUILTIN\Administrators). Its owner can always
+// rewrite its permissions, so a file owned by anyone else is never "corrected": it is refused.
 package ownerfile
 
 import (
@@ -13,42 +16,33 @@ import (
 	"os"
 )
 
-// ErrUnsafe is returned (wrapped) when a file is not a regular file owned by the service identity
-// with access for the service identity (and SYSTEM on Windows) only.
-var ErrUnsafe = errors.New("ownerfile: file is not restricted to the service identity")
+var (
+	// ErrForeignOwner: the file exists and is owned by an identity we do not trust. Its content is
+	// untrusted and its permissions cannot be made safe; the caller must treat the baseline as not
+	// durable-and-private (LOCAL_RECORD_FAILED).
+	ErrForeignOwner = errors.New("ownerfile: file is owned by another identity")
+	// ErrNotRegular: the path is a symlink, reparse point, directory or device.
+	ErrNotRegular = errors.New("ownerfile: path is not a regular file")
+)
 
-// OpenAppend opens path for appending, creating it with the restricted ACL if it does not exist.
-// An existing file is verified with Check first and refused if it is wider.
-func OpenAppend(path string) (*os.File, error) { return openAppend(path) }
+// OpenAppend opens path for appending, creating it owner-only if absent. If it already exists with
+// wider access and a trusted owner, the access is corrected (Windows: the DACL is replaced; POSIX:
+// chmod 0600) before the handle is returned; corrected reports that, and the caller must record it
+// (the content may have been written by someone else). A foreign owner or a non-regular file is an
+// error (ErrForeignOwner, ErrNotRegular), as is a failure to correct.
+func OpenAppend(path string) (f *os.File, corrected bool, err error) {
+	corrected, err = ensure(path)
+	if err != nil {
+		return nil, false, err
+	}
+	f, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|noFollow, 0o600)
+	if err != nil {
+		return nil, false, err
+	}
+	return f, corrected, nil
+}
 
-// CreateTemp creates a new, uniquely named file in dir with the restricted ACL, for write-then-rename.
+// CreateTemp creates a new, uniquely named, write-only file in dir that is owner-only from the
+// instant it exists (no window with an inherited ACL), for write-then-rename. pattern is as for
+// os.CreateTemp.
 func CreateTemp(dir, pattern string) (*os.File, error) { return createTemp(dir, pattern) }
-
-// Check refuses path unless it is a plain (non-link) regular file owned by the service identity whose
-// access is limited to the service identity (and SYSTEM on Windows). A missing file returns an error
-// satisfying errors.Is(err, fs.ErrNotExist), not ErrUnsafe.
-func Check(path string) error { return check(path) }
-
-// ErrDirUnsafe is returned (wrapped) when the state directory is not a real directory owned by the
-// service identity with access for the service identity (and SYSTEM on Windows) only.
-var ErrDirUnsafe = errors.New("ownerfile: state directory is not restricted to the service identity")
-
-// MaxReadSize bounds ReadFile: the files held here are small identifier lists.
-const MaxReadSize = 64 << 20
-
-// ReadFile reads path through a single handle: it opens the path without following a link
-// (O_NOFOLLOW / FILE_FLAG_OPEN_REPARSE_POINT), verifies owner and access on that open handle
-// (fstat / GetSecurityInfo), and reads from the same handle. A path swapped for a link after any
-// earlier Check is therefore refused, and the foreign contents are never read. Errors are ErrUnsafe
-// or satisfy errors.Is(err, fs.ErrNotExist).
-func ReadFile(path string) ([]byte, error) { return readFile(path) }
-
-// EnsureDir creates the state directory (and only the last element; the parent must exist) with the
-// service-identity-only protection, or verifies an existing one, and returns an error wrapping
-// ErrDirUnsafe if it is wider. The connector calls it at startup and refuses to start on error.
-// Unix: mode 0700, owned by the effective uid. Windows: owner = service identity, PROTECTED DACL of
-// the service identity and SYSTEM only.
-func EnsureDir(path string) error { return ensureDir(path) }
-
-// CheckDir verifies an existing state directory without creating it.
-func CheckDir(path string) error { return checkDir(path) }

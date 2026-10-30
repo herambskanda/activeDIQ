@@ -126,6 +126,7 @@ func TestCorpus(t *testing.T) {
 		}
 		return corpus.Result{}, corpustest.Skip("unknown call " + r.Call)
 	})
+	corpusWrite(t)
 }
 
 func grantsRecord(t *testing.T, r corpus.Record) (corpus.Result, error) {

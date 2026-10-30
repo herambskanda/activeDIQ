@@ -74,6 +74,10 @@ type Descriptor struct {
 	AuditKind     audit.Kind    // the step event kind, declared by the same owner
 	StepUp        bool          // submit needs a fresh MFA (TM-D16 §7.4)
 	SecretInput   bool          // the input carries a secret (rule 9)
+	// ControlPlane marks an Action whose permission administers RBAC, delegation, scopes, connections or
+	// the tenant: personal to an account, never carried by a group, token, automation policy or hybrid
+	// correlation. It must equal authz.NeverCrosses(Permission); a test in compose/server holds the two.
+	ControlPlane bool
 }
 
 // Input is the validated, canonically encodable input of one invocation.
@@ -106,12 +110,17 @@ type StepPlan struct {
 type Outcome struct {
 	AlreadyApplied bool
 	Payload        []byte
+	// Tier0 is the connector's step-9 report: objects it found tier0 after the write, with or without
+	// a basis (ADR-0005 rule 7). It counts at once and outranks every other Verify reason.
+	Tier0 []step.Tier0Finding
 }
 
 // Verdict is the result of Verify.
 type Verdict struct {
 	OK     bool
 	Reason string // machine reason code when !OK
+	// Tier0 lists the objects an Action's own Verify found tier0, when Reason is tier0_after_write.
+	Tier0 []step.Tier0Finding
 }
 
 // Errors of the pipeline. None carries a secret or a directory response.

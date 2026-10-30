@@ -235,6 +235,8 @@ func TestBadFixtures(t *testing.T) {
 		{"policy_check_true", []exp{{"T2", "policy-shape", "public.items"}, {"T4", "write-cross-tenant", "public.items"}}},
 		{"policy_coalesce", []exp{{"T2", "policy-shape", "public.items"}}},
 		{"policy_extra_permissive", []exp{{"T2", "policy-shape", "public.items"}}},
+		{"policy_catrust_open", []exp{{"T2", "policy-shape", "public.items"}}},
+		{"policy_catrust_wrong_qual", []exp{{"T2", "policy-shape", "public.fleet_ca"}}},
 		{"partition_without_rls", []exp{{"T2", "rls-enable", "public.events_2026"}}},
 		{"truncate_granted", []exp{{"T3", "runtime-truncate", "public.items"}}},
 		{"create_on_schema", []exp{{"T3", "runtime-create-schema", "public"}}},

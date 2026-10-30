@@ -76,10 +76,19 @@ func TestIssue(t *testing.T) {
 		ctx := context.Background()
 
 		// AC1: refused without the permission, refused without step-up; nothing is written.
-		if _, err := e.svc(false, true, nil).Issue(ctx, e.a, admin, fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "c"}); !errors.Is(err, fleetsql.ErrForbidden) {
+		if _, err := e.svc(false, true, nil).Issue(ctx, e.a, adminIn(e.a), fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "c"}); !errors.Is(err, fleetsql.ErrForbidden) {
 			t.Fatalf("no permission: %v", err)
 		}
-		if _, err := e.svc(true, false, nil).Issue(ctx, e.a, admin, fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "c"}); !errors.Is(err, fleetsql.ErrStepUpRequired) {
+		before, _ := e.raw(e.a, `SELECT count(*) FROM public.components`)
+		for name, pr := range map[string]apihost.Principal{"other tenant": adminIn(e.b), "platform": admin} {
+			if _, err := e.svc(true, true, nil).Issue(ctx, e.a, pr, fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "c"}); !errors.Is(err, fleetsql.ErrForbidden) {
+				t.Fatalf("%s: %v", name, err)
+			}
+		}
+		if n, _ := e.raw(e.a, `SELECT count(*) FROM public.components`); n != before {
+			t.Fatalf("cross-tenant issue wrote %d rows", n)
+		}
+		if _, err := e.svc(true, false, nil).Issue(ctx, e.a, adminIn(e.a), fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "c"}); !errors.Is(err, fleetsql.ErrStepUpRequired) {
 			t.Fatalf("no step-up: %v", err)
 		}
 		var cnt int
@@ -94,12 +103,12 @@ func TestIssue(t *testing.T) {
 			{Kind: "x", Name: "c"}, {Kind: fleetsql.KindADDC, Name: " "}, {Kind: fleetsql.KindADDC, Name: "a", TTL: 48 * time.Hour},
 			{Kind: fleetsql.KindADDC, Name: "a", TTL: time.Second}, {Kind: fleetsql.KindADDC, Name: "a\nb"},
 		} {
-			if _, err := e.svc(true, true, nil).Issue(ctx, e.a, admin, bad); !errors.Is(err, fleetsql.ErrInvalid) {
+			if _, err := e.svc(true, true, nil).Issue(ctx, e.a, adminIn(e.a), bad); !errors.Is(err, fleetsql.ErrInvalid) {
 				t.Fatalf("%+v: %v", bad, err)
 			}
 		}
 
-		iss, err := e.svc(true, true, nil).Issue(ctx, e.a, admin, fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "branch-1"})
+		iss, err := e.svc(true, true, nil).Issue(ctx, e.a, adminIn(e.a), fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "branch-1"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -132,7 +141,7 @@ func TestRedeem(t *testing.T) {
 		// This test is about redeem semantics, not the limiter: a generous budget for its many failures from one source.
 		svc := e.svc(true, true, fleetsql.NewMemoryLimiter(fleetsql.MemoryLimiterConfig{Burst: 1000}))
 		issue := func(tid tenant.ID) fleetsql.Issued {
-			iss, err := svc.Issue(ctx, tid, admin, fleetsql.NewComponent{Kind: fleetsql.KindADDC, Name: "dc1"})
+			iss, err := svc.Issue(ctx, tid, adminIn(tid), fleetsql.NewComponent{Kind: fleetsql.KindADDC, Name: "dc1"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -238,7 +247,7 @@ func TestRedeemRateLimit(t *testing.T) {
 		now := time.Now()
 		lim := fleetsql.NewMemoryLimiter(fleetsql.MemoryLimiterConfig{Burst: 3, Refill: time.Minute, Now: func() time.Time { now = now.Add(time.Nanosecond); return now }})
 		svc := e.svc(true, true, lim)
-		iss, err := svc.Issue(ctx, e.a, admin, fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "c"})
+		iss, err := svc.Issue(ctx, e.a, adminIn(e.a), fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "c"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -266,7 +275,7 @@ func TestDatabaseGuards(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
 		ctx := context.Background()
-		iss, err := e.svc(true, true, nil).Issue(ctx, e.a, admin, fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "c"})
+		iss, err := e.svc(true, true, nil).Issue(ctx, e.a, adminIn(e.a), fleetsql.NewComponent{Kind: fleetsql.KindConnector, Name: "c"})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -46,7 +46,7 @@ type Config struct {
 	Schema   *ldapfilter.Schema // filter and attribute allowlist; nil means DefaultSchema()
 	Timeout  time.Duration      // per-request timeout, default 30 s
 	PageSize uint32             // default page size, default 500, clamped to MaxPageSize
-	Dialer   *net.Dialer        // optional, for tests and proxies
+	Dialer   ContextDialer      // optional, for tests and proxies (a *net.Dialer fits)
 	// SecretAudit receives one event per ReadSecret call (actor, target GUID, attribute, reason,
 	// outcome — never a value). ReadSecret refuses to run without it.
 	SecretAudit func(SecretReadEvent) error
@@ -58,6 +58,11 @@ const (
 	MaxPageSize     = 1000
 	defaultTimeout  = 30 * time.Second
 )
+
+// ContextDialer is the part of net.Dialer that dial uses.
+type ContextDialer interface {
+	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+}
 
 // Session is one bound LDAPS connection to one DC. Requests are serialised: the paging cookie and
 // the DC are pinned to the connection (connector-contract §5.1). Not for concurrent use of Read and
@@ -128,24 +133,22 @@ func open(ctx context.Context, cfg Config, gc bool) (*Session, error) {
 		bindCred, krb := cfg.Credential, cfg.Kerberos
 		cfg.Credential, cfg.Kerberos = Credential{}, nil // the Session never holds the secret
 		s := &Session{conn: conn, cfg: cfg, schema: sc, server: net.JoinHostPort(host, port), pageSize: ps}
-		var berr error
-		if krb != nil {
-			name := cfg.ServerName
-			if name == "" {
-				name = host
-			}
-			berr = s.bindKerberos(ctx, *krb, name)
-		} else {
-			berr = s.bind(ctx, bindCred)
-		}
-		if err := berr; err != nil {
+		if err := s.bindAs(ctx, host, bindCred, krb); err != nil {
 			conn.Close()
 			// A rejected credential is not a reason to hammer the next DC (lockout).
 			return nil, err
 		}
 		// SecretAttrs is computed at connect (safe-primitives §3.7). Failing to compute it fails the
 		// connect: a session that cannot name its secrets must not search.
-		if err := s.loadSecretAttrs(ctx); err != nil {
+		if gc {
+			// searchFlags is not in the GC partial attribute set, so the schema-flag search returns
+			// nothing on 3269 (T-0619). Read it from the same host's LDAPS port (every DC holds the
+			// schema NC) on a short-lived domain session, then keep only the resulting schema.
+			err = s.loadSecretAttrsFromDC(ctx, host, bindCred, krb)
+		} else {
+			err = s.loadSecretAttrs(ctx)
+		}
+		if err != nil {
 			s.Close()
 			return nil, err
 		}
@@ -273,6 +276,10 @@ func ldapCode(err error) string {
 	return "transport error"
 }
 
+// FilterSchema is the schema allowlist the session renders filters against; a caller parses a
+// request's filter AST with it (ldapfilter.ParseFilterAST) so the parse and the render agree.
+func (s *Session) FilterSchema() *ldapfilter.Schema { return s.schema }
+
 // AttrSyntax returns the value syntax the session's schema allowlist records for an attribute.
 func (s *Session) AttrSyntax(name string) (ldapfilter.Syntax, bool) { return s.schema.Syntax(name) }
 
@@ -286,4 +293,37 @@ func (s *Session) CanonicalAttr(name string) (string, error) {
 		return "", fail(CodeInvalidArgument, "attribute: "+ldapfilter.Code(err), err)
 	}
 	return a.String(), nil
+}
+
+// bindAs binds s with a password or a kerberos identity.
+func (s *Session) bindAs(ctx context.Context, host string, cred Credential, krb *Kerberos) error {
+	if krb != nil {
+		name := s.cfg.ServerName
+		if name == "" {
+			name = host
+		}
+		return s.bindKerberos(ctx, *krb, name)
+	}
+	return s.bind(ctx, cred)
+}
+
+// loadSecretAttrsFromDC computes the secret-attribute set for a GC session from host:636. The
+// helper session reads the schema with the same credential, is closed before return, and never
+// serves any other request; the set it yields is unioned into s.schema exactly as on a DC session,
+// so a GC session refuses every attribute a domain session would (safe-primitives §3.7).
+func (s *Session) loadSecretAttrsFromDC(ctx context.Context, host string, cred Credential, krb *Kerberos) error {
+	conn, err := dial(ctx, s.cfg, host, "636")
+	if err != nil {
+		return fail(CodeUnreachable, "schema read on the domain controller port", err)
+	}
+	h := &Session{conn: conn, cfg: s.cfg, schema: s.schema, server: net.JoinHostPort(host, "636"), pageSize: s.pageSize}
+	defer h.Close()
+	if err := h.bindAs(ctx, host, cred, krb); err != nil {
+		return err
+	}
+	if err := h.loadSecretAttrs(ctx); err != nil {
+		return err
+	}
+	s.schema = h.schema
+	return nil
 }

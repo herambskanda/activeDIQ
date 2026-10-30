@@ -3,6 +3,7 @@ package write
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
@@ -16,10 +17,37 @@ type Authorised struct{ p *pass }
 
 type pass struct {
 	evaluated []guid.GUID
+	dc        guid.GUID // DSA GUID of the DC the guard's live re-read ran on (AD); zero otherwise
+	// props are the attribute keys the kind's PropertyWrite declared at step 4 (the ones the §8.9 guard
+	// and the step-7 Tier-0 checks were run for). Only the DACL kind declares nTSecurityDescriptor.
+	props []string
+}
+
+// DeclaresProperty reports whether the write kind this token was issued for declared the attribute in
+// its PropertyWrite. The token does not carry the WriteKind itself; ApplyDACL uses this to refuse a
+// token issued for another kind, whose declaration would not have covered nTSecurityDescriptor.
+func (a Authorised) DeclaresProperty(name string) bool {
+	if a.p == nil {
+		return false
+	}
+	for _, k := range a.p.props {
+		if strings.EqualFold(k, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // Valid reports whether the guard issued this token.
 func (a Authorised) Valid() bool { return a.p != nil }
+
+// DC is the DSA GUID of the DC the guard re-read on at step 7; zero for a token not bound to a DC.
+func (a Authorised) DC() guid.GUID {
+	if a.p == nil {
+		return guid.GUID{}
+	}
+	return a.p.dc
+}
 
 // Evaluated are the touched objects the guard classified, target first.
 func (a Authorised) Evaluated() []guid.GUID {

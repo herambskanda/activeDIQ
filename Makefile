@@ -21,3 +21,11 @@ playwright-install: ## Install the pinned Playwright and its Chromium (not commi
 playwright-test: ## Self-test of the screenshot/record scripts (needs `make playwright-install` once)
 	npm ci --prefix tools/playwright
 	npm --prefix tools/playwright test
+
+# The console in the server binary (T-0686). Node is build-time only (ADR-0001 tier W).
+.PHONY: web-embed
+web-embed: ## Build web/dist and copy it into internal/webui/dist for go:embed
+	npm ci --prefix web
+	npm --prefix web run build
+	find internal/webui/dist -mindepth 1 ! -name .gitkeep -delete
+	cp -r web/dist/. internal/webui/dist/

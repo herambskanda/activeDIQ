@@ -180,12 +180,13 @@ func (p *Purger) Purge(ctx context.Context, id tenant.ID, req PurgeRequest) (Pur
 		if err != nil {
 			return err
 		}
-		// A legal hold (rule 11, T-0515): the tenant's subject rows are locked FOR SHARE first and the
-		// hold flag read under that lock, so a hold set during this purge is seen here or commits after it. The purge is a prefix of the chain, so
+		// A legal hold (rule 11, T-0515, T-0587): the tenant's hold lock is taken exclusively and the registry
+		// read under it, so a hold set during this purge, for a subject with or without a salt row, is seen
+		// here or commits after it. The purge is a prefix of the chain, so
 		// it stops before the oldest partition holding an event that references a held subject.
 		var block *HoldBlock
 		if found && toSeq >= first {
-			held, err := lockHeldSubjects(ctx, tx, id)
+			held, err := personal.New().LockHolds(ctx, tx, id)
 			if err != nil {
 				return err
 			}
@@ -299,40 +300,20 @@ func (p *Purger) boundary(ctx context.Context, tx store.Tx, id tenant.ID, cutoff
 	return 0, nil, false, nil
 }
 
-// lockHeldSubjects takes every one of the tenant's subject rows FOR SHARE, whatever their hold flag, and only
-// then reads the flag: a row with an uncommitted UPDATE of hold blocks this statement until that commits,
-// and the row is then re-evaluated, so the new hold is seen. Locking only rows already held would not
-// serialise a hold being set. A writer that sets a hold afterwards needs the row exclusively, so it waits
-// for this transaction and commits after the purge.
-func lockHeldSubjects(ctx context.Context, tx store.Tx, id tenant.ID) (map[string]struct{}, error) {
-	rows, err := tx.Query(ctx, `SELECT subject_ref, hold FROM public.personal_subject WHERE tenant_id = $1::uuid FOR SHARE`, id.String())
-	if err != nil {
-		return nil, fmt.Errorf("audit: read legal holds: %w", err)
-	}
-	defer rows.Close()
-	held := map[string]struct{}{}
-	for rows.Next() {
-		var s string
-		var on bool
-		if err := rows.Scan(&s, &on); err != nil {
-			return nil, fmt.Errorf("audit: read legal hold: %w", err)
-		}
-		if on {
-			held[s] = struct{}{}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("audit: read legal holds: %w", err)
-	}
-	return held, nil
-}
-
-// referencedSubjects lists the subjects an envelope is about: the subject of every value ref, and the
-// directory object it targets.
+// referencedSubjects lists the subjects an envelope is about: the subject of every value ref, the
+// directory object it targets, and the accounts in its actor chain (a hold on an admin keeps what the
+// admin did).
 func referencedSubjects(env chain.Envelope) []string {
 	var out []string
 	if s, ok := personal.DirSubject(env.Connection, env.TargetGUID); ok {
 		out = append(out, s)
+	}
+	for _, p := range append([]chain.Principal{env.Requester}, env.Via...) {
+		if p.Kind == string(authority.Human) {
+			if s, ok := personal.AcctSubject(p.ID); ok {
+				out = append(out, s)
+			}
+		}
 	}
 	for _, r := range env.Snapshots {
 		out = append(out, r.Subject)

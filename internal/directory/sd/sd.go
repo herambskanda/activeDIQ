@@ -129,10 +129,26 @@ type SD struct {
 	RMBits             uint8
 	Anomalies          []Anomaly
 	Notes              []Note
+	// src is the byte string Decode parsed, set only by Decode. The write planners re-decode it and
+	// ignore every exported field, so a caller cannot make them plan on bytes they did not parse.
+	src []byte
 }
 
 // Editable reports whether the SD has no anomalies.
 func (s SD) Editable() bool { return len(s.Anomalies) == 0 }
+
+// trusted returns the SD re-decoded from the bytes Decode saw. An SD not made by Decode (a literal,
+// or a zero value) has none and is not editable.
+func (s SD) trusted() (SD, error) {
+	if len(s.src) == 0 {
+		return SD{}, fail(ErrNotEditable)
+	}
+	t, err := Decode(Raw(s.src))
+	if err != nil {
+		return SD{}, fail(ErrNotEditable)
+	}
+	return t, nil
+}
 
 func fail(code string) error { return codec.New(code) }
 
@@ -241,6 +257,7 @@ func Decode(r Raw) (SD, error) {
 	order1, notes := orderReport(s.DACL)
 	s.Anomalies = append(s.Anomalies, order1...)
 	s.Notes = append(s.Notes, notes...)
+	s.src = append([]byte(nil), b...)
 	return s, nil
 }
 

@@ -14,6 +14,7 @@ import { isCodeType } from './flows.mjs';
 import { LogScanner, detectRateLimit, resultKeyword } from './runlog.mjs';
 import { claimTicket, createTicket, blockTicket, reopenTicket, setTicketLinks } from './tickets.mjs';
 import { applyAdvisoryDefaults } from './decisions.mjs';
+import { pollAdvisories } from './advisories.mjs';
 import { applyNoProgress } from './escalation.mjs';
 import { buildPrompt } from './prompt.mjs';
 import { buildWorkerArgs, launchWorker, runFiles, signalPid } from './launcher.mjs';
@@ -155,12 +156,29 @@ export class Dispatcher {
       await this.guard('repository check', async () => {
         this.shared = usesSharedCheckout(this.ctx, await repoState(this.ctx));
       });
+      await this.guard('security advisory poll', () => this.advisoryPoll());
       if (!this.stopping) await this.guard('merge', () => this.mergePass());
       if (!this.stopping) await this.guard('launch', () => this.fill());
       if (this.daemon) this.heartbeat();
     } finally {
       this.ticking = false;
     }
+  }
+
+  /**
+   * Security-disclosure intake (runbook §1): when `security_intake.enabled`, poll private advisories
+   * every `interval_hours`; a failed poll is retried after an hour and is reported on every failure
+   * kind (the guard surfaces it as an event), never swallowed as "no reports".
+   */
+  async advisoryPoll() {
+    const cfg = this.ctx.config.security_intake;
+    if (!cfg?.enabled) return;
+    const now = this.#nowMs();
+    if (this.nextAdvisoryPoll && now < this.nextAdvisoryPoll) return;
+    this.nextAdvisoryPoll = now + 3_600_000;
+    const result = await pollAdvisories(this.ctx, { repo: cfg.repo });
+    this.nextAdvisoryPoll = now + (cfg.interval_hours ?? 24) * 3_600_000;
+    if (result.created.length) this.requestTick = true;
   }
 
   /** Take over runs a previous dispatcher left running. */

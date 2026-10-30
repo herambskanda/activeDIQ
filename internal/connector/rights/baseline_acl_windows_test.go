@@ -64,11 +64,14 @@ func TestWindowsBaselineAndRecordDACL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if o, _, _ := sd.Owner(); !o.Equals(self.User.Sid) {
-			t.Fatalf("%s owner %v, want %v", p, o, self.User.Sid)
+		// The default owner of a file an elevated token creates is BUILTIN\Administrators; ownerfile
+		// trusts the token user, SYSTEM and Administrators as owners (its DACL is what restricts).
+		system, _ := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+		admins, _ := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+		if o, _, _ := sd.Owner(); !o.Equals(self.User.Sid) && !o.Equals(system) && !o.Equals(admins) {
+			t.Fatalf("%s owner %v, want the service identity, SYSTEM or Administrators", p, o)
 		}
 		acl, _, _ := sd.DACL()
-		system, _ := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
 		for i := uint32(0); i < uint32(acl.AceCount); i++ {
 			var ace *windows.ACCESS_ALLOWED_ACE
 			if err := windows.GetAce(acl, i, &ace); err != nil {

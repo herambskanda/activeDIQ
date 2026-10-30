@@ -1,120 +1,42 @@
-//go:build unix
+//go:build !windows
 
 package ownerfile
 
 import (
 	"errors"
-	"fmt"
-	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"syscall"
 )
 
-func openAppend(path string) (*os.File, error) {
-	if _, err := os.Lstat(path); err == nil {
-		if err := check(path); err != nil {
-			return nil, err
-		}
+// noFollow makes the final open refuse a symlink planted after the check.
+const noFollow = syscall.O_NOFOLLOW
+
+// os.CreateTemp creates with 0600 and O_EXCL.
+func createTemp(dir, pattern string) (*os.File, error) { return os.CreateTemp(dir, pattern) }
+
+func ensure(path string) (bool, error) {
+	st, err := os.Lstat(path) // Lstat: never follow a symlink
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil // OpenFile creates it with 0600 (subject to umask, which only narrows)
 	}
-	// O_NOFOLLOW: a symlink planted at the path is refused, never followed.
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0o600)
 	if err != nil {
-		if unsafeOpenErr(err) {
-			return nil, fmt.Errorf("%w: %s", ErrUnsafe, filepath.Base(path))
-		}
-		return nil, err
+		return false, err
 	}
-	if err := checkOpen(f); err != nil {
-		_ = f.Close()
-		return nil, err
+	if !st.Mode().IsRegular() {
+		return false, ErrNotRegular
 	}
-	return f, nil
+	if !ownedBy(st, os.Geteuid()) {
+		return false, ErrForeignOwner
+	}
+	if st.Mode().Perm() == 0o600 {
+		return false, nil
+	}
+	return true, os.Chmod(path, 0o600)
 }
 
-// unsafeOpenErr: ELOOP is O_NOFOLLOW on a symlink; ENXIO is O_NONBLOCK|O_WRONLY on a FIFO with no
-// reader. O_NONBLOCK keeps open(2) on a planted FIFO from blocking forever before the fstat check
-// (which then refuses any non-regular file); it is harmless for regular files.
-func unsafeOpenErr(err error) bool {
-	return errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.ENXIO)
-}
-
-func createTemp(dir, pattern string) (*os.File, error) {
-	f, err := os.CreateTemp(dir, pattern) // created 0600 by os.CreateTemp
-	if err != nil {
-		return nil, err
-	}
-	if err := f.Chmod(0o600); err != nil {
-		name := f.Name()
-		_ = f.Close()
-		_ = os.Remove(name)
-		return nil, err
-	}
-	return f, nil
-}
-
-func check(path string) error {
-	st, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	return checkInfo(path, st)
-}
-
-func checkOpen(f *os.File) error {
-	st, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	return checkInfo(f.Name(), st)
-}
-
-func checkInfo(path string, st os.FileInfo) error {
+// ownedBy reports whether st is owned by uid. A missing Stat_t counts as foreign.
+func ownedBy(st fs.FileInfo, uid int) bool {
 	s, ok := st.Sys().(*syscall.Stat_t)
-	if !st.Mode().IsRegular() || !ok || int(s.Uid) != os.Geteuid() || st.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%w: %s", ErrUnsafe, filepath.Base(path))
-	}
-	return nil
-}
-
-func readFile(path string) ([]byte, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		if unsafeOpenErr(err) {
-			return nil, fmt.Errorf("%w: %s", ErrUnsafe, filepath.Base(path))
-		}
-		return nil, err
-	}
-	defer f.Close()
-	if err := checkOpen(f); err != nil {
-		return nil, err
-	}
-	b, err := io.ReadAll(io.LimitReader(f, MaxReadSize+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > MaxReadSize {
-		return nil, fmt.Errorf("%w: %s too large", ErrUnsafe, filepath.Base(path))
-	}
-	return b, nil
-}
-
-func ensureDir(path string) error {
-	if err := os.Mkdir(path, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
-		return err
-	}
-	return checkDir(path)
-}
-
-func checkDir(path string) error {
-	st, err := os.Lstat(path) // Lstat: a symlinked state directory is refused
-	if err != nil {
-		return err
-	}
-	s, ok := st.Sys().(*syscall.Stat_t)
-	if !st.IsDir() || !ok || int(s.Uid) != os.Geteuid() || st.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%w: %s", ErrDirUnsafe, filepath.Base(path))
-	}
-	return nil
+	return ok && int(s.Uid) == uid
 }

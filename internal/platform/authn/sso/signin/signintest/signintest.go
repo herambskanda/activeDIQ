@@ -206,6 +206,11 @@ func (f *Anchors) Matched(context.Context, tenant.ID, authn.DirectoryRef, authn.
 	return false, nil
 }
 
+// MatchedAD implements authn.DirectoryAnchors: no counterpart.
+func (f *Anchors) MatchedAD(context.Context, tenant.ID, authn.DirectoryRef) (authn.DirectoryRef, error) {
+	return authn.DirectoryRef{}, authn.ErrAnchorNoMatch
+}
+
 // Epochs is signin.Epochs; the epoch is the zero value because the fakes ignore it.
 type Epochs struct{}
 

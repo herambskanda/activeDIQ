@@ -92,4 +92,6 @@ Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `001
 
 **Not yet wired** (tickets filed): an `authz.Membership` implementation over inventory; the DM-32 token store
 (`TokenSource`); compose passing `Deps.Access` / `WithMembership` / `WithTokens` and registering module
-Actions with the runner; the group-member Actions that declare `GroupMembershipPermissions`; `control_plane` catalogue flags for the new permissions.
+Actions with the runner; the group-member Actions that declare `GroupMembershipPermissions`; `control_plane` catalogue flags for the connections.* and inventory.tier0_* Actions (T-0616).
+
+**Control-plane flag (T-0472):** `operation.Descriptor.ControlPlane` marks an Action whose permission is in an `authz.NeverCrosses` family. The four `delegation.*` Actions carry it; `Test_control_plane_flag_catalogue_matches_never_crosses` (compose/server) holds the flag to the rule. Their input schemas (`RoleCreate`, `RoleUpdate`, `AssignmentGrant`, `AssignmentRevoke`) are in `api/openapi/modules/delegation.yaml`; the wire members are camelCase and `delegation/contract_test.go` keeps the Action input types and the generated contract types in step.

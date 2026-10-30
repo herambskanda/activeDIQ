@@ -2,7 +2,7 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: fitness-objectid ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly fuzz-saml build build-web web-install ci-proof fitness-operation fitness-disclosure fitness-packaging workflows-check
+.PHONY: fitness-fleet-ca-scope fitness-objectid ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check
 
 ci: lint gen-check gen-api-check lint-api test fitness workflows-check build secrets-scan vuln-scan fuzz-saml lab-test-unit lab-test-windows-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
 	@echo "make ci: passed"
@@ -35,14 +35,20 @@ fmt: ## Format Go and web sources in place
 
 test: test-go test-web ## Go and web unit tests
 
-test-go:
-	go test -count=1 ./...
+test-go: web-install ## Go tests; package parallelism bounded (-p 3) because PG-backed packages each start an embedded PostgreSQL and starve under full parallelism (T-0550)
+	go test -count=1 -p 3 -timeout 30m ./...
 
 test-web: web-install
 	npm --prefix web run --silent test
 
-fitness: fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-operation fitness-objectid fitness-disclosure fitness-packaging ## Architecture fitness functions: fitness-packaging (T-0104 API TLS directory ACL/mode in packaging/), fitness-disclosure (T-0258 SECURITY.md and RFC 9116 security.txt intake, Expires renewal), fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P4 logs/metrics/caches, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) fitness-oracles (FF-SP6 on Linux) and fitness-api (ADR-0004 A1, A3, A4, A5, A6, A7, A8, A10, A11, A12, A13, A14; prints every inactive check and inactive part)
+fitness: fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-operation fitness-audit fitness-objectid fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope ## Architecture fitness-fleet-ca-scope (T-0738, ADR-0008 items 1-6: only SignServerLeaf uses the server CA key and it takes no key/CSR, the server CA is never in the client pool, dial roots are pinned certificates only, fleet_server_ca has no tenant_id, the presented chain is [leaf, server CA]; parts whose code has not landed are listed pending), fitness-keys (T-0525 keys-custody-design FF-KEY-1..6: tenant_keys schema guards, single owner of keys calls, KEK config only in the composition root, bound behaviour tests; parts whose code has not landed are listed pending; needs Docker), fitness-built-msi (T-0697, ADR-0006 A1 on the built MSI: opens dist/*.msi with msidump and judges ServiceInstall, MsiServiceConfig, CustomAction, Binary, MsiLockPermissionsEx, Registry; inactive until a build produces one), fitness-update (T-0139 TM-F-UPDATE: bad updates refused through the online courier and the offline bundle; the offline one again under docker --network none), fitness-agent-host (T-0554, ADR-0006 A1/A4 and ADR-0007 P1-P8, TM-F-AGENTCMD CI half: agent proto lints R1/R2/R5, module capability scans R3/R4, installer identity, agent import closure, P1-P8 and the F1 policy fuzz), fitness-host (T-0136 TM-F-HOST: boots the real server in a container and judges identity, file modes, TLS-only listener, default credentials, dumps and remote-DSN TLS; needs Docker), fitness functions: fitness-packaging (T-0104 API TLS directory ACL/mode in packaging/), fitness-disclosure (T-0258 SECURITY.md and RFC 9116 security.txt intake, Expires renewal; T-0260 advisory and CVE record carry one CVE ID and one CVSS on the fix day), fitness-modules (blueprint §2 import rules), fitness-stack (ADR-0001 F1-F5), fitness-tenancy (ADR-0002 T1-T5), fitness-domain-keys (domain-model X3-X5), fitness-profiles (ADR-0002 P1, P4 logs/metrics/caches, P7, U1, U2 and the activation table), fitness-proto (connector contract compiles and keeps its rules) fitness-safeprim (safe-primitives FF-SP1-3), fitness-corpus (FF-SP4, FF-SP5 declarations, FF-SP8) fitness-oracles (FF-SP6 on Linux) and fitness-api (ADR-0004 A1, A3, A4, A5, A6, A7, A8, A10, A11, A12, A13, A14; prints every inactive check and inactive part)
 	go run ./tools/fitness/modules
+
+fitness-keys: ## T-0525, keys-custody-design §7: FF-KEY-1 schema (tenant_keys RLS/index/trigger/grants, installation_kek grants once it exists) on PostgreSQL 16 and 18 containers (needs Docker), FF-KEY-2 single owner of tenant_keys and DEK/wrap calls, FF-KEY-3 KEK config only in compose/server, FF-KEY-5 insert sites and Rotate/ShredTenant/OpenMaintenance callers, and the bound tests of FF-KEY-1/3/4/5/6 (missing, failed or skipped fails); lists every part still pending
+	go run ./tools/fitness/keycustody
+
+fitness-fleet-ca-scope: ## T-0738, ADR-0008 fitness function: FCS-1..6 static rules on the tree and migrations, plus the bound tests of each landed part (a missing, failed or skipped bound test fails); lists every part whose code has not landed as pending, which is not a pass
+	go run ./tools/fitness/fleetca
 
 fitness-objectid: ## T-0180: no conversion to authz.ObjectID outside internal/platform/authz (type-checked, tests included); use ObjectIDFromOctets or ParseObjectID
 	go run ./tools/fitness/objectid
@@ -80,10 +86,33 @@ fitness-api: web-install ## T-0011, T-0017, T-0018, ADR-0004: A1 layout, A3 perm
 fitness-operation: ## T-0013: ADR-0005 O9, the kernel import DAG of rule 13: parses the dag block of the ADR itself and fails on any import among the listed platform packages it does not allow; lists each package as existing or pending plus O1 step escape (syntactic and the type-aware stepescape analyzer) (O2-O8 land with the code they inspect)
 	go run ./tools/fitness/operation
 
+fitness-audit: ## T-0133, ADR-0005 A1-A9 and TM-F-AUDIT: A1 catalogue of the audit tables and audit_head's genesis trigger against PostgreSQL 16 and 18 containers (needs Docker); A2, A3, A5, A6, A9 run the bound audit-chain, verifier and retention tests and fail when one is missing, failed or skipped; A4, A7, A8 are listed as pending, not as passes
+	go run ./tools/fitness/audit
+
 fitness-packaging: ## T-0104, TM-TB16-T3: the Windows ACL script (Administrators + service identity only, inheritance off), the linux-oci prepare script (run for real: non-root uid, mode 0700, refuses uid 0 and symlinks) and the Compose fragment (numeric non-root user, bind mount); the Windows lab test is packaging/windows/Test-ApiTlsDirAcl.ps1
 	go run ./tools/fitness/packaging
 
-fitness-disclosure: ## T-0258: SECURITY.md and .well-known/security.txt (RFC 9116): Contact named in SECURITY.md, one RFC 3339 Expires under a year ahead, fails 30 days before it so the file is renewed, Policy points at SECURITY.md
+fitness-host: ## T-0136, TM-F-HOST: build cmd/server into packaging/linux-oci/Dockerfile.server, boot it against PostgreSQL 16 and judge the named cases (needs Docker); the Windows half is packaging/windows/Get-HostObservation.ps1 judged by `go run ./tools/fitness/host evaluate`. Known gaps are listed in tools/fitness/host/known-gaps.json
+	go run ./tools/fitness/host oci
+
+BUILT_MSI ?= dist/*.msi
+
+fitness-built-msi: ## T-0697: ADR-0006 A1 on the built artefact: every MSI matching $(BUILT_MSI) is dumped with msidump (msitools) and its service account (NT SERVICE\\activeDIQAgent), restricted SID, pinned privileges, custom actions, binaries, DACLs and HKLM\\SYSTEM writes are judged; prints inactive when none exists. The release job passes -require once the packaging ticket builds the MSI
+	go run ./tools/fitness/builtmsi -glob '$(BUILT_MSI)'
+
+AGENT_POLICY_FUZZ_TIME ?= 20s
+
+fitness-agent-host: ## T-0554: ADR-0006 A1 (installer source: NT SERVICE\\activeDIQAgent, restricted SID, pinned privileges, no LocalSystem), A4 (agent closure has no LDAP/SMB/RPC/Kerberos/SSPI client), ADR-0007 P1-P8 tests must exist and pass, contract R1-R5 (proto lints, module capability and listener scans) and F1 (out-of-bounds policy rejected, then FuzzF1 for $(AGENT_POLICY_FUZZ_TIME)); prints inactive for a check whose subject does not exist yet
+	go run ./tools/fitness/agenthost
+	tools/ci/fuzz-target.sh internal/platform/agentpolicy FuzzF1DecodeOnlyAcceptsInBounds $(AGENT_POLICY_FUZZ_TIME)
+
+fitness-update: ## T-0139 TM-F-UPDATE (threat model s10, ENH-07 AC-1..AC-8): tampered artefact, tampered manifest, overlong artefact, revoked key, rollback (incl. after a database restore), freeze, clock rewind, under-threshold root rotation, server-signed artefact and withdrawn release are each refused with their reason through both couriers, nothing lands outside quarantine, a good release and an old-threshold-signed root rotation are accepted
+	go run ./tools/fitness/update
+
+fitness-update-offline: ## T-0139: the same matrix through the offline bundle courier inside a container with --network none (needs Docker)
+	tools/fitness/update/offline.sh
+
+fitness-disclosure: ## T-0258: SECURITY.md and .well-known/security.txt (RFC 9116): Contact named in SECURITY.md, one RFC 3339 Expires under a year ahead, fails 30 days before it so the file is renewed, Policy points at SECURITY.md; T-0260: advisory template present, every security/advisories/<CVE-ID>/ advisory.md and record.json agree on CVE ID and one CVSS v3.1 vector/score, published on the fix day, target_met honest
 	go run ./tools/fitness/disclosure
 
 workflows-check: ## T-0261: .github/workflows has no continue-on-error, every action is pinned to a commit SHA, release.yml verifies its signatures; the release tools' tests run in `make test`, their failing cases in `make ci-proof`

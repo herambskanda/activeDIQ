@@ -154,6 +154,21 @@ func TenantFrom(ctx context.Context) (string, bool) {
 	return v, ok && v != ""
 }
 
+type authorityFactorKey struct{}
+
+// WithAuthorityFactor returns ctx carrying whether the requesting session holds a current authority
+// factor (threat model §6.9 TM-D19 rule 1, DM-31.I3). The request edge sets it from the session; an
+// Authorizer reads it to decide whether correlation-derived grants apply. Absent means false.
+func WithAuthorityFactor(ctx context.Context, current bool) context.Context {
+	return context.WithValue(ctx, authorityFactorKey{}, current)
+}
+
+// AuthorityFactorFrom reports the fact set by WithAuthorityFactor; false when none was set (deny by default).
+func AuthorityFactorFrom(ctx context.Context) bool {
+	v, _ := ctx.Value(authorityFactorKey{}).(bool)
+	return v
+}
+
 type dsaPinsKey struct{}
 
 // WithDSAPins returns ctx carrying the DSA GUIDs of the operation's pinned DCs. LiveFacts has no

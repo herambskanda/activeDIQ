@@ -162,6 +162,11 @@ func scanSQLFiles(root string, cfg *Config) ([]Finding, error) {
 					}
 				}
 			}
+			if !UnderDir(dir, cfg.FleetSQLDir) {
+				for _, off := range allIndex(text, PoolFunction) {
+					out = append(out, Finding{RulePoolSQL, rel, line(off), "SQL file names " + PoolFunction + "() outside " + cfg.FleetSQLDir + " (F-POOL-1)"})
+				}
+			}
 			for _, g := range cfg.Registry.GlobalTables {
 				if UnderDir(dir, g.Owner) {
 					continue
@@ -177,4 +182,17 @@ func scanSQLFiles(root string, cfg *Config) ([]Finding, error) {
 		}
 	}
 	return out, nil
+}
+
+// allIndex returns the offset of every occurrence of sub in text.
+func allIndex(text, sub string) []int {
+	var out []int
+	for off := 0; ; {
+		i := strings.Index(text[off:], sub)
+		if i < 0 {
+			return out
+		}
+		out = append(out, off+i)
+		off += i + len(sub)
+	}
 }

@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,291 +15,236 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// Windows: owner = service identity (the process token's user: gMSA, virtual account or the invoking
-// account); DACL = service identity and SYSTEM, full control, PROTECTED so nothing is inherited from
-// the parent. The file is created with the descriptor in CreateFile, so there is no window in which
-// it carries the inherited ACL. Built with the typed ACL API, never an SDDL string.
-// Refs: https://learn.microsoft.com/windows/win32/secauthz/access-control-lists ,
-// https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-createfilew ,
-// https://learn.microsoft.com/windows/win32/api/aclapi/nf-aclapi-getnamedsecurityinfow
+// fileAllAccess is FILE_ALL_ACCESS (explicit, so no generic-right mapping is relied on).
+const fileAllAccess = 0x1F01FF
 
-const allowedACE = 0 // ACCESS_ALLOWED_ACE_TYPE
+// noFollow is a POSIX concept; on Windows reparse points are refused by attribute check in apply.
+const noFollow = 0
 
-func principals() (system, self *windows.SID, err error) {
-	if system, err = windows.CreateWellKnownSid(windows.WinLocalSystemSid); err != nil {
-		return
-	}
-	tu, err := windows.GetCurrentProcessToken().GetTokenUser()
+// desiredSIDs returns the token user and SYSTEM.
+func desiredSIDs() (user, system *windows.SID, err error) {
+	tok := windows.GetCurrentProcessToken()
+	tu, err := tok.GetTokenUser()
 	if err != nil {
-		return
+		return nil, nil, fmt.Errorf("ownerfile: token user: %w", err)
 	}
-	self = tu.User.Sid
-	return
+	system, err = windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ownerfile: system sid: %w", err)
+	}
+	return tu.User.Sid, system, nil
 }
 
-func descriptor(inherit uint32) (*windows.SECURITY_DESCRIPTOR, error) {
-	system, self, err := principals()
+// desiredACL builds the DACL: FILE_ALL_ACCESS for the process user and for SYSTEM. Microsoft Learn:
+// https://learn.microsoft.com/windows/win32/api/aclapi/nf-aclapi-setentriesinacla
+func desiredACL() (*windows.ACL, error) {
+	user, system, err := desiredSIDs()
 	if err != nil {
 		return nil, err
 	}
-	sids := []*windows.SID{self}
-	if !self.Equals(system) {
-		sids = append(sids, system)
-	}
-	var entries []windows.EXPLICIT_ACCESS
-	for _, s := range sids {
-		entries = append(entries, windows.EXPLICIT_ACCESS{
-			AccessPermissions: windows.GENERIC_ALL,
+	entry := func(s *windows.SID) windows.EXPLICIT_ACCESS {
+		return windows.EXPLICIT_ACCESS{
+			AccessPermissions: fileAllAccess,
 			AccessMode:        windows.GRANT_ACCESS,
-			Inheritance:       inherit,
+			Inheritance:       windows.NO_INHERITANCE,
 			Trustee: windows.TRUSTEE{
 				TrusteeForm:  windows.TRUSTEE_IS_SID,
 				TrusteeType:  windows.TRUSTEE_IS_UNKNOWN,
 				TrusteeValue: windows.TrusteeValueFromSID(s),
 			},
-		})
+		}
 	}
-	acl, err := windows.ACLFromEntries(entries, nil)
+	entries := []windows.EXPLICIT_ACCESS{entry(user)}
+	if !user.Equals(system) {
+		entries = append(entries, entry(system))
+	}
+	return windows.ACLFromEntries(entries, nil)
+}
+
+// trustedOwner reports whether owner is the token user, SYSTEM or BUILTIN\Administrators. The
+// owner holds implicit READ_CONTROL and WRITE_DAC, so only these may own a file we trust.
+func trustedOwner(owner *windows.SID) (bool, error) {
+	if owner == nil {
+		return false, nil
+	}
+	user, system, err := desiredSIDs()
 	if err != nil {
-		return nil, err
+		return false, err
 	}
+	admins, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	if err != nil {
+		return false, fmt.Errorf("ownerfile: administrators sid: %w", err)
+	}
+	return owner.Equals(user) || owner.Equals(system) || owner.Equals(admins), nil
+}
+
+func ensure(path string) (bool, error) {
+	acl, err := desiredACL()
+	if err != nil {
+		return false, err
+	}
+	created, err := createNewAt(path, acl)
+	if err != nil {
+		return false, err
+	}
+	if created {
+		return false, nil
+	}
+	return apply(path, acl)
+}
+
+func securityAttributes(acl *windows.ACL) (*windows.SecurityAttributes, error) {
 	sd, err := windows.NewSecurityDescriptor()
 	if err != nil {
-		return nil, err
-	}
-	if err := sd.SetOwner(self, false); err != nil {
 		return nil, err
 	}
 	if err := sd.SetDACL(acl, true, false); err != nil {
 		return nil, err
 	}
+	// Protect the DACL from inheritance in the descriptor control bits.
 	if err := sd.SetControl(windows.SE_DACL_PROTECTED, windows.SE_DACL_PROTECTED); err != nil {
 		return nil, err
 	}
-	return sd, nil
+	sa := &windows.SecurityAttributes{SecurityDescriptor: sd, InheritHandle: 0}
+	sa.Length = uint32(unsafe.Sizeof(*sa))
+	return sa, nil
 }
 
-// create opens path with the restricted descriptor. disposition is CREATE_NEW or OPEN_ALWAYS (the
-// descriptor only applies when the file is created).
-func create(path string, disposition uint32, access uint32) (*os.File, error) {
-	sd, err := descriptor(windows.NO_INHERITANCE)
+// createNewAt creates the file with the protected DACL atomically (no window where the inherited ACL
+// applies). It reports false when the file already exists.
+func createNewAt(path string, acl *windows.ACL) (bool, error) {
+	h, err := createHandle(path, acl)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, windows.ERROR_FILE_EXISTS) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, windows.CloseHandle(h)
+}
+
+func createHandle(path string, acl *windows.ACL) (windows.Handle, error) {
+	sa, err := securityAttributes(acl)
+	if err != nil {
+		return 0, err
 	}
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
-	// FILE_FLAG_OPEN_REPARSE_POINT: a link planted at the path is opened as itself, then refused by the check.
-	h, err := windows.CreateFile(p, access|windows.READ_CONTROL, windows.FILE_SHARE_READ, sa, disposition,
-		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
-	if err != nil {
-		return nil, err
-	}
-	// Verify the handle we write through, not the path (no check-then-use window).
-	if err := verifyHandle(h, false, fmt.Errorf("%w: %s", ErrUnsafe, filepath.Base(path))); err != nil {
-		_ = windows.CloseHandle(h)
-		return nil, err
-	}
-	return os.NewFile(uintptr(h), path), nil
-}
-
-func openAppend(path string) (*os.File, error) {
-	if _, err := os.Lstat(path); err == nil {
-		if err := check(path); err != nil {
-			return nil, err
-		}
-	}
-	// GENERIC_WRITE (not FILE_APPEND_DATA alone) so FlushFileBuffers works; append by seeking to the end.
-	// Writers are serialised by the caller.
-	f, err := create(path, windows.OPEN_ALWAYS, windows.GENERIC_WRITE)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := f.Seek(0, 2); err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-	return f, nil
+	// Share mode 0: nobody else can hold the file open while we write it.
+	return windows.CreateFile(p, windows.GENERIC_WRITE, 0, sa, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
 }
 
 func createTemp(dir, pattern string) (*os.File, error) {
-	prefix, suffix, _ := strings.Cut(pattern, "*")
-	for range 16 {
-		var b [8]byte
-		if _, err := rand.Read(b[:]); err != nil {
+	acl, err := desiredACL()
+	if err != nil {
+		return nil, err
+	}
+	prefix, suffix := pattern, ""
+	if i := strings.LastIndex(pattern, "*"); i >= 0 {
+		prefix, suffix = pattern[:i], pattern[i+1:]
+	}
+	for try := 0; try < 100; try++ {
+		var r [8]byte
+		if _, err := rand.Read(r[:]); err != nil {
 			return nil, err
 		}
-		name := filepath.Join(dir, prefix+hex.EncodeToString(b[:])+suffix)
-		f, err := create(name, windows.CREATE_NEW, windows.GENERIC_WRITE)
-		if errors.Is(err, os.ErrExist) {
+		name := filepath.Join(dir, prefix+hex.EncodeToString(r[:])+suffix)
+		h, err := createHandle(name, acl)
+		if errors.Is(err, windows.ERROR_FILE_EXISTS) {
 			continue
 		}
 		if err != nil {
-			_ = os.Remove(name)
 			return nil, err
 		}
-		return f, nil
+		return os.NewFile(uintptr(h), name), nil
 	}
-	return nil, fmt.Errorf("ownerfile: no unused temp name in %s", dir)
+	return nil, errors.New("ownerfile: no free temp name")
 }
 
-func check(path string) error {
-	st, err := os.Lstat(path)
+// apply refuses a reparse point or a foreign owner, and otherwise replaces the DACL when it is not
+// exactly the desired one (or is not protected), reporting whether it did. Decision (T-0242 AC2): a
+// wider file with a trusted owner is corrected at open, and the caller records that; a file owned by
+// anyone else is refused, because its owner can undo any correction.
+func apply(path string, want *windows.ACL) (bool, error) {
+	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return err
+		return false, err
 	}
-	bad := fmt.Errorf("%w: %s", ErrUnsafe, filepath.Base(path))
-	if !st.Mode().IsRegular() || isReparse(path) {
-		return bad
+	attrs, err := windows.GetFileAttributes(p)
+	if err != nil {
+		return false, err
+	}
+	if attrs&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || attrs&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		return false, ErrNotRegular
 	}
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
-		return err
-	}
-	return verifySD(sd, bad)
-}
-
-// verifySD accepts only: owner = service identity, PROTECTED DACL, allow ACEs for the service
-// identity and SYSTEM. Inheritance flags on the ACEs are irrelevant to the principal check.
-func verifySD(sd *windows.SECURITY_DESCRIPTOR, bad error) error {
-	system, self, err := principals()
-	if err != nil {
-		return err
+		return false, err
 	}
 	owner, _, err := sd.Owner()
-	if err != nil || owner == nil || !owner.Equals(self) {
-		return bad
+	if err != nil {
+		return false, err
+	}
+	ok, err := trustedOwner(owner)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, ErrForeignOwner
 	}
 	ctrl, _, err := sd.Control()
 	if err != nil {
-		return err
+		return false, err
 	}
-	if ctrl&windows.SE_DACL_PROTECTED == 0 {
-		return bad
+	have, _, err := sd.DACL()
+	if err != nil {
+		return false, err
 	}
-	// The second return value of DACL() is "defaulted" (SE_DACL_DEFAULTED), NOT "present": it is
-	// false for every explicit DACL. A NULL/absent DACL comes back as a nil acl.
-	acl, _, err := sd.DACL()
-	if err != nil || acl == nil { // a NULL DACL grants everyone full access
-		return bad
+	if ctrl&windows.SE_DACL_PROTECTED != 0 && have != nil && sameACL(have, want) {
+		return false, nil
 	}
-	for i := uint32(0); i < uint32(acl.AceCount); i++ {
-		var ace *windows.ACCESS_ALLOWED_ACE
-		if err := windows.GetAce(acl, i, &ace); err != nil {
-			return err
+	err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, want, nil)
+	if err != nil {
+		return false, fmt.Errorf("ownerfile: set DACL: %w", err)
+	}
+	return true, nil
+}
+
+// sameACL compares the access-allowed ACE SIDs of two ACLs (same count, same SID set). Access masks
+// are compared too: FILE_ALL_ACCESS is stored as is.
+func sameACL(a, b *windows.ACL) bool {
+	sa, ok := aceSet(a)
+	if !ok {
+		return false
+	}
+	sb, ok := aceSet(b)
+	if !ok || len(sa) != len(sb) {
+		return false
+	}
+	for k, m := range sa {
+		if sb[k] != m {
+			return false
 		}
-		if ace.Header.AceType != allowedACE {
-			return bad
+	}
+	return true
+}
+
+func aceSet(a *windows.ACL) (map[string]uint32, bool) {
+	out := map[string]uint32{}
+	for i := uint32(0); i < uint32(a.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(a, i, &ace); err != nil {
+			return nil, false
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			return nil, false
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-		if !sid.Equals(self) && !sid.Equals(system) {
-			return bad
-		}
+		out[sid.String()] |= uint32(ace.Mask)
 	}
-	return nil
-}
-
-// isReparse reads the attribute directly (GetFileAttributes does not follow the final link). Any
-// error counts as a reparse point: fail closed.
-// https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getfileattributesw
-func isReparse(path string) bool {
-	p, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return true
-	}
-	a, err := windows.GetFileAttributes(p)
-	if err != nil {
-		return true
-	}
-	return a&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0
-}
-
-// openChecked opens path without following a reparse point (FILE_FLAG_OPEN_REPARSE_POINT), then
-// verifies the open handle: not a reparse point, expected kind, owner and DACL read with
-// GetSecurityInfo on the handle itself. The caller works only with the returned handle, so a swap
-// of the path after this point cannot change what is read.
-// https://learn.microsoft.com/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo
-// https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
-func openChecked(path string, access uint32, dir bool, bad error) (windows.Handle, error) {
-	p, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return 0, err
-	}
-	flags := uint32(windows.FILE_ATTRIBUTE_NORMAL | windows.FILE_FLAG_OPEN_REPARSE_POINT)
-	if dir {
-		flags |= windows.FILE_FLAG_BACKUP_SEMANTICS
-	}
-	h, err := windows.CreateFile(p, access|windows.READ_CONTROL, windows.FILE_SHARE_READ, nil,
-		windows.OPEN_EXISTING, flags, 0)
-	if err != nil {
-		return 0, err
-	}
-	if err := verifyHandle(h, dir, bad); err != nil {
-		_ = windows.CloseHandle(h)
-		return 0, err
-	}
-	return h, nil
-}
-
-// verifyHandle checks an already-open handle: not a reparse point, expected kind, owner and DACL.
-func verifyHandle(h windows.Handle, dir bool, bad error) error {
-	var info windows.ByHandleFileInformation
-	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
-		return err
-	}
-	isDir := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || isDir != dir {
-		return bad
-	}
-	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		return err
-	}
-	return verifySD(sd, bad)
-}
-
-func readFile(path string) ([]byte, error) {
-	bad := fmt.Errorf("%w: %s", ErrUnsafe, filepath.Base(path))
-	h, err := openChecked(path, windows.GENERIC_READ, false, bad)
-	if err != nil {
-		return nil, err
-	}
-	f := os.NewFile(uintptr(h), path)
-	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, MaxReadSize+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(b) > MaxReadSize {
-		return nil, bad
-	}
-	return b, nil
-}
-
-func ensureDir(path string) error {
-	sd, err := descriptor(windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT)
-	if err != nil {
-		return err
-	}
-	p, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return err
-	}
-	sa := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
-	if err := windows.CreateDirectory(p, sa); err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
-		return err
-	}
-	return checkDir(path)
-}
-
-func checkDir(path string) error {
-	h, err := openChecked(path, windows.FILE_LIST_DIRECTORY, true, fmt.Errorf("%w: %s", ErrDirUnsafe, filepath.Base(path)))
-	if err != nil {
-		return err
-	}
-	return windows.CloseHandle(h)
+	return out, true
 }

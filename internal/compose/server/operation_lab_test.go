@@ -109,11 +109,12 @@ func uuidText(b []byte) string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
-// labPinner pins the lab DC (the one the session is bound to) for every naming context.
-type labPinner struct{ dsa string }
+// labDCs lists the lab DC (the one the session is bound to) as the only writable DC; the production
+// pinner (dcPinner) turns it into the pin.
+type labDCs struct{ dsa string }
 
-func (p labPinner) Pin(context.Context, string, authority.NamingContextID, string) (operation.DCPin, error) {
-	return operation.DCPin{Host: "localhost", DSAGUID: p.dsa}, nil
+func (l labDCs) WritableDCs(context.Context, string, authority.NamingContextID) ([]client.WritableDC, error) {
+	return []client.WritableDC{{Host: "localhost", DSAGUID: l.dsa}}, nil
 }
 
 type labSettings struct{}
@@ -170,6 +171,8 @@ type labRig struct {
 	dsa, nc                   string
 	broad, kid, plain, backer string
 	helpdsk                   string
+	admin                     *labadmin.Admin
+	plainDN                   string
 }
 
 func newLabRig(t *testing.T, s *storetest.Server) *labRig {
@@ -254,8 +257,12 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		if err != nil {
 			t.Fatal(err)
 		}
+		labPin, err := newDCPinner(labDCs{dsa: dsa})
+		if err != nil {
+			t.Fatal(err)
+		}
 		runner, err := operation.NewRunner(operation.Config{DB: e.db, Audit: ch, Authz: az, Registry: actions, Facts: facts, Jobs: jobs.NewRegistry(),
-			Keys: fixedKeys{}, Pinner: labPinner{dsa: dsa}, Settings: labSettings{}, Component: "lab"})
+			Keys: fixedKeys{}, Pinner: labPin, Settings: labSettings{}, Component: "lab"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -272,7 +279,7 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		assignRole(t, e, "helpdesk-operator", helpdsk, kid)
 		assignRole(t, e, "platform-administrator", admAcct, broad)
 
-		return &labRig{rd: reads, e: e, ctx: ctx, tr: tr, az: az, runner: runner, cp: cp, dsa: dsa, nc: nc, broad: broad, kid: kid, plain: plain, backer: backer, helpdsk: helpdsk}
+		return &labRig{rd: reads, e: e, ctx: ctx, tr: tr, az: az, runner: runner, cp: cp, dsa: dsa, nc: nc, broad: broad, kid: kid, plain: plain, backer: backer, helpdsk: helpdsk, admin: admin, plainDN: plainDN}
 	}
 }
 
@@ -368,6 +375,41 @@ func TestLabRule5ResetOfBackingObjectIsRefusedThroughTheRunner(t *testing.T) {
 		}
 		if got := auditOutcomes(t, r.e, r.cp, r.ctx, "lab"); !contains(got, "denied") {
 			failf("audit outcomes %v: none is denied", got)
+		}
+	})
+}
+
+// ADR-0005 O8, removed from scope between Plan and Apply, AD OU root, against the real lab DC: the
+// helpdesk operator holds helpdesk-operator over the Kid OU; the user is moved out of it by an
+// administrator; the live facts read from the DC (the target on the pinned DC, its ancestry walked) now
+// show a parent chain outside the root, and the same authorizer that allowed the first decision refuses
+// the second. The Apply-time arm of the same rule, through the runner on Postgres, is
+// internal/platform/operation TestO8RemovedFromScopeADOUMovedOut.
+func TestLabO8RemovedFromScopeADOUMovedOut(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		r := newLabRig(t, s)
+		pc := r.pinnedCtx()
+		decide := func() error {
+			f, err := directoryFacts(r.rd).Facts(pc, authority.Pins{authority.NamingContextID(r.nc): "localhost"}, r.az.FactsQuery(r.human(), resetPerm, r.target(r.plain)))
+			if err != nil {
+				t.Fatalf("live facts: %v", err)
+			}
+			return r.az.Authorize(pc, r.human(), resetPerm, r.target(r.plain), f)
+		}
+		if err := decide(); err != nil {
+			t.Fatalf("in scope before the move: %v", err)
+		}
+		r.admin.Move(r.plainDN, "CN=Users,"+labDom)
+		if err := decide(); !errors.Is(err, rbac.ErrDenied) {
+			t.Fatalf("after the move out of the OU root = %v, want a denial", err)
+		}
+		sub, err := r.runner.SubmitDirectory(r.ctx, operation.Request{Tenant: r.e.ten, Action: "objects.user.reset_password",
+			Input: operation.Input(fmt.Sprintf(`{"GUID":%q}`, r.plain)), Actor: r.human()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sub.Planned != 0 || sub.Blocked != 1 || itemReason(t, r.e, sub.Operation) != "denied" {
+			t.Fatalf("a moved-out user was planned: %+v", sub)
 		}
 	})
 }

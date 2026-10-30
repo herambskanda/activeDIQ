@@ -5,130 +5,142 @@ package ownerfile
 import (
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
-// widen grants a well-known SID (by string, so the test is locale independent) access through
-// icacls. Test-only; production code uses the typed ACL API.
-func widen(t *testing.T, path, sid, perm string) {
+func readDACL(t *testing.T, p string) (map[string]uint32, bool) {
 	t.Helper()
-	if out, err := exec.Command("icacls", path, "/grant", "*"+sid+":"+perm).CombinedOutput(); err != nil {
-		t.Fatalf("icacls grant: %v\n%s", err, out)
-	}
-}
-
-func writeOwned(t *testing.T, p, body string) {
-	t.Helper()
-	f, err := OpenAppend(p)
+	sd, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString(body); err != nil {
+	ctrl, _, _ := sd.Control()
+	acl, _, err := sd.DACL()
+	if err != nil || acl == nil {
 		t.Fatal(err)
 	}
-	if err := f.Close(); err != nil {
+	m, ok := aceSet(acl)
+	if !ok {
+		t.Fatal("unexpected ACE type")
+	}
+	return m, ctrl&windows.SE_DACL_PROTECTED != 0
+}
+
+func assertOwnerOnly(t *testing.T, p string) {
+	t.Helper()
+	m, protected := readDACL(t, p)
+	user, system, err := desiredSIDs()
+	if err != nil {
 		t.Fatal(err)
+	}
+	want := map[string]bool{user.String(): true, system.String(): true}
+	if !protected || len(m) != len(want) {
+		t.Fatalf("protected=%v aces=%v", protected, m)
+	}
+	for sid, mask := range m {
+		if !want[sid] || mask != fileAllAccess {
+			t.Fatalf("unexpected ACE %s %#x", sid, mask)
+		}
 	}
 }
 
-// T-0577 AC1/AC2 on Windows: run in the Windows lab. Logs icacls of the state directory.
-func TestWindowsEnsureDirAndReadFile(t *testing.T) {
-	d := filepath.Join(t.TempDir(), "state")
-	if err := EnsureDir(d); err != nil {
+// Windows-lab evidence for T-0242 AC1/AC2: run `go test ./internal/platform/ownerfile` on a Windows host.
+func TestWindowsDACL(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "b.jsonl")
+	f, corrected, err := OpenAppend(p)
+	if err != nil || corrected {
+		t.Fatal(corrected, err)
+	}
+	_, _ = f.WriteString("x\n")
+	if err := f.Sync(); err != nil {
 		t.Fatal(err)
 	}
-	out, _ := exec.Command("icacls", d).CombinedOutput()
-	t.Logf("icacls state dir\n%s", out)
-	if err := EnsureDir(d); err != nil {
-		t.Fatalf("idempotent: %v", err)
-	}
-	// A plain directory inherits the parent ACL (not protected): refused.
-	plain := filepath.Join(t.TempDir(), "plain")
-	if err := os.Mkdir(plain, 0o700); err != nil {
+	_ = f.Close()
+	assertOwnerOnly(t, p)
+
+	// Widen: inherit parent ACEs again (unprotected), then reopen: corrected.
+	if err := windows.SetNamedSecurityInfo(p, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckDir(plain); !errors.Is(err, ErrDirUnsafe) {
-		t.Fatalf("inherited-ACL dir: got %v", err)
+	f, corrected, err = OpenAppend(p)
+	if err != nil || !corrected {
+		t.Fatal(corrected, err)
 	}
-	// Reparse point at the path: refused, target contents never read.
-	writeOwned(t, filepath.Join(d, "target"), "secret")
-	link := filepath.Join(d, "baseline.json")
-	if err := os.Symlink(filepath.Join(d, "target"), link); err != nil {
-		t.Skipf("symlink needs privilege: %v", err)
-	}
-	if b, err := ReadFile(link); !errors.Is(err, ErrUnsafe) || len(b) != 0 {
-		t.Fatalf("reparse: got %q, %v", b, err)
+	_ = f.Close()
+	assertOwnerOnly(t, p)
+	if b, _ := os.ReadFile(p); string(b) != "x\n" {
+		t.Fatalf("content %q", b)
 	}
 }
 
-// AC1: a state directory wider than service identity + SYSTEM is refused with the typed error,
-// including the ProgramData default shape (BUILTIN\Users may create files).
-func TestWindowsWiderDirRefused(t *testing.T) {
-	for name, tc := range map[string]struct{ sid, perm string }{
-		"users-read":      {"S-1-5-32-545", "(OI)(CI)(RX)"},
-		"users-modify":    {"S-1-5-32-545", "(OI)(CI)(M)"},
-		"everyone-full":   {"S-1-1-0", "(OI)(CI)(F)"},
-		"authenticated-w": {"S-1-5-11", "(OI)(CI)(W)"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			d := filepath.Join(t.TempDir(), "state")
-			if err := EnsureDir(d); err != nil {
-				t.Fatal(err)
-			}
-			widen(t, d, tc.sid, tc.perm)
-			if err := EnsureDir(d); !errors.Is(err, ErrDirUnsafe) {
-				t.Fatalf("EnsureDir: got %v, want ErrDirUnsafe", err)
-			}
-			if err := CheckDir(d); !errors.Is(err, ErrDirUnsafe) {
-				t.Fatalf("CheckDir: got %v, want ErrDirUnsafe", err)
-			}
-		})
+// Review finding 2: the temp file is owner-only from creation, before any write.
+func TestWindowsCreateTempDACL(t *testing.T) {
+	f, err := CreateTemp(t.TempDir(), ".baseline-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	assertOwnerOnly(t, f.Name())
+}
+
+// Review finding 1: a file owned by a foreign SID is refused, not corrected. Needs an elevated
+// token with SeRestorePrivilege (the lab runs elevated); skipped otherwise.
+func TestWindowsForeignOwnerRefused(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "b.jsonl")
+	f, _, err := OpenAppend(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	if err := enablePrivilege("SeRestorePrivilege"); err != nil {
+		t.Skipf("SeRestorePrivilege unavailable: %v", err)
+	}
+	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(p, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, everyone, nil, nil, nil); err != nil {
+		t.Skipf("cannot set foreign owner: %v", err)
+	}
+	if _, _, err := OpenAppend(p); !errors.Is(err, ErrForeignOwner) {
+		t.Fatalf("want ErrForeignOwner, got %v", err)
 	}
 }
 
-// AC2: positive read, widened file, swap-after-Check to a link to a foreign file, junction.
-func TestWindowsReadFileCases(t *testing.T) {
-	d := filepath.Join(t.TempDir(), "state")
-	if err := EnsureDir(d); err != nil {
-		t.Fatal(err)
+func enablePrivilege(name string) error {
+	var luid windows.LUID
+	if err := windows.LookupPrivilegeValue(nil, windows.StringToUTF16Ptr(name), &luid); err != nil {
+		return err
 	}
-	p := filepath.Join(d, "baseline.json")
-	writeOwned(t, p, `{"ok":1}`)
-	if b, err := ReadFile(p); err != nil || string(b) != `{"ok":1}` {
-		t.Fatalf("legit read: %q, %v", b, err)
+	var tok windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &tok); err != nil {
+		return err
 	}
-	widen(t, p, "S-1-1-0", "(R)")
-	if b, err := ReadFile(p); !errors.Is(err, ErrUnsafe) || len(b) != 0 {
-		t.Fatalf("widened file: %q, %v", b, err)
+	defer tok.Close()
+	tp := windows.Tokenprivileges{PrivilegeCount: 1}
+	tp.Privileges[0] = windows.LUIDAndAttributes{Luid: luid, Attributes: windows.SE_PRIVILEGE_ENABLED}
+	if err := windows.AdjustTokenPrivileges(tok, false, &tp, 0, nil, nil); err != nil {
+		return err
 	}
+	if windows.GetLastError() == windows.ERROR_NOT_ALL_ASSIGNED {
+		return windows.ERROR_NOT_ALL_ASSIGNED
+	}
+	return nil
+}
 
-	foreign := filepath.Join(t.TempDir(), "foreign.json")
-	if err := os.WriteFile(foreign, []byte("FORGED"), 0o666); err != nil {
-		t.Fatal(err)
+func TestWindowsReparsePointRefused(t *testing.T) {
+	d := t.TempDir()
+	target := filepath.Join(d, "t")
+	_ = os.WriteFile(target, []byte("t"), 0o600)
+	link := filepath.Join(d, "l")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
 	}
-	widen(t, foreign, "S-1-1-0", "(F)")
-	swapped := filepath.Join(d, "swapped.json")
-	writeOwned(t, swapped, "legit")
-	if err := Check(swapped); err != nil {
-		t.Fatalf("Check of own file: %v", err)
-	}
-	if err := os.Remove(swapped); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(foreign, swapped); err != nil {
-		t.Skipf("symlink needs privilege: %v", err)
-	}
-	if b, err := ReadFile(swapped); !errors.Is(err, ErrUnsafe) || len(b) != 0 {
-		t.Fatalf("swap after Check: got %q, %v", b, err)
-	}
-
-	jn := filepath.Join(d, "junction.json")
-	if out, err := exec.Command("cmd", "/c", "mklink", "/J", jn, t.TempDir()).CombinedOutput(); err != nil {
-		t.Skipf("mklink /J: %v %s", err, out)
-	}
-	if b, err := ReadFile(jn); err == nil || len(b) != 0 {
-		t.Fatalf("junction: got %q, %v", b, err)
+	if _, _, err := OpenAppend(link); !errors.Is(err, ErrNotRegular) {
+		t.Fatalf("want ErrNotRegular, got %v", err)
 	}
 }

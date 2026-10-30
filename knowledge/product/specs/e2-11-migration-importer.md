@@ -5,7 +5,7 @@ updated: 2026-10-28
 status: draft
 owner: heramb
 author: product-manager
-ticket: T-0151
+ticket: T-0151, T-0633
 epic: E-001
 milestone: M2
 parity: [ADM-010, ADM-011, ADM-012, ADM-015, ADM-017, ADM-019, ADM-020, ADM-097, ADM-101, ADM-104, ADM-105, ADM-106, ADM-125, ADM-139, ADM-040, ADM-041, ADM-042, ADM-043, ADM-044, ADM-045]
@@ -202,7 +202,7 @@ through a Plan and these per-run limits, evaluated **before** any change applies
 A held run shows the Plan, what tripped the limit, and offers approve-all, approve-subset or
 reject. A run within limits proceeds unattended ("a believable HR change still flows",
 TM-TB9-T4 residual). Operators may tighten the limits, or loosen them up to 3× the defaults, with
-step-up; each change is audited. The limit is enforced in the operation pipeline (T-0130), not in
+step-up; each change is audited. The limit is enforced in the operation pipeline (ADR-0005 O8, T-0393), not in
 the lifecycle module, so that no policy can bypass it. The same limit class applies to an
 **imported** automation once its ownership flips to activeDIQ.
 
@@ -249,7 +249,7 @@ product for evidence. Fixture names are placeholders for the corpus the proof ow
 | AC-16 | TB18-T5 | **Given** a saved DB/API credential, **when** any API response, log, audit entry or export is searched for it, **then** it is absent (canary, TM-F-SECRETOUT); and a statement other than read-only select cannot be issued by the adapter. | `backend-engineer`, `test-engineer` |
 | AC-17 | TB18-T5 | **Given** a closed migration project, **when** opened, **then** the stored credential is gone. | `qa-verifier` |
 | AC-18 | TB18-T6 | **Given** an ADMP server URL that resolves to loopback, link-local, metadata or private ranges without allow-list, or redirects to one, **when** registered or used, **then** it is refused; and no NTLM is attempted (TM-F-EGRESS, TM-F-NTLM). | `backend-engineer` |
-| AC-19 | TB18-T7 | **Given** an imported automation owned by `manageengine`, **when** a run is triggered by schedule or API, **then** activeDIQ refuses and the audit shows why. **And given** a comparator run, **then** it has no Apply path and writes nothing to the directory. | `backend-engineer`; operation fitness (T-0130) |
+| AC-19 | TB18-T7 | **Given** an imported automation owned by `manageengine`, **when** a run is triggered by schedule or API, **then** activeDIQ refuses and the audit shows why. **And given** a comparator run, **then** it has no Apply path and writes nothing to the directory. | `backend-engineer`; operation fitness O7 (T-0392) |
 | AC-20 | TB18-T7 | **Given** an ownership switch, **when** an admin without step-up attempts it, **then** it is refused; with step-up it is recorded with actor and time and can be reversed. | `qa-verifier` |
 | AC-21 | TB18-T8 | **Given** a seeded divergence between activeDIQ and ADMP results, **when** the comparator runs, **then** every divergence is listed; each row names its source; and no automatic write follows from any comparator output. | `test-engineer` |
 | AC-22 | TB18-T9 | **Given** an imported scheduled report with an external recipient domain, **when** imported, **then** it is disabled, recipients are shown, the external one is flagged, and enabling needs an audited override. | `qa-verifier` |

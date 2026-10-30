@@ -61,8 +61,8 @@ type BaselineStore interface {
 }
 
 // ErrBaselineUnsafe is returned by FileBaselineStore.Load when the file is not restricted to the
-// service identity (Windows: owner and protected DACL of the service identity and SYSTEM only; Unix:
-// owned by the euid, mode 0600).
+// service identity (Windows: trusted owner and a protected DACL of the service identity and SYSTEM
+// only; Unix: owned by the euid, mode 0600) or is a link. Its content was not read.
 var ErrBaselineUnsafe = errors.New("rights: baseline file is not restricted to the service identity")
 
 // FileBaselineStore keeps the baseline in one file readable and writable by the connector's service
@@ -71,9 +71,9 @@ var ErrBaselineUnsafe = errors.New("rights: baseline file is not restricted to t
 type FileBaselineStore struct{ Path string }
 
 func (s FileBaselineStore) Load() (*Baseline, error) {
-	// ownerfile.ReadFile opens without following links and checks owner and access on the open
-	// handle, then reads from it: no check-then-read race (T-0577). A file another principal could
-	// have written is ErrBaselineUnsafe, never a silent adoption (T-0537, T-0329).
+	// ownerfile.ReadFile opens without following links, checks owner and access on the open handle,
+	// then reads from that handle: no check-then-read race (T-0577). A file another principal could
+	// have written is ErrBaselineUnsafe, never a silent adoption of a forged baseline.
 	raw, err := ownerfile.ReadFile(s.Path)
 	if err != nil {
 		if errors.Is(err, ownerfile.ErrUnsafe) {
@@ -94,7 +94,8 @@ func (s FileBaselineStore) Save(b *Baseline) error {
 		return err
 	}
 	dir := filepath.Dir(s.Path)
-	tmp, err := ownerfile.CreateTemp(dir, ".baseline-*") // service identity (and SYSTEM) only, from creation
+	// Owner-only from creation (no inherited-ACL window on Windows): T-0242.
+	tmp, err := ownerfile.CreateTemp(dir, ".baseline-*")
 	if err != nil {
 		return err
 	}
@@ -145,11 +146,24 @@ func (s FileRecordSink) append(v any) error {
 	if err != nil {
 		return err
 	}
-	f, err := ownerfile.OpenAppend(s.Path)
+	// Owner-only from creation, also on Windows where the mode is a no-op (T-0577). A foreign-owned
+	// or non-regular file is refused: the record cannot be made durable-and-private, and the caller
+	// ends the run with LOCAL_RECORD_FAILED.
+	f, corrected, err := ownerfile.OpenAppend(s.Path)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(append(raw, '\n')); err != nil {
+	line := append(raw, '\n')
+	if corrected {
+		// The file was wider than owner-only, so earlier lines may have been written by someone else.
+		note, merr := json.Marshal(map[string]any{"event": "records_acl_corrected", "time": time.Now().UTC()}, json.Deterministic(true))
+		if merr != nil {
+			_ = f.Close()
+			return merr
+		}
+		line = append(append(note, '\n'), line...)
+	}
+	if _, err := f.Write(line); err != nil {
 		_ = f.Close()
 		return err
 	}

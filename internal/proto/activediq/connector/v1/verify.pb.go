@@ -2086,8 +2086,13 @@ type VerifyConnectionRequest struct {
 	// `correlated_tier0` lacks an object the previous epoch had reported writes a tier0_set_shrink
 	// record on the connector host (contract §8.3a).
 	CorrelatedTier0 []*Tier0Member `protobuf:"bytes,8,rep,name=correlated_tier0,json=correlatedTier0,proto3" json:"correlated_tier0,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// TM-D26 rule 10: the C13 group GUIDs pinned for the connection on the server (persisted at first
+	// discovery). The connector treats a pinned group as C13 even after it is renamed, so a renamed
+	// DnsAdmins / Exchange group stays in the tier0 set. A malformed GUID is
+	// ERROR_CODE_INVALID_ARGUMENT before any directory call.
+	PinnedC13     []*Guid `protobuf:"bytes,9,rep,name=pinned_c13,json=pinnedC13,proto3" json:"pinned_c13,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VerifyConnectionRequest) Reset() {
@@ -2172,6 +2177,13 @@ func (x *VerifyConnectionRequest) GetDesignatedTier0() []*Guid {
 func (x *VerifyConnectionRequest) GetCorrelatedTier0() []*Tier0Member {
 	if x != nil {
 		return x.CorrelatedTier0
+	}
+	return nil
+}
+
+func (x *VerifyConnectionRequest) GetPinnedC13() []*Guid {
+	if x != nil {
+		return x.PinnedC13
 	}
 	return nil
 }
@@ -2608,8 +2620,14 @@ type VerificationCompleted struct {
 	// run. The record itself stays on the connector host; this count lets an honest server raise a
 	// health finding.
 	Tier0InputsDropped uint32 `protobuf:"varint,7,opt,name=tier0_inputs_dropped,json=tier0InputsDropped,proto3" json:"tier0_inputs_dropped,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Contract v1.3 (T-0412): the directory the run was answered against, as V5 (AD: objectGUID of
+	// the forest root domain NC head) or EV2 (Entra: the tenant id) read it. Set on every run whose
+	// verdict is not FAILED or COULD_NOT_VERIFY; the server records it on the connection (DM-10.I1)
+	// and rejects a run that lacks it, or carries the other directory kind, fail-closed
+	// (client.ErrIdentityMissing / ErrIdentityMismatch). Identifiers only, never names.
+	DirectoryIdentity *DirectoryIdentity `protobuf:"bytes,8,opt,name=directory_identity,json=directoryIdentity,proto3" json:"directory_identity,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *VerificationCompleted) Reset() {
@@ -2689,6 +2707,13 @@ func (x *VerificationCompleted) GetTier0InputsDropped() uint32 {
 		return x.Tier0InputsDropped
 	}
 	return 0
+}
+
+func (x *VerificationCompleted) GetDirectoryIdentity() *DirectoryIdentity {
+	if x != nil {
+		return x.DirectoryIdentity
+	}
+	return nil
 }
 
 type VerifyConnectionResponse struct {
@@ -2896,7 +2921,7 @@ const file_activediq_connector_v1_verify_proto_rawDesc = "" +
 	"\x12object_tier0_basis\x18\t \x03(\x0e2\".activediq.connector.v1.Tier0BasisR\x10objectTier0Basis\x12<\n" +
 	"\x06family\x18\n" +
 	" \x01(\x0e2$.activediq.connector.v1.RightsFamilyR\x06family\x12 \n" +
-	"\vfingerprint\x18\v \x01(\fR\vfingerprint\"\xe3\x04\n" +
+	"\vfingerprint\x18\v \x01(\fR\vfingerprint\"\xa0\x05\n" +
 	"\x17VerifyConnectionRequest\x12E\n" +
 	"\n" +
 	"connection\x18\x01 \x01(\v2%.activediq.connector.v1.ConnectionRefR\n" +
@@ -2907,7 +2932,9 @@ const file_activediq_connector_v1_verify_proto_rawDesc = "" +
 	"\x0fmanaged_domains\x18\x05 \x03(\v2\x1c.activediq.connector.v1.GuidR\x0emanagedDomains\x12A\n" +
 	"\rmanaged_roots\x18\x06 \x03(\v2\x1c.activediq.connector.v1.GuidR\fmanagedRoots\x12G\n" +
 	"\x10designated_tier0\x18\a \x03(\v2\x1c.activediq.connector.v1.GuidR\x0fdesignatedTier0\x12N\n" +
-	"\x10correlated_tier0\x18\b \x03(\v2#.activediq.connector.v1.Tier0MemberR\x0fcorrelatedTier0\"\xa3\x01\n" +
+	"\x10correlated_tier0\x18\b \x03(\v2#.activediq.connector.v1.Tier0MemberR\x0fcorrelatedTier0\x12;\n" +
+	"\n" +
+	"pinned_c13\x18\t \x03(\v2\x1c.activediq.connector.v1.GuidR\tpinnedC13\"\xa3\x01\n" +
 	"\x10ObservedIdentity\x12<\n" +
 	"\x02ad\x18\x01 \x01(\v2*.activediq.connector.v1.AdObservedIdentityH\x00R\x02ad\x12E\n" +
 	"\x05entra\x18\x02 \x01(\v2-.activediq.connector.v1.EntraObservedIdentityH\x00R\x05entraB\n" +
@@ -2936,7 +2963,7 @@ const file_activediq_connector_v1_verify_proto_rawDesc = "" +
 	"\x05check\x18\x01 \x01(\x0e2).activediq.connector.v1.VerificationCheckR\x05check\x12>\n" +
 	"\aoutcome\x18\x02 \x01(\x0e2$.activediq.connector.v1.CheckOutcomeR\aoutcome\x12A\n" +
 	"\x05error\x18\x03 \x01(\v2&.activediq.connector.v1.ConnectorErrorH\x00R\x05error\x88\x01\x01B\b\n" +
-	"\x06_error\"\x8f\x03\n" +
+	"\x06_error\"\xe9\x03\n" +
 	"\x15VerificationCompleted\x12E\n" +
 	"\averdict\x18\x01 \x01(\x0e2+.activediq.connector.v1.VerificationVerdictR\averdict\x12;\n" +
 	"\x06checks\x18\x02 \x03(\v2#.activediq.connector.v1.CheckResultR\x06checks\x12=\n" +
@@ -2944,7 +2971,8 @@ const file_activediq_connector_v1_verify_proto_rawDesc = "" +
 	"\rfinding_count\x18\x04 \x01(\rR\ffindingCount\x12,\n" +
 	"\x12tier0_member_count\x18\x05 \x01(\rR\x10tier0MemberCount\x12.\n" +
 	"\x13write_gate_openable\x18\x06 \x01(\bR\x11writeGateOpenable\x120\n" +
-	"\x14tier0_inputs_dropped\x18\a \x01(\rR\x12tier0InputsDropped\"\xc3\x02\n" +
+	"\x14tier0_inputs_dropped\x18\a \x01(\rR\x12tier0InputsDropped\x12X\n" +
+	"\x12directory_identity\x18\b \x01(\v2).activediq.connector.v1.DirectoryIdentityR\x11directoryIdentity\"\xc3\x02\n" +
 	"\x18VerifyConnectionResponse\x12D\n" +
 	"\x06header\x18\x01 \x01(\v2*.activediq.connector.v1.VerificationHeaderH\x00R\x06header\x12C\n" +
 	"\bfindings\x18\x02 \x01(\v2%.activediq.connector.v1.FindingsChunkH\x00R\bfindings\x12D\n" +
@@ -3139,6 +3167,7 @@ var file_activediq_connector_v1_verify_proto_goTypes = []any{
 	(*ConnectionRef)(nil),             // 40: activediq.connector.v1.ConnectionRef
 	(*Tier0Member)(nil),               // 41: activediq.connector.v1.Tier0Member
 	(*ConnectorError)(nil),            // 42: activediq.connector.v1.ConnectorError
+	(*DirectoryIdentity)(nil),         // 43: activediq.connector.v1.DirectoryIdentity
 }
 var file_activediq_connector_v1_verify_proto_depIdxs = []int32{
 	6,  // 0: activediq.connector.v1.AdRight.kind:type_name -> activediq.connector.v1.AdRightKind
@@ -3194,33 +3223,35 @@ var file_activediq_connector_v1_verify_proto_depIdxs = []int32{
 	36, // 50: activediq.connector.v1.VerifyConnectionRequest.managed_roots:type_name -> activediq.connector.v1.Guid
 	36, // 51: activediq.connector.v1.VerifyConnectionRequest.designated_tier0:type_name -> activediq.connector.v1.Guid
 	41, // 52: activediq.connector.v1.VerifyConnectionRequest.correlated_tier0:type_name -> activediq.connector.v1.Tier0Member
-	28, // 53: activediq.connector.v1.ObservedIdentity.ad:type_name -> activediq.connector.v1.AdObservedIdentity
-	29, // 54: activediq.connector.v1.ObservedIdentity.entra:type_name -> activediq.connector.v1.EntraObservedIdentity
-	36, // 55: activediq.connector.v1.AdObservedIdentity.object_guid:type_name -> activediq.connector.v1.Guid
-	38, // 56: activediq.connector.v1.AdObservedIdentity.object_sid:type_name -> activediq.connector.v1.Sid
-	36, // 57: activediq.connector.v1.EntraObservedIdentity.app_id:type_name -> activediq.connector.v1.Guid
-	36, // 58: activediq.connector.v1.EntraObservedIdentity.service_principal_id:type_name -> activediq.connector.v1.Guid
-	36, // 59: activediq.connector.v1.EntraObservedIdentity.application_object_id:type_name -> activediq.connector.v1.Guid
-	36, // 60: activediq.connector.v1.VerificationHeader.verification_id:type_name -> activediq.connector.v1.Guid
-	37, // 61: activediq.connector.v1.VerificationHeader.started_at:type_name -> google.protobuf.Timestamp
-	27, // 62: activediq.connector.v1.VerificationHeader.identity:type_name -> activediq.connector.v1.ObservedIdentity
-	25, // 63: activediq.connector.v1.FindingsChunk.findings:type_name -> activediq.connector.v1.RightsFinding
-	41, // 64: activediq.connector.v1.Tier0SetChunk.members:type_name -> activediq.connector.v1.Tier0Member
-	1,  // 65: activediq.connector.v1.CheckResult.check:type_name -> activediq.connector.v1.VerificationCheck
-	2,  // 66: activediq.connector.v1.CheckResult.outcome:type_name -> activediq.connector.v1.CheckOutcome
-	42, // 67: activediq.connector.v1.CheckResult.error:type_name -> activediq.connector.v1.ConnectorError
-	3,  // 68: activediq.connector.v1.VerificationCompleted.verdict:type_name -> activediq.connector.v1.VerificationVerdict
-	33, // 69: activediq.connector.v1.VerificationCompleted.checks:type_name -> activediq.connector.v1.CheckResult
-	37, // 70: activediq.connector.v1.VerificationCompleted.completed_at:type_name -> google.protobuf.Timestamp
-	30, // 71: activediq.connector.v1.VerifyConnectionResponse.header:type_name -> activediq.connector.v1.VerificationHeader
-	31, // 72: activediq.connector.v1.VerifyConnectionResponse.findings:type_name -> activediq.connector.v1.FindingsChunk
-	32, // 73: activediq.connector.v1.VerifyConnectionResponse.tier0_set:type_name -> activediq.connector.v1.Tier0SetChunk
-	34, // 74: activediq.connector.v1.VerifyConnectionResponse.completed:type_name -> activediq.connector.v1.VerificationCompleted
-	75, // [75:75] is the sub-list for method output_type
-	75, // [75:75] is the sub-list for method input_type
-	75, // [75:75] is the sub-list for extension type_name
-	75, // [75:75] is the sub-list for extension extendee
-	0,  // [0:75] is the sub-list for field type_name
+	36, // 53: activediq.connector.v1.VerifyConnectionRequest.pinned_c13:type_name -> activediq.connector.v1.Guid
+	28, // 54: activediq.connector.v1.ObservedIdentity.ad:type_name -> activediq.connector.v1.AdObservedIdentity
+	29, // 55: activediq.connector.v1.ObservedIdentity.entra:type_name -> activediq.connector.v1.EntraObservedIdentity
+	36, // 56: activediq.connector.v1.AdObservedIdentity.object_guid:type_name -> activediq.connector.v1.Guid
+	38, // 57: activediq.connector.v1.AdObservedIdentity.object_sid:type_name -> activediq.connector.v1.Sid
+	36, // 58: activediq.connector.v1.EntraObservedIdentity.app_id:type_name -> activediq.connector.v1.Guid
+	36, // 59: activediq.connector.v1.EntraObservedIdentity.service_principal_id:type_name -> activediq.connector.v1.Guid
+	36, // 60: activediq.connector.v1.EntraObservedIdentity.application_object_id:type_name -> activediq.connector.v1.Guid
+	36, // 61: activediq.connector.v1.VerificationHeader.verification_id:type_name -> activediq.connector.v1.Guid
+	37, // 62: activediq.connector.v1.VerificationHeader.started_at:type_name -> google.protobuf.Timestamp
+	27, // 63: activediq.connector.v1.VerificationHeader.identity:type_name -> activediq.connector.v1.ObservedIdentity
+	25, // 64: activediq.connector.v1.FindingsChunk.findings:type_name -> activediq.connector.v1.RightsFinding
+	41, // 65: activediq.connector.v1.Tier0SetChunk.members:type_name -> activediq.connector.v1.Tier0Member
+	1,  // 66: activediq.connector.v1.CheckResult.check:type_name -> activediq.connector.v1.VerificationCheck
+	2,  // 67: activediq.connector.v1.CheckResult.outcome:type_name -> activediq.connector.v1.CheckOutcome
+	42, // 68: activediq.connector.v1.CheckResult.error:type_name -> activediq.connector.v1.ConnectorError
+	3,  // 69: activediq.connector.v1.VerificationCompleted.verdict:type_name -> activediq.connector.v1.VerificationVerdict
+	33, // 70: activediq.connector.v1.VerificationCompleted.checks:type_name -> activediq.connector.v1.CheckResult
+	37, // 71: activediq.connector.v1.VerificationCompleted.completed_at:type_name -> google.protobuf.Timestamp
+	43, // 72: activediq.connector.v1.VerificationCompleted.directory_identity:type_name -> activediq.connector.v1.DirectoryIdentity
+	30, // 73: activediq.connector.v1.VerifyConnectionResponse.header:type_name -> activediq.connector.v1.VerificationHeader
+	31, // 74: activediq.connector.v1.VerifyConnectionResponse.findings:type_name -> activediq.connector.v1.FindingsChunk
+	32, // 75: activediq.connector.v1.VerifyConnectionResponse.tier0_set:type_name -> activediq.connector.v1.Tier0SetChunk
+	34, // 76: activediq.connector.v1.VerifyConnectionResponse.completed:type_name -> activediq.connector.v1.VerificationCompleted
+	77, // [77:77] is the sub-list for method output_type
+	77, // [77:77] is the sub-list for method input_type
+	77, // [77:77] is the sub-list for extension type_name
+	77, // [77:77] is the sub-list for extension extendee
+	0,  // [0:77] is the sub-list for field type_name
 }
 
 func init() { file_activediq_connector_v1_verify_proto_init() }

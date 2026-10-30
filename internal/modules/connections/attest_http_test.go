@@ -120,7 +120,7 @@ func newHTTPEnv(t *testing.T, s *storetest.Server, gate connections.CallbackGate
 		t.Fatal(err)
 	}
 	sp := sessionPorts{p: apihost.Principal{ID: "admin", Tenant: e.tid.String(), Kind: apihost.KindSession, SessionID: "sess"}}
-	srv, err := apihost.Build(doc, []apihost.TagHandlers{h.Bind()}, pol, apihost.Permissions{"connections.takeover.attest"},
+	srv, err := apihost.Build(doc, []apihost.TagHandlers{h.Bind()}, pol, apihost.Permissions{"connections.takeover.attest", "siem.destination.manage", "siem.destination.read", "directory.read"},
 		apihost.Ports{Authn: sp, Authz: sp, Limits: sp, StepUp: sp})
 	if err != nil {
 		t.Fatal(err)

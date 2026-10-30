@@ -1,9 +1,12 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/modules/compliance"
 	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/modules/delegation"
 	"github.com/skenzeriq/activediq/internal/modules/inventory"
@@ -29,6 +32,10 @@ var stepUpTable = map[operation.ActionID]string{
 	// cross-directory authority decision; it also requires a current tenant-owner.
 	connections.ReconfirmActionID:    "Correlation re-confirmation (TM-D17 rule 4 (g))",
 	inventory.SetDesignationActionID: "Designating or un-designating tier0 objects (§6.4)",
+	// Legal holds (T-0605): lifting one lets the next retention purge destroy evidence, and placing one
+	// withholds data from erasure; both are a compliance officer's act and need a fresh MFA.
+	compliance.SetHoldActionID:     "Placing a legal hold on a personal subject",
+	compliance.ReleaseHoldActionID: "Releasing a legal hold (lets the retention purge destroy evidence)",
 	// RBAC changes (§7.4): every role or assignment change is a step-up operation.
 	delegation.RoleCreateID: "RBAC change: creating a custom role",
 	delegation.RoleUpdateID: "RBAC change: editing a custom role's permissions",
@@ -113,5 +120,59 @@ func Test_group_target_check_rejects_member_targets(t *testing.T) {
 	}
 	if bad := groupTargetViolations(cat); len(bad) != 2 || bad[0] != "x.group.add" || bad[1] != "x.group.nest" {
 		t.Fatalf("got %v", bad)
+	}
+}
+
+// The control_plane flag is the authz.NeverCrosses rule made visible in the catalogue: an Action carries
+// it if and only if its permission is in a never-crosses family.
+func Test_control_plane_flag_catalogue_matches_never_crosses(t *testing.T) {
+	cat := catalogue(t)
+	flagged := 0
+	for _, d := range cat {
+		if d.ControlPlane && !authz.NeverCrosses(d.Permission) {
+			t.Errorf("%s (permission %s) is flagged control_plane but its permission is not in a never-crosses family", d.ID, d.Permission)
+		}
+		if authz.NeverCrosses(d.Permission) && !d.ControlPlane {
+			t.Errorf("%s (permission %s) is in a never-crosses family and must be flagged control_plane", d.ID, d.Permission)
+		}
+		if d.ControlPlane {
+			flagged++
+		}
+	}
+	for _, id := range []operation.ActionID{delegation.RoleCreateID, delegation.RoleUpdateID, delegation.GrantID, delegation.RevokeID} {
+		found := false
+		for _, d := range cat {
+			found = found || (d.ID == id && d.ControlPlane)
+		}
+		if !found {
+			t.Errorf("%s is not in the catalogue flagged control_plane", id)
+		}
+	}
+	if flagged == 0 {
+		t.Error("no Action is flagged control_plane")
+	}
+}
+
+// T-0617: every registered Action decodes its input strictly. An input with an extra member is refused
+// with ErrInvalid before Plan's own logic runs, so a mistyped or drifted member can never be dropped
+// silently (an expiring grant becoming permanent).
+func Test_every_action_plan_refuses_unknown_input_member(t *testing.T) {
+	var all []operation.Action
+	for _, m := range generatedModules(platform.Deps{}, directory.Services{}) {
+		c, err := moduletest.Register(m.Module)
+		if err != nil {
+			t.Fatalf("register %s: %v", m.ID, err)
+		}
+		all = append(all, c.Actions()...)
+	}
+	if len(all) == 0 {
+		t.Fatal("no actions registered")
+	}
+	for _, a := range all {
+		id := a.Describe().ID
+		_, err := a.Plan(context.Background(), operation.PlanContext{}, operation.Input(`{"__unknown_member__":1}`))
+		if !errors.Is(err, operation.ErrInvalid) {
+			t.Errorf("%s: Plan with an unknown input member returned %v, want ErrInvalid", id, err)
+		}
 	}
 }
