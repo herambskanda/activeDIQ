@@ -189,6 +189,17 @@ func genAssignments(r *rand.Rand, f *pForest, supportedOnly bool) []Assignment {
 			}
 			a.Roots = append(a.Roots, Root{Kind: kind, Connection: c, GUID: guidOf, Exclude: true})
 		}
+		if !supportedOnly {
+			// Shapes the schema refuses and the oracle fails closed on: the producer may not read wider.
+			c := []string{conn, conn2}[r.Intn(2)]
+			switch r.Intn(6) {
+			case 0:
+				ous := f.ous(c)
+				a.Roots = append(a.Roots, Root{Kind: OUOneLevel, Connection: c, GUID: f.nodes[ous[r.Intn(len(ous))]].id, Exclude: true})
+			case 1:
+				a.Roots = append(a.Roots, Root{Kind: OUOneLevel, Connection: c, GUID: c})
+			}
+		}
 		if !supportedOnly && r.Intn(6) == 0 {
 			a.Via = &authz.Derivation{Correlation: &authz.Correlation{State: authz.CorrelationMatched, Takeover: authz.TakeoverAttested}}
 		}

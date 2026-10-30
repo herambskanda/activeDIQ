@@ -184,6 +184,18 @@ func (r *ReadScopes) grantOf(a Assignment, reasons reasonSet) (authz.ScopeGrant,
 			}
 			continue // the tenant root reaches activeDIQ's own store, not directory datasets
 		}
+		if root.Kind == OUOneLevel {
+			// Mirror objectView (the read oracle): the schema refuses both shapes, but the producer
+			// must not be the one place that trusts it.
+			if root.Exclude { // a one-level exclude is never written; the oracle fails closed on it
+				reasons.add(ReasonScopeTermInvalid)
+				return authz.ScopeGrant{}, false
+			}
+			if root.GUID == root.Connection { // the connection is not an OU: such a root grants nothing
+				reasons.add(ReasonScopeTermInvalid)
+				continue
+			}
+		}
 		ev, ok := r.evals.ScopeEvaluator(string(root.Kind))
 		if !ok || ev == nil {
 			reasons.add(unsupported(root.Kind))

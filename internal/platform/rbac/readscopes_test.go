@@ -466,6 +466,27 @@ func TestReadScopesFor_MalformedRootsFailClosed(t *testing.T) {
 	}
 }
 
+// Security-architect (T-0882 F1): the schema refuses a one-level exclude and a one-level include on the
+// connection itself; the producer mirrors the read oracle and does not trust the schema.
+func TestReadScopesFor_OneLevelShapesTheOracleRefuses(t *testing.T) {
+	oneB := Root{Kind: OUOneLevel, Connection: conn, GUID: ouB}
+	s, err := produce(t, []Assignment{runAs("a1", reportsP, subtreeA, Root{Kind: OUOneLevel, Connection: conn, GUID: ouB, Exclude: true})})
+	if err != nil || !s.Empty() || len(s.Terms()) != 0 || !hasReason(s, ReasonScopeTermInvalid) {
+		t.Fatalf("one-level exclude: empty=%v grants=%+v reasons=%v err=%v", s.Empty(), s.Terms(), s.Reasons(), err)
+	}
+	onConn := Root{Kind: OUOneLevel, Connection: conn, GUID: conn}
+	s, err = produce(t, []Assignment{runAs("a1", reportsP, onConn)})
+	if err != nil || !s.Empty() || len(s.Terms()) != 0 || !hasReason(s, ReasonScopeTermInvalid) {
+		t.Fatalf("one-level on connection alone: empty=%v grants=%+v reasons=%v err=%v", s.Empty(), s.Terms(), s.Reasons(), err)
+	}
+	// The other includes of the assignment still count, as in the oracle.
+	s, err = produce(t, []Assignment{runAs("a1", reportsP, onConn, oneB)})
+	if err != nil || len(s.Terms()) != 1 || len(s.Terms()[0].Include) != 1 ||
+		s.Terms()[0].Include[0] != termOf3(t, authz.TermOneLevel, conn, ouB) || !hasReason(s, ReasonScopeTermInvalid) {
+		t.Fatalf("one-level on connection plus a valid one: grants=%+v reasons=%v err=%v", s.Terms(), s.Reasons(), err)
+	}
+}
+
 func TestReadScopesFor_ReasonsAreSortedAndUnique(t *testing.T) {
 	s, _ := produce(t, []Assignment{
 		runAs("a1", reportsP, Root{Kind: EntraTenant, Connection: conn, GUID: conn}),
