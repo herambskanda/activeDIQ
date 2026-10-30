@@ -87,6 +87,9 @@ var singleFactorNamespaces = []string{
 	oasisClassPrefix,
 	"urn:federation:authentication:",
 	"http://schemas.microsoft.com/ws/2008/06/identity/authenticationmethod/",
+	// Microsoft's SAML token reference writes the same value as a claim-type namespace. [UNVERIFIED that any IdP
+	// emits it]; refusing it costs one line.
+	"http://schemas.microsoft.com/ws/2008/06/identity/claims/authenticationmethod/",
 	"urn:oasis:names:tc:SAML:1.0:am:",
 	"urn:ietf:rfc:",
 }
@@ -120,6 +123,19 @@ func mfaEvidenceAllowed(v string) bool {
 	return true
 }
 
+// mfaAttributeAuthnMethods is the one attribute that may carry MFA evidence besides AuthnContextClassRef: the
+// Entra ID and AD FS preset (spec MFA-2). It lists authentication methods by definition.
+const mfaAttributeAuthnMethods = "http://schemas.microsoft.com/claims/authnmethodsreferences"
+
+// mfaAttributeAllowed is MFA-2c: the evidence attribute is an allow-list, because the value deny-lists of MFA-2a
+// and MFA-2b cannot stop an attribute every response carries with a constant value (`.../identity/claims/tenantid`,
+// `identityprovider`, a group claim). Empty means AuthnContextClassRef. Attribute names are compared exact-string,
+// so a case or whitespace variant is refused rather than saved as config that never matches. A new attribute
+// needs a spec change and a source showing it carries authentication methods.
+func mfaAttributeAllowed(a string) bool {
+	return a == "" || a == mfaAttributeAuthnMethods
+}
+
 var (
 	pinnable      = []string{algRSASHA256, algRSASHA384, algRSASHA512, algECDSASHA256, algECDSASHA384}
 	digestAllowed = []string{digestSHA256, digestSHA384, digestSHA512}
@@ -141,6 +157,9 @@ func ValidateConfig(c *sso.SAMLConfig) error {
 		if cert == nil || !keyMatchesAlg(cert.PublicKey, c.Alg) {
 			return sso.Refuse(ReasonAlg)
 		}
+	}
+	if !mfaAttributeAllowed(c.MFAAttribute) {
+		return sso.Refuse(ReasonConfig)
 	}
 	switch c.MFAMode {
 	case "", sso.MFAOff:
