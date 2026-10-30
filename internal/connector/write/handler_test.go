@@ -319,7 +319,7 @@ func TestRatchetAppendFailureClosesGate(t *testing.T) {
 }
 
 func TestFileBaselineIsDurableAndPrivate(t *testing.T) {
-	fb := &FileBaseline{Path: t.TempDir() + "/baseline.jsonl"}
+	fb := &FileBaseline{Path: t.TempDir() + "/baseline.jsonl", Recorder: &memRecorder{}}
 	if err := fb.Append(connID, []Mark{{Object: mk(1), Basis: tier0.C16, Source: "request", Revision: 3}}); err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestFileBaselineIsDurableAndPrivate(t *testing.T) {
 	if err != nil || st.Mode().Perm() != 0o600 || st.Size() == 0 {
 		t.Fatalf("%v %v", st, err)
 	}
-	bad := &FileBaseline{Path: t.TempDir() + "/missing-dir/x"}
+	bad := &FileBaseline{Path: t.TempDir() + "/missing-dir/x", Recorder: &memRecorder{}}
 	if bad.Append(connID, []Mark{{Object: mk(1), Basis: tier0.C16}}) == nil {
 		t.Fatal("append to an unwritable path must fail")
 	}
@@ -656,13 +656,20 @@ func TestFileBaselineWidenedIsRecorded(t *testing.T) {
 	_ = os.Chmod(fb.Path, 0o666)
 	noRec := &FileBaseline{Path: fb.Path}
 	if noRec.Append(connID, m) == nil {
-		t.Fatal("correction without a recorder must fail the append")
+		t.Fatal("append without a recorder must fail")
+	}
+	// ...and must leave the file as found, so the finding is still raised once a recorder exists.
+	if st, _ := os.Stat(fb.Path); st.Mode().Perm() != 0o666 {
+		t.Fatalf("recorder-less append narrowed the file: %v", st.Mode())
+	}
+	if err := fb.Append(connID, m); err != nil || len(rec.ev) != 2 {
+		t.Fatalf("finding lost: err=%v events=%d", err, len(rec.ev))
 	}
 }
 
 // json/v2 omitempty keeps numeric 0; the baseline line must still omit a zero revision (v1 bytes).
 func TestFileBaselineOmitsZeroRevision(t *testing.T) {
-	fb := &FileBaseline{Path: t.TempDir() + "/baseline.jsonl"}
+	fb := &FileBaseline{Path: t.TempDir() + "/baseline.jsonl", Recorder: &memRecorder{}}
 	if err := fb.Append(connID, []Mark{{Object: mk(1), Basis: tier0.C16, Source: "run"}, {Object: mk(2), Basis: tier0.C16, Source: "request", Revision: 3}}); err != nil {
 		t.Fatal(err)
 	}

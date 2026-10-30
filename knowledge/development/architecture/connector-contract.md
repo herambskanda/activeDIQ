@@ -767,6 +767,11 @@ rewrite its own DACL at will. A file owned by anyone else is **refused**, never 
 **corrected** at open and the correction is **recorded** (`baseline_acl_corrected`, local log and,
 on Windows hosts, the Windows event log): its content may have been written by someone else, so the
 comparison is never silently trusted. A failure to correct or to record is `LOCAL_RECORD_FAILED`.
+The recorder is a required part of the baseline (`write.NewFileBaseline` refuses a nil one) and is
+checked **before** the file is touched: a recorder-less append fails and leaves the file as found, so
+the finding is never lost by narrowing the file first. The connector composition wires the slog
+recorder (local log); the Windows event-log sink for this event is not yet implemented and is covered
+with the other local-record sinks by T-0837 (so the local-log half of §8.3a is what runs today).
 The temporary file of a baseline rewrite is created owner-only atomically (`ownerfile.CreateTemp`),
 with no window under an inherited ACL. After a restart, the first
 completed run compares against the persisted baseline, so a smaller verification issued right
