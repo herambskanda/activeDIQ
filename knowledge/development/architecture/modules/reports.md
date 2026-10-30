@@ -34,7 +34,7 @@ scope decision, not a platform asymmetry.
 | Piece | State today | Where this page fixes it |
 | --- | --- | --- |
 | `internal/platform/report` (EP-8 host), `Registrar.Dataset` | **Built (T-0956, row B1).** Pure types and `Resolve` (no SQL driver), `Registrar.Dataset`, `Contributions.Datasets()`, `platform.Deps.Report`, and the Boot table-ownership check (`report.CheckTables`). Deviations below | §2, §3, row B1 |
-| `internal/platform/store/reportsql` | **Missing.** `sqlconst` (FF-SP2) already lets values of type `reportsql.CompiledSQL` through, and `tools/gen/api` holds a pending `ReportAst → reportsql.Report` binding | §5, rows B1 and B2, RP1 |
+| `internal/platform/store/reportsql` | **Built (T-0957, row B2).** `NewRegistry`, `Compile`, `CompileCount`, `Exec`, `Count`, the scope and narrowing renderers, SQL vectors (FF-SP4) and RP6. `sqlconst` (FF-SP2) lets a value of type `reportsql.CompiledSQL` reach `Exec` and `string(x)` of one is a constant for it. Deviations in §5 | §5, row B2, RP1, RP6 |
 | Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. Two adapters are still to be wired in `compose/server`: `rbac.OwnerStatus` (over the account store) and `rbac.ObjectConnections` (over inventory) | §4 |
 | Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). There is no GIN index on `ancestry`, no per-NC sync-pass watermark (spec D6), no policy-input tables (D4) and no group closure. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed | §3.4, §4.5, rows P1, **P2**, B3, B6 |
 | `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150). **No canonical digest** (spec §8.3) | §7, row B9 |
@@ -73,7 +73,7 @@ T-0874 carries the spec and blueprint edits.
 | Package | Owner | Holds | May import |
 | --- | --- | --- | --- |
 | `internal/platform/report` | reporting-engineer | EP-8 host: `Dataset`, `Column`, `Definition`, `Query` (the AST), `Cell`, `Narrowing`, `Freshness`, `PerDCReader` port, `Host`. Pure types and validation, with **no SQL driver** (FF-SP1) | `authz` (types), `tenant`, stdlib |
-| `internal/platform/store/reportsql` | reporting-engineer. security-architect reviews every change (P5 rule 3) | `Registry` (pre-quoted, built once), `Compile`, `CompileCount`, `Exec`, `Query`, `CompiledSQL`, term rendering | `report`, `authz`, `store`, pgx (it sits under `store`) |
+| `internal/platform/store/reportsql` | reporting-engineer. security-architect reviews every change (P5 rule 3) | `Registry` (pre-quoted, built once), `Compile`, `CompileCount`, `Exec`, `Count`, `CatalogSchema`, `Query`, `CompiledSQL`, term rendering | `report`, `authz`, `store`, pgx (it sits under `store`) |
 | `internal/directory/inventory` | directory-engineer | descendant ancestry rewrite on move and `ancestry_complete` (row P2); the datasets `inventory.users`, `.computers`, `.groups`, `.group_members`, `.ous` and `.contacts` through `inventory.Datasets() []report.Dataset`; the D4 policy-input tables; the D6 watermarks through `inventory.Freshness` | `report` (types only) |
 | `internal/platform/authz` + `internal/platform/rbac` + `modules/delegation` | backend-engineer | `authz.ReadScope` (**T-0880**), the `ou_one_level` root kind (**T-0881**) and the producer `rbac.ReadScopes` (**T-0882**), fed by the EP-6 `ScopeEvaluator`s that `delegation` registers (T-0880) | as today |
 | `internal/modules/reports` (+ `run`, `library`, `export`, `schedule` subpackages) | reporting-engineer | DM-71 to DM-73 tables, the library, the run path, export jobs, schedules, API handlers | `platform/...`, `directory` via `directory.Services` (ADR-0003) |
@@ -172,7 +172,7 @@ type FreshnessSource uint8 // FreshNCWatermark | FreshPolicyRead | FreshPerDC
 **Identifiers (P5 rule 3).** `Ident` is a string that `report` validates against
 `^[a-z_][a-z0-9_]{0,62}$`. `report` does not quote it, because it cannot import pgx (FF-SP1).
 **Pre-quoting happens once, at registry build**:
-`reportsql.NewRegistry(ds ...report.Dataset) (*Registry, error)` runs `pgx.Identifier{name}.Sanitize()`
+`reportsql.NewRegistry(opt Options, ds ...report.Dataset) (*Registry, error)` runs `pgx.Identifier{name}.Sanitize()`
 on every `Ident` and stores the quoted text inside an unexported `reportsql.Dataset`. `Compile`
 only concatenates those pre-quoted strings, fixed keywords, and `$n` placeholders it numbers
 itself. A column ID from a request or a definition is a **map key into the registry**, never text
@@ -554,11 +554,18 @@ delivers:
 4. A test that moves an OU between an include and an exclude through the writer and checks every
    descendant's `ancestry` and `ancestry_complete`.
 
-B2 (RP6 generates trees with moves) and B4 (first real run) depend on P2.
+B2 (RP6 generates trees with moves) and B4 (first real run) depend on P2. Both are built: RP6 (§4.6)
+writes trees through `Populate`, moves OUs, then marks random rows `ancestry_complete = false` and
+asserts they leave every scope.
 
 ### 4.6 Fitness RP6: compiled scope equals the per-target decision
 
-`Test_compiled_scope_matches_read_oracle` (row B2) is a property test. **The oracle is not new
+`Test_compiled_scope_matches_read_oracle` (row B2) is a property test. **As built it lives in
+`internal/directory/inventory/rp6_scope_test.go`, not in `store/reportsql`:** it needs the inventory
+writer, and a platform test may not import `internal/directory` (fitness-modules rule 2.1).
+`tools/fitness/reports` binds it there (`Landed`). 80 random worlds per PostgreSQL version (about
+13 s), each with two connections, 6 random scopes, 0 to 5 OU moves and 15 % of worlds with up to
+three rows marked incomplete; both datasets below run, and `CompileCount` must equal the row count. **The oracle is not new
 code.** It is `authz.Evaluator.AuthorizeRead(p, tok, perm, target)` (built in T-0882): the existing
 `Authorize` path, including `Scope.covers`, `tokenOK` and the separate `tok.Scope.covers` check,
 with two differences. The Tier-0 deny is skipped, because Tier-0 does not narrow reads (DM-35.I5),
@@ -574,8 +581,16 @@ and `Via` grants contribute nothing. A target is built from the inventory row wi
   - `ou_one_level`, `ou_subtree` and `naming_context` terms;
   - zero roots and unknown kinds in includes, excludes and the token layer;
   - a token layer that narrows, one that is empty, and none.
-- **Datasets:** `inventory.users` (anchor `t`), and `inventory.group_members` with both anchors
-  `grp` and `mbr`, so a row appears only when the oracle admits both.
+- **Datasets:** a test dataset over `directory_objects` (anchor `t`; it needs no B3 dataset), and an
+  edge-shaped one that joins a second row anchor `p` on `{rel.p}.object_guid = {t}.parent_guid` (the
+  `group_members` shape), so a row appears only when the oracle admits both ends.
+- **Oracle facts** are the stored `ancestry` and `ancestry_complete` read back after the moves, and
+  the test first asserts the stored chain equals its own model's, so RP6 cannot agree with the
+  compiler about a wrong tree. Flawed terms are modelled as the compiler treats them (§4.3): an
+  unknown or invalid exclude, or an invalid include, drops the grant; an unknown include drops the
+  term; any flaw in the token layer matches nothing; a term naming the other connection matches nothing.
+- **Mutation check (done once, by hand):** widening `ou_one_level` to include the root, or removing
+  the `ancestry_complete` guard from the renderer, fails RP6 on the first seeds.
 - **Assertion:** the rows the compiled SQL returns equal the objects the oracle admits. A scope
   that renders `FALSE` yields zero rows and the expected reason.
 
@@ -622,9 +637,17 @@ type Query struct {                     // unexported fields
 }
 func (q Query) ScopeReasons() []string
 
-type Inputs struct{ Now time.Time }     // bound once per run; the only time any column sees
+type Inputs struct {
+    Now   time.Time                     // required, bound once per run; the only time any column sees
+    Limit int                           // > 0 caps the rows read (the run path passes cap+1); min(Limit, Top) applies
+}
 
-func NewRegistry(ds ...report.Dataset) (*Registry, error)
+type Options struct {
+    Schema    Schema                    // checked against every identifier; CatalogSchema(ctx, tx) reads it from the database
+    SecretKey func(key string) bool     // JSONAttr keys in this set are refused
+}
+
+func NewRegistry(opt Options, ds ...report.Dataset) (*Registry, error)
 func (r *Registry) Dataset(id report.DatasetID) (Dataset, bool)   // Dataset: pre-quoted, unexported fields
 
 func Compile(q report.Query, ds Dataset, scope authz.ReadScope, in Inputs) (Query, error)
@@ -635,6 +658,9 @@ func CompileCount(q report.Query, ds Dataset, scope authz.ReadScope, in Inputs) 
 // tables. One cursor = one snapshot, so every row and every hidden count come from the same data.
 func Exec(ctx context.Context, tx store.Tx, q Query, batch int,
     fn func(ctx context.Context, rows []report.Row) error) (int64, error)
+
+// Count runs a CompileCount query and returns its single number.
+func Count(ctx context.Context, tx store.Tx, q Query) (int64, error)
 ```
 
 - **Shape of the compiled SQL.**
@@ -655,8 +681,38 @@ func Exec(ctx context.Context, tx store.Tx, q Query, batch int,
   `ErrBadSortDirection`, `ErrTooManyValues`, `ErrScopeTooLarge`, `ErrNulInText`,
   `ErrInvalidUTF8`, `ErrQueryTimeout`. A scope that renders `FALSE` is **not** an error: `Compile`
   succeeds and `Query.ScopeReasons()` names why.
-- **Vectors.** SQL-01 to SQL-12, SQL-15, SQL-16, SQL-21 and SQL-22 run against `Compile` and `Exec`
-  (row B2, FF-SP4).
+- **Vectors.** SQL-01, 02, 04, 05, 06, 12, 15, 16, 21 and 22 run against `Compile` and `Exec` as
+  `kind:"e2e"` records in `testdata/safe-primitives/sql.jsonl` (row B2, FF-SP4); the other SQL
+  vectors are unit-level (`vectors_test.go`, `compile_test.go`).
+
+**As built (T-0957), where it adds to or differs from the text above.**
+
+- `ScopeReasons()` lists the producer's reasons (`ReadScope.Reasons`, in order) first, then the
+  compiler's: `scope_empty`, `scope_term_invalid`, `scope_term_unsupported:<kind>`, each once.
+- **Scope plan (§4.3)** as the test pins it: a grant with an invalid or unknown-kind exclude, or an
+  invalid include, is dropped; an unknown-kind include drops only that term; a grant left with no
+  include is dropped; no grant left renders `FALSE` (`scope_empty`). In the token layer any invalid or
+  unknown term empties the whole scope. More than `MaxScopeTerms` (512) terms is `ErrScopeTooLarge`.
+  Every term is wrapped `COALESCE(term, false)` (include) or `COALESCE(term, true)` (exclude), and the
+  anchor's `ancestry_complete` is ANDed in front of the grants, so a NULL anywhere is "out".
+- **`Subjects`** apply to the object column of anchor `t`; a dataset whose base anchor has no such
+  column answers `ErrNoSubjects` (edge datasets are undecided: B6 may add a `Dataset` field).
+- **Filters.** Absent is SQL `NULL`; `ne` matches absent rows (two-valued comparison). `contains` and
+  `prefix` are `ILIKE` with the pattern escaped by `store.LikePattern`. A `JSONAttr` read as time is
+  refused at registry build (JSON has no time type).
+- **Registry.** A MaskAnchor's non-identity projection gets the same type allowlist as a Rel
+  projection (GUID, int, bool, time, enum; no text, no jsonb; T-0865 re-review). An anchor or rel ID
+  that equals a schema table name is refused (a fragment names no table, not even by alias).
+  `{rel.<id>}` on a **joined RowAnchor** expands to its quoted alias (no subselect); on a Rel or a
+  MaskAnchor it expands to the scoped subselect.
+- **Cursor.** `FETCH FORWARD n` runs with `pgx.QueryExecModeExec`: pgx's statement cache is keyed by
+  SQL text, and a cursor's `FETCH` text is the same for every cursor, so a cached description would
+  misdescribe the columns of the next query. SQLSTATE 57014 maps to `ErrQueryTimeout`.
+- **Analyzer.** `sqlconst` accepts `string(x)` where `x` is a `reportsql.CompiledSQL` (the cursor
+  statement is built from compiled text). Minting a `CompiledSQL` stays banned outside the package (RP1).
+- **Not covered here:** the AC-06 lab count (ingest the Samba lab, compare with an LDAP subtree count)
+  is T-1030. The fixture-count integration test (`exec_test.go`) and RP6 prove the same scope logic
+  against known counts and the read oracle.
 
 ## 6. Run record, run path and freshness (DM-72)
 
@@ -1097,7 +1153,7 @@ Every check has a failing fixture.
 | RP3 | static | under `internal/modules/reports/**`, a package other than `…/reports/run` calls `reportsql.Compile`, `CompileCount` or `Exec` | ADR-0010 rule 4 |
 | RP4 | test (B4) | `Test_expired_run_is_not_served`; also: the row trigger refuses an insert or update once the run is `succeeded`, and the state trigger refuses every edge not in §6.2 | ADR-0010 rules 2 and 5; §6.2 |
 | RP5 | test (B9) | `Test_export_digest_equals_run_digest` | ADR-0010 rule 4, AC-50 |
-| RP6 | test (B2) | `Test_compiled_scope_matches_read_oracle` (property; oracle `authz.Evaluator.AuthorizeRead`, trees through the inventory writer with OU moves; §4.6) | FR-07, spec §8.1, LF-39 |
+| RP6 | test (B2, landed in `internal/directory/inventory`) | `Test_compiled_scope_matches_read_oracle` (property; oracle `authz.Evaluator.AuthorizeRead`, trees through the inventory writer with OU moves; §4.6) | FR-07, spec §8.1, LF-39 |
 | RP7 | static | a file listed in `library/LOCK` changed | FR-03 |
 | RP8 | test (B3) | `Test_derived_columns_match_reference` | FR-09, AC-49 |
 | RP9 | test (B4) | `Test_run_read_bound_to_runner_and_scope` (§6.6) | §6.6; FR-07, FR-30 |
@@ -1254,3 +1310,7 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
     unbalanced parentheses. The check that a fragment names no table is B2 (needs the ownership map).
   - `store/owners.Lookup` is an **empty** map: no generator exists yet, so any dataset fails Boot
     (fail closed, ADR-0003 rule 6). A `tools/gen/modules` ticket fills it; B3 needs it.
+- 2026-10-30 · T-0957 · row B2 built: `internal/platform/store/reportsql` (§5 "As built"). Signature
+  changes: `NewRegistry(opt Options, ds ...)`, `Inputs{Now, Limit}`, `Count`, `CatalogSchema`.
+  RP6 moved to `internal/directory/inventory` (platform tests cannot import `internal/directory`) and
+  is landed in `tools/fitness/reports`; AC-06's lab count is T-1030.
