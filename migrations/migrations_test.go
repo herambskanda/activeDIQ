@@ -361,3 +361,67 @@ func TestMigration0021UpgradeBackfillsPendingExpiryInEveryTenant(t *testing.T) {
 		}
 	})
 }
+
+// T-0881: 0058 admits the ou_one_level root kind, still refuses an unknown kind, keeps the 0037 tenant-root
+// rule, and allows ou_one_level only as an include of an OU (never an exclude, never a connection's GUID).
+func TestMigration0058AdmitsOULevelRootKind(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		d := s.NewDatabase(t)
+		d.Migrate(t)
+		ctx := context.Background()
+		a, err := d.Admin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer a.Close(ctx)
+		const (
+			tid  = "00000000-0000-4000-8000-0000000000c1"
+			rid  = "00000000-0000-4000-8000-0000000000c2"
+			aid  = "00000000-0000-4000-8000-0000000000c3"
+			acct = "00000000-0000-4000-8000-0000000000c4"
+			conn = "00000000-0000-4000-8000-0000000000d1"
+			ou   = "00000000-0000-4000-8000-0000000000d2"
+		)
+		for _, q := range []string{
+			`INSERT INTO public.tenants (id, name) VALUES ('` + tid + `', 'one-level')`,
+			`INSERT INTO public.authz_roles (tenant_id, id, role_name, tier) VALUES ('` + tid + `', '` + rid + `', 'desk', 2)`,
+			`INSERT INTO public.authz_assignments (tenant_id, id, account_id, role_id, granted_by) VALUES ('` + tid + `', '` + aid + `', '` + acct + `', '` + rid + `', 'test')`,
+		} {
+			if _, err := a.Exec(ctx, q); err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+		}
+		ord := 0
+		insert := func(kind string, exclude bool, connection, guid string) error {
+			ord++
+			_, err := a.Exec(ctx, `INSERT INTO public.authz_assignment_roots (tenant_id, assignment_id, ordinal, is_exclude, root_kind, connection_id, root_guid)
+				VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, $7::uuid)`, tid, aid, ord, exclude, kind, connection, guid)
+			return err
+		}
+		if err := insert("ou_one_level", false, conn, ou); err != nil {
+			t.Errorf("ou_one_level include of an OU refused: %v", err)
+		}
+		if err := insert("ou_subtree", false, conn, ou); err != nil {
+			t.Errorf("ou_subtree no longer accepted: %v", err)
+		}
+		if err := insert("ou_one_level", true, conn, ou); err == nil {
+			t.Error("ou_one_level exclude accepted")
+		}
+		if err := insert("ou_one_level", false, conn, conn); err == nil {
+			t.Error("ou_one_level root carrying the connection's GUID accepted")
+		}
+		if err := insert("ou_children", false, conn, ou); err == nil {
+			t.Error("unknown root kind accepted")
+		}
+		// The 0037 tenant-root rule: root_guid = connection_id = tenant_id and never an exclude.
+		if err := insert("tenant", false, tid, tid); err != nil {
+			t.Errorf("tenant root refused: %v", err)
+		}
+		if err := insert("tenant", false, conn, ou); err == nil {
+			t.Error("tenant root that is not the tenant's ID accepted")
+		}
+		if err := insert("tenant", true, tid, tid); err == nil {
+			t.Error("tenant exclude accepted")
+		}
+	})
+}

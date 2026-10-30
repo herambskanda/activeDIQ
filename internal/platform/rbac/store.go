@@ -23,8 +23,11 @@ type RootKind string
 const (
 	NamingContext RootKind = "naming_context"
 	OUSubtree     RootKind = "ou_subtree"
-	EntraTenant   RootKind = "entra_tenant"
-	Tier0Scope    RootKind = "tier0_scope"
+	// OUOneLevel reaches the direct children of an OU and nothing else: not the OU itself, not a
+	// deeper descendant. It is an include root only. Anything that reads it as a subtree widens it.
+	OUOneLevel  RootKind = "ou_one_level"
+	EntraTenant RootKind = "entra_tenant"
+	Tier0Scope  RootKind = "tier0_scope"
 	// TenantStore is the tenant-wide root. It covers targets in activeDIQ's own store (a target with
 	// no directory connection) and nothing else; its Connection and GUID are the tenant's ID.
 	TenantStore RootKind = "tenant"
