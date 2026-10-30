@@ -243,9 +243,9 @@ func (e *env) work() {
 func (e *env) get(id run.ID) run.Run {
 	e.t.Helper()
 	var r run.Run
-	err := e.db.WithTenant(context.Background(), e.tid, func(ctx context.Context, tx store.Tx) (err error) {
-		r, err = e.svc.ReadAccess(ctx, tx, e.tid, id, chainOf(alice), run.ForGet)
-		return err
+	err := e.svc.Read(context.Background(), e.tid, id, chainOf(alice), run.ForGet, func(_ context.Context, _ store.Tx, got run.Run) error {
+		r = got
+		return nil
 	})
 	if err != nil {
 		e.t.Fatalf("get: %v", err)
@@ -253,8 +253,14 @@ func (e *env) get(id run.ID) run.Run {
 	return r
 }
 
+// ownerExec runs sql as the application role inside the tenant (FORCE RLS shows the owner connection
+// no rows, so an owner UPDATE or DELETE by id would match nothing and "succeed"). The guard triggers
+// do not depend on the role.
 func (e *env) ownerExec(sql string, args ...any) error {
-	return e.d.ExecOwner(context.Background(), sql, args...)
+	return e.db.WithTenant(context.Background(), e.tid, func(ctx context.Context, tx store.Tx) error {
+		_, err := tx.Exec(ctx, sql, args...)
+		return err
+	})
 }
 
 func sams(p run.Page) []string {
@@ -341,10 +347,7 @@ func Test_run_read_bound_to_runner_and_scope(t *testing.T) {
 		r := e.create(alice, `{}`)
 		e.work()
 		read := func(who string, checks run.Check) error {
-			return e.db.WithTenant(ctx, e.tid, func(ctx context.Context, tx store.Tx) error {
-				_, err := e.svc.ReadAccess(ctx, tx, e.tid, r.ID, chainOf(who), checks)
-				return err
-			})
+			return e.svc.Read(ctx, e.tid, r.ID, chainOf(who), checks, nil)
 		}
 		// a second account with the same scope: 404 on get and page, by ID
 		for _, c := range []run.Check{run.ForGet, run.ForPage} {
@@ -439,10 +442,7 @@ func Test_expired_run_is_not_served(t *testing.T) {
 		if res, err = e.svc.Retention(ctx, e.tid, e.clock.Add(40*24*time.Hour)); err != nil || res.RecordsDeleted != 1 {
 			t.Fatalf("record sweep = %+v, %v", res, err)
 		}
-		if err := e.db.WithTenant(ctx, e.tid, func(ctx context.Context, tx store.Tx) error {
-			_, err := e.svc.ReadAccess(ctx, tx, e.tid, r.ID, chainOf(alice), run.ForGet)
-			return err
-		}); !errors.Is(err, run.ErrRunNotFound) {
+		if err := e.svc.Read(ctx, e.tid, r.ID, chainOf(alice), run.ForGet, nil); !errors.Is(err, run.ErrRunNotFound) {
 			t.Fatalf("after the record is deleted: %v", err)
 		}
 	})

@@ -257,21 +257,31 @@ const (
 	ForPage = CheckNotExpired | CheckScope | CheckSucceeded
 )
 
-// ReadAccess is the one gate every run read goes through (§6.6). A refusal at check 2, 3 or 4 appends
-// reports.run.read_denied in its own transaction, so the refusal is recorded even though the caller's
-// transaction rolls back or only reads.
+// denial is a refusal of ReadAccess that the caller must record. ReadAccess runs inside the caller's
+// transaction, where the audit event cannot be appended in a transaction of its own (nested tenant
+// transactions are refused), so Read records it after that transaction ends.
+type denial struct {
+	err   error
+	check string
+}
+
+func (d *denial) Error() string { return d.err.Error() }
+func (d *denial) Unwrap() error { return d.err }
+
+// ReadAccess is the one gate every run read goes through (§6.6). It is pure: it reads the record and the
+// caller's scope in tx and returns the refusal. A refusal at check 2, 3 or 4 is a *denial; use Read, which
+// appends reports.run.read_denied once the transaction has ended, so the refusal is recorded even though
+// the caller's transaction rolls back or only reads. Callers outside this package go through Read.
 func (s *Service) ReadAccess(ctx context.Context, tx store.Tx, tid tenant.ID, id ID, chain authority.Chain, checks Check) (Run, error) {
 	r, err := s.get(ctx, tx, id, chain)
 	if errors.Is(err, ErrRunNotFound) {
-		s.denied(ctx, tid, chain, id, "exists")
-		return Run{}, ErrRunNotFound
+		return Run{}, &denial{ErrRunNotFound, "exists"}
 	}
 	if err != nil {
 		return Run{}, err
 	}
 	if checks&CheckNotExpired != 0 && (r.State == StateExpired || (r.State == StateSucceeded && r.ExpiresAt != nil && !r.ExpiresAt.After(s.now()))) {
-		s.denied(ctx, tid, chain, id, "expired")
-		return r, ErrRunExpired
+		return r, &denial{ErrRunExpired, "expired"}
 	}
 	if checks&CheckScope != 0 {
 		scope, err := s.Scopes.For(ctx, tx, tid, chain, Perm)
@@ -279,8 +289,7 @@ func (s *Service) ReadAccess(ctx context.Context, tx store.Tx, tid tenant.ID, id
 			return Run{}, err
 		}
 		if fp := scope.Fingerprint(); fp != r.ScopeFingerprint {
-			s.denied(ctx, tid, chain, id, "scope")
-			return Run{}, ErrScopeChanged
+			return Run{}, &denial{ErrScopeChanged, "scope"}
 		}
 	}
 	if checks&CheckSucceeded != 0 {
@@ -295,6 +304,28 @@ func (s *Service) ReadAccess(ctx context.Context, tx store.Tx, tid tenant.ID, id
 		}
 	}
 	return r, nil
+}
+
+// Read opens the tenant transaction, passes the §6.6 gate and runs fn on the run in the same
+// transaction (so the rows read are the rows the gate cleared). A refusal is audited as read_denied
+// after the transaction ends and returned as its sentinel error.
+func (s *Service) Read(ctx context.Context, tid tenant.ID, id ID, chain authority.Chain, checks Check, fn func(ctx context.Context, tx store.Tx, r Run) error) error {
+	err := s.DB.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		r, err := s.ReadAccess(ctx, tx, tid, id, chain, checks)
+		if err != nil {
+			return err
+		}
+		if fn == nil {
+			return nil
+		}
+		return fn(ctx, tx, r)
+	})
+	var den *denial
+	if errors.As(err, &den) {
+		s.denied(ctx, tid, chain, id, den.check)
+		return den.err
+	}
+	return err
 }
 
 func (s *Service) denied(ctx context.Context, tid tenant.ID, c authority.Chain, id ID, check string) {
