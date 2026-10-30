@@ -38,6 +38,51 @@ func TestSequenceStartsAtTenantsAndIsNamedByOwner(t *testing.T) {
 	}
 }
 
+// T-0992: a migration's owner key is the second segment of its name, and it must name the package that
+// writes the file's tables (ADR-0003 rule 6). Each table below is created by exactly one file, whose owner
+// key is the top-level package that owns it (modules/agentfleet.md §Owned tables; invhost for DM-27).
+func TestOwnerKeyMatchesTableOwner(t *testing.T) {
+	want := map[string]string{ // table -> owner key
+		"agent_policy_key":    "agentpolicy",
+		"agent_policy_keyset": "agentpolicy",
+		"agent_policy_head":   "agentpolicy",
+		"agent_event":         "agentingest",
+		"inventory_servers":   "invhost",
+	}
+	ents, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, e := range ents {
+		if !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		b, err := migrations.FS.ReadFile(e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for table := range want {
+			if strings.Contains(string(b), "CREATE TABLE public."+table+" (") {
+				if prev, dup := got[table]; dup {
+					t.Errorf("%s is created by both %s and %s", table, prev, e.Name())
+				}
+				got[table] = e.Name()
+			}
+		}
+	}
+	for table, owner := range want {
+		file, ok := got[table]
+		if !ok {
+			t.Errorf("no migration creates %s", table)
+			continue
+		}
+		if key := strings.SplitN(file, "_", 3)[1]; key != owner {
+			t.Errorf("%s is created by %s: owner key %q, want %q", table, file, key, owner)
+		}
+	}
+}
+
 // Acceptance 1 (the part a unit test can prove; fitness-tenancy proves the rest): migration 0001
 // creates only the tenants table, and leaves the runtime role able to use it and nothing else.
 func TestMigration0001CreatesOnlyTenantsAndTheRoleSplit(t *testing.T) {
