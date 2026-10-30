@@ -76,26 +76,28 @@ func TestInFlightGateGivesEachSourceAFairShare(t *testing.T) {
 // Sources are an IPv4 /32 or an IPv6 /64: a host rotating addresses inside its /64, or writing its IPv4
 // address in mapped form, does not get a second slot; a different /64 is a different source.
 func TestSourceKeyGroupsIPv6By64AndUnmapsIPv4(t *testing.T) {
+	l := &LocalCredentials{}
 	same := [][2]string{
 		{"2001:db8:aa:bb::1", "2001:db8:aa:bb:ffff:ffff:ffff:ffff"},
 		{"192.0.2.5", "::ffff:192.0.2.5"},
 		{"fe80::1%eth0", "fe80::2"},
+		{"64:ff9b::c000:201", "192.0.2.1"}, // NAT64 carries the IPv4 client (§7.8 rule 2)
 	}
 	for _, p := range same {
-		if sourceKey(addr(p[0])) != sourceKey(addr(p[1])) {
+		if l.sourceKey(addr(p[0])) != l.sourceKey(addr(p[1])) {
 			t.Errorf("%s and %s must be one source", p[0], p[1])
 		}
 	}
 	diff := [][2]string{
 		{"2001:db8:aa:bb::1", "2001:db8:aa:bc::1"},
 		{"192.0.2.5", "192.0.2.6"},
+		{"64:ff9b::c000:201", "64:ff9b::c000:202"}, // two NAT64 clients are two sources, not one /64
 	}
 	for _, p := range diff {
-		if sourceKey(addr(p[0])) == sourceKey(addr(p[1])) {
+		if l.sourceKey(addr(p[0])) == l.sourceKey(addr(p[1])) {
 			t.Errorf("%s and %s must be different sources", p[0], p[1])
 		}
 	}
-	l := &LocalCredentials{}
 	r, ok := l.acquire(addr("2001:db8:aa:bb::1"))
 	if !ok {
 		t.Fatal("first slot refused")
@@ -104,6 +106,34 @@ func TestSourceKeyGroupsIPv6By64AndUnmapsIPv4(t *testing.T) {
 		t.Error("a second address in the same /64 got a slot")
 	}
 	r()
+}
+
+// The operator's §7.8 prefix lengths apply to the gate as they do to the limiter: at IPv6 /48, two /64s
+// in one /48 are one source and share one slot; a different /48 is another source.
+func TestSourceKeyHonoursConfiguredPrefixLengths(t *testing.T) {
+	l := &LocalCredentials{IPv6Bits: 48}
+	r, ok := l.acquire(addr("2001:db8:aa:1::1"))
+	if !ok {
+		t.Fatal("first slot refused")
+	}
+	defer r()
+	if _, ok := l.acquire(addr("2001:db8:aa:2::1")); ok {
+		t.Error("two /64s in one /48 took two slots at IPv6 /48")
+	}
+	r2, ok := l.acquire(addr("2001:db8:bb:1::1"))
+	if !ok {
+		t.Fatal("a different /48 was refused")
+	}
+	r2()
+	l4 := &LocalCredentials{IPv4Bits: 24}
+	r3, ok := l4.acquire(addr("192.0.2.1"))
+	if !ok {
+		t.Fatal("first slot refused")
+	}
+	defer r3()
+	if _, ok := l4.acquire(addr("192.0.2.200")); ok {
+		t.Error("two addresses in one /24 took two slots at IPv4 /24")
+	}
 }
 
 // An address that did not parse is one shared source, not an unlimited one.

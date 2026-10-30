@@ -22,6 +22,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
+	"github.com/skenzeriq/activediq/internal/platform/limiter"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -161,8 +162,11 @@ type LocalCredentials struct {
 	// MaxConcurrent caps attempts in flight (DefaultMaxConcurrent when 0): each holds a 64 MiB hash.
 	MaxConcurrent int
 	// MaxPerSource caps the attempts in flight from one source (DefaultMaxPerSource when 0), so one client
-	// cannot hold every slot. A source is an IPv4 address or an IPv6 /64 (sourceKey).
+	// cannot hold every slot. A source is the §7.8 canonical prefix of the client address (sourceKey).
 	MaxPerSource int
+	// IPv4Bits and IPv6Bits are the source prefix lengths, the same knobs as the limiter's (0 means /32
+	// and /64). Set them to what the limiter uses so one tightening covers both controls.
+	IPv4Bits, IPv6Bits int
 
 	hashes   int // verifications run (tests)
 	inflight int
@@ -400,22 +404,18 @@ WHERE c.tenant_id = $1::uuid AND c.username_norm = $2`, t.String(), name).Scan(&
 	return l.Pending.Begin(ctx, BeginInput{Tenant: t, Account: acct, FirstFactor: FirstPassword, ClientIP: from, Epoch: epoch})
 }
 
-// sourceKey is the unit of fair share: an IPv4 address (/32) or the /64 of an IPv6 address, since a
-// single IPv6 host or site controls its whole /64. An IPv4-mapped IPv6 address counts as the IPv4
-// address. An address that did not parse is one shared source, so it cannot hold more than its share.
-func sourceKey(a netip.Addr) netip.Prefix {
-	if !a.IsValid() {
-		return netip.Prefix{}
+// sourceKey is the unit of fair share: the same canonical source the rate limiter keys on (threat model
+// §7.8 rules 1-3, limiter.SourcePrefix) so the two controls cannot disagree about who a client is. An
+// address that is invalid or cannot be masked is one shared source, so it cannot hold more than its share.
+func (l *LocalCredentials) sourceKey(a netip.Addr) netip.Prefix {
+	v4, v6 := l.IPv4Bits, l.IPv6Bits
+	if v4 == 0 {
+		v4 = limiter.DefaultIPv4Bits
 	}
-	a = a.Unmap().WithZone("")
-	bits := 64
-	if a.Is4() {
-		bits = 32
+	if v6 == 0 {
+		v6 = limiter.DefaultIPv6Bits
 	}
-	p, err := a.Prefix(bits)
-	if err != nil {
-		return netip.Prefix{}
-	}
+	p, _ := limiter.SourcePrefix(a, v4, v6) // the zero Prefix on failure is the shared unparsed source
 	return p
 }
 
@@ -430,7 +430,7 @@ func (l *LocalCredentials) acquire(from netip.Addr) (release func(), ok bool) {
 	if share <= 0 {
 		share = DefaultMaxPerSource
 	}
-	key := sourceKey(from)
+	key := l.sourceKey(from)
 	l.gateMu.Lock()
 	defer l.gateMu.Unlock()
 	if l.held >= limit || l.bySource[key] >= share {
