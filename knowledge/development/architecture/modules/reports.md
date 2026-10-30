@@ -36,7 +36,7 @@ scope decision, not a platform asymmetry.
 | `internal/platform/report` (EP-8 host), `Registrar.Dataset` | **Built (T-0956, row B1).** Pure types and `Resolve` (no SQL driver), `Registrar.Dataset`, `Contributions.Datasets()`, `platform.Deps.Report`, and the Boot table-ownership check (`report.CheckTables`). Deviations below | §2, §3, row B1 |
 | `internal/platform/store/reportsql` | **Built (T-0957, row B2).** `NewRegistry`, `Compile`, `CompileCount`, `Exec`, `Count`, the scope and narrowing renderers, SQL vectors (FF-SP4) and RP6. `sqlconst` (FF-SP2) lets a value of type `reportsql.CompiledSQL` reach `Exec` and `string(x)` of one is a constant for it. Deviations in §5 | §5, row B2, RP1, RP6 |
 | Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. Two adapters are still to be wired in `compose/server`: `rbac.OwnerStatus` (over the account store) and `rbac.ObjectConnections` (over inventory) | §4 |
-| Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). There is no GIN index on `ancestry`, no per-NC sync-pass watermark (spec D6), no policy-input tables (D4) and no group closure. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed | §3.4, §4.5, rows P1, **P2**, B3, B6 |
+| Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. There is still no per-NC sync-pass watermark (spec D6) and no group closure. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed | §3.4, §4.5, rows P1, **P2**, B3, B6 |
 | `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150). **No canonical digest** (spec §8.3) | §7, row B9 |
 | `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
 | `platform/notify` | `notify/api` and `notify/syslog` only. **No SMTP, no DM-84 Delivery** | §7.2, §8, row P3 |
@@ -305,6 +305,50 @@ stored as the cell `["u"]` (§6.2), never as an inferred or absent value:
 table-driven test over the spec §6.4 rows. For every row, the column the compiled query returns
 equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. The Go function is a
 **test oracle only**, and RP3 keeps it out of the run path.
+
+**As built (T-0958, row B3): `inventory.users` and `inventory.computers`** (`internal/directory/inventory/datasets.go`,
+`datasets_sql.go`; tests `datasets_test.go`, `datasets_ac_test.go`, `rp8_derived_test.go`, `rp11_inventory_test.go`).
+
+- **Inputs.** `directory_objects` gains the D7 columns. A time input (`lockout_time`, `pwd_last_set`,
+  `account_expires`, `last_logon_timestamp`) is NULL both for "absent or 0" and for "not read"; the smallint
+  `inputs_read` bitmask (1 lockoutTime, 2 pwdLastSet, 4 accountExpires, 8 lastLogonTimestamp) tells them
+  apart, so a row written before this change is Unknown, not "not locked". `Observation.checkInputs`
+  refuses a time that is set without its bit. The D4 tables hold whole seconds: NULL is "not read", 0 is
+  forever (the lockout "until an admin unlocks", max age "never"). `PolicyWriter` (policy.go) takes
+  `*filetime.Interval` from the one codec and ignores an observation older than the stored one.
+- **Policy resolution is in SQL**, as a per-row recursive CTE (`resInner`): direct `msDS-PSOAppliesTo` edges
+  win over every group-linked PSO (transitive `member` links plus the primary-group edge); the lowest
+  precedence wins, then the lowest GUID compared as the 16 raw wire bytes (not the text); only
+  NORMAL_ACCOUNT users that are not krbtgt resolve a PSO. A candidate with no stored PSO row or no
+  precedence, or a domain whose PSO set was never read (`psos_read_at` NULL) leaves the policy
+  unresolved: the dependent states are `unknown_input_missing`, never the domain policy. This is not the
+  lateral join over `{rel.pso}` sketched above: the PSO values come from `inventory_psos` through the
+  `psoval` input Rel and only the PSO's name goes through the `pso` MaskAnchor (identity `rdn`).
+- **ad-expert corrections to spec §6.4** (T-0958 consult): the lockout test is inclusive
+  (`now <= lockoutTime + duration`); the stored duration 0 and MinInt64 both mean "until unlocked"; expired is
+  strictly `now > pwdLastSet + max age`; a negative `pwdLastSet` or `accountExpires` is Unknown; PSOs do not
+  apply to computers or krbtgt.
+- **Deviations to know.** (1) The test oracle is the test function `world8.derive`, not an exported
+  `inventory.DeriveUserState`: a function in the package would be callable from the run path. (2) The
+  `<column>_reason` companions are not built; the unknown cell is `["u"]` and the reason of an
+  unknown is not yet a column (filed). (3) The codec refuses a stored max age of 0 (`UnverifiedValue`), so
+  that value stays "not read" and shows Unknown although the expert says it means never. (4) The
+  global-security-group filter on group-linked PSOs is not applied (`groupType` is jsonb and a Rel cannot
+  project it); the Windows lab decides. (5) `probable_service_account` is the SPN leg only; the
+  DONT_EXPIRE plus tenant pattern list leg needs a text bind route. (6) `Datasets()` is not wired to
+  `compose/server`: the table-owner map is empty (T-0997), so boot would refuse it.
+- **Cost.** The CTE runs per row and per derived column that needs it, only in the branches that reach it.
+  It is O(users x group depth) and unmeasured at 200,000 users; a materialised closure (B6) replaces it.
+- **Secret keys.** `inventory.SecretKey` is the writer's refusal predicate, passed as
+  `reportsql.Options.SecretKey`; a column reading any `secretattr.Static()` name is refused at
+  registration (`Test_secret_attribute_keys_are_refused`).
+- **Tests.** RP8 `Test_derived_columns_match_reference` (one explicit case per spec §6.4 row, lockout,
+  PSO tie-break by wire bytes, direct over group, nested and primary group, krbtgt, unread inputs, eight
+  clocks, four domain-policy states, both PostgreSQL versions); RP11
+  `Test_dataset_reveals_nothing_outside_scope/<dataset>` for both datasets; AC-14, AC-15, AC-49 in
+  `datasets_ac_test.go`. `reportsql.Query.Statement()` exposes the compiled text for the AC-49 assertion.
+  Samba AD cannot prove PSO group-membership semantics, GUID byte order on a real DC or
+  `msDS-UserPasswordExpiryTimeComputed` as an oracle: a Windows-lab ticket is filed.
 
 ### 3.4 Definitions, presets and the AST a run executes
 
@@ -1227,7 +1271,7 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | P5 | `directory/client.ReadPerDC` plus `report.PerDCReader` implementation (bounded concurrency, coverage) | directory-engineer | B1; live connector reads (fleet tunnel mount) | FR-10; AC-39, AC-40 |
 | **B1** | `platform/report`: EP-8 host (`Dataset`, `Column`, `Fragment`, `Definition`, `Query`, `Resolve`, `Cell` with the `u` tag, `Column.UnknownWhen`, `SortKey`, `Label`, `PerDCReader`), `Registrar.Dataset`, Boot table-ownership check, `Deps.Report`, flip the `ReportAst` gen binding | reporting-engineer | — | FR-03 (version fields), FR-05; AC-05 |
 | **B2** | `store/reportsql`: `NewRegistry` (pre-quoting, table-name and rel checks), `Compile`, `CompileCount`, `Exec` (cursor), anchor and rel expansion (§3.3), the `UnknownWhen` checks and filter guard (§3.3), scope with token layer and narrowing rendering (§4.3, §4.4), SQL vectors, **RP6** | reporting-engineer (security-architect reviews) | B1, T-0880; RP6 also needs T-0882 (oracle) and P2 | FR-05, FR-07, FR-12; AC-05, AC-06, AC-07 |
-| **B3** | inventory: `inventory.users` and `inventory.computers` datasets, D4 policy-input tables and sync, D7 inputs, GIN index on `ancestry`, derived-state fragments, PSO `MaskAnchor` for `policy_source`, service-account signal, secret-key refusal, **RP8**, **RP11** for its datasets | directory-engineer (ad-expert consult) | B1, B2, P2 | FR-09, FR-14, FR-21; AC-12, AC-13, AC-14, AC-15, AC-29, AC-49 |
+| **B3** (built, T-0958; §3.3 "As built") | inventory: `inventory.users` and `inventory.computers` datasets, D4 policy-input tables and sync, D7 inputs, GIN index on `ancestry`, derived-state fragments, PSO `MaskAnchor` for `policy_source`, service-account signal, secret-key refusal, **RP8**, **RP11** for its datasets | directory-engineer (ad-expert consult) | B1, B2, P2 | FR-09, FR-14, FR-21; AC-12, AC-13, AC-14, AC-15, AC-29, AC-49 |
 | **B4** | `modules/reports` run path: module skeleton and page, `report_runs`/`report_run_rows` migrations and both triggers, `run.State`/`run.FailureReason`, `reports.run` job with row lock, `attempt` and interrupted rule, reuse window, concurrency cap, `run.ReadAccess` (§6.6), page queries, freshness label, permissions, run audit kinds with the full chain, retention job, run API handlers, **RP4**, **RP9** | reporting-engineer (backend-engineer reviews) | B1, B2, T-0882, P1, P2, T-0866 | FR-06, FR-07, FR-08, FR-11, FR-12, FR-13 (server-side sort and filter), FR-22 (run), FR-30, FR-31; AC-06–AC-11, AC-42, AC-48 |
 | **B5** | Library batch 1: loader, `LOCK`, crosswalk search index, USR-01, USR-02, USR-03, USR-05 with presets and hidden groups, sync-interval-0 narrowing | reporting-engineer | B3, B4 | FR-01, FR-02, FR-03, FR-04, FR-06, FR-09, FR-14; AC-01–AC-04, AC-12, AC-16, AC-17, AC-18, AC-49 |
 | **B6** | inventory: `inventory.groups`, `.group_members` (`grp` and `mbr` row anchors, primary-group edges, effective closure, cycle findings, FSP rows, `Via` hop as `MaskAnchor`), `.ous` (in-scope subtree counts over a `FilterAnchor`), `.contacts`, **RP11** for its datasets | directory-engineer | B1, B2, P2 | FR-15, FR-06; AC-19, AC-20, AC-21 |
@@ -1314,3 +1358,6 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   changes: `NewRegistry(opt Options, ds ...)`, `Inputs{Now, Limit}`, `Count`, `CatalogSchema`.
   RP6 moved to `internal/directory/inventory` (platform tests cannot import `internal/directory`) and
   is landed in `tools/fitness/reports`; AC-06's lab count is T-1030.
+- 2026-10-30 · T-0958 · row B3 built: `inventory.users` and `inventory.computers`, migration 0061 (D7 inputs, D4
+  policy tables, GIN index on `ancestry`), `PolicyWriter`, derived states with the effective policy resolved in
+  SQL, RP8 and RP11 landed in `tools/fitness/reports`, `reportsql.Query.Statement`. See §3.3 "As built".
