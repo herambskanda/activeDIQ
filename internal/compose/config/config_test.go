@@ -255,12 +255,15 @@ func TestConnectorConfigPathFromEnv(t *testing.T) {
 // T-0861: the public URL is canonicalised once, at load; every consumer sees only the canonical origin.
 func TestPublicURLIsCanonicalised(t *testing.T) {
 	for in, want := range map[string]struct{ origin, rp string }{
-		"https://DIQ.Example.com:443":  {"https://diq.example.com", "diq.example.com"},
-		"https://diq.example.com:443/": {"https://diq.example.com", "diq.example.com"},
-		"HTTPS://Diq.Example.COM/":     {"https://diq.example.com", "diq.example.com"},
-		"https://diq.example.com:":     {"https://diq.example.com", "diq.example.com"},
-		"https://diq.example.com:8443": {"https://diq.example.com:8443", "diq.example.com"},
-		"https://DIQ:08443":            {"https://diq:8443", "diq"},
+		"https://DIQ.Example.com:443":                         {"https://diq.example.com", "diq.example.com"},
+		"https://diq.example.com:443/":                        {"https://diq.example.com", "diq.example.com"},
+		"HTTPS://Diq.Example.COM/":                            {"https://diq.example.com", "diq.example.com"},
+		"https://diq.example.com:":                            {"https://diq.example.com", "diq.example.com"},
+		"https://diq.example.com:8443":                        {"https://diq.example.com:8443", "diq.example.com"},
+		"https://DIQ:08443":                                   {"https://diq:8443", "diq"},
+		"https://xn--dq-8ma.example.com":                      {"https://xn--dq-8ma.example.com", "xn--dq-8ma.example.com"},
+		"https://a-b.c--d.example.com":                        {"https://a-b.c--d.example.com", "a-b.c--d.example.com"},
+		"https://" + strings.Repeat("a", 63) + ".example.com": {"https://" + strings.Repeat("a", 63) + ".example.com", strings.Repeat("a", 63) + ".example.com"},
 	} {
 		got, err := config.ParsePublicURL(in)
 		if err != nil || got.Origin != want.origin || got.RPID != want.rp {
@@ -279,6 +282,11 @@ func TestPublicURLMustBeADomain(t *testing.T) {
 		"https://10.0.0.5", "https://10.0.0.5:8443", "https://[::1]", "https://[2001:db8::1]:8443", "https://[fe80::1%25eth0]",
 		"https://127.1", "https://0x7f.1", "https://2130706433", "https://diq.example.com.", "https://diq.example.com.:8443",
 		"https://diq..example.com", "https://dïq.example.com", "https://diq.example.com:0", "https://diq.example.com:99999",
+		// T-0890: anything outside [a-z0-9.-] per label, edge hyphens, over-long labels and hosts.
+		"https://diq.example.com\"><x", "https://diq.exa'mple.com", "https://diq.example.com;evil", "https://*.example.com",
+		"https://-diq.example.com", "https://diq-.example.com", "https://diq_ex.com", "https://diq.exa mple.com",
+		"https://" + strings.Repeat("a", 64) + ".example.com",
+		"https://" + strings.Repeat(strings.Repeat("a", 60)+".", 5) + "com",
 	} {
 		_, err := config.Load(env(map[string]string{config.EnvPublicURL: bad}))
 		if err == nil {
@@ -291,5 +299,21 @@ func TestPublicURLMustBeADomain(t *testing.T) {
 	}
 	if _, err := config.Load(env(map[string]string{config.EnvPublicURL: "https://u:secret@10.0.0.5"})); err == nil || strings.Contains(err.Error(), "secret") {
 		t.Errorf("credentials echoed or accepted: %v", err)
+	}
+}
+
+// T-0890: a host of exactly 253 bytes is accepted, 254 is refused.
+func TestPublicURLHostLengthBoundary(t *testing.T) {
+	// 63+1+63+1+63+1+61 = 253
+	ok := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 61)
+	if len(ok) != 253 {
+		t.Fatalf("fixture is %d bytes", len(ok))
+	}
+	if _, err := config.ParsePublicURL("https://" + ok); err != nil {
+		t.Errorf("253-byte host refused: %v", err)
+	}
+	_, err := config.Load(env(map[string]string{config.EnvPublicURL: "https://" + ok + "e"}))
+	if err == nil || !strings.Contains(err.Error(), config.EnvPublicURL) {
+		t.Errorf("254-byte host: %v", err)
 	}
 }
