@@ -5,7 +5,7 @@ updated: 2026-10-30
 status: review
 owner: heramb
 author: security-architect
-ticket: T-0212, T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395, T-0178, T-0623, T-0633, T-0631, T-0738
+ticket: T-0893, T-0212, T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395, T-0178, T-0623, T-0633, T-0631, T-0738
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -470,6 +470,9 @@ both kinds of agent, so both command sets are closed (TM-D13).
 | TM-TB15-T6 | R | Bulk data leaves with no record | Every export, download and delivery audited with actor and row count | TM-F-AUDIT | — |
 | TM-TB15-T7 | I | The SIEM stream travels in clear | TLS syslog (verified, port 6514) by default; UDP is not offered; plaintext TCP only with an explicit, audited operator opt-in shown in the API/UI with a warning | TM-F-EGRESS | Customer opts in |
 | TM-TB15-T8 | D | Huge exports exhaust the server | Streaming encoders, row caps, asynchronous jobs | T-0150 | — |
+| TM-TB15-T9 | I/E | **A standing exfiltration channel.** X4 with a hijacked session creates or edits a report schedule that mails owner-scope directory data (privileged membership, stale passwords, service accounts) to an outside address; it keeps firing after the session is revoked | DECISION TM-D30 ([reports-schedules-security-review.md](reports-schedules-security-review.md) §2): a schedule write whose after-state has an external recipient needs a fresh MFA, enforced by the operation kernel for every origin (token writes are held for a step-up approval); `reports.deliver.external` at write time and at every fire; the confirmed addresses are in the Action audit event; an address that became external later is not delivered until re-confirmed (SX-6) | T-0980 kernel tests; T-0965 `Test_schedule_external_needs_step_up` | TM-R26 |
+| TM-TB15-T10 | E | Widening the allowed recipient domains (or re-pointing the SMTP relay) turns external addresses internal and bypasses `reports.deliver.external` and TM-D30; a lax address parser classifies `"a@ok.example"@evil.example` as internal | `notify.settings.update` carries step-up (§7.4); exact domain match after IDNA, no implicit subdomains; one strict addr-spec parser whose canonical string is both classified and used as `RCPT TO` (TM-D30 SX-7); an account recipient's mail address is classified too (SX-5) | T-0950 parser corpus and catalogue row | — |
+| TM-TB15-T11 | E | **Confused deputy through a schedule.** A non-owner (e.g. a `reports.schedule.manage_all` holder with a narrow scope) edits another owner's schedule, adding recipients or changing the report, and receives what the owner's wider scope sees at the next fire | Schedule update and delete are owner-only; `manage_all` sees, pauses and reassigns only (spec §8.5); a reassigned schedule stays paused until the new owner resumes it with the external recipients confirmed and step-up (TM-D30, R1/R2/R5) | T-0979 contract test; T-0965 build tests | — |
 
 ### 5.16 TB16 — Host and installer
 
@@ -2065,6 +2068,8 @@ These operations require a fresh MFA within a short window, whatever the session
 | HybridLink confirmation (`connections.hybrid_link.confirm`); starting an attestation (`connections.takeover.attest`); re-confirming a correlation (TM-D17) | Opens a cross-directory authority path |
 | Approving, enrolling or resetting an authority factor (TM-D19) | Gates AD-side authority reached through Entra sign-in |
 | Designating or un-designating `tier0` objects (§6.4) | Widens or narrows the guard |
+| Report schedule writes (`reports.schedule.create`, `update`, `resume`, and their undo) whose after-state has an **external** recipient; conditional, kernel-enforced (DECISION TM-D30, T-0893) | Opens a standing outbound data channel that outlives the session (TM-TB15-T9) |
+| Notification settings: allowed recipient domains and SMTP relay (`notify.settings.update`, TM-D30 SX-7) | Turns external addresses internal, or re-points every outbound mail (TM-TB15-T10) |
 
 **Secret-reveal harvesting.** A technician (X4) may reveal secrets one by one within scope. Each
 reveal is audited; reveals per technician are rate-limited, and a burst above a tenant threshold
@@ -3097,6 +3102,8 @@ control.
 | R-AN8-1 | Anyone who reaches AN-8 on L1 can push a known break-glass name into the rule 3 delay window with 5 bad guesses, delaying the legitimate operator (T-0359, §7.6 rule 2f) | "Throttled, never locked" (rule 3) trades lockout for delay; a hard lock would let L1 disable recovery | security-architect | alerts at 10 failures/hour, CIDR allow-list (rule 4); a customer asking for a second recovery path |
 | R-AN8-2 | Multi-source and shared-address saturation of the AN-8 in-flight gate (T-0809, §7.6 rule 2d): an attacker with 4 sources (4 IPv4 addresses, or an IPv6 /62) holds all 4 slots and every other source gets the `429`; an attacker sharing an address with the break-glass admin (same NAT/CGNAT, or a proxy not listed in `ACTIVEDIQ_TRUSTED_PROXIES`) holds that address's one slot | A slot gate cannot tell sources apart beyond the address; per-source share lifts the bar from one client to four distinct prefixes, each also held to the §7.8 per-IP `auth` rate. A larger global cap costs 64 MiB per slot | security-architect | console source-CIDR allow-list (§7.6 rule 4), per-IP `auth` rate (§7.8), edge rate limits (TM-O8), uniform name-independent `429`; revisit if a deployment reports a break-glass lock-out, or when prefix lengths are tightened (§7.8 rule 3) |
 
+| TM-R26 | **External report schedule with a stolen second factor, accepted (T-0893).** An attacker holding a hijacked session and the victim's MFA factor can still create a schedule that mails owner-scope data outside the organisation | Step-up cannot defend a stolen factor; the schedule is visible to its owner and `manage_all` holders, every write, fire and delivery is audited with the confirmed addresses, and the owner-authority rule pauses it when the owner is disabled (TM-D30) | security-architect | If customers ask for four-eyes on external delivery, add an optional approval gate for SX-1 writes |
+
 ### 16.2 Decisions owed to the CEO (not asked now)
 
 Each goes through the `ceo-decisions` skill in business terms when its trigger arrives.
@@ -3250,6 +3257,7 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-10-30 · T-0893 (reports schedule security review). New DECISION TM-D30 in [reports-schedules-security-review.md](reports-schedules-security-review.md): conditional, kernel-enforced step-up for schedule writes whose after-state has an external recipient (no `policy.yaml` row: the condition is in the input), step-up for allowed-recipient-domain and SMTP relay changes, account-address classification and confirmed-external at fire. §5.15 rows TM-TB15-T9 to T11; two §7.4 rows; TM-R26. Contract defects R1-R6 in `reports.yaml` filed as T-0979; kernel predicate T-0980; spec alignment T-0981.
 - 2026-10-30 · T-0212 (ADM-143 spec review). Every `[OPEN → ADM-143 spec]` marker now points at `console-sso.md`: §7.2 MFA-asserting (SSO-D4), TM-TB8-T7 (SSO-D5), TM-D19 rule 3 and AN-9 (SPNEGO offered in v1, SSO-D7); TM-F-SSO cites the console-sso.md §10 corpus, fuzz oracle and FIT-SSO-1/2. TM-Q3 closed. New §7.2a: SSO-D4, MFA-5, SSO-D5 and SSO-D7 accepted with amendments MFA-1a (OIDC `amr` evidence is an allow-list), MFA-2a (no OASIS `ac:classes` value is SAML MFA evidence), MAP-2a (a role that gains `control_plane` revokes its claim sessions; evaluator filter) and NEG-4a (Kerberos authority counts from session creation); NEG-7 residual recorded. Bug T-0912 filed for MFA-1a/2a in the built config checks; MAP-2a and NEG-4a noted on T-0570 and T-0493.
 - 2026-10-28 · T-0544 (from the T-0469 review). §7.7 TM-D18 extension: D18-1 synced Entra groups are judged from their matched AD source's `diq_broadMembershipWrite` (unknown unless the pair is matched, attested, fresh within 26 h and the fact is known and false; computed in one read, never stored on the Entra row); D18-2 dynamic-membership groups never grant in v1. Nine cases added to TM-F-AUTHZ. Residual R-D18-1; lab G18 routed to T-0075. Build changes routed to T-0541 and a new judge ticket.
 - 2026-10-27 · T-0495 (from the T-0206 review). §7.6 rule 10: AN-9 refuses AD-disabled, expired, locked-out, deleted or SID-changed principals by an inventory pre-check plus an authoritative live connector read at sign-in, failing closed; no ticket-age bound (authtime is the TGT logon time). Residual R-AN9-1 (DC replication lag), R-AN9-2 (timing). TM-F-SSO adds `an9_refuses_ad_disabled`.
