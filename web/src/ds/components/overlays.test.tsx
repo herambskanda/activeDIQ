@@ -383,13 +383,21 @@ describe("SideSheet", () => {
     render(<Sheet />);
     q("#opener").focus();
     click(q("#opener"));
-    act(() => {
-      q("#first").dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    });
+    const press = (el: Element) =>
+      act(() => {
+        el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      });
+    // A drag that starts inside the sheet and ends on the scrim does not close it.
+    press(q("#first"));
+    click(q(".diq-sheet__scrim"));
     expect(dialog()).not.toBeNull();
-    act(() => {
-      q(".diq-sheet__scrim").dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    });
+    // The press alone does not close it: closing waits for the click, after the browser has moved
+    // focus, so focus can then be restored to the opener.
+    press(q(".diq-sheet__scrim"));
+    expect(dialog()).not.toBeNull();
+    // Simulate the browser's default mousedown action: focus falls to the page.
+    act(() => (document.activeElement as HTMLElement).blur());
+    click(q(".diq-sheet__scrim"));
     expect(dialog()).toBeNull();
     expect(active()).toBe(q("#opener"));
     click(q("#opener"));
@@ -481,6 +489,19 @@ describe("Toast", () => {
     expect(onAction).toHaveBeenCalledTimes(1);
     expect(onDismiss).toHaveBeenCalledTimes(1);
     expect(maybe(".diq-toast")).toBeNull();
+  });
+  it("an action activated from the keyboard hands focus back to where the user came from", () => {
+    render(<Host onAction={() => undefined} />);
+    click(q("#go"));
+    q("#go").focus();
+    const undo = Array.from(document.querySelectorAll<HTMLElement>("button")).find(
+      (b) => b.textContent === "Undo",
+    ) as HTMLElement;
+    act(() => undo.focus());
+    expect(active()).toBe(undo);
+    click(undo);
+    expect(maybe(".diq-toast")).toBeNull();
+    expect(active()).toBe(q("#go"));
   });
   it("Dismiss closes without running the action", () => {
     const onAction = vi.fn();

@@ -38,6 +38,7 @@ function Sheet({
   const uid = useId();
   const scrim = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
+  const pressedOnScrim = useRef(false);
   // The opener is read during the first render, before any child `autoFocus` moves focus.
   const [opener] = useState<Element | null>(() => document.activeElement);
 
@@ -73,7 +74,14 @@ function Sheet({
       ref={scrim}
       className="diq-sheet__scrim"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        pressedOnScrim.current = e.target === e.currentTarget;
+      }}
+      // Close on click, not on press: the press moves focus to the page, and the close must run
+      // after that so focus lands on the opener. A drag that began inside the sheet never closes.
+      onClick={(e) => {
+        const pressed = pressedOnScrim.current;
+        pressedOnScrim.current = false;
+        if (pressed && e.target === e.currentTarget) onClose();
       }}
     >
       <div
