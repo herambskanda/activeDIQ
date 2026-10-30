@@ -229,6 +229,27 @@ safe:
     Fragments use it to choose a label such as "(group outside your scope)".
 - `NewRegistry` rejects a fragment that contains `;`, `--`, `/*`, `$`, an unknown slot or a table
   name, or whose parentheses are unbalanced.
+- **A fragment's words come from an allowlist** (`reportsql/fragcheck.go`, T-1033), not a denylist.
+  A denylist cannot work: `query_to_xml('select * from directory_objects', …)`, `table_to_xml`,
+  `cursor_to_xml`, `xpath`, `ts_stat`, `to_regclass` and `information_schema.*` all read data
+  with a string the old check stripped before looking. The registry tokenizes the fragment and
+  refuses any word that is not one of: the expression keywords (`CASE/WHEN/THEN/ELSE/END`,
+  `AND/OR/NOT`, `IS [NOT] NULL/DISTINCT FROM`, `IN`, `BETWEEN`, `LIKE/ILIKE`, `EXISTS`, `ANY/ALL`,
+  `ARRAY`, `CAST … AS`, `EXTRACT`, `SELECT/FROM/WHERE`), the pure functions (`COALESCE`, `NULLIF`,
+  `GREATEST`, `LEAST`, `COUNT/MIN/MAX/SUM`, `LOWER`, `UPPER`, `LENGTH`, `ABS`, `CARDINALITY`), the
+  cast types (`text`, `int`, `bigint`, `smallint`, `integer`, `boolean`, `uuid`, `timestamptz`,
+  `date`, `interval`, `numeric`; never `regclass` or `xml`), or a column name after `{t}.` or
+  `{rel.<id>}.`. Also refused: a `.` anywhere else (no schema-qualified name), a `FROM` not
+  followed by a `{rel.<id>}` slot (`IS DISTINCT FROM` and `EXTRACT(… FROM …)` excepted), `now`
+  and `current_timestamp` (the clock is `{now}`), a slot inside a string literal, any character
+  outside ASCII SQL punctuation, and every unlisted function. The error names the word. A dataset
+  that needs another function amends the lists in `fragcheck.go` with a test, in review.
+- **Enum means the whole constraint** (`reportsql/schema.go`, T-1033). `CatalogSchema` classifies a
+  text column as `KindEnum` (projectable through a `Rel` or `MaskAnchor`) only when one of its
+  single-column CHECKs, as PostgreSQL prints it, is exactly `col = ANY (ARRAY[<literals>])` (the
+  printed form of `col IN ('a','b')`, with the `varchar` cast variant). An `OR`/`AND` with another
+  condition, an expression in the list, `NOT IN`, a pattern check or a one-element `IN` leaves the
+  column `KindText`.
 
 **Every alias over a directory table is a declared anchor, scoped by the compiler.** A
 fragment reads directory data only through `{rel.<id>}`, and the compiler builds that relation:

@@ -105,6 +105,88 @@ func TestNewRegistry_fragments_name_no_table(t *testing.T) {
 	}, "group_links", "table name")
 }
 
+// T-1033 AC1: a fragment's words come from an allowlist. A function that reads a table from a string,
+// a schema-qualified name or an unlisted function is refused, and the error names the word.
+func TestNewRegistry_fragments_use_an_allowlist(t *testing.T) {
+	derived := func(sql string) func(*report.Dataset) {
+		return func(d *report.Dataset) { d.Columns[2].Source = report.Derived{SQL: report.SQL(sql)} }
+	}
+	for _, c := range []struct{ sql, word string }{
+		{`query_to_xml('select * from directory_objects', true, true, '')`, "query_to_xml"},
+		{`(query_to_xml('select 1', true, true, ''))::text`, "query_to_xml"},
+		{`table_to_xml('directory_objects', true, true, '')`, "table_to_xml"},
+		{`cursor_to_xml('c', 1, true, true, '')`, "cursor_to_xml"},
+		{`xpath('/a', 'x')`, "xpath"},
+		{`ts_stat('select 1')`, "ts_stat"},
+		{`to_regclass('directory_objects')`, "to_regclass"},
+		{`'directory_objects'::regclass`, "regclass"},
+		{`(SELECT count(*) FROM information_schema.tables)`, "information_schema"},
+		{`(SELECT 1 FROM pg_catalog.pg_class)`, "pg_catalog"},
+		{`public.now()`, "public"},
+		{`pg_sleep(1)`, "pg_sleep"},
+		{`current_setting({t}.kind)`, "current_setting"},
+		{`now()`, "now"},
+		{`current_timestamp`, "current_timestamp"},
+		{`random()`, "random"},
+		{`generate_series(1, 3)`, "generate_series"},
+		{`md5({t}.kind)`, "md5"},
+		{`{t}.kind::xml`, "xml"},
+		{`E'x'`, "e"},
+		{`(TABLE directory_objects)`, "TABLE"},
+		{`(VALUES (1))`, "VALUES"},
+		{`(WITH x AS (SELECT 1) SELECT 1)`, "WITH"},
+		{`kind`, "kind"},
+		{`(SELECT 1 FROM group_links)`, "group_links"},
+		{`(SELECT 1 FROM Directory_Objects)`, "Directory_Objects"},
+		{`(SELECT 1 FROM (SELECT 1) x)`, "from"},
+		{`(SELECT 1 FROM {t})`, "from"},
+		{`count`, "count"},
+		{`{t}.kind(1)`, "kind"},
+		{`'abc {t} def'`, "literal"},
+		{"{t}.kind é", "character"},
+		{`{rel.p}.a.b`, "dotted"},
+	} {
+		t.Run(c.sql, func(t *testing.T) {
+			refused(t, func(d *report.Dataset) {
+				d.Rels = append(d.Rels, report.Rel{ID: "p", Kind: report.RelEdge, Table: "group_links", Project: []report.Ident{"group_guid"}})
+				d.Tables = append(d.Tables, "group_links")
+				derived(c.sql)(d)
+			}, c.word)
+		})
+	}
+}
+
+func TestNewRegistry_fragments_the_allowlist_admits_what_datasets_need(t *testing.T) {
+	for _, sql := range []string{
+		`'not_locked'`,
+		`CASE WHEN {t}.enabled IS NULL THEN 'unknown' WHEN {t}.lockout_time IS NULL THEN 'a' ELSE 'b' END`,
+		`COALESCE({t}.logon_count, 0)::bigint + 1`,
+		`CAST({t}.logon_count AS text)`,
+		`{t}.kind IN ('user', 'group') AND NOT {t}.enabled OR {t}.sam_account_name ILIKE 'a%'`,
+		`{t}.kind = ANY (ARRAY['user', 'it''s'])`,
+		`GREATEST({t}.pwd_last_set, {now}) IS DISTINCT FROM {t}.lockout_time`,
+		`EXTRACT(day FROM ({now} - {t}.pwd_last_set))`,
+		`{now} - interval '90 days'`,
+		`(SELECT count(*) FROM {rel.p} WHERE {rel.p}.group_guid = {t}.object_guid)`,
+		`EXISTS (SELECT 1 FROM {rel.p} WHERE {rel.p}.member_guid = {t}.object_guid)`,
+		`{t}.attributes ->> 'department'`,
+		`LOWER({t}.sam_account_name) || 'x'`,
+		`{t}.ancestry @> ARRAY[{t}.parent_guid]`,
+		`{t}.groups IS NULL`,
+		`1.5 * {t}.logon_count`,
+	} {
+		t.Run(sql, func(t *testing.T) {
+			ds := usersDataset()
+			ds.Rels = append(ds.Rels, report.Rel{ID: "p", Kind: report.RelEdge, Table: "group_links", Project: []report.Ident{"group_guid", "member_guid"}})
+			ds.Tables = append(ds.Tables, "group_links")
+			ds.Columns[2].Source = report.Derived{SQL: report.SQL(sql)}
+			if _, err := reportsql.NewRegistry(opts(), ds); err != nil {
+				t.Fatalf("the allowlist refused a fragment datasets need: %v", err)
+			}
+		})
+	}
+}
+
 // AC 5: a secret attribute is not readable, whatever the definition says.
 func TestNewRegistry_refuses_secret_json_keys(t *testing.T) {
 	refused(t, func(d *report.Dataset) {

@@ -60,16 +60,36 @@ func (m MapSchema) Column(table, column string) (ColKind, bool) {
 	return k, ok
 }
 
-const catalogSQL = `
+// A text column is bounded (KindEnum) only when one of its single-column CHECKs is, as a whole,
+// "col is one of these literals". PostgreSQL prints that as
+//
+//	CHECK ((col = ANY (ARRAY['a'::text, 'b'::text])))                      text
+//	CHECK (((col)::text = ANY ((ARRAY['a'::character varying, …])::text[])))  varchar
+//
+// (col IN ('a','b') prints the same way). The match is anchored on both ends and the list holds
+// literals only, so an open check such as CHECK (c = ANY (ARRAY['a']) OR c ~ '^x'), an AND with
+// another condition, or a list holding an expression is not bounded: the column stays KindText and
+// no Rel or MaskAnchor can project it (T-1033).
+const (
+	enumLit  = `''(?:[^'']|'''')*''(?:::[a-z]+(?: varying)?)?` // the regexp, inside an SQL string literal: quotes doubled
+	enumList = enumLit + `(?:, ` + enumLit + `)*`
+	// qcol is the column name as quote_ident prints it, with regex metacharacters escaped.
+	qcol = `regexp_replace(quote_ident(a.attname), '([^a-zA-Z0-9_])', '\\\1', 'g')`
+
+	catalogSQL = `
 SELECT c.relname::text, a.attname::text, format_type(a.atttypid, NULL)::text, ty.typtype::text,
   EXISTS (SELECT 1 FROM pg_constraint k
           WHERE k.conrelid = c.oid AND k.contype = 'c' AND k.conkey = ARRAY[a.attnum]
-            AND pg_get_constraintdef(k.oid) ~ '= ANY \(ARRAY\[')
+            AND pg_get_constraintdef(k.oid) ~ (
+              '^CHECK \(\((?:' || ` + qcol + ` || ' = ANY \(ARRAY\[` + enumList + `\]\)'
+              || '|\(' || ` + qcol + ` || '\)::text = ANY \(\(ARRAY\[` + enumList + `\]\)::text\[\]\)'
+              || ')\)\)$'))
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 JOIN pg_attribute a ON a.attrelid = c.oid
 JOIN pg_type ty ON ty.oid = a.atttypid
 WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped`
+)
 
 // CatalogSchema reads the public schema from the database the transaction is on. The composition
 // root builds the registry from it at start-up.

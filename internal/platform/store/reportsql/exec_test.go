@@ -112,6 +112,14 @@ func insert(ctx context.Context, tx pgx.Tx, o obj) error {
 // withDB runs fn in a transaction of the runtime role on a database holding the fixture.
 func withDB(t *testing.T, s *storetest.Server, extra func(ctx context.Context, tx pgx.Tx) error, fn func(ctx context.Context, tx pgx.Tx)) {
 	t.Helper()
+	withDBOwner(t, s, nil, extra, fn)
+}
+
+// withDBOwner is withDB with a hook that runs on the owner connection after the fixture is loaded,
+// before the runtime transaction begins. A hook that opens a transaction and leaves it open holds
+// its locks while fn runs; the hook's cleanup is up to the hook (t.Cleanup).
+func withDBOwner(t *testing.T, s *storetest.Server, owned func(ctx context.Context, owner *pgx.Conn), extra func(ctx context.Context, tx pgx.Tx) error, fn func(ctx context.Context, tx pgx.Tx)) {
+	t.Helper()
 	ctx := context.Background()
 	d := s.NewDatabase(t)
 	if err := d.ExecOwner(ctx, ddl); err != nil {
@@ -133,6 +141,9 @@ func withDB(t *testing.T, s *storetest.Server, extra func(ctx context.Context, t
 		if err := tx.Commit(ctx); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if owned != nil {
+		owned(ctx, owner)
 	}
 	app, err := d.App(ctx)
 	if err != nil {
@@ -445,33 +456,35 @@ func TestExec_statement_timeout_is_ErrQueryTimeout(t *testing.T) {
 		if !errors.Is(err, reportsql.ErrQueryTimeout) {
 			t.Fatalf("err = %v, want ErrQueryTimeout", err)
 		}
-		if strings.Contains(err.Error(), "SELECT") || strings.Contains(err.Error(), "generate_series") {
+		if strings.Contains(err.Error(), "SELECT") || strings.Contains(err.Error(), "directory_objects") {
 			t.Fatalf("the error carries SQL: %v", err)
 		}
 	})
 }
 
-// execUnderTimeout runs a deliberately slow query under a 30ms statement timeout and returns Exec's error.
+// execUnderTimeout runs the users query under a 30ms statement timeout while another session holds
+// ACCESS EXCLUSIVE on the base table, so the query waits on the lock and the timeout fires. A fragment
+// can no longer be the slow part: the registry's allowlist has no function that sleeps or generates rows.
 func execUnderTimeout(t *testing.T, s *storetest.Server) error {
 	t.Helper()
-	ds := usersDataset()
-	ds.Columns = append(ds.Columns, report.Column{ID: "slow", Label: "Slow", Type: report.TypeInt,
-		Source: report.Derived{SQL: report.SQL("(SELECT count(*) FROM generate_series(1, 30000000))")}, Sortable: true})
-	reg := registry(t, ds)
-	rd, _ := reg.Dataset(ds.ID)
-	def := usersDef()
-	def.Columns = []report.ColumnID{"name", "slow"}
-	q, err := report.Resolve(def, "all", report.RunParams{}, ds)
-	if err != nil {
-		t.Fatal(err)
-	}
+	q, rd := resolve(t, report.RunParams{})
 	scope := authztest.ReadScope(grant([]authz.ScopeTerm{term(authz.TermNamingContext, 1, 0x10)}))
 	c, err := reportsql.Compile(q, rd, scope, in())
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got error
-	withDB(t, s, func(ctx context.Context, tx pgx.Tx) error {
+	hold := func(ctx context.Context, owner *pgx.Conn) {
+		lock, err := owner.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = lock.Rollback(context.Background()) })
+		if _, err := lock.Exec(ctx, `LOCK TABLE directory_objects IN ACCESS EXCLUSIVE MODE`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	withDBOwner(t, s, hold, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `SET LOCAL statement_timeout = '30ms'`)
 		return err
 	}, func(ctx context.Context, tx pgx.Tx) {
