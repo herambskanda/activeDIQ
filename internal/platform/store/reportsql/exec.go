@@ -84,7 +84,10 @@ func wrapErr(ctx context.Context, err error) error {
 }
 
 func fetchBatch(ctx context.Context, tx store.Tx, fetch CompiledSQL, q Query) ([]report.Row, error) {
-	rs, err := tx.Query(ctx, string(fetch))
+	// Simple protocol: the statement cache keys a description by SQL text, and FETCH's columns depend
+	// on whichever query the cursor holds. A cached description of an earlier run's cursor would
+	// misdescribe this one. FETCH has no parameters, so nothing is lost.
+	rs, err := tx.Query(ctx, string(fetch), pgx.QueryExecModeSimpleProtocol)
 	if err != nil {
 		return nil, wrapErr(ctx, err)
 	}

@@ -47,7 +47,7 @@ func usersDataset() report.Dataset {
 				Enum:   []report.EnumValue{{ID: "enabled", Label: "Enabled", SortRank: 2}, {ID: "disabled", Label: "Disabled", SortRank: 1}},
 				Filter: []report.Op{report.OpEq, report.OpNe, report.OpIn}, Sortable: true},
 			{ID: "locked_out", Label: "Locked out", Type: report.TypeEnum,
-				Source: report.Derived{SQL: report.SQL("CASE WHEN {t}.lockout_time IS NULL THEN 'not_locked' ELSE 'locked' END")},
+				Source: report.Derived{SQL: report.SQL("CASE WHEN {t}.enabled IS NULL THEN 'unknown_input_missing' WHEN {t}.lockout_time IS NULL THEN 'not_locked' ELSE 'locked' END")},
 				Enum:   []report.EnumValue{{ID: "locked", Label: "Locked"}, {ID: "not_locked", Label: "Not locked"}, {ID: report.UnknownInputMissing, Label: "Unknown"}},
 				Filter: []report.Op{report.OpEq}},
 			{ID: "lockout_ends_at", Label: "Lockout ends", Type: report.TypeTime, Source: report.Derived{SQL: report.SQL("{t}.lockout_time")},
@@ -72,7 +72,8 @@ func usersDef() report.Definition {
 		ID: "usr-03", Version: 2, Category: report.CategoryUsers, Title: "Users", Dataset: "inventory.users",
 		Columns: []report.ColumnID{"name", "status", "pwd_last_set"},
 		Sort:    []report.SortKey{{Column: "name", Dir: report.Asc}},
-		Presets: []report.Preset{{ID: "all"}, {ID: "subject", Requires: &report.Subjects{Min: 1, Max: 5}}},
+		Presets: []report.Preset{{ID: "all"}, {ID: "hid", Hidden: []report.HiddenGroup{{ID: "off", Label: "Disabled", Where: report.Cmp{Column: "status", Op: report.OpEq, Value: report.EnumV("disabled")}}}},
+			{ID: "subject", Requires: &report.Subjects{Min: 1, Max: 5}}},
 	}
 }
 
@@ -91,6 +92,11 @@ func resolve(t testing.TB, p report.RunParams) (report.Query, reportsql.Dataset)
 	if len(p.Subjects) > 0 {
 		preset = "subject"
 	}
+	return resolveP(t, preset, p)
+}
+
+func resolveP(t testing.TB, preset string, p report.RunParams) (report.Query, reportsql.Dataset) {
+	t.Helper()
 	r := registry(t, usersDataset())
 	ds, _ := r.Dataset("inventory.users")
 	q, err := report.Resolve(usersDef(), preset, p, usersDataset())

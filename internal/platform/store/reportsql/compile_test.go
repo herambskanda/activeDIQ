@@ -249,7 +249,7 @@ func TestCompile_refuses_a_zero_GUID_in_a_narrowing(t *testing.T) {
 
 var hostile = []string{
 	"'; DROP TABLE directory_objects; --", "' OR '1'='1", `" OR ""="`, "x'); DELETE FROM directory_objects; --",
-	"\\'; --", "%' OR 1=1 --", "$1", "${jndi}", "a\u2028b", "'||(SELECT pg_sleep(10))||'", "Robert'); DROP TABLE students;--",
+	"\\'; --", "%' OR 1=1 --", "$$", "${jndi}", "a\u2028b", "'||(SELECT pg_sleep(10))||'", "Robert'); DROP TABLE students;--",
 }
 
 func TestCompile_hostile_values_are_bound_never_in_sql(t *testing.T) {
