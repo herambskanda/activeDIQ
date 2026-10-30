@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -180,7 +181,7 @@ func TestO8ScopeFactsThatCannotBeProvenAreRefusedAtApply(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if written || r.dir.applies[o8Obj] != 0 || row[:7] != "failed|" {
+				if written || r.dir.applies[o8Obj] != 0 || !strings.HasPrefix(row, "failed|") {
 					t.Fatalf("row=%q written=%v applies=%d", row, written, r.dir.applies[o8Obj])
 				}
 			})
@@ -188,87 +189,66 @@ func TestO8ScopeFactsThatCannotBeProvenAreRefusedAtApply(t *testing.T) {
 	})
 }
 
-// ---- root kinds the product does not evaluate yet: expected to fail, bug T-0824 ----
+// ---- root kinds the product does not evaluate yet: bug T-0824 ----
+//
+// ADR-0005 rule 7 names group_members, administrative_unit and include_correlated roots; rbac.RootKind
+// does not define them and Facts.Roots is never read, so none of this is evaluated today (an exclude of
+// those kinds is ignored: fail-open). These tests are real assertions, skipped only by the ticket id so
+// they are not counted as passing; when T-0824 lands, delete the Skip lines and they run unchanged.
+// They are deliberately absent from the O8 manifest's Tests (listed there as a Gap on T-0824), so
+// nothing reads them as coverage. The Entra arms (administrative_unit, Entra group_members and the
+// Entra side of include_correlated) additionally need a Graph fake behind authority.Facts; the kinds
+// here drive the same Facts.Roots seam, so a fake is added then, not before the product reads it.
 
-// knownBug runs check, which returns nil when the product behaves as ADR-0005 requires and an error
-// describing the deviation otherwise. While bug is open the deviation is logged; when the product is
-// fixed the test fails and says to promote it to a plain assertion, so it can never rot green.
-func knownBug(t *testing.T, bug string, check func() error) {
-	t.Helper()
-	if err := check(); err != nil {
-		t.Logf("EXPECTED FAILURE (%s): %v", bug, err)
-		return
-	}
-	t.Fatalf("%s is fixed: this case now behaves as ADR-0005 requires; delete knownBug and assert it directly", bug)
-}
+const skipT0824 = "T-0824: group_members, administrative_unit and include_correlated roots are not evaluated by rbac"
 
-// removedFromRoot checks one non-ancestry root kind: with the target a member of the root the operation
-// plans and applies; once membership flips to NotMember in the window, Apply refuses it.
-func removedFromRoot(t *testing.T, s *storetest.Server, kind rbac.RootKind, flipTo authority.Membership) error {
-	root := rbac.Root{Kind: kind, Connection: o8Conn, GUID: o8Group}
-	r := newScopeRig(t, s, root)
-	key := authority.Root{Kind: string(kind), ID: o8Group}
-	r.w.set(func(w *world) { w.roots[key] = authority.Member })
-	row, written, err := r.applyAfterChange(func(w *world) { w.roots[key] = flipTo })
-	if err != nil {
-		return fmt.Errorf("a member of a %s root is not planned: %w", kind, err)
-	}
-	if written || row != "failed|denied|1|false" {
-		return fmt.Errorf("removed from a %s root, row=%q written=%v", kind, row, written)
-	}
-	return nil
-}
+var nonAncestryKinds = []rbac.RootKind{rootGroupMembers, rootAdminUnit, rootIncludeCorrelat}
 
-func TestO8RemovedFromScopeADGroupMembers(t *testing.T) {
+// TestO8RemovedFromScopeNonAncestryRoots: with the target a member of the root the operation plans and
+// applies; once membership flips to NotMember in the window (removed from the group or AU, the correlated
+// AD object moved out, or the correlation dropped to candidate), Apply refuses it and writes nothing.
+func TestO8RemovedFromScopeNonAncestryRoots(t *testing.T) {
+	t.Skip(skipT0824)
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		knownBug(t, "T-0824", func() error { return removedFromRoot(t, s, rootGroupMembers, authority.NotMember) })
-	})
-}
-
-func TestO8RemovedFromScopeEntraAdministrativeUnit(t *testing.T) {
-	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		knownBug(t, "T-0824", func() error { return removedFromRoot(t, s, rootAdminUnit, authority.NotMember) })
-	})
-}
-
-func TestO8RemovedFromScopeEntraGroupMembers(t *testing.T) {
-	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		knownBug(t, "T-0824", func() error { return removedFromRoot(t, s, rootGroupMembers, authority.NotMember) })
-	})
-}
-
-// An include_correlated entry: the Entra target is in scope through its correlated AD object. It leaves
-// scope when that AD object moves out (membership NotMember) or the correlation drops to candidate
-// (the fact reads NotMember too).
-func TestO8RemovedFromScopeIncludeCorrelatedADObjectMovedOut(t *testing.T) {
-	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		knownBug(t, "T-0824", func() error { return removedFromRoot(t, s, rootIncludeCorrelat, authority.NotMember) })
-	})
-}
-
-func TestO8RemovedFromScopeIncludeCorrelatedDroppedToCandidate(t *testing.T) {
-	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		knownBug(t, "T-0824", func() error { return removedFromRoot(t, s, rootIncludeCorrelat, authority.NotMember) })
+		for _, kind := range nonAncestryKinds {
+			t.Run(string(kind), func(t *testing.T) {
+				r := newScopeRig(t, s, rbac.Root{Kind: kind, Connection: o8Conn, GUID: o8Group})
+				key := authority.Root{Kind: string(kind), ID: o8Group}
+				r.w.set(func(w *world) { w.roots[key] = authority.Member })
+				row, written, err := r.applyAfterChange(func(w *world) { w.roots[key] = authority.NotMember })
+				if err != nil {
+					t.Fatalf("a member of a %s root must be planned: %v", kind, err)
+				}
+				if written || row != "failed|denied|1|false" {
+					t.Fatalf("removed from a %s root: row=%q written=%v", kind, row, written)
+				}
+			})
+		}
 	})
 }
 
 // TestO8UnknownRootIsRefused: a target whose exclude root reads unknown (a hidden-membership Entra group,
-// a read error or timeout, a partial batch) is refused, as is one that reads Member. Today an exclude of
-// a kind the evaluator does not know is silently ignored, so the write goes through (fail-open).
+// a read error or timeout, a partial batch) is refused, as is one that reads Member (excluded). Both must
+// fail at Plan; today an exclude of a kind the evaluator does not know is ignored, so the write goes through.
 func TestO8UnknownRootIsRefused(t *testing.T) {
+	t.Skip(skipT0824)
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		for _, m := range []authority.Membership{authority.Unknown, authority.Member} {
-			knownBug(t, "T-0824", func() error {
-				excl := rbac.Root{Kind: rootGroupMembers, Connection: o8Conn, GUID: o8Group, Exclude: true}
-				r := newScopeRig(t, s, ouRoot(o8OUA, false), excl)
-				key := authority.Root{Kind: string(rootGroupMembers), ID: o8Group}
-				r.w.set(func(w *world) { w.roots[key] = m })
-				r.dir.set(o8Obj, "old")
-				if _, err := r.r.SubmitDirectory(context.Background(), r.req(itemIn{GUID: o8Obj, Want: "new"})); err == nil {
-					return fmt.Errorf("a target whose exclude root reads %q was planned", m)
-				}
-				return nil
-			})
+		for _, kind := range nonAncestryKinds {
+			for _, m := range []authority.Membership{authority.Unknown, authority.Member} {
+				t.Run(fmt.Sprintf("%s/%s", kind, m), func(t *testing.T) {
+					excl := rbac.Root{Kind: kind, Connection: o8Conn, GUID: o8Group, Exclude: true}
+					r := newScopeRig(t, s, ouRoot(o8OUA, false), excl)
+					key := authority.Root{Kind: string(kind), ID: o8Group}
+					r.w.set(func(w *world) { w.roots[key] = m })
+					r.dir.set(o8Obj, "old")
+					if _, err := r.r.SubmitDirectory(context.Background(), r.req(itemIn{GUID: o8Obj, Want: "new"})); err == nil {
+						t.Fatalf("a target whose exclude %s root reads %q was planned", kind, m)
+					}
+					if r.dir.applies[o8Obj] != 0 {
+						t.Fatalf("a write reached the directory (%d applies)", r.dir.applies[o8Obj])
+					}
+				})
+			}
 		}
 	})
 }

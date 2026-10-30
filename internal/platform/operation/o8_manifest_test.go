@@ -11,6 +11,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -21,9 +22,8 @@ type o8Clause struct {
 	ID     string
 	Rule   string
 	Tests  []o8Test
-	Gap    string // non-empty: not yet pinned, with the ticket that closes it
+	Gap    string // non-empty: not yet pinned; must start with the ticket ID that closes it
 	Needs  string // what the tests need: "pg" (Postgres), "lab" (Samba, -tags lab), "fake" (Graph fake)
-	XFail  string // bug ID when the test is an expected failure until the bug is fixed
 	Detail string
 }
 
@@ -49,16 +49,17 @@ var o8Manifest = []o8Clause{
 		Tests: []o8Test{{opDir, "TestStaleStateAndOutcomeUnknown"}}},
 	{ID: "O8.scope.ad-ou", Rule: "removed from scope: an AD object moved out of an OU root is refused", Needs: "pg",
 		Tests: []o8Test{{opDir, "TestO8RemovedFromScopeADOUMovedOut"}, {opDir, "TestO8RemovedFromScopeADExcludedSubOU"}, {opDir, "TestO8ScopeControlInScopeStillApplies"}, {srvDir, "TestLabRule5LiveFactsDecideBackingObject"}, {srvDir, "TestLabO8RemovedFromScopeADOUMovedOut"}}},
-	{ID: "O8.scope.ad-group", Rule: "removed from scope: an AD object removed from a group_members root is refused", Needs: "pg", XFail: "T-0824",
-		Tests: []o8Test{{opDir, "TestO8RemovedFromScopeADGroupMembers"}}},
-	{ID: "O8.scope.entra-au", Rule: "removed from scope: an Entra object removed from an administrative_unit root is refused", Needs: "fake", XFail: "T-0824",
-		Tests: []o8Test{{opDir, "TestO8RemovedFromScopeEntraAdministrativeUnit"}}},
-	{ID: "O8.scope.entra-group", Rule: "removed from scope: an Entra object removed from an Entra group_members root is refused", Needs: "fake", XFail: "T-0824",
-		Tests: []o8Test{{opDir, "TestO8RemovedFromScopeEntraGroupMembers"}}},
-	{ID: "O8.scope.correlated", Rule: "removed from scope: an include_correlated Entra target whose AD object left scope or whose correlation dropped to candidate is refused", Needs: "fake", XFail: "T-0824",
-		Tests: []o8Test{{opDir, "TestO8RemovedFromScopeIncludeCorrelatedADObjectMovedOut"}, {opDir, "TestO8RemovedFromScopeIncludeCorrelatedDroppedToCandidate"}}},
-	{ID: "O8.scope.unknown", Rule: "a target whose include or exclude root comes back unknown is refused", Needs: "pg", XFail: "T-0824",
-		Tests: []o8Test{{opDir, "TestO8UnknownRootIsRefused"}, {opDir, "TestO8ScopeFactsThatCannotBeProvenAreRefusedAtApply"}}},
+	{ID: "O8.scope.ad-group", Rule: "removed from scope: an AD object removed from a group_members root is refused", Needs: "pg",
+		Gap: "T-0824: rbac does not evaluate group_members roots; real assertions exist, skipped, in TestO8RemovedFromScopeNonAncestryRoots"},
+	{ID: "O8.scope.entra-au", Rule: "removed from scope: an Entra object removed from an administrative_unit root is refused", Needs: "fake",
+		Gap: "T-0824: administrative_unit roots are not evaluated, and the Graph fake behind authority.Facts is added once they are"},
+	{ID: "O8.scope.entra-group", Rule: "removed from scope: an Entra object removed from an Entra group_members root is refused", Needs: "fake",
+		Gap: "T-0824: as O8.scope.entra-au"},
+	{ID: "O8.scope.correlated", Rule: "removed from scope: an include_correlated Entra target whose AD object left scope or whose correlation dropped to candidate is refused", Needs: "fake",
+		Gap: "T-0824: include_correlated roots are not evaluated"},
+	{ID: "O8.scope.unknown", Rule: "a target whose include or exclude root comes back unknown is refused", Needs: "pg",
+		Tests:  []o8Test{{opDir, "TestO8ScopeFactsThatCannotBeProvenAreRefusedAtApply"}},
+		Detail: "pinned for ancestry roots (ou_subtree, naming_context); for group_members, administrative_unit and include_correlated roots, including an exclude that reads unknown or member, the open gap is T-0824 (skipped TestO8UnknownRootIsRefused)"},
 	{ID: "O8.digest", Rule: "client.Write refuses an operation whose digest differs from the step's plan", Needs: "fake",
 		Tests: []o8Test{{cliDir, "TestDigestMismatchRefused"}, {stepD, "TestDigest"}}},
 	{ID: "O8.approval-refusals", Rule: "an approval with a stale plan_hash, by the initiator, by an API token, without step-up for an Irreversible operation, or by a sock-puppet account in either direction is refused", Needs: "pg",
@@ -86,6 +87,8 @@ var o8Manifest = []o8Clause{
 	{ID: "O8.tier0-after-write", Rule: "tier0 after the write: verify_failed tier0_after_write with basis, critical alert, operation cancelling; connector step 9 disabled; server re-read unknown; empty basis recorded unclassified; the dc_unavailable split", Needs: "pg",
 		Tests: []o8Test{{opDir, "TestTier0AfterWriteCancelsRunningOperation"}, {opDir, "TestTier0AfterWriteFromDeferredVerify"}, {opDir, "TestTier0AfterWriteOnSettledOperationIsOnlyAudited"}, {opDir, "TestConnectorReportProducesTier0AfterWrite"}, {opDir, "TestServerRereadProducesTier0AfterWrite"}, {opDir, "TestServerRereadUnknownCountsAsTier0"}, {opDir, "TestServerRereadCleanVerifies"}, {opDir, "TestServerRereadFallbackDC"}, {opDir, "TestNoTier0KeepsOtherReasons"}}},
 }
+
+var gapTicket = regexp.MustCompile(`(^T-\d{4}\b)|(follow-up T-\d{4}\b)`)
 
 // testFuncs returns the top-level Test functions declared in the _test.go files of dir (all build tags).
 func testFuncs(t *testing.T, dir string) map[string]bool {
@@ -121,6 +124,9 @@ func TestO8ManifestNamesRealTests(t *testing.T) {
 		seen[c.ID] = true
 		if (len(c.Tests) == 0) == (c.Gap == "") {
 			t.Errorf("%s: needs tests or a gap, not both and not neither", c.ID)
+		}
+		if c.Gap != "" && !gapTicket.MatchString(c.Gap) {
+			t.Errorf("%s: Gap must start with the ticket ID that closes it (T-nnnn), got %q", c.ID, c.Gap)
 		}
 		for _, tc := range c.Tests {
 			fns, ok := cache[tc.Dir]
