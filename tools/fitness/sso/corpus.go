@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -29,16 +28,13 @@ type protocol struct {
 	Prefix  string   // check-number prefix in the spec
 	Pkg     string   // package whose TestCorpus runs one subtest per record
 	Classes []string // every class needs a record
-	// PendingBy, when set, lets the protocol's corpus be absent (listed as pending, never silent) until
-	// that ticket lands it. It stops applying the moment the corpus directory or a TestCorpus exists.
-	PendingBy string
 }
 
 // The XML signature-wrapping class exists only where there is a signed XML document; the OIDC cases of
 // §10.3 are forged, replayed, misaddressed and malformed.
 var protocols = []protocol{
 	{Name: "saml", Prefix: "SAML-", Pkg: "./" + samlDir, Classes: []string{"forged", "wrapped", "replayed", "misaddressed", "malformed"}},
-	{Name: "oidc", Prefix: "OIDC-", Pkg: "./" + oidcDir, Classes: []string{"forged", "replayed", "misaddressed", "malformed"}, PendingBy: "T-0911"},
+	{Name: "oidc", Prefix: "OIDC-", Pkg: "./" + oidcDir, Classes: []string{"forged", "replayed", "misaddressed", "malformed"}},
 }
 
 var (
@@ -86,7 +82,6 @@ func SpecChecks(root string) ([]string, error) {
 // Result is what CheckCorpus found.
 type Result struct {
 	Violations []string
-	Pending    []string
 	Records    map[string][]string // protocol -> record IDs that must each have a passing subtest
 }
 
@@ -108,11 +103,6 @@ func CheckCorpus(root string) (*Result, error) {
 		files, _ := filepath.Glob(filepath.Join(dir, "*.json"))
 		sort.Strings(files)
 		if len(files) == 0 {
-			if _, statErr := os.Stat(dir); statErr != nil && p.PendingBy != "" && !declaresTestCorpus(filepath.Join(root, strings.TrimPrefix(p.Pkg, "./"))) {
-				res.Pending = append(res.Pending, fmt.Sprintf("%s corpus (%s) has not landed; %s owns it. Until then no %s check is proven by a record; the checker enforces it in full the day %s/%s appears",
-					p.Name, filepath.ToSlash(filepath.Join(corpusDir, p.Name)), p.PendingBy, p.Prefix+"n", corpusDir, p.Name))
-				continue
-			}
 			bad("%s: no corpus records in %s (every %s check needs one)", p.Name, filepath.ToSlash(filepath.Join(corpusDir, p.Name)), p.Prefix+"n")
 			continue
 		}
@@ -173,18 +163,6 @@ func CheckCorpus(root string) (*Result, error) {
 	}
 	sort.Slice(res.Violations, func(i, j int) bool { return naturalLess(res.Violations[i], res.Violations[j]) })
 	return res, nil
-}
-
-// declaresTestCorpus reports whether a _test.go file of the package declares TestCorpus: a package that
-// claims a corpus run cannot be pending.
-func declaresTestCorpus(pkgDir string) bool {
-	files, _ := filepath.Glob(filepath.Join(pkgDir, "*_test.go"))
-	for _, f := range files {
-		if b, err := os.ReadFile(f); err == nil && bytes.Contains(b, []byte("func TestCorpus(")) {
-			return true
-		}
-	}
-	return false
 }
 
 // CheckSubtests is the bound half: TestCorpus of each protocol's package must run and pass one subtest

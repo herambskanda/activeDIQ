@@ -1,0 +1,11 @@
+{
+ "id": "O-R02",
+ "class": "replayed",
+ "cites": [
+  "OIDC-3",
+  "SSO-1"
+ ],
+ "build": "callback_twice",
+ "expect": "refuse",
+ "reason": "oidc.token"
+}

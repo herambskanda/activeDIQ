@@ -1,0 +1,10 @@
+{
+ "id": "O-R04",
+ "class": "replayed",
+ "cites": [
+  "OIDC-13"
+ ],
+ "build": "time_window",
+ "expect": "refuse",
+ "reason": "oidc.time"
+}

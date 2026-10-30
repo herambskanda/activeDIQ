@@ -175,9 +175,8 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   changes only by amending the spec); raise the module in `go.mod`; add a corpus record that cites the
   number (records are `sso/testdata/corpus/{saml,oidc}/<id>.json`, spec §10.1) and make sure `TestCorpus`
   in that package runs it as a subtest named `<id>`. The check numbers are read from the spec's tables, so
-  adding a check to §4 or §5 turns this red until a record cites it. `PENDING: oidc corpus` is expected until
-  T-0911 lands `corpus/oidc/` and an `oidc` `TestCorpus`; the moment either appears the OIDC half is
-  enforced in full. Proof: `go test ./tools/fitness/sso` and the `fitness-sso` cases of `make ci-proof`.
+  adding a check to §4 or §5 turns this red until a record cites it. A deleted record, or one whose subtest
+  is missing or skipped, fails the same way for OIDC (T-0911) as for SAML. Proof: `go test ./tools/fitness/sso` and the `fitness-sso` cases of `make ci-proof`.
 - **`fitness-grantbootstrap`** (T-0808): fails on any identifier or string mention of `GrantBootstrap`
   outside `internal/compose/server/localaccount.go`, the method declaration in
   `internal/platform/rbac/grants.go` and `_test.go` files, as `file:line:col`. `GrantBootstrap`

@@ -1603,8 +1603,8 @@ mk_sso() {
 ss="$tmp/sso"
 mk_sso "$ss/clean" with-oidc
 must_pass "fitness-sso on a fenced tree with a complete corpus" sso -root "$ss/clean" -static
-mk_sso "$ss/pend"
-must_pass "fitness-sso lists the missing OIDC corpus as pending" bash -c "go run ./tools/fitness/sso -root '$ss/pend' -static | grep -q 'PENDING: oidc corpus'"
+mk_sso "$ss/absent"
+must_fail_with "fitness-sso on a tree with no OIDC corpus" 'oidc: no corpus records' sso -root "$ss/absent" -static
 # FIT-SSO-1 imports (acceptance 1)
 mk_sso "$ss/imp" with-oidc; mkdir -p "$ss/imp/internal/platform/other"
 printf 'package other\n\nimport _ "github.com/russellhaering/goxmldsig"\n' >"$ss/imp/internal/platform/other/x.go"
@@ -1646,13 +1646,21 @@ must_fail_with "fitness-sso on a record citing a check the spec does not have" '
 mk_sso "$ss/c6" with-oidc; sed -i 's/"id":"S-1"/"id":"S-one"/' "$ss/c6/internal/platform/authn/sso/testdata/corpus/saml/S-1.json"
 must_fail_with "fitness-sso on a record whose id is not its file name" 'id "S-one" must equal the file name' sso -root "$ss/c6" -static
 mk_sso "$ss/c7"; mkdir -p "$ss/c7/internal/platform/authn/sso/testdata/corpus/oidc"
-must_fail_with "fitness-sso on an empty OIDC corpus directory (pending only while it is absent)" 'oidc: no corpus records' sso -root "$ss/c7" -static
+must_fail_with "fitness-sso on an empty OIDC corpus directory " 'oidc: no corpus records' sso -root "$ss/c7" -static
 mk_sso "$ss/c8"; printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {}\n' >"$ss/c8/internal/platform/authn/sso/oidc/c_test.go"
 must_fail_with "fitness-sso when oidc declares TestCorpus but has no records" 'oidc: no corpus records' sso -root "$ss/c8" -static
-# FIT-SSO-2 bound subtests, through go test in a throw-away module (SAML only; OIDC pending)
-mk_sso "$ss/b"; printf "package saml\n" >"$ss/b/internal/platform/authn/sso/saml/s.go"
+# FIT-SSO-2 bound subtests, through go test in a throw-away module
+mk_sso "$ss/b" with-oidc; printf "package saml\n" >"$ss/b/internal/platform/authn/sso/saml/s.go"
 printf 'package saml\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"S-1", "S-2", "S-3", "S-4", "S-5"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/saml/c_test.go"
+printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"O-1", "O-2", "O-3", "O-4"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/oidc/c_test.go"
 must_pass "fitness-sso runs every corpus record as a passing subtest" sso -root "$ss/b"
+rm "$ss/b/internal/platform/authn/sso/oidc/c_test.go"
+must_fail_with "fitness-sso on an OIDC corpus whose TestCorpus is missing" 'FIT-SSO-2' sso -root "$ss/b"
+printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"O-1", "O-2", "O-3"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/oidc/c_test.go"
+must_fail_with "fitness-sso on an OIDC corpus record with no subtest" 'subtest-missing.*O-4' sso -root "$ss/b"
+printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"O-1", "O-2", "O-3", "O-4"} {\n\t\tt.Run(id, func(t *testing.T) { if id == "O-2" { t.Skip("x") } })\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/oidc/c_test.go"
+must_fail_with "fitness-sso on a skipped OIDC corpus subtest" 'TestCorpus/O-2 .*subtest-skip' sso -root "$ss/b"
+printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"O-1", "O-2", "O-3", "O-4"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/oidc/c_test.go"
 sed -i 's/"S-5"/"S-6"/' "$ss/b/internal/platform/authn/sso/saml/c_test.go"
 must_fail_with "fitness-sso on a corpus record with no subtest" 'subtest-missing.*S-5' sso -root "$ss/b"
 sed -i 's/"S-6"/"S-5"/; s/t.Run(id, func(t \*testing.T) {})/t.Run(id, func(t *testing.T) { if id == "S-3" { t.Skip("x") } })/' "$ss/b/internal/platform/authn/sso/saml/c_test.go"
