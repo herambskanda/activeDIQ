@@ -168,30 +168,80 @@ func (s *Service) execute(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, 
 	colIDs := columnIDs(q.Columns)
 	rowCap := s.rowCap()
 
+	// The freshness reader opens its own transaction, and a transaction cannot open another on its own
+	// context, so the watermarks are read between two short transactions: the first names the connections
+	// the scope reaches, the second (T2) proves the scope is still that one before it reads anything.
+	for try := 0; ; try++ {
+		var conns []authz.ObjectID
+		var fp0 [32]byte
+		if err := jt.Run(ctx, func(ctx context.Context, t store.Tx) error {
+			scope, err := s.scopeOf(ctx, t, tid, r.Chain)
+			if err != nil {
+				return err
+			}
+			fp0, conns = scope.Fingerprint(), s.covered(scope, q.Narrowing.Connections)
+			return nil
+		}); err != nil {
+			return err
+		}
+		now := s.now()
+		fr, err := s.freshness(ctx, tid, conns, now)
+		if err != nil {
+			return err
+		}
+		err = s.store(ctx, jt, tid, r, attempt, def, q, cols, colIDs, fp0, fr, now, rowCap)
+		if errors.Is(err, errScopeMoved) && try < 2 {
+			continue
+		}
+		if errors.Is(err, errScopeMoved) {
+			return &runFailure{reason: FailInternal}
+		}
+		return err
+	}
+}
+
+var errScopeMoved = errors.New("run: the read scope changed while the run started")
+
+func (s *Service) scopeOf(ctx context.Context, t store.Tx, tid tenant.ID, c authority.Chain) (authz.ReadScope, error) {
+	scope, err := s.Scopes.For(ctx, t, tid, c, Perm)
+	switch {
+	case errors.Is(err, authz.ErrOwnerDead):
+		return authz.ReadScope{}, &runFailure{reason: FailRunnerInactive}
+	case errors.Is(err, authz.ErrTokenRefused):
+		return authz.ReadScope{}, &runFailure{reason: FailTokenRefused}
+	}
+	return scope, err
+}
+
+// covered is the connections the scope reaches, narrowed by the admin's pick.
+func (s *Service) covered(scope authz.ReadScope, narrowed []authz.ObjectID) []authz.ObjectID {
+	conns := scope.Connections()
+	if len(narrowed) > 0 {
+		conns = slices.DeleteFunc(conns, func(c authz.ObjectID) bool { return !slices.Contains(narrowed, c) })
+	}
+	return conns
+}
+
+// store is T2: one transaction holds the snapshot, the rows and the final state.
+func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r Run, attempt int, def Definition, q report.Query,
+	cols []report.Column, colIDs []string, fp0 [32]byte, fr FreshnessRecord, now time.Time, rowCap int) error {
 	return jt.Run(ctx, func(ctx context.Context, t store.Tx) error {
 		// 2.1 the scope, now
-		scope, err := s.Scopes.For(ctx, t, tid, r.Chain, Perm)
-		switch {
-		case errors.Is(err, authz.ErrOwnerDead):
-			return &runFailure{reason: FailRunnerInactive}
-		case errors.Is(err, authz.ErrTokenRefused):
-			return &runFailure{reason: FailTokenRefused}
-		case err != nil:
+		scope, err := s.scopeOf(ctx, t, tid, r.Chain)
+		if err != nil {
 			return err
 		}
 		// 2.2 the scope APPLIED is what later reads compare with
 		fp := scope.Fingerprint()
+		if fp != fp0 {
+			return errScopeMoved
+		}
 		if tag, err := t.Exec(ctx, fenceScope, r.ID.String(), fp[:], attempt); err != nil {
 			return err
 		} else if tag.RowsAffected() != 1 {
 			return errStopped
 		}
-		// 2.3 freshness BEFORE the cursor, so as_of never claims data newer than was read
-		now := s.now()
-		fr, err := s.freshness(ctx, tid, scope, q.Narrowing.Connections, now)
-		if err != nil {
-			return err
-		}
+		// 2.3 freshness was read before this snapshot opened, so as_of never claims newer data
 		// 2.4 compile
 		cq, err := reportsql.Compile(q, def.SQL, scope, reportsql.Inputs{Now: now, Limit: rowCap + 1})
 		switch {
@@ -321,13 +371,9 @@ func emptyReason(reasons []string) string {
 	return out
 }
 
-// freshness reads the watermarks of the connections the scope reaches (narrowed by the admin's pick)
+// freshness reads the watermarks of the covered connections
 // and labels them (§6.4). A scope that reaches no connection covers nothing: not synced yet.
-func (s *Service) freshness(ctx context.Context, tid tenant.ID, scope authz.ReadScope, narrowed []authz.ObjectID, now time.Time) (FreshnessRecord, error) {
-	conns := scope.Connections()
-	if len(narrowed) > 0 {
-		conns = slices.DeleteFunc(conns, func(c authz.ObjectID) bool { return !slices.Contains(narrowed, c) })
-	}
+func (s *Service) freshness(ctx context.Context, tid tenant.ID, conns []authz.ObjectID, now time.Time) (FreshnessRecord, error) {
 	var lbl report.Freshness
 	var thr time.Duration
 	if len(conns) == 0 {
