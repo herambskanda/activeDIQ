@@ -67,6 +67,8 @@ lab/windows/.win-lab-gmsa.json
 !/tools/fitness/*/*.go
 !/tools/fitness/*/*.txt
 !/tools/fitness/*/testdata/
+# shared fitness packages (tools/fitness/internal/<pkg>/) are source, not stray build output
+!/tools/fitness/internal/*/
 !/tools/fitness/update/offline.sh
 # stray `go build ./tools/fitness/audit` output
 /audit
