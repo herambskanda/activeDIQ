@@ -95,9 +95,11 @@ func newBuilder(ds Dataset, scope authz.ReadScope, in Inputs) (*builder, error) 
 	if b.plan, err = b.planScope(scope); err != nil {
 		return nil, err
 	}
+	var produced []string
 	for _, r := range scope.Reasons() {
-		b.reasons = append([]string{string(r)}, b.reasons...)
+		produced = append(produced, string(r))
 	}
+	b.reasons = append(produced, b.reasons...)
 	return b, nil
 }
 
@@ -286,6 +288,10 @@ func (b *builder) relation(id report.AnchorID) (string, error) {
 	alias := `"` + string(id) + `"`
 	var s string
 	if a, ok := b.d.anchors[id]; ok {
+		if a.src.Mode == report.RowAnchor {
+			// A joined RowAnchor is already in FROM, with its scope in WHERE: the slot is its alias.
+			return alias, nil
+		}
 		scope := b.scopeSQL(a, alias)
 		switch a.src.Mode {
 		case report.FilterAnchor:

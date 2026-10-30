@@ -164,13 +164,23 @@ func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 						return nil, fmt.Errorf("%s: a fragment may not use %q", path, w)
 					}
 				}
-			case report.SlotRel:
-				if a, ok := findAnchor(src, p.ID); ok && a.Mode == report.RowAnchor {
-					return nil, fmt.Errorf("%s: {rel.%s} names a RowAnchor; use its alias directly", path, p.ID)
-				}
 			}
 		}
 		return &frag{parts: parts}, nil
+	}
+	// An alias is a name a fragment writes through a slot; it may not also be a table, or a subselect
+	// that reads FROM an alias could read the table instead.
+	aliases := []string{}
+	for _, a := range src.Anchors {
+		aliases = append(aliases, string(a.ID))
+	}
+	for _, r := range src.Rels {
+		aliases = append(aliases, string(r.ID))
+	}
+	for _, id := range aliases {
+		if tableNames[strings.ToLower(id)] {
+			return nil, fmt.Errorf("anchor or relation ID %q is also a table name", id)
+		}
 	}
 	var err error
 	if d.rowKey, err = mkFrag("rowKey", src.RowKey); err != nil {
