@@ -205,6 +205,10 @@ func Load(getenv func(string) string) (Config, error) {
 	if err := c.ValidateAttestation(); err != nil {
 		return Config{}, err
 	}
+	if c.PublicURL != "" { // keep only the canonical origin, so no consumer sees the operator's spelling
+		po, _ := ParsePublicURL(c.PublicURL) // validated just above
+		c.PublicURL = po.Origin
+	}
 	c.OpsAddr, c.OpsTokenFile = getenv(EnvOpsAddr), getenv(EnvOpsTokenFile)
 	if err := c.ValidateOps(); err != nil {
 		return Config{}, err
@@ -323,8 +327,8 @@ func requireLoopback(addr string) error {
 }
 
 // ValidateAttestation refuses an attestation client ID without a public URL, and a public URL that is not
-// a plain https origin: the attestation's redirect URI and the WebAuthn relying party are built from it. A
-// public URL alone is valid (WebAuthn sign-in without the attestation).
+// a plain https origin on a domain name (see ParsePublicURL). A public URL alone is valid (WebAuthn sign-in
+// without the attestation).
 func (c Config) ValidateAttestation() error {
 	if c.PublicURL == "" {
 		if c.AttestClientID != "" {
@@ -332,11 +336,78 @@ func (c Config) ValidateAttestation() error {
 		}
 		return nil
 	}
-	u, err := url.Parse(c.PublicURL)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("%s: must be an https origin such as https://diq.example.com", EnvPublicURL)
+	_, err := ParsePublicURL(c.PublicURL)
+	return err
+}
+
+// PublicOrigin is the canonical form of an ACTIVEDIQ_PUBLIC_URL: the one value the WebAuthn relying party
+// and the attestation redirect URI are both built from (T-0861).
+type PublicOrigin struct {
+	// Origin is the https origin browsers see: lowercase host, no default port, no path, no trailing slash.
+	Origin string
+	// RPID is the WebAuthn relying party ID: the lowercase host without the port.
+	RPID string
+}
+
+// ParsePublicURL canonicalises ACTIVEDIQ_PUBLIC_URL. The host is lowercased and an explicit :443 dropped (a
+// browser never sends it, so an origin carrying it would never match); any other port is kept in the origin
+// and left out of the RP ID. It refuses what no browser can satisfy: anything but a bare https origin, an IP
+// literal or numeric-looking host (WebAuthn needs a registrable-style domain as RP ID), a trailing dot, and
+// a non-ASCII host (write the punycode form). Errors name ACTIVEDIQ_PUBLIC_URL and never echo credentials.
+func ParsePublicURL(raw string) (PublicOrigin, error) {
+	const shape = "must be an https origin on a domain name such as https://diq.example.com"
+	bad := func(why string) (PublicOrigin, error) {
+		return PublicOrigin{}, fmt.Errorf("%s: %s: %s", EnvPublicURL, why, shape)
 	}
-	return nil
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		return bad("not a plain https origin")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return bad("no host")
+	}
+	if strings.HasSuffix(host, ".") {
+		return bad("the host ends in a dot")
+	}
+	for _, r := range host {
+		if r > 0x7e || r <= 0x20 {
+			return bad("the host is not plain ASCII (use the punycode form of an internationalised name)")
+		}
+	}
+	host = strings.ToLower(host)
+	if strings.ContainsAny(host, ":[]%") {
+		return bad("the host is an IP address")
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return bad("the host is an IP address")
+	}
+	labels := strings.Split(host, ".")
+	for _, l := range labels {
+		if l == "" {
+			return bad("the host has an empty label")
+		}
+	}
+	// A browser reads a host whose last label is numeric (10.1, 0x7f.1, 2130706433) as an IPv4 address.
+	if last := labels[len(labels)-1]; last[0] >= '0' && last[0] <= '9' {
+		return bad("the host looks like an IP address")
+	}
+	port := u.Port()
+	if port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return bad("the port is out of range")
+		}
+		port = strconv.Itoa(n) // drops leading zeros
+		if n == 443 {
+			port = ""
+		}
+	}
+	origin := "https://" + host
+	if port != "" {
+		origin += ":" + port
+	}
+	return PublicOrigin{Origin: origin, RPID: host}, nil
 }
 
 // ValidatePrincipalStore refuses an unknown store and the in-memory store on more than one node: each

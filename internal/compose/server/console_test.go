@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -159,6 +161,7 @@ func TestWebAuthnRelyingPartyFromPublicURL(t *testing.T) {
 	for in, want := range map[string]authn.WebAuthnConfig{
 		"https://diq.example.com":      {RPID: "diq.example.com", RPDisplayName: "activeDIQ", Origins: []string{"https://diq.example.com"}},
 		"https://diq.example.com/":     {RPID: "diq.example.com", RPDisplayName: "activeDIQ", Origins: []string{"https://diq.example.com"}},
+		"https://DIQ.Example.com:443":  {RPID: "diq.example.com", RPDisplayName: "activeDIQ", Origins: []string{"https://diq.example.com"}},
 		"https://diq.example.com:8443": {RPID: "diq.example.com", RPDisplayName: "activeDIQ", Origins: []string{"https://diq.example.com:8443"}},
 	} {
 		got, err := webAuthnRelyingParty(in)
@@ -166,7 +169,7 @@ func TestWebAuthnRelyingPartyFromPublicURL(t *testing.T) {
 			t.Errorf("%s: %+v, %v", in, got, err)
 		}
 	}
-	for _, bad := range []string{"", "http://diq.example.com", "https://diq.example.com/x", "https://u:p@diq.example.com", "https://diq.example.com/?a=b", "diq.example.com", "https://"} {
+	for _, bad := range []string{"", "https://10.0.0.5", "https://[::1]", "https://diq.example.com.", "http://diq.example.com", "https://diq.example.com/x", "https://u:p@diq.example.com", "https://diq.example.com/?a=b", "diq.example.com", "https://"} {
 		if _, err := webAuthnRelyingParty(bad); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
@@ -186,5 +189,34 @@ func TestBuildConsoleWebAuthnOnlyWithPublicURL(t *testing.T) {
 	}
 	if _, err := buildConsole(&store.DB{}, nopSink{}, testKeys(), nil, withPublicURL("http://diq.example.com")); err == nil {
 		t.Error("a non-https public URL built a relying party")
+	}
+}
+
+// T-0861: the WebAuthn origin and the attestation redirect URI come from the same canonical value, however
+// the operator spelled the URL.
+func TestRelyingPartyAndRedirectURIShareOneCanonicalOrigin(t *testing.T) {
+	for _, in := range []string{"https://DIQ.Example.com:443", "https://diq.example.com/", "https://Diq.example.com:443/"} {
+		rp, err := webAuthnRelyingParty(in)
+		if err != nil {
+			t.Fatalf("%s: %v", in, err)
+		}
+		po, err := config.ParsePublicURL(in)
+		if err != nil {
+			t.Fatalf("%s: %v", in, err)
+		}
+		redirect := po.Origin + attestCallbackPath
+		if rp.Origins[0] != po.Origin || !strings.HasPrefix(redirect, rp.Origins[0]+"/") || rp.RPID != "diq.example.com" {
+			t.Errorf("%s: rp %+v, redirect %s", in, rp, redirect)
+		}
+		// The loaded config carries the canonical origin, so buildAttestation sees the same bytes.
+		c, err := config.Load(func(k string) string {
+			if k == config.EnvPublicURL {
+				return in
+			}
+			return ""
+		})
+		if err != nil || c.PublicURL != rp.Origins[0] {
+			t.Errorf("%s: loaded %q, rp origin %q, %v", in, c.PublicURL, rp.Origins[0], err)
+		}
 	}
 }

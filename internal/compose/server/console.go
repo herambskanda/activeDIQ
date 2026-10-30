@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"sync/atomic"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
@@ -70,16 +70,16 @@ func (c *consoleStack) Tags() apihost.TagHandlers {
 	return h.Bind()
 }
 
-// webAuthnRelyingParty derives the relying party from the install's public URL, the https origin browsers
-// use: the RP ID is the origin's hostname without port and the one allowed origin is the origin itself
-// (scheme, host and port, no path). config validates the shape; a value that is not an https origin is
-// refused here too, because this is the binding that decides which pages may sign a user in.
+// webAuthnRelyingParty derives the relying party from the install's public URL through config's one
+// canonicaliser (also used for the attestation redirect URI): the RP ID is the lowercase hostname without
+// port and the one allowed origin is the canonical origin. A value config would refuse is refused here too,
+// because this is the binding that decides which pages may sign a user in.
 func webAuthnRelyingParty(publicURL string) (authn.WebAuthnConfig, error) {
-	u, err := url.Parse(publicURL)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-		return authn.WebAuthnConfig{}, errors.New("server: WebAuthn: the public URL is not an https origin")
+	po, err := config.ParsePublicURL(publicURL)
+	if err != nil {
+		return authn.WebAuthnConfig{}, fmt.Errorf("server: WebAuthn: %w", err)
 	}
-	return authn.WebAuthnConfig{RPID: u.Hostname(), RPDisplayName: "activeDIQ", Origins: []string{"https://" + u.Host}}, nil
+	return authn.WebAuthnConfig{RPID: po.RPID, RPDisplayName: "activeDIQ", Origins: []string{po.Origin}}, nil
 }
 
 // consoleOption adjusts buildConsole.
