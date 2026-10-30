@@ -25,9 +25,11 @@ const (
 	winName = "dc1.win.activediq.test" // the name in the DC's certificate; dialled by IP via ServerName
 )
 
-// winLabPath returns the file named by envVar (external-host mode, T-0428) or the default beside lab/windows.
-func winLabPath(envVar, def string) string {
-	if p := os.Getenv(envVar); p != "" {
+// labFile returns p, the value of a WIN_LAB_* variable the caller read by its constant name
+// (external-host mode, T-0428), or the default file beside lab/windows when p is empty. It takes the
+// value, not the name, so fitness-profiles P1 can see which variable each call site reads.
+func labFile(p, def string) string {
+	if p != "" {
 		return p
 	}
 	return filepath.Join("..", "..", "..", "lab", "windows", def)
@@ -43,7 +45,7 @@ func winTLSName() string {
 
 func winEnv(t *testing.T) map[string]string {
 	t.Helper()
-	f, err := os.Open(winLabPath("WIN_LAB_ENV", ".win-lab.env"))
+	f, err := os.Open(labFile(os.Getenv("WIN_LAB_ENV"), ".win-lab.env"))
 	if err != nil {
 		t.Fatalf("windows lab not up (make windows-lab-up): %v", err)
 	}
@@ -69,7 +71,7 @@ func winConfig(t *testing.T, pw string, trust bool) Config {
 		Credential: Credential{BindName: winBind, Password: secret.FromBytes([]byte(pw))},
 	}
 	if trust {
-		pem, err := os.ReadFile(winLabPath("WIN_LAB_CA", ".win-lab-ca.pem"))
+		pem, err := os.ReadFile(labFile(os.Getenv("WIN_LAB_CA"), ".win-lab-ca.pem"))
 		if err != nil {
 			t.Fatal(err)
 		}

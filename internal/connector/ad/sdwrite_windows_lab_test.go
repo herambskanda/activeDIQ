@@ -50,7 +50,7 @@ func sdvDial(t *testing.T) *sdvLab {
 	if host == "" {
 		host = "192.168.77.10"
 	}
-	pem, err := os.ReadFile(winLabPath("WIN_LAB_CA", ".win-lab-ca.pem"))
+	pem, err := os.ReadFile(labFile(os.Getenv("WIN_LAB_CA"), ".win-lab-ca.pem"))
 	if err != nil {
 		t.Fatal(err)
 	}

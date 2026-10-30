@@ -45,6 +45,7 @@ web/src/api/schema.gen.d.ts                              paths and components (o
 | `internal/platform/secret/secretjson/` | `Decode`, the one decode path for API bodies; only apihost calls it (FF-SP2) | hand |
 | `tools/apitools/` | its own Go module: `tool` directives for vacuum and oasdiff; never linked into a shipped binary (stack manifest exception, ADR-0004) | hand |
 | `web/src/api/client.ts` | the one hand-written client file (openapi-fetch over the generated `paths`); ESLint forbids any other API call (rule 12) | hand |
+| `web/src/api/openapi-typescript-helpers.d.ts` | type-only stand-in for `openapi-typescript-helpers` (tsconfig `paths`): `Readable`/`Writable` pass strings through, so an open enum `(string & {})` survives openapi-fetch's response mapping instead of becoming a `String` copy; guarded by `open-enum.test.ts` | hand |
 
 ## What the generator refuses
 
@@ -52,7 +53,7 @@ Before any file is written the dialect check (about 40 refusals, each tested in 
 a raw filter string, a DN or a free-form object where a typed schema belongs; an inline object, enum or `oneOf` member;
 a nullable `$ref`, array or map; a secret (`SecretInput`) reachable from a response; objects of more than 64 members;
 a body that is not a `$ref`; a component declared in two files; an operation whose tag is not in the tag list.
-The set of bound primitives (`SecretInput` → `internal/platform/secret.Secret`, `FilterAst`, `ReportAst`, `GUIDRef`, `ObjectView`)
+The set of bound primitives (`SecretInput` → `internal/platform/secret.Secret`, `FilterAst`, `ReportAst` → `internal/platform/report.Query`, `GUIDRef`, `ObjectView`)
 lives in `DefaultConfig` (`tools/gen/api/main.go`); a binding marked `Pending` is emitted as an ordinary generated type until its primitive exists.
 
 ## The fixture

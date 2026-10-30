@@ -10,6 +10,15 @@
       "package": "internal/directory/ldapfilter"
     },
     {
+      "name": "go/dn",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "dn"
+      ],
+      "package": "internal/directory/dn"
+    },
+    {
       "name": "go/odata",
       "language": "go",
       "tier": "S",
@@ -106,6 +115,33 @@
         "sd.write"
       ],
       "package": "internal/directory/sd"
+    },
+    {
+      "name": "go/csv",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "csv"
+      ],
+      "package": "internal/platform/export/csv"
+    },
+    {
+      "name": "go/xlsx",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "xlsx"
+      ],
+      "package": "internal/platform/export/xlsx"
+    },
+    {
+      "name": "go/cellsafe",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "cellsafe"
+      ],
+      "package": "internal/platform/export/cellsafe"
     }
   ],
   "fuzz": [
@@ -113,6 +149,15 @@
       "implementation": "go/ldapfilter",
       "unit": "ldapfilter",
       "target": "FuzzFilter",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/dn",
+      "unit": "dn",
+      "target": "FuzzDN",
       "properties": [
         "roundtrip",
         "noUnescapedSpecial"
@@ -218,6 +263,31 @@
         "decodeRoundTrip",
         "daclOnly",
         "noPanic"
+      ]
+    },
+    {
+      "implementation": "go/csv",
+      "unit": "csv",
+      "target": "FuzzRoundTrip",
+      "properties": [
+        "roundtrip",
+        "noFormulaLead"
+      ]
+    },
+    {
+      "implementation": "go/xlsx",
+      "unit": "xlsx",
+      "target": "FuzzAnyTextIsInertString",
+      "properties": [
+        "independentParse"
+      ]
+    },
+    {
+      "implementation": "go/cellsafe",
+      "unit": "cellsafe",
+      "target": "FuzzClassify",
+      "properties": [
+        "noFormulaLead"
       ]
     }
   ]

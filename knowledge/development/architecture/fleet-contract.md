@@ -79,7 +79,11 @@ The generated stubs live in `internal/proto/activediq/fleet/v1`. `internal/platf
 (T-0125's gateway ticket) and will implement the `Fleet` service from outside the platform root, or
 declare its own transport-level types; that wiring, and where the `Enroll` handler is registered, is
 the gateway ticket's decision. This ticket adds only the contract. Nothing under `internal/platform`
-imports the generated package.
+imports the generated package. Bindings: server side `compose/server/fleettunnel.go`; component side
+`compose/tunnelbind` (frame conversion and the `Tunnel` stream, shared by `compose/agent` and
+`compose/connector`), passed to the generic `platform/fleet/tunnelclient` as `Config.Open` (T-0946).
+`fitness-modules` rule 2.1 does flag such an import; it went unseen because that job is the recipe of
+`make fitness` and never ran behind a red prerequisite (T-0998).
 
 ## Compatibility
 

@@ -1,7 +1,7 @@
 ---
 title: "platform/rbac: RBAC persistence and the operation Authorizer"
 date: 2026-10-26
-updated: 2026-10-27
+updated: 2026-10-30
 status: draft
 owner: backend-engineer
 ticket: T-0367
@@ -9,7 +9,7 @@ ticket: T-0367
 
 # platform/rbac (DM-34, DM-35, DM-36; threat model §7.7)
 
-Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `0018_authz_rbac.sql`, `0037_authz_subjects.sql`.
+Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `0018_authz_rbac.sql`, `0037_authz_subjects.sql`, `0058_authz_ou_one_level_root.sql`.
 
 - **Tables** (tenant, RLS): `authz_roles`, `authz_role_permissions`, `authz_assignments`,
   `authz_assignment_roots`. Subjects are an account, a directory group
@@ -23,6 +23,41 @@ Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `001
 - **Tier-0 scope (T-0173):** a target of class `tier0_scope` (GUID = connection ID) is covered only by
   a `tier0_scope` root for that connection. OU, naming-context and connection-wide roots never cover it;
   a `tier0_scope` root covers nothing else; the Tier-0 scope permission is refused on any other class.
+- **Root kinds (DM-35):** `naming_context`, `ou_subtree`, `ou_one_level`, `entra_tenant`, `tier0_scope`, `tenant`.
+  `ou_one_level` (T-0881, migration 0058) reaches the **direct children of an OU only**: a target is covered
+  when its nearest parent (`Target.Ancestors[0]`) is the root; the OU itself and anything deeper are not.
+  It is an include root only (the schema and `validRoots` refuse it as an exclude) and its GUID is an OU's,
+  never the connection's (the target chain ends in the connection). `authz.ScopeRoot.OneLevel` carries the
+  narrowing: `Scope.covers` honours it, and `CheckGrant` containment lets a one-level grantor root contain only
+  the identical one-level root (never a subtree below it), while a subtree grantor root contains a one-level
+  root beneath it. `Authorizer.resolve` sets `OneLevel` from the kind whatever a `RootResolver` returns. Excludes
+  of such an assignment are ordinary subtree excludes and beat the include. The object view fails closed on a
+  root kind it does not know (a zero root: the scope covers nothing), so a new kind is never read as a subtree.
+  The OpenAPI `AssignmentRootKind` enum does not list `ou_one_level` yet (the API follows the store).
+- **Read scopes (T-0882):** `ReadScopes.For(ctx, tx, tenant, chain, perm)` is the one producer of directory
+  read-scope predicates (`authz.ReadScope`); reports and search consume it and nothing else renders scope
+  (modules/reports.md §4). `NewReadScopes(authorizer, evaluators, owner, conns)` reuses the Authorizer's
+  assignment source, group membership, token source and clock, so the read scope and per-target `Authorize`
+  read the same facts. One grant per account or group assignment that holds `perm`: its include terms minus its
+  exclude terms, each term from the EP-6 `ScopeEvaluator` of the root's kind (`authz.ScopeEvaluator`; rbac
+  reaches it through the `ScopeEvaluators` port, which `module.Contributions` satisfies).
+  - A root kind with no evaluator (`entra_tenant`, `tier0_scope`, ...) contributes nothing and records
+    `scope_kind_unsupported:<kind>`; one such **exclude**, or any root that does not become a valid term, drops
+    the whole assignment (`scope_term_invalid`). The tenant root contributes nothing to directory datasets.
+  - An evaluator is module code, so every term is checked: same connection, same root, and a kind whose name is
+    the root kind (a broader kind than the root's, or an unknown one, is refused).
+  - Correlation-derived (`Via`) assignments contribute nothing (`scope_correlated_grant_not_applied`); Tier-0
+    does not narrow reads (DM-35.I5), so the producer does not look at it.
+  - A token in the chain is a separate layer, AND-ed with the grants: its `Scope` roots become subtree (or, for
+    a one-level include, one-level) terms, the connection resolved through the `ObjectConnections` port over
+    inventory. A zero or unresolvable root makes the layer grant nothing; an expired token or one without
+    `perm` is `authz.ErrTokenRefused`. A chain with an automation hop, a second token, or a non-human
+    requester is `ErrUnsupportedChain`.
+  - A disabled owner (`OwnerStatus` port over the account store), or one with no assignments, is
+    `authz.ErrOwnerDead`. An owner who holds assignments but none with `perm` gets an Empty scope.
+  - The read oracle is `authz.Evaluator.AuthorizeRead`: `Authorize` minus the Tier-0 write limit, with `Via`
+    grants contributing nothing. `Test_ReadScope_matches_read_oracle` holds the terms to it over random forests,
+    tokens and `ou_one_level`.
 - **Catalog:** `BuiltInRoles()` (tier 0/1/2). No Tier-2 role holds a Tier-0 scope permission: checked in
   `ValidateRoles`, and by a trigger in the schema.
 - **Tenant owner (T-0436, DM-30.I4, DM-36.I4, ADM-126):** `BuiltInRoles()` seeds `tenant-owner` (tier 1, no

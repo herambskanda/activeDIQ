@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
-	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/authn/negotiate"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -30,7 +28,7 @@ type none struct{}
 func (none) Accept(context.Context, []byte) (negotiate.Principal, error) {
 	return negotiate.Principal{}, errors.New("rejected")
 }
-func (none) ObjectsBySID(context.Context, tenant.ID, sid.SID) ([]inventory.Ref, error) {
+func (none) ObjectsBySID(context.Context, tenant.ID, string) ([]authn.DirectoryRef, error) {
 	return nil, nil
 }
 func (none) BackedBy(context.Context, tenant.ID, authn.DirectoryRef) ([]string, error) {
@@ -121,11 +119,10 @@ func (recorder) Refused(context.Context, tenant.ID, string, netip.Addr) error { 
 type okAll struct{ none }
 
 func (okAll) Accept(context.Context, []byte) (negotiate.Principal, error) {
-	s, _ := sid.Parse("S-1-5-21-1-2-3-1001")
-	return negotiate.Principal{SID: s}, nil
+	return negotiate.Principal{SID: "S-1-5-21-1-2-3-1001"}, nil
 }
-func (okAll) ObjectsBySID(context.Context, tenant.ID, sid.SID) ([]inventory.Ref, error) {
-	return []inventory.Ref{{Connection: "11111111-1111-4111-8111-111111111111", Object: "aaaaaaaa-0000-4000-8000-0000000000a1"}}, nil
+func (okAll) ObjectsBySID(context.Context, tenant.ID, string) ([]authn.DirectoryRef, error) {
+	return []authn.DirectoryRef{{ConnectionID: "11111111-1111-4111-8111-111111111111", ObjectGUID: "aaaaaaaa-0000-4000-8000-0000000000a1"}}, nil
 }
 func (okAll) BackedBy(context.Context, tenant.ID, authn.DirectoryRef) ([]string, error) {
 	return []string{"bbbbbbbb-0000-4000-8000-0000000000b1"}, nil

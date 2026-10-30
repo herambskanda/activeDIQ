@@ -178,7 +178,7 @@ again. The fingerprint in `Describe` tells a caller when to re-fetch.
   directories, DC list, customer CA, Kerberos principal/realm/keytab; unknown keys refused, no password
   field), loads the enrolled mTLS leaf (`dial.Load`; it must carry a `connector` component identity),
   opens the AD session (Kerberos GSSAPI over LDAPS with channel binding, trusting only the customer CA),
-  reloads the durable baseline, then dials out with `platform/fleet/tunnelclient` and serves ONE composite
+  reloads the durable baseline, then dials out with `platform/fleet/tunnelclient` (contract-agnostic; the `activediq.fleet.v1` stream and frame binding is `compose/tunnelbind`, passed as `Config.Open`) and serves ONE composite
   `ConnectorServer` (`compose/connector.TunnelBinding`) on the RoleComponent mux. `rights.Register` and
   `write.Register` each register the whole Connector service, so the composite is registered once per
   tunnel registrar. It serves `VerifyConnection`, `Read`, `ScopedSearch`, `Plan` and `Apply`; every

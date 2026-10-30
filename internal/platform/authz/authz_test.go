@@ -216,25 +216,6 @@ func TestBulkPerItem(t *testing.T) {
 	}
 }
 
-func TestOwnerScopedReport(t *testing.T) {
-	owner := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("ouA")}})
-	rows := []Target{target("1", "ouA"), target("2", "ouB"), target("3", "ouB")}
-	got, err := ev().FilterForOwner(owner, pReset, rows)
-	if err != nil || len(got.Permitted) != 1 || got.Permitted[0].ID != oid("1") || got.Omitted != 2 {
-		t.Fatalf("report: %+v %v", got, err)
-	}
-	// Owner loses the scope: next run delivers only the new scope.
-	owner.Assignments[0].Scope = Scope{Include: []ScopeRoot{root("ouB")}}
-	got, _ = ev().FilterForOwner(owner, pReset, rows)
-	if len(got.Permitted) != 2 || got.Omitted != 1 {
-		t.Errorf("after scope change: %+v", got)
-	}
-	owner.Disabled = true
-	if _, err := ev().FilterForOwner(owner, pReset, rows); !errors.Is(err, ErrOwnerDead) {
-		t.Errorf("disabled owner: %v", err)
-	}
-}
-
 func TestGrantFailsClosedOnIncompleteRoots(t *testing.T) {
 	reset := Role{Permissions: []Permission{pReset}}
 	e := ev()
@@ -441,5 +422,150 @@ func TestPlatformOnlyPermission(t *testing.T) {
 	listed := &Principal{ID: "l", Assignments: []Assignment{{Role: Role{Permissions: []Permission{perm}}, Scope: scope}}}
 	if d := ev.Authorize(listed, nil, perm, target); d.Allowed {
 		t.Fatal("a listed platform-only permission was effective at delegation scope")
+	}
+}
+
+func oneLevel(id string, anc ...string) ScopeRoot {
+	r := root(id, anc...)
+	r.OneLevel = true
+	return r
+}
+
+// T-0881: a OneLevel include root covers a target whose nearest parent is the root, and nothing else.
+func TestOneLevelRootIsNeverASubtree(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{oneLevel("ouA", "dom")}})
+	allow := func(tg Target) bool { return ev().Authorize(p, nil, pReset, tg).Allowed }
+	if !allow(target("u", "ouA", "dom")) {
+		t.Error("direct child refused")
+	}
+	if allow(target("u", "ouSub", "ouA", "dom")) {
+		t.Error("child of a child OU allowed: one-level read as a subtree")
+	}
+	if allow(target("ouA", "dom")) {
+		t.Error("the root OU itself allowed")
+	}
+	if allow(target("u")) {
+		t.Error("target with no parent allowed")
+	}
+	// An exclude still beats the include for a direct child.
+	px := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{oneLevel("ouA", "dom")}, Exclude: []ScopeRoot{root("ouA", "dom")}})
+	if ev().Authorize(px, nil, pReset, target("u", "ouA", "dom")).Allowed {
+		t.Error("exclude did not beat one-level include")
+	}
+	// A token scope with a one-level root narrows the same way.
+	wide := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("dom")}})
+	tok := tokenFor(pReset)
+	tok.Scope = &Scope{Include: []ScopeRoot{oneLevel("ouA", "dom")}}
+	if !ev().Authorize(wide, tok, pReset, target("u", "ouA", "dom")).Allowed {
+		t.Error("direct child refused through a one-level token scope")
+	}
+	if ev().Authorize(wide, tok, pReset, target("u", "ouSub", "ouA", "dom")).Allowed {
+		t.Error("token one-level scope read as a subtree")
+	}
+}
+
+// A one-level grantor root contains only the identical one-level root: a grant of its subtree, a
+// deeper OU or a different level would reach objects the grantor cannot act on.
+func TestOneLevelGrantorContainment(t *testing.T) {
+	role := Role{Permissions: []Permission{pReset}}
+	grantor := func(s Scope) *Principal { return tech([]Permission{pReset}, s) }
+	oneA := grantor(Scope{Include: []ScopeRoot{oneLevel("ouA", "dom")}})
+	if err := ev().CheckGrant(oneA, nil, role, Scope{Include: []ScopeRoot{oneLevel("ouA", "dom")}}); err != nil {
+		t.Errorf("same one-level root refused: %v", err)
+	}
+	for name, s := range map[string]ScopeRoot{
+		"subtree of the same OU":  root("ouA", "dom"),
+		"a child OU as a subtree": root("ouSub", "ouA", "dom"),
+		"a child OU as one level": oneLevel("ouSub", "ouA", "dom"),
+		"the parent as one level": oneLevel("dom"),
+	} {
+		if err := ev().CheckGrant(oneA, nil, role, Scope{Include: []ScopeRoot{s}}); !errors.Is(err, ErrEscalation) {
+			t.Errorf("%s: want escalation, got %v", name, err)
+		}
+	}
+	// A subtree grantor contains a one-level root beneath it.
+	sub := grantor(Scope{Include: []ScopeRoot{root("ouA", "dom")}})
+	if err := ev().CheckGrant(sub, nil, role, Scope{Include: []ScopeRoot{oneLevel("ouSub", "ouA", "dom")}}); err != nil {
+		t.Errorf("one-level inside a held subtree refused: %v", err)
+	}
+	if err := ev().CheckGrant(sub, nil, role, Scope{Include: []ScopeRoot{oneLevel("ouB", "dom")}}); !errors.Is(err, ErrEscalation) {
+		t.Errorf("one-level outside the held subtree: %v", err)
+	}
+}
+
+// AuthorizeRead is Authorize without the Tier-0 write limit (DM-35.I5) and without correlation-derived
+// grants; every other rule is the same.
+func TestAuthorizeReadDiffersFromAuthorizeOnlyForTier0AndVia(t *testing.T) {
+	p := tech([]Permission{pReset}, Scope{Include: []ScopeRoot{root("ouA")}, Exclude: []ScopeRoot{root("ouX")}})
+	tier0 := target("1", "ouA")
+	tier0.Tier0 = true
+	if d := ev().Authorize(p, nil, pReset, tier0); d.Allowed || d.Reason != ReasonTier0 {
+		t.Fatalf("write path must refuse Tier-0: %+v", d)
+	}
+	if d := ev().AuthorizeRead(p, nil, pReset, tier0); !d.Allowed {
+		t.Fatalf("read path must not be narrowed by Tier-0: %+v", d)
+	}
+	for name, c := range map[string]struct {
+		p   *Principal
+		tok *Token
+		tgt Target
+		why Reason
+	}{
+		"outside the scope":    {p, nil, target("2", "ouB"), ReasonNotInScope},
+		"in an exclude":        {p, nil, target("3", "ouX", "ouA"), ReasonNotInScope},
+		"incomplete facts":     {p, nil, Target{ID: oid("4"), Ancestors: []ObjectID{oid("ouA")}}, ReasonFactsIncomplete},
+		"permission not held":  {tech([]Permission{pDelete}, Scope{Include: []ScopeRoot{root("ouA")}}), nil, target("5", "ouA"), ReasonNotInScope},
+		"token without perm":   {p, tokenFor(pDelete), target("6", "ouA"), ReasonTokenExcludes},
+		"token scope excludes": {p, &Token{Permissions: []Permission{pReset}, ExpiresAt: now.Add(time.Hour), Scope: &Scope{Include: []ScopeRoot{root("ouB")}}}, target("7", "ouA"), ReasonTokenExcludes},
+		"empty token scope":    {p, &Token{Permissions: []Permission{pReset}, ExpiresAt: now.Add(time.Hour), Scope: &Scope{}}, target("8", "ouA"), ReasonTokenExcludes},
+		"disabled owner":       {&Principal{ID: "tech", Disabled: true, Assignments: p.Assignments}, nil, target("9", "ouA"), ReasonOwnerDisabled},
+		"expired token":        {p, &Token{Permissions: []Permission{pReset}, ExpiresAt: now.Add(-time.Second)}, target("10", "ouA"), ReasonTokenExpired},
+	} {
+		d := ev().AuthorizeRead(c.p, c.tok, pReset, c.tgt)
+		if d.Allowed || d.Reason != c.why {
+			t.Errorf("%s: %+v, want refused with %s", name, d, c.why)
+		}
+	}
+	// A correlation-derived assignment grants no read; the same assignment held directly does.
+	via := &Principal{ID: "tech", Assignments: []Assignment{{
+		Role: Role{Permissions: []Permission{pReset}}, Scope: Scope{Include: []ScopeRoot{root("ouA")}},
+		Via: &Derivation{Correlation: &Correlation{State: CorrelationMatched, Takeover: TakeoverAttested}}}}}
+	via.AuthorityFactor = true
+	if d := ev().Authorize(via, nil, pReset, target("11", "ouA")); !d.Allowed {
+		t.Fatalf("precondition: the gated write path admits this Via grant: %+v", d)
+	}
+	if d := ev().AuthorizeRead(via, nil, pReset, target("11", "ouA")); d.Allowed {
+		t.Fatalf("a Via grant must contribute nothing to a read: %+v", d)
+	}
+}
+
+func TestCheckTokenFor(t *testing.T) {
+	if err := ev().CheckTokenFor(nil, pReset); err != nil {
+		t.Fatalf("a session has no token to refuse: %v", err)
+	}
+	if err := ev().CheckTokenFor(tokenFor(pReset), pReset); err != nil {
+		t.Fatalf("usable token: %v", err)
+	}
+	for name, tk := range map[string]*Token{
+		"unlisted":  tokenFor(pDelete),
+		"expired":   {Permissions: []Permission{pReset}, ExpiresAt: now.Add(-time.Second)},
+		"no expiry": {Permissions: []Permission{pReset}},
+	} {
+		if err := ev().CheckTokenFor(tk, pReset); !errors.Is(err, ErrTokenRefused) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestRoleHolds(t *testing.T) {
+	if !(Role{Permissions: []Permission{pReset}}).Holds(pReset) || (Role{Permissions: []Permission{pReset}}).Holds(pDelete) {
+		t.Fatal("listed permission only")
+	}
+	if !(Role{TenantOwner: true}).Holds(pDelete) {
+		t.Fatal("tenant-owner holds every permission")
+	}
+	po := platformOnly[0]
+	if (Role{TenantOwner: true, Permissions: []Permission{po}}).Holds(po) {
+		t.Fatal("no role holds a platform-only permission")
 	}
 }

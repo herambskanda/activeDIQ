@@ -153,12 +153,20 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   - U1: remove the module. Ported UEM or PatchIQ code is copied with its source named in the commit
     and placed under `internal/platform/`; it is never imported or `replace`d.
   - U2: the platform root imports nothing from the directory domain, connector, modules or compose.
-  - Activation (`activation table P2: ... not implemented`): a subject has landed (an installer
+  - Activation (`activation table P2-oci: ... not implemented`): a subject has landed (an installer
     directory, the first connector package, the updater, the agent protos) and its check does not
     exist yet. Implement the check and register its `command` in
     `tools/fitness/profiles/manifest.json`; never delete the row. A new subject path is a change to
     the row's `paths` and is reviewed like a rule change.
-  - Lab runs the table cannot do yet (P2 on a `windows-2025` runner, P3 against the Samba lab, P6
+  - Deferral (`activation table P2-oci: deferral ...`, ADR-0002 erratum E-3): a row may carry
+    `"deferral": {"ticket", "expires", "adr"}`, which prints `ACTIVE, DEFERRED (T-NNNN until
+    YYYY-MM-DD)` instead of failing. It is valid only while the row has no `command`, the ticket is
+    `T-` and four or more digits, the expiry (UTC date) is today or later, and the "Activation
+    deferrals" table of the named ADR (in `decisionsDir`, ratified or accepted) lists the same
+    check, ticket and expiry. Editing the date in the manifest extends nothing: extend by an
+    amendment line and a new table row in the ADR. When the check lands, add its `command` **and
+    remove the deferral** in the same change, or the job calls the deferral stale.
+  - Lab runs the table cannot do yet (P2-msi on a `windows-2025` runner, P3 against the Samba lab, P6
     with egress denied) are the registered commands' job; the lab and runner must be documented
     in a runbook by the ticket that registers them.
 - **`fitness-modules`**: the message names the file, line and blueprint rule. Fix the import. Do not
@@ -168,6 +176,15 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   with `authz.ObjectIDFromOctets` (raw objectGUID bytes) or `authz.ParseObjectID` (text); `guid.GUID`
   is also `[16]byte` but its byte order differs. Type errors in other packages are printed as
   warnings (the build gate owns them). Proof: `go test ./tools/fitness/objectid` (positive and negative fixtures).
+- **`fitness-sso`** (T-0211, console-sso.md §13): FIT-SSO-1 and FIT-SSO-2. Output lines name the file and
+  line (`internal/platform/x/y.go:3: imports github.com/russellhaering/goxmldsig; only
+  internal/platform/authn/sso/saml may`), the go.mod line, or the check number (`saml: SAML-7 is cited by
+  no corpus record`). Fixes: move the parsing into `sso/saml` or `sso/oidc` (never widen the fence, which
+  changes only by amending the spec); raise the module in `go.mod`; add a corpus record that cites the
+  number (records are `sso/testdata/corpus/{saml,oidc}/<id>.json`, spec §10.1) and make sure `TestCorpus`
+  in that package runs it as a subtest named `<id>`. The check numbers are read from the spec's tables, so
+  adding a check to §4 or §5 turns this red until a record cites it. A deleted record, or one whose subtest
+  is missing or skipped, fails the same way for OIDC (T-0911) as for SAML. Proof: `go test ./tools/fitness/sso` and the `fitness-sso` cases of `make ci-proof`.
 - **`fitness-grantbootstrap`** (T-0808): fails on any identifier or string mention of `GrantBootstrap`
   outside `internal/compose/server/localaccount.go`, the method declaration in
   `internal/platform/rbac/grants.go` and `_test.go` files, as `file:line:col`. `GrantBootstrap`

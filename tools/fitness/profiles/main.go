@@ -1,5 +1,5 @@
 // Command profiles is the fitness-profiles job of ADR-0002 (checks P1, P4 telemetry, P7, U1, U2 and the
-// activation table for P2–P6, U3 and U4), run by `make ci`. It fails the build when a deployment
+// activation table for P2-oci, P2-msi, P3 to P6, U3 and U4), run by `make ci`. It fails the build when a deployment
 // profile or the UEM boundary is broken: domain code that imports the compose package, reads a
 // profile-selecting environment variable, names a profile or declares a profile-named capability;
 // self-hosted manifests that differ in a capability; a Tier-0 role composed beside another role;
@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 const defaultManifest = "tools/fitness/profiles/manifest.json"
@@ -22,11 +23,16 @@ type Ctx struct {
 	Root string
 	Cfg  *Config
 	Tree *Tree
+
+	Now time.Time // the clock deferrals expire against; always UTC
+
+	extTerms *[]string // cache of externalTerms
 }
 
 // Options tune a run; the zero value is what `make ci` uses.
 type Options struct {
-	Branches []string // when non-nil, P7 checks these instead of asking git
+	Branches []string  // when non-nil, P7 checks these instead of asking git
+	Now      time.Time // when non-zero, the date deferrals expire against instead of the wall clock
 }
 
 func main() {
@@ -75,11 +81,16 @@ func Run(root, manifestPath string, checks []string, opt Options) ([]Violation, 
 	if err != nil {
 		return nil, nil, err
 	}
-	c := &Ctx{Root: root, Cfg: cfg, Tree: tree}
+	now := opt.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	c := &Ctx{Root: root, Cfg: cfg, Tree: tree, Now: now.UTC()}
 	var vs []Violation
 	var rows []Row
 	if want["P1"] {
 		vs = append(vs, c.checkP1Domain()...)
+		vs = append(vs, c.checkExternalVocabulary()...)
 		vs = append(vs, c.checkP1Manifests()...)
 	}
 	if want["P4"] {

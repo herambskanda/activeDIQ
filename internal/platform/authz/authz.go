@@ -47,6 +47,10 @@ var (
 	ErrInvalidObjectID = errors.New("authz: invalid object id")
 	// ErrTokenInvalid means the token is missing or expired (distinct from a dead owner).
 	ErrTokenInvalid = errors.New("authz: token missing or expired")
+	// ErrTokenRefused means a token cannot be used for a permission: it is expired, it has no
+	// expiry, it does not list the permission, or its constraint could not be read. A read-scope
+	// producer returns it so the caller fails the run (reports: token_refused).
+	ErrTokenRefused = errors.New("authz: token refused for this permission")
 )
 
 // ObjectID identifies a directory object by objectGUID (never by DN). It is an opaque comparable
@@ -127,10 +131,16 @@ type Scope struct {
 // request input: forged ancestors on a new root would make containment checks pass. Complete is
 // true only when the chain was read live and fully (a domain-root has zero ancestors and is complete).
 // CheckGrant refuses any root it consults that is not Complete.
+//
+// OneLevel narrows an include root (ou_one_level, DM-35) to the direct children of the OU: only a
+// target whose nearest parent is the root is covered, never the root itself or anything deeper.
+// Every consumer treats a OneLevel root as the narrower set; none may read it as a subtree. An
+// exclude root is never OneLevel (the loader and the grant path refuse it).
 type ScopeRoot struct {
 	ID        ObjectID
 	Ancestors []ObjectID
 	Complete  bool
+	OneLevel  bool
 }
 
 // within reports whether id is this root or one of its ancestors. A blank ID never matches.
@@ -172,6 +182,14 @@ func (s Scope) covers(t Target) bool {
 		}
 	}
 	for _, i := range s.Include {
+		if i.OneLevel {
+			// Direct children only: the nearest parent is the root. The root itself and deeper
+			// descendants are not covered.
+			if len(t.Ancestors) > 0 && t.Ancestors[0] == i.ID {
+				return true
+			}
+			continue
+		}
 		if slices.Contains(chain, i.ID) {
 			return true
 		}
@@ -196,6 +214,10 @@ func (r Role) has(p Permission) bool {
 	}
 	return r.TenantOwner || slices.Contains(r.Permissions, p)
 }
+
+// Holds reports whether the role grants p, with the same rules Authorize applies: the tenant-owner
+// role holds every permission except a platform-only one, which no role holds.
+func (r Role) Holds(p Permission) bool { return r.has(p) }
 
 // platformOnly lists the permissions exercised at platform scope only (installation operator, ADR-0002
 // "Configuration scope"). Delegation and tenant scopes cannot hold them, so no role listing one can
@@ -289,6 +311,20 @@ func (e Evaluator) tokenOK(tok *Token, perm Permission) (Reason, bool) {
 // Authorize decides whether p, acting through tok (nil for a session), may exercise perm on target.
 // effective = role ∩ scope ∩ token, deny by default.
 func (e Evaluator) Authorize(p *Principal, tok *Token, perm Permission, target Target) Decision {
+	return e.authorize(p, tok, perm, target, false)
+}
+
+// AuthorizeRead is the read oracle (reports modules/reports.md §4.6): Authorize without the two
+// limits that apply to writes. A Tier-0 target is not refused, because Tier-0 does not narrow reads
+// (DM-35.I5); and a correlation-derived (Via) assignment contributes nothing at 2a. Everything else
+// is the Authorize path: owner liveness, tokenOK, the target's facts, the token's Scope and each
+// assignment's role and scope. The read-scope producer (rbac.ReadScopes) and its property test are
+// held to this one decision, so there is no second containment implementation.
+func (e Evaluator) AuthorizeRead(p *Principal, tok *Token, perm Permission, target Target) Decision {
+	return e.authorize(p, tok, perm, target, true)
+}
+
+func (e Evaluator) authorize(p *Principal, tok *Token, perm Permission, target Target, read bool) Decision {
 	if r, ok := ownerAlive(p); !ok {
 		return deny(r)
 	}
@@ -298,7 +334,7 @@ func (e Evaluator) Authorize(p *Principal, tok *Token, perm Permission, target T
 	if target.ID.IsZero() || !target.Complete || slices.Contains(target.Ancestors, ObjectID{}) {
 		return deny(ReasonFactsIncomplete)
 	}
-	if target.Tier0 {
+	if target.Tier0 && !read {
 		return deny(ReasonTier0)
 	}
 	if tok != nil && tok.Scope != nil && !tok.Scope.covers(target) {
@@ -310,6 +346,9 @@ func (e Evaluator) Authorize(p *Principal, tok *Token, perm Permission, target T
 			continue
 		}
 		if a.Via != nil {
+			if read {
+				continue
+			}
 			r, ok := hybridCheck(a, perm, p.AuthorityFactor)
 			if ok && target.CorrelatedTier0 {
 				r, ok = HybridRefusal{Reason: ReasonHybridTier0}, false
@@ -356,29 +395,15 @@ func (e Evaluator) AuthorizeItems(p *Principal, tok *Token, perm Permission, tar
 	return res
 }
 
-// ReportRows is the outcome of compiling a report with its owner's scope.
-type ReportRows struct {
-	Permitted []Target
-	// Omitted is for internal audit only. It must never reach a report recipient: counts of
-	// out-of-scope rows leak existence (TM-TB1-T8); any count shown comes after authorisation.
-	Omitted int
-}
-
-// FilterForOwner trims report candidates to what the owner may see now (TM-TB15-T2). A disabled
-// owner or one without authority returns ErrOwnerDead: the schedule stops, it does not deliver.
-func (e Evaluator) FilterForOwner(owner *Principal, perm Permission, candidates []Target) (ReportRows, error) {
-	if _, ok := ownerAlive(owner); !ok {
-		return ReportRows{}, ErrOwnerDead
+// CheckTokenFor reports ErrTokenRefused when tok cannot exercise perm now: it has no expiry, it has
+// expired, or it does not list perm. A nil token (a session) is always usable. These are the same
+// two reasons Authorize refuses on (tokenOK); it exists so a producer that builds a query rather
+// than deciding a target applies the identical test.
+func (e Evaluator) CheckTokenFor(tok *Token, perm Permission) error {
+	if _, ok := e.tokenOK(tok, perm); !ok {
+		return ErrTokenRefused
 	}
-	var out ReportRows
-	for _, t := range candidates {
-		if e.Authorize(owner, nil, perm, t).Allowed {
-			out.Permitted = append(out.Permitted, t)
-		} else {
-			out.Omitted++
-		}
-	}
-	return out, nil
+	return nil
 }
 
 // CheckToken reports ErrOwnerDead when a token's owner is disabled or lost authority, and
@@ -446,6 +471,16 @@ func holdsOverScope(g *Principal, perm Permission, s Scope) bool {
 func assignmentContains(g Scope, root ScopeRoot, newExcl []ScopeRoot) bool {
 	covered := false
 	for _, i := range g.Include {
+		if i.OneLevel {
+			// A one-level grantor root reaches only the direct children of its OU. It contains a
+			// new root only when that is the same one-level root: a subtree below it, or a deeper
+			// one-level root, reaches objects the grantor cannot act on.
+			if root.OneLevel && root.ID == i.ID {
+				covered = true
+				break
+			}
+			continue
+		}
 		if root.within(i.ID) {
 			covered = true
 			break
