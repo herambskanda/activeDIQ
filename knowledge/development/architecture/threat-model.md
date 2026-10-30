@@ -2011,6 +2011,38 @@ the two differ (console-sso.md header rule).
   The few that describe two factors (the `MobileTwoFactor*` classes `[UNVERIFIED — that IdPs in
   our target set emit them]`) are refused too, so the rule stays one prefix check. The evidence is the Entra and AD FS preset (MFA-2) or an IdP-specific value chosen from the last
   verified response on the setup screen. Same bug, T-0912.
+- **MFA-2b. No single-factor URI and no variant of the OASIS prefix is SAML evidence** (T-0938,
+  from the T-0912 review). MFA-2a covers only the OASIS 2.0 classes. Without MFA-2b, these could
+  still be saved as evidence: AD FS Integrated Windows Authentication (`urn:federation:authentication:windows`),
+  the Microsoft `.../identity/authenticationmethod/` values (`password`, `windows`), the SAML 1.x
+  methods and the REFEDS single-factor profile. Rule: the namespaces `urn:federation:authentication:`,
+  `http://schemas.microsoft.com/ws/2008/06/identity/authenticationmethod/`,
+  `urn:oasis:names:tc:SAML:1.0:am:` and `urn:ietf:rfc:` are refused. The last is there because
+  SAML 1.1 core §7.1 puts the Kerberos, SRP, TLS-client and XML-DSig methods outside the `am:`
+  namespace
+  ([SAML 1.1 core](https://groups.oasis-open.org/higherlogic/ws/public/download/3406/oasis-sstc-saml-core-1.1.pdf)).
+  The MFA-2a prefix is refused too, and so are two exact values:
+  `https://refeds.org/profile/sfa` ([REFEDS SFA](https://refeds.org/profile/sfa)) and
+  `http://schemas.microsoft.com/claims/wiaormultiauthn`. Matching is ASCII case-insensitive. A
+  value with surrounding whitespace is refused, not trimmed. `multipleauthn` and
+  `https://refeds.org/profile/mfa` stay acceptable. Built in `sso/saml/config.go`
+  (`mfaEvidenceAllowed`) and tested by `TestSAMLConfig_RefusesSingleFactorMicrosoftURIsAsMFAEvidence` at save,
+  Start and Complete (corpus X-18). Residual: this is a deny-list of values, so an unknown
+  single-factor value from another IdP is still the administrator's to rule out from the
+  last-response values (MFA-2). A Unicode-variant value also passes, but it never matches what an
+  IdP sends and therefore fails closed.
+- **MFA-2c. The SAML evidence attribute is an allow-list** (T-0974, from the T-0938 review).
+  MFA-2a and MFA-2b deny *values*. `MFAAttribute` is free-form, so an administrator, or an attacker
+  holding step-up, can name an attribute that every response carries with a constant value and
+  then make every sign-in "MFA". Example: Entra's
+  `http://schemas.microsoft.com/identity/claims/tenantid` with the tenant GUID as evidence
+  ([Entra SAML token reference](https://learn.microsoft.com/en-us/entra/identity-platform/reference-saml-tokens)).
+  A probe against `ValidateConfig` at d47c30bc8 accepted that configuration, and the
+  `identityprovider` claim works the same way. Rule: `MFAAttribute` is either empty
+  (AuthnContextClassRef) or exactly `http://schemas.microsoft.com/claims/authnmethodsreferences`.
+  Anything else is refused with `saml.config` at save, Start and Complete. Until T-0974 merges,
+  MFA-5 bounds the impact: the bypass reaches console access within RBAC, never the control plane,
+  and MFA-4 alerts every `tenant-owner` to the change.
 - **MAP-2a. A role that gains `control_plane` ends the claim sessions that hold it.** MAP-2 drops
   the role's claim mappings, but MAP-3 holds claim-derived roles on live sessions. Without more, a
   session that entered through a compromised MFA-asserting IdP (TM-X12), without an
@@ -3250,6 +3282,7 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-10-30 · T-0938 (MFA-2b security review). §7.2a adds MFA-2b, which refuses single-factor Microsoft, AD FS, SAML 1.x (`am:` and `urn:ietf:rfc:`) and REFEDS SFA values and OASIS case/whitespace variants as SAML evidence; it is built and tested. It also adds MFA-2c: the SAML evidence attribute is an allow-list, because a constant claim such as Entra `tenantid` bypassed MFA-2a/2b in a probe. Bug T-0974 filed.
 - 2026-10-30 · T-0212 (ADM-143 spec review). Every `[OPEN → ADM-143 spec]` marker now points at `console-sso.md`: §7.2 MFA-asserting (SSO-D4), TM-TB8-T7 (SSO-D5), TM-D19 rule 3 and AN-9 (SPNEGO offered in v1, SSO-D7); TM-F-SSO cites the console-sso.md §10 corpus, fuzz oracle and FIT-SSO-1/2. TM-Q3 closed. New §7.2a: SSO-D4, MFA-5, SSO-D5 and SSO-D7 accepted with amendments MFA-1a (OIDC `amr` evidence is an allow-list), MFA-2a (no OASIS `ac:classes` value is SAML MFA evidence), MAP-2a (a role that gains `control_plane` revokes its claim sessions; evaluator filter) and NEG-4a (Kerberos authority counts from session creation); NEG-7 residual recorded. Bug T-0912 filed for MFA-1a/2a in the built config checks; MAP-2a and NEG-4a noted on T-0570 and T-0493.
 - 2026-10-28 · T-0544 (from the T-0469 review). §7.7 TM-D18 extension: D18-1 synced Entra groups are judged from their matched AD source's `diq_broadMembershipWrite` (unknown unless the pair is matched, attested, fresh within 26 h and the fact is known and false; computed in one read, never stored on the Entra row); D18-2 dynamic-membership groups never grant in v1. Nine cases added to TM-F-AUTHZ. Residual R-D18-1; lab G18 routed to T-0075. Build changes routed to T-0541 and a new judge ticket.
 - 2026-10-27 · T-0495 (from the T-0206 review). §7.6 rule 10: AN-9 refuses AD-disabled, expired, locked-out, deleted or SID-changed principals by an inventory pre-check plus an authoritative live connector read at sign-in, failing closed; no ticket-age bound (authtime is the TGT logon time). Residual R-AN9-1 (DC replication lag), R-AN9-2 (timing). TM-F-SSO adds `an9_refuses_ad_disabled`.
