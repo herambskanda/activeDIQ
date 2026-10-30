@@ -28,8 +28,8 @@ import (
 
 const (
 	rp6Perm  authz.Permission = "reports.run"
-	rp6Seeds                  = 80  // random worlds per PostgreSQL version
-	rp6Scope                  = 6   // random scopes per world
+	rp6Seeds                  = 80 // random worlds per PostgreSQL version
+	rp6Scope                  = 6  // random scopes per world
 )
 
 type rpNode struct {
@@ -424,7 +424,7 @@ func (e *env) rpRun(t *testing.T, r rpRun, scope authz.ReadScope, now time.Time)
 	return keys, count
 }
 
-func TestCompiledScopeMatchesReadOracle(t *testing.T) { // Test_compiled_scope_matches_read_oracle
+func Test_compiled_scope_matches_read_oracle(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
 		conns := [2]inventory.ConnectionID{
