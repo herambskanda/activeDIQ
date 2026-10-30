@@ -111,6 +111,23 @@ describe("activeDIQ tokens: WCAG 2.2 AA in both themes", () => {
     expect(darkMedia).toEqual(darkAttr);
   });
 
+  it("defines the overlay layers and scrim the popover, sheet and toast components use (T-0953)", () => {
+    for (const name of [
+      "z-popover",
+      "z-sheet",
+      "z-toast",
+      "scrim",
+      "sheet-w-wide",
+      "popover-w",
+      "toast-w",
+    ]) {
+      expect(tokensCss, `--diq-${name}`).toMatch(new RegExp(`--diq-${name}:`));
+    }
+    const z = (n: string) => Number(new RegExp(`--diq-${n}:\\s*(\\d+)`).exec(tokensCss)?.[1]);
+    expect(z("z-popover")).toBeLessThan(z("z-sheet"));
+    expect(z("z-sheet")).toBeLessThan(z("z-toast"));
+  });
+
   it("is activeDIQ's own palette: no skenzeriq indigo", () => {
     for (const theme of [light, darkAttr]) expect(Object.values(theme)).not.toContain("#6E5BFF");
     expect(tokensCss).not.toMatch(/--sk-|Geist/);
