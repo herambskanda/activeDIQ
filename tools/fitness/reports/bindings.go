@@ -39,7 +39,7 @@ var defaultBindings = []binding{
 		What: "an expired run is not served; the row trigger refuses an insert or update once the run is succeeded, and the state trigger refuses every edge not in reports contract §6.2 (ADR-0010 rules 2 and 5)"},
 	{Check: "RP5", Name: "Test_export_digest_equals_run_digest", Pkg: "./internal/modules/reports/export", Owner: "B9",
 		What: "an export's digest equals the stored run's digest (ADR-0010 rule 4, AC-50)"},
-	{Check: "RP6", Name: "Test_compiled_scope_matches_read_oracle", Pkg: "./internal/platform/store/reportsql", Owner: "B2",
+	{Check: "RP6", Name: "Test_compiled_scope_matches_read_oracle", Pkg: "./internal/directory/inventory", Landed: true, Owner: "B2",
 		What: "the compiled scope equals the authz.Evaluator.AuthorizeRead oracle over trees written by the inventory writer with OU moves (FR-07, LF-39)"},
 	{Check: "RP8", Name: "Test_derived_columns_match_reference", Pkg: "./internal/directory/inventory", Owner: "B3",
 		What: "every derived column matches its reference implementation (FR-09, AC-49)"},
