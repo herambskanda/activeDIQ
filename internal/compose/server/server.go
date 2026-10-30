@@ -194,6 +194,10 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	}
 	firstOwner.SetTenant(tid) // the claim route can now create the first owner
 	console.SetTenant(tid)    // and the sign-in plane knows whose accounts it checks
+	// Dead AN-8 throttle rows are purged on a cadence so one-off submitted names cannot grow the table (T-0868).
+	if err := startThrottlePurge(ctx, db, jreg, console.Local, tid); err != nil {
+		return err
+	}
 	// Lab builds only (T-0684): create and activate the lab connections through the real activation path.
 	if err := labSeed(ctx, conns, connKernel.Service, tid); err != nil {
 		return err

@@ -2073,6 +2073,11 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
       shared overflow bucket for all new keys; the answer is still the uniform `401`, so the cap
       is not observable per name. The delay window uses no waiting goroutine, so a flood of
       names does not exhaust connections.
+      Only rows inside the window count toward the cap, but a row of a one-off name is replaced
+      only if that name returns, so dead rows would pile up without bound. The tenant job
+      `authn.throttle.purge` (T-0868, every 10 minutes, first run at boot) deletes rows whose
+      window ended more than `ThrottleWindow` + 5 minutes ago and whose `not_before` has passed,
+      in the tenant's own transaction.
    f. **Counting.** A non-evaluated attempt counts as a failure for rule 3 (otherwise
       hammering during the window would be free), capped at the rule-3 ceiling of 15 minutes.
       Residual R-AN8-1: anyone on L1 can push a known break-glass name into the delay window with
