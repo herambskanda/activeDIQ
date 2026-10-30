@@ -1876,6 +1876,12 @@ transport, `plaintext_opt_in`; the table CHECK ties plaintext to the opt-in). Ev
 `siem.destination.created`/`.updated` audit event (updates record the previous host, port and transport,
 read FOR UPDATE) in one transaction; a plaintext write also appends `siem.destination.plaintext_opt_in`. Other channel kinds
 and the lifecycle states arrive with their own tickets.
+**Realised so far (T-0950).** The `smtp` channel is the tenant's single row in `notify_settings` (relay host,
+port, `starttls`/`tls`/`none` security, sender, `plaintext_opt_in` tied to `none` by a CHECK), together with the
+tenant's allowed recipient domains (canonical, sorted, exact match, at most 200; an empty list makes every
+address external). It has an optimistic `version` and one writer, the `notify.settings.update` Action (StepUp,
+control plane, TM-D30 SX-7), which audits the before and after values. No SMTP AUTH credential is held yet, so
+I1's sealed credentials are not realised for SMTP; the lifecycle states do not exist for it.
 
 ### DM-83 NotificationTemplate · T (shipped defaults + overrides) · owner `platform/notify`
 **Definition.** The message for a purpose and channel kind. **Replaces (ME):** notification
@@ -1893,6 +1899,16 @@ notification history (ADM-204).
 report run, request, reminder) · `attempts` · `provider_message_id` · `state`.
 **Invariants.** I1 It stores metadata and variable references, not rendered bodies.
 **Lifecycle.** `queued → sent`, or `queued → failed → (retry) → sent | given_up`.
+**Realised so far (T-0950).** `notify_deliveries`, one row per recipient (`recipient_kind` `account` with the
+account id, or `address` with the canonical address), `source_kind` + `source_id` (`Deliveries.ForSource` returns
+the live Deliveries of one source and recipient, and ignores `given_up`), `requested_by`, a `dedup_key` that makes
+`Enqueue` idempotent, `attempts` against `max_attempts` (default 5), `last_error_code`, `next_attempt_at`, and a
+lease so a crashed dispatcher's claim is re-taken. States are `queued`, `sending`, `sent`, `failed` (last attempt
+failed, retry scheduled) and `given_up` (terminal; carries the reason code). Permanent failures (egress denial,
+SMTP 5xx, an external address where an internal one is required, no usable address) give up at once; transient
+ones back off 1 m, 5 m, 30 m, 2 h. The body is never stored: the purpose's renderer re-renders from the
+variables at each attempt (I1). Audit events `notify.delivery.queued|sent|given_up` carry ids, codes and class,
+never a body, subject or address. Rows are never deleted; identity columns are immutable (trigger).
 
 ### DM-85 ItsmConnection · T · owner `modules/itsm`
 **Definition.** A link to a service-desk system. One adapter shape covers every system.
