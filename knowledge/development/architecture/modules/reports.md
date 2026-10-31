@@ -252,14 +252,35 @@ and the ancestry-complete requirement. So:
   a `FilterAnchor`; a GUID or name in a cell comes from a `RowAnchor` or a `MaskAnchor` identity
   column. RP11 catches a breach per dataset.
 
+**DN disclosure rule** (security-architect decision, T-0958 review; filed as T-1063). An
+in-scope object's own `dn` cell may name the OUs and containers above the scope root. Those
+parent RDNs are not an exception to the masking rules; they are part of the object's name.
+- **Reason (AD semantics).** A DN is the object's name and its path from the naming context head.
+  AD returns the same string, parent RDNs included, to any principal who can read the object, so
+  the `dn` cell tells a reader with the grant nothing the directory would not.
+- **Where it applies.** Only a column that renders the row's own `dn` (today `dn` on
+  `inventory.users` and `inventory.computers`), and only for the row's own object.
+- **Where it does not.** No other column may carry an out-of-scope ancestor's name or GUID:
+  not a second copy of the DN, not a parent-DN or OU-path column (T-1041 must mask it or scope
+  it to the in-scope part), not another row's DN, and not a name or GUID of an out-of-scope
+  object that is not an ancestor. An ancestor name outside the `dn` cell comes from a
+  `MaskAnchor` identity column and shows as NULL or a "(… outside your scope)" label.
+- **Test.** RP11 keeps real DNs whose parent OUs carry the sentinel (below). It allows that
+  sentinel only inside the `dn` cell of the row's own object, and no sentinel at all anywhere
+  else. A column that adds the parent name fails the test.
+
 **Test RP11** (rows B3 and B6, listed by T-0873):
 `Test_dataset_reveals_nothing_outside_scope`. For **every registered dataset** and every column:
 1. Write an inventory through the inventory writer. One base object is in scope; every other
    object (members, groups, `Via` hops, PSOs, sibling and child OUs, contacts) is outside it and
    carries a sentinel name and GUID.
+   An in-scope object keeps a real DN whose parent OUs are outside the scope and carry the
+   sentinel (`CN=<name>,OU=SENTINEL-OU-child,OU=SENTINEL-OU-parent,DC=example,DC=test`).
 2. Run the dataset's full column set under a `ReadScope` whose single grant includes the base
    objects and excludes everything else.
-3. Fail when any cell holds a sentinel name or GUID, or when any numeric aggregate column differs
+3. Fail when any cell holds a sentinel name or GUID (except the `dn` cell of the row's own
+   object, which may hold the sentinel parent OUs and nothing else of the sentinel, see the DN
+   disclosure rule above), or when any numeric aggregate column differs
    from the same aggregate computed with the out-of-scope objects deleted. Aggregate columns are
    those declared `Column.Count`.
 
