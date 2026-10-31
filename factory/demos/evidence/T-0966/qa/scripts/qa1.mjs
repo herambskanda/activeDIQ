@@ -11,7 +11,7 @@ const defs = [
  {id:"cmp-01",version:1,name:"Ünïcödé 日本語 レポート very long name that goes on and on and on and on and on and on and on and on",description:"computers",category:"computers",dataset:"inventory.computers",freshnessKind:"synced",alsoKnownAs:[],columns:[col("name","Name")],exportFormats:[],minScheduleIntervalHours:1,perDc:true,subjectKind:"none",presets:[{id:"p",name:"All",meName:null,periodDays:null,columns:["name"],filters:[]}]},
 ];
 const RUN="22222222-2222-4222-8222-222222222222";
-const mkrun=(o={})=>({id:RUN,definitionId:"usr-03",definitionVersion:1,presetId:"recent",state:"succeeded",asOf:new Date(Date.now()-60000).toISOString(),createdAt:new Date().toISOString(),createdBy:{kind:"user",id:"u"},startedAt:new Date().toISOString(),finishedAt:new Date().toISOString(),expiresAt:null,digest:"x",freshness:{state:"synced",label:"Synced just now"},objectsChecked:5000,rowCount:1200,scopeApplied:"Domain lab.test",parameters:{columns:["name","days_since"],connectionIds:[],filters:[],includeReadOnlyDcs:false,ouExclude:[],ouInclude:[],subjects:[]},progress:{percent:100,stage:"done"},skippedConnections:[],...o});
+const mkrun=(o={})=>({id:RUN,definitionId:"usr-03",definitionVersion:1,presetId:"recent",state:"succeeded",asOf:new Date(Date.now()-60000).toISOString(),createdAt:new Date().toISOString(),createdBy:{kind:"user",id:"u"},startedAt:new Date().toISOString(),finishedAt:new Date().toISOString(),expiresAt:null,digest:"x",freshness:{state:"synced",label:"Synced just now",stale:[],thresholdSeconds:null},objectsChecked:5000,rowCount:1200,scopeApplied:"Domain lab.test",parameters:{columns:["name","days_since"],connectionIds:[],filters:[],includeReadOnlyDcs:false,ouExclude:[],ouInclude:[],subjects:[]},progress:{percent:100,stage:"done"},skippedConnections:[],hiddenGroups:[],...o});
 const problem=(s,t)=>({status:s,contentType:"application/problem+json",body:JSON.stringify({type:"about:blank",title:t,status:s,traceId:"trace-qa"})});
 const log=[]; const findings=[];
 const note=(ok,msg)=>{ (ok?log:findings).push((ok?"OK   ":"FAIL ")+msg); console.log((ok?"OK   ":"FAIL ")+msg); };
@@ -132,9 +132,6 @@ const S0=()=>({reqs:[]});
   console.log("   after preset url:",p.url()); console.log("   POSTs:",S.reqs.filter(r=>r.startsWith("POST /runs")));
   console.log("   svc banner:",await p.getByText("Probable service accounts are hidden").count());
   await p.screenshot({path:OUT+"/rpt-inactive.png",fullPage:true});
-  await p.getByRole("button",{name:"Show them"}).click(); await p.waitForTimeout(800);
-  console.log("   after Show them url:",p.url()); console.log("   last POST:",S.reqs.filter(r=>r.startsWith("POST /runs")).slice(-1));
-  await p.getByRole("button",{name:"Hide them"}).click(); await p.waitForTimeout(600);
   // period
   console.log("   period opts:",await p.getByLabel("Period").locator("option").allTextContents()); await p.getByLabel("Period").selectOption({label:"Last 7 days"}); await p.waitForTimeout(700);
   console.log("   period url:",p.url()," last POST:",S.reqs.filter(r=>r.startsWith("POST /runs")).slice(-1));
