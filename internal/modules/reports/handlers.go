@@ -116,7 +116,7 @@ func (h *Handlers) GetReportRun(ctx context.Context, in api.GetReportRunInput) (
 		return nil, h.problem(run.ErrRunNotFound)
 	}
 	var got run.Run
-	err = h.Runs.Read(ctx, tid, id, chain, run.ForGet, func(_ context.Context, _ store.Tx, r run.Run) error {
+	err = h.Runs.Read(ctx, tid, run.OpGet, id, chain, run.ForGet, func(_ context.Context, _ store.Tx, r run.Run) error {
 		got = r
 		return nil
 	})
