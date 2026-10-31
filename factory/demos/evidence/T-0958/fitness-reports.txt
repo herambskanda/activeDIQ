@@ -1,0 +1,7 @@
+go run ./tools/fitness/reports -lock-base main
+  pending   RP10 Test_delivery_link_authorised_by_delivery_row (row B11 has not landed it) (not yet checked, not a pass)
+  pending   RP4 Test_expired_run_is_not_served (row B4 has not landed it) (not yet checked, not a pass)
+  pending   RP5 Test_export_digest_equals_run_digest (row B9 has not landed it) (not yet checked, not a pass)
+  pending   RP7 library/LOCK (internal/modules/reports/library has not landed: row B5; the rule applies the moment the directory exists) (not yet checked, not a pass)
+  pending   RP9 Test_run_read_bound_to_runner_and_scope (row B4 has not landed it) (not yet checked, not a pass)
+fitness-reports: ok (RP2, RP3, RP7 and the landed bound tests as listed; RP1 runs in fitness-safeprim; pending parts above; ADR-0010 stays out of accepted until none is pending)

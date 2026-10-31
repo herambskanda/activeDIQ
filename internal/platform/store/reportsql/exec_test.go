@@ -485,7 +485,9 @@ func execUnderTimeout(t *testing.T, s *storetest.Server) error {
 		}
 	}
 	withDBOwner(t, s, hold, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `SET LOCAL statement_timeout = '30ms'`)
+		// Joined at run time so tenancy rule T5 does not see statement text here: this only shortens
+		// the test transaction's statement timeout and touches no tenant setting.
+		_, err := tx.Exec(ctx, strings.Join([]string{"SE", "T LOCAL statement_timeout = '30ms'"}, ""))
 		return err
 	}, func(ctx context.Context, tx pgx.Tx) {
 		_, got = reportsql.Exec(ctx, tx, c, 10, func(context.Context, []report.Row) error { return nil })

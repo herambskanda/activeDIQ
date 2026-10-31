@@ -16,6 +16,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/modules/directory"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
@@ -131,7 +132,7 @@ func serveAs(t *testing.T, h directory.Handlers, target string, authn apihost.Au
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := apihost.Build(doc, []apihost.TagHandlers{h.Bind()}, pol, apihost.Permissions{string(directory.ReadPermission), "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}, apihost.Ports{Authn: authn, Authz: ports{}, Limits: ports{}, StepUp: ports{}})
+	srv, err := apihost.Build(doc, []apihost.TagHandlers{h.Bind()}, pol, apitest.Catalogue(doc), apihost.Ports{Authn: authn, Authz: ports{}, Limits: ports{}, StepUp: ports{}})
 	if err != nil {
 		t.Fatal(err)
 	}
