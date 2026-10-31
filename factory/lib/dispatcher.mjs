@@ -23,6 +23,7 @@ import {
 } from './worktree.mjs';
 import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
+import { blockedNote, preMergeSettings, runPreMergeGate } from './premerge.mjs';
 
 export { selectCandidates, launchGate } from './candidates.mjs';
 
@@ -95,6 +96,9 @@ export class Dispatcher {
     this.lastTick = 0;
     this.lastHeartbeat = 0;
     this.wake = null;
+    this.gateRun = null; // the pre-merge gate + merge in flight (one at a time)
+    this.gateAbort = null;
+    this.gateRetryAt = new Map(); // ticket id → ms before which a gate that could not judge is not retried
   }
 
   // ---- bookkeeping ------------------------------------------------------------------------
@@ -379,9 +383,15 @@ export class Dispatcher {
    * Merge every finished ticket that has work on its branch: code tickets that still have a
    * worktree, and any other type whose `factory/<id>` branch has commits ahead of main (a spec
    * or docs ticket must never reach done with its commits stranded on a branch — T-0986).
+   * With the pre-merge gate enabled (`dispatcher.pre_merge.enabled`) the gate runs CI on the
+   * merge result first, which takes minutes to an hour, so one ticket at a time goes through it
+   * in the background: this pass starts it and returns, and the ticket merges (or is reopened)
+   * when the gate finishes.
    */
   async mergePass() {
     if (this.shared) return;
+    const gated = preMergeSettings(this.ctx.config).enabled;
+    if (gated && this.gateRun) return;
     const done = listEntities(this.ctx, 'tickets').filter((t) => t.status === 'done');
     const code = (t) => isCodeType(this.ctx.config, t.type);
     const stranded = done.some((t) => !code(t)) ? await branchesAheadOfMain(this.ctx) : new Map();
@@ -389,8 +399,21 @@ export class Dispatcher {
     for (const ticket of finished) {
       if (this.stopping) return;
       if (this.holdEmbargoed(ticket)) continue;
-      await this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket));
+      if (!gated || !code(ticket)) { // spec/docs branches carry no product code to gate
+        await this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket));
+        continue;
+      }
+      if ((this.gateRetryAt.get(ticket.id) ?? 0) > this.#nowMs()) continue;
+      this.gateAbort = new AbortController();
+      this.gateRun = this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket, { gate: true }))
+        .finally(() => { this.gateRun = null; this.gateAbort = null; this.requestTick = true; this.wake?.(); });
+      return;
     }
+  }
+
+  /** Wait for a pre-merge gate in flight (tests, shutdown). */
+  async gateIdle() {
+    while (this.gateRun) await this.gateRun;
   }
 
   /**
@@ -411,13 +434,34 @@ export class Dispatcher {
     return true;
   }
 
-  async mergeOne(ticket) {
+  async mergeOne(ticket, { gate = false } = {}) {
     const { ctx } = this;
+    const main = ctx.config.dispatcher.main_branch;
+    if (gate) {
+      let verdict;
+      try {
+        verdict = await runPreMergeGate(ctx, ticket, { signal: this.gateAbort?.signal });
+      } catch (err) {
+        // The gate could not judge (timeout, stop, worktree failure): never merge on that. Retry later.
+        this.gateRetryAt.set(ticket.id, this.#nowMs() + 10 * 60_000);
+        throw err;
+      }
+      this.gateRetryAt.delete(ticket.id);
+      if (verdict.status === 'blocked') {
+        appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merge refused by the pre-merge gate: ${verdict.summary}` });
+        reopenTicket(ctx, ticket.id, 'dispatcher', blockedNote(verdict, main));
+        return;
+      }
+      if (verdict.status === 'pass') {
+        appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} pre-merge gate passed (${verdict.mode}): ${verdict.summary}` });
+      }
+      // a 'conflict' verdict falls through: mergeTicket reports and reopens it the usual way
+    }
     const merged = await mergeTicket(ctx, ticket);
     if (merged.status === 'merged') {
       const problems = await cleanupWorktree(ctx, ticket.id);
       setTicketLinks(ctx, ticket.id, { worktree: null, held: null, merged: nowIso(ctx), merge_commit: merged.commit });
-      appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merged into ${ctx.config.dispatcher.main_branch} (${merged.commit.slice(0, 8)})${problems.length ? `; cleanup: ${problems.join('; ')}` : ''}` });
+      appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merged into ${main} (${merged.commit.slice(0, 8)})${problems.length ? `; cleanup: ${problems.join('; ')}` : ''}` });
     } else if (merged.status === 'conflict') {
       reopenTicket(ctx, ticket.id, 'dispatcher', `merging ${branchName(ticket.id)} into ${ctx.config.dispatcher.main_branch} conflicted (${merged.detail}). Merge ${ctx.config.dispatcher.main_branch} into the branch, resolve the conflicts, re-run the tests and advance again.${ticket.links?.worktree ? '' : ` This ${ticket.type} ticket works in the main checkout, so do the merge in a temporary worktree: git worktree add <dir> ${branchName(ticket.id)}.`}`);
     } else {
@@ -550,6 +594,7 @@ export class Dispatcher {
   stop() {
     if (this.stopping) this.forceStop = true;
     this.stopping = true;
+    this.gateAbort?.abort();
     this.wake?.();
   }
 
@@ -620,6 +665,7 @@ export class Dispatcher {
       if (this.active.size) await this.sleep(Math.min(500, Math.max(10, killEnds - this.#nowMs())));
     }
     for (const run of [...this.active.values()]) await this.reap(run, { code: null, signal: 'SIGKILL' });
+    await this.gateIdle();
   }
 }
 

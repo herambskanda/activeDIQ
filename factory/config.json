@@ -17,6 +17,11 @@
     "isolation": "worktree",
     "worktree_root": "../.activeDIQ-worktrees",
     "main_branch": "main",
+    "pre_merge": {
+      "enabled": true,
+      "argv": ["make", "-k", "ci"],
+      "timeout_minutes": 120
+    },
     "permission_mode": "auto",
     "rate_limit_backoff_minutes": 15,
     "grooming_min_ready": 6,
