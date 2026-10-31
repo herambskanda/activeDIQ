@@ -408,7 +408,7 @@ type Preset struct {
     Requires *Subjects              // GRP-02, GRP-03: one or more group / user GUIDs required
 }
 
-type HiddenGroup struct{ ID string; Label string; Where Expr }
+type HiddenGroup struct{ ID string; Label string; Where Expr; Locked bool } // Locked: counted, and ShowHidden may not include it (T-0960)
 
 // Expr is a sealed tagged union. JSON: {"and":[…]}, {"or":[…]}, {"not":…},
 // {"cmp":{"col":"status","op":"eq","value":{"enum":"enabled"}}}, {"param":"days"} as a value.
@@ -471,6 +471,40 @@ replicated-logon thresholds (spec §6.4) is `Min: 30` on USR-03's `days` paramet
 - The library loads at boot with strict decoding: unknown fields are refused, and every definition
   is `Resolve`d against its dataset with its default preset, so a broken definition stops
   start-up.
+
+**As built (T-0960, row B5): `internal/modules/reports/library`.**
+- **Files.** `usr-01.v1.json`, `usr-02.v1.json`, `usr-03.v1.json`, `usr-05.v1.json` (lower case, one file per
+  (ID, version)); `LOCK` (sha256sum lines, RP7 checks it in CI); `crosswalk.tsv` (all 54 ME names of spec §6.2:
+  name, report ID, title, preset, pending note). `Load(fsys, Options{Datasets, Registry})` is strict (unknown
+  member, bad operator, file name not `<id>.v<n>.json`, a hash that differs, a file not in `LOCK`, a listed file
+  missing, a version gap) and runs `ValidateAgainst`, so any broken definition stops start-up. `Library`
+  implements `run.Catalog` (`Definition(id, 0)` is the newest; the entry carries the file SHA-256). It has no
+  method that changes a definition.
+- **Search.** `Resolve(name)` is an exact ME name (case, hyphen and spacing do not matter: "Locked-Out Users");
+  `Search(q, n)` ranks exact name, name prefix, every word in a name, then report title or ID. A name whose
+  report or preset is not shipped answers with `Available=false`; "Users Without Managers" is pending on
+  T-1041 (the `manager` attribute is not collected). The crosswalk and the presets must agree both ways at load.
+- **Locked hidden groups.** `HiddenGroup.Locked` is a narrowing the admin cannot undo: the rows are counted in the
+  run header and `ShowHidden` naming it is refused (`unknown_parameter`). USR-03 uses it for `sync_off`
+  (AC-16): rows of a domain with `msDS-LogonTimeSyncInterval = 0` (dataset column `logon_sync_interval_days`) are
+  counted and never listed. The threshold floor is `Min: 30` on `days` (and `recent_days`) of USR-03.
+- **Rules from the ad-expert consult** (domain-model.md, "Consult 2026-10-31"): Inactive N = enabled and (replicated
+  logon older than N, or no logon recorded and created more than N days ago); an unread logon input is in neither
+  list; expiry reports include disabled accounts except "Soon-to-expire", which hides them behind a counted,
+  showable group; Locked-out Users has no extra exclusion. USR-03 hides probable service accounts
+  (`service_accounts`, showable, reason column in the grid).
+- **Dataset columns added to `inventory.users`** (`logon_recorded`, `days_since_logon`, `days_to_account_expiry`,
+  `logon_sync_interval_days`; `directory/inventory/datasets*.go`): RP11 still passes, they hold ints and enums only.
+- **Deviations from spec §6.2, each closed by T-1041 (a v2 file then):** "OU path" is the `dn` column (allowed by
+  the DN disclosure rule); no "Manager" column and no "Users Without Managers" preset; USR-03 shows one more
+  column (`probable_service_account_reason`). Not done: the per-domain threshold floor
+  `max(30, interval)` (the floor is 30 for every domain).
+- **Not wired in production:** `compose/server` still passes `noLibrary`, because `inventory.Datasets()` cannot be
+  registered until the table-owner map lists their tables (T-0997).
+- **Tests.** `library/library_test.go` (`Test_reports_library_matches_spec`, `Test_reports_search_by_me_name`,
+  immutability, broken definitions, crosswalk agreement); `directory/inventory/reports_library_test.go` (every
+  preset's rows equal a ground truth computed in Go from the seed, the six hidden service accounts and their
+  reasons, sync interval 0), both PostgreSQL versions.
 
 ## 4. Scope: the `authz.ReadScope` input (EP-6, spec §8.1)
 
@@ -1310,7 +1344,7 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | **B2** | `store/reportsql`: `NewRegistry` (pre-quoting, table-name and rel checks), `Compile`, `CompileCount`, `Exec` (cursor), anchor and rel expansion (§3.3), the `UnknownWhen` checks and filter guard (§3.3), scope with token layer and narrowing rendering (§4.3, §4.4), SQL vectors, **RP6** | reporting-engineer (security-architect reviews) | B1, T-0880; RP6 also needs T-0882 (oracle) and P2 | FR-05, FR-07, FR-12; AC-05, AC-06, AC-07 |
 | **B3** (built, T-0958; §3.3 "As built") | inventory: `inventory.users` and `inventory.computers` datasets, D4 policy-input tables and sync, D7 inputs, GIN index on `ancestry`, derived-state fragments, PSO `MaskAnchor` for `policy_source`, service-account signal, secret-key refusal, **RP8**, **RP11** for its datasets | directory-engineer (ad-expert consult) | B1, B2, P2 | FR-09, FR-14, FR-21; AC-12, AC-13, AC-14, AC-15, AC-29, AC-49 |
 | **B4** | `modules/reports` run path: module skeleton and page, `report_runs`/`report_run_rows` migrations and both triggers, `run.State`/`run.FailureReason`, `reports.run` job with row lock, `attempt` and interrupted rule, reuse window, concurrency cap, `run.ReadAccess` (§6.6), page queries, freshness label, permissions, run audit kinds with the full chain, retention job, run API handlers, **RP4**, **RP9** | reporting-engineer (backend-engineer reviews) | B1, B2, T-0882, P1, P2, T-0866 | FR-06, FR-07, FR-08, FR-11, FR-12, FR-13 (server-side sort and filter), FR-22 (run), FR-30, FR-31; AC-06–AC-11, AC-42, AC-48 |
-| **B5** | Library batch 1: loader, `LOCK`, crosswalk search index, USR-01, USR-02, USR-03, USR-05 with presets and hidden groups, sync-interval-0 narrowing | reporting-engineer | B3, B4 | FR-01, FR-02, FR-03, FR-04, FR-06, FR-09, FR-14; AC-01–AC-04, AC-12, AC-16, AC-17, AC-18, AC-49 |
+| **B5** (built, T-0960; §3.6 "As built") | Library batch 1: loader, `LOCK`, crosswalk search index, USR-01, USR-02, USR-03, USR-05 with presets and hidden groups, sync-interval-0 narrowing | reporting-engineer | B3, B4 | FR-01, FR-02, FR-03, FR-04, FR-06, FR-09, FR-14; AC-01–AC-04, AC-12, AC-16, AC-17, AC-18, AC-49 |
 | **B6** | inventory: `inventory.groups`, `.group_members` (`grp` and `mbr` row anchors, primary-group edges, effective closure, cycle findings, FSP rows, `Via` hop as `MaskAnchor`), `.ous` (in-scope subtree counts over a `FilterAnchor`), `.contacts`, **RP11** for its datasets | directory-engineer | B1, B2, P2 | FR-15, FR-06; AC-19, AC-20, AC-21 |
 | **B7** | Library batch 2: PWD-01, PWD-02, GRP-01–GRP-04, CMP-01, CMP-02, OU-01, CTC-01 | reporting-engineer | B5, B6 | FR-01, FR-02, FR-09, FR-14, FR-15; AC-13, AC-19, AC-20, AC-22, AC-23 |
 | **B8** | Per-DC runs: the §6.5 stages, read cap, coverage labels, `EvalPerDC`; USR-04, PWD-03 | reporting-engineer | B4, B5, P5 | FR-10; AC-39, AC-40, AC-41 |
@@ -1423,3 +1457,5 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 - 2026-10-30 · T-0958 · row B3 built: `inventory.users` and `inventory.computers`, migration 0061 (D7 inputs, D4
   policy tables, GIN index on `ancestry`), `PolicyWriter`, derived states with the effective policy resolved in
   SQL, RP8 and RP11 landed in `tools/fitness/reports`, `reportsql.Query.Statement`. See §3.3 "As built".
+- 2026-10-31 · T-0960 · row B5 built: `internal/modules/reports/library` (loader, `LOCK`, crosswalk search, USR-01, USR-02,
+  USR-03, USR-05), `HiddenGroup.Locked`, four derived columns on `inventory.users`. See §3.6 "As built".
