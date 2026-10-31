@@ -16,4 +16,5 @@
 - [Tier-0/verify stream lessons](tier0-verify-lessons.md) — connector must set fingerprint, duplicate fingerprints refuse the run, lab Tier-0 test recipe
 - [ancestry move lessons](ancestry-move-lessons.md) — CTE FOR UPDATE trap, derive-not-trust completeness, chain order, fault-injection trigger
 - [search scope lessons](search-scope-lessons.md) — RP2 forces matcher into authz, ObjectID vs wire GUID order, clienttest fake directory
+- [per-NC pass lessons](passes-lessons.md) — Freshness derives paused/never-synced, PassNCs on quiet cycles, test helper traps
 - [inventory datasets lessons](inventory-datasets-lessons.md) — T-0958: no pgx in tests, tenant role can't DELETE, RP11 subtest shape, unrelated rereds

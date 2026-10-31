@@ -24,10 +24,10 @@ PostgreSQL, and reach DCs only through the connector's `ReadPerDC` over the same
 profiles (spec §10; ADR-0002 rule 1). Entra datasets are absent at 2a (spec §11), and that is a
 scope decision, not a platform asymmetry.
 
-> **This page comes before the code.** `internal/modules/reports/` does not exist yet. Row B4 of
-> §12 creates the module and takes this page over as its module page (modules/README). Until
-> then the page is the build contract. Every Go name below is the name the build tickets use. A
-> ticket that needs a different name changes this page in the same change.
+> **This page is the build contract, and the module page.** `internal/modules/reports/` exists since
+> row B4 (T-0959): the run path is built (see the changelog for what differs from the text below).
+> Every Go name below is the name the build tickets use. A ticket that needs a different name changes
+> this page in the same change.
 
 ## 0. What exists today (grep, 2026-10-30) and what this page fixes
 
@@ -36,7 +36,7 @@ scope decision, not a platform asymmetry.
 | `internal/platform/report` (EP-8 host), `Registrar.Dataset` | **Built (T-0956, row B1).** Pure types and `Resolve` (no SQL driver), `Registrar.Dataset`, `Contributions.Datasets()`, `platform.Deps.Report`, and the Boot table-ownership check (`report.CheckTables`). Deviations below | §2, §3, row B1 |
 | `internal/platform/store/reportsql` | **Built (T-0957, row B2).** `NewRegistry`, `Compile`, `CompileCount`, `Exec`, `Count`, the scope and narrowing renderers, SQL vectors (FF-SP4) and RP6. `sqlconst` (FF-SP2) lets a value of type `reportsql.CompiledSQL` reach `Exec` and `string(x)` of one is a constant for it. Deviations in §5 | §5, row B2, RP1, RP6 |
 | Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. Two adapters are still to be wired in `compose/server`: `rbac.OwnerStatus` (over the account store) and `rbac.ObjectConnections` (over inventory) | §4 |
-| Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. **Row B6 (T-0961, migration 0063) added** the group closure `inventory_group_members` and its dirty set `inventory_group_closure_dirty`. There is still no per-NC sync-pass watermark (spec D6). Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed | §3.4, §4.5, rows P1, **P2**, B3, B6 |
+| Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. **Row B6 (T-0961, migration 0066) added** the group closure `inventory_group_members` and its dirty set `inventory_group_closure_dirty`. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed Row P1 (T-0949, migration 0063) is built: `nc_sync_passes` (one row per tenant, connection, NC) holds `last_pass_at` and `state` (`ok`, `resync_required`, `paused`). `Writer.RecordPass` sets the pass as-of (start of the read) in the cycle's transaction and `Ingest` calls it on the last batch for each `Cycle.PassNCs`, so a quiet domain is fresh; `Writer.MarkNC` records resync or pause; `Reader.Freshness` returns `[]report.NCWatermark` and the `report.Label` result, with `DefaultStalenessThreshold` = 60 min | §3.4, §4.5, rows P1, **P2**, B3, B6 |
 | `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150). **No canonical digest** (spec §8.3) | §7, row B9 |
 | `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
 | `platform/notify` | **Built (T-0950).** `notify/mailaddr` (strict address parser), `notify/settings` (allowed recipient domains, SMTP relay; migration 0062), `notify/mail` (SMTP over egress), `notify/mailtest`, `notify/delivery` (DM-84 `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue`), the `notify.settings.update` Action in `modules/notify`. **Not yet wired:** nothing calls `DispatchDue` (needs the DM-44 schedule, row P4, or a notify job), no `Renderer` per purpose, no SMTP AUTH credentials. Terminal failure state is `given_up` | §7.2, §8, row P3 |
@@ -74,7 +74,7 @@ T-0874 carries the spec and blueprint edits.
 | --- | --- | --- | --- |
 | `internal/platform/report` | reporting-engineer | EP-8 host: `Dataset`, `Column`, `Definition`, `Query` (the AST), `Cell`, `Narrowing`, `Freshness`, `PerDCReader` port, `Host`. Pure types and validation, with **no SQL driver** (FF-SP1) | `authz` (types), `tenant`, stdlib |
 | `internal/platform/store/reportsql` | reporting-engineer. security-architect reviews every change (P5 rule 3) | `Registry` (pre-quoted, built once), `Compile`, `CompileCount`, `Exec`, `Count`, `CatalogSchema`, `Query`, `CompiledSQL`, term rendering | `report`, `authz`, `store`, pgx (it sits under `store`) |
-| `internal/directory/inventory` | directory-engineer | descendant ancestry rewrite on move and `ancestry_complete` (row P2); the datasets `inventory.users`, `.computers`, `.groups`, `.group_members`, `.ous` and `.contacts` through `inventory.Datasets() []report.Dataset`; the D4 policy-input tables; the D6 watermarks through `inventory.Freshness` | `report` (types only) |
+| `internal/directory/inventory` | directory-engineer | descendant ancestry rewrite on move and `ancestry_complete` (row P2); the datasets `inventory.users`, `.computers`, `.groups`, `.group_members`, `.ous` and `.contacts` through `inventory.Datasets() []report.Dataset`; the D4 policy-input tables; the D6 watermarks through `Reader.Freshness` (built, row P1) | `report` (types only) |
 | `internal/platform/authz` + `internal/platform/rbac` + `modules/delegation` | backend-engineer | `authz.ReadScope` (**T-0880**), the `ou_one_level` root kind (**T-0881**) and the producer `rbac.ReadScopes` (**T-0882**), fed by the EP-6 `ScopeEvaluator`s that `delegation` registers (T-0880) | as today |
 | `internal/modules/reports` (+ `run`, `library`, `export`, `schedule` subpackages) | reporting-engineer | DM-71 to DM-73 tables, the library, the run path, export jobs, schedules, API handlers | `platform/...`, `directory` via `directory.Services` (ADR-0003) |
 
@@ -378,18 +378,21 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   `msDS-UserPasswordExpiryTimeComputed` as an oracle: a Windows-lab ticket is filed.
 
 **As built (T-0961, row B6): `inventory.groups`, `.group_members`, `.ous`, `.contacts`** (`internal/directory/inventory/closure.go`,
-`datasets_groups.go`, migration 0063; tests `closure_test.go`, `datasets_groups_test.go`, `rp11_inventory_test.go`).
+`datasets_groups.go`, migration 0066; tests `closure_test.go`, `datasets_groups_test.go`, `rp11_inventory_test.go`).
 
 - **Closure table.** `inventory_group_members (tenant_id, connection_id, group_guid, member_guid, edge_kind, depth, via uuid[])`,
-  one row per (group, effective member). `edge_kind` is `direct`, `primary_group`, `nested` or `cycle`; `via` holds the
+  one row per (group, effective member). `edge_kind` is `direct`, `primary_group`, `nested` or `cycle` (plus the flag `cut`); `via` holds the
   groups between the group and the member (`cardinality(via) = depth - 1`), the shortest path with the lowest GUID as tie-break. A cycle is a
   row with `group_guid = member_guid`, `edge_kind = 'cycle'` and `via` = the loop. `inventory_group_closure_dirty` holds the
   groups whose own edges or state changed. It is derived data: the runtime role keeps DELETE (the links table does not).
 - **Refresh seam.** `Writer.RefreshClosure` runs at the end of `Populate`, in the same transaction and under the connection
   advisory lock. It recomputes the dirty groups and every live group above them by a Go breadth-first walk, replaces their
   rows with one `INSERT … SELECT`, and clears the set. The dirty marks are written by the statements that change an edge
-  (`setEdge`, `removeEdge`, `removeUnseen`, `removeOtherPrimaryGroups`) and by each group observation. Depth is capped at 128
-  (`ErrTooDeep`, refuses the batch). The primary-group edge is a closure row of depth 1, so a group whose only members are
+  (`setEdge`, `removeEdge`, `removeUnseen`, `removeOtherPrimaryGroups`) and by each group observation. Depth is capped at 128:
+  the walk stops there, the nested row of a group at the cap that still has members is flagged `cut`, and the refresh
+  succeeds. `inventory.group_members.finding` then reads "Nesting deeper than 128 levels: members of X and below are not
+  listed" and `inventory.groups.nesting_cut` is true. Failing the refresh instead (the first design) let anyone who can
+  create a 129-deep chain of groups roll back every sync cycle of the connection. The primary-group edge is a closure row of depth 1, so a group whose only members are
   primary-group users is not empty. Entra groups produce no closure (the walk needs state `live` AD groups).
 - **Datasets.** `inventory.groups` counts `direct_members` (depth 1: member values and primary group), `effective_members`
   (every non-cycle closure row), `primary_group_members`; `has_members` is the Groups Without Members test; `managed_by` shows the
@@ -1112,7 +1115,12 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
   through the run API. Recipients get files only through §7.2.
 - **`reports.schedule.manage_all`** shows schedule metadata (definition, preset, owner, recipients,
   state, last fire, last run state and row count). It never opens a run's rows or files.
-- Every refusal at checks 2, 3 and 4 appends `reports.run.read_denied {run_id, check}` (§10).
+- Every refusal at checks 2, 3 and 4 appends `reports.run.read_denied {run_id, check, operation}` (§10).
+  `operation` is one of `get`, `page`, `cancel`, `retry`, `export_create` (and `download`, which B9 adds
+  under `download_denied`); `run.Service.Read` takes it as an argument, and `Cancel` and `Retry` supply
+  their own. The refusal is answered whether or not the append succeeds. A failed append is logged at
+  error level (`run_id`, `operation`, `check`, `error_class`; never the error text or a request value).
+  Retry and cancel by another account (check 2) are refused as 404 and audited the same way.
 - **History list** (`GET /reports/runs`, `listReportRuns`, T-0891) is not a run read, so it does not go
   through `run.ReadAccess`. It selects `WHERE runner_account = chain.Requester` ordered by
   `(created_at DESC, id DESC)` and takes no parameter that names another runner. It makes **one**
@@ -1131,7 +1139,10 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - the runner, after an assignment is narrowed or revoked, gets 409 on page and export create;
 - the runner, through a token narrower than the session that created the run, gets 409;
 - a `manage_all` holder gets schedule metadata and 404 on the schedule's runs;
-- every refusal leaves a `reports.run.read_denied` event.
+- every refusal (get, page, cancel, retry; export create from B9) leaves a `reports.run.read_denied` event
+  carrying the operation, the failed check and the run ID;
+- a sink that fails on the append leaves an error-level log record and the caller still gets the refusal
+  (`Test_read_denied_append_failure_is_logged`).
 
 ## 7. Export (spec §8.3, FR-16 to FR-22)
 
@@ -1431,7 +1442,32 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   changes: `NewRegistry(opt Options, ds ...)`, `Inputs{Now, Limit}`, `Count`, `CatalogSchema`.
   RP6 moved to `internal/directory/inventory` (platform tests cannot import `internal/directory`) and
   is landed in `tools/fitness/reports`; AC-06's lab count is T-1030.
+
+- 2026-10-30 · T-0959 · row B4 built: `modules/reports` (module, handlers, `Codec` for API params and
+  views, 501 stubs for the 15 operations of B5/B9/B11), `modules/reports/run` (record, service, job,
+  pages, history, retention), migrations 0064 and 0065, `compose/server/reports.go`. As built, against §6:
+  - T2 does **not** hold `FOR UPDATE` for its life (a cancel would wait up to 30 min). Every T2 write is
+    fenced (`WHERE state = 'running' AND attempt = $n`) and the rows trigger reads committed state, so a
+    concurrent cancel aborts the next insert (`AD403` -> stopped). T1 and the failure paths lock
+    (`lockRun`, then `selectRun`).
+  - Freshness is read **between** two short transactions (`inventory.Reader` opens its own; nesting is
+    refused); T2 re-checks the fingerprint, at most 3 tries.
+  - Both guard triggers are `AFTER` triggers: row security refuses a cross-tenant write before the guard
+    reads a run the caller cannot see (fitness-tenancy probes). `report_run_rows.tenant_id` also has a
+    direct foreign key to `tenants`.
+  - `ReadAccess` is pure (returns a denial); `Service.Read` opens the transaction and audits
+    `reports.run.read_denied` after it ends. `Page` goes through `Read`.
+  - `ParamsCodec.Decode(raw, def)` takes the definition (`period.lastDays` maps to its single Days param).
+  - Covered NCs for the freshness label = `ReadScope.Connections()` intersected with the narrowing.
+  - Cancel is audited as `reports.run.failed` with Reason `cancelled`. Token principals (a Via chain) are
+    refused at 2a (403). `too_many_report_jobs` is `errors[].code` on a 429.
+  - Production wiring is incomplete on purpose: compose passes `noScopes` (503 `not-ready`, no
+    `rbac.ReadScopes` adapters yet) and `noLibrary` (404 `definition_not_found` until B5).
+  - Page timings, 500k-row result, PostgreSQL 16, after `ANALYZE` (`TestLargeResultPageTimings`, opt-in
+    via `ACTIVEDIQ_REPORTS_LARGE_ROWS`): ordinal first page 10 ms; ordinal offset 250k 254 ms; sorted
+    first page 370 ms (either direction); sorted offset 250k 628 ms. Sorted pages are a top-N over
+    `sort_keys ->> col` (no per-column index); offset paging is O(offset). Storing 500k rows took 59 s.
 - 2026-10-30 · T-0958 · row B3 built: `inventory.users` and `inventory.computers`, migration 0061 (D7 inputs, D4
   policy tables, GIN index on `ancestry`), `PolicyWriter`, derived states with the effective policy resolved in
   SQL, RP8 and RP11 landed in `tools/fitness/reports`, `reportsql.Query.Statement`. See §3.3 "As built".
-- 2026-10-31 · T-0961 · row B6 built: `inventory.groups`, `.group_members`, `.ous`, `.contacts`, migration 0063 (group closure and dirty set, refreshed by `Populate`), `primary_group` and `in_other_groups` on users and computers, RP11 for the four datasets. See §3.3 "As built (T-0961)".
+- 2026-10-31 · T-0961 · row B6 built: `inventory.groups`, `.group_members`, `.ous`, `.contacts`, migration 0066 (group closure and dirty set, refreshed by `Populate`), `primary_group` and `in_other_groups` on users and computers, RP11 for the four datasets. See §3.3 "As built (T-0961)".

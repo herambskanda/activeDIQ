@@ -1,4 +1,4 @@
--- 0063_inventory_group_closure: the effective group membership the datasets inventory.groups and
+-- 0066_inventory_group_closure: the effective group membership the datasets inventory.groups and
 -- inventory.group_members read (T-0961; reports.md §3.3, spec reports-2a §6.6, FR-15). Owner:
 -- internal/directory/inventory.
 --

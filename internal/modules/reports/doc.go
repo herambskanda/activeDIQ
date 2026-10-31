@@ -1,6 +1,7 @@
-// Package reports is the server module of the 2a report operations (T-0866, contract first). Today it
-// holds only the permission names the contract binds; the handlers, the runner and the exports arrive
-// with the reporting tickets and must not add a domain rule to the generated api package.
+// Package reports is the server module of the 2a report operations (T-0866, contract first). It maps the
+// generated API onto the run service (package run) and answers the operations whose engine has not landed
+// (library, export, schedules) with 501 not-implemented. It must not add a domain rule to the generated
+// api package, and a report is a definition run by the one engine, never a handler of its own.
 //
 // The contract is api/openapi/modules/reports.yaml. Columns are a closed enum and filters a typed
 // tree: nothing in a request is a column name, an LDAP filter, a DN or SQL.
