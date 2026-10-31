@@ -57,6 +57,14 @@ const dnColumn report.ColumnID = "dn"
 // of that object. The dn cell of a row is allowed to hold exactly that DN and nothing else; every other
 // cell of every row, and the dn cell of any other value, must be free of the sentinel.
 func leaks(res hResult, ownDN map[string]string) []string {
+	return leaksWhere(res, func(rowKey string, col report.ColumnID, v string) bool {
+		return col == dnColumn && v == strings.ToLower(ownDN[rowKey]) && v != ""
+	})
+}
+
+// leaksWhere is leaks with the allowance as a function: allowed(rowKey, column, lower-cased text) says
+// whether a text cell may hold the sentinel because it is the own DN of an object the row is about.
+func leaksWhere(res hResult, allowed func(rowKey string, col report.ColumnID, v string) bool) []string {
 	var out []string
 	for k, row := range res.rows {
 		if strings.HasPrefix(strings.ToLower(k), "ee000000-") {
@@ -64,7 +72,7 @@ func leaks(res hResult, ownDN map[string]string) []string {
 		}
 		for col, cell := range row {
 			v := strings.ToLower(string(cell.DigestValue()))
-			if col == dnColumn && cell.Tag() == "s" && v == strings.ToLower(ownDN[k]) && v != "" {
+			if cell.Tag() == "s" && allowed(k, col, v) {
 				continue
 			}
 			if strings.Contains(v, strings.ToLower(sentinel)) || strings.Contains(v, "ee000000-0000-4000") {
@@ -271,10 +279,11 @@ func rpComputers(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Conn
 	}
 }
 
-// named gives an in-scope object a DN that does not name its parents, and an out-of-scope one a sentinel name.
+// named gives an in-scope object its real DN (with the out-of-scope parent OUs, §3.3 DN disclosure rule)
+// and an out-of-scope one a sentinel name.
 func named(o inventory.Observation, name string) inventory.Observation {
 	if !strings.HasPrefix(name, sentinel) {
-		o.DN, o.RDN = "CN="+name+",DC=example,DC=test", "CN="+name
+		o.DN, o.RDN = realDN(name), "CN="+name
 	}
 	return o
 }
@@ -327,9 +336,7 @@ func rpGroups(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Connect
 	if len(res.rows) != 1 || res.count != 1 {
 		t.Fatalf("rows = %d, count = %d, want 1 and 1", len(res.rows), res.count)
 	}
-	if l := leaks(res); len(l) > 0 {
-		t.Errorf("the run reveals objects outside the scope:\n  %s", strings.Join(l, "\n  "))
-	}
+	checkNoLeaks(t, res, map[string]string{strings.ToLower(baseG): realDN("base-group")})
 	row := res.rows[baseG]
 	// direct: the base user only; effective adds base-user-2, who is reached through the out-of-scope group
 	aggregate(t, dsOf(inventory.DatasetGroups), row, map[report.ColumnID]string{"direct_members": "1", "effective_members": "2", "primary_group_members": "0"})
@@ -354,8 +361,39 @@ func rpGroupMembers(t *testing.T, e *env, reg *reportsql.Registry, c inventory.C
 	if len(res.rows) != 2 || res.count != 2 {
 		t.Fatalf("rows = %d, count = %d, want 2 and 2 (the member and the cycle finding)", len(res.rows), res.count)
 	}
-	if l := leaks(res); len(l) > 0 {
+	// A group_members row is about two objects, both in scope; group_dn and member_dn each render one of
+	// them (§3.3 DN disclosure rule, applied to both own-object DN columns). Nothing else may.
+	ownDN := map[string]string{strings.ToLower(baseG): realDN("base-group"), strings.ToLower(baseU): realDN("base-user")}
+	gmAllowed := func(rowKey string, col report.ColumnID, v string) bool {
+		g, m, _ := strings.Cut(rowKey, "|")
+		switch col {
+		case "group_dn":
+			return v == strings.ToLower(ownDN[g])
+		case "member_dn":
+			return v == strings.ToLower(ownDN[m])
+		}
+		return false
+	}
+	if l := leaksWhere(res, gmAllowed); len(l) > 0 {
 		t.Errorf("the run reveals objects outside the scope:\n  %s", strings.Join(l, "\n  "))
+	}
+	for _, c := range []struct {
+		name string
+		col  report.ColumnID
+		val  string
+	}{{"another object's DN in group_dn", "group_dn", realDN("someone-else")}, {"parent name in via_path", "via_path", parentOUs}, {"swapped DN in member_dn", "member_dn", realDN("base-group")}} {
+		m := hResult{rows: map[string]map[report.ColumnID]report.Cell{}}
+		for k, row := range res.rows {
+			m.rows[k] = map[report.ColumnID]report.Cell{}
+			for col, cell := range row {
+				m.rows[k][col] = cell
+			}
+		}
+		k := baseG + "|" + baseU
+		m.rows[strings.ToLower(k)][c.col] = report.TextCell(c.val)
+		if len(leaksWhere(m, gmAllowed)) == 0 {
+			t.Errorf("mutation %q is not caught by RP11", c.name)
+		}
 	}
 	for key, want := range map[string]string{baseG + "|" + baseU: "(group outside your scope)", baseG + "|" + baseG: "(group outside your scope)"} {
 		row := res.rows[strings.ToLower(key)]
@@ -388,7 +426,7 @@ func rpOUs(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Connection
 	obs := []inventory.Observation{named(ouObs(base, "base-ou", hOU, hOU, hDom), "base-ou"), hiddenOU,
 		u(hGUID(1, 1), "base-user", 1101, base, chainB), u(sentinelGUID(2), sentinel+"-user", 1201, hidden, chainH), u(sentinelGUID(3), sentinel+"-user-2", 1202, hidden, chainH),
 		e.under(hGroup(sentinelGUID(4), sentinel+"-group", 2001), hidden, chainH...)}
-	obs[0].DN, obs[0].RDN = "OU=base-ou,DC=example,DC=test", "OU=base-ou"
+	obs[0].DN, obs[0].RDN = "OU=base-ou,"+parentOUs, "OU=base-ou"
 	if _, err := e.populate(t, c, at, obs...); err != nil {
 		t.Fatal(err)
 	}
@@ -399,9 +437,7 @@ func rpOUs(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Connection
 	if len(res.rows) != 1 || res.count != 1 {
 		t.Fatalf("rows = %d, count = %d, want 1 and 1", len(res.rows), res.count)
 	}
-	if l := leaks(res); len(l) > 0 {
-		t.Errorf("the run reveals objects outside the scope:\n  %s", strings.Join(l, "\n  "))
-	}
+	checkNoLeaks(t, res, map[string]string{strings.ToLower(base): "OU=base-ou," + parentOUs})
 	aggregate(t, dsOf(inventory.DatasetOUs), res.rows[base], map[report.ColumnID]string{"subtree_objects": "1", "subtree_users": "1", "subtree_computers": "0",
 		"subtree_groups": "0", "subtree_contacts": "0", "subtree_ous": "0", "child_objects": "1"})
 }
@@ -420,9 +456,7 @@ func rpContacts(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Conne
 	if len(res.rows) != 1 || res.count != 1 {
 		t.Fatalf("rows = %d, count = %d, want 1 and 1", len(res.rows), res.count)
 	}
-	if l := leaks(res); len(l) > 0 {
-		t.Errorf("the run reveals objects outside the scope:\n  %s", strings.Join(l, "\n  "))
-	}
+	checkNoLeaks(t, res, map[string]string{strings.ToLower(base): realDN("base-contact")})
 	if got := cellStr(res.rows[base], "mail"); got != "base-contact@example.test" {
 		t.Errorf("mail = %q", got)
 	}
