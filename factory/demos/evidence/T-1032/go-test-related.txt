@@ -1,0 +1,7 @@
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost	0.047s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitest	0.015s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitypes	0.009s
+ok  	github.com/skenzeriq/activediq/internal/modules/reports	0.083s
+?   	github.com/skenzeriq/activediq/internal/modules/reports/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/directory	0.073s
+?   	github.com/skenzeriq/activediq/internal/modules/directory/api	[no test files]
