@@ -733,6 +733,2183 @@ func (v *ObjectView) Validate(at jsontext.Pointer, errs *Errors) {
 	}
 }
 
+// OperationBlocked is the OperationBlocked schema.
+type OperationBlocked struct {
+	Code   string          `json:"code"`
+	Target OperationTarget `json:"target"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationBlocked) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationBlocked{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "code":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Code); err != nil {
+				return err
+			}
+		case "target":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Target); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationBlocked) Validate(at jsontext.Pointer, errs *Errors) {
+	// code
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "code")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "code")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		CheckLen(errs, InBody, at.AppendToken("code"), string(v.Code), 0, 64)
+		if !pattern1.MatchString(string(v.Code)) {
+			errs.Add(InBody, at.AppendToken("code"), CodePattern, "value does not match the required pattern")
+		}
+	}
+	// target
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "target")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "target")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		v.Target.Validate(at.AppendToken("target"), errs)
+	}
+}
+
+// OperationChange: One changed field. field is the camelCase member path in the target's resource schema. before is absent when the field is set for the first time or the target is created; after is absent when it is removed or the target deleted. (The dialect allows only primitive nullables, so absence is a variant of OperationValue, not null.)
+type OperationChange struct {
+	After  OperationValue `json:"after"`
+	Before OperationValue `json:"before"`
+	Field  string         `json:"field"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationChange) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationChange{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "after":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.After); err != nil {
+				return err
+			}
+		case "before":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Before); err != nil {
+				return err
+			}
+		case "field":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Field); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationChange) Validate(at jsontext.Pointer, errs *Errors) {
+	// after
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "after")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "after")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		v.After.Validate(at.AppendToken("after"), errs)
+	}
+	// before
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "before")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "before")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		v.Before.Validate(at.AppendToken("before"), errs)
+	}
+	// field
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "field")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "field")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		CheckLen(errs, InBody, at.AppendToken("field"), string(v.Field), 1, 128)
+		if !pattern2.MatchString(string(v.Field)) {
+			errs.Add(InBody, at.AppendToken("field"), CodePattern, "value does not match the required pattern")
+		}
+	}
+}
+
+// OperationConfirmation: One confirmation the caller gives after reading the preview. items repeats, exactly, the items of the requiredConfirmations entry of the same kind.
+type OperationConfirmation struct {
+	Items []string                  `json:"items"`
+	Kind  OperationConfirmationKind `json:"kind"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationConfirmation) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationConfirmation{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "items":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := DecodeArray(d, &v.Items); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationConfirmation) Validate(at jsontext.Pointer, errs *Errors) {
+	// items
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "items")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "items")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		CheckCount(errs, InBody, at.AppendToken("items"), len(v.Items), 0, 100, CodeMaxItems)
+		for i := range v.Items {
+			CheckLen(errs, InBody, Index(at.AppendToken("items"), i), string(v.Items[i]), 1, 254)
+		}
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		if !v.Kind.Valid() {
+			errs.Add(InBody, at.AppendToken("kind"), CodeEnum, "value is not one of the allowed values")
+		}
+	}
+}
+
+// OperationConfirmationKind: What the caller confirms. A closed request enum.
+type OperationConfirmationKind string
+
+const (
+	OperationConfirmationKindExternalRecipients OperationConfirmationKind = "external_recipients"
+)
+
+// Valid reports whether v is one of the closed set of values.
+func (v OperationConfirmationKind) Valid() bool {
+	switch v {
+	case OperationConfirmationKindExternalRecipients:
+		return true
+	}
+	return false
+}
+
+// Validate records a violation when v is not in the set.
+func (v OperationConfirmationKind) Validate(at jsontext.Pointer, errs *Errors) {
+	if !v.Valid() {
+		errs.AddBody(at, CodeEnum, "value is not one of the allowed values")
+	}
+}
+
+// OperationConfirmationKindValue: A confirmation the submit needs. external_recipients is "Data leaves your organisation". Clients accept values they do not know, and a client that does not know a kind cannot submit.
+type OperationConfirmationKindValue string
+
+const (
+	OperationConfirmationKindValueExternalRecipients OperationConfirmationKindValue = "external_recipients"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v OperationConfirmationKindValue) Valid() bool {
+	switch v {
+	case OperationConfirmationKindValueExternalRecipients:
+		return true
+	}
+	return false
+}
+
+// OperationPreview is the OperationPreview schema.
+type OperationPreview struct {
+	Action                string                          `json:"action"`
+	ActionVersion         int64                           `json:"actionVersion"`
+	Blocked               []OperationBlocked              `json:"blocked"`
+	HoldReason            *string                         `json:"holdReason"`
+	Outcome               OperationPreviewOutcome         `json:"outcome"`
+	PlanHash              string                          `json:"planHash"`
+	RequiredConfirmations []OperationRequiredConfirmation `json:"requiredConfirmations"`
+	Reversibility         OperationReversibilityValue     `json:"reversibility"`
+	StepUpRequired        bool                            `json:"stepUpRequired"`
+	Steps                 []OperationStepPreview          `json:"steps"`
+	Undo                  OperationUndoPlan               `json:"undo"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationPreview) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationPreview{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "action":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Action); err != nil {
+				return err
+			}
+		case "actionVersion":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ActionVersion); err != nil {
+				return err
+			}
+		case "blocked":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := DecodeArray(d, &v.Blocked); err != nil {
+				return err
+			}
+		case "holdReason":
+			v.p.Mark(3, false)
+			if err := json.UnmarshalDecode(d, &v.HoldReason); err != nil {
+				return err
+			}
+		case "outcome":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Outcome); err != nil {
+				return err
+			}
+		case "planHash":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.PlanHash); err != nil {
+				return err
+			}
+		case "requiredConfirmations":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := DecodeArray(d, &v.RequiredConfirmations); err != nil {
+				return err
+			}
+		case "reversibility":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(7, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Reversibility); err != nil {
+				return err
+			}
+		case "stepUpRequired":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(8, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.StepUpRequired); err != nil {
+				return err
+			}
+		case "steps":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(9, null)
+			if null {
+				continue
+			}
+			if err := DecodeArray(d, &v.Steps); err != nil {
+				return err
+			}
+		case "undo":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(10, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Undo); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationPreview) Validate(at jsontext.Pointer, errs *Errors) {
+	// action
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "action")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "action")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		CheckLen(errs, InBody, at.AppendToken("action"), string(v.Action), 0, 128)
+		if !pattern3.MatchString(string(v.Action)) {
+			errs.Add(InBody, at.AppendToken("action"), CodePattern, "value does not match the required pattern")
+		}
+	}
+	// actionVersion
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "actionVersion")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "actionVersion")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		CheckInt(errs, InBody, at.AppendToken("actionVersion"), int64(v.ActionVersion), 1, 1000000)
+	}
+	// blocked
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "blocked")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "blocked")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		CheckCount(errs, InBody, at.AppendToken("blocked"), len(v.Blocked), 0, 1000, CodeMaxItems)
+		for i := range v.Blocked {
+			v.Blocked[i].Validate(Index(at.AppendToken("blocked"), i), errs)
+		}
+	}
+	// holdReason
+	if v.p.Decoded() && !v.p.Has(3) {
+		errs.Required(at, "holdReason")
+	}
+	if v.HoldReason != nil {
+		CheckLen(errs, InBody, at.AppendToken("holdReason"), string((*v.HoldReason)), 0, 64)
+	}
+	// outcome
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "outcome")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "outcome")
+		}
+	}
+	// planHash
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "planHash")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "planHash")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(5) && !v.p.IsNull(5)) {
+		CheckLen(errs, InBody, at.AppendToken("planHash"), string(v.PlanHash), 64, 64)
+		if !pattern4.MatchString(string(v.PlanHash)) {
+			errs.Add(InBody, at.AppendToken("planHash"), CodePattern, "value does not match the required pattern")
+		}
+	}
+	// requiredConfirmations
+	if v.p.Decoded() {
+		if !v.p.Has(6) {
+			errs.Required(at, "requiredConfirmations")
+		}
+		if v.p.IsNull(6) {
+			errs.NullNotAllowed(at, "requiredConfirmations")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(6) && !v.p.IsNull(6)) {
+		CheckCount(errs, InBody, at.AppendToken("requiredConfirmations"), len(v.RequiredConfirmations), 0, 10, CodeMaxItems)
+		for i := range v.RequiredConfirmations {
+			v.RequiredConfirmations[i].Validate(Index(at.AppendToken("requiredConfirmations"), i), errs)
+		}
+	}
+	// reversibility
+	if v.p.Decoded() {
+		if !v.p.Has(7) {
+			errs.Required(at, "reversibility")
+		}
+		if v.p.IsNull(7) {
+			errs.NullNotAllowed(at, "reversibility")
+		}
+	}
+	// stepUpRequired
+	if v.p.Decoded() {
+		if !v.p.Has(8) {
+			errs.Required(at, "stepUpRequired")
+		}
+		if v.p.IsNull(8) {
+			errs.NullNotAllowed(at, "stepUpRequired")
+		}
+	}
+	// steps
+	if v.p.Decoded() {
+		if !v.p.Has(9) {
+			errs.Required(at, "steps")
+		}
+		if v.p.IsNull(9) {
+			errs.NullNotAllowed(at, "steps")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(9) && !v.p.IsNull(9)) {
+		CheckCount(errs, InBody, at.AppendToken("steps"), len(v.Steps), 0, 1000, CodeMaxItems)
+		for i := range v.Steps {
+			v.Steps[i].Validate(Index(at.AppendToken("steps"), i), errs)
+		}
+	}
+	// undo
+	if v.p.Decoded() {
+		if !v.p.Has(10) {
+			errs.Required(at, "undo")
+		}
+		if v.p.IsNull(10) {
+			errs.NullNotAllowed(at, "undo")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(10) && !v.p.IsNull(10)) {
+		v.Undo.Validate(at.AppendToken("undo"), errs)
+	}
+}
+
+// OperationPreviewOutcome: What submitting this exact request would do now: ready, no_change, needs_approval (ADR-0005 rule 8), refused (a step is blocked or the gate denies). Clients accept values they do not know.
+type OperationPreviewOutcome string
+
+const (
+	OperationPreviewOutcomeReady         OperationPreviewOutcome = "ready"
+	OperationPreviewOutcomeNoChange      OperationPreviewOutcome = "no_change"
+	OperationPreviewOutcomeNeedsApproval OperationPreviewOutcome = "needs_approval"
+	OperationPreviewOutcomeRefused       OperationPreviewOutcome = "refused"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v OperationPreviewOutcome) Valid() bool {
+	switch v {
+	case OperationPreviewOutcomeReady, OperationPreviewOutcomeNoChange, OperationPreviewOutcomeNeedsApproval, OperationPreviewOutcomeRefused:
+		return true
+	}
+	return false
+}
+
+// OperationRef is the OperationRef schema.
+type OperationRef struct {
+	Action string              `json:"action"`
+	ID     UUID                `json:"id"`
+	State  OperationStateValue `json:"state"`
+	Undoes *UUID               `json:"undoes"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationRef) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationRef{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "action":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Action); err != nil {
+				return err
+			}
+		case "id":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ID); err != nil {
+				return err
+			}
+		case "state":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.State); err != nil {
+				return err
+			}
+		case "undoes":
+			v.p.Mark(3, false)
+			if err := json.UnmarshalDecode(d, &v.Undoes); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationRef) Validate(at jsontext.Pointer, errs *Errors) {
+	// action
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "action")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "action")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		CheckLen(errs, InBody, at.AppendToken("action"), string(v.Action), 0, 128)
+		if !pattern3.MatchString(string(v.Action)) {
+			errs.Add(InBody, at.AppendToken("action"), CodePattern, "value does not match the required pattern")
+		}
+	}
+	// id
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "id")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "id")
+		}
+	}
+	// state
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "state")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "state")
+		}
+	}
+	// undoes
+	if v.p.Decoded() && !v.p.Has(3) {
+		errs.Required(at, "undoes")
+	}
+}
+
+// OperationRequiredConfirmation is the OperationRequiredConfirmation schema.
+type OperationRequiredConfirmation struct {
+	Items []string                       `json:"items"`
+	Kind  OperationConfirmationKindValue `json:"kind"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationRequiredConfirmation) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationRequiredConfirmation{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "items":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := DecodeArray(d, &v.Items); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationRequiredConfirmation) Validate(at jsontext.Pointer, errs *Errors) {
+	// items
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "items")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "items")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		CheckCount(errs, InBody, at.AppendToken("items"), len(v.Items), 0, 100, CodeMaxItems)
+		for i := range v.Items {
+			CheckLen(errs, InBody, Index(at.AppendToken("items"), i), string(v.Items[i]), 0, 254)
+		}
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+}
+
+// OperationReversibilityValue: How far an undo restores the before-state (ADR-0005 rule 1). Clients accept values they do not know.
+type OperationReversibilityValue string
+
+const (
+	OperationReversibilityValueReversible   OperationReversibilityValue = "reversible"
+	OperationReversibilityValueLossy        OperationReversibilityValue = "lossy"
+	OperationReversibilityValueIrreversible OperationReversibilityValue = "irreversible"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v OperationReversibilityValue) Valid() bool {
+	switch v {
+	case OperationReversibilityValueReversible, OperationReversibilityValueLossy, OperationReversibilityValueIrreversible:
+		return true
+	}
+	return false
+}
+
+// OperationStateValue: An operation's state (ADR-0005 rule 3, DM-41). Clients accept values they do not know.
+type OperationStateValue string
+
+const (
+	OperationStateValueDraft              OperationStateValue = "draft"
+	OperationStateValuePlanning           OperationStateValue = "planning"
+	OperationStateValuePlanned            OperationStateValue = "planned"
+	OperationStateValueAwaitingApproval   OperationStateValue = "awaiting_approval"
+	OperationStateValueApproved           OperationStateValue = "approved"
+	OperationStateValueQueued             OperationStateValue = "queued"
+	OperationStateValueRunning            OperationStateValue = "running"
+	OperationStateValueCancelling         OperationStateValue = "cancelling"
+	OperationStateValueNoChange           OperationStateValue = "no_change"
+	OperationStateValuePlanFailed         OperationStateValue = "plan_failed"
+	OperationStateValueRejected           OperationStateValue = "rejected"
+	OperationStateValueSucceeded          OperationStateValue = "succeeded"
+	OperationStateValuePartiallySucceeded OperationStateValue = "partially_succeeded"
+	OperationStateValueFailed             OperationStateValue = "failed"
+	OperationStateValueCancelled          OperationStateValue = "cancelled"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v OperationStateValue) Valid() bool {
+	switch v {
+	case OperationStateValueDraft, OperationStateValuePlanning, OperationStateValuePlanned, OperationStateValueAwaitingApproval, OperationStateValueApproved, OperationStateValueQueued, OperationStateValueRunning, OperationStateValueCancelling, OperationStateValueNoChange, OperationStateValuePlanFailed, OperationStateValueRejected, OperationStateValueSucceeded, OperationStateValuePartiallySucceeded, OperationStateValueFailed, OperationStateValueCancelled:
+		return true
+	}
+	return false
+}
+
+// OperationStepPreview is the OperationStepPreview schema.
+type OperationStepPreview struct {
+	Changes             []OperationChange           `json:"changes"`
+	Reversibility       OperationReversibilityValue `json:"reversibility"`
+	ReversibilityReason *string                     `json:"reversibilityReason"`
+	Target              OperationTarget             `json:"target"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationStepPreview) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationStepPreview{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "changes":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := DecodeArray(d, &v.Changes); err != nil {
+				return err
+			}
+		case "reversibility":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Reversibility); err != nil {
+				return err
+			}
+		case "reversibilityReason":
+			v.p.Mark(2, false)
+			if err := json.UnmarshalDecode(d, &v.ReversibilityReason); err != nil {
+				return err
+			}
+		case "target":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Target); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationStepPreview) Validate(at jsontext.Pointer, errs *Errors) {
+	// changes
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "changes")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "changes")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		CheckCount(errs, InBody, at.AppendToken("changes"), len(v.Changes), 0, 1000, CodeMaxItems)
+		for i := range v.Changes {
+			v.Changes[i].Validate(Index(at.AppendToken("changes"), i), errs)
+		}
+	}
+	// reversibility
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "reversibility")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "reversibility")
+		}
+	}
+	// reversibilityReason
+	if v.p.Decoded() && !v.p.Has(2) {
+		errs.Required(at, "reversibilityReason")
+	}
+	if v.ReversibilityReason != nil {
+		CheckLen(errs, InBody, at.AppendToken("reversibilityReason"), string((*v.ReversibilityReason)), 0, 512)
+	}
+	// target
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "target")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "target")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		v.Target.Validate(at.AppendToken("target"), errs)
+	}
+}
+
+// OperationTarget is the OperationTarget schema.
+type OperationTarget struct {
+	// Kind is the discriminator; exactly one variant pointer is set, the one Kind names.
+	Kind      string
+	Directory *OperationTargetDirectory
+	Store     *OperationTargetStore
+}
+
+// UnmarshalJSONFrom reads the value, takes its kind, and decodes the variant with the caller's
+// options, so the variant's own strict decoder applies.
+func (u *OperationTarget) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*u = OperationTarget{}
+	val, err := d.ReadValue()
+	if err != nil {
+		return err
+	}
+	prefix := d.StackPointer()
+	kind, err := UnionKind(prefix, val)
+	if err != nil {
+		return err
+	}
+	switch kind {
+	case "directory":
+		var x OperationTargetDirectory
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return Rebase(prefix, err)
+		}
+		u.Kind, u.Directory = kind, &x
+	case "store":
+		var x OperationTargetStore
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return Rebase(prefix, err)
+		}
+		u.Kind, u.Store = kind, &x
+	default:
+		return UnknownKind(prefix)
+	}
+	return nil
+}
+
+// MarshalJSONTo writes the one variant that is set, with its kind.
+func (u OperationTarget) MarshalJSONTo(e *jsontext.Encoder) error {
+	n := 0
+	if u.Directory != nil {
+		n++
+	}
+	if u.Store != nil {
+		n++
+	}
+	if n != 1 {
+		return ErrUnionVariants
+	}
+	switch {
+	case u.Directory != nil:
+		c := *u.Directory
+		c.Kind = "directory"
+		return json.MarshalEncode(e, &c)
+	case u.Store != nil:
+		c := *u.Store
+		c.Kind = "store"
+		return json.MarshalEncode(e, &c)
+	}
+	return nil
+}
+
+// Validate validates the variant that is set.
+func (u *OperationTarget) Validate(at jsontext.Pointer, errs *Errors) {
+	switch u.Kind {
+	case "directory":
+		if u.Directory == nil {
+			errs.AddBody(at, CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Directory.Validate(at, errs)
+	case "store":
+		if u.Store == nil {
+			errs.AddBody(at, CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Store.Validate(at, errs)
+	default:
+		errs.AddBody(at.AppendToken("kind"), CodeKind, "unknown kind")
+	}
+}
+
+// OperationTargetDirectory is the OperationTargetDirectory schema.
+type OperationTargetDirectory struct {
+	ConnectionID UUID   `json:"connectionId"`
+	Kind         string `json:"kind"`
+	ObjectGUID   *UUID  `json:"objectGuid"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationTargetDirectory) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationTargetDirectory{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "connectionId":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ConnectionID); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "objectGuid":
+			v.p.Mark(2, false)
+			if err := json.UnmarshalDecode(d, &v.ObjectGUID); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationTargetDirectory) Validate(at jsontext.Pointer, errs *Errors) {
+	// connectionId
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "connectionId")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "connectionId")
+		}
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		if v.Kind != "directory" {
+			errs.Add(InBody, at.AppendToken("kind"), CodeConst, "wrong value")
+		}
+	}
+	// objectGuid
+	if v.p.Decoded() && !v.p.Has(2) {
+		errs.Required(at, "objectGuid")
+	}
+}
+
+// OperationTargetStore is the OperationTargetStore schema.
+type OperationTargetStore struct {
+	ID       *string `json:"id"`
+	Kind     string  `json:"kind"`
+	Resource string  `json:"resource"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationTargetStore) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationTargetStore{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "id":
+			v.p.Mark(0, false)
+			if err := json.UnmarshalDecode(d, &v.ID); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "resource":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Resource); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationTargetStore) Validate(at jsontext.Pointer, errs *Errors) {
+	// id
+	if v.p.Decoded() && !v.p.Has(0) {
+		errs.Required(at, "id")
+	}
+	if v.ID != nil {
+		CheckLen(errs, InBody, at.AppendToken("id"), string((*v.ID)), 0, 128)
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		if v.Kind != "store" {
+			errs.Add(InBody, at.AppendToken("kind"), CodeConst, "wrong value")
+		}
+	}
+	// resource
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "resource")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "resource")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		CheckLen(errs, InBody, at.AppendToken("resource"), string(v.Resource), 0, 128)
+		if !pattern5.MatchString(string(v.Resource)) {
+			errs.Add(InBody, at.AppendToken("resource"), CodePattern, "value does not match the required pattern")
+		}
+	}
+}
+
+// OperationUndoPlan is the OperationUndoPlan schema.
+type OperationUndoPlan struct {
+	Possible      bool                        `json:"possible"`
+	Reversibility OperationReversibilityValue `json:"reversibility"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationUndoPlan) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationUndoPlan{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "possible":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Possible); err != nil {
+				return err
+			}
+		case "reversibility":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Reversibility); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationUndoPlan) Validate(at jsontext.Pointer, errs *Errors) {
+	// possible
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "possible")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "possible")
+		}
+	}
+	// reversibility
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "reversibility")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "reversibility")
+		}
+	}
+}
+
+// OperationUndoRequest: Starts the undo of an operation. confirmations carries every confirmation the undo preview listed in requiredConfirmations; an empty list when it listed none.
+type OperationUndoRequest struct {
+	Confirmations []OperationConfirmation `json:"confirmations"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationUndoRequest) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationUndoRequest{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "confirmations":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := DecodeArray(d, &v.Confirmations); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationUndoRequest) Validate(at jsontext.Pointer, errs *Errors) {
+	// confirmations
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "confirmations")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "confirmations")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		CheckCount(errs, InBody, at.AppendToken("confirmations"), len(v.Confirmations), 0, 10, CodeMaxItems)
+		for i := range v.Confirmations {
+			v.Confirmations[i].Validate(Index(at.AppendToken("confirmations"), i), errs)
+		}
+	}
+}
+
+// OperationValue: One side of a change, rendered by the Action for display. redacted stands for a secret or an erased personal value.
+type OperationValue struct {
+	// Kind is the discriminator; exactly one variant pointer is set, the one Kind names.
+	Kind     string
+	Absent   *OperationValueAbsent
+	Boolean  *OperationValueBoolean
+	Integer  *OperationValueInteger
+	Redacted *OperationValueRedacted
+	Text     *OperationValueText
+	TextList *OperationValueTextList
+	Time     *OperationValueTime
+}
+
+// UnmarshalJSONFrom reads the value, takes its kind, and decodes the variant with the caller's
+// options, so the variant's own strict decoder applies.
+func (u *OperationValue) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*u = OperationValue{}
+	val, err := d.ReadValue()
+	if err != nil {
+		return err
+	}
+	prefix := d.StackPointer()
+	kind, err := UnionKind(prefix, val)
+	if err != nil {
+		return err
+	}
+	switch kind {
+	case "absent":
+		var x OperationValueAbsent
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return Rebase(prefix, err)
+		}
+		u.Kind, u.Absent = kind, &x
+	case "boolean":
+		var x OperationValueBoolean
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return Rebase(prefix, err)
+		}
+		u.Kind, u.Boolean = kind, &x
+	case "integer":
+		var x OperationValueInteger
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return Rebase(prefix, err)
+		}
+		u.Kind, u.Integer = kind, &x
+	case "redacted":
+		var x OperationValueRedacted
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return Rebase(prefix, err)
+		}
+		u.Kind, u.Redacted = kind, &x
+	case "text":
+		var x OperationValueText
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return Rebase(prefix, err)
+		}
+		u.Kind, u.Text = kind, &x
+	case "textList":
+		var x OperationValueTextList
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return Rebase(prefix, err)
+		}
+		u.Kind, u.TextList = kind, &x
+	case "time":
+		var x OperationValueTime
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return Rebase(prefix, err)
+		}
+		u.Kind, u.Time = kind, &x
+	default:
+		return UnknownKind(prefix)
+	}
+	return nil
+}
+
+// MarshalJSONTo writes the one variant that is set, with its kind.
+func (u OperationValue) MarshalJSONTo(e *jsontext.Encoder) error {
+	n := 0
+	if u.Absent != nil {
+		n++
+	}
+	if u.Boolean != nil {
+		n++
+	}
+	if u.Integer != nil {
+		n++
+	}
+	if u.Redacted != nil {
+		n++
+	}
+	if u.Text != nil {
+		n++
+	}
+	if u.TextList != nil {
+		n++
+	}
+	if u.Time != nil {
+		n++
+	}
+	if n != 1 {
+		return ErrUnionVariants
+	}
+	switch {
+	case u.Absent != nil:
+		c := *u.Absent
+		c.Kind = "absent"
+		return json.MarshalEncode(e, &c)
+	case u.Boolean != nil:
+		c := *u.Boolean
+		c.Kind = "boolean"
+		return json.MarshalEncode(e, &c)
+	case u.Integer != nil:
+		c := *u.Integer
+		c.Kind = "integer"
+		return json.MarshalEncode(e, &c)
+	case u.Redacted != nil:
+		c := *u.Redacted
+		c.Kind = "redacted"
+		return json.MarshalEncode(e, &c)
+	case u.Text != nil:
+		c := *u.Text
+		c.Kind = "text"
+		return json.MarshalEncode(e, &c)
+	case u.TextList != nil:
+		c := *u.TextList
+		c.Kind = "textList"
+		return json.MarshalEncode(e, &c)
+	case u.Time != nil:
+		c := *u.Time
+		c.Kind = "time"
+		return json.MarshalEncode(e, &c)
+	}
+	return nil
+}
+
+// Validate validates the variant that is set.
+func (u *OperationValue) Validate(at jsontext.Pointer, errs *Errors) {
+	switch u.Kind {
+	case "absent":
+		if u.Absent == nil {
+			errs.AddBody(at, CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Absent.Validate(at, errs)
+	case "boolean":
+		if u.Boolean == nil {
+			errs.AddBody(at, CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Boolean.Validate(at, errs)
+	case "integer":
+		if u.Integer == nil {
+			errs.AddBody(at, CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Integer.Validate(at, errs)
+	case "redacted":
+		if u.Redacted == nil {
+			errs.AddBody(at, CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Redacted.Validate(at, errs)
+	case "text":
+		if u.Text == nil {
+			errs.AddBody(at, CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Text.Validate(at, errs)
+	case "textList":
+		if u.TextList == nil {
+			errs.AddBody(at, CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.TextList.Validate(at, errs)
+	case "time":
+		if u.Time == nil {
+			errs.AddBody(at, CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Time.Validate(at, errs)
+	default:
+		errs.AddBody(at.AppendToken("kind"), CodeKind, "unknown kind")
+	}
+}
+
+// OperationValueAbsent is the OperationValueAbsent schema.
+type OperationValueAbsent struct {
+	Kind string `json:"kind"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationValueAbsent) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationValueAbsent{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationValueAbsent) Validate(at jsontext.Pointer, errs *Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "absent" {
+			errs.Add(InBody, at.AppendToken("kind"), CodeConst, "wrong value")
+		}
+	}
+}
+
+// OperationValueBoolean is the OperationValueBoolean schema.
+type OperationValueBoolean struct {
+	Kind  string `json:"kind"`
+	Value bool   `json:"value"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationValueBoolean) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationValueBoolean{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "value":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Value); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationValueBoolean) Validate(at jsontext.Pointer, errs *Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "boolean" {
+			errs.Add(InBody, at.AppendToken("kind"), CodeConst, "wrong value")
+		}
+	}
+	// value
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "value")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "value")
+		}
+	}
+}
+
+// OperationValueInteger is the OperationValueInteger schema.
+type OperationValueInteger struct {
+	Kind  string `json:"kind"`
+	Value int64  `json:"value"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationValueInteger) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationValueInteger{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "value":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Value); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationValueInteger) Validate(at jsontext.Pointer, errs *Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "integer" {
+			errs.Add(InBody, at.AppendToken("kind"), CodeConst, "wrong value")
+		}
+	}
+	// value
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "value")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "value")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		CheckInt(errs, InBody, at.AppendToken("value"), int64(v.Value), -9007199254740991, 9007199254740991)
+	}
+}
+
+// OperationValueRedacted is the OperationValueRedacted schema.
+type OperationValueRedacted struct {
+	Kind string `json:"kind"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationValueRedacted) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationValueRedacted{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationValueRedacted) Validate(at jsontext.Pointer, errs *Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "redacted" {
+			errs.Add(InBody, at.AppendToken("kind"), CodeConst, "wrong value")
+		}
+	}
+}
+
+// OperationValueText is the OperationValueText schema.
+type OperationValueText struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationValueText) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationValueText{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "value":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Value); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationValueText) Validate(at jsontext.Pointer, errs *Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "text" {
+			errs.Add(InBody, at.AppendToken("kind"), CodeConst, "wrong value")
+		}
+	}
+	// value
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "value")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "value")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		CheckLen(errs, InBody, at.AppendToken("value"), string(v.Value), 0, 4096)
+	}
+}
+
+// OperationValueTextList is the OperationValueTextList schema.
+type OperationValueTextList struct {
+	Kind   string   `json:"kind"`
+	Values []string `json:"values"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationValueTextList) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationValueTextList{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "values":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := DecodeArray(d, &v.Values); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationValueTextList) Validate(at jsontext.Pointer, errs *Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "textList" {
+			errs.Add(InBody, at.AppendToken("kind"), CodeConst, "wrong value")
+		}
+	}
+	// values
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "values")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "values")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		CheckCount(errs, InBody, at.AppendToken("values"), len(v.Values), 0, 1000, CodeMaxItems)
+		for i := range v.Values {
+			CheckLen(errs, InBody, Index(at.AppendToken("values"), i), string(v.Values[i]), 0, 4096)
+		}
+	}
+}
+
+// OperationValueTime is the OperationValueTime schema.
+type OperationValueTime struct {
+	Kind  string    `json:"kind"`
+	Value Timestamp `json:"value"`
+
+	p Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *OperationValueTime) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = OperationValueTime{}
+	v.p.Begin()
+	if err := ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "value":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Value); err != nil {
+				return err
+			}
+		default:
+			return UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *OperationValueTime) Validate(at jsontext.Pointer, errs *Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "time" {
+			errs.Add(InBody, at.AppendToken("kind"), CodeConst, "wrong value")
+		}
+	}
+	// value
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "value")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "value")
+		}
+	}
+}
+
 // PageInfo: Cursor paging of a directory collection. Order is stable; nextCursor is null on the last page.
 type PageInfo struct {
 	NextCursor *string `json:"nextCursor"`
@@ -1009,7 +3186,7 @@ func (v *Problem) Validate(at jsontext.Pointer, errs *Errors) {
 	}
 	if !v.p.Decoded() || (v.p.Has(8) && !v.p.IsNull(8)) {
 		CheckLen(errs, InBody, at.AppendToken("type"), string(v.Type), 0, 100)
-		if !pattern1.MatchString(string(v.Type)) {
+		if !pattern6.MatchString(string(v.Type)) {
 			errs.Add(InBody, at.AppendToken("type"), CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -1356,5 +3533,10 @@ func (v *Rdn) Validate(at jsontext.Pointer, errs *Errors) {
 }
 
 var (
-	pattern1 = regexp.MustCompile("^/problems/[a-z][a-z0-9-]*$")
+	pattern1 = regexp.MustCompile("^[a-z][a-z0-9_]*$")
+	pattern2 = regexp.MustCompile("^[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)*$")
+	pattern3 = regexp.MustCompile("^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*){2,4}$")
+	pattern4 = regexp.MustCompile("^[0-9a-f]{64}$")
+	pattern5 = regexp.MustCompile("^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*)+$")
+	pattern6 = regexp.MustCompile("^/problems/[a-z][a-z0-9-]*$")
 )

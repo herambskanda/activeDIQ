@@ -105,6 +105,16 @@
           "type": "string"
         }
       },
+      "OperationId": {
+        "description": "The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered.",
+        "in": "path",
+        "name": "operationId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
       "PageCursor": {
         "description": "The nextCursor of the previous page.",
         "in": "query",
@@ -421,6 +431,21 @@
           }
         },
         "description": "The service is running but not ready to take traffic"
+      },
+      "OperationNotUndoable": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 409,
+              "title": "The operation cannot be undone",
+              "type": "/problems/operation-not-undoable"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The operation cannot be undone; errors[].code says why (irreversible, already_undone, superseded, not_finished, tier0_blocked, plan_refused)"
       },
       "PasswordPolicyViolation": {
         "content": {
@@ -1123,6 +1148,520 @@
           "guid",
           "dn",
           "rdns"
+        ],
+        "type": "object"
+      },
+      "OperationBlocked": {
+        "properties": {
+          "code": {
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/OperationTarget"
+          }
+        },
+        "required": [
+          "target",
+          "code"
+        ],
+        "type": "object"
+      },
+      "OperationChange": {
+        "description": "One changed field. field is the camelCase member path in the target's resource schema. before is absent when the field is set for the first time or the target is created; after is absent when it is removed or the target deleted. (The dialect allows only primitive nullables, so absence is a variant of OperationValue, not null.)",
+        "properties": {
+          "after": {
+            "$ref": "#/components/schemas/OperationValue"
+          },
+          "before": {
+            "$ref": "#/components/schemas/OperationValue"
+          },
+          "field": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "before",
+          "after"
+        ],
+        "type": "object"
+      },
+      "OperationConfirmation": {
+        "additionalProperties": false,
+        "description": "One confirmation the caller gives after reading the preview. items repeats, exactly, the items of the requiredConfirmations entry of the same kind.",
+        "properties": {
+          "items": {
+            "items": {
+              "maxLength": 254,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/OperationConfirmationKind"
+          }
+        },
+        "required": [
+          "kind",
+          "items"
+        ],
+        "type": "object"
+      },
+      "OperationConfirmationKind": {
+        "description": "What the caller confirms. A closed request enum.",
+        "enum": [
+          "external_recipients"
+        ],
+        "type": "string"
+      },
+      "OperationConfirmationKindValue": {
+        "description": "A confirmation the submit needs. external_recipients is \"Data leaves your organisation\". Clients accept values they do not know, and a client that does not know a kind cannot submit.",
+        "enum": [
+          "external_recipients"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open"
+      },
+      "OperationPreview": {
+        "properties": {
+          "action": {
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*){2,4}$",
+            "type": "string"
+          },
+          "actionVersion": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "blocked": {
+            "items": {
+              "$ref": "#/components/schemas/OperationBlocked"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "holdReason": {
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/OperationPreviewOutcome"
+          },
+          "planHash": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "requiredConfirmations": {
+            "items": {
+              "$ref": "#/components/schemas/OperationRequiredConfirmation"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
+          "reversibility": {
+            "$ref": "#/components/schemas/OperationReversibilityValue"
+          },
+          "stepUpRequired": {
+            "type": "boolean"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/OperationStepPreview"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "undo": {
+            "$ref": "#/components/schemas/OperationUndoPlan"
+          }
+        },
+        "required": [
+          "action",
+          "actionVersion",
+          "planHash",
+          "outcome",
+          "holdReason",
+          "stepUpRequired",
+          "reversibility",
+          "steps",
+          "blocked",
+          "requiredConfirmations",
+          "undo"
+        ],
+        "type": "object"
+      },
+      "OperationPreviewOutcome": {
+        "description": "What submitting this exact request would do now: ready, no_change, needs_approval (ADR-0005 rule 8), refused (a step is blocked or the gate denies). Clients accept values they do not know.",
+        "enum": [
+          "ready",
+          "no_change",
+          "needs_approval",
+          "refused"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open"
+      },
+      "OperationRef": {
+        "properties": {
+          "action": {
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*){2,4}$",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/OperationStateValue"
+          },
+          "undoes": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "state",
+          "undoes"
+        ],
+        "type": "object"
+      },
+      "OperationRequiredConfirmation": {
+        "properties": {
+          "items": {
+            "items": {
+              "maxLength": 254,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/OperationConfirmationKindValue"
+          }
+        },
+        "required": [
+          "kind",
+          "items"
+        ],
+        "type": "object"
+      },
+      "OperationReversibilityValue": {
+        "description": "How far an undo restores the before-state (ADR-0005 rule 1). Clients accept values they do not know.",
+        "enum": [
+          "reversible",
+          "lossy",
+          "irreversible"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open"
+      },
+      "OperationStateValue": {
+        "description": "An operation's state (ADR-0005 rule 3, DM-41). Clients accept values they do not know.",
+        "enum": [
+          "draft",
+          "planning",
+          "planned",
+          "awaiting_approval",
+          "approved",
+          "queued",
+          "running",
+          "cancelling",
+          "no_change",
+          "plan_failed",
+          "rejected",
+          "succeeded",
+          "partially_succeeded",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open"
+      },
+      "OperationStepPreview": {
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/OperationChange"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "reversibility": {
+            "$ref": "#/components/schemas/OperationReversibilityValue"
+          },
+          "reversibilityReason": {
+            "maxLength": 512,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target": {
+            "$ref": "#/components/schemas/OperationTarget"
+          }
+        },
+        "required": [
+          "target",
+          "changes",
+          "reversibility",
+          "reversibilityReason"
+        ],
+        "type": "object"
+      },
+      "OperationTarget": {
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OperationTargetStore"
+          },
+          {
+            "$ref": "#/components/schemas/OperationTargetDirectory"
+          }
+        ]
+      },
+      "OperationTargetDirectory": {
+        "properties": {
+          "connectionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "const": "directory",
+            "type": "string"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "connectionId",
+          "objectGuid"
+        ],
+        "type": "object"
+      },
+      "OperationTargetStore": {
+        "properties": {
+          "id": {
+            "maxLength": 128,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "const": "store",
+            "type": "string"
+          },
+          "resource": {
+            "maxLength": 128,
+            "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*)+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "resource",
+          "id"
+        ],
+        "type": "object"
+      },
+      "OperationUndoPlan": {
+        "properties": {
+          "possible": {
+            "type": "boolean"
+          },
+          "reversibility": {
+            "$ref": "#/components/schemas/OperationReversibilityValue"
+          }
+        },
+        "required": [
+          "possible",
+          "reversibility"
+        ],
+        "type": "object"
+      },
+      "OperationUndoRequest": {
+        "additionalProperties": false,
+        "description": "Starts the undo of an operation. confirmations carries every confirmation the undo preview listed in requiredConfirmations; an empty list when it listed none.",
+        "properties": {
+          "confirmations": {
+            "items": {
+              "$ref": "#/components/schemas/OperationConfirmation"
+            },
+            "maxItems": 10,
+            "type": "array"
+          }
+        },
+        "required": [
+          "confirmations"
+        ],
+        "type": "object"
+      },
+      "OperationValue": {
+        "description": "One side of a change, rendered by the Action for display. redacted stands for a secret or an erased personal value.",
+        "discriminator": {
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/OperationValueText"
+          },
+          {
+            "$ref": "#/components/schemas/OperationValueTextList"
+          },
+          {
+            "$ref": "#/components/schemas/OperationValueInteger"
+          },
+          {
+            "$ref": "#/components/schemas/OperationValueBoolean"
+          },
+          {
+            "$ref": "#/components/schemas/OperationValueTime"
+          },
+          {
+            "$ref": "#/components/schemas/OperationValueRedacted"
+          },
+          {
+            "$ref": "#/components/schemas/OperationValueAbsent"
+          }
+        ]
+      },
+      "OperationValueAbsent": {
+        "properties": {
+          "kind": {
+            "const": "absent",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "OperationValueBoolean": {
+        "properties": {
+          "kind": {
+            "const": "boolean",
+            "type": "string"
+          },
+          "value": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "type": "object"
+      },
+      "OperationValueInteger": {
+        "properties": {
+          "kind": {
+            "const": "integer",
+            "type": "string"
+          },
+          "value": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "type": "object"
+      },
+      "OperationValueRedacted": {
+        "properties": {
+          "kind": {
+            "const": "redacted",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object"
+      },
+      "OperationValueText": {
+        "properties": {
+          "kind": {
+            "const": "text",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 4096,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "type": "object"
+      },
+      "OperationValueTextList": {
+        "properties": {
+          "kind": {
+            "const": "textList",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind",
+          "values"
+        ],
+        "type": "object"
+      },
+      "OperationValueTime": {
+        "properties": {
+          "kind": {
+            "const": "time",
+            "type": "string"
+          },
+          "value": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
         ],
         "type": "object"
       },
@@ -6157,7 +6696,7 @@
         "x-permission": "reports.schedule"
       },
       "post": {
-        "description": "Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal (\"Data leaves your organisation\"), or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only. Scheduled data is what the owner can see, not what a recipient can see. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner, so a retried create is a 400 with code name_taken and changes nothing.",
+        "description": "Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal (\"Data leaves your organisation\"), or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only. Scheduled data is what the owner can see, not what a recipient can see. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner, so a retried create is a 400 with code name_taken and changes nothing. Preview it first with previewCreateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.",
         "operationId": "createReportSchedule",
         "requestBody": {
           "content": {
@@ -6180,6 +6719,14 @@
             },
             "description": "The schedule is created",
             "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The operation that made this change. It is the undo handle for undoReportScheduleOperation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
+                  "type": "string"
+                }
+              },
               "ETag": {
                 "required": true,
                 "schema": {
@@ -6190,6 +6737,26 @@
               "Location": {
                 "schema": {
                   "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationRef"
+                }
+              }
+            },
+            "description": "The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved",
+            "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The held operation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
                   "type": "string"
                 }
               }
@@ -6241,9 +6808,230 @@
         "x-permission": "reports.schedule"
       }
     },
+    "/reports/schedules/operations/{operationId}/previews/undo": {
+      "post": {
+        "description": "The dry run of undoing one reports.schedule.* operation (ADR-0004 rule 14): it plans the inverse, reports.schedule.restore, against the live schedule for the caller, with the checks of the transition it makes (modules/reports.md 8): undoing a pause resumes, so only the owner may (owner_only); undoing a reassignment needs reports.schedule.manage_all and leaves the schedule paused (lossy); restoring external recipients needs reports.deliver.external and lists them in requiredConfirmations. A plan refusal is a 200 with outcome refused. It writes, persists and audits nothing. 404 when the operation is unknown, is not a reports.schedule.* operation, or its schedule is not visible to the caller. 409 operation-not-undoable when no inverse can be planned at all, errors[].code irreversible, already_undone, superseded (the schedule changed after this operation; undo the later change first) or not_finished.",
+        "operationId": "previewUndoReportScheduleOperation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OperationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationPreview"
+                }
+              }
+            },
+            "description": "The preview of the undo"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/OperationNotUndoable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Preview undoing a schedule change",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      }
+    },
+    "/reports/schedules/operations/{operationId}/undo": {
+      "post": {
+        "description": "Undoes one reports.schedule.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14, ADR-0005 rule 10). The undo is a new operation of the Action reports.schedule.restore, planned against the live schedule for the caller with the checks of the transition it makes, run inline, audited, and itself undoable. It restores the version before the operation: undoing a create archives the schedule, a delete restores it, an update restores the previous version, a pause resumes it (owner only), a resume pauses it, and a reassignment restores the previous owner with the schedule still paused. It sends nothing, and a fire that ran in between is not recalled. confirmations must repeat the requiredConfirmations of the undo preview (external recipients the undo restores); otherwise 400 with code external_not_confirmed. 403 when the inverse needs a permission the caller lacks (errors[].code external_not_permitted, owner_only, manage_all_required). 404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded, not_finished or plan_refused (the scope refusals of create). Undoing an operation that itself needed approval is always held (202).",
+        "operationId": "undoReportScheduleOperation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OperationId"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationUndoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationRef"
+                }
+              }
+            },
+            "description": "The undo operation; undoes names the operation it undid",
+            "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The undo operation. Undoing it re-applies the original change.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationRef"
+                }
+              }
+            },
+            "description": "The undo is held for approval (ADR-0005 rule 8); nothing changed yet",
+            "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The held undo operation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/OperationNotUndoable"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Undo a schedule change",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 32768
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      }
+    },
+    "/reports/schedules/previews/create": {
+      "post": {
+        "description": "The dry run of createReportSchedule as the Action reports.schedule.create (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as createReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
+        "operationId": "previewCreateReportSchedule",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportScheduleWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationPreview"
+                }
+              }
+            },
+            "description": "The preview"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Preview creating a schedule",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read",
+          "maxBodyBytes": 32768
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      }
+    },
     "/reports/schedules/{scheduleId}": {
       "delete": {
-        "description": "Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire.",
+        "description": "Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire. Preview it first with previewDeleteReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.",
         "operationId": "deleteReportSchedule",
         "parameters": [
           {
@@ -6254,8 +7042,38 @@
           }
         ],
         "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationRef"
+                }
+              }
+            },
+            "description": "The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved",
+            "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The held operation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
+                  "type": "string"
+                }
+              }
+            }
+          },
           "204": {
-            "description": "The schedule is deleted"
+            "description": "The schedule is deleted",
+            "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The operation that made this change. It is the undo handle for undoReportScheduleOperation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "$ref": "#/components/responses/Unauthenticated"
@@ -6350,7 +7168,7 @@
         "x-permission": "reports.schedule"
       },
       "put": {
-        "description": "Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version. Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external address that is new or changed. Changing another owner's schedule additionally needs reports.schedule.manage_all. The scope refusals of create apply.",
+        "description": "Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version. Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external address that is new or changed. Changing another owner's schedule additionally needs reports.schedule.manage_all. The scope refusals of create apply. Preview it first with previewUpdateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.",
         "operationId": "updateReportSchedule",
         "parameters": [
           {
@@ -6381,10 +7199,38 @@
             },
             "description": "The schedule as stored",
             "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The operation that made this change. It is the undo handle for undoReportScheduleOperation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
+                  "type": "string"
+                }
+              },
               "ETag": {
                 "required": true,
                 "schema": {
                   "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationRef"
+                }
+              }
+            },
+            "description": "The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved",
+            "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The held operation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
                   "type": "string"
                 }
               }
@@ -6444,7 +7290,7 @@
     },
     "/reports/schedules/{scheduleId}/owner": {
       "put": {
-        "description": "Hands the schedule to another account, as the Action reports.schedule.reassign (ADR-0005 rule 10). This is the one schedule operation bound to reports.schedule.manage_all. The schedule pauses until the new owner resumes it, so a reassignment cannot widen what recipients receive without the new owner's act. The new owner must hold reports.run, reports.export and reports.schedule (400 with code owner_lacks_permission otherwise). Needs If-Match.",
+        "description": "Hands the schedule to another account, as the Action reports.schedule.reassign (ADR-0005 rule 10). This is the one schedule operation bound to reports.schedule.manage_all. The schedule pauses until the new owner resumes it, so a reassignment cannot widen what recipients receive without the new owner's act. The new owner must hold reports.run, reports.export and reports.schedule (400 with code owner_lacks_permission otherwise). Needs If-Match. Preview it first with previewReassignReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.",
         "operationId": "reassignReportSchedule",
         "parameters": [
           {
@@ -6475,10 +7321,38 @@
             },
             "description": "The schedule, paused under its new owner",
             "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The operation that made this change. It is the undo handle for undoReportScheduleOperation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
+                  "type": "string"
+                }
+              },
               "ETag": {
                 "required": true,
                 "schema": {
                   "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationRef"
+                }
+              }
+            },
+            "description": "The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved",
+            "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The held operation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
                   "type": "string"
                 }
               }
@@ -6532,7 +7406,7 @@
     },
     "/reports/schedules/{scheduleId}/pause": {
       "post": {
-        "description": "Pauses the schedule, as the Action reports.schedule.pause (ADR-0005 rule 10). A paused schedule fires nothing until it is resumed. Pausing another owner's schedule additionally needs reports.schedule.manage_all. A pause the system makes under the owner-authority rule is not this operation; it is audited as an event and shows as pausedReason.",
+        "description": "Pauses the schedule, as the Action reports.schedule.pause (ADR-0005 rule 10). A paused schedule fires nothing until it is resumed. Pausing another owner's schedule additionally needs reports.schedule.manage_all. A pause the system makes under the owner-authority rule is not this operation; it is audited as an event and shows as pausedReason. Preview it first with previewPauseReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.",
         "operationId": "pauseReportSchedule",
         "parameters": [
           {
@@ -6550,10 +7424,38 @@
             },
             "description": "The schedule, paused",
             "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The operation that made this change. It is the undo handle for undoReportScheduleOperation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
+                  "type": "string"
+                }
+              },
               "ETag": {
                 "required": true,
                 "schema": {
                   "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationRef"
+                }
+              }
+            },
+            "description": "The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved",
+            "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The held operation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
                   "type": "string"
                 }
               }
@@ -6589,9 +7491,326 @@
         "x-permission": "reports.schedule"
       }
     },
+    "/reports/schedules/{scheduleId}/previews/delete": {
+      "post": {
+        "description": "The dry run of deleteReportSchedule as the Action reports.schedule.delete (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as deleteReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
+        "operationId": "previewDeleteReportSchedule",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          },
+          {
+            "$ref": "#/components/parameters/RequiredIfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationPreview"
+                }
+              }
+            },
+            "description": "The preview"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Preview deleting a schedule",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      }
+    },
+    "/reports/schedules/{scheduleId}/previews/pause": {
+      "post": {
+        "description": "The dry run of pauseReportSchedule as the Action reports.schedule.pause (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as pauseReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
+        "operationId": "previewPauseReportSchedule",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationPreview"
+                }
+              }
+            },
+            "description": "The preview"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Preview pausing a schedule",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      }
+    },
+    "/reports/schedules/{scheduleId}/previews/reassign": {
+      "post": {
+        "description": "The dry run of reassignReportSchedule as the Action reports.schedule.reassign (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as reassignReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
+        "operationId": "previewReassignReportSchedule",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          },
+          {
+            "$ref": "#/components/parameters/RequiredIfMatch"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportScheduleReassign"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationPreview"
+                }
+              }
+            },
+            "description": "The preview"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Preview reassigning a schedule's owner",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule.manage_all"
+      }
+    },
+    "/reports/schedules/{scheduleId}/previews/resume": {
+      "post": {
+        "description": "The dry run of resumeReportSchedule as the Action reports.schedule.resume (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as resumeReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
+        "operationId": "previewResumeReportSchedule",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationPreview"
+                }
+              }
+            },
+            "description": "The preview"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Preview resuming a schedule",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      }
+    },
+    "/reports/schedules/{scheduleId}/previews/update": {
+      "post": {
+        "description": "The dry run of updateReportSchedule as the Action reports.schedule.update (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as updateReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
+        "operationId": "previewUpdateReportSchedule",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ScheduleId"
+          },
+          {
+            "$ref": "#/components/parameters/RequiredIfMatch"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportScheduleWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationPreview"
+                }
+              }
+            },
+            "description": "The preview"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Preview replacing a schedule's settings",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read",
+          "maxBodyBytes": 32768
+        },
+        "x-activediq-parity": [
+          "ADM-101"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.schedule"
+      }
+    },
     "/reports/schedules/{scheduleId}/resume": {
       "post": {
-        "description": "Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this.",
+        "description": "Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this. Preview it first with previewResumeReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.",
         "operationId": "resumeReportSchedule",
         "parameters": [
           {
@@ -6609,10 +7828,38 @@
             },
             "description": "The schedule, active",
             "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The operation that made this change. It is the undo handle for undoReportScheduleOperation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
+                  "type": "string"
+                }
+              },
               "ETag": {
                 "required": true,
                 "schema": {
                   "maxLength": 256,
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationRef"
+                }
+              }
+            },
+            "description": "The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved",
+            "headers": {
+              "ActiveDIQ-Operation-Id": {
+                "description": "The held operation.",
+                "required": true,
+                "schema": {
+                  "maxLength": 36,
                   "type": "string"
                 }
               }

@@ -1,0 +1,209 @@
+# The HTTP shape of the operation pipeline (ADR-0005), shared by every tag that serves Actions (ADR-0004 rule 14, T-0892).
+# One shape, parameterised per Action family: a module declares a preview twin beside each Action-backed write and one
+# undo pair per family, and every one of them $refs the schemas here. No module defines its own preview or undo shape.
+#
+# Request enums are closed and response enums are open (ADR-0004 rule 2), so the confirmation kind has two schemas:
+# OperationConfirmationKind (request) and OperationConfirmationKindValue (response).
+components:
+  parameters:
+    OperationId:
+      name: operationId
+      in: path
+      required: true
+      description: >-
+        The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered.
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    OperationConfirmationKind:
+      description: What the caller confirms. A closed request enum.
+      type: string
+      enum: [external_recipients]
+    OperationConfirmation:
+      description: >-
+        One confirmation the caller gives after reading the preview. items repeats, exactly, the items of the
+        requiredConfirmations entry of the same kind.
+      type: object
+      required: [kind, items]
+      additionalProperties: false
+      properties:
+        kind:
+          $ref: shared/operation.yaml#/components/schemas/OperationConfirmationKind
+        items:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+            maxLength: 254
+    OperationUndoRequest:
+      description: >-
+        Starts the undo of an operation. confirmations carries every confirmation the undo preview listed in
+        requiredConfirmations; an empty list when it listed none.
+      type: object
+      required: [confirmations]
+      additionalProperties: false
+      properties:
+        confirmations:
+          type: array
+          maxItems: 10
+          items:
+            $ref: shared/operation.yaml#/components/schemas/OperationConfirmation
+    OperationReversibilityValue:
+      description: >-
+        How far an undo restores the before-state (ADR-0005 rule 1). Clients accept values they do not know.
+      type: string
+      x-activediq-enum: open
+      enum: [reversible, lossy, irreversible]
+    OperationPreviewOutcome:
+      description: >-
+        What submitting this exact request would do now: ready, no_change, needs_approval (ADR-0005 rule 8), refused
+        (a step is blocked or the gate denies). Clients accept values they do not know.
+      type: string
+      x-activediq-enum: open
+      enum: [ready, no_change, needs_approval, refused]
+    OperationStateValue:
+      description: An operation's state (ADR-0005 rule 3, DM-41). Clients accept values they do not know.
+      type: string
+      x-activediq-enum: open
+      enum: [draft, planning, planned, awaiting_approval, approved, queued, running, cancelling, no_change, plan_failed, rejected, succeeded, partially_succeeded, failed, cancelled]
+    OperationConfirmationKindValue:
+      description: >-
+        A confirmation the submit needs. external_recipients is "Data leaves your organisation". Clients accept values
+        they do not know, and a client that does not know a kind cannot submit.
+      type: string
+      x-activediq-enum: open
+      enum: [external_recipients]
+    OperationValue:
+      description: One side of a change, rendered by the Action for display. redacted stands for a secret or an erased personal value.
+      oneOf:
+        - $ref: shared/operation.yaml#/components/schemas/OperationValueText
+        - $ref: shared/operation.yaml#/components/schemas/OperationValueTextList
+        - $ref: shared/operation.yaml#/components/schemas/OperationValueInteger
+        - $ref: shared/operation.yaml#/components/schemas/OperationValueBoolean
+        - $ref: shared/operation.yaml#/components/schemas/OperationValueTime
+        - $ref: shared/operation.yaml#/components/schemas/OperationValueRedacted
+        - $ref: shared/operation.yaml#/components/schemas/OperationValueAbsent
+      discriminator:
+        propertyName: kind
+    OperationValueText:
+      type: object
+      required: [kind, value]
+      properties:
+        kind: {type: string, const: text}
+        value: {type: string, maxLength: 4096}
+    OperationValueTextList:
+      type: object
+      required: [kind, values]
+      properties:
+        kind: {type: string, const: textList}
+        values: {type: array, maxItems: 1000, items: {type: string, maxLength: 4096}}
+    OperationValueInteger:
+      type: object
+      required: [kind, value]
+      properties:
+        kind: {type: string, const: integer}
+        value: {type: integer, minimum: -9007199254740991, maximum: 9007199254740991}
+    OperationValueBoolean:
+      type: object
+      required: [kind, value]
+      properties:
+        kind: {type: string, const: boolean}
+        value: {type: boolean}
+    OperationValueTime:
+      type: object
+      required: [kind, value]
+      properties:
+        kind: {type: string, const: time}
+        value: {type: string, format: date-time}
+    OperationValueRedacted:
+      type: object
+      required: [kind]
+      properties:
+        kind: {type: string, const: redacted}
+    OperationValueAbsent:
+      type: object
+      required: [kind]
+      properties:
+        kind: {type: string, const: absent}
+    OperationChange:
+      description: >-
+        One changed field. field is the camelCase member path in the target's resource schema. before is absent when the
+        field is set for the first time or the target is created; after is absent when it is removed or the target deleted.
+        (The dialect allows only primitive nullables, so absence is a variant of OperationValue, not null.)
+      type: object
+      required: [field, before, after]
+      properties:
+        field: {type: string, minLength: 1, maxLength: 128, pattern: "^[a-z][A-Za-z0-9]*(\\.[a-z][A-Za-z0-9]*)*$"}
+        before: {$ref: shared/operation.yaml#/components/schemas/OperationValue}
+        after: {$ref: shared/operation.yaml#/components/schemas/OperationValue}
+    OperationTarget:
+      oneOf:
+        - $ref: shared/operation.yaml#/components/schemas/OperationTargetStore
+        - $ref: shared/operation.yaml#/components/schemas/OperationTargetDirectory
+      discriminator:
+        propertyName: kind
+    OperationTargetStore:
+      type: object
+      required: [kind, resource, id]
+      properties:
+        kind: {type: string, const: store}
+        resource: {type: string, maxLength: 128, pattern: "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*)+$"}
+        id: {type: [string, "null"], maxLength: 128}
+    OperationTargetDirectory:
+      type: object
+      required: [kind, connectionId, objectGuid]
+      properties:
+        kind: {type: string, const: directory}
+        connectionId: {type: string, format: uuid}
+        objectGuid: {type: [string, "null"], format: uuid}
+    OperationStepPreview:
+      type: object
+      required: [target, changes, reversibility, reversibilityReason]
+      properties:
+        target: {$ref: shared/operation.yaml#/components/schemas/OperationTarget}
+        changes: {type: array, maxItems: 1000, items: {$ref: shared/operation.yaml#/components/schemas/OperationChange}}
+        reversibility: {$ref: shared/operation.yaml#/components/schemas/OperationReversibilityValue}
+        reversibilityReason: {type: [string, "null"], maxLength: 512}
+    OperationBlocked:
+      type: object
+      required: [target, code]
+      properties:
+        target: {$ref: shared/operation.yaml#/components/schemas/OperationTarget}
+        code: {type: string, maxLength: 64, pattern: "^[a-z][a-z0-9_]*$"}
+    OperationRequiredConfirmation:
+      type: object
+      required: [kind, items]
+      properties:
+        kind: {$ref: shared/operation.yaml#/components/schemas/OperationConfirmationKindValue}
+        items: {type: array, maxItems: 100, items: {type: string, maxLength: 254}}
+    OperationUndoPlan:
+      type: object
+      required: [possible, reversibility]
+      properties:
+        possible: {type: boolean}
+        reversibility: {$ref: shared/operation.yaml#/components/schemas/OperationReversibilityValue}
+    OperationPreview:
+      type: object
+      required: [action, actionVersion, planHash, outcome, holdReason, stepUpRequired, reversibility, steps, blocked, requiredConfirmations, undo]
+      properties:
+        action: {type: string, maxLength: 128, pattern: "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*){2,4}$"}
+        actionVersion: {type: integer, minimum: 1, maximum: 1000000}
+        planHash: {type: string, minLength: 64, maxLength: 64, pattern: "^[0-9a-f]{64}$"}
+        outcome: {$ref: shared/operation.yaml#/components/schemas/OperationPreviewOutcome}
+        holdReason: {type: [string, "null"], maxLength: 64}
+        stepUpRequired: {type: boolean}
+        reversibility: {$ref: shared/operation.yaml#/components/schemas/OperationReversibilityValue}
+        steps: {type: array, maxItems: 1000, items: {$ref: shared/operation.yaml#/components/schemas/OperationStepPreview}}
+        blocked: {type: array, maxItems: 1000, items: {$ref: shared/operation.yaml#/components/schemas/OperationBlocked}}
+        requiredConfirmations: {type: array, maxItems: 10, items: {$ref: shared/operation.yaml#/components/schemas/OperationRequiredConfirmation}}
+        undo: {$ref: shared/operation.yaml#/components/schemas/OperationUndoPlan}
+    OperationRef:
+      type: object
+      required: [id, action, state, undoes]
+      properties:
+        id: {type: string, format: uuid}
+        action: {type: string, maxLength: 128, pattern: "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*){2,4}$"}
+        state: {$ref: shared/operation.yaml#/components/schemas/OperationStateValue}
+        undoes: {type: [string, "null"], format: uuid}

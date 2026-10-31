@@ -509,7 +509,7 @@ export interface paths {
         put?: never;
         /**
          * Create a schedule
-         * @description Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal ("Data leaves your organisation"), or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only. Scheduled data is what the owner can see, not what a recipient can see. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner, so a retried create is a 400 with code name_taken and changes nothing.
+         * @description Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal ("Data leaves your organisation"), or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only. Scheduled data is what the owner can see, not what a recipient can see. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner, so a retried create is a 400 with code name_taken and changes nothing. Preview it first with previewCreateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         post: operations["createReportSchedule"];
         delete?: never;
@@ -532,13 +532,13 @@ export interface paths {
         get: operations["getReportSchedule"];
         /**
          * Replace a schedule's settings
-         * @description Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version. Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external address that is new or changed. Changing another owner's schedule additionally needs reports.schedule.manage_all. The scope refusals of create apply.
+         * @description Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version. Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external address that is new or changed. Changing another owner's schedule additionally needs reports.schedule.manage_all. The scope refusals of create apply. Preview it first with previewUpdateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         put: operations["updateReportSchedule"];
         post?: never;
         /**
          * Delete a schedule
-         * @description Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire.
+         * @description Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire. Preview it first with previewDeleteReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         delete: operations["deleteReportSchedule"];
         options?: never;
@@ -556,7 +556,7 @@ export interface paths {
         get?: never;
         /**
          * Reassign a schedule's owner
-         * @description Hands the schedule to another account, as the Action reports.schedule.reassign (ADR-0005 rule 10). This is the one schedule operation bound to reports.schedule.manage_all. The schedule pauses until the new owner resumes it, so a reassignment cannot widen what recipients receive without the new owner's act. The new owner must hold reports.run, reports.export and reports.schedule (400 with code owner_lacks_permission otherwise). Needs If-Match.
+         * @description Hands the schedule to another account, as the Action reports.schedule.reassign (ADR-0005 rule 10). This is the one schedule operation bound to reports.schedule.manage_all. The schedule pauses until the new owner resumes it, so a reassignment cannot widen what recipients receive without the new owner's act. The new owner must hold reports.run, reports.export and reports.schedule (400 with code owner_lacks_permission otherwise). Needs If-Match. Preview it first with previewReassignReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         put: operations["reassignReportSchedule"];
         post?: never;
@@ -577,9 +577,109 @@ export interface paths {
         put?: never;
         /**
          * Pause a schedule
-         * @description Pauses the schedule, as the Action reports.schedule.pause (ADR-0005 rule 10). A paused schedule fires nothing until it is resumed. Pausing another owner's schedule additionally needs reports.schedule.manage_all. A pause the system makes under the owner-authority rule is not this operation; it is audited as an event and shows as pausedReason.
+         * @description Pauses the schedule, as the Action reports.schedule.pause (ADR-0005 rule 10). A paused schedule fires nothing until it is resumed. Pausing another owner's schedule additionally needs reports.schedule.manage_all. A pause the system makes under the owner-authority rule is not this operation; it is audited as an event and shows as pausedReason. Preview it first with previewPauseReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         post: operations["pauseReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/previews/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview deleting a schedule
+         * @description The dry run of deleteReportSchedule as the Action reports.schedule.delete (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as deleteReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         */
+        post: operations["previewDeleteReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/previews/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview pausing a schedule
+         * @description The dry run of pauseReportSchedule as the Action reports.schedule.pause (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as pauseReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         */
+        post: operations["previewPauseReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/previews/reassign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview reassigning a schedule's owner
+         * @description The dry run of reassignReportSchedule as the Action reports.schedule.reassign (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as reassignReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         */
+        post: operations["previewReassignReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/previews/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview resuming a schedule
+         * @description The dry run of resumeReportSchedule as the Action reports.schedule.resume (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as resumeReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         */
+        post: operations["previewResumeReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/previews/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview replacing a schedule's settings
+         * @description The dry run of updateReportSchedule as the Action reports.schedule.update (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as updateReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         */
+        post: operations["previewUpdateReportSchedule"];
         delete?: never;
         options?: never;
         head?: never;
@@ -597,7 +697,7 @@ export interface paths {
         put?: never;
         /**
          * Resume a schedule
-         * @description Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this.
+         * @description Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this. Preview it first with previewResumeReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         post: operations["resumeReportSchedule"];
         delete?: never;
@@ -620,6 +720,66 @@ export interface paths {
          * @description Fires the schedule once now, exactly as a scheduled fire: a run of the pinned definition under the owner's current scope and permissions, then delivery to each recipient, every external address re-evaluated against the current allowed domains. Answers the run. Only the schedule's owner may call this, because the run is the owner's and reports.schedule.manage_all never opens another owner's runs (modules/reports.md 6.6); anyone else, a manage_all holder included, gets 404. It is bookkeeping, not an Action. A per-DC schedule cannot be run now more often than daily (409). A schedule whose owner is disabled or has lost a permission is paused instead (409).
          */
         post: operations["runReportScheduleNow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/operations/{operationId}/previews/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview undoing a schedule change
+         * @description The dry run of undoing one reports.schedule.* operation (ADR-0004 rule 14): it plans the inverse, reports.schedule.restore, against the live schedule for the caller, with the checks of the transition it makes (modules/reports.md 8): undoing a pause resumes, so only the owner may (owner_only); undoing a reassignment needs reports.schedule.manage_all and leaves the schedule paused (lossy); restoring external recipients needs reports.deliver.external and lists them in requiredConfirmations. A plan refusal is a 200 with outcome refused. It writes, persists and audits nothing. 404 when the operation is unknown, is not a reports.schedule.* operation, or its schedule is not visible to the caller. 409 operation-not-undoable when no inverse can be planned at all, errors[].code irreversible, already_undone, superseded (the schedule changed after this operation; undo the later change first) or not_finished.
+         */
+        post: operations["previewUndoReportScheduleOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/operations/{operationId}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a schedule change
+         * @description Undoes one reports.schedule.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14, ADR-0005 rule 10). The undo is a new operation of the Action reports.schedule.restore, planned against the live schedule for the caller with the checks of the transition it makes, run inline, audited, and itself undoable. It restores the version before the operation: undoing a create archives the schedule, a delete restores it, an update restores the previous version, a pause resumes it (owner only), a resume pauses it, and a reassignment restores the previous owner with the schedule still paused. It sends nothing, and a fire that ran in between is not recalled. confirmations must repeat the requiredConfirmations of the undo preview (external recipients the undo restores); otherwise 400 with code external_not_confirmed. 403 when the inverse needs a permission the caller lacks (errors[].code external_not_permitted, owner_only, manage_all_required). 404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded, not_finished or plan_refused (the scope refusals of create). Undoing an operation that itself needed approval is always held (202).
+         */
+        post: operations["undoReportScheduleOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/previews/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview creating a schedule
+         * @description The dry run of createReportSchedule as the Action reports.schedule.create (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as createReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         */
+        post: operations["previewCreateReportSchedule"];
         delete?: never;
         options?: never;
         head?: never;
@@ -784,6 +944,163 @@ export interface components {
             /** Format: uuid */
             guid: string;
             rdns: components["schemas"]["Rdn"][];
+        };
+        OperationBlocked: {
+            code: string;
+            target: components["schemas"]["OperationTarget"];
+        };
+        /** @description One changed field. field is the camelCase member path in the target's resource schema. before is absent when the field is set for the first time or the target is created; after is absent when it is removed or the target deleted. (The dialect allows only primitive nullables, so absence is a variant of OperationValue, not null.) */
+        OperationChange: {
+            after: components["schemas"]["OperationValue"];
+            before: components["schemas"]["OperationValue"];
+            field: string;
+        };
+        /** @description One confirmation the caller gives after reading the preview. items repeats, exactly, the items of the requiredConfirmations entry of the same kind. */
+        OperationConfirmation: {
+            items: string[];
+            kind: components["schemas"]["OperationConfirmationKind"];
+        };
+        /**
+         * @description What the caller confirms. A closed request enum.
+         * @enum {string}
+         */
+        OperationConfirmationKind: "external_recipients";
+        /**
+         * @description A confirmation the submit needs. external_recipients is "Data leaves your organisation". Clients accept values they do not know, and a client that does not know a kind cannot submit.
+         * @enum {string}
+         */
+        OperationConfirmationKindValue: "external_recipients" | (string & {});
+        OperationPreview: {
+            action: string;
+            actionVersion: number;
+            blocked: components["schemas"]["OperationBlocked"][];
+            holdReason: string | null;
+            outcome: components["schemas"]["OperationPreviewOutcome"];
+            planHash: string;
+            requiredConfirmations: components["schemas"]["OperationRequiredConfirmation"][];
+            reversibility: components["schemas"]["OperationReversibilityValue"];
+            steps: components["schemas"]["OperationStepPreview"][];
+            stepUpRequired: boolean;
+            undo: components["schemas"]["OperationUndoPlan"];
+        };
+        /**
+         * @description What submitting this exact request would do now: ready, no_change, needs_approval (ADR-0005 rule 8), refused (a step is blocked or the gate denies). Clients accept values they do not know.
+         * @enum {string}
+         */
+        OperationPreviewOutcome: "ready" | "no_change" | "needs_approval" | "refused" | (string & {});
+        OperationRef: {
+            action: string;
+            /** Format: uuid */
+            id: string;
+            state: components["schemas"]["OperationStateValue"];
+            /** Format: uuid */
+            undoes: string | null;
+        };
+        OperationRequiredConfirmation: {
+            items: string[];
+            kind: components["schemas"]["OperationConfirmationKindValue"];
+        };
+        /**
+         * @description How far an undo restores the before-state (ADR-0005 rule 1). Clients accept values they do not know.
+         * @enum {string}
+         */
+        OperationReversibilityValue: "reversible" | "lossy" | "irreversible" | (string & {});
+        /**
+         * @description An operation's state (ADR-0005 rule 3, DM-41). Clients accept values they do not know.
+         * @enum {string}
+         */
+        OperationStateValue: "draft" | "planning" | "planned" | "awaiting_approval" | "approved" | "queued" | "running" | "cancelling" | "no_change" | "plan_failed" | "rejected" | "succeeded" | "partially_succeeded" | "failed" | "cancelled" | (string & {});
+        OperationStepPreview: {
+            changes: components["schemas"]["OperationChange"][];
+            reversibility: components["schemas"]["OperationReversibilityValue"];
+            reversibilityReason: string | null;
+            target: components["schemas"]["OperationTarget"];
+        };
+        OperationTarget: components["schemas"]["OperationTargetStore"] | components["schemas"]["OperationTargetDirectory"];
+        OperationTargetDirectory: {
+            /** Format: uuid */
+            connectionId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationTargetDirectory";
+            /** Format: uuid */
+            objectGuid: string | null;
+        };
+        OperationTargetStore: {
+            id: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationTargetStore";
+            resource: string;
+        };
+        OperationUndoPlan: {
+            possible: boolean;
+            reversibility: components["schemas"]["OperationReversibilityValue"];
+        };
+        /** @description Starts the undo of an operation. confirmations carries every confirmation the undo preview listed in requiredConfirmations; an empty list when it listed none. */
+        OperationUndoRequest: {
+            confirmations: components["schemas"]["OperationConfirmation"][];
+        };
+        /** @description One side of a change, rendered by the Action for display. redacted stands for a secret or an erased personal value. */
+        OperationValue: components["schemas"]["OperationValueText"] | components["schemas"]["OperationValueTextList"] | components["schemas"]["OperationValueInteger"] | components["schemas"]["OperationValueBoolean"] | components["schemas"]["OperationValueTime"] | components["schemas"]["OperationValueRedacted"] | components["schemas"]["OperationValueAbsent"];
+        OperationValueAbsent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueAbsent";
+        };
+        OperationValueBoolean: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueBoolean";
+            value: boolean;
+        };
+        OperationValueInteger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueInteger";
+            value: number;
+        };
+        OperationValueRedacted: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueRedacted";
+        };
+        OperationValueText: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueText";
+            value: string;
+        };
+        OperationValueTextList: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueTextList";
+            values: string[];
+        };
+        OperationValueTime: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueTime";
+            /** Format: date-time */
+            value: string;
         };
         /** @description Cursor paging of a directory collection. Order is stable; nextCursor is null on the last page. */
         PageInfo: {
@@ -1971,6 +2288,22 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description The operation cannot be undone; errors[].code says why (irreversible, already_undone, superseded, not_finished, tier0_blocked, plan_refused) */
+        OperationNotUndoable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 409,
+                 *       "title": "The operation cannot be undone",
+                 *       "type": "/problems/operation-not-undoable"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description The password does not meet the policy */
         PasswordPolicyViolation: {
             headers: {
@@ -2231,6 +2564,8 @@ export interface components {
         IdempotencyKey: string;
         /** @description The ETag of the version being changed; a stale value answers precondition-failed. */
         IfMatch: string;
+        /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+        OperationId: string;
         /** @description The nextCursor of the previous page. */
         PageCursor: components["schemas"]["Cursor"];
         /** @description The page size. */
@@ -3159,12 +3494,25 @@ export interface operations {
             /** @description The schedule is created */
             201: {
                 headers: {
+                    /** @description The operation that made this change. It is the undo handle for undoReportScheduleOperation. */
+                    "ActiveDIQ-Operation-Id": string;
                     ETag: string;
                     Location?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            /** @description The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
                 };
             };
             400: components["responses"]["Validation"];
@@ -3230,11 +3578,24 @@ export interface operations {
             /** @description The schedule as stored */
             200: {
                 headers: {
+                    /** @description The operation that made this change. It is the undo handle for undoReportScheduleOperation. */
+                    "ActiveDIQ-Operation-Id": string;
                     ETag: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            /** @description The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
                 };
             };
             400: components["responses"]["Validation"];
@@ -3266,9 +3627,22 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
             /** @description The schedule is deleted */
             204: {
                 headers: {
+                    /** @description The operation that made this change. It is the undo handle for undoReportScheduleOperation. */
+                    "ActiveDIQ-Operation-Id": string;
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -3304,11 +3678,24 @@ export interface operations {
             /** @description The schedule, paused under its new owner */
             200: {
                 headers: {
+                    /** @description The operation that made this change. It is the undo handle for undoReportScheduleOperation. */
+                    "ActiveDIQ-Operation-Id": string;
                     ETag: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            /** @description The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
                 };
             };
             400: components["responses"]["Validation"];
@@ -3338,6 +3725,8 @@ export interface operations {
             /** @description The schedule, paused */
             200: {
                 headers: {
+                    /** @description The operation that made this change. It is the undo handle for undoReportScheduleOperation. */
+                    "ActiveDIQ-Operation-Id": string;
                     ETag: string;
                     [name: string]: unknown;
                 };
@@ -3345,9 +3734,189 @@ export interface operations {
                     "application/json": components["schemas"]["ReportSchedule"];
                 };
             };
+            /** @description The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewDeleteReportSchedule: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewPauseReportSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewReassignReportSchedule: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleReassign"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewResumeReportSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUpdateReportSchedule: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleWrite"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };
@@ -3367,11 +3936,24 @@ export interface operations {
             /** @description The schedule, active */
             200: {
                 headers: {
+                    /** @description The operation that made this change. It is the undo handle for undoReportScheduleOperation. */
+                    "ActiveDIQ-Operation-Id": string;
                     ETag: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            /** @description The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -3409,6 +3991,116 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUndoReportScheduleOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview of the undo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["OperationNotUndoable"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    undoReportScheduleOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationUndoRequest"];
+            };
+        };
+        responses: {
+            /** @description The undo operation; undoes names the operation it undid */
+            200: {
+                headers: {
+                    /** @description The undo operation. Undoing it re-applies the original change. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description The undo is held for approval (ADR-0005 rule 8); nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held undo operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["OperationNotUndoable"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewCreateReportSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleWrite"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };
