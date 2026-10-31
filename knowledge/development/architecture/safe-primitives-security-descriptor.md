@@ -5,7 +5,7 @@ updated: 2026-10-02
 status: review
 owner: heramb
 ticket: T-0028
-implemented: "read half (T-0149) and write half (T-0583): internal/directory/sd, corpus units sd.read and sd.write"
+implemented: "read half (T-0149), write half (T-0583), password-change classifier (T-1019): internal/directory/sd, corpus units sd.read and sd.write"
 sources_last_checked: 2026-10-02
 ---
 
@@ -491,3 +491,39 @@ Files `write.go` (types, codes, digests), `plan.go` (planners); corpus `testdata
 - PD changes only through `PlanInheritance` (BlockKeepInherited, BlockRemoveInherited, RestoreInheritance); a diff whose WantControl differs in PD/DI is refused.
 - SDProp: `ObjectCtx.ProtectedBySDProp` is caller-supplied (from the computed protected set); the planner only refuses (`sd.sdprop_will_revert`).
 - **Windows-lab status (T-0606, 2026-10-28, WS2025):** SDProp revert, PD-clear recompute, INHERITED/DI survival and DACL-only write without SeSecurityPrivilege hold; the DC re-sorts the DACL on write (T-0627/T-0728: SD-W10 is now refused as non-canonical, SD-W10N is the canonical plan; verify-after-write is `DACLWrite.VerifyAfter`, never positional); inherit-only OWNER RIGHTS/owner ACEs do not strip the owner's WRITE_DAC on WS2025 — SD-W26/W27 stay fail-closed by decision (T-0628): one DC build, Samba unverified, and a false refusal costs an operator a retry whereas a false allow can lock the connector out of an object. Their corpus `source` records this; `verified` stays `doc` because the lab disproved, not confirmed, the expectation. Narrow only with a multi-version lab run (WS2019/2022 + Samba) and security-architect sign-off. Details: `runbooks/windows-lab-runs/sdwrite-assumptions-20261028.md`.
+
+## 14. Implementation notes (T-1019, Cannot Change Password read)
+
+`internal/directory/sd/passwordchange.go`: `ClassifyPasswordChange(Raw)` and `SD.PasswordChange()` return the
+four-valued `PasswordChange` (`Blocked`, `BlockedOneACE`, `NoDenyACE`, `NotConfirmed`; reports-2-second-slice
+§4.2 rule 1). The zero value is `NotConfirmed`. It reads the decoded DACL only; no byte slicing, no SACL.
+
+- A counted ACE is an object-form deny (type 0x06) with the CONTROL_ACCESS bit, object type exactly
+  `ab721a53-1e2f-11d0-9819-00aa0040529b` (User-Change-Password), trustee Everyone (`S-1-1-0`) or SELF
+  (`S-1-5-10`), **not** INHERITED, **not** INHERIT_ONLY, no inherited-object type. Callback ACEs, plain
+  (non-object) denies of all control rights, inherited denies and allows are not counted, so `NoDenyACE`
+  never means "can change". The same trustee twice is one ACE.
+- Any `Decode` error returns `NotConfirmed` and the typed code unchanged; a descriptor with no DACL at all
+  (the DC withheld it) is `sd.not_returned`; a NULL DACL is a real DACL with no ACEs (`NoDenyACE`). The
+  state is never non-zero next to an error (`TestClassifyPasswordChangeNoPartialValue` flips every byte).
+- Connector: `ad.Session.ReadPasswordChange(ctx, ref)` = `ReadDACL` (DACL-only critical SD_FLAGS, SACL
+  refused, same DC) + classify, returning the `objectGUID` the state belongs to. It is a per-object base
+  read: `nTSecurityDescriptor` is Read-only in the schema allowlist, so no paged search carries it.
+- The UAC "password cannot change" bit is never consulted (AD ignores it).
+- Tests: `passwordchange_test.go` (golden cases from an independent byte builder), `sdwrite_test.go`
+  (`TestReadPasswordChange`, fake upstream), `sdpwchange_lab_test.go` (Samba; writes the denies through
+  PlanDACL/WriteDACL). Samba does not prove the ACE shape the Windows tools write (flags, ordering): a
+  Windows-lab ticket covers that.
+
+**S1 (does DirSync deliver `nTSecurityDescriptor` changes?), ad-expert consult, T-1019 — `[UNVERIFIED]`, Windows lab
+needed.** By inference from the documented DirSync model (an attribute named in the request list that was modified
+since the cookie makes the object appear; [MS-ADTS DirSync](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/2213a7f2-0a36-483c-b2a4-8574d53aa1e3),
+[polling with DirSync](https://learn.microsoft.com/en-us/windows/win32/ad/polling-for-changes-using-the-dirsync-control)),
+an *explicit* ACL edit on a user appears in the next delta when `nTSecurityDescriptor` is requested; no document
+singles the attribute out (medium confidence). Not settled: whether DirSync honours the SD_FLAGS control; whether
+the attribute needs Replicating Directory Changes (All). Inheritance propagation (the SD propagator) is not
+replicated and does not modify replication metadata
+([MS-ADTS](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/05c8a4b6-43aa-49f7-8c31-df3ac72230f3)),
+so a user's *effective* ACL can change with no delta. Consequence for PWD-04 (reports-2 §4.2 rule 5): the column is
+labelled with the full-sync age, not the delta age, until the Windows lab proves otherwise. `uSNChanged` polling sees
+originating writes only. Samba's DirSync/propagation behaviour is not evidence for any of this.
