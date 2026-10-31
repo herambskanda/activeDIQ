@@ -12,6 +12,8 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
+	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 )
@@ -138,8 +140,20 @@ func TestExportNeedsReportsRun(t *testing.T) {
 		if n := e.count(exports); n != 0 {
 			t.Errorf("a refused export left %d report_exports rows", n)
 		}
-		for _, ev := range e.xsink.ev {
-			t.Errorf("a refused export audited %s", ev.Kind)
+		// AG-2: the refusal is recorded once, as a denial naming the actor and reports.run; no export event
+		denials := func() int {
+			n := 0
+			for _, ev := range e.xsink.ev {
+				if ev.Kind != export.KindPermissionDenied || ev.Outcome != audit.Denied || ev.Actor.Requester.ID != authority.PrincipalID(alice) {
+					t.Errorf("a refused export audited %s", ev.Kind)
+					continue
+				}
+				n++
+			}
+			return n
+		}
+		if n := denials(); n != 1 {
+			t.Errorf("denial events after the finished-run refusal: %d, want 1", n)
 		}
 		e.work() // an export job, had one been queued, would run here
 		if n := e.count(exports); n != 0 {
@@ -158,6 +172,9 @@ func TestExportNeedsReportsRun(t *testing.T) {
 		}
 		if n := e.count(exports); n != 0 {
 			t.Errorf("report_exports rows: %d", n)
+		}
+		if n := denials(); n != 2 {
+			t.Errorf("denial events after the expired-run refusal: %d, want 2", n)
 		}
 
 		// both permissions: the export is accepted (the rerun itself is covered in package export; the reuse window reads the database clock, which this test does not move)

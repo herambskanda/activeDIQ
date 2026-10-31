@@ -335,6 +335,8 @@ func (h *Handlers) problem(err error) error {
 		return apitypes.ReportResultExpired("the export file has expired; export the report again")
 	case errors.Is(err, export.ErrNotPermitted):
 		return apitypes.Forbidden("")
+	case errors.Is(err, export.ErrDenialNotRecorded):
+		return apitypes.NotReady("the request could not be recorded; try again shortly")
 	case errors.Is(err, export.ErrExportUnavailable):
 		return apitypes.NotReady("exports are not available until a file store is configured for this installation")
 	case errors.As(err, &failed):

@@ -1138,8 +1138,17 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - **Second permission.** The route carries `reports.export`; `Create` checks `reports.run` itself,
   through `export.Authorizer` (compose adapter `reportsAuthz` over the RBAC authorizer, tenant scope), as its
   first act, before the run is read and before a rerun could start one: 403 on both the finished and the
-  expired-source path, with no row, job, file, audit event or new run. No `Authz` fails closed (403). Putting
+  expired-source path, with no row, job, file or new run. No `Authz` fails closed (403). Putting
   it in the service, not the handler, means B11's scheduled exports pass the same gate (security review F1).
+- **The refusal is audited (AG-2, review F2).** A `reports.run` denial appends one `authz.permission.denied`
+  event (`export.KindPermissionDenied`, the kind and shape the API host's route-level refusals use:
+  Outcome Denied, Reason `permission_denied`, details `permission=reports.run`, `scope=tenant`, no request
+  content) in a fresh tenant transaction. If it cannot be written, `Create` returns `ErrDenialNotRecorded`:
+  503 `not-ready`, never a 403 without a record and never an approval. An authorizer fault stays an error,
+  not a recorded denial.
+- **Authority factor (review F3).** `reportsAuthz` carries the session's authority factor from the request's
+  principal (`apihost.PrincipalFrom`), as `consoleAuthz` does. The rerun job has no principal, so the factor
+  is absent there and a grant that needs it is refused: it fails closed. `reports.run` needs no factor today.
 - **Caps refuse, never truncate.** `Create` checks `row_count` against the format's cap before any
   row, job or file exists (`*CapError`, names the alternative format). The job checks again (an
   expired source is rerun, so its count is known only then). `Service.Caps` may only lower the hard
@@ -1461,4 +1470,5 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   no scheduled `blob.Sweep` in the compose root (expired files stay on disk until swept; reads are
   already refused); the export row cap has no config surface; a rerun run can be left behind when the job
   limit refuses the export right after `Retry`. Security review F1 added the `reports.run` check inside
-  `Create` (see §7.1a).
+  `Create`; F2 its audited denial and 503 when unrecordable; F3 the adapter test and authority factor
+  (see §7.1a).

@@ -107,7 +107,13 @@ func (a reportsAuthz) Allow(ctx context.Context, tid tenant.ID, c authority.Chai
 		return false, nil
 	}
 	target := authority.TargetRef{Class: rbac.TargetClassTenant, GUID: tid.String()}
-	err := a.az.Authorize(authority.WithTenant(ctx, tid.String()), c, p, target, authority.Facts{})
+	ctx = authority.WithTenant(ctx, tid.String())
+	// The session's authority factor travels as on the console path. Off a request (the rerun job) there is
+	// no principal, the factor is absent, and a grant that needs it is refused: it fails closed.
+	if pr, ok := apihost.PrincipalFrom(ctx); ok {
+		ctx = authority.WithAuthorityFactor(ctx, pr.AuthorityFactor)
+	}
+	err := a.az.Authorize(ctx, c, p, target, authority.Facts{})
 	switch {
 	case err == nil:
 		return true, nil

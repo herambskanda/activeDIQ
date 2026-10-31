@@ -75,11 +75,16 @@ func (f *fakeScopes) For(_ context.Context, _ store.Tx, _ tenant.ID, c authority
 type recSink struct {
 	mu sync.Mutex
 	ev []audit.Event
+	// fail, when set, is returned by every Append and nothing is recorded.
+	fail error
 }
 
 func (r *recSink) Append(_ context.Context, _ store.Tx, e audit.Event) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.fail != nil {
+		return r.fail
+	}
 	if err := e.Validate(); err != nil {
 		return err
 	}

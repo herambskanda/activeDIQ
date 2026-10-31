@@ -19,6 +19,8 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
+	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
 	"github.com/skenzeriq/activediq/internal/platform/export/cellsafe"
 	"github.com/skenzeriq/activediq/internal/platform/report"
@@ -545,9 +547,55 @@ func TestCreateNeedsReportsRun(t *testing.T) {
 				t.Errorf("a refused export audited %s", ev.Kind)
 			}
 		}
+		// AG-2 (security review F2): each refusal is one denial event naming actor and permission
+		den := e.sink.of(export.KindPermissionDenied)
+		if len(den) != 2 {
+			t.Fatalf("denial events: %d, want 2 (finished run, expired run)", len(den))
+		}
+		for _, ev := range den {
+			if ev.Actor.Requester.ID != authority.PrincipalID(alice) || ev.Outcome != audit.Denied || ev.Reason != "permission_denied" {
+				t.Errorf("denial event: %+v", ev)
+			}
+			var perm string
+			for _, d := range ev.Details {
+				if d.Key == "permission" {
+					perm = d.Value
+				}
+			}
+			if perm != "reports.run" {
+				t.Errorf("denial names permission %q", perm)
+			}
+		}
 		e.exp.Authz = nil
 		if _, err := e.exp.Create(ctx, e.tid, chainOf(alice), r.ID, export.CSV); !errors.Is(err, export.ErrNotPermitted) {
 			t.Errorf("no authorizer: %v", err)
+		}
+	})
+}
+
+// A refusal that cannot be recorded is not a success and not a bare 403 (AG-2, security review F2): the
+// caller gets ErrDenialNotRecorded, and no export row, job or run exists.
+func TestRunDenialNotRecordedIsNotRefusedQuietly(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		r := e.finishedRun(alice)
+		e.authz.deny["reports.run"] = true
+		e.sink.fail = errors.New("audit store down")
+		runs, exports := `SELECT count(*) FROM public.report_runs`, `SELECT count(*) FROM public.report_exports`
+		baseRuns := e.count(runs)
+		_, err := e.exp.Create(context.Background(), e.tid, chainOf(alice), r.ID, export.CSV)
+		if !errors.Is(err, export.ErrDenialNotRecorded) || errors.Is(err, export.ErrNotPermitted) {
+			t.Fatalf("unrecordable denial: %v", err)
+		}
+		if n := e.count(exports); n != 0 {
+			t.Errorf("report_exports rows: %d", n)
+		}
+		if n := e.count(runs); n != baseRuns {
+			t.Errorf("report_runs %d, was %d", n, baseRuns)
+		}
+		e.sink.fail = nil
+		if got := len(e.sink.of(export.KindPermissionDenied)); got != 0 {
+			t.Errorf("denial events recorded despite the failing sink: %d", got)
 		}
 	})
 }

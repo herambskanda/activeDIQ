@@ -33,6 +33,9 @@ var (
 	ErrExportExpired     = errors.New("export: the file has expired")                 // 410 report-result-expired
 	ErrExportUnavailable = errors.New("export: no blob store is configured")          // 503 not-ready
 	ErrNotPermitted      = errors.New("export: the caller does not hold reports.run") // 403
+	// ErrDenialNotRecorded: the caller lacks reports.run and the refusal could not be written to the audit
+	// trail (AG-2). The answer is 503, never a 403 without a record.
+	ErrDenialNotRecorded = errors.New("export: the refusal could not be recorded") // 503 not-ready
 )
 
 // Authorizer answers whether a requester holds a permission in a tenant, over live RBAC facts. It is the
@@ -192,7 +195,7 @@ func (s *Service) Create(ctx context.Context, tid tenant.ID, c authority.Chain, 
 	if ok, err := s.Authz.Allow(ctx, tid, c, run.Perm); err != nil {
 		return Export{}, fmt.Errorf("export: authorize: %w", err)
 	} else if !ok {
-		return Export{}, ErrNotPermitted
+		return Export{}, s.deniedRun(ctx, tid, c)
 	}
 	var src run.Run
 	if err := s.Runs.Read(ctx, tid, rid, c, 0, func(_ context.Context, _ store.Tx, r run.Run) error {
@@ -374,6 +377,34 @@ type Download struct {
 	// Base is the file name without its extension; Format says which extension and media type.
 	Base   string
 	Format Format
+}
+
+// KindPermissionDenied is the kind the API host's route-level refusals use (authz.permission.denied); a
+// reports.run refusal inside Create is recorded in the same shape, so one query and one alert see both.
+const KindPermissionDenied audit.Kind = "authz.permission.denied"
+
+// deniedRun records a reports.run refusal in a fresh tenant transaction (AG-2: success, failure and denial
+// are all recorded; the refusal changed nothing, so nothing else shares the transaction). It returns
+// ErrNotPermitted once the record is written, ErrDenialNotRecorded when it cannot be: never a refusal
+// without a record, and never an approval. The record names the permission and scope, no request content.
+func (s *Service) deniedRun(ctx context.Context, tid tenant.ID, c authority.Chain) error {
+	if c.Validate() != nil {
+		return ErrDenialNotRecorded
+	}
+	// The caller may have cancelled; the record is kept anyway.
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	err := s.DB.WithTenant(rctx, tid, func(ctx context.Context, tx store.Tx) error {
+		return s.Audit.Append(ctx, tx, audit.Event{ID: "export:denied:" + randomSuffix(), Kind: KindPermissionDenied, At: s.now(),
+			Actor: c, Target: authority.TargetRef{Class: "tenant", GUID: tid.String()}, Component: Component,
+			Outcome: audit.Denied, Reason: "permission_denied",
+			Details: []chain.Detail{{Key: "permission", Value: string(run.Perm)}, {Key: "scope", Value: "tenant"}}})
+	})
+	if err != nil {
+		s.log().Error("reports: an export refusal could not be audited", "err", err)
+		return ErrDenialNotRecorded
+	}
+	return ErrNotPermitted
 }
 
 // denied records a refused download. Like run.Service.Read it runs after the reading transaction has
