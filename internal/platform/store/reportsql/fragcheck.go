@@ -318,10 +318,12 @@ func nameOf(n *token) string {
 func declareCTEs(toks []token, i int, env *fragEnv, d *decls) error {
 	d.ok[i] = true
 	j := i + 1
-	if isWord(toks, j, "recursive") {
+	recursive := isWord(toks, j, "recursive")
+	if recursive {
 		d.ok[j] = true
 		j++
 	}
+	var list []cteBody
 	for {
 		if j >= len(toks) || toks[j].kind != tokWord {
 			return fmt.Errorf(`"with" must be followed by a CTE name; only WITH [RECURSIVE] name [(columns)] AS (…) is allowed`)
@@ -329,7 +331,8 @@ func declareCTEs(toks []token, i int, env *fragEnv, d *decls) error {
 		if err := env.checkName(toks[j].raw, true); err != nil {
 			return err
 		}
-		d.ctes[toks[j].text], d.aliases[toks[j].text], d.ok[j] = true, true, true
+		name, raw := toks[j].text, toks[j].raw
+		d.ctes[name], d.aliases[name], d.ok[j] = true, true, true
 		j++
 		if isPunct(toks, j, "(") {
 			j++
@@ -361,12 +364,44 @@ func declareCTEs(toks []token, i int, env *fragEnv, d *decls) error {
 		if k < 0 {
 			return fmt.Errorf("a CTE body is not closed")
 		}
+		list = append(list, cteBody{name: name, raw: raw, start: j + 2, end: k})
 		if isPunct(toks, k+1, ",") {
 			j = k + 2
 			continue
 		}
+		if !recursive {
+			return checkCTEForwardRefs(toks, list)
+		}
 		return nil
 	}
+}
+
+// cteBody is one CTE of a WITH list: its name and the token range of its body, brackets excluded.
+type cteBody struct {
+	name, raw  string
+	start, end int
+}
+
+// checkCTEForwardRefs refuses, in a non-recursive WITH, a body that names its own CTE or one
+// declared after it. Without RECURSIVE such a name resolves to a relation of the schema (a view, a
+// materialized view, a sequence), which would be read with no {rel.x} scope, and a view runs with
+// its owner's rights (T-1087). The word is refused wherever it stands in the body, a column alias
+// of the same name included: the cost is a rename, and no resolution rule has to be reasoned about.
+func checkCTEForwardRefs(toks []token, list []cteBody) error {
+	for n, c := range list {
+		for _, later := range list[n:] {
+			for k := c.start; k < c.end; k++ {
+				if toks[k].kind != tokWord || toks[k].text != later.name {
+					continue
+				}
+				if later.name == c.name {
+					return fmt.Errorf("CTE %q refers to itself without RECURSIVE: inside its own body the name resolves to a relation of the schema, not to the CTE", c.raw)
+				}
+				return fmt.Errorf("CTE %q refers to %q, which is declared after it: the name resolves to a relation of the schema, not to the CTE", c.raw, later.raw)
+			}
+		}
+	}
+	return nil
 }
 
 // declareDerivedAlias reads the alias after the ")" at toks[k] that closes a derived table.
