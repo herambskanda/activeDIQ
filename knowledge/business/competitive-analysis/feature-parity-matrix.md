@@ -1,10 +1,10 @@
 ---
 title: Feature-parity matrix — ManageEngine AD suite vs activeDIQ
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-31
 status: draft
 owner: heramb
-sources_last_checked: 2026-10-02
+sources_last_checked: 2026-10-31
 ---
 
 # Feature-parity matrix — ManageEngine AD suite vs activeDIQ
@@ -597,3 +597,7 @@ Items most likely to flip importance, stance or phase come first.
   tickets are done.
 - **Keep it true.** When research changes, update the CSV, regenerate the totals and must tables
   here, bump `updated`, and log the reason. The matrix is `draft` until a human reads it end to end.
+
+## Change log
+
+- **2026-10-31 (T-1014):** Notes on ADM-085, 086, 087, 089, 100 and 207 carry the sourced report semantics (research doc §K.1). No row added or renumbered, so no totals changed.

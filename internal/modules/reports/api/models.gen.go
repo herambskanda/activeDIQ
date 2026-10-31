@@ -3948,10 +3948,12 @@ func (u *ReportFilterView) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 	}
 }
 
-// ReportFreshness: The freshness label of spec 8.2. label is the text to show, such as Synced 09:41.
+// ReportFreshness: The freshness label of spec 8.2. label is the text to show, such as Synced 09:41. When state is stale, stale names every naming context that makes it stale, oldest first: the connection (by id and display name), the naming context, why it is stale and when its last sync pass was. It is empty in every other state. thresholdSeconds is the staleness threshold the run was judged against; it is null when the run was judged against no connection. The console shows these and derives nothing from label.
 type ReportFreshness struct {
-	Label string               `json:"label"`
-	State ReportFreshnessState `json:"state"`
+	Label            string               `json:"label"`
+	Stale            []ReportStaleSource  `json:"stale"`
+	State            ReportFreshnessState `json:"state"`
+	ThresholdSeconds *int64               `json:"thresholdSeconds"`
 
 	p apitypes.Presence
 }
@@ -3985,7 +3987,7 @@ func (v *ReportFreshness) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.Label); err != nil {
 				return err
 			}
-		case "state":
+		case "stale":
 			null, err := apitypes.TakeNull(d)
 			if err != nil {
 				return err
@@ -3994,7 +3996,24 @@ func (v *ReportFreshness) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if null {
 				continue
 			}
+			if err := apitypes.DecodeArray(d, &v.Stale); err != nil {
+				return err
+			}
+		case "state":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
 			if err := json.UnmarshalDecode(d, &v.State); err != nil {
+				return err
+			}
+		case "thresholdSeconds":
+			v.p.Mark(3, false)
+			if err := json.UnmarshalDecode(d, &v.ThresholdSeconds); err != nil {
 				return err
 			}
 		default:
@@ -4018,14 +4037,36 @@ func (v *ReportFreshness) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("label"), string(v.Label), 0, 256)
 	}
-	// state
+	// stale
 	if v.p.Decoded() {
 		if !v.p.Has(1) {
-			errs.Required(at, "state")
+			errs.Required(at, "stale")
 		}
 		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "stale")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("stale"), len(v.Stale), 0, 1000, apitypes.CodeMaxItems)
+		for i := range v.Stale {
+			v.Stale[i].Validate(apitypes.Index(at.AppendToken("stale"), i), errs)
+		}
+	}
+	// state
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "state")
+		}
+		if v.p.IsNull(2) {
 			errs.NullNotAllowed(at, "state")
 		}
+	}
+	// thresholdSeconds
+	if v.p.Decoded() && !v.p.Has(3) {
+		errs.Required(at, "thresholdSeconds")
+	}
+	if v.ThresholdSeconds != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("thresholdSeconds"), int64((*v.ThresholdSeconds)), 0, 31536000)
 	}
 }
 
@@ -4047,6 +4088,137 @@ func (v ReportFreshnessState) Valid() bool {
 		return true
 	}
 	return false
+}
+
+// ReportHiddenGroup: A set of rows the run counted and did not store, such as probable service accounts (E2). count is the number of hidden rows after scope trimming and is at least 1: a group with nothing hidden is not listed. label is the group's name in the report definition. locked is true when the report cannot show the group, so the console offers no Show control for it.
+type ReportHiddenGroup struct {
+	Count  int64  `json:"count"`
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Locked bool   `json:"locked"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportHiddenGroup) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportHiddenGroup{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "count":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Count); err != nil {
+				return err
+			}
+		case "id":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ID); err != nil {
+				return err
+			}
+		case "label":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Label); err != nil {
+				return err
+			}
+		case "locked":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Locked); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportHiddenGroup) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// count
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "count")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "count")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("count"), int64(v.Count), 1, 9007199254740991)
+	}
+	// id
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "id")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "id")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("id"), string(v.ID), 1, 64)
+	}
+	// label
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "label")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "label")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("label"), string(v.Label), 0, 200)
+	}
+	// locked
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "locked")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "locked")
+		}
+	}
 }
 
 // ReportLastRun: The latest fire.
@@ -7274,7 +7446,7 @@ func (v *ReportRowPage) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 }
 
-// ReportRun: The run record (DM-72). asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header.
+// ReportRun: The run record (DM-72). hiddenGroups lists the sets of rows counted and not stored; it is empty when nothing was hidden or the run has not succeeded. asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header.
 type ReportRun struct {
 	AsOf               *apitypes.Timestamp       `json:"asOf"`
 	Coverage           *ReportDcCoverage         `json:"coverage,omitzero"`
@@ -7288,6 +7460,7 @@ type ReportRun struct {
 	Failure            *ReportFailure            `json:"failure,omitzero"`
 	FinishedAt         *apitypes.Timestamp       `json:"finishedAt"`
 	Freshness          ReportFreshness           `json:"freshness"`
+	HiddenGroups       []ReportHiddenGroup       `json:"hiddenGroups"`
 	ID                 apitypes.UUID             `json:"id"`
 	ObjectsChecked     *int64                    `json:"objectsChecked"`
 	Parameters         ReportParametersView      `json:"parameters"`
@@ -7436,7 +7609,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.Freshness); err != nil {
 				return err
 			}
-		case "id":
+		case "hiddenGroups":
 			null, err := apitypes.TakeNull(d)
 			if err != nil {
 				return err
@@ -7445,11 +7618,23 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if null {
 				continue
 			}
+			if err := apitypes.DecodeArray(d, &v.HiddenGroups); err != nil {
+				return err
+			}
+		case "id":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(13, null)
+			if null {
+				continue
+			}
 			if err := json.UnmarshalDecode(d, &v.ID); err != nil {
 				return err
 			}
 		case "objectsChecked":
-			v.p.Mark(13, false)
+			v.p.Mark(14, false)
 			if err := json.UnmarshalDecode(d, &v.ObjectsChecked); err != nil {
 				return err
 			}
@@ -7458,7 +7643,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(14, null)
+			v.p.Mark(15, null)
 			if null {
 				continue
 			}
@@ -7466,7 +7651,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 				return err
 			}
 		case "presetId":
-			v.p.Mark(15, false)
+			v.p.Mark(16, false)
 			if err := json.UnmarshalDecode(d, &v.PresetID); err != nil {
 				return err
 			}
@@ -7475,7 +7660,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(16, null)
+			v.p.Mark(17, null)
 			if null {
 				continue
 			}
@@ -7487,7 +7672,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(17, null)
+			v.p.Mark(18, null)
 			if null {
 				continue
 			}
@@ -7495,12 +7680,12 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 				return err
 			}
 		case "rowCount":
-			v.p.Mark(18, false)
+			v.p.Mark(19, false)
 			if err := json.UnmarshalDecode(d, &v.RowCount); err != nil {
 				return err
 			}
 		case "scopeApplied":
-			v.p.Mark(19, false)
+			v.p.Mark(20, false)
 			if err := json.UnmarshalDecode(d, &v.ScopeApplied); err != nil {
 				return err
 			}
@@ -7509,7 +7694,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(20, null)
+			v.p.Mark(21, null)
 			if null {
 				continue
 			}
@@ -7517,7 +7702,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 				return err
 			}
 		case "startedAt":
-			v.p.Mark(21, false)
+			v.p.Mark(22, false)
 			if err := json.UnmarshalDecode(d, &v.StartedAt); err != nil {
 				return err
 			}
@@ -7526,7 +7711,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(22, null)
+			v.p.Mark(23, null)
 			if null {
 				continue
 			}
@@ -7639,17 +7824,32 @@ func (v *ReportRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	if !v.p.Decoded() || (v.p.Has(11) && !v.p.IsNull(11)) {
 		v.Freshness.Validate(at.AppendToken("freshness"), errs)
 	}
-	// id
+	// hiddenGroups
 	if v.p.Decoded() {
 		if !v.p.Has(12) {
-			errs.Required(at, "id")
+			errs.Required(at, "hiddenGroups")
 		}
 		if v.p.IsNull(12) {
+			errs.NullNotAllowed(at, "hiddenGroups")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(12) && !v.p.IsNull(12)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("hiddenGroups"), len(v.HiddenGroups), 0, 64, apitypes.CodeMaxItems)
+		for i := range v.HiddenGroups {
+			v.HiddenGroups[i].Validate(apitypes.Index(at.AppendToken("hiddenGroups"), i), errs)
+		}
+	}
+	// id
+	if v.p.Decoded() {
+		if !v.p.Has(13) {
+			errs.Required(at, "id")
+		}
+		if v.p.IsNull(13) {
 			errs.NullNotAllowed(at, "id")
 		}
 	}
 	// objectsChecked
-	if v.p.Decoded() && !v.p.Has(13) {
+	if v.p.Decoded() && !v.p.Has(14) {
 		errs.Required(at, "objectsChecked")
 	}
 	if v.ObjectsChecked != nil {
@@ -7657,18 +7857,18 @@ func (v *ReportRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	// parameters
 	if v.p.Decoded() {
-		if !v.p.Has(14) {
+		if !v.p.Has(15) {
 			errs.Required(at, "parameters")
 		}
-		if v.p.IsNull(14) {
+		if v.p.IsNull(15) {
 			errs.NullNotAllowed(at, "parameters")
 		}
 	}
-	if !v.p.Decoded() || (v.p.Has(14) && !v.p.IsNull(14)) {
+	if !v.p.Decoded() || (v.p.Has(15) && !v.p.IsNull(15)) {
 		v.Parameters.Validate(at.AppendToken("parameters"), errs)
 	}
 	// presetId
-	if v.p.Decoded() && !v.p.Has(15) {
+	if v.p.Decoded() && !v.p.Has(16) {
 		errs.Required(at, "presetId")
 	}
 	if v.PresetID != nil {
@@ -7676,29 +7876,29 @@ func (v *ReportRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	// progress
 	if v.p.Decoded() {
-		if !v.p.Has(16) {
+		if !v.p.Has(17) {
 			errs.Required(at, "progress")
 		}
-		if v.p.IsNull(16) {
+		if v.p.IsNull(17) {
 			errs.NullNotAllowed(at, "progress")
 		}
 	}
-	if !v.p.Decoded() || (v.p.Has(16) && !v.p.IsNull(16)) {
+	if !v.p.Decoded() || (v.p.Has(17) && !v.p.IsNull(17)) {
 		v.Progress.Validate(at.AppendToken("progress"), errs)
 	}
 	// rerunOf
-	if v.p.Decoded() && v.p.IsNull(17) {
+	if v.p.Decoded() && v.p.IsNull(18) {
 		errs.NullNotAllowed(at, "rerunOf")
 	}
 	// rowCount
-	if v.p.Decoded() && !v.p.Has(18) {
+	if v.p.Decoded() && !v.p.Has(19) {
 		errs.Required(at, "rowCount")
 	}
 	if v.RowCount != nil {
 		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("rowCount"), int64((*v.RowCount)), 0, 9007199254740991)
 	}
 	// scopeApplied
-	if v.p.Decoded() && !v.p.Has(19) {
+	if v.p.Decoded() && !v.p.Has(20) {
 		errs.Required(at, "scopeApplied")
 	}
 	if v.ScopeApplied != nil {
@@ -7706,29 +7906,29 @@ func (v *ReportRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	// skippedConnections
 	if v.p.Decoded() {
-		if !v.p.Has(20) {
+		if !v.p.Has(21) {
 			errs.Required(at, "skippedConnections")
 		}
-		if v.p.IsNull(20) {
+		if v.p.IsNull(21) {
 			errs.NullNotAllowed(at, "skippedConnections")
 		}
 	}
-	if !v.p.Decoded() || (v.p.Has(20) && !v.p.IsNull(20)) {
+	if !v.p.Decoded() || (v.p.Has(21) && !v.p.IsNull(21)) {
 		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("skippedConnections"), len(v.SkippedConnections), 0, 64, apitypes.CodeMaxItems)
 		for i := range v.SkippedConnections {
 			v.SkippedConnections[i].Validate(apitypes.Index(at.AppendToken("skippedConnections"), i), errs)
 		}
 	}
 	// startedAt
-	if v.p.Decoded() && !v.p.Has(21) {
+	if v.p.Decoded() && !v.p.Has(22) {
 		errs.Required(at, "startedAt")
 	}
 	// state
 	if v.p.Decoded() {
-		if !v.p.Has(22) {
+		if !v.p.Has(23) {
 			errs.Required(at, "state")
 		}
-		if v.p.IsNull(22) {
+		if v.p.IsNull(23) {
 			errs.NullNotAllowed(at, "state")
 		}
 	}
@@ -9615,6 +9815,197 @@ func (v ReportSortOrder) Valid() bool {
 func (v ReportSortOrder) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	if !v.Valid() {
 		errs.AddBody(at, apitypes.CodeEnum, "value is not one of the allowed values")
+	}
+}
+
+// ReportStaleCause: Why a naming context makes a result stale. older_than_threshold: its last sync pass is older than the staleness threshold. resync_required: its change feed is unusable and a full resync is needed. paused: its sync is paused, or its connection is suspended.
+type ReportStaleCause string
+
+const (
+	ReportStaleCauseOlderThanThreshold ReportStaleCause = "older_than_threshold"
+	ReportStaleCauseResyncRequired     ReportStaleCause = "resync_required"
+	ReportStaleCausePaused             ReportStaleCause = "paused"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportStaleCause) Valid() bool {
+	switch v {
+	case ReportStaleCauseOlderThanThreshold, ReportStaleCauseResyncRequired, ReportStaleCausePaused:
+		return true
+	}
+	return false
+}
+
+// ReportStaleSource: One naming context behind a stale result. connectionName is the connection's display name when the run was made; it is the connection id's text when the run record predates names. lastPassAt is the start of the last successful sync pass of the naming context and ageSeconds is its age when the run was made. cause says why it counts as stale.
+type ReportStaleSource struct {
+	AgeSeconds      int64              `json:"ageSeconds"`
+	Cause           ReportStaleCause   `json:"cause"`
+	ConnectionID    apitypes.UUID      `json:"connectionId"`
+	ConnectionName  string             `json:"connectionName"`
+	LastPassAt      apitypes.Timestamp `json:"lastPassAt"`
+	NamingContextID apitypes.UUID      `json:"namingContextId"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportStaleSource) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportStaleSource{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "ageSeconds":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.AgeSeconds); err != nil {
+				return err
+			}
+		case "cause":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Cause); err != nil {
+				return err
+			}
+		case "connectionId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ConnectionID); err != nil {
+				return err
+			}
+		case "connectionName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ConnectionName); err != nil {
+				return err
+			}
+		case "lastPassAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.LastPassAt); err != nil {
+				return err
+			}
+		case "namingContextId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.NamingContextID); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportStaleSource) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// ageSeconds
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "ageSeconds")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "ageSeconds")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("ageSeconds"), int64(v.AgeSeconds), 0, 31536000)
+	}
+	// cause
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "cause")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "cause")
+		}
+	}
+	// connectionId
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "connectionId")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "connectionId")
+		}
+	}
+	// connectionName
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "connectionName")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "connectionName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("connectionName"), string(v.ConnectionName), 0, 200)
+	}
+	// lastPassAt
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "lastPassAt")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "lastPassAt")
+		}
+	}
+	// namingContextId
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "namingContextId")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "namingContextId")
+		}
 	}
 }
 

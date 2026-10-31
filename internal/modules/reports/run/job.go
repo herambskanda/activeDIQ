@@ -376,23 +376,26 @@ func emptyReason(reasons []string) string {
 // freshness reads the watermarks of the covered connections
 // and labels them (§6.4). A scope that reaches no connection covers nothing: not synced yet.
 func (s *Service) freshness(ctx context.Context, tid tenant.ID, conns []authz.ObjectID, now time.Time) (FreshnessRecord, error) {
-	var lbl report.Freshness
-	var thr time.Duration
-	if len(conns) == 0 {
-		lbl = report.Label(nil, 0, now)
-	} else {
+	read := FreshnessRead{Label: report.Label(nil, 0, now)}
+	if len(conns) > 0 {
 		var err error
-		if lbl, thr, err = s.Fresh.Freshness(ctx, tid, conns, now); err != nil {
+		if read, err = s.Fresh.Freshness(ctx, tid, conns, now); err != nil {
 			return FreshnessRecord{}, err
 		}
 	}
-	rec := FreshnessRecord{State: lbl.State.String(), Threshold: int64(thr / time.Second), ComputedAt: now}
+	lbl := read.Label
+	rec := FreshnessRecord{State: lbl.State.String(), Threshold: int64(read.Threshold / time.Second), ComputedAt: now}
 	if !lbl.AsOf.IsZero() {
 		t := lbl.AsOf.UTC()
 		rec.AsOf = &t
 	}
 	for _, st := range lbl.Stale {
-		rec.Stale = append(rec.Stale, StaleEntry{Connection: report.GUIDString(st.Connection), NC: report.GUIDString(st.NC),
+		conn := report.GUIDString(st.Connection)
+		name := read.Names[conn]
+		if name == "" {
+			name = conn
+		}
+		rec.Stale = append(rec.Stale, StaleEntry{Connection: conn, ConnectionName: name, NC: report.GUIDString(st.NC),
 			AgeSeconds: int64(st.Age / time.Second), State: ncStateText(st.State)})
 	}
 	for _, c := range lbl.NotSynced {

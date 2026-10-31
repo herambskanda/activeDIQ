@@ -1,10 +1,14 @@
 package run
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"errors"
+	"fmt"
+	"log/slog"
+	"slices"
 	"strconv"
 	"time"
 
@@ -51,6 +55,21 @@ const (
 	// KindExportExpired is appended by the retention sweep (system actor) when an export file passes its
 	// expiry. The other export kinds belong to package export.
 	KindExportExpired audit.Kind = "reports.export.expired"
+)
+
+// Operation names the run operation a refusal belongs to; read_denied carries it (reports.md §10, FR-22).
+type Operation string
+
+// The operations that read a run. Export download is an export read, not a run read (B9, §7.2).
+const (
+	OpGet          Operation = "get"
+	OpPage         Operation = "page"
+	OpCancel       Operation = "cancel"
+	OpRetry        Operation = "retry"
+	OpExportCreate Operation = "export_create"
+	// OpExportDownload is the creator's download re-checking the run gate (B9, §7.1); the download refusal itself
+	// is audited by package export as download_denied.
+	OpExportDownload Operation = "download"
 )
 
 // Component is the audit component of every event here.
@@ -102,7 +121,16 @@ type ParamsCodec interface {
 // FreshnessSource reads the sync watermarks of the connections a result covers (§6.4). It runs its own
 // short transaction, which is why it is read before the result cursor opens.
 type FreshnessSource interface {
-	Freshness(ctx context.Context, tid tenant.ID, connections []authz.ObjectID, now time.Time) (report.Freshness, time.Duration, error)
+	Freshness(ctx context.Context, tid tenant.ID, connections []authz.ObjectID, now time.Time) (FreshnessRead, error)
+}
+
+// FreshnessRead is what a FreshnessSource answers: the label, the threshold it was judged against, and
+// the display name of each covered connection (canonical GUID text), so a stale record can name the
+// directory behind it. A connection missing from Names is recorded under its id.
+type FreshnessRead struct {
+	Label     report.Freshness
+	Threshold time.Duration
+	Names     map[string]string
 }
 
 // Service is the run path. Every field is required except Now and RowCap.
@@ -116,6 +144,15 @@ type Service struct {
 	Fresh   FreshnessSource
 	Now     func() time.Time
 	RowCap  int
+	// Log receives the loss of a read_denied event (slog.Default when nil).
+	Log *slog.Logger
+}
+
+func (s *Service) log() *slog.Logger {
+	if s.Log != nil {
+		return s.Log
+	}
+	return slog.Default()
 }
 
 func (s *Service) now() time.Time {
@@ -336,7 +373,7 @@ func (s *Service) ReadAccess(ctx context.Context, tx store.Tx, tid tenant.ID, id
 // Read opens the tenant transaction, passes the §6.6 gate and runs fn on the run in the same
 // transaction (so the rows read are the rows the gate cleared). A refusal is audited as read_denied
 // after the transaction ends and returned as its sentinel error.
-func (s *Service) Read(ctx context.Context, tid tenant.ID, id ID, chain authority.Chain, checks Check, fn func(ctx context.Context, tx store.Tx, r Run) error) error {
+func (s *Service) Read(ctx context.Context, tid tenant.ID, op Operation, id ID, chain authority.Chain, checks Check, fn func(ctx context.Context, tx store.Tx, r Run) error) error {
 	err := s.DB.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
 		r, err := s.ReadAccess(ctx, tx, tid, id, chain, checks)
 		if err != nil {
@@ -349,23 +386,42 @@ func (s *Service) Read(ctx context.Context, tid tenant.ID, id ID, chain authorit
 	})
 	var den *denial
 	if errors.As(err, &den) {
-		s.denied(ctx, tid, chain, id, den.check)
+		s.denied(ctx, tid, chain, op, id, den.check)
 		return den.err
 	}
 	return err
 }
 
-func (s *Service) denied(ctx context.Context, tid tenant.ID, c authority.Chain, id ID, check string) {
+// denied appends reports.run.read_denied. The refusal is answered whether or not the append succeeds; a lost
+// event is logged at error level with the run, the check and the class of the failure, never a request value.
+func (s *Service) denied(ctx context.Context, tid tenant.ID, c authority.Chain, op Operation, id ID, check string) {
 	if c.Validate() != nil {
 		return
 	}
-	_ = s.DB.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+	err := s.DB.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
 		return s.Audit.Append(ctx, tx, audit.Event{
 			ID: "run:" + id.String() + ":read_denied:" + randomSuffix(), Kind: KindReadDenied, At: s.now(), Actor: c,
 			Target: authority.TargetRef{GUID: id.String(), Class: "report_run"}, Component: Component, Outcome: audit.Denied,
-			Reason: check, Details: []chain.Detail{{Key: "check", Value: check}, {Key: "run_id", Value: id.String()}},
+			Reason: check, Details: []chain.Detail{{Key: "check", Value: check}, {Key: "operation", Value: string(op)},
+				{Key: "run_id", Value: id.String()}},
 		})
 	})
+	if err != nil {
+		s.log().ErrorContext(ctx, "reports: read_denied audit event lost", "kind", string(KindReadDenied),
+			"run_id", id.String(), "operation", string(op), "check", check, "error_class", errClass(err))
+	}
+}
+
+// errClass is the Go type of the innermost error: enough to tell a sink failure from a database failure
+// without carrying a message that may hold a value.
+func errClass(err error) string {
+	for {
+		u := errors.Unwrap(err)
+		if u == nil {
+			return fmt.Sprintf("%T", err)
+		}
+		err = u
+	}
 }
 
 // Retry takes the §6.1 create path again from a finished run, under the caller's current scope. It runs
@@ -378,7 +434,7 @@ func (s *Service) Retry(ctx context.Context, tid tenant.ID, chain authority.Chai
 	})
 	if err != nil {
 		if errors.Is(err, ErrRunNotFound) {
-			s.denied(ctx, tid, chain, id, "exists")
+			s.denied(ctx, tid, chain, OpRetry, id, "exists")
 		}
 		return Run{}, false, err
 	}
@@ -412,7 +468,7 @@ func (s *Service) Cancel(ctx context.Context, tid tenant.ID, chain authority.Cha
 		return err
 	})
 	if errors.Is(err, ErrRunNotFound) {
-		s.denied(ctx, tid, chain, id, "exists")
+		s.denied(ctx, tid, chain, OpCancel, id, "exists")
 	}
 	return out, err
 }
@@ -462,4 +518,50 @@ func (s *Service) finish(ctx context.Context, tx store.Tx, r Run, to State, reas
 	return s.Audit.Append(ctx, tx, audit.Event{ID: "run:" + r.ID.String() + ":failed", Kind: KindFailed, At: now, Actor: r.Chain,
 		Target: authority.TargetRef{GUID: r.ID.String(), Class: "report_run"}, Component: Component, Outcome: audit.Failure,
 		Reason: why, Details: sortDetails(det)})
+}
+
+// HiddenGroup is one set of rows a run counted and did not store, named by its definition's group.
+type HiddenGroup struct {
+	ID     string
+	Label  string
+	Count  int64
+	Locked bool
+}
+
+// HiddenGroups lists the groups a run hid, largest first and then by ID, with the label and lock of the
+// preset that ran. Only groups with at least one hidden row appear. A definition the catalogue no longer
+// holds leaves the label as the group ID: the count is still true.
+func (s *Service) HiddenGroups(r Run) []HiddenGroup {
+	if len(r.HiddenCounts) == 0 {
+		return nil
+	}
+	label, locked := map[string]string{}, map[string]bool{}
+	if def, ok := s.Catalog.Definition(r.DefinitionID, r.DefinitionVer); ok {
+		for _, p := range def.Def.Presets {
+			if p.ID != r.Preset {
+				continue
+			}
+			for _, h := range p.Hidden {
+				label[h.ID], locked[h.ID] = h.Label, h.Locked
+			}
+		}
+	}
+	out := make([]HiddenGroup, 0, len(r.HiddenCounts))
+	for id, n := range r.HiddenCounts {
+		if n < 1 {
+			continue
+		}
+		l := label[id]
+		if l == "" {
+			l = id
+		}
+		out = append(out, HiddenGroup{ID: id, Label: l, Count: n, Locked: locked[id]})
+	}
+	slices.SortFunc(out, func(a, b HiddenGroup) int {
+		if a.Count != b.Count {
+			return cmp.Compare(b.Count, a.Count)
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return out
 }

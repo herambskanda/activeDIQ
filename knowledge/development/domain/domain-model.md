@@ -2243,3 +2243,31 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 - 2026-10-02 · T-0168 round 2, from the security-architect review. DM-25.I6: every record that a derived override state reads is pinned while the override is kept: the clearing run (new DM-24.I6 (c)), the superseding override (oldest first) and the connection. A property states that no retention pass or crash changes any derivation (tested by T-0119, listed for T-0050). DM-24.I5: no audit event carries a per-finding identifier. Events carry IDs, verdicts, outcomes, counts and `findings_digest`, salted with the new per-run `digest_salt`, and DM-25.I7 does the same for the override events. DM-24.I6: the `connection_verification` retention floor is the audit retention, and rows named by a retained audit event are pinned. DM-25.I7: `.tier0_override.cleared` is emitted in the clearing run's insert transaction. DM-10.I10: an interrupted run returns to `draft` only from `verifying`. DM-10.I11: the gate is re-checked at every Apply chunk, and a V7 `could_not_verify` or `failed` triggers an automatic re-run with backoff. §11 Q12 and Q13 are closed.
 - 2026-10-22 · T-0129 (ADR-0005 amendment of the same date, TM-D23 rule 11, contract v1.2 §8.1 step 9): DM-42.I5 lists the `verify_failed` reasons (`read_back_mismatch`, `scope_changed`, `dc_unavailable`, `tier0_after_write`); `tier0_after_write`, including an empty-basis report, raises a `critical` alert above `scope_changed`, cancels the operation, and its step's undo is refused by the `tier0` guard. Review round 1: the server's Tier-0 re-read follows the I3 verify window and fallback (only still-`unknown` counts), so `dc_unavailable` stays reachable; Entra window expiry is `read_back_mismatch`; the undo exception is stated in the lifecycle.
 - 2026-10-30 · T-0874 (ADR-0010, proposed; modules/reports.md): DM-72 stores the result as rows (`report_run_rows`) instead of a `result_blob`; exports serialise those rows. Adds `query_hash`, the initiator `chain`, `scope_fingerprint`, `digest` and `failure_reason`, invariants I4 (rows written only while `running`, read only once `succeeded`) and I5 (readable only by the runner under the same scope fingerprint), and the full lifecycle edges.
+
+## Consult 2026-10-31: user-report semantics for USR-01/02/03/05 (reporting-engineer, T-0960)
+
+Verification: documentation only (Microsoft Learn, AskDS). Nothing here was run on Samba or Windows.
+Existing notes cover the lag of `lastLogonTimestamp` and "absent is not never" (reports-2a §6.4); these
+rules are what they leave open.
+
+- **Inactive N days (USR-03).** `enabled AND (last_logon_timestamp < now - N days OR (logon_recorded = none_recorded AND when_created < now - N days))`.
+  An absent value is written at the first logon on a writable DC (no prior value to be "recent" against;
+  [AskDS comments, author's test](https://learn.microsoft.com/en-us/archive/blogs/askds/the-lastlogontimestamp-attribute-what-it-was-designed-for-and-how-it-works)),
+  so absent plus created more than N days ago means no recorded logon in N days; no extra 14-day margin
+  is needed. Created within N days: not inactive (it had no time), it appears in "Never logged on" only.
+  `logon_recorded = unknown`: in neither list. Same rows also appear in "Never logged on" by design.
+  A listed account's real last logon is in `[ts, ts + 14d]`, so it was inactive at least N-14 days.
+- **Recently logged on N.** No false inclusions (`ts >= now - N` implies a logon in N days), but
+  omissions exist at any N: a logon up to 14 days after the last write does not rewrite it, so an account
+  with a real logon 29 days ago and `ts` 40 days ago is missed. The header says "may omit accounts whose
+  last recorded value is older than N days". The floor must be per domain: `max(30, msDS-LogonTimeSyncInterval)`.
+- **`accountExpires` never** ([attribute](https://learn.microsoft.com/en-us/windows/win32/adschema/a-accountexpires)):
+  0 or `0x7FFFFFFFFFFFFFFF` (new accounts hold max; 0 means once configured then cleared). Also treat absent as never.
+  Values above year 9999 (> 2650467743999999999) cannot be shown as a date: "far future", never expired
+  `[UNVERIFIED]`. The attribute is not in the GC, so read it from the domain's DC. ADUC "End of <date>"
+  stores the next day's local midnight `[UNVERIFIED, secondary sources]`: show the instant, never "date minus a day".
+- **Disabled accounts and expiry.** Expiry and `ACCOUNTDISABLE` are independent. Product choice, not an AD fact.
+- **Locked out and disabled.** The MS-ADTS `LO` rule has no `ACCOUNTDISABLE` test
+  ([msDS-User-Account-Control-Computed](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/b80798ae-1f8c-4d30-9d80-a1f3281e96e2)),
+  so a disabled user with a live `lockoutTime` is locked out as the DC computes it. The lock holds while
+  `now <= lockoutTime + duration` (inclusive).

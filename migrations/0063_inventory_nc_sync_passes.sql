@@ -11,6 +11,7 @@
 --    ok requires a pass; last_pass_at never moves back or to NULL, whichever writer holds the pen.
 --  * Written in the same transaction as the inventory rows the pass covers (DM-19.I1).
 
+-- write-class: nc_sync_passes system
 CREATE TABLE public.nc_sync_passes (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,

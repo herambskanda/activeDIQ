@@ -1,4 +1,4 @@
--- 0065_reports_exports: the export of a stored report run (T-0963; reports.md §7, row B9; FR-16 to FR-22,
+-- 0067_reports_exports: the export of a stored report run (T-0963; reports.md §7, row B9; FR-16 to FR-22,
 -- DM-72.I3). Owner: internal/modules/reports (export subpackage). A tenant table: RLS with FORCE and a
 -- tenant-led key.
 --
@@ -9,6 +9,7 @@
 -- report_exports_guard carries the invariants the application also checks, so a bug in a caller cannot
 -- break them: the state edges, an identity that never changes, and a file that is described once.
 
+-- write-class: report_exports system
 CREATE TABLE public.report_exports (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL,

@@ -35,7 +35,9 @@ func (k ColKind) String() string {
 // Schema says which tables and columns exist. The registry checks every identifier of a dataset
 // against it (contract §3.1), so a typo or a renamed column stops start-up and never reaches a run.
 type Schema interface {
-	// Tables lists every table of the schema, for the "a fragment names no table" check.
+	// Tables lists every relation of the schema, whatever its kind (table, view, materialized view,
+	// sequence, foreign table), for the "a fragment names no table" check: a name a fragment may
+	// not declare is any name a FROM would resolve to. It may list more than Column knows.
 	Tables() []string
 	// Column returns the kind of a column, or false when the table or column does not exist.
 	Column(table, column string) (ColKind, bool)
@@ -60,20 +62,92 @@ func (m MapSchema) Column(table, column string) (ColKind, bool) {
 	return k, ok
 }
 
-const catalogSQL = `
+// A text column is bounded (KindEnum) only when one of its single-column CHECKs is, as a whole,
+// "col is one of these literals". PostgreSQL prints that as
+//
+//	CHECK ((col = ANY (ARRAY['a'::text, 'b'::text])))                      text
+//	CHECK (((col)::text = ANY ((ARRAY['a'::character varying, …])::text[])))  varchar
+//
+// (col IN ('a','b') prints the same way). The match is anchored on both ends and the list holds
+// literals only, so an open check such as CHECK (c = ANY (ARRAY['a']) OR c ~ '^x'), an AND with
+// another condition, or a list holding an expression is not bounded: the column stays KindText and
+// no Rel or MaskAnchor can project it (T-1033).
+const (
+	enumLit  = `''(?:[^'']|'''')*''(?:::[a-z]+(?: varying)?)?` // the regexp, inside an SQL string literal: quotes doubled
+	enumList = enumLit + `(?:, ` + enumLit + `)*`
+	// qcol is the column name as quote_ident prints it, with regex metacharacters escaped.
+	qcol = `regexp_replace(quote_ident(a.attname), '([^a-zA-Z0-9_])', '\\\1', 'g')`
+
+	catalogSQL = `
 SELECT c.relname::text, a.attname::text, format_type(a.atttypid, NULL)::text, ty.typtype::text,
   EXISTS (SELECT 1 FROM pg_constraint k
           WHERE k.conrelid = c.oid AND k.contype = 'c' AND k.conkey = ARRAY[a.attnum]
-            AND pg_get_constraintdef(k.oid) ~ '= ANY \(ARRAY\[')
+            AND pg_get_constraintdef(k.oid) ~ (
+              '^CHECK \(\((?:' || ` + qcol + ` || ' = ANY \(ARRAY\[` + enumList + `\]\)'
+              || '|\(' || ` + qcol + ` || '\)::text = ANY \(\(ARRAY\[` + enumList + `\]\)::text\[\]\)'
+              || ')\)\)$'))
 FROM pg_class c
 JOIN pg_namespace n ON n.oid = c.relnamespace
 JOIN pg_attribute a ON a.attrelid = c.oid
 JOIN pg_type ty ON ty.oid = a.atttypid
 WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND a.attnum > 0 AND NOT a.attisdropped`
+)
+
+// relationsSQL lists every relation a bare name in a FROM could resolve to in public: ordinary and
+// partitioned tables, views, materialized views, sequences and foreign tables (T-1087).
+const relationsSQL = `
+SELECT c.relname::text
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')`
+
+// catalogSchema is MapSchema's columns (tables only: a view's columns are not typed for the
+// registry's rules) with the names of every relation of public.
+type catalogSchema struct {
+	MapSchema
+	relations []string
+}
+
+// Tables implements Schema: every relation of public, not only the tables Column knows.
+func (c catalogSchema) Tables() []string { return c.relations }
 
 // CatalogSchema reads the public schema from the database the transaction is on. The composition
-// root builds the registry from it at start-up.
+// root builds the registry from it at start-up. Tables() lists every relation kind; Column() answers
+// for ordinary and partitioned tables only.
 func CatalogSchema(ctx context.Context, tx store.Tx) (Schema, error) {
+	out, err := catalogColumns(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	rels, err := catalogRelations(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	return catalogSchema{MapSchema: out, relations: rels}, nil
+}
+
+func catalogRelations(ctx context.Context, tx store.Tx) ([]string, error) {
+	rows, err := tx.Query(ctx, relationsSQL)
+	if err != nil {
+		return nil, fmt.Errorf("reportsql: reading the schema: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("reportsql: reading the schema: %w", err)
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reportsql: reading the schema: %w", err)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func catalogColumns(ctx context.Context, tx store.Tx) (MapSchema, error) {
 	rows, err := tx.Query(ctx, catalogSQL)
 	if err != nil {
 		return nil, fmt.Errorf("reportsql: reading the schema: %w", err)

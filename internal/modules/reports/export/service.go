@@ -198,7 +198,7 @@ func (s *Service) Create(ctx context.Context, tid tenant.ID, c authority.Chain, 
 		return Export{}, s.deniedRun(ctx, tid, c)
 	}
 	var src run.Run
-	if err := s.Runs.Read(ctx, tid, rid, c, 0, func(_ context.Context, _ store.Tx, r run.Run) error {
+	if err := s.Runs.Read(ctx, tid, run.OpExportCreate, rid, c, 0, func(_ context.Context, _ store.Tx, r run.Run) error {
 		src = r
 		return nil
 	}); err != nil {
@@ -209,7 +209,7 @@ func (s *Service) Create(ctx context.Context, tid tenant.ID, c authority.Chain, 
 		return s.createRerun(ctx, tid, c, src, f)
 	}
 	var out Export
-	err := s.Runs.Read(ctx, tid, rid, c, run.CheckScope|run.CheckSucceeded, func(ctx context.Context, tx store.Tx, r run.Run) (err error) {
+	err := s.Runs.Read(ctx, tid, run.OpExportCreate, rid, c, run.CheckScope|run.CheckSucceeded, func(ctx context.Context, tx store.Tx, r run.Run) (err error) {
 		if r.ExpiresAt == nil || !r.ExpiresAt.After(now) {
 			return run.ErrRunExpired // expired between the two reads
 		}
@@ -459,7 +459,7 @@ func (s *Service) Download(ctx context.Context, tid tenant.ID, c authority.Chain
 		s.denied(ctx, tid, c, id, "state")
 		return nil, ErrExportNotReady
 	}
-	if err := s.Runs.Read(ctx, tid, e.RunID, c, run.CheckScope, nil); err != nil {
+	if err := s.Runs.Read(ctx, tid, run.OpExportDownload, e.RunID, c, run.CheckScope, nil); err != nil {
 		if errors.Is(err, run.ErrScopeChanged) {
 			s.denied(ctx, tid, c, id, "scope")
 		}

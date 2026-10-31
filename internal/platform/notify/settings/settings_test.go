@@ -153,6 +153,12 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+// noTenantTx runs fn in a transaction with no tenant context. It is the one WithPlatform site of this test
+// file (registered in the exemption registry), so the test can show that Get refuses to run without a tenant.
+func noTenantTx(ctx context.Context, db *store.DB, fn func(ctx context.Context, tx store.Tx) error) error {
+	return db.WithPlatform(ctx, "settings test: no tenant context", fn)
+}
+
 func seedTenant(t *testing.T, s *storetest.Server) (*store.DB, tenant.ID) {
 	t.Helper()
 	d := s.NewDatabase(t)
@@ -182,7 +188,7 @@ func TestGetDefaultAndNoTenant(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.WithPlatform(ctx, "settings test: no tenant context", func(ctx context.Context, tx store.Tx) error {
+		if err := noTenantTx(ctx, db, func(ctx context.Context, tx store.Tx) error {
 			if _, err := (Store{}).Get(ctx, tx); !errors.Is(err, ErrNoTenant) {
 				t.Errorf("no tenant: %v", err)
 			}
