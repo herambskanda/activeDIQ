@@ -95,6 +95,24 @@ func (s ReadScope) Empty() bool {
 // Terms returns the account's grants, one per assignment. Callers: reportsql and authz only (RP2).
 func (s ReadScope) Terms() []ScopeGrant { return cloneGrants(s.grants) }
 
+// Connections returns the distinct connections the account's grants include, in no particular order.
+// It names where a scope reaches, never what it reaches, so it is not RP2-restricted: the report run
+// path uses it to pick the naming contexts a freshness label covers.
+func (s ReadScope) Connections() []ObjectID {
+	seen := map[ObjectID]struct{}{}
+	var out []ObjectID
+	for _, g := range s.grants {
+		for _, t := range g.Include {
+			if _, ok := seen[t.Connection]; ok || t.Connection == (ObjectID{}) {
+				continue
+			}
+			seen[t.Connection] = struct{}{}
+			out = append(out, t.Connection)
+		}
+	}
+	return out
+}
+
 // Token returns the token layer and true, or false when the token adds no narrowing (a session, or
 // a token without a Scope). Callers: reportsql and authz only (RP2).
 func (s ReadScope) Token() (TokenLayer, bool) {

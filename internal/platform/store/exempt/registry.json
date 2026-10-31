@@ -237,7 +237,7 @@
     {
       "column": "public.authn_authenticator_enrollments.expires_at",
       "value": "2030-01-01T00:00:00Z",
-      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 §5); the probe row is a pending enrolment."
+      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 \u00a75); the probe row is a pending enrolment."
     },
     {
       "column": "public.correlations.match",
@@ -452,7 +452,7 @@
     {
       "column": "public.connection_attestation_attempts.code_verifier",
       "value": "probe-code-verifier-0123456789-0123456789-0123",
-      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 §4.1)."
+      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 \u00a74.1)."
     },
     {
       "column": "public.connection_attestation_attempts.state_hash",
@@ -790,6 +790,71 @@
       "column": "public.authn_authority_approvals.approver_id",
       "value": "00000000-0000-4000-8000-0000000000a9",
       "reason": "CHECK: authn_authority_approvals_not_self requires approver_id <> account_id, but the generator resolves both foreign keys to the same account row; the probe row names a distinct approver (seeded with foreign keys off, as every probe row is) (T-0766)"
+    },
+    {
+      "column": "public.report_runs.columns",
+      "value": "[]",
+      "reason": "CHECK: report_runs_columns_check requires a JSON array (the resolved column IDs); the probe row carries an empty array."
+    },
+    {
+      "column": "public.report_run_rows.cells",
+      "value": "[]",
+      "reason": "CHECK: report_run_rows_cells_check requires a JSON array (one cell per column); the probe row carries an empty array."
+    },
+    {
+      "column": "public.report_runs.definition_id",
+      "value": "usr-01",
+      "reason": "CHECK: a definition ID is lowercase letters, digits and dashes (report_runs_definition_id_check); the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.definition_sha256",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: report_runs_definition_sha256_check requires a 32-byte hash; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.query_hash",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: report_runs_query_hash_check requires a 32-byte hash; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.scope_fingerprint",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: report_runs_scope_fingerprint_check requires a 32-byte hash; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.digest",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: report_runs_digest_check requires a 32-byte digest when set; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.preset",
+      "value": "default",
+      "reason": "CHECK: report_runs_preset_check requires a lowercase identifier; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.params",
+      "value": "{}",
+      "reason": "CHECK: report_runs_params_check requires a JSON object; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.chain",
+      "value": "{}",
+      "reason": "CHECK: report_runs_chain_check requires a JSON object; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.state",
+      "value": "queued",
+      "reason": "CHECK: report_runs_state_check restricts the run states; a queued run has no failure reason, as the failed-iff-reason CHECK needs; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_run_rows.sort_keys",
+      "value": "{}",
+      "reason": "CHECK: report_run_rows_sort_keys_check requires a JSON object; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.nc_sync_passes.state",
+      "value": "paused",
+      "reason": "CHECK: nc_sync_passes_state_check restricts the feed state, and state 'ok' needs last_pass_at; the probe row is a paused feed (T-0949's table, unblocked here by T-0959)."
     }
   ]
 }
