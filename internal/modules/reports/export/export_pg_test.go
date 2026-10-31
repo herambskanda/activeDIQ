@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -203,8 +204,8 @@ func TestCapRefusesBeforeAnythingExists(t *testing.T) {
 		if n := e.count(`SELECT count(*) FROM public.report_exports`); n != 0 {
 			t.Fatalf("%d export records after refusals", n)
 		}
-		if n := e.count(`SELECT count(*) FROM public.jobs WHERE kind = 'reports.export'`); n != 0 {
-			t.Fatalf("%d export jobs after refusals", n)
+		if slices.Contains(e.workKinds(), e.exp.Kind().Name) {
+			t.Fatal("an export job was queued by a refused export")
 		}
 		if files := blobFiles(t, e.blobDir); len(files) != 0 {
 			t.Fatalf("files after refusals: %v", files)

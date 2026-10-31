@@ -847,6 +847,21 @@
       "reason": "CHECK: report_runs_state_check restricts the run states; a queued run has no failure reason, as the failed-iff-reason CHECK needs; the probe row carries a valid placeholder."
     },
     {
+      "column": "public.report_exports.format",
+      "value": "csv",
+      "reason": "CHECK: report_exports_format_check restricts the export formats; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_exports.state",
+      "value": "queued",
+      "reason": "CHECK: report_exports_state_check restricts the export states; a queued export has no failure reason, as the failed-iff-reason CHECK needs; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_exports.chain",
+      "value": "{}",
+      "reason": "CHECK: report_exports_chain_check requires a JSON object; the probe row carries a valid placeholder."
+    },
+    {
       "column": "public.report_run_rows.sort_keys",
       "value": "{}",
       "reason": "CHECK: report_run_rows_sort_keys_check requires a JSON object; the probe row carries a valid placeholder."

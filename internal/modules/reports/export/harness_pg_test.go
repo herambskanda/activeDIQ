@@ -226,8 +226,13 @@ func setup(t *testing.T, s *storetest.Server) *env {
 }
 
 // work claims and executes every available job of the run and export kinds.
-func (e *env) work() {
+func (e *env) work() { e.t.Helper(); e.workKinds() }
+
+// workKinds is work, reporting the kinds it executed (so a test can show that no export job was queued
+// without reading the jobs table, which only internal/platform/jobs may name).
+func (e *env) workKinds() []string {
 	e.t.Helper()
+	var ran []string
 	ctx := context.Background()
 	cl, err := jobs.Claim(ctx, e.db, e.reg.TenantLeases(), 20)
 	if err != nil {
@@ -237,7 +242,9 @@ func (e *env) work() {
 		if _, err := jobs.NewRunner(e.db, e.reg).Execute(ctx, c); err != nil {
 			e.t.Fatalf("Execute %s: %v", c.Kind, err)
 		}
+		ran = append(ran, c.Kind)
 	}
+	return ran
 }
 
 // finishedRun creates a run for who and executes it.
