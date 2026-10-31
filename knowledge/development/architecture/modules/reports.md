@@ -248,6 +248,22 @@ safe:
   and `current_timestamp` (the clock is `{now}`), a slot inside a string literal, any character
   outside ASCII SQL punctuation, and every unlisted function. The error names the word. A dataset
   that needs another function amends the lists in `fragcheck.go` with a test, in review.
+  **Query shape (T-1033, third security review).** A fragment may use `WITH [RECURSIVE] name
+  [(cols)] AS (…)`, `JOIN`/`LEFT JOIN`/`INNER JOIN … ON`, `UNION [ALL]`, `ORDER BY … [NULLS FIRST|LAST]
+  LIMIT`, `substring(x FROM n FOR m)`, and the pure functions `substring`, `position`, `decode`,
+  `uuid_send`, `left`, `floor`, `jsonb_typeof`, `jsonb_array_length`. The rules that keep a table read
+  out: `FROM` and `JOIN` take exactly one of a `{rel.<id>}` slot (not a `RowAnchor`, not dotted), a CTE
+  **this fragment declared** (never dotted), or a derived table `( SELECT|WITH … )`; no `,` follows a
+  FROM or JOIN item before the next `SELECT`/`UNION`/`ORDER`/`LIMIT`; `NATURAL`, `LATERAL`, `ONLY`,
+  `USING`, `MATERIALIZED` and a FROM function are not on the list. A declared name (CTE, derived-table
+  alias) may not be a schema table, `pg_*`, `public`, `information_schema`, a reserved word or an
+  anchor/relation ID. A `.` follows `{t}`, `{rel.<id>}` or a declared alias, so `public.x`,
+  `pg_catalog.x` and `information_schema.x` stay refused. A bare word is a column of a table the
+  dataset uses (a `Rel`'s `Where` reads its table unqualified), or a name the fragment declares with
+  `AS`/a CTE column list. `current_user`, `session_user`, `user`, `current_role`, `current_schema`,
+  `current_catalog`, `current_timestamp`, `current_date`, `current_time`, `localtime`,
+  `localtimestamp` and `system_user` are refused wherever they stand. A cast or a typed literal names
+  only a listed type, even when the fragment declares an alias with a type's name.
 - **Enum means the whole constraint** (`reportsql/schema.go`, T-1033). `CatalogSchema` classifies a
   text column as `KindEnum` (projectable through a `Rel` or `MaskAnchor`) only when one of its
   single-column CHECKs, as PostgreSQL prints it, is exactly `col = ANY (ARRAY[<literals>])` (the
