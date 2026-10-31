@@ -1,0 +1,6 @@
+--- FAIL: TestRepositoryTree (1.37s)
+    check_test.go:476: web/src/api/open-enum.test.ts: [ADR-0004 A5] only the generated files and client.ts live in web/src/api (ADR-0004 rule 12); a hand-written client file is a private endpoint caller
+    check_test.go:476: web/src/api/openapi-typescript-helpers.d.ts: [ADR-0004 A5] only the generated files and client.ts live in web/src/api (ADR-0004 rule 12); a hand-written client file is a private endpoint caller
+FAIL
+FAIL	github.com/skenzeriq/activediq/tools/fitness/api	1.394s
+FAIL

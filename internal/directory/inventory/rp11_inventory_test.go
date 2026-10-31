@@ -42,8 +42,21 @@ func scopeOf(c inventory.ConnectionID, roots ...string) authz.ReadScope {
 	return authztest.ReadScope(authz.ScopeGrant{Include: terms})
 }
 
-// leaks lists the cells that hold a sentinel name or GUID.
-func leaks(res hResult) []string {
+// parentOUs are the out-of-scope ancestors an in-scope object's own DN names. They carry the sentinel,
+// so any cell that shows one is visible to leaks. Reports contract §3.3 "DN disclosure rule": the
+// sentinel may appear only inside the dn cell of the row's own object.
+const parentOUs = "OU=" + sentinel + "-OU-child,OU=" + sentinel + "-OU-parent,DC=example,DC=test"
+
+// realDN is an in-scope object's own DN with its real, out-of-scope parents.
+func realDN(name string) string { return "CN=" + name + "," + parentOUs }
+
+// dnColumn is the one column that renders an object's own DN.
+const dnColumn report.ColumnID = "dn"
+
+// leaks lists the cells that hold a sentinel name or GUID. ownDN maps a lower-case row GUID to the DN
+// of that object. The dn cell of a row is allowed to hold exactly that DN and nothing else; every other
+// cell of every row, and the dn cell of any other value, must be free of the sentinel.
+func leaks(res hResult, ownDN map[string]string) []string {
 	var out []string
 	for k, row := range res.rows {
 		if strings.HasPrefix(strings.ToLower(k), "ee000000-") {
@@ -51,12 +64,62 @@ func leaks(res hResult) []string {
 		}
 		for col, cell := range row {
 			v := strings.ToLower(string(cell.DigestValue()))
+			if col == dnColumn && cell.Tag() == "s" && v == strings.ToLower(ownDN[k]) && v != "" {
+				continue
+			}
 			if strings.Contains(v, strings.ToLower(sentinel)) || strings.Contains(v, "ee000000-0000-4000") {
 				out = append(out, fmt.Sprintf("%s.%s = %s", k, col, v))
 			}
 		}
 	}
 	return out
+}
+
+// checkNoLeaks fails on a leak and then proves the check itself: a copy of the result in which a second
+// column (and a second row's dn) carries the parent OU name must be caught.
+func checkNoLeaks(t *testing.T, res hResult, ownDN map[string]string) {
+	t.Helper()
+	if l := leaks(res, ownDN); len(l) > 0 {
+		t.Errorf("the run reveals objects outside the scope:\n  %s", strings.Join(l, "\n  "))
+	}
+	if _, ok := res.rows[firstKey(res)][dnColumn]; !ok {
+		t.Fatalf("the dn column is not in the run: the DN rule is untested")
+	}
+	for _, c := range []struct {
+		name   string
+		mutate func(rows map[string]map[report.ColumnID]report.Cell, k string)
+	}{
+		{"parent name in another column", func(r map[string]map[report.ColumnID]report.Cell, k string) {
+			r[k]["ou_path"] = report.TextCell(parentOUs)
+		}},
+		{"parent name in the dn of a second column", func(r map[string]map[report.ColumnID]report.Cell, k string) {
+			r[k]["parent_dn"] = r[k][dnColumn]
+		}},
+		{"another object's dn in the dn cell", func(r map[string]map[report.ColumnID]report.Cell, k string) {
+			r[k][dnColumn] = report.TextCell(realDN("someone-else"))
+		}},
+	} {
+		m := hResult{rows: map[string]map[report.ColumnID]report.Cell{}}
+		for k, row := range res.rows {
+			m.rows[k] = map[report.ColumnID]report.Cell{}
+			for col, cell := range row {
+				m.rows[k][col] = cell
+			}
+		}
+		c.mutate(m.rows, firstKey(m))
+		if len(leaks(m, ownDN)) == 0 {
+			t.Errorf("mutation %q is not caught by RP11", c.name)
+		}
+	}
+}
+
+func firstKey(res hResult) string {
+	var keys []string
+	for k := range res.rows {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	return keys[0]
 }
 
 func Test_dataset_reveals_nothing_outside_scope(t *testing.T) {
@@ -100,7 +163,7 @@ func rpUsers(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Connecti
 		}
 		o := u.obs()
 		if !strings.HasPrefix(sam, sentinel) {
-			o.DN = "CN=" + sam + ",DC=example,DC=test" // an in-scope object's own DN does not name its parents
+			o.DN = realDN(sam) // the real DN names the out-of-scope parent OUs (§3.3 DN disclosure rule)
 			o.RDN = "CN=" + sam
 		}
 		o.DisplayName, o.UPN = sam+" Display", sam+"@example.test"
@@ -147,8 +210,11 @@ func rpUsers(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Connecti
 	if len(res.rows) != 2 || res.count != 2 {
 		t.Fatalf("rows = %d, count = %d, want 2 and 2", len(res.rows), res.count)
 	}
-	if l := leaks(res); len(l) > 0 {
-		t.Errorf("the run reveals objects outside the scope:\n  %s", strings.Join(l, "\n  "))
+	checkNoLeaks(t, res, map[string]string{strings.ToLower(base1): realDN("base-one"), strings.ToLower(base2): realDN("base-two")})
+	for g, name := range map[string]string{base1: "base-one", base2: "base-two"} {
+		if got := cellKey(res.rows[strings.ToLower(g)][dnColumn]); got != "s:"+realDN(name) {
+			t.Errorf("%s dn = %s, want its own real DN", g, got)
+		}
 	}
 	// the policy still applies to the in-scope users, its identity does not show
 	for g, want := range map[string]string{base1: "(policy outside your scope)", base2: "(policy outside your scope)"} {
@@ -178,7 +244,7 @@ func rpComputers(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Conn
 		o := hUser{guid: guid, sam: sam, rid: rid, uac: i64(uacWks), read: 15, kind: inventory.KindComputer, class: "computer"}.obs()
 		o.Attributes = map[string]any{"dNSHostName": strings.ToLower(sam) + ".example.test", "operatingSystem": "Windows Server 2022"}
 		if !strings.HasPrefix(sam, sentinel) {
-			o.DN, o.RDN = "CN="+sam+",DC=example,DC=test", "CN="+sam
+			o.DN, o.RDN = realDN(sam), "CN="+sam
 		}
 		return o
 	}
@@ -196,8 +262,9 @@ func rpComputers(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Conn
 	if len(res.rows) != 1 || res.count != 1 {
 		t.Fatalf("rows = %d, count = %d, want 1 and 1", len(res.rows), res.count)
 	}
-	if l := leaks(res); len(l) > 0 {
-		t.Errorf("the run reveals objects outside the scope:\n  %s", strings.Join(l, "\n  "))
+	checkNoLeaks(t, res, map[string]string{strings.ToLower(base): realDN("BASE-PC$")})
+	if got := cellKey(res.rows[strings.ToLower(base)][dnColumn]); got != "s:"+realDN("BASE-PC$") {
+		t.Errorf("dn = %s, want its own real DN", got)
 	}
 	if got := cellKey(res.rows[strings.ToLower(base)]["dns_host_name"]); got != "s:base-pc$.example.test" {
 		t.Errorf("dns_host_name = %s", got)
