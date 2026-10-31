@@ -121,6 +121,12 @@ func GUIDsP(ids ...authz.ObjectID) ParamValue {
 // Kind returns the value's kind.
 func (p ParamValue) Kind() ParamKind { return p.kind }
 
+// Days returns the whole days of a ParamDays value.
+func (p ParamValue) Days() int64 { return p.days }
+
+// Enum returns the choice ID of a ParamEnum value.
+func (p ParamValue) Enum() string { return p.enum }
+
 // PerDCSpec marks a definition that reads per-DC attributes live (USR-04, PWD-03).
 type PerDCSpec struct{ Scope PerDCScope }
 

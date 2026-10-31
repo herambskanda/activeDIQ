@@ -38,7 +38,7 @@ scope decision, not a platform asymmetry.
 | `internal/platform/store/reportsql` | **Built (T-0957, row B2).** `NewRegistry`, `Compile`, `CompileCount`, `Exec`, `Count`, the scope and narrowing renderers, SQL vectors (FF-SP4) and RP6. `sqlconst` (FF-SP2) lets a value of type `reportsql.CompiledSQL` reach `Exec` and `string(x)` of one is a constant for it. Deviations in §5 | §5, row B2, RP1, RP6 |
 | Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. Two adapters are still to be wired in `compose/server`: `rbac.OwnerStatus` (over the account store) and `rbac.ObjectConnections` (over inventory) | §4 |
 | Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. There is no group closure. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed Row P1 (T-0949, migration 0063) is built: `nc_sync_passes` (one row per tenant, connection, NC) holds `last_pass_at` and `state` (`ok`, `resync_required`, `paused`). `Writer.RecordPass` sets the pass as-of (start of the read) in the cycle's transaction and `Ingest` calls it on the last batch for each `Cycle.PassNCs`, so a quiet domain is fresh; `Writer.MarkNC` records resync or pause; `Reader.Freshness` returns `[]report.NCWatermark` and the `report.Label` result, with `DefaultStalenessThreshold` = 60 min | §3.4, §4.5, rows P1, **P2**, B3, B6 |
-| Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. The other 15 operations answer 501 until B5, B9 and B11 | §6, §9, row B4 |
+| Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. **T-1105 added the two library reads** (`listReportDefinitions`, `getReportDefinition`, `modules/reports/definitions.go`, §3.6). The export operations are built in row B9 (T-0963); the other 9 operations answer 501 until B11 | §6, §9, row B4 |
 | `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150), the canonical `Digest`/`Digester` and `Unknown()`. **Built (T-0963, row B9):** `modules/reports/export` (service, `reports.export` job, About block), migration 0065, RP5 landed | §7, row B9 |
 | `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
 | `platform/notify` | **Built (T-0950).** `notify/mailaddr` (strict address parser), `notify/settings` (allowed recipient domains, SMTP relay; migration 0062), `notify/mail` (SMTP over egress), `notify/mailtest`, `notify/delivery` (DM-84 `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue`), the `notify.settings.update` Action in `modules/notify`. **Not yet wired:** nothing calls `DispatchDue` (needs the DM-44 schedule, row P4, or a notify job), no `Renderer` per purpose, no SMTP AUTH credentials. Terminal failure state is `given_up` | §7.2, §8, row P3 |
@@ -544,8 +544,26 @@ replicated-logon thresholds (spec §6.4) is `Min: 30` on USR-03's `days` paramet
   the DN disclosure rule); no "Manager" column and no "Users Without Managers" preset; USR-03 shows one more
   column (`probable_service_account_reason`). Not done: the per-domain threshold floor
   `max(30, interval)` (the floor is 30 for every domain).
-- **Not wired in production:** `compose/server` still passes `noLibrary`, because `inventory.Datasets()` cannot be
-  registered until the table-owner map lists their tables (T-0997).
+- **Served by the API (T-1105): `modules/reports/definitions.go`.** `Handlers.Library` (an interface over `List`, `Search`,
+  `Definition`; compose passes the loaded `*library.Library`) answers both reads under `reports.run` and nothing else: the
+  library holds no tenant data and a caller's scope narrows run rows, never which reports exist, so there is no read-scope
+  check. With no library the two operations answer 503 not-ready, never an empty library.
+  - `listReportDefinitions`: the newest version of each report, ordered category (spec 6.1 order), then name, then ID. `q` is
+    plain text over ME names, report title/ID (`library.Search`; a pending ME name finds nothing, because a report that does
+    not hold the preset must not answer for it) and every word of title+description; the preset whose ME name matched is
+    first in `alsoKnownAs`. `category` is the API name (`organizational_units`, engine `ous`). The cursor is opaque and names
+    the last report returned; the next page is every report that sorts after it. Default page 50.
+  - `getReportDefinition`: `version` absent is the newest; an unknown ID or version is 404 `definition_not_found` (path
+    `definitionId`). `columns` are every column of the dataset a run may use (a per-DC column only on a per-DC report), the
+    definition's default columns first with `defaultVisible`; presets render `Where` as the condition/group tree with a
+    parameter shown as its default, and `periodDays` is the default of the first days parameter the filter reads.
+    `exportFormats` is `[]` until B9 lands; `subjectKind` is `none`, or `object` when a preset requires subjects (the GRP
+    reports refine it in B7); `freshnessKind` is `nc_watermark`, `policy_read` or `per_dc` from the dataset.
+  - Test: `definitions_pg_test.go` (whole HTTP stack, response conformance on, both PostgreSQL versions).
+- **Wired in production (T-1104):** `compose/server.bootReport` adds `inventory.Datasets()` to the host under owner key
+  `inventory` (checked by `report.CheckTables` against `store/owners`); `buildReports` compiles the host's datasets with
+  `reportsql.NewRegistry` over the live schema catalogue (`reportSchema`, a registered platform path: it runs before the
+  install tenant exists) and passes `library.Load(library.Shipped(), …)` as `run.Catalog`. The placeholder catalogue that knew no definition is deleted.
 - **Tests.** `library/library_test.go` (`Test_reports_library_matches_spec`, `Test_reports_search_by_me_name`,
   immutability, broken definitions, crosswalk agreement); `directory/inventory/reports_library_test.go` (every
   preset's rows equal a ground truth computed in Go from the seed, the six hidden service accounts and their
@@ -1566,7 +1584,8 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   - Cancel is audited as `reports.run.failed` with Reason `cancelled`. Token principals (a Via chain) are
     refused at 2a (403). `too_many_report_jobs` is `errors[].code` on a 429.
   - Production wiring is incomplete on purpose: compose passes `noScopes` (503 `not-ready`, no
-    `rbac.ReadScopes` adapters yet) and `noLibrary` (404 `definition_not_found` until B5).
+    `rbac.ReadScopes` adapters yet); the catalogue is the shipped library since T-1104 (an unknown id is 404
+    `definition_not_found`).
   - Page timings, 500k-row result, PostgreSQL 16, after `ANALYZE` (`TestLargeResultPageTimings`, opt-in
     via `ACTIVEDIQ_REPORTS_LARGE_ROWS`): ordinal first page 10 ms; ordinal offset 250k 254 ms; sorted
     first page 370 ms (either direction); sorted offset 250k 628 ms. Sorted pages are a top-N over
@@ -1576,6 +1595,8 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   SQL, RP8 and RP11 landed in `tools/fitness/reports`, `reportsql.Query.Statement`. See §3.3 "As built".
 - 2026-10-31 · T-0960 · row B5 built: `internal/modules/reports/library` (loader, `LOCK`, crosswalk search, USR-01, USR-02,
   USR-03, USR-05), `HiddenGroup.Locked`, four derived columns on `inventory.users`. See §3.6 "As built".
+- 2026-10-31 · T-1105 · reports API: `listReportDefinitions` and `getReportDefinition` answer from the library (the 501 stubs are
+  deleted from `pending.go`); `report.ParamValue` gained `Days()` and `Enum()`. See §3.6 "Served by the API".
 - 2026-10-31 · T-1074 · reports API: `ReportFreshness.stale[]`/`thresholdSeconds` and `ReportRun.hiddenGroups[]`. See §6.4.
 - 2026-10-31 · T-0963 · row B9 built: `modules/reports/export`, migration 0067 (`report_exports`),
   `run.StoredSource` and `run.PageAfter`, `ACTIVEDIQ_BLOB_DIR`, RP5 landed. As built: §7.1a. Follow-ups:

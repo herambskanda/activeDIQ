@@ -1,0 +1,9 @@
+rows 16
+python digest 5aafee98aa73f2045c6f63d3b28ac2e847e1606d924c008450dc7f543e7a9c91
+formula elements: 0
+formula-lead XLSX cells without quote-prefix style: []
+formula-lead XLSX cells with quote-prefix: 12
+csv records 16
+csv cells starting with a bare lead char (not tab-neutralised): []
+csv cells whose first char is tab (neutraliser): 12
+5aafee98aa73f2045c6f63d3b28ac2e847e1606d924c008450dc7f543e7a9c91

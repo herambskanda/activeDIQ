@@ -1,11 +1,11 @@
 ---
 title: "Domain model v0"
 date: 2026-10-02
-updated: 2026-10-30
+updated: 2026-10-31
 status: review
 owner: heramb
 author: solution-architect
-ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168, T-0129, T-0191, T-0078, T-0107, T-0874)
+ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168, T-0129, T-0191, T-0078, T-0107, T-0874, T-1016)
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), blueprint v0 (review), safe-primitives.md (review), threat-model.md v0.2 (review; its TM-D decisions bind, TM §0)
 reviewed_by: ad-expert (AD/Entra semantics, see §12)
 ---
@@ -533,8 +533,10 @@ structural class) and `kind` · `parent_guid` · `ancestry` (GUID path to the NC
 from the producer; false is out of every ancestry scope; an Entra row is always false) · `dn` and
 `rdn` (display snapshot) · `sid` (security principals) · `sam_account_name` · `upn` ·
 `display_name` · `enabled` (from `userAccountControl`) · time-dependent state *inputs*:
-`lockout_time`, `pwd_last_set`, `account_expires`, and the effective password policy (domain
-policy or PSO) · `tier0` (definition: T-0007) · typed values of the synced attribute set ·
+`lockout_time`, `pwd_last_set`, `account_expires`, the decoded `userAccountControl` flags,
+`primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read` and the effective password
+policy (domain policy or PSO), all listed in "Report-engine inputs" below · `tier0` (definition:
+T-0007) · typed values of the synced attribute set ·
 `when_created` · `when_changed` · `observed_at` + `observed_dsa` · `cloud_seen_at` (Entra users
 and groups only, I9) · `state`.
 **Invariants.**
@@ -556,7 +558,18 @@ and groups only, I9) · `state`.
   `locked_out`, `password_expired`, `password_expires_at` and `account_expired` are computed at
   read time from the stored inputs and the effective policy. A decision that acts on them (unlock,
   reset, a leaver policy) re-reads `msDS-User-Account-Control-Computed` and
-  `msDS-UserPasswordExpiryTimeComputed` live at Plan `[LAB: Windows]`.
+  `msDS-UserPasswordExpiryTimeComputed` live at Plan `[LAB: Windows]`. The rules, with the
+  corrections to reports-2a §6.4 (lockout is inclusive, `pwdLastSet = 0` sets the DC's own
+  password-expired bit, only `MinInt64` is documented as "never" for a max age), are R1–R7 of
+  [account-state-lab-rows.md](account-state-lab-rows.md) §1, and each has a lab row.
+- I5b **Report-engine inputs are tri-state.** Each time input and each policy value is *present*,
+  *absent or 0* or *not read*. `inputs_read` (bit 1 `lockoutTime`, 2 `pwdLastSet`, 4 `accountExpires`,
+  8 `lastLogonTimestamp`) records what the connector read. A row whose bit is clear, a PSO set that
+  was never read, or a PSO the user resolves to with no stored row yields **Unknown (input missing)**.
+  The engine never falls back to the domain policy and never answers "not locked" or "not expired"
+  for an input it did not read. An unreadable Password Settings Container returns zero entries and no
+  error over LDAP, so the policy reader must prove it can read the container; it must not infer
+  "no PSOs" from zero rows (LAB-PS-12).
 - I6 AD and Entra objects are never merged. A hybrid user is two rows joined by a Correlation
   (DM-20).
 - I7 Uniqueness (sAMAccountName, UPN, CN in a container) is decided by the DC, not by this table
@@ -576,6 +589,35 @@ and groups only, I9) · `state`.
   under a parent's old chain as complete while a move commits beside it. With it, the later writer
   reads the earlier one's result and the child ends incomplete (fail closed) until re-observed. Same
   pattern as DM-10's activation (`AD409`).
+
+**Report-engine inputs (T-1016, reports-2a D7 and D4).** What `inventory.users` and
+`inventory.computers` must carry for the §6.4 derived states, and no more. All are replicated
+attributes read from the domain's writable DC, so the row carries `observed_at` and `observed_dsa`
+(I5). A time value is FILETIME (100 ns since 1601 UTC); the one codec decodes it.
+
+| Input | Attribute | Used for | Absent / special values |
+| --- | --- | --- | --- |
+| `user_account_control` | `userAccountControl`, bits `ACCOUNTDISABLE 0x2`, `NORMAL_ACCOUNT 0x200`, `INTERDOMAIN_TRUST 0x800`, `WORKSTATION_TRUST 0x1000`, `SERVER_TRUST 0x2000`, `DONT_EXPIRE_PASSWORD 0x10000`, `SMARTCARD_REQUIRED 0x40000`, plus for computers `TRUSTED_FOR_DELEGATION 0x80000` and `TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000` | not-applicable, exempt, locked-out and PSO eligibility | Never read from `msDS-User-Account-Control-Computed` (that is the oracle, not an input) |
+| `lockout_time` | `lockoutTime` | locked out | 0 = never locked or unlocked; **not cleared** when a lock lapses (R7) |
+| `pwd_last_set` | `pwdLastSet` | expired, expires at, must change | 0 or absent = must change at next logon; negative = invalid, Unknown |
+| `account_expires` | `accountExpires` | account expired | 0, `0x7FFFFFFFFFFFFFFF` or absent = never; negative = invalid, Unknown. Not in the global catalog: read from the domain's DC |
+| `last_logon_timestamp` | `lastLogonTimestamp` | inactive, computer activity | Absent = none recorded, not "never logged on" (reports-2a §6.4) |
+| `primary_group_id` | `primaryGroupID` | PSO group resolution (edge to the primary group, absent from `member`) | |
+| `when_created` | `whenCreated` | activity fallback, "created within N days" | |
+| `spn_present` | `servicePrincipalName` has a value | probable service account | The value is never stored (a count/boolean only) |
+| identity for policy | `objectClass`, `objectSid` (RID: `krbtgt` = 502; domain), `sAMAccountName` | PSO eligibility, logon name | |
+| `inputs_read` | bitmask, see I5b | Unknown vs absent | |
+| Group edges | `member` links (DM-17, transitive) and the primary-group edge; `groupType` (scope and security bit) | PSO group resolution | Scope filter open: LAB-PS-08 |
+| PSO links | `msDS-PSOAppliesTo` on each PSO (a user or a group) | direct link wins over every group link | |
+| Domain policy (per domain) | `maxPwdAge`, `lockoutDuration`, `msDS-LogonTimeSyncInterval`, `msDS-Behavior-Version` | the policy when no PSO resolves; the lag floor; PSOs have no effect below functional level 2008 | Stored as negative 100 ns deltas: magnitude is used. Only `MinInt64` is documented as "never" for a max age; a stored 0 is Unknown until LAB-PW-11 |
+| PSO values | `msDS-PasswordSettingsPrecedence`, `msDS-MaximumPasswordAge`, `msDS-LockoutDuration`, `objectGUID`, name | the winning PSO's values and name | Equal-precedence tie-break by GUID: LAB-PS-07 |
+| RODC krbtgt marker | `msDS-SecondaryKrbTgtNumber` present | no PSO for the RODC `krbtgt_nnnnn` | **Not yet an input** (LAB-PS-10) |
+
+Not inputs, by design: `lastLogon`, `logonCount`, `badPwdCount` and `badPasswordTime` (per-DC, never stored,
+reports-2a D5); `msDS-ResultantPSO`, `msDS-User-Account-Control-Computed` and
+`msDS-UserPasswordExpiryTimeComputed` (constructed per DC; test oracles only, RP3); `unicodePwd` and
+every other secret (I3). The cases that prove these inputs against a domain controller are the
+LAB-LK, LAB-PS, LAB-PW and LAB-AX rows of [account-state-lab-rows.md](account-state-lab-rows.md).
 
 **Lifecycle (AD).**
 
@@ -2243,6 +2285,7 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 - 2026-10-02 · T-0168 round 2, from the security-architect review. DM-25.I6: every record that a derived override state reads is pinned while the override is kept: the clearing run (new DM-24.I6 (c)), the superseding override (oldest first) and the connection. A property states that no retention pass or crash changes any derivation (tested by T-0119, listed for T-0050). DM-24.I5: no audit event carries a per-finding identifier. Events carry IDs, verdicts, outcomes, counts and `findings_digest`, salted with the new per-run `digest_salt`, and DM-25.I7 does the same for the override events. DM-24.I6: the `connection_verification` retention floor is the audit retention, and rows named by a retained audit event are pinned. DM-25.I7: `.tier0_override.cleared` is emitted in the clearing run's insert transaction. DM-10.I10: an interrupted run returns to `draft` only from `verifying`. DM-10.I11: the gate is re-checked at every Apply chunk, and a V7 `could_not_verify` or `failed` triggers an automatic re-run with backoff. §11 Q12 and Q13 are closed.
 - 2026-10-22 · T-0129 (ADR-0005 amendment of the same date, TM-D23 rule 11, contract v1.2 §8.1 step 9): DM-42.I5 lists the `verify_failed` reasons (`read_back_mismatch`, `scope_changed`, `dc_unavailable`, `tier0_after_write`); `tier0_after_write`, including an empty-basis report, raises a `critical` alert above `scope_changed`, cancels the operation, and its step's undo is refused by the `tier0` guard. Review round 1: the server's Tier-0 re-read follows the I3 verify window and fallback (only still-`unknown` counts), so `dc_unavailable` stays reachable; Entra window expiry is `read_back_mismatch`; the undo exception is stated in the lifecycle.
 - 2026-10-30 · T-0874 (ADR-0010, proposed; modules/reports.md): DM-72 stores the result as rows (`report_run_rows`) instead of a `result_blob`; exports serialise those rows. Adds `query_hash`, the initiator `chain`, `scope_fingerprint`, `digest` and `failure_reason`, invariants I4 (rows written only while `running`, read only once `succeeded`) and I5 (readable only by the runner under the same scope fingerprint), and the full lifecycle edges.
+- 2026-10-31 · T-1016 (reports-2a D7): DM-16 lists the report-engine inputs (attribute, use, absent and special values) and adds I5b (tri-state inputs, Unknown never inferred, unreadable PSO container); I5a points to the rules and the corrections to reports-2a §6.4. Lab rows for lockout, PSO and expiry are in `account-state-lab-rows.md`.
 
 ## Consult 2026-10-31: user-report semantics for USR-01/02/03/05 (reporting-engineer, T-0960)
 

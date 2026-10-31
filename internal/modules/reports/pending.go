@@ -7,23 +7,15 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 )
 
-// pending answers the operations whose rows of modules/reports.md 12 have not landed: the library
-// (B5) and schedules (B11). They are in the contract and mounted, and until their row
+// pending answers the operations whose rows of modules/reports.md 12 have not landed: schedules (B11).
+// They are in the contract and mounted, and until their row
 // lands they answer 501 not-implemented rather than a made-up body. Each row deletes its methods here.
 type pending struct{}
 
 var _ api.Handlers = (*Handlers)(nil)
 
-func (pending) GetReportDefinition(context.Context, api.GetReportDefinitionInput) (api.GetReportDefinitionOutput, error) {
-	return nil, apitypes.NotImplemented("not available yet (row B5)")
-}
-
 func (pending) GetReportSchedule(context.Context, api.GetReportScheduleInput) (api.GetReportScheduleOutput, error) {
 	return nil, apitypes.NotImplemented("not available yet (row B11)")
-}
-
-func (pending) ListReportDefinitions(context.Context, api.ListReportDefinitionsInput) (api.ListReportDefinitionsOutput, error) {
-	return nil, apitypes.NotImplemented("not available yet (row B5)")
 }
 
 func (pending) ListReportSchedules(context.Context, api.ListReportSchedulesInput) (api.ListReportSchedulesOutput, error) {

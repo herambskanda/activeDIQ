@@ -29,6 +29,8 @@ const (
 	ProblemTypeReportRowCapExceeded    = "/problems/report-row-cap-exceeded"
 	ProblemTypeReportScopeEmpty        = "/problems/report-scope-empty"
 	ProblemTypeReportScopeUnsupported  = "/problems/report-scope-unsupported"
+	ProblemTypeSearchQueryInvalid      = "/problems/search-query-invalid"
+	ProblemTypeSearchUnavailable       = "/problems/search-unavailable"
 	ProblemTypeSetupRefused            = "/problems/setup-refused"
 	ProblemTypeSignInFailed            = "/problems/sign-in-failed"
 	ProblemTypeStepUpRequired          = "/problems/step-up-required"
@@ -150,6 +152,16 @@ func ReportScopeEmpty(detail string) *Problem {
 // ReportScopeUnsupported builds a 409 /problems/report-scope-unsupported problem.
 func ReportScopeUnsupported(detail string) *Problem {
 	return newProblem(ProblemTypeReportScopeUnsupported, "The scope uses a kind that reports cannot evaluate", 409, detail)
+}
+
+// SearchQueryInvalid builds a 400 /problems/search-query-invalid problem.
+func SearchQueryInvalid(detail string) *Problem {
+	return newProblem(ProblemTypeSearchQueryInvalid, "The search text cannot be used", 400, detail)
+}
+
+// SearchUnavailable builds a 503 /problems/search-unavailable problem.
+func SearchUnavailable(detail string) *Problem {
+	return newProblem(ProblemTypeSearchUnavailable, "Search is unavailable", 503, detail)
 }
 
 // SetupRefused builds a 401 /problems/setup-refused problem.

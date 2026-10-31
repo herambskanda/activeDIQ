@@ -69,7 +69,8 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	defer db.Close()
 	// Capabilities come from the deployment profile once config selects one; no module requires
 	// one yet. The directory services are built from the store, so boot follows the open.
-	if _, err := boot(ctx, capability.NewSet(), directoryServices(db)); err != nil {
+	_, reportHost, err := bootReport(ctx, capability.NewSet(), directoryServices(db), owners.Lookup)
+	if err != nil {
 		return fmt.Errorf("server: boot modules: %w", err)
 	}
 	// The per-principal rate store and the limiter over it, mounted as the API's Limits port. A bad
@@ -179,7 +180,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// before the API is built so the kinds register with the handlers; the retention cadence is seeded
 	// once the tenant exists.
 	jreg := jobs.NewRegistry()
-	reportRuns, reportTag, err := buildReports(db, jreg, ok.Chainer, inventory.NewReader(db, nil), nil, authzr, cfg.BlobDir)
+	reportRuns, reportTag, err := buildReports(ctx, db, reportHost, jreg, ok.Chainer, inventory.NewReader(db, nil), nil, authzr, cfg.BlobDir)
 	if err != nil {
 		return err
 	}
@@ -348,11 +349,8 @@ func directoryServices(db *store.DB) directory.Services {
 	return directory.Services{Connection: connection.NewRegistry(db)}
 }
 
-// boot hands the generated module list to module.Boot, the only caller of it (ADR-0003 rule 5).
-func boot(ctx context.Context, enabled capability.Set, dir directory.Services) (*module.Contributions, error) {
-	c, _, err := bootReport(ctx, enabled, dir, owners.Lookup)
-	return c, err
-}
+// inventoryOwner is the owner key of the datasets internal/directory/inventory exports (row B3).
+const inventoryOwner = "inventory"
 
 // bootReport is boot plus the EP-8 report host. The host is created first so every module receives it
 // as Deps.Report, boots the modules (which checks the tables of the datasets they register), adds
@@ -361,6 +359,9 @@ func boot(ctx context.Context, enabled capability.Set, dir directory.Services) (
 // before the modules boot, and are checked by the same function.
 func bootReport(ctx context.Context, enabled capability.Set, dir directory.Services, ownerOf report.TableOwners) (*module.Contributions, *report.Host, error) {
 	host := report.NewHost(ownerOf)
+	if err := host.Add(inventoryOwner, inventory.Datasets()...); err != nil {
+		return nil, nil, fmt.Errorf("server: report datasets: %w", err)
+	}
 	c, err := module.Boot(ctx, generatedModules(platform.Deps{Report: host}, dir), enabled, module.WithTableOwners(ownerOf))
 	if err != nil {
 		return nil, nil, err

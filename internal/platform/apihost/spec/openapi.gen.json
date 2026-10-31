@@ -318,6 +318,7 @@
             "example": {
               "status": 403,
               "title": "You are not allowed to do this",
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
               "type": "/problems/forbidden"
             },
             "schema": {
@@ -513,6 +514,7 @@
             "example": {
               "status": 429,
               "title": "Too many requests",
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
               "type": "/problems/rate-limited"
             },
             "schema": {
@@ -581,6 +583,48 @@
           }
         },
         "description": "The scope uses a kind that reports cannot evaluate"
+      },
+      "SearchQueryInvalid": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "detail": "The search text is empty.",
+              "errors": [
+                {
+                  "code": "query_too_short",
+                  "detail": "Enter at least one character.",
+                  "in": "body",
+                  "pointer": "/q"
+                }
+              ],
+              "status": 400,
+              "title": "The search text cannot be used",
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "type": "/problems/search-query-invalid"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The search text or cursor cannot be used. errors[].code says why: query_too_short (empty after normalisation), query_too_long (over 256 characters), query_invalid (NUL or invalid UTF-8), query_refused (the text looks like a 48-digit BitLocker recovery password: refused without echoing, logging or tracing it; the same answer whatever the digits), cursor_invalid (bad, forged or mismatched cursor), cursor_requires_type. Neither detail nor errors ever repeat the text."
+      },
+      "SearchUnavailable": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "detail": "Search could not finish. Try again, or narrow the text.",
+              "status": 503,
+              "title": "Search is unavailable",
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "type": "/problems/search-unavailable"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Search could not finish in time"
       },
       "SetupRefused": {
         "content": {
@@ -853,6 +897,308 @@
         "minItems": 1,
         "type": "array",
         "x-activediq-tag": "delegation"
+      },
+      "DirectorySearchChip": {
+        "description": "One status chip of a hit. kind says which; at or days carry its value when it has one.",
+        "properties": {
+          "at": {
+            "description": "When it happened or will happen (locked, accountExpires, deleted).",
+            "format": "date-time",
+            "type": "string"
+          },
+          "days": {
+            "description": "Whole days left (passwordExpiresInDays).",
+            "maximum": 36500,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DirectorySearchChipKind"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "DirectorySearchChipKind": {
+        "description": "One status of the object, as the IA 5.3 chips show it. at is present for locked, accountExpires and deleted when the time is known; days is present for passwordExpiresInDays. There is no free-form status text: the client words every chip.",
+        "enum": [
+          "locked",
+          "disabled",
+          "passwordExpired",
+          "passwordExpiresInDays",
+          "accountExpires",
+          "deleted",
+          "tier0",
+          "cloudOnly"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "directory"
+      },
+      "DirectorySearchDisambiguator": {
+        "description": "What tells two objects with one name apart. Each member is present only when the inventory holds it; the client joins what is there (title, then office or department).",
+        "properties": {
+          "department": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "office": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "DirectorySearchGroup": {
+        "description": "The permitted hits of one type. count, more and nextCursor describe only objects the caller may read; none of them can be used to infer what the scope hides. Under refine, count, more and nextCursor are all absent.",
+        "properties": {
+          "count": {
+            "description": "How many objects of this type the caller may see for this text: the trimmed result, never a total over the directory. Absent when the normalised text has under 3 characters, and when refine is true.",
+            "maximum": 1000000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DirectorySearchHit"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "limitReached": {
+            "description": "True when paging stopped at 1,000 permitted hits. The client shows \"refine your search\"; there is no further cursor. The stop depends only on permitted hits.",
+            "type": "boolean"
+          },
+          "more": {
+            "description": "True when the caller may see more hits than items holds. A flag, never a number. Absent when refine is true.",
+            "type": "boolean"
+          },
+          "nextCursor": {
+            "description": "Pass back with the same q and type to get the next page. Absent on the last page, and when refine is true.",
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/DirectorySearchObjectType"
+          }
+        },
+        "required": [
+          "type",
+          "items"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "DirectorySearchHighlight": {
+        "description": "A matched stretch of one field, counted in Unicode code points from the start of the field's value (not UTF-16 units, not bytes). A hit that matched on a key the row does not show (a SID, say) has no highlight.",
+        "properties": {
+          "field": {
+            "$ref": "#/components/schemas/DirectorySearchHighlightField"
+          },
+          "length": {
+            "maximum": 1024,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "start": {
+            "maximum": 1024,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "field",
+          "start",
+          "length"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "DirectorySearchHighlightField": {
+        "description": "The field of the hit a highlight range refers to.",
+        "enum": [
+          "displayName",
+          "samAccountName",
+          "userPrincipalName",
+          "mail"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "directory"
+      },
+      "DirectorySearchHit": {
+        "description": "One permitted object, with everything a row shows. objectId is the key; distinguishedName is an attribute for display and may change when the object moves.",
+        "properties": {
+          "disambiguator": {
+            "$ref": "#/components/schemas/DirectorySearchDisambiguator"
+          },
+          "displayName": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "distinguishedName": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "domain": {
+            "description": "The DNS name of the object's domain. The client shows it when the answer spans more than one.",
+            "maxLength": 255,
+            "type": "string"
+          },
+          "highlights": {
+            "items": {
+              "$ref": "#/components/schemas/DirectorySearchHighlight"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "mail": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "matchClass": {
+            "$ref": "#/components/schemas/DirectorySearchMatchClass"
+          },
+          "objectId": {
+            "description": "The objectGUID.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "samAccountName": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "status": {
+            "description": "Status chips, most urgent first. Empty when none applies.",
+            "items": {
+              "$ref": "#/components/schemas/DirectorySearchChip"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "type": {
+            "$ref": "#/components/schemas/DirectorySearchObjectType"
+          },
+          "userPrincipalName": {
+            "maxLength": 1024,
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "objectId",
+          "displayName",
+          "matchClass",
+          "highlights",
+          "distinguishedName",
+          "domain",
+          "status"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "DirectorySearchMatchClass": {
+        "description": "How the hit matched, best first. An object appears once, in its best class.",
+        "enum": [
+          "exact",
+          "prefix",
+          "fuzzy"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "directory"
+      },
+      "DirectorySearchObjectType": {
+        "description": "The kind of object a group or a hit is. The group order of a full answer is users, groups, computers, contacts.",
+        "enum": [
+          "users",
+          "groups",
+          "computers",
+          "contacts"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "directory"
+      },
+      "DirectorySearchRequest": {
+        "additionalProperties": false,
+        "description": "The search. q is typed text and never a filter. type narrows to one kind of object; it is required with a cursor.",
+        "properties": {
+          "cursor": {
+            "$ref": "#/components/schemas/Cursor"
+          },
+          "groupLimit": {
+            "description": "The most hits per group; 5 when absent. With a cursor it is the page size.",
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "q": {
+            "description": "The text to find, as the admin typed it: a name, a logon name, a UPN or e-mail, a SID, a GUID, a DN or a host name. Up to 256 characters. Never sent in a URL.",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/DirectorySearchType"
+          }
+        },
+        "required": [
+          "q"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "DirectorySearchResult": {
+        "description": "The grouped, permitted hits of one search, with the freshness of the inventory behind them.",
+        "properties": {
+          "asOf": {
+            "description": "When the inventory behind this answer was last synced (the oldest of the connections the caller may read). The search reads the inventory, not the live directory. Null when nothing has synced yet.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "groups": {
+            "description": "One group per requested type, in the order users, groups, computers, contacts, even when a group is empty.",
+            "items": {
+              "$ref": "#/components/schemas/DirectorySearchGroup"
+            },
+            "maxItems": 4,
+            "type": "array"
+          },
+          "refine": {
+            "description": "True when the text is too broad to rank. No group then carries a count, a more flag or a cursor. The same for every caller with the same permissions.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "asOf",
+          "refine",
+          "groups"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "DirectorySearchType": {
+        "description": "The kind of object to search. Without it all four are searched.",
+        "enum": [
+          "users",
+          "groups",
+          "computers",
+          "contacts"
+        ],
+        "type": "string",
+        "x-activediq-tag": "directory"
       },
       "DirectoryUser": {
         "description": "A user as search shows it. Only these fields; the objectGuid is the key.",
@@ -5681,6 +6027,242 @@
         "x-permission": "connections.takeover.attest"
       }
     },
+    "/directory/search": {
+      "post": {
+        "description": "Universal search (directory.search; IA 5.3, ADR-0011). Answers users, groups, computers and contacts whose name or identifier matches q, grouped by type, each group ranked (exact identifier, then prefix, then fuzzy; live before deleted, enabled before disabled) and already carrying what an admin needs to tell two objects apart: no second call is needed to render a row. The query travels in the POST body, never in a path or query string, so it stays out of URLs and access logs (ADR-0011 rule 15); this is a read, it changes nothing, and it needs no Idempotency-Key. q is typed text, not a filter: LDAP, SQL and wildcard syntax have no meaning and are never passed through. The server normalises q (Unicode NFKC, case folding) before matching.\nTrimming comes before counting (LF-39, T-0875). Every hit, count, flag and cursor in the answer is computed from objects the caller is permitted to read under directory.read, and from nothing else. There is no total over the unscoped directory, and no field changes with what the scope hides. A group never says how many objects exist, only how many the caller may see, and a truncated group says so with the flag more instead of a number.\nrefine. When the text matches so many keys in the tenant that the server will not rank them (ADR-0011 rule 13), refine is true. The answer then carries no count, no more flag and no cursor on any group, so the client shows \"Keep typing to narrow the search\". Hits of a better match class than the one that overflowed are still returned (an exact identifier still finds its object). refine is the same for every caller who holds the same permissions, whatever their scope, so it is never a zero-result answer that a hidden OU could cause.\ncounts. A group's count is present only when the normalised q has at least 3 characters and refine is false. For a shorter q, a group shows its first hits and \"Show all\" with no number.\nShow all. A group's nextCursor, passed back with the same q and type, pages that one group, 50 hits per page (groupLimit applies up to 50), in the same order, and stops at 1,000 permitted hits with limitReached true. A cursor is opaque and bound to the query, class set, type and the caller's scope; a cursor presented with anything else is refused with 400 and reads nothing. Pages re-run the search, so they can shift if the inventory changes in between.\nRefusals. 400 (errors[].code): query_too_short (q is empty after normalisation), query_too_long (over 256 characters), query_invalid (a NUL or invalid UTF-8), query_refused (q looks like a 48-digit BitLocker recovery password; it is refused and never echoed, logged or traced), cursor_invalid (bad, forged or mismatched cursor), cursor_requires_type (a cursor without type). 403 when the caller lacks directory.read. 429 when the client is over its rate limit. 503 search-unavailable, with a trace ID and no count, when the search cannot finish in time. No refusal repeats q.",
+        "operationId": "searchDirectory",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "overview": {
+                  "summary": "The overlay's grouped overview",
+                  "value": {
+                    "groupLimit": 5,
+                    "q": "Pat Example"
+                  }
+                },
+                "showAllUsers": {
+                  "summary": "Show all users, next page",
+                  "value": {
+                    "cursor": "Y3Vyc29yLTAxLW9wYXF1ZS1leGFtcGxl",
+                    "groupLimit": 50,
+                    "q": "Pat Example",
+                    "type": "users"
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/DirectorySearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "refineState": {
+                    "summary": "Too broad to rank - no counts, no more flags, no cursor",
+                    "value": {
+                      "asOf": "2026-10-31T09:11:04Z",
+                      "groups": [
+                        {
+                          "items": [],
+                          "type": "users"
+                        },
+                        {
+                          "items": [],
+                          "type": "groups"
+                        },
+                        {
+                          "items": [],
+                          "type": "computers"
+                        },
+                        {
+                          "items": [],
+                          "type": "contacts"
+                        }
+                      ],
+                      "refine": true
+                    }
+                  },
+                  "truncatedGroup": {
+                    "summary": "A truncated group says so with a flag; nextCursor continues it",
+                    "value": {
+                      "asOf": "2026-10-31T09:11:04Z",
+                      "groups": [
+                        {
+                          "count": 7,
+                          "items": [
+                            {
+                              "displayName": "Sam Sample",
+                              "distinguishedName": "CN=Sam Sample,OU=Staff,DC=corp,DC=example,DC=test",
+                              "domain": "corp.example.test",
+                              "highlights": [
+                                {
+                                  "field": "displayName",
+                                  "length": 3,
+                                  "start": 0
+                                }
+                              ],
+                              "matchClass": "prefix",
+                              "objectId": "3f9c1e52-7a4b-4d0e-9b1a-0c5e8d2a6f10",
+                              "samAccountName": "ssample",
+                              "status": [],
+                              "type": "users",
+                              "userPrincipalName": "ssample@corp.example.test"
+                            }
+                          ],
+                          "more": true,
+                          "nextCursor": "Y3Vyc29yLTAxLW9wYXF1ZS1leGFtcGxl",
+                          "type": "users"
+                        }
+                      ],
+                      "refine": false
+                    }
+                  },
+                  "twoPeopleOneName": {
+                    "summary": "Two users who share a name are told apart without opening either",
+                    "value": {
+                      "asOf": "2026-10-31T09:11:04Z",
+                      "groups": [
+                        {
+                          "count": 2,
+                          "items": [
+                            {
+                              "disambiguator": {
+                                "office": "Leeds",
+                                "title": "Service Desk Analyst"
+                              },
+                              "displayName": "Pat Example",
+                              "distinguishedName": "CN=Pat Example,OU=Staff,DC=corp,DC=example,DC=test",
+                              "domain": "corp.example.test",
+                              "highlights": [
+                                {
+                                  "field": "displayName",
+                                  "length": 11,
+                                  "start": 0
+                                }
+                              ],
+                              "mail": "pat.example@corp.example.test",
+                              "matchClass": "exact",
+                              "objectId": "3f9c1e52-7a4b-4d0e-9b1a-0c5e8d2a6f10",
+                              "samAccountName": "pexample",
+                              "status": [
+                                {
+                                  "at": "2026-10-31T09:12:00Z",
+                                  "kind": "locked"
+                                },
+                                {
+                                  "days": 3,
+                                  "kind": "passwordExpiresInDays"
+                                }
+                              ],
+                              "type": "users",
+                              "userPrincipalName": "pexample@corp.example.test"
+                            },
+                            {
+                              "disambiguator": {
+                                "department": "Finance"
+                              },
+                              "displayName": "Pat Example",
+                              "distinguishedName": "CN=Pat Example,OU=Finance,DC=corp,DC=example,DC=test",
+                              "domain": "corp.example.test",
+                              "highlights": [
+                                {
+                                  "field": "displayName",
+                                  "length": 11,
+                                  "start": 0
+                                }
+                              ],
+                              "matchClass": "exact",
+                              "objectId": "a81d04c6-52f3-4be7-8c19-6d7f30e2b4a5",
+                              "samAccountName": "pexample2",
+                              "status": [
+                                {
+                                  "kind": "disabled"
+                                },
+                                {
+                                  "kind": "tier0"
+                                }
+                              ],
+                              "type": "users",
+                              "userPrincipalName": "pexample2@corp.example.test"
+                            }
+                          ],
+                          "more": false,
+                          "type": "users"
+                        },
+                        {
+                          "count": 0,
+                          "items": [],
+                          "more": false,
+                          "type": "groups"
+                        },
+                        {
+                          "count": 0,
+                          "items": [],
+                          "more": false,
+                          "type": "computers"
+                        },
+                        {
+                          "count": 0,
+                          "items": [],
+                          "more": false,
+                          "type": "contacts"
+                        }
+                      ],
+                      "refine": false
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/DirectorySearchResult"
+                }
+              }
+            },
+            "description": "The groups, each trimmed to the caller's scope"
+          },
+          "400": {
+            "$ref": "#/components/responses/SearchQueryInvalid"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/SearchUnavailable"
+          }
+        },
+        "summary": "Search the directory (universal search)",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read",
+          "maxBodyBytes": 4096
+        },
+        "x-activediq-parity": [
+          "ADM-003"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
+      }
+    },
     "/directory/users": {
       "get": {
         "description": "Answers the users of the caller's tenant whose display name, sAMAccountName or userPrincipalName contains q, in a stable order, at most limit of them. q is plain text: the characters ( ) * \\ & | = ! < > ~ and control characters are refused with a 400, as is a q longer than 256 characters. Nothing from q is ever placed in a directory query as syntax.",
@@ -8173,7 +8755,7 @@
       "name": "delegation"
     },
     {
-      "description": "Read-only directory queries. User search by plain text, tenant-scoped, permission directory.read.",
+      "description": "Read-only directory queries. Universal search (grouped, ranked, trimmed to the caller's scope) and user search by plain text; permission directory.read.",
       "name": "directory"
     },
     {

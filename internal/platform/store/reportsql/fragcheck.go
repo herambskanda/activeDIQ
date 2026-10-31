@@ -190,11 +190,27 @@ func (e *fragEnv) checkName(raw string, tableLike bool) error {
 // decls are the names a fragment declares, found before the main pass so a name may be used before
 // the clause that declares it (a select list reads `res.lockdur` ahead of `FROM (…) res`).
 type decls struct {
-	ctes    map[string]bool // names declared by WITH
-	aliases map[string]bool // what may stand before a ".": anchor and relation IDs, CTEs, derived-table aliases
-	cols    map[string]bool // column names declared by `AS name` and by a CTE's column list
-	ok      map[int]bool    // token indexes already judged: a declared name, or WITH / RECURSIVE of a CTE list
-	derived map[int]bool    // token indexes of the "(" that opens a derived table: FROM|JOIN ( SELECT|WITH
+	ctes    map[string][]span // names declared by WITH, each with the token range where it is visible
+	aliases map[string]bool   // what may stand before a ".": anchor and relation IDs, derived-table aliases (a CTE is judged by ctes)
+	cols    map[string]bool   // column names declared by `AS name` and by a CTE's column list
+	ok      map[int]bool      // token indexes already judged: a declared name, or WITH / RECURSIVE of a CTE list
+	derived map[int]bool      // token indexes of the "(" that opens a derived table: FROM|JOIN ( SELECT|WITH
+}
+
+// span is a half-open token range [from, to).
+type span struct{ from, to int }
+
+// cteVisible says whether the name w, written at token index at, is a CTE in scope there. Postgres
+// makes a CTE visible only inside the query its WITH belongs to: from the WITH to the bracket that
+// encloses it (or the end of the fragment at top level). Anywhere else the name resolves through
+// search_path to a relation of the schema, which a fragment would read with no {rel.x} scope (T-1103).
+func (d *decls) cteVisible(w string, at int) bool {
+	for _, s := range d.ctes[w] {
+		if at >= s.from && at < s.to {
+			return true
+		}
+	}
+	return false
 }
 
 func isWord(toks []token, k int, w string) bool {
@@ -228,12 +244,13 @@ func matching(toks []token, open int) int {
 var aliasEnds = wordSet("left", "inner", "join", "where", "order", "limit", "union")
 
 func declare(toks []token, env *fragEnv) (*decls, error) {
-	d := &decls{ctes: map[string]bool{}, aliases: map[string]bool{}, cols: map[string]bool{}, ok: map[int]bool{}, derived: map[int]bool{}}
+	d := &decls{ctes: map[string][]span{}, aliases: map[string]bool{}, cols: map[string]bool{}, ok: map[int]bool{}, derived: map[int]bool{}}
 	for id := range env.ids {
 		d.aliases[id] = true
 	}
 	type open struct {
 		bracket string
+		index   int // token index of the opening bracket
 		derived bool
 		cast    bool
 	}
@@ -245,7 +262,7 @@ func declare(toks []token, env *fragEnv) (*decls, error) {
 		if t.kind == tokPunct {
 			switch t.text {
 			case "(", "[":
-				o := open{bracket: t.text}
+				o := open{bracket: t.text, index: i}
 				if t.text == "(" {
 					o.derived = (isWord(toks, i-1, "from") || isWord(toks, i-1, "join")) && (isWord(toks, i+1, "select") || isWord(toks, i+1, "with"))
 					o.cast = isWord(toks, i-1, "cast")
@@ -270,7 +287,16 @@ func declare(toks []token, env *fragEnv) (*decls, error) {
 		}
 		switch t.text {
 		case "with":
-			if err := declareCTEs(toks, i, env, d); err != nil {
+			// The WITH belongs to the query inside the innermost open bracket, or to the whole fragment.
+			scope := span{from: i, to: len(toks)}
+			if len(stack) > 0 {
+				k := matching(toks, stack[len(stack)-1].index)
+				if k < 0 {
+					return nil, fmt.Errorf("brackets do not balance")
+				}
+				scope.to = k
+			}
+			if err := declareCTEs(toks, i, scope, env, d); err != nil {
 				return nil, err
 			}
 		case "as":
@@ -314,8 +340,8 @@ func nameOf(n *token) string {
 
 // declareCTEs reads `WITH [RECURSIVE] name [(col, …)] AS ( … ) [, name … AS ( … )]` at toks[i]. The
 // bodies are checked by the main pass like any other text; a name is declared only here, so a CTE
-// is always a name this fragment wrote itself.
-func declareCTEs(toks []token, i int, env *fragEnv, d *decls) error {
+// is always a name this fragment wrote itself. scope is where the names are visible.
+func declareCTEs(toks []token, i int, scope span, env *fragEnv, d *decls) error {
 	d.ok[i] = true
 	j := i + 1
 	recursive := isWord(toks, j, "recursive")
@@ -332,7 +358,8 @@ func declareCTEs(toks []token, i int, env *fragEnv, d *decls) error {
 			return err
 		}
 		name, raw := toks[j].text, toks[j].raw
-		d.ctes[name], d.aliases[name], d.ok[j] = true, true, true
+		d.ctes[name] = append(d.ctes[name], scope)
+		d.ok[j] = true
 		j++
 		if isPunct(toks, j, "(") {
 			j++
@@ -504,7 +531,10 @@ func checkFragment(parts []report.Part, env *fragEnv) error {
 				}
 			case ".":
 				qualified := p != nil && (p.kind == tokSlot && (p.slot == report.SlotBase || p.slot == report.SlotRel) ||
-					p.kind == tokWord && d.aliases[p.text])
+					p.kind == tokWord && (d.aliases[p.text] || d.cteVisible(p.text, i-1)))
+				if p != nil && p.kind == tokWord && !qualified && len(d.ctes[p.text]) > 0 {
+					return fmt.Errorf("CTE %q is used with a dot outside the query its WITH belongs to: there the name is not the CTE", p.raw)
+				}
 				if !qualified || pp != nil && pp.kind == tokPunct && pp.text == "." {
 					return fmt.Errorf("a schema-qualified or dotted name is not allowed%s; reach a column as {t}.col, {rel.<id>}.col or alias.col of a name the fragment declares", nearWord(p, n))
 				}
@@ -589,7 +619,7 @@ func checkFragment(parts []report.Part, env *fragEnv) error {
 				return fmt.Errorf("a fragment may not use %q before a literal; only the types in fragTypes may", t.raw)
 			}
 			if n != nil && n.kind == tokPunct && n.text == "." {
-				if d.aliases[w] {
+				if d.aliases[w] || len(d.ctes[w]) > 0 {
 					continue // the "." case judges the qualified name
 				}
 				return fmt.Errorf("a schema-qualified name is not allowed (found %q.…)", t.raw)
@@ -639,7 +669,10 @@ func checkFrom(toks []token, i int, kw string, s *special, env *fragEnv, d *decl
 			return false, fmt.Errorf("{rel.%s} follows %s and is followed by a dot: a FROM item is the bare slot, never a qualified name", n.id, kw)
 		}
 		return true, nil
-	case n != nil && n.kind == tokWord && d.ctes[n.text]:
+	case n != nil && n.kind == tokWord && len(d.ctes[n.text]) > 0:
+		if !d.cteVisible(n.text, i+1) {
+			return false, fmt.Errorf("CTE %q follows %s outside the query its WITH belongs to: there the name resolves to a relation of the schema, not to the CTE", n.raw, kw)
+		}
 		if dotted {
 			return false, fmt.Errorf("%q follows %s and is followed by a dot: a CTE is never schema-qualified", n.raw, kw)
 		}

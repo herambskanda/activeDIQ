@@ -23,7 +23,8 @@ import (
 )
 
 // Handlers implements api.Handlers: the run operations (createReportRun, getReportRun,
-// cancelReportRun, retryReportRun, listReportRuns, listReportRunRows). The permission reports.run is
+// cancelReportRun, retryReportRun, listReportRuns, listReportRunRows) and the two library reads
+// (listReportDefinitions, getReportDefinition: definitions.go). The permission reports.run is
 // the route's (apihost enforces it from RouteMeta before a handler runs); what a handler adds is the
 // runner binding and the read-scope check, both inside run.Service. The export operations
 // (createReportExport, getReportExport, deleteReportExport, downloadReportExport) are the same: the
@@ -33,6 +34,7 @@ type Handlers struct {
 	pending
 	Runs    *run.Service
 	Exports *export.Service
+	Library Library
 	Now     func() time.Time
 	Log     *slog.Logger
 }
