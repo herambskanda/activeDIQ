@@ -1,8 +1,8 @@
 package report
 
 import (
-	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 )
 
 // Limits on a filter expression.
@@ -57,13 +57,19 @@ type cmpJSON struct {
 }
 
 // MarshalJSON writes the canonical form.
-func (a And) MarshalJSON() ([]byte, error) { return json.Marshal(map[string][]Expr{"and": a.Terms}) }
+func (a And) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string][]Expr{"and": a.Terms}, wireOpts)
+}
 
 // MarshalJSON writes the canonical form.
-func (o Or) MarshalJSON() ([]byte, error) { return json.Marshal(map[string][]Expr{"or": o.Terms}) }
+func (o Or) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string][]Expr{"or": o.Terms}, wireOpts)
+}
 
 // MarshalJSON writes the canonical form.
-func (n Not) MarshalJSON() ([]byte, error) { return json.Marshal(map[string]Expr{"not": n.Term}) }
+func (n Not) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]Expr{"not": n.Term}, wireOpts)
+}
 
 // MarshalJSON writes the canonical form.
 func (c Cmp) MarshalJSON() ([]byte, error) {
@@ -72,7 +78,7 @@ func (c Cmp) MarshalJSON() ([]byte, error) {
 		v := c.Value
 		j.Value = &v
 	}
-	return json.Marshal(map[string]cmpJSON{"cmp": j})
+	return json.Marshal(map[string]cmpJSON{"cmp": j}, wireOpts)
 }
 
 // UnmarshalExpr decodes an Expr strictly: unknown fields, several node kinds in one object, an
@@ -92,15 +98,14 @@ func decodeExpr(data []byte, depth int, nodes *int) (Expr, error) {
 	if *nodes++; *nodes > MaxExprNodes {
 		return nil, verr(CodeTooComplex, "expr")
 	}
-	var m map[string]json.RawMessage
-	dec := json.NewDecoder(bytes.NewReader(data))
-	if err := dec.Decode(&m); err != nil || len(m) != 1 || dec.More() {
+	var m map[string]jsontext.Value
+	if err := json.Unmarshal(data, &m); err != nil || len(m) != 1 {
 		return nil, verr(CodeInvalidQuery, "expr")
 	}
 	for k, raw := range m {
 		switch k {
 		case "and", "or":
-			var parts []json.RawMessage
+			var parts []jsontext.Value
 			if err := json.Unmarshal(raw, &parts); err != nil || len(parts) == 0 {
 				return nil, verr(CodeInvalidQuery, "expr."+k)
 			}
@@ -127,9 +132,7 @@ func decodeExpr(data []byte, depth int, nodes *int) (Expr, error) {
 			return Not{t}, nil
 		case "cmp":
 			var j cmpJSON
-			d := json.NewDecoder(bytes.NewReader(raw))
-			d.DisallowUnknownFields()
-			if err := d.Decode(&j); err != nil {
+			if err := json.Unmarshal(raw, &j, json.RejectUnknownMembers(true)); err != nil {
 				return nil, verr(CodeInvalidQuery, "expr.cmp")
 			}
 			op, ok := ParseOp(j.Op)

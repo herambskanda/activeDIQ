@@ -1,8 +1,8 @@
 package report
 
 import (
-	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 )
@@ -35,9 +35,8 @@ type sortJSON struct {
 // Errors name a place and never echo request text. The result is not yet checked against a
 // dataset: Resolve does that.
 func DecodeRunParams(data []byte, def Definition) (RunParams, string, error) {
-	var top map[string]json.RawMessage
-	dec := json.NewDecoder(bytes.NewReader(data))
-	if err := dec.Decode(&top); err != nil || dec.More() {
+	var top map[string]jsontext.Value
+	if err := json.Unmarshal(data, &top); err != nil {
 		return RunParams{}, "", verr(CodeInvalidQuery, "body")
 	}
 	for k := range top {
@@ -50,17 +49,15 @@ func DecodeRunParams(data []byte, def Definition) (RunParams, string, error) {
 		preset string
 	)
 	bad := func(path string) (RunParams, string, error) { return RunParams{}, "", verr(CodeBadValue, path) }
-	strict := func(raw json.RawMessage, into any) bool {
-		d := json.NewDecoder(bytes.NewReader(raw))
-		d.DisallowUnknownFields()
-		return d.Decode(into) == nil && !d.More()
+	strict := func(raw jsontext.Value, into any) bool {
+		return json.Unmarshal(raw, into, json.RejectUnknownMembers(true)) == nil
 	}
 	if raw, ok := top["preset"]; ok {
 		if !strict(raw, &preset) || (preset != "" && !presetIDPattern.MatchString(preset)) {
 			return bad("preset")
 		}
 	}
-	guids := func(raw json.RawMessage) ([]authz.ObjectID, bool) {
+	guids := func(raw jsontext.Value) ([]authz.ObjectID, bool) {
 		var ss []string
 		if !strict(raw, &ss) {
 			return nil, false
@@ -132,7 +129,7 @@ func DecodeRunParams(data []byte, def Definition) (RunParams, string, error) {
 		}
 	}
 	if raw, has := top["filters"]; has {
-		var parts []json.RawMessage
+		var parts []jsontext.Value
 		if !strict(raw, &parts) {
 			return bad("filters")
 		}
@@ -145,7 +142,7 @@ func DecodeRunParams(data []byte, def Definition) (RunParams, string, error) {
 		}
 	}
 	if raw, has := top["params"]; has {
-		var ps map[string]json.RawMessage
+		var ps map[string]jsontext.Value
 		if !strict(raw, &ps) {
 			return bad("params")
 		}
@@ -167,15 +164,13 @@ func DecodeRunParams(data []byte, def Definition) (RunParams, string, error) {
 	return p, preset, nil
 }
 
-func decodeParamValue(raw json.RawMessage) (ParamValue, bool) {
+func decodeParamValue(raw jsontext.Value) (ParamValue, bool) {
 	var m struct {
 		Days *int64   `json:"days"`
 		Enum *string  `json:"enum"`
 		GUID []string `json:"guids"`
 	}
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&m); err != nil || d.More() {
+	if err := json.Unmarshal(raw, &m, json.RejectUnknownMembers(true)); err != nil {
 		return ParamValue{}, false
 	}
 	n := 0

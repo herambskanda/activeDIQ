@@ -1,7 +1,8 @@
 package report
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"time"
@@ -212,29 +213,35 @@ func (v Value) check(path string) error {
 	return nil
 }
 
+// wireOpts keeps the encoding the v1 package wrote: a nil slice or map is null, not []/{}, and map
+// members are sorted and <, >, &, U+2028 and U+2029 are escaped, so the bytes (and the query hash
+// over them) are the ones v1 produced.
+var wireOpts = json.JoinOptions(json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), json.Deterministic(true),
+	jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
+
 // MarshalJSON writes {"text":"x"}, {"int":5}, {"bool":true}, {"time":"…Z"}, {"enum":"id"} or
 // {"guid":"…"}.
 func (v Value) MarshalJSON() ([]byte, error) {
 	switch v.t {
 	case TypeText:
-		return json.Marshal(map[string]string{"text": v.s})
+		return json.Marshal(map[string]string{"text": v.s}, wireOpts)
 	case TypeEnum:
-		return json.Marshal(map[string]string{"enum": v.s})
+		return json.Marshal(map[string]string{"enum": v.s}, wireOpts)
 	case TypeInt:
-		return json.Marshal(map[string]int64{"int": v.i})
+		return json.Marshal(map[string]int64{"int": v.i}, wireOpts)
 	case TypeBool:
-		return json.Marshal(map[string]bool{"bool": v.b})
+		return json.Marshal(map[string]bool{"bool": v.b}, wireOpts)
 	case TypeTime:
-		return json.Marshal(map[string]string{"time": v.tm.Format(time.RFC3339)})
+		return json.Marshal(map[string]string{"time": v.tm.Format(time.RFC3339)}, wireOpts)
 	case TypeGUID:
-		return json.Marshal(map[string]string{"guid": GUIDString(v.guid)})
+		return json.Marshal(map[string]string{"guid": GUIDString(v.guid)}, wireOpts)
 	}
 	return nil, fmt.Errorf("report: cannot marshal a value of type %s", v.t)
 }
 
 // UnmarshalJSON reads exactly one of the keys MarshalJSON writes. Any other shape is refused.
 func (v *Value) UnmarshalJSON(b []byte) error {
-	var m map[string]json.RawMessage
+	var m map[string]jsontext.Value
 	if err := json.Unmarshal(b, &m); err != nil || len(m) != 1 {
 		return verr(CodeBadValue, "value")
 	}
