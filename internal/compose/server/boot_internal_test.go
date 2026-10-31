@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"github.com/skenzeriq/activediq/internal/platform/report"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory"
@@ -40,4 +42,20 @@ func TestDirectoryServicesConnection(t *testing.T) {
 			t.Fatalf("listed %d connections, want 0", len(cs))
 		}
 	})
+}
+
+// TestBootReportSealsHost checks the EP-8 host is built before the modules (so they receive it as
+// Deps.Report), is checked against the ownership map the caller passes, and is sealed after Boot.
+func TestBootReportSealsHost(t *testing.T) {
+	c, h, err := bootReport(context.Background(), capability.NewSet(capability.DirectoryAD, capability.DirectoryEntra, capability.TenantProvisioning),
+		directory.Services{}, func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatalf("bootReport: %v", err)
+	}
+	if len(c.Datasets()) != 0 || len(h.Datasets()) != 0 {
+		t.Fatalf("no module registers a dataset at 2a, got %v", h.Datasets())
+	}
+	if err := h.Add("inventory"); !errors.Is(err, report.ErrSealed) {
+		t.Fatalf("host is not sealed after boot: %v", err)
+	}
 }

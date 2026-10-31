@@ -528,7 +528,9 @@ group, computer, contact, OU, container, gMSA, foreign security principal, or an
 carried as data. **Replaces (ME):** the objects behind every Management tab (ADM-008…062), AD
 Explorer (ADM-004) and the M365 objects (ADM-160…164).
 **Key attributes:** `object_guid` · `connection_id` · `nc_guid` · `object_class` (most specific
-structural class) and `kind` · `parent_guid` · `ancestry` (GUID path to the NC head) · `dn` and
+structural class) and `kind` · `parent_guid` · `ancestry` (GUID path to the NC head, nearest parent first) ·
+`ancestry_complete` (the chain is known to be whole and current; derived by the writer, never taken
+from the producer; false is out of every ancestry scope; an Entra row is always false) · `dn` and
 `rdn` (display snapshot) · `sid` (security principals) · `sam_account_name` · `upn` ·
 `display_name` · `enabled` (from `userAccountControl`) · time-dependent state *inputs*:
 `lockout_time`, `pwd_last_set`, `account_expires`, and the effective password policy (domain
@@ -567,6 +569,13 @@ and groups only, I9) · `state`.
   takeover turns a cloud-only object into a synced one, so this observation usually predates the
   correlation it later forms; that is why it lives on the object and not on the correlation. It
   feeds DM-20.I4(g).
+- I10 **One writer per connection.** The inventory writer holds a per-(tenant, connection)
+  transaction advisory lock for the whole `Populate` transaction and refuses any isolation level but
+  READ COMMITTED (`ErrIsolation`). `ancestry_complete` is checked against the parent row and the move
+  rewrite sees committed rows only, so without the lock two overlapping passes could store a child
+  under a parent's old chain as complete while a move commits beside it. With it, the later writer
+  reads the earlier one's result and the child ends incomplete (fail closed) until re-observed. Same
+  pattern as DM-10's activation (`AD409`).
 
 **Lifecycle (AD).**
 

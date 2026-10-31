@@ -1,7 +1,7 @@
 ---
 title: "Module: reports — contract for the definition AST, dataset registry, compiler and run record"
 date: 2026-10-30
-updated: 2026-10-30
+updated: 2026-10-31
 status: draft
 owner: heramb
 author: solution-architect
@@ -33,13 +33,13 @@ scope decision, not a platform asymmetry.
 
 | Piece | State today | Where this page fixes it |
 | --- | --- | --- |
-| `internal/platform/report` (EP-8 host), `Registrar.Dataset` | **Missing.** Blueprint §4.1 names `Dataset(d report.Dataset)`, but `module.Registrar` has no such method and `platform.Deps` has only `Access` | §2, §3, row B1 |
+| `internal/platform/report` (EP-8 host), `Registrar.Dataset` | **Built (T-0956, row B1).** Pure types and `Resolve` (no SQL driver), `Registrar.Dataset`, `Contributions.Datasets()`, `platform.Deps.Report`, and the Boot table-ownership check (`report.CheckTables`). Deviations below | §2, §3, row B1 |
 | `internal/platform/store/reportsql` | **Missing.** `sqlconst` (FF-SP2) already lets values of type `reportsql.CompiledSQL` through, and `tools/gen/api` holds a pending `ReportAst → reportsql.Report` binding | §5, rows B1 and B2, RP1 |
 | Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. Two adapters are still to be wired in `compose/server`: `rbac.OwnerStatus` (over the account store) and `rbac.ObjectConnections` (over inventory) | §4 |
-| Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). There is no GIN index on `ancestry`, no per-NC sync-pass watermark (spec D6), no policy-input tables (D4) and no group closure. **`ancestry` is upserted as given** (`objects.go`, `ON CONFLICT … ancestry = EXCLUDED.ancestry`): moving an OU does not rewrite its descendants' `ancestry`, and no column says whether a row's chain is complete | §3.4, §4.5, rows P1, **P2**, B3, B6 |
+| Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). There is no GIN index on `ancestry`, no per-NC sync-pass watermark (spec D6), no policy-input tables (D4) and no group closure. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed | §3.4, §4.5, rows P1, **P2**, B3, B6 |
 | `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150). **No canonical digest** (spec §8.3) | §7, row B9 |
-| `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases. **No DM-44 recurring schedule** | §8, row P4 |
-| `platform/notify` | **Built (T-0950).** `notify/mailaddr` (strict address parser), `notify/settings` (allowed recipient domains, SMTP relay; migration 0059), `notify/mail` (SMTP over egress), `notify/mailtest`, `notify/delivery` (DM-84 `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue`), the `notify.settings.update` Action in `modules/notify`. **Not yet wired:** nothing calls `DispatchDue` (needs the DM-44 schedule, row P4, or a notify job), no `Renderer` per purpose, no SMTP AUTH credentials. Terminal failure state is `given_up` | §7.2, §8, row P3 |
+| `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
+| `platform/notify` | **Built (T-0950).** `notify/mailaddr` (strict address parser), `notify/settings` (allowed recipient domains, SMTP relay; migration 0061), `notify/mail` (SMTP over egress), `notify/mailtest`, `notify/delivery` (DM-84 `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue`), the `notify.settings.update` Action in `modules/notify`. **Not yet wired:** nothing calls `DispatchDue` (needs the DM-44 schedule, row P4, or a notify job), no `Renderer` per purpose, no SMTP AUTH credentials. Terminal failure state is `given_up` | §7.2, §8, row P3 |
 | Per-DC read | `ReadPerDC` exists in the connector proto (`read.proto`). There is **no Go client method** in `directory/client` | §6.5, row P5 |
 | `platform/store` | Entry points `WithTenant`, `WithTenantSeparate` and `WithPlatform`. `store.Tx` exposes `Exec`, `Query` and `QueryRow` | §6.3 uses them as they are |
 
@@ -1062,6 +1062,7 @@ Consequences:
     | `reassign` | the previous owner, **still paused** | `Lossy`: the earlier active state is not restored, and the previous owner resumes it | `reports.schedule.manage_all` (`manage_all_required`) |
 
   - An undo never sends anything. A fire that ran between the change and its undo stays sent and is not recalled.
+  - **Held and step-up answers** (TM-D30 SX-1, SX-2, SX-4). A held write or undo answers `202 OperationRef` with `holdReason`. `create`, `update`, `resume` and the undo of any of them step up when the after-state has an external recipient. An interactive caller without a fresh MFA gets `401 step-up-required`; a token or automation is held `step_up`. `pause`, `delete` and `reassign` never step up. The undo route declares `401 StepUpRequired` (T-0892). The three writes get theirs from T-0979 (R6).
 - **Fire.** A DM-44 tick enqueues `reports.schedule.fire`, which runs the owner-authority checks
   of spec §8.4 in order:
   1. Owner state and permissions. A failure gives a system pause plus `reports.schedule.paused`
@@ -1240,3 +1241,17 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   readable (200, state `expired`) while pages and downloads answer 410 `report-result-expired`
   (§6.2, §6.6 check 3 and the per-read check list); export re-run fields `rerun`/`rerunOfRunId` (§7.1);
   rows B1, B2, B9.
+- 2026-10-30 · T-0956 · row B1 built: `internal/platform/report` (types, `Resolve`, strict `DecodeRunParams`,
+  `Cell` with the `u` tag, `Label`, `PerDCReader` port, `Host`, `CheckTables`), `Registrar.Dataset`,
+  `module.WithTableOwners`, `platform.Deps.Report`, `compose/server.bootReport`; the `ReportAst` gen
+  binding now points at `report.Query`. As built, against §3:
+  - `Cmp` carries `Values []Value` for `OpIn`; `RunParams.Filters` takes any `Expr` (wire filters
+    have groups); there is no `Period` field (the API adapter maps it to the `days` Param).
+  - `DecodeRunParams(data, def)` returns `(RunParams, preset, error)` and refuses an undeclared name
+    before reading its value (`unknown_parameter`).
+  - Per-DC terms are split from top-level conjuncts; a mixed term is `per_dc_misplaced`.
+  - `report.SortKey` is the type; the page sort-key encoder is `CellSortKey`, built in B4.
+  - Fragment validation rejects `;`, `--`, `/*`, `$`, `\`, quoted identifiers, unknown slots and
+    unbalanced parentheses. The check that a fragment names no table is B2 (needs the ownership map).
+  - `store/owners.Lookup` is an **empty** map: no generator exists yet, so any dataset fails Boot
+    (fail closed, ADR-0003 rule 6). A `tools/gen/modules` ticket fills it; B3 needs it.

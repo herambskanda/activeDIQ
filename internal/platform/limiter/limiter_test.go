@@ -280,4 +280,12 @@ func TestSourcePrefixCanonicalForms(t *testing.T) {
 	if _, ok := SourcePrefix(netip.MustParseAddr("192.0.2.1"), 33, 64); ok {
 		t.Error("an out-of-range prefix length produced a prefix")
 	}
+	for _, bits := range []int{47, 65, 96, 128} { // net/netip accepts these; §7.8 does not
+		if p, ok := SourcePrefix(netip.MustParseAddr("2001:db8:aa:bb::1"), 32, bits); ok {
+			t.Errorf("IPv6 /%d produced a prefix %v", bits, p)
+		}
+	}
+	if _, ok := SourcePrefix(netip.MustParseAddr("192.0.2.1"), 23, 64); ok {
+		t.Error("IPv4 /23 produced a prefix")
+	}
 }

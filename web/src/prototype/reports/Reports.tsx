@@ -1,5 +1,12 @@
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 
+import {
+  DataGrid,
+  type DataGridColumn,
+  type DataGridSort as Sort,
+  type Column,
+  Table,
+} from "../../ds/components";
 import "../../ds/components/components.css";
 import "../prototype.css";
 import "./reports.css";
@@ -24,7 +31,6 @@ import {
   type Row,
   type Schedule,
 } from "./fixtures";
-import { Grid, type Col, type Sort } from "./Grid";
 import { searchReports, type Hit, HIT_LIMIT } from "./search";
 import {
   ALL_PERMS,
@@ -846,10 +852,20 @@ function ReportView(props: ViewProps) {
     [report, preset, params.days, params.group, needsParam],
   );
 
-  const columns: Col[] = useMemo(() => {
+  const columns: DataGridColumn<Row>[] = useMemo(() => {
     const keep = report.columns.filter((c) => !params.hidden.includes(c));
-    return [...keep, ...params.added].map((c) => ({ key: colKey(c), header: c }));
-  }, [report, params.hidden, params.added]);
+    return [...keep, ...params.added].map((header) => {
+      const key = colKey(header);
+      return {
+        key,
+        header,
+        sortable: true,
+        width: widthFor(key),
+        cell: (r: Row) => renderCell(key, r.cells[key], r, scenario),
+        title: (r: Row) => String(r.cells[key] ?? ""),
+      };
+    });
+  }, [report, params.hidden, params.added, scenario]);
 
   const rows = useMemo(() => {
     const f = params.filter.trim().toLowerCase();
@@ -1118,7 +1134,6 @@ function ReportView(props: ViewProps) {
             setScenario={setScenario}
             unsupported={unsupported}
             noRows={noRows}
-            busy={busy}
             filter={params.filter}
             checked={checked}
             domainsN={domains.length}
@@ -1129,12 +1144,14 @@ function ReportView(props: ViewProps) {
             setSeq={() => newRun({})}
             tick={tick}
             grid={
-              <Grid
+              <DataGrid
                 caption={`${report.name}: ${preset?.name ?? ""}, ${rows.length} rows`}
                 columns={columns}
                 rows={rows}
+                rowKey={(r) => r.key}
                 sort={params.sort}
                 busy={busy}
+                resizable
                 onSort={(k) =>
                   sortOnly(
                     params.sort?.key === k
@@ -1144,7 +1161,6 @@ function ReportView(props: ViewProps) {
                       : { key: k, dir: "asc" },
                   )
                 }
-                render={(col, v, row) => renderCell(col, v, row, scenario)}
               />
             }
             rowsCount={rows.length}
@@ -1630,7 +1646,6 @@ function RunBody(props: {
   readonly setScenario: (s: Scenario) => void;
   readonly unsupported: string;
   readonly noRows: boolean;
-  readonly busy: boolean;
   readonly filter: string;
   readonly checked: number;
   readonly domainsN: number;
@@ -1649,7 +1664,6 @@ function RunBody(props: {
     setScenario,
     unsupported,
     noRows,
-    busy,
     filter,
     checked,
     domainsN,
@@ -1814,9 +1828,7 @@ function RunBody(props: {
     );
   return (
     <>
-      <div className="rp__gridwrap" data-busy={busy ? "true" : undefined}>
-        {grid}
-      </div>
+      {grid}
       <p className="pt__sub rp__foot" role="status">
         {rowsCount.toLocaleString("en")} rows · sorted and filtered on the server; scrolling loads
         more · no row selection in this checkpoint{perDc ? "" : ""}
@@ -1894,42 +1906,54 @@ function RunDetails(props: {
               None yet. Press <span className="pt__kbd">E</span> to export this exact result.
             </p>
           ) : (
-            <table className="rp__grid rp__grid--auto">
-              <thead>
-                <tr>
-                  <th scope="col">File</th>
-                  <th scope="col">Rows</th>
-                  <th scope="col">Made</th>
-                  <th scope="col">Expires</th>
-                  <th scope="col">
-                    <span className="rp__sr">Delete</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {exports.map((x) => (
-                  <tr key={x.name}>
-                    <th scope="row" className="rp__cell rp__rowhead diq-mono" title={x.name}>
-                      {x.name}
-                    </th>
-                    <td>{x.rows.toLocaleString("en")}</td>
-                    <td>{x.at}</td>
-                    <td>{x.expires}</td>
-                    <td>
-                      <button type="button" className="btn" onClick={() => onDelete(x.name)}>
-                        Delete file
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <Table
+              caption="Files from this run"
+              rows={exports}
+              rowKey={(x) => x.name}
+              columns={fileColumns(onDelete)}
+            />
           )}
         </div>
       ) : null}
     </section>
   );
 }
+
+/** Initial column widths in characters (ch), by column kind. Users can resize. */
+function widthFor(key: string): number {
+  if (key === "name" || key === "member" || key === "user" || key === "via") return 30;
+  if (key === "group") return 18;
+  if (key.includes("ou-path") || key === "path") return 24;
+  if (key === "domain" || key === "upn" || key === "dns-name" || key === "e-mail") return 20;
+  if (key.startsWith("days") || key === "users" || key === "computers" || key === "groups")
+    return 13;
+  if (key === "status" || key === "membership-kind" || key === "member-type") return 18;
+  if (key === "probable-service-account") return 26;
+  return 19;
+}
+
+const fileColumns = (onDelete: (name: string) => void): Column<ExportRec>[] => [
+  {
+    key: "file",
+    header: "File",
+    rowHeader: true,
+    mono: true,
+    title: (x) => x.name,
+    cell: (x) => x.name,
+  },
+  { key: "rows", header: "Rows", cell: (x) => x.rows.toLocaleString("en") },
+  { key: "at", header: "Made", cell: (x) => x.at },
+  { key: "expires", header: "Expires", cell: (x) => x.expires },
+  {
+    key: "delete",
+    header: "Actions",
+    cell: (x) => (
+      <button type="button" className="btn" onClick={() => onDelete(x.name)}>
+        Delete file
+      </button>
+    ),
+  },
+];
 
 function renderCell(col: string, v: Cell | undefined, row: Row, scenario: Scenario): ReactNode {
   const text = v === undefined ? "" : String(v);

@@ -134,10 +134,162 @@
   text-transform: uppercase;
 }
 .diq-table tbody th {
+  color: var(--diq-text);
+  background: transparent;
+  font-size: var(--diq-text-table);
   font-weight: var(--diq-weight-medium);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.diq-table td.diq-table__wrap,
+.diq-table th.diq-table__wrap {
+  max-width: none;
+  padding-block: var(--diq-space-2);
+  overflow-wrap: break-word;
+  white-space: normal;
 }
 .diq-table tbody tr:hover {
   background: var(--diq-surface-2);
+}
+
+/* ---- DataGrid ------------------------------------------------------------ */
+.diq-grid {
+  position: relative;
+  max-height: calc((var(--diq-grid-rows) + 1) * var(--diq-row));
+  overflow: auto;
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line);
+  font-size: var(--diq-text-table);
+}
+/* Busy is not dimmed (dimming text breaks contrast): a signal rule under the header and a progress cursor. */
+.diq-grid[data-busy="true"] {
+  cursor: progress;
+}
+.diq-grid[data-busy="true"] thead th {
+  border-bottom: var(--diq-focus-width) solid var(--diq-signal);
+}
+.diq-grid__ch {
+  position: absolute;
+  width: 1ch;
+  height: 0;
+  visibility: hidden;
+}
+/* Width is the sum of the column widths (inline): extra room stays empty, so a resize moves only that column. */
+.diq-grid__table {
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.diq-grid__col-sel {
+  width: var(--diq-row);
+}
+.diq-grid tr {
+  --diq-grid-bg: var(--diq-surface);
+}
+.diq-grid tbody tr:hover {
+  --diq-grid-bg: var(--diq-surface-2);
+}
+.diq-grid tbody tr.diq-grid__row--selected {
+  --diq-grid-bg: var(--diq-signal-soft);
+}
+.diq-grid th,
+.diq-grid td {
+  height: var(--diq-row);
+  padding: 0 var(--diq-space-3);
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--diq-grid-bg);
+  border-bottom: var(--diq-border) solid var(--diq-line);
+}
+.diq-grid tbody th {
+  color: var(--diq-text);
+  font-size: var(--diq-text-table);
+  font-weight: var(--diq-weight-medium);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.diq-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  color: var(--diq-text-2);
+  background: var(--diq-surface-2);
+  font-size: var(--diq-text-micro);
+  font-weight: var(--diq-weight-semibold);
+  letter-spacing: var(--diq-tracking-label);
+  text-transform: uppercase;
+}
+.diq-grid thead th[data-sortable] {
+  cursor: pointer;
+}
+.diq-grid thead th[data-sortable]:hover {
+  background: var(--diq-line);
+}
+.diq-grid__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diq-grid__mark {
+  margin-inline-start: var(--diq-space-2);
+  color: var(--diq-signal-text);
+}
+.diq-grid th.diq-grid__end,
+.diq-grid td.diq-grid__end {
+  text-align: end;
+}
+/* The row-header column and the selection column stay in view when the grid scrolls sideways. */
+.diq-grid .diq-grid__rh {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+}
+.diq-grid--selectable .diq-grid__rh {
+  inset-inline-start: var(--diq-row);
+}
+.diq-grid thead .diq-grid__rh {
+  z-index: 3;
+}
+.diq-grid .diq-grid__sel {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  padding: 0;
+  text-align: center;
+}
+.diq-grid thead .diq-grid__sel {
+  z-index: 3;
+}
+.diq-grid .diq-grid__sel input {
+  margin: 0;
+  accent-color: var(--diq-signal);
+  cursor: pointer;
+}
+/* Inset ring: the cell's own outline would be clipped by its neighbours and the scroll box. */
+.diq-grid th:focus-visible,
+.diq-grid td:focus-visible {
+  outline-offset: calc(-1 * var(--diq-focus-width));
+}
+.diq-grid__resize {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: var(--diq-space-2);
+  cursor: col-resize;
+  touch-action: none;
+}
+.diq-grid__resize:hover {
+  background: var(--diq-line-strong);
+}
+.diq-grid__spacer {
+  height: auto;
+  padding: 0;
+  border: 0;
+}
+.diq-grid__empty {
+  padding: var(--diq-space-5);
+  color: var(--diq-text-2);
 }
 
 /* ---- Skeleton ------------------------------------------------------------ */
