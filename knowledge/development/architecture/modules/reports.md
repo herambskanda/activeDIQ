@@ -1,7 +1,7 @@
 ---
 title: "Module: reports — contract for the definition AST, dataset registry, compiler and run record"
 date: 2026-10-30
-updated: 2026-10-30
+updated: 2026-10-31
 status: draft
 owner: heramb
 author: solution-architect
@@ -1168,6 +1168,7 @@ Consequences:
     | `reassign` | the previous owner, **still paused** | `Lossy`: the earlier active state is not restored, and the previous owner resumes it | `reports.schedule.manage_all` (`manage_all_required`) |
 
   - An undo never sends anything. A fire that ran between the change and its undo stays sent and is not recalled.
+  - **Held and step-up answers** (TM-D30 SX-1, SX-2, SX-4). A held write or undo answers `202 OperationRef` with `holdReason`. `create`, `update`, `resume` and the undo of any of them step up when the after-state has an external recipient. An interactive caller without a fresh MFA gets `401 step-up-required`; a token or automation is held `step_up`. `pause`, `delete` and `reassign` never step up. The undo route declares `401 StepUpRequired` (T-0892). The three writes get theirs from T-0979 (R6).
 - **Fire.** A DM-44 tick enqueues `reports.schedule.fire`, which runs the owner-authority checks
   of spec §8.4 in order:
   1. Owner state and permissions. A failure gives a system pause plus `reports.schedule.paused`

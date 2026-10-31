@@ -344,6 +344,16 @@ components:
             type: /problems/report-scope-empty
             title: The scope covers no directory objects
             status: 422
+    OperationNotUndoable:
+      description: The operation cannot be undone; errors[].code says why (irreversible, already_undone, superseded, not_finished, tier0_blocked, plan_refused)
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/operation-not-undoable
+            title: The operation cannot be undone
+            status: 409
     ReportScopeUnsupported:
       description: The scope uses a kind that reports cannot evaluate
       content:
