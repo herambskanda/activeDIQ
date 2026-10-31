@@ -69,7 +69,8 @@ const run = (over: Record<string, unknown> = {}) => ({
   finishedAt: new Date().toISOString(),
   expiresAt: null,
   digest: "abc",
-  freshness: { state: "synced", label: "Synced just now" },
+  freshness: { state: "synced", label: "Synced just now", stale: [], thresholdSeconds: 3600 },
+  hiddenGroups: [],
   objectsChecked: 150000,
   rowCount: 1200,
   scopeApplied: "Domain lab.test",
@@ -151,6 +152,17 @@ async function serve(page: Page, over: Partial<Server> = {}): Promise<Server> {
         json: run({
           rowCount: s.totalRows,
           parameters: { ...run().parameters, filters },
+          // The server counts what the preset's filter left out.
+          hiddenGroups: filters.some((f: { column?: string }) => f.column === svcFilter.column)
+            ? [
+                {
+                  id: "service_accounts",
+                  label: "probable service accounts",
+                  count: 13,
+                  locked: false,
+                },
+              ]
+            : [],
           ...s.runOver,
         }),
       });
@@ -282,17 +294,33 @@ test("the empty states name their cause", async ({ page }) => {
   await page.screenshot({ path: `${EVIDENCE}/empty-no-match.png` });
 });
 
-test("a stale result says Stale with its age and the API's reason", async ({ page }) => {
+test("a stale result says Stale with its age, the cause and the connection", async ({ page }) => {
   await serve(page, {
     runOver: {
       asOf: new Date(Date.now() - 3 * 3600_000).toISOString(),
-      freshness: { state: "stale", label: "Stale: oldest sync pass 3h0m0s ago" },
+      freshness: {
+        state: "stale",
+        label: "Stale: oldest sync pass 3h0m ago",
+        thresholdSeconds: 3600,
+        stale: [
+          {
+            connectionId: "c1111111-1111-4111-8111-111111111111",
+            connectionName: "emea.corp.example",
+            namingContextId: "d1111111-1111-4111-8111-111111111111",
+            cause: "resync_required",
+            lastPassAt: new Date(Date.now() - 3 * 3600_000).toISOString(),
+            ageSeconds: 10800,
+          },
+        ],
+      },
     },
   });
   await page.goto("/reports/usr-03?preset=recent");
   await expect(page.getByText("Stale data")).toBeVisible();
-  await expect(page.getByText("Stale: oldest sync pass 3h0m0s ago").first()).toBeVisible();
-  await expect(page.getByText("3 h ago").first()).toBeVisible();
+  await expect(page.getByText("Stale: last sync 3 h ago (emea.corp.example)")).toBeVisible();
+  await expect(
+    page.getByText(/was 3 h ago .* because it is waiting for a full resync/),
+  ).toBeVisible();
   await page.screenshot({ path: `${EVIDENCE}/stale.png` });
   await noCriticalViolations(page);
 });
@@ -345,14 +373,14 @@ test("hidden probable service accounts can be shown, and the choice is in the UR
 }) => {
   const s = await serve(page);
   await page.goto("/reports/usr-03?preset=inactive");
-  await expect(page.getByText("Probable service accounts are hidden")).toBeVisible();
+  await expect(page.getByText("13 probable service accounts hidden")).toBeVisible();
   await page.screenshot({ path: `${EVIDENCE}/hidden-service-accounts.png` });
-  await page.getByRole("button", { name: "Show them" }).click();
+  await page.getByRole("button", { name: "Show", exact: true }).click();
   await expect(page).toHaveURL(/svc=1/);
-  await expect(page.getByText("Probable service accounts are hidden")).toHaveCount(0);
+  await expect(page.getByText("13 probable service accounts hidden")).toHaveCount(0);
   expect(s.runPosts).toBe(2);
   await page.goBack();
-  await expect(page.getByText("Probable service accounts are hidden")).toBeVisible();
+  await expect(page.getByText("13 probable service accounts hidden")).toBeVisible();
 });
 
 test("a library filter with no match offers to clear it; the filter is in the URL", async ({

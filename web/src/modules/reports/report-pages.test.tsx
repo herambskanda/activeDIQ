@@ -75,7 +75,8 @@ const run = (over: Record<string, unknown> = {}) => ({
   finishedAt: "2026-10-31T09:41:02Z",
   expiresAt: null,
   digest: "abc",
-  freshness: { state: "synced", label: "Synced 09:41" },
+  freshness: { state: "synced", label: "Synced 09:41", stale: [], thresholdSeconds: 3600 },
+  hiddenGroups: [],
   objectsChecked: 2500,
   rowCount: 1200,
   scopeApplied: "Domain lab.test",
@@ -292,21 +293,66 @@ describe("states", () => {
     expect(text()).toContain("Reports can’t use your role’s scope yet");
   });
 
-  it("says Stale, with the age", async () => {
+  it("says Stale with the age, the cause and the connection behind it", async () => {
     respond = ({ method, url }) =>
       method === "POST" && url.pathname.endsWith("/runs")
         ? json(
             202,
             run({
               asOf: new Date(Date.now() - 3 * 3600_000).toISOString(),
-              freshness: { state: "stale", label: "Stale: oldest sync pass 3h0m0s ago" },
+              freshness: {
+                state: "stale",
+                label: "Stale: oldest sync pass 3h0m ago",
+                thresholdSeconds: 3600,
+                stale: [
+                  {
+                    connectionId: "c1111111-1111-4111-8111-111111111111",
+                    connectionName: "emea.corp.example",
+                    namingContextId: "d1111111-1111-4111-8111-111111111111",
+                    cause: "resync_required",
+                    lastPassAt: "2026-10-31T06:41:00Z",
+                    ageSeconds: 10800,
+                  },
+                  {
+                    connectionId: "c2222222-2222-4222-8222-222222222222",
+                    connectionName: "apac.corp.example",
+                    namingContextId: "d2222222-2222-4222-8222-222222222222",
+                    cause: "older_than_threshold",
+                    lastPassAt: "2026-10-31T08:41:00Z",
+                    ageSeconds: 7200,
+                  },
+                ],
+              },
             }),
           )
         : undefined;
     await mount("/reports/usr-03?preset=recent", "report");
-    expect(text()).toContain("Stale data");
-    expect(text()).toContain("Stale: oldest sync pass 3h0m0s ago");
-    expect(text()).toContain("3 h ago");
+    const t = text();
+    expect(t).toContain("Stale data");
+    expect(t).toContain("Stale: last sync 3 h ago (emea.corp.example and 1 more)");
+    expect(t).toContain("emea.corp.example was 3 h ago");
+    expect(t).toContain("because it is waiting for a full resync");
+    expect(t).toContain("apac.corp.example was 2 h ago");
+    expect(t).toContain("because its last sync is older than the 1 h staleness limit");
+  });
+
+  it("falls back to the API label when a stale run names no source", async () => {
+    respond = ({ method, url }) =>
+      method === "POST" && url.pathname.endsWith("/runs")
+        ? json(
+            202,
+            run({
+              freshness: {
+                state: "stale",
+                label: "Stale (older run)",
+                stale: [],
+                thresholdSeconds: null,
+              },
+            }),
+          )
+        : undefined;
+    await mount("/reports/usr-03?preset=recent", "report");
+    expect(text()).toContain("Stale (older run)");
   });
 
   it("says why a run failed and retries as a new run", async () => {
@@ -348,13 +394,43 @@ describe("states", () => {
     expect(text()).toContain("Your access changed since this run");
   });
 
-  it("offers Show for hidden probable service accounts, and the run then includes them", async () => {
+  const hidden = (over: Record<string, unknown> = {}) => ({
+    id: "service_accounts",
+    label: "probable service accounts",
+    count: 13,
+    locked: false,
+    ...over,
+  });
+
+  it("shows how many were hidden, offers Show, and the run then includes them", async () => {
+    respond = ({ method, url }) =>
+      method === "POST" && url.pathname.endsWith("/runs")
+        ? json(202, run({ hiddenGroups: [hidden()] }))
+        : undefined;
     await mount("/reports/usr-03?preset=inactive", "report");
-    expect(text()).toContain("Probable service accounts are hidden");
-    await click(button("Show them"));
+    expect(text()).toContain("13 probable service accounts hidden");
+    await click(button("Show"));
     expect(window.location.search).toContain("svc=1");
     const last = calls.filter((c) => c.method === "POST").at(-1)!;
     expect(JSON.parse(last.body).parameters.filters).toEqual([]);
+  });
+
+  it("offers no Show for a locked hidden group", async () => {
+    respond = ({ method, url }) =>
+      method === "POST" && url.pathname.endsWith("/runs")
+        ? json(202, run({ hiddenGroups: [hidden({ locked: true, count: 2 })] }))
+        : undefined;
+    await mount("/reports/usr-03?preset=inactive", "report");
+    expect(text()).toContain("2 probable service accounts hidden");
+    expect(text()).toContain("does not show them");
+    expect([...container.querySelectorAll("button")].some((b) => b.textContent === "Show")).toBe(
+      false,
+    );
+  });
+
+  it("shows no hidden banner when nothing was hidden", async () => {
+    await mount("/reports/usr-03?preset=inactive", "report");
+    expect(text()).not.toContain("hidden");
   });
 
   it("has no access panel and no retry for a role without reports.run", async () => {

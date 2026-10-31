@@ -24,7 +24,7 @@ import {
 import { Controls } from "./controls";
 import { ReportsFrame } from "./frame";
 import {
-  ageText,
+  ageFromSeconds,
   cellText,
   failureText,
   filtersTest,
@@ -34,6 +34,9 @@ import {
   OPERATOR_LABEL,
   parseView,
   SERVICE_ACCOUNT_COLUMN,
+  staleCauseText,
+  staleChipDetail,
+  staleSources,
   viewToSearch,
   type View,
 } from "./model";
@@ -119,7 +122,9 @@ function RunStrip({ run }: { readonly run: Run }) {
       <div>
         <dt>Data</dt>
         <dd>
-          <Chip tone={tone}>{run.freshness.label}</Chip>
+          <Chip tone={tone}>
+            {staleChipDetail(run) !== "" ? `Stale: ${staleChipDetail(run)}` : run.freshness.label}
+          </Chip>
         </dd>
       </div>
       {run.scopeApplied !== null && (
@@ -166,15 +171,19 @@ function Banners({
 }) {
   const out: ReactNode[] = [];
   if (run.freshness.state === "stale") {
-    const asOfIso = run.asOf;
-    const asOf = asOfIso !== null ? new Date(asOfIso) : null;
+    const sources = staleSources(run);
     out.push(
       <Banner key="stale" tone="warn" title="Stale data">
+        {sources.length === 0 ? <p>{run.freshness.label}.</p> : null}
+        {sources.map((src) => (
+          <p key={`${src.connectionId}/${src.namingContextId}`}>
+            The last successful sync of <strong>{src.connectionName}</strong> was{" "}
+            {ageFromSeconds(src.ageSeconds)} ({formatTime(src.lastPassAt)}) because{" "}
+            {staleCauseText(src.cause, run.freshness.thresholdSeconds)}.
+          </p>
+        ))}
         <p>
-          {run.freshness.label}
-          {asOf !== null &&
-            ` (data as of ${formatTime(asOfIso as string)}, ${ageText(asOf, new Date())})`}
-          . This report ran on what activeDIQ last saw. Exports and scheduled deliveries carry this
+          This report ran on what activeDIQ last saw. Exports and scheduled deliveries carry this
           warning.
         </p>
       </Banner>,
@@ -204,25 +213,30 @@ function Banners({
   }
   const preset = definition.presets.find((p) => p.id === (view.preset ?? run.presetId));
   const presetHides = preset !== undefined && filtersTest(preset.filters, SERVICE_ACCOUNT_COLUMN);
-  if (
-    presetHides &&
-    !view.showServiceAccounts &&
-    filtersTest(run.parameters.filters, SERVICE_ACCOUNT_COLUMN)
-  ) {
+  for (const group of run.hiddenGroups) {
+    // "Show" only where the report can show the group; the one toggle the console has is the
+    // probable-service-account filter.
+    const canShow = !group.locked && presetHides;
     out.push(
       <Banner
-        key="svc"
+        key={`hidden-${group.id}`}
         tone="info"
-        title="Probable service accounts are hidden"
-        actions={<Button onClick={() => change({ showServiceAccounts: true })}>Show them</Button>}
+        title={`${formatCount(group.count)} ${group.label} hidden`}
+        actions={
+          canShow ? (
+            <Button onClick={() => change({ showServiceAccounts: true })}>Show</Button>
+          ) : undefined
+        }
       >
         <p>
-          This preset leaves out accounts that look like service accounts. They are not deleted from
-          the data.
+          {group.locked
+            ? "This report does not show them. They are counted, not deleted."
+            : "They are left out of the rows and counted in “checked”. They are not deleted from the data."}
         </p>
       </Banner>,
     );
-  } else if (presetHides && view.showServiceAccounts) {
+  }
+  if (presetHides && view.showServiceAccounts) {
     out.push(
       <Banner
         key="svc"

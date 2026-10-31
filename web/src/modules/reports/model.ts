@@ -404,6 +404,42 @@ export function ageText(from: Date, now: Date): string {
   return `${Math.floor(h / 24)} days ago`;
 }
 
+/** "3 h 5 min ago" from an age in seconds, as the API states it (no clock of ours involved). */
+export function ageFromSeconds(seconds: number): string {
+  return ageText(new Date(0), new Date(Math.max(0, seconds) * 1000));
+}
+
+type StaleSource = Run["freshness"]["stale"][number];
+
+/** Why a naming context is stale, in words (ReportStaleCause). An unknown cause is shown as sent. */
+export function staleCauseText(cause: string, thresholdSeconds: number | null): string {
+  switch (cause) {
+    case "older_than_threshold":
+      return thresholdSeconds === null
+        ? "its last sync is older than the staleness limit"
+        : `its last sync is older than the ${ageFromSeconds(thresholdSeconds).replace(" ago", "")} staleness limit`;
+    case "resync_required":
+      return "it is waiting for a full resync";
+    case "paused":
+      return "its sync is paused";
+    default:
+      return cause.replaceAll("_", " ");
+  }
+}
+
+/** The sources behind a stale result, oldest first as the API sends them. */
+export function staleSources(run: Pick<Run, "freshness">): readonly StaleSource[] {
+  return run.freshness.state === "stale" ? run.freshness.stale : [];
+}
+
+/** The header chip's tail: "last sync 3 h ago (emea.corp)". Empty when the API named no source. */
+export function staleChipDetail(run: Pick<Run, "freshness">): string {
+  const first = staleSources(run)[0];
+  if (first === undefined) return "";
+  const more = staleSources(run).length - 1;
+  return `last sync ${ageFromSeconds(first.ageSeconds)} (${first.connectionName}${more > 0 ? ` and ${more} more` : ""})`;
+}
+
 export const formatCount = (n: number) => n.toLocaleString("en");
 
 export function formatTime(iso: string): string {
