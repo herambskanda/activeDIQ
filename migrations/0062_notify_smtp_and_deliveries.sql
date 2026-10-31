@@ -1,4 +1,4 @@
--- 0061_notify_smtp_and_deliveries: tenant notify settings (SMTP relay, allowed recipient domains) and the
+-- 0062_notify_smtp_and_deliveries: tenant notify settings (SMTP relay, allowed recipient domains) and the
 -- DM-84 Delivery (T-0950; modules/reports.md §7.2, §8; TM-D30 SX-7). Owner: internal/platform/notify.
 --
 --   notify_settings    one row per tenant. The SMTP relay (DM-82 channel kind smtp) and the allowed recipient
