@@ -13,9 +13,20 @@ fitness: fitness-search SE1–SE5 (in make ci) and SE6 (nightly); T-1126 builds 
 # ADR-0011: Universal search runs over the inventory with pg_trgm, and is trimmed in the same SQL statement by the one ReadScope renderer in `store/reportsql`
 
 **Status:** proposed. factory-director ratifies after review. Because the ticket is tagged
-security-sensitive, security-architect reviews it too, in particular rule 5 (the work bound and
-what an answer may reveal). `accepted` when `fitness-search` SE1–SE5 run green in `make ci` and SE6
-has passed once in the nightly job.
+security-sensitive, security-architect reviews it too, in particular rules 12, 13 and 16 (the work
+bound and what an answer may reveal). `accepted` when `fitness-search` SE1–SE5 run green in
+`make ci` and SE6 has passed once in the nightly job.
+
+**Revision 2 (2026-10-31, after the T-1093 review).** These are the changes in this revision:
+- **M1:** rule 7 now case-folds before the fold table.
+- **M2, M3 and M4:** rules 12 and 13 replace the silent candidate cap with a work ceiling W. The
+  scope is applied before every limit, a ceiling hit is a refine state that does not depend on the
+  caller, and the unscoped stages are named.
+- **M5:** rule 7 refuses input after NFKC. Rule 9 gates the BitLocker key-ID kind on the BitLocker
+  permission. Rule 15 keeps search text out of URLs and logs.
+- **M6:** rule 16 gates multi-tenant databases on a tenant-isolated trigram index.
+- **M7:** SE1 and SE2 close the view, function and trigram-operator bypasses.
+- The review's nits are in rules 4, 8, 12 and 13, SE1, SE4 and SE5.
 **Kind:** technical. There is no CEO fork: price, packaging, deployment and platform strategy do not
 change. The one customer-visible effect is that a customer-supplied PostgreSQL must have the contrib
 extensions installed, and ADR-0001 already allows that kind of prerequisite.
@@ -141,6 +152,25 @@ LDAP user search is retired.
    refuses to migrate with a message that names the missing package (T-1128). It never fails
    halfway through a migration.
 
+   **Database encoding and ctype.** The ctype decides which letters `pg_trgm` counts as
+   alphanumeric, and so which scripts fuzzy matching works for
+   ([pg_trgm](https://www.postgresql.org/docs/current/pgtrgm.html): "non-alphanumerics" are
+   ignored).
+   - **Bundled server.** The bundled PostgreSQL 18 creates the product database with `ENCODING
+     'UTF8'` and the built-in locale provider, `LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8'`.
+     That provider has existed since PostgreSQL 17
+     ([Locale support](https://www.postgresql.org/docs/17/locale.html)). Its ctype is Unicode-aware
+     and does not depend on the operating system's libc or ICU version. Its collation is code-point
+     order, which is the same order as the `COLLATE "C"` keys.
+   - **Customer-supplied PostgreSQL 16** has no built-in provider. The database must be `UTF8`, and
+     any libc `*.UTF-8` ctype will do.
+   - **Preflight (T-1128).** It reads `pg_database.encoding`, `datlocprovider` and `datctype`. It
+     refuses a database that is not `UTF8`. It warns when the ctype is `C` or `POSIX`: there, fuzzy
+     matching still works for every key that rule 7 folds to ASCII, but not for Cyrillic, Greek or
+     CJK keys.
+   - **Unverified.** Whether `pg_trgm` 1.6 classifies non-ASCII letters through the built-in
+     `C.UTF-8` ctype is `[UNVERIFIED]`. T-1095's per-script vectors run on both images and settle it.
+
 ### 3. Index shape (owned by `inventory`, built by T-1095)
 
 5. A table `inventory_search_keys` holds the search keys, and `internal/directory/inventory` is its
@@ -151,7 +181,8 @@ LDAP user search is retired.
      has RLS with `FORCE` and the one fail-closed policy shape.
    - **Indexes.** A B-tree on `(tenant_id, key_kind, key)` serves exact and prefix matches. A GIN
      index `gin_trgm_ops` on `key`, partial to the fuzzy-eligible kinds (rule 9), serves fuzzy
-     matches.
+     matches. That GIN index does not lead with `tenant_id`. Rule 16 therefore gates any database
+     holding more than one tenant.
    - **Scope columns are not copied.** The table carries none of the scope anchor columns. The
      search statement joins `directory_objects` and trims there, so OU moves and `ancestry_complete`
      repairs have one place to be right.
@@ -173,18 +204,49 @@ LDAP user search is retired.
    standard library and `golang.org/x/text`, which is already in the register. It is the **only**
    code that normalises search text. The writer uses it to build keys and `modules/search` uses it
    to classify and normalise the query, so the two can never drift apart.
-   - **Refusals.** Invalid UTF-8, NUL and a query over 256 runes are refused (400) before anything
-     else happens (P5 rule 7).
-   - **Name keys and name queries** (`NormName`) go through these steps in order:
-     1. NFKC, so full-width letters and ligatures fold to their plain forms.
-     2. NFD, then removal of combining marks (`unicode.Mn`).
-     3. An explicit table for letters that do not decompose: ł→l, đ→d, ø→o, ħ→h, ı→i, ŀ→l, ß→ss,
-        æ→ae, œ→oe, þ→th. This covers the Łódź→lodz case that T-1092 showed `pg_trgm` alone cannot
-        fold.
-     4. Full Unicode case folding (`cases.Fold`).
-     5. Punctuation `, . - ' _ ( )` becomes a space, runs of whitespace collapse to one space, and
+   - **Refusals** (P5 rule 7), in this order. The order matters: a check that runs before NFKC can
+     be passed with full-width or compatibility forms.
+     1. **On the raw bytes:** invalid UTF-8, any NUL, and more than 4 KiB are refused (400). The
+        byte cap bounds the work NFKC can be asked to do.
+     2. **NFKC.** Every later check and every later step sees only the NFKC form.
+     3. **On the NFKC form:**
+        - more than 256 runes is refused (400);
+        - **the recovery-password shape is refused**, never echoed and never logged (T-1096). The
+          shape is: after removing whitespace and every dash (`unicode.Pd`), the text holds a run of
+          48 or more decimal digits (`unicode.Nd`). NFKC turns full-width digits into ASCII, and
+          `unicode.Nd` also catches other scripts' digits, which NFKC leaves as they are.
+     4. Only then are the query's shape (rule 9) and its normalised forms computed.
+   - **Name keys and name queries** (`NormName`) go through these steps in order. Case folding comes
+     **before** the table, so the table needs lowercase entries only, and an upper-case and a
+     lower-case spelling always reach the same key:
+     1. NFKC, so full-width letters, ligatures and `ŀ` (to `l·`) fold to their plain forms.
+     2. Full Unicode case folding (`cases.Fold`, not the Turkic variant). This turns `ß` and `ẞ`
+        into `ss`, and `İ` into `i` followed by U+0307.
+     3. NFD, then removal of combining marks (`unicode.Mn`). This removes the U+0307 left by `İ`.
+     4. An explicit table for letters that do not decompose, all lowercase: ł→l, đ→d, ø→o, ħ→h,
+        ı→i, æ→ae, œ→oe, þ→th. It also deletes U+00B7 (middle dot), so `col·lecció` becomes
+        `colleccio`. This covers the Łódź→lodz case that T-1092 showed `pg_trgm` alone cannot fold.
+     5. NFC.
+     6. Punctuation `, . - ' _ ( )` becomes a space, runs of whitespace collapse to one space, and
         the result is trimmed.
-   - **Identifier keys and queries** (`NormIdent`) are NFKC, case-folded and trimmed. Their
+
+     **Required vectors** (T-1095 and SE4). These were checked against Python's NFKC, `casefold`
+     and NFD, which implement the same Unicode operations; the Go implementation must reproduce
+     them.
+
+     | Inputs | Key |
+     |---|---|
+     | `Łódź`, `łódź`, `ŁÓDŹ` | `lodz` |
+     | `Øster`, `øster` | `oster` |
+     | `İstanbul`, `ISTANBUL`, `istanbul` | `istanbul` |
+     | `Straße`, `STRASSE` | `strasse` |
+     | `ẞ` | `ss` |
+     | `Æsir` | `aesir` |
+     | `Þór` | `thor` |
+     | `Đorđe` | `dorde` |
+     | `Ｐｒｉｙａ` | `priya` |
+     | `ﬁnn` | `finn` |
+   - **Identifier keys and queries** (`NormIdent`) are NFKC, then `cases.Fold`, then trimmed. Their
      punctuation (`. @ \ $ - =` and the rest) is kept.
    - **"Raman, Priya".** A name query that holds exactly one comma is also tried with its two sides
      swapped ("priya raman") for exact and prefix matching. Fuzzy matching needs no swap: `pg_trgm`
@@ -206,8 +268,17 @@ LDAP user search is retired.
    | `prefix` | A name or identifier key starts with the query: `key >= $p AND key < $p_hi` over the `COLLATE "C"` column, where `$p_hi` is the query with its last code point incremented, computed by `searchkey.PrefixUpper`. For a one-word query this also includes per-word name keys (`name_word`), so "pri" finds "Priya Raman" | B-tree range |
    | `fuzzy` | Only when the normalised query has at least 3 runes: `$q <% key` (`pg_trgm` word similarity) over fuzzy-eligible kinds. The threshold is set per transaction through the static statement `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`. It is `[PROPOSED]` 0.5 and T-1095/T-1102 tune it against the 'Pryia Ramn' vector | GIN `gin_trgm_ops` |
 
+   **`PrefixUpper` edges.** The keys are compared under `COLLATE "C"` in a UTF8 database, and there
+   byte order is code-point order. `PrefixUpper` increments the last code point:
+   - U+D7FF goes to U+E000, skipping the surrogates, which are not valid in UTF-8;
+   - U+10FFFF cannot be incremented, so it is dropped and the code point before it is incremented;
+   - a query made only of U+10FFFF has no upper bound, and the predicate becomes `key >= $p`.
+
+   T-1095 unit-tests all three cases, and an ASCII case.
+
    **No search SQL uses `LIKE`, `ILIKE`, `SIMILAR TO` or a POSIX regex.** Prefix is the bound range
-   above, so no user text ever becomes a pattern. Within a class, results order like this:
+   above, so no user text ever becomes a pattern. The trigram operators and functions appear only in
+   the `reportsql` search template (SE2). Within a class, results order like this:
    1. live before deleted;
    2. enabled before disabled (IA §5.3);
    3. for `prefix`, a key equal to the whole query first, then the shorter key;
@@ -232,76 +303,158 @@ LDAP user search is retired.
    | GUID, with or without braces | `object_guid`; `consistency_guid` (as a GUID and as base64) | `guid`, `consistency_guid` (exact) | The Entra object ID is indexed, but Entra objects are **admitted by no 2a scope kind**: they carry no `nc_guid`, and the 2a kinds are AD-only. They become findable when an Entra read-scope root kind exists → **T-1131** |
    | `CN=…,DC=…` | `dn` snapshot | `dn` (exact) | Descendants of a moved OU have stale `dn` keys until T-0988 lands. Rule 5 requires T-0988 to rewrite their keys too |
    | Host name or FQDN | computer `rdn`/`sam` without `$`; `dNSHostName` | `name`, `dns_host` (exact, prefix) | `servicePrincipalName` values → **T-1129** |
-   | 8 hex characters (BitLocker key ID) | none | | `msFVE-RecoveryInformation` child CN only, **never** the recovery password; Entra-escrowed keys come from Graph → **T-1129** |
-   | 48-digit recovery password | **refused**: 400, never echoed or logged (T-1096 AC5), as well as refused in the browser (IA §5.2) | | |
+   | 8 hex characters (BitLocker key ID) | none | | `msFVE-RecoveryInformation` child CN only, **never** the recovery password; Entra-escrowed keys come from Graph → **T-1129**. **Gated by the BitLocker read permission, not `directory.read`** (below) |
+   | 48-digit recovery password | **refused**: 400, never echoed or logged (T-1096 AC5). It is recognised on the NFKC form (rule 7), so full-width digits and other scripts' digits are refused too. The browser also refuses it (IA §5.2) and never puts it in a URL | | |
 
    The shape is recognised in `searchkey.Classify` and is never passed through to SQL as a string
    to interpret. A recognised shape adds the `exact` branch. Name matching (`prefix`, `fuzzy`)
    still runs, so `jsmith` also prefix-matches "jsmith2".
 
+   **Gated key kinds.** Every key kind declares the permission it is read under. Every kind in the
+   2a set is read under `directory.read`.
+   - **The BitLocker key-ID kind (T-1129)** is read under the BitLocker key-read permission. That is
+     the permission behind threat-model §6.3 R11; the BitLocker feature names it in the catalogue,
+     and until it does, the kind is not indexed. A key ID tells whoever can search it that a recovery
+     key exists for that computer, so `directory.read` alone must never admit one.
+   - **Scope per kind.** `SearchQuery` names each kind's permission. The caller passes one
+     `ReadScope` per permission, each produced by `rbac.ReadScopes.For` for that permission (rule
+     10). `CompileSearch` renders each kind's rows against its own scope with the same
+     `scopeSQL`.
+   - **No scope means no rows.** A kind whose permission has no scope in the call compiles to
+     `FALSE`.
+
+   SE3 covers a world in which a technician holds `directory.read` but not the BitLocker
+   permission. In that world the technician gets no key-ID hit, and that technician's counts are
+   the same as in a world with no key-ID keys at all.
+
 ### 6. Trimming: one producer, one renderer, in the statement
 
 10. **Producer.** The caller's scope is `rbac.ReadScopes.For(…, directory.read)`, reached through
-    the composed port (T-0987). It is the only producer: RP2 already confines `NewReadScope` to
+    the composed port (T-0987). A gated kind (rule 9) also needs `rbac.ReadScopes.For(…, <its
+    permission>)`. `rbac.ReadScopes.For` is the only producer: RP2 already confines `NewReadScope` to
     `rbac` and `authz`. Every error and every empty scope answers nothing: `ErrOwnerDead`,
-    `ErrTokenRefused`, `ErrUnsupportedChain`, no producer (403), `Empty`.
+    `ErrTokenRefused`, `ErrUnsupportedChain`, no producer (403), `Empty`. Outside `authz` and
+    `reportsql`, the only method of the scope a search caller may use is `ReadScope.Connections()`,
+    and only to choose which connections' freshness `as_of` to show. Reports' run job does the same
+    today (SE1).
 11. **Renderer: search reuses the reports renderer through one new exported entry point, and uses
     no per-result `Admits`.** `store/reportsql` gains
-    `CompileSearch(src SearchSource, q SearchQuery, scope authz.ReadScope) (Query, error)`.
+    `CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query, error)`, where
+    `SearchScopes` maps each permission named by the query's kinds to the `authz.ReadScope` the
+    producer gave for it. At 2a that is `directory.read` only.
     - `SearchSource` is registered by `inventory`, as datasets are. It names the key table and the
       `directory_objects` anchor columns, pre-quoted once at registration.
     - `SearchQuery` is a typed value: normalised text, class set, kinds, type facet, per-group
-      limit, cursor, candidate cap. It holds no SQL fragments.
+      limit, verified cursor, work ceiling W (rule 13). It holds no SQL fragments.
     - `CompileSearch` returns the existing `reportsql.Query`, so RP1 and `sqlconst` apply unchanged.
     - The statement is a fixed template inside `reportsql`. Its scope position is filled by the
       existing `planScope` and `scopeSQL` over the `directory_objects` anchor, the same functions
       RP6 proves. So `ancestry_complete`, the fail-closed rules, the 512-term cap
       (`ErrScopeTooLarge`) and `ScopeReasons` all carry over unchanged.
     - Only `internal/directory/inventory` calls `CompileSearch` (SE1). `modules/search` reaches it
-      through the port `inventory.Search(ctx, tx, tenant, scope authz.ReadScope, q)`, composed in
+      through the port `inventory.Search(ctx, tx, tenant, scopes, q)`, composed in
       `compose/server`. The port **takes the scope and returns trimmed hits**. It never returns
       ancestry for the caller to trim with: this amends T-1095 AC3.
-12. **Counts, limits and pages come after trimming (LF-39).** The statement has this shape (sketch;
-    T-1095 fixes the text):
+12. **The scope comes before every limit. Counts, limits and pages come after trimming (LF-39).**
+    The statement has this shape (sketch; T-1095 fixes the text):
 
     ```
-    cand  := per class: matching keys, ordered by class rank, LIMIT $cap        -- candidate cap (rule 13)
-    best  := DISTINCT ON (connection_id, object_guid): each object's best class
+    m_c   := for each class c in (exact, prefix, fuzzy): the key rows that match c,     -- UNSCOPED
+             read in the index's own order with no ORDER BY:
+               exact, prefix: B-tree on (tenant_id, key_kind, key), one equality or range scan per kind;
+               fuzzy:         GIN bitmap scan, $q <% key;
+             LIMIT $W + 1
+    ceil  := the best class c whose m_c holds W + 1 rows, or none                       -- UNSCOPED; caller-independent
+    best  := DISTINCT ON (connection_id, object_guid) over m_c, for the classes ranked above ceil only
+                                                                                        -- UNSCOPED
     hits  := best JOIN directory_objects t USING (tenant_id, connection_id, object_guid)
-             WHERE <scope(t) from scopeSQL>  AND  <type facet, bound>
-    out   := row_number() OVER (PARTITION BY kind ORDER BY rank) <= $group_limit + 1,
-             count(*) OVER (PARTITION BY kind)                       -- admitted rows only
+             WHERE <scope(t, kind's permission) from scopeSQL>  AND  <type facet, bound>  -- ADMITTED rows only
+    out   := over hits only: the full rank tuple (rule 8), row_number() per group <= $group_limit + 1,
+             count(*) per group, keyset cursor; plus the one boolean ceiling_hit := (ceil is not none)
     ```
 
-    - Every count, every "more" flag and every cursor is computed over `hits`, which holds admitted
-      rows only. No number in a response is ever computed from rows the scope rejects.
-    - **A group's count is shown only when the normalised query has at least 3 runes.** For one-
-      and two-rune queries a group shows its first results and "Show all" with no number.
-    - `more` is true only when admitted hits exceed the group limit.
-    - "Show all" (`/search`, IA §5.7) pages with a keyset cursor over the rank tuple of admitted
+    - **The unscoped-stage invariant (M4).** `m_c`, `ceil` and `best` read rows that the scope has
+      not yet trimmed. No aggregate, flag, cursor, ordering or limit in the output reads them. The
+      output reads only `hits`, with one exception: `ceiling_hit`. That boolean is a function of the
+      tenant, the normalised query and which gated kinds' permissions the caller holds at all. A
+      gated kind (rule 9) enters `m_c` only when the call carries a non-empty scope for its
+      permission. The boolean never depends on the extent of any scope, so two callers holding the
+      same permissions get the same value for the same query, however differently their scopes are
+      drawn.
+    - **Ranking only after the cut.** The rank tuple of rule 8 (live, enabled, whole-query-equal,
+      shorter key, similarity, display name, `object_guid`) is computed only over `hits`. That is a
+      set of at most 3(W + 1) admitted rows. It is never used to choose which matched rows to read.
+      Because a class over the ceiling is withheld whole, and never cut to a partial set, the order
+      in which `m_c` was read cannot change any answer.
+    - **Exact answers below the ceiling.** When no class hits the ceiling, the hits, the group counts
+      and the `more` flags are exactly the oracle's: objects that match the query and that
+      `AuthorizeRead` admits. They are not an approximation and they are not a top-K. No number in a
+      response is ever computed from rows the scope rejects.
+    - **The refine state (a ceiling hit).** Classes are taken best first.
+      - The first class with more than W matching key rows is the ceiling class. It and every class
+        below it are **withheld**.
+      - Classes ranked above it are still answered exactly. In practice that is `exact`, so a
+        technician who typed `jsmith` still sees `jsmith`.
+      - The response carries `refine: true`, **no counts for any group**, no `more` flags and no
+        cursor. The console shows "Keep typing to narrow the search" (T-1094 and T-1100 own the
+        copy).
+      - Every caller with the same permissions gets this state for the same tenant and query,
+        whatever their scope. It is never a zero-result answer that a hidden OU could cause.
+    - **Counts need at least 3 runes.** A group's count is shown only when the normalised query has
+      at least 3 runes and `refine` is false. For one- and two-rune queries a group shows its first
+      results and "Show all" with no number.
+    - **`more`** is true only when the admitted hits exceed the group limit.
+    - **"Show all"** (`/search`, IA §5.7) pages with a keyset cursor over the rank tuple of admitted
       hits, 50 per page, and stops at 1,000 admitted hits with "refine your search". That stop
       depends only on admitted rows.
-    - Search is not a frozen report run (ADR-0010 does not apply). A page re-runs the statement, so
-      pages may shift if the inventory changes in between.
-13. **Work per query is bounded, whatever the scope's shape (T-0995 class).** These caps are
-    `[PROPOSED]`; T-1102 measures them:
-    - at most **one** search statement per request, plus at most one batched metadata read keyed
-      by the admitted GUIDs (T-1097). There are no per-hit queries;
-    - a candidate cap of **`MaxSearchCandidates` = 5,000 key rows per class** before the scope
-      join, in rank order. This cap fixes the rows examined, independent of how many objects the
-      scope hides;
-    - per-group limit of at most 50, and scope terms of at most 512 (existing);
-    - `fuzzy` only from 3 runes, so a one-letter query does exact and B-tree prefix only;
-    - the store's per-transaction `statement_timeout` (SQL-22), set to 2 s for search, as a safety
-      net. A timeout is a generic 503 "search unavailable" with a trace ID and no count;
-    - the platform rate limiter answers 429 (T-1094 AC4).
+    - **The cursor is opaque and bound to its query.** It carries the rank tuple of the last admitted
+      hit and an HMAC-SHA256 under a server key. The MAC covers that tuple, the normalised query, the
+      class set, the type facet and `ReadScope.Fingerprint()` of every scope passed. A cursor
+      presented with a different query, facet or scope, or with a bad MAC, is 400, and the request
+      reads nothing.
+    - **No frozen pages.** Search is not a frozen report run, so ADR-0010 does not apply. A page
+      re-runs the statement, so pages may shift if the inventory changes in between.
+13. **The work per query is bounded, whatever the scope's shape (T-0995 class).** The values are
+    `[PROPOSED]`, and T-1102 measures and sets them:
+    - **One statement.** At most one search statement per request, plus at most one batched metadata
+      read keyed by the admitted GUIDs (T-1097). There are no per-hit queries.
+    - **The work ceiling W** (`MaxSearchMatches`). `[PROPOSED]` 10,000 matched key rows per class.
+      T-1102 sets it to the largest value at which a ceiling-sized class still meets rule 14's p95.
+      W is a property of the tenant's data. It is not a cap on what a caller sees: below W every
+      answer is complete, and above W every caller gets the refine state.
+    - **Exact and prefix: rows examined ≤ W + 1 per class.** The B-tree is tenant-led and is read in
+      key order with `LIMIT W + 1`. The work is independent of the scope, of how much the scope
+      hides, and of other tenants.
+    - **Fuzzy: rows returned ≤ W + 1 per class, but rows examined are bounded only by the size of the
+      fuzzy-eligible key set and the timeout.** This is stated plainly. A GIN trigram index cannot
+      return rows in similarity order ("efficiently by GiST indexes, but not by GIN",
+      [pg_trgm](https://www.postgresql.org/docs/current/pgtrgm.html)), and its bitmap scan reads the
+      posting lists of the query's trigrams in full before any heap row is checked. `LIMIT W + 1`
+      stops the heap recheck, but rows that fail the recheck are not counted against it.
+      - In a database with one tenant, that bound is the tenant's own key set, which T-1102 measures
+        at 50,000 objects.
+      - In a database with more than one tenant, it includes other tenants' keys. Rule 16 gates that
+        case.
+    - **After the cut.** At most 3(W + 1) rows are joined to `directory_objects` by primary key,
+      evaluated against the scope and sorted.
+    - **Other existing bounds:**
+      - at most 50 per group;
+      - at most 512 scope terms (`ErrScopeTooLarge`);
+      - `fuzzy` only from 3 runes;
+      - the statement's plan must use the two indexes, with no sequential scan on either table
+        (SE5).
+    - **Timeout.** The store's per-transaction `statement_timeout` (SQL-22) is 2 s for search, as a
+      safety net. A timeout gives every caller a generic 503 "search unavailable" with a trace ID and
+      no count.
+    - **Rate limit.** The platform rate limiter answers 429 (T-1094 AC4).
 
-    **What a cap hit may reveal: nothing new.** The cap is silent. It sets no flag, returns no
-    error, and changes no count beyond leaving out admitted objects that rank below 5,000 better
-    candidates. The only thing a technician could infer is that a very broad query matched many
-    objects in the tenant, and that is true of any delegated domain. Security-architect confirms
-    this outcome in review: it is the decision T-0995 asked to be taken with them. If it is
-    refused, rule 13 is amended before ratification.
+    **What an answer may reveal.** Below the ceiling, a caller learns exactly the admitted matches,
+    and nothing that depends on hidden rows. Two things are left over: the ceiling state, and the
+    response time, which grows with the matching key volume of the whole tenant (or, before rule 16
+    is met, the whole database). Both reveal "the tenant holds many keys matching this text". Neither
+    reveals which objects, or where they are, and every caller in the tenant sees the same signal.
+    This residual is recorded in the threat model (TB1, beside TM-TB1-T8) by T-1137, and
+    security-architect confirms it in the re-review.
 
 ### 7. Performance budget
 
@@ -311,8 +464,10 @@ LDAP user search is retired.
     - **Dataset:** 50,000 objects in one tenant written through the real inventory writer: 30,000
       users, 8,000 groups, 10,000 computers and 2,000 contacts; two connections; OUs 6 levels deep;
       5 % duplicate display names; 10 % disabled.
-    - **Runs:** 200 warm-up queries, then 1,000 queries per class (exact, prefix, one-typo fuzzy,
-      no match, one letter).
+    - **Runs:** 200 warm-up queries, then 1,000 queries per class: exact, prefix, one-typo fuzzy,
+      no match, one letter, and a query whose class holds just under W matched key rows. The fuzzy
+      runs record `Rows Removed by Index Recheck`, because that work is bounded by the key set and
+      not by W (rule 13).
     - **Callers:** an unscoped caller (a whole naming context) and a scoped caller (one OU subtree
       with a large excluded sub-OU).
     - **Machine:** 4 vCPU, 8 GB RAM, local SSD, with PostgreSQL and the server on the same host.
@@ -322,6 +477,33 @@ LDAP user search is retired.
     ≤ 30 ms for metadata. The IA's "first results p95 ≤ 300 ms on the 100k-object tier" remains the
     scale-tier design target, beside T-0972, and does not gate M2a. Network and browser time are
     not in the budget. The console debounces input before it sends.
+
+### 8. Search text handling and multi-tenant databases
+
+15. **Search text never sits in a URL or a log line on the server.**
+    - **API.** The API takes the query in a `POST` body (`directory.search`, T-1094). It is never
+      in a path or a query string.
+    - **Console.** The console's `/search?q=` route (IA §5.7) may keep `q` in the browser's address
+      bar for back, forward and bookmarking. When that page is loaded straight from the server,
+      the access log and the traces **redact `q` on every route**. The server records only the rune
+      length, the recognised shape and the class set (T-1096).
+    - **Handler.** The search handler, its errors and its traces never echo the text. A refused
+      query (rule 7) is logged only with its refusal reason.
+    - **Browser.** The console never navigates to a URL holding a query the browser has refused
+      (IA §5.2).
+16. **No database holding more than one tenant serves fuzzy search until its trigram index is
+    tenant-isolated (T-1136).** In a shared database, the GIN index (rule 5) makes one tenant's
+    fuzzy scan read other tenants' posting lists, and rule 13 bounds that work only by the database's
+    size and the timeout. A tenant's response time would then depend on another tenant's data, which
+    is a timing side channel, not only a performance cost.
+    - **Self-hosted profiles are unaffected.** ADR-0002 gives them exactly one tenant row.
+    - **SaaS cells** (ADR-0002: many tenants in a shared schema with RLS), **and a future MSP
+      deployment**, serve exact and prefix search only, which are tenant-led
+      B-tree scans, until T-1136 lands its index and removes the gate. The gate is checked at
+      start-up and shown on the health page.
+    - **Candidates for T-1136:** LIST partitioning by `tenant_id` with one GIN index per partition,
+      or `btree_gin` with a multi-column GIN. `btree_gin` needs a licence-register row, and proof
+      that it really stops the cross-tenant posting-list reads, which is `[UNVERIFIED]`.
 
 ## Alternatives considered
 
@@ -333,6 +515,8 @@ LDAP user search is retired.
 | **`unaccent` in the database** instead of folding in Go | Folding happens next to the data, and ad-hoc SQL gets it too | Indexing requires an IMMUTABLE wrapper around a STABLE function. A rules-file change silently requires a REINDEX (T-1092). It is a second prerequisite extension. Query normalisation must match key normalisation exactly, and one Go function that both paths call, with unit vectors, guarantees that more cheaply |
 | **PostgreSQL full-text search** (`tsvector`, `:*` prefix), with no extension at all | Built in. Word-prefix matching. No customer prerequisite | No typo tolerance at all, and stemming and stop-words are wrong for personal names and identifiers. We would still need `pg_trgm` for fuzzy matching, and then there would be two mechanisms |
 | **Trim per result with `ReadScope.Admits`** after a tenant-wide candidate query | Reuses a decision function that already exists and is property-tested. Simple SQL | It is a second renderer, and it can disagree with the SQL one. A tenant-wide top-K fills with hidden rows, so a scoped technician sees fewer or no results, and the shortfall reveals hidden matches. To avoid that we would read until K rows are admitted, which is unbounded work (T-0995). It also carries inventory ancestry out of the store for Go to decide on |
+| **A silent per-class candidate cap before the scope join** (revision 1 of this ADR: the top 5,000 keys per class, then trim) | Bounded results and a simple statement | Rejected in review. A GIN trigram index cannot do an ordered `LIMIT`, so the cap bounded the rows returned, not the rows examined. Worse, hidden objects could push a technician's own visible object out of the top 5,000. A broad query could then return fewer hits than a narrow one, which is a probe for hidden data (the T-0995 leak in a new form), and the counts were partial numbers shown as complete |
+| **GiST `gist_trgm_ops` with `<<->` KNN**, reading fuzzy candidates in similarity order | Fuzzy rows read in index order, so an ordered `LIMIT` is cheap ([pg_trgm](https://www.postgresql.org/docs/current/pgtrgm.html)) | Under rule 12 a ceiling hit withholds the class whole, so the order of reading never changes an answer, and the ordering buys nothing. GiST builds and set lookups are generally slower than GIN `[UNVERIFIED for trigram at 50k objects]`. Kept as a revisit option if T-1102 shows that the cost of the fuzzy recheck dominates |
 | **Scope as bound arrays in a static sqlc query** (terms passed as `uuid[]`/`smallint[]` and evaluated by a SQL function) | Fully static SQL. Plannable once | A second renderer, written in SQL, of the fail-closed rules RP6 proves for `scopeSQL`. It would need its own RP6, and the two would drift. Worth revisiting only if reports move to the same form, which would then be a superseding ADR for both |
 | **A materialised visible set per account** (account × object table) | Trimming becomes a join, which is very fast | It must be recomputed on every assignment, group-membership, token or OU-move change. Its size is accounts × objects. A stale row is a disclosure. It duplicates `rbac.ReadScopes.For` |
 | **Defer fuzzy matching** and ship exact and prefix over the inventory only | No extension prerequisite in M2a | The M2a promise (§8.2) is fuzzy matching. `pg_trgm` is trusted and present on every supported PostgreSQL, so deferring buys almost nothing |
@@ -342,8 +526,9 @@ LDAP user search is retired.
 **Positive**
 - Search and reports trim by literally the same code (`scopeSQL`), under the same proof (RP6, which
   SE3 extends to the search template). There is no second renderer anywhere once T-1127 lands.
-- One indexed statement per request, with fixed caps, gives a predictable cost that is independent
-  of the scope's shape. The 200 ms budget is a database index lookup, not a DC round trip.
+- One indexed statement per request gives a cost that is independent of the scope's shape. Exact
+  and prefix are bounded by W, and fuzzy by the tenant's key set (rule 13). The answers are exact
+  below the ceiling and the same for every caller above it. The 200 ms budget is a database index lookup, not a DC round trip.
 - Fuzzy matching, prefix matching and ranking across domains come from one engine that needs no new
   Go dependency and no new stateful service. Its licence is the PostgreSQL Licence.
 - The IA states work as designed: "Domain unreachable" is served from the last sync with `as of`,
@@ -362,12 +547,21 @@ LDAP user search is retired.
   T-1129 extends it. T-1097's disambiguator cannot use title, office or department until then.
 - **Entra objects are not findable at 2a** even though they are indexed, because no 2a scope kind
   admits them (T-1131).
-- **The candidate cap can hide low-ranked visible results** for very broad queries from a narrowly
-  scoped technician. This is the price of bounded work (rule 13).
+- **Broad queries in large tenants get "keep typing".** When a class matches more than W key rows,
+  every caller gets the refine state for it (rule 12). In a 50,000-object tenant that is typical
+  for one-letter prefix queries. This is the price of a bound that reveals nothing about the scope.
+  Exact identifier hits still show.
+- **Fuzzy work is not bounded by W.** It is bounded by the tenant's fuzzy-eligible key set and the
+  2 s timeout (rule 13). T-1102 measures it at 50k objects, and the scale tier must re-measure it.
 - **GIN on `key` is not tenant-led.** `gin_trgm_ops` cannot lead with `tenant_id` without
-  `btree_gin`. In a multi-tenant (SaaS or MSP) database a fuzzy scan reads other tenants' index
-  entries before RLS filters them. That is a performance problem, not a disclosure, because the
-  heap rows are RLS-filtered and the response is trimmed.
+  `btree_gin`. In a database with more than one tenant, a fuzzy scan reads other tenants' posting
+  lists before RLS filters their rows. The rows themselves never disclose anything: the heap rows
+  are filtered by RLS and the response is trimmed. But the time taken would depend on another
+  tenant's data, which is a timing side channel. So rule 16 withholds fuzzy matching from shared
+  databases until T-1136 lands a tenant-isolated index.
+- **A residual is accepted.** The refine state and the response time reveal "the tenant holds many
+  keys matching this text", the same to every caller (rule 13). T-1137 records it in the threat
+  model.
 - **Index volume.** Roughly 4–8 key rows per object, so about 0.3 M rows at 50k objects, plus the
   GIN index. The sizing guide must count it.
 - **No frozen pages.** "Show all" pages can shift while the inventory changes.
@@ -382,22 +576,33 @@ LDAP user search is retired.
 - **T-1129** sync-set extension for the search identifiers in rule 9 (directory-engineer).
 - **T-1130** per-account recent objects for ranking and for the empty palette (P3).
 - **T-1131** an Entra ID read-scope root kind for search and reports (spec).
+- **T-1136** a tenant-isolated trigram index, and the rule-16 gate until it lands
+  (directory-engineer).
+- **T-1137** the threat-model residuals of rules 13 and 16 (security-architect).
+- **T-1138** move `localaccount.go`'s `authz_roles` query into `rbac`, which removes SE1's pending
+  exception (backend-engineer).
 - Build tickets already waiting on this ADR, with the constraints above added as notes:
-  - T-1094: counts rule 12, no counts under 3 runes, timeout and 503;
-  - T-1095: index shape rules 4–7 and 9; the port takes the scope (amends AC3);
-  - T-1096: no `Admits`, the port only;
+  - T-1094: rule 12 (counts, the refine state, the opaque MAC-bound cursor, no counts under 3
+    runes), timeout and 503; rule 15 (the query in a `POST` body);
+  - T-1095: index shape and normalisation, rules 4–9 (rule 7's order and vectors, `PrefixUpper`
+    edges, the ctype); the statement of rules 12–13 with W; the port takes the scopes (amends AC3);
+  - T-1096: no `Admits`, the port only; the refusal order of rule 7; rule 15's log and trace
+    redaction;
   - T-1097: disambiguator inputs come from T-1129;
   - T-1102: the budget in rule 14;
   - T-0988: rewrite the `dn` keys.
 
 **Revisit when**
-- T-1102 or the scale tier misses the p95 for the scoped caller, or QA finds visible results lost to
-  the candidate cap at realistic query lengths. Then add a scope-driven query variant inside
-  `CompileSearch` (start from `ancestry @>` and join the keys), still through `scopeSQL`.
-- A multi-tenant deployment shows cross-tenant GIN cost. Then consider `btree_gin` (after a
-  register check) or per-tenant partial indexes.
-- Customers need typo tolerance on identifiers beyond trigrams, or cross-script matching. Then
-  consider a `fuzzystrmatch` re-ranker over the capped candidates.
+- **T-1102 or the scale tier misses the p95**, or the refine state shows up at realistic query
+  lengths (three or more runes) in QA or in the field. Then consider:
+  - a scope-driven variant inside `CompileSearch`, which starts from `ancestry @>` and joins the
+    keys, still through `scopeSQL` and still applying the scope before every limit;
+  - a GiST `gist_trgm_ops` index, if fuzzy recheck cost dominates.
+- **Before any SaaS cell or MSP deployment serves fuzzy search (rule 16).** T-1136's tenant-isolated
+  index must land, through partitioning or `btree_gin` after a register check. That is a gate, not
+  a someday.
+- **Customers need more typo tolerance on identifiers than trigrams give, or cross-script
+  matching.** Then consider a `fuzzystrmatch` re-ranker over the rows below the ceiling.
 - Any of these calls for a superseding ADR if it changes a rule above.
 
 ## Fitness function
@@ -405,53 +610,117 @@ LDAP user search is retired.
 Job **`fitness-search`** (`tools/fitness/search`, built by T-1126, in `make ci`). As in
 `fitness-reports`, a check whose subject has not landed prints `pending`, which is not a pass. This
 ADR is `accepted` only when SE1–SE5 are green in `make ci` with none pending and SE6 has passed once
-in the nightly job.
+in the nightly job. Each static check has a failing self-test fixture (T-1126).
 
-- **SE1, one renderer (typed, go/types).**
-  - In non-test code, `authz.ReadScope.Terms` and `.Token` (method values and method expressions
-    included, embedding included, as RP2 already does) are called **only** in
-    `internal/platform/store/reportsql`.
-  - `ReadScope.Admits` and `.SearchRoots` are called nowhere outside `authz`. Until T-1127 deletes
-    them, `internal/directory/client/usersearch.go` is the one listed exception, reported as
-    `pending`.
-  - `reportsql.CompileSearch` is called only from `internal/directory/inventory`.
-  - No non-test SQL text outside `internal/platform/rbac`, `internal/platform/authz` and
-    `migrations/` names the RBAC assignment tables. This closes the bypass of re-deriving a scope in
-    SQL without a `ReadScope`.
-  - RP2's allow-list in `fitness-reports` is narrowed to match when T-1127 lands.
-- **SE2, no string-built search SQL (static).**
-  - The search template in `reportsql` and every SQL constant or sqlc query file under
-    `internal/directory/inventory` and `internal/modules/search` contain no `LIKE`, `ILIKE`,
+- **SE1, one renderer and one reader of the scope's sources (typed with go/types, plus SQL).**
+  - **Scope internals.** In non-test code, `authz.ReadScope.Terms` and `.Token` are called **only**
+    in `internal/platform/store/reportsql`. Method values, method expressions and embedding count,
+    as RP2 already checks.
+  - **Who may use `Connections()`.** Outside `authz` and `reportsql`, `ReadScope.Connections()` is
+    allowed only in `internal/modules/reports/run` and `internal/modules/search`, where it labels
+    freshness.
+  - **`Admits` and `SearchRoots`** are called nowhere outside `authz`. Until T-1127 deletes them,
+    `internal/directory/client/usersearch.go` is the one listed exception, reported as `pending`.
+  - **`reportsql.CompileSearch`** is called only from `internal/directory/inventory`.
+  - **Go code that names the RBAC tables.** These tables are `authz_assignments`,
+    `authz_assignment_roots`, `authz_roles` and `authz_role_permissions`, plus any later
+    `authz_*` table that the owners map assigns to `rbac`. No non-test Go SQL text names them
+    outside `internal/platform/rbac` and `internal/platform/authz`. The generated
+    `internal/platform/store/owners/owners.gen.go` map is exempt because it holds table names, not
+    SQL. `internal/compose/server/localaccount.go` is the one listed exception, reported as
+    `pending` until T-1138 moves its `authz_roles` count into `rbac`.
+  - **Migrations that name the RBAC tables.** A migration may create, alter and index those tables,
+    and may put policies and grants on them. It may define **no view, materialised view, rule, or
+    non-trigger function or procedure whose body names them**. Trigger functions are allowed only
+    when they are attached to an RBAC table and listed by name. Today's list is
+    `authz_tier2_guard` (0018) and `authz_tenant_owner_role_guard` (0034, replaced by 0043). Without
+    this rule, a migration could define a view that lets constant SQL elsewhere re-derive a scope.
+  - **Who reads the key table.** Only the `reportsql` search template may read
+    `inventory_search_keys`, in a `FROM`, a `JOIN` or a subquery. `internal/directory/inventory`
+    may `INSERT`, `UPDATE` and `DELETE` it. Its one allowed read is the named backfill query, which
+    projects only `(connection_id, object_guid, norm_version)` and never `key`. No migration may
+    define a view or function over the table.
+  - **When T-1127 lands,** RP2's allow-list in `fitness-reports` is narrowed to match.
+- **SE2, no string-built search SQL and no stray trigram use (static, repo-wide).**
+  - **Patterns.** The search template in `reportsql`, and every SQL constant or sqlc query file under
+    `internal/directory/inventory` and `internal/modules/search`, contain no `LIKE`, `ILIKE`,
     `SIMILAR TO`, `~`, `~*`, `!~` or `!~*`.
-  - `set_config('pg_trgm.…', …)` appears only with a bound value.
-  - `modules/search` and `inventory` search code build no SQL text at all. `sqlconst` (FF-SP2/RP1)
-    already forbids non-constant SQL there, and SE2 asserts that the analyzer covers those packages.
-  - Repo-wide, a `LIKE`/`ILIKE` with a bound pattern must take a `store.LikePattern` argument
-    (P5 rule 4).
-- **SE3, search scope equals the oracle (integration, PostgreSQL 16 and 18).**
-  `Test_search_scope_matches_read_oracle` reuses RP6's world generator: trees written through the
-  writer, OU moves, incomplete ancestry, two connections, flawed terms and token layers. It adds
-  random queries in every class. Search hits must equal the objects that both match the query and
-  are admitted by `AuthorizeRead`. Group counts must equal the oracle's counts. A scope that renders
-  `FALSE` must give zero hits and its reason.
-- **SE4, hostile and normalisation vectors (integration).**
-  - `%`, `_`, `\`, quotes, `$1`, `'; --` and `E'\x00'`-style text match literally or not at all.
-  - NUL, invalid UTF-8 and 257 runes are refused (400).
-  - A 48-digit recovery password is refused and does not appear in the logs.
-  - Diacritic and Ł/ø/ß folding is equal for keys and queries.
-  - A seeded secret or confidential attribute never appears in `inventory_search_keys`.
-- **SE5, bounded work, nothing revealed (integration).**
-  `Test_search_work_is_bounded_and_silent`:
-  - **Setup:** a scoped technician with 5 visible matches and an excluded OU holding 20,000
-    matching objects.
-  - **Bound:** `EXPLAIN (ANALYZE, FORMAT JSON)` shows that the candidate node reads at most
-    `MaxSearchCandidates` rows per class.
-  - **Silence:** the technician's response, compared with the same search after the hidden OU is
-    emptied, differs in nothing except visible hits that rank below the cap. Its counts and `more`
-    flags equal the counts over admitted hits.
+  - **Trigram operators and functions.** These appear in SQL text **only in the `reportsql` search
+    template**, anywhere in the repository, migrations included:
+    - the operators `%`, `<%`, `%>`, `<<%`, `%>>`, `<->`, `<<->`, `<->>`, `<<<->` and `<->>>`;
+    - the functions `similarity(`, `word_similarity(`, `strict_word_similarity(`, `show_trgm(`,
+      `set_limit(` and `show_limit(`.
+
+    The one exception is the `gin_trgm_ops` operator class in T-1095's index migration. Modulo
+    arithmetic in SQL is written `mod(a, b)`, so a bare `%` is never ambiguous.
+  - **Settings.**
+    - No `SET` or `SET SESSION` of any `pg_trgm.*` setting.
+    - `set_config(` appears only with a literal `true` as its third argument (transaction-local),
+      repo-wide.
+    - `set_config('pg_trgm.…', $n, true)` appears only in the search transaction, with a bound value.
+  - **No hand-built SQL.** `modules/search` and the inventory search code build no SQL text at all.
+    `sqlconst` (FF-SP2/RP1) already forbids non-constant SQL there, and SE2 asserts that the
+    analyser covers those packages.
+  - **Bound `LIKE` patterns.** Repo-wide, a `LIKE`/`ILIKE` with a bound pattern must take a
+    `store.LikePattern` argument (P5 rule 4).
+- **SE3, search scope equals the oracle, and nothing leaks from the unscoped stages (integration,
+  PostgreSQL 16 and 18).** `Test_search_scope_matches_read_oracle` reuses RP6's world generator:
+  trees written through the writer, OU moves, incomplete ancestry, two connections, flawed terms and
+  token layers. It adds random queries in every class, and worlds whose matching key volume falls
+  below, at and above W.
+  - **Below the ceiling.** The hits are exactly the objects that match the query and that
+    `AuthorizeRead` admits. The group counts and the `more` flags are the oracle's.
+  - **Above the ceiling.** `refine` is true, there are no counts, and the classes ranked above the
+    ceiling class are still exact.
+  - **`refine` is the same for every caller in a world who holds the same permissions.** The test
+    compares an unscoped caller and a scoped caller.
+  - **Invariance (M4).** Add or remove hidden matching objects without crossing W, and every scoped
+    response is identical: hits, order, counts, `more` and cursor.
+  - **Gated kinds.** A world with BitLocker key-ID keys and a caller without the BitLocker
+    permission gives exactly that caller's response in the same world with no such keys.
+  - **Cursors.** A cursor replayed with another query, another facet or another scope fingerprint is
+    400.
+  - **Empty scopes.** A scope that renders `FALSE` gives zero hits and its reason.
+  - **The template itself.** A `reportsql` unit test asserts that the outer `SELECT`, `ORDER BY`,
+    window and `LIMIT` clauses reference only `hits` and `ceiling_hit`.
+- **SE4, hostile, normalisation and secrecy vectors (integration).**
+  - **Hostile text.** `%`, `_`, `\`, quotes, `$1`, `'; --` and `E'\x00'`-style text match literally
+    or not at all.
+  - **Refusals.** NUL, invalid UTF-8, more than 4 KiB of raw bytes and 257 NFKC runes are refused
+    (400).
+  - **Recovery passwords.** A 48-digit recovery password, in ASCII, in full-width digits and in
+    another script's digits, with and without dashes, is refused. It does not appear in the logs, in
+    the traces or in the access log.
+  - **Search text.** `q` on the console's `/search` route appears in no access-log or trace line;
+    only its length does (rule 15).
+  - **Folding.** Every row of rule 7's vector table folds the same way for keys and for queries.
+    That includes the upper-case and lower-case pairs Ł/ł, Ø/ø and İ/i, and `ẞ`.
+  - **`PrefixUpper`.** The U+D7FF and U+10FFFF edges give the bounds rule 8 states.
+  - **Secret attributes.** Seed every one of these: `ms-Mcs-AdmPwd`, `msLAPS-Password`,
+    `msLAPS-EncryptedPassword`, `msLAPS-EncryptedPasswordHistory`, `msDS-ManagedPassword`,
+    `msFVE-RecoveryPassword`, and a custom attribute marked confidential in `searchFlags` (0x80).
+    No value of any of them appears in `inventory_search_keys`.
+- **SE5, bounded work (integration).** `Test_search_work_is_bounded` (renamed from `…_and_silent`, because the cap is no longer silent):
+  - **Setup:** a scoped technician with 5 visible matches, and an excluded OU holding H matching
+    objects, for H in {0, W − 10, W + 10, 20,000}.
+  - **Plan shape.** `EXPLAIN (ANALYZE, FORMAT JSON)` of the compiled statement uses the B-tree for
+    exact and prefix and the GIN for fuzzy. There is no `Seq Scan` on `inventory_search_keys` or
+    `directory_objects`.
+  - **Rows examined.** The check asserts on **the scan nodes' actual rows**, never on the `Limit`
+    node:
+    - exact and prefix: the B-tree `Index Scan` or `Index Only Scan` nodes of each class have
+      `Actual Rows` summing to W + 1 or fewer;
+    - fuzzy: the `Bitmap Heap Scan` has `Actual Rows` of W + 1 or fewer. Its
+      `Rows Removed by Index Recheck` and the `Bitmap Index Scan`'s rows are recorded and reported
+      for SE6, but not bounded by W (rule 13);
+    - the join to `directory_objects` has 3(W + 1) or fewer loops.
+  - **Answers.** With H = W − 10, the technician's response equals the H = 0 response exactly. With
+    H = W + 10 and 20,000, the response is the refine state, and it equals an unscoped admin's
+    refine state for the same query.
 - **SE6, latency (nightly, behind the large-dataset switch).** T-1102's benchmark to rule 14's
-  budget: per class, scoped and unscoped, on PostgreSQL 16 and 18. A miss fails the nightly job and
-  names the class and the percentile.
+  budget: per class, scoped and unscoped, including the ceiling-sized class, on PostgreSQL 16 and 18.
+  A miss fails the nightly job and names the class and the percentile.
 
 `fitness-tenancy` (ADR-0002) covers RLS, `FORCE` and the tenant-led primary key of
-`inventory_search_keys`. `fitness-stack` F4 covers the absence of new Go dependencies.
+`inventory_search_keys`. `fitness-stack` F4 covers the absence of new Go dependencies. Rule 16's
+start-up gate is tested by T-1136.
