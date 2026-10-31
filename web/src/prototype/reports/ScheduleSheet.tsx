@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
+import { SideSheet } from "../../ds/components";
 import { ACCOUNTS, ALLOWED_DOMAINS, ZONE, type SchedRecipient, type Schedule } from "./fixtures";
 
 export interface Perms {
@@ -83,11 +84,6 @@ export function ScheduleSheet(props: {
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const typedOnce = useRef(false);
-  const first = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    first.current?.focus();
-  }, []);
 
   // The saved name follows the chosen cadence until the admin edits it (it is prefilled, 0 interactions).
   const nameTouched = useRef(false);
@@ -180,253 +176,242 @@ export function ScheduleSheet(props: {
       : [];
 
   return (
-    <div className="pt__sheetwrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div
-        className="pt__sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={`${uid}-h`}
-        onKeyDown={(e) => e.key === "Escape" && onClose()}
-      >
-        <form className="pt__form" onSubmit={submit} noValidate>
-          <div>
-            <h2 id={`${uid}-h`}>Schedule this report</h2>
-            <p className="pt__sub">
-              Exactly what is on screen: {subject.title}, {subject.filters}, {subject.columns}{" "}
-              columns.
-            </p>
-          </div>
-
-          <fieldset className="rp__fs">
-            <legend>When</legend>
-            <div className="rp__radios" role="radiogroup" aria-label="When it runs">
-              {PRESETS.map((p, i) => (
-                <label key={p.id} className={`rp__radio${preset === p.id ? " rp__radio--on" : ""}`}>
-                  <input
-                    ref={i === 0 ? first : undefined}
-                    type="radio"
-                    name={`${uid}-when`}
-                    checked={preset === p.id}
-                    onChange={() => {
-                      setPreset(p.id);
-                      onTick(`preset: ${p.label} ${p.when}`);
-                    }}
-                  />
-                  <b>{p.label}</b>
-                  <span>{p.when}</span>
-                </label>
-              ))}
-              <label className={`rp__radio${preset === "custom" ? " rp__radio--on" : ""}`}>
+    <SideSheet
+      open
+      onClose={onClose}
+      title="Schedule this report"
+      description={`Exactly what is on screen: ${subject.title}, ${subject.filters}, ${subject.columns} columns.`}
+    >
+      <form className="pt__form" onSubmit={submit} noValidate>
+        <fieldset className="rp__fs">
+          <legend>When</legend>
+          <div className="rp__radios" role="radiogroup" aria-label="When it runs">
+            {PRESETS.map((p, i) => (
+              <label key={p.id} className={`rp__radio${preset === p.id ? " rp__radio--on" : ""}`}>
                 <input
+                  data-autofocus={i === 0 ? "" : undefined}
                   type="radio"
                   name={`${uid}-when`}
-                  checked={preset === "custom"}
+                  checked={preset === p.id}
                   onChange={() => {
-                    setPreset("custom");
-                    onTick("preset: Custom");
+                    setPreset(p.id);
+                    onTick(`preset: ${p.label} ${p.when}`);
                   }}
                 />
-                <b>Custom</b>
-                <span>every n hours, days…</span>
+                <b>{p.label}</b>
+                <span>{p.when}</span>
               </label>
-            </div>
-            {preset === "custom" ? (
-              <div className="rp__row">
-                <label className="pt__field">
-                  <span>Repeat every</span>
-                  <select
-                    className="rp__select"
-                    value={hourly ? "hours" : "days"}
-                    onChange={(e) => setHourly(e.target.value === "hours")}
-                  >
-                    <option value="hours">1 hour</option>
-                    <option value="days">1 day</option>
-                  </select>
-                </label>
-                <p className="pt__sub">
-                  Shortest allowed: 1 hour. Time zone: Europe/London ({ZONE}).
-                </p>
-              </div>
-            ) : null}
-            <p className="pt__sub">
-              {chosen
-                ? `First run: ${chosen.next} ${ZONE}. A missed run (server down) runs once, never as a burst.`
-                : "Time zone: Europe/London (GMT). Daylight-saving changes are handled for you."}
-            </p>
-          </fieldset>
-
-          <div className="pt__field">
-            <label htmlFor={`${uid}-to`}>To</label>
-            <div className="rp__tokens">
-              {list.map((a) => (
-                <span key={a} className={`chip ${isExternal(a) ? "chip--warn" : "chip--muted"}`}>
-                  {isExternal(a) ? "↗ Outside " : "● Inside "}
-                  {a}
-                  <button
-                    type="button"
-                    className="rp__x"
-                    aria-label={`Remove ${a}`}
-                    onClick={() => setList(list.filter((x) => x !== a))}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
+            ))}
+            <label className={`rp__radio${preset === "custom" ? " rp__radio--on" : ""}`}>
               <input
-                id={`${uid}-to`}
-                className="rp__tokeninput"
-                value={typed}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="Name or e-mail address"
-                aria-describedby={`${uid}-to-help`}
-                onChange={(e) => {
-                  if (!typedOnce.current) {
-                    typedOnce.current = true;
-                    onTick("type recipient");
-                  }
-                  setTyped(e.target.value);
+                type="radio"
+                name={`${uid}-when`}
+                checked={preset === "custom"}
+                onChange={() => {
+                  setPreset("custom");
+                  onTick("preset: Custom");
                 }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === ",") {
-                    e.preventDefault();
-                    commit();
-                  }
-                }}
-                onBlur={commit}
               />
-            </div>
-            {accountMatches.length > 0 ? (
-              <ul className="pt__list" aria-label="Matching accounts">
-                {accountMatches.map((a) => (
-                  <li key={a.mail}>
-                    <button
-                      type="button"
-                      className="pt__row"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setList([...list, a.mail]);
-                        setTyped("");
-                      }}
-                    >
-                      <span className="pt__name">{a.name}</span>
-                      <span className="diq-mono pt__sub">{a.mail}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            <p id={`${uid}-to-help`} className="pt__sub">
-              Enter or comma adds an address; Save adds what you typed. Organisation domains:{" "}
-              {ALLOWED_DOMAINS.join(", ")}.
-            </p>
+              <b>Custom</b>
+              <span>every n hours, days…</span>
+            </label>
           </div>
-
-          <div className="pt__box" role="note">
-            <strong>Recipients receive what you can see:</strong> {subject.scope}. If your access
-            shrinks, later runs shrink with it.
-          </div>
-
-          {needsConfirm ? (
-            <div className="pt__banner rp__ext" role="alert">
-              <label className="pt__check">
-                <input
-                  type="checkbox"
-                  checked={confirmed}
-                  onChange={(e) => {
-                    setConfirmed(e.target.checked);
-                    onTick("confirm: data leaves organisation");
-                  }}
-                />
-                <span>
-                  <strong>Data leaves your organisation:</strong> {external.join(", ")}. I confirm
-                  these addresses may receive this report.
-                </span>
-              </label>
-            </div>
-          ) : null}
-
-          <fieldset className="rp__fs">
-            <legend>Delivery</legend>
+          {preset === "custom" ? (
             <div className="rp__row">
               <label className="pt__field">
-                <span>Format</span>
+                <span>Repeat every</span>
                 <select
                   className="rp__select"
-                  value={format}
-                  onChange={(e) => setFormat(e.target.value as "XLSX" | "CSV")}
+                  value={hourly ? "hours" : "days"}
+                  onChange={(e) => setHourly(e.target.value === "hours")}
                 >
-                  <option value="XLSX">XLSX (with About sheet)</option>
-                  <option value="CSV">CSV (table only)</option>
+                  <option value="hours">1 hour</option>
+                  <option value="days">1 day</option>
                 </select>
               </label>
-              <label className="pt__field">
-                <span>Send as</span>
-                <select
-                  className="rp__select"
-                  value={method}
-                  onChange={(e) => setMethod(e.target.value as "Attachment" | "Link")}
-                >
-                  <option value="Attachment">Attachment</option>
-                  <option value="Link">Link (accounts only)</option>
-                </select>
-              </label>
-            </div>
-            {method === "Link" && external.length > 0 ? (
               <p className="pt__sub">
-                Links work only for people with an activeDIQ account, so outside addresses get an
-                attachment.
+                Shortest allowed: 1 hour. Time zone: Europe/London ({ZONE}).
               </p>
-            ) : null}
+            </div>
+          ) : null}
+          <p className="pt__sub">
+            {chosen
+              ? `First run: ${chosen.next} ${ZONE}. A missed run (server down) runs once, never as a burst.`
+              : "Time zone: Europe/London (GMT). Daylight-saving changes are handled for you."}
+          </p>
+        </fieldset>
+
+        <div className="pt__field">
+          <label htmlFor={`${uid}-to`}>To</label>
+          <div className="rp__tokens">
+            {list.map((a) => (
+              <span key={a} className={`chip ${isExternal(a) ? "chip--warn" : "chip--muted"}`}>
+                {isExternal(a) ? "↗ Outside " : "● Inside "}
+                {a}
+                <button
+                  type="button"
+                  className="rp__x"
+                  aria-label={`Remove ${a}`}
+                  onClick={() => setList(list.filter((x) => x !== a))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <input
+              id={`${uid}-to`}
+              className="rp__tokeninput"
+              value={typed}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Name or e-mail address"
+              aria-describedby={`${uid}-to-help`}
+              onChange={(e) => {
+                if (!typedOnce.current) {
+                  typedOnce.current = true;
+                  onTick("type recipient");
+                }
+                setTyped(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === ",") {
+                  e.preventDefault();
+                  commit();
+                }
+              }}
+              onBlur={commit}
+            />
+          </div>
+          {accountMatches.length > 0 ? (
+            <ul className="pt__list" aria-label="Matching accounts">
+              {accountMatches.map((a) => (
+                <li key={a.mail}>
+                  <button
+                    type="button"
+                    className="pt__row"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setList([...list, a.mail]);
+                      setTyped("");
+                    }}
+                  >
+                    <span className="pt__name">{a.name}</span>
+                    <span className="diq-mono pt__sub">{a.mail}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <p id={`${uid}-to-help`} className="pt__sub">
+            Enter or comma adds an address; Save adds what you typed. Organisation domains:{" "}
+            {ALLOWED_DOMAINS.join(", ")}.
+          </p>
+        </div>
+
+        <div className="pt__box" role="note">
+          <strong>Recipients receive what you can see:</strong> {subject.scope}. If your access
+          shrinks, later runs shrink with it.
+        </div>
+
+        {needsConfirm ? (
+          <div className="pt__banner rp__ext" role="alert">
             <label className="pt__check">
               <input
                 type="checkbox"
-                checked={onlyIfData}
-                onChange={(e) => setOnlyIfData(e.target.checked)}
+                checked={confirmed}
+                onChange={(e) => {
+                  setConfirmed(e.target.checked);
+                  onTick("confirm: data leaves organisation");
+                }}
               />
-              <span>Only send if there is data (a run with 0 rows sends nothing)</span>
+              <span>
+                <strong>Data leaves your organisation:</strong> {external.join(", ")}. I confirm
+                these addresses may receive this report.
+              </span>
             </label>
-            <p className="pt__sub">
-              Files over 10 MB go as a link to account recipients; for outside addresses that
-              delivery fails and says why.
-            </p>
-          </fieldset>
-
-          <label className="pt__field">
-            <span>Name</span>
-            <input
-              className="rp__input"
-              value={name}
-              onChange={(e) => {
-                nameTouched.current = true;
-                setName(e.target.value);
-              }}
-            />
-          </label>
-
-          {errors.length > 0 ? (
-            <div className="pt__banner" role="alert">
-              <ul className="rp__errors">
-                {errors.map((e) => (
-                  <li key={e}>{e}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          <div className="pt__actions rp__sticky">
-            <button type="submit" className="btn btn--primary" disabled={saving} aria-busy={saving}>
-              {saving ? "Saving…" : "Save schedule"}
-            </button>
-            <button type="button" className="btn" onClick={onClose}>
-              Cancel <span className="pt__kbd">Esc</span>
-            </button>
-            <span className="pt__sub">
-              Saved as an action you can undo. Runs as you, with your access at each run.
-            </span>
           </div>
-        </form>
-      </div>
-    </div>
+        ) : null}
+
+        <fieldset className="rp__fs">
+          <legend>Delivery</legend>
+          <div className="rp__row">
+            <label className="pt__field">
+              <span>Format</span>
+              <select
+                className="rp__select"
+                value={format}
+                onChange={(e) => setFormat(e.target.value as "XLSX" | "CSV")}
+              >
+                <option value="XLSX">XLSX (with About sheet)</option>
+                <option value="CSV">CSV (table only)</option>
+              </select>
+            </label>
+            <label className="pt__field">
+              <span>Send as</span>
+              <select
+                className="rp__select"
+                value={method}
+                onChange={(e) => setMethod(e.target.value as "Attachment" | "Link")}
+              >
+                <option value="Attachment">Attachment</option>
+                <option value="Link">Link (accounts only)</option>
+              </select>
+            </label>
+          </div>
+          {method === "Link" && external.length > 0 ? (
+            <p className="pt__sub">
+              Links work only for people with an activeDIQ account, so outside addresses get an
+              attachment.
+            </p>
+          ) : null}
+          <label className="pt__check">
+            <input
+              type="checkbox"
+              checked={onlyIfData}
+              onChange={(e) => setOnlyIfData(e.target.checked)}
+            />
+            <span>Only send if there is data (a run with 0 rows sends nothing)</span>
+          </label>
+          <p className="pt__sub">
+            Files over 10 MB go as a link to account recipients; for outside addresses that delivery
+            fails and says why.
+          </p>
+        </fieldset>
+
+        <label className="pt__field">
+          <span>Name</span>
+          <input
+            className="rp__input"
+            value={name}
+            onChange={(e) => {
+              nameTouched.current = true;
+              setName(e.target.value);
+            }}
+          />
+        </label>
+
+        {errors.length > 0 ? (
+          <div className="pt__banner" role="alert">
+            <ul className="rp__errors">
+              {errors.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <div className="pt__actions rp__sticky">
+          <button type="submit" className="btn btn--primary" disabled={saving} aria-busy={saving}>
+            {saving ? "Saving…" : "Save schedule"}
+          </button>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel <span className="pt__kbd">Esc</span>
+          </button>
+          <span className="pt__sub">
+            Saved as an action you can undo. Runs as you, with your access at each run.
+          </span>
+        </div>
+      </form>
+    </SideSheet>
   );
 }

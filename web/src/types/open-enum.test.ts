@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createApiClient, unwrap } from "./client";
-import type { components } from "./schema.gen";
+import { createApiClient, unwrap } from "../api/client";
+import type { components } from "../api/schema.gen";
 
 type DirectoryUser = components["schemas"]["DirectoryUser"];
 
