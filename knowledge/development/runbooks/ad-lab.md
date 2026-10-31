@@ -82,6 +82,8 @@ counts that `make lab-test-live` asserts against the live directory.
 | Edge-case users (`OU=EdgeCases`) | comma, leading `#`, `+`, double quotes, backslash, `<>;=`, `()*`, accents NFC and NFD, CJK, non-BMP (emoji, math letters), 64-character CN, 20-character sAMAccountName, dot/hyphen, leading and trailing space in the CN |
 | Password policy | complexity on, max age **90 days**, lockout after **5** bad passwords (until an admin unlocks) |
 
+The lockout, PSO and expiry cases the report engine must match, with expected results and which run on Samba, are the LAB-LK, LAB-PS, LAB-PW and LAB-AX rows of [`domain/account-state-lab-rows.md`](../domain/account-state-lab-rows.md) (T-1016). They are specified, not yet seeded or run.
+
 Ages ("stale", "expiring") are relative to the day the lab was **built** (`manifest.json` → `now`).
 A snapshot ages like a real directory: after about a month the "expiring" users have expired. Run
 `make lab-rebuild` to refresh, or write your own timestamps in tests. Set `LAB_SEED_NOW=<unix>` for a

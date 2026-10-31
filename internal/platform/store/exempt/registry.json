@@ -64,6 +64,13 @@
       "mintsTenantID": true
     },
     {
+      "package": "internal/compose/server",
+      "function": "reportSchema",
+      "reason": "Start-up compiles the report datasets against the public schema catalogue (pg_class, pg_attribute) before the install tenant exists, so the read runs outside a tenant context under WithPlatform. The catalogue is identical for every tenant and holds names and types only, never a tenant row; the result is the immutable schema the SQL registry checks identifiers against (T-1104).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
       "package": "internal/platform/jobs",
       "function": "Claim",
       "reason": "Claim must see every tenant's runnable jobs, so it runs outside a tenant context under WithPlatform; the caller then runs each body in the job's own tenant (ADR-0002 Jobs row).",
