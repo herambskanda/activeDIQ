@@ -1,0 +1,58 @@
+# ManageEngine report name -> activeDIQ report and preset (spec reports-2a 6.2, 54 names).
+# Fields (tab separated): ME name, report ID, report title, preset ID ("-" = report not shipped yet), pending note.
+# A shipped report with a pending note has no such preset yet; the note says what it waits for.
+# Editing rule: a row for a report that ships later changes its preset field in the change that ships it.
+All Users	usr-01	Users	all	
+Enabled Users	usr-01	Users	enabled	
+Disabled Users	usr-01	Users	disabled	
+Users Without Managers	usr-01	Users	-	needs the manager attribute (T-1041)
+Recently Created Users	usr-01	Users	recently_created	
+Account Expired Users	usr-02	Account expiry	expired	
+Recently Account Expired Users	usr-02	Account expiry	recently_expired	
+Soon-to-expire User Accounts	usr-02	Account expiry	soon	
+Account Never Expires Users	usr-02	Account expiry	never	
+Inactive Users	usr-03	Logon activity	inactive	
+Recently Logged on Users	usr-03	Logon activity	recent	
+Users Never Logged On	usr-03	Logon activity	never	
+Real Last Logon	usr-04	Real last logon	-	
+Locked-out Users	usr-05	Locked-out users	locked_out	
+Password Expired Users	pwd-01	Password status	-	
+Soon-to-expire User Passwords	pwd-01	Password status	-	
+Users with Password Never Expires	pwd-01	Password status	-	
+Users with Change Password at Next Logon	pwd-01	Password status	-	
+Password Changed Users	pwd-02	Password age	-	
+Password Unchanged Users	pwd-02	Password age	-	
+Recent Logon Failures	pwd-03	Recent logon failures	-	
+All Groups	grp-01	Groups	-	
+Security Groups	grp-01	Groups	-	
+Distribution Groups	grp-01	Groups	-	
+Group Type and Scope	grp-01	Groups	-	
+Groups Without Members	grp-01	Groups	-	
+Managed Groups	grp-01	Groups	-	
+Unmanaged Groups	grp-01	Groups	-	
+Top N Big Groups	grp-01	Groups	-	
+Recently Created Groups	grp-01	Groups	-	
+Group Members	grp-02	Group members	-	
+Detailed Group Members	grp-02	Group members	-	
+Users in Groups	grp-02	Group members	-	
+Groups for Users	grp-03	Groups for users	-	
+Users Not in Groups	grp-04	Not in any group	-	
+Computers Not in Groups	grp-04	Not in any group	-	
+All computers	cmp-01	Computers	-	
+Enabled Computers	cmp-01	Computers	-	
+Disabled Computers	cmp-01	Computers	-	
+Workstation Computers	cmp-01	Computers	-	
+Domain Controllers	cmp-01	Computers	-	
+Computers Trusted for Delegation	cmp-01	Computers	-	
+OS based computers	cmp-01	Computers	-	
+Recently Created Computers	cmp-01	Computers	-	
+Inactive computers	cmp-02	Computer activity	-	
+Active Computers	cmp-02	Computer activity	-	
+All OUs	ou-01	Organizational units	-	
+Empty OUs	ou-01	Organizational units	-	
+Users-Only OUs	ou-01	Organizational units	-	
+Computers-Only OUs	ou-01	Organizational units	-	
+Recently Created OUs	ou-01	Organizational units	-	
+All Contacts	ctc-01	Contacts	-	
+Mail Enabled Contacts	ctc-01	Contacts	-	
+Recently Created Contacts	ctc-01	Contacts	-	

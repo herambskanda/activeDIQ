@@ -163,6 +163,19 @@ type Observation struct {
 	OnPremisesDomainName  string
 	OnPremisesImmutableID []byte
 
+	// The D7 inputs of the derived states (reports spec §6.4, T-0958). A nil pointer or a zero time is
+	// "absent"; InputsRead says which of the four time inputs the sync read, so absent-and-read
+	// ("not locked", "must change", "never") is told from not read ("unknown"). A zero LockoutTime
+	// with ReadLockoutTime set is lockoutTime 0; a zero AccountExpires with ReadAccountExpires set is
+	// "never" (0 or 0x7FFFFFFFFFFFFFFF; the filetime codec decides).
+	UserAccountControl *int64
+	PrimaryGroupID     *int64
+	LastLogonTimestamp time.Time
+	// HasSPN says whether servicePrincipalName has a value (nil: not read). The values themselves are
+	// not stored.
+	HasSPN     *bool
+	InputsRead InputsRead
+
 	// PrimaryGroup is a user's primaryGroupID resolved to the group (DM-17.I2). Zero: none observed.
 	PrimaryGroup GUID
 	// Members are the group's member values resolved to GUIDs. They are written through
@@ -173,6 +186,43 @@ type Observation struct {
 	MembersComplete bool
 	// RemovedMembers are explicit removals (a DirSync delta).
 	RemovedMembers []GUID
+}
+
+// InputsRead is the bitmask of time inputs a sync read for an object (directory_objects.inputs_read).
+type InputsRead uint8
+
+// The inputs.
+const (
+	ReadLockoutTime InputsRead = 1 << iota
+	ReadPwdLastSet
+	ReadAccountExpires
+	ReadLastLogonTimestamp
+	readAll = ReadLockoutTime | ReadPwdLastSet | ReadAccountExpires | ReadLastLogonTimestamp
+)
+
+func (r InputsRead) valid() bool { return r&^readAll == 0 }
+
+// checkInputs refuses a time that was set without its read bit and out-of-range values.
+func (o *Observation) checkInputs() error {
+	if !o.InputsRead.valid() {
+		return fmt.Errorf("unknown InputsRead bits")
+	}
+	for _, c := range []struct {
+		t   time.Time
+		bit InputsRead
+		n   string
+	}{{o.LockoutTime, ReadLockoutTime, "LockoutTime"}, {o.PwdLastSet, ReadPwdLastSet, "PwdLastSet"},
+		{o.AccountExpires, ReadAccountExpires, "AccountExpires"}, {o.LastLogonTimestamp, ReadLastLogonTimestamp, "LastLogonTimestamp"}} {
+		if !c.t.IsZero() && o.InputsRead&c.bit == 0 {
+			return fmt.Errorf("%s set without its InputsRead bit", c.n)
+		}
+	}
+	for _, v := range []*int64{o.UserAccountControl, o.PrimaryGroupID} {
+		if v != nil && (*v < 0 || *v > 1<<32-1) {
+			return fmt.Errorf("account control or primary group out of range")
+		}
+	}
+	return nil
 }
 
 // GroupFacts are the judge's inputs, typed so the producer cannot store one without the others it
@@ -399,7 +449,8 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			nullGUID(o.Parent), anc, o.DN, o.RDN, sid, o.SAMAccountName, o.UPN, o.DisplayName, o.Enabled,
 			nullTime(o.LockoutTime), nullTime(o.PwdLastSet), nullTime(o.AccountExpires),
 			cg, string(attrs[i]), nullTime(o.WhenCreated), nullTime(o.WhenChanged), observed.UTC(), o.ObservedDSA, cloud, string(o.State),
-			onPremSync, onPremCloud, nilIfEmpty(o.OnPremisesSID), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID)).
+			onPremSync, onPremCloud, nilIfEmpty(o.OnPremisesSID), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID),
+			o.UserAccountControl, o.PrimaryGroupID, nullTime(o.LastLogonTimestamp), o.HasSPN, int16(o.InputsRead)).
 			Scan(&w.inserted, &w.moved, &w.completeChanged)
 		if store.IsNoRows(err) {
 			out.Stale++
@@ -486,7 +537,8 @@ const upsertObjectSQL = `WITH old AS (
 		INSERT INTO public.directory_objects AS d (tenant_id, connection_id, object_guid, nc_guid, kind, object_class,
 			parent_guid, ancestry, dn, rdn, sid, sam_account_name, upn, display_name, enabled, lockout_time, pwd_last_set, account_expires,
 			consistency_guid, attributes, when_created, when_changed, observed_at, observed_dsa, cloud_seen_at, state,
-			on_prem_sync_enabled, on_prem_cloud_managed, on_prem_sid, on_prem_domain_name, on_prem_immutable_id, ancestry_complete)
+			on_prem_sync_enabled, on_prem_cloud_managed, on_prem_sid, on_prem_domain_name, on_prem_immutable_id, ancestry_complete,
+			user_account_control, primary_group_id, last_logon_timestamp, spn_present, inputs_read)
 		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $4, $5,
 			$6::uuid, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25,
 			$26, $27, $28, $29, $30,
@@ -497,7 +549,8 @@ const upsertObjectSQL = `WITH old AS (
 					FROM public.directory_objects p
 					WHERE p.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND p.connection_id = $1::uuid
 					AND p.object_guid = $6::uuid), false)
-			END)
+			END,
+			$31::bigint, $32::bigint, $33::timestamptz, $34::boolean, $35::smallint)
 		ON CONFLICT (tenant_id, connection_id, object_guid) DO UPDATE SET
 			nc_guid = EXCLUDED.nc_guid, kind = EXCLUDED.kind, object_class = EXCLUDED.object_class, parent_guid = EXCLUDED.parent_guid,
 			ancestry = EXCLUDED.ancestry, ancestry_complete = EXCLUDED.ancestry_complete, dn = EXCLUDED.dn, rdn = EXCLUDED.rdn, sid = EXCLUDED.sid,
@@ -509,6 +562,8 @@ const upsertObjectSQL = `WITH old AS (
 			on_prem_sync_enabled = EXCLUDED.on_prem_sync_enabled, on_prem_cloud_managed = EXCLUDED.on_prem_cloud_managed,
 			on_prem_sid = EXCLUDED.on_prem_sid, on_prem_domain_name = EXCLUDED.on_prem_domain_name,
 			on_prem_immutable_id = EXCLUDED.on_prem_immutable_id,
+			user_account_control = EXCLUDED.user_account_control, primary_group_id = EXCLUDED.primary_group_id,
+			last_logon_timestamp = EXCLUDED.last_logon_timestamp, spn_present = EXCLUDED.spn_present, inputs_read = EXCLUDED.inputs_read,
 			cloud_seen_at = GREATEST(d.cloud_seen_at, EXCLUDED.cloud_seen_at)
 		WHERE d.observed_at <= EXCLUDED.observed_at
 		RETURNING (xmax = 0) AS inserted, d.parent_guid, d.ancestry, d.ancestry_complete)
@@ -580,6 +635,9 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 	}
 	if !validKinds[o.Kind] || o.Class == "" || len(o.Class) > 100 {
 		return bad("kind or class")
+	}
+	if err := o.checkInputs(); err != nil {
+		return bad(err.Error())
 	}
 	if entra {
 		if len(o.OnPremisesSID) != 0 && (len(o.OnPremisesSID) < 8 || len(o.OnPremisesSID) > 68) {

@@ -117,6 +117,25 @@ test('mergeTicket refuses when the main checkout is not on the main branch', asy
   } finally { f.cleanup(); }
 });
 
+test('mergeTicket does not blame a ticket for a merge already in progress in the main checkout', async () => {
+  const f = makeFactory();
+  try {
+    initRepo(f.root);
+    const a = await ensureWorktree(f.ctx, 'T-0001');
+    const b = await ensureWorktree(f.ctx, 'T-0002');
+    commitIn(a.path, 'shared.txt', 'from A\n', 'feat: a');
+    commitIn(b.path, 'shared.txt', 'from B\n', 'feat: b');
+    // leave a conflicted merge of T-0002 uncommitted in the main checkout, as a failed abort would
+    commitIn(f.root, 'shared.txt', 'from main\n', 'feat: main');
+    try { git(f.root, 'merge', '--no-ff', '--no-edit', 'factory/T-0002'); } catch { /* conflicts expected */ }
+    assert.ok(fs.existsSync(path.join(f.root, '.git', 'MERGE_HEAD')), 'fixture: merge in progress');
+    const out = await mergeTicket(f.ctx, { id: 'T-0001', title: 'A' });
+    assert.equal(out.status, 'error', 'an error is retried; a conflict would reopen the ticket');
+    assert.match(out.detail, /mid-merge/);
+    assert.ok(fs.existsSync(path.join(f.root, '.git', 'MERGE_HEAD')), 'the other merge is left alone');
+  } finally { f.cleanup(); }
+});
+
 test('git arguments are never interpreted by a shell', async () => {
   const f = makeFactory();
   try {

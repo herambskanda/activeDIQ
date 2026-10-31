@@ -13,6 +13,7 @@
 --   state         active -> consumed (AN-10 succeeded) | dead (expired or out of attempts). Final states are final.
 -- Rows are kept after they end; the runtime role cannot delete them.
 
+-- write-class: authn_pending_signins system
 CREATE TABLE public.authn_pending_signins (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

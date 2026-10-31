@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -494,7 +495,13 @@ func TestEveryRPTestIsBound(t *testing.T) {
 }
 
 func TestBoundTestsPendingUntilLanded(t *testing.T) {
-	r := run(t, tree(t, nil), Options{Bindings: defaultBindings})
+	// The shipped bindings change as the rows land (RP6 is landed); this tests the not-landed path
+	// for every check, so it clears the flag on a copy.
+	bs := slices.Clone(defaultBindings)
+	for i := range bs {
+		bs[i].Landed = false
+	}
+	r := run(t, tree(t, nil), Options{Bindings: bs})
 	if len(r.Violations) != 0 || len(r.Pending) < 7 {
 		t.Fatalf("violations %v pending %v", r.Violations, r.Pending)
 	}

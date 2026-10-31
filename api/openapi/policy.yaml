@@ -21,8 +21,9 @@
 #                    factors. Never anything that reads or writes another principal.
 #   secretResponses  LAPS reveal and BitLocker reveal (secret.* permissions, DM-33.I2); API-token
 #                    creation and connector-enrollment-token creation (shown once, TM §7.5). Class reveal.
-#   directory.read   searchDirectoryUsers (T-0668) is an ordinary permissioned read: x-permission directory.read,
-#                    no step-up, no anonymous or authenticated row, rate class read. No row is stale or missing.
+#   directory.read   searchDirectoryUsers (T-0668) and searchDirectory (T-1094, a POST read so the text stays out of URLs, ADR-0011 rule 15)
+#                    are ordinary permissioned reads: x-permission directory.read, no step-up, no anonymous or authenticated row,
+#                    rate class read. No row is stale or missing.
 #   reports.*        the 2a report operations (T-0866, modules/reports.yaml) are ordinary permissioned operations: one x-permission each,
 #                    no step-up row, no anonymous or authenticated row. reports.run: library, runs, run header, result paging.
 #                    reports.export: export, export record, download, delete a file; createReportExport also checks reports.run inside the

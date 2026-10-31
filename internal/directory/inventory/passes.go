@@ -122,6 +122,9 @@ type FreshnessResult struct {
 	// have one; Stale names each stale NC with its age and cause; NotSynced lists the skipped connections.
 	Label     report.Freshness
 	Threshold time.Duration
+	// Names is the display name of every covered connection, so a stale label can name the directory
+	// behind it. It holds one entry per distinct connection asked for.
+	Names map[ConnectionID]string
 }
 
 // Freshness returns the watermarks of the covered connections' naming contexts and their label. The
@@ -158,8 +161,9 @@ func (r *Reader) Freshness(ctx context.Context, tid tenant.ID, q FreshnessQuery)
 	sort.Strings(ids)
 
 	var ws []report.NCWatermark
+	names := make(map[ConnectionID]string, len(ids))
 	err := r.with(ctx, tid, func(ctx context.Context, tx store.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT c.id::text, c.state, COALESCE(p.nc_guid::text, ''), p.last_pass_at, COALESCE(p.state, '')
+		rows, err := tx.Query(ctx, `SELECT c.id::text, c.state, c.display_name, COALESCE(p.nc_guid::text, ''), p.last_pass_at, COALESCE(p.state, '')
 			FROM public.connections c
 			LEFT JOIN public.nc_sync_passes p ON p.tenant_id = c.tenant_id AND p.connection_id = c.id
 			WHERE c.tenant_id = $1::uuid AND c.id = ANY($2::uuid[])
@@ -170,12 +174,13 @@ func (r *Reader) Freshness(ctx context.Context, tid tenant.ID, q FreshnessQuery)
 		defer rows.Close()
 		found := map[string]bool{}
 		for rows.Next() {
-			var conn, connState, nc, state string
+			var conn, connState, name, nc, state string
 			var pass *time.Time
-			if err := rows.Scan(&conn, &connState, &nc, &pass, &state); err != nil {
+			if err := rows.Scan(&conn, &connState, &name, &nc, &pass, &state); err != nil {
 				return fmt.Errorf("inventory: watermarks: %w", err)
 			}
 			found[conn] = true
+			names[ConnectionID(conn)] = name
 			w, err := watermark(conn, connState, nc, pass, state)
 			if err != nil {
 				return err
@@ -197,6 +202,7 @@ func (r *Reader) Freshness(ctx context.Context, tid tenant.ID, q FreshnessQuery)
 	}
 	out.Watermarks = ws
 	out.Threshold = threshold
+	out.Names = names
 	out.Label = report.Label(ws, threshold, q.Now)
 	return out, nil
 }

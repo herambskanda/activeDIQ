@@ -1,0 +1,15 @@
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost	0.037s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitest	0.008s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitypes	0.011s
+?   	github.com/skenzeriq/activediq/internal/modules	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/agentfleet	0.012s
+ok  	github.com/skenzeriq/activediq/internal/modules/compliance	30.045s
+ok  	github.com/skenzeriq/activediq/internal/modules/connections	60.858s
+?   	github.com/skenzeriq/activediq/internal/modules/connections/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/delegation	28.809s
+?   	github.com/skenzeriq/activediq/internal/modules/delegation/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/directory	0.072s
+?   	github.com/skenzeriq/activediq/internal/modules/directory/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/inventory	27.288s
+ok  	github.com/skenzeriq/activediq/internal/modules/reports	0.090s
+?   	github.com/skenzeriq/activediq/internal/modules/reports/api	[no test files]

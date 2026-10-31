@@ -2,7 +2,8 @@ package report
 
 import (
 	"encoding/binary"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strconv"
 	"time"
 
@@ -120,24 +121,24 @@ func (c Cell) MarshalJSON() ([]byte, error) {
 	tag := c.Tag()
 	switch c.kind {
 	case CellText, CellEnum:
-		return json.Marshal([]any{tag, c.s})
+		return json.Marshal([]any{tag, c.s}, wireOpts)
 	case CellInt:
-		return json.Marshal([]any{tag, strconv.FormatInt(c.i, 10)})
+		return json.Marshal([]any{tag, strconv.FormatInt(c.i, 10)}, wireOpts)
 	case CellBool:
-		return json.Marshal([]any{tag, c.b})
+		return json.Marshal([]any{tag, c.b}, wireOpts)
 	case CellTime:
-		return json.Marshal([]any{tag, c.t.Format(time.RFC3339)})
+		return json.Marshal([]any{tag, c.t.Format(time.RFC3339)}, wireOpts)
 	case CellGUID:
-		return json.Marshal([]any{tag, GUIDString(c.g)})
+		return json.Marshal([]any{tag, GUIDString(c.g)}, wireOpts)
 	case CellTextList:
-		return json.Marshal([]any{tag, c.l})
+		return json.Marshal([]any{tag, c.l}, wireOpts)
 	}
-	return json.Marshal([]any{tag})
+	return json.Marshal([]any{tag}, wireOpts)
 }
 
 // UnmarshalJSON reads what MarshalJSON writes and refuses any other shape.
 func (c *Cell) UnmarshalJSON(b []byte) error {
-	var parts []json.RawMessage
+	var parts []jsontext.Value
 	if err := json.Unmarshal(b, &parts); err != nil || len(parts) == 0 || len(parts) > 2 {
 		return verr(CodeBadValue, "cell")
 	}

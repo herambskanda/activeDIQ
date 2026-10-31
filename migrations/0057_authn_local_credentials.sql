@@ -13,6 +13,7 @@
 -- The runtime role may not delete credentials (a removal is a state change of the account); throttle rows
 -- are operational state and may be deleted.
 
+-- write-class: authn_local_credentials config
 CREATE TABLE public.authn_local_credentials (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   account_id uuid NOT NULL,
@@ -24,6 +25,7 @@ CREATE TABLE public.authn_local_credentials (
 );
 CREATE UNIQUE INDEX authn_local_credentials_username ON public.authn_local_credentials (tenant_id, username_norm);
 
+-- write-class: authn_signin_throttle system
 CREATE TABLE public.authn_signin_throttle (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   key_hash bytea NOT NULL CHECK (octet_length(key_hash) = 32),
@@ -34,6 +36,7 @@ CREATE TABLE public.authn_signin_throttle (
 );
 CREATE INDEX authn_signin_throttle_window ON public.authn_signin_throttle (tenant_id, window_start);
 
+-- write-class: authn_signin_pepper system
 CREATE TABLE public.authn_signin_pepper (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id) PRIMARY KEY,
   sealed_secret bytea NOT NULL,

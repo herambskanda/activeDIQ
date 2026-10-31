@@ -1,4 +1,4 @@
--- 0061_inventory_nc_sync_passes: the last successful sync pass of each naming context (T-0949; spec
+-- 0063_inventory_nc_sync_passes: the last successful sync pass of each naming context (T-0949; spec
 -- reports-2a D6, reports.md §6.4, row P1). Owner: internal/directory/inventory (DM-14 NamingContext).
 --
 --  * last_pass_at is the as-of of the newest sync pass that completed for the NC: the start of the read,
@@ -11,6 +11,7 @@
 --    ok requires a pass; last_pass_at never moves back or to NULL, whichever writer holds the pen.
 --  * Written in the same transaction as the inventory rows the pass covers (DM-19.I1).
 
+-- write-class: nc_sync_passes system
 CREATE TABLE public.nc_sync_passes (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,

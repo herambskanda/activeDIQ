@@ -1,0 +1,112 @@
+{
+ "design-system-feedback--banners/light": {
+  "violations": [],
+  "passes": 14,
+  "incomplete": [
+   "bypass",
+   "color-contrast"
+  ]
+ },
+ "design-system-feedback--banner-long-content/light": {
+  "violations": [],
+  "passes": 12,
+  "incomplete": [
+   "bypass",
+   "color-contrast"
+  ]
+ },
+ "design-system-feedback--chips/light": {
+  "violations": [],
+  "passes": 8,
+  "incomplete": [
+   "bypass",
+   "color-contrast"
+  ]
+ },
+ "design-system-feedback--progress-states/light": {
+  "violations": [],
+  "passes": 18,
+  "incomplete": [
+   "bypass"
+  ]
+ },
+ "design-system-feedback--keys/light": {
+  "violations": [],
+  "passes": 10,
+  "incomplete": [
+   "bypass"
+  ]
+ },
+ "design-system-feedback--state-panel-with-actions/light": {
+  "violations": [],
+  "passes": 14,
+  "incomplete": [
+   "bypass"
+  ]
+ },
+ "design-system-feedback--banners/dark": {
+  "violations": [],
+  "passes": 14,
+  "incomplete": [
+   "bypass",
+   "color-contrast"
+  ]
+ },
+ "design-system-feedback--banner-long-content/dark": {
+  "violations": [],
+  "passes": 12,
+  "incomplete": [
+   "bypass",
+   "color-contrast"
+  ]
+ },
+ "design-system-feedback--chips/dark": {
+  "violations": [],
+  "passes": 8,
+  "incomplete": [
+   "bypass",
+   "color-contrast"
+  ]
+ },
+ "design-system-feedback--progress-states/dark": {
+  "violations": [],
+  "passes": 18,
+  "incomplete": [
+   "bypass"
+  ]
+ },
+ "design-system-feedback--keys/dark": {
+  "violations": [],
+  "passes": 10,
+  "incomplete": [
+   "bypass"
+  ]
+ },
+ "design-system-feedback--state-panel-with-actions/dark": {
+  "violations": [],
+  "passes": 14,
+  "incomplete": [
+   "bypass"
+  ]
+ }
+}
+BANNERS [{"cls":"diq-banner diq-banner--info","role":"status","glyph":"ⓘ","glyphHidden":"true","text":"ⓘNot synced yet: labs.exampleThat domain has not finished it"},{"cls":"diq-banner diq-banner--warn","role":"status","glyph":"⚠","glyphHidden":"true","text":"⚠Stale dataThe last successful sync of emea.corp.example was"},{"cls":"diq-banner diq-banner--crit","role":"alert","glyph":"✕","glyphHidden":"true","text":"✕Sync failedThe connection to emea.corp.example was refused."}]
+CHIPS [{"cls":"diq-chip diq-chip--ok","text":"✓ Synced","bg":"rgb(225, 241, 231)","fg":"rgb(23, 102, 58)"},{"cls":"diq-chip diq-chip--muted","text":"○ Expired: was synced 09:41 on","bg":"rgb(231, 229, 222)","fg":"rgb(86, 83, 76)"},{"cls":"diq-chip diq-chip--warn","text":"⚠Stale: last sync 3 h ago (eme","bg":"rgb(250, 235, 203)","fg":"rgb(127, 75, 0)"},{"cls":"diq-chip diq-chip--crit","text":"✕Failed","bg":"rgb(251, 227, 224)","fg":"rgb(174, 36, 28)"}]
+PROGRESS [{"label":"Run progress","min":"0","max":"100","now":"33","barW":"33%","w":104.9375,"full":320},{"label":"Run progress","min":"0","max":"100","now":null,"barW":"","w":127.1875,"full":320},{"label":"Complete","min":"0","max":"100","now":"100","barW":"100%","w":318,"full":320}]
+COPIED Ask an administrator to grant a scope. Nothing is broken. Copied 2 times.
+COPIED kbd Ask an administrator to grant a scope. Nothing is broken. Copied 4 times.
+ROLES alert: 1
+TAB [
+  'Retry|solid|2px|none',
+  'Back to the library|solid|2px|none',
+  '\n    \n  \n\n\n\n  \n    \n      \n      \n      |none|3px|none',
+  'Copy a request for your administrator|solid|2px|none'
+]
+NARROW design-system-feedback--banners { sw: 320, cw: 320 }
+NARROW design-system-feedback--banner-long-content { sw: 320, cw: 320 }
+NARROW design-system-feedback--state-panel-with-actions { sw: 320, cw: 320 }
+REDUCED [
+  'none/1e-05s/1e-05s',
+  'diq-sweep/1e-05s/1e-05s',
+  'none/1e-05s/1e-05s'
+]

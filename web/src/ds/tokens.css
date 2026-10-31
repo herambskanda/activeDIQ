@@ -173,6 +173,17 @@
   --diq-topbar-h: 48px;
   --diq-nav-w: 232px;
   --diq-sheet-w: 520px;
+  --diq-sheet-w-wide: 760px;
+  --diq-popover-w: 340px; /* minimum width of a popover menu */
+  --diq-toast-w: 720px; /* maximum width of a toast */
+  --diq-palette-w: 640px; /* command palette dialog width */
+  --diq-palette-list-h: 400px; /* command palette: tallest the results list grows before it scrolls */
+  /* Layers: popovers over the page, sheets over popovers, toasts over everything. */
+  --diq-z-popover: 5;
+  --diq-z-sheet: 10;
+  --diq-z-palette: 15; /* over a sheet (opened from inside one), under toasts */
+  --diq-z-toast: 20;
+  --diq-scrim: rgb(0 0 0 / 0.35); /* behind a modal sheet, both themes */
 
   /* ---- Motion: short, interruptible, off under reduced motion ---------- */
   --diq-ease: cubic-bezier(0.2, 0.7, 0.2, 1);

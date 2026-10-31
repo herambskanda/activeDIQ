@@ -1,0 +1,5 @@
+internal/modules/reports/doc.go:14:	RunPermission authz.Permission = "reports.run"
+internal/modules/reports/doc.go:16:	ExportPermission authz.Permission = "reports.export"
+internal/modules/reports/doc.go:18:	SchedulePermission authz.Permission = "reports.schedule"
+internal/modules/reports/doc.go:21:	ScheduleManageAllPermission authz.Permission = "reports.schedule.manage_all"
+internal/modules/reports/doc.go:24:	DeliverExternalPermission authz.Permission = "reports.deliver.external"

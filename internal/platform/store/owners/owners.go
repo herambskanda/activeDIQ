@@ -1,18 +1,38 @@
-// Package owners is the table ownership map (ADR-0003 rule 6): which package owns which table.
-// It is a data-only leaf that imports nothing, so platform/module can read it without linking the
-// store. module.Boot and report.Host check every dataset's tables against it.
+// Package owners is the table ownership map (ADR-0003 rule 6): which package owns which table, and
+// the table's write class (ADR-0005 rule 10). It is a data-only leaf that imports nothing, so
+// platform/module can read it without linking the store. module.Boot and report.Host check every
+// dataset's tables against it.
 //
-// The map is meant to be generated from the migrations (`-- write-class:` lines beside each
-// table) by tools/gen/modules into owners.gen.go. That generator has not landed (T-0652 covers
-// only the agent module list), so the map is empty and Lookup fails closed: a dataset naming any
-// table is refused at Boot until its owner appears here. Do not fill it by hand.
+// The map is generated, never written by hand: tools/gen/modules reads the migrations (the owner key
+// is the second segment of the migration's file name; the class is the `-- write-class: <table>
+// config|system` line beside the CREATE TABLE) and writes owners.gen.go. `make gen-modules-check`
+// fails the build when the file is stale. A table no migration creates has no owner, so Lookup fails
+// closed: a dataset naming it is refused at Boot.
 package owners
 
-// Lookup returns the owner key of a table, or false when no owner declared it.
-func Lookup(table string) (owner string, ok bool) {
-	owner, ok = byTable[table]
-	return owner, ok
+// Class is a table's write class (ADR-0005 rule 10).
+type Class string
+
+const (
+	// Config tables are changed by a principal, so every write is an Action that takes a step.Step.
+	Config Class = "config"
+	// System tables are bookkeeping written by their owner (the closed list in ADR-0005 rule 10).
+	System Class = "system"
+)
+
+type entry struct {
+	owner string
+	class Class
 }
 
-// byTable is replaced by the generated owners.gen.go; until then it is empty.
-var byTable = map[string]string{}
+// Lookup returns the owner key of a table, or false when no migration creates it.
+func Lookup(table string) (owner string, ok bool) {
+	e, ok := byTable[table]
+	return e.owner, ok
+}
+
+// ClassOf returns the write class of a table, or false when no migration creates it.
+func ClassOf(table string) (class Class, ok bool) {
+	e, ok := byTable[table]
+	return e.class, ok
+}

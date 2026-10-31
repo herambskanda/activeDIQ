@@ -1,0 +1,44 @@
+{
+  "id": "usr-05",
+  "version": 1,
+  "category": "users",
+  "title": "Locked-out users",
+  "description": "Accounts that are locked out right now, computed from lockoutTime and the effective lockout duration at the moment the report runs.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "domain",
+    "dn",
+    "lockout_time",
+    "lockout_ends_at",
+    "policy_source",
+    "observed_at"
+  ],
+  "sort": [
+    {
+      "column": "lockout_time",
+      "dir": "desc"
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn"
+  ],
+  "presets": [
+    {
+      "id": "locked_out",
+      "names": [
+        "Locked-out Users"
+      ],
+      "where": {
+        "cmp": {
+          "col": "locked_out",
+          "op": "eq",
+          "value": {
+            "enum": "locked"
+          }
+        }
+      }
+    }
+  ]
+}

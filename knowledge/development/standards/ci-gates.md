@@ -9,8 +9,8 @@ ticket: T-0014
 
 # Standard: CI gates and `make ci`
 
-**Rule.** `make ci` is the one command that must pass before anything merges (the dispatcher runs it
-pre-merge once T-0015 lands). A gate is not a gate until a deliberate violation makes it fail:
+**Rule.** `make ci` is the one command that must pass before anything merges. The dispatcher runs it on the
+merge result before every merge (the pre-merge gate, T-0941, below). A gate is not a gate until a deliberate violation makes it fail:
 `make ci-proof` (part of `make ci`) keeps every gate honest by running it against a violation and
 against clean input.
 
@@ -45,6 +45,7 @@ against clean input.
 | Fitness: `fitness-agent-host` | `go run ./tools/fitness/agenthost` (`-checks R1,A1,P,…` for a subset; `make fitness-agent-host` adds a 20 s `FuzzF1` run) | T-0554, ADR-0006 and ADR-0007, TM-F-AGENTCMD CI half. **R1/R2/R5** (run the AG rules of `fitness-proto` against `proto/skenzeriq/agent/v1` and `proto/activediq/addc/v1`): an RPC off the golden list or with a denied verb (exec, delete, file write, service/registry, update outside TUF), a streaming RPC; `Any`, `map`, `bytes` or a free string in a policy; a password/credential/hash field; a fail-mode field. **R3** (allowlist): an `internal/agentmodules` file (non-`.go` files too) importing anything outside the reviewed stdlib/own-package list (so `x/sys/windows`, `syscall`, `unsafe`, cgo, `io/ioutil`, `os/exec`, `plugin`, any dot or blank import fail), or calling a file-mutating or process-starting API. **R4**: any own-module package in the agent's import closure (and `cmd/agent`, `internal/agentmodules`, `internal/compose/agent`) using a selector named `Listen*`, `Serve*`, `ListenConfig`, `NewServer`, or `syscall`/`windows` `Bind`. **A1** (allow by exception, every WiX source anywhere in the repo plus files under `packaging/` naming the agent; DOCTYPE/ENTITY and named entities fail; every ServiceInstall is pinned to the restricted SID and the one privilege unless its Id is reviewed): LocalSystem/LocalService/NetworkService text or the `CurrentControlSet\Services` key anywhere; a service element whose name is a variable or property; a ServiceInstall `Account` other than `NT SERVICE\activeDIQAgent`, a password, more than one agent ServiceInstall, a service SID type other than `restricted`, RequiredPrivileges other than `SeChangeNotifyPrivilege`; any `CustomAction`/`Binary` or agent-packaging script not listed in `installer-allow.txt` (five fixed-verb `agentsetup` actions, attributes pinned in check.go; T-0688); an HKLM/HKMU registry key under `SYSTEM\` or built from a property; an `sc.exe`/`Set-Service`/WMI account line not naming the pin; Merge/MergeRef and `.msm` (T-0759); a `.mst`/`.msp`/`.pcp` anywhere, and MSBuild judged by **allowlist** (T-0762): a `.wixproj`, `.wixproj.user` or reaching `Directory.Build.*`/packaging `.props`/`.targets` may hold only Project/PropertyGroup/ItemGroup/`Import Sdk.props|Sdk.targets` of the pinned WiX SDK, reviewed property names and item types (Compile, BindPath, Content, None); any other element, property, item (ProjectReference), attribute, `$([...])`/Registry lookup, DOCTYPE, foreign or listed SDK, or PackageReference/WixExtension not in `msbuildReviewedPackages` fails; any `.rsp` reaching WiX fails; `nuget.config` must be nuget.org-only and `global.json` a plain `sdk.version` pin; a `BaseIntermediateOutputPath` redirect, a `&#` character reference, and, on decoded element text and attribute values (comments and CDATA joined), every `$(` that is not immediately a plain `$(PropertyName)` reference (whitespace of any Unicode kind, `[`, `Registry:`, nesting or an unterminated `$(` all fail; an allowlist, not a denylist), and every `<wixproj>.*.props|targets` or `.props|.targets` in or below a `.wixproj` directory (MSBuild's wildcard imports) are judged too; none approvable via `installer-allow.txt`. **A4** (allowlist): `go list -deps ./cmd/agent` (windows and linux) containing any non-stdlib package not in `tools/fitness/agenthost/closure-allow.txt`, or a named LDAP, Kerberos, SSPI, SMB, MSRPC client or our `internal/directory`/`internal/connector`. **P1-P8, F1**: the named Go tests in `internal/platform/agentpolicy[/signer]` (wrong tenant, replay/rollback across restart, expiry, unknown key, keyset by unknown key, overlap and drop, anchor, only-the-signer key access; every §3 bound rejected) must exist, run and pass; a renamed, skipped or deleted one fails. A check whose subject does not exist yet (agent proto, installer) prints `inactive (<missing input>)`, exits 0, and ADR-0006/0007 are not `accepted` while any is inactive | the real CLI on a throw-away tree: denied verb, path in policy, password field, LocalSystem, extra privilege, directory client in the binary, `os/exec` in a module, a listener, `windows.CreateProcess`, a dot-import, `net.ListenConfig`, a package off the closure allowlist, a last-wins ServiceSid, LocalSystem in an install script, a variable service name in an unselected WiX file, a quoted `sc.exe` custom action, a property-split HKLM\SYSTEM key, an unreviewed script, a look-alike own package path, `filepath.WalkDir`, a DOCTYPE-built service name, a second service with an unrestricted SID, LocalSystem in WiX outside `packaging/` (`tools/ci/proof.sh`); the Go-test half by mutating the verifier (tenant check, replay check, a loosened bound) and watching P1, P2, F1 fail; every rule also has a fixture in `tools/fitness/agenthost/check_test.go` |
 | Fitness: `fitness-built-msi` | `go run ./tools/fitness/builtmsi -glob 'dist/*.msi'` (`make fitness-built-msi`; `-require` in the release job once an MSI is built) | T-0697, ADR-0006 A1 on the built artefact: `msidump` the MSI and fail on a ServiceInstall `StartName` other than `NT SERVICE\<Name>` (empty = LocalSystem), a Password, other than exactly one agent service, a missing or non-restricted SID (`MsiServiceConfig` ConfigType 3 != 3), privileges other than `SeChangeNotifyPrivilege` (ConfigType 4), a `CustomAction` not pinned in `builtmsi/pinned-actions.txt` and `installer-allow.txt`, any `Binary` row, any `MsiLockPermissionsEx`/`LockPermissions` row, settings rows that do not apply on install or sit in another/conditional component, `MsiEmbeddedChainer`/`MsiEmbeddedUI` rows, reboot/command failure actions, `ServiceControl` of any other service, an HKLM\SYSTEM registry row. Prints `inactive` with no MSI | `tools/fitness/builtmsi` tests (a table-level fixture per rule and a real wixl-built MSI) and `tools/ci/proof.sh` (MSIs generated into `obj/` at build time: LocalSystem, unrestricted SID, extra privilege, unreviewed action, service-keyed DACL, uninstall-only settings, missing MSI under `-require`; the clean MSI passes) |
 | Generated code freshness: `gen-check` | `go run ./tools/gen/proto -check` | `internal/proto` is stale, hand-edited or holds an orphaned `*.pb.go` against a fresh generation from `proto/` | the real CLI on a throw-away tree: hand-edited, orphaned and missing file each refused (`tools/ci/proof.sh`) |
+| Generated code freshness: `gen-modules-check` (T-0997) | `go run ./tools/gen/modules -check` | `internal/platform/store/owners/owners.gen.go` is stale, hand-edited or missing against the migrations (owner key = second segment of the file name `NNNN_<owner>_<what>.sql`, class = the `-- write-class: <table> config\|system` line beside the `CREATE TABLE`); a table without a class line, a class that is neither `config` nor `system`, a class line for a table the file does not create, a table created twice, a `DROP TABLE` or rename, a `CREATE TABLE` form the parser cannot read or one inside a function or `DO` body | the real CLI on a throw-away repository layout: missing, hand-edited and stale file, no class and an unknown class each refused (`tools/ci/proof.sh`); every refusal also has a case in `tools/gen/modules/modules_test.go` |
 | SAML fuzz: `fuzz-saml` (T-0490) | `tools/ci/fuzz-target.sh internal/platform/authn/sso/saml FuzzSAMLComplete 60s` (`SAML_FUZZ_TIME` overrides) | `go test -fuzz` finds an input where the SAML verifier returns a tuple the test IdP did not sign, or accepts an assertion twice; the target is missing or never fuzzed (no `fuzz: elapsed` output) | a throw-away target whose oracle is violated, a missing target, a clean target, and `make -n ci` containing the 60s invocation (`tools/ci/proof.sh`) |
 | Dependency vulnerability scan: `vuln-scan` | `go run ./tools/vulnscan` (govulncheck v1.9.0 pinned in `tools/vulntools`; allow list `tools/ci/vuln-allow.json`) | govulncheck reports a vulnerability the code *calls* (symbol level, standard library included) that has no unexpired allow entry; an allow entry is past its expiry or matches no finding; an entry lacks an OSV id, a reason, a `T-NNNN` ticket or a `YYYY-MM-DD` expiry; or the vulnerability database cannot be read or govulncheck does not finish (exit non-zero, message names the cause and the `GOVULNDB` mirror override; never a skip) | a throw-away module calling `x/text` v0.3.7 `ParseAcceptLanguage` (GO-2022-1059): rejected, accepted with an unexpired entry, rejected once the entry has expired, rejected with a stale entry or one without a reason; a clean module accepted; `GOVULNDB` at a missing path rejected (`tools/ci/proof.sh`); the parser and verdict also have table tests in `tools/vulnscan/scan_test.go` |
 | Web build | `vite build` | the build fails | — (a build failure is its own signal) |
@@ -61,10 +62,68 @@ Each of these has an owner; none is faked.
 | Safe-primitives FF-SP5 nightly fuzz log and the FF-SP6 Windows (PowerShell 5.1, SID, GUID) and Samba lab rows: the targets exist (`fitness-nightly`, `fitness-oracles-windows`) but no scheduler or Windows runner exists | follow-up tickets from T-0034 (runbook `safe-primitives-fitness.md`) |
 | Safe-primitives FF-SP9 to FF-SP11 | the `psx` build, the P7 build tickets |
 | Activation-table checks P2 to P6, U3 and U4 (installer build and boot, connector transports, multi-tenant composition, offline round trip, no egress, agent contract): each is implemented by the ticket that lands its subject, and `fitness-profiles` fails until it is | the packaging, connector, updater and agent-proto tickets (T-0039, T-0040, M2) |
-| `modules.gen.go` / `modules.gen.ts` staleness, which needs `tools/gen/modules` | the module-system ADR (T-0045) |
+| `modules.gen.go` / `modules.gen.ts` staleness (the module lists; `tools/gen/modules` writes only the ownership map so far, T-0997) | the module-system ADR (T-0045) |
 | `fitness-api` checks A2-A8, A10-A12 (static, they need operations) and A4, A6, A7, A14 (runtime, they need `apihost.Build`); A9 is T5 in `fitness-tenancy`. Each prints `inactive` until its input exists | the API-contract fitness tickets (follow-ups of T-0011) |
 | Duplication check; npm/web audit; installer and binary signing | later `ops` tickets; key custody is T-0140/T-0141 |
-| Dispatcher runs `make ci` before merge | T-0015 |
+
+## The pre-merge gate (T-0941)
+
+Until T-0941 nothing ran `make ci` at merge: the dispatcher's merge was a bare `git merge`, and a
+worker's own `make ci` ran on its branch, not on the merge result. ADR-0001 and ADR-0002 named a
+"dispatcher pre-merge gate (T-0015)", but that id became the Go upgrade and no ticket built the gate.
+So `fitness-profiles` was red on `main` (6 findings at the T-0104 merge, 88 at the T-0555 merge) and each
+of those merges still added findings: T-0104 took it from 6 to 8 (activation rows P2, P6 for
+`packaging/windows/`), T-0555 from 88 to 90 (U3, U4 for `proto/skenzeriq/agent/`).
+
+What the dispatcher does now for a finished code ticket (`factory/lib/premerge.mjs`, config
+`dispatcher.pre_merge`):
+
+1. Builds the merge result (`main` plus the branch) in a scratch worktree and runs `make -k ci` there.
+   `-k` keeps going after a failure so every red job is seen.
+2. Green: merge. A merge conflict: reopen the ticket as before.
+3. Red and `main` green: refuse. Everything the run reports is new.
+4. Red and `main` red: run the same command on `main` (cached per `main` commit), compare **findings**
+   as a multiset and refuse only if the merge result has one `main` does not. A finding is the check
+   and message with the line and column, durations and the worktree path removed, so an old finding
+   that moves does not count, a second copy of an old one does, and a job that turns red counts as the
+   finding `FAILED <target>`. A run that fails with no recognisable finding line is refused.
+5. A refused ticket returns to `in_progress` for its owner with the findings and the log paths in the
+   note. If the gate cannot judge (timeout, worktree failure) nothing merges and it is retried after
+   10 minutes.
+
+**Migration numbering (T-1067).** Before the full command the gate runs a cheap check on the same merge
+result (`dispatcher.pre_merge.numbering`: `go test ./migrations/ -run ^TestMigrationNumbersAreUniqueAndContiguous$`,
+no database, about 1 s warm). Two parallel branches that each add `00NN` pass that test alone and collide only
+once merged; four such collisions reached `main` (0034/0035 T-0505, 0047 T-0597/T-0608, 0061 T-1066), and the
+full-run ratchet could not be relied on to catch it while `main` was red. A failure refuses the merge
+before `main` moves and reopens the ticket with `Renumber to NNNN: git mv …`, the number being the next free
+one on current `main`. It is judged absolutely, not against `main`'s baseline, and a check that cannot run
+(timeout, no `go`) throws like any other gate failure. Test: `factory/test/premerge-numbering.test.mjs`.
+
+A finding line is recognised by shape (`findingKey` in `factory/lib/premerge.mjs`; line numbers,
+durations, scratch paths and the worktree path are not part of the key):
+
+| Shape | Printed by |
+| --- | --- |
+| `path:line[:col]: message` (also `P1 (ADR-0002 fitness function): …`) | profiles, safeprim, modules, operation, api, proto, objectid, grantbootstrap, disclosure |
+| `<where>:line <check> [<rule>]: message` | fleetca, reports, keycustody, the bound-test failures |
+| `<check> <where> [<rule>]: message` | tenancy, audit, domainkeys |
+| `<where>: <check> [<rule>]: message` | corpus |
+| `<file or dotted name>: message`, no line (`go.mod: F4 (ADR-0001 rule 4): …`, `<scenario>/<case>: …`, `attr.sid: FF-SP6 …`) | stack, api A5, tenancy OpenAPI, packaging, disclosure, update, oracles |
+| `fitness-x: FAIL: …` / `fitness-x: <message>` | sso, built-msi, update-offline |
+| a heading `<id> <what>: FAIL` or `FAIL <case>`, then one indented line per violation (key `FAIL <id>: <line>`; a `GAP` heading is a tolerated gap, not a finding) | agent-host, host |
+| a failed make target, `--- FAIL`, `FAIL pkg` | any |
+
+Progress and summary lines (`ok`, counts, `inactive`, `pending`, `PostgreSQL 16 (…)`) are not findings.
+A job that prints violations in none of these shapes is red on `main` but not ratcheted: new
+findings in it pass while it is red. So every job of `make fitness` has a sample violation line in
+`JOBS` in `factory/test/premerge.test.mjs`; a test fails when a job of the target has none, and one
+run through the gate per shape shows a violation added to a red job is refused naming it. A new
+fitness tool adds its line there, and prints one self-contained line per violation. A new shape goes
+into `findingKey` (or, for a heading with indented violations, `FAIL_BLOCK`) in `extractFindings`.
+
+Dry run, changes nothing: `factory/bin/factory premerge T-NNNN` (or `… -- make fitness-profiles` to
+run one job). Tests: `node --test factory/test/premerge.test.mjs`. Runbook: `runbooks/ci-and-build.md`.
 
 ## Rules for adding a gate
 

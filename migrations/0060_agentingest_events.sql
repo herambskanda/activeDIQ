@@ -6,6 +6,7 @@
 --                                server from the client certificate; nothing in the payload names them.
 --                                Append-only; the agent's own gapless agent_seq makes redelivery idempotent.
 
+-- write-class: agent_event system
 CREATE TABLE public.agent_event (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   component_id uuid NOT NULL,
