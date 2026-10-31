@@ -46,6 +46,9 @@ export function LibraryPage({ client = api }: { readonly client?: ApiClient }) {
 
   const { state, retry, loadMore } = useDefinitions(client, { q, category });
   const filtered = q !== "" || category !== "";
+  // A role without reports.run has nothing to filter: the controls would change the address and
+  // nothing else, so they are not rendered.
+  const forbidden = state.status === "failed" && state.failure.kind === "forbidden";
 
   let body;
   if (state.status === "loading") {
@@ -149,24 +152,26 @@ export function LibraryPage({ client = api }: { readonly client?: ApiClient }) {
 
   return (
     <ReportsFrame client={client}>
-      <form role="search" className="rp-lib__filter" onSubmit={(e) => e.preventDefault()}>
-        <TextInput
-          label="Filter reports"
-          type="search"
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="Report name, ManageEngine name or description"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-        />
-        <Select
-          label="Category"
-          placeholder="All categories"
-          options={CATEGORIES.map((c) => ({ value: c.id, label: c.label }))}
-          value={category}
-          onChange={(v) => setParams({ category: v })}
-        />
-      </form>
+      {!forbidden && (
+        <form role="search" className="rp-lib__filter" onSubmit={(e) => e.preventDefault()}>
+          <TextInput
+            label="Filter reports"
+            type="search"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Report name, ManageEngine name or description"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <Select
+            label="Category"
+            placeholder="All categories"
+            options={CATEGORIES.map((c) => ({ value: c.id, label: c.label }))}
+            value={category}
+            onChange={(v) => setParams({ category: v })}
+          />
+        </form>
+      )}
       <section aria-busy={state.status === "loading"} aria-label="Reports">
         {body}
       </section>

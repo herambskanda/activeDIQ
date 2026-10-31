@@ -234,6 +234,9 @@ test("a role without reports.run sees no report entry and search finds none (AC-
   await page.goto("/reports");
   await expect(page.getByText("You don't have access to reports")).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0);
+  // No control that does nothing: the filter box and category select are not rendered.
+  await expect(page.getByLabel("Filter reports")).toHaveCount(0);
+  await expect(page.getByLabel("Category")).toHaveCount(0);
   await page.keyboard.press("/");
   await page.getByRole("combobox", { name: "Search reports" }).fill("logon");
   await expect(page.getByText("No reports are available to your role.")).toBeVisible();

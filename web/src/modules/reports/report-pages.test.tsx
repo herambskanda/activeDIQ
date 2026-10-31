@@ -426,6 +426,9 @@ describe("the library", () => {
     respond = () => problem(403, "Forbidden");
     await mount("/reports", "library");
     expect(text()).toContain("You don't have access to reports");
+    // Nothing on the page may be a control that does nothing: no filter box, no category select.
+    expect(container.querySelector('input[type="search"]')).toBeNull();
+    expect(text()).not.toContain("Category");
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "/", bubbles: true }));
     });
