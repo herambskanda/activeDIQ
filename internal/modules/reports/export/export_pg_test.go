@@ -515,3 +515,39 @@ func TestGuardRefusesBadEdges(t *testing.T) {
 		}
 	})
 }
+
+// Create checks reports.run before it reads the run (security review F1): on a finished run and on an
+// expired one, where it would otherwise start a new run. With no Authorizer it fails closed.
+func TestCreateNeedsReportsRun(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		r := e.finishedRun(alice)
+		runs := `SELECT count(*) FROM public.report_runs`
+		exports := `SELECT count(*) FROM public.report_exports`
+		base := e.count(runs)
+		e.authz.deny["reports.run"] = true
+		if _, err := e.exp.Create(ctx, e.tid, chainOf(alice), r.ID, export.CSV); !errors.Is(err, export.ErrNotPermitted) {
+			t.Fatalf("finished run: %v", err)
+		}
+		*e.clock = e.clock.Add(run.ResultRetention + time.Hour)
+		if _, err := e.exp.Create(ctx, e.tid, chainOf(alice), r.ID, export.CSV); !errors.Is(err, export.ErrNotPermitted) {
+			t.Fatalf("expired run: %v", err)
+		}
+		if n := e.count(runs); n != base {
+			t.Errorf("a refused export started a run: %d, was %d", n, base)
+		}
+		if n := e.count(exports); n != 0 {
+			t.Errorf("report_exports rows: %d", n)
+		}
+		for _, ev := range e.sink.ev {
+			if ev.Kind == export.KindCreated {
+				t.Errorf("a refused export audited %s", ev.Kind)
+			}
+		}
+		e.exp.Authz = nil
+		if _, err := e.exp.Create(ctx, e.tid, chainOf(alice), r.ID, export.CSV); !errors.Is(err, export.ErrNotPermitted) {
+			t.Errorf("no authorizer: %v", err)
+		}
+	})
+}

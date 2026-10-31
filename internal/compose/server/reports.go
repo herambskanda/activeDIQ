@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/blob"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/operation"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -31,13 +34,13 @@ import (
 //
 // Both are filed as follow-ups on T-0959. A third port fails closed the same way: with no blob store
 // (blobDir empty) an export answers 503 not-ready rather than keep a file anywhere else.
-func buildReports(db *store.DB, jreg *jobs.Registry, sink audit.Sink, reader *inventory.Reader, scopes run.ReadScopes, blobDir string) (*run.Service, apihost.TagHandlers, error) {
+func buildReports(db *store.DB, jreg *jobs.Registry, sink audit.Sink, reader *inventory.Reader, scopes run.ReadScopes, az operation.Authorizer, blobDir string) (*run.Service, apihost.TagHandlers, error) {
 	if scopes == nil {
 		scopes = noScopes{}
 	}
 	svc := &run.Service{DB: db, Jobs: jreg, Scopes: scopes, Audit: sink, Catalog: noLibrary{}, Codec: reports.Codec{},
 		Fresh: inventoryFreshness{r: reader}}
-	exports := &export.Service{DB: db, Jobs: jreg, Runs: svc, Audit: sink}
+	exports := &export.Service{DB: db, Jobs: jreg, Runs: svc, Audit: sink, Authz: reportsAuthz{az}}
 	if blobDir != "" {
 		bs, err := blob.NewFS(blobDir)
 		if err != nil {
@@ -93,4 +96,24 @@ func (f inventoryFreshness) Freshness(ctx context.Context, tid tenant.ID, cs []a
 		return report.Freshness{}, 0, err
 	}
 	return res.Label, res.Threshold, nil
+}
+
+// reportsAuthz answers export.Authorizer from the shared RBAC authorizer, at tenant scope like the API
+// host's permission step. A missing authorizer, or any fault, refuses: it never allows by default.
+type reportsAuthz struct{ az operation.Authorizer }
+
+func (a reportsAuthz) Allow(ctx context.Context, tid tenant.ID, c authority.Chain, p authz.Permission) (bool, error) {
+	if a.az == nil {
+		return false, nil
+	}
+	target := authority.TargetRef{Class: rbac.TargetClassTenant, GUID: tid.String()}
+	err := a.az.Authorize(authority.WithTenant(ctx, tid.String()), c, p, target, authority.Facts{})
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, rbac.ErrDenied):
+		return false, nil
+	default:
+		return false, err
+	}
 }

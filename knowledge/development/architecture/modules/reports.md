@@ -1132,9 +1132,14 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 
 ### 7.1a As built (T-0963, row B9)
 
-- **Package `internal/modules/reports/export`.** `Service{DB, Jobs, Runs, Blob, Audit, Now, Caps, Log}`
+- **Package `internal/modules/reports/export`.** `Service{DB, Jobs, Runs, Blob, Audit, Authz, Now, Caps, Log}`
   with `Create`, `Get`, `Delete`, `Download`; `job.go` is the `reports.export` job; `about.go` builds the
   About lines. The 4 export operations of the API are served from it (no longer 501).
+- **Second permission.** The route carries `reports.export`; `Create` checks `reports.run` itself,
+  through `export.Authorizer` (compose adapter `reportsAuthz` over the RBAC authorizer, tenant scope), as its
+  first act, before the run is read and before a rerun could start one: 403 on both the finished and the
+  expired-source path, with no row, job, file, audit event or new run. No `Authz` fails closed (403). Putting
+  it in the service, not the handler, means B11's scheduled exports pass the same gate (security review F1).
 - **Caps refuse, never truncate.** `Create` checks `row_count` against the format's cap before any
   row, job or file exists (`*CapError`, names the alternative format). The job checks again (an
   expired source is rerun, so its count is known only then). `Service.Caps` may only lower the hard
@@ -1455,4 +1460,5 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   `run.StoredSource` and `run.PageAfter`, `ACTIVEDIQ_BLOB_DIR`, RP5 landed. As built: §7.1a. Follow-ups:
   no scheduled `blob.Sweep` in the compose root (expired files stay on disk until swept; reads are
   already refused); the export row cap has no config surface; a rerun run can be left behind when the job
-  limit refuses the export right after `Retry`.
+  limit refuses the export right after `Retry`. Security review F1 added the `reports.run` check inside
+  `Create` (see §7.1a).

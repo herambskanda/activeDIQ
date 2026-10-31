@@ -151,6 +151,14 @@ type env struct {
 	sink    *recSink
 	clock   *time.Time
 	blobDir string
+	authz   *permissions
+}
+
+// permissions is the export service's authorizer in tests: everyone holds everything except what deny names.
+type permissions struct{ deny map[string]bool }
+
+func (p *permissions) Allow(_ context.Context, _ tenant.ID, _ authority.Chain, perm authz.Permission) (bool, error) {
+	return !p.deny[string(perm)], nil
 }
 
 func dataset() report.Dataset {
@@ -211,12 +219,12 @@ func setup(t *testing.T, s *storetest.Server) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, db: db, tid: tid, reg: jobs.NewRegistry(), sink: &recSink{}, clock: &now, blobDir: dir,
+	e := &env{t: t, db: db, tid: tid, reg: jobs.NewRegistry(), sink: &recSink{}, clock: &now, blobDir: dir, authz: &permissions{deny: map[string]bool{}},
 		scopes: &fakeScopes{m: map[string]authz.ReadScope{alice: authztest.ReadScope(grant(conn1)), bob: authztest.ReadScope(grant(conn1))}}}
 	clock := func() time.Time { return *e.clock }
 	e.runs = &run.Service{DB: db, Jobs: e.reg, Scopes: e.scopes, Audit: e.sink, Catalog: catalog{run.Definition{Def: def, SHA256: [32]byte{1}, Dataset: src, SQL: sqlDS}},
 		Codec: codec{}, Fresh: fresh{at: now.Add(-time.Minute)}, Now: clock}
-	e.exp = &export.Service{DB: db, Jobs: e.reg, Runs: e.runs, Blob: bs, Audit: e.sink, Now: clock}
+	e.exp = &export.Service{DB: db, Jobs: e.reg, Runs: e.runs, Blob: bs, Audit: e.sink, Now: clock, Authz: e.authz}
 	for _, k := range []jobs.Kind{e.runs.Kind(), e.runs.RetentionKind(), e.exp.Kind()} {
 		if err := e.reg.Register(k); err != nil {
 			t.Fatal(err)

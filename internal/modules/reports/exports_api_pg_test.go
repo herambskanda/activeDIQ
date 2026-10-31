@@ -3,12 +3,16 @@ package reports_test
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	jsonv2 "encoding/json/v2"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/modules/reports/export"
+	"github.com/skenzeriq/activediq/internal/modules/reports/run"
+	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 )
 
@@ -97,6 +101,75 @@ func TestExportAPI(t *testing.T) {
 		b, _ := jsonv2.Marshal(p)
 		if code != 422 || !strings.Contains(string(b), "report-row-cap-exceeded") || !strings.Contains(string(b), "This export has 3 rows. CSV allows 2.") || !strings.Contains(string(b), "XLSX") {
 			t.Errorf("cap refusal: %d %s", code, b)
+		}
+	})
+}
+
+// count runs a single-count query as the tenant.
+func (e *apiEnv) count(sql string) int {
+	e.t.Helper()
+	var n int
+	if err := e.db.WithTenant(context.Background(), e.tid, func(ctx context.Context, tx store.Tx) error { return tx.QueryRow(ctx, sql).Scan(&n) }); err != nil {
+		e.t.Fatal(err)
+	}
+	return n
+}
+
+// createReportExport needs reports.export (the route's) and reports.run (checked inside, before any run is
+// read; security review of T-0963 F1). A caller whose role was cut back to reports.export alone is refused
+// with 403 for a finished run and for an expired one: no export, no job, no audit event, and the expired
+// source is not run again (a rerun would start a report the caller may no longer run). The mirror, reports.run
+// without reports.export, is refused at the route.
+func TestExportNeedsReportsRun(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := apiSetup(t, s)
+		_, rn := e.do(alice, "POST", "/api/v1/reports/runs", `{"definitionId":"tst-01"}`)
+		runID := rn["id"].(string)
+		e.work()
+		url := "/api/v1/reports/runs/" + runID + "/exports"
+		const exports = `SELECT count(*) FROM public.report_exports`
+		const runs = `SELECT count(*) FROM public.report_runs`
+		baseRuns := e.count(runs)
+
+		e.door.deny = map[string]bool{"reports.run": true}
+		if code, m := e.do(alice, "POST", url, `{"format":"csv"}`); code != 403 {
+			t.Fatalf("finished run without reports.run: %d %v", code, m)
+		}
+		if n := e.count(exports); n != 0 {
+			t.Errorf("a refused export left %d report_exports rows", n)
+		}
+		for _, ev := range e.xsink.ev {
+			t.Errorf("a refused export audited %s", ev.Kind)
+		}
+		e.work() // an export job, had one been queued, would run here
+		if n := e.count(exports); n != 0 {
+			t.Errorf("report_exports rows after work: %d", n)
+		}
+
+		// the same caller, the source run past its retention: the refusal comes before the rerun
+		future := time.Now().Add(run.ResultRetention + time.Hour)
+		e.svc.Now = func() time.Time { return future }
+		e.exp.Now = e.svc.Now
+		if code, m := e.do(alice, "POST", url, `{"format":"csv"}`); code != 403 {
+			t.Fatalf("expired run without reports.run: %d %v", code, m)
+		}
+		if n := e.count(runs); n != baseRuns {
+			t.Errorf("a refused export started a run: report_runs %d, was %d", n, baseRuns)
+		}
+		if n := e.count(exports); n != 0 {
+			t.Errorf("report_exports rows: %d", n)
+		}
+
+		// both permissions: the export is accepted (the rerun itself is covered in package export; the reuse window reads the database clock, which this test does not move)
+		e.door.deny = nil
+		if code, m := e.do(alice, "POST", url, `{"format":"csv"}`); code != 202 {
+			t.Fatalf("expired run with both permissions: %d %v", code, m)
+		}
+
+		// reports.run without reports.export is the route's refusal
+		e.door.deny = map[string]bool{"reports.export": true}
+		if code, m := e.do(alice, "POST", url, `{"format":"csv"}`); code != 403 {
+			t.Errorf("without reports.export: %d %v", code, m)
 		}
 	})
 }

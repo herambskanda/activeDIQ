@@ -17,6 +17,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/blob"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -25,13 +26,23 @@ import (
 
 // Errors the handlers map to Problems. None carries a request value.
 var (
-	ErrExportNotFound    = errors.New("export: no such export")                  // 404 export_not_found
-	ErrFormatUnavailable = errors.New("export: that format is not available")    // 400 format_unavailable
-	ErrExportNotReady    = errors.New("export: the file is not ready")           // 409 export_not_ready
-	ErrExportInProgress  = errors.New("export: the export is queued or running") // 409 export_in_progress
-	ErrExportExpired     = errors.New("export: the file has expired")            // 410 report-result-expired
-	ErrExportUnavailable = errors.New("export: no blob store is configured")     // 503 not-ready
+	ErrExportNotFound    = errors.New("export: no such export")                       // 404 export_not_found
+	ErrFormatUnavailable = errors.New("export: that format is not available")         // 400 format_unavailable
+	ErrExportNotReady    = errors.New("export: the file is not ready")                // 409 export_not_ready
+	ErrExportInProgress  = errors.New("export: the export is queued or running")      // 409 export_in_progress
+	ErrExportExpired     = errors.New("export: the file has expired")                 // 410 report-result-expired
+	ErrExportUnavailable = errors.New("export: no blob store is configured")          // 503 not-ready
+	ErrNotPermitted      = errors.New("export: the caller does not hold reports.run") // 403
 )
+
+// Authorizer answers whether a requester holds a permission in a tenant, over live RBAC facts. It is the
+// port the second permission of createReportExport is checked through (contract reports.yaml; reports.md
+// 6.6 check 1): reports.export is the route's, reports.run is checked here, before any run is read, so an
+// export of an old run, or a rerun of an expired one, needs the right to run the report today.
+// compose/server implements it over the same authorizer the API host uses.
+type Authorizer interface {
+	Allow(ctx context.Context, tid tenant.ID, c authority.Chain, permission authz.Permission) (bool, error)
+}
 
 // CapError is an export refused for its size (FR-18): the row count, the format's cap and the formats that
 // would take the result. Nothing is written when it is returned: no row, no job, no file.
@@ -82,13 +93,16 @@ const Component = "reports"
 
 const targetClass = "report_export"
 
-// Service is the export path. DB, Jobs, Runs, Blob and Audit are required; Now, Caps and Log are optional.
+// Service is the export path. DB, Jobs, Runs, Blob, Audit and Authz are required (Create fails closed
+// without Authz); Now, Caps and Log are optional.
 type Service struct {
 	DB    *store.DB
 	Jobs  *jobs.Registry
 	Runs  *run.Service
 	Blob  blob.Store
 	Audit audit.Sink
+	// Authz checks reports.run on Create (see Authorizer).
+	Authz Authorizer
 	Now   func() time.Time
 	// Caps lowers the row cap of a format below DefaultCap. A value above it, or zero, is ignored.
 	Caps map[Format]int64
@@ -169,6 +183,16 @@ func (s *Service) Create(ctx context.Context, tid tenant.ID, c authority.Chain, 
 	}
 	if !slices.Contains(Formats(), f) {
 		return Export{}, ErrFormatUnavailable
+	}
+	// reports.run, before the run is looked up and before a rerun could be started (security review F1).
+	// No Authorizer, or an error from it, refuses: the check fails closed.
+	if s.Authz == nil {
+		return Export{}, ErrNotPermitted
+	}
+	if ok, err := s.Authz.Allow(ctx, tid, c, run.Perm); err != nil {
+		return Export{}, fmt.Errorf("export: authorize: %w", err)
+	} else if !ok {
+		return Export{}, ErrNotPermitted
 	}
 	var src run.Run
 	if err := s.Runs.Read(ctx, tid, rid, c, 0, func(_ context.Context, _ store.Tx, r run.Run) error {

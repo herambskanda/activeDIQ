@@ -333,6 +333,8 @@ func (h *Handlers) problem(err error) error {
 		return coded(apitypes.Conflict("the export is still queued or running"), apitypes.InPath, "exportId", "export_in_progress", "")
 	case errors.Is(err, export.ErrExportExpired):
 		return apitypes.ReportResultExpired("the export file has expired; export the report again")
+	case errors.Is(err, export.ErrNotPermitted):
+		return apitypes.Forbidden("")
 	case errors.Is(err, export.ErrExportUnavailable):
 		return apitypes.NotReady("exports are not available until a file store is configured for this installation")
 	case errors.As(err, &failed):
