@@ -151,8 +151,8 @@ skills and the safe-primitives spec to match.
 This section restates [ADR-0003](../decisions/0003-module-system-extension-points-only-on-ramp.md)
 (ratified 2026-10-02) and keeps the rule numbers other documents cite ("§2 rule 7"). The ADR
 numbers its own rules differently, so each rule below names its ADR rule. If the two disagree, the
-ADR wins and this section is the bug. `fitness-modules` M1–M12 enforce the rules (old T-0141, lost in renumbering; now T-0991 for M7 and
-T-0990 for the rest). Until they land, the old T-0014 job in `tools/fitness/modules/` enforces a subset, and code review the rest.
+ADR wins and this section is the bug. `fitness-modules` M1–M12 enforce the rules (old T-0141, lost in renumbering; T-0991 landed M7, T-0990 owns
+the rest). Until they land, the job in `tools/fitness/modules/` enforces a subset (rules 1–5, 7, 8 and M7), and code review the rest.
 
 ```
  cmd/<role> --> compose/<role> (+ compose/config; profile is data)      every cmd/<role>: own role pkg only
@@ -843,7 +843,7 @@ first column once parenthesised text is removed; a name containing `/` (`store/r
 `fleet/dial`, `attr/*`) is a subpackage row and does not count; a `(+sub)` mention does not count;
 a name with no directory yet is a planned package and is allowed. Test support that must live under
 a product root (only `labadmin` today) still gets a row, marked as such, with the check that keeps it
-out of shipping binaries. M7 is built by T-0991; until it lands this rule is held by review. When a ticket adds a server or agent module, it also writes
+out of shipping binaries. `fitness-modules` enforces M7 (T-0991, `tools/fitness/modules/catalogue.go`): a missing, duplicated or wrong-section row fails `make fitness`, naming the package and the section it needs. When a ticket adds a server or agent module, it also writes
 `architecture/modules/<id>.md` from the [module page template](modules/README.md). M3 fails a
 module without a page and a page without a module. Table ownership follows §2 rule 6; the findings
 that placed each table are in §5.6.
@@ -866,7 +866,7 @@ The root package `internal/platform` declares `platform.Deps` (§4.1). Only serv
 | `capability` | backend-engineer (IDs: solution-architect) | `capability.ID` constants and `Set.Enabled(id)`. It is a leaf package with no behaviour. Manifests list IDs (`compose/profile`), modules return them from `Requires()` (§4.1), and role packages filter modules by them | supports EP-1 |
 | `apihost` | api-engineer | HTTP server, auth middleware, strict JSON, problem types, rate limits, static UI mount | hosts EP-2 |
 | `apitls` | api-engineer; security-architect reviews | The API listener's TLS identity (TM-TB1-T2, TM-F-HOST; T-0065): a per-install self-signed certificate generated on first boot and kept owner-only in the API TLS directory (in memory only for loopback development and tests), with its SHA-256 fingerprint exposed for first-connect pinning. No plaintext fallback. Only `compose/server` calls it | supports EP-2 |
-| `health` (+`health/api`) | api-engineer | The anonymous probes `/health/live` and `/health/ready` (AN-1, tag `platform.health`; T-0034, T-0316): body `{"status":"ok"}` or a problem with no detail; each check timeout-bounded, one probe round at a time, result reused for a short TTL, reasons to the server log only. **Not mounted by `compose/server` yet: T-0994** | implements EP-2 |
+| `health` (+`health/api`) | api-engineer | The anonymous probes `/health/live` and `/health/ready` (AN-1, tag `platform.health`; T-0034, T-0316): body `{"status":"ok"}` or a problem with no detail; each check timeout-bounded, one probe round at a time, result reused for a short TTL, reasons to the server log only. Mounted by `compose/server` (`health.go`: readiness = `store.DB.Ping`; served at `/api/v1/health/*`, T-0994); the root `/healthz` and `/readyz` non-API routes are not served yet | implements EP-2 |
 | `httpx` (+`httpx/authnhttp`, `httpx/negotiatehttp`, `httpx/ssohttp`) | backend-engineer; security-architect reviews | HTTP response primitives that must not be hand-built: `Attachment` and `Headers` are the only setter of `Content-Disposition` (safe-primitives P7; FF-SP2 `content-disposition-literal`; T-0046). The subpackages are `authn`'s HTTP bindings (ADR-0004 A6): `authnhttp` (`__Host-` cookies, CSRF), `negotiatehttp` (AN-9, RFC 4559), `ssohttp` (AN-3) | — |
 | `limiter` | backend-engineer | Implements `apihost.Limiter` (TM §7.8, TM-D22; T-0054, T-0274): per-IP buckets keyed by network prefix in node memory, per-principal buckets through the `PrincipalStore` port (`MemoryStore`, one node; `PGStore` over `platform_rate_buckets`, migration 0011). Refuses to start with the memory store on more than one node. Detail in §1 | implements the `apihost.Limiter` port of EP-2's host |
 | `setup` (+`setup/api`) | backend-engineer; security-architect reviews | The one-time first-run setup secret (TM-TB16-T7, AN-4; T-0636): a 256-bit secret in an owner-only file in a 0700 subdirectory of the API TLS directory, claimed exactly once by atomic rename and never reissued; route under tag `platform.setup`, plus the `setup show` CLI. Self-hosted single node only: multi-node and SaaS tenants are provisioned by the control plane and have no first-run claim | implements EP-2 |

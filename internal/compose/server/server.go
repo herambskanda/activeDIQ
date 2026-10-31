@@ -158,6 +158,8 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, syslog.Handlers{Store: siem}.Bind())
+	// The anonymous liveness and readiness probes (AN-1). Readiness is the store answering.
+	tags = append(tags, buildHealth(db, slog.Default()))
 	// First-run setup (TM-TB16-T7, AN-4): an unclaimed install holds a one-time secret the installing
 	// administrator reads from the setup directory; the claim route consumes it. Needs the TLS directory.
 	setupTags, err := buildSetup(cfg, time.Now, firstOwner)

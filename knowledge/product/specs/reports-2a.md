@@ -237,7 +237,7 @@ The 16 reports above answer **54** ME names: USR 14, PWD 7, GRP 15, CMP 10, OU 5
 | ME names | Why not at 2a | Goes to |
 | --- | --- | --- |
 | Recently Modified / Recently Deleted (Users, Groups, Computers, Contacts, OUs) | `whenChanged` is a per-DC value that is not replicated, so "modified" needs the observation history (DM-18.I2). Deleted visibility defaults are `directory/inventory` scope (P1, B3) | Second slice (follow-up ticket, §12) |
-| Users with Cannot Change Password | The truth is two deny ACEs on the object, not the `userAccountControl` bit. It needs the security-descriptor read path ([Microsoft](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/useraccountcontrol-manipulate-account-properties), [reading the ACEs](https://learn.microsoft.com/en-us/windows/win32/adsi/reading-user-cannot-change-password-ldap-provider)) | Second slice, after T-0118 |
+| Users with Cannot Change Password | The truth is two deny ACEs on the object, not the `userAccountControl` bit. It needs the security-descriptor read path ([Microsoft](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/useraccountcontrol-manipulate-account-properties), [reading the ACEs](https://learn.microsoft.com/en-us/windows/win32/adsi/reading-user-cannot-change-password-ldap-provider)) | Second slice (T-1015), after the security-descriptor read path (T-1019; the SD primitive is T-0149) |
 | Bitlocker Recovery Keys, Bitlocker Enabled / Disabled Computers | Recovery values are secrets and are never stored (X4, TM-TB15-T3). Enabled/disabled needs the `msFVE` child objects, which are not in the synced set. A single-key lookup is ENH-01 / benchmark T04 | 2b (AD Explorer and `ReadSecret`) |
 | Photo Based, Dial-in Allow/Deny, Users with/without Logon Script, Skype/Lync Enabled/Disabled, Smart Card Enabled, Logon Hour Based, Terminal Services (2), Users with Empty / Duplicate Attributes, All Managers, Manager Based Users, Users in More than One Group, Users Only Members of Domain Users Group, Computers with Duplicate Attributes | Lower use. They need attributes outside the 2a sync set or grouping logic | Second slice |
 | Managed Computers, Unmanaged Computers | ME's meaning is not in the research | Research ticket (§12), then second slice |
@@ -656,7 +656,7 @@ agents are `n/a` for every FR: reports have no behaviour on them at 2a.
 | FR-23…FR-29 schedule | ✓ | ✗ → same | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ |
 | FR-30…FR-32 permissions, API, states | ✓ | ✗ → same | ◐ | ✓ | ✓ | ◐ | ✓ | ✓ |
 
-`windows` reaches GA only when T-0123–T-0126 land (m2-plan decision 9). Checkpoint 2a is demoed on
+`windows` reaches GA only when the four Windows-profile adapters land: SSPI GSSAPI (T-1020), gMSA credential source (T-1021), DPAPI-NG or TPM KEK (T-0527) and Windows service host (T-1022). m2-plan decision 9 is the gate; m2-plan still lists them as WA1–WA4 under their old IDs. Checkpoint 2a is demoed on
 `linux-oci`. This spec adds no Windows-only behaviour, so nothing here lags on either profile.
 
 ## 11. Out of scope, and decisions made in this spec
@@ -703,7 +703,7 @@ agents are `n/a` for every FR: reports have no behaviour on them at 2a.
 
 No question here is directional: nothing needs the CEO.
 
-Follow-ups filed from this spec (`backlog`, not scope creep): T-0172 (research), T-0173 (second slice), T-0174 (DM-16), T-0175 (ADM-100/101 remainders), T-0176 (Entra reports).
+Follow-ups filed from this spec (`backlog`, not scope creep): T-1014 (research), T-1015 (second slice), T-1016 (DM-16), T-1017 (ADM-100/101 remainders), T-1018 (Entra reports). The security-descriptor read path the second slice needs is T-1019. The FR-09 wording revision is T-1023.
 1. research · `market-analyst` — confirm ME semantics for Workstation Computers, Computers Trusted for
    Delegation, Managed/Unmanaged Computers and Groups, Users Not in Groups, Mail Enabled Contacts,
    Recent Logon Failures versus "Recently bad logged users", and ME's export password protection.
