@@ -1061,12 +1061,34 @@ func (v OperationConfirmationKindValue) Valid() bool {
 	return false
 }
 
-// OperationPreview is the OperationPreview schema.
+// OperationHoldReasonValue: Why an operation is held for approval (ADR-0005 rule 8), mirroring the kernel's HoldReason (internal/platform/operation/holds.go). step_up: the Action needs a fresh MFA and the initiator cannot give one (an API token or an automation, TM-D30 SX-4); an approval that carries step-up releases it. blast_radius: an automation touches more objects than its limit. irreversible: the tenant requires approval for irreversible changes. undo_needed_approval: the undo of an operation that itself needed approval. gate: the registered approval gate asked for it. none: not held. (The dialect has no nullable $ref, so "not held" is a value, as HoldNone is in the kernel.) Clients accept values they do not know.
+type OperationHoldReasonValue string
+
+const (
+	OperationHoldReasonValueNone               OperationHoldReasonValue = "none"
+	OperationHoldReasonValueStepUp             OperationHoldReasonValue = "step_up"
+	OperationHoldReasonValueBlastRadius        OperationHoldReasonValue = "blast_radius"
+	OperationHoldReasonValueIrreversible       OperationHoldReasonValue = "irreversible"
+	OperationHoldReasonValueUndoNeededApproval OperationHoldReasonValue = "undo_needed_approval"
+	OperationHoldReasonValueGate               OperationHoldReasonValue = "gate"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v OperationHoldReasonValue) Valid() bool {
+	switch v {
+	case OperationHoldReasonValueNone, OperationHoldReasonValueStepUp, OperationHoldReasonValueBlastRadius, OperationHoldReasonValueIrreversible, OperationHoldReasonValueUndoNeededApproval, OperationHoldReasonValueGate:
+		return true
+	}
+	return false
+}
+
+// OperationPreview: What submitting the previewed request would do now. holdReason is the hold the submit would get when outcome is needs_approval, and none otherwise. stepUpRequired is true when the submit needs a fresh MFA (TM-D30 SX-1): an interactive caller without one is answered 401 step-up-required, and a token or automation is held step_up.
 type OperationPreview struct {
 	Action                string                          `json:"action"`
 	ActionVersion         int64                           `json:"actionVersion"`
 	Blocked               []OperationBlocked              `json:"blocked"`
-	HoldReason            *string                         `json:"holdReason"`
+	HoldReason            OperationHoldReasonValue        `json:"holdReason"`
 	Outcome               OperationPreviewOutcome         `json:"outcome"`
 	PlanHash              string                          `json:"planHash"`
 	RequiredConfirmations []OperationRequiredConfirmation `json:"requiredConfirmations"`
@@ -1132,7 +1154,14 @@ func (v *OperationPreview) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 				return err
 			}
 		case "holdReason":
-			v.p.Mark(3, false)
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
 			if err := json.UnmarshalDecode(d, &v.HoldReason); err != nil {
 				return err
 			}
@@ -1272,11 +1301,13 @@ func (v *OperationPreview) Validate(at jsontext.Pointer, errs *Errors) {
 		}
 	}
 	// holdReason
-	if v.p.Decoded() && !v.p.Has(3) {
-		errs.Required(at, "holdReason")
-	}
-	if v.HoldReason != nil {
-		CheckLen(errs, InBody, at.AppendToken("holdReason"), string((*v.HoldReason)), 0, 64)
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "holdReason")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "holdReason")
+		}
 	}
 	// outcome
 	if v.p.Decoded() {
@@ -1384,12 +1415,13 @@ func (v OperationPreviewOutcome) Valid() bool {
 	return false
 }
 
-// OperationRef is the OperationRef schema.
+// OperationRef: An operation as a write answers it. holdReason says why a held (awaiting_approval) operation waits, so a client can tell an approval that carries step-up from a policy approval; it is none when the operation is not held.
 type OperationRef struct {
-	Action string              `json:"action"`
-	ID     UUID                `json:"id"`
-	State  OperationStateValue `json:"state"`
-	Undoes *UUID               `json:"undoes"`
+	Action     string                   `json:"action"`
+	HoldReason OperationHoldReasonValue `json:"holdReason"`
+	ID         UUID                     `json:"id"`
+	State      OperationStateValue      `json:"state"`
+	Undoes     *UUID                    `json:"undoes"`
 
 	p Presence
 }
@@ -1423,12 +1455,24 @@ func (v *OperationRef) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.Action); err != nil {
 				return err
 			}
-		case "id":
+		case "holdReason":
 			null, err := TakeNull(d)
 			if err != nil {
 				return err
 			}
 			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.HoldReason); err != nil {
+				return err
+			}
+		case "id":
+			null, err := TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
 			if null {
 				continue
 			}
@@ -1440,7 +1484,7 @@ func (v *OperationRef) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(2, null)
+			v.p.Mark(3, null)
 			if null {
 				continue
 			}
@@ -1448,7 +1492,7 @@ func (v *OperationRef) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 				return err
 			}
 		case "undoes":
-			v.p.Mark(3, false)
+			v.p.Mark(4, false)
 			if err := json.UnmarshalDecode(d, &v.Undoes); err != nil {
 				return err
 			}
@@ -1476,26 +1520,35 @@ func (v *OperationRef) Validate(at jsontext.Pointer, errs *Errors) {
 			errs.Add(InBody, at.AppendToken("action"), CodePattern, "value does not match the required pattern")
 		}
 	}
-	// id
+	// holdReason
 	if v.p.Decoded() {
 		if !v.p.Has(1) {
-			errs.Required(at, "id")
+			errs.Required(at, "holdReason")
 		}
 		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "holdReason")
+		}
+	}
+	// id
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "id")
+		}
+		if v.p.IsNull(2) {
 			errs.NullNotAllowed(at, "id")
 		}
 	}
 	// state
 	if v.p.Decoded() {
-		if !v.p.Has(2) {
+		if !v.p.Has(3) {
 			errs.Required(at, "state")
 		}
-		if v.p.IsNull(2) {
+		if v.p.IsNull(3) {
 			errs.NullNotAllowed(at, "state")
 		}
 	}
 	// undoes
-	if v.p.Decoded() && !v.p.Has(3) {
+	if v.p.Decoded() && !v.p.Has(4) {
 		errs.Required(at, "undoes")
 	}
 }
