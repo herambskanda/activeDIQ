@@ -6,12 +6,13 @@
 export function Progress({
   label,
   value,
-  max = 100,
+  max: maxProp = 100,
 }: {
   readonly label: string;
   readonly value?: number;
   readonly max?: number;
 }) {
+  const max = maxProp > 0 ? maxProp : 100; // a non-positive max would make the bar NaN
   const determinate = value !== undefined;
   const now = determinate ? Math.min(Math.max(value, 0), max) : undefined;
   return (
