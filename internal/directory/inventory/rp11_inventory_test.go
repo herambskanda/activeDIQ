@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
@@ -148,6 +149,10 @@ func Test_dataset_reveals_nothing_outside_scope(t *testing.T) {
 					rpComputers(t, e, reg, c, cols, now, at)
 				case inventory.DatasetGroups:
 					rpGroups(t, e, reg, c, cols, now, at)
+					// a separate world: the same group and manager DN with a second connection
+					e2 := setup(t, s)
+					e2.hStructure(t, e2.adA)
+					rpGroupsManagerOtherConnection(t, e2, e2.registry(t), e2.adA, cols, now, at)
 				case inventory.DatasetGroupMembers:
 					rpGroupMembers(t, e, reg, c, cols, now, at)
 				case inventory.DatasetOUs:
@@ -222,6 +227,13 @@ func rpUsers(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Connecti
 	for g, name := range map[string]string{base1: "base-one", base2: "base-two"} {
 		if got := cellKey(res.rows[strings.ToLower(g)][dnColumn]); got != "s:"+realDN(name) {
 			t.Errorf("%s dn = %s, want its own real DN", g, got)
+		}
+	}
+	// Named exception (§3.3): in_other_groups is one bit about the user's own memberOf, true when the
+	// only other group is out of scope. It must not widen into a name or a count.
+	for g := range map[string]bool{base1: true, base2: true} {
+		if got := cellStr(res.rows[strings.ToLower(g)], "in_other_groups"); got != "true" {
+			t.Errorf("%s in_other_groups = %q, want true (a membership in an out-of-scope group)", g, got)
 		}
 	}
 	// the policy still applies to the in-scope users, its identity does not show
@@ -345,6 +357,49 @@ func rpGroups(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Connect
 		if got := cellStr(row, col); got != want {
 			t.Errorf("%s = %q, want %q", col, got, want)
 		}
+	}
+}
+
+// A DN is unique within a forest, not across connections: a second connection of the same tenant, in
+// scope, holds an object with the out-of-scope manager's DN (a dev copy, a migration copy, the same
+// forest registered twice). It says nothing about the manager of this group, so the manager stays masked.
+func rpGroupsManagerOtherConnection(t *testing.T, e *env, reg *reportsql.Registry, c inventory.ConnectionID, cols []report.ColumnID, now, at time.Time) {
+	baseG, baseU := hGUID(2, 1), hGUID(1, 1)
+	mgrA, mgrB := sentinelGUID(5), hGUID(9, 1)
+	mgrDN := "CN=" + sentinel + "-manager,DC=example,DC=test"
+	g := named(hGroup(baseG, "base-group", 2001, baseU), "base-group")
+	g.Attributes = map[string]any{"managedBy": mgrDN}
+	userAt := func(guid, sam string, rid uint32, dn string) inventory.Observation {
+		o := hUser{guid: guid, sam: sam, rid: rid, uac: i64(uacNormal), read: 15}.obs()
+		o.DN, o.RDN = dn, "CN="+sam
+		return o
+	}
+	if _, err := e.populate(t, c, at, named(hUser{guid: baseU, sam: "base-user", rid: 1101, uac: i64(uacNormal), read: 15}.obs(), "base-user"), g,
+		userAt(mgrA, sentinel+"-manager", 1301, mgrDN)); err != nil {
+		t.Fatal(err)
+	}
+	other := e.conn(t, e.a, connection.KindADForest, connection.TransportLDAPS)
+	e.hStructure(t, other) // the copy's parents exist, so its ancestry is complete and it is really in scope
+	if _, err := e.populate(t, other, at, userAt(mgrB, "manager-copy", 1401, mgrDN)); err != nil {
+		t.Fatal(err)
+	}
+	scope := func(roots ...authz.ScopeTerm) authz.ReadScope {
+		return authztest.ReadScope(authz.ScopeGrant{Include: append([]authz.ScopeTerm{
+			{Kind: authz.TermSubtree, Connection: rpID(string(c)), Root: rpID(baseG)},
+			{Kind: authz.TermSubtree, Connection: rpID(string(other)), Root: rpID(mgrB)}}, roots...)})
+	}
+	res := e.run(t, reg, hQuery{dataset: inventory.DatasetGroups, cols: cols, scope: scope(), now: now})
+	if len(res.rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(res.rows))
+	}
+	checkNoLeaks(t, res, map[string]string{strings.ToLower(baseG): realDN("base-group")})
+	if got := cellStr(res.rows[baseG], "managed_by"); got != "(manager outside your scope)" {
+		t.Errorf("managed_by = %q with only another connection's object of that DN in scope, want it masked", got)
+	}
+	// positive control: the manager of this connection in scope shows
+	res = e.run(t, reg, hQuery{dataset: inventory.DatasetGroups, cols: cols, scope: scope(authz.ScopeTerm{Kind: authz.TermSubtree, Connection: rpID(string(c)), Root: rpID(mgrA)}), now: now})
+	if got := cellStr(res.rows[baseG], "managed_by"); got != mgrDN {
+		t.Errorf("managed_by with the manager in scope = %q, want its DN", got)
 	}
 }
 

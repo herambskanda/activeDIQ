@@ -7,7 +7,12 @@ import (
 	"sort"
 
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 )
+
+// Both closure tables derive from the DM-17 links; neither is append-only (the closure is recomputed).
+var _ = tablekind.Declare(tablekind.Table{Name: "public.inventory_group_members", Entity: "DM-17", Kind: tablekind.Directory})
+var _ = tablekind.Declare(tablekind.Table{Name: "public.inventory_group_closure_dirty", Entity: "DM-17", Kind: tablekind.Directory})
 
 // The effective-membership closure (reports spec §6.6, FR-15) is materialised in
 // inventory_group_members (migration 0066) by RefreshClosure, which Populate calls at the end of every

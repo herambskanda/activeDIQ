@@ -37,6 +37,7 @@ scope decision, not a platform asymmetry.
 | `internal/platform/store/reportsql` | **Built (T-0957, row B2).** `NewRegistry`, `Compile`, `CompileCount`, `Exec`, `Count`, the scope and narrowing renderers, SQL vectors (FF-SP4) and RP6. `sqlconst` (FF-SP2) lets a value of type `reportsql.CompiledSQL` reach `Exec` and `string(x)` of one is a constant for it. Deviations in §5 | §5, row B2, RP1, RP6 |
 | Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. Two adapters are still to be wired in `compose/server`: `rbac.OwnerStatus` (over the account store) and `rbac.ObjectConnections` (over inventory) | §4 |
 | Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. **Row B6 (T-0961, migration 0066) added** the group closure `inventory_group_members` and its dirty set `inventory_group_closure_dirty`. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed Row P1 (T-0949, migration 0063) is built: `nc_sync_passes` (one row per tenant, connection, NC) holds `last_pass_at` and `state` (`ok`, `resync_required`, `paused`). `Writer.RecordPass` sets the pass as-of (start of the read) in the cycle's transaction and `Ingest` calls it on the last batch for each `Cycle.PassNCs`, so a quiet domain is fresh; `Writer.MarkNC` records resync or pause; `Reader.Freshness` returns `[]report.NCWatermark` and the `report.Label` result, with `DefaultStalenessThreshold` = 60 min | §3.4, §4.5, rows P1, **P2**, B3, B6 |
+| Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. The other 15 operations answer 501 until B5, B9 and B11 | §6, §9, row B4 |
 | `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150). **No canonical digest** (spec §8.3) | §7, row B9 |
 | `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
 | `platform/notify` | **Built (T-0950).** `notify/mailaddr` (strict address parser), `notify/settings` (allowed recipient domains, SMTP relay; migration 0062), `notify/mail` (SMTP over egress), `notify/mailtest`, `notify/delivery` (DM-84 `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue`), the `notify.settings.update` Action in `modules/notify`. **Not yet wired:** nothing calls `DispatchDue` (needs the DM-44 schedule, row P4, or a notify job), no `Renderer` per purpose, no SMTP AUTH credentials. Terminal failure state is `given_up` | §7.2, §8, row P3 |
@@ -257,8 +258,18 @@ parent RDNs are not an exception to the masking rules; they are part of the obje
 - **Reason (AD semantics).** A DN is the object's name and its path from the naming context head.
   AD returns the same string, parent RDNs included, to any principal who can read the object, so
   the `dn` cell tells a reader with the grant nothing the directory would not.
-- **Where it applies.** Only a column that renders the row's own `dn` (today `dn` on
-  `inventory.users` and `inventory.computers`), and only for the row's own object.
+- **Where it applies.** Only a column that renders the row's own `dn`, and only for the row's own
+  object: `dn` on `inventory.users`, `.computers`, `.groups`, `.ous` and `.contacts`; `group_dn` and
+  `member_dn` on `inventory.group_members` (each the own DN of an in-scope object the row is about);
+  and `managed_by` on `inventory.groups`, but only once the manager resolves to a live, in-scope
+  object **of the same connection** (a DN is unique within a forest, not across connections; the
+  match is on connection and DN, and a later GUID link, T-1071, replaces the DN string).
+- **Named exception: `in_other_groups`.** On `inventory.users` and `.computers` this boolean is
+  true when the object has a `member` link to any group, in scope or not. It is one bit about the
+  in-scope object's own `memberOf`, which AD returns to anyone who can read the object; counting only
+  in-scope groups would mislead a help-desk runner on "users in no other group" clean-ups. It must
+  never widen into a group name or a count. RP11 (`rpUsers`) pins the value: true when the only other
+  group is out of scope.
 - **Where it does not.** No other column may carry an out-of-scope ancestor's name or GUID:
   not a second copy of the DN, not a parent-DN or OU-path column (T-1041 must mask it or scope
   it to the in-scope part), not another row's DN, and not a name or GUID of an out-of-scope
@@ -396,7 +407,7 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   primary-group users is not empty. Entra groups produce no closure (the walk needs state `live` AD groups).
 - **Datasets.** `inventory.groups` counts `direct_members` (depth 1: member values and primary group), `effective_members`
   (every non-cycle closure row), `primary_group_members`; `has_members` is the Groups Without Members test; `managed_by` shows the
-  manager DN only when it resolves to an in-scope object (`FilterAnchor mgr`), else "(manager outside your scope)".
+  manager DN only when it resolves to a live, in-scope object of the same connection (`FilterAnchor mgr`, matched on connection and DN), else "(manager outside your scope)".
   `inventory.group_members` is keyed `group|member` with the `grp` and `mbr` row anchors, the `via` hop as `MaskAnchor`
   ("(group outside your scope)"), `finding` ("Circular nesting: A → B → A") for cycle rows, and "External principal (unresolved)"
   for an FSP member. `inventory.ous` counts the subtree per kind over the `sub` `FilterAnchor` (in-scope objects only).

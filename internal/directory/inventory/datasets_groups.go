@@ -43,9 +43,11 @@ const (
 	outsideInventorySQL = "EXISTS (SELECT 1 FROM {rel.memb} WHERE memb.connection_id = {t}.connection_id AND memb.source_guid = {t}.object_guid" +
 		" AND NOT EXISTS (SELECT 1 FROM {rel.known} WHERE known.connection_id = memb.connection_id AND known.object_guid = memb.target_guid))"
 
-	// The manager shows only when it is an in-scope object.
+	// The manager shows only when it is a live, in-scope object of the same connection: a DN is only
+	// unique within a forest, so another connection's object with the same DN says nothing about this one.
 	managedBySQL = "CASE WHEN jsonb_typeof({t}.attributes -> 'managedBy') IS DISTINCT FROM 'string' THEN NULL" +
-		" WHEN EXISTS (SELECT 1 FROM {rel.mgr} WHERE lower(mgr.dn) = lower({t}.attributes ->> 'managedBy')) THEN {t}.attributes ->> 'managedBy'" +
+		" WHEN EXISTS (SELECT 1 FROM {rel.mgr} WHERE mgr.connection_id = {t}.connection_id AND mgr.state = 'live'" +
+		" AND lower(mgr.dn) = lower({t}.attributes ->> 'managedBy')) THEN {t}.attributes ->> 'managedBy'" +
 		" ELSE '(manager outside your scope)' END"
 	hasManagerSQL = "jsonb_typeof({t}.attributes -> 'managedBy') = 'string'"
 
@@ -128,7 +130,7 @@ func groupsDataset() report.Dataset {
 		Anchors: []report.Anchor{rowAnchorT(),
 			{ID: "mem", Table: "directory_objects", Mode: report.FilterAnchor, Project: idents("connection_id", "object_guid", "state"),
 				Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"},
-			{ID: "mgr", Table: "directory_objects", Mode: report.FilterAnchor, Project: idents("dn"),
+			{ID: "mgr", Table: "directory_objects", Mode: report.FilterAnchor, Project: idents("connection_id", "dn", "state"),
 				Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"},
 			{ID: "known", Table: "directory_objects", Mode: report.MaskAnchor, Project: idents("connection_id", "object_guid"), Identity: idents("rdn"),
 				Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}},
