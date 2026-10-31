@@ -1385,6 +1385,14 @@ session, same DC) and calls `DACLWrite.VerifyAfter` (SD-R10). A mismatch is `sd.
 `DACLAuditor` receives a `DACLDiverged` record (object, DC, base, planned and actual digests, ACE count, PD bit, the planned and actual DACL kind (Null = everyone full access, distinct from an empty List = nobody), and the stored ACEs as typed fields — type, flags, mask, trustee SID, object GUIDs — bounded to 256 with a `Truncated` flag; no SDDL, no raw bytes), the error is returned and the write is **not** retried. A read-back that fails is `ErrReadBack`
 (stored state unknown, no retry). Samba proves the mechanics; Windows re-sorting and SDProp are windows-lab.
 
+## Cannot Change Password read (T-1019)
+
+`ad.Session.ReadPasswordChange(ctx, ref)` returns `(objectGUID, sd.PasswordChange, error)`: a DACL-only
+`ReadDACL` on the session's DC, classified by `sd.SD.PasswordChange` (two explicit, non-inherited
+User-Change-Password deny ACEs for Everyone and SELF; four states, see safe-primitives-security-descriptor
+§14). The state is `NotConfirmed` exactly when the error is non-nil; the sync records "Not confirmed" and
+continues. One base read per user: `nTSecurityDescriptor` is not searchable in bulk (`constructedReadOnly`).
+
 ## User search path (T-0669, walking skeleton 2/4)
 
 `GET /api/v1/directory/users` (`internal/modules/directory`) -> `client.UserSearch` -> gRPC

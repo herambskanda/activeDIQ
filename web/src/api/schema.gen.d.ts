@@ -181,6 +181,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/directory/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search the directory (universal search)
+         * @description Universal search (directory.search; IA 5.3, ADR-0011). Answers users, groups, computers and contacts whose name or identifier matches q, grouped by type, each group ranked (exact identifier, then prefix, then fuzzy; live before deleted, enabled before disabled) and already carrying what an admin needs to tell two objects apart: no second call is needed to render a row. The query travels in the POST body, never in a path or query string, so it stays out of URLs and access logs (ADR-0011 rule 15); this is a read, it changes nothing, and it needs no Idempotency-Key. q is typed text, not a filter: LDAP, SQL and wildcard syntax have no meaning and are never passed through. The server normalises q (Unicode NFKC, case folding) before matching.
+         *     Trimming comes before counting (LF-39, T-0875). Every hit, count, flag and cursor in the answer is computed from objects the caller is permitted to read under directory.read, and from nothing else. There is no total over the unscoped directory, and no field changes with what the scope hides. A group never says how many objects exist, only how many the caller may see, and a truncated group says so with the flag more instead of a number.
+         *     refine. When the text matches so many keys in the tenant that the server will not rank them (ADR-0011 rule 13), refine is true. The answer then carries no count, no more flag and no cursor on any group, so the client shows "Keep typing to narrow the search". Hits of a better match class than the one that overflowed are still returned (an exact identifier still finds its object). refine is the same for every caller who holds the same permissions, whatever their scope, so it is never a zero-result answer that a hidden OU could cause.
+         *     counts. A group's count is present only when the normalised q has at least 3 characters and refine is false. For a shorter q, a group shows its first hits and "Show all" with no number.
+         *     Show all. A group's nextCursor, passed back with the same q and type, pages that one group, 50 hits per page (groupLimit applies up to 50), in the same order, and stops at 1,000 permitted hits with limitReached true. A cursor is opaque and bound to the query, class set, type and the caller's scope; a cursor presented with anything else is refused with 400 and reads nothing. Pages re-run the search, so they can shift if the inventory changes in between.
+         *     Refusals. 400 (errors[].code): query_too_short (q is empty after normalisation), query_too_long (over 256 characters), query_invalid (a NUL or invalid UTF-8), query_refused (q looks like a 48-digit BitLocker recovery password; it is refused and never echoed, logged or traced), cursor_invalid (bad, forged or mismatched cursor), cursor_requires_type (a cursor without type). 403 when the caller lacks directory.read. 429 when the client is over its rate limit. 503 search-unavailable, with a trace ID and no count, when the search cannot finish in time. No refusal repeats q.
+         */
+        post: operations["searchDirectory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/directory/users": {
         parameters: {
             query?: never;
@@ -860,6 +885,109 @@ export interface components {
         DelegationId: string;
         /** @description Permission names, each of the form family.noun.verb. Duplicates are collapsed. */
         DelegationPermissions: string[];
+        /** @description One status chip of a hit. kind says which; at or days carry its value when it has one. */
+        DirectorySearchChip: {
+            /**
+             * Format: date-time
+             * @description When it happened or will happen (locked, accountExpires, deleted).
+             */
+            at?: string;
+            /** @description Whole days left (passwordExpiresInDays). */
+            days?: number;
+            kind: components["schemas"]["DirectorySearchChipKind"];
+        };
+        /**
+         * @description One status of the object, as the IA 5.3 chips show it. at is present for locked, accountExpires and deleted when the time is known; days is present for passwordExpiresInDays. There is no free-form status text: the client words every chip.
+         * @enum {string}
+         */
+        DirectorySearchChipKind: "locked" | "disabled" | "passwordExpired" | "passwordExpiresInDays" | "accountExpires" | "deleted" | "tier0" | "cloudOnly" | (string & {});
+        /** @description What tells two objects with one name apart. Each member is present only when the inventory holds it; the client joins what is there (title, then office or department). */
+        DirectorySearchDisambiguator: {
+            department?: string;
+            office?: string;
+            title?: string;
+        };
+        /** @description The permitted hits of one type. count, more and nextCursor describe only objects the caller may read; none of them can be used to infer what the scope hides. Under refine, count, more and nextCursor are all absent. */
+        DirectorySearchGroup: {
+            /** @description How many objects of this type the caller may see for this text: the trimmed result, never a total over the directory. Absent when the normalised text has under 3 characters, and when refine is true. */
+            count?: number;
+            items: components["schemas"]["DirectorySearchHit"][];
+            /** @description True when paging stopped at 1,000 permitted hits. The client shows "refine your search"; there is no further cursor. The stop depends only on permitted hits. */
+            limitReached?: boolean;
+            /** @description True when the caller may see more hits than items holds. A flag, never a number. Absent when refine is true. */
+            more?: boolean;
+            /** @description Pass back with the same q and type to get the next page. Absent on the last page, and when refine is true. */
+            nextCursor?: string;
+            type: components["schemas"]["DirectorySearchObjectType"];
+        };
+        /** @description A matched stretch of one field, counted in Unicode code points from the start of the field's value (not UTF-16 units, not bytes). A hit that matched on a key the row does not show (a SID, say) has no highlight. */
+        DirectorySearchHighlight: {
+            field: components["schemas"]["DirectorySearchHighlightField"];
+            length: number;
+            start: number;
+        };
+        /**
+         * @description The field of the hit a highlight range refers to.
+         * @enum {string}
+         */
+        DirectorySearchHighlightField: "displayName" | "samAccountName" | "userPrincipalName" | "mail" | (string & {});
+        /** @description One permitted object, with everything a row shows. objectId is the key; distinguishedName is an attribute for display and may change when the object moves. */
+        DirectorySearchHit: {
+            disambiguator?: components["schemas"]["DirectorySearchDisambiguator"];
+            displayName: string;
+            distinguishedName: string;
+            /** @description The DNS name of the object's domain. The client shows it when the answer spans more than one. */
+            domain: string;
+            highlights: components["schemas"]["DirectorySearchHighlight"][];
+            mail?: string;
+            matchClass: components["schemas"]["DirectorySearchMatchClass"];
+            /**
+             * Format: uuid
+             * @description The objectGUID.
+             */
+            objectId: string;
+            samAccountName?: string;
+            /** @description Status chips, most urgent first. Empty when none applies. */
+            status: components["schemas"]["DirectorySearchChip"][];
+            type: components["schemas"]["DirectorySearchObjectType"];
+            userPrincipalName?: string;
+        };
+        /**
+         * @description How the hit matched, best first. An object appears once, in its best class.
+         * @enum {string}
+         */
+        DirectorySearchMatchClass: "exact" | "prefix" | "fuzzy" | (string & {});
+        /**
+         * @description The kind of object a group or a hit is. The group order of a full answer is users, groups, computers, contacts.
+         * @enum {string}
+         */
+        DirectorySearchObjectType: "users" | "groups" | "computers" | "contacts" | (string & {});
+        /** @description The search. q is typed text and never a filter. type narrows to one kind of object; it is required with a cursor. */
+        DirectorySearchRequest: {
+            cursor?: components["schemas"]["Cursor"];
+            /** @description The most hits per group; 5 when absent. With a cursor it is the page size. */
+            groupLimit?: number;
+            /** @description The text to find, as the admin typed it: a name, a logon name, a UPN or e-mail, a SID, a GUID, a DN or a host name. Up to 256 characters. Never sent in a URL. */
+            q: string;
+            type?: components["schemas"]["DirectorySearchType"];
+        };
+        /** @description The grouped, permitted hits of one search, with the freshness of the inventory behind them. */
+        DirectorySearchResult: {
+            /**
+             * Format: date-time
+             * @description When the inventory behind this answer was last synced (the oldest of the connections the caller may read). The search reads the inventory, not the live directory. Null when nothing has synced yet.
+             */
+            asOf: string | null;
+            /** @description One group per requested type, in the order users, groups, computers, contacts, even when a group is empty. */
+            groups: components["schemas"]["DirectorySearchGroup"][];
+            /** @description True when the text is too broad to rank. No group then carries a count, a more flag or a cursor. The same for every caller with the same permissions. */
+            refine: boolean;
+        };
+        /**
+         * @description The kind of object to search. Without it all four are searched.
+         * @enum {string}
+         */
+        DirectorySearchType: "users" | "groups" | "computers" | "contacts";
         /** @description A user as search shows it. Only these fields; the objectGuid is the key. */
         DirectoryUser: {
             displayName: string;
@@ -1460,16 +1588,25 @@ export interface components {
         };
         /** @description A filter as the server stores it. A condition's column is a registry column ID. */
         ReportFilterView: components["schemas"]["ReportFilterGroupView"] | components["schemas"]["ReportFilterConditionView"];
-        /** @description The freshness label of spec 8.2. label is the text to show, such as Synced 09:41. */
+        /** @description The freshness label of spec 8.2. label is the text to show, such as Synced 09:41. When state is stale, stale names every naming context that makes it stale, oldest first: the connection (by id and display name), the naming context, why it is stale and when its last sync pass was. It is empty in every other state. thresholdSeconds is the staleness threshold the run was judged against; it is null when the run was judged against no connection. The console shows these and derives nothing from label. */
         ReportFreshness: {
             label: string;
+            stale: components["schemas"]["ReportStaleSource"][];
             state: components["schemas"]["ReportFreshnessState"];
+            thresholdSeconds: number | null;
         };
         /**
          * @description The freshness label of spec 8.2. per_dc_read is the only state that may be called live.
          * @enum {string}
          */
         ReportFreshnessState: "synced" | "stale" | "not_synced_yet" | "per_dc_read" | (string & {});
+        /** @description A set of rows the run counted and did not store, such as probable service accounts (E2). count is the number of hidden rows after scope trimming and is at least 1: a group with nothing hidden is not listed. label is the group's name in the report definition. locked is true when the report cannot show the group, so the console offers no Show control for it. */
+        ReportHiddenGroup: {
+            count: number;
+            id: string;
+            label: string;
+            locked: boolean;
+        };
         /** @description The latest fire. */
         ReportLastRun: {
             outcome: components["schemas"]["ReportLastRunOutcome"];
@@ -1715,7 +1852,7 @@ export interface components {
             /** Format: uuid */
             runId: string;
         };
-        /** @description The run record (DM-72). asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header. */
+        /** @description The run record (DM-72). hiddenGroups lists the sets of rows counted and not stored; it is empty when nothing was hidden or the run has not succeeded. asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header. */
         ReportRun: {
             /** Format: date-time */
             asOf: string | null;
@@ -1733,6 +1870,7 @@ export interface components {
             /** Format: date-time */
             finishedAt: string | null;
             freshness: components["schemas"]["ReportFreshness"];
+            hiddenGroups: components["schemas"]["ReportHiddenGroup"][];
             /** Format: uuid */
             id: string;
             objectsChecked: number | null;
@@ -1895,6 +2033,23 @@ export interface components {
          * @enum {string}
          */
         ReportSortOrder: "asc" | "desc";
+        /**
+         * @description Why a naming context makes a result stale. older_than_threshold: its last sync pass is older than the staleness threshold. resync_required: its change feed is unusable and a full resync is needed. paused: its sync is paused, or its connection is suspended.
+         * @enum {string}
+         */
+        ReportStaleCause: "older_than_threshold" | "resync_required" | "paused" | (string & {});
+        /** @description One naming context behind a stale result. connectionName is the connection's display name when the run was made; it is the connection id's text when the run record predates names. lastPassAt is the start of the last successful sync pass of the naming context and ageSeconds is its age when the run was made. cause says why it counts as stale. */
+        ReportStaleSource: {
+            ageSeconds: number;
+            cause: components["schemas"]["ReportStaleCause"];
+            /** Format: uuid */
+            connectionId: string;
+            connectionName: string;
+            /** Format: date-time */
+            lastPassAt: string;
+            /** Format: uuid */
+            namingContextId: string;
+        };
         /** @description A group or user a report is about (GRP-02, GRP-03), by connection and objectGUID. */
         ReportSubjectRef: {
             /** Format: uuid */
@@ -2178,6 +2333,7 @@ export interface components {
                  * @example {
                  *       "status": 403,
                  *       "title": "You are not allowed to do this",
+                 *       "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
                  *       "type": "/problems/forbidden"
                  *     }
                  */
@@ -2386,6 +2542,7 @@ export interface components {
                  * @example {
                  *       "status": 429,
                  *       "title": "Too many requests",
+                 *       "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
                  *       "type": "/problems/rate-limited"
                  *     }
                  */
@@ -2451,6 +2608,50 @@ export interface components {
                  *       "status": 409,
                  *       "title": "The scope uses a kind that reports cannot evaluate",
                  *       "type": "/problems/report-scope-unsupported"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The search text or cursor cannot be used. errors[].code says why: query_too_short (empty after normalisation), query_too_long (over 256 characters), query_invalid (NUL or invalid UTF-8), query_refused (the text looks like a 48-digit BitLocker recovery password: refused without echoing, logging or tracing it; the same answer whatever the digits), cursor_invalid (bad, forged or mismatched cursor), cursor_requires_type. Neither detail nor errors ever repeat the text. */
+        SearchQueryInvalid: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "detail": "The search text is empty.",
+                 *       "errors": [
+                 *         {
+                 *           "code": "query_too_short",
+                 *           "detail": "Enter at least one character.",
+                 *           "in": "body",
+                 *           "pointer": "/q"
+                 *         }
+                 *       ],
+                 *       "status": 400,
+                 *       "title": "The search text cannot be used",
+                 *       "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+                 *       "type": "/problems/search-query-invalid"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description Search could not finish in time */
+        SearchUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "detail": "Search could not finish. Try again, or narrow the text.",
+                 *       "status": 503,
+                 *       "title": "Search is unavailable",
+                 *       "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+                 *       "type": "/problems/search-unavailable"
                  *     }
                  */
                 "application/problem+json": components["schemas"]["Problem"];
@@ -2868,6 +3069,37 @@ export interface operations {
             400: components["responses"]["Validation"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
+        };
+    };
+    searchDirectory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DirectorySearchRequest"];
+            };
+        };
+        responses: {
+            /** @description The groups, each trimmed to the caller's scope */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectorySearchResult"];
+                };
+            };
+            400: components["responses"]["SearchQueryInvalid"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            501: components["responses"]["NotImplemented"];
+            503: components["responses"]["SearchUnavailable"];
         };
     };
     searchDirectoryUsers: {

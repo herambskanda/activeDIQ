@@ -189,7 +189,7 @@ When either enters scope, a separate ADR decides its language and extends rule 1
 - **AV/EDR heuristics sometimes flag unsigned Go binaries** `[UNVERIFIED]`. Authenticode signing of every Windows binary is therefore required from the first agent build.
 
 **Follow-on work** (all filed in `backlog` with T-0002 as a dependency):
-- **T-0022** `chore` · devops-engineer: implement the `fitness-stack` job (below) inside `make ci`. It depends on T-0014 (scaffolding) and T-0015 (dispatcher pre-merge gate).
+- **T-0022** `chore` · devops-engineer: implement the `fitness-stack` job (below) inside `make ci`. It depends on T-0014 (scaffolding) and the dispatcher pre-merge gate (named T-0015 when this was written; that id became the Go upgrade, the gate is T-0941).
 - **T-0024** `spike` · windows-engineer: Rust password filter in LSASS (rule-4 gate).
 - **T-0025** `spike` · windows-engineer: Rust credential provider in LogonUI (rule-4 gate).
 - **T-0023** `spike` · directory-engineer: LDAP SASL/GSSAPI bind with channel binding on go-krb5/krb5. Samba 4.21+ with strong auth first, then WS2025 with signing and CBT set to "Always", and no events 2887/3039/3074 (feasibility §2.4). **This spike is the main risk to the Go server choice.**

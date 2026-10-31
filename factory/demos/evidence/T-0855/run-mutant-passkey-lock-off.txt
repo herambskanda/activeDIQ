@@ -1,0 +1,23 @@
+# MUTANT: authn/pending.go passkey lock disabled ('len(keys) > 0' -> 'len(keys) > 1<<30'), built -tags lab, same DB/env
+Running 1 test using 1 worker
+  ✘  1 [chromium] › e2e/webauthn-sign-in.spec.ts:202:1 › a valid TOTP code is refused for an account that has a registered key (2.3s)
+  1) [chromium] › e2e/webauthn-sign-in.spec.ts:202:1 › a valid TOTP code is refused for an account that has a registered key 
+    Error: expect(received).toBe(expected) // Object.is equality
+    Expected: 401
+    Received: 204
+      214 |   await page.getByRole("button", { name: "Sign in" }).click();
+      215 |
+    > 216 |   expect((await verify).status()).toBe(401);
+          |                                   ^
+      217 |   await expect(page.getByText("Sign-in failed. Check the details and try again.")).toBeVisible();
+      218 |   await expect(page.getByRole("heading", { name: "Sign in to activeDIQ" })).toBeVisible();
+      219 |   await expect(page).not.toHaveURL(/\/directory\/users/);
+        at /home/khushi/AD/.activeDIQ-worktrees/T-0855/web/e2e/webauthn-sign-in.spec.ts:216:35
+    Error Context: test-results/webauthn-sign-in-a-valid-T-8cc3e-t-that-has-a-registered-key-chromium/error-context.md
+    attachment #2: trace (application/zip) ─────────────────────────────────────────────────────────
+    test-results/webauthn-sign-in-a-valid-T-8cc3e-t-that-has-a-registered-key-chromium/trace.zip
+    Usage:
+        npx playwright show-trace test-results/webauthn-sign-in-a-valid-T-8cc3e-t-that-has-a-registered-key-chromium/trace.zip
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+  1 failed
+    [chromium] › e2e/webauthn-sign-in.spec.ts:202:1 › a valid TOTP code is refused for an account that has a registered key 

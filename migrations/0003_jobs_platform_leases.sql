@@ -11,6 +11,7 @@
 -- holder that lost the lease can be told apart from the one that took it over. Expiry is judged on the
 -- database clock (now()), never a node's.
 
+-- write-class: platform_leases system
 CREATE TABLE public.platform_leases (
   name text PRIMARY KEY CHECK (name ~ '^[a-z][a-z0-9_.]{0,99}$'),
   holder text NOT NULL CHECK (holder ~ '^[A-Za-z0-9._:@-]{1,200}$'),

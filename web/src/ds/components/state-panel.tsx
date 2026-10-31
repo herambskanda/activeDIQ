@@ -1,14 +1,19 @@
 import type { ReactNode } from "react";
 
-/** An empty / error panel with a title, body and optional action. Errors are announced (role=alert). */
+/**
+ * An empty / error panel with a title, body and optional actions. Errors are announced (role=alert).
+ * `actions` takes Buttons (or links); the panel adds no callbacks of its own.
+ */
 export function StatePanel({
   tone = "neutral",
   title,
   children,
+  actions,
 }: {
   readonly tone?: "neutral" | "error";
   readonly title?: string;
   readonly children?: ReactNode;
+  readonly actions?: ReactNode;
 }) {
   return (
     <div
@@ -17,6 +22,7 @@ export function StatePanel({
     >
       {title !== undefined && <p className="diq-state__title">{title}</p>}
       {children}
+      {actions !== undefined && <div className="diq-state__actions">{actions}</div>}
     </div>
   );
 }

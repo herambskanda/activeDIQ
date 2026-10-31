@@ -48,6 +48,8 @@ func TestOwnerKeyMatchesTableOwner(t *testing.T) {
 		"agent_policy_head":   "agentpolicy",
 		"agent_event":         "agentingest",
 		"inventory_servers":   "invhost",
+		"report_runs":         "reports",
+		"report_run_rows":     "reports",
 	}
 	ents, err := migrations.FS.ReadDir(".")
 	if err != nil {

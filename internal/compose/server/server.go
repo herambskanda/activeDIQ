@@ -17,6 +17,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
+	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
@@ -68,7 +69,8 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	defer db.Close()
 	// Capabilities come from the deployment profile once config selects one; no module requires
 	// one yet. The directory services are built from the store, so boot follows the open.
-	if _, err := boot(ctx, capability.NewSet(), directoryServices(db)); err != nil {
+	_, reportHost, err := bootReport(ctx, capability.NewSet(), directoryServices(db), owners.Lookup)
+	if err != nil {
 		return fmt.Errorf("server: boot modules: %w", err)
 	}
 	// The per-principal rate store and the limiter over it, mounted as the API's Limits port. A bad
@@ -174,6 +176,15 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, dirTag)
+	// The report run path (T-0959): the run service, its job kinds and its API. The job registry exists
+	// before the API is built so the kinds register with the handlers; the retention cadence is seeded
+	// once the tenant exists.
+	jreg := jobs.NewRegistry()
+	reportRuns, reportTag, err := buildReports(ctx, db, reportHost, jreg, ok.Chainer, inventory.NewReader(db, nil), nil)
+	if err != nil {
+		return err
+	}
+	tags = append(tags, reportTag)
 	// The sign-in plane: AN-8 for a local account, then AN-10 (TOTP, and WebAuthn when the public URL is
 	// set), which is the only way a console session is created.
 	tags = append(tags, console.Tags())
@@ -185,8 +196,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	// Modules and platform packages contribute job kinds to this registry; the worker runs it.
-	jreg := jobs.NewRegistry()
+	// Modules and platform packages contribute job kinds to this registry (created above); the worker runs it.
 	connKernel, err := buildConnections(db, ok.Chainer, dirClient, jreg)
 	if err != nil {
 		return err
@@ -200,6 +210,10 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	console.SetTenant(tid)    // and the sign-in plane knows whose accounts it checks
 	// Dead AN-8 throttle rows are purged on a cadence so one-off submitted names cannot grow the table (T-0868).
 	if err := startThrottlePurge(ctx, db, jreg, console.Local, tid); err != nil {
+		return err
+	}
+	// The report retention cadence is seeded for the install tenant, like the throttle purge.
+	if err := startReportRetention(ctx, db, reportRuns, tid); err != nil {
 		return err
 	}
 	// Lab builds only (T-0684): create and activate the lab connections through the real activation path.
@@ -335,11 +349,8 @@ func directoryServices(db *store.DB) directory.Services {
 	return directory.Services{Connection: connection.NewRegistry(db)}
 }
 
-// boot hands the generated module list to module.Boot, the only caller of it (ADR-0003 rule 5).
-func boot(ctx context.Context, enabled capability.Set, dir directory.Services) (*module.Contributions, error) {
-	c, _, err := bootReport(ctx, enabled, dir, owners.Lookup)
-	return c, err
-}
+// inventoryOwner is the owner key of the datasets internal/directory/inventory exports (row B3).
+const inventoryOwner = "inventory"
 
 // bootReport is boot plus the EP-8 report host. The host is created first so every module receives it
 // as Deps.Report, boots the modules (which checks the tables of the datasets they register), adds
@@ -348,6 +359,9 @@ func boot(ctx context.Context, enabled capability.Set, dir directory.Services) (
 // before the modules boot, and are checked by the same function.
 func bootReport(ctx context.Context, enabled capability.Set, dir directory.Services, ownerOf report.TableOwners) (*module.Contributions, *report.Host, error) {
 	host := report.NewHost(ownerOf)
+	if err := host.Add(inventoryOwner, inventory.Datasets()...); err != nil {
+		return nil, nil, fmt.Errorf("server: report datasets: %w", err)
+	}
 	c, err := module.Boot(ctx, generatedModules(platform.Deps{Report: host}, dir), enabled, module.WithTableOwners(ownerOf))
 	if err != nil {
 		return nil, nil, err
