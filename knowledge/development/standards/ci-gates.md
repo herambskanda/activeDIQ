@@ -90,6 +90,15 @@ What the dispatcher does now for a finished code ticket (`factory/lib/premerge.m
    note. If the gate cannot judge (timeout, worktree failure) nothing merges and it is retried after
    10 minutes.
 
+**Migration numbering (T-1067).** Before the full command the gate runs a cheap check on the same merge
+result (`dispatcher.pre_merge.numbering`: `go test ./migrations/ -run ^TestMigrationNumbersAreUniqueAndContiguous$`,
+no database, about 1 s warm). Two parallel branches that each add `00NN` pass that test alone and collide only
+once merged; four such collisions reached `main` (0034/0035 T-0505, 0047 T-0597/T-0608, 0061 T-1066), and the
+full-run ratchet could not be relied on to catch it while `main` was red. A failure refuses the merge
+before `main` moves and reopens the ticket with `Renumber to NNNN: git mv …`, the number being the next free
+one on current `main`. It is judged absolutely, not against `main`'s baseline, and a check that cannot run
+(timeout, no `go`) throws like any other gate failure. Test: `factory/test/premerge-numbering.test.mjs`.
+
 A finding line is recognised by shape (`findingKey` in `factory/lib/premerge.mjs`; line numbers,
 durations, scratch paths and the worktree path are not part of the key):
 

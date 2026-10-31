@@ -368,6 +368,12 @@ Rules and the comparison: `standards/ci-gates.md` "The pre-merge gate". It needs
 into the branch first, because the findings are judged against current `main`. Never edit the
 check, add `continue-on-error` or delete a baseline file to get through.
 
+**Reopened with "Renumber to NNNN" (T-1067).** Another branch landed the same migration number
+first. Merge `main` into the branch, run the `git mv` the note gives, fix references to the old
+number (tests, comments, docs), run `go test ./migrations/ -run TestMigrationNumbersAreUniqueAndContiguous`,
+advance again. Settings: `dispatcher.pre_merge.numbering` (`dir`, `argv`, `timeout_seconds`); remove the key
+to turn the check off (do not, without the director).
+
 **Everything is refused for the same unrelated reason.** `main` is green and a job is red in the
 merge result with no change of ours (an expired token, a tool missing on the dispatcher host): the
 refusal names `FAILED <target>`. Fix the environment; the gate fails closed on purpose. To stop the

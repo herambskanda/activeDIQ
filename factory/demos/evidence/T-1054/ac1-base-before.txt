@@ -1,0 +1,11 @@
+--- FAIL: TestRepositoryTree (1.62s)
+    check_test.go:476: internal/platform/report/cell.go:5: [ADR-0004 A7] imports encoding/json (v1): product code uses encoding/json/v2, which rejects invalid UTF-8 and duplicate names by default (ADR-0004 rule 7; lessons.md 2026-10-02)
+    check_test.go:476: internal/platform/report/decode.go:5: [ADR-0004 A7] imports encoding/json (v1): product code uses encoding/json/v2, which rejects invalid UTF-8 and duplicate names by default (ADR-0004 rule 7; lessons.md 2026-10-02)
+    check_test.go:476: internal/platform/report/expr.go:5: [ADR-0004 A7] imports encoding/json (v1): product code uses encoding/json/v2, which rejects invalid UTF-8 and duplicate names by default (ADR-0004 rule 7; lessons.md 2026-10-02)
+    check_test.go:476: internal/platform/report/query.go:5: [ADR-0004 A7] imports encoding/json (v1): product code uses encoding/json/v2, which rejects invalid UTF-8 and duplicate names by default (ADR-0004 rule 7; lessons.md 2026-10-02)
+    check_test.go:476: internal/platform/report/value.go:4: [ADR-0004 A7] imports encoding/json (v1): product code uses encoding/json/v2, which rejects invalid UTF-8 and duplicate names by default (ADR-0004 rule 7; lessons.md 2026-10-02)
+    check_test.go:476: web/src/api/open-enum.test.ts: [ADR-0004 A5] only the generated files and client.ts live in web/src/api (ADR-0004 rule 12); a hand-written client file is a private endpoint caller
+    check_test.go:476: web/src/api/openapi-typescript-helpers.d.ts: [ADR-0004 A5] only the generated files and client.ts live in web/src/api (ADR-0004 rule 12); a hand-written client file is a private endpoint caller
+FAIL
+FAIL	github.com/skenzeriq/activediq/tools/fitness/api	1.635s
+FAIL
