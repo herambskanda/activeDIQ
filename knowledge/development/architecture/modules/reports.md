@@ -1067,6 +1067,18 @@ is `report_runs.row_count` (ADR-0010 rule 3, FR-12). An expired run gives `ErrRu
 - **`as_of`** is the oldest `LastPassAt` among the covered NCs.
 - **The threshold** belongs to `inventory`: `[PROPOSED]` 60 min, set by row P1 (spec Q6).
 - **"Live" is never used.** Per-DC runs add `read_from {answered, in_scope, at}` (§6.5).
+- **What the API returns (T-1074).** `ReportFreshness` carries `stale[]`, one `ReportStaleSource` per naming
+  context behind a stale result, oldest first: `connectionId`, `connectionName` (the display name recorded when
+  the run was made, so a later rename does not rewrite the run; the id's text for a record that predates names),
+  `namingContextId`, `cause` (`older_than_threshold` | `resync_required` | `paused`), `lastPassAt` and
+  `ageSeconds`; and `thresholdSeconds` (null when the run covered no connection). `stale` is empty unless the
+  state is `stale`. The names come from `inventory.FreshnessResult.Names` through `run.FreshnessRead`; a naming
+  context has no stored name (DM-14 holds the GUID only), so it is identified by id.
+- **Hidden groups on a run.** `ReportRun.hiddenGroups[]` is `run.Service.HiddenGroups`: the run's
+  `hidden_counts` joined to the label and `Locked` of the preset's `HiddenGroup`s, largest first. Only groups with
+  at least one hidden row appear, so the console shows "N probable service accounts hidden" from this count and
+  nothing else; `locked` removes the Show control. Counts are taken after scope trimming, so they never
+  disclose rows the caller cannot read. Objects checked = stored rows + the sum of the counts.
 
 ### 6.5 Per-DC reads (USR-04, PWD-03; spec §6.5, FR-10)
 
@@ -1500,3 +1512,4 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   SQL, RP8 and RP11 landed in `tools/fitness/reports`, `reportsql.Query.Statement`. See §3.3 "As built".
 - 2026-10-31 · T-0960 · row B5 built: `internal/modules/reports/library` (loader, `LOCK`, crosswalk search, USR-01, USR-02,
   USR-03, USR-05), `HiddenGroup.Locked`, four derived columns on `inventory.users`. See §3.6 "As built".
+- 2026-10-31 · T-1074 · reports API: `ReportFreshness.stale[]`/`thresholdSeconds` and `ReportRun.hiddenGroups[]`. See §6.4.

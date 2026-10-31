@@ -77,12 +77,12 @@ func (l library) Definition(id string, _ int) (run.Definition, bool) {
 
 type freshAt struct{ at time.Time }
 
-func (f freshAt) Freshness(_ context.Context, _ tenant.ID, cs []authz.ObjectID, now time.Time) (report.Freshness, time.Duration, error) {
+func (f freshAt) Freshness(_ context.Context, _ tenant.ID, cs []authz.ObjectID, now time.Time) (run.FreshnessRead, error) {
 	var ws []report.NCWatermark
 	for _, c := range cs {
 		ws = append(ws, report.NCWatermark{Connection: c, NC: nc1, LastPassAt: f.at, State: report.NCOK})
 	}
-	return report.Label(ws, time.Hour, now), time.Hour, nil
+	return run.FreshnessRead{Label: report.Label(ws, time.Hour, now), Threshold: time.Hour}, nil
 }
 
 // door is the test's authenticator and authorizer: the principal is chosen by the X-Who header.

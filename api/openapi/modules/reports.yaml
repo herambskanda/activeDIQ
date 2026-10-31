@@ -2224,6 +2224,13 @@ components:
       type: string
       x-activediq-enum: open
       enum: [synced, stale, not_synced_yet, per_dc_read]
+    ReportStaleCause:
+      description: >-
+        Why a naming context makes a result stale. older_than_threshold: its last sync pass is older than the staleness threshold. resync_required: its change feed is unusable and a full resync is
+        needed. paused: its sync is paused, or its connection is suspended.
+      type: string
+      x-activediq-enum: open
+      enum: [older_than_threshold, resync_required, paused]
     ReportRunState:
       description: >-
         Run states (spec 8.1): queued, running, then succeeded, failed or cancelled; a succeeded run becomes expired when its result is removed.
@@ -2588,15 +2595,71 @@ components:
           type: boolean
     ReportFreshness:
       description: >-
-        The freshness label of spec 8.2. label is the text to show, such as Synced 09:41.
+        The freshness label of spec 8.2. label is the text to show, such as Synced 09:41. When state is stale, stale names every naming context that makes it stale, oldest first: the connection
+        (by id and display name), the naming context, why it is stale and when its last sync pass was. It is empty in every other state. thresholdSeconds is the staleness threshold the run was
+        judged against; it is null when the run was judged against no connection. The console shows these and derives nothing from label.
       type: object
-      required: [state, label]
+      required: [state, label, stale, thresholdSeconds]
       properties:
         state:
           $ref: modules/reports.yaml#/components/schemas/ReportFreshnessState
         label:
           type: string
           maxLength: 256
+        stale:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportStaleSource
+        thresholdSeconds:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 31536000
+    ReportStaleSource:
+      description: >-
+        One naming context behind a stale result. connectionName is the connection's display name when the run was made; it is the connection id's text when the run record predates names.
+        lastPassAt is the start of the last successful sync pass of the naming context and ageSeconds is its age when the run was made. cause says why it counts as stale.
+      type: object
+      required: [connectionId, connectionName, namingContextId, cause, lastPassAt, ageSeconds]
+      properties:
+        connectionId:
+          type: string
+          format: uuid
+        connectionName:
+          type: string
+          maxLength: 200
+        namingContextId:
+          type: string
+          format: uuid
+        cause:
+          $ref: modules/reports.yaml#/components/schemas/ReportStaleCause
+        lastPassAt:
+          type: string
+          format: date-time
+        ageSeconds:
+          type: integer
+          minimum: 0
+          maximum: 31536000
+    ReportHiddenGroup:
+      description: >-
+        A set of rows the run counted and did not store, such as probable service accounts (E2). count is the number of hidden rows after scope trimming and is at least 1: a group with nothing
+        hidden is not listed. label is the group's name in the report definition. locked is true when the report cannot show the group, so the console offers no Show control for it.
+      type: object
+      required: [id, label, count, locked]
+      properties:
+        id:
+          type: string
+          maxLength: 64
+          minLength: 1
+        label:
+          type: string
+          maxLength: 200
+        count:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        locked:
+          type: boolean
     ReportDcCoverage:
       description: >-
         How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5).
@@ -2716,9 +2779,9 @@ components:
           $ref: shared/paging.yaml#/components/schemas/PageInfo
     ReportRun:
       description: >-
-        The run record (DM-72). asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header.
+        The run record (DM-72). hiddenGroups lists the sets of rows counted and not stored; it is empty when nothing was hidden or the run has not succeeded. asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header.
       type: object
-      required: [id, definitionId, definitionVersion, presetId, state, createdBy, createdAt, startedAt, finishedAt, expiresAt, asOf, freshness, rowCount, objectsChecked, digest, scopeApplied, skippedConnections, progress, parameters]
+      required: [id, definitionId, definitionVersion, presetId, state, createdBy, createdAt, startedAt, finishedAt, expiresAt, asOf, freshness, rowCount, objectsChecked, digest, scopeApplied, skippedConnections, hiddenGroups, progress, parameters]
       properties:
         id:
           type: string
@@ -2777,6 +2840,11 @@ components:
           maxItems: 64
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportSkippedConnection
+        hiddenGroups:
+          type: array
+          maxItems: 64
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportHiddenGroup
         progress:
           $ref: modules/reports.yaml#/components/schemas/ReportRunProgress
         failure:
