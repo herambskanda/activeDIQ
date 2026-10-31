@@ -49,6 +49,8 @@ var byTable = map[string]entry{
 	"hybrid_links":                     {owner: "connection", class: Config},
 	"installation_keys":                {owner: "keys", class: System},
 	"inventory_domain_policies":        {owner: "inventory", class: System},
+	"inventory_group_closure_dirty":    {owner: "inventory", class: System},
+	"inventory_group_members":          {owner: "inventory", class: System},
 	"inventory_pso_applies":            {owner: "inventory", class: System},
 	"inventory_psos":                   {owner: "inventory", class: System},
 	"inventory_servers":                {owner: "invhost", class: Config},

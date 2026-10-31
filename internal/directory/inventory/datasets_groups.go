@@ -239,7 +239,6 @@ func viaHopSQL(idx string) string {
 }
 
 var (
-	// The hops between group and member, by name: a hop outside the scope is named only as such.
 	// The hops between group and member, by name: a hop outside the scope is named only as such. A fragment
 	// may not call unnest or string_agg, so the path is built by a recursive walk down the via array.
 	viaPathSQL = "(WITH RECURSIVE hop(i, path) AS (SELECT 1, " + viaHopSQL("1") + " WHERE cardinality({t}.via) > 0" +

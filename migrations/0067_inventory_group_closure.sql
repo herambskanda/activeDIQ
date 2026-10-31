@@ -22,6 +22,7 @@
 --
 -- The closure is derived data: unlike links it may be deleted, so the runtime role keeps DELETE.
 
+-- write-class: inventory_group_members system
 CREATE TABLE public.inventory_group_members (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,
@@ -40,6 +41,7 @@ CREATE TABLE public.inventory_group_members (
 -- The groups one object belongs to (the tokenGroups question), and the groups that contain a group.
 CREATE INDEX inventory_group_members_by_member ON public.inventory_group_members (tenant_id, connection_id, member_guid);
 
+-- write-class: inventory_group_closure_dirty system
 CREATE TABLE public.inventory_group_closure_dirty (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,
