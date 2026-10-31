@@ -1,9 +1,10 @@
 import type { ComponentType } from "react";
 
 // EP-15, the web screen module (blueprint §4). A web module is the only way a screen enters the
-// console: it registers routes, palette entries and search-result renderers through the Registrar. The shell (src/app) and the design system
-// (src/ds) never import src/modules; the generated modules.gen.ts, added with the first module,
-// is the only place that names one (blueprint §2 rule 8).
+// console: it registers routes, palette entries and search-result renderers through the Registrar.
+// The shell (src/app) and the design system (src/ds) never import src/modules; the generated
+// modules.gen.ts, added with the first module, is the only place that names one (blueprint §2
+// rule 8).
 
 export interface RouteSpec {
   /** Absolute path, for example "/objects". */
