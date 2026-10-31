@@ -1,4 +1,4 @@
--- 0062_reports_runs: the report run record and its stored result (T-0959; ADR-0010; reports.md §6.2,
+-- 0063_reports_runs: the report run record and its stored result (T-0959; ADR-0010; reports.md §6.2,
 -- row B4; DM-72). Owner: internal/modules/reports (run subpackage). Both are tenant tables: RLS with FORCE
 -- and a tenant-led key.
 --

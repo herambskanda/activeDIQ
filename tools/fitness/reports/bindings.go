@@ -41,13 +41,13 @@ var defaultBindings = []binding{
 		What: "an export's digest equals the stored run's digest (ADR-0010 rule 4, AC-50)"},
 	{Check: "RP6", Name: "Test_compiled_scope_matches_read_oracle", Pkg: "./internal/directory/inventory", Landed: true, Owner: "B2",
 		What: "the compiled scope equals the authz.Evaluator.AuthorizeRead oracle over trees written by the inventory writer with OU moves (FR-07, LF-39)"},
-	{Check: "RP8", Name: "Test_derived_columns_match_reference", Pkg: "./internal/directory/inventory", Owner: "B3",
+	{Check: "RP8", Name: "Test_derived_columns_match_reference", Pkg: "./internal/directory/inventory", Landed: true, Owner: "B3",
 		What: "every derived column matches its reference implementation (FR-09, AC-49)"},
 	{Check: "RP9", Name: "Test_run_read_bound_to_runner_and_scope", Pkg: "./internal/modules/reports/run", Landed: true, Owner: "B4",
 		What: "a run read is bound to the runner and the scope that produced it (reports contract §6.6; FR-07, FR-30)"},
 	{Check: "RP10", Name: "Test_delivery_link_authorised_by_delivery_row", Pkg: "./internal/modules/reports/schedule", Owner: "B11",
 		What: "a delivery link is authorised by its Delivery row (reports contract §7.2; FR-24, AC-47)"},
-	{Check: "RP11", Name: "Test_dataset_reveals_nothing_outside_scope", PerDataset: true, Owner: "B3, B6",
+	{Check: "RP11", Name: "Test_dataset_reveals_nothing_outside_scope", PerDataset: true, Landed: true, Owner: "B3, B6",
 		What: "a dataset reveals no name, GUID or aggregate from outside the read scope, once per registered dataset (reports contract §3.3; LF-39, FR-07)"},
 }
 
