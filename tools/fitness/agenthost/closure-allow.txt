@@ -12,6 +12,12 @@
 github.com/skenzeriq/activediq/cmd/agent
 github.com/skenzeriq/activediq/internal/compose/agent
 github.com/skenzeriq/activediq/internal/compose/config
+# tunnelbind (T-0946, allowlisted in T-1055): the activediq.fleet.v1 <-> fleet.Frame conversion and the
+# Fleet.Tunnel client stream, moved out of platform/fleet so the platform root stays contract-agnostic.
+# It imports only context, errors, grpc, platform/fleet and the fleet proto, every one already on this
+# list: no socket of its own (tunnelclient passes the conn in), no listener, no process, no file access,
+# no new transitive package. The same code sat in the allowed platform/fleet before T-0946.
+github.com/skenzeriq/activediq/internal/compose/tunnelbind
 github.com/skenzeriq/activediq/internal/agenthost/hostapi
 github.com/skenzeriq/activediq/internal/agentmodules/...
 github.com/skenzeriq/activediq/internal/platform/agent
