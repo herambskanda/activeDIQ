@@ -43,7 +43,7 @@ func buildReports(ctx context.Context, db *store.DB, host *report.Host, jreg *jo
 			return nil, apihost.TagHandlers{}, fmt.Errorf("server: reports job kind %s: %w", k.Name, err)
 		}
 	}
-	return svc, (&reports.Handlers{Runs: svc}).Bind(), nil
+	return svc, (&reports.Handlers{Runs: svc, Library: lib}).Bind(), nil
 }
 
 // reportLibrary compiles the host's datasets against the live schema (reportsql.NewRegistry) and loads
