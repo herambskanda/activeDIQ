@@ -16,6 +16,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
+	"github.com/skenzeriq/activediq/internal/platform/export"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -251,7 +252,7 @@ func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r 
 			return err
 		}
 		// 2.5 stream, 2.6 cap
-		dig := newDigester(colIDs)
+		dig := export.NewDigester(colIDs)
 		hidden := map[string]int64{}
 		var stored, hiddenN, ordinal int64
 		var keys, cells, sorts []string
@@ -290,7 +291,7 @@ func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r 
 				keys, ords, cells, sorts = append(keys, row.Key), append(ords, ordinal), append(cells, string(cj)), append(sorts, string(sj))
 				ordinal++
 				stored++
-				dig.row(row.Cells)
+				dig.Row(typed(row.Cells))
 			}
 			return flush(ctx)
 		})
@@ -325,7 +326,8 @@ func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r 
 		if fr.AsOf != nil {
 			asOf = *fr.AsOf
 		}
-		tag, err := t.Exec(ctx, succeedRun, r.ID.String(), attempt, stored, stored+hiddenN, string(hj), dig.sum(), asOf, string(fj), string(saj), now, now.Add(ResultRetention))
+		sum := dig.Sum()
+		tag, err := t.Exec(ctx, succeedRun, r.ID.String(), attempt, stored, stored+hiddenN, string(hj), sum[:], asOf, string(fj), string(saj), now, now.Add(ResultRetention))
 		if err != nil {
 			return err
 		}
@@ -336,7 +338,7 @@ func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r 
 			Target: authority.TargetRef{GUID: r.ID.String(), Class: "report_run"}, Component: Component, Outcome: audit.Success,
 			Details: sortDetails([]chain.Detail{
 				{Key: "definition", Value: r.DefinitionID + "@" + strconv.Itoa(r.DefinitionVer)},
-				{Key: "digest", Value: hexOf(dig.sum())},
+				{Key: "digest", Value: hexOf(sum[:])},
 				{Key: "preset", Value: r.Preset},
 				{Key: "query_hash", Value: hexOf(r.QueryHash[:])},
 				{Key: "row_count", Value: strconv.FormatInt(stored, 10)},

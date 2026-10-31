@@ -535,13 +535,14 @@ func TestBoundTestSkippedOrFailedFails(t *testing.T) {
 }
 
 func TestDeclaredButNotLandedFails(t *testing.T) {
-	r := run(t, tree(t, map[string]string{"internal/modules/reports/export/d_test.go": `package export
+	// RP10 is the binding still waiting on its row (B11); when it lands, move this to the next one.
+	r := run(t, tree(t, map[string]string{"internal/modules/reports/schedule/d_test.go": `package schedule
 
 import "testing"
 
-func Test_export_digest_equals_run_digest(t *testing.T) {}
+func Test_delivery_link_authorised_by_delivery_row(t *testing.T) {}
 `}), Options{Bindings: defaultBindings})
-	expect(t, r, "RP5", "binding-not-landed", "Test_export_digest_equals_run_digest", "flip it")
+	expect(t, r, "RP10", "binding-not-landed", "Test_delivery_link_authorised_by_delivery_row", "flip it")
 }
 
 const rp11 = "Test_dataset_reveals_nothing_outside_scope"

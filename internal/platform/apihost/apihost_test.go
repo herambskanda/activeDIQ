@@ -19,6 +19,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
+	"github.com/skenzeriq/activediq/internal/platform/httpx"
 	"github.com/skenzeriq/activediq/internal/platform/httpx/authnhttp"
 )
 
@@ -804,11 +805,19 @@ func TestSuccessResponse(t *testing.T) {
 		t.Fatalf("%d %q", rec.Code, rec.Body)
 	}
 	r.call = func(context.Context, apihost.Input) (apihost.Response, error) {
-		return resp{status: 200, body: apihost.Stream{Reader: strings.NewReader("a,b\n"), ContentType: "text/csv", Filename: "w.csv"}}, nil
+		return resp{status: 200, body: apihost.Stream{Reader: strings.NewReader("a,b\n"), FileBase: "w", FileFormat: httpx.CSV}}, nil
 	}
 	rec = serve(t, r, newPorts(), apihost.Policy{}, get("/widgets"))
-	if rec.Body.String() != "a,b\n" || rec.Header().Get("Content-Type") != "text/csv" || rec.Header().Get("Content-Disposition") != "" {
+	// A download's headers come from httpx.Headers, the one builder of Content-Disposition.
+	if rec.Body.String() != "a,b\n" || rec.Header().Get("Content-Type") != "text/csv; charset=utf-8" ||
+		!strings.HasPrefix(rec.Header().Get("Content-Disposition"), `attachment; filename="w.csv"`) {
 		t.Fatalf("%v %q", rec.Header(), rec.Body)
+	}
+	r.call = func(context.Context, apihost.Input) (apihost.Response, error) {
+		return resp{status: 200, body: apihost.Stream{Reader: strings.NewReader("x"), ContentType: "text/plain"}}, nil
+	}
+	if rec = serve(t, r, newPorts(), apihost.Policy{}, get("/widgets")); rec.Header().Get("Content-Type") != "text/plain" || rec.Header().Get("Content-Disposition") != "" {
+		t.Fatalf("plain stream %v", rec.Header())
 	}
 	// An unencodable body is a problem, never a half-written 200.
 	r.call = func(context.Context, apihost.Input) (apihost.Response, error) {

@@ -1,0 +1,21 @@
+package reports_test
+
+import (
+	"testing"
+
+	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
+)
+
+func TestQANoBlob(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := apiSetup(t, s)
+		_, rn := e.do(alice, "POST", "/api/v1/reports/runs", `{"definitionId":"tst-01"}`)
+		runID := rn["id"].(string)
+		e.work()
+		e.exp.Blob = nil
+		code, m := e.do(alice, "POST", "/api/v1/reports/runs/"+runID+"/exports", `{"format":"csv"}`)
+		t.Logf("no blob store: %d %v", code, m)
+		n := e.count(`SELECT count(*) FROM public.report_exports`)
+		t.Logf("report_exports rows: %d", n)
+	})
+}

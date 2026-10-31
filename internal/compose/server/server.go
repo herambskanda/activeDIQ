@@ -92,8 +92,11 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// The connector endpoint source: a connection resolves, under the context's tenant, to its active
 	// component binding's tunnel on the fleet hub (mutual TLS, established by the component). The Tier-0
 	// verdict arrives in the Read header from the connector, so no separate verdict source exists.
+	// The hub is made once: the tunnel dependencies built below attach components to it, and the source
+	// reaches them through it (T-1119).
 	conns := connection.NewRegistry(db)
-	src, err := client.NewTunnelSource(conns, conns, gateway.NewHub())
+	hub := gateway.NewHub()
+	src, err := client.NewTunnelSource(conns, conns, hub)
 	if err != nil {
 		return fmt.Errorf("server: connector source: %w", err)
 	}
@@ -134,6 +137,15 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
+	// What Fleet.Tunnel needs, around the same hub the connector source reads through. The fleet
+	// listener that serves it (T-0716, T-0717) is not composed yet, so until it is no component can
+	// attach and a directory target fails closed at the tunnel (ErrNoEndpoint / UNAVAILABLE), never as
+	// empty facts. Building the deps now means a bad composition stops startup, not the first dial.
+	tunnelDeps, err := buildTunnelDeps(hub, db, ok.Chainer)
+	if err != nil {
+		return err
+	}
+	_ = tunnelDeps // handed to NewFleetService by the fleet listener (T-0717)
 	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
 	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
 	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default(), withPublicURL(cfg.PublicURL))
@@ -180,7 +192,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// before the API is built so the kinds register with the handlers; the retention cadence is seeded
 	// once the tenant exists.
 	jreg := jobs.NewRegistry()
-	reportRuns, reportTag, err := buildReports(ctx, db, reportHost, jreg, ok.Chainer, inventory.NewReader(db, nil), nil)
+	reportRuns, reportTag, err := buildReports(ctx, db, reportHost, jreg, ok.Chainer, inventory.NewReader(db, nil), nil, authzr, cfg.BlobDir)
 	if err != nil {
 		return err
 	}

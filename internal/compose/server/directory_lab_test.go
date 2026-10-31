@@ -17,7 +17,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/labadmin"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
-	"github.com/skenzeriq/activediq/internal/modules/directory"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
