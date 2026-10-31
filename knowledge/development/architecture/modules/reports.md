@@ -314,6 +314,12 @@ parent RDNs are not an exception to the masking rules; they are part of the obje
   in-scope groups would mislead a help-desk runner on "users in no other group" clean-ups. It must
   never widen into a group name or a count. RP11 (`rpUsers`) pins the value: true when the only other
   group is out of scope.
+- **Named exceptions: `nesting_cut` and `membership_listing`.** On `inventory.groups`, `nesting_cut` is true when the walk
+  stopped at the depth cap below the group, and `membership_listing` is `unknown_input_missing` when the group is over the closure
+  row budget (below). Each is one bit about the in-scope group's own listing ("the members shown for this group are incomplete"):
+  it names no object and carries no count, and it cannot be scoped without turning a true "incomplete" into a misleading "complete".
+  The group's member counts and `has_members` read Unknown (`UnknownWhen`) in that case, never a number. RP11 pins both
+  (`rpGroups`, `rpOverBudget`). They must never widen into a name, a GUID or a size.
 - **Where it does not.** No other column may carry an out-of-scope ancestor's name or GUID:
   not a second copy of the DN, not a parent-DN or OU-path column (T-1041 must mask it or scope
   it to the in-scope part), not another row's DN, and not a name or GUID of an out-of-scope
@@ -439,7 +445,7 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   by a recursive CTE that walks `{t}.via[i]` and names each hop through the `via` `MaskAnchor`; `member_sid` reads the generated column
   `directory_objects.sid_text` (`directory_sid_text(sid)`, migration 0067; stored, so adding it rewrites the table once).
 - **Closure table.** `inventory_group_members (tenant_id, connection_id, group_guid, member_guid, edge_kind, depth, via uuid[])`,
-  one row per (group, effective member). `edge_kind` is `direct`, `primary_group`, `nested` or `cycle` (plus the flag `cut`); `via` holds the
+  one row per (group, effective member). `edge_kind` is `direct`, `primary_group`, `nested`, `cycle` or `over_budget` (plus the flag `cut`); `via` holds the
   groups between the group and the member (`cardinality(via) = depth - 1`), the shortest path with the lowest GUID as tie-break. A cycle is a
   row with `group_guid = member_guid`, `edge_kind = 'cycle'` and `via` = the loop. `inventory_group_closure_dirty` holds the
   groups whose own edges or state changed. It is derived data: the runtime role keeps DELETE (the links table does not).
@@ -452,6 +458,33 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   listed" and `inventory.groups.nesting_cut` is true. Failing the refresh instead (the first design) let anyone who can
   create a 129-deep chain of groups roll back every sync cycle of the connection. The primary-group edge is a closure row of depth 1, so a group whose only members are
   primary-group users is not empty. Entra groups produce no closure (the walk needs state `live` AD groups).
+- **Closure row budget (security review of T-0961).** Depth is not the only way to freeze a sync: breadth does it too. Whoever can
+  write the `member` attribute of K groups (a group delegate, a managedBy owner with "can update membership", anyone who can create a
+  group) adds one big group to each, and the closure grows to K x N rows; every later change to the big group rewrites all of them
+  inside the sync transaction (measured by the reviewer: 50 one-value writes, N = 6,000, 306,050 rows, 13-15 s per batch; with
+  BUILTIN\Users containing Domain Users it also happens without an attacker). The refresh therefore has a declared budget
+  (`closure.go`): **250,000 rows per group and 500,000 per connection** (a 200,000-user Domain Users, and BUILTIN\Users which contains it,
+  fit). Before writing anything, `admit` estimates each recomputed group as the number of member and primary-group links of
+  every group it reaches (an upper bound; a member reached two ways has one row). Groups are admitted smallest estimate first, then
+  lowest GUID, so a container never displaces the group it contains and the outcome does not depend on arrival order; a group whose
+  estimate exceeds the per-group limit, or what is left of the connection budget after the groups that are *not* recomputed, gets one
+  `over_budget` marker row (`group_guid = member_guid`) and no member rows. Its counts, `has_members` and `nesting_cut` read Unknown,
+  `membership_listing` is `unknown_input_missing`, and `inventory.group_members` shows one row "Membership too large to list: the
+  members of X are not expanded" (it names only the group itself). The refresh succeeds. Groups left unexpanded are decided again at
+  every refresh, so room that frees up is used. **Bounds:** a refresh deletes and inserts at most 500,000 rows plus one marker per
+  group, whatever fan-out the directory has. **Measured** (PG16 and PG18, in-process, one-member change to the big group): at a
+  scaled-down budget (600-member group, 10 containers, 2,500 rows) 1.0-1.3 s per batch; **at the declared budget** (30,000-user
+  group, 15 admitted containers, 480,025 rows, 10 groups left unexpanded) a user added through the primary group, which makes the
+  refresh rewrite every row: **14-16 s per batch** (PG16 and PG18), with every statement far under the store's 30 s timeout because
+  an INSERT carries at most about 25,000 estimated rows (`closureChunkRows`; the first version put whole roots in one statement and
+  timed out on PG16 at this size). Re-reading a 30,000-member group's links in the same batch adds 20-25 s. Building the 25
+  containers took 12-38 s once. **Residual risk:** (1) the walk over group edges that decides admission is
+  in memory and costs groups x groups reached, bounded by the depth cap but not by the budget; a domain with tens of thousands of
+  densely nested groups is a separate cost, filed with the threat model row (T-1142); (2) an attacker can still push a
+  *legitimate* big group out of the budget by making it share the budget with larger groups, but never a smaller one (admission is
+  smallest first); (3) over-budget groups show Unknown until the budget has room, there is no setting to raise it per tenant
+  yet. Tests: `Test_group_closure_fanout_is_bounded`, `Test_splitByBudget`, `Test_closure_budget_is_the_declared_one`,
+  RP11 `rpOverBudget`.
 - **Datasets.** `inventory.groups` counts `direct_members` (depth 1: member values and primary group), `effective_members`
   (every non-cycle closure row), `primary_group_members`; `has_members` is the Groups Without Members test; `managed_by` shows the
   manager DN only when it resolves to a live, in-scope object of the same connection (`FilterAnchor mgr`, matched on connection and DN), else "(manager outside your scope)".
@@ -1604,6 +1637,7 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 - 2026-10-30 · T-0958 · row B3 built: `inventory.users` and `inventory.computers`, migration 0061 (D7 inputs, D4
   policy tables, GIN index on `ancestry`), `PolicyWriter`, derived states with the effective policy resolved in
   SQL, RP8 and RP11 landed in `tools/fitness/reports`, `reportsql.Query.Statement`. See §3.3 "As built".
+- 2026-10-31 · T-0961 · closure row budget (250,000 per group, 500,000 per connection), `over_budget` marker, `membership_listing`; `nesting_cut` named as a one-bit exception (security review). See §3.3.
 - 2026-10-31 · T-0961 · row B6 built: `inventory.groups`, `.group_members`, `.ous`, `.contacts`, migration 0067 (group closure and dirty set, refreshed by `Populate`), `primary_group` and `in_other_groups` on users and computers, RP11 for the four datasets. See §3.3 "As built (T-0961)".
 - 2026-10-31 · T-0960 · row B5 built: `internal/modules/reports/library` (loader, `LOCK`, crosswalk search, USR-01, USR-02,
   USR-03, USR-05), `HiddenGroup.Locked`, four derived columns on `inventory.users`. See §3.6 "As built".

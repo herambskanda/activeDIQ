@@ -28,15 +28,15 @@ const (
 	groupScopeSQL = "CASE WHEN " + groupType + " IS NULL THEN 'unknown_input_missing' WHEN (" + groupType + " & 2) <> 0 THEN 'global'" +
 		" WHEN (" + groupType + " & 4) <> 0 THEN 'domain_local' WHEN (" + groupType + " & 8) <> 0 THEN 'universal' ELSE 'unknown_input_missing' END"
 
-	// A member reached through a closure row counts when it is a live, in-scope object. A cycle row is
-	// a finding, not a member.
+	// A member reached through a closure row counts when it is a live, in-scope object. A cycle row and an
+	// over-budget marker are findings, not members.
 	memberCount = "(SELECT count(*) FROM {rel.clo} JOIN {rel.mem} ON mem.connection_id = clo.connection_id AND mem.object_guid = clo.member_guid" +
-		" WHERE clo.connection_id = {t}.connection_id AND clo.group_guid = {t}.object_guid AND clo.edge_kind <> 'cycle' AND mem.state = 'live'"
+		" WHERE clo.connection_id = {t}.connection_id AND clo.group_guid = {t}.object_guid AND clo.edge_kind NOT IN ('cycle', 'over_budget') AND mem.state = 'live'"
 	directMembersSQL    = memberCount + " AND clo.depth = 1)"
 	effectiveMembersSQL = memberCount + ")"
 	primaryMembersSQL   = memberCount + " AND clo.edge_kind = 'primary_group')"
 	hasMembersSQL       = "EXISTS (SELECT 1 FROM {rel.clo} JOIN {rel.mem} ON mem.connection_id = clo.connection_id AND mem.object_guid = clo.member_guid" +
-		" WHERE clo.connection_id = {t}.connection_id AND clo.group_guid = {t}.object_guid AND clo.depth = 1 AND clo.edge_kind <> 'cycle' AND mem.state = 'live')"
+		" WHERE clo.connection_id = {t}.connection_id AND clo.group_guid = {t}.object_guid AND clo.depth = 1 AND clo.edge_kind NOT IN ('cycle', 'over_budget') AND mem.state = 'live')"
 
 	// A member edge whose target has no inventory row at all: a domain outside the inventory. Whether a
 	// row exists is not scoped (it names no object); what the row is would be.
@@ -53,6 +53,11 @@ const (
 
 	// A group whose nesting is deeper than the closure follows: some effective members are not listed.
 	nestingCutSQL = "EXISTS (SELECT 1 FROM {rel.clo} WHERE clo.connection_id = {t}.connection_id AND clo.group_guid = {t}.object_guid AND clo.cut)"
+
+	// A group whose closure would exceed the row budget (closure.go) is not expanded: its member counts are
+	// Unknown, never a wrong number. One bit about the in-scope group's own listing (named exception, §3.3).
+	listingSQL = "CASE WHEN EXISTS (SELECT 1 FROM {rel.clo} WHERE clo.connection_id = {t}.connection_id AND clo.group_guid = {t}.object_guid" +
+		" AND clo.edge_kind = 'over_budget') THEN 'unknown_input_missing' ELSE 'listed' END"
 
 	memberNameSQL = "CASE WHEN {rel.mbr}.kind = 'fsp' THEN " + externalLabel +
 		" ELSE COALESCE(NULLIF({rel.mbr}.sam_account_name, ''), NULLIF({rel.mbr}.display_name, ''), {rel.mbr}.rdn) END"
@@ -71,7 +76,7 @@ var memberKinds = []string{"user", "inetorgperson", "group", "computer", "contac
 func init() {
 	for k, v := range map[string]string{
 		"security": "Security", "distribution": "Distribution", "global": "Global", "domain_local": "Domain local", "universal": "Universal",
-		"direct": "Direct member", "primary_group": "Primary group", "nested": "Nested member", "cycle": "Circular nesting",
+		"direct": "Direct member", "primary_group": "Primary group", "nested": "Nested member", "cycle": "Circular nesting", "over_budget": "Not listed (too large)", "listed": "Listed",
 		"user": "User", "inetorgperson": "inetOrgPerson", "group": "Group", "computer": "Computer", "contact": "Contact", "ou": "Organizational unit",
 		"container": "Container", "gmsa": "Group managed service account", "fsp": "Foreign security principal", "other": "Other",
 	} {
@@ -104,12 +109,13 @@ func groupsDataset() report.Dataset {
 		attr("sam_account_name", "Logon name (pre-Windows 2000)", report.TypeText, "sam_account_name", opsText, true),
 		state("group_type", "Group type", report.SQL(groupTypeSQL), "security", "distribution", report.UnknownInputMissing),
 		state("group_scope", "Group scope", report.SQL(groupScopeSQL), "global", "domain_local", "universal", report.UnknownInputMissing),
-		counted("direct_members", "Direct members", report.SQL(directMembersSQL)),
-		counted("effective_members", "Effective members", report.SQL(effectiveMembersSQL)),
-		counted("primary_group_members", "Members by primary group", report.SQL(primaryMembersSQL)),
-		derived("has_members", "Has members (member or primary group)", report.TypeBool, report.SQL(hasMembersSQL), opsBool),
+		state("membership_listing", "Membership listing", report.SQL(listingSQL), "listed", report.UnknownInputMissing),
+		withUnknown(counted("direct_members", "Direct members", report.SQL(directMembersSQL)), "membership_listing"),
+		withUnknown(counted("effective_members", "Effective members", report.SQL(effectiveMembersSQL)), "membership_listing"),
+		withUnknown(counted("primary_group_members", "Members by primary group", report.SQL(primaryMembersSQL)), "membership_listing"),
+		withUnknown(derived("has_members", "Has members (member or primary group)", report.TypeBool, report.SQL(hasMembersSQL), opsBool), "membership_listing"),
 		derived("includes_members_outside_inventory", "Includes members outside the covered domains", report.TypeBool, report.SQL(outsideInventorySQL), opsBool),
-		derived("nesting_cut", "Nesting deeper than 128 levels (members beyond not listed)", report.TypeBool, report.SQL(nestingCutSQL), opsBool),
+		withUnknown(derived("nesting_cut", "Nesting deeper than 128 levels (members beyond not listed)", report.TypeBool, report.SQL(nestingCutSQL), opsBool), "membership_listing"),
 		derived("managed_by", "Managed by", report.TypeText, report.SQL(managedBySQL), opsText),
 		derived("has_manager", "Managed by is set", report.TypeBool, report.SQL(hasManagerSQL), opsBool),
 	)
@@ -141,7 +147,7 @@ func groupMembersDataset() report.Dataset {
 	via.Sortable = false
 	finding := derived("finding", "Finding", report.TypeText, report.SQL(findingSQL), opsText)
 	finding.Sortable = false
-	edge := state("edge_kind", "Membership", report.SQL("{t}.edge_kind"), "direct", "primary_group", "nested", "cycle")
+	edge := state("edge_kind", "Membership", report.SQL("{t}.edge_kind"), "direct", "primary_group", "nested", "cycle", "over_budget")
 	cols := []report.Column{
 		attr("group_guid", "Group GUID", report.TypeGUID, "group_guid", opsGUID, false),
 		attr("member_guid", "Member GUID", report.TypeGUID, "member_guid", opsGUID, false),
@@ -245,5 +251,6 @@ var (
 		" UNION ALL SELECT hop.i + 1, hop.path || ' → ' || " + viaHopSQL("hop.i + 1") + " FROM hop WHERE hop.i < cardinality({t}.via))" +
 		" SELECT hop.path FROM hop WHERE hop.i = cardinality({t}.via))"
 	findingSQL = "CASE WHEN {t}.edge_kind = 'cycle' THEN 'Circular nesting: ' || {rel.grp}.sam_account_name || COALESCE(' → ' || (" + viaPathSQL + "), '') || ' → ' || {rel.grp}.sam_account_name" +
+		" WHEN {t}.edge_kind = 'over_budget' THEN 'Membership too large to list: the members of ' || {rel.grp}.sam_account_name || ' are not expanded'" +
 		" WHEN {t}.cut THEN 'Nesting deeper than 128 levels: members of ' || {rel.mbr}.sam_account_name || ' and below are not listed' END"
 )

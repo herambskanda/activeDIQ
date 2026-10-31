@@ -8,6 +8,8 @@
 --      primary_group  the member's primaryGroupID names the group (depth 1; no member value)
 --      nested         reached through one or more nested groups (depth > 1)
 --      cycle          the group reaches itself through nested groups: a finding row, not a member
+--      over_budget    the group's closure would exceed the declared row budget (closure.go): the only
+--                     row it has, a marker with group = member; its counts are Unknown, never a wrong number
 --    via lists the groups between the group and the member, nearest the group first (empty at depth
 --    1); for a cycle row it is the groups of the loop, so A -> B -> A is group A, via {B}. A member
 --    reachable by several paths has one row, with the shortest path (lowest GUID breaks a tie), so a
@@ -28,13 +30,13 @@ CREATE TABLE public.inventory_group_members (
   connection_id uuid NOT NULL,
   group_guid uuid NOT NULL,
   member_guid uuid NOT NULL,
-  edge_kind text NOT NULL CHECK (edge_kind IN ('direct', 'primary_group', 'nested', 'cycle')),
+  edge_kind text NOT NULL CHECK (edge_kind IN ('direct', 'primary_group', 'nested', 'cycle', 'over_budget')),
   depth integer NOT NULL CHECK (depth BETWEEN 1 AND 128),
   via uuid[] NOT NULL DEFAULT '{}' CHECK (cardinality(via) BETWEEN 0 AND 127),
   cut boolean NOT NULL DEFAULT false,
   PRIMARY KEY (tenant_id, connection_id, group_guid, member_guid),
   FOREIGN KEY (tenant_id, connection_id) REFERENCES public.connections (tenant_id, id),
-  CHECK ((edge_kind = 'cycle') = (group_guid = member_guid)),
+  CHECK ((edge_kind IN ('cycle', 'over_budget')) = (group_guid = member_guid)),
   CHECK (cardinality(via) = depth - 1),
   CHECK (NOT cut OR (edge_kind = 'nested' AND depth = 128))
 );

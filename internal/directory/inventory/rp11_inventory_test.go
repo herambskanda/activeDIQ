@@ -153,8 +153,15 @@ func Test_dataset_reveals_nothing_outside_scope(t *testing.T) {
 					e2 := setup(t, s)
 					e2.hStructure(t, e2.adA)
 					rpGroupsManagerOtherConnection(t, e2, e2.registry(t), e2.adA, cols, now, at)
+					// a third world: the group is over the closure budget (its counts are Unknown)
+					e3 := setup(t, s)
+					e3.hStructure(t, e3.adA)
+					rpOverBudget(t, e3, e3.registry(t), e3.adA, src.ID, cols, now, at)
 				case inventory.DatasetGroupMembers:
 					rpGroupMembers(t, e, reg, c, cols, now, at)
+					e3 := setup(t, s)
+					e3.hStructure(t, e3.adA)
+					rpOverBudget(t, e3, e3.registry(t), e3.adA, src.ID, cols, now, at)
 				case inventory.DatasetOUs:
 					rpOUs(t, e, reg, c, cols, now, at)
 				case inventory.DatasetContacts:
