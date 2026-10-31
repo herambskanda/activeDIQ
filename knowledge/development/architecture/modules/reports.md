@@ -230,6 +230,46 @@ safe:
     Fragments use it to choose a label such as "(group outside your scope)".
 - `NewRegistry` rejects a fragment that contains `;`, `--`, `/*`, `$`, an unknown slot or a table
   name, or whose parentheses are unbalanced.
+- **A fragment's words come from an allowlist** (`reportsql/fragcheck.go`, T-1033), not a denylist.
+  A denylist cannot work: `query_to_xml('select * from directory_objects', …)`, `table_to_xml`,
+  `cursor_to_xml`, `xpath`, `ts_stat`, `to_regclass` and `information_schema.*` all read data
+  with a string the old check stripped before looking. The registry tokenizes the fragment and
+  refuses any word that is not one of: the expression keywords (`CASE/WHEN/THEN/ELSE/END`,
+  `AND/OR/NOT`, `IS [NOT] NULL/DISTINCT FROM`, `IN`, `BETWEEN`, `LIKE/ILIKE`, `EXISTS`, `ANY/ALL`,
+  `ARRAY`, `CAST … AS`, `EXTRACT`, `SELECT/FROM/WHERE`), the pure functions (`COALESCE`, `NULLIF`,
+  `GREATEST`, `LEAST`, `COUNT/MIN/MAX/SUM`, `LOWER`, `UPPER`, `LENGTH`, `ABS`, `CARDINALITY`), the
+  cast types (`text`, `int`, `bigint`, `smallint`, `integer`, `boolean`, `uuid`, `timestamptz`,
+  `date`, `interval`, `numeric`; never `regclass` or `xml`), or a column name after `{t}.` or
+  `{rel.<id>}.`. Also refused: a `.` anywhere else (no schema-qualified name), a `FROM` not
+  followed by a `{rel.<id>}` slot (exactly `IS [NOT] DISTINCT FROM` and the first `FROM` inside
+  `EXTRACT(` excepted, so `AS distinct FROM` is not; the slot of a joined `RowAnchor` is refused too,
+  see below), a `,` after a FROM item at the same bracket depth (the list is one slot), a `.` after
+  the FROM slot, `now`
+  and `current_timestamp` (the clock is `{now}`), a slot inside a string literal, any character
+  outside ASCII SQL punctuation, and every unlisted function. The error names the word. A dataset
+  that needs another function amends the lists in `fragcheck.go` with a test, in review.
+  **Query shape (T-1033, third security review).** A fragment may use `WITH [RECURSIVE] name
+  [(cols)] AS (…)`, `JOIN`/`LEFT JOIN`/`INNER JOIN … ON`, `UNION [ALL]`, `ORDER BY … [NULLS FIRST|LAST]
+  LIMIT`, `substring(x FROM n FOR m)`, and the pure functions `substring`, `position`, `decode`,
+  `uuid_send`, `left`, `floor`, `jsonb_typeof`, `jsonb_array_length`. The rules that keep a table read
+  out: `FROM` and `JOIN` take exactly one of a `{rel.<id>}` slot (not a `RowAnchor`, not dotted), a CTE
+  **this fragment declared** (never dotted), or a derived table `( SELECT|WITH … )`; no `,` follows a
+  FROM or JOIN item before the next `SELECT`/`UNION`/`ORDER`/`LIMIT`; `NATURAL`, `LATERAL`, `ONLY`,
+  `USING`, `MATERIALIZED` and a FROM function are not on the list. A declared name (CTE, derived-table
+  alias) may not be a schema table, `pg_*`, `public`, `information_schema`, a reserved word or an
+  anchor/relation ID. A `.` follows `{t}`, `{rel.<id>}` or a declared alias, so `public.x`,
+  `pg_catalog.x` and `information_schema.x` stay refused. A bare word is a column of a table the
+  dataset uses (a `Rel`'s `Where` reads its table unqualified), or a name the fragment declares with
+  `AS`/a CTE column list. `current_user`, `session_user`, `user`, `current_role`, `current_schema`,
+  `current_catalog`, `current_timestamp`, `current_date`, `current_time`, `localtime`,
+  `localtimestamp` and `system_user` are refused wherever they stand. A cast or a typed literal names
+  only a listed type, even when the fragment declares an alias with a type's name.
+- **Enum means the whole constraint** (`reportsql/schema.go`, T-1033). `CatalogSchema` classifies a
+  text column as `KindEnum` (projectable through a `Rel` or `MaskAnchor`) only when one of its
+  single-column CHECKs, as PostgreSQL prints it, is exactly `col = ANY (ARRAY[<literals>])` (the
+  printed form of `col IN ('a','b')`, with the `varchar` cast variant). An `OR`/`AND` with another
+  condition, an expression in the list, `NOT IN`, a pattern check or a one-element `IN` leaves the
+  column `KindText`.
 
 **Every alias over a directory table is a declared anchor, scoped by the compiler.** A
 fragment reads directory data only through `{rel.<id>}`, and the compiler builds that relation:
@@ -238,6 +278,7 @@ fragment reads directory data only through `{rel.<id>}`, and the compiler builds
 | --- | --- | --- |
 | `FilterAnchor` | `(SELECT <Project> FROM <table> WHERE <scope(alias)>) AS "<id>"` | counts and lists of other objects: GRP-01 member counts, OU-01 subtree counts, a member's groups. Out-of-scope rows do not exist for the fragment |
 | `MaskAnchor` | `(SELECT <Project minus Identity>, CASE WHEN <scope> THEN <identity col> END AS <identity col>…, <scope> AS in_scope FROM <table>) AS "<id>"` | inputs that must be read whatever the scope, whose identity must not show: the PSO that sets a user's policy (`policy_source`), the `Via` hop of an effective membership |
+| joined `RowAnchor` | its quoted alias `"<id>"` (no subselect: the row is already in FROM, scope in WHERE) | reading a column of a joined endpoint object, `{rel.<id>}.col`. **It may not follow `FROM`**: there a bare name resolves as a relation on the search_path, so `FROM {rel.pg_class}` would read a catalog. The registry refuses it (T-1033), and refuses any anchor or `Rel` ID starting `pg_` or equal to `public` or `information_schema` (a schema name followed by `.table` would read it) |
 | `RelEdge`, `RelInput` | `(SELECT <Project> FROM <table> WHERE <Rel.Where>) AS "<id>"` | links, closure edges, D4 policy values. No text columns (enforced), so no name can come from them |
 
 `<scope(alias)>` is the full rendered scope of §4.3 over that alias, including the token layer
