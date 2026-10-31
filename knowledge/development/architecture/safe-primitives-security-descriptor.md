@@ -1,7 +1,7 @@
 ---
 title: "Safe primitive P6: the typed security-descriptor model (MS-DTYP SD/ACL), SD_FLAGS and diff-based DACL edits"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-31
 status: review
 owner: heramb
 ticket: T-0028
@@ -503,6 +503,19 @@ four-valued `PasswordChange` (`Blocked`, `BlockedOneACE`, `NoDenyACE`, `NotConfi
   (`S-1-5-10`), **not** INHERITED, **not** INHERIT_ONLY, no inherited-object type. Callback ACEs, plain
   (non-object) denies of all control rights, inherited denies and allows are not counted, so `NoDenyACE`
   never means "can change". The same trustee twice is one ACE.
+- **Order matters (security-architect finding, T-1019).** Windows evaluates ACEs in stored order (SD-R11), so an
+  allow stored before a counted deny can let the user change the password. A DACL with an outcome-changing
+  ordering anomaly (`acl.order_outcome`, rules 1 and 2: an explicit ACE after an inherited one, a deny after an
+  allow) is `NotConfirmed` with that code, never `Blocked`/`BlockedOneACE`/`NoDenyACE`. So is a conditional
+  allow (types 0x09/0x0B, not INHERIT_ONLY) stored ahead of a counted deny (`ace.callback_present`): its
+  condition is never evaluated. Only canonical DACLs (denies, then allows, explicit before inherited) classify.
+  Windows DCs re-sort on write (T-0606), but legacy and migrated objects can be non-canonical.
+  Other decode anomalies are tolerated, one line each: `ace.opaque` (unknown type: AccessCheck skips ACE types
+  it does not know, so it cannot grant); `ace.misplaced_type` (an audit/alarm-typed ACE in a DACL, or the reverse:
+  not an allow/deny, no effect on access); `ace.callback_present` on a deny-callback or after the counted denies
+  (a deny can only restrict; after the denies its position cannot override them); `ace.unknown_flags`,
+  `acl.zero_slack`, `acl.sbz_nonzero`, `sd.rm_bits_set`, `sd.null_dacl` (layout oddities with no effect on
+  who is allowed).
 - Any `Decode` error returns `NotConfirmed` and the typed code unchanged; a descriptor with no DACL at all
   (the DC withheld it) is `sd.not_returned`; a NULL DACL is a real DACL with no ACEs (`NoDenyACE`). The
   state is never non-zero next to an error (`TestClassifyPasswordChangeNoPartialValue` flips every byte).

@@ -97,8 +97,28 @@ func TestWriteDACLStaleBaseSendsNothing(t *testing.T) {
 // pwDenySD is a DACL-only SD with the two Cannot Change Password deny ACEs (T-1019), built by hand.
 func pwDenySD(t *testing.T, trustees ...string) []byte {
 	t.Helper()
+	return pwSD(t, false, trustees...)
+}
+
+// pwSD is pwDenySD, optionally with an explicit allow of the right for Everyone stored BEFORE the denies:
+// a non-canonical order in which Windows lets the user change the password.
+func pwSD(t *testing.T, allowFirst bool, trustees ...string) []byte {
+	t.Helper()
 	gb := []byte{0x53, 0x1a, 0x72, 0xab, 0x2f, 0x1e, 0xd0, 0x11, 0x98, 0x19, 0x00, 0xaa, 0x00, 0x40, 0x52, 0x9b}
 	var aces []byte
+	n := len(trustees)
+	if allowFirst {
+		ev, err := sid.Parse("S-1-1-0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ace := []byte{0x05, 0, 0, 0, 0x00, 0x01, 0, 0, 0x01, 0, 0, 0}
+		ace = append(ace, gb...)
+		ace = append(ace, ev.Bytes()...)
+		binary.LittleEndian.PutUint16(ace[2:], uint16(len(ace)))
+		aces = append(aces, ace...)
+		n++
+	}
 	for _, s := range trustees {
 		tr, err := sid.Parse(s)
 		if err != nil {
@@ -112,7 +132,7 @@ func pwDenySD(t *testing.T, trustees ...string) []byte {
 	}
 	acl := []byte{4, 0, 0, 0, 0, 0, 0, 0}
 	binary.LittleEndian.PutUint16(acl[2:], uint16(8+len(aces)))
-	binary.LittleEndian.PutUint16(acl[4:], uint16(len(trustees)))
+	binary.LittleEndian.PutUint16(acl[4:], uint16(n))
 	hdr := make([]byte, 20)
 	hdr[0] = 1
 	binary.LittleEndian.PutUint16(hdr[2:], 0x8004)
@@ -133,6 +153,7 @@ func TestReadPasswordChange(t *testing.T) {
 		{"both denies", map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {pwDenySD(t, "S-1-1-0", "S-1-5-10")}}, sd.PasswordChangeBlocked, ""},
 		{"one deny", map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {pwDenySD(t, "S-1-5-10")}}, sd.PasswordChangeBlockedOneACE, ""},
 		{"no deny", map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {pwDenySD(t)}}, sd.PasswordChangeNoDenyACE, ""},
+		{"allow ahead of the denies", map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {pwSD(t, true, "S-1-1-0", "S-1-5-10")}}, sd.PasswordChangeNotConfirmed, "acl.order_outcome"},
 		{"malformed", map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {pwDenySD(t, "S-1-1-0")[:30]}}, sd.PasswordChangeNotConfirmed, "sd.truncated"},
 		{"garbage", map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {{1, 2, 3}}}, sd.PasswordChangeNotConfirmed, "sd.truncated_header"},
 		{"not returned", map[string][][]byte{"objectGUID": {obj.Bytes()}}, sd.PasswordChangeNotConfirmed, string(CodeProtocol)},

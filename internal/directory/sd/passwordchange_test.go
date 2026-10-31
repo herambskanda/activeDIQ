@@ -176,3 +176,43 @@ func TestClassifyPasswordChangeNoPartialValue(t *testing.T) {
 		}
 	}
 }
+
+// A DACL whose stored order lets an allow run before the explicit denies is not a clean "Blocked":
+// Windows evaluates in stored order (SD-R11), so the user may be able to change the password.
+func TestClassifyPasswordChangeNonCanonicalOrder(t *testing.T) {
+	allowAllControl := pcACE{typ: TypeAccessAllowed, mask: MaskControlAccess, trustee: "S-1-1-0"}
+	inhAllow := pcACE{typ: TypeAccessAllowedObject, flags: FlagInherited, mask: MaskControlAccess, obj: cpGUID, trustee: "S-1-1-0"}
+	condAllow := pcACE{typ: TypeAllowedCallback, mask: MaskControlAccess, trustee: "S-1-1-0"}
+	condAllowInheritOnly := pcACE{typ: TypeAllowedCallback, flags: FlagInheritOnly | FlagContainerInherit, mask: MaskControlAccess, trustee: "S-1-1-0"}
+	cases := []struct {
+		name     string
+		aces     []pcACE
+		wantCode string // "" = a real state is expected
+		want     PasswordChange
+	}{
+		{"explicit allow for the right before both denies", []pcACE{allowCP("S-1-1-0"), denyCP("S-1-1-0"), denyCP("S-1-5-10")}, AnomalyOrderOutcome, PasswordChangeNotConfirmed},
+		{"allow of all control rights before the denies", []pcACE{allowAllControl, denyCP("S-1-1-0"), denyCP("S-1-5-10")}, AnomalyOrderOutcome, PasswordChangeNotConfirmed},
+		{"inherited allow before the explicit denies", []pcACE{inhAllow, denyCP("S-1-1-0"), denyCP("S-1-5-10")}, AnomalyOrderOutcome, PasswordChangeNotConfirmed},
+		{"allow before a single deny", []pcACE{allowCP("S-1-5-11"), denyCP("S-1-5-10")}, AnomalyOrderOutcome, PasswordChangeNotConfirmed},
+		{"conditional allow before the denies", []pcACE{condAllow, denyCP("S-1-1-0"), denyCP("S-1-5-10")}, AnomalyCallbackPresent, PasswordChangeNotConfirmed},
+		{"conditional allow after the denies is harmless", []pcACE{denyCP("S-1-1-0"), denyCP("S-1-5-10"), condAllow}, "", PasswordChangeBlocked},
+		{"inherit-only conditional allow does not apply", []pcACE{condAllowInheritOnly, denyCP("S-1-1-0"), denyCP("S-1-5-10")}, "", PasswordChangeBlocked},
+		// Canonical order still classifies.
+		{"canonical: denies then allows", []pcACE{denyCP("S-1-1-0"), denyCP("S-1-5-10"), allowCP("S-1-1-0"), inhAllow}, "", PasswordChangeBlocked},
+		{"canonical: one deny then allows", []pcACE{denyCP("S-1-5-10"), allowCP("S-1-1-0")}, "", PasswordChangeBlockedOneACE},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := ClassifyPasswordChange(pcSD(t, c.aces...))
+			if c.wantCode != "" {
+				if codec.Code(err) != c.wantCode || got != PasswordChangeNotConfirmed || got.Blocks() {
+					t.Fatalf("got %v err=%v code=%q, want not_confirmed + %s", got, err, codec.Code(err), c.wantCode)
+				}
+				return
+			}
+			if err != nil || got != c.want {
+				t.Fatalf("got %v err=%v, want %v", got, err, c.want)
+			}
+		})
+	}
+}

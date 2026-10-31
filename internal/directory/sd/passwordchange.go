@@ -36,7 +36,8 @@ func (p PasswordChange) String() string {
 	return "not_confirmed"
 }
 
-// Blocks reports whether the state proves the user cannot change the password.
+// Blocks reports whether the state proves the user cannot change the password. A DACL that is not
+// in canonical order is NotConfirmed, so it never blocks.
 func (p PasswordChange) Blocks() bool {
 	return p == PasswordChangeBlocked || p == PasswordChangeBlockedOneACE
 }
@@ -63,6 +64,11 @@ var userChangePassword = func() guid.GUID {
 // Any decode failure, or a descriptor with no DACL at all (the DC withheld it), returns
 // PasswordChangeNotConfirmed and a typed error (the sd.* / acl.* / ace.* / sid.* codes, readable
 // with codec.Code); no partial value is ever reported. A NULL DACL is a real DACL with no ACEs.
+//
+// Windows evaluates ACEs in stored order (SD-R11), so an allow that precedes a deny can let the user
+// change the password. A DACL with an outcome-changing ordering anomaly (acl.order_outcome, rules 1 and
+// 2) or a conditional allow ahead of a counted deny is therefore NotConfirmed with that code, never
+// Blocked. The other decode anomalies are tolerated: see safe-primitives-security-descriptor §14.
 func ClassifyPasswordChange(r Raw) (PasswordChange, error) {
 	d, err := Decode(r)
 	if err != nil {
@@ -76,10 +82,22 @@ func (s SD) PasswordChange() (PasswordChange, error) {
 	if s.DACL.Kind == Absent {
 		return PasswordChangeNotConfirmed, fail(ErrNotReturned)
 	}
-	var everyone, self bool
+	for _, an := range s.Anomalies {
+		if an.Code == AnomalyOrderOutcome {
+			return PasswordChangeNotConfirmed, fail(AnomalyOrderOutcome)
+		}
+	}
+	var everyone, self, condAllow bool
 	for _, a := range s.DACL.ACEs { // Null DACL has no ACEs
+		if isConditionalAllow(a) {
+			condAllow = true
+		}
 		if !isChangePasswordDeny(a) {
 			continue
+		}
+		if condAllow {
+			// A conditional allow is never evaluated here; ahead of a deny it may grant the right.
+			return PasswordChangeNotConfirmed, fail(AnomalyCallbackPresent)
 		}
 		switch a.Trustee {
 		case sidEveryone:
@@ -95,6 +113,13 @@ func (s SD) PasswordChange() (PasswordChange, error) {
 		return PasswordChangeBlockedOneACE, nil
 	}
 	return PasswordChangeNoDenyACE, nil
+}
+
+// isConditionalAllow is an allow-type callback ACE that applies to this object. It is decoded but its
+// condition is never evaluated, so it might grant the right.
+func isConditionalAllow(a ACE) bool {
+	return a.Kind == Callback && !a.InheritOnly() &&
+		(a.Type == TypeAllowedCallback || a.Type == TypeAllowedCallbackObject)
 }
 
 func isChangePasswordDeny(a ACE) bool {
