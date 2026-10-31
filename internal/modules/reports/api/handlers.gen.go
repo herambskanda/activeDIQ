@@ -186,15 +186,19 @@ type CreateReportScheduleOutput interface {
 
 // CreateReportSchedule201 is the 201 response.
 type CreateReportSchedule201 struct {
-	Body     ReportSchedule
-	ETag     string // header ETag
-	Location string // header Location
+	Body                 ReportSchedule
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+	ETag                 string // header ETag
+	Location             string // header Location
 }
 
 func (CreateReportSchedule201) StatusCode() int     { return 201 }
 func (o CreateReportSchedule201) ResponseBody() any { return o.Body }
 func (o CreateReportSchedule201) ResponseHeaders() map[string]string {
 	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
 	if o.ETag != "" {
 		h["ETag"] = o.ETag
 	}
@@ -204,6 +208,23 @@ func (o CreateReportSchedule201) ResponseHeaders() map[string]string {
 	return h
 }
 func (CreateReportSchedule201) isCreateReportScheduleOutput() {}
+
+// CreateReportSchedule202 is the 202 response.
+type CreateReportSchedule202 struct {
+	Body                 apitypes.OperationRef
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+}
+
+func (CreateReportSchedule202) StatusCode() int     { return 202 }
+func (o CreateReportSchedule202) ResponseBody() any { return o.Body }
+func (o CreateReportSchedule202) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	return h
+}
+func (CreateReportSchedule202) isCreateReportScheduleOutput() {}
 
 // DeleteReportExportInput is the decoded input of deleteReportExport: path, query and header parameters, then the body.
 type DeleteReportExportInput struct {
@@ -308,14 +329,38 @@ type DeleteReportScheduleOutput interface {
 	isDeleteReportScheduleOutput()
 }
 
-// DeleteReportSchedule204 is the 204 response.
-type DeleteReportSchedule204 struct {
+// DeleteReportSchedule202 is the 202 response.
+type DeleteReportSchedule202 struct {
+	Body                 apitypes.OperationRef
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
 }
 
-func (DeleteReportSchedule204) StatusCode() int                    { return 204 }
-func (DeleteReportSchedule204) ResponseBody() any                  { return nil }
-func (DeleteReportSchedule204) ResponseHeaders() map[string]string { return nil }
-func (DeleteReportSchedule204) isDeleteReportScheduleOutput()      {}
+func (DeleteReportSchedule202) StatusCode() int     { return 202 }
+func (o DeleteReportSchedule202) ResponseBody() any { return o.Body }
+func (o DeleteReportSchedule202) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	return h
+}
+func (DeleteReportSchedule202) isDeleteReportScheduleOutput() {}
+
+// DeleteReportSchedule204 is the 204 response.
+type DeleteReportSchedule204 struct {
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+}
+
+func (DeleteReportSchedule204) StatusCode() int   { return 204 }
+func (DeleteReportSchedule204) ResponseBody() any { return nil }
+func (o DeleteReportSchedule204) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	return h
+}
+func (DeleteReportSchedule204) isDeleteReportScheduleOutput() {}
 
 // DownloadReportExportInput is the decoded input of downloadReportExport: path, query and header parameters, then the body.
 type DownloadReportExportInput struct {
@@ -1049,20 +1094,421 @@ type PauseReportScheduleOutput interface {
 
 // PauseReportSchedule200 is the 200 response.
 type PauseReportSchedule200 struct {
-	Body ReportSchedule
-	ETag string // header ETag
+	Body                 ReportSchedule
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+	ETag                 string // header ETag
 }
 
 func (PauseReportSchedule200) StatusCode() int     { return 200 }
 func (o PauseReportSchedule200) ResponseBody() any { return o.Body }
 func (o PauseReportSchedule200) ResponseHeaders() map[string]string {
 	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
 	if o.ETag != "" {
 		h["ETag"] = o.ETag
 	}
 	return h
 }
 func (PauseReportSchedule200) isPauseReportScheduleOutput() {}
+
+// PauseReportSchedule202 is the 202 response.
+type PauseReportSchedule202 struct {
+	Body                 apitypes.OperationRef
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+}
+
+func (PauseReportSchedule202) StatusCode() int     { return 202 }
+func (o PauseReportSchedule202) ResponseBody() any { return o.Body }
+func (o PauseReportSchedule202) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	return h
+}
+func (PauseReportSchedule202) isPauseReportScheduleOutput() {}
+
+// PreviewCreateReportScheduleInput is the decoded input of previewCreateReportSchedule: path, query and header parameters, then the body.
+type PreviewCreateReportScheduleInput struct {
+	Body ReportScheduleWrite
+}
+
+func (in *PreviewCreateReportScheduleInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+}
+
+func (in *PreviewCreateReportScheduleInput) BodyTarget() any { return &in.Body }
+
+func (in *PreviewCreateReportScheduleInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	in.Body.Validate(jsontext.Pointer(""), errs)
+}
+
+func (in *PreviewCreateReportScheduleInput) DestroySecrets() {}
+
+// PreviewCreateReportScheduleOutput is one of the responses previewCreateReportSchedule declares. Errors are returned as the error value.
+type PreviewCreateReportScheduleOutput interface {
+	apihost.Response
+	isPreviewCreateReportScheduleOutput()
+}
+
+// PreviewCreateReportSchedule200 is the 200 response.
+type PreviewCreateReportSchedule200 struct {
+	Body apitypes.OperationPreview
+}
+
+func (PreviewCreateReportSchedule200) StatusCode() int                      { return 200 }
+func (o PreviewCreateReportSchedule200) ResponseBody() any                  { return o.Body }
+func (PreviewCreateReportSchedule200) ResponseHeaders() map[string]string   { return nil }
+func (PreviewCreateReportSchedule200) isPreviewCreateReportScheduleOutput() {}
+
+// PreviewDeleteReportScheduleInput is the decoded input of previewDeleteReportSchedule: path, query and header parameters, then the body.
+type PreviewDeleteReportScheduleInput struct {
+	ScheduleID apitypes.UUID // path "scheduleId"
+	IfMatch    string        // header "If-Match"
+}
+
+func (in *PreviewDeleteReportScheduleInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("scheduleId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.ScheduleID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+	{
+		vs := r.Header.Values("If-Match")
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("If-Match"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			in.IfMatch = string(s)
+		default:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("If-Match"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *PreviewDeleteReportScheduleInput) BodyTarget() any { return nil }
+
+func (in *PreviewDeleteReportScheduleInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	{
+		apitypes.CheckLen(errs, apitypes.InHeader, jsontext.Pointer("If-Match"), string(in.IfMatch), 1, 256)
+	}
+}
+
+func (in *PreviewDeleteReportScheduleInput) DestroySecrets() {}
+
+// PreviewDeleteReportScheduleOutput is one of the responses previewDeleteReportSchedule declares. Errors are returned as the error value.
+type PreviewDeleteReportScheduleOutput interface {
+	apihost.Response
+	isPreviewDeleteReportScheduleOutput()
+}
+
+// PreviewDeleteReportSchedule200 is the 200 response.
+type PreviewDeleteReportSchedule200 struct {
+	Body apitypes.OperationPreview
+}
+
+func (PreviewDeleteReportSchedule200) StatusCode() int                      { return 200 }
+func (o PreviewDeleteReportSchedule200) ResponseBody() any                  { return o.Body }
+func (PreviewDeleteReportSchedule200) ResponseHeaders() map[string]string   { return nil }
+func (PreviewDeleteReportSchedule200) isPreviewDeleteReportScheduleOutput() {}
+
+// PreviewPauseReportScheduleInput is the decoded input of previewPauseReportSchedule: path, query and header parameters, then the body.
+type PreviewPauseReportScheduleInput struct {
+	ScheduleID apitypes.UUID // path "scheduleId"
+}
+
+func (in *PreviewPauseReportScheduleInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("scheduleId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.ScheduleID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *PreviewPauseReportScheduleInput) BodyTarget() any { return nil }
+
+func (in *PreviewPauseReportScheduleInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+}
+
+func (in *PreviewPauseReportScheduleInput) DestroySecrets() {}
+
+// PreviewPauseReportScheduleOutput is one of the responses previewPauseReportSchedule declares. Errors are returned as the error value.
+type PreviewPauseReportScheduleOutput interface {
+	apihost.Response
+	isPreviewPauseReportScheduleOutput()
+}
+
+// PreviewPauseReportSchedule200 is the 200 response.
+type PreviewPauseReportSchedule200 struct {
+	Body apitypes.OperationPreview
+}
+
+func (PreviewPauseReportSchedule200) StatusCode() int                     { return 200 }
+func (o PreviewPauseReportSchedule200) ResponseBody() any                 { return o.Body }
+func (PreviewPauseReportSchedule200) ResponseHeaders() map[string]string  { return nil }
+func (PreviewPauseReportSchedule200) isPreviewPauseReportScheduleOutput() {}
+
+// PreviewReassignReportScheduleInput is the decoded input of previewReassignReportSchedule: path, query and header parameters, then the body.
+type PreviewReassignReportScheduleInput struct {
+	ScheduleID apitypes.UUID // path "scheduleId"
+	IfMatch    string        // header "If-Match"
+	Body       ReportScheduleReassign
+}
+
+func (in *PreviewReassignReportScheduleInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("scheduleId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.ScheduleID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+	{
+		vs := r.Header.Values("If-Match")
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("If-Match"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			in.IfMatch = string(s)
+		default:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("If-Match"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *PreviewReassignReportScheduleInput) BodyTarget() any { return &in.Body }
+
+func (in *PreviewReassignReportScheduleInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	{
+		apitypes.CheckLen(errs, apitypes.InHeader, jsontext.Pointer("If-Match"), string(in.IfMatch), 1, 256)
+	}
+	in.Body.Validate(jsontext.Pointer(""), errs)
+}
+
+func (in *PreviewReassignReportScheduleInput) DestroySecrets() {}
+
+// PreviewReassignReportScheduleOutput is one of the responses previewReassignReportSchedule declares. Errors are returned as the error value.
+type PreviewReassignReportScheduleOutput interface {
+	apihost.Response
+	isPreviewReassignReportScheduleOutput()
+}
+
+// PreviewReassignReportSchedule200 is the 200 response.
+type PreviewReassignReportSchedule200 struct {
+	Body apitypes.OperationPreview
+}
+
+func (PreviewReassignReportSchedule200) StatusCode() int                        { return 200 }
+func (o PreviewReassignReportSchedule200) ResponseBody() any                    { return o.Body }
+func (PreviewReassignReportSchedule200) ResponseHeaders() map[string]string     { return nil }
+func (PreviewReassignReportSchedule200) isPreviewReassignReportScheduleOutput() {}
+
+// PreviewResumeReportScheduleInput is the decoded input of previewResumeReportSchedule: path, query and header parameters, then the body.
+type PreviewResumeReportScheduleInput struct {
+	ScheduleID apitypes.UUID // path "scheduleId"
+}
+
+func (in *PreviewResumeReportScheduleInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("scheduleId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.ScheduleID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *PreviewResumeReportScheduleInput) BodyTarget() any { return nil }
+
+func (in *PreviewResumeReportScheduleInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+}
+
+func (in *PreviewResumeReportScheduleInput) DestroySecrets() {}
+
+// PreviewResumeReportScheduleOutput is one of the responses previewResumeReportSchedule declares. Errors are returned as the error value.
+type PreviewResumeReportScheduleOutput interface {
+	apihost.Response
+	isPreviewResumeReportScheduleOutput()
+}
+
+// PreviewResumeReportSchedule200 is the 200 response.
+type PreviewResumeReportSchedule200 struct {
+	Body apitypes.OperationPreview
+}
+
+func (PreviewResumeReportSchedule200) StatusCode() int                      { return 200 }
+func (o PreviewResumeReportSchedule200) ResponseBody() any                  { return o.Body }
+func (PreviewResumeReportSchedule200) ResponseHeaders() map[string]string   { return nil }
+func (PreviewResumeReportSchedule200) isPreviewResumeReportScheduleOutput() {}
+
+// PreviewUndoReportScheduleOperationInput is the decoded input of previewUndoReportScheduleOperation: path, query and header parameters, then the body.
+type PreviewUndoReportScheduleOperationInput struct {
+	OperationID apitypes.UUID // path "operationId"
+}
+
+func (in *PreviewUndoReportScheduleOperationInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("operationId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("operationId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("operationId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.OperationID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("operationId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *PreviewUndoReportScheduleOperationInput) BodyTarget() any { return nil }
+
+func (in *PreviewUndoReportScheduleOperationInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+}
+
+func (in *PreviewUndoReportScheduleOperationInput) DestroySecrets() {}
+
+// PreviewUndoReportScheduleOperationOutput is one of the responses previewUndoReportScheduleOperation declares. Errors are returned as the error value.
+type PreviewUndoReportScheduleOperationOutput interface {
+	apihost.Response
+	isPreviewUndoReportScheduleOperationOutput()
+}
+
+// PreviewUndoReportScheduleOperation200 is the 200 response.
+type PreviewUndoReportScheduleOperation200 struct {
+	Body apitypes.OperationPreview
+}
+
+func (PreviewUndoReportScheduleOperation200) StatusCode() int                             { return 200 }
+func (o PreviewUndoReportScheduleOperation200) ResponseBody() any                         { return o.Body }
+func (PreviewUndoReportScheduleOperation200) ResponseHeaders() map[string]string          { return nil }
+func (PreviewUndoReportScheduleOperation200) isPreviewUndoReportScheduleOperationOutput() {}
+
+// PreviewUpdateReportScheduleInput is the decoded input of previewUpdateReportSchedule: path, query and header parameters, then the body.
+type PreviewUpdateReportScheduleInput struct {
+	ScheduleID apitypes.UUID // path "scheduleId"
+	IfMatch    string        // header "If-Match"
+	Body       ReportScheduleWrite
+}
+
+func (in *PreviewUpdateReportScheduleInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("scheduleId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.ScheduleID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("scheduleId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+	{
+		vs := r.Header.Values("If-Match")
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("If-Match"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			in.IfMatch = string(s)
+		default:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("If-Match"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *PreviewUpdateReportScheduleInput) BodyTarget() any { return &in.Body }
+
+func (in *PreviewUpdateReportScheduleInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	{
+		apitypes.CheckLen(errs, apitypes.InHeader, jsontext.Pointer("If-Match"), string(in.IfMatch), 1, 256)
+	}
+	in.Body.Validate(jsontext.Pointer(""), errs)
+}
+
+func (in *PreviewUpdateReportScheduleInput) DestroySecrets() {}
+
+// PreviewUpdateReportScheduleOutput is one of the responses previewUpdateReportSchedule declares. Errors are returned as the error value.
+type PreviewUpdateReportScheduleOutput interface {
+	apihost.Response
+	isPreviewUpdateReportScheduleOutput()
+}
+
+// PreviewUpdateReportSchedule200 is the 200 response.
+type PreviewUpdateReportSchedule200 struct {
+	Body apitypes.OperationPreview
+}
+
+func (PreviewUpdateReportSchedule200) StatusCode() int                      { return 200 }
+func (o PreviewUpdateReportSchedule200) ResponseBody() any                  { return o.Body }
+func (PreviewUpdateReportSchedule200) ResponseHeaders() map[string]string   { return nil }
+func (PreviewUpdateReportSchedule200) isPreviewUpdateReportScheduleOutput() {}
 
 // ReassignReportScheduleInput is the decoded input of reassignReportSchedule: path, query and header parameters, then the body.
 type ReassignReportScheduleInput struct {
@@ -1123,20 +1569,41 @@ type ReassignReportScheduleOutput interface {
 
 // ReassignReportSchedule200 is the 200 response.
 type ReassignReportSchedule200 struct {
-	Body ReportSchedule
-	ETag string // header ETag
+	Body                 ReportSchedule
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+	ETag                 string // header ETag
 }
 
 func (ReassignReportSchedule200) StatusCode() int     { return 200 }
 func (o ReassignReportSchedule200) ResponseBody() any { return o.Body }
 func (o ReassignReportSchedule200) ResponseHeaders() map[string]string {
 	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
 	if o.ETag != "" {
 		h["ETag"] = o.ETag
 	}
 	return h
 }
 func (ReassignReportSchedule200) isReassignReportScheduleOutput() {}
+
+// ReassignReportSchedule202 is the 202 response.
+type ReassignReportSchedule202 struct {
+	Body                 apitypes.OperationRef
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+}
+
+func (ReassignReportSchedule202) StatusCode() int     { return 202 }
+func (o ReassignReportSchedule202) ResponseBody() any { return o.Body }
+func (o ReassignReportSchedule202) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	return h
+}
+func (ReassignReportSchedule202) isReassignReportScheduleOutput() {}
 
 // ResumeReportScheduleInput is the decoded input of resumeReportSchedule: path, query and header parameters, then the body.
 type ResumeReportScheduleInput struct {
@@ -1179,20 +1646,41 @@ type ResumeReportScheduleOutput interface {
 
 // ResumeReportSchedule200 is the 200 response.
 type ResumeReportSchedule200 struct {
-	Body ReportSchedule
-	ETag string // header ETag
+	Body                 ReportSchedule
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+	ETag                 string // header ETag
 }
 
 func (ResumeReportSchedule200) StatusCode() int     { return 200 }
 func (o ResumeReportSchedule200) ResponseBody() any { return o.Body }
 func (o ResumeReportSchedule200) ResponseHeaders() map[string]string {
 	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
 	if o.ETag != "" {
 		h["ETag"] = o.ETag
 	}
 	return h
 }
 func (ResumeReportSchedule200) isResumeReportScheduleOutput() {}
+
+// ResumeReportSchedule202 is the 202 response.
+type ResumeReportSchedule202 struct {
+	Body                 apitypes.OperationRef
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+}
+
+func (ResumeReportSchedule202) StatusCode() int     { return 202 }
+func (o ResumeReportSchedule202) ResponseBody() any { return o.Body }
+func (o ResumeReportSchedule202) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	return h
+}
+func (ResumeReportSchedule202) isResumeReportScheduleOutput() {}
 
 // RetryReportRunInput is the decoded input of retryReportRun: path, query and header parameters, then the body.
 type RetryReportRunInput struct {
@@ -1306,6 +1794,81 @@ func (o RunReportScheduleNow202) ResponseHeaders() map[string]string {
 }
 func (RunReportScheduleNow202) isRunReportScheduleNowOutput() {}
 
+// UndoReportScheduleOperationInput is the decoded input of undoReportScheduleOperation: path, query and header parameters, then the body.
+type UndoReportScheduleOperationInput struct {
+	OperationID apitypes.UUID // path "operationId"
+	Body        apitypes.OperationUndoRequest
+}
+
+func (in *UndoReportScheduleOperationInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("operationId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("operationId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("operationId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.OperationID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("operationId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *UndoReportScheduleOperationInput) BodyTarget() any { return &in.Body }
+
+func (in *UndoReportScheduleOperationInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	in.Body.Validate(jsontext.Pointer(""), errs)
+}
+
+func (in *UndoReportScheduleOperationInput) DestroySecrets() {}
+
+// UndoReportScheduleOperationOutput is one of the responses undoReportScheduleOperation declares. Errors are returned as the error value.
+type UndoReportScheduleOperationOutput interface {
+	apihost.Response
+	isUndoReportScheduleOperationOutput()
+}
+
+// UndoReportScheduleOperation200 is the 200 response.
+type UndoReportScheduleOperation200 struct {
+	Body                 apitypes.OperationRef
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+}
+
+func (UndoReportScheduleOperation200) StatusCode() int     { return 200 }
+func (o UndoReportScheduleOperation200) ResponseBody() any { return o.Body }
+func (o UndoReportScheduleOperation200) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	return h
+}
+func (UndoReportScheduleOperation200) isUndoReportScheduleOperationOutput() {}
+
+// UndoReportScheduleOperation202 is the 202 response.
+type UndoReportScheduleOperation202 struct {
+	Body                 apitypes.OperationRef
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+}
+
+func (UndoReportScheduleOperation202) StatusCode() int     { return 202 }
+func (o UndoReportScheduleOperation202) ResponseBody() any { return o.Body }
+func (o UndoReportScheduleOperation202) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	return h
+}
+func (UndoReportScheduleOperation202) isUndoReportScheduleOperationOutput() {}
+
 // UpdateReportScheduleInput is the decoded input of updateReportSchedule: path, query and header parameters, then the body.
 type UpdateReportScheduleInput struct {
 	ScheduleID apitypes.UUID // path "scheduleId"
@@ -1365,20 +1928,41 @@ type UpdateReportScheduleOutput interface {
 
 // UpdateReportSchedule200 is the 200 response.
 type UpdateReportSchedule200 struct {
-	Body ReportSchedule
-	ETag string // header ETag
+	Body                 ReportSchedule
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+	ETag                 string // header ETag
 }
 
 func (UpdateReportSchedule200) StatusCode() int     { return 200 }
 func (o UpdateReportSchedule200) ResponseBody() any { return o.Body }
 func (o UpdateReportSchedule200) ResponseHeaders() map[string]string {
 	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
 	if o.ETag != "" {
 		h["ETag"] = o.ETag
 	}
 	return h
 }
 func (UpdateReportSchedule200) isUpdateReportScheduleOutput() {}
+
+// UpdateReportSchedule202 is the 202 response.
+type UpdateReportSchedule202 struct {
+	Body                 apitypes.OperationRef
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+}
+
+func (UpdateReportSchedule202) StatusCode() int     { return 202 }
+func (o UpdateReportSchedule202) ResponseBody() any { return o.Body }
+func (o UpdateReportSchedule202) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	return h
+}
+func (UpdateReportSchedule202) isUpdateReportScheduleOutput() {}
 
 // Handlers is the tag's handler interface: one method per operation. A handler never sees
 // *http.Request, http.ResponseWriter or the raw body (ADR-0004 rule 5).
@@ -1399,10 +1983,18 @@ type Handlers interface {
 	ListReportRuns(ctx context.Context, in ListReportRunsInput) (ListReportRunsOutput, error)
 	ListReportSchedules(ctx context.Context, in ListReportSchedulesInput) (ListReportSchedulesOutput, error)
 	PauseReportSchedule(ctx context.Context, in PauseReportScheduleInput) (PauseReportScheduleOutput, error)
+	PreviewCreateReportSchedule(ctx context.Context, in PreviewCreateReportScheduleInput) (PreviewCreateReportScheduleOutput, error)
+	PreviewDeleteReportSchedule(ctx context.Context, in PreviewDeleteReportScheduleInput) (PreviewDeleteReportScheduleOutput, error)
+	PreviewPauseReportSchedule(ctx context.Context, in PreviewPauseReportScheduleInput) (PreviewPauseReportScheduleOutput, error)
+	PreviewReassignReportSchedule(ctx context.Context, in PreviewReassignReportScheduleInput) (PreviewReassignReportScheduleOutput, error)
+	PreviewResumeReportSchedule(ctx context.Context, in PreviewResumeReportScheduleInput) (PreviewResumeReportScheduleOutput, error)
+	PreviewUndoReportScheduleOperation(ctx context.Context, in PreviewUndoReportScheduleOperationInput) (PreviewUndoReportScheduleOperationOutput, error)
+	PreviewUpdateReportSchedule(ctx context.Context, in PreviewUpdateReportScheduleInput) (PreviewUpdateReportScheduleOutput, error)
 	ReassignReportSchedule(ctx context.Context, in ReassignReportScheduleInput) (ReassignReportScheduleOutput, error)
 	ResumeReportSchedule(ctx context.Context, in ResumeReportScheduleInput) (ResumeReportScheduleOutput, error)
 	RetryReportRun(ctx context.Context, in RetryReportRunInput) (RetryReportRunOutput, error)
 	RunReportScheduleNow(ctx context.Context, in RunReportScheduleNowInput) (RunReportScheduleNowOutput, error)
+	UndoReportScheduleOperation(ctx context.Context, in UndoReportScheduleOperationInput) (UndoReportScheduleOperationOutput, error)
 	UpdateReportSchedule(ctx context.Context, in UpdateReportScheduleInput) (UpdateReportScheduleOutput, error)
 }
 
@@ -1668,6 +2260,121 @@ func Bind(h Handlers) apihost.TagHandlers {
 				return out, nil
 			}),
 		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "previewCreateReportSchedule", Tag: "reports", Method: "POST", Path: "/reports/schedules/previews/create",
+			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 32768, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
+		},
+			func() apihost.Input { return new(PreviewCreateReportScheduleInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.PreviewCreateReportSchedule(ctx, *in.(*PreviewCreateReportScheduleInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("PreviewCreateReportSchedule returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "previewDeleteReportSchedule", Tag: "reports", Method: "POST", Path: "/reports/schedules/{scheduleId}/previews/delete",
+			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Headers: []string{"If-Match"},
+		},
+			func() apihost.Input { return new(PreviewDeleteReportScheduleInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.PreviewDeleteReportSchedule(ctx, *in.(*PreviewDeleteReportScheduleInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("PreviewDeleteReportSchedule returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "previewPauseReportSchedule", Tag: "reports", Method: "POST", Path: "/reports/schedules/{scheduleId}/previews/pause",
+			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(PreviewPauseReportScheduleInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.PreviewPauseReportSchedule(ctx, *in.(*PreviewPauseReportScheduleInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("PreviewPauseReportSchedule returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "previewReassignReportSchedule", Tag: "reports", Method: "POST", Path: "/reports/schedules/{scheduleId}/previews/reassign",
+			Permission: "reports.schedule.manage_all", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 1024, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
+			Headers: []string{"If-Match"},
+		},
+			func() apihost.Input { return new(PreviewReassignReportScheduleInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.PreviewReassignReportSchedule(ctx, *in.(*PreviewReassignReportScheduleInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("PreviewReassignReportSchedule returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "previewResumeReportSchedule", Tag: "reports", Method: "POST", Path: "/reports/schedules/{scheduleId}/previews/resume",
+			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(PreviewResumeReportScheduleInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.PreviewResumeReportSchedule(ctx, *in.(*PreviewResumeReportScheduleInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("PreviewResumeReportSchedule returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "previewUndoReportScheduleOperation", Tag: "reports", Method: "POST", Path: "/reports/schedules/operations/{operationId}/previews/undo",
+			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(PreviewUndoReportScheduleOperationInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.PreviewUndoReportScheduleOperation(ctx, *in.(*PreviewUndoReportScheduleOperationInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("PreviewUndoReportScheduleOperation returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "previewUpdateReportSchedule", Tag: "reports", Method: "POST", Path: "/reports/schedules/{scheduleId}/previews/update",
+			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 32768, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
+			Headers: []string{"If-Match"},
+		},
+			func() apihost.Input { return new(PreviewUpdateReportScheduleInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.PreviewUpdateReportSchedule(ctx, *in.(*PreviewUpdateReportScheduleInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("PreviewUpdateReportSchedule returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "reassignReportSchedule", Tag: "reports", Method: "PUT", Path: "/reports/schedules/{scheduleId}/owner",
 			Permission: "reports.schedule.manage_all", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
 			Class: "write", MaxBody: 1024, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
@@ -1729,6 +2436,22 @@ func Bind(h Handlers) apihost.TagHandlers {
 				}
 				if out == nil {
 					return nil, fmt.Errorf("RunReportScheduleNow returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "undoReportScheduleOperation", Tag: "reports", Method: "POST", Path: "/reports/schedules/operations/{operationId}/undo",
+			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "write", MaxBody: 32768, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
+		},
+			func() apihost.Input { return new(UndoReportScheduleOperationInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.UndoReportScheduleOperation(ctx, *in.(*UndoReportScheduleOperationInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("UndoReportScheduleOperation returned no output and no error")
 				}
 				return out, nil
 			}),
