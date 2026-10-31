@@ -9,6 +9,7 @@
 --            embedded binding in the same transaction, immediately before the transition.
 -- Lifecycle `active <-> disabled -> removed` is state data; removal is a state, never a delete.
 
+-- write-class: connector_bindings config
 CREATE TABLE public.connector_bindings (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

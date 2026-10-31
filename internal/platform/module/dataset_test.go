@@ -66,9 +66,27 @@ func TestBootFailsForUnownedTableAndWithNoMap(t *testing.T) {
 	if _, err := moduletest.Register(m, ownerMap(map[string]string{})); !errors.Is(err, report.ErrTableOwnership) {
 		t.Fatalf("unowned table: %v", err)
 	}
-	// The default map is the generated one, which is empty until the generator lands: fail closed.
-	if _, err := moduletest.Register(m); !errors.Is(err, report.ErrTableOwnership) {
-		t.Fatalf("default map: %v", err)
+}
+
+// T-0997 AC 2, against the generated map (store/owners, from the migrations) that Boot uses by default:
+// a module registering a dataset over a table it owns passes CheckTables; over a foreign table, or one no
+// migration creates, it still fails and names the table.
+func TestBootWithGeneratedOwnershipMap(t *testing.T) {
+	own := &fake{id: "reports", register: datasets(dataset("reports.runs", "report_runs", "report_run_rows"))}
+	if _, err := moduletest.Register(own); err != nil {
+		t.Fatalf("a dataset over the tables reports owns: %v", err)
+	}
+	for table, actual := range map[string]string{"directory_objects": "inventory", "authn_accounts": "authn"} {
+		foreign := &fake{id: "reports", register: datasets(dataset("reports.runs", "report_runs", table))}
+		_, err := moduletest.Register(foreign)
+		var te *report.TableOwnershipError
+		if !errors.As(err, &te) || te.Table != table || te.Actual != actual || te.Owner != "reports" {
+			t.Fatalf("foreign table %s: %v", table, err)
+		}
+	}
+	missing := &fake{id: "reports", register: datasets(dataset("reports.runs", "report_runs", "no_such_table"))}
+	if _, err := moduletest.Register(missing); !errors.Is(err, report.ErrTableOwnership) {
+		t.Fatalf("a table no migration creates: %v", err)
 	}
 }
 

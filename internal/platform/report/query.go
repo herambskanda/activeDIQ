@@ -251,7 +251,7 @@ func (r *resolver) sortKeys(p RunParams, pr Preset) ([]SortKey, error) {
 func (r *resolver) hidden(p RunParams, pr Preset) ([]HiddenGroup, error) {
 	known := map[string]bool{}
 	for _, h := range pr.Hidden {
-		known[h.ID] = true
+		known[h.ID] = !h.Locked
 	}
 	for _, id := range p.ShowHidden {
 		if !known[id] {
@@ -260,7 +260,7 @@ func (r *resolver) hidden(p RunParams, pr Preset) ([]HiddenGroup, error) {
 	}
 	var out []HiddenGroup
 	for i, h := range pr.Hidden {
-		if slices.Contains(p.ShowHidden, h.ID) {
+		if !h.Locked && slices.Contains(p.ShowHidden, h.ID) {
 			continue
 		}
 		r.nodes = 0
@@ -271,7 +271,7 @@ func (r *resolver) hidden(p RunParams, pr Preset) ([]HiddenGroup, error) {
 		if cols := columns(e, nil); slices.ContainsFunc(cols, func(c ColumnID) bool { col, _ := r.ds.Column(c); return col.IsPerDC() }) {
 			return nil, verr(CodePerDCMisplaced, fmt.Sprintf("hidden[%d]", i))
 		}
-		out = append(out, HiddenGroup{ID: h.ID, Label: h.Label, Where: e})
+		out = append(out, HiddenGroup{ID: h.ID, Label: h.Label, Where: e, Locked: h.Locked})
 	}
 	return out, nil
 }

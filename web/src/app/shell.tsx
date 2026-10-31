@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../api/client";
 import { Skeleton, StatePanel, Button } from "../ds/components";
-import { collectRoutes, matchRoute, type WebModule } from "./modules";
+import { collectContributions, matchRoute, type WebModule } from "./modules";
 import { loadSession, SIGN_IN_PATH, type SessionClient, safeNext } from "./session";
 import { SignInPage } from "./sign-in";
 
@@ -27,7 +27,7 @@ export function Shell({
   readonly modules: readonly WebModule[];
   readonly client?: SessionClient;
 }) {
-  const routes = collectRoutes(modules);
+  const { routes } = collectContributions(modules);
   const [path, setPath] = useState(currentPath);
   const [session, setSession] = useState<Session>("checking");
 

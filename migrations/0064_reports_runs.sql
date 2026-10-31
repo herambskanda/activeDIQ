@@ -12,6 +12,7 @@
 -- record, and report_run_rows_guard refuses a write to the rows of a run that is not running and a delete
 -- of the rows of a run that is not failed, cancelled or expired.
 
+-- write-class: report_runs system
 CREATE TABLE public.report_runs (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL,
@@ -63,6 +64,7 @@ CREATE INDEX report_runs_expiry ON public.report_runs (tenant_id, expires_at) WH
 -- the reuse window looks a recent identical run up by (runner, query, scope)
 CREATE INDEX report_runs_reuse ON public.report_runs (tenant_id, runner_account, query_hash, created_at DESC);
 
+-- write-class: report_run_rows system
 CREATE TABLE public.report_run_rows (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   run_id uuid NOT NULL,

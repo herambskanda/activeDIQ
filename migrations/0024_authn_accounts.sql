@@ -17,6 +17,7 @@
 --                        (audit refers to them); the runtime role cannot delete them.
 -- A binding is never rewritten here; rebinding is an audited administrative action of its own ticket.
 
+-- write-class: authn_accounts config
 CREATE TABLE public.authn_accounts (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

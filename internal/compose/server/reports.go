@@ -7,6 +7,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/modules/reports"
+	"github.com/skenzeriq/activediq/internal/modules/reports/library"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -15,30 +16,75 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/store/reportsql"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // buildReports wires the report run path (T-0959): the run service over the store and the job registry,
-// its two job kinds and the run API handlers.
+// its two job kinds and the run API handlers. The catalogue is the shipped report library (T-1104),
+// loaded over the datasets the sealed EP-8 host holds, so a definition that does not resolve against
+// its dataset stops start-up.
 //
-// Two ports have no production implementation yet, and each fails closed rather than guess:
-//   - the read-scope producer (rbac.ReadScopes needs the owner-status and object-connection sources), so a
-//     run cannot be created or read and the API answers 503 not-ready;
-//   - the report library (row B5), so every definition is unknown and the API answers 404.
-//
-// Both are filed as follow-ups on T-0959.
-func buildReports(db *store.DB, jreg *jobs.Registry, sink audit.Sink, reader *inventory.Reader, scopes run.ReadScopes) (*run.Service, apihost.TagHandlers, error) {
+// One port has no production implementation yet and fails closed rather than guess: the read-scope
+// producer (rbac.ReadScopes needs the owner-status and object-connection sources), so a run cannot be
+// created or read and the API answers 503 not-ready. It is filed as a follow-up on T-0959.
+func buildReports(ctx context.Context, db *store.DB, host *report.Host, jreg *jobs.Registry, sink audit.Sink, reader *inventory.Reader, scopes run.ReadScopes) (*run.Service, apihost.TagHandlers, error) {
 	if scopes == nil {
 		scopes = noScopes{}
 	}
-	svc := &run.Service{DB: db, Jobs: jreg, Scopes: scopes, Audit: sink, Catalog: noLibrary{}, Codec: reports.Codec{},
+	lib, err := reportLibrary(ctx, db, host)
+	if err != nil {
+		return nil, apihost.TagHandlers{}, err
+	}
+	svc := &run.Service{DB: db, Jobs: jreg, Scopes: scopes, Audit: sink, Catalog: lib, Codec: reports.Codec{},
 		Fresh: inventoryFreshness{r: reader}}
 	for _, k := range []jobs.Kind{svc.Kind(), svc.RetentionKind()} {
 		if err := jreg.Register(k); err != nil {
 			return nil, apihost.TagHandlers{}, fmt.Errorf("server: reports job kind %s: %w", k.Name, err)
 		}
 	}
-	return svc, (&reports.Handlers{Runs: svc}).Bind(), nil
+	return svc, (&reports.Handlers{Runs: svc, Library: lib}).Bind(), nil
+}
+
+// reportLibrary compiles the host's datasets against the live schema (reportsql.NewRegistry) and loads
+// the shipped definitions over them (library.Load).
+func reportLibrary(ctx context.Context, db *store.DB, host *report.Host) (*library.Library, error) {
+	var ds []report.Dataset
+	for _, id := range host.Datasets() {
+		d, _ := host.Dataset(id)
+		ds = append(ds, d)
+	}
+	sc, err := reportSchema(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	reg, err := reportsql.NewRegistry(reportsql.Options{Schema: sc, SecretKey: inventory.SecretKey}, ds...)
+	if err != nil {
+		return nil, fmt.Errorf("server: report datasets: %w", err)
+	}
+	lib, err := library.Load(library.Shipped(), library.Options{Datasets: ds, Registry: reg})
+	if err != nil {
+		return nil, fmt.Errorf("server: report library: %w", err)
+	}
+	return lib, nil
+}
+
+// reportSchema reads the public schema catalogue once at start-up, before the install tenant exists.
+// The catalogue is the same for every tenant and holds no tenant data, so the read runs in platform
+// scope (registered platform path, exemption registry).
+func reportSchema(ctx context.Context, db *store.DB) (reportsql.Schema, error) {
+	var sc reportsql.Schema
+	rctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	err := db.WithPlatform(rctx, "server: read the schema catalogue to compile the report datasets", func(ctx context.Context, tx store.Tx) error {
+		var err error
+		sc, err = reportsql.CatalogSchema(ctx, tx)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("server: report schema: %w", err)
+	}
+	return sc, nil
 }
 
 // startReportRetention seeds the retention sweep for the install tenant. The job reschedules itself and
@@ -62,23 +108,22 @@ func (noScopes) For(context.Context, store.Tx, tenant.ID, authority.Chain, authz
 	return authz.ReadScope{}, run.ErrScopesUnavailable
 }
 
-// noLibrary is the catalogue before the report library lands: it knows no definition.
-type noLibrary struct{}
-
-func (noLibrary) Definition(string, int) (run.Definition, bool) { return run.Definition{}, false }
-
 // inventoryFreshness reads the sync watermarks of the connections a result covers from the inventory
 // reader (D6) and hands the run path the label and the threshold it used.
 type inventoryFreshness struct{ r *inventory.Reader }
 
-func (f inventoryFreshness) Freshness(ctx context.Context, tid tenant.ID, cs []authz.ObjectID, now time.Time) (report.Freshness, time.Duration, error) {
+func (f inventoryFreshness) Freshness(ctx context.Context, tid tenant.ID, cs []authz.ObjectID, now time.Time) (run.FreshnessRead, error) {
 	q := inventory.FreshnessQuery{Now: now}
 	for _, c := range cs {
 		q.Connections = append(q.Connections, inventory.ConnectionID(report.GUIDString(c)))
 	}
 	res, err := f.r.Freshness(ctx, tid, q)
 	if err != nil {
-		return report.Freshness{}, 0, err
+		return run.FreshnessRead{}, err
 	}
-	return res.Label, res.Threshold, nil
+	names := make(map[string]string, len(res.Names))
+	for id, n := range res.Names {
+		names[string(id)] = n
+	}
+	return run.FreshnessRead{Label: res.Label, Threshold: res.Threshold, Names: names}, nil
 }

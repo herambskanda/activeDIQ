@@ -21,15 +21,17 @@ import (
 )
 
 // Handlers implements api.Handlers: the run operations (createReportRun, getReportRun,
-// cancelReportRun, retryReportRun, listReportRuns, listReportRunRows). The permission reports.run is
+// cancelReportRun, retryReportRun, listReportRuns, listReportRunRows) and the two library reads
+// (listReportDefinitions, getReportDefinition: definitions.go). The permission reports.run is
 // the route's (apihost enforces it from RouteMeta before a handler runs); what a handler adds is the
 // runner binding and the read-scope check, both inside run.Service. The other operations of the tag
 // answer 501 until their rows land (pending.go).
 type Handlers struct {
 	pending
-	Runs *run.Service
-	Now  func() time.Time
-	Log  *slog.Logger
+	Runs    *run.Service
+	Library Library
+	Now     func() time.Time
+	Log     *slog.Logger
 }
 
 // Bind returns the tag's routes for apihost.Build.
@@ -102,7 +104,7 @@ func (h *Handlers) CreateReportRun(ctx context.Context, in api.CreateReportRunIn
 	if err != nil {
 		return nil, h.problem(err)
 	}
-	return api.CreateReportRun202{Body: runView(r, h.now()), Location: location(r.ID)}, nil
+	return api.CreateReportRun202{Body: runView(r, h.Runs.HiddenGroups(r), h.now()), Location: location(r.ID)}, nil
 }
 
 // GetReportRun implements api.Handlers.
@@ -116,14 +118,14 @@ func (h *Handlers) GetReportRun(ctx context.Context, in api.GetReportRunInput) (
 		return nil, h.problem(run.ErrRunNotFound)
 	}
 	var got run.Run
-	err = h.Runs.Read(ctx, tid, id, chain, run.ForGet, func(_ context.Context, _ store.Tx, r run.Run) error {
+	err = h.Runs.Read(ctx, tid, run.OpGet, id, chain, run.ForGet, func(_ context.Context, _ store.Tx, r run.Run) error {
 		got = r
 		return nil
 	})
 	if err != nil {
 		return nil, h.problem(err)
 	}
-	return api.GetReportRun200{Body: runView(got, h.now())}, nil
+	return api.GetReportRun200{Body: runView(got, h.Runs.HiddenGroups(got), h.now())}, nil
 }
 
 // CancelReportRun implements api.Handlers.
@@ -140,7 +142,7 @@ func (h *Handlers) CancelReportRun(ctx context.Context, in api.CancelReportRunIn
 	if err != nil {
 		return nil, h.problem(err)
 	}
-	return api.CancelReportRun200{Body: runView(r, h.now())}, nil
+	return api.CancelReportRun200{Body: runView(r, h.Runs.HiddenGroups(r), h.now())}, nil
 }
 
 // RetryReportRun implements api.Handlers.
@@ -157,7 +159,7 @@ func (h *Handlers) RetryReportRun(ctx context.Context, in api.RetryReportRunInpu
 	if err != nil {
 		return nil, h.problem(err)
 	}
-	return api.RetryReportRun202{Body: runView(r, h.now()), Location: location(r.ID)}, nil
+	return api.RetryReportRun202{Body: runView(r, h.Runs.HiddenGroups(r), h.now()), Location: location(r.ID)}, nil
 }
 
 // ListReportRuns implements api.Handlers: the caller's own history, never anyone else's.

@@ -116,6 +116,17 @@ const (
 
 	accountReasonSQL = "CASE WHEN ({t}.inputs_read & 4) = 0 THEN 'account_expires_not_read' ELSE 'none' END"
 
+	// USR-02, USR-03 (T-0960). The replicated logon is "recorded" only when its input was read (bit 8): an
+	// unread input is Unknown, never "no logon recorded". Whole days are floored; a negative count of days
+	// to expiry is the days since expiry.
+	logonRecordedSQL  = "CASE WHEN ({t}.inputs_read & 8) = 0 THEN " + unknown + " WHEN {t}.last_logon_timestamp IS NULL THEN 'none_recorded' ELSE 'recorded' END"
+	daysSinceLogonSQL = "CASE WHEN ({t}.inputs_read & 8) = 0 OR {t}.last_logon_timestamp IS NULL THEN NULL" +
+		" ELSE floor(extract(epoch FROM ({now} - {t}.last_logon_timestamp)) / 86400) END"
+	daysToExpirySQL = "CASE WHEN ({t}.inputs_read & 4) = 0 OR {t}.account_expires IS NULL THEN NULL" +
+		" ELSE floor(extract(epoch FROM ({t}.account_expires - {now})) / 86400) END"
+	// The domain's msDS-LogonTimeSyncInterval in days: NULL when the domain row or the value was not read.
+	logonSyncSQL = "(SELECT dom.logon_sync_interval_days FROM {rel.dom} WHERE dom.connection_id = {t}.connection_id AND dom.nc_guid = {t}.nc_guid)"
+
 	outside = "'(policy outside your scope)'"
 
 	policySourceSQL = "(SELECT CASE res.status WHEN 0 THEN 'Domain policy' WHEN 1 THEN COALESCE((" +

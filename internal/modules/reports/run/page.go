@@ -109,7 +109,7 @@ func (s *Service) Page(ctx context.Context, tid tenant.ID, chain authority.Chain
 		off = c.Off
 	}
 	var out Page
-	err := s.Read(ctx, tid, id, chain, ForPage, func(ctx context.Context, tx store.Tx, r Run) error {
+	err := s.Read(ctx, tid, OpPage, id, chain, ForPage, func(ctx context.Context, tx store.Tx, r Run) error {
 		out.Run = r
 		def, ok := s.Catalog.Definition(r.DefinitionID, r.DefinitionVer)
 		if !ok {

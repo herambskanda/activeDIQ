@@ -22,3 +22,4 @@
 - [Erratum guards vs own examples](erratum-guards-vs-own-examples.md) — run every registered/allowed example through the erratum's own guard (T-0889 onprem_sid)
 - [Ticket notes vs YAML](review-ticket-notes-vs-yaml.md) — verify each security note in the artefact, not the commit msg; new routes vs existing R-n findings
 - [Merge-conflict blocks](triage-merge-conflict-blocks.md) — primary MERGE_HEAD, merge-tree vs current main, migrations-number test on main
+- [Search ADR review checks](search-adr-review-checks.md) — fold step order vs own examples; LIMIT≠bound unless index-ordered (GIN can't); cap before scope leaks

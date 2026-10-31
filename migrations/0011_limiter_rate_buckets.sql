@@ -14,6 +14,7 @@
 --   admitted    whether the take that last wrote the row was admitted; the statement reads it back.
 -- A row that has refilled to its burst carries no state and may be deleted; nothing depends on it.
 
+-- write-class: platform_rate_buckets system
 CREATE TABLE public.platform_rate_buckets (
   key text PRIMARY KEY CHECK (octet_length(key) BETWEEN 1 AND 512),
   tokens double precision NOT NULL CHECK (tokens >= 0),

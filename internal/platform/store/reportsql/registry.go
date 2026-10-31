@@ -3,7 +3,6 @@ package reportsql
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -84,7 +83,8 @@ func quote(id report.Ident) string { return pgx.Identifier{string(id)}.Sanitize(
 // NewRegistry validates and pre-quotes the datasets. It fails, naming the dataset and the place,
 // on: a dataset that fails report.Dataset.Validate; a table, column or scope column the schema does
 // not have; a Rel projection, or a MaskAnchor's non-identity projection, that is not GUID, int,
-// bool, time or enum (no text, no jsonb); a fragment that names a table, or a slot the dataset
+// bool, time or enum (no text, no jsonb); a fragment that uses a word outside the allowlist
+// (fragcheck.go: functions, keywords, casts), a schema-qualified name, a table, or a slot the dataset
 // does not declare; a JSON key in the secret set; and a column whose type does not fit its source.
 func NewRegistry(opt Options, ds ...report.Dataset) (*Registry, error) {
 	if opt.Schema == nil {
@@ -117,22 +117,6 @@ func (r *Registry) Dataset(id report.DatasetID) (Dataset, bool) {
 // IDs lists the registered datasets in registration order.
 func (r *Registry) IDs() []report.DatasetID { return slices.Clone(r.order) }
 
-var (
-	wordPattern   = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
-	literalPatten = regexp.MustCompile(`'[^']*'`)
-	// Words no fragment may contain: functions that reach outside the query, and statements.
-	// The deny-list is assembled at init from parts (glue), so the tenancy rule T5 (no SET / set_config
-	// SQL text outside internal/platform/store) does not trip on a list that only names the words.
-	forbidden = regexp.MustCompile(`^(` + strings.Join([]string{
-		`pg_.*`, `lo_.*`, `dblink.*`, glue("set", "_config"), glue("current", "_setting"), `nextval`, `setval`, `currval`,
-		`copy`, `do`, `call`, `listen`, `notify`, `insert`, `update`, `delete`, `truncate`, `drop`, `alter`,
-		`create`, `grant`, `revoke`, `vacuum`, `analyze`, `lock`, glue("se", "t"), `reset`, `explain`, `prepare`,
-		`execute`, `declare`, `fetch`, `close`,
-	}, `|`) + `)$`)
-)
-
-func glue(parts ...string) string { return strings.Join(parts, "") }
-
 func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 	if err := src.Validate(); err != nil {
 		return nil, err
@@ -152,6 +136,36 @@ func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 	for _, t := range src.Tables {
 		tableNames[strings.ToLower(t)] = true
 	}
+	// A joined RowAnchor's {rel.<id>} is a bare alias, not a compiler-built subselect (compile.go).
+	rowAnchors := map[report.AnchorID]bool{}
+	for _, a := range src.Anchors {
+		if a.Mode == report.RowAnchor {
+			rowAnchors[a.ID] = true
+		}
+	}
+	env := &fragEnv{tables: tableNames, rowAnchors: rowAnchors, ids: map[string]bool{"t": true}}
+	dsTables := map[string]bool{string(src.Base.Table): true}
+	for _, t := range src.Tables {
+		dsTables[t] = true
+	}
+	for _, a := range src.Anchors {
+		env.ids[strings.ToLower(string(a.ID))] = true
+		dsTables[string(a.Table)] = true
+	}
+	for _, r := range src.Rels {
+		env.ids[strings.ToLower(string(r.ID))] = true
+		dsTables[string(r.Table)] = true
+	}
+	// A bare word in a fragment may be a column of a table the dataset uses (a Rel's own WHERE reads its
+	// table unqualified); the schema, not the fragment author, says which words those are.
+	env.isColumn = func(name string) bool {
+		for t := range dsTables {
+			if _, ok := sch.Column(t, name); ok {
+				return true
+			}
+		}
+		return false
+	}
 	mkFrag := func(path string, f report.Fragment) (*frag, error) {
 		if f.IsZero() {
 			return nil, nil
@@ -160,19 +174,8 @@ func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
-		for _, p := range parts {
-			switch p.Kind {
-			case report.SlotLiteral:
-				for _, w := range wordPattern.FindAllString(literalPatten.ReplaceAllString(p.Text, "''"), -1) {
-					lw := strings.ToLower(w)
-					if tableNames[lw] {
-						return nil, fmt.Errorf("%s: a fragment names no table (found %q); tables enter through {rel.<id>}", path, w)
-					}
-					if forbidden.MatchString(lw) {
-						return nil, fmt.Errorf("%s: a fragment may not use %q", path, w)
-					}
-				}
-			}
+		if err := checkFragment(parts, env); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 		return &frag{parts: parts}, nil
 	}
@@ -186,6 +189,13 @@ func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 		aliases = append(aliases, string(r.ID))
 	}
 	for _, id := range aliases {
+		// Defence in depth: no alias may look like a system relation (pg_class, pg_roles, …).
+		if strings.HasPrefix(strings.ToLower(id), "pg_") {
+			return nil, fmt.Errorf("anchor or relation ID %q starts with pg_, which names system relations", id)
+		}
+		if l := strings.ToLower(id); l == "public" || l == "information_schema" {
+			return nil, fmt.Errorf("anchor or relation ID %q is a schema name, which {rel.%s}.table would turn into a table read", id, id)
+		}
 		if tableNames[strings.ToLower(id)] {
 			return nil, fmt.Errorf("anchor or relation ID %q is also a table name", id)
 		}

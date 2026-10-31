@@ -24,3 +24,16 @@ export {
 } from "./popover";
 export { SideSheet, type SideSheetProps } from "./side-sheet";
 export { Toast, ToastRegion, type ToastProps } from "./toast";
+export {
+  CommandPalette,
+  highlightRanges,
+  resultsAnnouncement,
+  truncateMiddle,
+  usePaletteShortcut,
+  type CommandPaletteProps,
+  type PaletteChip,
+  type PaletteGroup,
+  type PaletteItem,
+  type PaletteNotice,
+  type PaletteStatus,
+} from "./command-palette";

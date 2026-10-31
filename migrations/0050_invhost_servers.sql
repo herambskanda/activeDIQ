@@ -6,6 +6,7 @@
 -- inserted by code; the only writer is invhost.Service.Register. The name is stored lower-case, with no
 -- trailing dot (the same normalisation the Go side applies), and is unique per tenant.
 
+-- write-class: inventory_servers config
 CREATE TABLE public.inventory_servers (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

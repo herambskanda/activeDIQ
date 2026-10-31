@@ -1,6 +1,7 @@
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 
+import { useModalLayer } from "./modal-layer";
 import { tabbables } from "./popover";
 
 export interface SideSheetProps {
@@ -39,35 +40,7 @@ function Sheet({
   const scrim = useRef<HTMLDivElement>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const pressedOnScrim = useRef(false);
-  // The opener is read during the first render, before any child `autoFocus` moves focus.
-  const [opener] = useState<Element | null>(() => document.activeElement);
-
-  useEffect(() => {
-    const d = dialog.current;
-    const s = scrim.current;
-    if (!d || !s) return;
-    // Make the page behind inert, except live regions (toasts) so announcements still reach AT.
-    const inerted: Element[] = [];
-    for (const el of Array.from(document.body.children)) {
-      if (el === s || el.hasAttribute("inert") || el.hasAttribute("data-diq-live")) continue;
-      if (el.tagName === "SCRIPT" || el.tagName === "STYLE") continue;
-      el.setAttribute("inert", "");
-      inerted.push(el);
-    }
-    if (!d.contains(document.activeElement)) {
-      (d.querySelector<HTMLElement>("[data-autofocus]") ?? tabbables(d)[0] ?? d).focus();
-    }
-    const stray = (e: FocusEvent) => {
-      const t = e.target as Element | null;
-      if (t && !d.contains(t) && !t.closest("[data-diq-live]")) (tabbables(d)[0] ?? d).focus();
-    };
-    document.addEventListener("focusin", stray);
-    return () => {
-      document.removeEventListener("focusin", stray);
-      for (const el of inerted) el.removeAttribute("inert");
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
-    };
-  }, [opener]);
+  useModalLayer(scrim, dialog);
 
   return createPortal(
     <div

@@ -12,6 +12,7 @@
 -- TRUNCATE, and no UPDATE on tenant_id, version, created_at, kek_provider or kek_key_id. Re-wrapping a DEK
 -- under another KEK is an owner-role maintenance step (activediq_owner), never a runtime path.
 
+-- write-class: tenant_keys system
 CREATE TABLE public.tenant_keys (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   version integer NOT NULL CHECK (version > 0),
