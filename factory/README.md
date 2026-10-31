@@ -317,7 +317,8 @@ claude -p "<rendered templates/worker-prompt.md>" \
   red make target counts; baseline cached per `main` commit). A refused ticket is reopened for its
   owner with the findings and log paths (`state/premerge/`). A gate that cannot judge (timeout,
   worktree error) merges nothing and retries after 10 minutes. One ticket at a time goes through the
-  gate, in the background. `factory premerge ID [-- CMD…]` is the dry run. Details:
+  gate, in the background. Before the full run a cheap `pre_merge.numbering` check (the migration-number
+  test, T-1067) runs on the same merge result and refuses with the free number to renumber to. `factory premerge ID [-- CMD…]` is the dry run. Details:
   `knowledge/development/standards/ci-gates.md`.
 - When a code-bearing ticket reaches `done` (and passes the gate), the dispatcher merges with
   `git merge --no-ff factory/<id>` in the main checkout. On conflict: `git merge --abort`, the
