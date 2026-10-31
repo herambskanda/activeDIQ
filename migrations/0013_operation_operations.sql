@@ -17,6 +17,7 @@
 -- Only internal/platform/operation references these tables in SQL; the state columns are written only by its
 -- transition functions (fitness-operation O4).
 
+-- write-class: operations system
 CREATE TABLE public.operations (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL,
@@ -61,6 +62,7 @@ CREATE UNIQUE INDEX operations_idempotency ON public.operations (tenant_id, requ
 CREATE INDEX operations_live ON public.operations (tenant_id, state, updated_at)
   WHERE state IN ('planning', 'approved', 'queued', 'running', 'cancelling', 'awaiting_approval', 'planned', 'draft');
 
+-- write-class: operation_items system
 CREATE TABLE public.operation_items (
   tenant_id uuid NOT NULL,
   operation_id uuid NOT NULL,
@@ -75,6 +77,7 @@ CREATE TABLE public.operation_items (
   FOREIGN KEY (tenant_id, operation_id) REFERENCES public.operations (tenant_id, id)
 );
 
+-- write-class: operation_steps system
 CREATE TABLE public.operation_steps (
   tenant_id uuid NOT NULL,
   operation_id uuid NOT NULL,
@@ -108,6 +111,7 @@ CREATE INDEX operation_steps_claim ON public.operation_steps (tenant_id, operati
 CREATE INDEX operation_steps_lapsed ON public.operation_steps (tenant_id, claimed_until) WHERE state = 'applying';
 CREATE INDEX operation_steps_slots ON public.operation_steps (tenant_id, connection_id, dc_host) WHERE state = 'applying';
 
+-- write-class: operation_secrets system
 CREATE TABLE public.operation_secrets (
   tenant_id uuid NOT NULL,
   operation_id uuid NOT NULL,

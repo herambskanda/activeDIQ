@@ -102,6 +102,9 @@ func TestFreshnessQuietDomainIsNotStale(t *testing.T) {
 		if r.Label.State != report.FreshnessSynced || !r.Label.AsOf.Equal(want) || len(r.Label.Stale) != 0 || len(r.Label.NotSynced) != 0 {
 			t.Fatalf("label %+v, want synced as of %s", r.Label, want)
 		}
+		if n, ok := r.Names[e.adA]; !ok || n != "c" || len(r.Names) != 1 {
+			t.Fatalf("connection names %v, want the display name of the one covered connection", r.Names)
+		}
 		if len(r.Watermarks) != 1 || r.Watermarks[0].State != report.NCOK || !r.Watermarks[0].LastPassAt.Equal(want) ||
 			r.Watermarks[0].NC != ncOID(t, nc1) || r.Threshold != inventory.DefaultStalenessThreshold {
 			t.Fatalf("watermarks %+v", r.Watermarks)

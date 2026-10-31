@@ -28,7 +28,7 @@ writes through `settings.Store` inside the runner's transaction.
 | Table | Entity (DM-nn) | Migration | Owner package | Retention |
 | --- | --- | --- | --- | --- |
 | `notify_settings` | DM-82 (smtp channel + allowed domains) | 0062 | `platform/notify/settings` | life of the tenant |
-| `notify_deliveries` | DM-84 | 0062 | `platform/notify/delivery` | no delete path; immutability trigger on identity columns |
+| `notify_deliveries` | DM-84 | 0062, 0066 | `platform/notify/delivery` | no delete path; immutability trigger on identity columns (ENABLE ALWAYS since 0066) |
 
 ## Contributions (what `Register` registers)
 

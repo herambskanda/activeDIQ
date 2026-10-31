@@ -1,0 +1,5 @@
+# SHA-256 of every shipped definition file (sha256sum format). Append-only: a shipped version is never edited or removed (FR-03, RP7).
+97d0ae9ff0f8a9cdf377ddc7968d91a81249f77befe0c62ea45cf3329f8511f4  usr-01.v1.json
+b3cd2930e5db298ce244a554bb8050f53514c0e864e42be5422a6e2f61c7f903  usr-02.v1.json
+bd13b14c10141b2bb5640d45812739757ea18abfe4ecb8655fc6dbdf9ef1489c  usr-03.v1.json
+7fc0c8139634aeda01208524753461c09b386e937f54d5eee7394f2c4f961410  usr-05.v1.json

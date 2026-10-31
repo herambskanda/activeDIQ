@@ -211,6 +211,19 @@ func TestHiddenGroupsAreCountedUnlessShown(t *testing.T) {
 	wantCode(t, err, report.CodeUnknownParameter)
 }
 
+// A locked hidden group is a narrowing the admin cannot undo (AC-16): it stays in the query, and a request
+// that asks to show it is refused.
+func TestLockedHiddenGroupCannotBeShown(t *testing.T) {
+	d := usersDef()
+	d.Presets[1].Hidden = []report.HiddenGroup{{ID: "off", Label: "Off", Locked: true, Where: report.Cmp{Column: "status", Op: report.OpEq, Value: report.EnumV("disabled")}}}
+	q, err := report.Resolve(d, "all", report.RunParams{}, usersDataset())
+	if err != nil || len(q.Hidden) != 1 || !q.Hidden[0].Locked {
+		t.Fatalf("locked group: %v %v", q.Hidden, err)
+	}
+	_, err = report.Resolve(d, "all", report.RunParams{ShowHidden: []string{"off"}}, usersDataset())
+	wantCode(t, err, report.CodeUnknownParameter)
+}
+
 func TestHashIsStableAndSensitive(t *testing.T) {
 	a, _ := report.Resolve(usersDef(), "inactive", report.RunParams{}, usersDataset())
 	b, _ := report.Resolve(usersDef(), "inactive", report.RunParams{}, usersDataset())

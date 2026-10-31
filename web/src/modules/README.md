@@ -1,9 +1,14 @@
 # `src/modules`: screen modules
 
-One directory per web module (`objects`, `helpdesk`, …), each registering its routes through the
-`Registrar` in `src/app/modules.ts` (EP-15). Only `src/app/modules.gen.ts` names a module (edited
-by hand until `tools/gen/modules` exists).
+One directory per web module (`objects`, `helpdesk`, …), each registering its routes, palette
+entries (`r.palette({ id, label, keywords, route })`) and search-result renderers
+(`r.searchResults(type, renderer)`) through the `Registrar` in `src/app/modules.ts` (EP-15).
+`collectContributions` returns them; start-up throws on a duplicate palette ID or result type and on
+a palette entry whose route no module registered. ESLint (rule 8, `eslint/module-boundary.js`) resolves
+every import against the importing file, so it bars `src/app` and `src/ds` from importing a module
+and bars one module from importing another at any folder depth. Only `src/app/modules.gen.ts` names a
+module (edited by hand until `tools/gen/modules` exists).
 
-| Module      | Routes             | Reads                       |
-| ----------- | ------------------ | --------------------------- |
-| `directory` | `/directory/users` | `searchDirectoryUsers` only |
+| Module      | Routes             | Palette                                   | Reads                       |
+| ----------- | ------------------ | ----------------------------------------- | --------------------------- |
+| `directory` | `/directory/users` | `directory.search-users` ("Search users") | `searchDirectoryUsers` only |
