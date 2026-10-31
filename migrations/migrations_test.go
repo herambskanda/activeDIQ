@@ -50,6 +50,7 @@ func TestOwnerKeyMatchesTableOwner(t *testing.T) {
 		"inventory_servers":   "invhost",
 		"report_runs":         "reports",
 		"report_run_rows":     "reports",
+		"report_exports":      "reports",
 	}
 	ents, err := migrations.FS.ReadDir(".")
 	if err != nil {

@@ -192,7 +192,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// before the API is built so the kinds register with the handlers; the retention cadence is seeded
 	// once the tenant exists.
 	jreg := jobs.NewRegistry()
-	reportRuns, reportTag, err := buildReports(ctx, db, reportHost, jreg, ok.Chainer, inventory.NewReader(db, nil), nil)
+	reportRuns, reportTag, err := buildReports(ctx, db, reportHost, jreg, ok.Chainer, inventory.NewReader(db, nil), nil, authzr, cfg.BlobDir)
 	if err != nil {
 		return err
 	}

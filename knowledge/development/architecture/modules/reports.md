@@ -25,7 +25,8 @@ profiles (spec §10; ADR-0002 rule 1). Entra datasets are absent at 2a (spec §1
 scope decision, not a platform asymmetry.
 
 > **This page is the build contract, and the module page.** `internal/modules/reports/` exists since
-> row B4 (T-0959): the run path is built (see the changelog for what differs from the text below).
+> row B4 (T-0959): the run path is built; since row B9 (T-0963) so are CSV and XLSX exports (see the
+> changelog for what differs from the text below).
 > Every Go name below is the name the build tickets use. A ticket that needs a different name changes
 > this page in the same change.
 
@@ -37,8 +38,8 @@ scope decision, not a platform asymmetry.
 | `internal/platform/store/reportsql` | **Built (T-0957, row B2).** `NewRegistry`, `Compile`, `CompileCount`, `Exec`, `Count`, the scope and narrowing renderers, SQL vectors (FF-SP4) and RP6. `sqlconst` (FF-SP2) lets a value of type `reportsql.CompiledSQL` reach `Exec` and `string(x)` of one is a constant for it. Deviations in §5 | §5, row B2, RP1, RP6 |
 | Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. Two adapters are still to be wired in `compose/server`: `rbac.OwnerStatus` (over the account store) and `rbac.ObjectConnections` (over inventory) | §4 |
 | Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. There is no group closure. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed Row P1 (T-0949, migration 0063) is built: `nc_sync_passes` (one row per tenant, connection, NC) holds `last_pass_at` and `state` (`ok`, `resync_required`, `paused`). `Writer.RecordPass` sets the pass as-of (start of the read) in the cycle's transaction and `Ingest` calls it on the last batch for each `Cycle.PassNCs`, so a quiet domain is fresh; `Writer.MarkNC` records resync or pause; `Reader.Freshness` returns `[]report.NCWatermark` and the `report.Label` result, with `DefaultStalenessThreshold` = 60 min | §3.4, §4.5, rows P1, **P2**, B3, B6 |
-| Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. **T-1105 added the two library reads** (`listReportDefinitions`, `getReportDefinition`, `modules/reports/definitions.go`, §3.6). The other 13 operations answer 501 until B9 and B11 | §6, §9, row B4 |
-| `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150). **No canonical digest** (spec §8.3) | §7, row B9 |
+| Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. **T-1105 added the two library reads** (`listReportDefinitions`, `getReportDefinition`, `modules/reports/definitions.go`, §3.6). The export operations are built in row B9 (T-0963); the other 9 operations answer 501 until B11 | §6, §9, row B4 |
+| `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150), the canonical `Digest`/`Digester` and `Unknown()`. **Built (T-0963, row B9):** `modules/reports/export` (service, `reports.export` job, About block), migration 0065, RP5 landed | §7, row B9 |
 | `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
 | `platform/notify` | **Built (T-0950).** `notify/mailaddr` (strict address parser), `notify/settings` (allowed recipient domains, SMTP relay; migration 0062), `notify/mail` (SMTP over egress), `notify/mailtest`, `notify/delivery` (DM-84 `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue`), the `notify.settings.update` Action in `modules/notify`. **Not yet wired:** nothing calls `DispatchDue` (needs the DM-44 schedule, row P4, or a notify job), no `Renderer` per purpose, no SMTP AUTH credentials. Terminal failure state is `given_up` | §7.2, §8, row P3 |
 | Per-DC read | `ReadPerDC` exists in the connector proto (`read.proto`). There is **no Go client method** in `directory/client` | §6.5, row P5 |
@@ -1181,8 +1182,8 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - **`reports.schedule.manage_all`** shows schedule metadata (definition, preset, owner, recipients,
   state, last fire, last run state and row count). It never opens a run's rows or files.
 - Every refusal at checks 2, 3 and 4 appends `reports.run.read_denied {run_id, check, operation}` (§10).
-  `operation` is one of `get`, `page`, `cancel`, `retry`, `export_create` (and `download`, which B9 adds
-  under `download_denied`); `run.Service.Read` takes it as an argument, and `Cancel` and `Retry` supply
+  `operation` is one of `get`, `page`, `cancel`, `retry`, `export_create`, `download` (B9: the creator's
+  download re-checks the run scope; the export's own refusal is `download_denied`); `run.Service.Read` takes it as an argument, and `Cancel` and `Retry` supply
   their own. The refusal is answered whether or not the append succeeds. A failed append is logged at
   error level (`run_id`, `operation`, `check`, `error_class`; never the error text or a request value).
   Retry and cancel by another account (check 2) are refused as 404 and audited the same way.
@@ -1231,8 +1232,11 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - **Digest.** Row B9 implements the canonical form of spec §8.3 **once**, in `platform/export`:
   `export.Digest(columns []string, rows iter.Seq[[]export.Typed]) [32]byte`, with test vectors. The
   run path computes it; export and API recompute it only in tests (RP5, AC-50).
-- **`report_exports`:** `tenant_id, id, run_id, format, blob_key, size, file_sha256, created_by,
-  state (pending|ready|failed|deleted|expired), expires_at`.
+- **`report_exports`** (migration 0067, as built): `tenant_id, id, run_id, rerun, rerun_of_run_id, format,
+  state (queued|running|succeeded|failed|expired|deleted), failure_reason, failure_detail, attempt,
+  created_by, chain, row_count, digest, byte_size, file_sha256, blob_key, file_name, created_at,
+  finished_at, expires_at`. A guard trigger fixes the state edges, makes `failed`, `expired` and
+  `deleted` final, and describes the file once.
 - **Download by the creator.** `GET /reports/exports/{export_id}/file` is authenticated. The
   export is looked up **by its ID** under RLS. The caller must be its `created_by`, and
   `run.ReadAccess` must pass for its run (§6.6), so a scope change stops downloads too. Otherwise
@@ -1245,6 +1249,52 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 
 - **Encoders.** Bytes come only from the P7 encoders (FR-19, FF-SP10). PDF and HTML are row B10,
   and the UI offers only formats that exist (FR-16).
+
+### 7.1a As built (T-0963, row B9)
+
+- **Package `internal/modules/reports/export`.** `Service{DB, Jobs, Runs, Blob, Audit, Authz, Now, Caps, Log}`
+  with `Create`, `Get`, `Delete`, `Download`; `job.go` is the `reports.export` job; `about.go` builds the
+  About lines. The 4 export operations of the API are served from it (no longer 501).
+- **Second permission.** The route carries `reports.export`; `Create` checks `reports.run` itself,
+  through `export.Authorizer` (compose adapter `reportsAuthz` over the RBAC authorizer, tenant scope), as its
+  first act, before the run is read and before a rerun could start one: 403 on both the finished and the
+  expired-source path, with no row, job, file or new run. No `Authz` fails closed (403). Putting
+  it in the service, not the handler, means B11's scheduled exports pass the same gate (security review F1).
+- **The refusal is audited (AG-2, review F2).** A `reports.run` denial appends one `authz.permission.denied`
+  event (`export.KindPermissionDenied`, the kind and shape the API host's route-level refusals use:
+  Outcome Denied, Reason `permission_denied`, details `permission=reports.run`, `scope=tenant`, no request
+  content) in a fresh tenant transaction. If it cannot be written, `Create` returns `ErrDenialNotRecorded`:
+  503 `not-ready`, never a 403 without a record and never an approval. An authorizer fault stays an error,
+  not a recorded denial.
+- **Authority factor (review F3).** `reportsAuthz` carries the session's authority factor from the request's
+  principal (`apihost.PrincipalFrom`), as `consoleAuthz` does. The rerun job has no principal, so the factor
+  is absent there and a grant that needs it is refused: it fails closed. `reports.run` needs no factor today.
+- **Caps refuse, never truncate.** `Create` checks `row_count` against the format's cap before any
+  row, job or file exists (`*CapError`, names the alternative format). The job checks again (an
+  expired source is rerun, so its count is known only then). `Service.Caps` may only lower the hard
+  cap (`export.DefaultCap`); there is no config surface for it yet.
+- **Job.** `ModeManagedTx`; it polls (5 s, at most 480 tries) while the run is `queued` or `running`,
+  then streams through `run.StoredSource` and `export.RunToBlob`. Rows are read by keyset on `ordinal`
+  in short per-page transactions (`run.PageAfter`), so no transaction or cursor is held while the file
+  is written. `StoredSource` feeds each row it serves into `export.Digester`; the job compares the
+  served digest and row count with the run's before marking the export `succeeded`. A mismatch fails
+  the export `internal` and deletes the blob.
+- **Rerun.** An expired source triggers `Runs.Retry` as the caller, under the current scope; the
+  export follows the new run (`rerun`, `rerun_of_run_id`).
+- **Blob.** `blob_key = reports/exports/<id>.<ext>` under the tenant prefix; `expires_at` = the
+  run's. `ACTIVEDIQ_BLOB_DIR` (absolute path; `blob.NewFS`) enables exports. Unset, they answer 503
+  `not-ready` (`ErrExportUnavailable`).
+- **Download.** Creator only (delivery links are B11). Refusals append `download_denied` with
+  `check` = `exists`, `creator`, `scope` or `expired`, and answer 404, 404, 409
+  `scope_changed_rerun`, 410. `apihost.Stream` closes the blob reader.
+- **Delete.** A succeeded export becomes `deleted`, its blob is removed and the delete is audited.
+  A failed export is a no-op 204: the guard makes `failed` final.
+- **Job limit.** `run.countOpen` counts runs and exports together.
+- **Audit kinds added:** `reports.export.failed` and `reports.export.download_denied` (with
+  `created`, `downloaded`, `deleted`).
+- **Evidence.** `Test_export_digest_equals_run_digest` (RP5), the cap, hostile-cell, audit and
+  retention tests in `export/export_pg_test.go`, the API tests in `reports/exports_api_pg_test.go`
+  and the 300k-row memory test `run/stored_test.go` (`TestStoredExportStreamsInBoundedMemory`).
 
 ### 7.2 Delivery-link downloads: authorised by the DM-84 Delivery row
 
@@ -1376,7 +1426,7 @@ landed prints `pending`; the owning build ticket flips `Landed` in `tools/fitnes
 | API (EP-2) | tag `reports` | `api/openapi/reports.yaml`, T-0866 |
 | Action (EP-3) | `reports.schedule.create`, `.update`, `.pause`, `.resume`, `.reassign`, `.delete` | `Target: Store`; undo restores the previous version |
 | Permission (EP-6) | `reports.run`, `reports.export`, `reports.schedule`, `reports.schedule.manage_all`, `reports.deliver.external` | spec §8.5; reads apply over the directory scope kinds of §4 |
-| AuditKind (EP-7) | `reports.run.completed`, `reports.run.failed`, `reports.run.read_denied`, `reports.export.created`, `.downloaded`, `.download_denied`, `.expired`, `.deleted`, `reports.schedule.*` (the Actions), `reports.schedule.paused` (system), `reports.schedule.fired`, `reports.delivery.sent`, `reports.delivery.failed` | see below |
+| AuditKind (EP-7) | `reports.run.completed`, `reports.run.failed`, `reports.run.read_denied`, `reports.export.created`, `.downloaded`, `.download_denied`, `.failed`, `.expired`, `.deleted`, `reports.schedule.*` (the Actions), `reports.schedule.paused` (system), `reports.schedule.fired`, `reports.delivery.sent`, `reports.delivery.failed` | see below |
 | Dataset (EP-8) | none | consumes `inventory.*` |
 | Job (EP-5) | `reports.run`, `reports.export`, `reports.schedule.fire`, `reports.retention` (daily per tenant) | all tenant-carrying |
 
@@ -1548,3 +1598,10 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 - 2026-10-31 · T-1105 · reports API: `listReportDefinitions` and `getReportDefinition` answer from the library (the 501 stubs are
   deleted from `pending.go`); `report.ParamValue` gained `Days()` and `Enum()`. See §3.6 "Served by the API".
 - 2026-10-31 · T-1074 · reports API: `ReportFreshness.stale[]`/`thresholdSeconds` and `ReportRun.hiddenGroups[]`. See §6.4.
+- 2026-10-31 · T-0963 · row B9 built: `modules/reports/export`, migration 0067 (`report_exports`),
+  `run.StoredSource` and `run.PageAfter`, `ACTIVEDIQ_BLOB_DIR`, RP5 landed. As built: §7.1a. Follow-ups:
+  no scheduled `blob.Sweep` in the compose root (expired files stay on disk until swept; reads are
+  already refused); the export row cap has no config surface; a rerun run can be left behind when the job
+  limit refuses the export right after `Retry`. Security review F1 added the `reports.run` check inside
+  `Create`; F2 its audited denial and 503 when unrecordable; F3 the adapter test and authority factor
+  (see §7.1a).

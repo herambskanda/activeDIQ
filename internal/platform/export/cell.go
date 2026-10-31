@@ -69,6 +69,7 @@ const (
 	kTime
 	kNever
 	kMulti
+	kUnknown
 )
 
 // Cell is one typed value. The zero Cell is Empty. Build cells with the constructors only.
@@ -106,6 +107,13 @@ const NeverText = "Never"
 // Never marks an attribute whose value means "never" (for example lastLogon 0): it is text, not a date.
 func Never() Cell { return Cell{k: kNever} }
 
+// UnknownText is the label an Unknown cell shows.
+const UnknownText = "Unknown (input missing)"
+
+// Unknown marks a derived value whose input is missing (FR-09). It is text in the file, never blank and
+// never "Never": a reader can tell "not collected" from "no value" from "never".
+func Unknown() Cell { return Cell{k: kUnknown} }
+
 // Multi is a multi-valued attribute; encoders join it with "; " into one cell.
 func Multi(vs ...string) Cell { return Cell{k: kMulti, multi: append([]string(nil), vs...)} }
 
@@ -141,6 +149,8 @@ func (c Cell) Resolve() (Resolved, error) {
 		return Resolved{Kind: KindText, Text: c.s}, nil
 	case kNever:
 		return Resolved{Kind: KindText, Text: NeverText}, nil
+	case kUnknown:
+		return Resolved{Kind: KindText, Text: UnknownText}, nil
 	case kMulti:
 		return Resolved{Kind: KindText, Text: strings.Join(c.multi, "; ")}, nil
 	case kInt:

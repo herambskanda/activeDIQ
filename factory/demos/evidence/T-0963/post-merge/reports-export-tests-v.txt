@@ -1,0 +1,765 @@
+=== RUN   TestEveryReportsOperationBindsOneSpecPermissionAndAClass
+--- PASS: TestEveryReportsOperationBindsOneSpecPermissionAndAClass (0.00s)
+=== RUN   TestScopeAndExpiryProblemTypesAreDistinctAndSayNoNames
+    contract_test.go:148: slug -> operations: map[ReportResultExpired:[downloadReportExport 410 listReportRunRows 410] ReportScopeEmpty:[updateReportSchedule 422 resumeReportSchedule 422 createReportSchedule 422] ReportScopeUnsupported:[updateReportSchedule 409 resumeReportSchedule 409 createReportSchedule 409]]
+--- PASS: TestScopeAndExpiryProblemTypesAreDistinctAndSayNoNames (0.01s)
+=== RUN   TestCreateRunRefusesFreeTextColumnsRawFiltersAndSQL
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+    contract_test.go:264: valid body status 202
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- PASS: TestCreateRunRefusesFreeTextColumnsRawFiltersAndSQL (0.04s)
+=== RUN   TestRunReadGateIsDeclaredOnEveryRunRead
+--- PASS: TestRunReadGateIsDeclaredOnEveryRunRead (0.00s)
+=== RUN   TestScheduleActionsHavePreviewTwinsAndAnUndoPair
+--- PASS: TestScheduleActionsHavePreviewTwinsAndAnUndoPair (0.00s)
+=== RUN   TestExportAPI
+=== RUN   TestExportAPI/pg16
+2026/10/31 13:30:15 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:15 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:15 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:15 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:15 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:15 INFO api tag not mounted: no module contributes it tag=platform.setup
+=== RUN   TestExportAPI/pg18
+2026/10/31 13:30:20 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:20 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- PASS: TestExportAPI (11.62s)
+    --- PASS: TestExportAPI/pg16 (6.79s)
+    --- PASS: TestExportAPI/pg18 (4.83s)
+=== RUN   TestExportNeedsReportsRun
+=== RUN   TestExportNeedsReportsRun/pg16
+2026/10/31 13:30:22 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:22 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:22 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:22 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:22 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:22 INFO api tag not mounted: no module contributes it tag=platform.setup
+=== RUN   TestExportNeedsReportsRun/pg18
+2026/10/31 13:30:22 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:22 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:22 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:22 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:22 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:22 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- PASS: TestExportNeedsReportsRun (2.37s)
+    --- PASS: TestExportNeedsReportsRun/pg16 (1.69s)
+    --- PASS: TestExportNeedsReportsRun/pg18 (0.68s)
+=== RUN   TestRunHeaderPagingAndFilterChange
+=== RUN   TestRunHeaderPagingAndFilterChange/pg16
+2026/10/31 13:30:24 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:24 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:24 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:24 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:24 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:24 INFO api tag not mounted: no module contributes it tag=platform.setup
+=== RUN   TestRunHeaderPagingAndFilterChange/pg18
+2026/10/31 13:30:25 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:25 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:25 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:25 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:25 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:25 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- PASS: TestRunHeaderPagingAndFilterChange (2.29s)
+    --- PASS: TestRunHeaderPagingAndFilterChange/pg16 (1.60s)
+    --- PASS: TestRunHeaderPagingAndFilterChange/pg18 (0.69s)
+=== RUN   TestOtherAccountMeetsNotFound
+=== RUN   TestOtherAccountMeetsNotFound/pg16
+2026/10/31 13:30:26 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:26 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:26 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:26 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:26 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:26 INFO api tag not mounted: no module contributes it tag=platform.setup
+=== RUN   TestOtherAccountMeetsNotFound/pg18
+2026/10/31 13:30:27 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:27 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:27 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:27 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:27 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:27 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- PASS: TestOtherAccountMeetsNotFound (2.73s)
+    --- PASS: TestOtherAccountMeetsNotFound/pg16 (1.79s)
+    --- PASS: TestOtherAccountMeetsNotFound/pg18 (0.94s)
+=== RUN   TestForbiddenWithoutPermissionAndForTokens
+=== RUN   TestForbiddenWithoutPermissionAndForTokens/pg16
+2026/10/31 13:30:29 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:29 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:29 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:29 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:29 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:29 INFO api tag not mounted: no module contributes it tag=platform.setup
+=== RUN   TestForbiddenWithoutPermissionAndForTokens/pg18
+2026/10/31 13:30:30 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:30 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:30 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:30 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:30 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:30 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- PASS: TestForbiddenWithoutPermissionAndForTokens (2.67s)
+    --- PASS: TestForbiddenWithoutPermissionAndForTokens/pg16 (1.68s)
+    --- PASS: TestForbiddenWithoutPermissionAndForTokens/pg18 (0.99s)
+=== RUN   TestNotReadyCancelAndRetry
+=== RUN   TestNotReadyCancelAndRetry/pg16
+2026/10/31 13:30:32 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:32 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:32 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:32 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:32 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:32 INFO api tag not mounted: no module contributes it tag=platform.setup
+=== RUN   TestNotReadyCancelAndRetry/pg18
+2026/10/31 13:30:33 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:33 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:33 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:33 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:33 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:33 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- PASS: TestNotReadyCancelAndRetry (2.57s)
+    --- PASS: TestNotReadyCancelAndRetry/pg16 (1.80s)
+    --- PASS: TestNotReadyCancelAndRetry/pg18 (0.77s)
+=== RUN   TestStaleFreshnessNamesCauseAndConnections
+=== RUN   TestStaleFreshnessNamesCauseAndConnections/pg16
+2026/10/31 13:30:34 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:34 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:34 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:34 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:34 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:34 INFO api tag not mounted: no module contributes it tag=platform.setup
+=== RUN   TestStaleFreshnessNamesCauseAndConnections/pg18
+2026/10/31 13:30:35 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:35 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:35 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:35 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:35 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:35 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- PASS: TestStaleFreshnessNamesCauseAndConnections (2.44s)
+    --- PASS: TestStaleFreshnessNamesCauseAndConnections/pg16 (1.64s)
+    --- PASS: TestStaleFreshnessNamesCauseAndConnections/pg18 (0.80s)
+=== RUN   TestRunReturnsHiddenGroupCounts
+=== RUN   TestRunReturnsHiddenGroupCounts/pg16
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+=== RUN   TestRunReturnsHiddenGroupCounts/pg18
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- PASS: TestRunReturnsHiddenGroupCounts (2.26s)
+    --- PASS: TestRunReturnsHiddenGroupCounts/pg16 (1.51s)
+    --- PASS: TestRunReturnsHiddenGroupCounts/pg18 (0.75s)
+=== RUN   TestListReportRunsPagesByCursorWithStateAndAsOf
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+    runs_history_contract_test.go:139: GET /api/v1/reports/runs?limit=2&state=succeeded&definitionId=USR-01 -> 200
+        {"items":[{"asOf":"2026-10-30T09:00:00Z","createdAt":"2026-10-30T09:01:00Z","definitionId":"USR-01","definitionVersion":3,"expiresAt":null,"finishedAt":"2026-10-30T09:01:00Z","freshness":{"label":"Synced","stale":[],"state":"synced","thresholdSeconds":null},"id":"0a1b2c3d-0000-4000-8000-000000000002","presetId":null,"rowCount":42,"scopeCurrent":true,"startedAt":null,"state":"succeeded"},{"asOf":"2026-10-30T09:00:00Z","createdAt":"2026-10-30T09:00:00Z","definitionId":"USR-01","definitionVersion":3,"expiresAt":null,"finishedAt":null,"freshness":{"label":"Synced","stale":[],"state":"synced","thresholdSeconds":null},"id":"0a1b2c3d-0000-4000-8000-000000000001","presetId":null,"rowCount":null,"scopeCurrent":false,"startedAt":null,"state":"expired"}],"page":{"nextCursor":"c3VtbWFyeQ"}}
+--- PASS: TestListReportRunsPagesByCursorWithStateAndAsOf (0.01s)
+=== RUN   TestListReportRunsRefusesRawFiltersAndOtherRunners
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- PASS: TestListReportRunsRefusesRawFiltersAndOtherRunners (0.04s)
+=== RUN   TestRetryReportRunTakesOnlyARunID
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:30:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- PASS: TestRetryReportRunTakesOnlyARunID (0.01s)
+=== RUN   TestRunHistoryRulesAreStatedInTheContract
+--- PASS: TestRunHistoryRulesAreStatedInTheContract (0.01s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/modules/reports	31.970s
+?   	github.com/skenzeriq/activediq/internal/modules/reports/api	[no test files]
+=== RUN   Test_export_digest_equals_run_digest
+=== RUN   Test_export_digest_equals_run_digest/pg16
+=== RUN   Test_export_digest_equals_run_digest/pg18
+--- PASS: Test_export_digest_equals_run_digest (11.77s)
+    --- PASS: Test_export_digest_equals_run_digest/pg16 (7.26s)
+    --- PASS: Test_export_digest_equals_run_digest/pg18 (4.51s)
+=== RUN   TestCapRefusesBeforeAnythingExists
+=== RUN   TestCapRefusesBeforeAnythingExists/pg16
+=== RUN   TestCapRefusesBeforeAnythingExists/pg18
+--- PASS: TestCapRefusesBeforeAnythingExists (2.89s)
+    --- PASS: TestCapRefusesBeforeAnythingExists/pg16 (1.97s)
+    --- PASS: TestCapRefusesBeforeAnythingExists/pg18 (0.92s)
+=== RUN   TestJobRefusesOverCapRerun
+=== RUN   TestJobRefusesOverCapRerun/pg16
+=== RUN   TestJobRefusesOverCapRerun/pg18
+--- PASS: TestJobRefusesOverCapRerun (2.91s)
+    --- PASS: TestJobRefusesOverCapRerun/pg16 (1.69s)
+    --- PASS: TestJobRefusesOverCapRerun/pg18 (1.22s)
+=== RUN   TestHostileValuesAreNeutralInBothFormats
+=== RUN   TestHostileValuesAreNeutralInBothFormats/pg16
+=== RUN   TestHostileValuesAreNeutralInBothFormats/pg18
+--- PASS: TestHostileValuesAreNeutralInBothFormats (3.31s)
+    --- PASS: TestHostileValuesAreNeutralInBothFormats/pg16 (2.06s)
+    --- PASS: TestHostileValuesAreNeutralInBothFormats/pg18 (1.25s)
+=== RUN   TestAuditDownloadDenialAndExpiry
+=== RUN   TestAuditDownloadDenialAndExpiry/pg16
+=== RUN   TestAuditDownloadDenialAndExpiry/pg18
+--- PASS: TestAuditDownloadDenialAndExpiry (3.28s)
+    --- PASS: TestAuditDownloadDenialAndExpiry/pg16 (2.16s)
+    --- PASS: TestAuditDownloadDenialAndExpiry/pg18 (1.12s)
+=== RUN   TestDeleteAndLimits
+=== RUN   TestDeleteAndLimits/pg16
+=== RUN   TestDeleteAndLimits/pg18
+--- PASS: TestDeleteAndLimits (3.08s)
+    --- PASS: TestDeleteAndLimits/pg16 (2.01s)
+    --- PASS: TestDeleteAndLimits/pg18 (1.07s)
+=== RUN   TestExpiredSourceIsRerun
+=== RUN   TestExpiredSourceIsRerun/pg16
+=== RUN   TestExpiredSourceIsRerun/pg18
+--- PASS: TestExpiredSourceIsRerun (2.93s)
+    --- PASS: TestExpiredSourceIsRerun/pg16 (1.71s)
+    --- PASS: TestExpiredSourceIsRerun/pg18 (1.22s)
+=== RUN   TestRetentionExpiresExports
+=== RUN   TestRetentionExpiresExports/pg16
+=== RUN   TestRetentionExpiresExports/pg18
+--- PASS: TestRetentionExpiresExports (3.07s)
+    --- PASS: TestRetentionExpiresExports/pg16 (1.84s)
+    --- PASS: TestRetentionExpiresExports/pg18 (1.23s)
+=== RUN   TestGuardRefusesBadEdges
+=== RUN   TestGuardRefusesBadEdges/pg16
+=== RUN   TestGuardRefusesBadEdges/pg18
+--- PASS: TestGuardRefusesBadEdges (3.16s)
+    --- PASS: TestGuardRefusesBadEdges/pg16 (2.18s)
+    --- PASS: TestGuardRefusesBadEdges/pg18 (0.98s)
+=== RUN   TestCreateNeedsReportsRun
+=== RUN   TestCreateNeedsReportsRun/pg16
+=== RUN   TestCreateNeedsReportsRun/pg18
+--- PASS: TestCreateNeedsReportsRun (2.98s)
+    --- PASS: TestCreateNeedsReportsRun/pg16 (2.01s)
+    --- PASS: TestCreateNeedsReportsRun/pg18 (0.97s)
+=== RUN   TestRunDenialNotRecordedIsNotRefusedQuietly
+=== RUN   TestRunDenialNotRecordedIsNotRefusedQuietly/pg16
+2026/10/31 13:30:49 ERROR reports: an export refusal could not be audited err="audit store down"
+=== RUN   TestRunDenialNotRecordedIsNotRefusedQuietly/pg18
+2026/10/31 13:30:50 ERROR reports: an export refusal could not be audited err="audit store down"
+--- PASS: TestRunDenialNotRecordedIsNotRefusedQuietly (2.70s)
+    --- PASS: TestRunDenialNotRecordedIsNotRefusedQuietly/pg16 (1.74s)
+    --- PASS: TestRunDenialNotRecordedIsNotRefusedQuietly/pg18 (0.96s)
+=== RUN   TestLargeExportTimings
+    large_pg_test.go:29: needs ACTIVEDIQ_REPORTS_LARGE_ROWS to measure
+--- SKIP: TestLargeExportTimings (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/modules/reports/export	43.804s
+=== RUN   Test_reports_library_matches_spec
+=== RUN   Test_reports_library_matches_spec/pg16
+=== RUN   Test_reports_library_matches_spec/pg18
+--- PASS: Test_reports_library_matches_spec (10.66s)
+    --- PASS: Test_reports_library_matches_spec/pg16 (6.54s)
+    --- PASS: Test_reports_library_matches_spec/pg18 (4.11s)
+=== RUN   Test_reports_library_default_filters
+--- PASS: Test_reports_library_default_filters (0.00s)
+=== RUN   Test_reports_search_by_me_name
+--- PASS: Test_reports_search_by_me_name (0.00s)
+=== RUN   Test_reports_library_is_immutable
+--- PASS: Test_reports_library_is_immutable (0.00s)
+=== RUN   Test_reports_library_refuses_broken_definitions
+--- PASS: Test_reports_library_refuses_broken_definitions (0.00s)
+=== RUN   Test_reports_library_crosswalk_must_match_presets
+--- PASS: Test_reports_library_crosswalk_must_match_presets (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/modules/reports/library	12.038s
+=== RUN   TestRetentionBatchMatchesDeleteLimit
+--- PASS: TestRetentionBatchMatchesDeleteLimit (0.00s)
+=== RUN   TestStoredExportStreamsInBoundedMemory
+    stored_test.go:83: 300k rows, 19 MB file, peak heap 4 MB
+--- PASS: TestStoredExportStreamsInBoundedMemory (2.11s)
+=== RUN   TestStoredSourceRefusesOverCapBeforeReading
+--- PASS: TestStoredSourceRefusesOverCapBeforeReading (0.00s)
+=== RUN   TestStoredSourceRejectsCellCountMismatch
+--- PASS: TestStoredSourceRejectsCellCountMismatch (0.00s)
+=== RUN   TestNewStoredSourceChecksColumns
+--- PASS: TestNewStoredSourceChecksColumns (0.00s)
+=== RUN   TestExportCellTotal
+--- PASS: TestExportCellTotal (0.00s)
+=== RUN   TestLargeResultPageTimings
+    large_pg_test.go:23: needs ACTIVEDIQ_REPORTS_LARGE_ROWS to measure
+--- SKIP: TestLargeResultPageTimings (0.00s)
+=== RUN   TestRunStoresRowsFreshnessAndPages
+=== RUN   TestRunStoresRowsFreshnessAndPages/pg16
+=== RUN   TestRunStoresRowsFreshnessAndPages/pg18
+--- PASS: TestRunStoresRowsFreshnessAndPages (11.31s)
+    --- PASS: TestRunStoresRowsFreshnessAndPages/pg16 (6.23s)
+    --- PASS: TestRunStoresRowsFreshnessAndPages/pg18 (5.09s)
+=== RUN   Test_run_read_bound_to_runner_and_scope
+=== RUN   Test_run_read_bound_to_runner_and_scope/pg16
+=== RUN   Test_run_read_bound_to_runner_and_scope/pg18
+--- PASS: Test_run_read_bound_to_runner_and_scope (2.25s)
+    --- PASS: Test_run_read_bound_to_runner_and_scope/pg16 (1.52s)
+    --- PASS: Test_run_read_bound_to_runner_and_scope/pg18 (0.73s)
+=== RUN   Test_read_denied_append_failure_is_logged
+=== RUN   Test_read_denied_append_failure_is_logged/pg16
+=== RUN   Test_read_denied_append_failure_is_logged/pg18
+--- PASS: Test_read_denied_append_failure_is_logged (2.58s)
+    --- PASS: Test_read_denied_append_failure_is_logged/pg16 (1.68s)
+    --- PASS: Test_read_denied_append_failure_is_logged/pg18 (0.90s)
+=== RUN   Test_expired_run_is_not_served
+=== RUN   Test_expired_run_is_not_served/pg16
+=== RUN   Test_expired_run_is_not_served/pg18
+--- PASS: Test_expired_run_is_not_served (2.57s)
+    --- PASS: Test_expired_run_is_not_served/pg16 (1.59s)
+    --- PASS: Test_expired_run_is_not_served/pg18 (0.98s)
+=== RUN   TestJobFindingRunningFailsInterruptedNeverResumes
+=== RUN   TestJobFindingRunningFailsInterruptedNeverResumes/pg16
+=== RUN   TestJobFindingRunningFailsInterruptedNeverResumes/pg18
+--- PASS: TestJobFindingRunningFailsInterruptedNeverResumes (2.90s)
+    --- PASS: TestJobFindingRunningFailsInterruptedNeverResumes/pg16 (2.04s)
+    --- PASS: TestJobFindingRunningFailsInterruptedNeverResumes/pg18 (0.86s)
+=== RUN   TestFailuresAreNamedAndLeaveNoRows
+=== RUN   TestFailuresAreNamedAndLeaveNoRows/pg16
+=== RUN   TestFailuresAreNamedAndLeaveNoRows/pg18
+--- PASS: TestFailuresAreNamedAndLeaveNoRows (2.40s)
+    --- PASS: TestFailuresAreNamedAndLeaveNoRows/pg16 (1.55s)
+    --- PASS: TestFailuresAreNamedAndLeaveNoRows/pg18 (0.85s)
+=== RUN   TestReuseCapCancelAndRetry
+=== RUN   TestReuseCapCancelAndRetry/pg16
+=== RUN   TestReuseCapCancelAndRetry/pg18
+--- PASS: TestReuseCapCancelAndRetry (2.31s)
+    --- PASS: TestReuseCapCancelAndRetry/pg16 (1.53s)
+    --- PASS: TestReuseCapCancelAndRetry/pg18 (0.78s)
+=== RUN   Test_report_runs_insert_guard
+=== RUN   Test_report_runs_insert_guard/pg16
+=== RUN   Test_report_runs_insert_guard/pg18
+--- PASS: Test_report_runs_insert_guard (2.84s)
+    --- PASS: Test_report_runs_insert_guard/pg16 (1.57s)
+    --- PASS: Test_report_runs_insert_guard/pg18 (1.27s)
+=== RUN   TestGoConstantsEqualTheCheckLists
+--- PASS: TestGoConstantsEqualTheCheckLists (0.00s)
+=== RUN   TestStateEdges
+--- PASS: TestStateEdges (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/modules/reports/run	34.308s
+=== RUN   TestDigestVectors
+--- PASS: TestDigestVectors (0.00s)
+=== RUN   TestDigestIsSensitive
+--- PASS: TestDigestIsSensitive (0.00s)
+=== RUN   TestAbsentNeverUnknownDiffer
+--- PASS: TestAbsentNeverUnknownDiffer (0.00s)
+=== RUN   TestDigesterStreamsLikeDigest
+--- PASS: TestDigesterStreamsLikeDigest (0.00s)
+=== RUN   TestUnknownCellIsVisibleText
+--- PASS: TestUnknownCellIsVisibleText (0.00s)
+=== RUN   TestRunToBlobCSVAndReport
+--- PASS: TestRunToBlobCSVAndReport (0.07s)
+=== RUN   TestRunToBlobXLSXIsAValidArchive
+--- PASS: TestRunToBlobXLSXIsAValidArchive (0.02s)
+=== RUN   TestRowCapStopsUnboundedExport
+=== RUN   TestRowCapStopsUnboundedExport/csv
+=== RUN   TestRowCapStopsUnboundedExport/xlsx
+--- PASS: TestRowCapStopsUnboundedExport (0.01s)
+    --- PASS: TestRowCapStopsUnboundedExport/csv (0.01s)
+    --- PASS: TestRowCapStopsUnboundedExport/xlsx (0.00s)
+=== RUN   TestCountRefusesBeforeWriting
+--- PASS: TestCountRefusesBeforeWriting (0.00s)
+=== RUN   TestFailedExportKeepsPreviousBlob
+--- PASS: TestFailedExportKeepsPreviousBlob (0.01s)
+=== RUN   TestCancelStopsTheJob
+--- PASS: TestCancelStopsTheJob (0.00s)
+=== RUN   TestRetentionRequired
+--- PASS: TestRetentionRequired (0.00s)
+=== RUN   TestStreamsWithBoundedMemory
+=== RUN   TestStreamsWithBoundedMemory/xlsx
+    run_test.go:213: xlsx: 500000 rows, 5 MiB out, first byte after 651 rows, peak heap 3 MiB
+=== RUN   TestStreamsWithBoundedMemory/csv
+    run_test.go:213: csv: 500000 rows, 7 MiB out, first byte after 5120 rows, peak heap 3 MiB
+--- PASS: TestStreamsWithBoundedMemory (1.54s)
+    --- PASS: TestStreamsWithBoundedMemory/xlsx (1.26s)
+    --- PASS: TestStreamsWithBoundedMemory/csv (0.29s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/export	1.669s
+=== RUN   TestTableMatchesNFKC
+--- PASS: TestTableMatchesNFKC (0.13s)
+=== RUN   TestCorpus
+--- PASS: TestCorpus (0.00s)
+=== RUN   TestClassifyEdges
+--- PASS: TestClassifyEdges (0.00s)
+=== RUN   FuzzClassify
+=== RUN   FuzzClassify/seed#0
+=== RUN   FuzzClassify/seed#1
+=== RUN   FuzzClassify/seed#2
+=== RUN   FuzzClassify/seed#3
+=== RUN   FuzzClassify/seed#4
+=== RUN   FuzzClassify/seed#5
+=== RUN   FuzzClassify/seed#6
+=== RUN   FuzzClassify/seed#7
+=== RUN   FuzzClassify/seed#8
+=== RUN   FuzzClassify/seed#9
+=== RUN   FuzzClassify/seed#10
+=== RUN   FuzzClassify/seed#11
+=== RUN   FuzzClassify/seed#12
+=== RUN   FuzzClassify/seed#13
+=== RUN   FuzzClassify/seed#14
+=== RUN   FuzzClassify/seed#15
+=== RUN   FuzzClassify/seed#16
+=== RUN   FuzzClassify/seed#17
+=== RUN   FuzzClassify/seed#18
+=== RUN   FuzzClassify/seed#19
+=== RUN   FuzzClassify/seed#20
+=== RUN   FuzzClassify/seed#21
+=== RUN   FuzzClassify/seed#22
+=== RUN   FuzzClassify/seed#23
+=== RUN   FuzzClassify/seed#24
+=== RUN   FuzzClassify/seed#25
+=== RUN   FuzzClassify/seed#26
+=== RUN   FuzzClassify/seed#27
+=== RUN   FuzzClassify/seed#28
+=== RUN   FuzzClassify/seed#29
+=== RUN   FuzzClassify/seed#30
+=== RUN   FuzzClassify/seed#31
+=== RUN   FuzzClassify/seed#32
+=== RUN   FuzzClassify/seed#33
+=== RUN   FuzzClassify/seed#34
+=== RUN   FuzzClassify/seed#35
+=== RUN   FuzzClassify/seed#36
+=== RUN   FuzzClassify/seed#37
+=== RUN   FuzzClassify/seed#38
+=== RUN   FuzzClassify/seed#39
+=== RUN   FuzzClassify/seed#40
+=== RUN   FuzzClassify/seed#41
+--- PASS: FuzzClassify (0.00s)
+    --- PASS: FuzzClassify/seed#0 (0.00s)
+    --- PASS: FuzzClassify/seed#1 (0.00s)
+    --- PASS: FuzzClassify/seed#2 (0.00s)
+    --- PASS: FuzzClassify/seed#3 (0.00s)
+    --- PASS: FuzzClassify/seed#4 (0.00s)
+    --- PASS: FuzzClassify/seed#5 (0.00s)
+    --- PASS: FuzzClassify/seed#6 (0.00s)
+    --- PASS: FuzzClassify/seed#7 (0.00s)
+    --- PASS: FuzzClassify/seed#8 (0.00s)
+    --- PASS: FuzzClassify/seed#9 (0.00s)
+    --- PASS: FuzzClassify/seed#10 (0.00s)
+    --- PASS: FuzzClassify/seed#11 (0.00s)
+    --- PASS: FuzzClassify/seed#12 (0.00s)
+    --- PASS: FuzzClassify/seed#13 (0.00s)
+    --- PASS: FuzzClassify/seed#14 (0.00s)
+    --- PASS: FuzzClassify/seed#15 (0.00s)
+    --- PASS: FuzzClassify/seed#16 (0.00s)
+    --- PASS: FuzzClassify/seed#17 (0.00s)
+    --- PASS: FuzzClassify/seed#18 (0.00s)
+    --- PASS: FuzzClassify/seed#19 (0.00s)
+    --- PASS: FuzzClassify/seed#20 (0.00s)
+    --- PASS: FuzzClassify/seed#21 (0.00s)
+    --- PASS: FuzzClassify/seed#22 (0.00s)
+    --- PASS: FuzzClassify/seed#23 (0.00s)
+    --- PASS: FuzzClassify/seed#24 (0.00s)
+    --- PASS: FuzzClassify/seed#25 (0.00s)
+    --- PASS: FuzzClassify/seed#26 (0.00s)
+    --- PASS: FuzzClassify/seed#27 (0.00s)
+    --- PASS: FuzzClassify/seed#28 (0.00s)
+    --- PASS: FuzzClassify/seed#29 (0.00s)
+    --- PASS: FuzzClassify/seed#30 (0.00s)
+    --- PASS: FuzzClassify/seed#31 (0.00s)
+    --- PASS: FuzzClassify/seed#32 (0.00s)
+    --- PASS: FuzzClassify/seed#33 (0.00s)
+    --- PASS: FuzzClassify/seed#34 (0.00s)
+    --- PASS: FuzzClassify/seed#35 (0.00s)
+    --- PASS: FuzzClassify/seed#36 (0.00s)
+    --- PASS: FuzzClassify/seed#37 (0.00s)
+    --- PASS: FuzzClassify/seed#38 (0.00s)
+    --- PASS: FuzzClassify/seed#39 (0.00s)
+    --- PASS: FuzzClassify/seed#40 (0.00s)
+    --- PASS: FuzzClassify/seed#41 (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/export/cellsafe	0.137s
+=== RUN   TestCorpus
+--- PASS: TestCorpus (0.01s)
+=== RUN   TestFieldEdges
+--- PASS: TestFieldEdges (0.00s)
+=== RUN   TestCSV13HeaderSepDirective
+--- PASS: TestCSV13HeaderSepDirective (0.00s)
+=== RUN   TestCSV14Truncation
+--- PASS: TestCSV14Truncation (0.00s)
+=== RUN   TestCSV15Multi
+--- PASS: TestCSV15Multi (0.00s)
+=== RUN   TestCSV16TabDelimiterRefused
+--- PASS: TestCSV16TabDelimiterRefused (0.00s)
+=== RUN   TestTypedCells
+--- PASS: TestTypedCells (0.00s)
+=== RUN   TestNonFiniteAndShape
+--- PASS: TestNonFiniteAndShape (0.00s)
+=== RUN   TestRowCap
+--- PASS: TestRowCap (0.00s)
+=== RUN   TestInvalidUTF8Mapped
+--- PASS: TestInvalidUTF8Mapped (0.00s)
+=== RUN   TestNeutralisedCount
+--- PASS: TestNeutralisedCount (0.00s)
+=== RUN   TestReaderLimitsAndSyntax
+--- PASS: TestReaderLimitsAndSyntax (0.00s)
+=== RUN   TestReaderDoubledQuoteFieldLimit
+--- PASS: TestReaderDoubledQuoteFieldLimit (0.00s)
+=== RUN   TestReaderRecordByteLimit
+--- PASS: TestReaderRecordByteLimit (0.00s)
+=== RUN   FuzzRoundTrip
+=== RUN   FuzzRoundTrip/seed#0
+=== RUN   FuzzRoundTrip/seed#1
+=== RUN   FuzzRoundTrip/seed#2
+=== RUN   FuzzRoundTrip/seed#3
+=== RUN   FuzzRoundTrip/seed#4
+=== RUN   FuzzRoundTrip/seed#5
+=== RUN   FuzzRoundTrip/seed#6
+=== RUN   FuzzRoundTrip/seed#7
+=== RUN   FuzzRoundTrip/seed#8
+=== RUN   FuzzRoundTrip/seed#9
+=== RUN   FuzzRoundTrip/seed#10
+=== RUN   FuzzRoundTrip/seed#11
+=== RUN   FuzzRoundTrip/seed#12
+=== RUN   FuzzRoundTrip/seed#13
+=== RUN   FuzzRoundTrip/seed#14
+=== RUN   FuzzRoundTrip/seed#15
+=== RUN   FuzzRoundTrip/seed#16
+=== RUN   FuzzRoundTrip/seed#17
+=== RUN   FuzzRoundTrip/seed#18
+=== RUN   FuzzRoundTrip/seed#19
+=== RUN   FuzzRoundTrip/seed#20
+=== RUN   FuzzRoundTrip/seed#21
+=== RUN   FuzzRoundTrip/seed#22
+--- PASS: FuzzRoundTrip (0.00s)
+    --- PASS: FuzzRoundTrip/seed#0 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#1 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#2 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#3 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#4 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#5 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#6 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#7 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#8 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#9 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#10 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#11 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#12 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#13 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#14 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#15 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#16 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#17 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#18 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#19 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#20 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#21 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#22 (0.00s)
+=== RUN   FuzzReaderLimits
+=== RUN   FuzzReaderLimits/seed#0
+=== RUN   FuzzReaderLimits/seed#1
+--- PASS: FuzzReaderLimits (0.00s)
+    --- PASS: FuzzReaderLimits/seed#0 (0.00s)
+    --- PASS: FuzzReaderLimits/seed#1 (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/export/csv	0.032s
+=== RUN   TestLeadCellsAreQuotePrefixedStrings
+--- PASS: TestLeadCellsAreQuotePrefixedStrings (0.01s)
+=== RUN   TestXL05EscapeSpoofing
+--- PASS: TestXL05EscapeSpoofing (0.00s)
+=== RUN   TestXL06to08ControlsStayWellFormed
+--- PASS: TestXL06to08ControlsStayWellFormed (0.01s)
+=== RUN   TestXL09XL10Injection
+--- PASS: TestXL09XL10Injection (0.00s)
+=== RUN   TestXL11XL12Truncation
+--- PASS: TestXL11XL12Truncation (0.01s)
+=== RUN   TestXL13SheetNames
+--- PASS: TestXL13SheetNames (0.00s)
+=== RUN   TestXL14RowCap
+--- PASS: TestXL14RowCap (0.00s)
+=== RUN   TestXL15NonFinite
+--- PASS: TestXL15NonFinite (0.00s)
+=== RUN   TestXL16WorkbookShape
+--- PASS: TestXL16WorkbookShape (0.00s)
+=== RUN   TestXL17TitleEscaped
+--- PASS: TestXL17TitleEscaped (0.00s)
+=== RUN   TestXL20XL21Typed
+--- PASS: TestXL20XL21Typed (0.00s)
+=== RUN   TestHeaderAndMismatch
+--- PASS: TestHeaderAndMismatch (0.00s)
+=== RUN   TestColName
+--- PASS: TestColName (0.00s)
+=== RUN   TestCorpus
+--- PASS: TestCorpus (0.07s)
+=== RUN   TestAboutSheetIsFirstAndNeutralised
+--- PASS: TestAboutSheetIsFirstAndNeutralised (0.00s)
+=== RUN   FuzzAnyTextIsInertString
+=== RUN   FuzzAnyTextIsInertString/seed#0
+=== RUN   FuzzAnyTextIsInertString/seed#1
+=== RUN   FuzzAnyTextIsInertString/seed#2
+=== RUN   FuzzAnyTextIsInertString/seed#3
+=== RUN   FuzzAnyTextIsInertString/seed#4
+=== RUN   FuzzAnyTextIsInertString/seed#5
+=== RUN   FuzzAnyTextIsInertString/seed#6
+=== RUN   FuzzAnyTextIsInertString/seed#7
+=== RUN   FuzzAnyTextIsInertString/seed#8
+=== RUN   FuzzAnyTextIsInertString/seed#9
+=== RUN   FuzzAnyTextIsInertString/seed#10
+=== RUN   FuzzAnyTextIsInertString/seed#11
+=== RUN   FuzzAnyTextIsInertString/seed#12
+=== RUN   FuzzAnyTextIsInertString/seed#13
+=== RUN   FuzzAnyTextIsInertString/seed#14
+=== RUN   FuzzAnyTextIsInertString/seed#15
+=== RUN   FuzzAnyTextIsInertString/seed#16
+=== RUN   FuzzAnyTextIsInertString/seed#17
+=== RUN   FuzzAnyTextIsInertString/seed#18
+=== RUN   FuzzAnyTextIsInertString/seed#19
+=== RUN   FuzzAnyTextIsInertString/seed#20
+=== RUN   FuzzAnyTextIsInertString/seed#21
+=== RUN   FuzzAnyTextIsInertString/seed#22
+--- PASS: FuzzAnyTextIsInertString (0.04s)
+    --- PASS: FuzzAnyTextIsInertString/seed#0 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#1 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#2 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#3 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#4 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#5 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#6 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#7 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#8 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#9 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#10 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#11 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#12 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#13 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#14 (0.01s)
+    --- PASS: FuzzAnyTextIsInertString/seed#15 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#16 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#17 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#18 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#19 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#20 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#21 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#22 (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/export/xlsx	0.151s
+exit=0

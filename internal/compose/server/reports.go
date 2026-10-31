@@ -2,33 +2,40 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/modules/reports"
+	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	"github.com/skenzeriq/activediq/internal/modules/reports/library"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
+	"github.com/skenzeriq/activediq/internal/platform/blob"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/operation"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/reportsql"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
-// buildReports wires the report run path (T-0959): the run service over the store and the job registry,
-// its two job kinds and the run API handlers. The catalogue is the shipped report library (T-1104),
-// loaded over the datasets the sealed EP-8 host holds, so a definition that does not resolve against
-// its dataset stops start-up.
+// buildReports wires the report run path (T-0959) and the export path (T-0963): the run service over the
+// store and the job registry, the export service over the same and the blob store, their job kinds and the
+// API handlers. The catalogue is the shipped report library (T-1104), loaded over the datasets the sealed
+// EP-8 host holds, so a definition that does not resolve against its dataset stops start-up.
 //
-// One port has no production implementation yet and fails closed rather than guess: the read-scope
-// producer (rbac.ReadScopes needs the owner-status and object-connection sources), so a run cannot be
-// created or read and the API answers 503 not-ready. It is filed as a follow-up on T-0959.
-func buildReports(ctx context.Context, db *store.DB, host *report.Host, jreg *jobs.Registry, sink audit.Sink, reader *inventory.Reader, scopes run.ReadScopes) (*run.Service, apihost.TagHandlers, error) {
+// Two ports have no production implementation yet, and each fails closed rather than guess:
+//   - the read-scope producer (rbac.ReadScopes needs the owner-status and object-connection sources), so a
+//     run cannot be created or read and the API answers 503 not-ready (filed as a follow-up on T-0959);
+//   - the blob store when blobDir is empty: an export answers 503 not-ready rather than keep a file
+//     anywhere else.
+func buildReports(ctx context.Context, db *store.DB, host *report.Host, jreg *jobs.Registry, sink audit.Sink, reader *inventory.Reader, scopes run.ReadScopes, az operation.Authorizer, blobDir string) (*run.Service, apihost.TagHandlers, error) {
 	if scopes == nil {
 		scopes = noScopes{}
 	}
@@ -38,12 +45,20 @@ func buildReports(ctx context.Context, db *store.DB, host *report.Host, jreg *jo
 	}
 	svc := &run.Service{DB: db, Jobs: jreg, Scopes: scopes, Audit: sink, Catalog: lib, Codec: reports.Codec{},
 		Fresh: inventoryFreshness{r: reader}}
-	for _, k := range []jobs.Kind{svc.Kind(), svc.RetentionKind()} {
+	exports := &export.Service{DB: db, Jobs: jreg, Runs: svc, Audit: sink, Authz: reportsAuthz{az}}
+	if blobDir != "" {
+		bs, err := blob.NewFS(blobDir)
+		if err != nil {
+			return nil, apihost.TagHandlers{}, fmt.Errorf("server: blob store: %w", err)
+		}
+		exports.Blob = bs
+	}
+	for _, k := range []jobs.Kind{svc.Kind(), svc.RetentionKind(), exports.Kind()} {
 		if err := jreg.Register(k); err != nil {
 			return nil, apihost.TagHandlers{}, fmt.Errorf("server: reports job kind %s: %w", k.Name, err)
 		}
 	}
-	return svc, (&reports.Handlers{Runs: svc, Library: lib}).Bind(), nil
+	return svc, (&reports.Handlers{Runs: svc, Exports: exports, Library: lib}).Bind(), nil
 }
 
 // reportLibrary compiles the host's datasets against the live schema (reportsql.NewRegistry) and loads
@@ -126,4 +141,30 @@ func (f inventoryFreshness) Freshness(ctx context.Context, tid tenant.ID, cs []a
 		names[string(id)] = n
 	}
 	return run.FreshnessRead{Label: res.Label, Threshold: res.Threshold, Names: names}, nil
+}
+
+// reportsAuthz answers export.Authorizer from the shared RBAC authorizer, at tenant scope like the API
+// host's permission step. A missing authorizer, or any fault, refuses: it never allows by default.
+type reportsAuthz struct{ az operation.Authorizer }
+
+func (a reportsAuthz) Allow(ctx context.Context, tid tenant.ID, c authority.Chain, p authz.Permission) (bool, error) {
+	if a.az == nil {
+		return false, nil
+	}
+	target := authority.TargetRef{Class: rbac.TargetClassTenant, GUID: tid.String()}
+	ctx = authority.WithTenant(ctx, tid.String())
+	// The session's authority factor travels as on the console path. Off a request (the rerun job) there is
+	// no principal, the factor is absent, and a grant that needs it is refused: it fails closed.
+	if pr, ok := apihost.PrincipalFrom(ctx); ok {
+		ctx = authority.WithAuthorityFactor(ctx, pr.AuthorityFactor)
+	}
+	err := a.az.Authorize(ctx, c, p, target, authority.Facts{})
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, rbac.ErrDenied):
+		return false, nil
+	default:
+		return false, err
+	}
 }

@@ -70,7 +70,20 @@ type Options struct {
 	Title string
 	// MaxRows lowers the data-row cap (never above export.MaxDataRows); 0 means the maximum.
 	MaxRows int64
+	// About, when not empty, adds a first sheet named "About" with one label and one value per line
+	// (the export About block, reports-2a §8.3). Labels and values are text cells with the same rules
+	// as every other cell; the block is small and fixed before the data streams.
+	About []AboutLine
 }
+
+// AboutLine is one label and value of the About sheet.
+type AboutLine struct{ Label, Value string }
+
+// AboutSheetName is the name of the About sheet. A data sheet of the same name gets a suffix.
+const AboutSheetName = "About"
+
+// MaxAboutLines bounds the About sheet.
+const MaxAboutLines = 100
 
 // Style indexes in styles.xml cellXfs.
 const (
@@ -96,6 +109,7 @@ type Writer struct {
 	rep     export.RenderReport
 	err     error
 	bwOpen  bool
+	about   []AboutLine
 }
 
 var _ export.Encoder = (*Writer)(nil)
@@ -110,7 +124,13 @@ func NewWriter(w io.Writer, o Options) (*Writer, error) {
 	if sheet.s == "" {
 		sheet = SheetName{"Sheet1"}
 	}
-	x := &Writer{zw: zip.NewWriter(w), sheet: sheet, maxRows: max}
+	if len(o.About) > MaxAboutLines {
+		return nil, export.ErrTooManyColumns
+	}
+	if len(o.About) > 0 && strings.EqualFold(sheet.s, AboutSheetName) {
+		sheet = SheetName{sheet.s + "_"}
+	}
+	x := &Writer{zw: zip.NewWriter(w), sheet: sheet, maxRows: max, about: o.About}
 	x.title, _ = export.Sanitize(o.Title)
 	x.title, _ = export.LimitCell(x.title, MaxTitleUnits)
 	if err := x.static(); err != nil {
@@ -131,12 +151,18 @@ func (x *Writer) part(name, body string) error {
 const xmlDecl = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n"
 
 func (x *Writer) static() error {
+	aboutType, aboutSheet, aboutRel := "", "", ""
+	if len(x.about) > 0 {
+		aboutType = `<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
+		aboutSheet = `<sheet name="` + AboutSheetName + `" sheetId="2" r:id="rId3"/>`
+		aboutRel = `<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>`
+	}
 	parts := []struct{ name, body string }{
 		{"[Content_Types].xml", xmlDecl + `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
 			`<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
 			`<Default Extension="xml" ContentType="application/xml"/>` +
 			`<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>` +
-			`<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` +
+			`<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` + aboutType +
 			`<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>` +
 			`<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>` +
 			`</Types>`},
@@ -147,11 +173,11 @@ func (x *Writer) static() error {
 		{"docProps/core.xml", xmlDecl + `<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" ` +
 			`xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>` + escape(x.title) + `</dc:title></cp:coreProperties>`},
 		{"xl/workbook.xml", xmlDecl + `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ` +
-			`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>` +
+			`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>` + aboutSheet +
 			`<sheet name="` + escape(x.sheet.s) + `" sheetId="1" r:id="rId1"/></sheets></workbook>`},
 		{"xl/_rels/workbook.xml.rels", xmlDecl + `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
 			`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>` +
-			`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
+			`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` + aboutRel +
 			`</Relationships>`},
 		{"xl/styles.xml", xmlDecl + `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
 			`<numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy\-mm\-dd\ hh:mm:ss"/></numFmts>` +
@@ -172,7 +198,31 @@ func (x *Writer) static() error {
 			return err
 		}
 	}
-	return nil
+	return x.aboutSheet()
+}
+
+// aboutSheet writes the About sheet part: label in column A (bold), value in column B.
+func (x *Writer) aboutSheet() error {
+	if len(x.about) == 0 {
+		return nil
+	}
+	f, err := x.zw.Create("xl/worksheets/sheet2.xml")
+	if err != nil {
+		return err
+	}
+	x.bw = bufio.NewWriterSize(f, 16<<10)
+	x.bw.WriteString(xmlDecl + `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>`)
+	for i, l := range x.about {
+		n := strconv.Itoa(i + 1)
+		x.bw.WriteString(`<row r="` + n + `">`)
+		x.cell("A"+n, export.Resolved{Kind: export.KindText, Text: l.Label}, true)
+		x.cell("B"+n, export.Resolved{Kind: export.KindText, Text: l.Value}, false)
+		x.bw.WriteString(`</row>`)
+	}
+	x.bw.WriteString(`</sheetData></worksheet>`)
+	err = x.bw.Flush()
+	x.bw = nil
+	return err
 }
 
 // openSheet starts the streaming sheet part.

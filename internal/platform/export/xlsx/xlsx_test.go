@@ -591,3 +591,36 @@ func FuzzAnyTextIsInertString(f *testing.F) {
 		}
 	})
 }
+
+func TestAboutSheetIsFirstAndNeutralised(t *testing.T) {
+	var buf bytes.Buffer
+	w, err := NewWriter(&buf, Options{Sheet: ParseSheetName("About"), About: []AboutLine{
+		{Label: "Report", Value: "Users"}, {Label: "Filters", Value: "=HYPERLINK(\"http://x\")"}, {Label: "Row count", Value: "1"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Header([]export.Column{{Label: "a"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Row([]export.Cell{export.Text("v")}); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := w.Close()
+	if err != nil || rep.Rows != 1 || rep.Neutralised != 1 {
+		t.Fatalf("report %+v, %v", rep, err)
+	}
+	wb := open(t, buf.Bytes()) // every part is well-formed
+	book := wb.files["xl/workbook.xml"]
+	ia, id := strings.Index(book, `name="About"`), strings.Index(book, `name="About_"`)
+	if ia < 0 || id < 0 || ia > id {
+		t.Fatalf("About must be the first sheet and the data sheet renamed: %s", book)
+	}
+	about := wb.files["xl/worksheets/sheet2.xml"]
+	if !strings.Contains(about, "<t>Report</t>") || !strings.Contains(about, `s="1" t="inlineStr"><is><t>=HYPERLINK`) || strings.Contains(about, "<f") {
+		t.Fatalf("about sheet: %s", about)
+	}
+	if !strings.Contains(wb.files["xl/worksheets/sheet1.xml"], "<t>v</t>") {
+		t.Fatal("data sheet lost")
+	}
+}
