@@ -156,59 +156,6 @@
 .rp__input {
   width: 100%;
 }
-.rp__pop {
-  position: relative;
-}
-.rp__menu {
-  position: absolute;
-  top: calc(100% + var(--diq-space-1));
-  left: 0;
-  z-index: 5;
-  min-width: 340px;
-  background: var(--diq-surface);
-  border: 1px solid var(--diq-line-strong);
-  border-radius: var(--diq-radius-3);
-  padding: var(--diq-space-1);
-}
-.rp__menu--right,
-.pt__actions .rp__menu {
-  left: auto;
-  right: 0;
-}
-.rp__menu--form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--diq-space-2);
-  padding: var(--diq-space-3);
-  min-width: 260px;
-}
-.rp__menuhead,
-.rp__menunote {
-  padding: var(--diq-space-2) var(--diq-space-3);
-}
-.rp__item {
-  width: 100%;
-  min-height: var(--diq-row);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--diq-space-3);
-  padding: var(--diq-space-1) var(--diq-space-3);
-  background: none;
-  border: 0;
-  font: inherit;
-  color: var(--diq-text);
-  text-align: left;
-  cursor: pointer;
-}
-.rp__item:hover,
-.rp__item:focus-visible {
-  background: var(--diq-signal-soft);
-}
-.rp__item[aria-disabled="true"] {
-  color: var(--diq-text-3);
-  cursor: not-allowed;
-}
 .rp__err {
   color: var(--diq-crit);
   font-weight: var(--diq-weight-medium);
@@ -278,10 +225,7 @@
   border: 1px solid var(--diq-signal);
 }
 
-/* ---- sheet bits ---- */
-.rp__sheet--wide {
-  width: min(760px, 100vw);
-}
+/* ---- schedule sheet bits (the sheet, menu and toast are design-system components) ---- */
 .rp__fs {
   border: 1px solid var(--diq-line);
   padding: var(--diq-space-3) var(--diq-space-4);
@@ -304,27 +248,6 @@
   background: var(--diq-surface);
   padding: var(--diq-space-3) 0;
   border-top: 1px solid var(--diq-line);
-}
-
-/* ---- toast ---- */
-.rp__toast {
-  position: fixed;
-  left: var(--diq-space-4);
-  bottom: var(--diq-space-4);
-  z-index: 20;
-  max-width: min(720px, calc(100vw - var(--diq-space-6)));
-  display: flex;
-  gap: var(--diq-space-3);
-  align-items: center;
-  padding: var(--diq-space-3) var(--diq-space-4);
-  background: var(--diq-surface);
-  color: var(--diq-text);
-  border: 1px solid var(--diq-line-strong);
-  border-left: 4px solid var(--diq-signal);
-  border-radius: var(--diq-radius-3);
-}
-.rp__toast--ok {
-  border-left-color: var(--diq-ok);
 }
 
 .rp__h1 {

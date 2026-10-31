@@ -1,6 +1,13 @@
-import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
-import { Checkbox, RadioCardGroup, Select, type Token, TokenInput } from "../../ds/components";
+import {
+  Checkbox,
+  RadioCardGroup,
+  Select,
+  SideSheet,
+  type Token,
+  TokenInput,
+} from "../../ds/components";
 import { ACCOUNTS, ALLOWED_DOMAINS, ZONE, type SchedRecipient, type Schedule } from "./fixtures";
 
 export interface Perms {
@@ -82,7 +89,6 @@ export function ScheduleSheet(props: {
   readonly onClose: () => void;
 }) {
   const { subject, perms, initial = {}, onTick, onSave, onClose } = props;
-  const uid = useId();
   const [preset, setPreset] = useState<PresetId | null>(initial.preset ?? null);
   const [hourly, setHourly] = useState(initial.customHourly ?? false);
   const [list, setList] = useState<string[]>([...(initial.recipients ?? [])]);
@@ -192,183 +198,172 @@ export function ScheduleSheet(props: {
       : [];
 
   return (
-    <div className="pt__sheetwrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div
-        className="pt__sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={`${uid}-h`}
-        onKeyDown={(e) => e.key === "Escape" && onClose()}
-      >
-        <form ref={form} className="pt__form" onSubmit={submit} noValidate>
-          <div>
-            <h2 id={`${uid}-h`}>Schedule this report</h2>
-            <p className="pt__sub">
-              Exactly what is on screen: {subject.title}, {subject.filters}, {subject.columns}{" "}
-              columns.
-            </p>
-          </div>
-
-          <fieldset className="rp__fs">
-            <legend>When</legend>
-            <RadioCardGroup
-              label="When it runs"
-              value={preset}
-              options={[
-                ...PRESETS.map((p) => ({ value: p.id, label: p.label, description: p.when })),
-                { value: "custom", label: "Custom", description: "every n hours, days…" },
-              ]}
-              onChange={(id) => {
-                if (id === null) return;
-                setPreset(id as PresetId);
-                onTick(
-                  `preset: ${id === "custom" ? "Custom" : `${PRESETS.find((p) => p.id === id)?.label ?? ""} ${PRESETS.find((p) => p.id === id)?.when ?? ""}`}`,
-                );
-              }}
-            />
-            {preset === "custom" ? (
-              <div className="rp__row">
-                <Select
-                  label="Repeat every"
-                  value={hourly ? "hours" : "days"}
-                  onChange={(v) => setHourly(v === "hours")}
-                  options={[
-                    { value: "hours", label: "1 hour" },
-                    { value: "days", label: "1 day" },
-                  ]}
-                />
-                <p className="pt__sub">
-                  Shortest allowed: 1 hour. Time zone: Europe/London ({ZONE}).
-                </p>
-              </div>
-            ) : null}
-            <p className="pt__sub">
-              {chosen
-                ? `First run: ${chosen.next} ${ZONE}. A missed run (server down) runs once, never as a burst.`
-                : "Time zone: Europe/London (GMT). Daylight-saving changes are handled for you."}
-            </p>
-          </fieldset>
-
-          <TokenInput
-            label="To"
-            value={list.map(toToken)}
-            onChange={(tokens) => setList(tokens.map((t) => t.id))}
-            query={typed}
-            onQueryChange={(q) => {
-              if (!typedOnce.current && q !== "") {
-                typedOnce.current = true;
-                onTick("type recipient");
-              }
-              setTyped(q);
+    <SideSheet
+      open
+      onClose={onClose}
+      title="Schedule this report"
+      description={`Exactly what is on screen: ${subject.title}, ${subject.filters}, ${subject.columns} columns.`}
+    >
+      <form ref={form} className="pt__form" onSubmit={submit} noValidate>
+        <fieldset className="rp__fs">
+          <legend>When</legend>
+          <RadioCardGroup
+            label="When it runs"
+            value={preset}
+            options={[
+              ...PRESETS.map((p) => ({ value: p.id, label: p.label, description: p.when })),
+              { value: "custom", label: "Custom", description: "every n hours, days…" },
+            ]}
+            onChange={(id) => {
+              if (id === null) return;
+              setPreset(id as PresetId);
+              onTick(
+                `preset: ${id === "custom" ? "Custom" : `${PRESETS.find((p) => p.id === id)?.label ?? ""} ${PRESETS.find((p) => p.id === id)?.when ?? ""}`}`,
+              );
             }}
-            parse={(text) => (text === "" ? null : toToken(text))}
-            suggestions={accountMatches.map((a) => ({
-              id: a.mail,
-              label: a.name,
-              detail: a.mail,
-            }))}
-            placeholder="Name or e-mail address"
-            tokensLabel="Recipients"
-            hint={`Enter or comma adds an address; Save adds what you typed. Organisation domains: ${ALLOWED_DOMAINS.join(", ")}.`}
           />
-
-          <div className="pt__box" role="note">
-            <strong>Recipients receive what you can see:</strong> {subject.scope}. If your access
-            shrinks, later runs shrink with it.
-          </div>
-
-          {needsConfirm ? (
-            <div className="pt__banner rp__ext" role="alert">
-              <Checkbox
-                checked={confirmed}
-                onChange={(on) => {
-                  setConfirmed(on);
-                  onTick("confirm: data leaves organisation");
-                }}
-                label={
-                  <>
-                    <strong>Data leaves your organisation:</strong> {external.join(", ")}. I confirm
-                    these addresses may receive this report.
-                  </>
-                }
-              />
-            </div>
-          ) : null}
-
-          <fieldset className="rp__fs">
-            <legend>Delivery</legend>
+          {preset === "custom" ? (
             <div className="rp__row">
               <Select
-                label="Format"
-                value={format}
-                onChange={(v) => setFormat(v as "XLSX" | "CSV")}
+                label="Repeat every"
+                value={hourly ? "hours" : "days"}
+                onChange={(v) => setHourly(v === "hours")}
                 options={[
-                  { value: "XLSX", label: "XLSX (with About sheet)" },
-                  { value: "CSV", label: "CSV (table only)" },
+                  { value: "hours", label: "1 hour" },
+                  { value: "days", label: "1 day" },
                 ]}
               />
-              <Select
-                label="Send as"
-                value={method}
-                onChange={(v) => setMethod(v as "Attachment" | "Link")}
-                options={[
-                  { value: "Attachment", label: "Attachment" },
-                  { value: "Link", label: "Link (accounts only)" },
-                ]}
-              />
-            </div>
-            {method === "Link" && external.length > 0 ? (
               <p className="pt__sub">
-                Links work only for people with an activeDIQ account, so outside addresses get an
-                attachment.
+                Shortest allowed: 1 hour. Time zone: Europe/London ({ZONE}).
               </p>
-            ) : null}
-            <Checkbox
-              checked={onlyIfData}
-              onChange={setOnlyIfData}
-              label="Only send if there is data (a run with 0 rows sends nothing)"
-            />
-            <p className="pt__sub">
-              Files over 10 MB go as a link to account recipients; for outside addresses that
-              delivery fails and says why.
-            </p>
-          </fieldset>
-
-          <label className="pt__field">
-            <span>Name</span>
-            <input
-              className="rp__input"
-              value={name}
-              onChange={(e) => {
-                nameTouched.current = true;
-                setName(e.target.value);
-              }}
-            />
-          </label>
-
-          {errors.length > 0 ? (
-            <div className="pt__banner" role="alert">
-              <ul className="rp__errors">
-                {errors.map((e) => (
-                  <li key={e}>{e}</li>
-                ))}
-              </ul>
             </div>
           ) : null}
+          <p className="pt__sub">
+            {chosen
+              ? `First run: ${chosen.next} ${ZONE}. A missed run (server down) runs once, never as a burst.`
+              : "Time zone: Europe/London (GMT). Daylight-saving changes are handled for you."}
+          </p>
+        </fieldset>
 
-          <div className="pt__actions rp__sticky">
-            <button type="submit" className="btn btn--primary" disabled={saving} aria-busy={saving}>
-              {saving ? "Saving…" : "Save schedule"}
-            </button>
-            <button type="button" className="btn" onClick={onClose}>
-              Cancel <span className="pt__kbd">Esc</span>
-            </button>
-            <span className="pt__sub">
-              Saved as an action you can undo. Runs as you, with your access at each run.
-            </span>
+        <TokenInput
+          label="To"
+          value={list.map(toToken)}
+          onChange={(tokens) => setList(tokens.map((t) => t.id))}
+          query={typed}
+          onQueryChange={(q) => {
+            if (!typedOnce.current && q !== "") {
+              typedOnce.current = true;
+              onTick("type recipient");
+            }
+            setTyped(q);
+          }}
+          parse={(text) => (text === "" ? null : toToken(text))}
+          suggestions={accountMatches.map((a) => ({
+            id: a.mail,
+            label: a.name,
+            detail: a.mail,
+          }))}
+          placeholder="Name or e-mail address"
+          tokensLabel="Recipients"
+          hint={`Enter or comma adds an address; Save adds what you typed. Organisation domains: ${ALLOWED_DOMAINS.join(", ")}.`}
+        />
+
+        <div className="pt__box" role="note">
+          <strong>Recipients receive what you can see:</strong> {subject.scope}. If your access
+          shrinks, later runs shrink with it.
+        </div>
+
+        {needsConfirm ? (
+          <div className="pt__banner rp__ext" role="alert">
+            <Checkbox
+              checked={confirmed}
+              onChange={(on) => {
+                setConfirmed(on);
+                onTick("confirm: data leaves organisation");
+              }}
+              label={
+                <>
+                  <strong>Data leaves your organisation:</strong> {external.join(", ")}. I confirm
+                  these addresses may receive this report.
+                </>
+              }
+            />
           </div>
-        </form>
-      </div>
-    </div>
+        ) : null}
+
+        <fieldset className="rp__fs">
+          <legend>Delivery</legend>
+          <div className="rp__row">
+            <Select
+              label="Format"
+              value={format}
+              onChange={(v) => setFormat(v as "XLSX" | "CSV")}
+              options={[
+                { value: "XLSX", label: "XLSX (with About sheet)" },
+                { value: "CSV", label: "CSV (table only)" },
+              ]}
+            />
+            <Select
+              label="Send as"
+              value={method}
+              onChange={(v) => setMethod(v as "Attachment" | "Link")}
+              options={[
+                { value: "Attachment", label: "Attachment" },
+                { value: "Link", label: "Link (accounts only)" },
+              ]}
+            />
+          </div>
+          {method === "Link" && external.length > 0 ? (
+            <p className="pt__sub">
+              Links work only for people with an activeDIQ account, so outside addresses get an
+              attachment.
+            </p>
+          ) : null}
+          <Checkbox
+            checked={onlyIfData}
+            onChange={setOnlyIfData}
+            label="Only send if there is data (a run with 0 rows sends nothing)"
+          />
+          <p className="pt__sub">
+            Files over 10 MB go as a link to account recipients; for outside addresses that delivery
+            fails and says why.
+          </p>
+        </fieldset>
+
+        <label className="pt__field">
+          <span>Name</span>
+          <input
+            className="rp__input"
+            value={name}
+            onChange={(e) => {
+              nameTouched.current = true;
+              setName(e.target.value);
+            }}
+          />
+        </label>
+
+        {errors.length > 0 ? (
+          <div className="pt__banner" role="alert">
+            <ul className="rp__errors">
+              {errors.map((e) => (
+                <li key={e}>{e}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        <div className="pt__actions rp__sticky">
+          <button type="submit" className="btn btn--primary" disabled={saving} aria-busy={saving}>
+            {saving ? "Saving…" : "Save schedule"}
+          </button>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel <span className="pt__kbd">Esc</span>
+          </button>
+          <span className="pt__sub">
+            Saved as an action you can undo. Runs as you, with your access at each run.
+          </span>
+        </div>
+      </form>
+    </SideSheet>
   );
 }

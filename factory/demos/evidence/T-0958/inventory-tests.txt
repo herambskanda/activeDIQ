@@ -1,0 +1,638 @@
+=== RUN   TestMoveRewritesDescendantsAncestry
+=== RUN   TestMoveRewritesDescendantsAncestry/pg16
+    ancestry_test.go:124: before: uZ ancestry=[cccccccc-0000-4000-8000-0000000000e3 cccccccc-0000-4000-8000-0000000000e2 cccccccc-0000-4000-8000-0000000000e1 cccccccc-0000-4000-8000-00000000000a bbbbbbbb-0000-4000-8000-000000000001] complete=true
+    ancestry_test.go:138: after:  uZ ancestry=[cccccccc-0000-4000-8000-0000000000e3 cccccccc-0000-4000-8000-0000000000e2 cccccccc-0000-4000-8000-0000000000e1 cccccccc-0000-4000-8000-00000000000b cccccccc-0000-4000-8000-00000000000a bbbbbbbb-0000-4000-8000-000000000001] complete=true
+=== RUN   TestMoveRewritesDescendantsAncestry/pg18
+    ancestry_test.go:124: before: uZ ancestry=[cccccccc-0000-4000-8000-0000000000e3 cccccccc-0000-4000-8000-0000000000e2 cccccccc-0000-4000-8000-0000000000e1 cccccccc-0000-4000-8000-00000000000a bbbbbbbb-0000-4000-8000-000000000001] complete=true
+    ancestry_test.go:138: after:  uZ ancestry=[cccccccc-0000-4000-8000-0000000000e3 cccccccc-0000-4000-8000-0000000000e2 cccccccc-0000-4000-8000-0000000000e1 cccccccc-0000-4000-8000-00000000000b cccccccc-0000-4000-8000-00000000000a bbbbbbbb-0000-4000-8000-000000000001] complete=true
+--- PASS: TestMoveRewritesDescendantsAncestry (12.67s)
+    --- PASS: TestMoveRewritesDescendantsAncestry/pg16 (7.78s)
+    --- PASS: TestMoveRewritesDescendantsAncestry/pg18 (4.90s)
+=== RUN   TestMoveAndMoveBack
+=== RUN   TestMoveAndMoveBack/pg16
+=== RUN   TestMoveAndMoveBack/pg18
+--- PASS: TestMoveAndMoveBack (1.66s)
+    --- PASS: TestMoveAndMoveBack/pg16 (1.12s)
+    --- PASS: TestMoveAndMoveBack/pg18 (0.54s)
+=== RUN   TestMoveFailingPartWayRollsBack
+=== RUN   TestMoveFailingPartWayRollsBack/pg16
+=== RUN   TestMoveFailingPartWayRollsBack/pg18
+--- PASS: TestMoveFailingPartWayRollsBack (1.75s)
+    --- PASS: TestMoveFailingPartWayRollsBack/pg16 (1.15s)
+    --- PASS: TestMoveFailingPartWayRollsBack/pg18 (0.60s)
+=== RUN   TestMoveRolledBackByCaller
+=== RUN   TestMoveRolledBackByCaller/pg16
+=== RUN   TestMoveRolledBackByCaller/pg18
+--- PASS: TestMoveRolledBackByCaller (1.98s)
+    --- PASS: TestMoveRolledBackByCaller/pg16 (1.39s)
+    --- PASS: TestMoveRolledBackByCaller/pg18 (0.58s)
+=== RUN   TestIncompleteUntilParentArrives
+=== RUN   TestIncompleteUntilParentArrives/pg16
+=== RUN   TestIncompleteUntilParentArrives/pg18
+--- PASS: TestIncompleteUntilParentArrives (1.64s)
+    --- PASS: TestIncompleteUntilParentArrives/pg16 (1.10s)
+    --- PASS: TestIncompleteUntilParentArrives/pg18 (0.54s)
+=== RUN   TestIncompleteRepairedWithinOneBatch
+=== RUN   TestIncompleteRepairedWithinOneBatch/pg16
+=== RUN   TestIncompleteRepairedWithinOneBatch/pg18
+--- PASS: TestIncompleteRepairedWithinOneBatch (1.67s)
+    --- PASS: TestIncompleteRepairedWithinOneBatch/pg16 (1.11s)
+    --- PASS: TestIncompleteRepairedWithinOneBatch/pg18 (0.56s)
+=== RUN   TestAncestryCompleteness
+=== RUN   TestAncestryCompleteness/pg16
+=== RUN   TestAncestryCompleteness/pg18
+--- PASS: TestAncestryCompleteness (1.58s)
+    --- PASS: TestAncestryCompleteness/pg16 (1.05s)
+    --- PASS: TestAncestryCompleteness/pg18 (0.54s)
+=== RUN   TestMoveUnderIncompleteParent
+=== RUN   TestMoveUnderIncompleteParent/pg16
+=== RUN   TestMoveUnderIncompleteParent/pg18
+--- PASS: TestMoveUnderIncompleteParent (1.64s)
+    --- PASS: TestMoveUnderIncompleteParent/pg16 (1.11s)
+    --- PASS: TestMoveUnderIncompleteParent/pg18 (0.53s)
+=== RUN   TestMoveDeepTree
+=== RUN   TestMoveDeepTree/pg16
+=== RUN   TestMoveDeepTree/pg18
+--- PASS: TestMoveDeepTree (2.37s)
+    --- PASS: TestMoveDeepTree/pg16 (1.51s)
+    --- PASS: TestMoveDeepTree/pg18 (0.86s)
+=== RUN   TestMoveIsTenantScoped
+=== RUN   TestMoveIsTenantScoped/pg16
+=== RUN   TestMoveIsTenantScoped/pg18
+--- PASS: TestMoveIsTenantScoped (1.83s)
+    --- PASS: TestMoveIsTenantScoped/pg16 (1.23s)
+    --- PASS: TestMoveIsTenantScoped/pg18 (0.60s)
+=== RUN   TestConcurrentMoveAndChildInsert
+=== RUN   TestConcurrentMoveAndChildInsert/pg16
+=== RUN   TestConcurrentMoveAndChildInsert/pg18
+--- PASS: TestConcurrentMoveAndChildInsert (2.79s)
+    --- PASS: TestConcurrentMoveAndChildInsert/pg16 (1.65s)
+    --- PASS: TestConcurrentMoveAndChildInsert/pg18 (1.14s)
+=== RUN   TestConcurrentMoveAndKnownDescendant
+=== RUN   TestConcurrentMoveAndKnownDescendant/pg16
+=== RUN   TestConcurrentMoveAndKnownDescendant/pg18
+--- PASS: TestConcurrentMoveAndKnownDescendant (3.01s)
+    --- PASS: TestConcurrentMoveAndKnownDescendant/pg16 (1.77s)
+    --- PASS: TestConcurrentMoveAndKnownDescendant/pg18 (1.24s)
+=== RUN   TestPopulateRefusesNonReadCommitted
+=== RUN   TestPopulateRefusesNonReadCommitted/repeatable_read
+=== RUN   TestPopulateRefusesNonReadCommitted/repeatable_read/pg16
+=== RUN   TestPopulateRefusesNonReadCommitted/repeatable_read/pg18
+=== RUN   TestPopulateRefusesNonReadCommitted/serializable
+=== RUN   TestPopulateRefusesNonReadCommitted/serializable/pg16
+=== RUN   TestPopulateRefusesNonReadCommitted/serializable/pg18
+--- PASS: TestPopulateRefusesNonReadCommitted (4.77s)
+    --- PASS: TestPopulateRefusesNonReadCommitted/repeatable_read (1.64s)
+        --- PASS: TestPopulateRefusesNonReadCommitted/repeatable_read/pg16 (1.08s)
+        --- PASS: TestPopulateRefusesNonReadCommitted/repeatable_read/pg18 (0.55s)
+    --- PASS: TestPopulateRefusesNonReadCommitted/serializable (3.13s)
+        --- PASS: TestPopulateRefusesNonReadCommitted/serializable/pg16 (1.19s)
+        --- PASS: TestPopulateRefusesNonReadCommitted/serializable/pg18 (1.95s)
+=== RUN   Test_policy_change_is_reflected_without_a_user_write
+=== RUN   Test_policy_change_is_reflected_without_a_user_write/pg16
+=== RUN   Test_policy_change_is_reflected_without_a_user_write/pg18
+--- PASS: Test_policy_change_is_reflected_without_a_user_write (2.13s)
+    --- PASS: Test_policy_change_is_reflected_without_a_user_write/pg16 (1.41s)
+    --- PASS: Test_policy_change_is_reflected_without_a_user_write/pg18 (0.72s)
+=== RUN   Test_missing_inputs_are_unknown
+=== RUN   Test_missing_inputs_are_unknown/pg16
+=== RUN   Test_missing_inputs_are_unknown/pg18
+--- PASS: Test_missing_inputs_are_unknown (2.67s)
+    --- PASS: Test_missing_inputs_are_unknown/pg16 (1.66s)
+    --- PASS: Test_missing_inputs_are_unknown/pg18 (1.00s)
+=== RUN   Test_locked_out_filter_count_and_page
+=== RUN   Test_locked_out_filter_count_and_page/pg16
+=== RUN   Test_locked_out_filter_count_and_page/pg18
+--- PASS: Test_locked_out_filter_count_and_page (2.42s)
+    --- PASS: Test_locked_out_filter_count_and_page/pg16 (1.58s)
+    --- PASS: Test_locked_out_filter_count_and_page/pg18 (0.84s)
+=== RUN   Test_service_account_signal_and_computer_activity
+=== RUN   Test_service_account_signal_and_computer_activity/pg16
+=== RUN   Test_service_account_signal_and_computer_activity/pg18
+--- PASS: Test_service_account_signal_and_computer_activity (1.89s)
+    --- PASS: Test_service_account_signal_and_computer_activity/pg16 (1.23s)
+    --- PASS: Test_service_account_signal_and_computer_activity/pg18 (0.66s)
+=== RUN   Test_inventory_datasets_register
+=== RUN   Test_inventory_datasets_register/pg16
+=== RUN   Test_inventory_datasets_register/pg18
+--- PASS: Test_inventory_datasets_register (1.66s)
+    --- PASS: Test_inventory_datasets_register/pg16 (1.12s)
+    --- PASS: Test_inventory_datasets_register/pg18 (0.54s)
+=== RUN   Test_secret_attribute_keys_are_refused
+=== RUN   Test_secret_attribute_keys_are_refused/pg16
+=== RUN   Test_secret_attribute_keys_are_refused/pg18
+--- PASS: Test_secret_attribute_keys_are_refused (1.83s)
+    --- PASS: Test_secret_attribute_keys_are_refused/pg16 (1.21s)
+    --- PASS: Test_secret_attribute_keys_are_refused/pg18 (0.62s)
+=== RUN   Test_inventory_users_smoke
+=== RUN   Test_inventory_users_smoke/pg16
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 sam_account_name = s:alice
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 locked_out = e:not_locked
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 lockout_ends_at = a:
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 password_state = e:expires
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 password_expires_at = t:2026-06-12T00:00:00Z
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 days_to_password_expiry = i:41
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 account_expired = e:never
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 policy_source = s:Domain policy
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 probable_service_account = a:
+=== RUN   Test_inventory_users_smoke/pg18
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 sam_account_name = s:alice
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 locked_out = e:not_locked
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 lockout_ends_at = a:
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 password_state = e:expires
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 password_expires_at = t:2026-06-12T00:00:00Z
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 days_to_password_expiry = i:41
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 account_expired = e:never
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 policy_source = s:Domain policy
+    datasets_test.go:297: 01000000-0000-4000-8000-000000000001 probable_service_account = a:
+--- PASS: Test_inventory_users_smoke (1.92s)
+    --- PASS: Test_inventory_users_smoke/pg16 (1.18s)
+    --- PASS: Test_inventory_users_smoke/pg18 (0.73s)
+=== RUN   TestFakeKeepsTheReaderContract
+--- PASS: TestFakeKeepsTheReaderContract (0.00s)
+=== RUN   TestGateFirstFailingCheck
+--- PASS: TestGateFirstFailingCheck (0.00s)
+=== RUN   TestGateEligibilityClassAndMarkers
+--- PASS: TestGateEligibilityClassAndMarkers (0.00s)
+=== RUN   TestIngestFormsMatchedPairWithMembersInOneTransaction
+=== RUN   TestIngestFormsMatchedPairWithMembersInOneTransaction/pg16
+=== RUN   TestIngestFormsMatchedPairWithMembersInOneTransaction/pg18
+--- PASS: TestIngestFormsMatchedPairWithMembersInOneTransaction (1.69s)
+    --- PASS: TestIngestFormsMatchedPairWithMembersInOneTransaction/pg16 (1.14s)
+    --- PASS: TestIngestFormsMatchedPairWithMembersInOneTransaction/pg18 (0.55s)
+=== RUN   TestIngestGateReasonsFromStoredState
+=== RUN   TestIngestGateReasonsFromStoredState/pg16
+=== RUN   TestIngestGateReasonsFromStoredState/pg18
+--- PASS: TestIngestGateReasonsFromStoredState (1.81s)
+    --- PASS: TestIngestGateReasonsFromStoredState/pg16 (1.23s)
+    --- PASS: TestIngestGateReasonsFromStoredState/pg18 (0.58s)
+=== RUN   TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair
+=== RUN   TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair/pg16
+=== RUN   TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair/pg18
+--- PASS: TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair (3.60s)
+    --- PASS: TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair/pg16 (2.35s)
+    --- PASS: TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair/pg18 (1.25s)
+=== RUN   TestIngestPreconditions
+=== RUN   TestIngestPreconditions/pg16
+=== RUN   TestIngestPreconditions/pg18
+--- PASS: TestIngestPreconditions (1.76s)
+    --- PASS: TestIngestPreconditions/pg16 (1.20s)
+    --- PASS: TestIngestPreconditions/pg18 (0.56s)
+=== RUN   TestIngestPrincipalTypeMismatchNeverPassesTheGate
+=== RUN   TestIngestPrincipalTypeMismatchNeverPassesTheGate/pg16
+=== RUN   TestIngestPrincipalTypeMismatchNeverPassesTheGate/pg18
+--- PASS: TestIngestPrincipalTypeMismatchNeverPassesTheGate (8.90s)
+    --- PASS: TestIngestPrincipalTypeMismatchNeverPassesTheGate/pg16 (5.85s)
+    --- PASS: TestIngestPrincipalTypeMismatchNeverPassesTheGate/pg18 (3.05s)
+=== RUN   TestMembership_direct_AD_fact_freshness
+=== RUN   TestMembership_direct_AD_fact_freshness/fresh
+=== RUN   TestMembership_direct_AD_fact_freshness/fresh/pg16
+=== RUN   TestMembership_direct_AD_fact_freshness/fresh/pg18
+=== RUN   TestMembership_direct_AD_fact_freshness/absent
+=== RUN   TestMembership_direct_AD_fact_freshness/absent/pg16
+=== RUN   TestMembership_direct_AD_fact_freshness/absent/pg18
+=== RUN   TestMembership_direct_AD_fact_freshness/unparseable
+=== RUN   TestMembership_direct_AD_fact_freshness/unparseable/pg16
+=== RUN   TestMembership_direct_AD_fact_freshness/unparseable/pg18
+=== RUN   TestMembership_direct_AD_fact_freshness/not_a_string
+=== RUN   TestMembership_direct_AD_fact_freshness/not_a_string/pg16
+=== RUN   TestMembership_direct_AD_fact_freshness/not_a_string/pg18
+=== RUN   TestMembership_direct_AD_fact_freshness/older_than_26h
+=== RUN   TestMembership_direct_AD_fact_freshness/older_than_26h/pg16
+=== RUN   TestMembership_direct_AD_fact_freshness/older_than_26h/pg18
+=== RUN   TestMembership_direct_AD_fact_freshness/40_days_old
+=== RUN   TestMembership_direct_AD_fact_freshness/40_days_old/pg16
+=== RUN   TestMembership_direct_AD_fact_freshness/40_days_old/pg18
+=== RUN   TestMembership_direct_AD_fact_freshness/beyond_future_skew
+=== RUN   TestMembership_direct_AD_fact_freshness/beyond_future_skew/pg16
+=== RUN   TestMembership_direct_AD_fact_freshness/beyond_future_skew/pg18
+--- PASS: TestMembership_direct_AD_fact_freshness (12.36s)
+    --- PASS: TestMembership_direct_AD_fact_freshness/fresh (1.92s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/fresh/pg16 (1.35s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/fresh/pg18 (0.57s)
+    --- PASS: TestMembership_direct_AD_fact_freshness/absent (1.73s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/absent/pg16 (1.14s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/absent/pg18 (0.59s)
+    --- PASS: TestMembership_direct_AD_fact_freshness/unparseable (1.70s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/unparseable/pg16 (1.14s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/unparseable/pg18 (0.56s)
+    --- PASS: TestMembership_direct_AD_fact_freshness/not_a_string (1.76s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/not_a_string/pg16 (1.19s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/not_a_string/pg18 (0.56s)
+    --- PASS: TestMembership_direct_AD_fact_freshness/older_than_26h (1.73s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/older_than_26h/pg16 (1.18s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/older_than_26h/pg18 (0.55s)
+    --- PASS: TestMembership_direct_AD_fact_freshness/40_days_old (1.78s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/40_days_old/pg16 (1.21s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/40_days_old/pg18 (0.57s)
+    --- PASS: TestMembership_direct_AD_fact_freshness/beyond_future_skew (1.75s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/beyond_future_skew/pg16 (1.13s)
+        --- PASS: TestMembership_direct_AD_fact_freshness/beyond_future_skew/pg18 (0.61s)
+=== RUN   TestPopulate_refuses_judge_keys_in_attributes
+=== RUN   TestPopulate_refuses_judge_keys_in_attributes/pg16
+=== RUN   TestPopulate_refuses_judge_keys_in_attributes/pg18
+--- PASS: TestPopulate_refuses_judge_keys_in_attributes (1.68s)
+    --- PASS: TestPopulate_refuses_judge_keys_in_attributes/pg16 (1.14s)
+    --- PASS: TestPopulate_refuses_judge_keys_in_attributes/pg18 (0.55s)
+=== RUN   TestPopulate_refuses_inconsistent_facts
+=== RUN   TestPopulate_refuses_inconsistent_facts/pg16
+=== RUN   TestPopulate_refuses_inconsistent_facts/pg18
+--- PASS: TestPopulate_refuses_inconsistent_facts (1.63s)
+    --- PASS: TestPopulate_refuses_inconsistent_facts/pg16 (1.08s)
+    --- PASS: TestPopulate_refuses_inconsistent_facts/pg18 (0.55s)
+=== RUN   TestMembership_synced_weak_good_and_flip
+=== RUN   TestMembership_synced_weak_good_and_flip/pg16
+=== RUN   TestMembership_synced_weak_good_and_flip/pg18
+--- PASS: TestMembership_synced_weak_good_and_flip (1.74s)
+    --- PASS: TestMembership_synced_weak_good_and_flip/pg16 (1.23s)
+    --- PASS: TestMembership_synced_weak_good_and_flip/pg18 (0.52s)
+=== RUN   TestMembership_synced_unknown
+=== RUN   TestMembership_synced_unknown/no_fact
+=== RUN   TestMembership_synced_unknown/no_fact/pg16
+=== RUN   TestMembership_synced_unknown/no_fact/pg18
+=== RUN   TestMembership_synced_unknown/fact_without_computed_at
+=== RUN   TestMembership_synced_unknown/fact_without_computed_at/pg16
+=== RUN   TestMembership_synced_unknown/fact_without_computed_at/pg18
+=== RUN   TestMembership_synced_unknown/AD_group_absent
+=== RUN   TestMembership_synced_unknown/AD_group_absent/pg16
+=== RUN   TestMembership_synced_unknown/AD_group_absent/pg18
+=== RUN   TestMembership_synced_unknown/candidate
+=== RUN   TestMembership_synced_unknown/candidate/pg16
+=== RUN   TestMembership_synced_unknown/candidate/pg18
+=== RUN   TestMembership_synced_unknown/broken
+=== RUN   TestMembership_synced_unknown/broken/pg16
+=== RUN   TestMembership_synced_unknown/broken/pg18
+=== RUN   TestMembership_synced_unknown/takeover_not_attested
+=== RUN   TestMembership_synced_unknown/takeover_not_attested/pg16
+=== RUN   TestMembership_synced_unknown/takeover_not_attested/pg18
+=== RUN   TestMembership_synced_unknown/takeover_unknown
+=== RUN   TestMembership_synced_unknown/takeover_unknown/pg16
+=== RUN   TestMembership_synced_unknown/takeover_unknown/pg18
+=== RUN   TestMembership_synced_unknown/pair_older_than_26h_(evaluation)
+=== RUN   TestMembership_synced_unknown/pair_older_than_26h_(evaluation)/pg16
+=== RUN   TestMembership_synced_unknown/pair_older_than_26h_(evaluation)/pg18
+=== RUN   TestMembership_synced_unknown/pair_older_than_26h_(fact)
+=== RUN   TestMembership_synced_unknown/pair_older_than_26h_(fact)/pg16
+=== RUN   TestMembership_synced_unknown/pair_older_than_26h_(fact)/pg18
+--- PASS: TestMembership_synced_unknown (17.86s)
+    --- PASS: TestMembership_synced_unknown/no_fact (1.64s)
+        --- PASS: TestMembership_synced_unknown/no_fact/pg16 (1.11s)
+        --- PASS: TestMembership_synced_unknown/no_fact/pg18 (0.54s)
+    --- PASS: TestMembership_synced_unknown/fact_without_computed_at (1.66s)
+        --- PASS: TestMembership_synced_unknown/fact_without_computed_at/pg16 (1.09s)
+        --- PASS: TestMembership_synced_unknown/fact_without_computed_at/pg18 (0.58s)
+    --- PASS: TestMembership_synced_unknown/AD_group_absent (1.72s)
+        --- PASS: TestMembership_synced_unknown/AD_group_absent/pg16 (1.17s)
+        --- PASS: TestMembership_synced_unknown/AD_group_absent/pg18 (0.54s)
+    --- PASS: TestMembership_synced_unknown/candidate (1.74s)
+        --- PASS: TestMembership_synced_unknown/candidate/pg16 (1.21s)
+        --- PASS: TestMembership_synced_unknown/candidate/pg18 (0.53s)
+    --- PASS: TestMembership_synced_unknown/broken (1.70s)
+        --- PASS: TestMembership_synced_unknown/broken/pg16 (1.13s)
+        --- PASS: TestMembership_synced_unknown/broken/pg18 (0.57s)
+    --- PASS: TestMembership_synced_unknown/takeover_not_attested (1.84s)
+        --- PASS: TestMembership_synced_unknown/takeover_not_attested/pg16 (1.21s)
+        --- PASS: TestMembership_synced_unknown/takeover_not_attested/pg18 (0.63s)
+    --- PASS: TestMembership_synced_unknown/takeover_unknown (1.78s)
+        --- PASS: TestMembership_synced_unknown/takeover_unknown/pg16 (1.17s)
+        --- PASS: TestMembership_synced_unknown/takeover_unknown/pg18 (0.61s)
+    --- PASS: TestMembership_synced_unknown/pair_older_than_26h_(evaluation) (3.63s)
+        --- PASS: TestMembership_synced_unknown/pair_older_than_26h_(evaluation)/pg16 (2.55s)
+        --- PASS: TestMembership_synced_unknown/pair_older_than_26h_(evaluation)/pg18 (1.08s)
+    --- PASS: TestMembership_synced_unknown/pair_older_than_26h_(fact) (2.15s)
+        --- PASS: TestMembership_synced_unknown/pair_older_than_26h_(fact)/pg16 (1.08s)
+        --- PASS: TestMembership_synced_unknown/pair_older_than_26h_(fact)/pg18 (1.06s)
+=== RUN   TestMembership_synced_tier0
+=== RUN   TestMembership_synced_tier0/pg16
+=== RUN   TestMembership_synced_tier0/pg18
+--- PASS: TestMembership_synced_tier0 (1.82s)
+    --- PASS: TestMembership_synced_tier0/pg16 (1.29s)
+    --- PASS: TestMembership_synced_tier0/pg18 (0.54s)
+=== RUN   TestMembership_sync_flag
+=== RUN   TestMembership_sync_flag/pg16
+=== RUN   TestMembership_sync_flag/pg18
+--- PASS: TestMembership_sync_flag (3.40s)
+    --- PASS: TestMembership_sync_flag/pg16 (2.39s)
+    --- PASS: TestMembership_sync_flag/pg18 (1.02s)
+=== RUN   TestMembership_synced_nest
+=== RUN   TestMembership_synced_nest/pg16
+=== RUN   TestMembership_synced_nest/pg18
+--- PASS: TestMembership_synced_nest (1.96s)
+    --- PASS: TestMembership_synced_nest/pg16 (1.14s)
+    --- PASS: TestMembership_synced_nest/pg18 (0.82s)
+=== RUN   TestMembership_forged_peer
+=== RUN   TestMembership_forged_peer/two_Entra_groups_share_one_SID
+=== RUN   TestMembership_forged_peer/two_Entra_groups_share_one_SID/pg16
+=== RUN   TestMembership_forged_peer/two_Entra_groups_share_one_SID/pg18
+=== RUN   TestMembership_forged_peer/claimed_SID_is_not_the_matched_source's
+=== RUN   TestMembership_forged_peer/claimed_SID_is_not_the_matched_source's/pg16
+=== RUN   TestMembership_forged_peer/claimed_SID_is_not_the_matched_source's/pg18
+--- PASS: TestMembership_forged_peer (6.31s)
+    --- PASS: TestMembership_forged_peer/two_Entra_groups_share_one_SID (4.31s)
+        --- PASS: TestMembership_forged_peer/two_Entra_groups_share_one_SID/pg16 (3.66s)
+        --- PASS: TestMembership_forged_peer/two_Entra_groups_share_one_SID/pg18 (0.65s)
+    --- PASS: TestMembership_forged_peer/claimed_SID_is_not_the_matched_source's (2.00s)
+        --- PASS: TestMembership_forged_peer/claimed_SID_is_not_the_matched_source's/pg16 (1.40s)
+        --- PASS: TestMembership_forged_peer/claimed_SID_is_not_the_matched_source's/pg18 (0.60s)
+=== RUN   TestMembership_dynamic
+=== RUN   TestMembership_dynamic/pg16
+=== RUN   TestMembership_dynamic/pg18
+--- PASS: TestMembership_dynamic (1.89s)
+    --- PASS: TestMembership_dynamic/pg16 (1.18s)
+    --- PASS: TestMembership_dynamic/pg18 (0.71s)
+=== RUN   TestMembership_sync_flag_column_precedence
+=== RUN   TestMembership_sync_flag_column_precedence/attr_<nil>,_column_true
+=== RUN   TestMembership_sync_flag_column_precedence/attr_<nil>,_column_true/pg16
+=== RUN   TestMembership_sync_flag_column_precedence/attr_<nil>,_column_true/pg18
+=== RUN   TestMembership_sync_flag_column_precedence/attr_false,_column_true
+=== RUN   TestMembership_sync_flag_column_precedence/attr_false,_column_true/pg16
+=== RUN   TestMembership_sync_flag_column_precedence/attr_false,_column_true/pg18
+=== RUN   TestMembership_sync_flag_column_precedence/attr_true,_column_false
+=== RUN   TestMembership_sync_flag_column_precedence/attr_true,_column_false/pg16
+=== RUN   TestMembership_sync_flag_column_precedence/attr_true,_column_false/pg18
+--- PASS: TestMembership_sync_flag_column_precedence (9.53s)
+    --- PASS: TestMembership_sync_flag_column_precedence/attr_<nil>,_column_true (2.66s)
+        --- PASS: TestMembership_sync_flag_column_precedence/attr_<nil>,_column_true/pg16 (1.74s)
+        --- PASS: TestMembership_sync_flag_column_precedence/attr_<nil>,_column_true/pg18 (0.91s)
+    --- PASS: TestMembership_sync_flag_column_precedence/attr_false,_column_true (3.66s)
+        --- PASS: TestMembership_sync_flag_column_precedence/attr_false,_column_true/pg16 (2.96s)
+        --- PASS: TestMembership_sync_flag_column_precedence/attr_false,_column_true/pg18 (0.70s)
+    --- PASS: TestMembership_sync_flag_column_precedence/attr_true,_column_false (3.21s)
+        --- PASS: TestMembership_sync_flag_column_precedence/attr_true,_column_false/pg16 (1.19s)
+        --- PASS: TestMembership_sync_flag_column_precedence/attr_true,_column_false/pg18 (2.02s)
+=== RUN   TestMembership_sync_flag_not_boolean
+=== RUN   TestMembership_sync_flag_not_boolean/pg16
+=== RUN   TestMembership_sync_flag_not_boolean/pg18
+--- PASS: TestMembership_sync_flag_not_boolean (2.90s)
+    --- PASS: TestMembership_sync_flag_not_boolean/pg16 (1.48s)
+    --- PASS: TestMembership_sync_flag_not_boolean/pg18 (1.41s)
+=== RUN   TestMembership_forged_peer_stale_ad_sid
+=== RUN   TestMembership_forged_peer_stale_ad_sid/pg16
+=== RUN   TestMembership_forged_peer_stale_ad_sid/pg18
+--- PASS: TestMembership_forged_peer_stale_ad_sid (2.70s)
+    --- PASS: TestMembership_forged_peer_stale_ad_sid/pg16 (2.12s)
+    --- PASS: TestMembership_forged_peer_stale_ad_sid/pg18 (0.58s)
+=== RUN   TestMembership_synced_entra_tier0
+=== RUN   TestMembership_synced_entra_tier0/pg16
+=== RUN   TestMembership_synced_entra_tier0/pg18
+--- PASS: TestMembership_synced_entra_tier0 (2.56s)
+    --- PASS: TestMembership_synced_entra_tier0/pg16 (1.98s)
+    --- PASS: TestMembership_synced_entra_tier0/pg18 (0.58s)
+=== RUN   TestMembership_synced_future_dated
+=== RUN   TestMembership_synced_future_dated/computed_at
+=== RUN   TestMembership_synced_future_dated/computed_at/pg16
+=== RUN   TestMembership_synced_future_dated/computed_at/pg18
+=== RUN   TestMembership_synced_future_dated/evaluation_and_facts_as-of
+=== RUN   TestMembership_synced_future_dated/evaluation_and_facts_as-of/pg16
+=== RUN   TestMembership_synced_future_dated/evaluation_and_facts_as-of/pg18
+--- PASS: TestMembership_synced_future_dated (3.42s)
+    --- PASS: TestMembership_synced_future_dated/computed_at (1.67s)
+        --- PASS: TestMembership_synced_future_dated/computed_at/pg16 (1.12s)
+        --- PASS: TestMembership_synced_future_dated/computed_at/pg18 (0.56s)
+    --- PASS: TestMembership_synced_future_dated/evaluation_and_facts_as-of (1.75s)
+        --- PASS: TestMembership_synced_future_dated/evaluation_and_facts_as-of/pg16 (1.19s)
+        --- PASS: TestMembership_synced_future_dated/evaluation_and_facts_as-of/pg18 (0.56s)
+=== RUN   TestMembership_eligible_groups
+=== RUN   TestMembership_eligible_groups/pg16
+=== RUN   TestMembership_eligible_groups/pg18
+--- PASS: TestMembership_eligible_groups (1.87s)
+    --- PASS: TestMembership_eligible_groups/pg16 (1.24s)
+    --- PASS: TestMembership_eligible_groups/pg18 (0.63s)
+=== RUN   TestMembership_writtenBackADGroup
+=== RUN   TestMembership_writtenBackADGroup/pg16
+=== RUN   TestMembership_writtenBackADGroup/pg18
+--- PASS: TestMembership_writtenBackADGroup (1.70s)
+    --- PASS: TestMembership_writtenBackADGroup/pg16 (1.12s)
+    --- PASS: TestMembership_writtenBackADGroup/pg18 (0.57s)
+=== RUN   TestMembership_via
+=== RUN   TestMembership_via/pg16
+=== RUN   TestMembership_via/pg18
+--- PASS: TestMembership_via (1.83s)
+    --- PASS: TestMembership_via/pg16 (1.20s)
+    --- PASS: TestMembership_via/pg18 (0.63s)
+=== RUN   TestMembership_incomplete_not_complete
+=== RUN   TestMembership_incomplete_not_complete/pg16
+=== RUN   TestMembership_incomplete_not_complete/pg18
+--- PASS: TestMembership_incomplete_not_complete (1.61s)
+    --- PASS: TestMembership_incomplete_not_complete/pg16 (1.08s)
+    --- PASS: TestMembership_incomplete_not_complete/pg18 (0.53s)
+=== RUN   TestMembership_unbound_account_has_no_groups
+=== RUN   TestMembership_unbound_account_has_no_groups/pg16
+=== RUN   TestMembership_unbound_account_has_no_groups/pg18
+--- PASS: TestMembership_unbound_account_has_no_groups (1.65s)
+    --- PASS: TestMembership_unbound_account_has_no_groups/pg16 (1.07s)
+    --- PASS: TestMembership_unbound_account_has_no_groups/pg18 (0.57s)
+=== RUN   TestPopulateADCycleWithEdges
+=== RUN   TestPopulateADCycleWithEdges/pg16
+=== RUN   TestPopulateADCycleWithEdges/pg18
+--- PASS: TestPopulateADCycleWithEdges (6.17s)
+    --- PASS: TestPopulateADCycleWithEdges/pg16 (3.56s)
+    --- PASS: TestPopulateADCycleWithEdges/pg18 (2.62s)
+=== RUN   TestPopulateStaleAndInvalid
+=== RUN   TestPopulateStaleAndInvalid/pg16
+=== RUN   TestPopulateStaleAndInvalid/pg18
+--- PASS: TestPopulateStaleAndInvalid (1.79s)
+    --- PASS: TestPopulateStaleAndInvalid/pg16 (1.16s)
+    --- PASS: TestPopulateStaleAndInvalid/pg18 (0.62s)
+=== RUN   TestCloudSeenAtOnlyMovesForward
+=== RUN   TestCloudSeenAtOnlyMovesForward/pg16
+=== RUN   TestCloudSeenAtOnlyMovesForward/pg18
+--- PASS: TestCloudSeenAtOnlyMovesForward (1.73s)
+    --- PASS: TestCloudSeenAtOnlyMovesForward/pg16 (1.12s)
+    --- PASS: TestCloudSeenAtOnlyMovesForward/pg18 (0.61s)
+=== RUN   TestAnchorMatchesAcrossADConnections
+=== RUN   TestAnchorMatchesAcrossADConnections/pg16
+=== RUN   TestAnchorMatchesAcrossADConnections/pg18
+--- PASS: TestAnchorMatchesAcrossADConnections (1.82s)
+    --- PASS: TestAnchorMatchesAcrossADConnections/pg16 (1.20s)
+    --- PASS: TestAnchorMatchesAcrossADConnections/pg18 (0.63s)
+=== RUN   TestAnchorMatchesCountsOnlyUserKinds
+=== RUN   TestAnchorMatchesCountsOnlyUserKinds/pg16
+=== RUN   TestAnchorMatchesCountsOnlyUserKinds/pg18
+--- PASS: TestAnchorMatchesCountsOnlyUserKinds (1.78s)
+    --- PASS: TestAnchorMatchesCountsOnlyUserKinds/pg16 (1.22s)
+    --- PASS: TestAnchorMatchesCountsOnlyUserKinds/pg18 (0.56s)
+=== RUN   TestReachWithRealAuthorizerEscalation
+=== RUN   TestReachWithRealAuthorizerEscalation/pg16
+=== RUN   TestReachWithRealAuthorizerEscalation/pg18
+--- PASS: TestReachWithRealAuthorizerEscalation (4.75s)
+    --- PASS: TestReachWithRealAuthorizerEscalation/pg16 (1.40s)
+    --- PASS: TestReachWithRealAuthorizerEscalation/pg18 (3.35s)
+=== RUN   TestReachedFromIsTargetPlusOuterGroups
+--- PASS: TestReachedFromIsTargetPlusOuterGroups (0.00s)
+=== RUN   TestReachedFromFailsClosed
+--- PASS: TestReachedFromFailsClosed (0.00s)
+=== RUN   TestTier0RevisionDesignations
+=== RUN   TestTier0RevisionDesignations/pg16
+=== RUN   TestTier0RevisionDesignations/pg18
+--- PASS: TestTier0RevisionDesignations (1.71s)
+    --- PASS: TestTier0RevisionDesignations/pg16 (1.12s)
+    --- PASS: TestTier0RevisionDesignations/pg18 (0.59s)
+=== RUN   TestTier0RevisionFacts
+=== RUN   TestTier0RevisionFacts/pg16
+=== RUN   TestTier0RevisionFacts/pg18
+--- PASS: TestTier0RevisionFacts (1.74s)
+    --- PASS: TestTier0RevisionFacts/pg16 (1.17s)
+    --- PASS: TestTier0RevisionFacts/pg18 (0.57s)
+=== RUN   TestTier0RevisionTenantIsolationAndMonotone
+=== RUN   TestTier0RevisionTenantIsolationAndMonotone/pg16
+=== RUN   TestTier0RevisionTenantIsolationAndMonotone/pg18
+--- PASS: TestTier0RevisionTenantIsolationAndMonotone (1.67s)
+    --- PASS: TestTier0RevisionTenantIsolationAndMonotone/pg16 (1.15s)
+    --- PASS: TestTier0RevisionTenantIsolationAndMonotone/pg18 (0.52s)
+=== RUN   TestTier0RevisionRowSecurityRefusesTenantReassignment
+=== RUN   TestTier0RevisionRowSecurityRefusesTenantReassignment/pg16
+=== RUN   TestTier0RevisionRowSecurityRefusesTenantReassignment/pg18
+--- PASS: TestTier0RevisionRowSecurityRefusesTenantReassignment (2.46s)
+    --- PASS: TestTier0RevisionRowSecurityRefusesTenantReassignment/pg16 (1.07s)
+    --- PASS: TestTier0RevisionRowSecurityRefusesTenantReassignment/pg18 (1.39s)
+=== RUN   TestTier0RevisionAfterTriggerRefusesTenantMoveByRLSBypassingWriter
+=== RUN   TestTier0RevisionAfterTriggerRefusesTenantMoveByRLSBypassingWriter/pg16
+=== RUN   TestTier0RevisionAfterTriggerRefusesTenantMoveByRLSBypassingWriter/pg18
+--- PASS: TestTier0RevisionAfterTriggerRefusesTenantMoveByRLSBypassingWriter (3.61s)
+    --- PASS: TestTier0RevisionAfterTriggerRefusesTenantMoveByRLSBypassingWriter/pg16 (2.43s)
+    --- PASS: TestTier0RevisionAfterTriggerRefusesTenantMoveByRLSBypassingWriter/pg18 (1.18s)
+=== RUN   Test_dataset_reveals_nothing_outside_scope
+=== RUN   Test_dataset_reveals_nothing_outside_scope/inventory.users
+=== RUN   Test_dataset_reveals_nothing_outside_scope/inventory.users/pg16
+=== RUN   Test_dataset_reveals_nothing_outside_scope/inventory.users/pg18
+=== RUN   Test_dataset_reveals_nothing_outside_scope/inventory.computers
+=== RUN   Test_dataset_reveals_nothing_outside_scope/inventory.computers/pg16
+=== RUN   Test_dataset_reveals_nothing_outside_scope/inventory.computers/pg18
+--- PASS: Test_dataset_reveals_nothing_outside_scope (5.07s)
+    --- PASS: Test_dataset_reveals_nothing_outside_scope/inventory.users (1.95s)
+        --- PASS: Test_dataset_reveals_nothing_outside_scope/inventory.users/pg16 (1.30s)
+        --- PASS: Test_dataset_reveals_nothing_outside_scope/inventory.users/pg18 (0.65s)
+    --- PASS: Test_dataset_reveals_nothing_outside_scope/inventory.computers (3.12s)
+        --- PASS: Test_dataset_reveals_nothing_outside_scope/inventory.computers/pg16 (2.56s)
+        --- PASS: Test_dataset_reveals_nothing_outside_scope/inventory.computers/pg18 (0.55s)
+=== RUN   Test_compiled_scope_matches_read_oracle
+=== RUN   Test_compiled_scope_matches_read_oracle/pg16
+    rp6_scope_test.go:546: 80 worlds, 169 moves, 28 rows marked incomplete, 480 scopes, 3336 admitted rows compared, 14.114s
+=== RUN   Test_compiled_scope_matches_read_oracle/pg18
+    rp6_scope_test.go:546: 80 worlds, 169 moves, 28 rows marked incomplete, 480 scopes, 3336 admitted rows compared, 12.066s
+--- PASS: Test_compiled_scope_matches_read_oracle (27.76s)
+    --- PASS: Test_compiled_scope_matches_read_oracle/pg16 (15.17s)
+    --- PASS: Test_compiled_scope_matches_read_oracle/pg18 (12.59s)
+=== RUN   Test_derived_columns_match_reference
+=== RUN   Test_derived_columns_match_reference/pg16
+=== RUN   Test_derived_columns_match_reference/pg18
+--- PASS: Test_derived_columns_match_reference (4.80s)
+    --- PASS: Test_derived_columns_match_reference/pg16 (3.22s)
+    --- PASS: Test_derived_columns_match_reference/pg18 (1.58s)
+=== RUN   TestObjectsBySID
+=== RUN   TestObjectsBySID/pg16
+=== RUN   TestObjectsBySID/pg18
+--- PASS: TestObjectsBySID (3.41s)
+    --- PASS: TestObjectsBySID/pg16 (1.44s)
+    --- PASS: TestObjectsBySID/pg18 (1.97s)
+=== RUN   TestCorrelationsForReturnsEveryStateFromEitherSide
+=== RUN   TestCorrelationsForReturnsEveryStateFromEitherSide/pg16
+=== RUN   TestCorrelationsForReturnsEveryStateFromEitherSide/pg18
+--- PASS: TestCorrelationsForReturnsEveryStateFromEitherSide (1.91s)
+    --- PASS: TestCorrelationsForReturnsEveryStateFromEitherSide/pg16 (1.35s)
+    --- PASS: TestCorrelationsForReturnsEveryStateFromEitherSide/pg18 (0.56s)
+=== RUN   TestCorrelationsForFailsClosed
+=== RUN   TestCorrelationsForFailsClosed/pg16
+=== RUN   TestCorrelationsForFailsClosed/pg18
+--- PASS: TestCorrelationsForFailsClosed (2.21s)
+    --- PASS: TestCorrelationsForFailsClosed/pg16 (1.49s)
+    --- PASS: TestCorrelationsForFailsClosed/pg18 (0.72s)
+=== RUN   TestSchemaRefusesIncoherentRows
+=== RUN   TestSchemaRefusesIncoherentRows/pg16
+=== RUN   TestSchemaRefusesIncoherentRows/pg18
+--- PASS: TestSchemaRefusesIncoherentRows (3.61s)
+    --- PASS: TestSchemaRefusesIncoherentRows/pg16 (2.82s)
+    --- PASS: TestSchemaRefusesIncoherentRows/pg18 (0.79s)
+=== RUN   TestDesignationsForScopedByTenantAndConnection
+=== RUN   TestDesignationsForScopedByTenantAndConnection/pg16
+=== RUN   TestDesignationsForScopedByTenantAndConnection/pg18
+--- PASS: TestDesignationsForScopedByTenantAndConnection (1.69s)
+    --- PASS: TestDesignationsForScopedByTenantAndConnection/pg16 (1.08s)
+    --- PASS: TestDesignationsForScopedByTenantAndConnection/pg18 (0.61s)
+=== RUN   TestCorrelationsForRefusesWrongConnections
+=== RUN   TestCorrelationsForRefusesWrongConnections/pg16
+=== RUN   TestCorrelationsForRefusesWrongConnections/pg18
+--- PASS: TestCorrelationsForRefusesWrongConnections (1.65s)
+    --- PASS: TestCorrelationsForRefusesWrongConnections/pg16 (1.11s)
+    --- PASS: TestCorrelationsForRefusesWrongConnections/pg18 (0.54s)
+=== RUN   TestTMFHybridControl
+--- PASS: TestTMFHybridControl (0.00s)
+=== RUN   TestTMFHybridForgedAnchor
+--- PASS: TestTMFHybridForgedAnchor (0.00s)
+=== RUN   TestTMFHybridSOATransferred
+--- PASS: TestTMFHybridSOATransferred (0.00s)
+=== RUN   TestTMFHybridSIDMismatch
+--- PASS: TestTMFHybridSIDMismatch (0.00s)
+=== RUN   TestTMFHybridUnattested
+--- PASS: TestTMFHybridUnattested (0.00s)
+=== RUN   TestTMFHybridOnceCloudOnly
+--- PASS: TestTMFHybridOnceCloudOnly (0.00s)
+=== RUN   TestTMFHybridInstallTimePopulation
+--- PASS: TestTMFHybridInstallTimePopulation (0.00s)
+=== RUN   TestTMFHybridLapseWindowNeedsReconfirmation
+--- PASS: TestTMFHybridLapseWindowNeedsReconfirmation (0.00s)
+=== RUN   TestTMFHybridTenantOwnerNeverCrosses
+--- PASS: TestTMFHybridTenantOwnerNeverCrosses (0.00s)
+=== RUN   TestTMFHybridEntraOnlySessionHoldsNoGrant
+--- PASS: TestTMFHybridEntraOnlySessionHoldsNoGrant (0.00s)
+=== RUN   TestTMFHybridTier0CorrelationRefused
+--- PASS: TestTMFHybridTier0CorrelationRefused (0.00s)
+=== RUN   TestTMFHybridTraceability
+--- PASS: TestTMFHybridTraceability (0.01s)
+=== RUN   TestFormStoresGateVerdict
+=== RUN   TestFormStoresGateVerdict/pg16
+=== RUN   TestFormStoresGateVerdict/pg18
+--- PASS: TestFormStoresGateVerdict (2.19s)
+    --- PASS: TestFormStoresGateVerdict/pg16 (1.13s)
+    --- PASS: TestFormStoresGateVerdict/pg18 (1.06s)
+=== RUN   TestFormInstallTimePopulation
+=== RUN   TestFormInstallTimePopulation/pg16
+=== RUN   TestFormInstallTimePopulation/pg18
+--- PASS: TestFormInstallTimePopulation (1.78s)
+    --- PASS: TestFormInstallTimePopulation/pg16 (1.25s)
+    --- PASS: TestFormInstallTimePopulation/pg18 (0.53s)
+=== RUN   TestFormRefusesBadInput
+=== RUN   TestFormRefusesBadInput/pg16
+=== RUN   TestFormRefusesBadInput/pg18
+--- PASS: TestFormRefusesBadInput (1.63s)
+    --- PASS: TestFormRefusesBadInput/pg16 (1.09s)
+    --- PASS: TestFormRefusesBadInput/pg18 (0.54s)
+=== RUN   TestGroupSourceTransitive
+=== RUN   TestGroupSourceTransitive/pg16
+=== RUN   TestGroupSourceTransitive/pg18
+--- PASS: TestGroupSourceTransitive (1.73s)
+    --- PASS: TestGroupSourceTransitive/pg16 (1.18s)
+    --- PASS: TestGroupSourceTransitive/pg18 (0.55s)
+=== RUN   TestDesignationSoftDelete
+=== RUN   TestDesignationSoftDelete/pg16
+=== RUN   TestDesignationSoftDelete/pg18
+--- PASS: TestDesignationSoftDelete (1.73s)
+    --- PASS: TestDesignationSoftDelete/pg16 (1.13s)
+    --- PASS: TestDesignationSoftDelete/pg18 (0.60s)
+=== RUN   TestCorrelationsForCarriesEvaluationAsOf
+=== RUN   TestCorrelationsForCarriesEvaluationAsOf/pg16
+=== RUN   TestCorrelationsForCarriesEvaluationAsOf/pg18
+--- PASS: TestCorrelationsForCarriesEvaluationAsOf (1.78s)
+    --- PASS: TestCorrelationsForCarriesEvaluationAsOf/pg16 (1.13s)
+    --- PASS: TestCorrelationsForCarriesEvaluationAsOf/pg18 (0.64s)
+=== RUN   TestNonTier0LinkCarriesFactsAsOf
+=== RUN   TestNonTier0LinkCarriesFactsAsOf/pg16
+=== RUN   TestNonTier0LinkCarriesFactsAsOf/pg18
+--- PASS: TestNonTier0LinkCarriesFactsAsOf (1.71s)
+    --- PASS: TestNonTier0LinkCarriesFactsAsOf/pg16 (1.12s)
+    --- PASS: TestNonTier0LinkCarriesFactsAsOf/pg18 (0.58s)
+=== RUN   TestStaleRunRollsBack
+=== RUN   TestStaleRunRollsBack/pg16
+=== RUN   TestStaleRunRollsBack/pg18
+--- PASS: TestStaleRunRollsBack (1.59s)
+    --- PASS: TestStaleRunRollsBack/pg16 (1.07s)
+    --- PASS: TestStaleRunRollsBack/pg18 (0.52s)
+=== RUN   TestRecordLiveFacts
+=== RUN   TestRecordLiveFacts/pg16
+=== RUN   TestRecordLiveFacts/pg18
+--- PASS: TestRecordLiveFacts (2.05s)
+    --- PASS: TestRecordLiveFacts/pg16 (1.15s)
+    --- PASS: TestRecordLiveFacts/pg18 (0.89s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/directory/inventory	251.916s
