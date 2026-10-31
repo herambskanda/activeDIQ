@@ -746,6 +746,10 @@ and `Via` grants contribute nothing. A target is built from the inventory row wi
 
 ### 4.7 Search consumes the same scope (T-0875, m2-plan decision 4)
 
+> **2026-10-31, ADR-0011 (`proposed`, T-1093):** universal search moves to the inventory. It is one statement
+> compiled by `reportsql.CompileSearch`, trimmed by the `scopeSQL` of §4.3 in that statement, and it uses no
+> `Admits`. The live path below stays only until T-1127 deletes it, together with `SearchRoots` and `Admits`.
+
 `GET /directory/users` (`modules/directory`) trims to the caller's `ReadScope` for `directory.read`. The
 design choice (directory-engineer): **push the include roots to the directory, then decide each result
 in memory** rather than filter through inventory.
