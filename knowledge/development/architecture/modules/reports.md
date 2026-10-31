@@ -255,8 +255,11 @@ safe:
   out: `FROM` and `JOIN` take exactly one of a `{rel.<id>}` slot (not a `RowAnchor`, not dotted), a CTE
   **this fragment declared** (never dotted), or a derived table `( SELECT|WITH … )`; no `,` follows a
   FROM or JOIN item before the next `SELECT`/`UNION`/`ORDER`/`LIMIT`; `NATURAL`, `LATERAL`, `ONLY`,
-  `USING`, `MATERIALIZED` and a FROM function are not on the list. A declared name (CTE, derived-table
-  alias) may not be a schema table, `pg_*`, `public`, `information_schema`, a reserved word or an
+  `USING`, `MATERIALIZED` and a FROM function are not on the list. Without `RECURSIVE`, a CTE body may not
+  name its own CTE or one declared after it (T-1087): the name would resolve to a relation of
+  `public`, read with no `{rel.x}` scope. A declared name (CTE, derived-table
+  alias) may not be a schema relation of any kind (`Schema.Tables()` lists tables, views, materialized
+  views, sequences and foreign tables; `Column()` answers for tables only), `pg_*`, `public`, `information_schema`, a reserved word or an
   anchor/relation ID. A `.` follows `{t}`, `{rel.<id>}` or a declared alias, so `public.x`,
   `pg_catalog.x` and `information_schema.x` stay refused. A bare word is a column of a table the
   dataset uses (a `Rel`'s `Where` reads its table unqualified), or a name the fragment declares with
