@@ -15,6 +15,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/modules/reports"
 	"github.com/skenzeriq/activediq/internal/modules/reports/api"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 )
 
@@ -212,8 +213,7 @@ func postRun(t *testing.T, s *stub, body string) *httptest.ResponseRecorder {
 	if err != nil {
 		t.Fatal(err)
 	}
-	perms := apihost.Permissions{"reports.deliver.external", "reports.export", "reports.run", "reports.schedule", "reports.schedule.manage_all",
-		"directory.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}
+	perms := apitest.Catalogue(doc)
 	srv, err := apihost.Build(doc, []apihost.TagHandlers{api.Bind(s)}, pol, perms, apihost.Ports{Authn: ports{}, Authz: ports{}, Limits: ports{}, StepUp: ports{}})
 	if err != nil {
 		t.Fatal(err)

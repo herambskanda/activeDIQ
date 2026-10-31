@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -58,7 +59,7 @@ func newAPIWith(t *testing.T, s *Store, ten tenant.ID, px ports) http.Handler {
 		t.Fatal(err)
 	}
 	px.p = apihost.Principal{ID: "admin", Tenant: ten.String(), Kind: apihost.KindSession, SessionID: "s"}
-	srv, err := apihost.Build(doc, []apihost.TagHandlers{Handlers{Store: s}.Bind()}, pol, apihost.Permissions{ManagePermission, ReadPermission, "connections.takeover.attest", "directory.read"},
+	srv, err := apihost.Build(doc, []apihost.TagHandlers{Handlers{Store: s}.Bind()}, pol, apitest.Catalogue(doc),
 		apihost.Ports{Authn: px, Authz: px, Limits: px, StepUp: px})
 	if err != nil {
 		t.Fatal(err)

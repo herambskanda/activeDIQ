@@ -75,8 +75,7 @@ func serveHistory(t *testing.T, s *historyStub, method, target string) *httptest
 	if err != nil {
 		t.Fatal(err)
 	}
-	perms := apihost.Permissions{"reports.deliver.external", "reports.export", "reports.run", "reports.schedule", "reports.schedule.manage_all",
-		"directory.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}
+	perms := apitest.Catalogue(doc)
 	var rec apitest.Recorder
 	srv, err := apihost.Build(doc, apitest.Conform(&rec, api.Bind(s)), pol, perms, apihost.Ports{Authn: ports{}, Authz: ports{}, Limits: ports{}, StepUp: ports{}})
 	if err != nil {
