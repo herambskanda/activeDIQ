@@ -8,6 +8,6 @@ export default defineConfig({
     // Component tests opt in to a DOM with `// @vitest-environment jsdom` at the top of the file.
     environment: "node",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx", "eslint/**/*.test.js"],
-    css: { include: [/src\/ds\/tokens\.css/] },
+    css: { include: [/src\/ds\/(tokens|base)\.css/, /src\/ds\/components\/components\.css/] },
   },
 });

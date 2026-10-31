@@ -1055,3 +1055,189 @@ legend.diq-field__label {
 .diq-toast__x:hover {
   background: var(--diq-surface-2);
 }
+
+/* ---- CommandPalette ------------------------------------------------------ */
+.diq-pal__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--diq-z-palette);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--diq-space-8) var(--diq-space-4) var(--diq-space-4);
+  overscroll-behavior: contain;
+  background: var(--diq-scrim);
+  animation: diq-fade var(--diq-dur) var(--diq-ease);
+}
+.diq-pal {
+  display: flex;
+  flex-direction: column;
+  width: min(var(--diq-palette-w), 100%);
+  max-height: 100%;
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-3);
+  box-shadow: var(--diq-shadow-2);
+  animation: diq-pal-in var(--diq-dur) var(--diq-ease);
+}
+@keyframes diq-pal-in {
+  from {
+    transform: translateY(calc(var(--diq-space-2) * -1));
+    opacity: 0;
+  }
+}
+.diq-pal__input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--diq-row-comfortable);
+  padding: var(--diq-space-3) var(--diq-space-4);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: 0;
+  border-bottom: var(--diq-border) solid var(--diq-line);
+  border-radius: var(--diq-radius-3) var(--diq-radius-3) 0 0;
+  font: inherit;
+  font-size: var(--diq-text-body);
+}
+.diq-pal__input::placeholder {
+  color: var(--diq-text-3);
+}
+/* The ring sits inside the dialog edge, so it is never clipped. */
+.diq-pal__input:focus-visible {
+  outline: var(--diq-focus-width) solid var(--diq-focus);
+  outline-offset: calc(var(--diq-focus-width) * -1);
+}
+.diq-pal__input[aria-disabled="true"] {
+  color: var(--diq-text-3);
+}
+.diq-pal__body {
+  min-height: 0;
+}
+.diq-pal__list {
+  max-height: var(--diq-palette-list-h);
+  padding-block: var(--diq-space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.diq-pal__gh {
+  display: flex;
+  gap: var(--diq-space-2);
+  padding: var(--diq-space-2) var(--diq-space-4) var(--diq-space-1);
+  color: var(--diq-text-3);
+  font-size: var(--diq-text-micro);
+  font-weight: var(--diq-weight-semibold);
+  letter-spacing: var(--diq-tracking-label);
+  text-transform: uppercase;
+}
+.diq-pal__count {
+  font-weight: var(--diq-weight-regular);
+}
+.diq-pal__opt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--diq-space-1);
+  padding: var(--diq-space-2) var(--diq-space-4);
+  border-inline-start: var(--diq-focus-width) solid transparent;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.diq-pal__opt:hover {
+  background: var(--diq-surface-2);
+}
+/* The highlighted row: tint plus a bar, so it never rests on colour alone. */
+.diq-pal__opt[data-active] {
+  background: var(--diq-signal-soft);
+  border-inline-start-color: var(--diq-signal);
+}
+.diq-pal__opt[aria-disabled="true"] {
+  cursor: default;
+}
+.diq-pal__opt[aria-disabled="true"] .diq-pal__name {
+  color: var(--diq-text-2);
+}
+.diq-pal__l1 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-1) var(--diq-space-2);
+  align-items: baseline;
+}
+.diq-pal__tag {
+  flex: none;
+  min-width: var(--diq-space-7);
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-micro);
+  font-weight: var(--diq-weight-semibold);
+  letter-spacing: var(--diq-tracking-label);
+  text-transform: uppercase;
+}
+.diq-pal__name {
+  min-width: 0;
+  font-size: var(--diq-text-ui);
+  font-weight: var(--diq-weight-medium);
+  line-height: var(--diq-leading-ui);
+}
+.diq-pal__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-1);
+  max-width: 100%;
+  margin-inline-start: auto;
+}
+/* The match: heavier as well as coloured. */
+.diq-pal__mark {
+  color: var(--diq-signal-text);
+  background: transparent;
+  font-weight: var(--diq-weight-semibold);
+}
+.diq-pal__l2,
+.diq-pal__l3 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--diq-space-3);
+  padding-inline-start: var(--diq-space-7);
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+  line-height: var(--diq-leading-ui);
+}
+.diq-pal__ident,
+.diq-pal__dn {
+  font-family: var(--diq-font-mono);
+}
+.diq-pal__dn {
+  min-width: 0;
+  color: var(--diq-text-2);
+}
+.diq-pal__domain {
+  margin-inline-start: auto;
+}
+.diq-pal__why {
+  padding-inline-start: var(--diq-space-7);
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}
+.diq-pal__opt--all {
+  color: var(--diq-signal-text);
+  font-size: var(--diq-text-ui);
+}
+.diq-pal .diq-state,
+.diq-pal .diq-skeleton {
+  margin: var(--diq-space-3) var(--diq-space-4);
+}
+.diq-pal__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2) var(--diq-space-4);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--diq-space-2) var(--diq-space-4);
+  color: var(--diq-text-2);
+  border-top: var(--diq-border) solid var(--diq-line);
+  font-size: var(--diq-text-cap);
+}
+.diq-pal__keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-1) var(--diq-space-3);
+  margin-inline-start: auto;
+}
