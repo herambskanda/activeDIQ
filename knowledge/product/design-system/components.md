@@ -12,7 +12,10 @@ Import from `../../ds/components`. Tokens only; one component per concept.
 | --- | --- | --- | --- |
 | `Button` | Any action. `variant="primary"` for the one main action in a region | Navigation (use a link) | `variant`, `loading` (stays focusable, `aria-busy`, ignores clicks), native button props; `type` defaults to `button` |
 | `TextInput` | A labelled text field with validation | Unlabelled inputs; the label is always visible | `label`, `error` (sets `aria-invalid`, linked by `aria-describedby`), `inputRef`, `trailing` (e.g. Clear), native input props |
-| `Chip` | Short status, always with text | Colour-only signals | `tone: "ok" \| "muted"` |
+| `Chip` | Short status, always with text | Colour-only signals | `tone: "ok" \| "muted" \| "warn" \| "crit"`. `warn` adds ⚠ and `crit` adds ✕ (aria-hidden), so the two differ by shape as well as colour |
+| `Banner` | A state that affects the whole view or region: stale data, partial result, not synced, failed sync. Say the state in words | Field errors (`TextInput error`); a whole-page empty or error block (`StatePanel`); toasts | `tone: "info" \| "warn" \| "crit"` (glyph ⓘ / ⚠ / ✕, aria-hidden, one shape per tone), `title`, children, `actions` (Buttons or links). `crit` is `role=alert`; `info` and `warn` are `role=status` |
+| `Progress` | A run or load with a known or unknown length | Instant actions; a button's own busy state (`Button loading`) | `label` (required, names what progresses), `value` + `max` (default 100; clamped) for determinate; omit `value` for indeterminate (no `aria-valuenow`). Put the numbers in text beside it |
+| `Kbd` | A shortcut hint beside the control that owns it: `Export <Kbd>E</Kbd>` | The only way to reach an action: the key must follow its button | children (the key text) |
 | `Table` | Short read-only tables (tens of rows): sticky header, row-header column, cells truncate with full text in `title` | Anything long, sortable, selectable or resizable: use `DataGrid` | `caption`, `columns` (`key`, `header`, `rowHeader`, `mono`, `wrap`, `cell`, `title`), `rows`, `rowKey`. `wrap` lets one prose column (reasons, details) wrap instead of truncate |
 | `DataGrid` | Result sets, directory lists, schedules: thousands of rows, server-driven sort, selection, resizable columns. See below | Short static lists (use `Table`); cells that need wrapping or variable height | `caption`, `columns`, `rows`, `rowKey`, `sort`/`onSort`, `selected`/`onSelectedChange`, `onRowActivate`, `resizable`/`onColumnResize`, `visibleRows`, `busy`, `empty` |
 | `PopoverMenu` | A short list of actions from a button (export format, row actions), each optionally with an accelerator key. See below | Navigation (use links); settings that stay open (use `Popover`); more than about eight items | `label`, `trigger`, `items` (`id`, `label`, `description`, `accelerator`, `disabled`, `onSelect`), `header`, `footer`, `align`, `open`/`onOpenChange` |
@@ -20,11 +23,11 @@ Import from `../../ds/components`. Tokens only; one component per concept.
 | `SideSheet` | Work that needs room and a Save: schedule, create, run details. Modal | A quick choice or a yes/no (menu or confirmation); non-modal detail | `open`, `onClose`, `title`, `description`, `width` (`default` 520 px, `wide` 760 px), `closeLabel`, `children` |
 | `Toast` + `ToastRegion` | A short message about something that just happened, with at most one action ("Undo", "Run details") | Errors or anything the admin must act on (banner, `StatePanel`); progress | `Toast`: `tone` (`info`, `ok`), `action` (`label`, `onAction`), `onDismiss`, `dismissLabel`. `ToastRegion`: mount once per screen |
 | `Skeleton` | Loading placeholder for lists | Spinners for short actions | `rows`, `label` (announced as status) |
-| `StatePanel` | Empty and error blocks; `tone="error"` is `role=alert` | Inline field errors (use `TextInput error`) | `tone`, `title` |
+| `StatePanel` | Empty and error blocks; `tone="error"` is `role=alert` | Inline field errors (use `TextInput error`) | `tone`, `title`, `actions` (Buttons; the panel owns no callbacks, the Button's `onClick` fires) |
 
 States: hover, active, focus-visible (global ring), disabled, loading (Button), error (TextInput), read-only (TextInput) are all in `components.css`.
 Reduced motion: transition and pulse durations collapse via the token and `base.css` rules.
-Stories: `src/ds/components/data-grid.stories.tsx` (Storybook, `npm run storybook`; the a11y addon runs axe on every story). Other components still have their fixtures in `components.test.tsx` and the screen's Playwright suite.
+Stories: `src/ds/components/feedback.stories.tsx` (Banner, Chip, Progress, Kbd, StatePanel with actions, long and RTL text; T-0955) and `src/ds/components/data-grid.stories.tsx` (Storybook, `npm run storybook`; the a11y addon runs axe on every story). Other components still have their fixtures in `components.test.tsx` and the screen's Playwright suite.
 
 ## DataGrid (T-0952)
 
