@@ -377,3 +377,9 @@ as soon as the cause is fixed; the director owns that call.
 **A red job that is not ratcheted.** Findings are recognised by shape. If a job prints violations
 in another shape, new ones in it pass while it is red on `main`. Change its output to
 `path:line: message` or extend `findingKey` in `factory/lib/premerge.mjs` and its test.
+
+**Merges fail with "the main checkout is mid-merge".** A previous merge left `MERGE_HEAD` in the main
+checkout (a failed `merge --abort`, for example "Unable to write index"). `mergeTicket` now reports
+that as an error and retries, instead of calling it the next ticket's conflict and reopening it
+(T-0941 was reopened twice that way). Finish or abort that merge by hand (`git -C <root> merge --abort`
+once its index is writable); every pending merge then proceeds on the next pass.

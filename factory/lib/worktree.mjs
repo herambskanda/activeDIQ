@@ -106,6 +106,12 @@ export async function mergeTicket(ctx, ticket) {
   if (current.stdout.trim() !== main) {
     return { status: 'error', detail: `the main checkout is on "${current.stdout.trim() || 'a detached HEAD'}", not "${main}"` };
   }
+  // A merge already in progress in the main checkout is not this ticket's conflict: git would refuse with
+  // "You have not concluded your merge", and the MERGE_HEAD check below would blame this ticket and reopen it.
+  const pending = await git(ctx.root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+  if (pending.code === 0) {
+    return { status: 'error', detail: `the main checkout is mid-merge (MERGE_HEAD ${pending.stdout.trim().slice(0, 8)}); finish or abort that merge first, then ${ticket.id} merges on the next pass` };
+  }
   const merged = await git(ctx.root, ['merge', '--no-ff', '--no-edit', '-m', `Merge ${ticket.id}: ${ticket.title}`, branchName(ticket.id)]);
   if (merged.code === 0) {
     const head = await git(ctx.root, ['rev-parse', 'HEAD']);
