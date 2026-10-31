@@ -1,0 +1,94 @@
+{
+  "id": "usr-01",
+  "version": 1,
+  "category": "users",
+  "title": "Users",
+  "description": "Every live user account in the directories you may read, with its status, domain and creation date.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "user_principal_name",
+    "enabled",
+    "domain",
+    "dn",
+    "when_created"
+  ],
+  "sort": [
+    {
+      "column": "display_name",
+      "dir": "asc"
+    }
+  ],
+  "params": [
+    {
+      "name": "recent_days",
+      "kind": "days",
+      "default": {
+        "days": 30
+      },
+      "min": 1,
+      "max": 365
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn"
+  ],
+  "presets": [
+    {
+      "id": "all",
+      "names": [
+        "All Users"
+      ]
+    },
+    {
+      "id": "enabled",
+      "names": [
+        "Enabled Users"
+      ],
+      "where": {
+        "cmp": {
+          "col": "enabled",
+          "op": "eq",
+          "value": {
+            "bool": true
+          }
+        }
+      }
+    },
+    {
+      "id": "disabled",
+      "names": [
+        "Disabled Users"
+      ],
+      "where": {
+        "cmp": {
+          "col": "enabled",
+          "op": "eq",
+          "value": {
+            "bool": false
+          }
+        }
+      }
+    },
+    {
+      "id": "recently_created",
+      "names": [
+        "Recently Created Users"
+      ],
+      "where": {
+        "cmp": {
+          "col": "when_created",
+          "op": "within_last_days",
+          "param": "recent_days"
+        }
+      },
+      "sort": [
+        {
+          "column": "when_created",
+          "dir": "desc"
+        }
+      ]
+    }
+  ]
+}

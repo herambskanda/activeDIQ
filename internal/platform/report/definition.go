@@ -65,11 +65,14 @@ type Preset struct {
 	Requires *Subjects
 }
 
-// HiddenGroup is a set of rows counted in the header and not stored (E2).
+// HiddenGroup is a set of rows counted in the header and not stored (E2). A Locked group cannot be
+// shown: a run that names it in ShowHidden is refused. It carries a narrowing the admin may not undo,
+// such as the domains where replicated logon is not usable (AC-16).
 type HiddenGroup struct {
-	ID    string
-	Label string
-	Where Expr
+	ID     string
+	Label  string
+	Where  Expr
+	Locked bool
 }
 
 // Subjects says a preset needs objects named by GUID (GRP-02, GRP-03).
