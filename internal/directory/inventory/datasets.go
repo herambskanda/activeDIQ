@@ -18,7 +18,9 @@ func SecretKey(key string) bool { return secretKey(key) }
 
 // Datasets returns the datasets this package registers. compose/server hands them to report.NewHost
 // with the owner key "inventory" (boot refuses them until the table-owner map lists their tables).
-func Datasets() []report.Dataset { return []report.Dataset{usersDataset(), computersDataset()} }
+func Datasets() []report.Dataset {
+	return []report.Dataset{usersDataset(), computersDataset(), groupsDataset(), groupMembersDataset(), ousDataset(), contactsDataset()}
+}
 
 func idents(s ...string) []report.Ident {
 	out := make([]report.Ident, len(s))
@@ -104,6 +106,8 @@ func baseColumns() []report.Column {
 		attr("primary_group_id", "Primary group ID", report.TypeInt, "primary_group_id", opsInt, false),
 		attr("user_account_control", "userAccountControl", report.TypeInt, "user_account_control", opsInt, false),
 		attr("observed_at", "Observed at", report.TypeTime, "observed_at", opsTime, false),
+		derived("primary_group", "Primary group", report.TypeText, report.SQL(primaryGroupSQL), opsText),
+		derived("in_other_groups", "Member of a group other than its primary group", report.TypeBool, report.SQL(inOtherGroupsSQL), opsBool),
 		uacFlag("password_never_expires", "Password never expires (flag)", report.SQL("("+uac+" & 65536) <> 0")),
 		uacFlag("smartcard_required", "Smartcard required", report.SQL("("+uac+" & 262144) <> 0")),
 		uacFlag("trusted_for_delegation", "Trusted for unconstrained delegation", report.SQL("("+uac+" & 524288) <> 0")),
@@ -137,7 +141,7 @@ func usersDataset() report.Dataset {
 		RowKey: report.SQL("{t}.object_guid"),
 		Anchors: []report.Anchor{rowAnchorT(), {ID: "pso", Table: "directory_objects", Mode: report.MaskAnchor,
 			Project: idents("object_guid", "connection_id"), Identity: idents("rdn"),
-			Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}},
+			Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}, pgroupAnchor()},
 		Rels: []report.Rel{
 			{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid", "link_attr"),
 				Where: report.SQL("state = 'active'")},
@@ -181,12 +185,20 @@ func computersDataset() report.Dataset {
 			"none", "pwd_last_set_not_read", "last_logon_not_read", "activity_inputs_not_read"),
 	)
 	return report.Dataset{
-		ID:        DatasetComputers,
-		Base:      report.Relation{Table: "directory_objects", Where: report.SQL("{t}.kind IN ('computer', 'gmsa') AND {t}.state = 'live'")},
-		RowKey:    report.SQL("{t}.object_guid"),
-		Anchors:   []report.Anchor{rowAnchorT()},
+		ID:      DatasetComputers,
+		Base:    report.Relation{Table: "directory_objects", Where: report.SQL("{t}.kind IN ('computer', 'gmsa') AND {t}.state = 'live'")},
+		RowKey:  report.SQL("{t}.object_guid"),
+		Anchors: []report.Anchor{rowAnchorT(), pgroupAnchor()},
+		Rels: []report.Rel{{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid", "link_attr"),
+			Where: report.SQL("state = 'active'")}},
 		Columns:   cols,
 		Freshness: report.FreshNCWatermark,
-		Tables:    []string{"directory_objects"},
+		Tables:    []string{"directory_objects", "links"},
 	}
+}
+
+// pgroupAnchor reads the primary group's name, masked when the group is outside the scope.
+func pgroupAnchor() report.Anchor {
+	return report.Anchor{ID: "pgrp", Table: "directory_objects", Mode: report.MaskAnchor, Project: idents("connection_id", "object_guid"), Identity: idents("sam_account_name"),
+		Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}
 }

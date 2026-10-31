@@ -3,6 +3,7 @@ package inventory_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ import (
 
 // RP11 (reports contract §3.3): a dataset run under a scope reveals no name, GUID or aggregate of an
 // object outside it. One run per registered dataset; the subtest is named by the dataset ID, which the
-// fitness job reads. This file covers the datasets of the inventory package (B3: users, computers).
+// fitness job reads. This file covers the datasets of the inventory package (B3: users, computers; B6: groups, group members, OUs, contacts).
 
 const sentinel = "SENTINEL"
 
@@ -61,11 +62,6 @@ func leaks(res hResult) []string {
 func Test_dataset_reveals_nothing_outside_scope(t *testing.T) {
 	for _, src := range inventory.Datasets() {
 		t.Run(string(src.ID), func(t *testing.T) {
-			for _, c := range src.Columns {
-				if c.Count {
-					t.Fatalf("column %s is an aggregate: this test must compare it with the out-of-scope objects deleted", c.ID)
-				}
-			}
 			storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 				e := setup(t, s)
 				reg := e.registry(t)
@@ -79,6 +75,14 @@ func Test_dataset_reveals_nothing_outside_scope(t *testing.T) {
 					rpUsers(t, e, reg, c, cols, now, at)
 				case inventory.DatasetComputers:
 					rpComputers(t, e, reg, c, cols, now, at)
+				case inventory.DatasetGroups:
+					rpGroups(t, e, reg, c, cols, now, at)
+				case inventory.DatasetGroupMembers:
+					rpGroupMembers(t, e, reg, c, cols, now, at)
+				case inventory.DatasetOUs:
+					rpOUs(t, e, reg, c, cols, now, at)
+				case inventory.DatasetContacts:
+					rpContacts(t, e, reg, c, cols, now, at)
 				default:
 					t.Fatalf("no RP11 world for %s", src.ID)
 				}
@@ -197,5 +201,162 @@ func rpComputers(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Conn
 	}
 	if got := cellKey(res.rows[strings.ToLower(base)]["dns_host_name"]); got != "s:base-pc$.example.test" {
 		t.Errorf("dns_host_name = %s", got)
+	}
+}
+
+// named gives an in-scope object a DN that does not name its parents, and an out-of-scope one a sentinel name.
+func named(o inventory.Observation, name string) inventory.Observation {
+	if !strings.HasPrefix(name, sentinel) {
+		o.DN, o.RDN = "CN="+name+",DC=example,DC=test", "CN="+name
+	}
+	return o
+}
+
+// aggregate checks the Count columns of a row against the value computed from the model with the
+// out-of-scope objects deleted.
+func aggregate(t *testing.T, ds report.Dataset, row map[report.ColumnID]report.Cell, want map[report.ColumnID]string) {
+	t.Helper()
+	counts := 0
+	for _, c := range ds.Columns {
+		if !c.Count {
+			continue
+		}
+		counts++
+		w, ok := want[c.ID]
+		if !ok {
+			t.Errorf("no expected value for the aggregate column %s", c.ID)
+			continue
+		}
+		if got := cellStr(row, c.ID); got != w {
+			t.Errorf("%s.%s = %s, want %s (the count of in-scope objects)", ds.ID, c.ID, got, w)
+		}
+	}
+	if counts != len(want) {
+		t.Errorf("%s has %d aggregate columns, the test expects %d", ds.ID, counts, len(want))
+	}
+}
+
+func dsOf(id report.DatasetID) report.Dataset {
+	i := slices.IndexFunc(inventory.Datasets(), func(d report.Dataset) bool { return d.ID == id })
+	return inventory.Datasets()[i]
+}
+
+func rpGroups(t *testing.T, e *env, reg *reportsql.Registry, c inventory.ConnectionID, cols []report.ColumnID, now, at time.Time) {
+	baseG, baseU, baseU2 := hGUID(2, 1), hGUID(1, 1), hGUID(1, 2)
+	sentG, sentU, sentU2, outside := sentinelGUID(1), sentinelGUID(2), sentinelGUID(3), hGUID(7, 1)
+	mu := func(g, sam string, rid uint32) inventory.Observation {
+		return named(hUser{guid: g, sam: sam, rid: rid, uac: i64(uacNormal), read: 15}.obs(), sam)
+	}
+	g1 := named(hGroup(baseG, "base-group", 2001, baseU, sentU, sentG, outside), "base-group")
+	g1.Attributes = map[string]any{"managedBy": "CN=" + sentinel + "-manager,DC=example,DC=test"}
+	gt := int32(-2147483646)
+	g1.Facts.GroupType = &gt
+	obs := []inventory.Observation{mu(baseU, "base-user", 1101), mu(baseU2, "base-user-2", 1102), mu(sentU, sentinel+"-user", 1201), mu(sentU2, sentinel+"-user-2", 1202),
+		g1, hGroup(sentG, sentinel+"-group", 2002, sentU2, baseU2)}
+	if _, err := e.populate(t, c, at, obs...); err != nil {
+		t.Fatal(err)
+	}
+	res := e.run(t, reg, hQuery{dataset: inventory.DatasetGroups, cols: cols, scope: scopeOf(c, baseG, baseU, baseU2), now: now})
+	if len(res.rows) != 1 || res.count != 1 {
+		t.Fatalf("rows = %d, count = %d, want 1 and 1", len(res.rows), res.count)
+	}
+	if l := leaks(res); len(l) > 0 {
+		t.Errorf("the run reveals objects outside the scope:\n  %s", strings.Join(l, "\n  "))
+	}
+	row := res.rows[baseG]
+	// direct: the base user only; effective adds base-user-2, who is reached through the out-of-scope group
+	aggregate(t, dsOf(inventory.DatasetGroups), row, map[report.ColumnID]string{"direct_members": "1", "effective_members": "2", "primary_group_members": "0"})
+	for col, want := range map[report.ColumnID]string{"managed_by": "(manager outside your scope)", "has_manager": "true", "group_type": "security", "group_scope": "global",
+		"includes_members_outside_inventory": "true", "has_members": "true"} {
+		if got := cellStr(row, col); got != want {
+			t.Errorf("%s = %q, want %q", col, got, want)
+		}
+	}
+}
+
+func rpGroupMembers(t *testing.T, e *env, reg *reportsql.Registry, c inventory.ConnectionID, cols []report.ColumnID, now, at time.Time) {
+	baseG, baseU := hGUID(2, 1), hGUID(1, 1)
+	sentG, sentU := sentinelGUID(1), sentinelGUID(2)
+	obs := []inventory.Observation{named(hUser{guid: baseU, sam: "base-user", rid: 1101, uac: i64(uacNormal), read: 15}.obs(), "base-user"),
+		mu2(sentU, sentinel+"-user", 1201), named(hGroup(baseG, "base-group", 2001, sentG, sentU), "base-group"), hGroup(sentG, sentinel+"-group", 2002, baseU, baseG)}
+	if _, err := e.populate(t, c, at, obs...); err != nil {
+		t.Fatal(err)
+	}
+	res := e.run(t, reg, hQuery{dataset: inventory.DatasetGroupMembers, cols: cols, scope: scopeOf(c, baseG, baseU), now: now})
+	// base-group holds base-user through the out-of-scope group, and itself again through the loop
+	if len(res.rows) != 2 || res.count != 2 {
+		t.Fatalf("rows = %d, count = %d, want 2 and 2 (the member and the cycle finding)", len(res.rows), res.count)
+	}
+	if l := leaks(res); len(l) > 0 {
+		t.Errorf("the run reveals objects outside the scope:\n  %s", strings.Join(l, "\n  "))
+	}
+	for key, want := range map[string]string{baseG + "|" + baseU: "(group outside your scope)", baseG + "|" + baseG: "(group outside your scope)"} {
+		row := res.rows[strings.ToLower(key)]
+		if got := cellStr(row, "via_path"); got != want {
+			t.Errorf("%s via_path = %q, want %q", key, got, want)
+		}
+	}
+	if got := cellStr(res.rows[strings.ToLower(baseG+"|"+baseG)], "finding"); got != "Circular nesting: base-group → (group outside your scope) → base-group" {
+		t.Errorf("finding = %q", got)
+	}
+	// positive control: with the hop in scope its name shows
+	res = e.run(t, reg, hQuery{dataset: inventory.DatasetGroupMembers, cols: cols, scope: scopeOf(c, baseG, baseU, sentG), now: now})
+	if got := cellStr(res.rows[strings.ToLower(baseG+"|"+baseU)], "via_path"); got != sentinel+"-group" {
+		t.Errorf("via_path with the hop in scope = %q, want its name", got)
+	}
+}
+
+func mu2(g, sam string, rid uint32) inventory.Observation {
+	return hUser{guid: g, sam: sam, rid: rid, uac: i64(uacNormal), read: 15}.obs()
+}
+
+func rpOUs(t *testing.T, e *env, reg *reportsql.Registry, c inventory.ConnectionID, cols []report.ColumnID, now, at time.Time) {
+	base, hidden := hGUID(6, 1), sentinelGUID(1)
+	chainB := []string{base, hOU, hDom}
+	chainH := []string{hidden, base, hOU, hDom}
+	u := func(g, sam string, rid uint32, parent string, chain []string) inventory.Observation {
+		return e.under(named(hUser{guid: g, sam: sam, rid: rid, uac: i64(uacNormal), read: 15}.obs(), sam), parent, chain...)
+	}
+	hiddenOU := e.under(ouObs(hidden, sentinel+"-ou", base), base, chainB...)
+	obs := []inventory.Observation{named(ouObs(base, "base-ou", hOU, hOU, hDom), "base-ou"), hiddenOU,
+		u(hGUID(1, 1), "base-user", 1101, base, chainB), u(sentinelGUID(2), sentinel+"-user", 1201, hidden, chainH), u(sentinelGUID(3), sentinel+"-user-2", 1202, hidden, chainH),
+		e.under(hGroup(sentinelGUID(4), sentinel+"-group", 2001), hidden, chainH...)}
+	obs[0].DN, obs[0].RDN = "OU=base-ou,DC=example,DC=test", "OU=base-ou"
+	if _, err := e.populate(t, c, at, obs...); err != nil {
+		t.Fatal(err)
+	}
+	scope := authztest.ReadScope(authz.ScopeGrant{
+		Include: []authz.ScopeTerm{{Kind: authz.TermSubtree, Connection: rpID(string(c)), Root: rpID(base)}},
+		Exclude: []authz.ScopeTerm{{Kind: authz.TermSubtree, Connection: rpID(string(c)), Root: rpID(hidden)}}})
+	res := e.run(t, reg, hQuery{dataset: inventory.DatasetOUs, cols: cols, scope: scope, now: now})
+	if len(res.rows) != 1 || res.count != 1 {
+		t.Fatalf("rows = %d, count = %d, want 1 and 1", len(res.rows), res.count)
+	}
+	if l := leaks(res); len(l) > 0 {
+		t.Errorf("the run reveals objects outside the scope:\n  %s", strings.Join(l, "\n  "))
+	}
+	aggregate(t, dsOf(inventory.DatasetOUs), res.rows[base], map[report.ColumnID]string{"subtree_objects": "1", "subtree_users": "1", "subtree_computers": "0",
+		"subtree_groups": "0", "subtree_contacts": "0", "subtree_ous": "0", "child_objects": "1"})
+}
+
+func rpContacts(t *testing.T, e *env, reg *reportsql.Registry, c inventory.ConnectionID, cols []report.ColumnID, now, at time.Time) {
+	mk := func(g, name string) inventory.Observation {
+		return named(inventory.Observation{Object: inventory.GUID(g), NC: inventory.GUID(hDom), Kind: inventory.KindContact, Class: "contact", State: inventory.ObjLive,
+			Parent: inventory.GUID(hOU), Ancestry: []inventory.GUID{inventory.GUID(hOU), inventory.GUID(hDom)}, DisplayName: name,
+			Attributes: map[string]any{"mail": strings.ToLower(name) + "@example.test"}}, name)
+	}
+	base := hGUID(8, 1)
+	if _, err := e.populate(t, c, at, mk(base, "base-contact"), mk(sentinelGUID(1), sentinel+"-contact")); err != nil {
+		t.Fatal(err)
+	}
+	res := e.run(t, reg, hQuery{dataset: inventory.DatasetContacts, cols: cols, scope: scopeOf(c, base), now: now})
+	if len(res.rows) != 1 || res.count != 1 {
+		t.Fatalf("rows = %d, count = %d, want 1 and 1", len(res.rows), res.count)
+	}
+	if l := leaks(res); len(l) > 0 {
+		t.Errorf("the run reveals objects outside the scope:\n  %s", strings.Join(l, "\n  "))
+	}
+	if got := cellStr(res.rows[base], "mail"); got != "base-contact@example.test" {
+		t.Errorf("mail = %q", got)
 	}
 }
