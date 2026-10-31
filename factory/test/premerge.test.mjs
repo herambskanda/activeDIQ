@@ -7,6 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Dispatcher } from '../lib/dispatcher.mjs';
 import { blockedNote, extractFindings, findingKey, newFindings, runPreMergeGate } from '../lib/premerge.mjs';
 import { advanceTicket, claimTicket, createTicket, setTicketLinks } from '../lib/tickets.mjs';
@@ -22,6 +23,7 @@ for (const l of read('violations.txt')) {
   console.error(\`\${file}:\${line}: P1 (ADR-0002 fitness function): \${msg}\`);
   bad++;
 }
+for (const l of read('raw.txt')) { console.error(l); bad++; }
 for (const t of read('targets.txt')) { console.error(\`make: *** [tools/ci/ci.mk:7: \${t}] Error 1\`); bad++; }
 console.log('ok  \\tsome/package\\t0.123s');
 process.exit(bad ? 1 : 0);
@@ -230,5 +232,192 @@ test('when the gate cannot judge, the ticket stays done, unmerged, and is retrie
     assert.equal(git(f.root, 'rev-parse', 'main'), mainBefore);
     await d.mergePass();
     assert.equal(d.gateRun, null, 'backing off: not retried at once');
+  } finally { f.cleanup(); }
+});
+
+
+// ---- one fixture per violation shape (T-0973) --------------------------------------------------
+// Every job in `make fitness` prints violations in the shape its Go type formats them (the Sprintf
+// in tools/fitness/<job>). A shape findingKey does not recognise is red on main yet lets a new
+// violation through, so each job has a sample line, copied from that format, and the table below
+// must name every job of the target. `moved` is the same finding after a line moved; `other` is a
+// different violation of the same job.
+const JOBS = {
+  'fitness-modules': {
+    line: 'internal/compose/server/catalogue.go:7: [blueprint §2.5] internal/compose/server imports internal/modules/reports; only the generated modules.gen.go may name a module',
+    moved: 'internal/compose/server/catalogue.go:9: [blueprint §2.5] internal/compose/server imports internal/modules/reports; only the generated modules.gen.go may name a module',
+    other: 'internal/compose/server/catalogue.go:8: [blueprint §2.5] internal/compose/server imports internal/modules/directory; only the generated modules.gen.go may name a module',
+  },
+  'fitness-sso': {
+    line: 'fitness-sso: FAIL: internal/platform/authn/sso/saml/x.go:12 imports github.com/crewjam/saml outside authn/sso/saml',
+    moved: 'fitness-sso: FAIL: internal/platform/authn/sso/saml/x.go:12 imports github.com/crewjam/saml outside authn/sso/saml',
+    other: 'fitness-sso: FAIL: go.mod: goxmldsig is below the v1.6.0 floor',
+  },
+  'fitness-stack': {
+    line: 'go.mod: F4 (ADR-0001 rule 4): golang.org/x/text has no row in the licence register',
+    moved: 'go.mod: F4 (ADR-0001 rule 4): golang.org/x/text has no row in the licence register',
+    other: 'internal/platform/kekopen: F2 (ADR-0001 rule 2): platform adapter names a vendor',
+  },
+  'fitness-tenancy': {
+    line: 'T2 public.widgets [rls-enabled]: tenant table has row level security disabled',
+    moved: 'T2 public.widgets [rls-enabled]: tenant table has row level security disabled',
+    other: 'T1 owner role [migrations-apply]: does not apply on an empty database as the migration role: boom',
+  },
+  'fitness-domain-keys': {
+    line: 'X3 public.directory_user [dn-key]: table is keyed on a distinguished name',
+    moved: 'X3 public.directory_user [dn-key]: table is keyed on a distinguished name',
+    other: 'X5 public.audit_event [no-update]: an UPDATE grant exists on an append-only table',
+  },
+  'fitness-profiles': {
+    line: 'internal/directory/inventory/objects.go:157: P1 (ADR-0002 fitness function): identifier "OnPremisesSyncRead" names a deployment profile ("onprem"); name the capability or the setting, never the profile (ADR-0002 rule 1)',
+    moved: 'internal/directory/inventory/objects.go:200: P1 (ADR-0002 fitness function): identifier "OnPremisesSyncRead" names a deployment profile ("onprem"); name the capability or the setting, never the profile (ADR-0002 rule 1)',
+    other: 'activation table P3: ACT (ADR-0002 fitness function): internal/connector/ad exists, the connector conformance check is deferred past its expiry',
+  },
+  'fitness-proto': {
+    line: 'proto/skenzeriq/agent/v1/agent.proto:14:3: [AG4] field "blob" is bytes; policy data is typed',
+    moved: 'proto/skenzeriq/agent/v1/agent.proto:20:3: [AG4] field "blob" is bytes; policy data is typed',
+    other: 'proto/skenzeriq/agent/v1/agent.proto:30:3: [AG5] field "any" is google.protobuf.Any',
+  },
+  'fitness-safeprim': {
+    line: 'internal/platform/jobs/queue.go:146: FF-SP2 [sqlconst] SQL argument of Exec is not a constant or reportsql.CompiledSQL',
+    moved: 'internal/platform/jobs/queue.go:151: FF-SP2 [sqlconst] SQL argument of Exec is not a constant or reportsql.CompiledSQL',
+    other: 'internal/platform/jobs/queue.go:200: FF-SP2 [dnstring] distinguished name built with fmt.Sprintf',
+  },
+  'fitness-corpus': {
+    line: 'internal/directory/ldap/corpus/ldapfilter.jsonl: FF-SP4 [min-hostile]: unit p1.filter has 3 records with "hostile": true, needs 10',
+    moved: 'internal/directory/ldap/corpus/ldapfilter.jsonl: FF-SP4 [min-hostile]: unit p1.filter has 3 records with "hostile": true, needs 10',
+    other: 'internal/directory/ldap/corpus/ldapfilter.jsonl: FF-SP4 [retired]: retired record p1.filter/r7 needs supersededBy and reason',
+  },
+  'fitness-oracles': {
+    line: 'attr.sid: FF-SP6 [pslit] record r12 rejected by the PowerShell parser: Unexpected token',
+    moved: 'attr.sid: FF-SP6 [pslit] record r12 rejected by the PowerShell parser: Unexpected token',
+    other: 'p1.filter: FF-SP6 [ldapfilter] record r3 does not parse',
+  },
+  'fitness-api': {
+    line: 'web/src/api/open-enum.test.ts: [ADR-0004 A5] only the generated files and client.ts live in web/src/api (ADR-0004 rule 12); a hand-written client file is a private endpoint caller',
+    moved: 'web/src/api/open-enum.test.ts: [ADR-0004 A5] only the generated files and client.ts live in web/src/api (ADR-0004 rule 12); a hand-written client file is a private endpoint caller',
+    other: 'internal/platform/report/cell.go:5: [ADR-0004 A7] imports encoding/json (v1): product code uses encoding/json/v2',
+  },
+  'fitness-operation': {
+    line: 'internal/platform/operation/step.go:40: O1 [rule 2] step escapes the operation kernel',
+    moved: 'internal/platform/operation/step.go:44: O1 [rule 2] step escapes the operation kernel',
+    other: 'internal/platform/operation/queue.go:9: O4 [rule 3] SQL is not constant',
+  },
+  'fitness-audit': {
+    line: 'A1 audit_head [genesis-trigger]: audit_head has no genesis trigger',
+    moved: 'A1 audit_head [genesis-trigger]: audit_head has no genesis trigger',
+    other: 'A2 internal/platform/audit/chain_test.go [test-missing]: no test TestChainDetectsReorder',
+  },
+  'fitness-objectid': {
+    line: 'internal/directory/x/y.go:12:9: conversion to authz.ObjectID is forbidden',
+    moved: 'internal/directory/x/y.go:30:9: conversion to authz.ObjectID is forbidden',
+    other: 'internal/directory/x/z.go:3:2: conversion to authz.ObjectID is forbidden',
+  },
+  'fitness-grantbootstrap': {
+    line: 'internal/modules/rbac/grant.go:55:4: reference to GrantBootstrap',
+    moved: 'internal/modules/rbac/grant.go:70:4: reference to GrantBootstrap',
+    other: 'internal/modules/rbac/grant.go:80:4: string mentions GrantBootstrap (reflection or code generation)',
+  },
+  'fitness-disclosure': {
+    line: '.well-known/security.txt:7: Expires 2026-11-01T00:00:00Z is less than 30 days away; renew it (new Expires under a year ahead)',
+    moved: '.well-known/security.txt:9: Expires 2026-11-01T00:00:00Z is less than 30 days away; renew it (new Expires under a year ahead)',
+    other: 'SECURITY.md: missing (vulnerability disclosure policy): open SECURITY.md: no such file',
+  },
+  'fitness-packaging': {
+    line: 'packaging/linux-oci/prepare-tls-dir.sh: directory is not mode 0700 afterwards',
+    moved: 'packaging/linux-oci/prepare-tls-dir.sh: directory is not mode 0700 afterwards',
+    other: 'packaging/linux-oci/compose.yml: the server must run as a numeric non-root user: "uid:gid"',
+  },
+  'fitness-host': {
+    line: 'FAIL   HOST-IDENT                \n         - service account is root',
+    moved: 'FAIL   HOST-IDENT                \n         - service account is root',
+    other: 'FAIL   HOST-IDENT                \n         - the data directory is writable by the service group',
+  },
+  'fitness-agent-host': {
+    line: 'A4  agent binary closure holds only allowlisted non-stdlib packages: FAIL\n    agent closure imports github.com/skenzeriq/activediq/internal/compose/tunnelbind, which is not on the allowlist tools/fitness/agenthost/closure-allow.txt (GOOS=windows)',
+    moved: 'A4  agent binary closure holds only allowlisted non-stdlib packages: FAIL\n    agent closure imports github.com/skenzeriq/activediq/internal/compose/tunnelbind, which is not on the allowlist tools/fitness/agenthost/closure-allow.txt (GOOS=windows)',
+    other: 'R3  agent modules import only allowlisted packages: FAIL\n    internal/modules/x imports os/exec',
+  },
+  'fitness-built-msi': {
+    line: 'fitness-built-msi: dist/activeDIQ-agent.msi: ServiceInstall runs as LocalSystem',
+    moved: 'fitness-built-msi: dist/activeDIQ-agent.msi: ServiceInstall runs as LocalSystem',
+    other: 'fitness-built-msi: dist/activeDIQ-agent.msi: CustomAction runs a script',
+  },
+  'fitness-update': {
+    line: 'tampered-artefact/online: accepted a bad update; want refusal "hash-mismatch"',
+    moved: 'tampered-artefact/online: accepted a bad update; want refusal "hash-mismatch"',
+    other: 'rollback/online: accepted a bad update; want refusal "rollback"',
+  },
+  'fitness-update-offline': {
+    line: 'tampered-artefact/offline: accepted a bad update; want refusal "hash-mismatch"',
+    moved: 'tampered-artefact/offline: accepted a bad update; want refusal "hash-mismatch"',
+    other: 'fitness-update-offline: FAIL: the container reached the network under --network none',
+  },
+  'fitness-keys': {
+    line: 'internal/platform/keys/keys.go:88 FF-KEY-2 [owner]: tenant_keys is touched outside internal/platform/keys',
+    moved: 'internal/platform/keys/keys.go:91 FF-KEY-2 [owner]: tenant_keys is touched outside internal/platform/keys',
+    other: 'internal/compose/server/kek.go:12 FF-KEY-3 [kek-config]: KEK config is read outside the composition root',
+  },
+  'fitness-fleet-ca-scope': {
+    line: 'internal/platform/fleetca/sign.go:30 FCS-1 [key-use]: the server CA key is unsealed outside SignServerLeaf',
+    moved: 'internal/platform/fleetca/sign.go:34 FCS-1 [key-use]: the server CA key is unsealed outside SignServerLeaf',
+    other: 'migrations/0090.sql:4 FCS-5 [tenant-id]: fleet_server_ca is installation scope: no tenant_id column',
+  },
+  'fitness-reports': {
+    line: 'internal/modules/reports/run/x.go:20 RP2 [readscope]: ReadScope.Terms is called outside authz and reportsql',
+    moved: 'internal/modules/reports/run/x.go:25 RP2 [readscope]: ReadScope.Terms is called outside authz and reportsql',
+    other: 'internal/platform/report/library/LOCK RP7 [append-only]: library/LOCK lost an entry against main',
+  },
+};
+
+const fitnessTargets = () => {
+  const mk = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../tools/ci/ci.mk'), 'utf8');
+  const m = /^fitness:\s*(.*?)\s*##/m.exec(mk);
+  assert.ok(m, 'tools/ci/ci.mk defines the fitness target');
+  // The recipe also runs fitness-modules; the others are prerequisites.
+  return new Set([...m[1].split(/\s+/).filter(Boolean), 'fitness-modules']);
+};
+
+test('every job in make fitness has a violation fixture, so none is red on main but unratcheted', () => {
+  const targets = fitnessTargets();
+  const have = new Set(Object.keys(JOBS));
+  assert.deepEqual([...targets].filter((t) => !have.has(t)).sort(), [], 'a fitness job has no fixture: add its violation line to JOBS in factory/test/premerge.test.mjs, and make findingKey recognise the shape');
+  assert.deepEqual([...have].filter((t) => !targets.has(t)).sort(), [], 'a fixture names a job that is not in make fitness: delete it');
+});
+
+for (const [job, s] of Object.entries(JOBS)) {
+  test(`${job}: a violation is a finding, a moved one is the same finding, another one is new`, () => {
+    // A sample is one violation: a line, or a heading with one indented line under it.
+    const only = (text) => { const k = [...extractFindings(text).keys()]; assert.equal(k.length, 1, `${job}: expected one finding in ${JSON.stringify(text)}, got ${JSON.stringify(k)}`); return k[0]; };
+    const key = only(s.line);
+    assert.equal(only(s.moved), key, 'a line number is not part of the finding');
+    assert.notEqual(only(s.other), key);
+    // The job's summary and progress lines are not findings.
+    const name = job.replace(/^fitness-/, '');
+    for (const quiet of [`fitness-${name}: 3 violation(s); rules: x`, `fitness-${name}: ok (X1)`, `fitness-${name}: FAIL: 2 problem(s)`]) {
+      assert.equal(findingKey(quiet), null, quiet);
+    }
+    const base = extractFindings(`${s.line}\nmake: *** [tools/ci/ci.mk:9: ${job}] Error 1\n`);
+    assert.deepEqual(newFindings(base, extractFindings(`${s.moved}\nmake: *** [tools/ci/ci.mk:9: ${job}] Error 1\n`)), []);
+    assert.deepEqual(newFindings(base, extractFindings(`${s.line}\n${s.other}\nmake: *** [tools/ci/ci.mk:9: ${job}] Error 1\n`)).map((f) => f.key), [only(s.other)]);
+  });
+}
+
+test('through the gate, one violation added to any job is refused naming it, and moved ones pass', async () => {
+  const f = setup({});
+  try {
+    let n = 0;
+    for (const [job, { line, moved, other }] of Object.entries(JOBS)) {
+      n += 1;
+      fs.writeFileSync(path.join(f.root, 'raw.txt'), `${line}\n`);
+      commitAll(f.root, `main is red in ${job}`);
+      const refused = await branchWith(f, `T-9${n}01`, [], { 'raw.txt': `${line}\n${other}\n` });
+      const v = await runPreMergeGate(f.ctx, refused);
+      assert.deepEqual([v.status, v.mode, v.findings], ['blocked', 'new-findings', [...extractFindings(other).keys()]], job);
+      assert.match(blockedNote(v, 'main'), /New findings/, job);
+      const same = await branchWith(f, `T-9${n}02`, [], { 'raw.txt': `${moved}\n` });
+      const p = await runPreMergeGate(f.ctx, same);
+      assert.deepEqual([p.status, p.mode], ['pass', 'ratchet'], job);
+    }
   } finally { f.cleanup(); }
 });

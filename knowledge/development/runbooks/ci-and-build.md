@@ -374,9 +374,13 @@ refusal names `FAILED <target>`. Fix the environment; the gate fails closed on p
 gate temporarily set `dispatcher.pre_merge.enabled` to `false`, say why in an event, and re-enable it
 as soon as the cause is fixed; the director owns that call.
 
-**A red job that is not ratcheted.** Findings are recognised by shape. If a job prints violations
-in another shape, new ones in it pass while it is red on `main`. Change its output to
-`path:line: message` or extend `findingKey` in `factory/lib/premerge.mjs` and its test.
+**A red job that is not ratcheted.** Findings are recognised by shape (the table in
+`standards/ci-gates.md`, Pre-merge gate). If a job prints violations in another shape, new ones in
+it pass while it is red on `main`. Print one self-contained line per violation, add a sample of it
+to `JOBS` in `factory/test/premerge.test.mjs` (the test fails for a `make fitness` job without one)
+and, for a new shape, extend `findingKey` in `factory/lib/premerge.mjs`. Check a log by hand:
+`node -e "import('./factory/lib/premerge.mjs').then(m=>console.log(m.extractFindings(require('fs').readFileSync('job.log','utf8'))))"`
+prints the findings it counts; fewer than the job's own violation count means a shape is missed.
 
 **Merges fail with "the main checkout is mid-merge".** A previous merge left `MERGE_HEAD` in the main
 checkout (a failed `merge --abort`, for example "Unable to write index"). `mergeTicket` now reports

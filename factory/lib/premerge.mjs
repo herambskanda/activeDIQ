@@ -71,11 +71,42 @@ export function findingKey(raw, roots = []) {
   if (failPkg) return `FAIL ${failPkg[1]}`;
 
   // Position-free fitness findings: the ADR checks end their rule with "fitness function)".
-  if (/fitness function\)/.test(line)) return stripTimes(line);
-  // `fitness-xyz: FAIL: …` / `fitness-xyz: [P1] …` but not a pass line or a count summary.
-  if (/^fitness-[\w-]+:/.test(line) && !/:\s*ok\b/.test(line) && !/\b\d+ (?:violation|problem|record)/.test(line)) return stripTimes(line);
+  if (/fitness function\)/.test(line)) return stripTemp(stripTimes(line));
+  // `fitness-xyz: FAIL: …` / `fitness-xyz: [P1] …` but not a pass line, a progress line or a count summary.
+  if (/^fitness-[\w-]+:/.test(line)) {
+    if (FITNESS_QUIET.some((re) => re.test(line))) return null;
+    return stripTemp(stripTimes(line));
+  }
+
+  // A rule tag followed by a colon: `<where> <check> [<rule>]: <message>` (fleetca, reports, keycustody,
+  // the bound-test failures; `<where>` is path:line) and `<check> <where> [<rule>]: <message>` (audit,
+  // tenancy, domainkeys; `<where>` is a table, a role or a path). Only the line numbers come out.
+  const tagged = /^(\S.*?) (\[[^\]]+\]): (\S.*)$/.exec(line);
+  if (tagged) return stripTemp(`${tagged[1].replace(/(\.[A-Za-z]\w*):\d+(?::\d+)?(?=\s|$)/g, '$1')} ${tagged[2]}: ${stripTimes(tagged[3])}`);
+
+  // A finding on a whole file or object, no line: `docs/x.md: message`, `go.mod: F4 (ADR-0001 rule 4): …`,
+  // `attr.sid: FF-SP6 [pslit] …`, `<scenario>/<case>: message`. The subject must look like a path or a
+  // dotted name, so `go: downloading …` and `Error: …` are not findings.
+  const bare = /^((?=[^\s:]*(?:\/|\.[A-Za-z]))[\w@.+~/<>-]+): (\S.*)$/.exec(line);
+  if (bare) return stripTemp(`${bare[1]}: ${stripTimes(bare[2])}`);
   return null;
 }
+
+// Progress and summary lines of the fitness tools; the same on `main` and the branch unless the change
+// activates a check, which must not read as a new finding.
+const FITNESS_QUIET = [
+  /:\s*ok\b/,
+  /\bok \(/,
+  /^fitness-[\w-]+:\s+activation table \(/,
+  /\b\d+ (?:violation|problem|record)/,
+  /^fitness-[\w-]+:\s+(?:inactive|pending)\b/,
+  /^fitness-[\w-]+:\s+PostgreSQL \d+/,
+  /\b\d+ of \d+ checks active\b/,
+  /\bAG1-AG8 (?:in)?active\b/,
+];
+
+// Scratch directories differ on every run.
+const stripTemp = (s) => s.replace(/\/tmp\/[\w.-]+/g, '<tmp>');
 
 /**
  * Count the findings in a CI log.
@@ -85,12 +116,29 @@ export function findingKey(raw, roots = []) {
  */
 export function extractFindings(text, roots = []) {
   const found = new Map();
+  const add = (key) => { if (key !== null) found.set(key, (found.get(key) ?? 0) + 1); };
+  let block = null; // the id of a `<id> … : FAIL` header whose indented lines are its violations
   for (const raw of text.split('\n')) {
-    const key = findingKey(raw, roots);
-    if (key !== null) found.set(key, (found.get(key) ?? 0) + 1);
+    const line = raw.replace(ANSI, '').replace(/\r$/, '');
+    if (block !== null) {
+      if (/^\s{2,}\S/.test(line)) {
+        let body = line.trim().replace(/^[-*]\s+/, '');
+        for (const root of roots) body = body.split(root).join('<root>');
+        add(stripTemp(`FAIL ${block}: ${stripTimes(body)}`));
+        continue;
+      }
+      block = null;
+    }
+    const header = FAIL_BLOCK.map((re) => re.exec(line.trim())).find(Boolean);
+    if (header && !/^\s/.test(line)) { block = header[1]; continue; }
+    add(findingKey(raw, roots));
   }
   return found;
 }
+
+// A result that lists its violations indented under a heading: agent-host prints
+// `A4  <what>: FAIL` and host prints `FAIL   <case>`, each then one indented line per violation.
+const FAIL_BLOCK = [/^(\S+)\s+.*: FAIL$/, /^FAIL\s+(\S+)$/];
 
 /**
  * The findings in `head` that `base` does not account for (multiset difference).
