@@ -142,7 +142,7 @@ What exists in `web/src/ds/components`: Button, TextInput, Chip (`ok`, `muted` o
 | Ticket | Component | Needed by (screens) |
 |---|---|---|
 | (a) T-0897 → T-0952 DataGrid (**done**: `web/src/ds/components/data-grid.tsx`; the local grid CSS is deleted) | Virtualised rows, sticky header, sortable columns, column sizing, row-header, truncation with `title`; row selection as an option (2b, schedules) | Results grid, schedules list, library |
-| (b) T-0898 Overlays | Popover menu with accelerator keys, SideSheet (focus trap/restore), Toast with action | Export menu, columns and domains popovers, schedule sheet, schedule detail, run-details, toasts |
+| (b) T-0898 → T-0953 Overlays (**done**: `popover.tsx`, `side-sheet.tsx`, `toast.tsx`; the local menu, sheet and toast CSS is deleted) | Popover menu with accelerator keys, SideSheet (focus trap/restore), Toast with action | Export menu, columns and domains popovers, schedule sheet, schedule detail, run-details, toasts |
 | (c) T-0899 Form controls | Select, Checkbox, RadioCard, SegmentedControl (preset chips), TokenInput with typeahead | Filter bar, schedule sheet (preset, recipients, format, external confirm) |
 | (d) T-0900 → T-0955 Feedback (**done**: `banner.tsx`, `progress.tsx`, `kbd.tsx`, Chip tones, StatePanel `actions`; the prototype's local `pt__banner`, `pt__kbd` and `<progress>` go when T-0901/T-0902 build the real screens) | Banner (warn / crit / info, with glyph), Chip tones `warn` and `crit`, Progress, Kbd hint, StatePanel with actions | Every state banner, per-DC running, header freshness chips |
 

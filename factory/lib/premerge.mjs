@@ -1,0 +1,284 @@
+// The pre-merge gate (T-0941). Before the dispatcher merges a finished ticket it builds the merge
+// result in a throw-away worktree and runs the configured CI command (`make -k ci`) there.
+//
+//  - Green: merge.
+//  - Red while `main` is green: refuse; every finding is new.
+//  - Red while `main` is red too: run the same command on `main` (cached per main commit) and
+//    refuse only if the merge result has a finding `main` does not have. Findings are compared as a
+//    multiset keyed by a position-independent text, so an old finding that moves a line does not
+//    count and a new one in a red job cannot hide behind the old ones.
+//
+// Nothing here edits the repository's checks; it only reads their output. Every subprocess runs
+// from an argument array, never a shell.
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { git } from './git.mjs';
+import { FactoryError } from './errors.mjs';
+import { branchName } from './worktree.mjs';
+
+const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
+const MAX_LOG_BYTES = 256 * 1024 * 1024;
+
+export const PRE_MERGE_DEFAULTS = Object.freeze({
+  enabled: false,
+  argv: ['make', '-k', 'ci'],
+  timeout_minutes: 120,
+});
+
+/**
+ * The effective gate settings (config.json `dispatcher.pre_merge` over the defaults).
+ * @param {object} config
+ */
+export function preMergeSettings(config) {
+  const s = { ...PRE_MERGE_DEFAULTS, ...(config.dispatcher?.pre_merge ?? {}) };
+  if (!Array.isArray(s.argv) || !s.argv.length || s.argv.some((a) => typeof a !== 'string')) {
+    throw new FactoryError('dispatcher.pre_merge.argv must be a non-empty array of strings');
+  }
+  return s;
+}
+
+// ---- findings ----------------------------------------------------------------------------
+
+const stripTimes = (s) => s.replace(/\(\d+(?:\.\d+)?s\)/g, '').replace(/\b\d+(?:\.\d+)?(?:ms|s)\b/g, '').replace(/\s+/g, ' ').trim();
+
+/**
+ * Turn one output line into a finding key, or null when the line is not a finding. A key never
+ * contains a line or column number, a duration or the worktree path.
+ * @param {string} raw
+ * @param {string[]} [roots] directories to replace with `<root>`
+ * @returns {string|null}
+ */
+export function findingKey(raw, roots = []) {
+  let line = raw.replace(ANSI, '').replace(/\r$/, '');
+  for (const root of roots) line = line.split(root).join('<root>');
+  line = line.trim();
+  if (!line) return null;
+
+  // A failed make target: `make: *** [tools/ci/ci.mk:42: fitness-profiles] Error 1`.
+  const mk = /^make(?:\[\d+\])?: \*\*\* \[(?:[^\]]*?:\d+: )?([^\]\s]+)\]/.exec(line);
+  if (mk) return `FAILED ${mk[1]}`;
+  if (/^make(?:\[\d+\])?: /.test(line)) return null;
+
+  // A positioned finding: `path/file.go:12:3: message` (Go, vet, fitness checks, test log lines).
+  const pos = /^([\w@.+~/<>-]+\.[A-Za-z][\w]*):\d+(?::\d+)?:\s*(.*)$/.exec(line);
+  if (pos) return `${pos[1]}: ${stripTimes(pos[2])}`;
+
+  const failTest = /^--- FAIL: (\S+)/.exec(line);
+  if (failTest) return `FAIL ${failTest[1]}`;
+  const failPkg = /^FAIL\s+(\S+)/.exec(line);
+  if (failPkg) return `FAIL ${failPkg[1]}`;
+
+  // Position-free fitness findings: the ADR checks end their rule with "fitness function)".
+  if (/fitness function\)/.test(line)) return stripTimes(line);
+  // `fitness-xyz: FAIL: …` / `fitness-xyz: [P1] …` but not a pass line or a count summary.
+  if (/^fitness-[\w-]+:/.test(line) && !/:\s*ok\b/.test(line) && !/\b\d+ (?:violation|problem|record)/.test(line)) return stripTimes(line);
+  return null;
+}
+
+/**
+ * Count the findings in a CI log.
+ * @param {string} text
+ * @param {string[]} [roots]
+ * @returns {Map<string, number>}
+ */
+export function extractFindings(text, roots = []) {
+  const found = new Map();
+  for (const raw of text.split('\n')) {
+    const key = findingKey(raw, roots);
+    if (key !== null) found.set(key, (found.get(key) ?? 0) + 1);
+  }
+  return found;
+}
+
+/**
+ * The findings in `head` that `base` does not account for (multiset difference).
+ * @param {Map<string, number>} base
+ * @param {Map<string, number>} head
+ * @returns {{key: string, extra: number, known: number}[]} sorted by key; `known` is how many copies the base already has
+ */
+export function newFindings(base, head) {
+  const out = [];
+  for (const [key, count] of head) {
+    const known = base.get(key) ?? 0;
+    const extra = count - known;
+    if (extra > 0) out.push({ key, extra, known });
+  }
+  return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+}
+
+// ---- running the command -------------------------------------------------------------------
+
+/**
+ * Run argv in cwd, both streams to `logFile`. Kills the whole process group on timeout or abort.
+ * @returns {Promise<{code: number, timedOut: boolean, aborted: boolean}>}
+ */
+export function runLogged(argv, cwd, logFile, { timeoutMs, signal, env = process.env } = {}) {
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  const fd = fs.openSync(logFile, 'w');
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      child = spawn(argv[0], argv.slice(1), { cwd, env: { ...env, CI: '1' }, stdio: ['ignore', fd, fd], detached: true });
+    } catch (err) {
+      fs.closeSync(fd);
+      reject(new FactoryError(`could not start ${argv[0]}: ${err.message}`));
+      return;
+    }
+    let timedOut = false;
+    let aborted = false;
+    const killGroup = (sig) => { try { process.kill(-child.pid, sig); } catch { /* already gone */ } };
+    const stop = () => { killGroup('SIGTERM'); setTimeout(() => killGroup('SIGKILL'), 15_000).unref(); };
+    const timer = timeoutMs ? setTimeout(() => { timedOut = true; stop(); }, timeoutMs) : null;
+    const onAbort = () => { aborted = true; stop(); };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    child.on('error', (err) => {
+      clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
+      reject(new FactoryError(`could not start ${argv[0]}: ${err.message}`));
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
+      resolve({ code: code ?? -1, timedOut, aborted });
+    });
+  });
+}
+
+function readLog(file) {
+  const size = fs.statSync(file).size;
+  if (size <= MAX_LOG_BYTES) return fs.readFileSync(file, 'utf8');
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(MAX_LOG_BYTES);
+    fs.readSync(fd, buf, 0, MAX_LOG_BYTES, size - MAX_LOG_BYTES);
+    return buf.toString('utf8');
+  } finally { fs.closeSync(fd); }
+}
+
+function gateDir(ctx) { return path.join(ctx.stateDir, 'premerge'); }
+function scratchRoot(ctx) { return path.resolve(ctx.root, ctx.config.dispatcher.worktree_root, '.premerge'); }
+
+async function addDetached(ctx, dir, ref) {
+  fs.rmSync(dir, { recursive: true, force: true });
+  await git(ctx.root, ['worktree', 'prune']);
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  const added = await git(ctx.root, ['worktree', 'add', '--detach', dir, ref]);
+  if (added.code !== 0) throw new FactoryError(`pre-merge: git worktree add failed: ${added.stderr.trim()}`);
+}
+
+async function dropWorktree(ctx, dir) {
+  await git(ctx.root, ['worktree', 'remove', '--force', dir]);
+  fs.rmSync(dir, { recursive: true, force: true });
+  await git(ctx.root, ['worktree', 'prune']);
+}
+
+/**
+ * The findings (and exit code) of the gate command on `main`, cached per commit and argv.
+ * @returns {Promise<{code: number, findings: Map<string, number>, log: string, cached: boolean}>}
+ */
+async function baseline(ctx, settings, mainSha, { signal }) {
+  const tag = crypto.createHash('sha256').update(JSON.stringify(settings.argv)).digest('hex').slice(0, 10);
+  const cache = path.join(gateDir(ctx), `baseline-${mainSha.slice(0, 12)}-${tag}.json`);
+  try {
+    const hit = JSON.parse(fs.readFileSync(cache, 'utf8'));
+    return { code: hit.code, findings: new Map(hit.findings), log: hit.log, cached: true };
+  } catch { /* no usable cache */ }
+  const dir = path.join(scratchRoot(ctx), `base-${mainSha.slice(0, 12)}`);
+  const log = path.join(gateDir(ctx), `baseline-${mainSha.slice(0, 12)}-${tag}.log`);
+  await addDetached(ctx, dir, mainSha);
+  try {
+    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
+    if (ran.timedOut || ran.aborted) throw new FactoryError(`pre-merge: the baseline run on main ${ran.timedOut ? 'timed out' : 'was stopped'} (${log})`);
+    const findings = extractFindings(readLog(log), [fs.realpathSync(dir), dir]);
+    fs.writeFileSync(cache, JSON.stringify({ code: ran.code, findings: [...findings], log }));
+    return { code: ran.code, findings, log, cached: false };
+  } finally {
+    await dropWorktree(ctx, dir);
+  }
+}
+
+/**
+ * Run the gate for a finished ticket.
+ *
+ * Statuses: `pass` (merge may proceed), `blocked` (the branch adds a finding or breaks a green
+ * job; `findings` names them), `conflict` (main moved and the branch no longer merges cleanly).
+ * Anything that stops the gate from judging (a timeout, a worktree failure, a stop request)
+ * throws, so the merge is never allowed by accident.
+ *
+ * @param {object} ctx
+ * @param {{id: string, title: string}} ticket
+ * @param {{signal?: AbortSignal, argv?: string[]}} [opts] `argv` overrides the configured command (dry runs)
+ * @returns {Promise<{status: 'pass'|'blocked'|'conflict', mode?: string, findings: string[], summary: string, log?: string, baseLog?: string}>}
+ */
+export async function runPreMergeGate(ctx, ticket, { signal, argv } = {}) {
+  const settings = preMergeSettings(ctx.config);
+  if (argv) settings.argv = argv;
+  const main = ctx.config.dispatcher.main_branch;
+  const mainSha = (await git(ctx.root, ['rev-parse', '--verify', '-q', `refs/heads/${main}`])).stdout.trim();
+  if (!mainSha) throw new FactoryError(`pre-merge: branch "${main}" not found`);
+  const branch = branchName(ticket.id);
+  if ((await git(ctx.root, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`])).code !== 0) {
+    throw new FactoryError(`pre-merge: branch "${branch}" not found`);
+  }
+  const dir = path.join(scratchRoot(ctx), `cand-${ticket.id}`);
+  const log = path.join(gateDir(ctx), `${ticket.id}-${mainSha.slice(0, 12)}.log`);
+  await addDetached(ctx, dir, mainSha);
+  try {
+    const merged = await git(dir, ['merge', '--no-ff', '--no-edit', '-m', `Merge ${ticket.id}: ${ticket.title}`, branch]);
+    if (merged.code !== 0) {
+      const detail = (merged.stdout + merged.stderr).trim().split('\n').slice(0, 6).join(' | ');
+      await git(dir, ['merge', '--abort']);
+      return { status: 'conflict', findings: [], summary: detail };
+    }
+    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
+    if (ran.timedOut) throw new FactoryError(`pre-merge: ${settings.argv.join(' ')} on ${ticket.id} timed out after ${settings.timeout_minutes} minutes (${log})`);
+    if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${ticket.id} was stopped (${log})`);
+    if (ran.code === 0) return { status: 'pass', mode: 'green', findings: [], summary: `${settings.argv.join(' ')} passed on the merge result`, log };
+
+    const head = extractFindings(readLog(log), [fs.realpathSync(dir), dir]);
+    const base = await baseline(ctx, settings, mainSha, { signal });
+    const fresh = newFindings(base.code === 0 ? new Map() : base.findings, head);
+    const total = (m) => [...m.values()].reduce((a, b) => a + b, 0);
+    const lines = fresh.map((f) => (f.known ? `${f.key}  (${f.extra} more than the ${f.known} on ${main})` : f.extra > 1 ? `${f.key}  (${f.extra} times)` : f.key));
+    if (base.code === 0) {
+      return {
+        status: 'blocked', mode: 'main-green', findings: lines, log, baseLog: base.log,
+        summary: `${main} is green and ${settings.argv.join(' ')} fails on the merge result${lines.length ? '' : ' with no recognisable finding line; read the log'}`,
+      };
+    }
+    if (!head.size) {
+      return {
+        status: 'blocked', mode: 'unrecognised', findings: [], log, baseLog: base.log,
+        summary: `${settings.argv.join(' ')} fails on the merge result and the log has no recognisable finding line, so it cannot be compared with the red ${main}; read the log`,
+      };
+    }
+    if (fresh.length) {
+      return {
+        status: 'blocked', mode: 'new-findings', findings: lines, log, baseLog: base.log,
+        summary: `${main} is red (${total(base.findings)} known findings) and the merge result adds ${lines.length} that ${main} does not have`,
+      };
+    }
+    return {
+      status: 'pass', mode: 'ratchet', findings: [], log, baseLog: base.log,
+      summary: `${main} is red (${total(base.findings)} known findings); the merge result adds none (${total(head)} findings, all already on ${main})`,
+    };
+  } finally {
+    await dropWorktree(ctx, dir);
+  }
+}
+
+/**
+ * Text for the reopen note: what to fix and where the logs are.
+ * @param {Awaited<ReturnType<typeof runPreMergeGate>>} gate
+ * @param {string} main
+ */
+export function blockedNote(gate, main) {
+  const shown = gate.findings.slice(0, 25);
+  const more = gate.findings.length - shown.length;
+  return [
+    `the pre-merge gate refused the merge: ${gate.summary}.`,
+    shown.length ? `New findings (key = check and message, positions removed):\n${shown.map((l) => `  - ${l}`).join('\n')}${more > 0 ? `\n  … and ${more} more` : ''}` : null,
+    `Logs: ${gate.log}${gate.baseLog ? ` · ${main}: ${gate.baseLog}` : ''}.`,
+    `Fix the cause in the code (never weaken, skip or edit the check to get green), merge ${main} into the branch, run the failing job locally, and advance again.`,
+  ].filter(Boolean).join(' ');
+}

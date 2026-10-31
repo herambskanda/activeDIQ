@@ -19,6 +19,7 @@ const (
 	ProblemTypeNotFound                = "/problems/not-found"
 	ProblemTypeNotImplemented          = "/problems/not-implemented"
 	ProblemTypeNotReady                = "/problems/not-ready"
+	ProblemTypeOperationNotUndoable    = "/problems/operation-not-undoable"
 	ProblemTypePasswordPolicyViolation = "/problems/password-policy-violation"
 	ProblemTypePayloadTooLarge         = "/problems/payload-too-large"
 	ProblemTypePreconditionFailed      = "/problems/precondition-failed"
@@ -99,6 +100,11 @@ func NotImplemented(detail string) *Problem {
 // NotReady builds a 503 /problems/not-ready problem.
 func NotReady(detail string) *Problem {
 	return newProblem(ProblemTypeNotReady, "The service is not ready", 503, detail)
+}
+
+// OperationNotUndoable builds a 409 /problems/operation-not-undoable problem.
+func OperationNotUndoable(detail string) *Problem {
+	return newProblem(ProblemTypeOperationNotUndoable, "The operation cannot be undone", 409, detail)
 }
 
 // PasswordPolicyViolation builds a 422 /problems/password-policy-violation problem.

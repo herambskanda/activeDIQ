@@ -15,4 +15,9 @@
 // Nothing is truncated either: a result over the bound is ErrTooMany.
 //
 // The writers (the gate, the correlation writer, designations) are in writer.go and gate.go.
+//
+// It also registers the EP-8 report datasets inventory.users and inventory.computers (datasets.go,
+// datasets_sql.go; reports contract §3.3): the locked-out, password and account-expiry states are
+// computed in the compiled query from the stored inputs (objects.go) and the policy inputs PolicyWriter
+// keeps (policy.go), so a report never holds a flag the directory did not write.
 package inventory
