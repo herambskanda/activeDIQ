@@ -41,6 +41,11 @@ their own opt-in change kinds (§4.1.2); `repsFrom` is dropped and `msDS-Repl*` 
 safe decoder (§7.3.1); the Entra cells name a ticket or `n/a` (§12); acceptance criteria AC-S06,
 AC-S07 and AC-S14 are rewritten and AC-S28 to AC-S33 added (33 in all).
 
+**Revision 3 (2026-10-31, after the second `solution-architect` review).** The USR-07 matrix row is
+complete and split by attribute (§12); AC-S14 seeds user D only where the directory accepts the
+write; AC-S31 asserts the children are listed exactly when their descriptor metadata changed, so it
+passes whatever F1 finds; AC-S28 to AC-S33 now follow AC-S27.
+
 ## 1. Problem and users
 
 Reports-2a ships 16 reports that answer 54 ME names. The rest of ME's AD library (35 user, 8
@@ -176,8 +181,8 @@ lifecycle state is deleted or purged (DM-16).
      it touched is in the set; a change that touches one other attribute is an edit.
    - **Credential event** (own kind, off by default on the Modified presets): a password change
      or reset, recognised from the replication metadata of the password attributes
-     (`unicodePwd`, `pwdLastSet`, `ntPwdHistory`), never with a value. Header: "n credential events
-     not shown · Show". A chip "Credential events" switches the kind on, and the *Include credential
+     (`unicodePwd`, `pwdLastSet`, `ntPwdHistory`), never with a value. Header: "n credential event(s)
+     not shown · Show" (singular when n is 1). A chip "Credential events" switches the kind on, and the *Include credential
      events* switch on the preset does the same. A password change is not an edit and not noise.
    - **Permissions changed** (own kind, off by default, **not noise**): a change to
      `nTSecurityDescriptor`, recognised from the replication metadata of that attribute (name,
@@ -598,7 +603,8 @@ later ([Recycle Bin](https://learn.microsoft.com/en-us/windows-server/identity/a
 | --- | --- | --- | --- | --- | --- | --- |
 | PWD-04 | ✓ | ✗ → T-1018 | ◐ AD side only | ◐ the DACL read is testable; assert on ACEs, not on the flag (lab note) | ✓ | ✓ |
 | USR-06, GRP-05, CMP-03, CTC-02, OU-02 | ✓ from the feed and inventory under default rights (§4.1.7); the tombstone columns (§4.1.7b) need the Recycle Bin on and the T-1125 ruling | ✗ → T-1018 | ◐ AD side only | ◐ originating-time metadata and show-deleted behaviour `[UNVERIFIED]` | ✓ | ✓ |
-| USR-07 (dial-in, smart card, logon hours) | ✓ | n/a (no Entra equivalent) | ◐ AD side only |
+| USR-07 dial-in and logon hours | ✓ | n/a (Entra has no per-user dial-in flag or logon-hours attribute; time-based access is a Conditional Access policy, not a user attribute) | ◐ AD side only | ✓ attributes are plain LDAP | ✓ | ✓ |
+| USR-07 smart card required | ✓ | ✗ → T-1018 (Entra has certificate-based authentication and per-user authentication methods, which are not the `SMARTCARD_REQUIRED` flag; whether to report them is T-1018's question) | ◐ AD side only | ✓ the flag is plain LDAP | ✓ | ✓ |
 | USR-08, USR-11 | ✓ | ✗ → T-1018 (photo and attribute completeness of Entra users) | ◐ AD side only | ✓ attributes are plain LDAP | ✓ | ✓ |
 | USR-09 | ✓ where the schema was extended; "Schema extension not present" otherwise | n/a (Skype/Lync attribute is on-prem only; Entra has no equivalent) | ◐ AD side only | ◐ schema usually absent | ✓ | ✓ |
 | USR-12 (manager) | ✓ | ✗ → T-1018 | ◐ AD side only | ✓ | ✓ | ✓ |
@@ -732,61 +738,6 @@ When Skype/Lync Enabled Users runs
 Then the report does not run for that domain and says "Schema extension not present", and it does not return zero rows
 Evidence: Samba lab test (schema absent)
 
-AC-S28 (FR-S05)
-Given a domain whose schema has msRTCSIP-UserEnabled and users with it TRUE, FALSE and absent
-When Skype/Lync Enabled Users and Skype/Lync Disabled Users run
-Then Enabled lists TRUE only, Disabled lists FALSE only, the absent users are in neither and are
-  counted in the header as "not set", and each list's total equals the LDAP count
-Evidence: lab test versus (msRTCSIP-UserEnabled=TRUE) and (msRTCSIP-UserEnabled=FALSE) on a lab with the
-  schema extension added. [ADMP] for ME's treatment of absent
-
-AC-S29 (FR-S11)
-Given a group with 3 members added and 1 removed in the last 7 days (one of the added values
-  written before linked-value replication, so its origin is null), and a group with no change
-When Recently Modified Groups runs for 7 days and the row detail is opened
-Then the first group shows kind "membership changed" with "Members added 3 / removed 1", the
-  legacy value's Basis reads "observed" and the others "DC time, originating", the other group is
-  not listed, and no user in those groups is listed as modified for the membership change
-Evidence: Samba lab test versus a scripted diff of member before and after (observed basis);
-  [LAB: Windows] test versus msDS-ReplValueMetaData for the originating basis and the null-origin
-  case
-
-AC-S30 (FR-S11)
-Given a user whose password was reset 2 days ago, a user whose department was edited 2 days ago,
-  and a user whose password was reset and department edited in the same cycle
-When Recently Modified Users runs with the defaults, then with "Include credential events" on
-Then by default only the department edits are listed (the third as an edit) and the header reads
-  "1 credential events not shown · Show"; with the switch on, the reset-only user appears with
-  kind "credential event" and the third carries both kinds; no value of any password attribute
-  appears in the API, the grid or an export
-Evidence: lab test; response and export inspection
-
-AC-S31 (FR-S11)
-Given an administrator edit to one user's ACL, and an ACL edit on an OU that makes the DC rewrite
-  the inherited descriptor of 40 users beneath it
-When Recently Modified Users runs with the defaults, then with the "Permissions changed" chip on
-Then by default none of the 41 is listed and the header reads "41 permission changes not shown ·
-  Show", the count is not part of "automatic updates hidden", and with the chip on all 41 are listed with kind
-  "permissions changed" and no descriptor content; the report never calls them automatic
-Evidence: [LAB: Windows] test versus replication metadata of nTSecurityDescriptor; the SDProp
-  question stays [UNVERIFIED] until F1
-
-AC-S32 (FR-S12)
-Given a DC that returns no msDS-Repl* constructed attributes and a DC that returns a response
-  with a DTD and an external entity in the XML value
-When DC Replication Status runs
-Then the first DC has a row of "Not reported" and no repsFrom value is read or decoded; the second
-  is rejected by the decoder with a named parse error, no entity is resolved and no network request is
-  made, and the other DCs are still reported
-Evidence: connector call log; decoder fuzz and negative test (T-1124 conformance case)
-
-AC-S33 (FR-S03)
-Given the library UI and API after batch 5
-When the Recently Deleted presets are inspected
-Then no control, column or export offers Restore, and every Restorable until cell shows "Unknown"
-  under default rights
-Evidence: UI recording; API response schema check
-
 AC-S10 (FR-S01)
 Given users with and without thumbnailPhoto or jpegPhoto, a scriptPath, a SMARTCARD_REQUIRED flag
 When the photo, logon script and smart card presets run
@@ -814,17 +765,20 @@ Evidence: API negative test (FR-05, AC-29 pattern)
 AC-S14 (FR-S07)
 Given user A with primary group Domain Users and no explicit group; user B with primary group
   Domain Users and an explicit membership of one other group; user C with primary group "Staff"
-  who is also an explicit member of Domain Users; user D with primary group Domain Users and an
-  explicit membership of Domain Users only; and a group with 1,600 members
+  who is also an explicit member of Domain Users; and a group with 1,600 members. Where the
+  directory accepts the write, also user D with primary group Domain Users and an explicit
+  membership of Domain Users only (Samba: seeded; Windows is expected to refuse adding a user to
+  their own primary group [UNVERIFIED] [LAB: Windows], in which case D is not seeded there and the
+  rule stays as a defensive case covered by a table test over synthetic edge data)
 When Users in More than One Group and Users Only Members of Domain Users Group run
-Then Users Only Members of Domain Users lists A and D and not B or C (C's set is {Staff, Domain
-  Users}); Users in More than One Group lists B by default and C only (as {Staff, Domain Users})
-  when "Count the primary group" is on; the switches change counts as stated; and all 1,600 members
-  of the large group are counted
-Evidence: lab test. Ground truth for GRP-06: users with primaryGroupID=513 whose memberOf is empty
-  or holds only the Domain Users DN (a scripted check of memberOf values over
-  (&(objectCategory=person)(objectClass=user)(primaryGroupID=513))); for USR-13 a scripted count of
-  memberOf plus the primary group. [ADMP] for ME's counting rule
+Then Users Only Members of Domain Users lists A (and D where seeded) and not B or C (C's set is
+  {Staff, Domain Users}); Users in More than One Group lists B by default and C only (as {Staff,
+  Domain Users}) when "Count the primary group" is on; D is never listed as in more than one group;
+  the switches change counts as stated; and all 1,600 members of the large group are counted
+Evidence: lab test; the D case on Samba and in the table test. Ground truth for GRP-06: users with
+  primaryGroupID=513 whose memberOf is empty or holds only the Domain Users DN (a scripted check of
+  memberOf values over (&(objectCategory=person)(objectClass=user)(primaryGroupID=513))); for
+  USR-13 a scripted count of memberOf plus the primary group. [ADMP] for ME's counting rule
 
 AC-S15 (FR-S01)
 Given managers with direct reports
@@ -903,6 +857,66 @@ Given a run over two domains where one has not synced and one is stale
 When any report of this slice runs
 Then the other domain runs, the first is listed as skipped, the second carries the Stale banner, and exports and schedules carry both labels (reports-2a AC-10/AC-11)
 Evidence: test
+
+AC-S28 (FR-S05)
+Given a domain whose schema has msRTCSIP-UserEnabled and users with it TRUE, FALSE and absent
+When Skype/Lync Enabled Users and Skype/Lync Disabled Users run
+Then Enabled lists TRUE only, Disabled lists FALSE only, the absent users are in neither and are
+  counted in the header as "not set", and each list's total equals the LDAP count
+Evidence: lab test versus (msRTCSIP-UserEnabled=TRUE) and (msRTCSIP-UserEnabled=FALSE) on a lab with the
+  schema extension added. [ADMP] for ME's treatment of absent
+
+AC-S29 (FR-S11)
+Given a group with 3 members added and 1 removed in the last 7 days (one of the added values
+  written before linked-value replication, so its origin is null), and a group with no change
+When Recently Modified Groups runs for 7 days and the row detail is opened
+Then the first group shows kind "membership changed" with "Members added 3 / removed 1", the
+  legacy value's Basis reads "observed" and the others "DC time, originating", the other group is
+  not listed, and no user in those groups is listed as modified for the membership change
+Evidence: Samba lab test versus a scripted diff of member before and after (observed basis);
+  [LAB: Windows] test versus msDS-ReplValueMetaData for the originating basis and the null-origin
+  case
+
+AC-S30 (FR-S11)
+Given a user whose password was reset 2 days ago, a user whose department was edited 2 days ago,
+  and a user whose password was reset and department edited in the same cycle
+When Recently Modified Users runs with the defaults, then with "Include credential events" on
+Then by default only the department edits are listed (the third as an edit) and the header reads
+  "1 credential event not shown · Show"; with the switch on, the reset-only user appears with
+  kind "credential event" and the third carries both kinds; no value of any password attribute
+  appears in the API, the grid or an export
+Evidence: lab test; response and export inspection
+
+AC-S31 (FR-S11)
+Given an administrator edit to one user's ACL, and an ACL edit on an OU that may make the DC
+  rewrite the inherited descriptor of 40 users beneath it
+When Recently Modified Users runs with the defaults, then with the "Permissions changed" chip on
+Then by default no user is listed for the permission change and the header reads "n permission
+  changes not shown · Show", where n is the number of users whose nTSecurityDescriptor metadata
+  changed in the period, and the count is not part of "automatic updates hidden"; with the chip on
+  the administrator's directly edited user is listed with kind "permissions changed" and no
+  descriptor content, each of the 40 children is listed exactly when its nTSecurityDescriptor
+  metadata version changed (and not otherwise), the header count equals the number of listed rows,
+  and the report never calls any of them automatic
+Evidence: [LAB: Windows] test; ground truth is msDS-ReplAttributeMetaData of nTSecurityDescriptor
+  read for all 41 users before and after the edit, compared to the listed set. The test passes
+  whatever F1 finds about SDProp and inheritance (S7 stays [UNVERIFIED] until F1 measures it)
+
+AC-S32 (FR-S12)
+Given a DC that returns no msDS-Repl* constructed attributes and a DC that returns a response
+  with a DTD and an external entity in the XML value
+When DC Replication Status runs
+Then the first DC has a row of "Not reported" and no repsFrom value is read or decoded; the second
+  is rejected by the decoder with a named parse error, no entity is resolved and no network request is
+  made, and the other DCs are still reported
+Evidence: connector call log; decoder fuzz and negative test (T-1124 conformance case)
+
+AC-S33 (FR-S03)
+Given the library UI and API after batch 5
+When the Recently Deleted presets are inspected
+Then no control, column or export offers Restore, and every Restorable until cell shows "Unknown"
+  under default rights
+Evidence: UI recording; API response schema check
 ```
 
 ## 16. Open questions
