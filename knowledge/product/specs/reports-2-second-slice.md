@@ -34,6 +34,13 @@ own help pages read on 2026-10-31 and from the
 ticket T-1014 has not landed, so every ME meaning below that is not in the research is tagged
 `[ME-HELP]` (stated by ME's page, not yet in the research) or `[UNVERIFIED]`.
 
+**Revision 2 (2026-10-31, after the `solution-architect` review).** Recently Deleted now works from
+the feed and our inventory under the default least-privilege rights (§4.1.7, tombstone columns
+conditional on T-1125 in §4.1.7b); GRP-06 has one rule (§6.3); permission and credential changes are
+their own opt-in change kinds (§4.1.2); `repsFrom` is dropped and `msDS-Repl*` values go through one
+safe decoder (§7.3.1); the Entra cells name a ticket or `n/a` (§12); acceptance criteria AC-S06,
+AC-S07 and AC-S14 are rewritten and AC-S28 to AC-S33 added (33 in all).
+
 ## 1. Problem and users
 
 Reports-2a ships 16 reports that answer 54 ME names. The rest of ME's AD library (35 user, 8
@@ -140,12 +147,16 @@ deleted-object retention period" `[ME-HELP]`. For computers ME's page adds "the 
 How ME decides "modified" (the `whenChanged` of one DC, or something else) is `[UNVERIFIED]`.
 
 **Default columns (Modified):** Name, Logon name (users and computers), Domain, OU path, Change
-(created / edited / moved / renamed / membership changed), Attributes changed (names only),
+(created / edited / moved / renamed / membership changed / permissions changed / credential
+event), Attributes changed (names only),
 Changed at, Basis, Observed at.
 **Default columns (Deleted):** Name, Logon name, Domain, Last known OU path, Deleted at, Basis,
-Observed at, State, Restorable until.
+Observed at, State, Restorable until. Under the default directory rights (rule 7) the values come
+from our last inventory observation and Deleted at is the time we observed the object gone; the
+tombstone-derived values (rule 7b) replace them only when the T-1125 ruling allows the read.
 **Default filters:** period last 7 days (presets 1, 7, 30, 90, 180, 365 plus custom); Modified
-excludes the noise set below; Deleted lists `state` in deleted, recycled or purged.
+excludes the noise set and the two opt-in change kinds below; Deleted lists every object whose
+lifecycle state is deleted or purged (DM-16).
 
 **Rules.**
 1. **Definition of "changed at".** The latest originating time of a recorded, non-noise change
@@ -153,22 +164,43 @@ excludes the noise set below; Deleted lists `state` in deleted, recycled or purg
    DC). Where `origin` is null the value is the time activeDIQ observed the change. Column *Basis*
    says which ("DC time, originating" or "observed"). Observed time is always also shown (DM-18.I2:
    two changes between two observations show as one, and the report says so in its header).
-2. **Noise is hidden by default, with its count and a switch.** The header reads "3,412 automatic
-   updates hidden · Show". The hidden set, from the consult: logon and bad-password state
-   (`lastLogonTimestamp`, `lastLogon`, `logonCount`, `badPwdCount`, `badPasswordTime`); lockout and
-   housekeeping (`lockoutTime`, `adminCount`, `dSCorePropagationData`, a security descriptor
-   rewritten only by SDProp or inheritance); computer-driven updates (operating system fields,
-   `dNSHostName`, `servicePrincipalName`, `msDS-SupportedEncryptionTypes`, `msDS-KeyVersionNumber`,
-   the machine password). **Password changes are not noise and not an edit:** they appear as change
-   kind "credential event" (their own filter chip, off by default on the Modified presets, on in
-   the "Include credential events" switch), never with a value. The noise set belongs to the
-   definition version (X7). `[UNVERIFIED]` for the `msDS-LastSuccessful*`/`msDS-LastFailed*` family.
+2. **Noise is hidden by default; two change kinds are opt-in; each has a count and a switch.**
+   The header reads "3,412 automatic updates hidden · Show".
+   - **The noise set** (hidden, switchable as one): logon and bad-password state
+     (`lastLogonTimestamp`, `lastLogon`, `logonCount`, `badPwdCount`, `badPasswordTime`); lockout and
+     housekeeping (`lockoutTime`, `adminCount`, `dSCorePropagationData`); computer-driven updates
+     (operating system fields, `dNSHostName`, `servicePrincipalName`,
+     `msDS-SupportedEncryptionTypes`, `msDS-KeyVersionNumber`, the machine password). The set
+     belongs to the definition version (X7). `[UNVERIFIED]` for the
+     `msDS-LastSuccessful*`/`msDS-LastFailed*` family. A change is noise only if **every** attribute
+     it touched is in the set; a change that touches one other attribute is an edit.
+   - **Credential event** (own kind, off by default on the Modified presets): a password change
+     or reset, recognised from the replication metadata of the password attributes
+     (`unicodePwd`, `pwdLastSet`, `ntPwdHistory`), never with a value. Header: "n credential events
+     not shown · Show". A chip "Credential events" switches the kind on, and the *Include credential
+     events* switch on the preset does the same. A password change is not an edit and not noise.
+   - **Permissions changed** (own kind, off by default, **not noise**): a change to
+     `nTSecurityDescriptor`, recognised from the replication metadata of that attribute (name,
+     originating time, version; **no descriptor is read or compared**). Why a separate kind and
+     not a noise rule: the metadata cannot say whether the rewrite was an administrator's ACL edit
+     or SDProp or inheritance propagation from a parent, and a report that guesses would hide real
+     permission edits. Header: "n permission changes not shown · Show", so an admin hunting a cause
+     can turn it on in one click. Whether SDProp's hourly pass bumps the version of the attribute
+     when nothing changes, and how many child objects a parent ACL edit touches, are
+     `[UNVERIFIED]` `[LAB: Windows]` and measured in F1 (T-1120) before the default is reviewed.
+     Until then the kind stays off by default and counted, never dropped.
 3. **Attribute names, never values.** The report shows which attributes changed, not old or new
    values (DM-18.I4, I6: personal values are erasable, secrets are never recorded). Value diffs
    are a later enhancement.
 4. **Groups.** A membership change appears on the group as kind "membership changed" with "Members
-   added n / removed m" for the period. A user whose group membership changed is not "modified"
-   (the change is on the group's `member` link).
+   added n / removed m" for the period, counted from the group's `member` link values (DM-18, from
+   `msDS-ReplValueMetaData` where the value carries it, so *Basis* is "DC time, originating", and
+   from our observation where it does not: legacy values written before linked-value replication
+   have a null `origin`, DM-18.I2a, and the row says "observed"). Added and removed are counted per
+   value over the period; a member added and removed between two observations shows as neither
+   (DM-18.I2) and the header's "history is observation-based" note covers it. A user whose group
+   membership changed is not "modified" (the change is on the group's `member` link). The row
+   detail lists the member names, never more than the runner's scope allows (rule 8).
 5. **History starts when we started watching.** The header states "Change history starts <first
    sync of each covered domain>. Earlier changes are not listed". To avoid a day-one report that is
    empty where ME's is not, a period that begins before the history does includes objects whose
@@ -180,17 +212,45 @@ excludes the noise set below; Deleted lists `state` in deleted, recycled or purg
    ME's computer page promises "the deleting account" `[ME-HELP]`; that parity gap closes with the
    M3 DC event collectors (reports-2a §6.3 pattern: stated, not hidden). For changes made through
    activeDIQ itself the actor *is* known (DM-18 `source: operation`) and is shown.
-7. **Deleted objects.** Read with the show-deleted control (`1.2.840.113556.1.4.417`) by sync
-   (DM-19, T-0018). With the Recycle Bin on, the object keeps its attributes while `isDeleted`; once
-   `isRecycled` it keeps few ([consult], [Recycle Bin](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/adac/active-directory-recycle-bin));
-   with it off, only attributes preserved on delete survive. So Name, Logon name and Last known
-   OU path may be blank on a tombstone; a blank is shown as "Not retained by AD", never as empty.
-   *State* is "Deleted (restorable)", "Recycled (cannot be restored)" or "Purged from the
-   directory (history only)"; *Restorable until* is the deleted time plus the domain's
-   `msDS-deletedObjectLifetime` (falls back to `tombstoneLifetime`, default 180 days on forests
-   created from Server 2003 SP1 [tombstoneLifetime](https://learn.microsoft.com/en-us/windows/win32/adschema/a-tombstonelifetime));
-   the column says "up to". The list keeps purged objects while our history does (ME is limited by
-   AD's retention).
+7. **Deleted objects under the default rights (the case that ships).** The connection account is
+   least-privilege, and **it cannot list or read `CN=Deleted Objects`**: a principal without that
+   right gets `noSuchObject`, which means "missing or not permitted" and is never proof that a
+   tombstone expired; activeDIQ does not take ownership of the container by default
+   ([threat model §6.3 R9](../../development/architecture/threat-model.md), confirmed on a Windows
+   Server 2025 lab in [T-0076](../../development/runbooks/windows-lab-runs/T-0076-ad-lab-confirmation-20261028.md);
+   [KB 892806](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/non-administrators-view-deleted-object-container)).
+   So the deletion signal is **the object leaving the feed**: DirSync returning the delete, if the
+   least-privilege account's DirSync does (`[LAB: Windows]`, T-1125), or otherwise the resync diff
+   (DM-19.I3), which turns an object missing from a full read into lifecycle state `deleted` or
+   `purged` (DM-16). Nothing else is claimed. The Deleted presets list those objects as follows:
+   - **Name, Logon name, Last known OU path** come from the **last inventory observation** of the
+     object before it left (stored, scope-trimmed by that stored ancestry). *Basis* reads "last
+     seen by activeDIQ"; they are not "Not retained by AD", because we retained them.
+   - **Deleted at** is the time activeDIQ **first observed the object gone**, shown as "on or before
+     <time>" with Basis "observed". No DC time is shown for a deletion we did not read.
+   - **State** is "Removed (restore status unknown)" and **Restorable until** is "Unknown". Whether
+     the object is still a restorable tombstone, already recycled or purged is exactly what the
+     account cannot see; the column does not guess from time elapsed. A hover says why.
+   - A GUID that reappears in another domain of the forest is a **move**, not a deletion (DM-16, F3
+     of the domain-model review), and is not listed here.
+   - An object deleted before our first observation is not listed; the header states where history
+     starts (rule 5).
+
+   **7b. If, and only if, the T-1125 ruling permits an optional tombstone read** (for instance a
+   delegated read of `CN=Deleted Objects`, off by default and named on the connection screen),
+   these columns are replaced for objects the read covers: *Deleted at* from the tombstone's
+   originating time (Basis "DC time, originating"); *State* "Deleted (restorable)", "Recycled
+   (cannot be restored)" or "Purged from the directory (history only)"; *Restorable until* the
+   deleted time plus the domain's `msDS-deletedObjectLifetime` (falling back to `tombstoneLifetime`,
+   default 180 days on forests created from Server 2003 SP1,
+   [tombstoneLifetime](https://learn.microsoft.com/en-us/windows/win32/adschema/a-tombstonelifetime)),
+   labelled "up to". With the Recycle Bin on a deleted object keeps its attributes while
+   `isDeleted`; once `isRecycled` it keeps few; with it off only attributes preserved on delete
+   survive ([Recycle Bin](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/adac/active-directory-recycle-bin)),
+   so a field that is blank on the tombstone falls back to the last inventory observation, and
+   only when that is also empty is it shown "Not retained by AD". A row is in 7b mode or in
+   rule 7 mode, per object, and *Basis* says which; the two are never mixed inside one cell.
+   Until the ruling lands the build implements rule 7 only.
 8. **Scope.** A deleted object is in the runner's scope only if its stored last-known ancestry is
    in scope. Unknown ancestry grants nothing and is never counted (reports-2a §8.1 fail closed). The
    2a rule that deleted and purged objects appear in no report (§6.1 rule 6) is lifted for the
@@ -317,13 +377,17 @@ Domain, OU path, Groups (n), Member of (list, the first 5 with "+n"), Status. ME
 ### 6.3 GRP-06 Users only in Domain Users
 
 ME name: Users Only Members of Domain Users Group (ME's heading: "Users only Member of 'Domain
-Users Group'" `[ME-HELP]`). Definition: the user's primary group is the domain's Domain Users
-(RID 513) and the user is a member of no other group. A user whose primary group is something
-else is not in this report unless explicitly added to Domain Users (consult). It is the Domain
-Users subset of GRP-04 (reports-2a §6.6) and uses the same edge data (DM-17) so that the primary
-group counts and a group with more than 1,500 members contributes every edge. A separate
-definition keeps GRP-04's locked version unchanged. Columns: Name, Logon name, Domain, OU path,
-Primary group, Created, Last logon (replicated), Status. The header lists the domains covered.
+Users Group'" `[ME-HELP]`). **One rule.** A user's direct group set is their primary group plus
+their explicit `memberOf` groups. The user is in this report when that set is exactly
+{Domain Users}: the primary group is Domain Users (RID 513) and the user has no explicit
+membership of any other group (an explicit membership of Domain Users itself changes nothing).
+It follows that a user whose primary group is anything else is **never** in this report, whether
+or not they were also added to Domain Users explicitly, because they are in that other group.
+Direct membership only, as GRP-04; nested groups are not counted. It is the Domain Users subset of
+GRP-04 (reports-2a §6.6) and uses the same edge data (DM-17) so that the primary group counts and
+a group with more than 1,500 members contributes every edge. A separate definition keeps GRP-04's
+locked version unchanged. Columns: Name, Logon name, Domain, OU path, Primary group, Created,
+Last logon (replicated), Status. The header lists the domains covered.
 
 ### 6.4 CMP-04 Computers with duplicate attributes
 
@@ -405,11 +469,16 @@ ME's report "fetches the replication status of the selected domain controller(s)
 1. **Read per DC, inbound view.** Each DC reports only its own inbound neighbours, so the run reads
    every DC in scope. Attributes: the replication-neighbour constructed attributes
    (`msDS-ReplAllInboundNeighbors`, `msDS-ReplPendingOps`, `msDS-ReplConnectionFailures`,
-   `msDS-ReplLinkFailures`), with `repsFrom` on the partition head as the lowest-privilege
-   fallback. Their location (RootDSE or partition head) and the right needed ("Monitor Active
-   Directory Replication", the DRS `GetReplInfo` right) are `[UNVERIFIED]` and `[LAB: Windows]`.
-   Samba is expected to return partial data `[UNVERIFIED]`: a value the DC does not return is
-   "Not reported", never "healthy".
+   `msDS-ReplLinkFailures`). **There is no fallback to `repsFrom`:** it is a binary blob and
+   decoding it is the same class of work as the Terminal Services blob that §2 keeps out. A DC that
+   does not return the constructed attributes is a row of "Not reported", never a guess. These
+   `msDS-Repl*` values are XML text returned by the DC; they are parsed **only by the connector's
+   safe decoder** (no DTD, no entities, bounded size, fuzzed), specified in T-1124, and the same
+   decoder serves `msDS-ReplAttributeMetaData` and `msDS-ReplValueMetaData` for D10. Their
+   location (RootDSE or partition head) and the right needed ("Monitor Active Directory
+   Replication", the DRS `GetReplInfo` right) are `[UNVERIFIED]` and `[LAB: Windows]`, and the
+   right is T-1125's ruling. Samba is expected to return partial data `[UNVERIFIED]`: a value the DC
+   does not return is "Not reported", never "healthy".
 2. **Coverage as in reports-2a §6.5**: "Read from 5 of 6 DCs", the unreachable DC and its error
    named, a row for every DC that did not answer. Never "no problems" with partial coverage.
 3. **Status** is derived, not stored: Healthy (last success within the threshold and zero
@@ -454,12 +523,15 @@ ME's report "fetches the replication status of the selected domain controller(s)
 | P6 | No actor on Recently Deleted/Modified | DM-18.I3 |
 
 Amendments to reports-2a (to be folded into it by its owner, with the version note):
-- **A1 (§6.1 rule 6):** the Deleted presets of §4.1 list deleted, recycled and purged objects.
+- **A1 (§6.1 rule 6):** the Deleted presets of §4.1 list objects in lifecycle state deleted or
+  purged (DM-16), from the feed and our inventory under default rights (§4.1.7).
 - **A2 (FR-28, §8.4):** the daily floor applies to per-object per-DC reads only; SYS-03 follows the
   1-hour floor.
 - **A3 (§6.3):** the table is superseded by §2 here.
 
-Decisions (logged here, vetoable by the CEO, none directional): the noise default (§4.1.2); the
+Decisions (logged here, vetoable by the CEO, none directional): the noise default (§4.1.2) and
+the opt-in "credential event" and "permissions changed" kinds; deletion shown from observation
+under default rights (§4.1.7); the one-rule Domain Users definition (§6.3); the
 day-one `when_changed` fallback (§4.1.5); the four-valued CCP state (§4.2); the "Published printers"
 naming; the closed attribute list (§5.5); keeping Terminal Services out.
 
@@ -486,8 +558,14 @@ it, rows show "Not confirmed" `[UNVERIFIED]` for hardened domains.
 - `solution-architect`: new derived fragments for the logon-hours test (`permitted_at` in a zone),
   scope-only duplicate counting, noise-filtered change aggregation, per-policy rows; confirm each is
   expressible in the closed AST (FR-05).
-- `security-architect` tags: PWD-04 (T-1019/T-1106/T-1107), D10 (T-1109), D11 (T-1111), SYS-03
-  (D14), USR-07 (dial-in, smart card, logon hours).
+- `solution-architect` (T-1124): the `ReadReplicationStatus{DC}` call, the single safe decoder for
+  `msDS-Repl*`/`msDS-ReplAttributeMetaData`/`msDS-ReplValueMetaData` XML (no DTD, no entities,
+  fuzzed), and the closed-AST fragments above.
+- `security-architect` (T-1125): the replication-monitoring read for SYS-03 and whether an optional
+  `CN=Deleted Objects` read may exist (§4.1.7b, §13). Tags: PWD-04 (T-1019/T-1106/T-1107), D10
+  (T-1109), D11 (T-1111), SYS-03 (D14), USR-07 (dial-in, smart card, logon hours).
+- `project-manager` (T-1118): retitle T-1112 to drop "Terminal Services" (kept out, §2); batch 10
+  ticket for SYS-02/SYS-03.
 - `product-designer`: three screens that are not the 2a grid: the change-history row detail (§4.1),
   the PSO table with deltas (§7.1), the per-DC replication grid with the unreachable-DC rows (§7.3).
 
@@ -519,12 +597,15 @@ later ([Recycle Bin](https://learn.microsoft.com/en-us/windows-server/identity/a
 | Report | AD on-prem WS2016 to 2025 | Entra cloud-only | Hybrid synced objects | Samba AD (CI lab) | `windows` | `linux-oci` |
 | --- | --- | --- | --- | --- | --- | --- |
 | PWD-04 | ✓ | ✗ → T-1018 | ◐ AD side only | ◐ the DACL read is testable; assert on ACEs, not on the flag (lab note) | ✓ | ✓ |
-| USR-06, GRP-05, CMP-03, CTC-02, OU-02 | ✓ with the Recycle Bin on; with it off, deleted rows are sparse (§4.1.7) | ✗ → T-1018 | ◐ | ◐ originating-time metadata and show-deleted behaviour `[UNVERIFIED]` | ✓ | ✓ |
-| USR-07, USR-08, USR-11 | ✓ | ✗ | ◐ | ✓ attributes are plain LDAP | ✓ | ✓ |
-| USR-09 | ✓ where the schema was extended; "Schema extension not present" otherwise | ✗ | ◐ | ◐ schema usually absent | ✓ | ✓ |
-| USR-12, USR-13, GRP-06, CMP-04, CMP-05 | ✓ | ✗ | ◐ | ✓ | ✓ | ✓ |
-| SYS-01 | ✓ domain row; PSO rows need level 2008+ and the read right | ✗ | ◐ | ◐ PSO behaviour `[UNVERIFIED]` on Samba, `[LAB: Windows]` | ✓ | ✓ |
-| SYS-02 | ✓ | ✗ | ◐ | ✓ if `printQueue` objects are seeded | ✓ | ✓ |
+| USR-06, GRP-05, CMP-03, CTC-02, OU-02 | ✓ from the feed and inventory under default rights (§4.1.7); the tombstone columns (§4.1.7b) need the Recycle Bin on and the T-1125 ruling | ✗ → T-1018 | ◐ AD side only | ◐ originating-time metadata and show-deleted behaviour `[UNVERIFIED]` | ✓ | ✓ |
+| USR-07 (dial-in, smart card, logon hours) | ✓ | n/a (no Entra equivalent) | ◐ AD side only |
+| USR-08, USR-11 | ✓ | ✗ → T-1018 (photo and attribute completeness of Entra users) | ◐ AD side only | ✓ attributes are plain LDAP | ✓ | ✓ |
+| USR-09 | ✓ where the schema was extended; "Schema extension not present" otherwise | n/a (Skype/Lync attribute is on-prem only; Entra has no equivalent) | ◐ AD side only | ◐ schema usually absent | ✓ | ✓ |
+| USR-12 (manager) | ✓ | ✗ → T-1018 | ◐ AD side only | ✓ | ✓ | ✓ |
+| USR-13, GRP-06 | ✓ | ✗ → T-1018 | ◐ AD side only | ✓ | ✓ | ✓ |
+| CMP-04, CMP-05 | ✓ | ✗ → T-1018 (devices) | ◐ AD side only | ✓ | ✓ | ✓ |
+| SYS-01 | ✓ domain row; PSO rows need level 2008+ and the read right | n/a (Entra password policy is tenant-wide and not an AD policy object; PSOs have no equivalent) | ◐ AD side only | ◐ PSO behaviour `[UNVERIFIED]` on Samba, `[LAB: Windows]` | ✓ | ✓ |
+| SYS-02 | ✓ | n/a (no Entra equivalent of published printers) | ◐ AD side only | ✓ if `printQueue` objects are seeded | ✓ | ✓ |
 | SYS-03 | ✓ `[LAB: Windows]` for attribute location and right | n/a (no DCs) | ◐ AD DCs only | ◐ expected partial, rows say "Not reported" | ✓ | ✓ over the same LDAP transport |
 
 Cells that are partial are decisions: Samba results prove the plumbing and the LDAP-readable
@@ -536,9 +617,13 @@ truth; they do not prove the Windows-only behaviour listed, which waits for `[LA
   suffices). SYS-01 PSOs need read of the Password Settings Container (Domain Admins by default; a
   delegated read otherwise; an unreadable container is stated, never hidden). SYS-03 needs a
   replication-monitoring read `[UNVERIFIED]`: **this may contradict reports-2a §9's "no new
-  directory right"**, so `security-architect` decides before D14 is built. Deleted-object reads need
-  the right to see the Deleted Objects container (research notes ADMP needs manual `dsacls` grants
-  for restores; reading is a different, lower right `[UNVERIFIED]`). No report writes to a directory.
+  directory right"**, so `security-architect` decides before D14 is built (T-1125). **The Deleted
+  presets request no right on `CN=Deleted Objects`:** under the default least-privilege account
+  that container answers `noSuchObject`
+  ([threat model §6.3 R9](../../development/architecture/threat-model.md), T-0076), so §4.1 rule 7
+  runs from the feed and our own inventory. An optional tombstone read (§4.1 rule 7b) is built only
+  if T-1125 permits it, as a named, off-by-default choice, and never by taking ownership of the
+  container. No report writes to a directory.
 - **Disclosure.** USR-06 and the other change reports disclose that an object existed and when it
   was deleted; scope trims by stored ancestry (§4.1.8). Duplicates are counted in scope only (§5.5).
   Photo and logon-script reports return presence and path text, never bytes. PWD-04 and USR-07 name
@@ -556,7 +641,9 @@ truth; they do not prove the Windows-only behaviour listed, which waits for `[LA
 | --- | --- | --- |
 | FR-S01 | The library MUST add the reports of §4 to §7 (17 firm, plus CMP-05 only when T-1014 confirms) in the category and with the ME names, presets, columns and filters stated there, and each ME name MUST resolve to its report and preset (FR-02) | ADM-084…089, ADM-092 |
 | FR-S02 | A change report MUST show "changed at" with its basis, hide the noise set with a count and a switch, show attribute names only, show no actor, state where history starts, and apply the day-one fallback of §4.1.5 | ADM-084, 086, 087, 089 |
-| FR-S03 | Recently Deleted MUST list deleted, recycled and purged objects within scope, show State and "Restorable until" as "up to", mark non-retained fields as "Not retained by AD", and MUST NOT list an object whose ancestry is unknown | same |
+| FR-S03 | Recently Deleted MUST list objects observed leaving the directory within scope, taking Name, Logon name and OU path from the last inventory observation, MUST show Deleted at as the observed time ("on or before") and State "Removed (restore status unknown)" with Restorable until "Unknown" under default rights, MUST NOT request a right on `CN=Deleted Objects`, MUST show the tombstone-derived columns only when the T-1125 ruling allows (§4.1.7b), and MUST NOT list an object whose ancestry is unknown | same |
+| FR-S11 | A change report MUST treat password changes and `nTSecurityDescriptor` changes as their own opt-in kinds ("credential event", "permissions changed"), each with a header count and a switch, MUST NOT call a permissions change automatic, and MUST show group membership changes as "Members added n / removed m" with the Basis per value | ADM-084, 086, 087, 089 |
+| FR-S12 | SYS-03 MUST NOT decode `repsFrom`, and every `msDS-Repl*` value MUST pass only the connector's safe decoder (T-1124) | ADM-092 |
 | FR-S04 | PWD-04 MUST use the four-valued stored state of §4.2, MUST NOT read a descriptor at run time, MUST count "Not confirmed" in the header and MUST NOT list it as a match or as "No deny ACE" | ADM-085 |
 | FR-S05 | Attribute-state reports MUST distinguish absent from false where the directory does (dial-in, Skype/Lync schema absent) and MUST NOT return an empty list for a domain they cannot evaluate | ADM-084 |
 | FR-S06 | Empty/Duplicate Attributes MUST accept only registered columns and count duplicates within the runner's scope | ADM-084, ADM-087 |
@@ -609,19 +696,29 @@ When it runs
 Then the run record shows no directory read of any descriptor, and the column is the stored state
 Evidence: definition test; connector call log empty
 
-AC-S06 (FR-S03)
-Given one object deleted with the Recycle Bin on (restorable), one recycled, one purged from the
-  directory, and one with unknown ancestry
+AC-S06 (FR-S03, default rights)
+Given a lab connection with the least-privilege account (no right on CN=Deleted Objects), one user
+  deleted 3 days ago and seen by sync before, one deleted before the first sync, one moved to
+  another domain of the forest, and one with unknown ancestry
 When Recently Deleted Users runs for 365 days
-Then the first three are listed with State and "Restorable until" shown as "up to", the purged one
-  from history, and the fourth is neither listed nor counted
-Evidence: lab test `[LAB: Windows]` for recycled; table test elsewhere
+Then the first user is listed with Name, Logon name and Last known OU path from the last inventory
+  observation, Basis "last seen by activeDIQ", Deleted at "on or before <time>" with Basis
+  "observed", State "Removed (restore status unknown)" and Restorable until "Unknown"; the second,
+  third and fourth are not listed or counted; the header states where history starts; and the run
+  record shows no read of CN=Deleted Objects
+Evidence: lab test against the seeded list and the connector call log; [LAB: Windows] run for
+  whether DirSync returns the delete to the least-privilege account, else the resync-diff path
 
-AC-S07 (FR-S03)
-Given a forest with the Recycle Bin off and a tombstone with no retained name
-When Recently Deleted Computers runs
-Then the row shows "Not retained by AD" in the name fields and the GUID, never a blank
-Evidence: test
+AC-S07 (FR-S03, rule 7b, only if T-1125 permits the optional read)
+Given the optional tombstone read is enabled, one object deleted with the Recycle Bin on
+  (restorable), one recycled, one purged from the directory, and a forest with the Recycle Bin off
+  and a tombstone with no retained name
+When Recently Deleted Users and Computers run
+Then the first three show State "Deleted (restorable)", "Recycled (cannot be restored)" and "Purged
+  from the directory (history only)" with Restorable until as "up to"; the Recycle-Bin-off row falls
+  back to the last inventory name and only when that is empty shows "Not retained by AD", never a
+  blank; and Basis says "DC time, originating" for these cells
+Evidence: [LAB: Windows] test; table test elsewhere. Not built until the T-1125 ruling
 
 AC-S08 (FR-S05)
 Given users with msNPAllowDialin TRUE, FALSE and absent
@@ -634,6 +731,61 @@ Given a domain whose schema has no msRTCSIP-UserEnabled
 When Skype/Lync Enabled Users runs
 Then the report does not run for that domain and says "Schema extension not present", and it does not return zero rows
 Evidence: Samba lab test (schema absent)
+
+AC-S28 (FR-S05)
+Given a domain whose schema has msRTCSIP-UserEnabled and users with it TRUE, FALSE and absent
+When Skype/Lync Enabled Users and Skype/Lync Disabled Users run
+Then Enabled lists TRUE only, Disabled lists FALSE only, the absent users are in neither and are
+  counted in the header as "not set", and each list's total equals the LDAP count
+Evidence: lab test versus (msRTCSIP-UserEnabled=TRUE) and (msRTCSIP-UserEnabled=FALSE) on a lab with the
+  schema extension added. [ADMP] for ME's treatment of absent
+
+AC-S29 (FR-S11)
+Given a group with 3 members added and 1 removed in the last 7 days (one of the added values
+  written before linked-value replication, so its origin is null), and a group with no change
+When Recently Modified Groups runs for 7 days and the row detail is opened
+Then the first group shows kind "membership changed" with "Members added 3 / removed 1", the
+  legacy value's Basis reads "observed" and the others "DC time, originating", the other group is
+  not listed, and no user in those groups is listed as modified for the membership change
+Evidence: Samba lab test versus a scripted diff of member before and after (observed basis);
+  [LAB: Windows] test versus msDS-ReplValueMetaData for the originating basis and the null-origin
+  case
+
+AC-S30 (FR-S11)
+Given a user whose password was reset 2 days ago, a user whose department was edited 2 days ago,
+  and a user whose password was reset and department edited in the same cycle
+When Recently Modified Users runs with the defaults, then with "Include credential events" on
+Then by default only the department edits are listed (the third as an edit) and the header reads
+  "1 credential events not shown · Show"; with the switch on, the reset-only user appears with
+  kind "credential event" and the third carries both kinds; no value of any password attribute
+  appears in the API, the grid or an export
+Evidence: lab test; response and export inspection
+
+AC-S31 (FR-S11)
+Given an administrator edit to one user's ACL, and an ACL edit on an OU that makes the DC rewrite
+  the inherited descriptor of 40 users beneath it
+When Recently Modified Users runs with the defaults, then with the "Permissions changed" chip on
+Then by default none of the 41 is listed and the header reads "41 permission changes not shown ·
+  Show", the count is not part of "automatic updates hidden", and with the chip on all 41 are listed with kind
+  "permissions changed" and no descriptor content; the report never calls them automatic
+Evidence: [LAB: Windows] test versus replication metadata of nTSecurityDescriptor; the SDProp
+  question stays [UNVERIFIED] until F1
+
+AC-S32 (FR-S12)
+Given a DC that returns no msDS-Repl* constructed attributes and a DC that returns a response
+  with a DTD and an external entity in the XML value
+When DC Replication Status runs
+Then the first DC has a row of "Not reported" and no repsFrom value is read or decoded; the second
+  is rejected by the decoder with a named parse error, no entity is resolved and no network request is
+  made, and the other DCs are still reported
+Evidence: connector call log; decoder fuzz and negative test (T-1124 conformance case)
+
+AC-S33 (FR-S03)
+Given the library UI and API after batch 5
+When the Recently Deleted presets are inspected
+Then no control, column or export offers Restore, and every Restorable until cell shows "Unknown"
+  under default rights
+Evidence: UI recording; API response schema check
 
 AC-S10 (FR-S01)
 Given users with and without thumbnailPhoto or jpegPhoto, a scriptPath, a SMARTCARD_REQUIRED flag
@@ -660,11 +812,19 @@ Then it is refused as an unregistered column and no query runs
 Evidence: API negative test (FR-05, AC-29 pattern)
 
 AC-S14 (FR-S07)
-Given a user whose primary group is not Domain Users, a user in two explicit groups, a user only
-  in Domain Users, and a group with 1,600 members
+Given user A with primary group Domain Users and no explicit group; user B with primary group
+  Domain Users and an explicit membership of one other group; user C with primary group "Staff"
+  who is also an explicit member of Domain Users; user D with primary group Domain Users and an
+  explicit membership of Domain Users only; and a group with 1,600 members
 When Users in More than One Group and Users Only Members of Domain Users Group run
-Then each lands in the right report, the primary-group switches change counts as stated, and the 1,600 members are all counted
-Evidence: lab test versus (&(primaryGroupID=513)(!(memberOf=*))) and a scripted count of memberOf; [ADMP] for ME's counting rule
+Then Users Only Members of Domain Users lists A and D and not B or C (C's set is {Staff, Domain
+  Users}); Users in More than One Group lists B by default and C only (as {Staff, Domain Users})
+  when "Count the primary group" is on; the switches change counts as stated; and all 1,600 members
+  of the large group are counted
+Evidence: lab test. Ground truth for GRP-06: users with primaryGroupID=513 whose memberOf is empty
+  or holds only the Domain Users DN (a scripted check of memberOf values over
+  (&(objectCategory=person)(objectClass=user)(primaryGroupID=513))); for USR-13 a scripted count of
+  memberOf plus the primary group. [ADMP] for ME's counting rule
 
 AC-S15 (FR-S01)
 Given managers with direct reports
@@ -754,6 +914,8 @@ Evidence: test
 | S3 | ME's meanings marked `[UNVERIFIED]` here (Dial-in absent, Smart Card, multi-group count, Domain-Users-only, printers, modified) | test-engineer, F1 | Nothing; no match claimed |
 | S4 | Replication status thresholds (1 h, 24 h) | ad-expert, reporting-engineer | Defaults apply |
 | S5 | T-1014 confirmation of Managed/Unmanaged | market-analyst | CMP-05 only |
+| S6 | Whether the least-privilege account's DirSync returns deletes, and whether an optional `CN=Deleted Objects` read may exist | security-architect (T-1125), `[LAB: Windows]` | The tombstone columns of §4.1.7b only; rule 7 ships regardless |
+| S7 | Whether SDProp or inheritance bumps `nTSecurityDescriptor` metadata and at what volume | test-engineer, F1 (T-1120), `[LAB: Windows]` | Nothing; the kind is opt-in |
 
 No question is directional: nothing needs the CEO. The only commercial-looking item, how many
 reports count towards the PRD's "60+", is a reading of an existing claim by the `project-manager`.
