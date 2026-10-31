@@ -433,8 +433,11 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   `msDS-UserPasswordExpiryTimeComputed` as an oracle: a Windows-lab ticket is filed.
 
 **As built (T-0961, row B6): `inventory.groups`, `.group_members`, `.ous`, `.contacts`** (`internal/directory/inventory/closure.go`,
-`datasets_groups.go`, migration 0066; tests `closure_test.go`, `datasets_groups_test.go`, `rp11_inventory_test.go`).
+`datasets_groups.go`, migration 0067; tests `closure_test.go`, `datasets_groups_test.go`, `rp11_inventory_test.go`).
 
+- **Fragment allowlist (T-1033).** A report fragment may not call `unnest`, `string_agg`, `get_byte` or `generate_series`. `Via` is built
+  by a recursive CTE that walks `{t}.via[i]` and names each hop through the `via` `MaskAnchor`; `member_sid` reads the generated column
+  `directory_objects.sid_text` (`directory_sid_text(sid)`, migration 0067; stored, so adding it rewrites the table once).
 - **Closure table.** `inventory_group_members (tenant_id, connection_id, group_guid, member_guid, edge_kind, depth, via uuid[])`,
   one row per (group, effective member). `edge_kind` is `direct`, `primary_group`, `nested` or `cycle` (plus the flag `cut`); `via` holds the
   groups between the group and the member (`cardinality(via) = depth - 1`), the shortest path with the lowest GUID as tie-break. A cycle is a
@@ -1582,7 +1585,7 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 - 2026-10-30 · T-0958 · row B3 built: `inventory.users` and `inventory.computers`, migration 0061 (D7 inputs, D4
   policy tables, GIN index on `ancestry`), `PolicyWriter`, derived states with the effective policy resolved in
   SQL, RP8 and RP11 landed in `tools/fitness/reports`, `reportsql.Query.Statement`. See §3.3 "As built".
-- 2026-10-31 · T-0961 · row B6 built: `inventory.groups`, `.group_members`, `.ous`, `.contacts`, migration 0066 (group closure and dirty set, refreshed by `Populate`), `primary_group` and `in_other_groups` on users and computers, RP11 for the four datasets. See §3.3 "As built (T-0961)".
+- 2026-10-31 · T-0961 · row B6 built: `inventory.groups`, `.group_members`, `.ous`, `.contacts`, migration 0067 (group closure and dirty set, refreshed by `Populate`), `primary_group` and `in_other_groups` on users and computers, RP11 for the four datasets. See §3.3 "As built (T-0961)".
 - 2026-10-31 · T-0960 · row B5 built: `internal/modules/reports/library` (loader, `LOCK`, crosswalk search, USR-01, USR-02,
   USR-03, USR-05), `HiddenGroup.Locked`, four derived columns on `inventory.users`. See §3.6 "As built".
 - 2026-10-31 · T-1074 · reports API: `ReportFreshness.stale[]`/`thresholdSeconds` and `ReportRun.hiddenGroups[]`. See §6.4.

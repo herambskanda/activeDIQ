@@ -1,4 +1,4 @@
--- 0066_inventory_group_closure: the effective group membership the datasets inventory.groups and
+-- 0067_inventory_group_closure: the effective group membership the datasets inventory.groups and
 -- inventory.group_members read (T-0961; reports.md §3.3, spec reports-2a §6.6, FR-15). Owner:
 -- internal/directory/inventory.
 --
@@ -57,6 +57,21 @@ BEGIN
     EXECUTE format('CREATE POLICY %I ON public.%I USING (tenant_id = NULLIF(current_setting(''app.tenant_id'', true), '''')::uuid) WITH CHECK (tenant_id = NULLIF(current_setting(''app.tenant_id'', true), '''')::uuid)', t || '_tenant', t);
   END LOOP;
 END $$;
+
+-- directory_objects.sid_text: the SID as S-1-5-..., derived from sid. The group_members dataset shows
+-- it for the member (it is the only handle on an external principal); a report fragment may not call
+-- get_byte or generate_series (T-1033 allowlist), so the text is a generated column instead. NULL when
+-- the stored bytes are not a well-formed SID. Adding a stored generated column rewrites the table once.
+CREATE FUNCTION public.directory_sid_text(sid bytea) RETURNS text
+LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $f$
+  SELECT CASE WHEN length(sid) <> 8 + 4 * get_byte(sid, 1) THEN NULL
+    ELSE 'S-' || get_byte(sid, 0) || '-'
+      || (get_byte(sid, 4)::bigint * 16777216 + get_byte(sid, 5) * 65536 + get_byte(sid, 6) * 256 + get_byte(sid, 7))
+      || COALESCE((SELECT string_agg('-' || (get_byte(sid, 8 + 4 * i)::bigint + get_byte(sid, 9 + 4 * i) * 256
+           + get_byte(sid, 10 + 4 * i) * 65536 + get_byte(sid, 11 + 4 * i)::bigint * 16777216), '' ORDER BY i)
+         FROM generate_series(0, get_byte(sid, 1) - 1) AS i), '') END
+$f$;
+ALTER TABLE public.directory_objects ADD COLUMN sid_text text GENERATED ALWAYS AS (public.directory_sid_text(sid)) STORED;
 
 COMMENT ON TABLE public.inventory_group_members IS 'Effective group membership closure with primary-group edges, shortest via path and cycle findings (directory table, RLS, derived). Only internal/directory/inventory references it in SQL.';
 COMMENT ON TABLE public.inventory_group_closure_dirty IS 'Groups whose closure rows are stale (directory table, RLS, derived). Only internal/directory/inventory references it in SQL.';

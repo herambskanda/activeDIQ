@@ -51,21 +51,11 @@ const (
 		" ELSE '(manager outside your scope)' END"
 	hasManagerSQL = "jsonb_typeof({t}.attributes -> 'managedBy') = 'string'"
 
-	// The hops between group and member, by name: a hop outside the scope is named only as such.
-	viaPathSQL = "NULLIF(COALESCE((SELECT string_agg(CASE WHEN {in_scope.via} THEN via.sam_account_name ELSE " + outsideGroup + " END, ' → ' ORDER BY h.ord)" +
-		" FROM unnest({t}.via) WITH ORDINALITY AS h(guid, ord) LEFT JOIN {rel.via} ON via.connection_id = {t}.connection_id AND via.object_guid = h.guid), ''), '')"
-	findingSQL = "CASE WHEN {t}.edge_kind = 'cycle' THEN 'Circular nesting: ' || {rel.grp}.sam_account_name || COALESCE(' → ' || (" + viaPathSQL + "), '') || ' → ' || {rel.grp}.sam_account_name" +
-		" WHEN {t}.cut THEN 'Nesting deeper than 128 levels: members of ' || {rel.mbr}.sam_account_name || ' and below are not listed' END"
 	// A group whose nesting is deeper than the closure follows: some effective members are not listed.
 	nestingCutSQL = "EXISTS (SELECT 1 FROM {rel.clo} WHERE clo.connection_id = {t}.connection_id AND clo.group_guid = {t}.object_guid AND clo.cut)"
 
 	memberNameSQL = "CASE WHEN {rel.mbr}.kind = 'fsp' THEN " + externalLabel +
 		" ELSE COALESCE(NULLIF({rel.mbr}.sam_account_name, ''), NULLIF({rel.mbr}.display_name, ''), {rel.mbr}.rdn) END"
-	// S-<revision>-<authority>-<subauthority>...; NULL when the stored bytes are not a well-formed SID.
-	memberSIDSQL = "CASE WHEN {rel.mbr}.sid IS NULL OR length({rel.mbr}.sid) <> 8 + 4 * get_byte({rel.mbr}.sid, 1) THEN NULL ELSE 'S-' || get_byte({rel.mbr}.sid, 0) || '-' ||" +
-		" (get_byte({rel.mbr}.sid, 4)::bigint * 16777216 + get_byte({rel.mbr}.sid, 5) * 65536 + get_byte({rel.mbr}.sid, 6) * 256 + get_byte({rel.mbr}.sid, 7)) ||" +
-		" COALESCE((SELECT string_agg('-' || (get_byte({rel.mbr}.sid, 8 + 4 * i)::bigint + get_byte({rel.mbr}.sid, 9 + 4 * i) * 256 + get_byte({rel.mbr}.sid, 10 + 4 * i) * 65536" +
-		" + get_byte({rel.mbr}.sid, 11 + 4 * i)::bigint * 16777216), '' ORDER BY i) FROM generate_series(0, get_byte({rel.mbr}.sid, 1) - 1) AS i), '') END"
 )
 
 const (
@@ -161,7 +151,7 @@ func groupMembersDataset() report.Dataset {
 		derived("group_dn", "Group distinguished name", report.TypeText, report.SQL("{rel.grp}.dn"), opsText),
 		derived("member_name", "Member", report.TypeText, report.SQL(memberNameSQL), opsText),
 		derived("member_dn", "Member distinguished name", report.TypeText, report.SQL("{rel.mbr}.dn"), opsText),
-		derived("member_sid", "Member SID", report.TypeText, report.SQL(memberSIDSQL), opsText),
+		derived("member_sid", "Member SID", report.TypeText, report.SQL("{rel.mbr}.sid_text"), opsText),
 		derived("member_enabled", "Member enabled", report.TypeBool, report.SQL("{rel.mbr}.enabled"), opsBool),
 		derived("member_unresolved", "External principal (unresolved)", report.TypeBool, report.SQL("{rel.mbr}.kind = 'fsp'"), opsBool),
 		kind, edge,
@@ -241,3 +231,20 @@ func contactsDataset() report.Dataset {
 		Tables:    []string{"directory_objects"},
 	}
 }
+
+// viaHopSQL names the group at position idx (1-based) of the row's via array.
+func viaHopSQL(idx string) string {
+	return "COALESCE((SELECT CASE WHEN {in_scope.via} THEN via.sam_account_name ELSE " + outsideGroup + " END FROM {rel.via}" +
+		" WHERE via.connection_id = {t}.connection_id AND via.object_guid = {t}.via[" + idx + "]), " + outsideGroup + ")"
+}
+
+var (
+	// The hops between group and member, by name: a hop outside the scope is named only as such.
+	// The hops between group and member, by name: a hop outside the scope is named only as such. A fragment
+	// may not call unnest or string_agg, so the path is built by a recursive walk down the via array.
+	viaPathSQL = "(WITH RECURSIVE hop(i, path) AS (SELECT 1, " + viaHopSQL("1") + " WHERE cardinality({t}.via) > 0" +
+		" UNION ALL SELECT hop.i + 1, hop.path || ' → ' || " + viaHopSQL("hop.i + 1") + " FROM hop WHERE hop.i < cardinality({t}.via))" +
+		" SELECT hop.path FROM hop WHERE hop.i = cardinality({t}.via))"
+	findingSQL = "CASE WHEN {t}.edge_kind = 'cycle' THEN 'Circular nesting: ' || {rel.grp}.sam_account_name || COALESCE(' → ' || (" + viaPathSQL + "), '') || ' → ' || {rel.grp}.sam_account_name" +
+		" WHEN {t}.cut THEN 'Nesting deeper than 128 levels: members of ' || {rel.mbr}.sam_account_name || ' and below are not listed' END"
+)
