@@ -63,6 +63,18 @@ components:
       type: string
       x-activediq-enum: open
       enum: [ready, no_change, needs_approval, refused]
+    OperationHoldReasonValue:
+      description: >-
+        Why an operation is held for approval (ADR-0005 rule 8), mirroring the kernel's HoldReason
+        (internal/platform/operation/holds.go). step_up: the Action needs a fresh MFA and the initiator cannot give one
+        (an API token or an automation, TM-D30 SX-4); an approval that carries step-up releases it. blast_radius: an
+        automation touches more objects than its limit. irreversible: the tenant requires approval for irreversible
+        changes. undo_needed_approval: the undo of an operation that itself needed approval. gate: the registered
+        approval gate asked for it. none: not held. (The dialect has no nullable $ref, so "not held" is a value, as
+        HoldNone is in the kernel.) Clients accept values they do not know.
+      type: string
+      x-activediq-enum: open
+      enum: [none, step_up, blast_radius, irreversible, undo_needed_approval, gate]
     OperationStateValue:
       description: An operation's state (ADR-0005 rule 3, DM-41). Clients accept values they do not know.
       type: string
@@ -185,6 +197,10 @@ components:
         possible: {type: boolean}
         reversibility: {$ref: shared/operation.yaml#/components/schemas/OperationReversibilityValue}
     OperationPreview:
+      description: >-
+        What submitting the previewed request would do now. holdReason is the hold the submit would get when outcome is
+        needs_approval, and none otherwise. stepUpRequired is true when the submit needs a fresh MFA (TM-D30 SX-1): an
+        interactive caller without one is answered 401 step-up-required, and a token or automation is held step_up.
       type: object
       required: [action, actionVersion, planHash, outcome, holdReason, stepUpRequired, reversibility, steps, blocked, requiredConfirmations, undo]
       properties:
@@ -192,7 +208,7 @@ components:
         actionVersion: {type: integer, minimum: 1, maximum: 1000000}
         planHash: {type: string, minLength: 64, maxLength: 64, pattern: "^[0-9a-f]{64}$"}
         outcome: {$ref: shared/operation.yaml#/components/schemas/OperationPreviewOutcome}
-        holdReason: {type: [string, "null"], maxLength: 64}
+        holdReason: {$ref: shared/operation.yaml#/components/schemas/OperationHoldReasonValue}
         stepUpRequired: {type: boolean}
         reversibility: {$ref: shared/operation.yaml#/components/schemas/OperationReversibilityValue}
         steps: {type: array, maxItems: 1000, items: {$ref: shared/operation.yaml#/components/schemas/OperationStepPreview}}
@@ -200,10 +216,14 @@ components:
         requiredConfirmations: {type: array, maxItems: 10, items: {$ref: shared/operation.yaml#/components/schemas/OperationRequiredConfirmation}}
         undo: {$ref: shared/operation.yaml#/components/schemas/OperationUndoPlan}
     OperationRef:
+      description: >-
+        An operation as a write answers it. holdReason says why a held (awaiting_approval) operation waits, so a client
+        can tell an approval that carries step-up from a policy approval; it is none when the operation is not held.
       type: object
-      required: [id, action, state, undoes]
+      required: [id, action, state, holdReason, undoes]
       properties:
         id: {type: string, format: uuid}
         action: {type: string, maxLength: 128, pattern: "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*){2,4}$"}
         state: {$ref: shared/operation.yaml#/components/schemas/OperationStateValue}
+        holdReason: {$ref: shared/operation.yaml#/components/schemas/OperationHoldReasonValue}
         undoes: {type: [string, "null"], format: uuid}

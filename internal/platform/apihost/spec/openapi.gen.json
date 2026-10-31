@@ -1229,7 +1229,21 @@
         "type": "string",
         "x-activediq-enum": "open"
       },
+      "OperationHoldReasonValue": {
+        "description": "Why an operation is held for approval (ADR-0005 rule 8), mirroring the kernel's HoldReason (internal/platform/operation/holds.go). step_up: the Action needs a fresh MFA and the initiator cannot give one (an API token or an automation, TM-D30 SX-4); an approval that carries step-up releases it. blast_radius: an automation touches more objects than its limit. irreversible: the tenant requires approval for irreversible changes. undo_needed_approval: the undo of an operation that itself needed approval. gate: the registered approval gate asked for it. none: not held. (The dialect has no nullable $ref, so \"not held\" is a value, as HoldNone is in the kernel.) Clients accept values they do not know.",
+        "enum": [
+          "none",
+          "step_up",
+          "blast_radius",
+          "irreversible",
+          "undo_needed_approval",
+          "gate"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open"
+      },
       "OperationPreview": {
+        "description": "What submitting the previewed request would do now. holdReason is the hold the submit would get when outcome is needs_approval, and none otherwise. stepUpRequired is true when the submit needs a fresh MFA (TM-D30 SX-1): an interactive caller without one is answered 401 step-up-required, and a token or automation is held step_up.",
         "properties": {
           "action": {
             "maxLength": 128,
@@ -1249,11 +1263,7 @@
             "type": "array"
           },
           "holdReason": {
-            "maxLength": 64,
-            "type": [
-              "string",
-              "null"
-            ]
+            "$ref": "#/components/schemas/OperationHoldReasonValue"
           },
           "outcome": {
             "$ref": "#/components/schemas/OperationPreviewOutcome"
@@ -1315,11 +1325,15 @@
         "x-activediq-enum": "open"
       },
       "OperationRef": {
+        "description": "An operation as a write answers it. holdReason says why a held (awaiting_approval) operation waits, so a client can tell an approval that carries step-up from a policy approval; it is none when the operation is not held.",
         "properties": {
           "action": {
             "maxLength": 128,
             "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9_]*){2,4}$",
             "type": "string"
+          },
+          "holdReason": {
+            "$ref": "#/components/schemas/OperationHoldReasonValue"
           },
           "id": {
             "format": "uuid",
@@ -1340,6 +1354,7 @@
           "id",
           "action",
           "state",
+          "holdReason",
           "undoes"
         ],
         "type": "object"
@@ -6723,6 +6738,7 @@
                 "description": "The operation that made this change. It is the undo handle for undoReportScheduleOperation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -6750,12 +6766,13 @@
                 }
               }
             },
-            "description": "The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved",
+            "description": "Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which, for example step_up when a token or automation makes a change whose after-state has an external recipient (TM-D30 SX-1, SX-4). Nothing changed yet; it applies when approved",
             "headers": {
               "ActiveDIQ-Operation-Id": {
                 "description": "The held operation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -6810,7 +6827,7 @@
     },
     "/reports/schedules/operations/{operationId}/previews/undo": {
       "post": {
-        "description": "The dry run of undoing one reports.schedule.* operation (ADR-0004 rule 14): it plans the inverse, reports.schedule.restore, against the live schedule for the caller, with the checks of the transition it makes (modules/reports.md 8): undoing a pause resumes, so only the owner may (owner_only); undoing a reassignment needs reports.schedule.manage_all and leaves the schedule paused (lossy); restoring external recipients needs reports.deliver.external and lists them in requiredConfirmations. A plan refusal is a 200 with outcome refused. It writes, persists and audits nothing. 404 when the operation is unknown, is not a reports.schedule.* operation, or its schedule is not visible to the caller. 409 operation-not-undoable when no inverse can be planned at all, errors[].code irreversible, already_undone, superseded (the schedule changed after this operation; undo the later change first) or not_finished.",
+        "description": "The dry run of undoing one reports.schedule.* operation (ADR-0004 rule 14): it plans the inverse, reports.schedule.restore, against the live schedule for the caller, with the checks of the transition it makes (modules/reports.md 8): undoing a pause resumes, so only the owner may (owner_only); undoing a reassignment needs reports.schedule.manage_all and leaves the schedule paused (lossy); restoring external recipients needs reports.deliver.external, lists them in requiredConfirmations and sets stepUpRequired (TM-D30 SX-1). A plan refusal is a 200 with outcome refused. It writes, persists and audits nothing. 404 when the operation is unknown, is not a reports.schedule.* operation, or its schedule is not visible to the caller. 409 operation-not-undoable when no inverse can be planned at all, errors[].code irreversible, already_undone, superseded (the schedule changed after this operation; undo the later change first) or not_finished.",
         "operationId": "previewUndoReportScheduleOperation",
         "parameters": [
           {
@@ -6863,7 +6880,7 @@
     },
     "/reports/schedules/operations/{operationId}/undo": {
       "post": {
-        "description": "Undoes one reports.schedule.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14, ADR-0005 rule 10). The undo is a new operation of the Action reports.schedule.restore, planned against the live schedule for the caller with the checks of the transition it makes, run inline, audited, and itself undoable. It restores the version before the operation: undoing a create archives the schedule, a delete restores it, an update restores the previous version, a pause resumes it (owner only), a resume pauses it, and a reassignment restores the previous owner with the schedule still paused. It sends nothing, and a fire that ran in between is not recalled. confirmations must repeat the requiredConfirmations of the undo preview (external recipients the undo restores); otherwise 400 with code external_not_confirmed. 403 when the inverse needs a permission the caller lacks (errors[].code external_not_permitted, owner_only, manage_all_required). 404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded, not_finished or plan_refused (the scope refusals of create). Undoing an operation that itself needed approval is always held (202).",
+        "description": "Undoes one reports.schedule.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14, ADR-0005 rule 10). The undo is a new operation of the Action reports.schedule.restore, planned against the live schedule for the caller with the checks of the transition it makes, run inline, audited, and itself undoable. It restores the version before the operation: undoing a create archives the schedule, a delete restores it, an update restores the previous version, a pause resumes it (owner only), a resume pauses it, and a reassignment restores the previous owner with the schedule still paused. It sends nothing, and a fire that ran in between is not recalled. confirmations must repeat the requiredConfirmations of the undo preview (external recipients the undo restores); otherwise 400 with code external_not_confirmed. 403 when the inverse needs a permission the caller lacks (errors[].code external_not_permitted, owner_only, manage_all_required). 404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded, not_finished or plan_refused (the scope refusals of create). Undoing an operation that itself needed approval is always held (202). Step-up (TM-D30 SX-1): undoing a create, update or resume whose restored state has an external recipient needs a fresh MFA. An interactive caller without one is answered 401 step-up-required and nothing changes (401 unauthenticated without a session, as everywhere); an API token or an automation is held for an approval that carries step-up (202, holdReason step_up, SX-4). The undo preview says so in stepUpRequired.",
         "operationId": "undoReportScheduleOperation",
         "parameters": [
           {
@@ -6895,6 +6912,7 @@
                 "description": "The undo operation. Undoing it re-applies the original change.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -6909,12 +6927,13 @@
                 }
               }
             },
-            "description": "The undo is held for approval (ADR-0005 rule 8); nothing changed yet",
+            "description": "The undo is held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which: undo_needed_approval when the undone operation needed approval, step_up when a token or automation restores an external recipient (TM-D30 SX-1, SX-4). Nothing changed yet",
             "headers": {
               "ActiveDIQ-Operation-Id": {
                 "description": "The held undo operation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -6925,7 +6944,7 @@
             "$ref": "#/components/responses/Validation"
           },
           "401": {
-            "$ref": "#/components/responses/Unauthenticated"
+            "$ref": "#/components/responses/StepUpRequired"
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
@@ -6966,7 +6985,7 @@
     },
     "/reports/schedules/previews/create": {
       "post": {
-        "description": "The dry run of createReportSchedule as the Action reports.schedule.create (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as createReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
+        "description": "The dry run of createReportSchedule as the Action reports.schedule.create (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code report_scope_empty, report_scope_unsupported, external_not_permitted or name_taken, never a problem; so is a gate denial. Same x-permission and body as createReportSchedule. Create has no target yet, so the 404 is that of the write (the definition is unknown or not visible).",
         "operationId": "previewCreateReportSchedule",
         "requestBody": {
           "content": {
@@ -7031,7 +7050,7 @@
     },
     "/reports/schedules/{scheduleId}": {
       "delete": {
-        "description": "Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire. Preview it first with previewDeleteReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.",
+        "description": "Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire. Preview it first with previewDeleteReportSchedule (same parameters, including If-Match; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.",
         "operationId": "deleteReportSchedule",
         "parameters": [
           {
@@ -7050,12 +7069,13 @@
                 }
               }
             },
-            "description": "The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved",
+            "description": "Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. This Action never steps up (TM-D30 SX-2), so it is never held step_up. Nothing changed yet; it applies when approved",
             "headers": {
               "ActiveDIQ-Operation-Id": {
                 "description": "The held operation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -7069,6 +7089,7 @@
                 "description": "The operation that made this change. It is the undo handle for undoReportScheduleOperation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -7203,6 +7224,7 @@
                 "description": "The operation that made this change. It is the undo handle for undoReportScheduleOperation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -7224,12 +7246,13 @@
                 }
               }
             },
-            "description": "The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved",
+            "description": "Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which, for example step_up when a token or automation makes a change whose after-state has an external recipient (TM-D30 SX-1, SX-4). Nothing changed yet; it applies when approved",
             "headers": {
               "ActiveDIQ-Operation-Id": {
                 "description": "The held operation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -7325,6 +7348,7 @@
                 "description": "The operation that made this change. It is the undo handle for undoReportScheduleOperation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -7346,12 +7370,13 @@
                 }
               }
             },
-            "description": "The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved",
+            "description": "Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. This Action never steps up (TM-D30 SX-2), so it is never held step_up. Nothing changed yet; it applies when approved",
             "headers": {
               "ActiveDIQ-Operation-Id": {
                 "description": "The held operation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -7406,7 +7431,7 @@
     },
     "/reports/schedules/{scheduleId}/pause": {
       "post": {
-        "description": "Pauses the schedule, as the Action reports.schedule.pause (ADR-0005 rule 10). A paused schedule fires nothing until it is resumed. Pausing another owner's schedule additionally needs reports.schedule.manage_all. A pause the system makes under the owner-authority rule is not this operation; it is audited as an event and shows as pausedReason. Preview it first with previewPauseReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.",
+        "description": "Pauses the schedule, as the Action reports.schedule.pause (ADR-0005 rule 10). A paused schedule fires nothing until it is resumed. Pausing another owner's schedule additionally needs reports.schedule.manage_all. A pause the system makes under the owner-authority rule is not this operation; it is audited as an event and shows as pausedReason. Preview it first with previewPauseReportSchedule (same parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.",
         "operationId": "pauseReportSchedule",
         "parameters": [
           {
@@ -7428,6 +7453,7 @@
                 "description": "The operation that made this change. It is the undo handle for undoReportScheduleOperation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -7449,12 +7475,13 @@
                 }
               }
             },
-            "description": "The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved",
+            "description": "Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. This Action never steps up (TM-D30 SX-2), so it is never held step_up. Nothing changed yet; it applies when approved",
             "headers": {
               "ActiveDIQ-Operation-Id": {
                 "description": "The held operation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -7493,7 +7520,7 @@
     },
     "/reports/schedules/{scheduleId}/previews/delete": {
       "post": {
-        "description": "The dry run of deleteReportSchedule as the Action reports.schedule.delete (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as deleteReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
+        "description": "The dry run of deleteReportSchedule as the Action reports.schedule.delete (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. This Action has no plan refusal of its own; a gate denial is a 200 with outcome refused, never a problem. Same x-permission and parameters (including If-Match) as deleteReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
         "operationId": "previewDeleteReportSchedule",
         "parameters": [
           {
@@ -7552,7 +7579,7 @@
     },
     "/reports/schedules/{scheduleId}/previews/pause": {
       "post": {
-        "description": "The dry run of pauseReportSchedule as the Action reports.schedule.pause (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as pauseReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
+        "description": "The dry run of pauseReportSchedule as the Action reports.schedule.pause (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. This Action has no plan refusal of its own: pausing a paused schedule is outcome no_change, and a gate denial is a 200 with outcome refused, never a problem. Same x-permission and parameters as pauseReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
         "operationId": "previewPauseReportSchedule",
         "parameters": [
           {
@@ -7602,7 +7629,7 @@
     },
     "/reports/schedules/{scheduleId}/previews/reassign": {
       "post": {
-        "description": "The dry run of reassignReportSchedule as the Action reports.schedule.reassign (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as reassignReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
+        "description": "The dry run of reassignReportSchedule as the Action reports.schedule.reassign (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code owner_lacks_permission, never a problem; so is a gate denial. Same x-permission, parameters (including If-Match) and body as reassignReportSchedule; its x-permission already is reports.schedule.manage_all.",
         "operationId": "previewReassignReportSchedule",
         "parameters": [
           {
@@ -7681,7 +7708,7 @@
     },
     "/reports/schedules/{scheduleId}/previews/resume": {
       "post": {
-        "description": "The dry run of resumeReportSchedule as the Action reports.schedule.resume (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as resumeReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
+        "description": "The dry run of resumeReportSchedule as the Action reports.schedule.resume (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code owner_only, report_scope_empty or report_scope_unsupported, never a problem; so is a gate denial. Resuming an active schedule is outcome no_change. Same x-permission and parameters as resumeReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
         "operationId": "previewResumeReportSchedule",
         "parameters": [
           {
@@ -7731,7 +7758,7 @@
     },
     "/reports/schedules/{scheduleId}/previews/update": {
       "post": {
-        "description": "The dry run of updateReportSchedule as the Action reports.schedule.update (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds (blocked codes such as report_scope_empty, report_scope_unsupported, external_not_permitted, owner_only) is a 200 with outcome refused, never a problem. Same x-permission, parameters and body as updateReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
+        "description": "The dry run of updateReportSchedule as the Action reports.schedule.update (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code report_scope_empty, report_scope_unsupported, external_not_permitted or name_taken, never a problem; so is a gate denial. Same x-permission, parameters (including If-Match) and body as updateReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).",
         "operationId": "previewUpdateReportSchedule",
         "parameters": [
           {
@@ -7810,7 +7837,7 @@
     },
     "/reports/schedules/{scheduleId}/resume": {
       "post": {
-        "description": "Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this. Preview it first with previewResumeReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.",
+        "description": "Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this. Preview it first with previewResumeReportSchedule (same parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.",
         "operationId": "resumeReportSchedule",
         "parameters": [
           {
@@ -7832,6 +7859,7 @@
                 "description": "The operation that made this change. It is the undo handle for undoReportScheduleOperation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
@@ -7853,12 +7881,13 @@
                 }
               }
             },
-            "description": "The gate held the change for approval (ADR-0005 rule 8); nothing changed yet, and it applies when approved",
+            "description": "Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which, for example step_up when a token or automation makes a change whose after-state has an external recipient (TM-D30 SX-1, SX-4). Nothing changed yet; it applies when approved",
             "headers": {
               "ActiveDIQ-Operation-Id": {
                 "description": "The held operation.",
                 "required": true,
                 "schema": {
+                  "format": "uuid",
                   "maxLength": 36,
                   "type": "string"
                 }
