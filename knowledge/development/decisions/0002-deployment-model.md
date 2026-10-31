@@ -390,7 +390,7 @@ The job therefore holds an **activation table**: each check lists the path that 
 
 **Status path.** Ratified at review of T-0003 (notice D-0007). It becomes `accepted` when two conditions hold:
 - `fitness-tenancy` (T1–T5) and `fitness-profiles` (P1, P7, U1, U2 and the activation table) run green in `make ci` on `main`;
-- the activation table holds an entry for every remaining check: P2–P6, U3 and U4.
+- the activation table holds an entry for every remaining check: P2-oci, P2-msi, P3 to P6, U3 and U4.
 
 From then on, a subject such as the MSI, the connector, the updater or the agent protos cannot merge without its check.
 

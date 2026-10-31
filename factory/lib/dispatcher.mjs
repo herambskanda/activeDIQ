@@ -19,7 +19,7 @@ import { applyNoProgress } from './escalation.mjs';
 import { buildPrompt } from './prompt.mjs';
 import { buildWorkerArgs, launchWorker, runFiles, signalPid } from './launcher.mjs';
 import {
-  branchName, cleanupWorktree, ensureWorktree, mergeTicket, repoState, usesSharedCheckout,
+  branchName, branchesAheadOfMain, cleanupWorktree, ensureWorktree, mergeTicket, repoState, usesSharedCheckout,
 } from './worktree.mjs';
 import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
@@ -380,21 +380,26 @@ export class Dispatcher {
   // ---- merging ----------------------------------------------------------------------------
 
   /**
-   * Merge every finished code ticket that still has a worktree. With the pre-merge gate enabled
-   * (`dispatcher.pre_merge.enabled`) the gate runs CI on the merge result first, which takes
-   * minutes to an hour, so one ticket at a time goes through it in the background: this pass
-   * starts it and returns, and the ticket merges (or is reopened) when the gate finishes.
+   * Merge every finished ticket that has work on its branch: code tickets that still have a
+   * worktree, and any other type whose `factory/<id>` branch has commits ahead of main (a spec
+   * or docs ticket must never reach done with its commits stranded on a branch — T-0986).
+   * With the pre-merge gate enabled (`dispatcher.pre_merge.enabled`) the gate runs CI on the
+   * merge result first, which takes minutes to an hour, so one ticket at a time goes through it
+   * in the background: this pass starts it and returns, and the ticket merges (or is reopened)
+   * when the gate finishes.
    */
   async mergePass() {
     if (this.shared) return;
     const gated = preMergeSettings(this.ctx.config).enabled;
     if (gated && this.gateRun) return;
-    const finished = listEntities(this.ctx, 'tickets')
-      .filter((t) => t.status === 'done' && t.links?.worktree && isCodeType(this.ctx.config, t.type));
+    const done = listEntities(this.ctx, 'tickets').filter((t) => t.status === 'done');
+    const code = (t) => isCodeType(this.ctx.config, t.type);
+    const stranded = done.some((t) => !code(t)) ? await branchesAheadOfMain(this.ctx) : new Map();
+    const finished = done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id)));
     for (const ticket of finished) {
       if (this.stopping) return;
       if (this.holdEmbargoed(ticket)) continue;
-      if (!gated) {
+      if (!gated || !code(ticket)) { // spec/docs branches carry no product code to gate
         await this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket));
         continue;
       }
@@ -458,7 +463,7 @@ export class Dispatcher {
       setTicketLinks(ctx, ticket.id, { worktree: null, held: null, merged: nowIso(ctx), merge_commit: merged.commit });
       appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merged into ${main} (${merged.commit.slice(0, 8)})${problems.length ? `; cleanup: ${problems.join('; ')}` : ''}` });
     } else if (merged.status === 'conflict') {
-      reopenTicket(ctx, ticket.id, 'dispatcher', `merging ${branchName(ticket.id)} into ${main} conflicted (${merged.detail}). Merge ${main} into the branch, resolve the conflicts, re-run the tests and advance again.`);
+      reopenTicket(ctx, ticket.id, 'dispatcher', `merging ${branchName(ticket.id)} into ${ctx.config.dispatcher.main_branch} conflicted (${merged.detail}). Merge ${ctx.config.dispatcher.main_branch} into the branch, resolve the conflicts, re-run the tests and advance again.${ticket.links?.worktree ? '' : ` This ${ticket.type} ticket works in the main checkout, so do the merge in a temporary worktree: git worktree add <dir> ${branchName(ticket.id)}.`}`);
     } else {
       throw new FactoryError(`merging ${ticket.id} failed: ${merged.detail}`);
     }

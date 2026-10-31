@@ -1,4 +1,4 @@
--- 0050_inventory_servers: admin-registered servers (safe-primitives §6.3 InventoryHost, T-0584).
+-- 0050_invhost_servers: admin-registered servers (safe-primitives §6.3 InventoryHost, T-0584).
 -- Owner: internal/directory/invhost.
 --
 -- A file server (home folders, ADM-023) or any non-DC host we may connect to is a row here, put there by an

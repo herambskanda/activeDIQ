@@ -139,7 +139,7 @@ func waBoot(t *testing.T, s *storetest.Server, publicURL string) *waServer {
 		t.Fatal(err)
 	}
 	cfg := config.Config{APIBodyBudget: config.DefaultAPIBodyBudget, PublicURL: publicURL}
-	h, err := buildAPIPorts(cfg, permissionCatalogue(), console.ports(testLimiter(t), az, permissionCatalogue()), console.Tags(), directory.Handlers{Connections: activeConns{}, Search: &oneUser{}}.Bind())
+	h, err := buildAPIPorts(cfg, permissionCatalogue(), console.ports(testLimiter(t), az, permissionCatalogue()), console.Tags(), directory.Handlers{Connections: activeConns{}, Search: &oneUser{}, Scopes: consoleScopes{}}.Bind())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,8 +8,11 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
+	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authn/api"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
+	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 func addr(s string) netip.Addr { return netip.MustParseAddr(s) }
@@ -172,5 +175,53 @@ func TestPasswordStepBusyAndFaultAnswers(t *testing.T) {
 	}
 	if pf.Status != 401 || !reflect.DeepEqual(pf, pw) {
 		t.Errorf("a fault must answer exactly the wrong-password 401: %+v vs %+v", pf, pw)
+	}
+}
+
+type stubKeys struct{ KeySource }
+type stubSink struct{ audit.Sink }
+
+// configured returns a LocalCredentials whose dependencies are all set (never called), so only the
+// source prefix lengths decide whether ready() accepts it.
+func configured(v4, v6 int) *LocalCredentials {
+	return &LocalCredentials{DB: &store.DB{}, Sessions: &Store{}, Pending: &PendingStore{}, Keys: stubKeys{}, Audit: stubSink{},
+		Tenant: func() (tenant.ID, bool) { return tenant.ID{}, false }, IPv4Bits: v4, IPv6Bits: v6}
+}
+
+// A prefix length outside the §7.8 ranges (IPv4 /24../32, IPv6 /48../64) is refused when the gate is
+// used, so it is never a finer key; the in-range edges and the zero default are accepted.
+func TestSourcePrefixLengthsOutsideTheRangesAreRefused(t *testing.T) {
+	for _, c := range []struct{ v4, v6 int }{{0, 128}, {0, 96}, {0, 65}, {0, 47}, {0, -1}, {33, 0}, {23, 0}, {128, 128}} {
+		if err := configured(c.v4, c.v6).ready(); err == nil {
+			t.Errorf("IPv4Bits=%d IPv6Bits=%d was accepted", c.v4, c.v6)
+		}
+		if _, err := configured(c.v4, c.v6).BeginPassword(context.Background(), "a", secret.Secret{}, addr("2001:db8::1")); err == nil {
+			t.Errorf("BeginPassword ran with IPv4Bits=%d IPv6Bits=%d", c.v4, c.v6)
+		}
+	}
+	for _, c := range []struct{ v4, v6 int }{{0, 0}, {24, 48}, {32, 64}, {28, 56}} {
+		if err := configured(c.v4, c.v6).ready(); err != nil {
+			t.Errorf("IPv4Bits=%d IPv6Bits=%d refused: %v", c.v4, c.v6, err)
+		}
+	}
+}
+
+// Even if an out-of-range value reached sourceKey, it falls back to the defaults: two addresses in one
+// /64 stay one source at IPv6Bits 96 and 128 (the fail-open the ticket describes).
+func TestSourceKeyNeverUsesAFinerThanAllowedPrefix(t *testing.T) {
+	for _, bits := range []int{96, 128} {
+		l := &LocalCredentials{IPv6Bits: bits}
+		r, ok := l.acquire(addr("2001:db8:aa:bb::1"))
+		if !ok {
+			t.Fatalf("/%d: first slot refused", bits)
+		}
+		if _, ok := l.acquire(addr("2001:db8:aa:bb::2")); ok {
+			t.Errorf("/%d: two addresses in one /64 took two slots", bits)
+		}
+		r()
+	}
+	l4 := &LocalCredentials{IPv4Bits: 33}
+	if l4.sourceKey(addr("192.0.2.1")).Bits() != 32 {
+		t.Error("IPv4Bits 33 did not fall back to /32")
 	}
 }

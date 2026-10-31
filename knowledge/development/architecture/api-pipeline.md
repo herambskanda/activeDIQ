@@ -53,7 +53,7 @@ Before any file is written the dialect check (about 40 refusals, each tested in 
 a raw filter string, a DN or a free-form object where a typed schema belongs; an inline object, enum or `oneOf` member;
 a nullable `$ref`, array or map; a secret (`SecretInput`) reachable from a response; objects of more than 64 members;
 a body that is not a `$ref`; a component declared in two files; an operation whose tag is not in the tag list.
-The set of bound primitives (`SecretInput` → `internal/platform/secret.Secret`, `FilterAst`, `ReportAst`, `GUIDRef`, `ObjectView`)
+The set of bound primitives (`SecretInput` → `internal/platform/secret.Secret`, `FilterAst`, `ReportAst` → `internal/platform/report.Query`, `GUIDRef`, `ObjectView`)
 lives in `DefaultConfig` (`tools/gen/api/main.go`); a binding marked `Pending` is emitted as an ordinary generated type until its primitive exists.
 
 ## The fixture

@@ -349,6 +349,23 @@ type PublicOrigin struct {
 	RPID string
 }
 
+// maxHostBytes is the DNS limit on a presentation-form name without the trailing dot.
+const maxHostBytes = 253
+
+// validHostLabel reports whether l matches [a-z0-9]([a-z0-9-]{0,61}[a-z0-9])? (l is already lowercase).
+func validHostLabel(l string) bool {
+	if len(l) == 0 || len(l) > 63 || l[0] == '-' || l[len(l)-1] == '-' {
+		return false
+	}
+	for i := 0; i < len(l); i++ {
+		c := l[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // ParsePublicURL canonicalises ACTIVEDIQ_PUBLIC_URL. The host is lowercased and an explicit :443 dropped (a
 // browser never sends it, so an origin carrying it would never match); any other port is kept in the origin
 // and left out of the RP ID. It refuses what no browser can satisfy: anything but a bare https origin, an IP
@@ -382,10 +399,18 @@ func ParsePublicURL(raw string) (PublicOrigin, error) {
 	if _, err := netip.ParseAddr(host); err == nil {
 		return bad("the host is an IP address")
 	}
+	if len(host) > maxHostBytes {
+		return bad("the host is longer than 253 bytes")
+	}
+	// Allow-list, not deny-list: every label is letters, digits and inner hyphens, 1 to 63 bytes. This is
+	// what a browser can use as an RP ID, and it refuses <, >, quotes, ';', '*', '_' and the like.
 	labels := strings.Split(host, ".")
 	for _, l := range labels {
 		if l == "" {
 			return bad("the host has an empty label")
+		}
+		if !validHostLabel(l) {
+			return bad("the host has a label that is not letters, digits and inner hyphens of at most 63 characters")
 		}
 	}
 	// A browser reads a host whose last label is numeric (10.1, 0x7f.1, 2130706433) as an IPv4 address.

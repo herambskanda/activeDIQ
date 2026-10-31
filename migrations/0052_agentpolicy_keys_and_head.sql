@@ -1,6 +1,7 @@
--- 0052_agentfleet_policy_and_events: server side of the addc agent module (T-0556; ADR-0007; contract
--- agent-host-addc-contract §2, §4). Owner: internal/platform/agentpolicy/signer (keys, keysets, policy
--- head) and internal/platform/agentpolicy/ingest (events). Four tenant tables, all FORCE ROW LEVEL SECURITY.
+-- 0052_agentpolicy_keys_and_head: server side of the addc agent module's policy trust chain (T-0556;
+-- ADR-0007; contract agent-host-addc-contract §2, §4). Owner: internal/platform/agentpolicy (SQL in
+-- agentpolicy/signer). Three tenant tables, all FORCE ROW LEVEL SECURITY. The fourth table of the
+-- original file, agent_event, is in 0060_agentingest_events.sql (T-0992: one owner key per file).
 --
 --   agent_policy_key      DM-86  the tenant's Ed25519 policy keys. The private key is AEAD-sealed under the
 --                                tenant DEK (keys.Seal, bound to tenant, table, row, column, version); the
@@ -9,9 +10,6 @@
 --                                offline replays. Append-only.
 --   agent_policy_head     DM-88  the latest signed policy per tenant and agent kind, and the sequence floor:
 --                                policy_seq only ever rises.
---   agent_event           DM-89  records an addc agent appended. The identity columns are stamped by the
---                                server from the client certificate; nothing in the payload names them.
---                                Append-only; the agent's own gapless agent_seq makes redelivery idempotent.
 
 CREATE TABLE public.agent_policy_key (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
@@ -50,29 +48,10 @@ CREATE TABLE public.agent_policy_head (
   PRIMARY KEY (tenant_id, agent_kind)
 );
 
-CREATE TABLE public.agent_event (
-  tenant_id uuid NOT NULL REFERENCES public.tenants (id),
-  component_id uuid NOT NULL,
-  agent_seq bigint NOT NULL CHECK (agent_seq > 0),
-  record_type text NOT NULL CHECK (record_type IN ('event', 'gap', 'dropped')),
-  channel text CHECK (channel IN ('security', 'directory_service')),
-  event_record_id bigint CHECK (event_record_id IS NULL OR event_record_id >= 0),
-  observed_at timestamptz NOT NULL,
-  reported_dc_guid uuid,
-  fields jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (octet_length(fields::text) <= 65536),
-  -- sha256 of the agent-supplied content: a redelivery with the same hash is a duplicate, a different
-  -- hash under the same agent_seq means the agent's state went backwards (divergence, never discarded).
-  content_sha256 bytea NOT NULL CHECK (octet_length(content_sha256) = 32),
-  received_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (tenant_id, component_id, agent_seq)
-);
-
-CREATE INDEX agent_event_time ON public.agent_event (tenant_id, observed_at);
-
 DO $do$
 DECLARE t text;
 BEGIN
-  FOREACH t IN ARRAY ARRAY['agent_policy_key', 'agent_policy_keyset', 'agent_policy_head', 'agent_event'] LOOP
+  FOREACH t IN ARRAY ARRAY['agent_policy_key', 'agent_policy_keyset', 'agent_policy_head'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('ALTER TABLE public.%I FORCE ROW LEVEL SECURITY', t);
     EXECUTE format($p$CREATE POLICY %I ON public.%I
@@ -83,12 +62,11 @@ BEGIN
 END
 $do$;
 
-REVOKE UPDATE ON public.agent_policy_keyset, public.agent_event FROM activediq_app;
+REVOKE UPDATE ON public.agent_policy_keyset FROM activediq_app;
 
 COMMENT ON TABLE public.agent_policy_key IS 'Policy signing keys of a tenant (tenant table, RLS). The private key is sealed (ADR-0007). Only internal/platform/agentpolicy/signer references it in SQL.';
 COMMENT ON TABLE public.agent_policy_keyset IS 'Every signed keyset published, in order (tenant table, RLS, append-only).';
 COMMENT ON TABLE public.agent_policy_head IS 'Latest signed policy and sequence floor per tenant and agent kind (tenant table, RLS).';
-COMMENT ON TABLE public.agent_event IS 'Records appended by addc agents, identity stamped from the client certificate (tenant table, RLS, append-only).';
 
 -- A key only moves forward: active -> retiring (retire_after set), retiring -> dropped (sealed material
 -- erased). Identity columns never change and a dropped key is never revived. A live key's sealed bytes

@@ -29,7 +29,9 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/limiter"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
+	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/store/owners"
 )
 
 // ErrNoDatabase is returned by Run when no database DSN is configured. The server has nothing to do
@@ -156,6 +158,8 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, syslog.Handlers{Store: siem}.Bind())
+	// The anonymous liveness and readiness probes (AN-1). Readiness is the store answering.
+	tags = append(tags, buildHealth(db, slog.Default()))
 	// First-run setup (TM-TB16-T7, AN-4): an unclaimed install holds a one-time secret the installing
 	// administrator reads from the setup directory; the claim route consumes it. Needs the TLS directory.
 	setupTags, err := buildSetup(cfg, time.Now, firstOwner)
@@ -165,7 +169,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	tags = append(tags, setupTags...)
 	// directory.users.search: the connection registry for the active connection and its service-account
 	// gate, the connector source for the ScopedSearch RPC (over the tunnel the connector dialled).
-	dirTag, err := buildDirectory(db, conns, csrc)
+	dirTag, err := buildDirectory(db, conns, csrc, reads, nil)
 	if err != nil {
 		return err
 	}
@@ -333,5 +337,26 @@ func directoryServices(db *store.DB) directory.Services {
 
 // boot hands the generated module list to module.Boot, the only caller of it (ADR-0003 rule 5).
 func boot(ctx context.Context, enabled capability.Set, dir directory.Services) (*module.Contributions, error) {
-	return module.Boot(ctx, generatedModules(platform.Deps{}, dir), enabled)
+	c, _, err := bootReport(ctx, enabled, dir, owners.Lookup)
+	return c, err
+}
+
+// bootReport is boot plus the EP-8 report host. The host is created first so every module receives it
+// as Deps.Report, boots the modules (which checks the tables of the datasets they register), adds
+// those datasets under their module's owner key and seals the host. Datasets that directory packages
+// export (inventory.Datasets(), row B3) are added to the host here too, under their package's key,
+// before the modules boot, and are checked by the same function.
+func bootReport(ctx context.Context, enabled capability.Set, dir directory.Services, ownerOf report.TableOwners) (*module.Contributions, *report.Host, error) {
+	host := report.NewHost(ownerOf)
+	c, err := module.Boot(ctx, generatedModules(platform.Deps{Report: host}, dir), enabled, module.WithTableOwners(ownerOf))
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, s := range c.Datasets() {
+		if err := host.Add(s.Owner, s.Datasets...); err != nil {
+			return nil, nil, fmt.Errorf("server: report datasets: %w", err)
+		}
+	}
+	host.Seal()
+	return c, host, nil
 }

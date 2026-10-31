@@ -90,7 +90,7 @@ func TestRunServesOneCompositeServerBoundToTheConfiguredConnection(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !served || got.State != st || got.Identity.Kind != fleet.KindConnector {
+	if !served || got.State != st || got.Identity.Kind != fleet.KindConnector || got.Open == nil {
 		t.Fatalf("tunnel not served with the enrolled state and leaf identity: %+v", got)
 	}
 	if !closed {
