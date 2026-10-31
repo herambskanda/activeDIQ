@@ -73,9 +73,26 @@ mkdir -p "$fit/internal/platform/kernel" "$fit/internal/directory"
 printf 'module fit.test\n\ngo 1.27.0\n' >"$fit/go.mod"
 printf 'package directory\n' >"$fit/internal/directory/d.go"
 printf 'package kernel\n\nimport _ "fit.test/internal/directory"\n' >"$fit/internal/platform/kernel/k.go"
+# the fixture needs a blueprint now: M7 (ADR-0003 closed catalogue) reads blueprint §5.1-§5.3.
+bp="$fit/knowledge/development/architecture"
+mkdir -p "$bp"
+bprow() { printf '| %s | owner | interface | - |\n' "$1"; }
+bpdoc() { # <5.1 rows> <5.2 rows>
+	printf '## 5. Component catalogue\n\n### 5.1 Platform kernel\n\n| Package | Owner | Interface | EPs |\n| --- | --- | --- | --- |\n%s\n### 5.2 Directory domain\n\n| Package | Owner | Interface | EPs |\n| --- | --- | --- | --- |\n%s\n### 5.3 Connector root\n\n| Package | Owner | Interface | EPs |\n| --- | --- | --- | --- |\n\n### 5.4 Server feature modules\n' "$1" "$2"
+}
+bpdoc "$(bprow '`kernel`')" "$(bprow '`directory`')" >"$bp/blueprint.md"
 must_fail_with "fitness-modules on a platform package importing the directory domain" "kernel imports nothing above it" go run ./tools/fitness/modules -root "$fit"
 printf 'package kernel\n' >"$fit/internal/platform/kernel/k.go"
 must_pass "fitness-modules" go run ./tools/fitness/modules -root "$fit"
+bpdoc "" "$(bprow '`directory`')" >"$bp/blueprint.md"
+must_fail_with "fitness-modules M7 on a platform package with no blueprint row" 'internal/platform/kernel: \[ADR-0003 M7\] package internal/platform/kernel has no row in blueprint §5.1' go run ./tools/fitness/modules -root "$fit"
+bpdoc "$(bprow '`kernel`')"$'\n'"$(bprow '`kernel`')" "$(bprow '`directory`')" >"$bp/blueprint.md"
+must_fail_with "fitness-modules M7 on a platform package with two blueprint rows" 'internal/platform/kernel has 2 rows in blueprint §5.1' go run ./tools/fitness/modules -root "$fit"
+bpdoc "" "$(bprow '`directory`')"$'\n'"$(bprow '`kernel`')" >"$bp/blueprint.md"
+must_fail_with "fitness-modules M7 on a platform package whose only row is in §5.2" 'internal/platform/kernel is named only in blueprint §5.2, not in its own §5.1' go run ./tools/fitness/modules -root "$fit"
+bpdoc "$(bprow '`other` (+`kernel`)')" "$(bprow '`directory`')" >"$bp/blueprint.md"
+must_fail_with "fitness-modules M7 does not count a (+sub) mention" 'internal/platform/kernel has no row in blueprint §5.1' go run ./tools/fitness/modules -root "$fit"
+bpdoc "$(bprow '`kernel`')" "$(bprow '`directory`')" >"$bp/blueprint.md"
 
 # --- fitness-api (ADR-0004 A1, A3, A5, A7 static, A8, A10, A11, A12, A13, self-test, inactive reporting), the real CLI
 # The per-rule proofs are the tool's own tests (go test ./tools/fitness/api); this is the command line.

@@ -199,6 +199,10 @@ func (l *LocalCredentials) ready() error {
 	if l.DB == nil || l.Sessions == nil || l.Pending == nil || l.Keys == nil || l.Audit == nil || l.Tenant == nil {
 		return errors.New("authn: LocalCredentials is not fully configured")
 	}
+	// A prefix length outside the §7.8 ranges would let one /64 hold every in-flight slot: refuse to run.
+	if _, _, err := limiter.NormaliseBits(l.IPv4Bits, l.IPv6Bits); err != nil {
+		return fmt.Errorf("authn: LocalCredentials source prefix: %w", err)
+	}
 	return nil
 }
 
@@ -419,12 +423,9 @@ WHERE c.tenant_id = $1::uuid AND c.username_norm = $2`, t.String(), name).Scan(&
 // §7.8 rules 1-3, limiter.SourcePrefix) so the two controls cannot disagree about who a client is. An
 // address that is invalid or cannot be masked is one shared source, so it cannot hold more than its share.
 func (l *LocalCredentials) sourceKey(a netip.Addr) netip.Prefix {
-	v4, v6 := l.IPv4Bits, l.IPv6Bits
-	if v4 == 0 {
-		v4 = limiter.DefaultIPv4Bits
-	}
-	if v6 == 0 {
-		v6 = limiter.DefaultIPv6Bits
+	v4, v6, err := limiter.NormaliseBits(l.IPv4Bits, l.IPv6Bits)
+	if err != nil { // ready() refuses these; if one gets here anyway, use the defaults, never a finer key
+		v4, v6 = limiter.DefaultIPv4Bits, limiter.DefaultIPv6Bits
 	}
 	p, _ := limiter.SourcePrefix(a, v4, v6) // the zero Prefix on failure is the shared unparsed source
 	return p
