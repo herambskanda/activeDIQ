@@ -145,17 +145,20 @@ func isDigit(c byte) bool     { return c >= '0' && c <= '9' }
 //   - a word is a keyword, a function followed by "(", a type after "::", "as" or before a
 //     literal, or a column name after "{t}." or "{rel.x}.";
 //   - a "." is allowed only after {t} or {rel.x}, so no schema-qualified name exists;
-//   - "from" is followed by {rel.x}, except in IS DISTINCT FROM and EXTRACT(… FROM …), so a
-//     subselect reads only relations the compiler built and scoped. A joined RowAnchor is not one:
-//     its slot is a bare alias, which in FROM position PostgreSQL resolves as a relation on the
-//     search_path, so it may not follow FROM; rowAnchors holds those IDs.
+//   - "from" is followed by {rel.x}, except in exactly IS [NOT] DISTINCT FROM and the first FROM of
+//     EXTRACT(… FROM …), so a subselect reads only relations the compiler built and scoped. A
+//     joined RowAnchor is not one: its slot is a bare alias, which in FROM position PostgreSQL
+//     resolves as a relation on the search_path, so it may not follow FROM; rowAnchors holds those
+//     IDs. The slot is the whole FROM list: it is not followed by "." (schema.table) and no ","
+//     at the same bracket depth follows it (a second, unscoped FROM item).
 func checkFragment(parts []report.Part, tables map[string]bool, rowAnchors map[report.AnchorID]bool) error {
 	toks, err := tokenize(parts)
 	if err != nil {
 		return err
 	}
-	var extractDepth []int // paren depths at which an EXTRACT( is open
+	var extractDepth []int // paren depths at which an EXTRACT( is open; -depth-1 once its FROM was used
 	depth := 0
+	inFrom := map[int]bool{} // bracket depths at which a FROM item has been seen
 	prev := func(i int) *token {
 		if i == 0 {
 			return nil
@@ -173,16 +176,21 @@ func checkFragment(parts []report.Part, tables map[string]bool, rowAnchors map[r
 		switch t.kind {
 		case tokPunct:
 			switch t.text {
-			case "(":
+			case "(", "[":
 				depth++
-				if p != nil && p.kind == tokWord && p.text == "extract" {
+				if t.text == "(" && p != nil && p.kind == tokWord && p.text == "extract" {
 					extractDepth = append(extractDepth, depth)
 				}
-			case ")":
-				if k := len(extractDepth); k > 0 && extractDepth[k-1] == depth {
+			case ")", "]":
+				if k := len(extractDepth); k > 0 && (extractDepth[k-1] == depth || extractDepth[k-1] == -depth-1) {
 					extractDepth = extractDepth[:k-1]
 				}
+				delete(inFrom, depth)
 				depth--
+			case ",":
+				if inFrom[depth] {
+					return fmt.Errorf(`a "," follows the FROM item at the same level: a FROM list may hold one {rel.<id>} slot only, because any further item would be read unscoped`)
+				}
 			case ".":
 				if p == nil || p.kind != tokSlot || (p.slot != report.SlotBase && p.slot != report.SlotRel) {
 					return fmt.Errorf("a schema-qualified or dotted name is not allowed%s; reach a column as {t}.col or {rel.<id>}.col", nearWord(p, n))
@@ -215,8 +223,12 @@ func checkFragment(parts []report.Part, tables map[string]bool, rowAnchors map[r
 			}
 			if fragKeywords[w] {
 				if w == "from" {
-					if err := checkFrom(p, n, len(extractDepth) > 0 && extractDepth[len(extractDepth)-1] == depth, rowAnchors); err != nil {
+					item, err := checkFrom(toks, i, extractDepth, depth, rowAnchors)
+					if err != nil {
 						return err
+					}
+					if item {
+						inFrom[depth] = true
 					}
 				}
 				continue
@@ -236,26 +248,40 @@ func checkFragment(parts []report.Part, tables map[string]bool, rowAnchors map[r
 	return nil
 }
 
-// checkFrom allows FROM only before a {rel.x} slot, inside EXTRACT(…), or after DISTINCT. The slot
-// must expand to a subselect the compiler built (Rel, FilterAnchor, MaskAnchor), never to a RowAnchor's
-// bare alias.
-func checkFrom(p, n *token, inExtract bool, rowAnchors map[report.AnchorID]bool) error {
-	if p != nil && p.kind == tokWord && p.text == "distinct" {
-		return nil
+// checkFrom judges the "from" at toks[i]. It reports whether the word opens a FROM list (as opposed
+// to being part of IS [NOT] DISTINCT FROM or EXTRACT(… FROM …)). A FROM list is one {rel.x} slot that
+// expands to a subselect the compiler built (Rel, FilterAnchor, MaskAnchor), never a RowAnchor's bare
+// alias, and is not followed by "." (that would reach {rel.public}.directory_objects).
+//
+// Only the exact phrases IS DISTINCT FROM and IS NOT DISTINCT FROM are exempt: "distinct" before
+// "from" is not enough, since `AS distinct FROM {rel.x}` is a select list ending in an alias. The
+// first FROM directly inside EXTRACT( is exempt; extractDepth marks it spent.
+func checkFrom(toks []token, i int, extractDepth []int, depth int, rowAnchors map[report.AnchorID]bool) (bool, error) {
+	word := func(k int, w string) bool { return k >= 0 && toks[k].kind == tokWord && toks[k].text == w }
+	if word(i-1, "distinct") && (word(i-2, "is") || word(i-2, "not") && word(i-3, "is")) {
+		return false, nil
 	}
-	if inExtract {
-		return nil
+	if k := len(extractDepth); k > 0 && extractDepth[k-1] == depth {
+		extractDepth[k-1] = -depth - 1
+		return false, nil
+	}
+	var n *token
+	if i+1 < len(toks) {
+		n = &toks[i+1]
 	}
 	if n != nil && n.kind == tokSlot && n.slot == report.SlotRel {
 		if rowAnchors[n.id] {
-			return fmt.Errorf("{rel.%s} follows from, but %q is a RowAnchor: its slot is a bare alias, which FROM would resolve as a table; read it as {rel.%s}.col outside FROM, or declare a FilterAnchor or Rel", n.id, n.id, n.id)
+			return false, fmt.Errorf("{rel.%s} follows from, but %q is a RowAnchor: its slot is a bare alias, which FROM would resolve as a table; read it as {rel.%s}.col outside FROM, or declare a FilterAnchor or Rel", n.id, n.id, n.id)
 		}
-		return nil
+		if i+2 < len(toks) && toks[i+2].kind == tokPunct && toks[i+2].text == "." {
+			return false, fmt.Errorf("{rel.%s} follows from and is followed by a dot: a FROM item is the bare slot, never a qualified name", n.id)
+		}
+		return true, nil
 	}
 	if n != nil && n.kind == tokWord {
-		return fmt.Errorf("a fragment names no table: %q follows from, which must be followed by a {rel.<id>} slot", n.raw)
+		return false, fmt.Errorf("a fragment names no table: %q follows from, which must be followed by a {rel.<id>} slot", n.raw)
 	}
-	return fmt.Errorf(`"from" must be followed by a {rel.<id>} slot; a fragment names no table`)
+	return false, fmt.Errorf(`"from" must be followed by a {rel.<id>} slot; a fragment names no table`)
 }
 
 func nearWord(p, n *token) string {

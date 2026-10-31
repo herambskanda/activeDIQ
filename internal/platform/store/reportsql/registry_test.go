@@ -214,6 +214,71 @@ func TestNewRegistry_RowAnchor_slot_may_not_follow_from(t *testing.T) {
 	}
 }
 
+// T-1033 (second security review): the FROM list is exactly one non-RowAnchor {rel.x} slot. The
+// IS [NOT] DISTINCT FROM exemption is exact, a comma adds no second item, a dot qualifies nothing,
+// and a RowAnchor or Rel may not be named after a schema.
+func TestNewRegistry_FROM_is_one_scoped_slot(t *testing.T) {
+	withRel := func(d *report.Dataset) {
+		d.Rels = append(d.Rels, report.Rel{ID: "p", Kind: report.RelEdge, Table: "group_links", Project: []report.Ident{"group_guid"}})
+		d.Tables = append(d.Tables, "group_links")
+	}
+	withRow := func(id report.AnchorID) func(*report.Dataset) {
+		return func(d *report.Dataset) {
+			a := anchorT()
+			a.ID = id
+			d.Anchors = append(d.Anchors, a)
+			d.Base.Joins = append(d.Base.Joins, report.RowJoin{Anchor: id,
+				On: report.SQL("{rel." + string(id) + "}.object_guid = {t}.object_guid")})
+		}
+	}
+	with := func(sql string, pre ...func(*report.Dataset)) func(*report.Dataset) {
+		return func(d *report.Dataset) {
+			for _, f := range pre {
+				f(d)
+			}
+			d.Columns[2].Source = report.Derived{SQL: report.SQL(sql)}
+		}
+	}
+	for _, c := range []struct {
+		name string
+		mut  func(*report.Dataset)
+		want []string
+	}{
+		{"alias distinct", with(`(SELECT count(*) AS distinct FROM {rel.g})::text`, withRow("g")), []string{"g", "RowAnchor"}},
+		{"alias distinct over a Rel", with(`(SELECT count(*) AS distinct FROM x)::text`, withRel), []string{"x", "from"}},
+		{"not distinct alias", with(`(SELECT count(*) AS not distinct FROM {rel.g})::text`, withRow("g")), []string{"g", "RowAnchor"}},
+		{"comma item", with(`(SELECT count(*) FROM {rel.p}, {rel.p})::text`, withRel), []string{","}},
+		{"comma item after where", with(`(SELECT count(*) FROM {rel.p} WHERE true, {rel.p})::text`, withRel), []string{","}},
+		{"comma item bare table", with(`(SELECT count(*) FROM {rel.p}, day)::text`, withRel), []string{","}},
+		{"second from after extract", with(`(SELECT extract(day FROM now FROM {rel.g}))::text`, withRow("g")), []string{"now"}},
+		{"slot then dot", with(`(SELECT count(*) FROM {rel.p}.directory_objects)::text`, withRel), []string{"p", "dot"}},
+		{"anchor named public", with(`(SELECT count(*) AS distinct FROM {rel.public}.directory_objects)::text`, withRow("public")), []string{"public"}},
+		{"anchor named information_schema", withRow("information_schema"), []string{"information_schema"}},
+		{"rel named public", func(d *report.Dataset) {
+			d.Rels = append(d.Rels, report.Rel{ID: "public", Kind: report.RelEdge, Table: "group_links", Project: []report.Ident{"group_guid"}})
+			d.Tables = append(d.Tables, "group_links")
+		}, []string{"public"}},
+	} {
+		t.Run(c.name, func(t *testing.T) { refused(t, c.mut, c.want...) })
+	}
+
+	for name, sql := range map[string]string{
+		"is distinct from":     `{t}.sam_account_name IS DISTINCT FROM {t}.display_name`,
+		"is not distinct from": `{t}.sam_account_name IS NOT DISTINCT FROM {t}.display_name`,
+		"one slot":             `(SELECT count(*) FROM {rel.p} WHERE {rel.p}.group_guid IS NOT NULL)::text`,
+		"commas elsewhere":     `(SELECT coalesce(max({rel.p}.group_guid::text), 'x') FROM {rel.p} WHERE {rel.p}.group_guid = ANY (ARRAY[{t}.object_guid, {t}.object_guid]))::text`,
+		"extract":              `extract(epoch FROM {t}.when_created)::text`,
+	} {
+		t.Run("ok "+name, func(t *testing.T) {
+			ds := usersDataset()
+			with(sql, withRel)(&ds)
+			if _, err := reportsql.NewRegistry(opts(), ds); err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+		})
+	}
+}
+
 func TestNewRegistry_fragments_the_allowlist_admits_what_datasets_need(t *testing.T) {
 	for _, sql := range []string{
 		`'not_locked'`,

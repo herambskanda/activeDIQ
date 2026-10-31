@@ -240,8 +240,10 @@ safe:
   cast types (`text`, `int`, `bigint`, `smallint`, `integer`, `boolean`, `uuid`, `timestamptz`,
   `date`, `interval`, `numeric`; never `regclass` or `xml`), or a column name after `{t}.` or
   `{rel.<id>}.`. Also refused: a `.` anywhere else (no schema-qualified name), a `FROM` not
-  followed by a `{rel.<id>}` slot (`IS DISTINCT FROM` and `EXTRACT(… FROM …)` excepted; the slot of a
-  joined `RowAnchor` is refused too, see below), `now`
+  followed by a `{rel.<id>}` slot (exactly `IS [NOT] DISTINCT FROM` and the first `FROM` inside
+  `EXTRACT(` excepted, so `AS distinct FROM` is not; the slot of a joined `RowAnchor` is refused too,
+  see below), a `,` after a FROM item at the same bracket depth (the list is one slot), a `.` after
+  the FROM slot, `now`
   and `current_timestamp` (the clock is `{now}`), a slot inside a string literal, any character
   outside ASCII SQL punctuation, and every unlisted function. The error names the word. A dataset
   that needs another function amends the lists in `fragcheck.go` with a test, in review.
@@ -259,7 +261,7 @@ fragment reads directory data only through `{rel.<id>}`, and the compiler builds
 | --- | --- | --- |
 | `FilterAnchor` | `(SELECT <Project> FROM <table> WHERE <scope(alias)>) AS "<id>"` | counts and lists of other objects: GRP-01 member counts, OU-01 subtree counts, a member's groups. Out-of-scope rows do not exist for the fragment |
 | `MaskAnchor` | `(SELECT <Project minus Identity>, CASE WHEN <scope> THEN <identity col> END AS <identity col>…, <scope> AS in_scope FROM <table>) AS "<id>"` | inputs that must be read whatever the scope, whose identity must not show: the PSO that sets a user's policy (`policy_source`), the `Via` hop of an effective membership |
-| joined `RowAnchor` | its quoted alias `"<id>"` (no subselect: the row is already in FROM, scope in WHERE) | reading a column of a joined endpoint object, `{rel.<id>}.col`. **It may not follow `FROM`**: there a bare name resolves as a relation on the search_path, so `FROM {rel.pg_class}` would read a catalog. The registry refuses it (T-1033), and refuses any anchor or `Rel` ID starting `pg_` |
+| joined `RowAnchor` | its quoted alias `"<id>"` (no subselect: the row is already in FROM, scope in WHERE) | reading a column of a joined endpoint object, `{rel.<id>}.col`. **It may not follow `FROM`**: there a bare name resolves as a relation on the search_path, so `FROM {rel.pg_class}` would read a catalog. The registry refuses it (T-1033), and refuses any anchor or `Rel` ID starting `pg_` or equal to `public` or `information_schema` (a schema name followed by `.table` would read it) |
 | `RelEdge`, `RelInput` | `(SELECT <Project> FROM <table> WHERE <Rel.Where>) AS "<id>"` | links, closure edges, D4 policy values. No text columns (enforced), so no name can come from them |
 
 `<scope(alias)>` is the full rendered scope of §4.3 over that alias, including the token layer

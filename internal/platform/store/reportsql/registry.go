@@ -170,6 +170,9 @@ func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 		if strings.HasPrefix(strings.ToLower(id), "pg_") {
 			return nil, fmt.Errorf("anchor or relation ID %q starts with pg_, which names system relations", id)
 		}
+		if l := strings.ToLower(id); l == "public" || l == "information_schema" {
+			return nil, fmt.Errorf("anchor or relation ID %q is a schema name, which {rel.%s}.table would turn into a table read", id, id)
+		}
 		if tableNames[strings.ToLower(id)] {
 			return nil, fmt.Errorf("anchor or relation ID %q is also a table name", id)
 		}
