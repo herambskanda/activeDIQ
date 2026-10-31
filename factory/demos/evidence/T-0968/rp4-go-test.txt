@@ -1,0 +1,8 @@
+=== RUN   Test_expired_run_is_not_served
+=== RUN   Test_expired_run_is_not_served/pg16
+=== RUN   Test_expired_run_is_not_served/pg18
+--- PASS: Test_expired_run_is_not_served (7.77s)
+    --- PASS: Test_expired_run_is_not_served/pg16 (4.53s)
+    --- PASS: Test_expired_run_is_not_served/pg18 (3.24s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/modules/reports/run	8.616s

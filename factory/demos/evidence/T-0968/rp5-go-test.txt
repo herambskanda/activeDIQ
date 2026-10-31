@@ -1,0 +1,8 @@
+=== RUN   Test_export_digest_equals_run_digest
+=== RUN   Test_export_digest_equals_run_digest/pg16
+=== RUN   Test_export_digest_equals_run_digest/pg18
+--- PASS: Test_export_digest_equals_run_digest (7.91s)
+    --- PASS: Test_export_digest_equals_run_digest/pg16 (4.55s)
+    --- PASS: Test_export_digest_equals_run_digest/pg18 (3.37s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/modules/reports/export	8.837s
