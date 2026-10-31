@@ -58,6 +58,7 @@ const PAIRS: ReadonlyArray<readonly [string, string, string, number]> = [
   ["Secondary text on sunken surface", "text-2", "surface-2", 4.5],
   ["Body text on selected row", "text", "signal-soft", 4.5],
   ["Muted text on selected row", "text-3", "signal-soft", 4.5],
+  ["Secondary text on selected row (palette active option)", "text-2", "signal-soft", 4.5],
   ["Signal as link or key number on surface", "signal-text", "surface", 4.5],
   ["Signal as link on page", "signal-text", "bg", 4.5],
   ["Signal as text on sunken surface", "signal-text", "surface-2", 4.5],
@@ -127,6 +128,15 @@ describe("activeDIQ tokens: WCAG 2.2 AA in both themes", () => {
     const z = (n: string) => Number(new RegExp(`--diq-${n}:\\s*(\\d+)`).exec(tokensCss)?.[1]);
     expect(z("z-popover")).toBeLessThan(z("z-sheet"));
     expect(z("z-sheet")).toBeLessThan(z("z-toast"));
+  });
+
+  it("defines the command palette size and layer, between the sheet and the toast (T-1098)", () => {
+    for (const name of ["palette-w", "palette-list-h", "z-palette"]) {
+      expect(tokensCss, `--diq-${name}`).toMatch(new RegExp(`--diq-${name}:`));
+    }
+    const z = (n: string) => Number(new RegExp(`--diq-${n}:\\s*(\\d+)`).exec(tokensCss)?.[1]);
+    expect(z("z-sheet")).toBeLessThan(z("z-palette"));
+    expect(z("z-palette")).toBeLessThan(z("z-toast"));
   });
 
   it("is activeDIQ's own palette: no skenzeriq indigo", () => {
