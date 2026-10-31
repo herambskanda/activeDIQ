@@ -20,7 +20,12 @@
     "pre_merge": {
       "enabled": true,
       "argv": ["make", "-k", "ci"],
-      "timeout_minutes": 120
+      "timeout_minutes": 120,
+      "numbering": {
+        "dir": "migrations",
+        "argv": ["go", "test", "-count=1", "./migrations/", "-run", "^TestMigrationNumbersAreUniqueAndContiguous$"],
+        "timeout_seconds": 120
+      }
     },
     "permission_mode": "auto",
     "rate_limit_backoff_minutes": 15,

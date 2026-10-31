@@ -2,7 +2,7 @@ package report
 
 import (
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"slices"
 	"strings"
@@ -583,7 +583,7 @@ func (q Query) Hash() [32]byte {
 		Exclude    []root     `json:"exclude"`
 		Subjects   []string   `json:"subjects"`
 	}{q.Dataset, q.Columns, q.Where, q.PerDCWhere, hs, sorts, q.Top, guids(n.Connections), roots(n.Include), roots(n.Exclude), guids(q.Subjects)}
-	b, err := json.Marshal(doc)
+	b, err := json.Marshal(doc, wireOpts)
 	if err != nil {
 		// Every field is a plain type or an Expr built by Resolve; a failure here is a programming error.
 		panic("report: hashing a query: " + err.Error())

@@ -1,6 +1,13 @@
 import { useId, useMemo, useState } from "react";
 
-import { type Column, DataGrid, type DataGridColumn, SideSheet, Table } from "../../ds/components";
+import {
+  type Column,
+  DataGrid,
+  type DataGridColumn,
+  SegmentedControl,
+  SideSheet,
+  Table,
+} from "../../ds/components";
 import type { RecipientState, SchedRecipient, Schedule } from "./fixtures";
 
 const STATE_LABEL: Record<RecipientState, string> = {
@@ -134,26 +141,20 @@ export function Schedules(props: {
           </p>
         </div>
       </div>
-      <div className="rp__filters" role="radiogroup" aria-label="Show">
-        {(
-          [
-            ["all", `All ${schedules.length}`],
-            ["attention", `Needs attention ${attention}`],
-            ["paused", `Paused ${schedules.filter((s) => s.state === "paused").length}`],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            role="radio"
-            aria-checked={filter === id}
-            className={`rp__seg${filter === id ? " rp__seg--on" : ""}`}
-            onClick={() => setFilter(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        className="rp__filters"
+        label="Show"
+        value={filter}
+        onChange={(id) => id !== null && setFilter(id as typeof filter)}
+        options={[
+          { value: "all", label: `All ${schedules.length}` },
+          { value: "attention", label: `Needs attention ${attention}` },
+          {
+            value: "paused",
+            label: `Paused ${schedules.filter((s) => s.state === "paused").length}`,
+          },
+        ]}
+      />
       {picked.length > 0 ? (
         <div className="rp__bulk" role="region" aria-label="Selected schedules" id={bulkId}>
           {confirm === null ? (
