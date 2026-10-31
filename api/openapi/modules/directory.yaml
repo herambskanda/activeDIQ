@@ -1,8 +1,176 @@
-# Directory reads (T-0668, walking skeleton 1/4, roadmap M1 demo criterion 2). One read-only operation:
-# search users of the caller's tenant. The query is typed text, never a filter: the server builds the
+# Directory reads. searchDirectoryUsers (T-0668, walking skeleton 1/4, roadmap M1 demo criterion 2):
+# search users of the caller's tenant. searchDirectory (T-1094, ADR-0011): universal search over the
+# inventory, grouped, ranked and trimmed to the caller's scope; it supersedes searchDirectoryUsers, which
+# T-1127 retires. The query is typed text, never a filter: the server builds the
 # directory query with the safe filter builder, so no LDAP syntax is accepted from a client (ADR-0004
 # rule 4). Needs directory.read. Objects are addressed by objectGUID; a DN is never returned as a key.
 paths:
+  /directory/search:
+    post:
+      tags: [directory]
+      operationId: searchDirectory
+      summary: Search the directory (universal search)
+      description: >-
+        Universal search (directory.search; IA 5.3, ADR-0011). Answers users, groups, computers and contacts whose name or identifier matches q,
+        grouped by type, each group ranked (exact identifier, then prefix, then fuzzy; live before deleted, enabled before disabled) and
+        already carrying what an admin needs to tell two objects apart: no second call is needed to render a row. The query travels in the
+        POST body, never in a path or query string, so it stays out of URLs and access logs (ADR-0011 rule 15); this is a read, it changes
+        nothing, and it needs no Idempotency-Key. q is typed text, not a filter: LDAP, SQL and wildcard syntax have no meaning and are never
+        passed through. The server normalises q (Unicode NFKC, case folding) before matching.
+
+        Trimming comes before counting (LF-39, T-0875). Every hit, count, flag and cursor in the answer is computed from objects the caller is
+        permitted to read under directory.read, and from nothing else. There is no total over the unscoped directory, and no field changes
+        with what the scope hides. A group never says how many objects exist, only how many the caller may see, and a truncated group says so
+        with the flag more instead of a number.
+
+        refine. When the text matches so many keys in the tenant that the server will not rank them (ADR-0011 rule 13), refine is true. The
+        answer then carries no count, no more flag and no cursor on any group, so the client shows "Keep typing to narrow the search". Hits of
+        a better match class than the one that overflowed are still returned (an exact identifier still finds its object). refine is the same
+        for every caller who holds the same permissions, whatever their scope, so it is never a zero-result answer that a hidden OU could cause.
+
+        counts. A group's count is present only when the normalised q has at least 3 characters and refine is false. For a shorter q, a group
+        shows its first hits and "Show all" with no number.
+
+        Show all. A group's nextCursor, passed back with the same q and type, pages that one group, 50 hits per page (groupLimit applies up to
+        50), in the same order, and stops at 1,000 permitted hits with limitReached true. A cursor is opaque and bound to the query, class set,
+        type and the caller's scope; a cursor presented with anything else is refused with 400 and reads nothing. Pages re-run the search, so
+        they can shift if the inventory changes in between.
+
+        Refusals. 400 (errors[].code): query_too_short (q is empty after normalisation), query_too_long (over 256 characters), query_invalid
+        (a NUL or invalid UTF-8), query_refused (q looks like a 48-digit BitLocker recovery password; it is refused and never echoed, logged or
+        traced), cursor_invalid (bad, forged or mismatched cursor), cursor_requires_type (a cursor without type). 403 when the caller lacks
+        directory.read. 429 when the client is over its rate limit. 503 search-unavailable, with a trace ID and no count, when the search
+        cannot finish in time. No refusal repeats q.
+      x-permission: directory.read
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+        maxBodyBytes: 4096
+      x-activediq-parity: [ADM-003]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/directory.yaml#/components/schemas/DirectorySearchRequest
+            examples:
+              overview:
+                summary: The overlay's grouped overview
+                value:
+                  q: Pat Example
+                  groupLimit: 5
+              showAllUsers:
+                summary: Show all users, next page
+                value:
+                  q: Pat Example
+                  type: users
+                  groupLimit: 50
+                  cursor: Y3Vyc29yLTAxLW9wYXF1ZS1leGFtcGxl
+      responses:
+        "200":
+          description: The groups, each trimmed to the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: modules/directory.yaml#/components/schemas/DirectorySearchResult
+              examples:
+                twoPeopleOneName:
+                  summary: Two users who share a name are told apart without opening either
+                  value:
+                    asOf: "2026-10-31T09:11:04Z"
+                    refine: false
+                    groups:
+                      - type: users
+                        count: 2
+                        more: false
+                        items:
+                          - type: users
+                            objectId: 3f9c1e52-7a4b-4d0e-9b1a-0c5e8d2a6f10
+                            displayName: Pat Example
+                            matchClass: exact
+                            highlights:
+                              - {field: displayName, start: 0, length: 11}
+                            samAccountName: pexample
+                            userPrincipalName: pexample@corp.example.test
+                            mail: pat.example@corp.example.test
+                            disambiguator: {title: Service Desk Analyst, office: Leeds}
+                            distinguishedName: CN=Pat Example,OU=Staff,DC=corp,DC=example,DC=test
+                            domain: corp.example.test
+                            status:
+                              - {kind: locked, at: "2026-10-31T09:12:00Z"}
+                              - {kind: passwordExpiresInDays, days: 3}
+                          - type: users
+                            objectId: a81d04c6-52f3-4be7-8c19-6d7f30e2b4a5
+                            displayName: Pat Example
+                            matchClass: exact
+                            highlights:
+                              - {field: displayName, start: 0, length: 11}
+                            samAccountName: pexample2
+                            userPrincipalName: pexample2@corp.example.test
+                            disambiguator: {department: Finance}
+                            distinguishedName: CN=Pat Example,OU=Finance,DC=corp,DC=example,DC=test
+                            domain: corp.example.test
+                            status:
+                              - {kind: disabled}
+                              - {kind: tier0}
+                      - type: groups
+                        count: 0
+                        more: false
+                        items: []
+                      - type: computers
+                        count: 0
+                        more: false
+                        items: []
+                      - type: contacts
+                        count: 0
+                        more: false
+                        items: []
+                truncatedGroup:
+                  summary: A truncated group says so with a flag; nextCursor continues it
+                  value:
+                    asOf: "2026-10-31T09:11:04Z"
+                    refine: false
+                    groups:
+                      - type: users
+                        count: 7
+                        more: true
+                        nextCursor: Y3Vyc29yLTAxLW9wYXF1ZS1leGFtcGxl
+                        items:
+                          - type: users
+                            objectId: 3f9c1e52-7a4b-4d0e-9b1a-0c5e8d2a6f10
+                            displayName: Sam Sample
+                            matchClass: prefix
+                            highlights:
+                              - {field: displayName, start: 0, length: 3}
+                            samAccountName: ssample
+                            userPrincipalName: ssample@corp.example.test
+                            distinguishedName: CN=Sam Sample,OU=Staff,DC=corp,DC=example,DC=test
+                            domain: corp.example.test
+                            status: []
+                refineState:
+                  summary: Too broad to rank - no counts, no more flags, no cursor
+                  value:
+                    asOf: "2026-10-31T09:11:04Z"
+                    refine: true
+                    groups:
+                      - {type: users, items: []}
+                      - {type: groups, items: []}
+                      - {type: computers, items: []}
+                      - {type: contacts, items: []}
+        "400":
+          $ref: shared/problems.yaml#/components/responses/SearchQueryInvalid
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+        "501":
+          $ref: shared/problems.yaml#/components/responses/NotImplemented
+        "503":
+          $ref: shared/problems.yaml#/components/responses/SearchUnavailable
   /directory/users:
     get:
       tags: [directory]
@@ -56,6 +224,205 @@ paths:
           $ref: shared/problems.yaml#/components/responses/DirectoryUnavailable
 components:
   schemas:
+    DirectorySearchRequest:
+      description: >-
+        The search. q is typed text and never a filter. type narrows to one kind of object; it is required with a cursor.
+      type: object
+      required: [q]
+      additionalProperties: false
+      properties:
+        q:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: >-
+            The text to find, as the admin typed it: a name, a logon name, a UPN or e-mail, a SID, a GUID, a DN or a host name. Up to 256 characters.
+            Never sent in a URL.
+        type:
+          $ref: modules/directory.yaml#/components/schemas/DirectorySearchType
+        groupLimit:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: The most hits per group; 5 when absent. With a cursor it is the page size.
+        cursor:
+          $ref: shared/scalars.yaml#/components/schemas/Cursor
+    DirectorySearchType:
+      description: The kind of object to search. Without it all four are searched.
+      type: string
+      enum: [users, groups, computers, contacts]
+    DirectorySearchObjectType:
+      description: The kind of object a group or a hit is. The group order of a full answer is users, groups, computers, contacts.
+      type: string
+      x-activediq-enum: open
+      enum: [users, groups, computers, contacts]
+    DirectorySearchMatchClass:
+      description: How the hit matched, best first. An object appears once, in its best class.
+      type: string
+      x-activediq-enum: open
+      enum: [exact, prefix, fuzzy]
+    DirectorySearchHighlightField:
+      description: The field of the hit a highlight range refers to.
+      type: string
+      x-activediq-enum: open
+      enum: [displayName, samAccountName, userPrincipalName, mail]
+    DirectorySearchHighlight:
+      description: >-
+        A matched stretch of one field, counted in Unicode code points from the start of the field's value (not UTF-16 units, not bytes).
+        A hit that matched on a key the row does not show (a SID, say) has no highlight.
+      type: object
+      required: [field, start, length]
+      properties:
+        field:
+          $ref: modules/directory.yaml#/components/schemas/DirectorySearchHighlightField
+        start:
+          type: integer
+          minimum: 0
+          maximum: 1024
+        length:
+          type: integer
+          minimum: 1
+          maximum: 1024
+    DirectorySearchChipKind:
+      description: >-
+        One status of the object, as the IA 5.3 chips show it. at is present for locked, accountExpires and deleted when the time is known;
+        days is present for passwordExpiresInDays. There is no free-form status text: the client words every chip.
+      type: string
+      x-activediq-enum: open
+      enum: [locked, disabled, passwordExpired, passwordExpiresInDays, accountExpires, deleted, tier0, cloudOnly]
+    DirectorySearchChip:
+      description: One status chip of a hit. kind says which; at or days carry its value when it has one.
+      type: object
+      required: [kind]
+      properties:
+        kind:
+          $ref: modules/directory.yaml#/components/schemas/DirectorySearchChipKind
+        at:
+          type: string
+          format: date-time
+          description: When it happened or will happen (locked, accountExpires, deleted).
+        days:
+          type: integer
+          minimum: 0
+          maximum: 36500
+          description: Whole days left (passwordExpiresInDays).
+    DirectorySearchDisambiguator:
+      description: >-
+        What tells two objects with one name apart. Each member is present only when the inventory holds it; the client joins what is there
+        (title, then office or department).
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 256
+        office:
+          type: string
+          maxLength: 256
+        department:
+          type: string
+          maxLength: 256
+    DirectorySearchHit:
+      description: >-
+        One permitted object, with everything a row shows. objectId is the key; distinguishedName is an attribute for display and may change
+        when the object moves.
+      type: object
+      required: [type, objectId, displayName, matchClass, highlights, distinguishedName, domain, status]
+      properties:
+        type:
+          $ref: modules/directory.yaml#/components/schemas/DirectorySearchObjectType
+        objectId:
+          type: string
+          format: uuid
+          description: The objectGUID.
+        displayName:
+          type: string
+          maxLength: 256
+        matchClass:
+          $ref: modules/directory.yaml#/components/schemas/DirectorySearchMatchClass
+        highlights:
+          type: array
+          maxItems: 16
+          items:
+            $ref: modules/directory.yaml#/components/schemas/DirectorySearchHighlight
+        samAccountName:
+          type: string
+          maxLength: 256
+        userPrincipalName:
+          type: string
+          maxLength: 1024
+        mail:
+          type: string
+          maxLength: 1024
+        disambiguator:
+          $ref: modules/directory.yaml#/components/schemas/DirectorySearchDisambiguator
+        distinguishedName:
+          type: string
+          maxLength: 4096
+        domain:
+          type: string
+          maxLength: 255
+          description: The DNS name of the object's domain. The client shows it when the answer spans more than one.
+        status:
+          type: array
+          maxItems: 16
+          description: Status chips, most urgent first. Empty when none applies.
+          items:
+            $ref: modules/directory.yaml#/components/schemas/DirectorySearchChip
+    DirectorySearchGroup:
+      description: >-
+        The permitted hits of one type. count, more and nextCursor describe only objects the caller may read; none of them can be used to infer
+        what the scope hides. Under refine, count, more and nextCursor are all absent.
+      type: object
+      required: [type, items]
+      properties:
+        type:
+          $ref: modules/directory.yaml#/components/schemas/DirectorySearchObjectType
+        items:
+          type: array
+          maxItems: 50
+          items:
+            $ref: modules/directory.yaml#/components/schemas/DirectorySearchHit
+        count:
+          type: integer
+          minimum: 0
+          maximum: 1000000
+          description: >-
+            How many objects of this type the caller may see for this text: the trimmed result, never a total over the directory. Absent
+            when the normalised text has under 3 characters, and when refine is true.
+        more:
+          type: boolean
+          description: True when the caller may see more hits than items holds. A flag, never a number. Absent when refine is true.
+        nextCursor:
+          type: string
+          maxLength: 1024
+          description: Pass back with the same q and type to get the next page. Absent on the last page, and when refine is true.
+        limitReached:
+          type: boolean
+          description: >-
+            True when paging stopped at 1,000 permitted hits. The client shows "refine your search"; there is no further cursor. The stop depends
+            only on permitted hits.
+    DirectorySearchResult:
+      description: The grouped, permitted hits of one search, with the freshness of the inventory behind them.
+      type: object
+      required: [asOf, refine, groups]
+      properties:
+        asOf:
+          type: [string, "null"]
+          format: date-time
+          description: >-
+            When the inventory behind this answer was last synced (the oldest of the connections the caller may read). The search reads the
+            inventory, not the live directory. Null when nothing has synced yet.
+        refine:
+          type: boolean
+          description: >-
+            True when the text is too broad to rank. No group then carries a count, a more flag or a cursor. The same for every caller with the
+            same permissions.
+        groups:
+          type: array
+          maxItems: 4
+          description: One group per requested type, in the order users, groups, computers, contacts, even when a group is empty.
+          items:
+            $ref: modules/directory.yaml#/components/schemas/DirectorySearchGroup
     DirectoryUser:
       description: A user as search shows it. Only these fields; the objectGuid is the key.
       type: object
