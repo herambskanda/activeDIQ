@@ -134,11 +134,12 @@ func TestNewRegistry_fragments_use_an_allowlist(t *testing.T) {
 		{`E'x'`, "e"},
 		{`(TABLE directory_objects)`, "TABLE"},
 		{`(VALUES (1))`, "VALUES"},
-		{`(WITH x AS (SELECT 1) SELECT 1)`, "WITH"},
-		{`kind`, "kind"},
+		{`(WITH x AS MATERIALIZED (SELECT 1) SELECT 1)`, "MATERIALIZED"},
+		{`zzz`, "zzz"},
 		{`(SELECT 1 FROM group_links)`, "group_links"},
 		{`(SELECT 1 FROM Directory_Objects)`, "Directory_Objects"},
-		{`(SELECT 1 FROM (SELECT 1) x)`, "from"},
+		{`(SELECT 1 FROM (directory_objects) x)`, "from"},
+		{`(SELECT 1 FROM (SELECT 1 FROM group_links) x)`, "group_links"},
 		{`(SELECT 1 FROM {t})`, "from"},
 		{`count`, "count"},
 		{`{t}.kind(1)`, "kind"},
@@ -244,15 +245,16 @@ func TestNewRegistry_FROM_is_one_scoped_slot(t *testing.T) {
 		mut  func(*report.Dataset)
 		want []string
 	}{
-		{"alias distinct", with(`(SELECT count(*) AS distinct FROM {rel.g})::text`, withRow("g")), []string{"g", "RowAnchor"}},
-		{"alias distinct over a Rel", with(`(SELECT count(*) AS distinct FROM x)::text`, withRel), []string{"x", "from"}},
-		{"not distinct alias", with(`(SELECT count(*) AS not distinct FROM {rel.g})::text`, withRow("g")), []string{"g", "RowAnchor"}},
+		{"distinct before from", with(`(SELECT 1 distinct FROM {rel.g})::text`, withRow("g")), []string{"g", "RowAnchor"}},
+		{"distinct before from over a Rel", with(`(SELECT 1 distinct FROM x)::text`, withRel), []string{"x", "from"}},
+		{"not distinct before from", with(`(SELECT 1 not distinct FROM {rel.g})::text`, withRow("g")), []string{"g", "RowAnchor"}},
+		{"alias distinct", with(`(SELECT count(*) AS distinct FROM {rel.g})::text`, withRow("g")), []string{"distinct", "reserved"}},
 		{"comma item", with(`(SELECT count(*) FROM {rel.p}, {rel.p})::text`, withRel), []string{","}},
 		{"comma item after where", with(`(SELECT count(*) FROM {rel.p} WHERE true, {rel.p})::text`, withRel), []string{","}},
 		{"comma item bare table", with(`(SELECT count(*) FROM {rel.p}, day)::text`, withRel), []string{","}},
 		{"second from after extract", with(`(SELECT extract(day FROM now FROM {rel.g}))::text`, withRow("g")), []string{"now"}},
 		{"slot then dot", with(`(SELECT count(*) FROM {rel.p}.directory_objects)::text`, withRel), []string{"p", "dot"}},
-		{"anchor named public", with(`(SELECT count(*) AS distinct FROM {rel.public}.directory_objects)::text`, withRow("public")), []string{"public"}},
+		{"anchor named public", with(`(SELECT count(*) FROM {rel.public}.directory_objects)::text`, withRow("public")), []string{"public"}},
 		{"anchor named information_schema", withRow("information_schema"), []string{"information_schema"}},
 		{"rel named public", func(d *report.Dataset) {
 			d.Rels = append(d.Rels, report.Rel{ID: "public", Kind: report.RelEdge, Table: "group_links", Project: []report.Ident{"group_guid"}})
@@ -349,4 +351,132 @@ func TestNewRegistry_RowAnchor_must_be_joined(t *testing.T) {
 		a.ID = "other"
 		d.Anchors = append(d.Anchors, a)
 	}, "other", "joined")
+}
+
+// T-1033 (third security review): the allowlist admits what the inventory datasets write (CTEs, JOIN,
+// derived tables, alias.col, substring … FROM … FOR) and still refuses every way to name a table.
+func TestNewRegistry_CTE_JOIN_and_alias_rules(t *testing.T) {
+	rels := func(d *report.Dataset) {
+		for _, id := range []report.AnchorID{"p", "q"} {
+			d.Rels = append(d.Rels, report.Rel{ID: id, Kind: report.RelEdge, Table: "group_links", Project: []report.Ident{"group_guid", "member_guid"},
+				Where: report.SQL("link_kind = 'member' AND since IS NOT NULL")})
+		}
+		d.Tables = append(d.Tables, "group_links")
+	}
+	rowAnchor := func(d *report.Dataset) {
+		a := anchorT()
+		a.ID = "g"
+		d.Anchors = append(d.Anchors, a)
+		d.Base.Joins = append(d.Base.Joins, report.RowJoin{Anchor: "g", On: report.SQL("{rel.g}.object_guid = {t}.object_guid")})
+	}
+	build := func(sql string) report.Dataset {
+		ds := usersDataset()
+		rels(&ds)
+		rowAnchor(&ds)
+		ds.Columns[2].Source = report.Derived{SQL: report.SQL(sql)}
+		return ds
+	}
+	for name, sql := range map[string]string{
+		"cte":                  `(WITH x AS (SELECT p.group_guid AS g1 FROM {rel.p}) SELECT count(*) FROM x WHERE g1 IS NOT NULL)::text`,
+		"cte columns":          `(WITH x(a, b) AS (SELECT p.group_guid, p.member_guid FROM {rel.p}) SELECT count(*) FROM x WHERE a = b)::text`,
+		"recursive cte":        `(WITH RECURSIVE x(a) AS (SELECT p.group_guid FROM {rel.p} UNION SELECT p.group_guid FROM x JOIN {rel.p} ON p.member_guid = x.a) SELECT count(*) FROM x)::text`,
+		"two ctes":             `(WITH x AS (SELECT 1 AS a), y AS (SELECT a FROM x) SELECT count(*) FROM y)::text`,
+		"join rel":             `(SELECT count(*) FROM {rel.p} JOIN {rel.q} ON q.group_guid = p.group_guid)::text`,
+		"left join rel":        `(SELECT count(*) FROM {rel.p} LEFT JOIN {rel.q} ON q.group_guid = p.group_guid WHERE q.group_guid IS NULL)::text`,
+		"join cte":             `(WITH x AS (SELECT 1 AS a) SELECT count(*) FROM {rel.p} INNER JOIN x ON x.a = 1)::text`,
+		"derived table":        `(SELECT s.n FROM (SELECT count(*) AS n FROM {rel.p}) s)::text`,
+		"derived table as":     `(SELECT s.n FROM (SELECT count(*) AS n FROM {rel.p}) AS s LEFT JOIN {rel.q} ON true)::text`,
+		"derived with":         `(SELECT s.n FROM (WITH x AS (SELECT 1 AS n) SELECT n FROM x) s)::text`,
+		"order limit nulls":    `(SELECT p.group_guid FROM {rel.p} ORDER BY p.since NULLS FIRST, p.group_guid DESC LIMIT 1)::text`,
+		"union all":            `(SELECT count(*) FROM (SELECT p.group_guid AS a FROM {rel.p} UNION ALL SELECT q.group_guid FROM {rel.q}) u)::text`,
+		"substring from for":   `substring({t}.sam_account_name from 1 for 2)`,
+		"substring from":       `substring({t}.sam_account_name from length({t}.sam_account_name) - 3)`,
+		"nested substring":     `substring({t}.sam_account_name from position('=' in {t}.sam_account_name) + 1)`,
+		"pure functions":       `left(lower(decode('f6010000', 'hex')::text), 7) || floor(1.5)::text || jsonb_typeof({t}.attributes -> 'a') || uuid_send({t}.object_guid)::text`,
+		"jsonb array length":   `jsonb_array_length({t}.attributes -> 'a') > 0`,
+		"alias dot star":       `(SELECT count(s.*) FROM (SELECT 1) s)::text`,
+		"select alias used":    `(SELECT t2.one FROM (SELECT 1 AS one) t2)::text`,
+		"row anchor as column": `{rel.g}.object_guid::text`,
+	} {
+		t.Run("ok "+name, func(t *testing.T) {
+			if _, err := reportsql.NewRegistry(opts(), build(sql)); err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+		})
+	}
+
+	for _, c := range []struct{ name, sql, word string }{
+		{"raw table beside a declared CTE", `(WITH x AS (SELECT 1 AS a) SELECT count(*) FROM x WHERE EXISTS (SELECT 1 FROM directory_objects))::text`, "directory_objects"},
+		{"raw table in a CTE body", `(WITH x AS (SELECT 1 FROM directory_objects) SELECT count(*) FROM x)::text`, "directory_objects"},
+		{"comma after a CTE item", `(WITH x AS (SELECT 1 AS a) SELECT count(*) FROM x, directory_objects)::text`, ","},
+		{"undeclared name after from", `(WITH x AS (SELECT 1 AS a) SELECT count(*) FROM y)::text`, "y"},
+		{"CTE named pg_class", `(WITH pg_class AS (SELECT 1 AS a) SELECT count(*) FROM pg_class)::text`, "pg_class"},
+		{"CTE named public", `(WITH public AS (SELECT 1 AS a) SELECT count(*) FROM public)::text`, "public"},
+		{"CTE named information_schema", `(WITH information_schema AS (SELECT 1 AS a) SELECT 1)::text`, "information_schema"},
+		{"CTE named as a schema table", `(WITH group_links AS (SELECT 1 AS a) SELECT count(*) FROM group_links)::text`, "group_links"},
+		{"CTE named as the dataset table", `(WITH directory_objects AS (SELECT 1 AS a) SELECT 1)::text`, "directory_objects"},
+		{"CTE named as a relation ID", `(WITH p AS (SELECT 1 AS a) SELECT 1)::text`, "p"},
+		{"CTE named as a function", `(WITH lower AS (SELECT 1 AS a) SELECT 1)::text`, "lower"},
+		{"CTE column named as a table", `(WITH x(group_links) AS (SELECT 1) SELECT 1)::text`, "group_links"},
+		{"CTE with an option", `(WITH x AS NOT MATERIALIZED (SELECT 1) SELECT 1)::text`, "AS"},
+		{"CTE writes", `(WITH x AS (DELETE FROM directory_objects RETURNING 1) SELECT 1)::text`, "DELETE"},
+		{"CTE name dotted", `(WITH x AS (SELECT 1 AS a) SELECT count(*) FROM x.directory_objects)::text`, "x"},
+		{"join raw table", `(SELECT count(*) FROM {rel.p} JOIN directory_objects ON true)::text`, "directory_objects"},
+		{"left join raw table", `(SELECT count(*) FROM {rel.p} LEFT JOIN directory_objects ON true)::text`, "directory_objects"},
+		{"join a RowAnchor", `(SELECT count(*) FROM {rel.p} JOIN {rel.g} ON true)::text`, "RowAnchor"},
+		{"join a dotted slot", `(SELECT count(*) FROM {rel.p} JOIN {rel.q}.directory_objects ON true)::text`, "dot"},
+		{"comma after a join item", `(SELECT count(*) FROM {rel.p} JOIN {rel.q} ON true, t)::text`, ","},
+		{"comma after a join item and a raw table", `(SELECT count(*) FROM {rel.p} JOIN {rel.q} ON true, directory_objects)::text`, ","},
+		{"natural join", `(SELECT count(*) FROM {rel.p} NATURAL JOIN {rel.q})::text`, "NATURAL"},
+		{"join function", `(SELECT count(*) FROM {rel.p} JOIN lower('x') ON true)::text`, "lower"},
+		{"join lateral", `(SELECT count(*) FROM {rel.p} JOIN LATERAL (SELECT 1) x ON true)::text`, "LATERAL"},
+		{"from only", `(SELECT count(*) FROM ONLY directory_objects)::text`, "ONLY"},
+		{"derived table with a raw table", `(SELECT 1 FROM (SELECT 1 FROM directory_objects) s)::text`, "directory_objects"},
+		{"derived alias is a table", `(SELECT 1 FROM (SELECT 1) group_links)::text`, "group_links"},
+		{"derived alias is an ID", `(SELECT 1 FROM (SELECT 1) p)::text`, "p"},
+		{"derived alias is a keyword", `(SELECT 1 FROM (SELECT 1) AS select)::text`, "select"},
+		{"derived alias then a keyword the list lacks", `(SELECT 1 FROM (SELECT 1) s tablesample bernoulli (1))::text`, "alias"},
+		{"substring over a raw table", `substring((SELECT 1 FROM directory_objects) from 1 for 2)`, "directory_objects"},
+		{"substring select at its level", `substring(SELECT 1 FROM directory_objects)`, "directory_objects"},
+		{"second from after substring", `(SELECT substring({t}.sam_account_name from 1 from directory_objects))::text`, "from"},
+		{"for outside substring", `(SELECT 1 FROM {rel.p} FOR UPDATE)::text`, "for"},
+		{"undeclared dotted name", `undeclared.col`, "undeclared"},
+		{"undeclared dotted after a CTE", `(WITH x AS (SELECT 1 AS a) SELECT y.a FROM x)::text`, "y"},
+		{"public dotted", `public.directory_objects`, "public"},
+		{"pg_catalog dotted", `pg_catalog.pg_class`, "pg_catalog"},
+		{"information_schema dotted", `information_schema.tables`, "information_schema"},
+		{"dotted after a column", `{t}.attributes.x.y`, "dotted"},
+		{"alias.col.field", `(SELECT s.a.b FROM (SELECT 1 AS a) s)::text`, "dotted"},
+		{"undeclared bare word", `(SELECT zzz FROM {rel.p})::text`, "zzz"},
+		{"cast to a declared alias", `(SELECT 'x'::regclass AS regclass FROM {rel.p})::text`, "regclass"},
+		{"CAST to a declared alias", `(SELECT CAST('x' AS regclass) AS regclass FROM {rel.p})::text`, "fragTypes"},
+		{"typed literal of a declared alias", `(SELECT regclass 'directory_objects' AS regclass FROM {rel.p})::text`, "regclass"},
+		{"second union branch reads a raw table", `(SELECT 1 FROM {rel.p} UNION SELECT 1 FROM directory_objects)::text`, "directory_objects"},
+		{"second union branch comma", `(SELECT 1 FROM {rel.p} UNION SELECT 1 FROM {rel.p}, {rel.q})::text`, ","},
+		{"line comment", "(SELECT 1 FROM {rel.p} -- x\n)::text", "--"},
+		{"block comment", `(SELECT 1 FROM /* x */ {rel.p})::text`, "/*"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := reportsql.NewRegistry(opts(), build(c.sql))
+			if err == nil {
+				t.Fatalf("NewRegistry accepted %s", c.sql)
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(c.word)) {
+				t.Fatalf("error %q does not name %q", err, c.word)
+			}
+		})
+	}
+
+	// The session and clock words are refused by name, wherever they stand.
+	for _, w := range []string{"current_user", "session_user", "user", "current_role", "current_schema", "current_catalog",
+		"current_timestamp", "current_date", "current_time", "localtime", "localtimestamp", "system_user"} {
+		for _, sql := range []string{w + "::text", "(SELECT " + w + " FROM {rel.p})::text", "COALESCE(" + w + "::text, 'x')"} {
+			t.Run(w+" in "+sql, func(t *testing.T) {
+				_, err := reportsql.NewRegistry(opts(), build(sql))
+				if err == nil || !strings.Contains(err.Error(), w) {
+					t.Fatalf("err = %v; want an error naming %q", err, w)
+				}
+			})
+		}
+	}
 }

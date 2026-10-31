@@ -143,6 +143,29 @@ func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 			rowAnchors[a.ID] = true
 		}
 	}
+	env := &fragEnv{tables: tableNames, rowAnchors: rowAnchors, ids: map[string]bool{"t": true}}
+	dsTables := map[string]bool{string(src.Base.Table): true}
+	for _, t := range src.Tables {
+		dsTables[t] = true
+	}
+	for _, a := range src.Anchors {
+		env.ids[strings.ToLower(string(a.ID))] = true
+		dsTables[string(a.Table)] = true
+	}
+	for _, r := range src.Rels {
+		env.ids[strings.ToLower(string(r.ID))] = true
+		dsTables[string(r.Table)] = true
+	}
+	// A bare word in a fragment may be a column of a table the dataset uses (a Rel's own WHERE reads its
+	// table unqualified); the schema, not the fragment author, says which words those are.
+	env.isColumn = func(name string) bool {
+		for t := range dsTables {
+			if _, ok := sch.Column(t, name); ok {
+				return true
+			}
+		}
+		return false
+	}
 	mkFrag := func(path string, f report.Fragment) (*frag, error) {
 		if f.IsZero() {
 			return nil, nil
@@ -151,7 +174,7 @@ func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
-		if err := checkFragment(parts, tableNames, rowAnchors); err != nil {
+		if err := checkFragment(parts, env); err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 		return &frag{parts: parts}, nil
