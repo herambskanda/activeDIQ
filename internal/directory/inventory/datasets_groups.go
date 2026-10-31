@@ -97,8 +97,8 @@ func objectColumns() []report.Column {
 	}
 }
 
-func counted(id report.ColumnID, label, sql string) report.Column {
-	c := derived(id, label, report.TypeInt, report.SQL(sql), opsInt)
+func counted(id report.ColumnID, label string, sql report.Fragment) report.Column {
+	c := derived(id, label, report.TypeInt, sql, opsInt)
 	c.Count = true
 	return c
 }
@@ -109,9 +109,9 @@ func groupsDataset() report.Dataset {
 		attr("sam_account_name", "Logon name (pre-Windows 2000)", report.TypeText, "sam_account_name", opsText, true),
 		state("group_type", "Group type", report.SQL(groupTypeSQL), "security", "distribution", report.UnknownInputMissing),
 		state("group_scope", "Group scope", report.SQL(groupScopeSQL), "global", "domain_local", "universal", report.UnknownInputMissing),
-		counted("direct_members", "Direct members", directMembersSQL),
-		counted("effective_members", "Effective members", effectiveMembersSQL),
-		counted("primary_group_members", "Members by primary group", primaryMembersSQL),
+		counted("direct_members", "Direct members", report.SQL(directMembersSQL)),
+		counted("effective_members", "Effective members", report.SQL(effectiveMembersSQL)),
+		counted("primary_group_members", "Members by primary group", report.SQL(primaryMembersSQL)),
 		derived("has_members", "Has members (member or primary group)", report.TypeBool, report.SQL(hasMembersSQL), opsBool),
 		derived("includes_members_outside_inventory", "Includes members outside the covered domains", report.TypeBool, report.SQL(outsideInventorySQL), opsBool),
 		derived("managed_by", "Managed by", report.TypeText, report.SQL(managedBySQL), opsText),
@@ -147,27 +147,27 @@ func groupMembersDataset() report.Dataset {
 	baseAttr := func(id report.ColumnID, label string, t report.ValueType, col string, ops []report.Op) report.Column {
 		return attr(id, label, t, col, ops, false)
 	}
-	plain := func(id report.ColumnID, label string, t report.ValueType, sql string, ops []report.Op) report.Column {
-		return derived(id, label, t, report.SQL(sql), ops)
+	plain := func(id report.ColumnID, label string, t report.ValueType, sql report.Fragment, ops []report.Op) report.Column {
+		return derived(id, label, t, sql, ops)
 	}
 	kind := enumCol("member_kind", "Member type", report.SQL("{rel.mbr}.kind"), memberKinds...)
-	via := plain("via_path", "Via", report.TypeText, viaPathSQL, nil)
+	via := plain("via_path", "Via", report.TypeText, report.SQL(viaPathSQL), nil)
 	via.Sortable = false
-	finding := plain("finding", "Finding", report.TypeText, findingSQL, opsText)
+	finding := plain("finding", "Finding", report.TypeText, report.SQL(findingSQL), opsText)
 	finding.Sortable = false
 	edge := state("edge_kind", "Membership", report.SQL("{t}.edge_kind"), "direct", "primary_group", "nested", "cycle")
 	cols := []report.Column{
 		baseAttr("group_guid", "Group GUID", report.TypeGUID, "group_guid", opsGUID),
 		baseAttr("member_guid", "Member GUID", report.TypeGUID, "member_guid", opsGUID),
 		baseAttr("connection_id", "Connection", report.TypeGUID, "connection_id", opsGUID),
-		plain("domain", "Group domain (naming context)", report.TypeGUID, "{rel.grp}.nc_guid", opsGUID),
-		plain("group_name", "Group", report.TypeText, "{rel.grp}.sam_account_name", opsText),
-		plain("group_dn", "Group distinguished name", report.TypeText, "{rel.grp}.dn", opsText),
-		plain("member_name", "Member", report.TypeText, memberNameSQL, opsText),
-		plain("member_dn", "Member distinguished name", report.TypeText, "{rel.mbr}.dn", opsText),
-		plain("member_sid", "Member SID", report.TypeText, memberSIDSQL, opsText),
-		plain("member_enabled", "Member enabled", report.TypeBool, "{rel.mbr}.enabled", opsBool),
-		plain("member_unresolved", "External principal (unresolved)", report.TypeBool, "{rel.mbr}.kind = 'fsp'", opsBool),
+		plain("domain", "Group domain (naming context)", report.TypeGUID, report.SQL("{rel.grp}.nc_guid"), opsGUID),
+		plain("group_name", "Group", report.TypeText, report.SQL("{rel.grp}.sam_account_name"), opsText),
+		plain("group_dn", "Group distinguished name", report.TypeText, report.SQL("{rel.grp}.dn"), opsText),
+		plain("member_name", "Member", report.TypeText, report.SQL(memberNameSQL), opsText),
+		plain("member_dn", "Member distinguished name", report.TypeText, report.SQL("{rel.mbr}.dn"), opsText),
+		plain("member_sid", "Member SID", report.TypeText, report.SQL(memberSIDSQL), opsText),
+		plain("member_enabled", "Member enabled", report.TypeBool, report.SQL("{rel.mbr}.enabled"), opsBool),
+		plain("member_unresolved", "External principal (unresolved)", report.TypeBool, report.SQL("{rel.mbr}.kind = 'fsp'"), opsBool),
 		kind, edge,
 		baseAttr("depth", "Depth", report.TypeInt, "depth", opsInt),
 		via, finding,
@@ -206,14 +206,14 @@ const subtreeCount = "(SELECT count(*) FROM {rel.sub} WHERE sub.connection_id = 
 func ousDataset() report.Dataset {
 	cols := objectColumns()
 	cols = append(cols,
-		counted("subtree_objects", "Objects in the subtree", subtreeCount+")"),
-		counted("subtree_users", "Users in the subtree", subtreeCount+" AND sub.kind IN ('user', 'inetorgperson'))"),
-		counted("subtree_computers", "Computers in the subtree", subtreeCount+" AND sub.kind IN ('computer', 'gmsa'))"),
-		counted("subtree_groups", "Groups in the subtree", subtreeCount+" AND sub.kind = 'group')"),
-		counted("subtree_contacts", "Contacts in the subtree", subtreeCount+" AND sub.kind = 'contact')"),
-		counted("subtree_ous", "Organizational units in the subtree", subtreeCount+" AND sub.kind = 'ou')"),
+		counted("subtree_objects", "Objects in the subtree", report.SQL(subtreeCount+")")),
+		counted("subtree_users", "Users in the subtree", report.SQL(subtreeCount+" AND sub.kind IN ('user', 'inetorgperson'))")),
+		counted("subtree_computers", "Computers in the subtree", report.SQL(subtreeCount+" AND sub.kind IN ('computer', 'gmsa'))")),
+		counted("subtree_groups", "Groups in the subtree", report.SQL(subtreeCount+" AND sub.kind = 'group')")),
+		counted("subtree_contacts", "Contacts in the subtree", report.SQL(subtreeCount+" AND sub.kind = 'contact')")),
+		counted("subtree_ous", "Organizational units in the subtree", report.SQL(subtreeCount+" AND sub.kind = 'ou')")),
 		counted("child_objects", "Objects directly in the unit",
-			"(SELECT count(*) FROM {rel.sub} WHERE sub.connection_id = {t}.connection_id AND sub.parent_guid = {t}.object_guid AND sub.state = 'live')"),
+			report.SQL("(SELECT count(*) FROM {rel.sub} WHERE sub.connection_id = {t}.connection_id AND sub.parent_guid = {t}.object_guid AND sub.state = 'live')")),
 	)
 	return report.Dataset{
 		ID:     DatasetOUs,

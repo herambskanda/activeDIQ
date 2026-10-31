@@ -38,8 +38,8 @@ func (Writer) RefreshClosure(ctx context.Context, tx store.Tx, connection Connec
 	if err := lockConnection(ctx, tx, connection); err != nil {
 		return 0, err
 	}
-	dirty, err := queryGUIDs(ctx, tx, `SELECT group_guid::text FROM public.inventory_group_closure_dirty
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid`, string(connection))
+	dirty, err := scanGUIDs(tx.Query(ctx, `SELECT group_guid::text FROM public.inventory_group_closure_dirty
+		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid`, string(connection)))
 	if err != nil {
 		return 0, fmt.Errorf("inventory: closure: dirty groups: %w", err)
 	}
@@ -47,21 +47,21 @@ func (Writer) RefreshClosure(ctx context.Context, tx store.Tx, connection Connec
 		return 0, nil
 	}
 	// The dirty groups and every live group above them: their rows are stale.
-	affected, err := queryGUIDs(ctx, tx, `WITH RECURSIVE up(g) AS (
+	affected, err := scanGUIDs(tx.Query(ctx, `WITH RECURSIVE up(g) AS (
 			SELECT x FROM unnest($2::uuid[]) AS x
 		UNION
 			SELECT l.source_guid FROM public.links l JOIN up ON l.target_guid = up.g
 			JOIN public.directory_objects s ON s.tenant_id = l.tenant_id AND s.connection_id = l.connection_id AND s.object_guid = l.source_guid
 			WHERE l.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND l.connection_id = $1::uuid
 			AND l.link_attr = 'member' AND l.state = 'active' AND s.kind = 'group' AND s.state = 'live')
-		SELECT g::text FROM up`, string(connection), dirty)
+		SELECT g::text FROM up`, string(connection), dirty))
 	if err != nil {
 		return 0, fmt.Errorf("inventory: closure: affected groups: %w", err)
 	}
 	// The live nesting edges below the affected live groups: all a breadth-first walk needs.
-	roots, err := queryGUIDs(ctx, tx, `SELECT object_guid::text FROM public.directory_objects
+	roots, err := scanGUIDs(tx.Query(ctx, `SELECT object_guid::text FROM public.directory_objects
 		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-		AND object_guid = ANY($2::uuid[]) AND kind = 'group' AND state = 'live'`, string(connection), affected)
+		AND object_guid = ANY($2::uuid[]) AND kind = 'group' AND state = 'live'`, string(connection), affected))
 	if err != nil {
 		return 0, fmt.Errorf("inventory: closure: live roots: %w", err)
 	}
@@ -217,8 +217,16 @@ func reachFrom(root string, edges map[string][]string) ([]reachRow, error) {
 	return out, nil
 }
 
-func queryGUIDs(ctx context.Context, tx store.Tx, sql string, args ...any) ([]string, error) {
-	rows, err := tx.Query(ctx, sql, args...)
+// guidRows is the part of pgx.Rows scanGUIDs reads. The SQL stays a constant at the call site
+// (sqlconst), so the helper takes the rows, not the statement: scanGUIDs(tx.Query(ctx, `...`, args...)).
+type guidRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close()
+}
+
+func scanGUIDs(rows guidRows, err error) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
