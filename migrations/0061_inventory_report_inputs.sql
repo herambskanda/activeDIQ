@@ -27,6 +27,7 @@ ALTER TABLE public.directory_objects
 
 CREATE INDEX directory_objects_by_ancestry ON public.directory_objects USING gin (ancestry);
 
+-- write-class: inventory_domain_policies system
 CREATE TABLE public.inventory_domain_policies (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,
@@ -40,6 +41,7 @@ CREATE TABLE public.inventory_domain_policies (
   FOREIGN KEY (tenant_id, connection_id) REFERENCES public.connections (tenant_id, id)
 );
 
+-- write-class: inventory_psos system
 CREATE TABLE public.inventory_psos (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,
@@ -53,6 +55,7 @@ CREATE TABLE public.inventory_psos (
   FOREIGN KEY (tenant_id, connection_id) REFERENCES public.connections (tenant_id, id)
 );
 
+-- write-class: inventory_pso_applies system
 CREATE TABLE public.inventory_pso_applies (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,

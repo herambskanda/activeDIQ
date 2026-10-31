@@ -318,7 +318,7 @@ service.
      a lower layer needs is owned below and written by the module through that owner's Go API,
      inside its Actions (§5.6).
    - **The ownership map** `internal/platform/store/owners/owners.gen.go` (table → owner key and
-     write class) is generated with the module lists. Cross-owner data migrations need an entry
+     write class) is generated from the migrations by `tools/gen/modules` (`make gen-modules`; `gen-modules-check` in `make ci`, T-0997). Cross-owner data migrations need an entry
      with a reason, a ticket and an expiry in `tools/fitness/modules/exempt.json`.
    - **Every table has a write class** (ADR-0005 rule 10; ADR-0003 amendment). `config` means a
      principal changes it, so its writes are Actions: every function whose SQL writes it takes a

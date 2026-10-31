@@ -1481,6 +1481,13 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
     unbalanced parentheses. The check that a fragment names no table is B2 (needs the ownership map).
   - `store/owners.Lookup` is an **empty** map: no generator exists yet, so any dataset fails Boot
     (fail closed, ADR-0003 rule 6). A `tools/gen/modules` ticket fills it; B3 needs it.
+- 2026-10-31 · T-0997 · the ownership map exists: `tools/gen/modules` writes
+  `internal/platform/store/owners/owners.gen.go` (69 tables: owner key from the migration's file name,
+  write class from `-- write-class:`). `owners.Lookup` and `owners.ClassOf` now answer, so a dataset over
+  a table its module owns passes Boot's `report.CheckTables` (`report_runs`, `report_run_rows` belong to
+  `reports`) and one over a foreign or uncreated table still fails. B3 is unblocked. Note the owner key
+  is the migration's owner segment (`inventory`, `reports`, `connection`), which is what `Dataset.ID.Owner()`
+  must equal.
 - 2026-10-30 · T-0957 · row B2 built: `internal/platform/store/reportsql` (§5 "As built"). Signature
   changes: `NewRegistry(opt Options, ds ...)`, `Inputs{Now, Limit}`, `Count`, `CatalogSchema`.
   RP6 moved to `internal/directory/inventory` (platform tests cannot import `internal/directory`) and

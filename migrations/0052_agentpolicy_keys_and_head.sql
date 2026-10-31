@@ -11,6 +11,7 @@
 --   agent_policy_head     DM-88  the latest signed policy per tenant and agent kind, and the sequence floor:
 --                                policy_seq only ever rises.
 
+-- write-class: agent_policy_key system
 CREATE TABLE public.agent_policy_key (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -31,6 +32,7 @@ CREATE TABLE public.agent_policy_key (
 CREATE UNIQUE INDEX agent_policy_key_one_active ON public.agent_policy_key (tenant_id) WHERE state = 'active';
 CREATE UNIQUE INDEX agent_policy_key_id ON public.agent_policy_key (tenant_id, key_id);
 
+-- write-class: agent_policy_keyset system
 CREATE TABLE public.agent_policy_keyset (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   keyset_seq bigint NOT NULL CHECK (keyset_seq > 0),
@@ -39,6 +41,7 @@ CREATE TABLE public.agent_policy_keyset (
   PRIMARY KEY (tenant_id, keyset_seq)
 );
 
+-- write-class: agent_policy_head system
 CREATE TABLE public.agent_policy_head (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   agent_kind text NOT NULL CHECK (agent_kind IN ('addc', 'fileserver')),

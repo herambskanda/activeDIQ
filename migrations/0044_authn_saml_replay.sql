@@ -12,6 +12,7 @@
 -- Rows are never updated. The runtime role may delete only rows that have expired (a DELETE policy), which
 -- is how the cache trims itself; an unexpired row cannot be removed, so a replay window cannot be reopened.
 
+-- write-class: authn_saml_replay system
 CREATE TABLE public.authn_saml_replay (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   idp_id text NOT NULL CHECK (char_length(idp_id) BETWEEN 1 AND 256),

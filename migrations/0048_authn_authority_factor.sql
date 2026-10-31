@@ -44,6 +44,7 @@ BEGIN
 END
 $fn$;
 
+-- write-class: authn_authority_challenges system
 CREATE TABLE public.authn_authority_challenges (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   kind text NOT NULL CHECK (kind IN ('register', 'assert')),
@@ -61,6 +62,7 @@ CREATE TABLE public.authn_authority_challenges (
   CONSTRAINT authn_authority_challenges_proof CHECK ((kind = 'register') = (proof IS NOT NULL))
 );
 
+-- write-class: authn_authority_approvals system
 CREATE TABLE public.authn_authority_approvals (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -76,6 +78,7 @@ CREATE TABLE public.authn_authority_approvals (
   CONSTRAINT authn_authority_approvals_not_self CHECK (approver_id <> account_id)
 );
 
+-- write-class: authn_authority_notices system
 CREATE TABLE public.authn_authority_notices (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),
