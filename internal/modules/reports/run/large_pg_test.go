@@ -20,7 +20,7 @@ import (
 func TestLargeResultPageTimings(t *testing.T) {
 	n, _ := strconv.Atoi(os.Getenv("ACTIVEDIQ_REPORTS_LARGE_ROWS"))
 	if n <= 0 {
-		t.Skip("set ACTIVEDIQ_REPORTS_LARGE_ROWS to measure")
+		t.Skip("needs ACTIVEDIQ_REPORTS_LARGE_ROWS to measure")
 	}
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)

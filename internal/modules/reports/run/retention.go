@@ -2,7 +2,6 @@ package run
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
@@ -118,8 +117,5 @@ func (s *Service) ScheduleRetention(ctx context.Context, tx store.Tx, tid tenant
 func (s *Service) scheduleRetention(ctx context.Context, tx store.Tx, tid tenant.ID, at time.Time) error {
 	_, err := s.Jobs.Enqueue(ctx, tx, jobs.Job{Kind: RetentionKind, Tenant: tid, Args: struct{}{},
 		UniqueKey: "day:" + at.UTC().Format("2006-01-02"), RunAt: at})
-	if errors.Is(err, jobs.ErrInvalid) {
-		return err
-	}
 	return err
 }
