@@ -100,6 +100,118 @@
   color: var(--diq-muted);
   background: var(--diq-muted-bg);
 }
+.diq-chip--warn {
+  color: var(--diq-warn);
+  background: var(--diq-warn-bg);
+}
+.diq-chip--crit {
+  color: var(--diq-crit);
+  background: var(--diq-crit-bg);
+}
+.diq-chip__glyph {
+  margin-inline-end: var(--diq-space-1);
+}
+
+/* ---- Banner -------------------------------------------------------------- */
+/* Body text stays --diq-text (tested on each tint); the tone is the border, tint and glyph + words. */
+.diq-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2) var(--diq-space-3);
+  align-items: flex-start;
+  margin-block: var(--diq-space-2);
+  padding: var(--diq-space-3);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-inline-start-width: var(--diq-space-1);
+  border-radius: var(--diq-radius-2);
+}
+.diq-banner--info {
+  background: var(--diq-signal-soft);
+  border-color: var(--diq-signal);
+}
+.diq-banner--warn {
+  background: var(--diq-warn-bg);
+  border-color: var(--diq-warn);
+}
+.diq-banner--crit {
+  background: var(--diq-crit-bg);
+  border-color: var(--diq-crit);
+}
+.diq-banner__glyph {
+  flex: none;
+  font-weight: var(--diq-weight-semibold);
+}
+.diq-banner--info .diq-banner__glyph {
+  color: var(--diq-signal-text);
+}
+.diq-banner--warn .diq-banner__glyph {
+  color: var(--diq-warn);
+}
+.diq-banner--crit .diq-banner__glyph {
+  color: var(--diq-crit);
+}
+.diq-banner__body {
+  flex: 1 1 24ch;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.diq-banner__title,
+.diq-banner__text {
+  margin: 0;
+}
+.diq-banner__title {
+  font-weight: var(--diq-weight-semibold);
+}
+.diq-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2);
+}
+
+/* ---- Progress ------------------------------------------------------------ */
+.diq-progress {
+  position: relative;
+  block-size: var(--diq-space-2);
+  overflow: hidden;
+  background: var(--diq-surface-2);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+}
+.diq-progress__bar {
+  block-size: 100%;
+  background: var(--diq-signal);
+  transition: inline-size var(--diq-dur) var(--diq-ease);
+}
+/* Indeterminate: a segment sweeps along the track; base.css stops it under reduced motion. */
+.diq-progress--indeterminate .diq-progress__bar {
+  inline-size: 40%;
+  animation: diq-sweep 1.2s var(--diq-ease) infinite alternate;
+}
+@keyframes diq-sweep {
+  from {
+    margin-inline-start: 0;
+  }
+  to {
+    margin-inline-start: 60%;
+  }
+}
+
+/* ---- Kbd ----------------------------------------------------------------- */
+.diq-kbd {
+  padding: 0 var(--diq-space-1);
+  color: var(--diq-text-2);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-1);
+  font-family: var(--diq-font-mono);
+  font-size: var(--diq-text-cap);
+}
+
+.diq-btn--primary .diq-kbd {
+  color: inherit;
+  border-color: currentcolor;
+}
 
 /* ---- Table --------------------------------------------------------------- */
 .diq-table-wrap {
@@ -362,6 +474,12 @@
   font-size: var(--diq-text-section);
   font-weight: var(--diq-weight-semibold);
 }
+.diq-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2);
+  margin-top: var(--diq-space-3);
+}
 .diq-state--error {
   background: var(--diq-crit-bg);
   border-color: var(--diq-crit);
@@ -369,6 +487,352 @@
 .diq-state--error .diq-state__title,
 .diq-state--error p {
   color: var(--diq-text);
+}
+
+/* ---- Form controls (T-0954) ---------------------------------------------- */
+.diq-field__hint {
+  margin: var(--diq-space-1) 0 0;
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}
+legend.diq-field__label {
+  padding: 0;
+}
+
+/* Select: the platform control, restyled to match the text input; the chevron is a bordered triangle. */
+.diq-select {
+  position: relative;
+}
+.diq-select__control {
+  appearance: none;
+  padding-inline-end: var(--diq-space-6);
+  cursor: pointer;
+}
+.diq-select__control:disabled {
+  cursor: not-allowed;
+}
+.diq-select__control[aria-busy="true"] {
+  cursor: progress;
+}
+.diq-select::after {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: var(--diq-space-3);
+  width: 0;
+  height: 0;
+  content: "";
+  border-block-start: var(--diq-space-1) solid var(--diq-text-2);
+  border-inline: var(--diq-space-1) solid transparent;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+.diq-select__control option {
+  color: var(--diq-text);
+  background: var(--diq-surface);
+}
+
+/* Checkbox */
+.diq-check {
+  display: flex;
+  gap: var(--diq-space-2);
+  align-items: flex-start;
+  min-height: var(--diq-control);
+  padding-block: var(--diq-space-1);
+  cursor: pointer;
+}
+.diq-check__box {
+  flex: none;
+  width: var(--diq-space-4);
+  height: var(--diq-space-4);
+  margin: var(--diq-space-1) 0 0;
+  accent-color: var(--diq-signal);
+  cursor: inherit;
+}
+.diq-check__box[aria-invalid="true"] {
+  outline: var(--diq-border) solid var(--diq-crit);
+}
+.diq-check__box[aria-invalid="true"]:focus-visible {
+  outline: var(--diq-focus-width) solid var(--diq-focus);
+}
+.diq-check__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.diq-check[data-disabled] {
+  color: var(--diq-text-2);
+  cursor: not-allowed;
+}
+
+/* Choice group (RadioCardGroup, SegmentedControl) */
+.diq-choice {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.diq-choice__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2);
+  align-items: stretch;
+}
+.diq-choice__options--chip {
+  align-items: center;
+}
+.diq-choice__options > .diq-btn {
+  align-self: center;
+}
+
+/* RadioCard: the card is the click target; a native radio inside carries the state for assistive tech. */
+.diq-card {
+  display: flex;
+  flex: 1 1 calc(var(--diq-space-9) + var(--diq-space-6));
+  gap: var(--diq-space-2);
+  align-items: flex-start;
+  min-width: 0;
+  padding: var(--diq-space-3);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+  cursor: pointer;
+  transition: background var(--diq-dur-fast) var(--diq-ease);
+}
+.diq-card:hover:not([data-disabled]) {
+  background: var(--diq-surface-2);
+}
+.diq-card[data-checked] {
+  background: var(--diq-signal-soft);
+  border-color: var(--diq-signal);
+  box-shadow: inset 0 0 0 var(--diq-border) var(--diq-signal);
+}
+.diq-card[data-disabled] {
+  color: var(--diq-text-2);
+  cursor: not-allowed;
+}
+.diq-card__radio {
+  flex: none;
+  margin: var(--diq-space-1) 0 0;
+  accent-color: var(--diq-signal);
+  cursor: inherit;
+}
+.diq-card__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.diq-card__title {
+  overflow: hidden;
+  font-weight: var(--diq-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diq-card__desc {
+  overflow: hidden;
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* SegmentedControl: the radio is visually hidden but real; its face carries hover, checked and focus. */
+.diq-seg {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  cursor: pointer;
+}
+.diq-seg__face {
+  display: inline-flex;
+  gap: var(--diq-space-1);
+  align-items: center;
+  max-width: 100%;
+  min-height: var(--diq-control);
+  padding: 0 var(--diq-space-3);
+  overflow: hidden;
+  color: var(--diq-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+  transition: background var(--diq-dur-fast) var(--diq-ease);
+}
+.diq-seg:hover:not([data-disabled]) .diq-seg__face {
+  background: var(--diq-surface-2);
+}
+/* Selected is a check, a heavier weight and a ring-weight border, so colour is never the only signal. */
+.diq-seg[data-checked] .diq-seg__face {
+  color: var(--diq-signal-text);
+  font-weight: var(--diq-weight-medium);
+  background: var(--diq-signal-soft);
+  border-color: var(--diq-signal);
+  box-shadow: inset 0 0 0 var(--diq-border) var(--diq-signal);
+}
+.diq-seg[data-checked] .diq-seg__face::before {
+  content: "✓" / "";
+}
+.diq-seg__radio:focus-visible + .diq-seg__face {
+  outline: var(--diq-focus-width) solid var(--diq-focus);
+  outline-offset: var(--diq-focus-offset);
+}
+.diq-seg[data-disabled] {
+  cursor: not-allowed;
+}
+.diq-seg[data-disabled] .diq-seg__face {
+  color: var(--diq-text-2);
+  background: var(--diq-surface-2);
+  opacity: 0.6;
+}
+.diq-choice[aria-invalid="true"] .diq-seg__face,
+.diq-choice[aria-invalid="true"] .diq-card {
+  border-color: var(--diq-crit);
+}
+
+/* TokenInput */
+.diq-token {
+  position: relative;
+}
+.diq-token__field {
+  display: flex;
+  min-height: var(--diq-control);
+  padding: var(--diq-space-1) var(--diq-space-2);
+  cursor: text;
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+}
+.diq-token__field[data-invalid] {
+  border-color: var(--diq-crit);
+}
+.diq-token__field[data-readonly] {
+  background: var(--diq-surface-2);
+}
+.diq-token__field[data-disabled] {
+  background: var(--diq-surface-2);
+  cursor: not-allowed;
+}
+.diq-token__list {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: var(--diq-space-1);
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.diq-token__item {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: var(--diq-space-5);
+  padding-inline-start: var(--diq-space-2);
+  color: var(--diq-muted);
+  background: var(--diq-muted-bg);
+  border-radius: var(--diq-radius-1);
+  font-size: var(--diq-text-cap);
+  font-weight: var(--diq-weight-medium);
+}
+.diq-token__item[data-invalid] {
+  color: var(--diq-crit);
+  background: var(--diq-crit-bg);
+}
+.diq-token__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diq-token__remove {
+  min-width: var(--diq-space-5);
+  height: var(--diq-space-5);
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  background: none;
+  border: 0;
+  border-radius: var(--diq-radius-1);
+  cursor: pointer;
+}
+.diq-token__remove:hover:not(:disabled) {
+  background: var(--diq-line);
+}
+.diq-token__entry {
+  flex: 1 1 calc(var(--diq-space-9));
+  min-width: 0;
+}
+.diq-token__input {
+  width: 100%;
+  min-height: var(--diq-space-5);
+  padding: 0;
+  color: var(--diq-text);
+  background: none;
+  border: 0;
+  font: inherit;
+}
+.diq-token__input:disabled {
+  color: var(--diq-text-2);
+  cursor: not-allowed;
+}
+/* One ring around the whole field instead of a clipped one around the bare input. */
+@supports selector(:has(*)) {
+  .diq-token__input:focus-visible {
+    outline: none;
+  }
+  .diq-token__field:has(.diq-token__input:focus-visible) {
+    outline: var(--diq-focus-width) solid var(--diq-focus);
+    outline-offset: var(--diq-focus-offset);
+  }
+}
+.diq-token__options,
+.diq-token__note {
+  position: absolute;
+  inset-inline: 0;
+  z-index: 10;
+  margin: var(--diq-space-1) 0 0;
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-3);
+}
+.diq-token__options {
+  max-height: calc(var(--diq-row) * 8);
+  padding: var(--diq-space-1);
+  overflow: auto;
+  list-style: none;
+}
+.diq-token__note {
+  padding: var(--diq-space-2) var(--diq-space-3);
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}
+.diq-token__option {
+  display: flex;
+  gap: var(--diq-space-3);
+  align-items: baseline;
+  justify-content: space-between;
+  min-height: var(--diq-row);
+  padding: var(--diq-space-1) var(--diq-space-3);
+  border-radius: var(--diq-radius-2);
+  cursor: pointer;
+}
+.diq-token__option[aria-selected="true"] {
+  background: var(--diq-signal-soft);
+  box-shadow: inset var(--diq-focus-width) 0 0 var(--diq-signal);
+}
+.diq-token__opt-label,
+.diq-token__opt-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diq-token__opt-detail {
+  flex: none;
+  max-width: 50%;
+  color: var(--diq-text-2);
+}
+.diq-token__badge {
+  font-weight: var(--diq-weight-semibold);
 }
 
 /* ---- Popover and PopoverMenu (T-0953) ------------------------------------ */

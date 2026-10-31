@@ -13,14 +13,14 @@ import (
 // checkList reads the quoted values of `<column> text ... CHECK (<column> IN (...))` from the migration.
 func checkList(t *testing.T, column string) []string {
 	t.Helper()
-	b, err := migrations.FS.ReadFile("0063_reports_runs.sql")
+	b, err := migrations.FS.ReadFile("0064_reports_runs.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	re := regexp.MustCompile(`(?s)` + column + ` text (?:NOT NULL )?CHECK \(` + column + ` IN \((.*?)\)\)`)
 	m := re.FindSubmatch(b)
 	if m == nil {
-		t.Fatalf("no CHECK list for %s in 0063", column)
+		t.Fatalf("no CHECK list for %s in 0064", column)
 	}
 	var out []string
 	for _, v := range regexp.MustCompile(`'([a-z_]+)'`).FindAllSubmatch(m[1], -1) {

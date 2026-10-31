@@ -9,8 +9,8 @@ ticket: T-0014
 
 # Standard: CI gates and `make ci`
 
-**Rule.** `make ci` is the one command that must pass before anything merges (the dispatcher runs it
-pre-merge once T-0015 lands). A gate is not a gate until a deliberate violation makes it fail:
+**Rule.** `make ci` is the one command that must pass before anything merges. The dispatcher runs it on the
+merge result before every merge (the pre-merge gate, T-0941, below). A gate is not a gate until a deliberate violation makes it fail:
 `make ci-proof` (part of `make ci`) keeps every gate honest by running it against a violation and
 against clean input.
 
@@ -64,7 +64,56 @@ Each of these has an owner; none is faked.
 | `modules.gen.go` / `modules.gen.ts` staleness, which needs `tools/gen/modules` | the module-system ADR (T-0045) |
 | `fitness-api` checks A2-A8, A10-A12 (static, they need operations) and A4, A6, A7, A14 (runtime, they need `apihost.Build`); A9 is T5 in `fitness-tenancy`. Each prints `inactive` until its input exists | the API-contract fitness tickets (follow-ups of T-0011) |
 | Duplication check; npm/web audit; installer and binary signing | later `ops` tickets; key custody is T-0140/T-0141 |
-| Dispatcher runs `make ci` before merge | T-0015 |
+
+## The pre-merge gate (T-0941)
+
+Until T-0941 nothing ran `make ci` at merge: the dispatcher's merge was a bare `git merge`, and a
+worker's own `make ci` ran on its branch, not on the merge result. ADR-0001 and ADR-0002 named a
+"dispatcher pre-merge gate (T-0015)", but that id became the Go upgrade and no ticket built the gate.
+So `fitness-profiles` was red on `main` (6 findings at the T-0104 merge, 88 at the T-0555 merge) and each
+of those merges still added findings: T-0104 took it from 6 to 8 (activation rows P2, P6 for
+`packaging/windows/`), T-0555 from 88 to 90 (U3, U4 for `proto/skenzeriq/agent/`).
+
+What the dispatcher does now for a finished code ticket (`factory/lib/premerge.mjs`, config
+`dispatcher.pre_merge`):
+
+1. Builds the merge result (`main` plus the branch) in a scratch worktree and runs `make -k ci` there.
+   `-k` keeps going after a failure so every red job is seen.
+2. Green: merge. A merge conflict: reopen the ticket as before.
+3. Red and `main` green: refuse. Everything the run reports is new.
+4. Red and `main` red: run the same command on `main` (cached per `main` commit), compare **findings**
+   as a multiset and refuse only if the merge result has one `main` does not. A finding is the check
+   and message with the line and column, durations and the worktree path removed, so an old finding
+   that moves does not count, a second copy of an old one does, and a job that turns red counts as the
+   finding `FAILED <target>`. A run that fails with no recognisable finding line is refused.
+5. A refused ticket returns to `in_progress` for its owner with the findings and the log paths in the
+   note. If the gate cannot judge (timeout, worktree failure) nothing merges and it is retried after
+   10 minutes.
+
+A finding line is recognised by shape (`findingKey` in `factory/lib/premerge.mjs`; line numbers,
+durations, scratch paths and the worktree path are not part of the key):
+
+| Shape | Printed by |
+| --- | --- |
+| `path:line[:col]: message` (also `P1 (ADR-0002 fitness function): …`) | profiles, safeprim, modules, operation, api, proto, objectid, grantbootstrap, disclosure |
+| `<where>:line <check> [<rule>]: message` | fleetca, reports, keycustody, the bound-test failures |
+| `<check> <where> [<rule>]: message` | tenancy, audit, domainkeys |
+| `<where>: <check> [<rule>]: message` | corpus |
+| `<file or dotted name>: message`, no line (`go.mod: F4 (ADR-0001 rule 4): …`, `<scenario>/<case>: …`, `attr.sid: FF-SP6 …`) | stack, api A5, tenancy OpenAPI, packaging, disclosure, update, oracles |
+| `fitness-x: FAIL: …` / `fitness-x: <message>` | sso, built-msi, update-offline |
+| a heading `<id> <what>: FAIL` or `FAIL <case>`, then one indented line per violation (key `FAIL <id>: <line>`; a `GAP` heading is a tolerated gap, not a finding) | agent-host, host |
+| a failed make target, `--- FAIL`, `FAIL pkg` | any |
+
+Progress and summary lines (`ok`, counts, `inactive`, `pending`, `PostgreSQL 16 (…)`) are not findings.
+A job that prints violations in none of these shapes is red on `main` but not ratcheted: new
+findings in it pass while it is red. So every job of `make fitness` has a sample violation line in
+`JOBS` in `factory/test/premerge.test.mjs`; a test fails when a job of the target has none, and one
+run through the gate per shape shows a violation added to a red job is refused naming it. A new
+fitness tool adds its line there, and prints one self-contained line per violation. A new shape goes
+into `findingKey` (or, for a heading with indented violations, `FAIL_BLOCK`) in `extractFindings`.
+
+Dry run, changes nothing: `factory/bin/factory premerge T-NNNN` (or `… -- make fitness-profiles` to
+run one job). Tests: `node --test factory/test/premerge.test.mjs`. Runbook: `runbooks/ci-and-build.md`.
 
 ## Rules for adding a gate
 

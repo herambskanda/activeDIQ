@@ -351,3 +351,39 @@ A core MSI with no agent in it is still judged by rules 2-4 and the LocalSystem/
 **If it fails.** The line names the rule and the file. A4: the import path is in the message; the agent has no directory or network-identity client, so remove the import, never the ban. P/F1: the test name is printed; fix the verifier or the bound, never the test. A missing test means a rename: P1-P8 are found by the prefixes `TestP1`…`TestP8`, `TestF1`, `FuzzF1`. A `FuzzF1` crasher is written to `internal/platform/agentpolicy/testdata/fuzz/`: commit it as a regression seed. `make fitness-agent-host AGENT_POLICY_FUZZ_TIME=2s` for a quick local run.
 
 **Not covered here (lab or other tickets).** The contract §3 bound "event_ids in the compiled-in catalogue" and the local-ceiling clamp are not enforced by `agentpolicy.Validate` (they need the module catalogue and the host's local config) and so are not in F1: owning ticket T-0555 (agent host and addc module). ADR-0006 A2/A3 (token privilege refusal, channel ACE read, write-denied outside the data directory) run in the Windows lab; F2/F3 (hostile in-bounds policy has no side effect beyond verdicts, applying a policy writes the local entry) need the agent host and rule engine; S1 is T-0556's ingest test.
+
+## The pre-merge gate (T-0941)
+
+**What it is.** The dispatcher builds `main` + `factory/T-NNNN` in a scratch worktree
+(`<worktree_root>/.premerge/`) and runs `dispatcher.pre_merge.argv` (default `make -k ci`) there before
+it merges. Settings: `factory/config.json` `dispatcher.pre_merge` (`enabled`, `argv`,
+`timeout_minutes`). Logs and the per-`main`-commit baseline cache: `factory/state/premerge/`.
+Rules and the comparison: `standards/ci-gates.md` "The pre-merge gate". It needs what `make ci` needs
+(Docker for the container jobs, Node, network once for toolchains).
+
+**See what it would do:** `factory/bin/factory premerge T-NNNN` (exit 0 pass, 1 refused or conflict).
+`factory/bin/factory premerge T-NNNN -- make fitness-profiles` runs one job instead.
+
+**A ticket was reopened by the gate.** The note lists the new findings. Fix them in code; merge `main`
+into the branch first, because the findings are judged against current `main`. Never edit the
+check, add `continue-on-error` or delete a baseline file to get through.
+
+**Everything is refused for the same unrelated reason.** `main` is green and a job is red in the
+merge result with no change of ours (an expired token, a tool missing on the dispatcher host): the
+refusal names `FAILED <target>`. Fix the environment; the gate fails closed on purpose. To stop the
+gate temporarily set `dispatcher.pre_merge.enabled` to `false`, say why in an event, and re-enable it
+as soon as the cause is fixed; the director owns that call.
+
+**A red job that is not ratcheted.** Findings are recognised by shape (the table in
+`standards/ci-gates.md`, Pre-merge gate). If a job prints violations in another shape, new ones in
+it pass while it is red on `main`. Print one self-contained line per violation, add a sample of it
+to `JOBS` in `factory/test/premerge.test.mjs` (the test fails for a `make fitness` job without one)
+and, for a new shape, extend `findingKey` in `factory/lib/premerge.mjs`. Check a log by hand:
+`node -e "import('./factory/lib/premerge.mjs').then(m=>console.log(m.extractFindings(require('fs').readFileSync('job.log','utf8'))))"`
+prints the findings it counts; fewer than the job's own violation count means a shape is missed.
+
+**Merges fail with "the main checkout is mid-merge".** A previous merge left `MERGE_HEAD` in the main
+checkout (a failed `merge --abort`, for example "Unable to write index"). `mergeTicket` now reports
+that as an error and retries, instead of calling it the next ticket's conflict and reopening it
+(T-0941 was reopened twice that way). Finish or abort that merge by hand (`git -C <root> merge --abort`
+once its index is writable); every pending merge then proceeds on the next pass.
