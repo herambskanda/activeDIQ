@@ -1,12 +1,15 @@
 package run_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"errors"
+	"log/slog"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -79,19 +82,49 @@ func (f *fakeScopes) For(_ context.Context, _ store.Tx, _ tenant.ID, c authority
 }
 
 type recSink struct {
-	mu sync.Mutex
-	ev []audit.Event
+	mu   sync.Mutex
+	ev   []audit.Event
+	fail error // when set, Append of a read_denied event returns it
 }
 
 func (r *recSink) Append(_ context.Context, _ store.Tx, e audit.Event) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.fail != nil && e.Kind == run.KindReadDenied {
+		return r.fail
+	}
 	if err := e.Validate(); err != nil {
 		return err
 	}
 	r.ev = append(r.ev, e)
 	return nil
 }
+
+// denials returns "operation/check" of every read_denied event, in order.
+func (r *recSink) denials() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for _, e := range r.ev {
+		if e.Kind != run.KindReadDenied {
+			continue
+		}
+		var op, check, id string
+		for _, d := range e.Details {
+			switch d.Key {
+			case "operation":
+				op = d.Value
+			case "check":
+				check = d.Value
+			case "run_id":
+				id = d.Value
+			}
+		}
+		out = append(out, op+"/"+check+"/"+id)
+	}
+	return out
+}
+
 func (r *recSink) kinds() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -244,7 +277,7 @@ func (e *env) work() {
 func (e *env) get(id run.ID) run.Run {
 	e.t.Helper()
 	var r run.Run
-	err := e.svc.Read(context.Background(), e.tid, id, chainOf(alice), run.ForGet, func(_ context.Context, _ store.Tx, got run.Run) error {
+	err := e.svc.Read(context.Background(), e.tid, run.OpGet, id, chainOf(alice), run.ForGet, func(_ context.Context, _ store.Tx, got run.Run) error {
 		r = got
 		return nil
 	})
@@ -348,7 +381,11 @@ func Test_run_read_bound_to_runner_and_scope(t *testing.T) {
 		r := e.create(alice, `{}`)
 		e.work()
 		read := func(who string, checks run.Check) error {
-			return e.svc.Read(ctx, e.tid, r.ID, chainOf(who), checks, nil)
+			op := run.OpGet
+			if checks == run.ForPage {
+				op = run.OpPage
+			}
+			return e.svc.Read(ctx, e.tid, op, r.ID, chainOf(who), checks, nil)
 		}
 		// a second account with the same scope: 404 on get and page, by ID
 		for _, c := range []run.Check{run.ForGet, run.ForPage} {
@@ -358,6 +395,12 @@ func Test_run_read_bound_to_runner_and_scope(t *testing.T) {
 		}
 		if _, err := e.svc.Page(ctx, e.tid, chainOf(bob), r.ID, run.PageQuery{}); !errors.Is(err, run.ErrRunNotFound) {
 			t.Fatalf("other account page: %v", err)
+		}
+		if _, err := e.svc.Cancel(ctx, e.tid, chainOf(bob), r.ID); !errors.Is(err, run.ErrRunNotFound) {
+			t.Fatalf("other account cancel: %v", err)
+		}
+		if _, _, err := e.svc.Retry(ctx, e.tid, chainOf(bob), r.ID); !errors.Is(err, run.ErrRunNotFound) {
+			t.Fatalf("other account retry: %v", err)
 		}
 		if err := read(alice, run.ForPage); err != nil {
 			t.Fatalf("the runner: %v", err)
@@ -379,15 +422,43 @@ func Test_run_read_bound_to_runner_and_scope(t *testing.T) {
 		if err := read(alice, run.ForPage); err != nil {
 			t.Fatalf("restored scope: %v", err)
 		}
-		// every refusal left a read_denied event
-		n := 0
-		for _, k := range e.sink.kinds() {
-			if len(k) > 22 && k[:23] == "reports.run.read_denied" {
-				n++
-			}
+		// every refusal left a read_denied event that names the operation, the failed check and the run
+		id := r.ID.String()
+		want := []string{
+			"get/exists/" + id, "page/exists/" + id, "page/exists/" + id, // bob: get, page, Page
+			"cancel/exists/" + id, "retry/exists/" + id, // bob: cancel, retry
+			"get/scope/" + id, "page/scope/" + id, // alice, narrowed assignment
+			"page/scope/" + id, // alice, narrower token
 		}
-		if n != 6 { // bob: get, page, Page (3); alice: narrowed get and page (2); narrower token (1)
-			t.Fatalf("read_denied events = %d, want one per refusal (6): %v", n, e.sink.kinds())
+		if got := e.sink.denials(); !slices.Equal(got, want) {
+			t.Fatalf("read_denied events = %v, want %v", got, want)
+		}
+	})
+}
+
+// A read_denied append that fails does not change the answer, and the lost security event is logged at
+// error level with the run, operation, check and error class, and no request value.
+func Test_read_denied_append_failure_is_logged(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		r := e.create(alice, `{}`)
+		e.work()
+		var buf bytes.Buffer
+		e.svc.Log = slog.New(slog.NewJSONHandler(&buf, nil))
+		e.sink.fail = errors.New("sink down: secret-looking-value")
+		if err := e.svc.Read(ctx, e.tid, run.OpGet, r.ID, chainOf(bob), run.ForGet, nil); !errors.Is(err, run.ErrRunNotFound) {
+			t.Fatalf("the refusal is still answered: %v", err)
+		}
+		var rec map[string]any
+		if err := jsonv2.Unmarshal(bytes.TrimSpace(buf.Bytes()), &rec); err != nil {
+			t.Fatalf("log output %q: %v", buf.String(), err)
+		}
+		if rec["level"] != "ERROR" || rec["run_id"] != r.ID.String() || rec["operation"] != "get" || rec["check"] != "exists" || rec["error_class"] == nil {
+			t.Fatalf("log record = %v", rec)
+		}
+		if strings.Contains(buf.String(), "secret-looking-value") {
+			t.Fatalf("the log carries the error text: %s", buf.String())
 		}
 	})
 }
@@ -443,7 +514,7 @@ func Test_expired_run_is_not_served(t *testing.T) {
 		if res, err = e.svc.Retention(ctx, e.tid, e.clock.Add(40*24*time.Hour)); err != nil || res.RecordsDeleted != 1 {
 			t.Fatalf("record sweep = %+v, %v", res, err)
 		}
-		if err := e.svc.Read(ctx, e.tid, r.ID, chainOf(alice), run.ForGet, nil); !errors.Is(err, run.ErrRunNotFound) {
+		if err := e.svc.Read(ctx, e.tid, run.OpGet, r.ID, chainOf(alice), run.ForGet, nil); !errors.Is(err, run.ErrRunNotFound) {
 			t.Fatalf("after the record is deleted: %v", err)
 		}
 	})
@@ -562,6 +633,35 @@ func TestReuseCapCancelAndRetry(t *testing.T) {
 		}
 		if other, _, _ := e.svc.List(ctx, e.tid, chainOf(bob), run.ListFilter{}); len(other) != 0 {
 			t.Fatalf("another account sees %d runs", len(other))
+		}
+	})
+}
+
+// RP4-style probe: the application role cannot create a run that is not queued with attempt 0 and an empty
+// result, whatever a caller's bug asks for (migration 0065). Each probe is a copy of a real run's row.
+func Test_report_runs_insert_guard(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		r := e.create(alice, `{}`)
+		const cols = `tenant_id, id, definition_id, definition_version, definition_sha256, preset, params, query_hash,
+			scope_fingerprint, runner_account, chain, columns`
+		for name, set := range map[string]string{
+			"succeeded":          `'succeeded', 0, 5, decode(repeat('ab', 32), 'hex'), now(), now() + interval '1 day'`,
+			"running":            `'running', 0, NULL, NULL, NULL, NULL`,
+			"queued, attempt 1":  `'queued', 1, NULL, NULL, NULL, NULL`,
+			"queued with result": `'queued', 0, 5, NULL, NULL, NULL`,
+			"queued with expiry": `'queued', 0, NULL, NULL, NULL, now() + interval '1 day'`,
+		} {
+			err := e.ownerExec(`INSERT INTO public.report_runs (`+cols+`, state, attempt, row_count, digest, as_of, expires_at)
+				SELECT `+cols+`, `+set+` FROM (SELECT tenant_id, gen_random_uuid() AS id, definition_id, definition_version, definition_sha256,
+				preset, params, query_hash, scope_fingerprint, runner_account, chain, columns FROM public.report_runs WHERE id = $1::uuid) x`, r.ID.String())
+			if got := store.SQLState(err); got != "AD403" {
+				t.Errorf("%s: SQLSTATE %q (%v), want AD403", name, got, err)
+			}
+		}
+		// the run service's own insert still works
+		if r2 := e.create(bob, `{}`); r2.State != run.StateQueued {
+			t.Fatalf("a queued run: %+v", r2)
 		}
 	})
 }

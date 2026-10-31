@@ -37,7 +37,7 @@ scope decision, not a platform asymmetry.
 | `internal/platform/store/reportsql` | **Built (T-0957, row B2).** `NewRegistry`, `Compile`, `CompileCount`, `Exec`, `Count`, the scope and narrowing renderers, SQL vectors (FF-SP4) and RP6. `sqlconst` (FF-SP2) lets a value of type `reportsql.CompiledSQL` reach `Exec` and `string(x)` of one is a constant for it. Deviations in §5 | §5, row B2, RP1, RP6 |
 | Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. Two adapters are still to be wired in `compose/server`: `rbac.OwnerStatus` (over the account store) and `rbac.ObjectConnections` (over inventory) | §4 |
 | Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. There is no group closure. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed Row P1 (T-0949, migration 0063) is built: `nc_sync_passes` (one row per tenant, connection, NC) holds `last_pass_at` and `state` (`ok`, `resync_required`, `paused`). `Writer.RecordPass` sets the pass as-of (start of the read) in the cycle's transaction and `Ingest` calls it on the last batch for each `Cycle.PassNCs`, so a quiet domain is fresh; `Writer.MarkNC` records resync or pause; `Reader.Freshness` returns `[]report.NCWatermark` and the `report.Label` result, with `DefaultStalenessThreshold` = 60 min | §3.4, §4.5, rows P1, **P2**, B3, B6 |
-| Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. The other 15 operations answer 501 until B5, B9 and B11 | §6, §9, row B4 |
+| Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. The other 15 operations answer 501 until B5, B9 and B11 | §6, §9, row B4 |
 | `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150). **No canonical digest** (spec §8.3) | §7, row B9 |
 | `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
 | `platform/notify` | **Built (T-0950).** `notify/mailaddr` (strict address parser), `notify/settings` (allowed recipient domains, SMTP relay; migration 0062), `notify/mail` (SMTP over egress), `notify/mailtest`, `notify/delivery` (DM-84 `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue`), the `notify.settings.update` Action in `modules/notify`. **Not yet wired:** nothing calls `DispatchDue` (needs the DM-44 schedule, row P4, or a notify job), no `Renderer` per purpose, no SMTP AUTH credentials. Terminal failure state is `given_up` | §7.2, §8, row P3 |
@@ -1068,7 +1068,12 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
   through the run API. Recipients get files only through §7.2.
 - **`reports.schedule.manage_all`** shows schedule metadata (definition, preset, owner, recipients,
   state, last fire, last run state and row count). It never opens a run's rows or files.
-- Every refusal at checks 2, 3 and 4 appends `reports.run.read_denied {run_id, check}` (§10).
+- Every refusal at checks 2, 3 and 4 appends `reports.run.read_denied {run_id, check, operation}` (§10).
+  `operation` is one of `get`, `page`, `cancel`, `retry`, `export_create` (and `download`, which B9 adds
+  under `download_denied`); `run.Service.Read` takes it as an argument, and `Cancel` and `Retry` supply
+  their own. The refusal is answered whether or not the append succeeds. A failed append is logged at
+  error level (`run_id`, `operation`, `check`, `error_class`; never the error text or a request value).
+  Retry and cancel by another account (check 2) are refused as 404 and audited the same way.
 - **History list** (`GET /reports/runs`, `listReportRuns`, T-0891) is not a run read, so it does not go
   through `run.ReadAccess`. It selects `WHERE runner_account = chain.Requester` ordered by
   `(created_at DESC, id DESC)` and takes no parameter that names another runner. It makes **one**
@@ -1087,7 +1092,10 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - the runner, after an assignment is narrowed or revoked, gets 409 on page and export create;
 - the runner, through a token narrower than the session that created the run, gets 409;
 - a `manage_all` holder gets schedule metadata and 404 on the schedule's runs;
-- every refusal leaves a `reports.run.read_denied` event.
+- every refusal (get, page, cancel, retry; export create from B9) leaves a `reports.run.read_denied` event
+  carrying the operation, the failed check and the run ID;
+- a sink that fails on the append leaves an error-level log record and the caller still gets the refusal
+  (`Test_read_denied_append_failure_is_logged`).
 
 ## 7. Export (spec §8.3, FR-16 to FR-22)
 
@@ -1390,7 +1398,7 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 
 - 2026-10-30 · T-0959 · row B4 built: `modules/reports` (module, handlers, `Codec` for API params and
   views, 501 stubs for the 15 operations of B5/B9/B11), `modules/reports/run` (record, service, job,
-  pages, history, retention), migration 0064, `compose/server/reports.go`. As built, against §6:
+  pages, history, retention), migrations 0064 and 0065, `compose/server/reports.go`. As built, against §6:
   - T2 does **not** hold `FOR UPDATE` for its life (a cancel would wait up to 30 min). Every T2 write is
     fenced (`WHERE state = 'running' AND attempt = $n`) and the rows trigger reads committed state, so a
     concurrent cancel aborts the next insert (`AD403` -> stopped). T1 and the failure paths lock
