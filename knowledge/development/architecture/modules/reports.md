@@ -543,8 +543,10 @@ replicated-logon thresholds (spec §6.4) is `Min: 30` on USR-03's `days` paramet
   the DN disclosure rule); no "Manager" column and no "Users Without Managers" preset; USR-03 shows one more
   column (`probable_service_account_reason`). Not done: the per-domain threshold floor
   `max(30, interval)` (the floor is 30 for every domain).
-- **Not wired in production:** `compose/server` still passes `noLibrary`, because `inventory.Datasets()` cannot be
-  registered until the table-owner map lists their tables (T-0997).
+- **Wired in production (T-1104):** `compose/server.bootReport` adds `inventory.Datasets()` to the host under owner key
+  `inventory` (checked by `report.CheckTables` against `store/owners`); `buildReports` compiles the host's datasets with
+  `reportsql.NewRegistry` over the live schema catalogue (`reportSchema`, a registered platform path: it runs before the
+  install tenant exists) and passes `library.Load(library.Shipped(), …)` as `run.Catalog`. The placeholder catalogue that knew no definition is deleted.
 - **Tests.** `library/library_test.go` (`Test_reports_library_matches_spec`, `Test_reports_search_by_me_name`,
   immutability, broken definitions, crosswalk agreement); `directory/inventory/reports_library_test.go` (every
   preset's rows equal a ground truth computed in Go from the seed, the six hidden service accounts and their
@@ -1516,7 +1518,8 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   - Cancel is audited as `reports.run.failed` with Reason `cancelled`. Token principals (a Via chain) are
     refused at 2a (403). `too_many_report_jobs` is `errors[].code` on a 429.
   - Production wiring is incomplete on purpose: compose passes `noScopes` (503 `not-ready`, no
-    `rbac.ReadScopes` adapters yet) and `noLibrary` (404 `definition_not_found` until B5).
+    `rbac.ReadScopes` adapters yet); the catalogue is the shipped library since T-1104 (an unknown id is 404
+    `definition_not_found`).
   - Page timings, 500k-row result, PostgreSQL 16, after `ANALYZE` (`TestLargeResultPageTimings`, opt-in
     via `ACTIVEDIQ_REPORTS_LARGE_ROWS`): ordinal first page 10 ms; ordinal offset 250k 254 ms; sorted
     first page 370 ms (either direction); sorted offset 250k 628 ms. Sorted pages are a top-N over
