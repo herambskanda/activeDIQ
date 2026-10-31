@@ -427,7 +427,14 @@ var unsafeHomes = []string{"internal/proto"}
 // LazyProc.Call, which takes uintptr(unsafe.Pointer(...)). The agent-host fitness rulings put that
 // reach in the host, never in a module (knowledge/development/decisions/agent-host-fitness-rulings.md,
 // Ruling 1; fitness-agent-host R3 keeps unsafe out of addc and the other modules). T-0800.
-var unsafeWindowsHomes = []string{"internal/platform/agent", "cmd/agentsetup"}
+//
+// internal/platform/ownerfile and internal/platform/fleet/dial (T-0883) write and re-check owner-only
+// state files with a PROTECTED DACL. Their *_windows.go files need unsafe for two things x/sys/windows
+// offers no helper for: unsafe.Sizeof(SecurityAttributes) for the Length field, and reading the SID
+// that trails an ACCESS_ALLOWED_ACE ((*windows.SID)(unsafe.Pointer(&ace.SidStart))). Same ruling as the
+// agent host: Win32 security-descriptor reach, Windows files only. Every other directory, and every
+// non-windows file in these two, stays banned.
+var unsafeWindowsHomes = []string{"internal/platform/agent", "cmd/agentsetup", "internal/platform/ownerfile", "internal/platform/fleet/dial"}
 
 // checkUnsafe bans importing "unsafe" in product code outside generated protobuf packages: linkname
 // needs it, and so does every memory-safety escape. Tests and tier L are exempt.

@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/ownerfile"
 	v1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -59,14 +60,25 @@ type BaselineStore interface {
 	Save(*Baseline) error
 }
 
+// ErrBaselineUnsafe is returned by FileBaselineStore.Load when the file is not restricted to the
+// service identity (Windows: trusted owner and a protected DACL of the service identity and SYSTEM
+// only; Unix: owned by the euid, mode 0600) or is a link. Its content was not read.
+var ErrBaselineUnsafe = errors.New("rights: baseline file is not restricted to the service identity")
+
 // FileBaselineStore keeps the baseline in one file readable and writable by the connector's service
 // identity only. Save writes a temporary file, flushes it, renames it over the target and flushes the
 // directory.
 type FileBaselineStore struct{ Path string }
 
 func (s FileBaselineStore) Load() (*Baseline, error) {
-	raw, err := os.ReadFile(s.Path)
+	// ownerfile.ReadFile opens without following links, checks owner and access on the open handle,
+	// then reads from that handle: no check-then-read race (T-0577). A file another principal could
+	// have written is ErrBaselineUnsafe, never a silent adoption of a forged baseline.
+	raw, err := ownerfile.ReadFile(s.Path)
 	if err != nil {
+		if errors.Is(err, ownerfile.ErrUnsafe) {
+			return nil, fmt.Errorf("%w: %w", ErrBaselineUnsafe, err)
+		}
 		return nil, err
 	}
 	var b Baseline
@@ -82,15 +94,13 @@ func (s FileBaselineStore) Save(b *Baseline) error {
 		return err
 	}
 	dir := filepath.Dir(s.Path)
-	tmp, err := os.CreateTemp(dir, ".baseline-*")
+	// Owner-only from creation (no inherited-ACL window on Windows): T-0242.
+	tmp, err := ownerfile.CreateTemp(dir, ".baseline-*")
 	if err != nil {
 		return err
 	}
 	name := tmp.Name()
 	cleanup := func(e error) error { _ = tmp.Close(); _ = os.Remove(name); return e }
-	if err := tmp.Chmod(0o600); err != nil {
-		return cleanup(err)
-	}
 	if _, err := tmp.Write(raw); err != nil {
 		return cleanup(err)
 	}
@@ -101,16 +111,11 @@ func (s FileBaselineStore) Save(b *Baseline) error {
 		_ = os.Remove(name)
 		return err
 	}
-	if err := os.Rename(name, s.Path); err != nil {
+	if err := renameDurable(name, s.Path); err != nil {
 		_ = os.Remove(name)
 		return err
 	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer d.Close()
-	return d.Sync()
+	return nil
 }
 
 // ShrinkRecord is the tier0_set_shrink record.
@@ -133,7 +138,7 @@ type RecordSink interface {
 	WriteBaselineMissing(ctx context.Context, verificationID string, cause error) error
 }
 
-// FileRecordSink appends JSON lines to a local log file (mode 0600) and flushes each one.
+// FileRecordSink appends JSON lines to a local log file restricted to the service identity (ownerfile) and flushes each one.
 type FileRecordSink struct{ Path string }
 
 func (s FileRecordSink) append(v any) error {
@@ -141,11 +146,24 @@ func (s FileRecordSink) append(v any) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(s.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	// Owner-only from creation, also on Windows where the mode is a no-op (T-0577). A foreign-owned
+	// or non-regular file is refused: the record cannot be made durable-and-private, and the caller
+	// ends the run with LOCAL_RECORD_FAILED.
+	f, corrected, err := ownerfile.OpenAppend(s.Path)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(append(raw, '\n')); err != nil {
+	line := append(raw, '\n')
+	if corrected {
+		// The file was wider than owner-only, so earlier lines may have been written by someone else.
+		note, merr := json.Marshal(map[string]any{"event": "records_acl_corrected", "time": time.Now().UTC()}, json.Deterministic(true))
+		if merr != nil {
+			_ = f.Close()
+			return merr
+		}
+		line = append(append(note, '\n'), line...)
+	}
+	if _, err := f.Write(line); err != nil {
 		_ = f.Close()
 		return err
 	}
@@ -161,8 +179,11 @@ func (s FileRecordSink) WriteShrink(_ context.Context, r ShrinkRecord) error { r
 func (s FileRecordSink) WriteBaselineMissing(_ context.Context, id string, cause error) error {
 	// The cause is classified, never echoed: it can carry a path.
 	reason := "unreadable"
-	if errors.Is(cause, fs.ErrNotExist) {
+	switch {
+	case errors.Is(cause, fs.ErrNotExist):
 		reason = "not_found"
+	case errors.Is(cause, ErrBaselineUnsafe):
+		reason = "unsafe_acl"
 	}
 	return s.append(map[string]any{"event": "tier0_baseline_missing", "time": time.Now().UTC(), "verification_id": id, "reason": reason})
 }

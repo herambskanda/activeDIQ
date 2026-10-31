@@ -42,6 +42,17 @@ type dirFake struct {
 	noNC    bool          // plan AD targets without a naming context
 	badNC   string        // set by Apply when the Step's NC/pin disagree with the plan
 	kept    secret.Secret // the Step's secret as the Action saw it
+	conn    string        // connection ID of planned targets; "c1" when empty
+	// live, when set, is what the Action's Apply reads as the target's facts before it re-checks, as
+	// client.Write does; otherwise Apply re-checks with bare "exists" facts.
+	live func(context.Context, authority.FactsQuery) (authority.Facts, error)
+}
+
+func (d *dirFake) connID() string {
+	if d.conn != "" {
+		return d.conn
+	}
+	return "c1"
 }
 
 func newDir() *dirFake {
@@ -77,12 +88,12 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			for _, it := range in.Items {
 				before := d.get(it.GUID)
 				if before == it.Want {
-					out = append(out, TypedStep[dirPayload]{Plan: StepPlan{Target: authority.TargetRef{Connection: "c1", GUID: it.GUID, Class: "user", NC: nc},
+					out = append(out, TypedStep[dirPayload]{Plan: StepPlan{Target: authority.TargetRef{Connection: d.connID(), GUID: it.GUID, Class: "user", NC: nc},
 						Kind: "ldap.modify", Reversibility: class}, Payload: dirPayload{GUID: it.GUID}})
 					continue
 				}
 				out = append(out, TypedStep[dirPayload]{
-					Plan: StepPlan{Target: authority.TargetRef{Connection: "c1", GUID: it.GUID, Class: "user", NC: nc}, Kind: "ldap.modify",
+					Plan: StepPlan{Target: authority.TargetRef{Connection: d.connID(), GUID: it.GUID, Class: "user", NC: nc}, Kind: "ldap.modify",
 						Reversibility: class, Phase: it.Phase, Credential: it.Cred,
 						Diff: []Change{{Attribute: "title", Before: []string{before}, After: []string{it.Want}}}},
 					Payload: dirPayload{GUID: it.GUID, Before: before, Want: it.Want}})
@@ -101,7 +112,14 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 				return dirOut{}, errors.New("nc/pin mismatch")
 			}
 			// Live facts, the re-check, then the write.
-			if _, err := s.Recheck(ctx, authority.Facts{Exists: true}); err != nil {
+			facts := authority.Facts{Exists: true}
+			if d.live != nil {
+				var ferr error
+				if facts, ferr = d.live(ctx, s.FactsQuery()); ferr != nil {
+					return dirOut{}, ferr
+				}
+			}
+			if _, err := s.Recheck(ctx, facts); err != nil {
 				return dirOut{}, err
 			}
 			d.mu.Lock()

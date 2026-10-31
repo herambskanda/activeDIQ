@@ -1,0 +1,2 @@
+# The reports library holds the SHA-256 of every shipped definition (RP7): git must not rewrite line endings.
+internal/modules/reports/library/** -text

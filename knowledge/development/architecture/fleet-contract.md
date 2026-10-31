@@ -79,7 +79,11 @@ The generated stubs live in `internal/proto/activediq/fleet/v1`. `internal/platf
 (T-0125's gateway ticket) and will implement the `Fleet` service from outside the platform root, or
 declare its own transport-level types; that wiring, and where the `Enroll` handler is registered, is
 the gateway ticket's decision. This ticket adds only the contract. Nothing under `internal/platform`
-imports the generated package.
+imports the generated package. Bindings: server side `compose/server/fleettunnel.go`; component side
+`compose/tunnelbind` (frame conversion and the `Tunnel` stream, shared by `compose/agent` and
+`compose/connector`), passed to the generic `platform/fleet/tunnelclient` as `Config.Open` (T-0946).
+`fitness-modules` rule 2.1 does flag such an import; it went unseen because that job is the recipe of
+`make fitness` and never ran behind a red prerequisite (T-0998).
 
 ## Compatibility
 
@@ -231,7 +235,7 @@ Threat-model links: TM-A11 (key never leaves the sealed column; unreachable here
   both roots, new pin, bundle without the old root). One audit event per use (Application log 4102/4103).
 - **Persistence.** `ca-bundle.pem`, `ca-pin.txt`, `endpoints.txt`, `key.pem` (0600, PKCS#8), `leaf.pem`
   in a 0700 directory, each by temp+rename, leaf last; `Load` re-validates everything. Nothing is written on
-  any failure. On non-unix hosts the package fails closed (no state written or read) until the owner-only DACL lands in T-0291. Load returns ErrExpired for an expired leaf or CA.
+  any failure. On Windows the directory is created atomically with a protected DACL (SYSTEM, Administrators, the service identity; typed ACL API, no SDDL), a pre-existing directory is never adopted unless already owner-only, and Load re-checks owner and DACL of the directory and every file (T-0291). Reparse points (junctions, symlinks) are refused via the file attributes, not Go's FileInfo mapping. **Enrol identity:** the directory is owned by, and grants, the token user at enrol time, so enrol as the identity the service runs as (gMSA/virtual account); enrolling as an interactive admin and running as another account fails closed on Load. The installer should own the parent directory. Load returns ErrExpired for an expired leaf or CA.
 - **Dial-out.** `dial.DialOut(addr, state)` uses `Credentials`: TLS 1.3, roots exactly `State.Roots` (the pinned server CA); a leaf signed by a tenant CA is refused as a server.
   Nothing retries or falls back; retry policy is the caller's and must reuse the same pin.
 - **Seam.** `dial` imports no generated proto; the role package supplies `Exchange` (fleetv1 Enroll call).

@@ -342,6 +342,21 @@
         "path": "internal/testlab/harnessdocker",
         "adr": "0001-technology-stack.md",
         "reason": "test-lab Docker harness file-ownership handling differs by OS: owner_unix.go and owner_windows.go; test tooling, never shipped"
+      },
+      {
+        "path": "internal/platform/ownerfile",
+        "adr": "0001-technology-stack.md",
+        "reason": "owner-only file/state-directory creation and handle-based verification (T-0242, T-0577): ownerfile_{unix,windows}.go and ownerfile_read_{unix,windows}.go; Windows uses a typed protected DACL (SetEntriesInAcl, SetNamedSecurityInfo) and GetSecurityInfo on an FILE_FLAG_OPEN_REPARSE_POINT handle, which have no portable form"
+      },
+      {
+        "path": "internal/connector/rights",
+        "adr": "0001-technology-stack.md",
+        "reason": "durable baseline-file replace: rename_unix.go (rename plus a parent-directory fsync) versus rename_windows.go (MoveFileEx with MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH); a directory fsync does not exist on Windows, so there is no portable form (T-0329, T-0577)"
+      },
+      {
+        "path": "lab/windows/agent-harness/svcstub",
+        "adr": "0001-technology-stack.md",
+        "reason": "lab-only stand-in Windows service (T-0613) built with golang.org/x/sys/windows/svc; the SCM service-control API has no portable form; never shipped"
       }
     ],
     "sidecars": [],

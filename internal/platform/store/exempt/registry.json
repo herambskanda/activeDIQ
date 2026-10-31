@@ -21,6 +21,11 @@
       "owner": "internal/platform/limiter"
     },
     {
+      "table": "public.installation_keys",
+      "reason": "The installation-scope data key (T-0715, ADR-0008) seals installation secrets that belong to no tenant, such as the fleet server CA's private key, so its row has no tenant_id and no RLS (ADR-0002 rule 4). wrapped_dek is the AEAD blob a key provider returned; the runtime role can only SELECT and INSERT. Any tenant transaction can read it, so only its owning package may name it in SQL.",
+      "owner": "internal/platform/keys"
+    },
+    {
       "table": "public.update_verifier_floor",
       "reason": "The update verifier's rollback floor is install-level: one monotone row shared by the server, connector and agent update paths, read before and outside any tenant transaction, so it has no tenant_id and no RLS. The guard trigger refuses any lowering and the runtime role cannot DELETE or TRUNCATE it (ENH-07, TM-D12 rule 2). Any tenant transaction can read it, so only its owning package may name it in SQL.",
       "owner": "internal/platform/updateverify/floorpg"
@@ -164,6 +169,20 @@
       "mintsTenantID": false
     },
     {
+      "package": "internal/platform/keys",
+      "function": "rig.instDEK",
+      "reason": "Test helper: fetches the installation DEK under WithPlatform, because the installation key has no tenant context. It is in a _test.go file and ships in no binary (T-0715, ADR-0008).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/keys",
+      "function": "rig.rolledBack",
+      "reason": "Test helper: runs the installation-key call in a transaction the test rolls back under WithPlatform, because the installation key has no tenant context. It is in a _test.go file and ships in no binary (T-0715, ADR-0008).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
       "package": "internal/platform/updateverify/floorpg",
       "function": "Store.Load",
       "reason": "The update verifier floor is install-level and its table is registered global, so the statement that reads it runs under WithPlatform (ENH-07, TM-D12 rule 2).",
@@ -239,6 +258,16 @@
       "column": "public.correlations.entra_connection_id",
       "value": "00000000-0000-4000-8000-0000000000e1",
       "reason": "CHECK: the AD and Entra connection of a correlation differ (DM-20); every other column of the probe row is the generated value, so this one needs a second value. The foreign-key probe points the sibling key at an alternate parent row."
+    },
+    {
+      "column": "public.authn_local_credentials.password_hash",
+      "value": "$argon2id$probe",
+      "reason": "CHECK: a password hash is an argon2id PHC string (authn_local_credentials, T-0783); the probe row carries a placeholder with the prefix, not a real hash."
+    },
+    {
+      "column": "public.authn_signin_throttle.key_hash",
+      "value": "\\x0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: a throttle key is exactly 32 bytes, the HMAC of the tenant and normalised name (authn_signin_throttle, T-0783); the probe row carries 32 placeholder bytes."
     },
     {
       "column": "public.links.link_attr",

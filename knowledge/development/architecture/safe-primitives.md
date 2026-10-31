@@ -1271,6 +1271,14 @@ records) and later numbers (`FT-18` to `FT-29`, `GT-14B` to `GT-23`, `FL-14` to 
 SID/GUID form is not in `attr`: P1 escapes `Bytes()`. Not yet run: the Windows SID/GUID oracle and the Samba lab rows
 (no runner; follow-up ticket), so every record stays `"verified": "doc"`.
 
+**Implementation (T-0886, P2 corpus).** `internal/directory/dn` is declared as `go/dn` in
+`testdata/safe-primitives/implementations.json`; `dn.jsonl` carries the §4.5 vectors DN-B01 to DN-B17 and DN-P01 to
+DN-P19 (46 records, 32 hostile; a vector with several inputs is split into `a`/`b` records, `DN-P01b`, `DN-P03b`,
+`DN-P11a/b`, `DN-P12a/b`, `DN-P13a/b`, `DN-P14a/b`). `TestCorpus` runs each through the public API (`Child`, `Parse`,
+`ParseRDNType`, `ParseObjectRef`, `ParseExtendedDN`, `Equal`, `IsDescendantOf`); `FuzzDN` is the FF-SP5 target
+(`roundtrip`, `noUnescapedSpecial`). DN-P18 uses 65 RDNs (the §4.3 cap); the 10 000-RDN and 1 MiB inputs stay in
+`TestParseVectors`. All records are `"verified": "doc"`: no lab run has compared them with a DC.
+
 ## 9. Verification status and Samba false-pass risks
 
 Nothing in this document is lab-verified yet (lab: old T-0012). Status today: **documentation only**,

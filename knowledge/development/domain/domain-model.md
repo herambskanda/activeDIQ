@@ -1,11 +1,11 @@
 ---
 title: "Domain model v0"
 date: 2026-10-02
-updated: 2026-10-27
+updated: 2026-10-30
 status: review
 owner: heramb
 author: solution-architect
-ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168, T-0129, T-0191, T-0078, T-0107)
+ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168, T-0129, T-0191, T-0078, T-0107, T-0874)
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), blueprint v0 (review), safe-primitives.md (review), threat-model.md v0.2 (review; its TM-D decisions bind, TM §0)
 reviewed_by: ad-expert (AD/Entra semantics, see §12)
 ---
@@ -133,7 +133,7 @@ created `active`, because the `tenant-provisioning` capability is not composed t
 `suspended`: sign-in is refused, jobs are paused and connectors are refused; data is kept. The
 export window during `deleting` is `[OPEN → E5.6]`.
 
-### DM-02 TenantKey · T · owner `platform/keys`
+### DM-02 TenantKey · P (installation key) and T (tenant keys) · owner `platform/keys`
 **Definition.** A tenant's data-encryption key, wrapped by the installation KEK from the profile's
 key provider. Everything sealed (DM-11, DM-37, DM-63, DM-82, DM-85) is sealed under it.
 **Key attributes:** `version` · `wrapped_dek` · `kek_ref` (provider, key id) · `state` · `created_at`.
@@ -141,6 +141,9 @@ key provider. Everything sealed (DM-11, DM-37, DM-63, DM-82, DM-85) is sealed un
 version that sealed it. I3 The plaintext DEK exists only in memory. I4 Shredding destroys every
 version. The rotation procedure is `[OPEN → T-0007]`.
 **Lifecycle.** `active → retired` (decrypt-only) `→ shredded`.
+**Installation scope (T-0715, ADR-0008).** One further key belongs to the installation (`installation_keys`, no
+`tenant_id`): exactly one `active` version, wrapped under a distinct platform purpose and sealing with its own
+associated-data domain, so it never opens a tenant value nor a tenant key it. First consumer: the fleet server CA key.
 
 ### DM-03 Node · P · owner `platform/update` (registry of server processes)
 **Definition.** One running `server` process of the installation. Nodes are stateless, and HA is
@@ -525,7 +528,9 @@ group, computer, contact, OU, container, gMSA, foreign security principal, or an
 carried as data. **Replaces (ME):** the objects behind every Management tab (ADM-008…062), AD
 Explorer (ADM-004) and the M365 objects (ADM-160…164).
 **Key attributes:** `object_guid` · `connection_id` · `nc_guid` · `object_class` (most specific
-structural class) and `kind` · `parent_guid` · `ancestry` (GUID path to the NC head) · `dn` and
+structural class) and `kind` · `parent_guid` · `ancestry` (GUID path to the NC head, nearest parent first) ·
+`ancestry_complete` (the chain is known to be whole and current; derived by the writer, never taken
+from the producer; false is out of every ancestry scope; an Entra row is always false) · `dn` and
 `rdn` (display snapshot) · `sid` (security principals) · `sam_account_name` · `upn` ·
 `display_name` · `enabled` (from `userAccountControl`) · time-dependent state *inputs*:
 `lockout_time`, `pwd_last_set`, `account_expires`, and the effective password policy (domain
@@ -564,6 +569,13 @@ and groups only, I9) · `state`.
   takeover turns a cloud-only object into a synced one, so this observation usually predates the
   correlation it later forms; that is why it lives on the object and not on the correlation. It
   feeds DM-20.I4(g).
+- I10 **One writer per connection.** The inventory writer holds a per-(tenant, connection)
+  transaction advisory lock for the whole `Populate` transaction and refuses any isolation level but
+  READ COMMITTED (`ErrIsolation`). `ancestry_complete` is checked against the parent row and the move
+  rewrite sees committed rows only, so without the lock two overlapping passes could store a child
+  under a parent's old chain as complete while a move commits beside it. With it, the later writer
+  reads the earlier one's result and the child ends incomplete (fail closed) until re-observed. Same
+  pattern as DM-10's activation (`AD409`).
 
 **Lifecycle (AD).**
 
@@ -1224,6 +1236,19 @@ DcObservation.
 
 **Lifecycle.** None is stored (X5).
 
+### DM-27 InventoryServer · T · owner `directory/invhost` (safe-primitives §6.3)
+**Definition.** A server an admin registered as a host activeDIQ may connect to that is not a domain
+controller: a file server for home folders (ADM-023), a SYSVOL or report host. Discovered DCs are DM-15
+and are not stored here. Added by T-0835 to give migration 0050 (T-0584) its entity; the table was
+already built. **Replaces (ME):** none documented.
+**Key attributes:** `id` · `fqdn` (lower case, no trailing dot, unique per tenant) · `registered_by`
+(the human admin's audit reference) · `registered_at`.
+**Invariants.** I1 The only writer is `invhost.Service.Register`, which accepts a Human requester with
+no delegation chain, audits `inventory.host.registered` in the same transaction, and is idempotent.
+I2 A host name read from the directory (`homeDirectory`, `dNSHostName`, `gPCFileSysPath`) is never
+inserted by code. I3 A registration is never edited; the runtime role has no UPDATE or DELETE.
+Unregistering is a later, audited Action.
+
 ## 3. Identity and access
 
 ### DM-30 Account · T · owner `platform/authn`
@@ -1790,11 +1815,20 @@ How it maps onto inventory datasets is `[OPEN → report builder spec]`.
 ### DM-72 ReportRun · T · owner `modules/reports`
 **Definition.** One execution of a definition version with parameters. **Replaces (ME):** report
 generation and export (ADM-100).
-**Key attributes:** `definition_version` · `parameters` · `runner` · `scope_applied` · `as_of`
-(freshness watermark) · `row_count` · `result_blob` · `exports[]` (format, blob, expiry) · `state`.
+**Key attributes:** `definition_version` · `parameters` · `query_hash` · `runner` and the full
+initiator `chain` · `scope_applied` and `scope_fingerprint` · `as_of` (freshness watermark) ·
+`row_count` · `digest` · **result rows** (`report_run_rows`, one per result row, in run order;
+[ADR-0010](../decisions/0010-report-results-stored-as-rows-in-postgres.md)) · `exports[]`
+(`report_exports`: format, blob, expiry) · `state` · `failure_reason`. Tables and types:
+[modules/reports.md §6.2](../architecture/modules/reports.md).
 **Invariants.** I1 Freshness is stated, never "live" when it is not. I2 Exports go through the
-output encoders (T-0029). I3 Blobs are tenant-prefixed and expire.
-**Lifecycle.** `queued → running → succeeded | failed | cancelled`, then `succeeded → expired`.
+output encoders (T-0029) and serialise the stored rows only. Their digest equals the run's. I3 Export
+blobs are tenant-prefixed and expire with the run. I4 Rows are written only while the run is
+`running`, and read only once it has `succeeded`. Pages, sorts, exports and deliveries never
+re-query a dataset (ADR-0010). I5 A run is readable only by its runner, and only while the runner's
+read-scope fingerprint equals `scope_fingerprint`.
+**Lifecycle.** `queued → running | cancelled | failed`; `running → succeeded | failed | cancelled`;
+`succeeded → expired`. Failed and cancelled runs hold no rows.
 
 ### DM-73 ReportSchedule · T · owner `modules/reports`
 **Definition.** A recurring run plus delivery. **Replaces (ME):** scheduled reports (ADM-101) and,
@@ -2192,3 +2226,4 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
     its own run's salt, and Q14 is reworded.
 - 2026-10-02 · T-0168 round 2, from the security-architect review. DM-25.I6: every record that a derived override state reads is pinned while the override is kept: the clearing run (new DM-24.I6 (c)), the superseding override (oldest first) and the connection. A property states that no retention pass or crash changes any derivation (tested by T-0119, listed for T-0050). DM-24.I5: no audit event carries a per-finding identifier. Events carry IDs, verdicts, outcomes, counts and `findings_digest`, salted with the new per-run `digest_salt`, and DM-25.I7 does the same for the override events. DM-24.I6: the `connection_verification` retention floor is the audit retention, and rows named by a retained audit event are pinned. DM-25.I7: `.tier0_override.cleared` is emitted in the clearing run's insert transaction. DM-10.I10: an interrupted run returns to `draft` only from `verifying`. DM-10.I11: the gate is re-checked at every Apply chunk, and a V7 `could_not_verify` or `failed` triggers an automatic re-run with backoff. §11 Q12 and Q13 are closed.
 - 2026-10-22 · T-0129 (ADR-0005 amendment of the same date, TM-D23 rule 11, contract v1.2 §8.1 step 9): DM-42.I5 lists the `verify_failed` reasons (`read_back_mismatch`, `scope_changed`, `dc_unavailable`, `tier0_after_write`); `tier0_after_write`, including an empty-basis report, raises a `critical` alert above `scope_changed`, cancels the operation, and its step's undo is refused by the `tier0` guard. Review round 1: the server's Tier-0 re-read follows the I3 verify window and fallback (only still-`unknown` counts), so `dc_unavailable` stays reachable; Entra window expiry is `read_back_mismatch`; the undo exception is stated in the lifecycle.
+- 2026-10-30 · T-0874 (ADR-0010, proposed; modules/reports.md): DM-72 stores the result as rows (`report_run_rows`) instead of a `result_blob`; exports serialise those rows. Adds `query_hash`, the initiator `chain`, `scope_fingerprint`, `digest` and `failure_reason`, invariants I4 (rows written only while `running`, read only once `succeeded`) and I5 (readable only by the runner under the same scope fingerprint), and the full lifecycle edges.

@@ -32,7 +32,7 @@ Also reachable inside the stories: three wrong codes block and log the attempt; 
 
 ## Decisions (usability, ours)
 
-1. **Code sent when the sheet opens.** `R` is the deliberate act, so there is no "Send code" step. This is what brings the stage from the user page to **3 interactions** (`R`, type code, Enter). Needs the security-architect's confirmation (rate limit, wrong-user open). A "Send a new code" button remains.
+1. **Code sent when the sheet opens.** `R` is the deliberate act, so there is no "Send code" step. This is what brings the stage from the user page to **3 interactions** (`R`, type code, Enter). Confirmed by the security-architect (T-0719, 2026-10-29) with conditions C1–C8 in [ENH-09 spec §4a](../specs/enh-09-otp-and-totp-enrolment.md): the send is a POST from the `R` key or click, never from loading the route; re-opening within 5 minutes sends nothing; closing the sheet does not refund the hourly quota. A "Send a new code" button remains.
 2. **The passphrase is not shown before verification**; it appears once after confirmation, so a shoulder-surfer or a wrong caller never sees it first.
 3. **Impact list instead of a confirm dialog.** The sheet states exactly what will change (new passphrase, change at next sign-in, unlock since 09:12), so there is no second modal.
 4. **Locked accounts rank first in search** and carry the lock time in the result, which removes the ME console load and the lock-column hunt (§3 T01 pain points).

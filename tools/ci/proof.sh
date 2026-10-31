@@ -73,9 +73,26 @@ mkdir -p "$fit/internal/platform/kernel" "$fit/internal/directory"
 printf 'module fit.test\n\ngo 1.27.0\n' >"$fit/go.mod"
 printf 'package directory\n' >"$fit/internal/directory/d.go"
 printf 'package kernel\n\nimport _ "fit.test/internal/directory"\n' >"$fit/internal/platform/kernel/k.go"
+# the fixture needs a blueprint now: M7 (ADR-0003 closed catalogue) reads blueprint §5.1-§5.3.
+bp="$fit/knowledge/development/architecture"
+mkdir -p "$bp"
+bprow() { printf '| %s | owner | interface | - |\n' "$1"; }
+bpdoc() { # <5.1 rows> <5.2 rows>
+	printf '## 5. Component catalogue\n\n### 5.1 Platform kernel\n\n| Package | Owner | Interface | EPs |\n| --- | --- | --- | --- |\n%s\n### 5.2 Directory domain\n\n| Package | Owner | Interface | EPs |\n| --- | --- | --- | --- |\n%s\n### 5.3 Connector root\n\n| Package | Owner | Interface | EPs |\n| --- | --- | --- | --- |\n\n### 5.4 Server feature modules\n' "$1" "$2"
+}
+bpdoc "$(bprow '`kernel`')" "$(bprow '`directory`')" >"$bp/blueprint.md"
 must_fail_with "fitness-modules on a platform package importing the directory domain" "kernel imports nothing above it" go run ./tools/fitness/modules -root "$fit"
 printf 'package kernel\n' >"$fit/internal/platform/kernel/k.go"
 must_pass "fitness-modules" go run ./tools/fitness/modules -root "$fit"
+bpdoc "" "$(bprow '`directory`')" >"$bp/blueprint.md"
+must_fail_with "fitness-modules M7 on a platform package with no blueprint row" 'internal/platform/kernel: \[ADR-0003 M7\] package internal/platform/kernel has no row in blueprint §5.1' go run ./tools/fitness/modules -root "$fit"
+bpdoc "$(bprow '`kernel`')"$'\n'"$(bprow '`kernel`')" "$(bprow '`directory`')" >"$bp/blueprint.md"
+must_fail_with "fitness-modules M7 on a platform package with two blueprint rows" 'internal/platform/kernel has 2 rows in blueprint §5.1' go run ./tools/fitness/modules -root "$fit"
+bpdoc "" "$(bprow '`directory`')"$'\n'"$(bprow '`kernel`')" >"$bp/blueprint.md"
+must_fail_with "fitness-modules M7 on a platform package whose only row is in §5.2" 'internal/platform/kernel is named only in blueprint §5.2, not in its own §5.1' go run ./tools/fitness/modules -root "$fit"
+bpdoc "$(bprow '`other` (+`kernel`)')" "$(bprow '`directory`')" >"$bp/blueprint.md"
+must_fail_with "fitness-modules M7 does not count a (+sub) mention" 'internal/platform/kernel has no row in blueprint §5.1' go run ./tools/fitness/modules -root "$fit"
+bpdoc "$(bprow '`kernel`')" "$(bprow '`directory`')" >"$bp/blueprint.md"
 
 # --- fitness-api (ADR-0004 A1, A3, A5, A7 static, A8, A10, A11, A12, A13, self-test, inactive reporting), the real CLI
 # The per-rule proofs are the tool's own tests (go test ./tools/fitness/api); this is the command line.
@@ -598,6 +615,141 @@ func f(src string) { template.New("a").Parse(src) }
 GO
 must_fail_with "FF-SP2 analyzer tmplconst on a non-constant template" 'internal/modules/users/u.go:5: FF-SP2 \[tmplconst\]' safeprim -checks FF-SP2
 
+# RP1 (reports contract §9, T-0873): nothing outside store/reportsql mints a CompiledSQL or a Query, and
+# report.SQL takes a constant. The package the user code imports is declared by the tree, so the proof
+# does not depend on the real reportsql having landed.
+rp1_tree() {
+  fresh_sp_tree
+  sp_put internal/platform/store/reportsql/r.go <<'GO'
+package reportsql
+
+type CompiledSQL string
+type Query struct{ text CompiledSQL }
+
+func Compile(ident string) Query { return Query{text: CompiledSQL("SELECT " + ident)} }
+GO
+  sp_put internal/platform/report/r.go <<'GO'
+package report
+
+type Fragment struct{ text string }
+
+func SQL(text string) Fragment { return Fragment{text} }
+GO
+}
+rp1_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "sp.test/internal/platform/store/reportsql"
+
+func f(userText string) reportsql.CompiledSQL { return reportsql.CompiledSQL(userText) }
+GO
+must_fail_with "FF-SP2 RP1 on a string converted to reportsql.CompiledSQL outside reportsql" 'internal/modules/users/u.go:5: FF-SP2 \[sqlconst\].*RP1' safeprim -checks FF-SP2
+rp1_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "sp.test/internal/platform/store/reportsql"
+
+var q = reportsql.Query{}
+GO
+must_fail_with "FF-SP2 RP1 on a reportsql.Query literal outside reportsql" 'internal/modules/users/u.go:5: FF-SP2 \[sqlconst\].*RP1' safeprim -checks FF-SP2
+rp1_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import "sp.test/internal/platform/report"
+
+func f(col string) report.Fragment { return report.SQL("{t}." + col) }
+GO
+must_fail_with "FF-SP2 RP1 on report.SQL with a non-constant argument" 'internal/modules/users/u.go:5: FF-SP2 \[sqlconst\].*RP1' safeprim -checks FF-SP2
+rp1_tree; sp_put internal/modules/users/u.go <<'GO'
+package users
+
+import (
+	"sp.test/internal/platform/report"
+	"sp.test/internal/platform/store/reportsql"
+)
+
+var frag = report.SQL("{t}.enabled = true")
+var compiled = reportsql.Compile("users")
+GO
+must_pass "fitness-safeprim FF-SP2 RP1 on a constant fragment and the compiler's own output" safeprim -checks FF-SP2
+
+# --- fitness-reports (ADR-0010, reports contract §9 RP2, RP3, RP7 and the bound tests, T-0873), the real CLI ----
+# (-static-only: the bound tests are listed pending until their rows land; their rules' failing fixtures
+# are go test ./tools/fitness/reports)
+rpbin="$tmp/fitness-reports"; go build -o "$rpbin" ./tools/fitness/reports
+rp="$tmp/rp"
+rp_put() { mkdir -p "$rp/$(dirname "$1")"; cat >"$rp/$1"; }
+fresh_rp() {
+  rm -rf "$rp"; mkdir -p "$rp"; printf 'module rp.test\n\ngo 1.27.0\n' >"$rp/go.mod"
+  rp_put internal/platform/authz/a.go <<'GO'
+package authz
+
+type ReadScope struct{ n int }
+
+func NewReadScope(n int) ReadScope { return ReadScope{n} }
+func (s ReadScope) Terms() []int   { return nil }
+GO
+  rp_put internal/platform/store/reportsql/r.go <<'GO'
+package reportsql
+
+type Registry struct{}
+type Query struct{}
+
+func (r *Registry) Compile() Query { return Query{} }
+func (r *Registry) Exec(Query)     {}
+GO
+  rp_put internal/modules/reports/run/run.go <<'GO'
+package run
+
+import "rp.test/internal/platform/store/reportsql"
+
+func Do(r *reportsql.Registry) { r.Exec(r.Compile()) }
+GO
+  rp_put internal/modules/reports/library/USR-01.v1.json <<'GO'
+{"id":"USR-01","version":1}
+GO
+  printf '%s  USR-01.v1.json\n' "$(sha256sum "$rp/internal/modules/reports/library/USR-01.v1.json" | cut -d' ' -f1)" >"$rp/internal/modules/reports/library/LOCK"
+}
+fresh_rp
+must_pass "fitness-reports (clean tree)" "$rpbin" -root "$rp" -static-only
+fresh_rp; rp_put internal/modules/reports/export/e.go <<'GO'
+package export
+
+import "rp.test/internal/platform/store/reportsql"
+
+func Again(r *reportsql.Registry) { r.Exec(r.Compile()) }
+GO
+must_fail_with "fitness-reports RP3 on an export that calls reportsql.Compile" 'internal/modules/reports/export/e.go:5 RP3 \[export-compiles\]' "$rpbin" -root "$rp" -static-only
+fresh_rp; rp_put internal/modules/reports/export/e.go <<'GO'
+package export
+
+import "rp.test/internal/platform/authz"
+
+func Leak(s authz.ReadScope) []int { return s.Terms() }
+GO
+must_fail_with "fitness-reports RP2 on ReadScope.Terms outside authz and reportsql" 'internal/modules/reports/export/e.go:5 RP2 \[scope-renderer\]' "$rpbin" -root "$rp" -static-only
+fresh_rp; rp_put internal/modules/reports/run/mint.go <<'GO'
+package run
+
+import "rp.test/internal/platform/authz"
+
+var s = authz.NewReadScope(1)
+GO
+must_fail_with "fitness-reports RP2 on authz.NewReadScope outside rbac" 'internal/modules/reports/run/mint.go:5 RP2 \[scope-producer\]' "$rpbin" -root "$rp" -static-only
+fresh_rp; printf '{"id":"USR-01","version":1,"edited":true}\n' >"$rp/internal/modules/reports/library/USR-01.v1.json"
+must_fail_with "fitness-reports RP7 on a changed byte in a locked definition" 'USR-01.v1.json RP7 \[locked-file-changed\]' "$rpbin" -root "$rp" -static-only
+fresh_rp; rp_put internal/modules/reports/library/USR-02.v1.json <<'GO'
+{"id":"USR-02","version":1}
+GO
+must_fail_with "fitness-reports RP7 on a definition missing from LOCK" 'USR-02.v1.json RP7 \[unlisted-file\]' "$rpbin" -root "$rp" -static-only
+fresh_rp
+git -C "$rp" init -q -b main && git -C "$rp" add . && git -C "$rp" -c user.name=proof -c user.email=proof@example.test -c commit.gpgsign=false commit -q -m base
+printf '{"id":"USR-01","version":1,"edited":true}\n' >"$rp/internal/modules/reports/library/USR-01.v1.json"
+printf '%s  USR-01.v1.json\n' "$(sha256sum "$rp/internal/modules/reports/library/USR-01.v1.json" | cut -d' ' -f1)" >"$rp/internal/modules/reports/library/LOCK"
+must_fail_with "fitness-reports RP7 on a definition and its LOCK entry edited together" 'RP7 \[lock-entry-rewritten\]' "$rpbin" -root "$rp" -static-only -lock-base main
+# a bound test that is declared but whose binding is not landed, and one that is absent when landed, are
+# the tool's own tests (TestBoundTest*, TestDeclaredButNotLandedFails, TestRP11* in tools/fitness/reports/check_test.go).
+
 fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
 package users
 
@@ -824,13 +976,16 @@ fresh_pf_tree() {
     "$pf/internal/compose/profile" "$pf/internal/compose/config" "$pf/tools/fitness/profiles" "$pf/tools/fitness/stack" \
     "$pf/knowledge/development/decisions"
   printf 'module pf.test\n\ngo 1.27.0\n' >"$pf/go.mod"
-  printf -- '---\nstatus: ratified\n---\n' >"$pf/knowledge/development/decisions/0002-deployment-model.md"
+  # The real ADR: its "Activation deferrals" table is what approves the manifest's deferrals (ADR-0002 E-3).
+  cp knowledge/development/decisions/0002-deployment-model.md "$pf/knowledge/development/decisions/0002-deployment-model.md"
   cp tools/fitness/profiles/uem-denylist.json "$pf/tools/fitness/profiles/"
-  # The real manifest, minus its p4.exempt entries (they name files this throw-away tree does not have).
+  # The real manifest, minus its p4.exempt and externalVocabulary entries (they name files and identifiers
+  # this throw-away tree does not have, and P1 reports a vocabulary entry that matches nothing as stale).
   python3 - tools/fitness/profiles/manifest.json "$pf/tools/fitness/profiles/manifest.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))
 m["p4"]["exempt"] = []
+m["externalVocabulary"] = []
 json.dump(m, open(sys.argv[2], "w"), indent=2)
 PY
   printf '{"denylistExtends": ["tools/fitness/profiles/uem-denylist.json"]}\n' >"$pf/tools/fitness/stack/manifest.json"
@@ -867,6 +1022,16 @@ GO
   git -C "$pf" init -q -b main && git -C "$pf" -c user.name=proof -c user.email=proof@example.test commit -q --allow-empty -m proof
 }
 profiles() { go run ./tools/fitness/profiles -root "$pf" "$@"; }
+# manifest_edit PYTHON-STATEMENTS: edit the activation rows of the throw-away tree's manifest (variable m).
+manifest_edit() {
+  python3 - "$pf/tools/fitness/profiles/manifest.json" "$1" <<'PY'
+import json, sys
+p, code = sys.argv[1], sys.argv[2]
+m = json.load(open(p))
+exec(code)
+json.dump(m, open(p, "w"), indent=2)
+PY
+}
 fresh_pf_tree
 must_pass "fitness-profiles on a clean composition" profiles
 fresh_pf_tree; printf 'package dn\n\nimport _ "pf.test/internal/compose/profile"\n' >"$pf/internal/directory/dn/d.go"
@@ -917,12 +1082,23 @@ printf 'package svc\n\ntype S struct{ cache map[string]int }\n' >"$pf/internal/m
 must_fail_with "fitness-profiles P4 on a cache not keyed by tenant" 'internal/modules/svc/s.go:3: P4 .*cache S.cache is not keyed by tenant' profiles -checks P4
 printf 'package svc\n\nimport "pf.test/internal/platform/tenant"\n\ntype S struct{ cache map[tenant.ID]int }\n' >"$pf/internal/modules/svc/s.go"
 must_pass "fitness-profiles P4 on a cache keyed by tenant" profiles -checks P4
-fresh_pf_tree; mkdir -p "$pf/packaging/windows"; : >"$pf/packaging/windows/product.wxs"
-must_fail_with "fitness-profiles activation: an installer without its P2 check" 'ACT .*packaging/windows exists, which activates P2.*not implemented' profiles -checks ACT
-fresh_pf_tree; mkdir -p "$pf/internal/connector/ldap"
+# Without its deferral a row's path activates the check, and the check is not implemented: a violation.
+DROP_DEFERRALS='for r in m["activation"]: r.pop("deferral", None)'
+fresh_pf_tree; manifest_edit "$DROP_DEFERRALS"; mkdir -p "$pf/packaging/windows"; : >"$pf/packaging/windows/product.wxs"
+must_fail_with "fitness-profiles activation: an installer without its P2-msi check" 'ACT .*packaging/windows exists, which activates P2-msi.*not implemented' profiles -checks ACT
+fresh_pf_tree; manifest_edit "$DROP_DEFERRALS"; mkdir -p "$pf/packaging/linux-oci"; : >"$pf/packaging/linux-oci/Dockerfile"
+must_fail_with "fitness-profiles activation: an image without its P2-oci and P6 checks" 'ACT .*packaging/linux-oci exists, which activates P2-oci.*not implemented' profiles -checks ACT
+fresh_pf_tree; manifest_edit "$DROP_DEFERRALS"; mkdir -p "$pf/internal/connector/ldap"
 must_fail_with "fitness-profiles activation: a connector without its P3 check" 'ACT .*internal/connector/ldap exists, which activates P3.*not implemented' profiles -checks ACT
+# A deferral listed in ADR-0002's Activation deferrals table (check, ticket, expiry) turns the violation into ACTIVE, DEFERRED.
+fresh_pf_tree; mkdir -p "$pf/packaging/windows"; : >"$pf/packaging/windows/product.wxs"
+must_pass "fitness-profiles activation: a deferral the ADR table approves" bash -c "go run ./tools/fitness/profiles -root '$pf' -checks ACT | grep -q 'P2-msi *ACTIVE, DEFERRED (T-0928 until 2027-01-30)'"
+# Editing the date in the manifest alone extends nothing: the ADR table has no such row.
+fresh_pf_tree; manifest_edit 'for r in m["activation"]:
+    if r["check"] == "P2-msi": r["deferral"]["expires"] = "2027-06-30"'
+must_fail_with "fitness-profiles activation: a deferral only the manifest approves" 'P2-msi: ACT .*deferral \(P2-msi, T-0928, 2027-06-30\) has no row in the "Activation deferrals" table' profiles -checks ACT
 fresh_pf_tree
-must_pass "fitness-profiles prints the pending table" bash -c "go run ./tools/fitness/profiles -root '$pf' -checks ACT | grep -q 'P2 .*pending'"
+must_pass "fitness-profiles prints the pending table" bash -c "go run ./tools/fitness/profiles -root '$pf' -checks ACT | grep -q 'P2-oci .*pending'"
 
 # --- vuln-scan (T-0010) -----------------------------------------------------------------------
 # A throw-away module that calls golang.org/x/text/language.ParseAcceptLanguage at v0.3.7
@@ -1443,6 +1619,93 @@ must_fail_with "fitness-built-msi on a SelfReg row (code run at install)" 'SelfR
 must_fail_with "fitness-built-msi on a critical ErrorControl" 'ErrorControl' builtmsi -glob "$bm/critical/critical.msi"
 must_fail_with "fitness-built-msi when no MSI exists and one is required (release job)" 'no built MSI found' builtmsi -require -glob "$bm/none/*.msi"
 must_pass "fitness-built-msi prints inactive, not a pass, when no MSI exists" bash -c "go run ./tools/fitness/builtmsi -glob '$bm/none/*.msi' | grep -q '^fitness-built-msi: inactive'"
+
+# --- fitness-sso (T-0211, console-sso.md §13 FIT-SSO-1/2), the real CLI on throw-away trees ---------
+# mk_sso <dir> [with-oidc]: a small repo with a two-check spec per protocol, complete corpus records, a SAML
+# package that imports the SAML libraries (inside the fence) and a go.mod at the floors.
+sso() { go run ./tools/fitness/sso "$@"; }
+mk_sso() {
+  local d=$1; local c=$d/internal/platform/authn/sso/testdata/corpus
+  mkdir -p "$d/knowledge/development/architecture" "$c/saml" "$d/internal/platform/authn/sso/saml" "$d/internal/platform/authn/sso/oidc"
+  printf 'module github.com/skenzeriq/activediq\n\ngo 1.27.3\n\nrequire (\n\tgithub.com/russellhaering/goxmldsig v1.6.1\n)\n' >"$d/go.mod"
+  printf '## 4. OIDC checks\n\n| # | Check |\n| --- | --- |\n| OIDC-1 | a |\n| OIDC-2 | b |\n\n## 5. SAML checks\n\n| # | Check |\n| --- | --- |\n| SAML-1 | a |\n| SAML-2 | b |\n\n## 6. Shared\n\n| SSO-1 | c |\n' >"$d/knowledge/development/architecture/console-sso.md"
+  printf 'package saml\n\nimport _ "github.com/russellhaering/goxmldsig"\n' >"$d/internal/platform/authn/sso/saml/s.go"
+  local i=0 cls
+  for cls in forged wrapped replayed misaddressed malformed; do
+    i=$((i + 1)); printf '{"id":"S-%s","class":"%s","cites":["SAML-%s","SSO-1"],"build":"b","expect":"refuse","reason":"saml.x"}\n' "$i" "$cls" "$(( (i % 2) + 1 ))" >"$c/saml/S-$i.json"
+  done
+  if [ "${2:-}" = with-oidc ]; then
+    mkdir -p "$c/oidc"; i=0
+    for cls in forged replayed misaddressed malformed; do
+      i=$((i + 1)); printf '{"id":"O-%s","class":"%s","cites":["OIDC-%s"],"build":"b","expect":"refuse","reason":"oidc.x"}\n' "$i" "$cls" "$(( (i % 2) + 1 ))" >"$c/oidc/O-$i.json"
+    done
+  fi
+}
+ss="$tmp/sso"
+mk_sso "$ss/clean" with-oidc
+must_pass "fitness-sso on a fenced tree with a complete corpus" sso -root "$ss/clean" -static
+mk_sso "$ss/absent"
+must_fail_with "fitness-sso on a tree with no OIDC corpus" 'oidc: no corpus records' sso -root "$ss/absent" -static
+# FIT-SSO-1 imports (acceptance 1)
+mk_sso "$ss/imp" with-oidc; mkdir -p "$ss/imp/internal/platform/other"
+printf 'package other\n\nimport _ "github.com/russellhaering/goxmldsig"\n' >"$ss/imp/internal/platform/other/x.go"
+must_fail_with "fitness-sso on goxmldsig imported outside sso/saml, naming the file" 'internal/platform/other/x.go:3: imports github.com/russellhaering/goxmldsig' sso -root "$ss/imp" -static
+for lib in github.com/beevik/etree github.com/mattermost/xml-roundtrip-validator github.com/russellhaering/gosaml2; do
+  mk_sso "$ss/imp2" with-oidc; mkdir -p "$ss/imp2/internal/platform/other"; printf 'package other\n\nimport _ "%s"\n' "$lib" >"$ss/imp2/internal/platform/other/x.go"
+  must_fail_with "fitness-sso on $lib outside sso/saml" "imports $lib" sso -root "$ss/imp2" -static; rm -rf "$ss/imp2"
+done
+for lib in github.com/go-jose/go-jose/v4 github.com/coreos/go-oidc/v3/oidc; do
+  mk_sso "$ss/imp3" with-oidc; printf 'package saml\n\nimport _ "%s"\n' "$lib" >"$ss/imp3/internal/platform/authn/sso/saml/j.go"
+  must_fail_with "fitness-sso on $lib imported from sso/saml" "imports $lib; only internal/platform/authn/sso/oidc" sso -root "$ss/imp3" -static; rm -rf "$ss/imp3"
+done
+mk_sso "$ss/imp4" with-oidc; mkdir -p "$ss/imp4/internal/platform/authn/session"
+printf 'package session\n\nimport _ "encoding/xml"\n' >"$ss/imp4/internal/platform/authn/session/x_test.go"
+must_fail_with "fitness-sso on encoding/xml under platform/authn outside sso/saml (a test file too)" 'authn/session/x_test.go:3: imports encoding/xml' sso -root "$ss/imp4" -static
+rm "$ss/imp4/internal/platform/authn/session/x_test.go"; mkdir -p "$ss/imp4/internal/agentmodules"
+printf 'package agentmodules\n\nimport _ "encoding/xml"\n' >"$ss/imp4/internal/agentmodules/x.go"
+must_pass "fitness-sso allows encoding/xml outside platform/authn" sso -root "$ss/imp4" -static
+# FIT-SSO-1 go.mod floors (acceptance 2)
+mk_sso "$ss/floor" with-oidc; sed -i 's/goxmldsig v1.6.1/goxmldsig v1.5.0/' "$ss/floor/go.mod"
+must_fail_with "fitness-sso on go.mod pinning goxmldsig v1.5.0" 'requires github.com/russellhaering/goxmldsig v1.5.0; the floor is v1.6.0' sso -root "$ss/floor" -static
+mk_sso "$ss/floor2" with-oidc; printf 'require github.com/russellhaering/gosaml2 v0.11.0\n' >>"$ss/floor2/go.mod"
+must_fail_with "fitness-sso on go.mod pinning gosaml2 v0.11.0" 'gosaml2 v0.11.0; the floor is v0.12.0' sso -root "$ss/floor2" -static
+mk_sso "$ss/floor3" with-oidc; printf 'replace github.com/russellhaering/goxmldsig => github.com/russellhaering/goxmldsig v1.5.0\n' >>"$ss/floor3/go.mod"
+must_fail_with "fitness-sso on a replace that lowers goxmldsig" 'replaces github.com/russellhaering/goxmldsig with v1.5.0' sso -root "$ss/floor3" -static
+mk_sso "$ss/floor4" with-oidc; printf 'replace github.com/russellhaering/goxmldsig => ../goxmldsig\n' >>"$ss/floor4/go.mod"
+must_fail_with "fitness-sso on a replace to a local path" 'replaces github.com/russellhaering/goxmldsig with the path' sso -root "$ss/floor4" -static
+# FIT-SSO-2 corpus (acceptance 3)
+mk_sso "$ss/c1" with-oidc; rm "$ss/c1/internal/platform/authn/sso/testdata/corpus/saml/S-1.json" "$ss/c1/internal/platform/authn/sso/testdata/corpus/saml/S-3.json" "$ss/c1/internal/platform/authn/sso/testdata/corpus/saml/S-5.json"
+must_fail_with "fitness-sso on a corpus that cites no record for SAML-2" 'saml: SAML-2 is cited by no corpus record' sso -root "$ss/c1" -static
+mk_sso "$ss/c2" with-oidc; sed -i 's/^| SAML-2 | b |$/| SAML-2 | b |\n| SAML-3 | c |/' "$ss/c2/knowledge/development/architecture/console-sso.md"
+must_fail_with "fitness-sso when the spec gains a check the corpus does not cite" 'saml: SAML-3 is cited by no corpus record' sso -root "$ss/c2" -static
+mk_sso "$ss/c3" with-oidc; sed -i 's/^| OIDC-2 | b |$/| OIDC-2 | b |\n| OIDC-3 | c |/' "$ss/c3/knowledge/development/architecture/console-sso.md"
+must_fail_with "fitness-sso when an OIDC check has no record" 'oidc: OIDC-3 is cited by no corpus record' sso -root "$ss/c3" -static
+mk_sso "$ss/c4" with-oidc; rm "$ss/c4/internal/platform/authn/sso/testdata/corpus/saml/S-2.json"
+must_fail_with "fitness-sso on a protocol with no wrapped record" 'saml: no "wrapped" record' sso -root "$ss/c4" -static
+mk_sso "$ss/c5" with-oidc; sed -i 's/"SAML-1"/"SAML-99"/' "$ss/c5/internal/platform/authn/sso/testdata/corpus/saml/S-2.json"
+must_fail_with "fitness-sso on a record citing a check the spec does not have" 'cites "SAML-99"' sso -root "$ss/c5" -static
+mk_sso "$ss/c6" with-oidc; sed -i 's/"id":"S-1"/"id":"S-one"/' "$ss/c6/internal/platform/authn/sso/testdata/corpus/saml/S-1.json"
+must_fail_with "fitness-sso on a record whose id is not its file name" 'id "S-one" must equal the file name' sso -root "$ss/c6" -static
+mk_sso "$ss/c7"; mkdir -p "$ss/c7/internal/platform/authn/sso/testdata/corpus/oidc"
+must_fail_with "fitness-sso on an empty OIDC corpus directory " 'oidc: no corpus records' sso -root "$ss/c7" -static
+mk_sso "$ss/c8"; printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {}\n' >"$ss/c8/internal/platform/authn/sso/oidc/c_test.go"
+must_fail_with "fitness-sso when oidc declares TestCorpus but has no records" 'oidc: no corpus records' sso -root "$ss/c8" -static
+# FIT-SSO-2 bound subtests, through go test in a throw-away module
+mk_sso "$ss/b" with-oidc; printf "package saml\n" >"$ss/b/internal/platform/authn/sso/saml/s.go"
+printf 'package saml\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"S-1", "S-2", "S-3", "S-4", "S-5"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/saml/c_test.go"
+printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"O-1", "O-2", "O-3", "O-4"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/oidc/c_test.go"
+must_pass "fitness-sso runs every corpus record as a passing subtest" sso -root "$ss/b"
+rm "$ss/b/internal/platform/authn/sso/oidc/c_test.go"
+must_fail_with "fitness-sso on an OIDC corpus whose TestCorpus is missing" 'FIT-SSO-2' sso -root "$ss/b"
+printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"O-1", "O-2", "O-3"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/oidc/c_test.go"
+must_fail_with "fitness-sso on an OIDC corpus record with no subtest" 'subtest-missing.*O-4' sso -root "$ss/b"
+printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"O-1", "O-2", "O-3", "O-4"} {\n\t\tt.Run(id, func(t *testing.T) { if id == "O-2" { t.Skip("x") } })\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/oidc/c_test.go"
+must_fail_with "fitness-sso on a skipped OIDC corpus subtest" 'TestCorpus/O-2 .*subtest-skip' sso -root "$ss/b"
+printf 'package oidc\n\nimport "testing"\n\nfunc TestCorpus(t *testing.T) {\n\tfor _, id := range []string{"O-1", "O-2", "O-3", "O-4"} {\n\t\tt.Run(id, func(t *testing.T) {})\n\t}\n}\n' >"$ss/b/internal/platform/authn/sso/oidc/c_test.go"
+sed -i 's/"S-5"/"S-6"/' "$ss/b/internal/platform/authn/sso/saml/c_test.go"
+must_fail_with "fitness-sso on a corpus record with no subtest" 'subtest-missing.*S-5' sso -root "$ss/b"
+sed -i 's/"S-6"/"S-5"/; s/t.Run(id, func(t \*testing.T) {})/t.Run(id, func(t *testing.T) { if id == "S-3" { t.Skip("x") } })/' "$ss/b/internal/platform/authn/sso/saml/c_test.go"
+must_fail_with "fitness-sso on a skipped corpus subtest" 'TestCorpus/S-3 .*subtest-skip' sso -root "$ss/b"
 
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"

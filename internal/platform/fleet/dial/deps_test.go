@@ -9,10 +9,18 @@ import (
 // TestNoStoreOrSQL is rule 7 for this package (blueprint §2): the component side links no store, no
 // key-sealing code and no SQL driver, on either component OS.
 func TestNoStoreOrSQL(t *testing.T) {
-	for _, goos := range []string{"linux", "windows"} {
-		cmd := exec.Command("go", "list", "-deps", ".")
-		cmd.Env = append(cmd.Environ(), "GOOS="+goos)
-		out, err := cmd.Output()
+	// Each OS passes its own constant setting: ADR-0002 erratum E-2 allows the environment to be
+	// forwarded to a child only with constant strings appended.
+	linux := exec.Command("go", "list", "-deps", ".")
+	linux.Env = append(linux.Environ(), "GOOS=linux")
+	windows := exec.Command("go", "list", "-deps", ".")
+	windows.Env = append(windows.Environ(), "GOOS=windows")
+	for _, tc := range []struct {
+		goos string
+		cmd  *exec.Cmd
+	}{{"linux", linux}, {"windows", windows}} {
+		goos := tc.goos
+		out, err := tc.cmd.Output()
 		if err != nil {
 			t.Fatalf("go list (%s): %v", goos, err)
 		}

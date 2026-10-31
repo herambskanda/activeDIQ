@@ -1,0 +1,62 @@
+sha256 48f6d935a896120162cd896dcd987660346ea8f40a9dc2ec216767c887058c44 activediq-agent.exe
+sha256 e6967d9906caf0ea813ac2ac123b21a53fdbd1036de8337510707d7e3490489f agentsetup.exe
+INFO baseline Security channelAccess: O:BAG:SYD:(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+CASE T0 PASS no service-SID ACE before install
+CASE A1-install PASS msiexec exit 0
+CASE A1-service PASS service registered
+CASE A1-sidtype PASS service SID type RESTRICTED
+CASE A2-qprivs PASS [SC] QueryServiceConfig2 SUCCESS SERVICE_NAME: activeDIQAgent PRIVILEGES : SeChangeNotifyPrivilege 
+CASE A2-token PASS user=S-1-5-80-3803417868-3083394944-3978303958-4174658546-1200079750 priv=SeChangeNotifyPrivilege restrictingSids=4
+CASE A2-startname PASS runs as the virtual account, not LocalSystem or a domain account
+CASE A3-ace PASS Security channel carries the service-SID ACE
+CASE A3-others-kept PASS SYSTEM and Administrators ACEs untouched by grant
+CASE A3-readable FAIL Security read as NT SERVICE\activeDIQAgent through the agent's event source: error The operation identifier is not valid.
+CASE A5-datadir PASS C:\ProgramData\skenzeriq\agent NT SERVICE\activeDIQAgent:(F) NT SERVICE\activeDIQAgent:(OI)(CI)(IO)(F) NT AUTHORITY\SYSTEM:(F) NT AUTHORITY\SYSTEM:(OI)(CI)(IO)(F) BUILTIN\Administrators:(F) BUILTIN\Administrators:(OI)(CI)(IO)(F) Successfully processed 1 files; Failed processing 0 files 
+CASE A5-eventsource PASS Application event source registered
+KNOWN A5-event-renders T-0813: event text does not render (message file is EventCreate.exe)
+CASE G1-reset PASS channel ACL reset to baseline removes the ACE
+CASE G1-unreadable PASS after the reset the service identity gets ErrUnreadable: unreadable
+CASE G2-regrant PASS grant-channel exit 0
+CASE G3-idempotent PASS grant twice -> 1 service ACE(s)
+CASE S1-not-enrolled PASS event 101: agent stopped: agent: not enrolled; run `agent enroll`
+CASE F1-corrupt-config PASS event 101 on corrupt agent.json: agent stopped: agent: local configuration: jsontext: invalid character 'h' in literal true (expecting 'r') after offset 3
+CASE F1-dc-healthy PASS NTDS, Netlogon and KDC running
+CASE F1-dc-auth PASS DC locator answers (nltest /dsgetdc)
+CASE U1-repair PASS repair exit 0, ACE present=True
+CASE U2-upgrade-fails PASS forced failure exit 1603
+CASE U2-old-version-kept PASS installed version after rollback: 0.0.1
+INFO U2 residual: Security ACE present after failed upgrade = False (expected False per T-0732)
+CASE U2-residual-reproduced PASS RollbackGrantChannel removed the pre-existing ACE; the installed agent would report CHANNEL_UNREADABLE
+CASE U2-recovery PASS grant-channel restores read access
+INFO event 102 (channel unreadable) count since upgrade failure: 0
+CASE D1-junction-refused PASS prepare-datadir exit 1; junction target untouched
+CASE D2-user-owned-parent-refused PASS owner WINLAB\agentverifyusr; prepare-datadir exit 1
+=== RUN   TestLabCheckDataDir
+    winlab_windows_test.go:148: allow Everyone on leaf: refused: C:\ProgramData\agentlab-3991623614\agent\data grants access to S-1-1-0
+    winlab_windows_test.go:148: allow Users on parent: refused: C:\ProgramData\agentlab-3991623614\agent grants access to S-1-5-32-545
+    winlab_windows_test.go:148: callback ACE for Everyone on leaf: refused: C:\ProgramData\agentlab-3991623614\agent\data has an ACE of unsupported type 9
+    winlab_windows_test.go:148: foreign owner on leaf: refused: C:\ProgramData\agentlab-3991623614\agent\data has an owner outside SYSTEM, Administrators and the service identity
+    winlab_windows_test.go:148: foreign owner on parent: refused: C:\ProgramData\agentlab-3991623614\agent has an owner outside SYSTEM, Administrators and the service identity
+--- PASS: TestLabCheckDataDir (0.06s)
+=== RUN   TestLabOldestRecord
+    winlab_windows_test.go:199: oldest record 1 -> 1 after clearing Security (a 1102 is written)
+--- PASS: TestLabOldestRecord (0.47s)
+=== RUN   TestLabReadAsService
+    winlab_windows_test.go:209: run by agent-verify as the service identity
+--- SKIP: TestLabReadAsService (0.00s)
+PASS
+CASE GO-TestLabCheckDataDir PASS see go test output above
+CASE GO-TestLabOldestRecord PASS see go test output above
+CASE X0-reinstall PASS msiexec exit 0
+CASE E6-revoke-failure-event PASS revoke-channel as the service identity (not an administrator): Application event 4101 count 1
+CASE X1-uninstall PASS msiexec exit 0
+CASE X1-service-gone PASS no service left
+CASE X1-ace-gone PASS Security channelAccess back to baseline
+CASE X1-files-gone PASS Program Files tree removed
+CASE X1-datadir-kept PASS data directory kept by design (outbox, policy anchor)
+CASE X1-eventsource-gone PASS event source removed
+CASE X1-no-product PASS no Add/Remove Programs entry
+CASE X1-no-listener PASS no firewall rule created
+CASE X1-dc-healthy PASS DC services running after uninstall
+SUMMARY failures=1
+

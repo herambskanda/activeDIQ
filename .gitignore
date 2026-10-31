@@ -55,15 +55,20 @@ lab/.entra-lab.pem
 lab/windows/.state/
 lab/windows/.win-lab.env
 lab/windows/.win-lab-ca.pem
+lab/windows/.win-lab-gssapi.keytab
+lab/windows/.win-lab-gmsa.json
 
 # stray go build output of tools/fitness/profiles
 /profiles
+!knowledge/development/runbooks/windows-lab-runs/*.log
 
 # Stray `go build` output of the fitness tools (make uses go run)
 /tools/fitness/*/*
 !/tools/fitness/*/*.go
 !/tools/fitness/*/*.txt
 !/tools/fitness/*/testdata/
+# shared fitness packages (tools/fitness/internal/<pkg>/) are source, not stray build output
+!/tools/fitness/internal/*/
 !/tools/fitness/update/offline.sh
 # stray `go build ./tools/fitness/audit` output
 /audit

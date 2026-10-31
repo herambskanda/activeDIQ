@@ -6,6 +6,8 @@ export interface Column<Row> {
   /** The first column's cells render as row headers (th scope=row). */
   readonly rowHeader?: boolean;
   readonly mono?: boolean;
+  /** Long prose (reasons, details): wrap instead of truncating. Use sparingly; truncation is the default. */
+  readonly wrap?: boolean;
   readonly cell: (row: Row) => ReactNode;
   /** Plain text for the cell's title when the content is truncated. */
   readonly title?: (row: Row) => string;
@@ -39,7 +41,10 @@ export function Table<Row>({ caption, columns, rows, rowKey }: TableProps<Row>) 
             <tr key={rowKey(r)}>
               {columns.map((c) => {
                 const props = {
-                  className: c.mono ? "diq-mono" : undefined,
+                  className:
+                    [c.mono ? "diq-mono" : "", c.wrap ? "diq-table__wrap" : ""]
+                      .filter(Boolean)
+                      .join(" ") || undefined,
                   title: c.title?.(r),
                 };
                 return c.rowHeader ? (

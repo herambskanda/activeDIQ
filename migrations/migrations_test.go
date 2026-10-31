@@ -38,6 +38,51 @@ func TestSequenceStartsAtTenantsAndIsNamedByOwner(t *testing.T) {
 	}
 }
 
+// T-0992: a migration's owner key is the second segment of its name, and it must name the package that
+// writes the file's tables (ADR-0003 rule 6). Each table below is created by exactly one file, whose owner
+// key is the top-level package that owns it (modules/agentfleet.md §Owned tables; invhost for DM-27).
+func TestOwnerKeyMatchesTableOwner(t *testing.T) {
+	want := map[string]string{ // table -> owner key
+		"agent_policy_key":    "agentpolicy",
+		"agent_policy_keyset": "agentpolicy",
+		"agent_policy_head":   "agentpolicy",
+		"agent_event":         "agentingest",
+		"inventory_servers":   "invhost",
+	}
+	ents, err := migrations.FS.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, e := range ents {
+		if !strings.HasSuffix(e.Name(), ".sql") {
+			continue
+		}
+		b, err := migrations.FS.ReadFile(e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for table := range want {
+			if strings.Contains(string(b), "CREATE TABLE public."+table+" (") {
+				if prev, dup := got[table]; dup {
+					t.Errorf("%s is created by both %s and %s", table, prev, e.Name())
+				}
+				got[table] = e.Name()
+			}
+		}
+	}
+	for table, owner := range want {
+		file, ok := got[table]
+		if !ok {
+			t.Errorf("no migration creates %s", table)
+			continue
+		}
+		if key := strings.SplitN(file, "_", 3)[1]; key != owner {
+			t.Errorf("%s is created by %s: owner key %q, want %q", table, file, key, owner)
+		}
+	}
+}
+
 // Acceptance 1 (the part a unit test can prove; fitness-tenancy proves the rest): migration 0001
 // creates only the tenants table, and leaves the runtime role able to use it and nothing else.
 func TestMigration0001CreatesOnlyTenantsAndTheRoleSplit(t *testing.T) {
@@ -358,6 +403,70 @@ func TestMigration0021UpgradeBackfillsPendingExpiryInEveryTenant(t *testing.T) {
 		var force bool
 		if err := a.QueryRow(ctx, `SELECT relforcerowsecurity FROM pg_class WHERE oid = 'public.authn_authenticator_enrollments'::regclass`).Scan(&force); err != nil || !force {
 			t.Errorf("FORCE ROW LEVEL SECURITY is not back: %v %v", force, err)
+		}
+	})
+}
+
+// T-0881: 0058 admits the ou_one_level root kind, still refuses an unknown kind, keeps the 0037 tenant-root
+// rule, and allows ou_one_level only as an include of an OU (never an exclude, never a connection's GUID).
+func TestMigration0058AdmitsOULevelRootKind(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		d := s.NewDatabase(t)
+		d.Migrate(t)
+		ctx := context.Background()
+		a, err := d.Admin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer a.Close(ctx)
+		const (
+			tid  = "00000000-0000-4000-8000-0000000000c1"
+			rid  = "00000000-0000-4000-8000-0000000000c2"
+			aid  = "00000000-0000-4000-8000-0000000000c3"
+			acct = "00000000-0000-4000-8000-0000000000c4"
+			conn = "00000000-0000-4000-8000-0000000000d1"
+			ou   = "00000000-0000-4000-8000-0000000000d2"
+		)
+		for _, q := range []string{
+			`INSERT INTO public.tenants (id, name) VALUES ('` + tid + `', 'one-level')`,
+			`INSERT INTO public.authz_roles (tenant_id, id, role_name, tier) VALUES ('` + tid + `', '` + rid + `', 'desk', 2)`,
+			`INSERT INTO public.authz_assignments (tenant_id, id, account_id, role_id, granted_by) VALUES ('` + tid + `', '` + aid + `', '` + acct + `', '` + rid + `', 'test')`,
+		} {
+			if _, err := a.Exec(ctx, q); err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+		}
+		ord := 0
+		insert := func(kind string, exclude bool, connection, guid string) error {
+			ord++
+			_, err := a.Exec(ctx, `INSERT INTO public.authz_assignment_roots (tenant_id, assignment_id, ordinal, is_exclude, root_kind, connection_id, root_guid)
+				VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6::uuid, $7::uuid)`, tid, aid, ord, exclude, kind, connection, guid)
+			return err
+		}
+		if err := insert("ou_one_level", false, conn, ou); err != nil {
+			t.Errorf("ou_one_level include of an OU refused: %v", err)
+		}
+		if err := insert("ou_subtree", false, conn, ou); err != nil {
+			t.Errorf("ou_subtree no longer accepted: %v", err)
+		}
+		if err := insert("ou_one_level", true, conn, ou); err == nil {
+			t.Error("ou_one_level exclude accepted")
+		}
+		if err := insert("ou_one_level", false, conn, conn); err == nil {
+			t.Error("ou_one_level root carrying the connection's GUID accepted")
+		}
+		if err := insert("ou_children", false, conn, ou); err == nil {
+			t.Error("unknown root kind accepted")
+		}
+		// The 0037 tenant-root rule: root_guid = connection_id = tenant_id and never an exclude.
+		if err := insert("tenant", false, tid, tid); err != nil {
+			t.Errorf("tenant root refused: %v", err)
+		}
+		if err := insert("tenant", false, conn, ou); err == nil {
+			t.Error("tenant root that is not the tenant's ID accepted")
+		}
+		if err := insert("tenant", true, tid, tid); err == nil {
+			t.Error("tenant exclude accepted")
 		}
 	})
 }
