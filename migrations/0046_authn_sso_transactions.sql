@@ -15,6 +15,7 @@
 --   expires_at   at most 5 minutes after created_at (CHECK); the server also refuses after it.
 -- Rows are never updated. The runtime role may delete them (that is the consumption and the trim of expired rows).
 
+-- write-class: authn_sso_transactions system
 CREATE TABLE public.authn_sso_transactions (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

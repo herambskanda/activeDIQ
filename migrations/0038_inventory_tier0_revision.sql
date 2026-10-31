@@ -12,6 +12,7 @@
 -- (Group membership under a designated group is read live at statement time, contract §8.3 F2, and is not
 -- part of this number.)
 
+-- write-class: inventory_tier0_revisions system
 CREATE TABLE public.inventory_tier0_revisions (
   tenant_id uuid PRIMARY KEY REFERENCES public.tenants (id),
   revision bigint NOT NULL CHECK (revision > 0)

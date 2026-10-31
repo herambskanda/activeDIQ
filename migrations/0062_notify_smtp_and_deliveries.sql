@@ -11,6 +11,7 @@
 --                      authority for a delivery-link download (reports §7.2), so they never change after
 --                      insert (trigger below). Rows are not deleted by the runtime role.
 
+-- write-class: notify_settings config
 CREATE TABLE public.notify_settings (
   tenant_id uuid PRIMARY KEY REFERENCES public.tenants (id),
   allowed_domains text[] NOT NULL DEFAULT '{}',
@@ -39,6 +40,7 @@ REVOKE DELETE ON public.notify_settings FROM activediq_app;
 
 COMMENT ON TABLE public.notify_settings IS 'DM-82 smtp channel and the allowed recipient domains (tenant table, RLS). Only internal/platform/notify/settings references it in SQL.';
 
+-- write-class: notify_deliveries system
 CREATE TABLE public.notify_deliveries (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

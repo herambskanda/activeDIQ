@@ -12,6 +12,7 @@
 --                           connection ID); it covers Tier-0 scope targets and nothing else, and no other
 --                           kind ever covers a Tier-0 scope target.
 
+-- write-class: authz_roles config
 CREATE TABLE public.authz_roles (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -23,6 +24,7 @@ CREATE TABLE public.authz_roles (
   UNIQUE (tenant_id, role_name)
 );
 
+-- write-class: authz_role_permissions config
 CREATE TABLE public.authz_role_permissions (
   tenant_id uuid NOT NULL,
   role_id uuid NOT NULL,
@@ -31,6 +33,7 @@ CREATE TABLE public.authz_role_permissions (
   FOREIGN KEY (tenant_id, role_id) REFERENCES public.authz_roles (tenant_id, id)
 );
 
+-- write-class: authz_assignments config
 CREATE TABLE public.authz_assignments (
   tenant_id uuid NOT NULL,
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -47,6 +50,7 @@ CREATE TABLE public.authz_assignments (
 );
 CREATE INDEX authz_assignments_account ON public.authz_assignments (tenant_id, account_id) WHERE assignment_state = 'active';
 
+-- write-class: authz_assignment_roots config
 CREATE TABLE public.authz_assignment_roots (
   tenant_id uuid NOT NULL,
   assignment_id uuid NOT NULL,

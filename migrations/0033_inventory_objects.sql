@@ -15,6 +15,7 @@
 --  * nc_guid names the AD naming context the object lives in (DM-14); there is none for Entra.
 --  * tier0 is NOT a column: the classifiers (T-0326) compute it from these rows.
 
+-- write-class: directory_objects system
 CREATE TABLE public.directory_objects (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,
