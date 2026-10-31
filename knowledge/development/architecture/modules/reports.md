@@ -330,8 +330,14 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   apply to computers or krbtgt.
 - **Deviations to know.** (1) The test oracle is the test function `world8.derive`, not an exported
   `inventory.DeriveUserState`: a function in the package would be callable from the run path. (2) The
-  `<column>_reason` companions are not built; the unknown cell is `["u"]` and the reason of an
-  unknown is not yet a column (filed). (3) The codec refuses a stored max age of 0 (`UnverifiedValue`), so
+  reason companions are built for the state columns (`locked_out_reason`, `password_state_reason`,
+  `account_expired_reason`, `activity_source_reason`); `probable_service_account_reason` was already there.
+  Each is `none` when the state is known, else the cause: `uac_not_read`, `lockout_time_not_read`,
+  `pwd_last_set_not_read`, `last_logon_not_read`, `activity_inputs_not_read`, `account_expires_not_read`,
+  `pso_set_not_read` (PSO set never read), `pso_not_read` (an applying PSO has no stored row),
+  `pso_precedence_not_read`, `pso_interval_not_read`, `domain_policy_not_read` (domain row or interval
+  missing), `account_inputs_not_read` (uac, SID or logon name missing: the policy cannot be chosen, so it
+  fails closed). They are evaluated in the same query from the same CTE row as the state. (3) The codec refuses a stored max age of 0 (`UnverifiedValue`), so
   that value stays "not read" and shows Unknown although the expert says it means never. (4) The
   global-security-group filter on group-linked PSOs is not applied (`groupType` is jsonb and a Rel cannot
   project it); the Windows lab decides. (5) `probable_service_account` is the SPN leg only; the

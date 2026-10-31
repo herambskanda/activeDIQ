@@ -70,18 +70,24 @@ func wireBytes(g string) []byte {
 // derived is the reference result for one user.
 type derived struct {
 	locked, pwd, acct, source string
+	lockWhy, pwdWhy, acctWhy  string
 	lockEnds, pwdAt           *time.Time
 	days                      *int64
 }
 
-// resolve returns the effective max age and lockout duration and the policy source name.
-func (w world8) resolve(u hUser) (maxAge, lock secs, source string) {
+// resolve returns the effective max age and lockout duration, the policy source name, and, when the
+// policy is unresolved, the cause (otherwise "").
+func (w world8) resolve(u hUser) (maxAge, lock secs, source, why string) {
+	const unresolved = "Unknown (policy not resolved)"
 	if !w.dom.psosRead {
-		return nil, nil, "Unknown (policy not resolved)"
+		return nil, nil, unresolved, "pso_set_not_read"
 	}
-	eligible := u.uac != nil && *u.uac&512 == 512 && u.rid != 502 && !strings.HasPrefix(strings.ToLower(u.sam), "krbtgt_")
+	if u.uac == nil {
+		return nil, nil, unresolved, "account_inputs_not_read"
+	}
+	eligible := *u.uac&512 == 512 && u.rid != 502 && !strings.HasPrefix(strings.ToLower(u.sam), "krbtgt_")
 	if !eligible {
-		return w.dom.max, w.dom.lock, "Domain policy"
+		return w.dom.max, w.dom.lock, "Domain policy", ""
 	}
 	// the groups the user is in: direct and primary, then transitively through group members
 	in := map[string]bool{}
@@ -120,7 +126,7 @@ func (w world8) resolve(u hUser) (maxAge, lock secs, source string) {
 		cands = viaGroup
 	}
 	if len(cands) == 0 {
-		return w.dom.max, w.dom.lock, "Domain policy"
+		return w.dom.max, w.dom.lock, "Domain policy", ""
 	}
 	best := cands[0]
 	for _, p := range cands[1:] {
@@ -134,29 +140,43 @@ func (w world8) resolve(u hUser) (maxAge, lock secs, source string) {
 			best = p
 		}
 	}
-	if best.prec == nil || !best.stored {
-		return nil, nil, "Unknown (policy not resolved)"
+	if !best.stored {
+		return nil, nil, unresolved, "pso_not_read"
 	}
-	return best.max, best.lock, best.name
+	if best.prec == nil {
+		return nil, nil, unresolved, "pso_precedence_not_read"
+	}
+	return best.max, best.lock, best.name, ""
 }
 
 func (w world8) derive(u hUser, now time.Time) derived {
 	var d derived
 	const unk = report.UnknownInputMissing
-	maxAge, lock, src := w.resolve(u)
+	maxAge, lock, src, why := w.resolve(u)
 	d.source = src
+	// the cause of an interval that is not read: the unresolved cause, else the source that holds it
+	intervalWhy := func() string {
+		switch {
+		case why != "":
+			return why
+		case src == "Domain policy":
+			return "domain_policy_not_read"
+		}
+		return "pso_interval_not_read"
+	}
+	d.lockWhy, d.pwdWhy, d.acctWhy = "none", "none", "none"
 	trust := u.uac != nil && *u.uac&14336 != 0
 	switch {
 	case u.uac == nil:
-		d.locked = unk
+		d.locked, d.lockWhy = unk, "uac_not_read"
 	case trust:
 		d.locked = "not_applicable"
 	case u.read&inventory.ReadLockoutTime == 0:
-		d.locked = unk
+		d.locked, d.lockWhy = unk, "lockout_time_not_read"
 	case u.lockout.IsZero():
 		d.locked = "not_locked"
 	case lock == nil:
-		d.locked = unk
+		d.locked, d.lockWhy = unk, intervalWhy()
 	case *lock == 0:
 		d.locked = "locked"
 	default:
@@ -169,7 +189,7 @@ func (w world8) derive(u hUser, now time.Time) derived {
 	}
 	switch {
 	case u.uac == nil:
-		d.pwd = unk
+		d.pwd, d.pwdWhy = unk, "uac_not_read"
 	case trust:
 		d.pwd = "not_applicable"
 	case *u.uac&65536 != 0:
@@ -177,11 +197,11 @@ func (w world8) derive(u hUser, now time.Time) derived {
 	case *u.uac&262144 != 0:
 		d.pwd = "not_applicable_smartcard"
 	case u.read&inventory.ReadPwdLastSet == 0:
-		d.pwd = unk
+		d.pwd, d.pwdWhy = unk, "pwd_last_set_not_read"
 	case u.pwdLastSet.IsZero():
 		d.pwd = "must_change"
 	case maxAge == nil:
-		d.pwd = unk
+		d.pwd, d.pwdWhy = unk, intervalWhy()
 	case *maxAge == 0:
 		d.pwd = "never_policy"
 	default:
@@ -196,7 +216,7 @@ func (w world8) derive(u hUser, now time.Time) derived {
 	}
 	switch {
 	case u.read&inventory.ReadAccountExpires == 0:
-		d.acct = unk
+		d.acct, d.acctWhy = unk, "account_expires_not_read"
 	case u.expires.IsZero():
 		d.acct = "never"
 	case now.After(u.expires):
@@ -228,6 +248,9 @@ func (d derived) cells() map[report.ColumnID]report.Cell {
 		"password_state":          enumOrUnknown(d.pwd),
 		"account_expired":         enumOrUnknown(d.acct),
 		"policy_source":           report.TextCell(d.source),
+		"locked_out_reason":       report.EnumCell(d.lockWhy),
+		"password_state_reason":   report.EnumCell(d.pwdWhy),
+		"account_expired_reason":  report.EnumCell(d.acctWhy),
 		"lockout_ends_at":         timeOrAbsent(d.lockEnds),
 		"password_expires_at":     timeOrAbsent(d.pwdAt),
 		"days_to_password_expiry": report.Absent(),
@@ -245,7 +268,7 @@ func (d derived) cells() map[report.ColumnID]report.Cell {
 }
 
 var rp8Cols = []report.ColumnID{"sam_account_name", "locked_out", "lockout_ends_at", "password_state", "password_expires_at",
-	"days_to_password_expiry", "account_expired", "policy_source"}
+	"days_to_password_expiry", "account_expired", "policy_source", "locked_out_reason", "password_state_reason", "account_expired_reason"}
 
 // seed writes the world: structure, users, groups, PSOs and the domain policy. observed rises with
 // each call so a re-seed replaces what the previous scenario wrote.
@@ -330,8 +353,6 @@ func (e *env) compare8(t *testing.T, reg *reportsql.Registry, c inventory.Connec
 		}
 	}
 }
-
-var _ = storetest.EachVersion
 
 func (e *env) setDom8(t *testing.T, c inventory.ConnectionID, d domPol, at time.Time) {
 	t.Helper()
@@ -431,6 +452,8 @@ type want8 struct {
 	locked, pwd, acct, src string
 	lockEnds, pwdAt        string // RFC 3339, "" absent
 	days                   string // decimal, "" absent
+	// why: the reasons of the three states, locked_out / password_state / account_expired; "" is "none"
+	why [3]string
 }
 
 func Test_derived_columns_match_reference(t *testing.T) {
@@ -461,12 +484,12 @@ func Test_derived_columns_match_reference(t *testing.T) {
 			{user: "lock-elapsed", locked: "not_locked", pwd: "expires", acct: "never", src: "Domain policy", pwdAt: f(32 * day), days: "32"},
 			{user: "lock-edge", locked: "locked", pwd: "expires", acct: "never", src: "Domain policy", lockEnds: f(0), pwdAt: f(32 * day), days: "32"},
 			{user: "never-locked", locked: "not_locked", pwd: "expires", acct: "never", src: "Domain policy", pwdAt: f(32 * day), days: "32"},
-			{user: "lock-unread", locked: unk, pwd: "expires", acct: "never", src: "Domain policy", pwdAt: f(32 * day), days: "32"},
+			{user: "lock-unread", why: [3]string{"lockout_time_not_read"}, locked: unk, pwd: "expires", acct: "never", src: "Domain policy", pwdAt: f(32 * day), days: "32"},
 			{user: "acct-expired", locked: "not_locked", pwd: "expires", acct: "expired", src: "Domain policy", pwdAt: f(32 * day), days: "32"},
 			{user: "acct-future", locked: "not_locked", pwd: "expires", acct: "not_expired", src: "Domain policy", pwdAt: f(32 * day), days: "32"},
-			{user: "acct-unread", locked: "not_locked", pwd: "expires", acct: unk, src: "Domain policy", pwdAt: f(32 * day), days: "32"},
-			{user: "pwd-unread", locked: "not_locked", pwd: unk, acct: "never", src: "Domain policy"},
-			{user: "no-uac", locked: unk, pwd: unk, acct: "never", src: "Domain policy"},
+			{user: "acct-unread", why: [3]string{2: "account_expires_not_read"}, locked: "not_locked", pwd: "expires", acct: unk, src: "Domain policy", pwdAt: f(32 * day), days: "32"},
+			{user: "pwd-unread", why: [3]string{1: "pwd_last_set_not_read"}, locked: "not_locked", pwd: unk, acct: "never", src: "Domain policy"},
+			{user: "no-uac", why: [3]string{"uac_not_read", "uac_not_read"}, locked: unk, pwd: unk, acct: "never", src: "Unknown (policy not resolved)"},
 			// a PSO with a shorter age expires earlier than the domain policy would say
 			{user: "pso-short", locked: "not_locked", pwd: "expired", acct: "never", src: "PSO-short", pwdAt: f(-10 * day), days: "-10"},
 			{user: "group-pso", locked: "not_locked", pwd: "expired", acct: "never", src: "PSO-group", pwdAt: f(-5 * day), days: "-5"},
@@ -476,8 +499,8 @@ func Test_derived_columns_match_reference(t *testing.T) {
 			{user: "primary", locked: "not_locked", pwd: "expired", acct: "never", src: "PSO-primary", pwdAt: f(-10 * day), days: "-10"},
 			{user: "krbtgt", locked: "not_locked", pwd: "expires", acct: "never", src: "Domain policy", pwdAt: f(22 * day), days: "22"},
 			{user: "krbtgt_1234", locked: "not_locked", pwd: "expires", acct: "never", src: "Domain policy", pwdAt: f(22 * day), days: "22"},
-			{user: "no-precedence", locked: "not_locked", pwd: unk, acct: "never", src: "Unknown (policy not resolved)"},
-			{user: "pso-unread", locked: "not_locked", pwd: unk, acct: "never", src: "Unknown (policy not resolved)"},
+			{user: "no-precedence", why: [3]string{1: "pso_precedence_not_read"}, locked: "not_locked", pwd: unk, acct: "never", src: "Unknown (policy not resolved)"},
+			{user: "pso-unread", why: [3]string{1: "pso_not_read"}, locked: "not_locked", pwd: unk, acct: "never", src: "Unknown (policy not resolved)"},
 			{user: "edge-removed", locked: "not_locked", pwd: "expires", acct: "never", src: "Domain policy", pwdAt: f(22 * day), days: "22"},
 			{user: "pso-forever", locked: "locked", pwd: "never_policy", acct: "never", src: "PSO-forever"},
 		}
@@ -500,6 +523,12 @@ func Test_derived_columns_match_reference(t *testing.T) {
 			v, _ := time.Parse(time.RFC3339, s)
 			return cellKey(report.TimeCell(v))
 		}
+		reason := func(w string) string {
+			if w == "" {
+				w = "none"
+			}
+			return cellKey(report.EnumCell(w))
+		}
 		for _, x := range explicit {
 			r := bySam[x.user]
 			if r == nil {
@@ -520,6 +549,7 @@ func Test_derived_columns_match_reference(t *testing.T) {
 			}{
 				{"locked_out", en(x.locked)}, {"password_state", en(x.pwd)}, {"account_expired", en(x.acct)},
 				{"policy_source", cellKey(report.TextCell(x.src))},
+				{"locked_out_reason", reason(x.why[0])}, {"password_state_reason", reason(x.why[1])}, {"account_expired_reason", reason(x.why[2])},
 				{"lockout_ends_at", tm(x.lockEnds, x.locked == unk)},
 				{"password_expires_at", tm(x.pwdAt, x.pwd == unk)}, {"days_to_password_expiry", days},
 			}

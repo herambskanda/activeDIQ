@@ -56,7 +56,13 @@ var enumLabels = map[string]string{
 	"must_change": "Must change at next logon", "never_policy": "Never expires (policy)", "expired": "Password expired", "expires": "Expires",
 	"not_expired": "Not expired", "never": "Never",
 	"spn_set": "servicePrincipalName set", "none": "None",
-	"logon": "Replicated logon", "password_set": "Password last set", "created": "Created",
+	"uac_not_read": "userAccountControl not read", "lockout_time_not_read": "lockoutTime not read", "pwd_last_set_not_read": "pwdLastSet not read",
+	"account_expires_not_read": "accountExpires not read", "last_logon_not_read": "lastLogonTimestamp not read",
+	"activity_inputs_not_read": "pwdLastSet and lastLogonTimestamp not read", "domain_policy_not_read": "Domain password policy not read",
+	"pso_set_not_read": "Password settings objects not read for this domain", "pso_not_read": "A password settings object that applies was not read",
+	"pso_precedence_not_read": "A password settings object has no precedence", "pso_interval_not_read": "The password settings object's interval was not read",
+	"account_inputs_not_read": "Account attributes that select the policy (userAccountControl, SID, logon name) not read",
+	"logon":                   "Replicated logon", "password_set": "Password last set", "created": "Created",
 }
 
 func attr(id report.ColumnID, label string, t report.ValueType, col string, ops []report.Op, def bool) report.Column {
@@ -112,12 +118,15 @@ func usersDataset() report.Dataset {
 		attr("lockout_time", "lockoutTime", report.TypeTime, "lockout_time", opsTime, false),
 		attr("account_expires", "Account expires", report.TypeTime, "account_expires", opsTime, false),
 		state("locked_out", "Locked out", report.SQL(lockedOutSQL), "locked", "not_locked", "not_applicable", report.UnknownInputMissing),
+		state("locked_out_reason", "Locked out: reason", report.SQL(lockReasonSQL), reasonValues("lockout_time_not_read")...),
 		withUnknown(derived("lockout_ends_at", "Lockout ends", report.TypeTime, report.SQL(lockoutEndsSQL), opsTime), "locked_out"),
 		state("password_state", "Password state", report.SQL(pwdStateSQL), "not_applicable", "never_account_flag", "not_applicable_smartcard",
 			"must_change", "never_policy", "expired", "expires", report.UnknownInputMissing),
+		state("password_state_reason", "Password state: reason", report.SQL(pwdReasonSQL), reasonValues("pwd_last_set_not_read")...),
 		withUnknown(derived("password_expires_at", "Password expires", report.TypeTime, report.SQL(pwdExpiresAtSQL), opsTime), "password_state"),
 		withUnknown(derived("days_to_password_expiry", "Days to password expiry", report.TypeInt, report.SQL(pwdDaysSQL), opsInt), "password_state"),
 		state("account_expired", "Account expired", report.SQL(accountExpiredSQL), "expired", "not_expired", "never", report.UnknownInputMissing),
+		state("account_expired_reason", "Account expired: reason", report.SQL(accountReasonSQL), "none", "account_expires_not_read"),
 		derived("policy_source", "Policy source", report.TypeText, report.SQL(policySourceSQL), opsText),
 		derived("probable_service_account", "Probable service account", report.TypeBool, report.SQL(probableSvcSQL), opsBool),
 		state("probable_service_account_reason", "Service account reason", report.SQL(probableReasonSQL), "spn_set", "none"),
@@ -145,6 +154,12 @@ func usersDataset() report.Dataset {
 	}
 }
 
+// reasonValues are the causes of an unknown policy-dependent state, led by the account's own input.
+func reasonValues(own string) []string {
+	return []string{"none", "uac_not_read", own, "domain_policy_not_read", "pso_set_not_read", "pso_not_read",
+		"pso_precedence_not_read", "pso_interval_not_read", "account_inputs_not_read"}
+}
+
 func withUnknown(c report.Column, state report.ColumnID) report.Column {
 	c.UnknownWhen = state
 	return c
@@ -162,6 +177,8 @@ func computersDataset() report.Dataset {
 		derived("managed_service_account", "Group managed service account", report.TypeBool, report.SQL("{t}.kind = 'gmsa'"), opsBool),
 		withUnknown(derived("last_activity", "Last activity", report.TypeTime, report.SQL(activitySQL), opsTime), "activity_source"),
 		state("activity_source", "Activity source", report.SQL(activitySrcSQL), "logon", "password_set", "created", "none", report.UnknownInputMissing),
+		state("activity_source_reason", "Activity source: reason", report.SQL(activityReasonSQL),
+			"none", "pwd_last_set_not_read", "last_logon_not_read", "activity_inputs_not_read"),
 	)
 	return report.Dataset{
 		ID:        DatasetComputers,
