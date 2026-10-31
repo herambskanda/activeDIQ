@@ -10,11 +10,13 @@ import (
 	jsonv2 "encoding/json/v2"
 
 	"github.com/skenzeriq/activediq/internal/modules/reports/api"
+	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/httpx"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -23,13 +25,16 @@ import (
 // Handlers implements api.Handlers: the run operations (createReportRun, getReportRun,
 // cancelReportRun, retryReportRun, listReportRuns, listReportRunRows). The permission reports.run is
 // the route's (apihost enforces it from RouteMeta before a handler runs); what a handler adds is the
-// runner binding and the read-scope check, both inside run.Service. The other operations of the tag
-// answer 501 until their rows land (pending.go).
+// runner binding and the read-scope check, both inside run.Service. The export operations
+// (createReportExport, getReportExport, deleteReportExport, downloadReportExport) are the same: the
+// permission is the route's, and export.Service owns the creator check and the gate. The other operations
+// of the tag answer 501 until their rows land (pending.go).
 type Handlers struct {
 	pending
-	Runs *run.Service
-	Now  func() time.Time
-	Log  *slog.Logger
+	Runs    *run.Service
+	Exports *export.Service
+	Now     func() time.Time
+	Log     *slog.Logger
 }
 
 // Bind returns the tag's routes for apihost.Build.
@@ -226,6 +231,82 @@ func (h *Handlers) ListReportRunRows(ctx context.Context, in api.ListReportRunRo
 	return api.ListReportRunRows200{Body: body}, nil
 }
 
+func exportID(u apitypes.UUID) (export.ID, error) { return export.ParseID(u.String()) }
+
+func exportLocation(id export.ID) string { return "/api/v1/reports/exports/" + id.String() }
+
+// CreateReportExport implements api.Handlers.
+func (h *Handlers) CreateReportExport(ctx context.Context, in api.CreateReportExportInput) (api.CreateReportExportOutput, error) {
+	tid, chain, err := h.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rid, err := runID(in.RunID)
+	if err != nil {
+		return nil, h.problem(run.ErrRunNotFound)
+	}
+	e, err := h.Exports.Create(ctx, tid, chain, rid, export.Format(in.Body.Format))
+	if err != nil {
+		return nil, h.problem(err)
+	}
+	return api.CreateReportExport202{Body: exportView(e, h.now()), Location: exportLocation(e.ID)}, nil
+}
+
+// GetReportExport implements api.Handlers.
+func (h *Handlers) GetReportExport(ctx context.Context, in api.GetReportExportInput) (api.GetReportExportOutput, error) {
+	tid, chain, err := h.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	id, err := exportID(in.ExportID)
+	if err != nil {
+		return nil, h.problem(export.ErrExportNotFound)
+	}
+	e, err := h.Exports.Get(ctx, tid, chain, id)
+	if err != nil {
+		return nil, h.problem(err)
+	}
+	return api.GetReportExport200{Body: exportView(e, h.now())}, nil
+}
+
+// DeleteReportExport implements api.Handlers.
+func (h *Handlers) DeleteReportExport(ctx context.Context, in api.DeleteReportExportInput) (api.DeleteReportExportOutput, error) {
+	tid, chain, err := h.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	id, err := exportID(in.ExportID)
+	if err != nil {
+		return nil, h.problem(export.ErrExportNotFound)
+	}
+	if err := h.Exports.Delete(ctx, tid, chain, id); err != nil {
+		return nil, h.problem(err)
+	}
+	return api.DeleteReportExport204{}, nil
+}
+
+// DownloadReportExport implements api.Handlers: the creator's file, through the one gate. The headers come
+// from httpx.Headers (apihost.Stream.FileFormat), never from this package.
+func (h *Handlers) DownloadReportExport(ctx context.Context, in api.DownloadReportExportInput) (api.DownloadReportExportOutput, error) {
+	tid, chain, err := h.caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	id, err := exportID(in.ExportID)
+	if err != nil {
+		return nil, h.problem(export.ErrExportNotFound)
+	}
+	d, err := h.Exports.Download(ctx, tid, chain, id)
+	if err != nil {
+		return nil, h.problem(err)
+	}
+	ff := httpx.CSV
+	if d.Format == export.XLSX {
+		ff = httpx.XLSX
+	}
+	return api.DownloadReportExport200{Body: apihost.Stream{Reader: d.Reader, FileBase: d.Base, FileFormat: ff}}, nil
+}
+
 // coded adds the machine-readable errors[].code a client branches on. The detail is fixed text.
 func coded(p *apitypes.Problem, in, pointer, code, detail string) *apitypes.Problem {
 	var e apitypes.Errors
@@ -238,7 +319,22 @@ func coded(p *apitypes.Problem, in, pointer, code, detail string) *apitypes.Prob
 func (h *Handlers) problem(err error) error {
 	var failed *run.FailedError
 	var ve report.ValidationError
+	var capErr *export.CapError
 	switch {
+	case errors.As(err, &capErr):
+		return coded(apitypes.ReportRowCapExceeded(capErr.Error()), apitypes.InBody, "format", "row_cap_exceeded", "")
+	case errors.Is(err, export.ErrExportNotFound):
+		return coded(apitypes.NotFound("no such export"), apitypes.InPath, "exportId", "export_not_found", "")
+	case errors.Is(err, export.ErrFormatUnavailable):
+		return coded(apitypes.Validation("that export format is not available"), apitypes.InBody, "format", "format_unavailable", "")
+	case errors.Is(err, export.ErrExportNotReady):
+		return coded(apitypes.Conflict("the export file is not ready"), apitypes.InPath, "exportId", "export_not_ready", "")
+	case errors.Is(err, export.ErrExportInProgress):
+		return coded(apitypes.Conflict("the export is still queued or running"), apitypes.InPath, "exportId", "export_in_progress", "")
+	case errors.Is(err, export.ErrExportExpired):
+		return apitypes.ReportResultExpired("the export file has expired; export the report again")
+	case errors.Is(err, export.ErrExportUnavailable):
+		return apitypes.NotReady("exports are not available until a file store is configured for this installation")
 	case errors.As(err, &failed):
 		return coded(apitypes.Conflict("the run did not produce a result"), apitypes.InBody, "", "run_failed", string(failed.Reason)+" ("+string(failed.State)+")")
 	case errors.As(err, &ve):

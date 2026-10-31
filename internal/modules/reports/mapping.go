@@ -4,11 +4,13 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	jsonv2 "encoding/json/v2"
 
 	"github.com/skenzeriq/activediq/internal/modules/reports/api"
+	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
@@ -263,6 +265,49 @@ func failure(r run.Run) *api.ReportFailure {
 		}
 	}
 	return &api.ReportFailure{Reason: api.ReportFailureReason(r.Failure), Message: msg}
+}
+
+// exportFailure is the ReportFailure of a failed export. The row-cap message names the numbers the job
+// recorded; every other message is fixed text (a run's own reasons keep the run's wording).
+func exportFailure(e export.Export) *api.ReportFailure {
+	if e.Failure == "" {
+		return nil
+	}
+	msg := failureMessages[e.Failure]
+	switch e.Failure {
+	case run.FailRowCapExceeded:
+		msg = "The result is over the row limit for this export format. Narrow the filters or the scope and export again."
+		if rows, ok := e.FailureDetail["rows"]; ok {
+			msg = fmt.Sprintf("This export has %d rows. %s allows %d. Narrow the filters or the scope and export again.",
+				rows, strings.ToUpper(string(e.Format)), e.FailureDetail["cap"])
+		}
+	case run.FailInternal:
+		msg = "The export failed for an internal reason. Export it again; if it keeps failing, contact support."
+	}
+	return &api.ReportFailure{Reason: api.ReportFailureReason(e.Failure), Message: msg}
+}
+
+// exportView is the ReportExport of one export. The state is the effective one: a succeeded export past its
+// expiry reads as expired before the sweep has flipped the record. The blob key never appears.
+func exportView(e export.Export, now time.Time) api.ReportExport {
+	st := e.State
+	if e.Expired(now) {
+		st = export.StateExpired
+	}
+	v := api.ReportExport{
+		ID: uuid(e.ID.String()), RunID: uuid(e.RunID.String()), Rerun: e.Rerun, RerunOfRunID: idp(e.RerunOf),
+		Format: api.ReportExportFormatValue(e.Format), State: api.ReportExportState(st),
+		CreatedBy: apitypes.JobActor{ID: e.CreatedBy, Type: "user"}, CreatedAt: ts(e.CreatedAt), FinishedAt: tsp(e.FinishedAt),
+		RowCount: e.RowCount, ByteSize: e.ByteSize, Digest: digestHex(e.Digest), Failure: exportFailure(e),
+	}
+	if st == export.StateSucceeded || st == export.StateExpired {
+		v.FileName = e.FileName
+	}
+	if e.State != export.StateFailed {
+		exp := ts(e.ExpiresAt)
+		v.ExpiresAt = &exp
+	}
+	return v
 }
 
 func freshness(r run.Run) api.ReportFreshness {

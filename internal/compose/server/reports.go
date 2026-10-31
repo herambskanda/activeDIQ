@@ -7,38 +7,50 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/modules/reports"
+	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
+	"github.com/skenzeriq/activediq/internal/platform/blob"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
-// buildReports wires the report run path (T-0959): the run service over the store and the job registry,
-// its two job kinds and the run API handlers.
+// buildReports wires the report run path (T-0959) and the export path (T-0963): the run service over the
+// store and the job registry, the export service over the same and the blob store, their job kinds and the
+// API handlers.
 //
 // Two ports have no production implementation yet, and each fails closed rather than guess:
 //   - the read-scope producer (rbac.ReadScopes needs the owner-status and object-connection sources), so a
 //     run cannot be created or read and the API answers 503 not-ready;
 //   - the report library (row B5), so every definition is unknown and the API answers 404.
 //
-// Both are filed as follow-ups on T-0959.
-func buildReports(db *store.DB, jreg *jobs.Registry, sink audit.Sink, reader *inventory.Reader, scopes run.ReadScopes) (*run.Service, apihost.TagHandlers, error) {
+// Both are filed as follow-ups on T-0959. A third port fails closed the same way: with no blob store
+// (blobDir empty) an export answers 503 not-ready rather than keep a file anywhere else.
+func buildReports(db *store.DB, jreg *jobs.Registry, sink audit.Sink, reader *inventory.Reader, scopes run.ReadScopes, blobDir string) (*run.Service, apihost.TagHandlers, error) {
 	if scopes == nil {
 		scopes = noScopes{}
 	}
 	svc := &run.Service{DB: db, Jobs: jreg, Scopes: scopes, Audit: sink, Catalog: noLibrary{}, Codec: reports.Codec{},
 		Fresh: inventoryFreshness{r: reader}}
-	for _, k := range []jobs.Kind{svc.Kind(), svc.RetentionKind()} {
+	exports := &export.Service{DB: db, Jobs: jreg, Runs: svc, Audit: sink}
+	if blobDir != "" {
+		bs, err := blob.NewFS(blobDir)
+		if err != nil {
+			return nil, apihost.TagHandlers{}, fmt.Errorf("server: blob store: %w", err)
+		}
+		exports.Blob = bs
+	}
+	for _, k := range []jobs.Kind{svc.Kind(), svc.RetentionKind(), exports.Kind()} {
 		if err := jreg.Register(k); err != nil {
 			return nil, apihost.TagHandlers{}, fmt.Errorf("server: reports job kind %s: %w", k.Name, err)
 		}
 	}
-	return svc, (&reports.Handlers{Runs: svc}).Bind(), nil
+	return svc, (&reports.Handlers{Runs: svc, Exports: exports}).Bind(), nil
 }
 
 // startReportRetention seeds the retention sweep for the install tenant. The job reschedules itself and
