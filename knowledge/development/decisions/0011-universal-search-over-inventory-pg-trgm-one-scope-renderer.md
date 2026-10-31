@@ -2,7 +2,10 @@
 title: "ADR-0011: Universal search runs over the inventory with pg_trgm, and is trimmed in the same SQL statement by the one ReadScope renderer in store/reportsql"
 date: 2026-10-31
 updated: 2026-10-31
-status: proposed
+status: ratified
+ratified_on: 2026-10-31
+ratified_by: factory-director
+decision: D-0014
 owner: heramb
 author: solution-architect
 kind: technical
@@ -12,10 +15,9 @@ fitness: fitness-search SE1–SE5 (in make ci) and SE6 (nightly); T-1126 builds 
 
 # ADR-0011: Universal search runs over the inventory with pg_trgm, and is trimmed in the same SQL statement by the one ReadScope renderer in `store/reportsql`
 
-**Status:** proposed. factory-director ratifies after review. Because the ticket is tagged
-security-sensitive, security-architect reviews it too, in particular rules 12, 13 and 16 (the work
-bound and what an answer may reveal). `accepted` when `fitness-search` SE1–SE5 run green in
-`make ci` and SE6 has passed once in the nightly job.
+**Status:** ratified 2026-10-31 by factory-director (notice D-0014, T-1093 review). security-architect
+confirmed rules 12, 13 and 16 in the re-review. `accepted` when `fitness-search` SE1–SE5 run green
+in `make ci` and SE6 has passed once in the nightly job (T-1126).
 
 **Revision 2 (2026-10-31, after the T-1093 review).** These are the changes in this revision:
 - **M1:** rule 7 now case-folds before the fold table.
@@ -451,10 +453,11 @@ LDAP user search is retired.
     **What an answer may reveal.** Below the ceiling, a caller learns exactly the admitted matches,
     and nothing that depends on hidden rows. Two things are left over: the ceiling state, and the
     response time, which grows with the matching key volume of the whole tenant (or, before rule 16
-    is met, the whole database). Both reveal "the tenant holds many keys matching this text". Neither
-    reveals which objects, or where they are, and every caller in the tenant sees the same signal.
-    This residual is recorded in the threat model (TB1, beside TM-TB1-T8) by T-1137, and
-    security-architect confirms it in the re-review.
+    is met, the whole database). The ceiling reveals "the tenant holds many keys matching this text",
+    the same to every caller, and never which objects or where. Timing can, in principle and only with
+    many rate-limited samples, confirm that a named object exists: an exact match on a hidden object
+    adds a few key rows, one primary-key join and one scope check. These residuals are recorded in the
+    threat model (TB1, beside TM-TB1-T8) by T-1137. security-architect confirmed this in the re-review.
 
 ### 7. Performance budget
 
@@ -560,8 +563,8 @@ LDAP user search is retired.
   tenant's data, which is a timing side channel. So rule 16 withholds fuzzy matching from shared
   databases until T-1136 lands a tenant-isolated index.
 - **A residual is accepted.** The refine state and the response time reveal "the tenant holds many
-  keys matching this text", the same to every caller (rule 13). T-1137 records it in the threat
-  model.
+  keys matching this text", the same to every caller. Timing can also, with many rate-limited samples,
+  confirm that a named object exists (rule 13). T-1137 records both in the threat model.
 - **Index volume.** Roughly 4–8 key rows per object, so about 0.3 M rows at 50k objects, plus the
   GIN index. The sizing guide must count it.
 - **No frozen pages.** "Show all" pages can shift while the inventory changes.
