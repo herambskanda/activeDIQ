@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/modules/reports"
 	"github.com/skenzeriq/activediq/internal/modules/reports/api"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/operation"
 )
 
 const wantOperations = 29 // 21 on main (T-0866, T-0891) + 6 preview twins + the undo pair (T-0892, ADR-0004 rule 14)
@@ -481,6 +483,58 @@ func TestScheduleActionsHavePreviewTwinsAndAnUndoPair(t *testing.T) {
 	}
 	if s, h := respRef(ops["undoReportScheduleOperation"].op, "200"); s == "" || h[header] == nil {
 		t.Errorf("undoReportScheduleOperation 200 lacks %s", header)
+	}
+	if s, _ := respRef(ops["undoReportScheduleOperation"].op, "202"); s != opRef {
+		t.Errorf("undoReportScheduleOperation 202 answers %q, want %s", s, opRef)
+	}
+
+	// The held answer says why it is held (TM-D30 SX-4): OperationRef carries a required holdReason of the
+	// open enum that mirrors the kernel's HoldReason, and the preview uses the same enum.
+	const holdRef = "#/components/schemas/OperationHoldReasonValue"
+	schemas := at(t, d, "components", "schemas")
+	for _, name := range []string{"OperationRef", "OperationPreview"} {
+		sc, _ := schemas[name].(map[string]any)
+		props, _ := sc["properties"].(map[string]any)
+		if ref(props["holdReason"]) != holdRef {
+			t.Errorf("%s.holdReason is %v, want $ref %s", name, props["holdReason"], holdRef)
+		}
+		if !slices.Contains(anyList(sc["required"]), any("holdReason")) {
+			t.Errorf("%s does not require holdReason", name)
+		}
+	}
+	hr, _ := schemas["OperationHoldReasonValue"].(map[string]any)
+	if hr["x-activediq-enum"] != "open" {
+		t.Errorf("OperationHoldReasonValue is a response enum and must be open")
+	}
+	got := map[string]bool{}
+	for _, v := range anyList(hr["enum"]) {
+		got[v.(string)] = true
+	}
+	for _, h := range []operation.HoldReason{operation.HoldStepUp, operation.HoldBlastRadius, operation.HoldIrreversible, operation.HoldUndoNeededAppr, operation.HoldGate} {
+		if !got[string(h)] {
+			t.Errorf("OperationHoldReasonValue lacks the kernel hold reason %q", h)
+		}
+	}
+	if !got["none"] || len(got) != 6 {
+		t.Errorf("OperationHoldReasonValue is %v, want none plus the five kernel hold reasons", hr["enum"])
+	}
+
+	// The undo restores external recipients under step-up (TM-D30 SX-1, R6): it declares 401 step-up-required.
+	r401, _ := ops["undoReportScheduleOperation"].op["responses"].(map[string]any)["401"]
+	if ref(r401) != "#/components/responses/StepUpRequired" {
+		t.Errorf("undoReportScheduleOperation 401 is %v, want $ref StepUpRequired", r401)
+	}
+	// The header that names the undo handle has the format of the OperationId path parameter it feeds.
+	for id := range writes {
+		for code, r := range ops[id].op["responses"].(map[string]any) {
+			if code[0] != '2' {
+				continue
+			}
+			h, _ := r.(map[string]any)["headers"].(map[string]any)[header].(map[string]any)
+			if sc, _ := h["schema"].(map[string]any); sc["format"] != "uuid" {
+				t.Errorf("%s %s: %s is not format uuid", id, code, header)
+			}
+		}
 	}
 }
 
