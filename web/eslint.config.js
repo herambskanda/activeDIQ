@@ -106,6 +106,48 @@ export default tseslint.config(
     },
   },
   {
+    // Blueprint §2 rule 8 (ADR-0003): the shell and the design system never import a web module; they
+    // read what modules register from the collected registration. The generated module list is the
+    // one place that names a module. Restated with the HTTP-library pattern because a later
+    // no-restricted-imports setting replaces an earlier one.
+    files: ["src/app/**/*.{ts,tsx}", "src/ds/**/*.{ts,tsx}"],
+    ignores: ["src/app/modules.gen.ts", "src/api/**"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            { regex: httpLibraryPattern, message: "No HTTP library: " + apiClientMessage },
+            {
+              regex: "(^|/)modules/",
+              message:
+                "Rule 8: src/app and src/ds never import src/modules; read the collected registration (collectContributions). Only modules.gen.ts names a module.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // Rule 8: web modules never import each other. Own files are "./x" and the app is "../../app".
+    files: ["src/modules/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            { regex: httpLibraryPattern, message: "No HTTP library: " + apiClientMessage },
+            {
+              regex: "^\\.\\./(?!\\.)",
+              message:
+                "Rule 8: a web module never imports another module; share through src/app or src/ds.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Build-time Node scripts (the API type generator).
     files: ["scripts/**/*.mjs"],
     languageOptions: { globals: { process: "readonly", console: "readonly" } },
