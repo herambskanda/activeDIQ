@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/modules/reports"
+	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
@@ -20,6 +21,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
+	"github.com/skenzeriq/activediq/internal/platform/blob"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -113,6 +115,7 @@ type apiEnv struct {
 	db   *store.DB
 	tid  tenant.ID
 	svc  *run.Service
+	exp  *export.Service
 	reg  *jobs.Registry
 	door *door
 	srv  http.Handler
@@ -169,12 +172,17 @@ func apiSetup(t *testing.T, s *storetest.Server) *apiEnv {
 	e := &apiEnv{t: t, db: db, tid: tid, reg: jobs.NewRegistry(), door: &door{allow: true}}
 	e.svc = &run.Service{DB: db, Jobs: e.reg, Scopes: staticScopes{}, Audit: &sink{}, Catalog: library{run.Definition{Def: def, SHA256: [32]byte{1}, Dataset: src, SQL: sqlDS}},
 		Codec: reports.Codec{}, Fresh: freshAt{at: time.Now().Add(-time.Minute)}}
-	for _, k := range []jobs.Kind{e.svc.Kind(), e.svc.RetentionKind()} {
+	bs, err := blob.NewFS(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.exp = &export.Service{DB: db, Jobs: e.reg, Runs: e.svc, Blob: bs, Audit: &sink{}}
+	for _, k := range []jobs.Kind{e.svc.Kind(), e.svc.RetentionKind(), e.exp.Kind()} {
 		if err := e.reg.Register(k); err != nil {
 			t.Fatal(err)
 		}
 	}
-	h := &reports.Handlers{Runs: e.svc}
+	h := &reports.Handlers{Runs: e.svc, Exports: e.exp}
 	doc, err := apihost.LoadDocument()
 	if err != nil {
 		t.Fatal(err)
@@ -207,9 +215,6 @@ func (e *apiEnv) work() {
 		e.t.Fatal(err)
 	}
 	for _, c := range cl {
-		if c.Kind != run.JobKind {
-			continue
-		}
 		if _, err := jobs.NewRunner(e.db, e.reg).Execute(ctx, c); err != nil {
 			e.t.Fatalf("Execute: %v", err)
 		}
