@@ -12,3 +12,4 @@ metadata:
 - A MaskAnchor `Identity` column is already NULL outside scope, so mutating the `{in_scope.pso}` guard in `policy_source` does not fail RP11 (defence in depth); the positive control (PSO in scope shows its name) is what proves the mask is not blanket.
 - The filetime codec refuses stored maxPwdAge 0, so it stays "not read" (Unknown) even though AD treats 0 as never.
 - Unrelated reds seen on the full run (not from T-0958): limiter burst on pg18, syslog apihost permission catalogue, agenthost closure allow-list, fitness/api A7 (encoding/json v1 in platform/report, node ajv).
+- Reasons for Unknown (review fix): `<state>_reason` are Derived enum columns fed by the same resInner CTE row (`why` = status-2 cause); a missing domain row is `domain_policy_not_read`, not `pso_set_not_read`. Don't COALESCE `eligible` to false: NULL must fail closed to unresolved. RP8 hand-written `want8.why` + reference `derive` both carry reasons.
