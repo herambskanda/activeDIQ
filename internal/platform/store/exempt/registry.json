@@ -120,6 +120,13 @@
       "mintsTenantID": false
     },
     {
+      "package": "internal/platform/notify/settings",
+      "function": "noTenantTx",
+      "reason": "Test helper: runs a transaction with no tenant context to prove that Store.Get refuses it with ErrNoTenant (DM-82). It is in a _test.go file and ships in no binary.",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
       "package": "internal/directory/connection",
       "function": "env.platform",
       "reason": "Test helper: runs a transaction with no tenant context to prove that connection queries outside WithTenant fail with ErrNoTenant (DM-10, T-0099 acceptance 4).",
@@ -513,6 +520,26 @@
       "column": "public.connector_bindings.target",
       "value": "embedded",
       "reason": "CHECK: target is embedded or component, and a component target needs component_id; the probe row is the embedded binding, which has none (DM-13)."
+    },
+    {
+      "column": "public.notify_deliveries.recipient_kind",
+      "value": "address",
+      "reason": "CHECK: notify_deliveries_recipient_kind needs an account recipient to carry recipient_account and no address, or an address recipient to carry recipient_address and no account; the probe row is the address kind."
+    },
+    {
+      "column": "public.notify_deliveries.recipient_address",
+      "value": "probe@example.invalid",
+      "reason": "CHECK: notify_deliveries_recipient_kind, see recipient_kind; an address recipient carries a 3 to 254 character address, and the probe row's is a reserved .invalid one."
+    },
+    {
+      "column": "public.notify_deliveries.state",
+      "value": "queued",
+      "reason": "CHECK: notify_deliveries_state_shape ties state to next_attempt_at, sent_at and last_error_code; the probe row is queued, which needs only a next attempt."
+    },
+    {
+      "column": "public.notify_deliveries.next_attempt_at",
+      "value": "2030-01-01T00:00:00Z",
+      "reason": "CHECK: notify_deliveries_state_shape; the probe row is queued, and a queued delivery has a next attempt and no sent_at."
     },
     {
       "column": "public.notify_syslog_destinations.transport",
