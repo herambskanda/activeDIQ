@@ -1,6 +1,7 @@
 package inventory_test
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -175,12 +176,22 @@ func Test_group_member_counts_at_scale(t *testing.T) {
 			}
 		}
 		flush()
+		// Autovacuum would analyse the freshly loaded tables within minutes; the test database has no such
+		// delay budget, and the app role may not ANALYZE tables it does not own. Without statistics the planner
+		// believes the tables are empty and joins the closure to the objects with a nested loop over every row
+		// (measured without: populate 40-45 s, the two counts 8-14 s; with: 6-7 s and 60-95 ms).
+		if err := e.d.ExecOwner(context.Background(), "ANALYZE"); err != nil {
+			t.Fatal(err)
+		}
 		start := time.Now()
 		if _, err := e.populate(t, c, hBase.Add(2*time.Hour), hGroup(hGUID(2, 1), "Small", 2001, smallM...), hGroup(hGUID(2, 2), "Big", 2002, bigM...)); err != nil {
 			t.Fatal(err)
 		}
 		t.Logf("populate of the two groups (edges and closure refresh): %v", time.Since(start))
 		truth := map[string]int{hGUID(2, 1): small, hGUID(2, 2): big}
+		if err := e.d.ExecOwner(context.Background(), "ANALYZE"); err != nil {
+			t.Fatal(err)
+		}
 		start = time.Now()
 		res := e.run(t, reg, hQuery{dataset: inventory.DatasetGroups, cols: []report.ColumnID{"direct_members", "effective_members"}, scope: e.scopeNC(c), now: hBase.Add(24 * time.Hour)})
 		t.Logf("inventory.groups, both counts: %v", time.Since(start))
