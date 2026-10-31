@@ -47,6 +47,10 @@ const (
 	KindCompleted  audit.Kind = "reports.run.completed"
 	KindFailed     audit.Kind = "reports.run.failed"
 	KindReadDenied audit.Kind = "reports.run.read_denied"
+
+	// KindExportExpired is appended by the retention sweep (system actor) when an export file passes its
+	// expiry. The other export kinds belong to package export.
+	KindExportExpired audit.Kind = "reports.export.expired"
 )
 
 // Component is the audit component of every event here.
@@ -192,12 +196,8 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (run Run, reused b
 		case !isNoRows(err):
 			return err
 		}
-		var open int
-		if err := tx.QueryRow(ctx, countOpen).Scan(&open); err != nil {
+		if err := s.CheckJobLimit(ctx, tx); err != nil {
 			return err
-		}
-		if open >= OpenRunLimit {
-			return ErrTooManyJobs
 		}
 		id := NewID()
 		var rerun *string
@@ -216,6 +216,32 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (run Run, reused b
 		return err
 	})
 	return run, reused, err
+}
+
+// LockJobs takes the tenant's job lock for the transaction: the open-job count and the insert that follows
+// it are only true while it is held. Runs and exports take the same lock.
+func (s *Service) LockJobs(ctx context.Context, tx store.Tx) error {
+	_, err := tx.Exec(ctx, lockTenantJobs)
+	return err
+}
+
+// CheckJobLimit returns ErrTooManyJobs when the tenant already has OpenRunLimit runs and exports not yet
+// finished. Call it under LockJobs.
+func (s *Service) CheckJobLimit(ctx context.Context, tx store.Tx) error {
+	var open int
+	if err := tx.QueryRow(ctx, countOpen).Scan(&open); err != nil {
+		return err
+	}
+	if open >= OpenRunLimit {
+		return ErrTooManyJobs
+	}
+	return nil
+}
+
+// Peek loads a run without any gate. It is for the export job, which serialises the run its export row was
+// created for after the request passed the gate; it is never reachable from a request.
+func (s *Service) Peek(ctx context.Context, tx store.Tx, id ID) (Run, error) {
+	return load(ctx, tx, id, false)
 }
 
 type jobArgs struct {
