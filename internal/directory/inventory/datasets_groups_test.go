@@ -40,14 +40,14 @@ func Test_group_members_nested_cycle_fsp(t *testing.T) {
 		reg := e.registry(t)
 		c := e.adA
 		e.hStructure(t, c)
-		gA, gB, gC := hGUID(2, 1), hGUID(2, 2), hGUID(2, 3)
+		gA, gB, gC, gS := hGUID(2, 1), hGUID(2, 2), hGUID(2, 3), hGUID(2, 5)
 		u1, u2, f := hGUID(1, 1), hGUID(1, 2), hGUID(5, 1)
 		no := false
 		dis := hUser{guid: u2, sam: "u2", rid: 1102, uac: i64(514), read: 15}.obs()
 		dis.Enabled = &no
-		direct := map[string][]string{gA: {gB, u1}, gB: {gC, u2}, gC: {gA, f}}
+		direct := map[string][]string{gA: {gB, u1}, gB: {gC, u2}, gC: {gA, f}, gS: {gS}} // gS: a loop and nothing else
 		obs := []inventory.Observation{hUser{guid: u1, sam: "u1", rid: 1101, uac: i64(uacNormal), read: 15}.obs(), dis, fsp(f, 9001),
-			hGroup(gA, "A", 2001, direct[gA]...), hGroup(gB, "B", 2002, direct[gB]...), hGroup(gC, "C", 2003, direct[gC]...)}
+			hGroup(gA, "A", 2001, direct[gA]...), hGroup(gB, "B", 2002, direct[gB]...), hGroup(gC, "C", 2003, direct[gC]...), hGroup(gS, "Loop-only", 2005, direct[gS]...)}
 		if _, err := e.populate(t, c, hBase.Add(time.Hour), obs...); err != nil {
 			t.Fatal(err)
 		}
@@ -59,7 +59,7 @@ func Test_group_members_nested_cycle_fsp(t *testing.T) {
 			got[k] = true
 		}
 		want := map[string]bool{}
-		for _, g := range []string{gA, gB, gC} {
+		for _, g := range []string{gA, gB, gC, gS} {
 			seen, stack := map[string]bool{}, slices.Clone(direct[g])
 			for len(stack) > 0 {
 				m := stack[0]
@@ -79,6 +79,28 @@ func Test_group_members_nested_cycle_fsp(t *testing.T) {
 		}
 		if res.count != int64(len(want)) {
 			t.Errorf("count = %d, want %d", res.count, len(want))
+		}
+		// The group counts agree with the same oracle: a loop is a finding, never a member, so a group does
+		// not count itself, and a group whose only edge is the loop has no members.
+		groups := e.run(t, reg, hQuery{dataset: inventory.DatasetGroups, cols: []report.ColumnID{"sam_account_name", "has_members", "direct_members", "effective_members"},
+			scope: e.scopeNC(c), now: hBase.Add(24 * time.Hour)})
+		for _, g := range []string{gA, gB, gC, gS} {
+			effective := 0
+			for k := range want {
+				if grp, m, _ := strings.Cut(k, "|"); grp == strings.ToLower(g) && m != strings.ToLower(g) {
+					effective++
+				}
+			}
+			directN := 0
+			for _, m := range direct[g] {
+				if m != g {
+					directN++
+				}
+			}
+			r := groups.rows[strings.ToLower(g)]
+			if got := [3]string{cellStr(r, "direct_members"), cellStr(r, "effective_members"), cellStr(r, "has_members")}; got != [3]string{fmt.Sprint(directN), fmt.Sprint(effective), fmt.Sprint(directN > 0)} {
+				t.Errorf("group %s: direct, effective, has_members = %v, want %d, %d, %v", g, got, directN, effective, directN > 0)
+			}
 		}
 		row := func(g, m string) map[report.ColumnID]report.Cell { return res.rows[strings.ToLower(g+"|"+m)] }
 		for _, tc := range []struct{ g, m, col, want string }{

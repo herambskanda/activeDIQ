@@ -52,7 +52,10 @@ const (
 	// The hops between group and member, by name: a hop outside the scope is named only as such.
 	viaPathSQL = "NULLIF(COALESCE((SELECT string_agg(CASE WHEN {in_scope.via} THEN via.sam_account_name ELSE " + outsideGroup + " END, ' → ' ORDER BY h.ord)" +
 		" FROM unnest({t}.via) WITH ORDINALITY AS h(guid, ord) LEFT JOIN {rel.via} ON via.connection_id = {t}.connection_id AND via.object_guid = h.guid), ''), '')"
-	findingSQL = "CASE WHEN {t}.edge_kind = 'cycle' THEN 'Circular nesting: ' || {rel.grp}.sam_account_name || COALESCE(' → ' || (" + viaPathSQL + "), '') || ' → ' || {rel.grp}.sam_account_name END"
+	findingSQL = "CASE WHEN {t}.edge_kind = 'cycle' THEN 'Circular nesting: ' || {rel.grp}.sam_account_name || COALESCE(' → ' || (" + viaPathSQL + "), '') || ' → ' || {rel.grp}.sam_account_name" +
+		" WHEN {t}.cut THEN 'Nesting deeper than 128 levels: members of ' || {rel.mbr}.sam_account_name || ' and below are not listed' END"
+	// A group whose nesting is deeper than the closure follows: some effective members are not listed.
+	nestingCutSQL = "EXISTS (SELECT 1 FROM {rel.clo} WHERE clo.connection_id = {t}.connection_id AND clo.group_guid = {t}.object_guid AND clo.cut)"
 
 	memberNameSQL = "CASE WHEN {rel.mbr}.kind = 'fsp' THEN " + externalLabel +
 		" ELSE COALESCE(NULLIF({rel.mbr}.sam_account_name, ''), NULLIF({rel.mbr}.display_name, ''), {rel.mbr}.rdn) END"
@@ -114,6 +117,7 @@ func groupsDataset() report.Dataset {
 		counted("primary_group_members", "Members by primary group", report.SQL(primaryMembersSQL)),
 		derived("has_members", "Has members (member or primary group)", report.TypeBool, report.SQL(hasMembersSQL), opsBool),
 		derived("includes_members_outside_inventory", "Includes members outside the covered domains", report.TypeBool, report.SQL(outsideInventorySQL), opsBool),
+		derived("nesting_cut", "Nesting deeper than 128 levels (members beyond not listed)", report.TypeBool, report.SQL(nestingCutSQL), opsBool),
 		derived("managed_by", "Managed by", report.TypeText, report.SQL(managedBySQL), opsText),
 		derived("has_manager", "Managed by is set", report.TypeBool, report.SQL(hasManagerSQL), opsBool),
 	)
@@ -129,7 +133,7 @@ func groupsDataset() report.Dataset {
 			{ID: "known", Table: "directory_objects", Mode: report.MaskAnchor, Project: idents("connection_id", "object_guid"), Identity: idents("rdn"),
 				Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}},
 		Rels: []report.Rel{
-			{ID: "clo", Kind: report.RelEdge, Table: "inventory_group_members", Project: idents("connection_id", "group_guid", "member_guid", "edge_kind", "depth")},
+			{ID: "clo", Kind: report.RelEdge, Table: "inventory_group_members", Project: idents("connection_id", "group_guid", "member_guid", "edge_kind", "depth", "cut")},
 			{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid"),
 				Where: report.SQL("state = 'active' AND link_attr = 'member'")},
 		},
@@ -139,37 +143,27 @@ func groupsDataset() report.Dataset {
 	}
 }
 
-func enumCol(id report.ColumnID, label string, sql report.Fragment, values ...string) report.Column {
-	return state(id, label, sql, values...)
-}
-
 func groupMembersDataset() report.Dataset {
-	baseAttr := func(id report.ColumnID, label string, t report.ValueType, col string, ops []report.Op) report.Column {
-		return attr(id, label, t, col, ops, false)
-	}
-	plain := func(id report.ColumnID, label string, t report.ValueType, sql report.Fragment, ops []report.Op) report.Column {
-		return derived(id, label, t, sql, ops)
-	}
-	kind := enumCol("member_kind", "Member type", report.SQL("{rel.mbr}.kind"), memberKinds...)
-	via := plain("via_path", "Via", report.TypeText, report.SQL(viaPathSQL), nil)
+	kind := state("member_kind", "Member type", report.SQL("{rel.mbr}.kind"), memberKinds...)
+	via := derived("via_path", "Via", report.TypeText, report.SQL(viaPathSQL), nil)
 	via.Sortable = false
-	finding := plain("finding", "Finding", report.TypeText, report.SQL(findingSQL), opsText)
+	finding := derived("finding", "Finding", report.TypeText, report.SQL(findingSQL), opsText)
 	finding.Sortable = false
 	edge := state("edge_kind", "Membership", report.SQL("{t}.edge_kind"), "direct", "primary_group", "nested", "cycle")
 	cols := []report.Column{
-		baseAttr("group_guid", "Group GUID", report.TypeGUID, "group_guid", opsGUID),
-		baseAttr("member_guid", "Member GUID", report.TypeGUID, "member_guid", opsGUID),
-		baseAttr("connection_id", "Connection", report.TypeGUID, "connection_id", opsGUID),
-		plain("domain", "Group domain (naming context)", report.TypeGUID, report.SQL("{rel.grp}.nc_guid"), opsGUID),
-		plain("group_name", "Group", report.TypeText, report.SQL("{rel.grp}.sam_account_name"), opsText),
-		plain("group_dn", "Group distinguished name", report.TypeText, report.SQL("{rel.grp}.dn"), opsText),
-		plain("member_name", "Member", report.TypeText, report.SQL(memberNameSQL), opsText),
-		plain("member_dn", "Member distinguished name", report.TypeText, report.SQL("{rel.mbr}.dn"), opsText),
-		plain("member_sid", "Member SID", report.TypeText, report.SQL(memberSIDSQL), opsText),
-		plain("member_enabled", "Member enabled", report.TypeBool, report.SQL("{rel.mbr}.enabled"), opsBool),
-		plain("member_unresolved", "External principal (unresolved)", report.TypeBool, report.SQL("{rel.mbr}.kind = 'fsp'"), opsBool),
+		attr("group_guid", "Group GUID", report.TypeGUID, "group_guid", opsGUID, false),
+		attr("member_guid", "Member GUID", report.TypeGUID, "member_guid", opsGUID, false),
+		attr("connection_id", "Connection", report.TypeGUID, "connection_id", opsGUID, false),
+		derived("domain", "Group domain (naming context)", report.TypeGUID, report.SQL("{rel.grp}.nc_guid"), opsGUID),
+		derived("group_name", "Group", report.TypeText, report.SQL("{rel.grp}.sam_account_name"), opsText),
+		derived("group_dn", "Group distinguished name", report.TypeText, report.SQL("{rel.grp}.dn"), opsText),
+		derived("member_name", "Member", report.TypeText, report.SQL(memberNameSQL), opsText),
+		derived("member_dn", "Member distinguished name", report.TypeText, report.SQL("{rel.mbr}.dn"), opsText),
+		derived("member_sid", "Member SID", report.TypeText, report.SQL(memberSIDSQL), opsText),
+		derived("member_enabled", "Member enabled", report.TypeBool, report.SQL("{rel.mbr}.enabled"), opsBool),
+		derived("member_unresolved", "External principal (unresolved)", report.TypeBool, report.SQL("{rel.mbr}.kind = 'fsp'"), opsBool),
 		kind, edge,
-		baseAttr("depth", "Depth", report.TypeInt, "depth", opsInt),
+		attr("depth", "Depth", report.TypeInt, "depth", opsInt, false),
 		via, finding,
 	}
 	cols[0].Default, cols[1].Default = false, false

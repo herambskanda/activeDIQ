@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
+	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 )
@@ -113,8 +114,8 @@ func Test_group_closure(t *testing.T) {
 	})
 }
 
-// A group that contains itself is a cycle finding of depth 1; a chain deeper than the closure holds is refused.
-func Test_group_closure_self_loop_and_depth(t *testing.T) {
+// A group that contains itself is a cycle finding of depth 1.
+func Test_group_closure_self_loop(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
 		c := e.adA
@@ -124,22 +125,53 @@ func Test_group_closure_self_loop_and_depth(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantRows(t, "self", e.closureRows(t, c, g), g+" cycle 1 []")
+	})
+}
 
-		// a chain of 129 groups: the head would reach a member at depth 129
+// A chain of groups deeper than the closure follows must not stop the sync: Populate succeeds, the walk
+// stops at 128 levels, and the group_members dataset and the groups dataset say that members beyond are
+// not listed. Whoever can build such a chain must not be able to freeze the inventory.
+func Test_group_closure_deep_chain_is_a_finding_not_a_failure(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		reg := e.registry(t)
+		c := e.adA
+		e.hStructure(t, c)
+		const n = 130
 		var chain []inventory.Observation
-		for i := 1; i <= 129; i++ {
+		for i := 1; i <= n; i++ {
 			var members []string
-			if i < 129 {
+			if i < n {
 				members = []string{hGUID(3, i+1)}
 			}
 			chain = append(chain, hGroup(hGUID(3, i), fmt.Sprintf("N%d", i), uint32(3000+i), members...))
 		}
-		_, err := e.populate(t, c, hBase.Add(2*time.Hour), chain...)
-		if err == nil || !strings.Contains(err.Error(), "deeper than 128") {
-			t.Fatalf("a 129-level chain: err = %v, want ErrTooDeep", err)
+		if _, err := e.populate(t, c, hBase.Add(2*time.Hour), chain...); err != nil {
+			t.Fatalf("a %d-level chain must not fail the sync: %v", n, err)
 		}
-		if n := e.count(t, `SELECT count(*) FROM public.directory_objects WHERE object_guid = $1::uuid`, hGUID(3, 1)); n != 0 {
-			t.Errorf("the refused batch left its rows behind")
+		if got := e.count(t, `SELECT count(*) FROM public.inventory_group_members WHERE group_guid = $1::uuid`, hGUID(3, 1)); got != 128 {
+			t.Errorf("the head holds %d closure rows, want 128 (N2..N129)", got)
+		}
+		if got := e.count(t, `SELECT count(*) FROM public.inventory_group_members WHERE group_guid = $1::uuid AND cut`, hGUID(3, 1)); got != 1 {
+			t.Errorf("the head has %d cut rows, want 1", got)
+		}
+		if got := e.count(t, `SELECT count(*) FROM public.inventory_group_members WHERE cut`); got != 1 {
+			t.Errorf("%d cut rows in all, want 1 (N2 reaches N130, which has no members: nothing hidden)", got)
+		}
+		if got := e.count(t, `SELECT count(*) FROM public.inventory_group_members WHERE group_guid = $1::uuid AND member_guid = $2::uuid`, hGUID(3, 1), hGUID(3, 130)); got != 0 {
+			t.Errorf("the head lists the member at level 129")
+		}
+		now := hBase.Add(24 * time.Hour)
+		gm := e.run(t, reg, hQuery{dataset: inventory.DatasetGroupMembers, cols: gmCols, scope: e.scopeNC(c), now: now})
+		finding := cellStr(gm.rows[strings.ToLower(hGUID(3, 1)+"|"+hGUID(3, 129))], "finding")
+		if want := "Nesting deeper than 128 levels: members of N129 and below are not listed"; finding != want {
+			t.Errorf("finding = %q, want %q", finding, want)
+		}
+		groups := e.run(t, reg, hQuery{dataset: inventory.DatasetGroups, cols: []report.ColumnID{"sam_account_name", "nesting_cut"}, scope: e.scopeNC(c), now: now})
+		for i, want := range map[int]string{1: "true", 2: "false", 129: "false"} {
+			if got := cellStr(groups.rows[strings.ToLower(hGUID(3, i))], "nesting_cut"); got != want {
+				t.Errorf("N%d nesting_cut = %q, want %q", i, got, want)
+			}
 		}
 	})
 }

@@ -11,7 +11,9 @@
 --    via lists the groups between the group and the member, nearest the group first (empty at depth
 --    1); for a cycle row it is the groups of the loop, so A -> B -> A is group A, via {B}. A member
 --    reachable by several paths has one row, with the shortest path (lowest GUID breaks a tie), so a
---    report names each member once. Rows exist for every member the links name; whether the member or
+--    report names each member once. cut marks a nested row that is a group whose own members were
+--    not followed because the walk stopped at the depth cap (128 levels): the finding "nesting deeper
+--    than 128 levels", never a failed refresh. Rows exist for every member the links name; whether the member or
 --    the group is live and in scope is decided by the report query, never by this table.
 --  * inventory_group_closure_dirty: groups whose own edges or state changed since the closure was
 --    last refreshed. RefreshClosure recomputes those groups and every group that contains them, then
@@ -28,10 +30,12 @@ CREATE TABLE public.inventory_group_members (
   edge_kind text NOT NULL CHECK (edge_kind IN ('direct', 'primary_group', 'nested', 'cycle')),
   depth integer NOT NULL CHECK (depth BETWEEN 1 AND 128),
   via uuid[] NOT NULL DEFAULT '{}' CHECK (cardinality(via) BETWEEN 0 AND 127),
+  cut boolean NOT NULL DEFAULT false,
   PRIMARY KEY (tenant_id, connection_id, group_guid, member_guid),
   FOREIGN KEY (tenant_id, connection_id) REFERENCES public.connections (tenant_id, id),
   CHECK ((edge_kind = 'cycle') = (group_guid = member_guid)),
-  CHECK (cardinality(via) = depth - 1)
+  CHECK (cardinality(via) = depth - 1),
+  CHECK (NOT cut OR (edge_kind = 'nested' AND depth = 128))
 );
 -- The groups one object belongs to (the tokenGroups question), and the groups that contain a group.
 CREATE INDEX inventory_group_members_by_member ON public.inventory_group_members (tenant_id, connection_id, member_guid);

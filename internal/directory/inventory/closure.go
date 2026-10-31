@@ -3,7 +3,6 @@ package inventory
 import (
 	"context"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"sort"
 
@@ -15,11 +14,11 @@ import (
 // batch. It is derived only from the stored DM-17 links and the live group rows, never from a live
 // LDAP walk. See the migration for what a row means.
 
-// ErrTooDeep: group nesting is deeper than the closure can hold (128 levels). A silent cut would hide
-// members, so the refresh fails and the cycle rolls back.
-var ErrTooDeep = errors.New("inventory: group nesting is deeper than 128 levels")
-
 const (
+	// maxClosureDepth is the deepest member row the closure holds. Nesting beyond it is not followed:
+	// the groups at the cap are flagged cut and the group_members dataset shows the finding. A refresh
+	// never fails on depth: whoever can build a deep chain of groups must not be able to freeze the
+	// inventory of the whole domain.
 	maxClosureDepth = 128
 	// closureChunk bounds the roots one INSERT carries, so a parameter stays small on a big domain.
 	closureChunk = 200
@@ -75,6 +74,7 @@ func (Writer) RefreshClosure(ctx context.Context, tx store.Tx, connection Connec
 		return 0, fmt.Errorf("inventory: closure: clear: %w", err)
 	}
 	var chunk []reachRow
+	var cuts []reachRow
 	rows := 0
 	flush := func() error {
 		if len(chunk) == 0 {
@@ -89,15 +89,22 @@ func (Writer) RefreshClosure(ctx context.Context, tx store.Tx, connection Connec
 			return writeErr("closure insert", err)
 		}
 		rows += int(tag.RowsAffected())
-		chunk = chunk[:0]
+		if len(cuts) > 0 {
+			cb, err := json.Marshal(cuts)
+			if err != nil {
+				return fmt.Errorf("inventory: closure: %w", err)
+			}
+			if _, err := tx.Exec(ctx, markCutSQL, string(connection), string(cb)); err != nil {
+				return writeErr("closure cut", err)
+			}
+		}
+		chunk, cuts = chunk[:0], cuts[:0]
 		return nil
 	}
 	for i, r := range roots {
-		reach, err := reachFrom(r, edges)
-		if err != nil {
-			return 0, err
-		}
+		reach, cut := reachFrom(r, edges)
 		chunk = append(chunk, reach...)
+		cuts = append(cuts, cut...)
 		if (i+1)%closureChunk == 0 || len(chunk) >= 20000 {
 			if err := flush(); err != nil {
 				return 0, err
@@ -132,6 +139,15 @@ const insertClosureSQL = `INSERT INTO public.inventory_group_members (tenant_id,
 	JOIN public.links l ON l.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND l.connection_id = $1::uuid
 		AND l.source_guid = r.grp AND l.link_attr IN ('member', 'primary_group') AND l.state = 'active'
 	ORDER BY r.root, l.target_guid, r.depth, r.grp, (l.link_attr = 'primary_group')`
+
+// markCutSQL flags the member rows of groups the walk did not descend into (see maxClosureDepth), when
+// such a group has members at all: an empty group at the cap hides nothing.
+const markCutSQL = `UPDATE public.inventory_group_members m SET cut = true
+	FROM jsonb_to_recordset($2::jsonb) AS c(root uuid, grp uuid)
+	WHERE m.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND m.connection_id = $1::uuid
+	AND m.group_guid = c.root AND m.member_guid = c.grp AND m.edge_kind = 'nested' AND m.depth = 128
+	AND EXISTS (SELECT 1 FROM public.links l WHERE l.tenant_id = m.tenant_id AND l.connection_id = m.connection_id
+		AND l.source_guid = c.grp AND l.link_attr IN ('member', 'primary_group') AND l.state = 'active')`
 
 type reachRow struct {
 	Root  string   `json:"root"`
@@ -180,15 +196,17 @@ func nestingEdges(ctx context.Context, tx store.Tx, connection ConnectionID, roo
 
 // reachFrom walks the nesting edges breadth first from root and returns every group it reaches,
 // root first at depth 0, each with its shortest chain of intermediate groups (nearest the root first).
-// A group is visited once, so cycles end. Level by level and in GUID order, the parent of a group is the
+// A group at the depth cap is not descended into; it is returned in the second result (Root, Grp) so its
+// member row is flagged. A group is visited once, so cycles end. Level by level and in GUID order, the parent of a group is the
 // lowest-GUID group of the previous level that holds it, which makes the chain deterministic.
-func reachFrom(root string, edges map[string][]string) ([]reachRow, error) {
+func reachFrom(root string, edges map[string][]string) (reached, cut []reachRow) {
 	type node struct {
 		depth int
 		via   []string
 	}
 	seen := map[string]node{root: {}}
 	out := []reachRow{{Root: root, Grp: root, Depth: 0, Via: []string{}}}
+	cutSeen := map[string]bool{}
 	frontier := []string{root}
 	for depth := 1; len(frontier) > 0; depth++ {
 		var next []string
@@ -198,7 +216,11 @@ func reachFrom(root string, edges map[string][]string) ([]reachRow, error) {
 					continue
 				}
 				if depth >= maxClosureDepth {
-					return nil, ErrTooDeep
+					if !cutSeen[c] {
+						cutSeen[c] = true
+						cut = append(cut, reachRow{Root: root, Grp: c, Depth: depth})
+					}
+					continue
 				}
 				n := node{depth: depth}
 				if depth > 1 {
@@ -214,7 +236,7 @@ func reachFrom(root string, edges map[string][]string) ([]reachRow, error) {
 		sort.Strings(next)
 		frontier = next
 	}
-	return out, nil
+	return out, cut
 }
 
 // guidRows is the part of pgx.Rows scanGUIDs reads. The SQL stays a constant at the call site
