@@ -6,7 +6,10 @@ import type { ComponentType } from "react";
 // is the only place that names one (blueprint §2 rule 8).
 
 export interface RouteSpec {
-  /** Absolute path, for example "/objects". */
+  /**
+   * Absolute path, for example "/objects". A path ending in "/*" matches that path's children
+   * ("/reports/*" matches "/reports/x" but not "/reports"); an exact path always wins over it.
+   */
   readonly path: string;
   readonly component: ComponentType;
 }
@@ -44,4 +47,19 @@ export function collectRoutes(modules: readonly WebModule[]): readonly RouteSpec
     });
   }
   return [...routes.values()];
+}
+
+/** The route for `path`: an exact path first, then the longest "/*" prefix that contains it. */
+export function matchRoute(routes: readonly RouteSpec[], path: string): RouteSpec | undefined {
+  const exact = routes.find((r) => r.path === path);
+  if (exact) return exact;
+  let best: RouteSpec | undefined;
+  for (const r of routes) {
+    if (!r.path.endsWith("/*")) continue;
+    const prefix = r.path.slice(0, -1); // keeps the trailing "/"
+    if (path.startsWith(prefix) && (best === undefined || r.path.length > best.path.length)) {
+      best = r;
+    }
+  }
+  return best;
 }

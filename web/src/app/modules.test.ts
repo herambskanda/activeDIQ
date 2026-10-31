@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { collectRoutes, type WebModule } from "./modules";
+import { collectRoutes, matchRoute, type WebModule } from "./modules";
 
 const Screen = () => null;
 const mod = (id: string, ...paths: string[]): WebModule => ({
@@ -33,5 +33,20 @@ describe("collectRoutes", () => {
 
   it("rejects a relative route path", () => {
     expect(() => collectRoutes([mod("a", "x")])).toThrow(/must start with/);
+  });
+});
+
+describe("matchRoute", () => {
+  const routes = collectRoutes([mod("a", "/a", "/a/*", "/a/b/*", "/c")]);
+  it("prefers an exact path", () => {
+    expect(matchRoute(routes, "/a")?.path).toBe("/a");
+  });
+  it("matches children of a prefix route, longest first", () => {
+    expect(matchRoute(routes, "/a/x")?.path).toBe("/a/*");
+    expect(matchRoute(routes, "/a/b/c")?.path).toBe("/a/b/*");
+  });
+  it("does not match the prefix itself, a sibling or nothing", () => {
+    expect(matchRoute(routes, "/c/x")).toBeUndefined();
+    expect(matchRoute(routes, "/ab")).toBeUndefined();
   });
 });
