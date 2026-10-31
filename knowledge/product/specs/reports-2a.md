@@ -258,8 +258,9 @@ A user is locked out when all of these hold:
 1. none of `WORKSTATION_TRUST_ACCOUNT`, `SERVER_TRUST_ACCOUNT`, `INTERDOMAIN_TRUST_ACCOUNT` is set,
    so computer accounts are never "locked out";
 2. `lockoutTime` is not 0;
-3. the effective lockout duration is "until an admin unlocks" (stored 0), or `now` is before
-   `lockoutTime` plus the duration.
+3. the effective lockout duration is "until an admin unlocks" (stored 0 or the minimum signed 64-bit
+   value), or `now` is **not after** `lockoutTime` plus the duration (inclusive; corrected in T-1016
+   from "before", MS-ADTS says `ST + duration ≤ lockoutTime`).
 
 The effective duration is the PSO's `msDS-LockoutDuration` when the user has a resultant PSO,
 else the domain's `lockoutDuration`
@@ -283,7 +284,12 @@ hold a stale value: the row shows "as of <time> from <DC>".
 | 7 | Otherwise | Expires on that date (shown with days remaining) |
 
 The effective maximum age is the PSO's `msDS-MaximumPasswordAge` if a PSO applies, else the domain's
-`maxPwdAge`. The codec treats stored 0 and the minimum signed 64-bit value as "never".
+`maxPwdAge`. Only the minimum signed 64-bit value is documented as "never" for a maximum age (MS-ADTS). A stored 0
+is **Unknown (input missing)** until the Windows lab records what each tool writes (LAB-PW-09, LAB-PW-11);
+the earlier text treated 0 as "never", which Samba does but Microsoft does not document (T-1016). A stored
+0 or the minimum value for a *lockout duration* is documented as "until an admin unlocks". Order 4 is the
+DC's own password-expired bit, which is set for `pwdLastSet = 0`: the counts reconcile as
+`count(DC bit) = must change + expired` over non-exempt users (LAB-PW-05).
 
 **Evaluated in the query, not after it.** `locked_out`, `password_state`, `password_expires_at` and
 `account_expired` are **dataset columns of `inventory.users`, evaluated inside the compiled query**,
@@ -417,7 +423,7 @@ row marked **new** is not yet in their scope and is sent to them as a note.
   healthy, quiet domain "Stale".
 - **D7.** DM-16's input list must carry `userAccountControl` (trust, smartcard and
   `DONT_EXPIRE_PASSWORD` bits), `primaryGroupID` and `whenCreated`, plus D4 (from the `ad-expert`
-  consult). A follow-up ticket asks `ad-expert` to amend DM-16 (§12).
+  consult). Done in T-1016: the list is DM-16 "Report-engine inputs", and the lab cases that prove it are in [account-state-lab-rows.md](../../development/domain/account-state-lab-rows.md).
 - **D8.** Secret attributes are never in a dataset (X4, LF-38). No report column can name one.
 - **D9.** Scope is applied by the compiler (`store/reportsql`, B2) from an `authz.ReadScope` produced
   only by `rbac.ReadScopes.For` (T-0882), fed by the EP-6 `ScopeEvaluator`s that `delegation`
@@ -1163,3 +1169,4 @@ cited in §6.4–§6.6 and §10. Items the consult could not source carry `[UNVE
 - 2026-10-02 · created (T-0067)
 - 2026-10-02 · revised after the solution-architect review: schedule writes are `reports.schedule.*` Actions (ADR-0005 rule 10, §8.4, FR-29, Q5 dropped); run-time checks of every permission and external recipient (FR-25); one delivery-link rule (FR-24); run and snapshot semantics (§8.1, FR-11, FR-17); derived states evaluated in the query (§6.4, FR-09); canonical digest form (§8.3); per-DC wording mechanism-neutral (§6.5, Q2). Added AC-45 to AC-50
 - 2026-10-30 · T-0914 · traceability only, no scope, FR or AC change: placeholder tickets replaced by the modules/reports.md §12 rows; D9 names `authz.ReadScope` and `rbac.ReadScopes`; Q2 and Q3 marked decided (modules/reports.md §14 items 1 and 2); §14 table equals the contract's FR/AC column
+- 2026-10-31 · T-1016 · domain corrections only, no scope, FR or AC change: §6.4 lockout is inclusive, a stored 0 max age is Unknown, the DC's expired bit includes must-change; D7 points to DM-16 and the lab rows
