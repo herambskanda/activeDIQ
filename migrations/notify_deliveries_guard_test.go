@@ -2,11 +2,10 @@ package migrations_test
 
 import (
 	"context"
-	"errors"
+	"sort"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
+	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 )
 
@@ -108,14 +107,74 @@ func guardUpdate(t *testing.T, d *storetest.Database, stmt string, args ...any) 
 
 func requireGuard(t *testing.T, what string, err error) {
 	t.Helper()
-	var pe *pgconn.PgError
-	if !errors.As(err, &pe) {
+	// store.SQLState is "" for anything that is not a PostgreSQL error (pgx stays behind the store boundary).
+	switch code := store.SQLState(err); code {
+	case "23000":
+	case "":
 		t.Errorf("%s: err = %v; want a PostgreSQL error with SQLSTATE 23000", what, err)
-		return
+	default:
+		t.Errorf("%s: SQLSTATE %s (%v); want 23000 from notify_deliveries_guard", what, code, err)
 	}
-	if pe.Code != "23000" {
-		t.Errorf("%s: SQLSTATE %s (%s); want 23000 from notify_deliveries_guard", what, pe.Code, pe.Message)
-	}
+}
+
+// guardProgressColumns are the columns the delivery worker legitimately updates; every other column of
+// notify_deliveries is identity and is covered by a case in TestNotifyDeliveriesGuardRefusesIdentityColumnChanges.
+var guardProgressColumns = []string{"state", "attempts", "next_attempt_at", "lease_until", "last_error_code", "provider_message_id", "sent_at", "updated_at"}
+
+// guardIdentityColumns are the columns that must never change after insert. Keep in step with the cases below.
+var guardIdentityColumns = []string{"tenant_id", "id", "dedup_key", "channel", "purpose", "template_version", "variables",
+	"recipient_kind", "recipient_account", "recipient_address", "source_kind", "source_id", "requested_by",
+	"require_internal", "max_attempts", "created_at"}
+
+// Column drift: a column added to notify_deliveries by a later migration must be classified here (identity,
+// with a guard case, or progress) so it cannot go unguarded without a test failing.
+func TestNotifyDeliveriesGuardCoversEveryColumn(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		d := s.NewDatabase(t)
+		d.Migrate(t)
+		ctx := context.Background()
+		a, err := d.Admin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer a.Close(ctx)
+		rows, err := a.Query(ctx, `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'notify_deliveries'`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		known := map[string]bool{}
+		for _, c := range append(append([]string{}, guardIdentityColumns...), guardProgressColumns...) {
+			known[c] = true
+		}
+		var actual, unclassified []string
+		for rows.Next() {
+			var c string
+			if err := rows.Scan(&c); err != nil {
+				t.Fatal(err)
+			}
+			actual = append(actual, c)
+			if !known[c] {
+				unclassified = append(unclassified, c)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		sort.Strings(unclassified)
+		if len(unclassified) > 0 {
+			t.Errorf("notify_deliveries has columns not classified as identity or progress: %v; guard them in notify_deliveries_guard (0062 trigger) and add a case here", unclassified)
+		}
+		have := map[string]bool{}
+		for _, c := range actual {
+			have[c] = true
+		}
+		for c := range known {
+			if !have[c] {
+				t.Errorf("column %s is listed in the guard test but not in notify_deliveries", c)
+			}
+		}
+	})
 }
 
 // Acceptance 1: every identity column, one case each, against a queued delivery.
@@ -142,6 +201,18 @@ func TestNotifyDeliveriesGuardRefusesIdentityColumnChanges(t *testing.T) {
 			{"require_internal", guardQueuedAccount, `require_internal = true`},
 			{"max_attempts", guardQueuedAccount, `max_attempts = 5`},
 			{"created_at", guardQueuedAccount, `created_at = now() + interval '1 day'`},
+		}
+		covered := map[string]bool{}
+		for _, tc := range cases {
+			covered[tc.column] = true
+		}
+		for _, c := range guardIdentityColumns {
+			if !covered[c] {
+				t.Fatalf("identity column %s has no case", c)
+			}
+		}
+		if len(cases) != len(guardIdentityColumns) {
+			t.Fatalf("%d cases for %d identity columns", len(cases), len(guardIdentityColumns))
 		}
 		for _, tc := range cases {
 			t.Run(tc.column, func(t *testing.T) {
