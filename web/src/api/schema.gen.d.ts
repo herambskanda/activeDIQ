@@ -1460,16 +1460,25 @@ export interface components {
         };
         /** @description A filter as the server stores it. A condition's column is a registry column ID. */
         ReportFilterView: components["schemas"]["ReportFilterGroupView"] | components["schemas"]["ReportFilterConditionView"];
-        /** @description The freshness label of spec 8.2. label is the text to show, such as Synced 09:41. */
+        /** @description The freshness label of spec 8.2. label is the text to show, such as Synced 09:41. When state is stale, stale names every naming context that makes it stale, oldest first: the connection (by id and display name), the naming context, why it is stale and when its last sync pass was. It is empty in every other state. thresholdSeconds is the staleness threshold the run was judged against; it is null when the run was judged against no connection. The console shows these and derives nothing from label. */
         ReportFreshness: {
             label: string;
+            stale: components["schemas"]["ReportStaleSource"][];
             state: components["schemas"]["ReportFreshnessState"];
+            thresholdSeconds: number | null;
         };
         /**
          * @description The freshness label of spec 8.2. per_dc_read is the only state that may be called live.
          * @enum {string}
          */
         ReportFreshnessState: "synced" | "stale" | "not_synced_yet" | "per_dc_read" | (string & {});
+        /** @description A set of rows the run counted and did not store, such as probable service accounts (E2). count is the number of hidden rows after scope trimming and is at least 1: a group with nothing hidden is not listed. label is the group's name in the report definition. locked is true when the report cannot show the group, so the console offers no Show control for it. */
+        ReportHiddenGroup: {
+            count: number;
+            id: string;
+            label: string;
+            locked: boolean;
+        };
         /** @description The latest fire. */
         ReportLastRun: {
             outcome: components["schemas"]["ReportLastRunOutcome"];
@@ -1715,7 +1724,7 @@ export interface components {
             /** Format: uuid */
             runId: string;
         };
-        /** @description The run record (DM-72). asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header. */
+        /** @description The run record (DM-72). hiddenGroups lists the sets of rows counted and not stored; it is empty when nothing was hidden or the run has not succeeded. asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header. */
         ReportRun: {
             /** Format: date-time */
             asOf: string | null;
@@ -1733,6 +1742,7 @@ export interface components {
             /** Format: date-time */
             finishedAt: string | null;
             freshness: components["schemas"]["ReportFreshness"];
+            hiddenGroups: components["schemas"]["ReportHiddenGroup"][];
             /** Format: uuid */
             id: string;
             objectsChecked: number | null;
@@ -1895,6 +1905,23 @@ export interface components {
          * @enum {string}
          */
         ReportSortOrder: "asc" | "desc";
+        /**
+         * @description Why a naming context makes a result stale. older_than_threshold: its last sync pass is older than the staleness threshold. resync_required: its change feed is unusable and a full resync is needed. paused: its sync is paused, or its connection is suspended.
+         * @enum {string}
+         */
+        ReportStaleCause: "older_than_threshold" | "resync_required" | "paused" | (string & {});
+        /** @description One naming context behind a stale result. connectionName is the connection's display name when the run was made; it is the connection id's text when the run record predates names. lastPassAt is the start of the last successful sync pass of the naming context and ageSeconds is its age when the run was made. cause says why it counts as stale. */
+        ReportStaleSource: {
+            ageSeconds: number;
+            cause: components["schemas"]["ReportStaleCause"];
+            /** Format: uuid */
+            connectionId: string;
+            connectionName: string;
+            /** Format: date-time */
+            lastPassAt: string;
+            /** Format: uuid */
+            namingContextId: string;
+        };
         /** @description A group or user a report is about (GRP-02, GRP-03), by connection and objectGUID. */
         ReportSubjectRef: {
             /** Format: uuid */

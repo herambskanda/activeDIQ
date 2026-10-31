@@ -71,14 +71,18 @@ func (noLibrary) Definition(string, int) (run.Definition, bool) { return run.Def
 // reader (D6) and hands the run path the label and the threshold it used.
 type inventoryFreshness struct{ r *inventory.Reader }
 
-func (f inventoryFreshness) Freshness(ctx context.Context, tid tenant.ID, cs []authz.ObjectID, now time.Time) (report.Freshness, time.Duration, error) {
+func (f inventoryFreshness) Freshness(ctx context.Context, tid tenant.ID, cs []authz.ObjectID, now time.Time) (run.FreshnessRead, error) {
 	q := inventory.FreshnessQuery{Now: now}
 	for _, c := range cs {
 		q.Connections = append(q.Connections, inventory.ConnectionID(report.GUIDString(c)))
 	}
 	res, err := f.r.Freshness(ctx, tid, q)
 	if err != nil {
-		return report.Freshness{}, 0, err
+		return run.FreshnessRead{}, err
 	}
-	return res.Label, res.Threshold, nil
+	names := make(map[string]string, len(res.Names))
+	for id, n := range res.Names {
+		names[string(id)] = n
+	}
+	return run.FreshnessRead{Label: res.Label, Threshold: res.Threshold, Names: names}, nil
 }

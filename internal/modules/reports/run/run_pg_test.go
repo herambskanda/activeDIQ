@@ -160,12 +160,12 @@ func (codec) Decode(raw jsontext.Value, _ report.Definition) (report.RunParams, 
 
 type fresh struct{ at time.Time }
 
-func (f fresh) Freshness(_ context.Context, _ tenant.ID, cs []authz.ObjectID, now time.Time) (report.Freshness, time.Duration, error) {
+func (f fresh) Freshness(_ context.Context, _ tenant.ID, cs []authz.ObjectID, now time.Time) (run.FreshnessRead, error) {
 	var ws []report.NCWatermark
 	for _, c := range cs {
 		ws = append(ws, report.NCWatermark{Connection: c, NC: nc1, LastPassAt: f.at, State: report.NCOK})
 	}
-	return report.Label(ws, time.Hour, now), time.Hour, nil
+	return run.FreshnessRead{Label: report.Label(ws, time.Hour, now), Threshold: time.Hour}, nil
 }
 
 type env struct {

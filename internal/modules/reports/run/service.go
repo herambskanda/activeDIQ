@@ -1,12 +1,14 @@
 package run
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"time"
 
@@ -112,7 +114,16 @@ type ParamsCodec interface {
 // FreshnessSource reads the sync watermarks of the connections a result covers (§6.4). It runs its own
 // short transaction, which is why it is read before the result cursor opens.
 type FreshnessSource interface {
-	Freshness(ctx context.Context, tid tenant.ID, connections []authz.ObjectID, now time.Time) (report.Freshness, time.Duration, error)
+	Freshness(ctx context.Context, tid tenant.ID, connections []authz.ObjectID, now time.Time) (FreshnessRead, error)
+}
+
+// FreshnessRead is what a FreshnessSource answers: the label, the threshold it was judged against, and
+// the display name of each covered connection (canonical GUID text), so a stale record can name the
+// directory behind it. A connection missing from Names is recorded under its id.
+type FreshnessRead struct {
+	Label     report.Freshness
+	Threshold time.Duration
+	Names     map[string]string
 }
 
 // Service is the run path. Every field is required except Now and RowCap.
@@ -478,4 +489,50 @@ func (s *Service) finish(ctx context.Context, tx store.Tx, r Run, to State, reas
 	return s.Audit.Append(ctx, tx, audit.Event{ID: "run:" + r.ID.String() + ":failed", Kind: KindFailed, At: now, Actor: r.Chain,
 		Target: authority.TargetRef{GUID: r.ID.String(), Class: "report_run"}, Component: Component, Outcome: audit.Failure,
 		Reason: why, Details: sortDetails(det)})
+}
+
+// HiddenGroup is one set of rows a run counted and did not store, named by its definition's group.
+type HiddenGroup struct {
+	ID     string
+	Label  string
+	Count  int64
+	Locked bool
+}
+
+// HiddenGroups lists the groups a run hid, largest first and then by ID, with the label and lock of the
+// preset that ran. Only groups with at least one hidden row appear. A definition the catalogue no longer
+// holds leaves the label as the group ID: the count is still true.
+func (s *Service) HiddenGroups(r Run) []HiddenGroup {
+	if len(r.HiddenCounts) == 0 {
+		return nil
+	}
+	label, locked := map[string]string{}, map[string]bool{}
+	if def, ok := s.Catalog.Definition(r.DefinitionID, r.DefinitionVer); ok {
+		for _, p := range def.Def.Presets {
+			if p.ID != r.Preset {
+				continue
+			}
+			for _, h := range p.Hidden {
+				label[h.ID], locked[h.ID] = h.Label, h.Locked
+			}
+		}
+	}
+	out := make([]HiddenGroup, 0, len(r.HiddenCounts))
+	for id, n := range r.HiddenCounts {
+		if n < 1 {
+			continue
+		}
+		l := label[id]
+		if l == "" {
+			l = id
+		}
+		out = append(out, HiddenGroup{ID: id, Label: l, Count: n, Locked: locked[id]})
+	}
+	slices.SortFunc(out, func(a, b HiddenGroup) int {
+		if a.Count != b.Count {
+			return cmp.Compare(b.Count, a.Count)
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return out
 }

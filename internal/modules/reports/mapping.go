@@ -268,7 +268,7 @@ func failure(r run.Run) *api.ReportFailure {
 func freshness(r run.Run) api.ReportFreshness {
 	f := r.Freshness
 	if f == nil {
-		return api.ReportFreshness{Label: "Not synced yet", State: api.ReportFreshnessStateNotSyncedYet}
+		return api.ReportFreshness{Label: "Not synced yet", State: api.ReportFreshnessStateNotSyncedYet, Stale: []api.ReportStaleSource{}}
 	}
 	st := api.ReportFreshnessState(f.State)
 	switch st {
@@ -276,7 +276,40 @@ func freshness(r run.Run) api.ReportFreshness {
 	default:
 		st = api.ReportFreshnessStateNotSyncedYet
 	}
-	return api.ReportFreshness{Label: f.Label, State: st}
+	out := api.ReportFreshness{Label: f.Label, State: st, Stale: staleSources(f)}
+	if f.Threshold > 0 { // zero: the run was judged against no connection
+		t := f.Threshold
+		out.ThresholdSeconds = &t
+	}
+	return out
+}
+
+// staleSources lists the naming contexts behind a stale result, oldest first (the record's order). It is
+// empty unless the state is stale, so a synced run never carries a cause. The ids are canonical text
+// written by the run job.
+func staleSources(f *run.FreshnessRecord) []api.ReportStaleSource {
+	out := []api.ReportStaleSource{}
+	if f.State != "stale" {
+		return out
+	}
+	for _, e := range f.Stale {
+		cause := api.ReportStaleCauseOlderThanThreshold
+		switch e.State {
+		case "resync_required":
+			cause = api.ReportStaleCauseResyncRequired
+		case "paused":
+			cause = api.ReportStaleCausePaused
+		}
+		name := e.ConnectionName
+		if name == "" {
+			name = e.Connection
+		}
+		out = append(out, api.ReportStaleSource{
+			ConnectionID: uuid(e.Connection), ConnectionName: name, NamingContextID: uuid(e.NC), Cause: cause,
+			LastPassAt: ts(f.ComputedAt.Add(-time.Duration(e.AgeSeconds) * time.Second)), AgeSeconds: e.AgeSeconds,
+		})
+	}
+	return out
 }
 
 func emptyReason(r run.Run) *api.ReportEmptyReason {
@@ -294,6 +327,14 @@ func skipped(r run.Run) []api.ReportSkippedConnection {
 	}
 	for _, c := range r.Freshness.NotSynced {
 		out = append(out, api.ReportSkippedConnection{ConnectionID: uuid(c), Reason: api.ReportSkipReasonNotSyncedYet})
+	}
+	return out
+}
+
+func hiddenView(hs []run.HiddenGroup) []api.ReportHiddenGroup {
+	out := make([]api.ReportHiddenGroup, 0, len(hs))
+	for _, h := range hs {
+		out = append(out, api.ReportHiddenGroup{ID: h.ID, Label: h.Label, Count: h.Count, Locked: h.Locked})
 	}
 	return out
 }
@@ -325,7 +366,7 @@ func digestHex(d []byte) *string {
 
 // runView is the ReportRun of one stored run. The state is the effective one: a succeeded run past its
 // expiry reads as expired before the sweep has flipped the record.
-func runView(r run.Run, now time.Time) api.ReportRun {
+func runView(r run.Run, hidden []run.HiddenGroup, now time.Time) api.ReportRun {
 	st := r.EffectiveState(now)
 	var created apitypes.JobActor
 	created = apitypes.JobActor{ID: r.Runner, Type: "user"}
@@ -337,7 +378,7 @@ func runView(r run.Run, now time.Time) api.ReportRun {
 		ID: uuid(r.ID.String()), DefinitionID: r.DefinitionID, DefinitionVersion: int64(r.DefinitionVer), PresetID: strp(r.Preset),
 		State: api.ReportRunState(st), Progress: progress(st), CreatedBy: created, CreatedAt: ts(r.CreatedAt),
 		StartedAt: tsp(r.StartedAt), FinishedAt: tsp(r.FinishedAt), ExpiresAt: tsp(r.ExpiresAt), AsOf: tsp(r.AsOf),
-		Freshness: freshness(r), SkippedConnections: skipped(r), RowCount: r.RowCount, ObjectsChecked: r.ObjectsChecked,
+		Freshness: freshness(r), SkippedConnections: skipped(r), HiddenGroups: hiddenView(hidden), RowCount: r.RowCount, ObjectsChecked: r.ObjectsChecked,
 		Digest: digestHex(r.Digest), ScopeApplied: sa, EmptyReason: emptyReason(r), Failure: failure(r), RerunOf: idp(r.RerunOf),
 		Parameters: paramsView(r),
 	}

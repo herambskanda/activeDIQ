@@ -102,9 +102,12 @@ type FreshnessRecord struct {
 // StaleEntry names a naming context that makes a result stale.
 type StaleEntry struct {
 	Connection string `json:"connection"`
-	NC         string `json:"nc"`
-	AgeSeconds int64  `json:"ageSeconds"`
-	State      string `json:"state"`
+	// ConnectionName is the connection's display name when the run was made; a record written before
+	// names were kept has none.
+	ConnectionName string `json:"connectionName,omitempty"`
+	NC             string `json:"nc"`
+	AgeSeconds     int64  `json:"ageSeconds"`
+	State          string `json:"state"`
 }
 
 type principalJSON struct {
