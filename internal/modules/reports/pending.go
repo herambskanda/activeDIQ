@@ -73,3 +73,35 @@ func (pending) RunReportScheduleNow(context.Context, api.RunReportScheduleNowInp
 func (pending) UpdateReportSchedule(context.Context, api.UpdateReportScheduleInput) (api.UpdateReportScheduleOutput, error) {
 	return nil, apitypes.NotImplemented("not available yet (row B11)")
 }
+
+func (pending) PreviewCreateReportSchedule(context.Context, api.PreviewCreateReportScheduleInput) (api.PreviewCreateReportScheduleOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (row B11)")
+}
+
+func (pending) PreviewDeleteReportSchedule(context.Context, api.PreviewDeleteReportScheduleInput) (api.PreviewDeleteReportScheduleOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (row B11)")
+}
+
+func (pending) PreviewPauseReportSchedule(context.Context, api.PreviewPauseReportScheduleInput) (api.PreviewPauseReportScheduleOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (row B11)")
+}
+
+func (pending) PreviewReassignReportSchedule(context.Context, api.PreviewReassignReportScheduleInput) (api.PreviewReassignReportScheduleOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (row B11)")
+}
+
+func (pending) PreviewResumeReportSchedule(context.Context, api.PreviewResumeReportScheduleInput) (api.PreviewResumeReportScheduleOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (row B11)")
+}
+
+func (pending) PreviewUndoReportScheduleOperation(context.Context, api.PreviewUndoReportScheduleOperationInput) (api.PreviewUndoReportScheduleOperationOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (row B11)")
+}
+
+func (pending) PreviewUpdateReportSchedule(context.Context, api.PreviewUpdateReportScheduleInput) (api.PreviewUpdateReportScheduleOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (row B11)")
+}
+
+func (pending) UndoReportScheduleOperation(context.Context, api.UndoReportScheduleOperationInput) (api.UndoReportScheduleOperationOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (row B11)")
+}
