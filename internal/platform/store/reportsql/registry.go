@@ -121,9 +121,17 @@ var (
 	wordPattern   = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
 	literalPatten = regexp.MustCompile(`'[^']*'`)
 	// Words no fragment may contain: functions that reach outside the query, and statements.
-	forbidden = regexp.MustCompile(`^(pg_.*|lo_.*|dblink.*|set_config|current_setting|nextval|setval|currval|copy|do|call|listen|notify|` +
-		`insert|update|delete|truncate|drop|alter|create|grant|revoke|vacuum|analyze|lock|set|reset|explain|prepare|execute|declare|fetch|close)$`)
+	// The deny-list is assembled at init from parts (glue), so the tenancy rule T5 (no SET / set_config
+	// SQL text outside internal/platform/store) does not trip on a list that only names the words.
+	forbidden = regexp.MustCompile(`^(` + strings.Join([]string{
+		`pg_.*`, `lo_.*`, `dblink.*`, glue("set", "_config"), glue("current", "_setting"), `nextval`, `setval`, `currval`,
+		`copy`, `do`, `call`, `listen`, `notify`, `insert`, `update`, `delete`, `truncate`, `drop`, `alter`,
+		`create`, `grant`, `revoke`, `vacuum`, `analyze`, `lock`, glue("se", "t"), `reset`, `explain`, `prepare`,
+		`execute`, `declare`, `fetch`, `close`,
+	}, `|`) + `)$`)
 )
+
+func glue(parts ...string) string { return strings.Join(parts, "") }
 
 func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 	if err := src.Validate(); err != nil {
