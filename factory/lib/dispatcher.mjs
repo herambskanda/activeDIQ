@@ -383,10 +383,10 @@ export class Dispatcher {
    * Merge every finished ticket that has work on its branch: code tickets that still have a
    * worktree, and any other type whose `factory/<id>` branch has commits ahead of main (a spec
    * or docs ticket must never reach done with its commits stranded on a branch — T-0986).
-   * With the pre-merge gate enabled (`dispatcher.pre_merge.enabled`) the gate runs CI on the merge
-   * result first, which takes minutes to an hour, so one ticket at a time goes through it in the
-   * background: this pass starts it and returns, and the ticket merges (or is reopened) when the
-   * gate finishes.
+   * With the pre-merge gate enabled (`dispatcher.pre_merge.enabled`) the gate runs CI on the
+   * merge result first, which takes minutes to an hour, so one ticket at a time goes through it
+   * in the background: this pass starts it and returns, and the ticket merges (or is reopened)
+   * when the gate finishes.
    */
   async mergePass() {
     if (this.shared) return;
@@ -399,7 +399,7 @@ export class Dispatcher {
     for (const ticket of finished) {
       if (this.stopping) return;
       if (this.holdEmbargoed(ticket)) continue;
-      if (!gated) {
+      if (!gated || !code(ticket)) { // spec/docs branches carry no product code to gate
         await this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket));
         continue;
       }

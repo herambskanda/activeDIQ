@@ -381,3 +381,9 @@ to `JOBS` in `factory/test/premerge.test.mjs` (the test fails for a `make fitnes
 and, for a new shape, extend `findingKey` in `factory/lib/premerge.mjs`. Check a log by hand:
 `node -e "import('./factory/lib/premerge.mjs').then(m=>console.log(m.extractFindings(require('fs').readFileSync('job.log','utf8'))))"`
 prints the findings it counts; fewer than the job's own violation count means a shape is missed.
+
+**Merges fail with "the main checkout is mid-merge".** A previous merge left `MERGE_HEAD` in the main
+checkout (a failed `merge --abort`, for example "Unable to write index"). `mergeTicket` now reports
+that as an error and retries, instead of calling it the next ticket's conflict and reopening it
+(T-0941 was reopened twice that way). Finish or abort that merge by hand (`git -C <root> merge --abort`
+once its index is writable); every pending merge then proceeds on the next pass.

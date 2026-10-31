@@ -1,5 +1,25 @@
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type ComponentProps,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
+import {
+  DataGrid,
+  type DataGridColumn,
+  type DataGridSort as Sort,
+  type Column,
+  Popover,
+  PopoverMenu,
+  Table,
+  Toast,
+  ToastRegion,
+} from "../../ds/components";
 import "../../ds/components/components.css";
 import "../prototype.css";
 import "./reports.css";
@@ -24,7 +44,6 @@ import {
   type Row,
   type Schedule,
 } from "./fixtures";
-import { Grid, type Col, type Sort } from "./Grid";
 import { searchReports, type Hit, HIT_LIMIT } from "./search";
 import {
   ALL_PERMS,
@@ -97,7 +116,6 @@ interface Toast {
   readonly text: ReactNode;
   readonly tone: "info" | "ok";
   readonly action?: { readonly label: string; readonly run: () => void };
-  readonly busy?: boolean;
 }
 interface Params {
   readonly id: string;
@@ -445,24 +463,19 @@ export function Reports({
           }}
         />
       ) : null}
-      {toast ? (
-        <div className={`rp__toast rp__toast--${toast.tone}`} role="status">
-          <span>{toast.text}</span>
-          {toast.action ? (
-            <button type="button" className="btn" onClick={toast.action.run}>
-              {toast.action.label}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="rp__x"
-            aria-label="Dismiss"
-            onClick={() => setToast(null)}
+      <ToastRegion>
+        {toast ? (
+          <Toast
+            tone={toast.tone}
+            {...(toast.action
+              ? { action: { label: toast.action.label, onAction: toast.action.run } }
+              : {})}
+            onDismiss={() => setToast(null)}
           >
-            ×
-          </button>
-        </div>
-      ) : null}
+            {toast.text}
+          </Toast>
+        ) : null}
+      </ToastRegion>
     </div>
   );
 }
@@ -846,10 +859,20 @@ function ReportView(props: ViewProps) {
     [report, preset, params.days, params.group, needsParam],
   );
 
-  const columns: Col[] = useMemo(() => {
+  const columns: DataGridColumn<Row>[] = useMemo(() => {
     const keep = report.columns.filter((c) => !params.hidden.includes(c));
-    return [...keep, ...params.added].map((c) => ({ key: colKey(c), header: c }));
-  }, [report, params.hidden, params.added]);
+    return [...keep, ...params.added].map((header) => {
+      const key = colKey(header);
+      return {
+        key,
+        header,
+        sortable: true,
+        width: widthFor(key),
+        cell: (r: Row) => renderCell(key, r.cells[key], r, scenario),
+        title: (r: Row) => String(r.cells[key] ?? ""),
+      };
+    });
+  }, [report, params.hidden, params.added, scenario]);
 
   const rows = useMemo(() => {
     const f = params.filter.trim().toLowerCase();
@@ -903,7 +926,6 @@ function ReportView(props: ViewProps) {
     const ext = fmt.toLowerCase();
     setToast({
       tone: "info",
-      busy: true,
       text: `Preparing ${fmt} of ${rows.length.toLocaleString("en")} rows…`,
     });
     const wasExpired = scenario === "expired";
@@ -976,34 +998,32 @@ function ReportView(props: ViewProps) {
         </div>
         <div className="rp__actwrap">
           <div className="pt__actions" role="toolbar" aria-label="Report actions">
-            <div className="rp__pop">
-              <button
-                type="button"
-                className="btn btn--primary"
-                aria-haspopup="menu"
-                aria-expanded={menu === "export"}
-                aria-keyshortcuts="e"
-                disabled={!canExport}
-                aria-describedby={!perms.exportFiles ? "rp-perm-note" : undefined}
-                onClick={() => {
-                  tick("click Export");
-                  setMenu(menu === "export" ? null : "export");
-                }}
-              >
-                Export <span className="pt__kbd">E</span>
-              </button>
-              {menu === "export" ? (
-                <ExportMenu
-                  rows={rows.length}
-                  columns={columns.length}
-                  caps={exportCaps}
-                  ext={report.id === "GRP-02" && params.preset === "detailed"}
-                  expired={scenario === "expired"}
-                  onPick={doExport}
-                  onClose={() => setMenu(null)}
-                />
-              ) : null}
-            </div>
+            <ExportMenu
+              open={menu === "export"}
+              onOpenChange={(o) => setMenu(o ? "export" : null)}
+              trigger={(p) => (
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  aria-keyshortcuts="e"
+                  disabled={!canExport}
+                  aria-describedby={!perms.exportFiles ? "rp-perm-note" : undefined}
+                  {...p}
+                  onClick={() => {
+                    tick("click Export");
+                    p.onClick();
+                  }}
+                >
+                  Export <span className="pt__kbd">E</span>
+                </button>
+              )}
+              rows={rows.length}
+              columns={columns.length}
+              caps={exportCaps}
+              ext={report.id === "GRP-02" && params.preset === "detailed"}
+              expired={scenario === "expired"}
+              onPick={doExport}
+            />
             <button
               type="button"
               className="btn"
@@ -1118,7 +1138,6 @@ function ReportView(props: ViewProps) {
             setScenario={setScenario}
             unsupported={unsupported}
             noRows={noRows}
-            busy={busy}
             filter={params.filter}
             checked={checked}
             domainsN={domains.length}
@@ -1129,12 +1148,14 @@ function ReportView(props: ViewProps) {
             setSeq={() => newRun({})}
             tick={tick}
             grid={
-              <Grid
+              <DataGrid
                 caption={`${report.name}: ${preset?.name ?? ""}, ${rows.length} rows`}
                 columns={columns}
                 rows={rows}
+                rowKey={(r) => r.key}
                 sort={params.sort}
                 busy={busy}
+                resizable
                 onSort={(k) =>
                   sortOnly(
                     params.sort?.key === k
@@ -1144,7 +1165,6 @@ function ReportView(props: ViewProps) {
                       : { key: k, dir: "asc" },
                   )
                 }
-                render={(col, v, row) => renderCell(col, v, row, scenario)}
               />
             }
             rowsCount={rows.length}
@@ -1268,24 +1288,17 @@ function Banners(props: {
 }
 
 function ExportMenu(props: {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly trigger: ComponentProps<typeof PopoverMenu>["trigger"];
   readonly rows: number;
   readonly columns: number;
   readonly caps: ExportCaps;
   readonly ext: boolean;
   readonly expired: boolean;
   readonly onPick: (f: "CSV" | "XLSX") => void;
-  readonly onClose: () => void;
 }) {
-  const { rows, columns, caps, ext, expired, onPick, onClose } = props;
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    ref.current?.querySelector<HTMLElement>("[role=menuitem]:not([aria-disabled])")?.focus();
-    const away = (e: MouseEvent) => {
-      if (ref.current && !ref.current.parentElement?.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
-  }, [onClose]);
+  const { rows, columns, caps, ext, expired, onPick } = props;
   const items = [
     {
       f: "XLSX" as const,
@@ -1298,77 +1311,48 @@ function ExportMenu(props: {
   ];
   const fmt = (n: number) => n.toLocaleString("en");
   const overOf = (f: "CSV" | "XLSX") => rows > caps[f];
-  const pick = (f: "CSV" | "XLSX") => {
-    if (overOf(f)) return;
-    onPick(f);
-  };
   const overFormats = items.filter((it) => overOf(it.f));
   const okFormats = items.filter((it) => !overOf(it.f));
   return (
-    <div
-      ref={ref}
-      className="rp__menu"
-      onKeyDown={(e) => {
-        const k = e.key.toLowerCase();
-        if (e.key === "Escape") {
-          e.stopPropagation();
-          onClose();
-        } else if (k === "x") pick("XLSX");
-        else if (k === "c") pick("CSV");
-        else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-          e.preventDefault();
-          const els = Array.from(
-            ref.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? [],
-          );
-          const i = els.indexOf(document.activeElement as HTMLElement);
-          els[(i + (e.key === "ArrowDown" ? 1 : els.length - 1)) % els.length]?.focus();
-        }
-      }}
-    >
-      <div className="rp__menuhead pt__sub">
-        {rows.toLocaleString("en")} rows · {columns} columns as shown · the full result, not just
-        this page
-      </div>
-      {expired ? (
-        <div className="rp__menunote pt__sub">
-          This result has expired. Exporting runs the report again first and says so.
-        </div>
-      ) : null}
-      <div role="menu" aria-label="Export format">
-        {items.map((it) => (
-          <button
-            key={it.f}
-            type="button"
-            role="menuitem"
-            className="rp__item"
-            aria-disabled={overOf(it.f) ? true : undefined}
-            onClick={() => pick(it.f)}
-          >
-            <span>
-              <b>{it.f}</b>
-              <span className="pt__sub">
-                {" "}
-                {overOf(it.f) ? `limit ${fmt(caps[it.f])} rows` : it.note}
-              </span>
-            </span>
-            <span className="pt__kbd">{it.key}</span>
-          </button>
-        ))}
-      </div>
-      {overFormats.length > 0 ? (
-        <div className="rp__menunote rp__err" role="alert">
-          This export has {fmt(rows)} rows.{" "}
-          {overFormats.length === items.length
-            ? caps.CSV === caps.XLSX
-              ? `Your organisation limits CSV and XLSX to ${fmt(caps.CSV)}. `
-              : `Your organisation limits CSV to ${fmt(caps.CSV)} and XLSX to ${fmt(caps.XLSX)}. `
-            : `Your organisation limits ${overFormats[0]?.f} to ${fmt(caps[overFormats[0]?.f ?? "CSV"])}. `}
-          {overFormats.length === items.length
-            ? "No file was created. Narrow the filters (period, domain or column filter) and export again."
-            : `No file was created. ${okFormats[0]?.f} allows ${fmt(caps[okFormats[0]?.f ?? "CSV"])} rows: choose ${okFormats[0]?.f} (${okFormats[0]?.key}), or narrow the filters (period, domain or column filter).`}
-        </div>
-      ) : null}
-    </div>
+    <PopoverMenu
+      label="Export format"
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      trigger={props.trigger}
+      align="end"
+      header={
+        <>
+          {rows.toLocaleString("en")} rows · {columns} columns as shown · the full result, not just
+          this page
+          {expired
+            ? ". This result has expired. Exporting runs the report again first and says so."
+            : ""}
+        </>
+      }
+      items={items.map((it) => ({
+        id: it.f,
+        label: it.f,
+        description: overOf(it.f) ? `limit ${fmt(caps[it.f])} rows` : it.note,
+        accelerator: it.key,
+        disabled: overOf(it.f),
+        onSelect: () => onPick(it.f),
+      }))}
+      footer={
+        overFormats.length > 0 ? (
+          <div className="diq-menu__note rp__err" role="alert">
+            This export has {fmt(rows)} rows.{" "}
+            {overFormats.length === items.length
+              ? caps.CSV === caps.XLSX
+                ? `Your organisation limits CSV and XLSX to ${fmt(caps.CSV)}. `
+                : `Your organisation limits CSV to ${fmt(caps.CSV)} and XLSX to ${fmt(caps.XLSX)}. `
+              : `Your organisation limits ${overFormats[0]?.f} to ${fmt(caps[overFormats[0]?.f ?? "CSV"])}. `}
+            {overFormats.length === items.length
+              ? "No file was created. Narrow the filters (period, domain or column filter) and export again."
+              : `No file was created. ${okFormats[0]?.f} allows ${fmt(caps[okFormats[0]?.f ?? "CSV"])} rows: choose ${okFormats[0]?.f} (${okFormats[0]?.key}), or narrow the filters (period, domain or column filter).`}
+          </div>
+        ) : null
+      }
+    />
   );
 }
 
@@ -1428,40 +1412,37 @@ function Controls(props: {
             </select>
           </label>
         ) : null}
-        <div className="rp__pop" hidden={report.kind === "member"}>
-          <button
-            type="button"
-            className="btn"
-            aria-haspopup="true"
-            aria-expanded={scopeOpen}
-            disabled={disabled}
-            onClick={() => setMenu(scopeOpen ? null : "scope")}
+        <div hidden={report.kind === "member"}>
+          <Popover
+            label="Domains"
+            open={scopeOpen}
+            onOpenChange={(o) => setMenu(o ? "scope" : null)}
+            trigger={(p) => (
+              <button type="button" className="btn" disabled={disabled} {...p}>
+                Domains: {params.domains.length} of 3
+              </button>
+            )}
           >
-            Domains: {params.domains.length} of 3
-          </button>
-          {scopeOpen ? (
-            <div className="rp__menu rp__menu--form" role="group" aria-label="Domains">
-              {domainNames.map((d) => (
-                <label key={d} className="pt__check">
-                  <input
-                    type="checkbox"
-                    checked={params.domains.includes(d)}
-                    onChange={(e) => {
-                      const next = e.target.checked
-                        ? [...params.domains, d]
-                        : params.domains.filter((x) => x !== d);
-                      if (next.length === 0) return;
-                      newRun({ domains: next });
-                    }}
-                  />
-                  <span>
-                    {d} <span className="pt__sub">{DOMAIN_COUNT[d].toLocaleString("en")}</span>
-                  </span>
-                </label>
-              ))}
-              <p className="pt__sub">At least one domain stays selected.</p>
-            </div>
-          ) : null}
+            {domainNames.map((d) => (
+              <label key={d} className="pt__check">
+                <input
+                  type="checkbox"
+                  checked={params.domains.includes(d)}
+                  onChange={(e) => {
+                    const next = e.target.checked
+                      ? [...params.domains, d]
+                      : params.domains.filter((x) => x !== d);
+                    if (next.length === 0) return;
+                    newRun({ domains: next });
+                  }}
+                />
+                <span>
+                  {d} <span className="pt__sub">{DOMAIN_COUNT[d].toLocaleString("en")}</span>
+                </span>
+              </label>
+            ))}
+            <p className="pt__sub">At least one domain stays selected.</p>
+          </Popover>
         </div>
         <label className="pt__field rp__grow">
           <span>Filter rows</span>
@@ -1473,60 +1454,52 @@ function Controls(props: {
             onChange={(e) => newRun({ filter: e.target.value })}
           />
         </label>
-        <div className="rp__pop">
-          <button
-            type="button"
-            className="btn"
-            aria-haspopup="true"
-            aria-expanded={columnsOpen}
-            disabled={disabled}
-            onClick={() => setMenu(columnsOpen ? null : "columns")}
-          >
-            Columns
-          </button>
-          {columnsOpen ? (
-            <div
-              className="rp__menu rp__menu--form rp__menu--right"
-              role="group"
-              aria-label="Columns"
-            >
-              {report.columns.map((c) => (
-                <label key={c} className="pt__check">
-                  <input
-                    type="checkbox"
-                    checked={!params.hidden.includes(c)}
-                    disabled={c === report.columns[0]}
-                    onChange={(e) =>
-                      newRun({
-                        hidden: e.target.checked
-                          ? params.hidden.filter((x) => x !== c)
-                          : [...params.hidden, c],
-                      })
-                    }
-                  />
-                  <span>{c}</span>
-                </label>
-              ))}
-              {extra.length > 0 ? <div className="rp__menuhead pt__sub">More columns</div> : null}
-              {extra.map((c) => (
-                <label key={c} className="pt__check">
-                  <input
-                    type="checkbox"
-                    checked={params.added.includes(c)}
-                    onChange={(e) =>
-                      newRun({
-                        added: e.target.checked
-                          ? [...params.added, c]
-                          : params.added.filter((x) => x !== c),
-                      })
-                    }
-                  />
-                  <span>{c}</span>
-                </label>
-              ))}
-            </div>
-          ) : null}
-        </div>
+        <Popover
+          label="Columns"
+          align="end"
+          open={columnsOpen}
+          onOpenChange={(o) => setMenu(o ? "columns" : null)}
+          trigger={(p) => (
+            <button type="button" className="btn" disabled={disabled} {...p}>
+              Columns
+            </button>
+          )}
+        >
+          {report.columns.map((c) => (
+            <label key={c} className="pt__check">
+              <input
+                type="checkbox"
+                checked={!params.hidden.includes(c)}
+                disabled={c === report.columns[0]}
+                onChange={(e) =>
+                  newRun({
+                    hidden: e.target.checked
+                      ? params.hidden.filter((x) => x !== c)
+                      : [...params.hidden, c],
+                  })
+                }
+              />
+              <span>{c}</span>
+            </label>
+          ))}
+          {extra.length > 0 ? <div className="diq-menu__note">More columns</div> : null}
+          {extra.map((c) => (
+            <label key={c} className="pt__check">
+              <input
+                type="checkbox"
+                checked={params.added.includes(c)}
+                onChange={(e) =>
+                  newRun({
+                    added: e.target.checked
+                      ? [...params.added, c]
+                      : params.added.filter((x) => x !== c),
+                  })
+                }
+              />
+              <span>{c}</span>
+            </label>
+          ))}
+        </Popover>
         {report.svcHidden && svcHidden > 0 ? (
           <label className="pt__check rp__svc">
             <input
@@ -1630,7 +1603,6 @@ function RunBody(props: {
   readonly setScenario: (s: Scenario) => void;
   readonly unsupported: string;
   readonly noRows: boolean;
-  readonly busy: boolean;
   readonly filter: string;
   readonly checked: number;
   readonly domainsN: number;
@@ -1649,7 +1621,6 @@ function RunBody(props: {
     setScenario,
     unsupported,
     noRows,
-    busy,
     filter,
     checked,
     domainsN,
@@ -1814,9 +1785,7 @@ function RunBody(props: {
     );
   return (
     <>
-      <div className="rp__gridwrap" data-busy={busy ? "true" : undefined}>
-        {grid}
-      </div>
+      {grid}
       <p className="pt__sub rp__foot" role="status">
         {rowsCount.toLocaleString("en")} rows · sorted and filtered on the server; scrolling loads
         more · no row selection in this checkpoint{perDc ? "" : ""}
@@ -1894,42 +1863,54 @@ function RunDetails(props: {
               None yet. Press <span className="pt__kbd">E</span> to export this exact result.
             </p>
           ) : (
-            <table className="rp__grid rp__grid--auto">
-              <thead>
-                <tr>
-                  <th scope="col">File</th>
-                  <th scope="col">Rows</th>
-                  <th scope="col">Made</th>
-                  <th scope="col">Expires</th>
-                  <th scope="col">
-                    <span className="rp__sr">Delete</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {exports.map((x) => (
-                  <tr key={x.name}>
-                    <th scope="row" className="rp__cell rp__rowhead diq-mono" title={x.name}>
-                      {x.name}
-                    </th>
-                    <td>{x.rows.toLocaleString("en")}</td>
-                    <td>{x.at}</td>
-                    <td>{x.expires}</td>
-                    <td>
-                      <button type="button" className="btn" onClick={() => onDelete(x.name)}>
-                        Delete file
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <Table
+              caption="Files from this run"
+              rows={exports}
+              rowKey={(x) => x.name}
+              columns={fileColumns(onDelete)}
+            />
           )}
         </div>
       ) : null}
     </section>
   );
 }
+
+/** Initial column widths in characters (ch), by column kind. Users can resize. */
+function widthFor(key: string): number {
+  if (key === "name" || key === "member" || key === "user" || key === "via") return 30;
+  if (key === "group") return 18;
+  if (key.includes("ou-path") || key === "path") return 24;
+  if (key === "domain" || key === "upn" || key === "dns-name" || key === "e-mail") return 20;
+  if (key.startsWith("days") || key === "users" || key === "computers" || key === "groups")
+    return 13;
+  if (key === "status" || key === "membership-kind" || key === "member-type") return 18;
+  if (key === "probable-service-account") return 26;
+  return 19;
+}
+
+const fileColumns = (onDelete: (name: string) => void): Column<ExportRec>[] => [
+  {
+    key: "file",
+    header: "File",
+    rowHeader: true,
+    mono: true,
+    title: (x) => x.name,
+    cell: (x) => x.name,
+  },
+  { key: "rows", header: "Rows", cell: (x) => x.rows.toLocaleString("en") },
+  { key: "at", header: "Made", cell: (x) => x.at },
+  { key: "expires", header: "Expires", cell: (x) => x.expires },
+  {
+    key: "delete",
+    header: "Actions",
+    cell: (x) => (
+      <button type="button" className="btn" onClick={() => onDelete(x.name)}>
+        Delete file
+      </button>
+    ),
+  },
+];
 
 function renderCell(col: string, v: Cell | undefined, row: Row, scenario: Scenario): ReactNode {
   const text = v === undefined ? "" : String(v);
