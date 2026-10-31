@@ -19,3 +19,4 @@
 - [per-NC pass lessons](passes-lessons.md) — Freshness derives paused/never-synced, PassNCs on quiet cycles, test helper traps
 - [inventory datasets lessons](inventory-datasets-lessons.md) — T-0958: no pgx in tests, tenant role can't DELETE, RP11 subtest shape, unrelated rereds
 - [pwchange lessons](pwchange-lessons.md) — T-1019: SD reads are per-object only, lab recipe, S1 unverified (T-1139)
+- [closure budget lessons](closure-budget-lessons.md) — T-0961: measure at declared budget, 30 s statement timeout, chunk by rows
