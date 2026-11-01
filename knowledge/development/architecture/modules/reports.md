@@ -1,13 +1,13 @@
 ---
 title: "Module: reports — contract for the definition AST, dataset registry, compiler and run record"
 date: 2026-10-30
-updated: 2026-10-31
+updated: 2026-11-01
 status: draft
 owner: heramb
 author: solution-architect
 ticket: T-0865
 tier: server
-binding_sources: ADR-0002, ADR-0003, ADR-0005 rule 10, ADR-0010 (proposed), safe-primitives P5 and P7, reports-2a spec (scope locked)
+binding_sources: ADR-0002, ADR-0003, ADR-0005 rule 10, ADR-0010 (accepted), safe-primitives P5 and P7, reports-2a spec (scope locked)
 ---
 
 # Module `reports`: definition AST, dataset registry, compiler and run record
@@ -1661,7 +1661,7 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | **B11** | Schedules: DM-73 tables, `reports.schedule.*` Actions, fire job, owner-authority checks, delivery links authorised by the Delivery row (§7.2), ZIP, notify-only-if-data, `manage_all` metadata view, delivery audit kinds, **RP10** | reporting-engineer (backend-engineer reviews) | B4, B9, P3, P4 | FR-22 (delivery), FR-23–FR-29, FR-31; AC-30–AC-38, AC-45, AC-46, AC-47 |
 | **B12** | Screens: library and `/` search, run and results grid (sort, column filters, column chooser, row count, freshness, coverage, hidden-group banner), export dialog, schedule sheet; empty, error, stale and loading states | frontend-engineer | T-0866, T-0867, B4 (then B9, B11 per screen) | FR-01, FR-02, FR-04, FR-13, FR-32; AC-44 |
 | **B13** | Scale-tier calibration: row caps, sort p95 on 1M rows (ADR-0010 budget), per-DC read cap, report accuracy | test-engineer | B7, B8, B9 | FR-12, FR-18; AC-21, AC-22, AC-23, AC-39 |
-| **B14** | ADR-0010 to `accepted`: confirm RP3–RP5 are green in CI and update the ADR status | solution-architect | T-0873, B4, B9 | none (ADR ladder) |
+| **B14** (done, T-0968; accepted 2026-11-01) | ADR-0010 to `accepted`: confirm RP3–RP5 are green in CI and update the ADR status | solution-architect | T-0873, B4, B9 | none (ADR ladder) |
 | **B15** | (after 2a) Report retention tenant setting, 1–30 days, as a configuration Action | reporting-engineer | B4 | spec §8.1 retention |
 
 **Coverage check:** every FR-01 to FR-32 appears in at least one row above.
@@ -1699,7 +1699,7 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
    bound to the DM-84 Delivery row (§6.6, §7.2).
 9. **A run found `running` by a job retry is failed `interrupted`**, never resumed (§6.3).
 10. **Result storage** is rows in PostgreSQL ([ADR-0010](../../decisions/0010-report-results-stored-as-rows-in-postgres.md),
-   `proposed`).
+   `accepted`).
 11. **Unknown is its own cell, never absent or inferred** (`"u"`, §6.2). State enums keep
    `unknown_input_missing` for filtering, and dependent columns name their state in `UnknownWhen`, so
    one stored shape, one digest tag and one API kind say "input missing" (§3.3).

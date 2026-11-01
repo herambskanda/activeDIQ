@@ -1,8 +1,20 @@
 === RUN   Test_expired_run_is_not_served
 === RUN   Test_expired_run_is_not_served/pg16
+=== RUN   Test_expired_run_is_not_served/pg16/export_of_an_expired_run_makes_a_new_run
+=== RUN   Test_expired_run_is_not_served/pg16/a_succeeded_run_needs_expires_at
+=== RUN   Test_expired_run_is_not_served/pg16/every_state_edge_at_the_trigger
 === RUN   Test_expired_run_is_not_served/pg18
---- PASS: Test_expired_run_is_not_served (7.77s)
-    --- PASS: Test_expired_run_is_not_served/pg16 (4.53s)
-    --- PASS: Test_expired_run_is_not_served/pg18 (3.24s)
+=== RUN   Test_expired_run_is_not_served/pg18/export_of_an_expired_run_makes_a_new_run
+=== RUN   Test_expired_run_is_not_served/pg18/a_succeeded_run_needs_expires_at
+=== RUN   Test_expired_run_is_not_served/pg18/every_state_edge_at_the_trigger
+--- PASS: Test_expired_run_is_not_served (21.63s)
+    --- PASS: Test_expired_run_is_not_served/pg16 (13.31s)
+        --- PASS: Test_expired_run_is_not_served/pg16/export_of_an_expired_run_makes_a_new_run (1.67s)
+        --- PASS: Test_expired_run_is_not_served/pg16/a_succeeded_run_needs_expires_at (1.89s)
+        --- PASS: Test_expired_run_is_not_served/pg16/every_state_edge_at_the_trigger (1.76s)
+    --- PASS: Test_expired_run_is_not_served/pg18 (8.32s)
+        --- PASS: Test_expired_run_is_not_served/pg18/export_of_an_expired_run_makes_a_new_run (0.92s)
+        --- PASS: Test_expired_run_is_not_served/pg18/a_succeeded_run_needs_expires_at (0.90s)
+        --- PASS: Test_expired_run_is_not_served/pg18/every_state_edge_at_the_trigger (1.14s)
 PASS
-ok  	github.com/skenzeriq/activediq/internal/modules/reports/run	8.616s
+ok  	github.com/skenzeriq/activediq/internal/modules/reports/run	28.945s
