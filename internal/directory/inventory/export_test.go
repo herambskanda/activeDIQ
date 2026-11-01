@@ -35,3 +35,13 @@ func DecideClosure(ctx context.Context, tx store.Tx, connection ConnectionID) (a
 	admitted, over = splitByBudget(universe.guids, universe.privileged, edges, counts, closureBudget)
 	return admitted, over, nil
 }
+
+// LivePrivileged runs the SQL that classifies the live groups of a connection and returns the GUIDs it
+// marks as well-known privileged (the input of the closure's privileged-first rule).
+func LivePrivileged(ctx context.Context, tx store.Tx, connection ConnectionID) (map[string]bool, error) {
+	u, err := liveGroups(ctx, tx, connection)
+	if err != nil {
+		return nil, err
+	}
+	return u.privileged, nil
+}
