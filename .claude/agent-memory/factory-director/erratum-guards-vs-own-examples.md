@@ -13,4 +13,6 @@ Before ratifying a fitness-rule erratum, run every term the erratum registers or
 
 Same check for classification criteria. On T-1221 (2026-11-01), the criterion read "config when a principal's decision sets any row". By that test, enrollment_tokens (issued_by), correlations (the reconfirm Action) and item 5's approval decisions would all be config, yet the ADR confirmed them as system. Run each confirmed table, and each numbered exception, through the criterion. When an allow-list sets `callers: []`, grep for in-package references too: a convert-row wrapper still trips the caller rule.
 
+Round 2 (T-1221): every carve-out clause in a class test must be no wider than the list item it cites ("own credentials" vs item 1 "at first sign-in"). The test must be surface-independent, with a closed numbered list of no-Step exceptions. A qualifier such as "via the authenticated surface" lets anonymous routes escape. For a security-sensitive spec, consult security-architect in the review: the spec flow has no security stage, and that consult caught all three round-2 gaps.
+
 Related: [[adr-ratification-flow]], [[generator-adr-review-checks]]
