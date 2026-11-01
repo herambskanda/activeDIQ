@@ -75,8 +75,15 @@ type HiddenGroup struct {
 	Locked bool
 }
 
-// Subjects says a preset needs objects named by GUID (GRP-02, GRP-03).
-type Subjects struct{ Min, Max int }
+// Subjects says a preset needs objects named by GUID (GRP-02, GRP-03). With Column set, the GUIDs are
+// matched against that GUID column of the dataset (an edge dataset has no object column of its own:
+// group_members matches group_guid for the groups and member_guid for the users). Kind ("group" or
+// "user") is what the console asks the admin to pick; it is empty when Column is empty.
+type Subjects struct {
+	Min, Max int
+	Column   ColumnID
+	Kind     string
+}
 
 // ParamKind is the kind of a definition parameter.
 type ParamKind uint8
@@ -201,6 +208,9 @@ func (d Definition) Validate() error {
 		}
 		if p.Requires != nil && (p.Requires.Min < 1 || p.Requires.Max < p.Requires.Min || p.Requires.Max > 100) {
 			return bad(path, "subjects range is invalid")
+		}
+		if p.Requires != nil && (p.Requires.Column.Valid() != (p.Requires.Kind != "") || (p.Requires.Kind != "" && p.Requires.Kind != "group" && p.Requires.Kind != "user")) {
+			return bad(path, "subjects need a column and a kind of group or user together")
 		}
 		hid := map[string]bool{}
 		for _, h := range p.Hidden {

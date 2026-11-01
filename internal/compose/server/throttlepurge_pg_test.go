@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/authn"
+	"github.com/skenzeriq/activediq/internal/platform/authn/throttlejob"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/jobs/jobstest"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
@@ -235,7 +236,7 @@ VALUES ($1::uuid, $2, 1, $3, $3), ($1::uuid, $4, 1, $5, $5)`, r.a.String(), thro
 			if err := startThrottlePurge(ctx, r.db, jreg, l, r.a); err != nil {
 				t.Fatal(err)
 			}
-			if v, err := jobstest.CountQueued(r.adminStrings, authn.JobPurgeThrottle); err != nil || v != "1" {
+			if v, err := jobstest.CountQueued(r.adminStrings, throttlejob.JobPurge); err != nil || v != "1" {
 				t.Fatalf("queued purge jobs = %q, %v; want exactly one after two starts", v, err)
 			}
 
@@ -257,7 +258,7 @@ VALUES ($1::uuid, $2, 1, $3, $3), ($1::uuid, $4, 1, $5, $5)`, r.a.String(), thro
 			if !r.held(t, r.a, "job-live")["job-live"] {
 				t.Error("the job deleted a live row")
 			}
-			if v, err := jobstest.CountQueued(r.adminStrings, authn.JobPurgeThrottle); err != nil || v != "1" {
+			if v, err := jobstest.CountQueued(r.adminStrings, throttlejob.JobPurge); err != nil || v != "1" {
 				t.Errorf("queued purge jobs after a run = %q, %v; want its successor", v, err)
 			}
 		})

@@ -1659,7 +1659,7 @@ has an explicit type.
 ```
 htmlx.Render(w, name: TemplateName, data: any) -> Error   // html/template only; templates compiled at init from embed.FS
 htmlx.SystemURL(r: Route, q: url.Values) -> template.URL   // the only producer of template.URL; base from config
-htmlx.Document(t: Table, meta: ReportMeta) -> io.Reader    // standalone HTML export (rule 4)
+htmlx.NewWriter(w, o: Options{Title, MaxRows, About, Location}) -> export.Encoder   // standalone HTML export (rule 4); streams Header/Row/Close like the other encoders (as built, T-0964)
 msgtpl.Parse(adminText: string, reg: PlaceholderRegistry) -> MessageTemplate | Error
 msgtpl.RenderText(t, vals) -> string ; msgtpl.RenderHTML(t, vals) -> HTML   // both escape per context
 httpx.Attachment(w, base: string, f: Format, body: io.Reader)   // the only setter of Content-Disposition
@@ -1851,7 +1851,7 @@ corrupting data (§12.8).
 ### 12.7 `export/pdf` — PDF writer
 
 ```
-pdf.NewWriter(w: io.Writer, o: PDFOptions{Title: string, Orientation, Font: EmbeddedFont}) -> Writer
+pdf.NewWriter(w: io.Writer, o: Options{Title, MaxRows, About, Location}) -> Writer   // as built, T-0964: A4 landscape, standard Helvetica (not embedded), no PDF library
 Writer.Header(cols) / Writer.Row(cells) -> Error ; Writer.Close() -> RenderReport
 ```
 
@@ -1877,11 +1877,18 @@ There is no link, annotation, JavaScript, attachment, form, outline-action or pa
    we set; there is no XMP from data.
 5. **Visible controls.** Cc and Cf characters are drawn as `⟨U+XXXX⟩` (O3). A PDF has no bidi
    algorithm, so an RLO would otherwise be invisible and show as missing glyphs. A glyph missing
-   from the embedded font is drawn as the font's fallback glyph, never dropped.
-6. **Library.** Candidates: `signintech/gopdf` (MIT, active) and `johnfercher/maroto` v2 (MIT,
-   active; it depends on `phpdave11/gofpdf` and `pdfcpu`). `go-pdf/fpdf` is archived (checked
-   through the GitHub API, 2026-10-02) and is out. The choice and the licence-register entry belong
-   to the old T-0102 owner. Page import (`gofpdi`) is never called: we do not merge external PDFs.
+   from the font is drawn as a fallback glyph, never dropped.
+6. **Library.** *As built (T-0964): none.* The writer is hand-built and streaming (like `export/xlsx`),
+   so no library licence-register entry exists and the API cannot express a link, action, annotation,
+   attachment, form or page import: PDF-11 holds by construction. It draws with the standard
+   Helvetica and Helvetica-Bold, which a reader supplies (no font is embedded, so no font licence or
+   size cost); widths come from the Adobe core-14 AFM metrics. A character outside WinAnsi is drawn
+   with a visible fallback glyph and a `/ToUnicode` map keeps the real code point, so PDF-13 holds for
+   extraction; CJK glyphs are not drawn until an embedded OFL font is added (follow-up).
+   `signintech/gopdf` and `johnfercher/maroto` v2 stay the candidates if a library is ever adopted;
+   `go-pdf/fpdf` is archived (checked through the GitHub API, 2026-10-02) and is out. Page import
+   (`gofpdi`) is never called: we do not merge external PDFs. The independent parser FF-SP10 uses is
+   `export/pdf/pdftest`.
 
 | ID | Input | Expected | Why |
 | --- | --- | --- | --- |
@@ -1897,7 +1904,7 @@ There is no link, annotation, JavaScript, attachment, form, outline-action or pa
 | PDF-10 | 1 000 000 rows | error `RowCapExceeded`, raised before writing | O7 |
 | PDF-11 | static: PDF library imported outside `export/pdf`; its link, annotation, JavaScript, attachment, form or page-import APIs called | build fails (FF-SP1/FF-SP2) | rule 3, 6 |
 | PDF-12 | static: `chromedp`, `go-rod`, `playwright-go` or a wkhtmltopdf wrapper in product `go.mod`; a browser in the `proc` allowlist | build fails (FF-SP1, §6.3) | rule 1 |
-| PDF-13 | `漢字 😀` with no glyph in the embedded font | fallback glyphs drawn; extracted text equals input | control |
+| PDF-13 | `漢字 😀` with no glyph in the standard font | fallback glyphs drawn; extracted text equals input | control |
 | PDF-14 | `Smith & Sons` | extracted text equals input | control |
 
 ### 12.8 Residual risks

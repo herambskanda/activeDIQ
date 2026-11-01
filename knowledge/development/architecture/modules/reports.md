@@ -25,8 +25,8 @@ profiles (spec §10; ADR-0002 rule 1). Entra datasets are absent at 2a (spec §1
 scope decision, not a platform asymmetry.
 
 > **This page is the build contract, and the module page.** `internal/modules/reports/` exists since
-> row B4 (T-0959): the run path is built; since row B9 (T-0963) so are CSV and XLSX exports (see the
-> changelog for what differs from the text below).
+> row B4 (T-0959): the run path is built; since row B9 (T-0963) so are CSV and XLSX exports and since row
+> B10 (T-0964) PDF and HTML (see the changelog for what differs from the text below).
 > Every Go name below is the name the build tickets use. A ticket that needs a different name changes
 > this page in the same change.
 
@@ -36,13 +36,14 @@ scope decision, not a platform asymmetry.
 | --- | --- | --- |
 | `internal/platform/report` (EP-8 host), `Registrar.Dataset` | **Built (T-0956, row B1).** Pure types and `Resolve` (no SQL driver), `Registrar.Dataset`, `Contributions.Datasets()`, `platform.Deps.Report`, and the Boot table-ownership check (`report.CheckTables`). Deviations below | §2, §3, row B1 |
 | `internal/platform/store/reportsql` | **Built (T-0957, row B2).** `NewRegistry`, `Compile`, `CompileCount`, `Exec`, `Count`, the scope and narrowing renderers, SQL vectors (FF-SP4) and RP6. `sqlconst` (FF-SP2) lets a value of type `reportsql.CompiledSQL` reach `Exec` and `string(x)` of one is a constant for it. Deviations in §5 | §5, row B2, RP1, RP6 |
-| Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. Two adapters are still to be wired in `compose/server`: `rbac.OwnerStatus` (over the account store) and `rbac.ObjectConnections` (over inventory) | §4 |
-| Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. There is no group closure. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed Row P1 (T-0949, migration 0063) is built: `nc_sync_passes` (one row per tenant, connection, NC) holds `last_pass_at` and `state` (`ok`, `resync_required`, `paused`). `Writer.RecordPass` sets the pass as-of (start of the read) in the cycle's transaction and `Ingest` calls it on the last batch for each `Cycle.PassNCs`, so a quiet domain is fresh; `Writer.MarkNC` records resync or pause; `Reader.Freshness` returns `[]report.NCWatermark` and the `report.Label` result, with `DefaultStalenessThreshold` = 60 min | §3.4, §4.5, rows P1, **P2**, B3, B6 |
+| Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. **Wired in `compose/server` (T-0916, `readscopes.go`):** `rbac.OwnerStatus` over `authn_accounts` (active only), `rbac.ObjectConnections` over `directory_objects` (one connection, else ok=false), `buildReadScopes(authorizer, module.Contributions)`, and `txReadScopes` (opens the tenant tx) for `directory.ReadScopes`; search and report runs both receive it | §4 |
+| Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. **Row B6 (T-0961, migration 0068) added** the group closure `inventory_group_members` and its dirty set `inventory_group_closure_dirty`. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed Row P1 (T-0949, migration 0063) is built: `nc_sync_passes` (one row per tenant, connection, NC) holds `last_pass_at` and `state` (`ok`, `resync_required`, `paused`). `Writer.RecordPass` sets the pass as-of (start of the read) in the cycle's transaction and `Ingest` calls it on the last batch for each `Cycle.PassNCs`, so a quiet domain is fresh; `Writer.MarkNC` records resync or pause; `Reader.Freshness` returns `[]report.NCWatermark` and the `report.Label` result, with `DefaultStalenessThreshold` = 60 min | §3.4, §4.5, rows P1, **P2**, B3, B6 |
 | Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. **T-1105 added the two library reads** (`listReportDefinitions`, `getReportDefinition`, `modules/reports/definitions.go`, §3.6). The export operations are built in row B9 (T-0963); the other 9 operations answer 501 until B11 | §6, §9, row B4 |
-| `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150), the canonical `Digest`/`Digester` and `Unknown()`. **Built (T-0963, row B9):** `modules/reports/export` (service, `reports.export` job, About block), migration 0065, RP5 landed | §7, row B9 |
+| Console screens (`web/src/modules/reports`) | **Built (T-0966, row B12 part 1; export and schedule are B12b, T-0902).** Routes `/reports` (library) and `/reports/<id>`; the run starts when the report opens and the grid reads `listReportRunRows` (500 a page, server sort, windowed DataGrid). Client state is the URL plus `use-definitions.ts` and `use-report-run.ts` (start, poll `getReportRun`, cancel, retry). The stale banner and header chip render `ReportFreshness.stale[]` (connection name, cause, age) and the hidden-group banner renders `ReportRun.hiddenGroups[]` (count, `locked` removes Show), all from the API (T-1074); the console derives neither. Open gaps: no report+object composite hit (T-1075), subject reports need an object picker (T-1076), live-stack check (T-1077) | §6, row B12 |
+| `platform/export` | CSV, XLSX and PDF encoders (HTML is `platform/htmlx`), `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150), the canonical `Digest`/`Digester` and `Unknown()`. **Built (T-0963, row B9):** `modules/reports/export` (service, `reports.export` job, About block), migration 0065, RP5 landed. **PDF and HTML built (T-0964, row B10)**, §7.1b | §7, rows B9, B10 |
 | `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
 | `platform/notify` | **Built (T-0950).** `notify/mailaddr` (strict address parser), `notify/settings` (allowed recipient domains, SMTP relay; migration 0062), `notify/mail` (SMTP over egress), `notify/mailtest`, `notify/delivery` (DM-84 `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue`), the `notify.settings.update` Action in `modules/notify`. **Not yet wired:** nothing calls `DispatchDue` (needs the DM-44 schedule, row P4, or a notify job), no `Renderer` per purpose, no SMTP AUTH credentials. Terminal failure state is `given_up` | §7.2, §8, row P3 |
-| Per-DC read | `ReadPerDC` exists in the connector proto (`read.proto`). There is **no Go client method** in `directory/client` | §6.5, row P5 |
+| Per-DC read | **Built (T-0970, row P5).** `client.ConnectorPerDC` (`directory/client/perdc.go`) implements `report.PerDCReader` over the connector's `ReadPerDC` (`GRPCPerDCTransport`): one call per object, at most `PerDCConfig.InFlight` (default 8, max 64) in flight **per tenant** across every `Read`, `FanOut` (default 4) as `max_concurrency`, `Reads()` counter. Attributes and scope are the closed enums (an undefined value is refused before any RPC). The batch summary is the weakest object's (largest `DCsInScope`, smallest `DCsAnswered`, COMPLETE only if all were). Coverage is derived from the answers accepted: a DC whose values are missing, mistyped or out of range becomes an errored result (`incomplete_values`, `invalid_value`), and a stream that deviates from results-then-one-summary is `ErrReadProtocol`. Per-DC `Err` is the lower-case connector code, never its message. A stream-level `OBJECT_NOT_FOUND` is an object with no answers and PARTIAL. **The connector has no `ReadPerDC` handler yet** (`internal/connector/read` serves `Read` and `ScopedSearch` only), so the client is proved over a real gRPC hop against a scripted server, not Samba | §6.5, row P5 |
 | `platform/store` | Entry points `WithTenant`, `WithTenantSeparate` and `WithPlatform`. `store.Tx` exposes `Exec`, `Query` and `QueryRow` | §6.3 uses them as they are |
 
 The ticket numbers in the spec's traceability table (T-0075, T-0089, T-0094, T-0099…T-0104,
@@ -76,7 +77,8 @@ T-0874 carries the spec and blueprint edits.
 | --- | --- | --- | --- |
 | `internal/platform/report` | reporting-engineer | EP-8 host: `Dataset`, `Column`, `Definition`, `Query` (the AST), `Cell`, `Narrowing`, `Freshness`, `PerDCReader` port, `Host`. Pure types and validation, with **no SQL driver** (FF-SP1) | `authz` (types), `tenant`, stdlib |
 | `internal/platform/store/reportsql` | reporting-engineer. security-architect reviews every change (P5 rule 3) | `Registry` (pre-quoted, built once), `Compile`, `CompileCount`, `Exec`, `Count`, `CatalogSchema`, `Query`, `CompiledSQL`, term rendering | `report`, `authz`, `store`, pgx (it sits under `store`) |
-| `internal/directory/inventory` | directory-engineer | descendant ancestry rewrite on move and `ancestry_complete` (row P2); the datasets `inventory.users`, `.computers`, `.groups`, `.group_members`, `.ous` and `.contacts` through `inventory.Datasets() []report.Dataset`; the D4 policy-input tables; the D6 watermarks through `Reader.Freshness` (built, row P1) | `report` (types only) |
+| `internal/platform/searchkey` | directory-engineer | the search-key normaliser and query classifier (leaf, no I/O); fuzzed and vector-tested | stdlib, `x/text` |
+| `internal/directory/inventory` | directory-engineer | the search keys, their backfill and the `Searcher` port (§4.7a); descendant ancestry rewrite on move and `ancestry_complete` (row P2); the datasets `inventory.users`, `.computers`, `.groups`, `.group_members`, `.ous` and `.contacts` through `inventory.Datasets() []report.Dataset`; the D4 policy-input tables; the D6 watermarks through `Reader.Freshness` (built, row P1) | `report` (types only) |
 | `internal/platform/authz` + `internal/platform/rbac` + `modules/delegation` | backend-engineer | `authz.ReadScope` (**T-0880**), the `ou_one_level` root kind (**T-0881**) and the producer `rbac.ReadScopes` (**T-0882**), fed by the EP-6 `ScopeEvaluator`s that `delegation` registers (T-0880) | as today |
 | `internal/modules/reports` (+ `run`, `library`, `export`, `schedule` subpackages) | reporting-engineer | DM-71 to DM-73 tables, the library, the run path, export jobs, schedules, API handlers | `platform/...`, `directory` via `directory.Services` (ADR-0003) |
 
@@ -104,7 +106,7 @@ type Dataset struct {
     Rels      []Rel          // every other relation a fragment may read, each through {rel.<id>} (§3.3)
     Columns   []Column
     Freshness FreshnessSource
-    Tables    []string       // every table any anchor or rel names; Boot checks owners.gen.go (ADR-0003 rule 6)
+    Tables    []string       // every table any anchor or rel names; Boot checks owners.gen.tsv (ADR-0003 rule 6)
 }
 
 type Relation struct {
@@ -181,7 +183,7 @@ itself. A column ID from a request or a definition is a **map key into the regis
 in SQL (SQL-04, SQL-05: an unknown, quoted, case-varied or padded key is `ErrUnknownColumn`).
 
 **Registry build refuses** (start-up fails, `compose/server` boot test):
-- a fragment that contains the name of any table in `owners.gen.go` (tables enter only through
+- a fragment that contains the name of any table in `owners.gen.tsv` (tables enter only through
   `{rel.<id>}`, §3.3), or a `{rel.<id>}` the dataset does not declare;
 - an anchor or rel whose `Project` names a column the table does not have (checked against the
   migration schema snapshot), or a `Rel` that projects a text column;
@@ -303,8 +305,24 @@ parent RDNs are not an exception to the masking rules; they are part of the obje
 - **Reason (AD semantics).** A DN is the object's name and its path from the naming context head.
   AD returns the same string, parent RDNs included, to any principal who can read the object, so
   the `dn` cell tells a reader with the grant nothing the directory would not.
-- **Where it applies.** Only a column that renders the row's own `dn` (today `dn` on
-  `inventory.users` and `inventory.computers`), and only for the row's own object.
+- **Where it applies.** Only a column that renders the row's own `dn`, and only for the row's own
+  object: `dn` on `inventory.users`, `.computers`, `.groups`, `.ous` and `.contacts`; `group_dn` and
+  `member_dn` on `inventory.group_members` (each the own DN of an in-scope object the row is about);
+  and `managed_by` on `inventory.groups`, but only once the manager resolves to a live, in-scope
+  object **of the same connection** (a DN is unique within a forest, not across connections; the
+  match is on connection and DN, and a later GUID link, T-1071, replaces the DN string).
+- **Named exception: `in_other_groups`.** On `inventory.users` and `.computers` this boolean is
+  true when the object has a `member` link to any group, in scope or not. It is one bit about the
+  in-scope object's own `memberOf`, which AD returns to anyone who can read the object; counting only
+  in-scope groups would mislead a help-desk runner on "users in no other group" clean-ups. It must
+  never widen into a group name or a count. RP11 (`rpUsers`) pins the value: true when the only other
+  group is out of scope.
+- **Named exceptions: `nesting_cut` and `membership_listing`.** On `inventory.groups`, `nesting_cut` is true when the walk
+  stopped at the depth cap below the group, and `membership_listing` is `unknown_input_missing` when the group is over the closure
+  row budget (below). Each is one bit about the in-scope group's own listing ("the members shown for this group are incomplete"):
+  it names no object and carries no count, and it cannot be scoped without turning a true "incomplete" into a misleading "complete".
+  The group's member counts and `has_members` read Unknown (`UnknownWhen`) in that case, never a number. RP11 pins both
+  (`rpGroups`, `rpOverBudget`). They must never widen into a name, a GUID or a size.
 - **Where it does not.** No other column may carry an out-of-scope ancestor's name or GUID:
   not a second copy of the DN, not a parent-DN or OU-path column (T-1041 must mask it or scope
   it to the in-scope part), not another row's DN, and not a name or GUID of an out-of-scope
@@ -411,7 +429,7 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   DONT_EXPIRE plus tenant pattern list leg needs a text bind route. (6) `Datasets()` is not wired to
   `compose/server`: the table-owner map is empty (T-0997), so boot would refuse it.
 - **Cost.** The CTE runs per row and per derived column that needs it, only in the branches that reach it.
-  It is O(users x group depth) and unmeasured at 200,000 users; a materialised closure (B6) replaces it.
+  It is O(users x group depth) and unmeasured at 200,000 users. Row B6 built the materialised closure for the group datasets, but this CTE in the users policy resolution was **not** moved onto it (it still walks `links`); that is a follow-up.
 - **Secret keys.** `inventory.SecretKey` is the writer's refusal predicate, passed as
   `reportsql.Options.SecretKey`; a column reading any `secretattr.Static()` name is refused at
   registration (`Test_secret_attribute_keys_are_refused`).
@@ -422,6 +440,103 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   `datasets_ac_test.go`. `reportsql.Query.Statement()` exposes the compiled text for the AC-49 assertion.
   Samba AD cannot prove PSO group-membership semantics, GUID byte order on a real DC or
   `msDS-UserPasswordExpiryTimeComputed` as an oracle: a Windows-lab ticket is filed.
+
+**As built (T-0961, row B6): `inventory.groups`, `.group_members`, `.ous`, `.contacts`** (`internal/directory/inventory/closure.go`,
+`datasets_groups.go`, migration 0068; tests `closure_test.go`, `datasets_groups_test.go`, `rp11_inventory_test.go`).
+
+- **Fragment allowlist (T-1033).** A report fragment may not call `unnest`, `string_agg`, `get_byte` or `generate_series`. `Via` is built
+  by a recursive CTE that walks `{t}.via[i]` and names each hop through the `via` `MaskAnchor`; `member_sid` reads the generated column
+  `directory_objects.sid_text` (`directory_sid_text(sid)`, migration 0068; stored, so adding it rewrites the table once).
+- **Closure table.** `inventory_group_members (tenant_id, connection_id, group_guid, member_guid, edge_kind, depth, via uuid[])`,
+  one row per (group, effective member). `edge_kind` is `direct`, `primary_group`, `nested`, `cycle` or `over_budget` (plus the flag `cut`); `via` holds the
+  groups between the group and the member (`cardinality(via) = depth - 1`), the shortest path with the lowest GUID as tie-break. A cycle is a
+  row with `group_guid = member_guid`, `edge_kind = 'cycle'` and `via` = the loop. `inventory_group_closure_dirty` holds the
+  groups whose own edges or state changed. It is derived data: the runtime role keeps DELETE (the links table does not).
+- **Refresh seam.** `Writer.RefreshClosure` runs at the end of `Populate`, in the same transaction and under the connection
+  advisory lock. It recomputes the dirty groups and every live group above them by a Go breadth-first walk, replaces their
+  rows with one `INSERT … SELECT`, and clears the set. The dirty marks are written by the statements that change an edge
+  (`setEdge`, `removeEdge`, `removeUnseen`, `removeOtherPrimaryGroups`) and by each group observation. Depth is capped at 128:
+  the walk stops there, the nested row of a group at the cap that still has members is flagged `cut`, and the refresh
+  succeeds. `inventory.group_members.finding` then reads "Nesting deeper than 128 levels: members of X and below are not
+  listed" and `inventory.groups.nesting_cut` is true. Failing the refresh instead (the first design) let anyone who can
+  create a 129-deep chain of groups roll back every sync cycle of the connection. The primary-group edge is a closure row of depth 1, so a group whose only members are
+  primary-group users is not empty. Entra groups produce no closure (the walk needs state `live` AD groups).
+- **Closure row budget (security review of T-0961).** Depth is not the only way to freeze a sync: breadth does it too. Whoever can
+  write the `member` attribute of K groups (a group delegate, a managedBy owner with "can update membership", anyone who can create a
+  group) adds one big group to each, and the closure grows to K x N rows; every later change to the big group rewrites all of them
+  inside the sync transaction (measured by the reviewer: 50 one-value writes, N = 6,000, 306,050 rows, 13-15 s per batch; with
+  BUILTIN\Users containing Domain Users it also happens without an attacker). The refresh therefore has a declared budget
+  (`closure.go`): **250,000 rows per group and 500,000 per connection** (a 200,000-user Domain Users, and BUILTIN\Users which contains it,
+  fit). Before writing anything, `splitByBudget` estimates each live group as an upper bound of its rows: its own member and
+  primary-group links plus the bound of each group it holds, computed **once per group over the strongly connected components** of
+  the nesting graph (iterative Tarjan; a cycle is one component, counted once; saturating arithmetic). **The decision's work is
+  O(groups + nesting edges)**: no group's reach set is built to estimate (third security review: building each reach set cost
+  K x W, 18.6 s and 9.3 GB per refresh from about 16,000 attacker writes), and only a group that is admitted and rewritten is
+  walked, bounded by its estimate. A nested group reachable by several paths (a diamond) is counted once per path, so the bound can
+  exceed the exact row count: that can only turn a group Unknown, never give it a wrong count. **Which groups are expanded is a function of the
+  current links alone** (second security review: an outcome that depended on what earlier refreshes held let someone fill the budget
+  first and then blank Domain Admins' membership at the moment they joined it). Every refresh decides over *all* live groups of the
+  connection: well-known privileged groups first (domain RIDs 512 Domain Admins, 516 Domain Controllers, 518 Schema Admins, 519 Enterprise Admins, 521 Read-only Domain
+  Controllers, 526 Key Admins, 527 Enterprise Key Admins (the last two write msDS-KeyCredentialLink); BUILTIN 544, 548-551; an
+  attacker cannot create a group with such a SID. RIDs 520 Group Policy Creator Owners and BUILTIN 552 Replicator stay out on purpose), then smallest estimate, then lowest GUID, so a container never displaces the group it contains and arrival
+  order never matters. A group whose estimate exceeds the per-group limit, or what is left of the connection budget at its turn, gets
+  one `over_budget` marker row (`group_guid = member_guid`) and no member rows. A group already expanded is **evicted** to a marker
+  when the decision no longer admits it (a smaller or privileged group pre-empts it); a group that was left out is expanded when it
+  now fits; groups the decision leaves as they were keep their rows. Its counts, `has_members` and `nesting_cut` read Unknown,
+  `membership_listing` is `unknown_input_missing`, and `inventory.group_members` shows one row "Membership too large to list: the
+  members of X are not expanded" (it names only the group itself). The refresh succeeds. **Bounds:** a refresh deletes and inserts at most 500,000 rows plus one marker per
+  group, whatever fan-out the directory has (the stored rows always total at most the connection budget). **Measured** (PG16 and PG18, in-process, one-member change to the big group): at a
+  scaled-down budget (600-member group, 10 containers, 2,500 rows) 1.0-1.3 s per batch; **at the declared budget** (30,000-user
+  group, 15 admitted containers, 480,025 rows, 10 groups left unexpanded) a user added through the primary group, which makes the
+  refresh rewrite every row: **14-16 s per batch** (PG16 and PG18), with every statement far under the store's 30 s timeout because
+  an INSERT carries at most about 25,000 estimated rows (`closureChunkRows`; the first version put whole roots in one statement and
+  timed out on PG16 at this size). Re-reading a 30,000-member group's links in the same batch adds 20-25 s. Building the 25
+  containers took 12-38 s once. **Residual risk:** (1) the decision reads every live group, its
+  nesting edges and its own link count on every refresh with a dirty group: that work is linear in the groups and nesting links, not
+  in the budget (measured: a hub of 4,000 groups held by 4,000 groups, 8,001 groups and 12,000 edges, decides in about 10 ms and
+  2 MB; the same graph was 18.6 s and 9.3 GB with per-group reach sets), filed with the threat model row (T-1142); (1b) diamonds over-count
+  as above, so a legitimately diamond-shaped big group can read Unknown while its exact count would have fitted; (2) an attacker can still
+  push an ordinary *legitimate* big group out of the budget by creating enough smaller groups to fill it (500,000 rows of them);
+  privileged groups cannot be pushed out, and a group out of the budget shows Unknown, never a wrong number; (3) over-budget groups
+  show Unknown until the budget has room, and there is no setting to raise it per tenant yet. `nesting_cut` and `membership_listing`
+  are named one-bit exceptions (see above). Tests: `Test_group_closure_fanout_is_bounded`, `Test_group_closure_no_displacement` (the displacement probe as a regression, with the
+  stored decision compared to a from-scratch one after every refresh), `Test_splitByBudget`, `Test_splitByBudget_privileged_and_small_first`, `Test_splitByBudget_work_is_linear_in_the_graph` (4,000 + 4,000 hub fan under 1 s and 64 MB), `Test_estimates_are_an_upper_bound_of_the_reach_set`, `Test_splitByBudget_diamond_turns_a_group_unknown`, `Test_group_closure_hub_fan_is_bounded` (database level, from-scratch invariant, Domain Admins listed), `Test_live_groups_privileged_classification`, `Test_closure_budget_is_the_declared_one`,
+  RP11 `rpOverBudget`.
+- **Datasets.** `inventory.groups` counts `direct_members` (depth 1: member values and primary group), `effective_members`
+  (every non-cycle closure row), `primary_group_members`; `has_members` is the Groups Without Members test; `managed_by` shows the
+  manager DN only when it resolves to a live, in-scope object of the same connection (`FilterAnchor mgr`, matched on connection and DN), else "(manager outside your scope)".
+  `inventory.group_members` is keyed `group|member` with the `grp` and `mbr` row anchors, the `via` hop as `MaskAnchor`
+  ("(group outside your scope)"), `finding` ("Circular nesting: A → B → A") for cycle rows, and "External principal (unresolved)"
+  for an FSP member. `inventory.ous` counts the subtree per kind over the `sub` `FilterAnchor` (in-scope objects only).
+  `inventory.contacts` is a plain dataset. `inventory.users` and `.computers` gained `primary_group` and `in_other_groups`.
+  **Added for library batch 2 (T-0962, B7).** `inventory.principals` is users and computers in one dataset (GRP-04 is one report with a Users and a
+  Computers preset, and a preset cannot switch dataset); it carries the primary group and the in-another-group test. New columns: `name` (the RDN value) on
+  users, computers, groups, OUs and contacts; users `pwd_set_recorded` and `days_since_password_set`; computers `computer_type` (gMSA by class, RODC by
+  0x4000000, DC by 0x2000, then an OS name containing "server"; no OS and no flag is Unknown, never "workstation"), `delegation`, `days_since_activity`;
+  OUs `subtree_other`; `group_members` `member_domain`, `group_type`, `group_scope`.
+  Every count joins a `FilterAnchor`, so it counts in-scope objects only (RP11).
+- **DN disclosure rule applied to `group_members`.** A row is about two in-scope objects (both anchors are row anchors), so
+  `group_dn` and `member_dn` each render one own-object DN. The RP11 world allows exactly that (`leaksWhere`) and proves a
+  swapped or foreign DN is caught.
+- **Deviations to know.** (1) `includes_members_outside_inventory` is true when a member edge's target has no
+  `directory_objects` row at all; a member in a covered domain that is out of the runner's scope is counted nowhere and not
+  flagged. (2) FSP resolution to a connection in the inventory (DM-17.I4) is not done: the FSP row shows the unresolved label.
+  (3) `groupType` and `managedBy` come from `attributes`; a sync that does not write them leaves `group_type` Unknown and
+  `has_manager` false. (4) The B3 policy-resolution CTE still walks `links` (see its cost note). (5) `Datasets()` is still not
+  wired to `compose/server` (T-0997).
+- **Cost, measured** (7,501 objects; groups of 1,501 and 6,000 direct members; PostgreSQL 16 and 18, in-process): populate of both
+  groups including edges and closure refresh 6-7 s; `inventory.groups` with `direct_members` and `effective_members` 60-95 ms;
+  first page of `group_members` for the 6,000-member group 55-70 ms. **These need table statistics.** Measured on tables
+  that had never been analysed (a fresh bulk load, before autovacuum) the same populate took 40-45 s and the two counts
+  8-14 s: the planner assumed empty tables and chose a nested loop that probed every object per closure row. The scale test
+  runs `ANALYZE` as the table owner to stand in for autovacuum; the runtime role cannot. After a first sync of a large
+  domain, reads are slow until autovacuum has analysed `inventory_group_members` and `directory_objects`. A 200,000-object
+  initial sync is not measured.
+- **Tests.** `Test_group_closure*` (closure rows, self loop, depth cap), `Test_group_members_nested_cycle_fsp` (AC-20 against a
+  Go-model oracle), `Test_primary_group_user_and_group_without_member_values` (AC-19), `Test_group_member_counts_at_scale` (AC-21),
+  `Test_ou_subtree_counts_in_scope_only` (AC-5), RP11 subtests for all six inventory datasets. All run on PostgreSQL only.
+  The `tokenGroups` oracle, real LDAP ground truth and Windows behaviour (FSP, primary group via `tokenGroups`) need the lab:
+  a lab ticket is filed.
 
 ### 3.4 Definitions, presets and the AST a run executes
 
@@ -450,7 +565,7 @@ type Preset struct {
     Columns []ColumnID              // nil = the definition's
     Sort    []SortKey
     Top     int                     // 0 = no top-N; GRP-01 "Top N Big Groups" = 25
-    Requires *Subjects              // GRP-02, GRP-03: one or more group / user GUIDs required
+    Requires *Subjects              // GRP-02, GRP-03: 1..100 group / user GUIDs required; Column names the GUID column they bind to, Kind ("group"|"user") what the console asks for
 }
 
 type HiddenGroup struct{ ID string; Label string; Where Expr; Locked bool } // Locked: counted, and ShowHidden may not include it (T-0960)
@@ -557,8 +672,7 @@ replicated-logon thresholds (spec §6.4) is `Min: 30` on USR-03's `days` paramet
     `definitionId`). `columns` are every column of the dataset a run may use (a per-DC column only on a per-DC report), the
     definition's default columns first with `defaultVisible`; presets render `Where` as the condition/group tree with a
     parameter shown as its default, and `periodDays` is the default of the first days parameter the filter reads.
-    `exportFormats` is `[]` until B9 lands; `subjectKind` is `none`, or `object` when a preset requires subjects (the GRP
-    reports refine it in B7); `freshnessKind` is `nc_watermark`, `policy_read` or `per_dc` from the dataset.
+    `exportFormats` is `[]` until B9 lands; `subjectKind` is `none`, `group` or `user` when a preset requires subjects and names their kind (GRP-02, GRP-03), or `object` when it names none; `freshnessKind` is `nc_watermark`, `policy_read` or `per_dc` from the dataset.
   - Test: `definitions_pg_test.go` (whole HTTP stack, response conformance on, both PostgreSQL versions).
 - **Wired in production (T-1104):** `compose/server.bootReport` adds `inventory.Datasets()` to the host under owner key
   `inventory` (checked by `report.CheckTables` against `store/owners`); `buildReports` compiles the host's datasets with
@@ -796,6 +910,35 @@ in memory** rather than filter through inventory.
   applied after the query, not pushed into the roots, so a narrow token on a broad grant reads more
   candidates than it returns.
 
+### 4.7a As built (T-1095): the search index, the statement and the port
+
+- **Keys.** `platform/searchkey` (leaf: `NormName`, `NormIdent`, `Classify`, `PrefixUpper`, `Version`) turns a
+  name or identifier into the normalised key and a query into probes. `inventory.Populate` writes the keys
+  of every written object with it (`searchkeys.go`: one statement per batch, delete-unwanted plus upsert),
+  inside the sync transaction and before `RefreshClosure`, so a rollback takes them with it. The allow-list
+  of sources is `searchKeys` (display name and its words, RDN, sAMAccountName, UPN, DN, SID, objectGUID,
+  consistency GUID; `mail` for contacts and `dNSHostName` for computers, only when they are JSON strings):
+  keys are built from named columns, never from the attribute bag, so a secret attribute cannot reach the
+  index. Purged objects have no keys; deleted and out-of-scope objects keep theirs and rank after live ones.
+  Table `inventory_search_keys` (migration 0069): B-tree `(tenant_id, key_kind, key)`, partial GIN on kinds
+  1-5, RLS + FORCE.
+- **Backfill.** `Reader.Backfill(ctx, tenant, progress)` walks `directory_objects` in `(connection, object)`
+  pages of 500 and never reads the key table; it rewrites rows of an older `norm_version`, and a second run
+  changes nothing. Entra objects are indexed but admitted by no 2a scope kind (T-1131), so they are
+  unfindable. The `dn` keys of descendants of a moved OU stay stale until T-0988 (it rewrites ancestry
+  only). The `Domain` part of `DOMAIN\sam` and `sam@dns` is dropped from queries: the connection record
+  holds no NetBIOS or DNS name.
+- **Statement.** `reportsql.CompileSearch(src, SearchQuery, SearchScopes)` and `ExecSearch`: `m_exact`,
+  `m_prefix`, `m_fuzzy` (MATERIALIZED, `LIMIT W+1`), `ceil`, `cand`, `hits` (scope by `scopeSQL` per
+  permission, `DISTINCT ON` object), `visible`, `paged`. Key kinds are integer literals so the partial
+  index predicate is provable. `inventory.Searcher.Search(ctx, tx, tenant, scopes, SearchRequest)` is the
+  port; counts only from three characters and never in the refine state. The fuzzy threshold is
+  transaction-local, 0.3 (0.5 cannot find the 'Pryia Ramn' vector, whose word similarity is 0.333).
+- **Known limit.** Under FORCE RLS the planner cannot use the trigram GIN (pg_trgm's operators are not
+  leakproof): the fuzzy probe filters the tenant's kind 1-5 rows. `Test_search_plan_uses_the_indexes` pins
+  it; T-1180 decides the fix. The per-script vectors (Latin with diacritics, Cyrillic, Greek, CJK) all
+  match fuzzily on the bundled pg16 and pg18 images.
+
 ## 5. The compiler: `store/reportsql`
 
 ```go
@@ -869,7 +1012,9 @@ func Count(ctx context.Context, tx store.Tx, q Query) (int64, error)
   Every term is wrapped `COALESCE(term, false)` (include) or `COALESCE(term, true)` (exclude), and the
   anchor's `ancestry_complete` is ANDed in front of the grants, so a NULL anywhere is "out".
 - **`Subjects`** apply to the object column of anchor `t`; a dataset whose base anchor has no such
-  column answers `ErrNoSubjects` (edge datasets are undecided: B6 may add a `Dataset` field).
+  column answers `ErrNoSubjects`. An edge dataset names the column instead (`Subjects.Column`, with `Kind`): `Resolve` then turns the
+  GUIDs into an `in` term on that column (GRP-02 `group_guid`, GRP-03 `member_guid`). The row anchors still apply scope, so a subject
+  outside the reader's scope returns no row.
 - **Filters.** Absent is SQL `NULL`; `ne` matches absent rows (two-valued comparison). `contains` and
   `prefix` are `ILIKE` with the pattern escaped by `store.LikePattern`. A `JSONAttr` read as time is
   refused at registry build (JSON has no time type).
@@ -1247,8 +1392,8 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - Every download appends `reports.export.downloaded`; every refusal appends
   `reports.export.download_denied {export_id, check}`.
 
-- **Encoders.** Bytes come only from the P7 encoders (FR-19, FF-SP10). PDF and HTML are row B10,
-  and the UI offers only formats that exist (FR-16).
+- **Encoders.** Bytes come only from the P7 encoders (FR-19, FF-SP10). PDF and HTML are row B10 (built,
+  §7.1b), and the UI offers only formats that exist (FR-16).
 
 ### 7.1a As built (T-0963, row B9)
 
@@ -1295,6 +1440,41 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - **Evidence.** `Test_export_digest_equals_run_digest` (RP5), the cap, hostile-cell, audit and
   retention tests in `export/export_pg_test.go`, the API tests in `reports/exports_api_pg_test.go`
   and the 300k-row memory test `run/stored_test.go` (`TestStoredExportStreamsInBoundedMemory`).
+
+### 7.1b As built (T-0964, row B10)
+
+- **Formats.** `export.Formats()` = csv, xlsx, pdf, html. `Format.HTTPX()` gives the download description and
+  `Format.DownloadOptions()` the extra header input of an HTML file (`httpx.WithStyleSHA256(htmlx.StyleSHA256())`,
+  carried by `apihost.Stream.FileOptions`), so the one place that builds `Content-Disposition` and the CSP stays
+  `httpx.Headers`.
+- **Encoders.** PDF: `platform/export/pdf`, a hand-built streaming writer (no library, so no link, action,
+  annotation, attachment or form API exists to call). A4 landscape, the header row repeated on every page, standard
+  non-embedded Helvetica, every string a hex string; a character with no glyph in WinAnsi is drawn with a visible
+  fallback glyph and a `/ToUnicode` map keeps the real code point, so extracted text equals the input. Controls, bidi
+  and format characters are drawn as `⟨U+XXXX⟩`; a cell is capped at 200 lines plus a `… [truncated: N chars]`
+  marker; at most 24 columns. HTML: `platform/htmlx`, a streaming `export.Encoder` over embedded `html/template`
+  files (CSP meta first, one hashed `<style>`, no script or URL, every value in `<bdi>`, text cells typed as text
+  for Excel). Both print the same About block as the XLSX About sheet (`pexport.AboutLine`, now shared).
+  Limitation: no CJK glyphs are drawn in the PDF (the text is still in the file and extractable); an embedded
+  font is a follow-up.
+- **Caps.** Per-format hard caps in `export.HardCap`: CSV and XLSX 1,000,000, **PDF 5,000, HTML 20,000**;
+  `Service.Caps` may only lower them. A larger result is refused before any record, job or file exists, with the
+  count, the cap and every format that would take it ("This export has 5001 rows. PDF allows 5000. Narrow the
+  filters or use CSV, XLSX or HTML."). The PDF encoder has its own backstop (`pdf.MaxRows` 100,000).
+- **Wide reports.** A PDF page lays out 24 columns. `export.FormatsFor(columns)` drops PDF for a wider table: the
+  definition view lists the formats per definition, and `Create` answers `format_unavailable` for a PDF of a run
+  with more columns.
+- **API.** `ReportDefinition.exportFormats` is the formats of `FormatsFor` when the host has an export service
+  (a blob store is configured) and empty otherwise; it was empty before B10.
+- **Digest.** Unchanged and format-independent: the job's `StoredSource` digests the rows it serves and compares
+  them with the run's before the file is kept (RP5); the test loop runs all four formats.
+- **Time zone.** Both encoders take a `Location`; the service passes none (UTC with the abbreviation) because a run
+  records no viewer zone. Spec §8.3 wants the owner's; follow-up ticket.
+- **Evidence.** `export/pdf` `TestCorpus` (PDF-01..14) with the independent oracle `export/pdf/pdftest`,
+  `htmlx` `TestCorpus` (HT-xx, which also runs `httpx.Attachment` records), both fuzz targets;
+  `export_pg_test.go` `Test_export_digest_equals_run_digest`, `TestHostileValuesAreInertInPDFAndHTML`,
+  `TestPageFormatCapsRefuse`; `reports/exports_api_pg_test.go` `TestExportPDFAndHTMLAPI`;
+  `definitions_pg_test.go` `TestDefinitionOffersExportFormats`.
 
 ### 7.2 Delivery-link downloads: authorised by the DM-84 Delivery row
 
@@ -1473,11 +1653,11 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | **B3** (built, T-0958; §3.3 "As built") | inventory: `inventory.users` and `inventory.computers` datasets, D4 policy-input tables and sync, D7 inputs, GIN index on `ancestry`, derived-state fragments, PSO `MaskAnchor` for `policy_source`, service-account signal, secret-key refusal, **RP8**, **RP11** for its datasets | directory-engineer (ad-expert consult) | B1, B2, P2 | FR-09, FR-14, FR-21; AC-12, AC-13, AC-14, AC-15, AC-29, AC-49 |
 | **B4** | `modules/reports` run path: module skeleton and page, `report_runs`/`report_run_rows` migrations and both triggers, `run.State`/`run.FailureReason`, `reports.run` job with row lock, `attempt` and interrupted rule, reuse window, concurrency cap, `run.ReadAccess` (§6.6), page queries, freshness label, permissions, run audit kinds with the full chain, retention job, run API handlers, **RP4**, **RP9** | reporting-engineer (backend-engineer reviews) | B1, B2, T-0882, P1, P2, T-0866 | FR-06, FR-07, FR-08, FR-11, FR-12, FR-13 (server-side sort and filter), FR-22 (run), FR-30, FR-31; AC-06–AC-11, AC-42, AC-48 |
 | **B5** (built, T-0960; §3.6 "As built") | Library batch 1: loader, `LOCK`, crosswalk search index, USR-01, USR-02, USR-03, USR-05 with presets and hidden groups, sync-interval-0 narrowing | reporting-engineer | B3, B4 | FR-01, FR-02, FR-03, FR-04, FR-06, FR-09, FR-14; AC-01–AC-04, AC-12, AC-16, AC-17, AC-18, AC-49 |
-| **B6** | inventory: `inventory.groups`, `.group_members` (`grp` and `mbr` row anchors, primary-group edges, effective closure, cycle findings, FSP rows, `Via` hop as `MaskAnchor`), `.ous` (in-scope subtree counts over a `FilterAnchor`), `.contacts`, **RP11** for its datasets | directory-engineer | B1, B2, P2 | FR-15, FR-06; AC-19, AC-20, AC-21 |
-| **B7** | Library batch 2: PWD-01, PWD-02, GRP-01–GRP-04, CMP-01, CMP-02, OU-01, CTC-01 | reporting-engineer | B5, B6 | FR-01, FR-02, FR-09, FR-14, FR-15; AC-13, AC-19, AC-20, AC-22, AC-23 |
+| **B6** (built, T-0961; §3.3 "As built (T-0961)") | inventory: `inventory.groups`, `.group_members` (`grp` and `mbr` row anchors, primary-group edges, effective closure, cycle findings, FSP rows, `Via` hop as `MaskAnchor`), `.ous` (in-scope subtree counts over a `FilterAnchor`), `.contacts`, **RP11** for its datasets | directory-engineer | B1, B2, P2 | FR-15, FR-06; AC-19, AC-20, AC-21 |
+| **B7** (built, T-0962) | Library batch 2: PWD-01, PWD-02, GRP-01–GRP-04, CMP-01, CMP-02, OU-01, CTC-01 | reporting-engineer | B5, B6 | FR-01, FR-02, FR-09, FR-14, FR-15; AC-13, AC-19, AC-20, AC-22, AC-23 |
 | **B8** | Per-DC runs: the §6.5 stages, read cap, coverage labels, `EvalPerDC`; USR-04, PWD-03 | reporting-engineer | B4, B5, P5 | FR-10; AC-39, AC-40, AC-41 |
 | **B9** | Export: `export.Digest` (canonical form and vectors, `u` tag included), `export.Unknown()`, `run.StoredSource`, About block, CSV and XLSX export jobs, `report_exports`, creator download through `run.ReadAccess` (§7.1), 410, delete, caps, export audit kinds, **RP5** | reporting-engineer | B4 | FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22 (export), FR-31; AC-24–AC-28, AC-50 |
-| **B10** | PDF and HTML encoders and export formats (before M2 exit) | reporting-engineer | B9 | FR-16, FR-19 |
+| **B10** | PDF and HTML encoders and export formats (before M2 exit). **Built (T-0964), §7.1b** | reporting-engineer | B9 | FR-16, FR-19 |
 | **B11** | Schedules: DM-73 tables, `reports.schedule.*` Actions, fire job, owner-authority checks, delivery links authorised by the Delivery row (§7.2), ZIP, notify-only-if-data, `manage_all` metadata view, delivery audit kinds, **RP10** | reporting-engineer (backend-engineer reviews) | B4, B9, P3, P4 | FR-22 (delivery), FR-23–FR-29, FR-31; AC-30–AC-38, AC-45, AC-46, AC-47 |
 | **B12** | Screens: library and `/` search, run and results grid (sort, column filters, column chooser, row count, freshness, coverage, hidden-group banner), export dialog, schedule sheet; empty, error, stale and loading states | frontend-engineer | T-0866, T-0867, B4 (then B9, B11 per screen) | FR-01, FR-02, FR-04, FR-13, FR-32; AC-44 |
 | **B13** | Scale-tier calibration: row caps, sort p95 on 1M rows (ADR-0010 budget), per-DC read cap, report accuracy | test-engineer | B7, B8, B9 | FR-12, FR-18; AC-21, AC-22, AC-23, AC-39 |
@@ -1554,7 +1734,7 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   - `store/owners.Lookup` is an **empty** map: no generator exists yet, so any dataset fails Boot
     (fail closed, ADR-0003 rule 6). A `tools/gen/modules` ticket fills it; B3 needs it.
 - 2026-10-31 · T-0997 · the ownership map exists: `tools/gen/modules` writes
-  `internal/platform/store/owners/owners.gen.go` (69 tables: owner key from the migration's file name,
+  `internal/platform/store/owners/owners.gen.tsv` (69 tables: owner key from the migration's file name,
   write class from `-- write-class:`). `owners.Lookup` and `owners.ClassOf` now answer, so a dataset over
   a table its module owns passes Boot's `report.CheckTables` (`report_runs`, `report_run_rows` belong to
   `reports`) and one over a foreign or uncreated table still fails. B3 is unblocked. Note the owner key
@@ -1583,8 +1763,10 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   - Covered NCs for the freshness label = `ReadScope.Connections()` intersected with the narrowing.
   - Cancel is audited as `reports.run.failed` with Reason `cancelled`. Token principals (a Via chain) are
     refused at 2a (403). `too_many_report_jobs` is `errors[].code` on a 429.
-  - Production wiring is incomplete on purpose: compose passes `noScopes` (503 `not-ready`, no
-    `rbac.ReadScopes` adapters yet); the catalogue is the shipped library since T-1104 (an unknown id is 404
+  - Production wiring: compose passes the composed `*rbac.ReadScopes` (T-0916, the producer search shares)
+    to `buildReports`, which refuses to start without it; `noScopes` and its 503 `not-ready` fallback are gone
+    (T-1151). The handler still maps `run.ErrScopesUnavailable` to 503 for any other host that builds the
+    service without a producer. The catalogue is the shipped library since T-1104 (an unknown id is 404
     `definition_not_found`).
   - Page timings, 500k-row result, PostgreSQL 16, after `ANALYZE` (`TestLargeResultPageTimings`, opt-in
     via `ACTIVEDIQ_REPORTS_LARGE_ROWS`): ordinal first page 10 ms; ordinal offset 250k 254 ms; sorted
@@ -1593,11 +1775,16 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 - 2026-10-30 · T-0958 · row B3 built: `inventory.users` and `inventory.computers`, migration 0061 (D7 inputs, D4
   policy tables, GIN index on `ancestry`), `PolicyWriter`, derived states with the effective policy resolved in
   SQL, RP8 and RP11 landed in `tools/fitness/reports`, `reportsql.Query.Statement`. See §3.3 "As built".
+- 2026-11-01 · T-0961 · closure decision made linear (O(groups + nesting edges): memoised bound over SCCs, no per-group reach sets); privileged set adds RIDs 521, 526, 527 (third security review). See §3.3.
+- 2026-11-01 · T-0961 · closure expansion decided from the current links alone (privileged first, eviction), no history dependence (second security review). See §3.3.
+- 2026-10-31 · T-0961 · closure row budget (250,000 per group, 500,000 per connection), `over_budget` marker, `membership_listing`; `nesting_cut` named as a one-bit exception (security review). See §3.3.
+- 2026-10-31 · T-0961 · row B6 built: `inventory.groups`, `.group_members`, `.ous`, `.contacts`, migration 0068 (group closure and dirty set, refreshed by `Populate`), `primary_group` and `in_other_groups` on users and computers, RP11 for the four datasets. See §3.3 "As built (T-0961)".
 - 2026-10-31 · T-0960 · row B5 built: `internal/modules/reports/library` (loader, `LOCK`, crosswalk search, USR-01, USR-02,
   USR-03, USR-05), `HiddenGroup.Locked`, four derived columns on `inventory.users`. See §3.6 "As built".
 - 2026-10-31 · T-1105 · reports API: `listReportDefinitions` and `getReportDefinition` answer from the library (the 501 stubs are
   deleted from `pending.go`); `report.ParamValue` gained `Days()` and `Enum()`. See §3.6 "Served by the API".
 - 2026-10-31 · T-1074 · reports API: `ReportFreshness.stale[]`/`thresholdSeconds` and `ReportRun.hiddenGroups[]`. See §6.4.
+- 2026-10-31 · T-0966 · §0: the reports console screens (library, `/` search, run and results) are built; what they read; the stale cause, connection names and hidden counts come from T-1074's fields.
 - 2026-10-31 · T-0963 · row B9 built: `modules/reports/export`, migration 0067 (`report_exports`),
   `run.StoredSource` and `run.PageAfter`, `ACTIVEDIQ_BLOB_DIR`, RP5 landed. As built: §7.1a. Follow-ups:
   no scheduled `blob.Sweep` in the compose root (expired files stay on disk until swept; reads are
@@ -1605,3 +1792,6 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   limit refuses the export right after `Retry`. Security review F1 added the `reports.run` check inside
   `Create`; F2 its audited denial and 503 when unrecordable; F3 the adapter test and authority factor
   (see §7.1a).
+- 2026-11-01 · T-0964 · row B10 built: `platform/export/pdf` (+ `pdftest`), `platform/htmlx`, PDF and HTML formats with
+  caps of 5,000 and 20,000 rows, per-format `HardCap`, `FormatsFor`, `exportFormats` served by the API. As built:
+  §7.1b. Follow-ups: the owner's time zone on a run; an embedded font for CJK in the PDF.

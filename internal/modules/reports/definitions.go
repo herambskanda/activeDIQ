@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/modules/reports/api"
+	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	"github.com/skenzeriq/activediq/internal/modules/reports/library"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
@@ -222,7 +223,7 @@ func (h *Handlers) GetReportDefinition(_ context.Context, in api.GetReportDefini
 	if !ok {
 		return nil, coded(apitypes.NotFound("no such report"), apitypes.InPath, "definitionId", "definition_not_found", "")
 	}
-	body, err := definitionView(d)
+	body, err := definitionView(d, h.Exports != nil)
 	if err != nil {
 		h.log().Error("reports: a shipped definition could not be rendered", "definition", d.Def.Key(), "err", err)
 		return nil, apitypes.Internal("")
@@ -272,7 +273,24 @@ var freshnessKinds = map[report.FreshnessSource]string{
 	report.FreshPerDC:       "per_dc",
 }
 
-func definitionView(rd run.Definition) (api.ReportDefinition, error) {
+// exportFormats are the formats this installation can produce for d: none without an export service, and
+// no PDF when the report (any of its presets) has more columns than a PDF page lays out.
+func exportFormats(d report.Definition, exports bool) []api.ReportExportFormatValue {
+	out := []api.ReportExportFormatValue{}
+	if !exports {
+		return out
+	}
+	widest := len(d.Columns)
+	for _, p := range d.Presets {
+		widest = max(widest, len(p.Columns))
+	}
+	for _, f := range export.FormatsFor(widest) {
+		out = append(out, api.ReportExportFormatValue(f))
+	}
+	return out
+}
+
+func definitionView(rd run.Definition, exports bool) (api.ReportDefinition, error) {
 	d := rd.Def
 	s, err := summaryOf(rd, nil)
 	if err != nil {
@@ -281,15 +299,18 @@ func definitionView(rd run.Definition) (api.ReportDefinition, error) {
 	out := api.ReportDefinition{ID: s.ID, Version: s.Version, Name: s.Name, Description: s.Description, Category: s.Category,
 		Dataset: s.Dataset, AlsoKnownAs: s.AlsoKnownAs, FreshnessKind: s.FreshnessKind,
 		Presets: []api.ReportPreset{}, Columns: columnsOf(d, rd.Dataset),
-		// Exports (row B9) are not built, so the installation can produce no format yet.
-		ExportFormats: []api.ReportExportFormatValue{}, SubjectKind: "none", PerDc: d.PerDC != nil,
+		ExportFormats: exportFormats(d, exports), SubjectKind: "none", PerDc: d.PerDC != nil,
 		MinScheduleIntervalHours: minIntervalOther}
 	if d.PerDC != nil {
 		out.MinScheduleIntervalHours = minIntervalPerDC
 	}
 	for _, p := range d.Presets {
 		if p.Requires != nil {
-			out.SubjectKind = "object" // the objects are named by GUID; which kind is the dataset's
+			// the objects are named by GUID; a preset that names their kind (group, user) says so
+			out.SubjectKind = "object"
+			if p.Requires.Kind != "" {
+				out.SubjectKind = p.Requires.Kind
+			}
 		}
 		pv, err := presetView(d, p)
 		if err != nil {

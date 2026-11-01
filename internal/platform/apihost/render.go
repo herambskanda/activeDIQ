@@ -126,7 +126,7 @@ func writeResponse(w http.ResponseWriter, r *http.Request, meta RouteMeta, resp 
 			defer c.Close() // a file or blob handle is released whether or not the body is sent
 		}
 		if b.FileFormat != 0 {
-			if err := httpx.Headers(h, b.FileBase, b.FileFormat); err != nil {
+			if err := httpx.Headers(h, b.FileBase, b.FileFormat, b.FileOptions...); err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}

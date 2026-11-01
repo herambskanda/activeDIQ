@@ -50,8 +50,8 @@ func TestExportAPI(t *testing.T) {
 		if w := e.raw(alice, "POST", "/api/v1/reports/runs/"+runID+"/exports"); w.Code != 415 && w.Code != 400 {
 			t.Errorf("create without a body: %d", w.Code)
 		}
-		if code, m := e.do(alice, "POST", "/api/v1/reports/runs/"+runID+"/exports", `{"format":"pdf"}`); code != 400 || errCode(m) != "format_unavailable" {
-			t.Errorf("pdf: %d %v", code, m)
+		if code, _ := e.do(alice, "POST", "/api/v1/reports/runs/"+runID+"/exports", `{"format":"docx"}`); code != 400 {
+			t.Errorf("an unknown format: %d", code)
 		}
 		if w := e.raw(alice, "GET", "/api/v1/reports/exports/"+id+"/file"); w.Code != 409 {
 			t.Errorf("download before the job ran: %d", w.Code)
@@ -103,6 +103,47 @@ func TestExportAPI(t *testing.T) {
 		b, _ := jsonv2.Marshal(p)
 		if code != 422 || !strings.Contains(string(b), "report-row-cap-exceeded") || !strings.Contains(string(b), "This export has 3 rows. CSV allows 2.") || !strings.Contains(string(b), "XLSX") {
 			t.Errorf("cap refusal: %d %s", code, b)
+		}
+	})
+}
+
+// AC-4 (the other half of TestDefinitionOffersExportFormats): a PDF and an HTML export can be requested, run and
+// downloaded with the headers of their kind (an HTML file under a sandboxing Content-Security-Policy that pins its one style
+// block), and both carry the digest of the run.
+func TestExportPDFAndHTMLAPI(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := apiSetup(t, s)
+		_, rn := e.do(alice, "POST", "/api/v1/reports/runs", `{"definitionId":"tst-01"}`)
+		runID := rn["id"].(string)
+		e.work()
+		_, done := e.do(alice, "GET", "/api/v1/reports/runs/"+runID, "")
+		for _, c := range []struct{ format, mime, ext, magic string }{
+			{"pdf", "application/pdf", ".pdf", "%PDF-"},
+			{"html", "text/html", ".html", "<!DOCTYPE html>"},
+		} {
+			code, x := e.do(alice, "POST", "/api/v1/reports/runs/"+runID+"/exports", `{"format":"`+c.format+`"}`)
+			if code != 202 || x["format"] != c.format {
+				t.Fatalf("%s create: %d %v", c.format, code, x)
+			}
+			e.work()
+			id := x["id"].(string)
+			_, g := e.do(alice, "GET", "/api/v1/reports/exports/"+id, "")
+			if g["state"] != "succeeded" || g["digest"] != done["digest"] || g["rowCount"] != float64(3) {
+				t.Fatalf("%s export: %v (run digest %v)", c.format, g, done["digest"])
+			}
+			w := e.raw(alice, "GET", "/api/v1/reports/exports/"+id+"/file")
+			cd := w.Header().Get("Content-Disposition")
+			if w.Code != 200 || !strings.HasPrefix(cd, "attachment;") || !strings.Contains(cd, c.ext) || w.Header().Get("X-Content-Type-Options") != "nosniff" ||
+				!strings.HasPrefix(w.Header().Get("Content-Type"), c.mime) || !strings.HasPrefix(strings.TrimSpace(w.Body.String()), c.magic) {
+				t.Fatalf("%s download: %d %v %.20q", c.format, w.Code, w.Header(), w.Body.String())
+			}
+			csp := w.Header().Get("Content-Security-Policy")
+			if c.format == "html" && (!strings.Contains(csp, "sandbox") || !strings.Contains(csp, "'sha256-")) {
+				t.Errorf("html Content-Security-Policy = %q", csp)
+			}
+			if c.format != "html" && csp != "" && strings.Contains(csp, "sha256") {
+				t.Errorf("%s carries a style hash: %q", c.format, csp)
+			}
 		}
 	})
 }

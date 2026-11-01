@@ -9,6 +9,8 @@ import (
 const (
 	DatasetUsers     report.DatasetID = "inventory.users"
 	DatasetComputers report.DatasetID = "inventory.computers"
+	// DatasetPrincipals is users and computers in one dataset, for GRP-04 (T-0962).
+	DatasetPrincipals report.DatasetID = "inventory.principals"
 )
 
 // SecretKey reports whether a JSON attribute key is a secret (D8, TM-TB15-T3): the one predicate the
@@ -18,7 +20,9 @@ func SecretKey(key string) bool { return secretKey(key) }
 
 // Datasets returns the datasets this package registers. compose/server hands them to report.NewHost
 // with the owner key "inventory" (boot refuses them until the table-owner map lists their tables).
-func Datasets() []report.Dataset { return []report.Dataset{usersDataset(), computersDataset()} }
+func Datasets() []report.Dataset {
+	return []report.Dataset{usersDataset(), computersDataset(), groupsDataset(), groupMembersDataset(), ousDataset(), contactsDataset(), principalsDataset()}
+}
 
 func idents(s ...string) []report.Ident {
 	out := make([]report.Ident, len(s))
@@ -62,7 +66,10 @@ var enumLabels = map[string]string{
 	"pso_set_not_read": "Password settings objects not read for this domain", "pso_not_read": "A password settings object that applies was not read",
 	"pso_precedence_not_read": "A password settings object has no precedence", "pso_interval_not_read": "The password settings object's interval was not read",
 	"account_inputs_not_read": "Account attributes that select the policy (userAccountControl, SID, logon name) not read",
-	"logon":                   "Replicated logon", "password_set": "Password last set", "created": "Created",
+	"workstation":             "Workstation", "server": "Server", "domain_controller": "Domain controller", "read_only_dc": "Read-only domain controller",
+	"managed_account": "Group managed service account", "unconstrained": "Unconstrained", "constrained": "Constrained",
+	"protocol_transition": "Constrained with protocol transition",
+	"logon":               "Replicated logon", "password_set": "Password last set", "created": "Created",
 }
 
 func attr(id report.ColumnID, label string, t report.ValueType, col string, ops []report.Op, def bool) report.Column {
@@ -104,6 +111,8 @@ func baseColumns() []report.Column {
 		attr("primary_group_id", "Primary group ID", report.TypeInt, "primary_group_id", opsInt, false),
 		attr("user_account_control", "userAccountControl", report.TypeInt, "user_account_control", opsInt, false),
 		attr("observed_at", "Observed at", report.TypeTime, "observed_at", opsTime, false),
+		derived("primary_group", "Primary group", report.TypeText, report.SQL(primaryGroupSQL), opsText),
+		derived("in_other_groups", "Member of a group other than its primary group", report.TypeBool, report.SQL(inOtherGroupsSQL), opsBool),
 		uacFlag("password_never_expires", "Password never expires (flag)", report.SQL("("+uac+" & 65536) <> 0")),
 		uacFlag("smartcard_required", "Smartcard required", report.SQL("("+uac+" & 262144) <> 0")),
 		uacFlag("trusted_for_delegation", "Trusted for unconstrained delegation", report.SQL("("+uac+" & 524288) <> 0")),
@@ -125,6 +134,8 @@ func usersDataset() report.Dataset {
 		state("password_state_reason", "Password state: reason", report.SQL(pwdReasonSQL), reasonValues("pwd_last_set_not_read")...),
 		withUnknown(derived("password_expires_at", "Password expires", report.TypeTime, report.SQL(pwdExpiresAtSQL), opsTime), "password_state"),
 		withUnknown(derived("days_to_password_expiry", "Days to password expiry", report.TypeInt, report.SQL(pwdDaysSQL), opsInt), "password_state"),
+		state("pwd_set_recorded", "Password last set recorded", report.SQL(pwdSetRecordedSQL), "recorded", "none_recorded", report.UnknownInputMissing),
+		withUnknown(derived("days_since_password_set", "Days since password last set", report.TypeInt, report.SQL(daysSincePwdSetSQL), opsInt), "pwd_set_recorded"),
 		state("account_expired", "Account expired", report.SQL(accountExpiredSQL), "expired", "not_expired", "never", report.UnknownInputMissing),
 		state("account_expired_reason", "Account expired: reason", report.SQL(accountReasonSQL), "none", "account_expires_not_read"),
 		state("logon_recorded", "Replicated logon recorded", report.SQL(logonRecordedSQL), "recorded", "none_recorded", report.UnknownInputMissing),
@@ -141,7 +152,7 @@ func usersDataset() report.Dataset {
 		RowKey: report.SQL("{t}.object_guid"),
 		Anchors: []report.Anchor{rowAnchorT(), {ID: "pso", Table: "directory_objects", Mode: report.MaskAnchor,
 			Project: idents("object_guid", "connection_id"), Identity: idents("rdn"),
-			Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}},
+			Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}, pgroupAnchor()},
 		Rels: []report.Rel{
 			{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid", "link_attr"),
 				Where: report.SQL("state = 'active'")},
@@ -172,6 +183,10 @@ func withUnknown(c report.Column, state report.ColumnID) report.Column {
 func computersDataset() report.Dataset {
 	cols := baseColumns()
 	cols = append(cols,
+		derived("name", "Name", report.TypeText, report.SQL(nameSQL), opsText),
+		state("computer_type", "Type", report.SQL(computerType), "workstation", "server", "domain_controller", "read_only_dc", "managed_account", report.UnknownInputMissing),
+		state("delegation", "Delegation", report.SQL(delegationSQL), "none", "unconstrained", "constrained", "protocol_transition", report.UnknownInputMissing),
+		withUnknown(derived("days_since_activity", "Days since last activity", report.TypeInt, report.SQL(daysSinceActivitySQL), opsInt), "activity_source"),
 		jsonText("dns_host_name", "DNS host name", "dNSHostName"),
 		jsonText("operating_system", "Operating system", "operatingSystem"),
 		jsonText("operating_system_version", "Operating system version", "operatingSystemVersion"),
@@ -185,12 +200,42 @@ func computersDataset() report.Dataset {
 			"none", "pwd_last_set_not_read", "last_logon_not_read", "activity_inputs_not_read"),
 	)
 	return report.Dataset{
-		ID:        DatasetComputers,
-		Base:      report.Relation{Table: "directory_objects", Where: report.SQL("{t}.kind IN ('computer', 'gmsa') AND {t}.state = 'live'")},
-		RowKey:    report.SQL("{t}.object_guid"),
-		Anchors:   []report.Anchor{rowAnchorT()},
+		ID:      DatasetComputers,
+		Base:    report.Relation{Table: "directory_objects", Where: report.SQL("{t}.kind IN ('computer', 'gmsa') AND {t}.state = 'live'")},
+		RowKey:  report.SQL("{t}.object_guid"),
+		Anchors: []report.Anchor{rowAnchorT(), pgroupAnchor()},
+		Rels: []report.Rel{{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid", "link_attr"),
+			Where: report.SQL("state = 'active'")}},
 		Columns:   cols,
 		Freshness: report.FreshNCWatermark,
-		Tables:    []string{"directory_objects"},
+		Tables:    []string{"directory_objects", "links"},
+	}
+}
+
+// pgroupAnchor reads the primary group's name, masked when the group is outside the scope.
+func pgroupAnchor() report.Anchor {
+	return report.Anchor{ID: "pgrp", Table: "directory_objects", Mode: report.MaskAnchor, Project: idents("connection_id", "object_guid"), Identity: idents("sam_account_name"),
+		Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}
+}
+
+// principalsDataset is the objects GRP-04 asks about, users and computers together, so one report with a
+// preset per kind answers "Users Not in Groups" and "Computers Not in Groups" (spec reports-2a 6.2, 6.6). It
+// shares the base columns of both datasets; the membership test is the same in_other_groups column.
+func principalsDataset() report.Dataset {
+	cols := baseColumns()
+	cols = append(cols,
+		derived("name", "Name", report.TypeText, report.SQL(userOrRdnName), opsText),
+		state("object_kind", "Object type", report.SQL("CASE WHEN {t}.kind IN ('user', 'inetorgperson') THEN 'user' ELSE 'computer' END"), "user", "computer"),
+	)
+	return report.Dataset{
+		ID:      DatasetPrincipals,
+		Base:    report.Relation{Table: "directory_objects", Where: report.SQL("{t}.kind IN ('user', 'inetorgperson', 'computer', 'gmsa') AND {t}.state = 'live'")},
+		RowKey:  report.SQL("{t}.object_guid"),
+		Anchors: []report.Anchor{rowAnchorT(), pgroupAnchor()},
+		Rels: []report.Rel{{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid", "link_attr"),
+			Where: report.SQL("state = 'active'")}},
+		Columns:   cols,
+		Freshness: report.FreshNCWatermark,
+		Tables:    []string{"directory_objects", "links"},
 	}
 }

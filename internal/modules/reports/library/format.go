@@ -51,8 +51,10 @@ type fileHidden struct {
 }
 
 type fileSubjects struct {
-	Min int `json:"min"`
-	Max int `json:"max"`
+	Min    int    `json:"min"`
+	Max    int    `json:"max"`
+	Column string `json:"column"`
+	Kind   string `json:"kind"`
 }
 
 type fileParam struct {
@@ -154,7 +156,7 @@ func preset(p filePreset) (report.Preset, error) {
 		return report.Preset{}, err
 	}
 	if p.Requires != nil {
-		out.Requires = &report.Subjects{Min: p.Requires.Min, Max: p.Requires.Max}
+		out.Requires = &report.Subjects{Min: p.Requires.Min, Max: p.Requires.Max, Column: report.ColumnID(p.Requires.Column), Kind: p.Requires.Kind}
 	}
 	return out, nil
 }

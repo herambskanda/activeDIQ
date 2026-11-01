@@ -229,6 +229,11 @@
       "reason": "CHECK: authn_saml_replay_life, see created_at; 12 hours after the pinned created_at."
     },
     {
+      "column": "public.inventory_group_members.edge_kind",
+      "value": "direct",
+      "reason": "CHECK: edge_kind is direct, primary_group, nested, cycle or over_budget (and a cycle or over_budget row needs group = member); the probe row is a direct membership, depth 1 from the default int probe value, via '{}'."
+    },
+    {
       "column": "public.directory_objects.kind",
       "value": "other",
       "reason": "CHECK: a kind is one of the DM-16 kinds; the probe row is an object of kind other."

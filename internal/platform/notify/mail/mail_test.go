@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/platform/egress"
+	"github.com/skenzeriq/activediq/internal/platform/httpx"
 	nm "github.com/skenzeriq/activediq/internal/platform/notify/mail"
 	"github.com/skenzeriq/activediq/internal/platform/notify/mailaddr"
 	"github.com/skenzeriq/activediq/internal/platform/notify/mailtest"
@@ -189,7 +190,7 @@ func TestMessageIsInjectionSafe(t *testing.T) {
 
 	m := msg(t, "bob@ok.example")
 	m.Text = "line one\n.\nQUIT\r\nRCPT TO:<attacker@evil.example>\n.."
-	m.Attachments = []nm.Attachment{{Filename: "../../etc/passwd\r\nX: y", ContentType: "text/csv\r\nX: y", Data: []byte("a,b\n1,2\n")}}
+	m.Attachments = []nm.Attachment{{Filename: "../../etc/passwd\r\nX: y", Format: httpx.CSV, Data: []byte("a,b\n1,2\n")}}
 	if _, err := s.Send(context.Background(), relay(srv, settings.Plaintext), m); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +222,7 @@ func TestMessageIsInjectionSafe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fn := att.FileName(); fn != "passwd__X_ y" {
+	if fn := att.FileName(); fn != ".._.._etc_passwd__X_ y.csv" {
 		t.Fatalf("attachment name = %q", fn)
 	}
 	if att.Header.Get("X") != "" {

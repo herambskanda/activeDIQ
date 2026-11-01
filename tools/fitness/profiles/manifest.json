@@ -12,6 +12,8 @@
     {"term": "onPremisesSyncEnabled", "kind": "graph-property", "source": "https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0"},
     {"term": "onPremisesDomainName", "kind": "graph-property", "source": "https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0"},
     {"term": "onPremisesImmutableId", "kind": "graph-property", "source": "https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0"},
+    {"term": "onPremisesSecurityIdentifier", "kind": "graph-property", "source": "https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0"},
+    {"term": "onPremisesSynchronization", "kind": "graph-segment", "source": "https://learn.microsoft.com/en-us/graph/api/onpremisesdirectorysynchronization-get?view=graph-rest-1.0"},
     {"term": "onprem_sid", "kind": "token-claim", "source": "https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims-reference"}
   ],
   "literalDenylist": ["saas", "linux-oci"],

@@ -1,25 +1,23 @@
 ---
 title: "ADR-0010: A report run's result is stored as rows in PostgreSQL; exports are blobs serialised from those rows"
 date: 2026-10-30
-updated: 2026-10-31
-status: proposed
+updated: 2026-11-01
+status: ratified
+ratified_on: 2026-10-30
+ratified_by: factory-director
+decision: D-0015
 owner: heramb
 author: solution-architect
 kind: technical
 ticket: T-0865
-fitness: fitness-reports RP3, RP4, RP5 (T-0873; in make ci, all three print pass on main d34d56e2c, 2026-10-31; not `accepted` until ratified, T-1145, and RP4's bound test asserts every RP4 clause, T-1144)
+fitness: fitness-reports RP3, RP4, RP5 (T-0873; not yet in CI, so not `accepted`)
 ---
 
 # ADR-0010: A report run's result is stored as rows in PostgreSQL; exports are blobs serialised from those rows
 
-**Status:** proposed. factory-director ratifies after review; `accepted` when `fitness-reports`
-RP3–RP5 run green in CI (T-0873).
-**Status check 2026-10-31 (T-0968):** RP3, RP4 and RP5 run in `make ci` and print `pass` on main
-`d34d56e2c` (RP4 and RP5 on PostgreSQL 16 and 18, nothing skipped). Two things keep the ADR out of
-`accepted`. (1) It was approved at the T-0865 review, but the ratification was never recorded and
-no notice was filed (T-1145). (2) RP4's bound test, `Test_expired_run_is_not_served`, does not yet
-assert three of the RP4 clauses below: an export of an expired run creates a new run; the
-`expires_at` CHECK; and every state edge at the trigger (T-1144).
+**Status:** ratified 2026-10-30 by factory-director (T-0865 re-review of rework 53d5eee4e). The
+fields and the notice D-0015 were recorded on 2026-11-01 (T-1145). `accepted` when `fitness-reports`
+RP3–RP5 run green in CI (T-0873; T-0968 confirms).
 **Kind:** technical (no CEO fork: no change to price, packaging, deployment or platform strategy).
 **Deciders:** solution-architect · **Ticket:** T-0865 · **Parity / scope refs:** ADM-099, ADM-100,
 ADM-101; reports-2a FR-11, FR-12, FR-17, FR-20; DM-72.

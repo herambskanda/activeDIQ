@@ -59,7 +59,7 @@ func adGroup(g string, groupType int, broad any, members ...string) inventory.Ob
 // enGroup is an Entra group the sync read as cloud-managed (onPremisesSyncEnabled null) with groupTypes [].
 func enGroup(g string, sec bool, vis string, members ...string) inventory.Observation {
 	o := inventory.Observation{Object: inventory.GUID(g), Kind: inventory.KindGroup, Class: "group", State: inventory.ObjActive,
-		Facts: inventory.GroupFacts{SecurityEnabled: &sec, GroupTypes: []string{}, Visibility: vis}, OnPremisesSyncRead: true}
+		Facts: inventory.GroupFacts{SecurityEnabled: &sec, GroupTypes: []string{}, Visibility: vis}, OnPremisesSyncEnabledRead: true}
 	for _, m := range members {
 		o.Members = append(o.Members, inventory.GUID(m))
 	}

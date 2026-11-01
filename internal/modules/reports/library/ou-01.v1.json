@@ -1,0 +1,204 @@
+{
+  "id": "ou-01",
+  "version": 1,
+  "category": "ous",
+  "title": "Organizational units",
+  "description": "Every organizational unit with the users, computers, groups and other objects in its subtree (nested units included), counted among the objects you may read.",
+  "dataset": "inventory.ous",
+  "columns": [
+    "name",
+    "domain",
+    "dn",
+    "subtree_users",
+    "subtree_computers",
+    "subtree_groups",
+    "subtree_other",
+    "subtree_objects",
+    "when_created"
+  ],
+  "sort": [
+    {
+      "column": "dn",
+      "dir": "asc"
+    }
+  ],
+  "params": [
+    {
+      "name": "recent_days",
+      "kind": "days",
+      "default": {
+        "days": 30
+      },
+      "min": 1,
+      "max": 365
+    }
+  ],
+  "caveats": [
+    "counts_in_scope_only"
+  ],
+  "presets": [
+    {
+      "id": "all",
+      "names": [
+        "All OUs"
+      ]
+    },
+    {
+      "id": "empty",
+      "names": [
+        "Empty OUs"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "subtree_users",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "subtree_computers",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "subtree_groups",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "subtree_other",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "users_only",
+      "names": [
+        "Users-Only OUs"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "subtree_users",
+              "op": "gt",
+              "value": {
+                "int": 0
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "subtree_computers",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "subtree_groups",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "subtree_other",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "computers_only",
+      "names": [
+        "Computers-Only OUs"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "subtree_users",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "subtree_computers",
+              "op": "gt",
+              "value": {
+                "int": 0
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "subtree_groups",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "subtree_other",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "recently_created",
+      "names": [
+        "Recently Created OUs"
+      ],
+      "where": {
+        "cmp": {
+          "col": "when_created",
+          "op": "within_last_days",
+          "param": "recent_days"
+        }
+      },
+      "sort": [
+        {
+          "column": "when_created",
+          "dir": "desc"
+        }
+      ]
+    }
+  ]
+}

@@ -5,38 +5,51 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base32"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/connector/labadmin"
+	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
-	"github.com/skenzeriq/activediq/internal/platform/authz"
-	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
+	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/store/owners"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	"github.com/skenzeriq/activediq/internal/testlab"
 )
 
 // labPorts authenticates every request as one session principal of the install's tenant and allows it.
-type labPorts struct{ tenant string }
+// The principal is the console account `account init-local` created after the lab seed (set by
+// labDirectory.seed); before that there is none and every request is a 401.
+type labPorts struct {
+	tenant  string
+	account *atomic.Pointer[string]
+}
 
 func (p labPorts) Authenticate(*http.Request) (apihost.Principal, error) {
-	return apihost.Principal{ID: "admin", Tenant: p.tenant, Kind: apihost.KindSession, SessionID: "s"}, nil
+	id := p.account.Load()
+	if id == nil {
+		return apihost.Principal{}, errors.New("no console account yet")
+	}
+	return apihost.Principal{ID: *id, Tenant: p.tenant, Kind: apihost.KindSession, SessionID: "s"}, nil
 }
 func (labPorts) CheckCSRF(*http.Request, apihost.Principal) error { return nil }
 func (labPorts) Allow(context.Context, apihost.Principal, string, string) (bool, error) {
@@ -49,26 +62,6 @@ func (labPorts) AllowIP(context.Context, string, string) (apihost.Decision, erro
 	return apihost.Decision{Allowed: true}, nil
 }
 func (labPorts) Fresh(context.Context, apihost.Principal) (bool, error) { return true, nil }
-
-// labScopes grants the lab's one connection as a whole (its naming context head), so these tests keep
-// proving the search path; the trimming itself is proved in modules/directory and client.
-type labScopes struct{ conns *connection.Registry }
-
-func (l labScopes) ReadScope(ctx context.Context, tid tenant.ID, _ authority.Chain, _ authz.Permission) (authz.ReadScope, error) {
-	cs, err := l.conns.List(ctx, tid, false)
-	if err != nil || len(cs) == 0 {
-		return authz.ReadScope{}, err // before the seed there is no connection: nothing is granted
-	}
-	conn, err := authz.ParseObjectID(string(cs[0].ID))
-	if err != nil {
-		return authz.ReadScope{}, err
-	}
-	nc, err := authz.ParseObjectID(string(cs[0].DirectoryIdentity))
-	if err != nil {
-		return authz.ReadScope{}, err
-	}
-	return authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermNamingContext, Connection: conn, Root: nc}}}), nil
-}
 
 // labDirectory is one booted lab server's directory surface: the real apihost pipeline over the real
 // connection registry, served by the in-process connector against the Samba lab.
@@ -135,7 +128,21 @@ func newLabDirectory(t *testing.T, s *storetest.Server) *labDirectory {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tag, err := buildDirectory(db, conns, src, reads, labScopes{conns: conns})
+	// The producer the composed server uses (T-0916): rbac.ReadScopes over the authorizer and the booted
+	// modules' evaluators, behind a tenant transaction. Nothing here is granted by the test.
+	contrib, _, err := bootReport(ctx, capability.NewSet(capability.DirectoryAD, capability.DirectoryEntra, capability.TenantProvisioning), directory.Services{}, owners.Lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	az, err := rbacAuthorizer(db, noFacts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs, err := buildReadScopes(az, contrib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag, err := buildDirectory(db, conns, src, reads, txReadScopes{db: db, rs: rs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,14 +154,39 @@ func newLabDirectory(t *testing.T, s *storetest.Server) *labDirectory {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lp := labPorts{tenant: tid.String()}
+	account := &atomic.Pointer[string]{}
+	lp := labPorts{tenant: tid.String(), account: account}
 	srv, err := apihost.Build(doc, []apihost.TagHandlers{tag}, pol, apitest.Catalogue(doc),
 		apihost.Ports{Authn: lp, Authz: lp, Limits: lp, StepUp: lp})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return &labDirectory{admin: admin, conns: conns, svc: svc, tid: tid, pw: pw, logs: logs, started: ctx,
-		seed: func(ctx context.Context) error { return seed(ctx, conns, svc, tid) },
+		seed: func(ctx context.Context) error {
+			if err := seed(ctx, conns, svc, tid); err != nil {
+				return err
+			}
+			// What an operator does next on a lab server: `account init-local`. The account gets the
+			// console-directory-reader role and, for the connection the seed just activated, its
+			// naming_context assignment; the tests then search as that account.
+			deps := localAccountDeps{DB: db, Sink: ch, Keys: keys.NewStore(kek).KeySource()}
+			la, err := createLocalAccount(ctx, deps, LocalAccountSpec{Username: "lab.console", Password: secret.FromBytes([]byte("lab-console-password-0987"))})
+			if err != nil {
+				return err
+			}
+			var seedText string
+			la.Seed.Expose(func(b []byte) { seedText = string(b) })
+			raw, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(seedText))
+			if err != nil {
+				return err
+			}
+			if err := confirmTOTP(ctx, deps, la, totpCode(raw, time.Now())); err != nil {
+				return err
+			}
+			id := la.ID
+			account.Store(&id)
+			return nil
+		},
 		get: func(q string) *httptest.ResponseRecorder {
 			r := httptest.NewRequest("GET", "/api/v1/directory/users?q="+q, nil)
 			r.RemoteAddr = "203.0.113.7:4444"
