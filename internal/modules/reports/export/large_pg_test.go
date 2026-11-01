@@ -35,11 +35,12 @@ func TestLargeExportTimings(t *testing.T) {
 		for _, c := range []struct {
 			f    export.Format
 			rows int
-		}{{export.CSV, n}, {export.XLSX, n}, {export.PDF, int(export.PDFCap)}, {export.HTML, int(export.HTMLCap)}} {
+			col  string // a run of the same columns inside the reuse window is the earlier run
+		}{{export.CSV, n, "sam"}, {export.XLSX, n, "sam"}, {export.PDF, int(export.PDFCap), "enabled"}, {export.HTML, int(export.HTMLCap), "display"}} {
 			f, n := c.f, c.rows
 			big, ok := stored[n]
 			if !ok {
-				big = e.storedRun(n)
+				big = e.storedRun(n, c.col)
 				stored[n] = big
 			}
 			var peak atomic.Uint64
@@ -69,7 +70,7 @@ func TestLargeExportTimings(t *testing.T) {
 			if x.State != export.StateSucceeded || x.RowCount == nil || *x.RowCount != int64(n) {
 				t.Fatalf("%s: state %s rows %v failure %v", f, x.State, x.RowCount, x.Failure)
 			}
-			t.Logf("%-4s %d rows -> %d MB in %v (%.0f rows/s), peak heap %d MB", f, n, *x.ByteSize>>20, el.Round(time.Millisecond), float64(n)/el.Seconds(), peak.Load()>>20)
+			t.Logf("%-4s %d rows -> %d KB in %v (%.0f rows/s), peak heap %d MB", f, n, *x.ByteSize>>10, el.Round(time.Millisecond), float64(n)/el.Seconds(), peak.Load()>>20)
 		}
 	})
 }
