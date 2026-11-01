@@ -22,3 +22,4 @@
 - [closure budget lessons](closure-budget-lessons.md) — T-0961: measure at declared budget, 30 s statement timeout, chunk by rows
 - [per-DC read lessons](perdc-lessons.md) — T-0970: no connector ReadPerDC handler (T-1143), coverage derived not trusted, per-tenant semaphore
 - [closure decision lessons](closure-decision-lessons.md) — T-0961: decide the budget from the whole graph each refresh, oracle test after every refresh
+- [search index lessons](search-index-lessons.md) — T-1095: pg_trgm GIN unusable under RLS (T-1180), threshold 0.3, bind-typing and FORCE-RLS fixture traps

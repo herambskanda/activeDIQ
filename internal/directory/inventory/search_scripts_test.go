@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/searchkey"
@@ -101,7 +99,7 @@ func Test_search_fuzzy_per_script(t *testing.T) {
 
 // explain runs EXPLAIN over the compiled search statement in tx and returns the plan text.
 func explain(ctx context.Context, tx store.Tx, sql string, args []any) (string, error) {
-	rs, err := tx.Query(ctx, "EXPLAIN (COSTS OFF) "+sql, append([]any{pgx.QueryExecModeExec}, args...)...)
+	rs, err := tx.Query(ctx, "EXPLAIN (COSTS OFF) "+sql, args...)
 	if err != nil {
 		return "", err
 	}
@@ -153,7 +151,7 @@ func Test_search_plan_uses_the_indexes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cq, err := reportsql.CompileSearch(src, reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, GroupLimit: 5, Ceiling: 10000},
+		cq, err := reportsql.CompileSearch(src, reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, GroupLimit: 5, Ceiling: 10000, Threshold: 0.3},
 			reportsql.SearchScopes{"directory.read": e.scopeNC(e.adA)})
 		if err != nil {
 			t.Fatal(err)
@@ -178,10 +176,10 @@ func Test_search_plan_uses_the_indexes(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer c.Close(context.Background())
-		if _, err := c.Exec(context.Background(), `SELECT set_config('app.tenant_id', $1, false)`, e.a.String()); err != nil {
+		if _, err := c.Exec(context.Background(), `SET app.tenant_id = '`+e.a.String()+`'`); err != nil {
 			t.Fatal(err)
 		}
-		rs, err := c.Query(context.Background(), "EXPLAIN (COSTS OFF) "+sql, append([]any{pgx.QueryExecModeExec}, args...)...)
+		rs, err := c.Query(context.Background(), "EXPLAIN (COSTS OFF) "+sql, args...)
 		if err != nil {
 			t.Fatal(err)
 		}

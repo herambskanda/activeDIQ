@@ -24,7 +24,7 @@ const (
 	// vector (T-1095): its word_similarity to 'priya raman' is 0.333 on pg16 and pg18, a transposition
 	// costing four trigrams, so 0.5 cannot find it; the nearest unrelated name measured ('praveen
 	// ramesh') scores 0.294. Ranking by similarity and the ceiling bound the extra candidates.
-	searchThreshold = "0.3"
+	searchThreshold = 0.3
 )
 
 // ErrSearchRefused: the search text is refused (rule 7). It carries no text.
@@ -82,7 +82,7 @@ func (s *Searcher) Search(ctx context.Context, tx store.Tx, tid tenant.ID, scope
 	if err != nil {
 		return SearchResult{}, fmt.Errorf("%w: %w", ErrSearchRefused, err)
 	}
-	q := reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, Types: req.Types, GroupLimit: req.GroupLimit, Ceiling: req.Ceiling, After: req.After}
+	q := reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, Types: req.Types, GroupLimit: req.GroupLimit, Ceiling: req.Ceiling, After: req.After, Threshold: searchThreshold}
 	if q.GroupLimit == 0 {
 		q.GroupLimit = 5
 	}
@@ -93,13 +93,6 @@ func (s *Searcher) Search(ctx context.Context, tx store.Tx, tid tenant.ID, scope
 	if err != nil {
 		return SearchResult{}, err
 	}
-	if p.Fuzzy != "" {
-		restore, err := fuzzySettings(ctx, tx)
-		if err != nil {
-			return SearchResult{}, err
-		}
-		defer restore()
-	}
 	res, err := reportsql.ExecSearch(ctx, tx, cq)
 	if err != nil {
 		return SearchResult{}, err
@@ -109,20 +102,4 @@ func (s *Searcher) Search(ctx context.Context, tx store.Tx, tid tenant.ID, scope
 		res.Count = nil
 	}
 	return res, nil
-}
-
-// fuzzySettings sets, for the caller's transaction only, the trigram threshold. It is the only place the
-// threshold is set (SE2). restore puts the earlier value back for whatever else the transaction runs.
-func fuzzySettings(ctx context.Context, tx store.Tx) (restore func(), err error) {
-	var prior string
-	if err := tx.QueryRow(ctx, `SELECT current_setting('pg_trgm.word_similarity_threshold')`).Scan(&prior); err != nil {
-		return nil, fmt.Errorf("inventory: search settings: %w", err)
-	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`, searchThreshold); err != nil {
-		return nil, fmt.Errorf("inventory: search settings: %w", err)
-	}
-	return func() {
-		// Best effort: a failed transaction is rolled back by the caller and the setting goes with it.
-		_, _ = tx.Exec(ctx, `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`, prior)
-	}, nil
 }
