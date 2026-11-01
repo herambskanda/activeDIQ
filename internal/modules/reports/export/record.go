@@ -9,7 +9,12 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/httpx"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 )
+
+// report_exports stores DM-72's export job and file (DM-72.I3, migration 0067): a tenant table, mutable
+// (the export has a lifecycle state), not append-only.
+var _ = tablekind.Declare(tablekind.Table{Name: "public.report_exports", Entity: "DM-72", Kind: tablekind.Tenant})
 
 // ID identifies one export. It is minted here and parsed from the canonical text only.
 type ID struct{ r run.ID }
