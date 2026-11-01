@@ -67,6 +67,7 @@ func Test_group_closure_fanout_is_bounded(t *testing.T) {
 		if rows > connBudget+k+1 {
 			t.Errorf("%d closure rows exceed the connection budget %d (+ one marker per group)", rows, connBudget)
 		}
+		e.requireStoredDecisionIsFromScratch(t, c, "after the containers were added")
 		wantOver := e.overBudgetGroups(t)
 
 		// A one-member change to the big group: refreshed within a stated time, same decision.
@@ -81,6 +82,7 @@ func Test_group_closure_fanout_is_bounded(t *testing.T) {
 		if took > 5*time.Second {
 			t.Errorf("a one-member change took %v at a %d-row budget, want under 5 s", took, connBudget)
 		}
+		e.requireStoredDecisionIsFromScratch(t, c, "after the one-member change")
 		if got := e.overBudgetGroups(t); strings.Join(got, ",") != strings.Join(wantOver, ",") {
 			t.Errorf("the groups left unexpanded changed with an unrelated member: %v, was %v", got, wantOver)
 		}
@@ -134,6 +136,7 @@ func Test_group_closure_fanout_is_bounded(t *testing.T) {
 		if _, err := e.populate(t, c, hBase.Add(5*time.Hour), empty...); err != nil {
 			t.Fatal(err)
 		}
+		e.requireStoredDecisionIsFromScratch(t, c, "after three containers emptied")
 		if got := len(e.overBudgetGroups(t)); got != 4 {
 			t.Errorf("%d groups unexpanded after three containers emptied, want 4 (7 left out, 3 now fit)", got)
 		}

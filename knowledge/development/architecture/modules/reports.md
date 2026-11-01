@@ -466,26 +466,33 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   inside the sync transaction (measured by the reviewer: 50 one-value writes, N = 6,000, 306,050 rows, 13-15 s per batch; with
   BUILTIN\Users containing Domain Users it also happens without an attacker). The refresh therefore has a declared budget
   (`closure.go`): **250,000 rows per group and 500,000 per connection** (a 200,000-user Domain Users, and BUILTIN\Users which contains it,
-  fit). Before writing anything, `admit` estimates each recomputed group as the number of member and primary-group links of
-  every group it reaches (an upper bound; a member reached two ways has one row). Groups are admitted smallest estimate first, then
-  lowest GUID, so a container never displaces the group it contains and the outcome does not depend on arrival order; a group whose
-  estimate exceeds the per-group limit, or what is left of the connection budget after the groups that are *not* recomputed, gets one
-  `over_budget` marker row (`group_guid = member_guid`) and no member rows. Its counts, `has_members` and `nesting_cut` read Unknown,
+  fit). Before writing anything, `splitByBudget` estimates each live group as the number of member and primary-group links of
+  every group it reaches (an upper bound; a member reached two ways has one row). **Which groups are expanded is a function of the
+  current links alone** (second security review: an outcome that depended on what earlier refreshes held let someone fill the budget
+  first and then blank Domain Admins' membership at the moment they joined it). Every refresh decides over *all* live groups of the
+  connection: well-known privileged groups first (domain RIDs 512, 516, 518, 519; BUILTIN 544, 548-551; an attacker cannot create a
+  group with such a SID), then smallest estimate, then lowest GUID, so a container never displaces the group it contains and arrival
+  order never matters. A group whose estimate exceeds the per-group limit, or what is left of the connection budget at its turn, gets
+  one `over_budget` marker row (`group_guid = member_guid`) and no member rows. A group already expanded is **evicted** to a marker
+  when the decision no longer admits it (a smaller or privileged group pre-empts it); a group that was left out is expanded when it
+  now fits; groups the decision leaves as they were keep their rows. Its counts, `has_members` and `nesting_cut` read Unknown,
   `membership_listing` is `unknown_input_missing`, and `inventory.group_members` shows one row "Membership too large to list: the
-  members of X are not expanded" (it names only the group itself). The refresh succeeds. Groups left unexpanded are decided again at
-  every refresh, so room that frees up is used. **Bounds:** a refresh deletes and inserts at most 500,000 rows plus one marker per
-  group, whatever fan-out the directory has. **Measured** (PG16 and PG18, in-process, one-member change to the big group): at a
+  members of X are not expanded" (it names only the group itself). The refresh succeeds. **Bounds:** a refresh deletes and inserts at most 500,000 rows plus one marker per
+  group, whatever fan-out the directory has (the stored rows always total at most the connection budget). **Measured** (PG16 and PG18, in-process, one-member change to the big group): at a
   scaled-down budget (600-member group, 10 containers, 2,500 rows) 1.0-1.3 s per batch; **at the declared budget** (30,000-user
   group, 15 admitted containers, 480,025 rows, 10 groups left unexpanded) a user added through the primary group, which makes the
   refresh rewrite every row: **14-16 s per batch** (PG16 and PG18), with every statement far under the store's 30 s timeout because
   an INSERT carries at most about 25,000 estimated rows (`closureChunkRows`; the first version put whole roots in one statement and
   timed out on PG16 at this size). Re-reading a 30,000-member group's links in the same batch adds 20-25 s. Building the 25
-  containers took 12-38 s once. **Residual risk:** (1) the walk over group edges that decides admission is
-  in memory and costs groups x groups reached, bounded by the depth cap but not by the budget; a domain with tens of thousands of
-  densely nested groups is a separate cost, filed with the threat model row (T-1142); (2) an attacker can still push a
-  *legitimate* big group out of the budget by making it share the budget with larger groups, but never a smaller one (admission is
-  smallest first); (3) over-budget groups show Unknown until the budget has room, there is no setting to raise it per tenant
-  yet. Tests: `Test_group_closure_fanout_is_bounded`, `Test_splitByBudget`, `Test_closure_budget_is_the_declared_one`,
+  containers took 12-38 s once. **Residual risk:** (1) the decision reads every live group, its
+  nesting edges and its own link count on every refresh with a dirty group, and walks the group edges in memory (groups x groups
+  reached, bounded by the depth cap): that work grows with the number of groups and nesting links, not with the budget; a domain with
+  tens of thousands of densely nested groups is a separate cost, filed with the threat model row (T-1142); (2) an attacker can still
+  push an ordinary *legitimate* big group out of the budget by creating enough smaller groups to fill it (500,000 rows of them);
+  privileged groups cannot be pushed out, and a group out of the budget shows Unknown, never a wrong number; (3) over-budget groups
+  show Unknown until the budget has room, and there is no setting to raise it per tenant yet. `nesting_cut` and `membership_listing`
+  are named one-bit exceptions (see above). Tests: `Test_group_closure_fanout_is_bounded`, `Test_group_closure_no_displacement` (the displacement probe as a regression, with the
+  stored decision compared to a from-scratch one after every refresh), `Test_splitByBudget`, `Test_splitByBudget_privileged_and_small_first`, `Test_closure_budget_is_the_declared_one`,
   RP11 `rpOverBudget`.
 - **Datasets.** `inventory.groups` counts `direct_members` (depth 1: member values and primary group), `effective_members`
   (every non-cycle closure row), `primary_group_members`; `has_members` is the Groups Without Members test; `managed_by` shows the
@@ -1688,6 +1695,7 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 - 2026-10-30 · T-0958 · row B3 built: `inventory.users` and `inventory.computers`, migration 0061 (D7 inputs, D4
   policy tables, GIN index on `ancestry`), `PolicyWriter`, derived states with the effective policy resolved in
   SQL, RP8 and RP11 landed in `tools/fitness/reports`, `reportsql.Query.Statement`. See §3.3 "As built".
+- 2026-11-01 · T-0961 · closure expansion decided from the current links alone (privileged first, eviction), no history dependence (second security review). See §3.3.
 - 2026-10-31 · T-0961 · closure row budget (250,000 per group, 500,000 per connection), `over_budget` marker, `membership_listing`; `nesting_cut` named as a one-bit exception (security review). See §3.3.
 - 2026-10-31 · T-0961 · row B6 built: `inventory.groups`, `.group_members`, `.ous`, `.contacts`, migration 0068 (group closure and dirty set, refreshed by `Populate`), `primary_group` and `in_other_groups` on users and computers, RP11 for the four datasets. See §3.3 "As built (T-0961)".
 - 2026-10-31 · T-0960 · row B5 built: `internal/modules/reports/library` (loader, `LOCK`, crosswalk search, USR-01, USR-02,

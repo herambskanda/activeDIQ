@@ -37,15 +37,21 @@ const (
 	// group then rewrites all of them inside the sync transaction, under the connection's lock (security
 	// review of T-0961: 50 one-value writes made 306,050 rows and 13-15 s per batch).
 	//
-	// A root's cost is estimated before anything is written: the number of member and primary-group links
+	// A group's cost is estimated before anything is written: the number of member and primary-group links
 	// of every group it reaches, an upper bound of the rows it would hold (a member reachable several
-	// ways has one row). A root whose estimate exceeds defaultRootRows, or what is left of
-	// defaultConnRows after the roots that are not being recomputed, is not expanded: it gets one
-	// over_budget marker row, its counts read Unknown and group_members says so. The refresh succeeds.
-	// Roots are admitted smallest estimate first (then lowest GUID), so a container never displaces the
-	// group it contains, and the outcome does not depend on the order rows arrived. Because only
-	// recomputed roots are re-decided, the rows held by the other roots stay within defaultConnRows, and a
-	// refresh deletes and inserts at most that many rows.
+	// ways has one row). A group whose estimate exceeds defaultRootRows, or what is left of defaultConnRows
+	// after the groups admitted before it, is not expanded: it gets one over_budget marker row, its counts
+	// read Unknown and group_members says so. The refresh succeeds.
+	//
+	// Which groups are expanded is a function of the current links alone (security review of T-0961: an
+	// outcome that depended on history let someone fill the budget first and then blank Domain Admins'
+	// membership at the moment they joined it). Every refresh decides over all live groups: well-known
+	// privileged groups first, then smallest estimate first, then lowest GUID, so a container never displaces
+	// the group it contains. A group already expanded is evicted to a marker when the new decision no longer
+	// admits it; a group that was left out is expanded when it now fits. Groups the decision leaves as they
+	// were keep their rows, so a refresh deletes and inserts at most the connection budget of rows. The
+	// reads for the decision (the live groups, their nesting edges and per-group link counts) are not
+	// bounded by the budget; they grow with the groups, not with the members.
 	//
 	// defaultRootRows holds a 200,000-user Domain Users (the largest group a customer domain has);
 	// defaultConnRows holds it and BUILTIN\Users, which contains it, with room for the rest.
@@ -79,13 +85,9 @@ func (Writer) RefreshClosure(ctx context.Context, tx store.Tx, connection Connec
 	if len(dirty) == 0 {
 		return 0, nil
 	}
-	// The dirty groups, every group left unexpanded by an earlier refresh (the budget may have room now),
-	// and every live group above them: their rows are stale or to be decided again.
+	// The dirty groups and every live group above them: their rows are stale.
 	affected, err := scanGUIDs(tx.Query(ctx, `WITH RECURSIVE up(g) AS (
 			SELECT x FROM unnest($2::uuid[]) AS x
-		UNION
-			SELECT o.group_guid FROM public.inventory_group_members o
-			WHERE o.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND o.connection_id = $1::uuid AND o.edge_kind = 'over_budget'
 		UNION
 			SELECT l.source_guid FROM public.links l JOIN up ON l.target_guid = up.g
 			JOIN public.directory_objects s ON s.tenant_id = l.tenant_id AND s.connection_id = l.connection_id AND s.object_guid = l.source_guid
@@ -95,27 +97,61 @@ func (Writer) RefreshClosure(ctx context.Context, tx store.Tx, connection Connec
 	if err != nil {
 		return 0, fmt.Errorf("inventory: closure: affected groups: %w", err)
 	}
-	// The live nesting edges below the affected live groups: all a breadth-first walk needs.
-	roots, err := scanGUIDs(tx.Query(ctx, `SELECT object_guid::text FROM public.directory_objects
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-		AND object_guid = ANY($2::uuid[]) AND kind = 'group' AND state = 'live'`, string(connection), affected))
-	if err != nil {
-		return 0, fmt.Errorf("inventory: closure: live roots: %w", err)
-	}
-	edges, err := nestingEdges(ctx, tx, connection, roots)
+	// The decision about which groups are expanded is made over every live group of the connection, from the
+	// current links alone, so it never depends on what an earlier refresh held (see defaultRootRows).
+	universe, err := liveGroups(ctx, tx, connection)
 	if err != nil {
 		return 0, err
 	}
+	edges, err := nestingEdges(ctx, tx, connection)
+	if err != nil {
+		return 0, err
+	}
+	counts, err := memberCounts(ctx, tx, connection)
+	if err != nil {
+		return 0, err
+	}
+	marked, err := scanGUIDs(tx.Query(ctx, `SELECT group_guid::text FROM public.inventory_group_members
+		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND edge_kind = 'over_budget'`, string(connection)))
+	if err != nil {
+		return 0, fmt.Errorf("inventory: closure: markers: %w", err)
+	}
+	admitted, over := splitByBudget(universe.guids, universe.privileged, edges, counts, closureBudget)
+	// Rewrite only what changed: the affected groups, a group that was left out and now fits (it has just a
+	// marker), and a group that was expanded and no longer fits (evicted: smaller or privileged groups
+	// pre-empt it). Every other group's rows were decided on the same graph and stay.
+	touched := map[string]bool{}
+	for _, g := range affected {
+		touched[g] = true
+	}
+	wasOver := map[string]bool{}
+	for _, g := range marked {
+		wasOver[g] = true
+	}
+	var roots []string
+	for _, g := range admitted {
+		if touched[g] || wasOver[g] {
+			roots = append(roots, g)
+			touched[g] = true
+		}
+	}
+	var mark []string
+	for _, g := range over {
+		if touched[g] || !wasOver[g] {
+			mark = append(mark, g)
+			touched[g] = true
+		}
+	}
+	rewrite := make([]string, 0, len(touched))
+	for g := range touched {
+		rewrite = append(rewrite, g)
+	}
+	sort.Strings(rewrite)
 	if _, err := tx.Exec(ctx, `DELETE FROM public.inventory_group_members
 		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND group_guid = ANY($2::uuid[])`,
-		string(connection), affected); err != nil {
+		string(connection), rewrite); err != nil {
 		return 0, fmt.Errorf("inventory: closure: clear: %w", err)
 	}
-	admitted, over, counts, err := admit(ctx, tx, connection, roots, affected, edges)
-	if err != nil {
-		return 0, err
-	}
-	roots = admitted
 	var chunk []reachRow
 	var cuts []reachRow
 	rows := 0
@@ -162,8 +198,8 @@ func (Writer) RefreshClosure(ctx context.Context, tx store.Tx, connection Connec
 	if err := flush(); err != nil {
 		return 0, err
 	}
-	if len(over) > 0 {
-		tag, err := tx.Exec(ctx, markOverBudgetSQL, string(connection), over)
+	if len(mark) > 0 {
+		tag, err := tx.Exec(ctx, markOverBudgetSQL, string(connection), mark)
 		if err != nil {
 			return 0, writeErr("closure over budget", err)
 		}
@@ -200,78 +236,100 @@ const markOverBudgetSQL = `INSERT INTO public.inventory_group_members (tenant_id
 	SELECT NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, g, g, 'over_budget', 1, '{}'::uuid[]
 	FROM unnest($2::uuid[]) AS g`
 
-// admit splits the roots being recomputed into those that fit the closure budget and those that do not
-// (see defaultRootRows). Nothing is written. The estimate walks the group edges only, never the members.
-func admit(ctx context.Context, tx store.Tx, connection ConnectionID, roots, affected []string, edges map[string][]string) (admitted, over []string, counts map[string]int, err error) {
-	if len(roots) == 0 {
-		return nil, nil, nil, nil
-	}
-	universe := map[string]bool{}
-	for p, cs := range edges {
-		universe[p] = true
-		for _, c := range cs {
-			universe[c] = true
-		}
-	}
-	for _, r := range roots {
-		universe[r] = true
-	}
-	ids := make([]string, 0, len(universe))
-	for g := range universe {
-		ids = append(ids, g)
-	}
-	counts = map[string]int{}
-	rows, err := tx.Query(ctx, `SELECT source_guid::text, count(*) FROM public.links
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-		AND source_guid = ANY($2::uuid[]) AND link_attr IN ('member', 'primary_group') AND state = 'active' GROUP BY source_guid`, string(connection), ids)
+type liveSet struct {
+	guids      []string
+	privileged map[string]bool
+}
+
+// liveGroups lists the live groups of the connection and which of them are the well-known privileged ones:
+// the domain-relative RIDs 512 (Domain Admins), 516, 518, 519 and BUILTIN 544 (Administrators) and 548-551
+// (the operator groups). An attacker cannot create a group with such a SID.
+func liveGroups(ctx context.Context, tx store.Tx, connection ConnectionID) (liveSet, error) {
+	rows, err := tx.Query(ctx, `SELECT object_guid::text,
+			COALESCE(sid_text ~ '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-(512|516|518|519)$' OR sid_text IN ('S-1-5-32-544', 'S-1-5-32-548', 'S-1-5-32-549', 'S-1-5-32-550', 'S-1-5-32-551'), false)
+		FROM public.directory_objects
+		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND kind = 'group' AND state = 'live'`, string(connection))
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("inventory: closure: budget counts: %w", err)
+		return liveSet{}, fmt.Errorf("inventory: closure: live groups: %w", err)
 	}
 	defer rows.Close()
+	out := liveSet{privileged: map[string]bool{}}
+	for rows.Next() {
+		var g string
+		var p bool
+		if err := rows.Scan(&g, &p); err != nil {
+			return liveSet{}, fmt.Errorf("inventory: closure: live groups: %w", err)
+		}
+		out.guids = append(out.guids, g)
+		if p {
+			out.privileged[g] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return liveSet{}, fmt.Errorf("inventory: closure: live groups: %w", err)
+	}
+	return out, nil
+}
+
+// memberCounts returns, per live group, its active member and primary-group links: the upper bound of the
+// rows the group itself adds to a closure. One read of the groups' own links; never the members.
+func memberCounts(ctx context.Context, tx store.Tx, connection ConnectionID) (map[string]int, error) {
+	rows, err := tx.Query(ctx, `SELECT l.source_guid::text, count(*) FROM public.links l
+		JOIN public.directory_objects s ON s.tenant_id = l.tenant_id AND s.connection_id = l.connection_id AND s.object_guid = l.source_guid
+		WHERE l.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND l.connection_id = $1::uuid
+		AND l.link_attr IN ('member', 'primary_group') AND l.state = 'active' AND s.kind = 'group' AND s.state = 'live'
+		GROUP BY l.source_guid`, string(connection))
+	if err != nil {
+		return nil, fmt.Errorf("inventory: closure: budget counts: %w", err)
+	}
+	defer rows.Close()
+	counts := map[string]int{}
 	for rows.Next() {
 		var g string
 		var n int
 		if err := rows.Scan(&g, &n); err != nil {
-			return nil, nil, nil, fmt.Errorf("inventory: closure: budget counts: %w", err)
+			return nil, fmt.Errorf("inventory: closure: budget counts: %w", err)
 		}
 		counts[g] = n
 	}
 	if err := rows.Err(); err != nil {
-		return nil, nil, nil, fmt.Errorf("inventory: closure: budget counts: %w", err)
+		return nil, fmt.Errorf("inventory: closure: budget counts: %w", err)
 	}
-	rows.Close()
-	var held int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.inventory_group_members
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND NOT group_guid = ANY($2::uuid[])`,
-		string(connection), affected).Scan(&held); err != nil {
-		return nil, nil, nil, fmt.Errorf("inventory: closure: budget held rows: %w", err)
-	}
-	admitted, over = splitByBudget(roots, edges, counts, closureBudget, held)
-	return admitted, over, counts, nil
+	return counts, nil
 }
 
-// splitByBudget is admit without the database: each root's estimate is the sum of counts over the groups it reaches.
-func splitByBudget(roots []string, edges map[string][]string, counts map[string]int, b budget, held int) (admitted, over []string) {
+// splitByBudget decides which groups are expanded, from the graph alone. Each group's estimate is the sum
+// of counts over the groups it reaches. Groups are taken privileged first, then smallest estimate, then
+// lowest GUID; one is admitted when its estimate is within the per-group limit and what is left of the
+// connection budget. The result does not depend on the order of groups or on any earlier decision.
+func splitByBudget(groups []string, privileged map[string]bool, edges map[string][]string, counts map[string]int, b budget) (admitted, over []string) {
 	type cand struct {
 		root string
 		est  int
+		priv bool
 	}
-	cands := make([]cand, 0, len(roots))
-	for _, r := range roots {
-		reach, _ := reachFrom(r, edges)
-		est := 0
-		for _, g := range reach {
-			est += counts[g.Grp]
+	cands := make([]cand, 0, len(groups))
+	for _, r := range groups {
+		est := counts[r]
+		if len(edges[r]) > 0 {
+			est = 0
+			reach, _ := reachFrom(r, edges)
+			for _, g := range reach {
+				est += counts[g.Grp]
+			}
 		}
-		cands = append(cands, cand{r, est})
+		cands = append(cands, cand{r, est, privileged[r]})
 	}
 	sort.Slice(cands, func(i, j int) bool {
+		if cands[i].priv != cands[j].priv {
+			return cands[i].priv
+		}
 		if cands[i].est != cands[j].est {
 			return cands[i].est < cands[j].est
 		}
 		return cands[i].root < cands[j].root
 	})
-	remaining := max(b.conn-held, 0)
+	remaining := b.conn
 	for _, c := range cands {
 		if c.est > b.root || c.est > remaining {
 			over = append(over, c.root)
@@ -299,24 +357,16 @@ type reachRow struct {
 	Via   []string `json:"via"`
 }
 
-// nestingEdges returns, for every live group at or below the roots, its live group members:
+// nestingEdges returns, for every live group of the connection, its live group members:
 // parent -> children, children sorted so that a walk is deterministic.
-func nestingEdges(ctx context.Context, tx store.Tx, connection ConnectionID, roots []string) (map[string][]string, error) {
+func nestingEdges(ctx context.Context, tx store.Tx, connection ConnectionID) (map[string][]string, error) {
 	out := map[string][]string{}
-	if len(roots) == 0 {
-		return out, nil
-	}
-	rows, err := tx.Query(ctx, `WITH RECURSIVE down(g) AS (
-			SELECT x FROM unnest($2::uuid[]) AS x
-		UNION
-			SELECT l.target_guid FROM public.links l JOIN down ON l.source_guid = down.g
-			JOIN public.directory_objects t ON t.tenant_id = l.tenant_id AND t.connection_id = l.connection_id AND t.object_guid = l.target_guid
-			WHERE l.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND l.connection_id = $1::uuid
-			AND l.link_attr = 'member' AND l.state = 'active' AND t.kind = 'group' AND t.state = 'live')
-		SELECT l.source_guid::text, l.target_guid::text FROM public.links l JOIN down ON l.source_guid = down.g
+	rows, err := tx.Query(ctx, `SELECT l.source_guid::text, l.target_guid::text FROM public.links l
+		JOIN public.directory_objects s ON s.tenant_id = l.tenant_id AND s.connection_id = l.connection_id AND s.object_guid = l.source_guid
 		JOIN public.directory_objects t ON t.tenant_id = l.tenant_id AND t.connection_id = l.connection_id AND t.object_guid = l.target_guid
 		WHERE l.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND l.connection_id = $1::uuid
-		AND l.link_attr = 'member' AND l.state = 'active' AND t.kind = 'group' AND t.state = 'live'`, string(connection), roots)
+		AND l.link_attr = 'member' AND l.state = 'active'
+		AND s.kind = 'group' AND s.state = 'live' AND t.kind = 'group' AND t.state = 'live'`, string(connection))
 	if err != nil {
 		return nil, fmt.Errorf("inventory: closure: nesting edges: %w", err)
 	}
