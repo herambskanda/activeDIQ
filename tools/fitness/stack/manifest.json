@@ -434,6 +434,21 @@
         "path": "internal/directory/client/labsource_lab.go",
         "adr": "0001-technology-stack.md",
         "reason": "lab connector plumbing (T-0795): the in-process connector dial and the lab ConnectorSource, kept in the package that owns the generated connector client (ADR-0005 O2); compiled out of every production binary"
+      },
+      {
+        "path": "internal/compose/server/labpasskey_lab.go",
+        "adr": "0001-technology-stack.md",
+        "reason": "lab passkey seeding (T-0855): LabAddPasskey stores a virtual authenticator's public key for the console end-to-end suite until the registration ceremony exists (T-0573); no !lab counterpart, because the only caller is cmd/server/account_lab.go; TestProductionBinaryHasNoPasskeySeeding proves it is absent from the production binary"
+      },
+      {
+        "path": "cmd/server/account_lab.go",
+        "adr": "0001-technology-stack.md",
+        "reason": "the lab half of the `account` subcommand hook (T-0855, T-1156): dispatches `account add-passkey` to LabAddPasskey; compiled out of every production binary"
+      },
+      {
+        "path": "cmd/server/account_off.go",
+        "adr": "0001-technology-stack.md",
+        "reason": "the production (!lab) counterpart of account_lab.go: a plain function that knows no lab subcommand, so main needs no func init (prochardening TM-TB16-T6; T-1156)"
       }
     ]
   },

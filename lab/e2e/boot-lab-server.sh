@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Boots a REAL, lab-built activeDIQ server for the console end-to-end suites (T-0855).
 #
-#   web/e2e/support/boot-lab-server.sh up   [DIR]   build, start PostgreSQL + the server, write DIR/env
-#   web/e2e/support/boot-lab-server.sh down [DIR]   stop the server and remove the PostgreSQL container
+#   lab/e2e/boot-lab-server.sh up   [DIR]   build, start PostgreSQL + the server, write DIR/env
+#   lab/e2e/boot-lab-server.sh down [DIR]   stop the server and remove the PostgreSQL container
 #
 # DIR defaults to a fresh mktemp directory (printed). `up` writes DIR/env: source it, then run
 #   ADIQ_BASE_URL=... npm --prefix web run e2e -- webauthn-sign-in
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 cmd="${1:-}"; dir="${2:-}"
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PG_IMAGE="${ADIQ_E2E_PG_IMAGE:-postgres:16-alpine}"
 
 die() { echo "boot-lab-server: $*" >&2; exit 1; }
