@@ -235,7 +235,9 @@ func Test_ranking_table(t *testing.T) {
 		tOff.Enabled = &no
 		tDel := obj(inventory.KindUser, "user", guid(1, 12), gOUA, "Taylor Ames", "tames3")
 		tDel.State = inventory.ObjDeleted
-		w.populate(t, priya, prima, priyaRamsey, wk, tOn, tOff, tDel)
+		// An all-digit identifier: searchkey has no digits shape, so it classifies as sam/host/text and the sam is an exact hit.
+		dana := obj(inventory.KindUser, "user", guid(1, 20), gOUA, "Dana Ford", "4711")
+		w.populate(t, priya, prima, priyaRamsey, wk, tOn, tOff, tDel, dana)
 		svc, _ := w.service(t, w.admin())
 
 		for _, c := range []struct {
@@ -253,7 +255,10 @@ func Test_ranking_table(t *testing.T) {
 			{"S-1-5-21-1-2-3-1105", reportsql.TypeUser, guid(1, 1), reportsql.ClassExact},
 			{strings.ToUpper(guid(1, 1)), reportsql.TypeUser, guid(1, 1), reportsql.ClassExact},
 			{"{" + guid(1, 1) + "}", reportsql.TypeUser, guid(1, 1), reportsql.ClassExact},
-			{"CN=praman,OU=A,DC=corp,DC=example,DC=test", reportsql.TypeUser, "", 0}, // dn key is the stored dn: see below
+			// the DN shape: the stored DN of priya as obj() builds it, as typed and lower-cased
+			{priya.DN, reportsql.TypeUser, guid(1, 1), reportsql.ClassExact},
+			{strings.ToLower(priya.DN), reportsql.TypeUser, guid(1, 1), reportsql.ClassExact},
+			{"4711", reportsql.TypeUser, guid(1, 20), reportsql.ClassExact},
 			{"wkst01", reportsql.TypeComputer, guid(3, 1), reportsql.ClassExact},
 			{"wkst01.corp.example.test", reportsql.TypeComputer, guid(3, 1), reportsql.ClassExact},
 			{"pri", reportsql.TypeUser, "", reportsql.ClassPrefix},
@@ -261,7 +266,8 @@ func Test_ranking_table(t *testing.T) {
 		} {
 			g := group(w.ask(t, svc, c.q), c.typ)
 			if c.first == "" {
-				if c.class != 0 && (len(g.Items) == 0 || g.Items[0].Class != c.class) {
+				// no specific first hit: the best hit must at least have the class the shape implies
+				if len(g.Items) == 0 || g.Items[0].Class != c.class {
 					t.Errorf("%q: %+v", c.q, names(g))
 				}
 				continue

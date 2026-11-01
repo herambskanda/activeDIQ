@@ -22,7 +22,7 @@ var ErrCursorInvalid = errors.New("search: cursor invalid")
 // maxCursorLen is the contract's bound on nextCursor.
 const maxCursorLen = 1024
 
-// Paging stops at this many permitted hits ("refine your search", rule 12).
+// MaxPagedHits is where paging stops: this many permitted hits ("refine your search", rule 12).
 const MaxPagedHits = 1000
 
 // cursorBinding is everything a cursor's MAC covers besides the rank tuple: the normalised query, the class
