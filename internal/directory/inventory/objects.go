@@ -151,17 +151,17 @@ type Observation struct {
 	// onPremisesSyncBehavior.isCloudManaged. They decide cloud_seen_at (DM-16.I9).
 	OnPremisesSyncEnabled *bool
 	CloudManaged          bool
-	// OnPremisesSyncRead says the sync read onPremisesSyncEnabled on this Entra group. With it set,
+	// OnPremisesSyncEnabledRead says the sync read onPremisesSyncEnabled on this Entra group. With it set,
 	// a nil OnPremisesSyncEnabled is Graph's JSON null (never synced); without it the key is stored
 	// absent, which the judge treats as unknown. OnPremisesSyncEnabled set requires it.
-	OnPremisesSyncRead bool
+	OnPremisesSyncEnabledRead bool
 	// Entra only, users and groups: the other inputs of the DM-20.I4 gate, kept so that a later AD-side
-	// cycle can run the gate again. OnPremisesSID is onPremisesSecurityIdentifier (binary),
+	// cycle can run the gate again. OnPremisesSecurityIdentifier is onPremisesSecurityIdentifier (binary),
 	// OnPremisesDomainName is onPremisesDomainName ("" when not populated) and OnPremisesImmutableID is
 	// the decoded onPremisesImmutableId (the anchor, 16 bytes for a GUID anchor).
-	OnPremisesSID         []byte
-	OnPremisesDomainName  string
-	OnPremisesImmutableID []byte
+	OnPremisesSecurityIdentifier []byte
+	OnPremisesDomainName         string
+	OnPremisesImmutableID        []byte
 
 	// The D7 inputs of the derived states (reports spec §6.4, T-0958). A nil pointer or a zero time is
 	// "absent"; InputsRead says which of the four time inputs the sync read, so absent-and-read
@@ -228,7 +228,7 @@ func (o *Observation) checkInputs() error {
 // GroupFacts are the judge's inputs, typed so the producer cannot store one without the others it
 // depends on. A nil pointer or nil slice is "not read", which the judge treats as unknown. AD groups
 // use GroupType, BroadMembershipWrite(+At) and WrittenBack; Entra groups use SecurityEnabled,
-// Visibility and GroupTypes (and Observation.OnPremisesSyncRead).
+// Visibility and GroupTypes (and Observation.OnPremisesSyncEnabledRead).
 type GroupFacts struct {
 	GroupType *int32 // AD groupType
 	// BroadMembershipWrite is the computed fact (TM-D18); BroadMembershipWriteAt is when it was
@@ -265,19 +265,19 @@ func (o *Observation) merged(entra bool) (map[string]any, error) {
 	}
 	f := o.Facts
 	if o.Kind != KindGroup {
-		if f.ad() || f.entra() || o.OnPremisesSyncRead {
+		if f.ad() || f.entra() || o.OnPremisesSyncEnabledRead {
 			return nil, fmt.Errorf("group facts on a non-group")
 		}
 		return o.Attributes, nil
 	}
-	if entra && f.ad() || !entra && (f.entra() || o.OnPremisesSyncRead) {
+	if entra && f.ad() || !entra && (f.entra() || o.OnPremisesSyncEnabledRead) {
 		return nil, fmt.Errorf("group facts of the other plane")
 	}
 	if (f.BroadMembershipWrite == nil) != f.BroadMembershipWriteAt.IsZero() {
 		return nil, fmt.Errorf("broadMembershipWrite and its computed-at come together")
 	}
-	if entra && o.OnPremisesSyncEnabled != nil && !o.OnPremisesSyncRead {
-		return nil, fmt.Errorf("onPremisesSyncEnabled set without OnPremisesSyncRead")
+	if entra && o.OnPremisesSyncEnabled != nil && !o.OnPremisesSyncEnabledRead {
+		return nil, fmt.Errorf("onPremisesSyncEnabled set without OnPremisesSyncEnabledRead")
 	}
 	out := make(map[string]any, len(o.Attributes)+8)
 	for k, v := range o.Attributes {
@@ -302,7 +302,7 @@ func (o *Observation) merged(entra bool) (map[string]any, error) {
 	if f.GroupTypes != nil {
 		out[AttrGroupTypes] = f.GroupTypes
 	}
-	if o.OnPremisesSyncRead {
+	if o.OnPremisesSyncEnabledRead {
 		if o.OnPremisesSyncEnabled != nil {
 			out[AttrOnPremisesSyncEnabled] = *o.OnPremisesSyncEnabled
 		} else {
@@ -417,6 +417,9 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		attrs[i] = b
 	}
 
+	// The search keys of the objects this call wrote, replaced in this transaction after the loop.
+	keyed := map[GUID][]searchKeyRow{}
+	var keyOrder []GUID
 	for i := range obs {
 		o := &obs[i]
 		var cloud any
@@ -425,12 +428,12 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			cloud = observed.UTC()
 		}
 		// The gate inputs are stored for Entra users and groups only; for anything else they stay NULL.
-		var onPremSync, onPremCloud any
+		var syncEnabledVal, cloudManagedVal any
 		if entra && (o.Kind == KindUser || o.Kind == KindGroup) {
 			if o.OnPremisesSyncEnabled != nil {
-				onPremSync = *o.OnPremisesSyncEnabled
+				syncEnabledVal = *o.OnPremisesSyncEnabled
 			}
-			onPremCloud = o.CloudManaged
+			cloudManagedVal = o.CloudManaged
 		}
 		anc := make([]string, len(o.Ancestry))
 		for j, a := range o.Ancestry {
@@ -449,7 +452,7 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			nullGUID(o.Parent), anc, o.DN, o.RDN, sid, o.SAMAccountName, o.UPN, o.DisplayName, o.Enabled,
 			nullTime(o.LockoutTime), nullTime(o.PwdLastSet), nullTime(o.AccountExpires),
 			cg, string(attrs[i]), nullTime(o.WhenCreated), nullTime(o.WhenChanged), observed.UTC(), o.ObservedDSA, cloud, string(o.State),
-			onPremSync, onPremCloud, nilIfEmpty(o.OnPremisesSID), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID),
+			syncEnabledVal, cloudManagedVal, nilIfEmpty(o.OnPremisesSecurityIdentifier), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID),
 			o.UserAccountControl, o.PrimaryGroupID, nullTime(o.LastLogonTimestamp), o.HasSPN, int16(o.InputsRead)).
 			Scan(&w.inserted, &w.moved, &w.completeChanged)
 		if store.IsNoRows(err) {
@@ -464,6 +467,10 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		} else {
 			out.Updated++
 		}
+		if _, ok := keyed[o.Object]; !ok {
+			keyOrder = append(keyOrder, o.Object)
+		}
+		keyed[o.Object] = searchKeys(sourceOf(o))
 		// The row moved (its parent or chain changed) or its completeness changed, or it is new and
 		// descendants may be waiting for it: bring the rows below it up to date in this transaction.
 		if w.moved {
@@ -481,6 +488,13 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		}
 
 		if o.Kind == KindGroup {
+			// A group row that arrived or changed (state, kind) is a closure root to recompute, with
+			// the groups that contain it.
+			if _, err := tx.Exec(ctx, `INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+				VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid) ON CONFLICT DO NOTHING`,
+				string(connection), string(o.Object)); err != nil {
+				return out, writeErr("mark group dirty", err)
+			}
 			for _, m := range o.Members {
 				if err := p.SetMember(ctx, tx, connection, o.Object, m, observed); err != nil {
 					return out, err
@@ -507,6 +521,18 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 				return out, err
 			}
 		}
+	}
+	// The search index follows the objects in the same transaction (ADR-0011 rule 5): a rollback leaves both.
+	var keyRows []searchKeyRow
+	for _, g := range keyOrder {
+		keyRows = append(keyRows, keyed[g]...)
+	}
+	if _, err := writeSearchKeys(ctx, tx, connection, keyOrder, keyRows); err != nil {
+		return out, err
+	}
+	// The membership closure the group datasets read follows the links of this batch in the same transaction.
+	if _, err := p.RefreshClosure(ctx, tx, connection); err != nil {
+		return out, err
 	}
 	return out, nil
 }
@@ -640,7 +666,7 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 		return bad(err.Error())
 	}
 	if entra {
-		if len(o.OnPremisesSID) != 0 && (len(o.OnPremisesSID) < 8 || len(o.OnPremisesSID) > 68) {
+		if len(o.OnPremisesSecurityIdentifier) != 0 && (len(o.OnPremisesSecurityIdentifier) < 8 || len(o.OnPremisesSecurityIdentifier) > 68) {
 			return bad("onPremisesSecurityIdentifier")
 		}
 		if len(o.OnPremisesImmutableID) > 64 || len(o.OnPremisesDomainName) > 255 || strings.ContainsRune(o.OnPremisesDomainName, 0) {
@@ -651,7 +677,7 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 		}
 	} else {
 		if !validGUID(o.NC) || !adStates[o.State] || o.OnPremisesSyncEnabled != nil || o.CloudManaged ||
-			len(o.OnPremisesSID) > 0 || o.OnPremisesDomainName != "" || len(o.OnPremisesImmutableID) > 0 {
+			len(o.OnPremisesSecurityIdentifier) > 0 || o.OnPremisesDomainName != "" || len(o.OnPremisesImmutableID) > 0 {
 			return bad("AD object nc, state or cloud fields")
 		}
 		if len(o.ConsistencyGUID) != 0 {
@@ -725,9 +751,13 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 // removeUnseen marks the active attr edges of group that this cycle did not refresh (observed_at older
 // than the cycle) removed: the cycle read the whole membership.
 func (Writer) removeUnseen(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group GUID, observed time.Time) error {
-	_, err := tx.Exec(ctx, `UPDATE public.links SET state = 'removed', observed_at = $3
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-		AND source_guid = $2::uuid AND link_attr = $4 AND state = 'active' AND observed_at < $3`,
+	_, err := tx.Exec(ctx, `WITH edge AS (
+			UPDATE public.links SET state = 'removed', observed_at = $3
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
+			AND source_guid = $2::uuid AND link_attr = $4 AND state = 'active' AND observed_at < $3
+			RETURNING tenant_id, connection_id, source_guid)
+		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
 		string(connection), string(group), observed.UTC(), attr)
 	if err != nil {
 		return writeErr("remove unseen "+attr, err)
@@ -738,9 +768,13 @@ func (Writer) removeUnseen(ctx context.Context, tx store.Tx, attr string, connec
 // removeOtherPrimaryGroups: a user has one primary group, so any other active primary_group edge to the
 // user is stale once the new one is observed.
 func (Writer) removeOtherPrimaryGroups(ctx context.Context, tx store.Tx, connection ConnectionID, group, user GUID, observed time.Time) error {
-	_, err := tx.Exec(ctx, `UPDATE public.links SET state = 'removed', observed_at = $4
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-		AND link_attr = 'primary_group' AND target_guid = $3::uuid AND source_guid <> $2::uuid AND state = 'active' AND observed_at <= $4`,
+	_, err := tx.Exec(ctx, `WITH edge AS (
+			UPDATE public.links SET state = 'removed', observed_at = $4
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
+			AND link_attr = 'primary_group' AND target_guid = $3::uuid AND source_guid <> $2::uuid AND state = 'active' AND observed_at <= $4
+			RETURNING tenant_id, connection_id, source_guid)
+		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
 		string(connection), string(group), string(user), observed.UTC())
 	if err != nil {
 		return writeErr("remove stale primary group", err)

@@ -1,6 +1,7 @@
 package library_test
 
 import (
+	"io/fs"
 	"slices"
 	"strings"
 	"testing"
@@ -11,7 +12,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/report"
 )
 
-// specRow is one row of reports-2a 6.2 for a batch-1 report, as the spec table words it. Columns are the
+// specRow is one row of reports-2a 6.2 for a shipped report, as the spec table words it. Columns are the
 // registry column that shows each spec column. Deviations are the places the shipped definition differs
 // from the table today, each with the ticket that closes it; a deviation not listed here fails the test.
 type specRow struct {
@@ -22,31 +23,111 @@ type specRow struct {
 	presets    map[string][]string // preset ID -> ME names
 	columns    []string
 	deviations []string
+	// filters is, per preset, the columns the preset's filter reads, sorted: the "Default filters" cell of the
+	// 6.2 row says which attributes each preset constrains. Only the batch-2 rows state it.
+	filters map[string][]string
+	// subject is "<kind>:<column>" for the reports that require objects (GRP-02, GRP-03).
+	subject string
 }
 
 var specRows = []specRow{
-	{"usr-01", "Users", report.CategoryUsers, "inventory.users",
-		map[string][]string{"all": {"All Users"}, "enabled": {"Enabled Users"}, "disabled": {"Disabled Users"}, "recently_created": {"Recently Created Users"}},
+	{id: "usr-01", title: "Users", category: report.CategoryUsers, dataset: "inventory.users",
+		presets: map[string][]string{"all": {"All Users"}, "enabled": {"Enabled Users"}, "disabled": {"Disabled Users"}, "recently_created": {"Recently Created Users"}},
 		// Name, Logon name, UPN, Status, Domain, OU path, Manager, Created
-		[]string{"display_name", "sam_account_name", "user_principal_name", "enabled", "domain", "dn", "when_created"},
-		[]string{"OU path is shown by the dn column (T-1041 adds the masked OU path)", "Manager column and the Users Without Managers preset wait for T-1041"}},
-	{"usr-02", "Account expiry", report.CategoryUsers, "inventory.users",
-		map[string][]string{"expired": {"Account Expired Users"}, "recently_expired": {"Recently Account Expired Users"},
+		columns:    []string{"display_name", "sam_account_name", "user_principal_name", "enabled", "domain", "dn", "when_created"},
+		deviations: []string{"OU path is shown by the dn column (T-1041 adds the masked OU path)", "Manager column and the Users Without Managers preset wait for T-1041"}},
+	{id: "usr-02", title: "Account expiry", category: report.CategoryUsers, dataset: "inventory.users",
+		presets: map[string][]string{"expired": {"Account Expired Users"}, "recently_expired": {"Recently Account Expired Users"},
 			"soon": {"Soon-to-expire User Accounts"}, "never": {"Account Never Expires Users"}},
 		// Name, Logon name, Domain, OU path, Account expires, Days to / since expiry, Status
-		[]string{"display_name", "sam_account_name", "domain", "dn", "account_expires", "days_to_account_expiry", "enabled"},
-		[]string{"OU path is shown by the dn column (T-1041)"}},
-	{"usr-03", "Logon activity", report.CategoryUsers, "inventory.users",
-		map[string][]string{"inactive": {"Inactive Users"}, "recent": {"Recently Logged on Users"}, "never": {"Users Never Logged On"}},
+		columns:    []string{"display_name", "sam_account_name", "domain", "dn", "account_expires", "days_to_account_expiry", "enabled"},
+		deviations: []string{"OU path is shown by the dn column (T-1041)"}},
+	{id: "usr-03", title: "Logon activity", category: report.CategoryUsers, dataset: "inventory.users",
+		presets: map[string][]string{"inactive": {"Inactive Users"}, "recent": {"Recently Logged on Users"}, "never": {"Users Never Logged On"}},
 		// Name, Logon name, Domain, OU path, Last logon (replicated), Days since, Created, Status, Probable service account
-		[]string{"display_name", "sam_account_name", "domain", "dn", "last_logon_timestamp", "days_since_logon", "when_created", "enabled",
+		columns: []string{"display_name", "sam_account_name", "domain", "dn", "last_logon_timestamp", "days_since_logon", "when_created", "enabled",
 			"probable_service_account", "probable_service_account_reason"},
-		[]string{"OU path is shown by the dn column (T-1041)", "adds the service-account reason column (spec 6.7: every flagged row shows its reason)"}},
-	{"usr-05", "Locked-out users", report.CategoryUsers, "inventory.users",
-		map[string][]string{"locked_out": {"Locked-out Users"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "adds the service-account reason column (spec 6.7: every flagged row shows its reason)"}},
+	{id: "usr-05", title: "Locked-out users", category: report.CategoryUsers, dataset: "inventory.users",
+		presets: map[string][]string{"locked_out": {"Locked-out Users"}},
 		// Name, Logon name, Domain, OU path, Locked out since, Lockout ends, Policy source, Data as of
-		[]string{"display_name", "sam_account_name", "domain", "dn", "lockout_time", "lockout_ends_at", "policy_source", "observed_at"},
-		[]string{"OU path is shown by the dn column (T-1041)"}},
+		columns:    []string{"display_name", "sam_account_name", "domain", "dn", "lockout_time", "lockout_ends_at", "policy_source", "observed_at"},
+		deviations: []string{"OU path is shown by the dn column (T-1041)"}},
+
+	// ---- batch 2 (T-0962)
+	{id: "pwd-01", title: "Password status", category: report.CategoryPasswords, dataset: "inventory.users",
+		presets: map[string][]string{"expired": {"Password Expired Users"}, "soon": {"Soon-to-expire User Passwords"},
+			"never": {"Users with Password Never Expires"}, "must_change": {"Users with Change Password at Next Logon"}},
+		// Name, Logon name, Domain, OU path, Password last set, Password expires, Password state, Policy source, Status, Probable service account
+		columns: []string{"display_name", "sam_account_name", "domain", "dn", "pwd_last_set", "password_expires_at", "password_state", "policy_source", "enabled",
+			"probable_service_account", "probable_service_account_reason"},
+		filters:    map[string][]string{"expired": {"password_state"}, "soon": {"password_expires_at", "password_state"}, "never": {"password_state"}, "must_change": {"password_state"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "adds the service-account reason column (spec 6.7: every flagged row shows its reason)"}},
+	{id: "pwd-02", title: "Password age", category: report.CategoryPasswords, dataset: "inventory.users",
+		presets: map[string][]string{"changed": {"Password Changed Users"}, "unchanged": {"Password Unchanged Users"}},
+		// Name, Logon name, Domain, OU path, Password last set, Days since, Status
+		columns:    []string{"display_name", "sam_account_name", "domain", "dn", "pwd_last_set", "days_since_password_set", "enabled"},
+		filters:    map[string][]string{"changed": {"pwd_last_set"}, "unchanged": {"enabled", "pwd_last_set", "pwd_set_recorded", "when_created"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "Unchanged also lists enabled accounts whose pwdLastSet is 0 and that were created before the threshold (never changed)"}},
+	{id: "grp-01", title: "Groups", category: report.CategoryGroups, dataset: "inventory.groups",
+		presets: map[string][]string{"all": {"All Groups"}, "security": {"Security Groups"}, "distribution": {"Distribution Groups"}, "type_scope": {"Group Type and Scope"},
+			"no_members": {"Groups Without Members"}, "managed": {"Managed Groups"}, "unmanaged": {"Unmanaged Groups"}, "top": {"Top N Big Groups"},
+			"recently_created": {"Recently Created Groups"}},
+		// Name, Domain, OU path, Type, Scope, Direct members, Effective members, Managed by, Created
+		columns: []string{"name", "domain", "dn", "group_type", "group_scope", "direct_members", "effective_members", "managed_by", "when_created"},
+		filters: map[string][]string{"all": nil, "security": {"group_type"}, "distribution": {"group_type"}, "type_scope": nil, "no_members": {"has_members"},
+			"managed": {"has_manager"}, "unmanaged": {"has_manager"}, "top": nil, "recently_created": {"when_created"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)"}},
+	{id: "grp-02", title: "Group members", category: report.CategoryGroups, dataset: "inventory.group_members",
+		presets: map[string][]string{"members": {"Group Members"}, "detailed": {"Detailed Group Members"}, "users": {"Users in Groups"}},
+		// Group, Member, Member type, Domain, OU path, Status, Membership kind, Via
+		columns: []string{"group_name", "member_name", "member_kind", "member_domain", "member_dn", "member_enabled", "edge_kind", "via_path", "finding"},
+		filters: map[string][]string{"members": {"depth"}, "detailed": nil, "users": {"finding", "member_kind"}},
+		subject: "group:group_guid",
+		deviations: []string{"OU path is shown by the member's dn column (T-1041)", "adds the Finding column: a cycle, a group too large to expand and a nesting cut are rows that need their sentence (spec 6.6)",
+			"Users in Groups also lists the finding rows, so a user-only list is never silently incomplete"}},
+	{id: "grp-03", title: "Groups for users", category: report.CategoryGroups, dataset: "inventory.group_members",
+		presets: map[string][]string{"groups_for_users": {"Groups for Users"}},
+		// User, Group, Group type, Group scope, Membership kind, Via
+		columns: []string{"member_name", "group_name", "group_type", "group_scope", "edge_kind", "via_path"},
+		filters: map[string][]string{"groups_for_users": nil}, subject: "user:member_guid",
+		deviations: []string{"the effective, primary-group-inclusive rule is the dataset's: every closure row of the user"}},
+	{id: "grp-04", title: "Not in any group", category: report.CategoryGroups, dataset: "inventory.principals",
+		presets: map[string][]string{"users": {"Users Not in Groups"}, "computers": {"Computers Not in Groups"}},
+		// Name, Domain, OU path, Primary group, Status, Created, Last logon (replicated)
+		columns: []string{"name", "domain", "dn", "primary_group", "enabled", "when_created", "last_logon_timestamp"},
+		filters: map[string][]string{"users": {"in_other_groups", "object_kind"}, "computers": {"in_other_groups", "object_kind"}},
+		deviations: []string{"the dataset is inventory.principals (users and computers in one registered dataset) because a definition holds one dataset and the preset chooses the kind",
+			"OU path is shown by the dn column (T-1041)"}},
+	{id: "cmp-01", title: "Computers", category: report.CategoryComputers, dataset: "inventory.computers",
+		presets: map[string][]string{"all": {"All computers"}, "enabled": {"Enabled Computers"}, "disabled": {"Disabled Computers"}, "workstation": {"Workstation Computers"},
+			"domain_controller": {"Domain Controllers"}, "delegation": {"Computers Trusted for Delegation"}, "os": {"OS based computers"}, "recently_created": {"Recently Created Computers"}},
+		// Name, DNS name, Domain, OU path, Type, Operating system, OS version, Status, Delegation, Created
+		columns: []string{"name", "dns_host_name", "domain", "dn", "computer_type", "operating_system", "operating_system_version", "enabled", "delegation", "when_created"},
+		filters: map[string][]string{"all": nil, "enabled": {"enabled"}, "disabled": {"enabled"}, "workstation": {"computer_type"}, "domain_controller": {"computer_type"},
+			"delegation": {"delegation"}, "os": {"operating_system"}, "recently_created": {"when_created"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)",
+			"OS based computers lists the computers that report an operating system, grouped by it; narrowing to one name is the grid filter (a text parameter kind does not exist)"}},
+	{id: "cmp-02", title: "Computer activity", category: report.CategoryComputers, dataset: "inventory.computers",
+		presets: map[string][]string{"inactive": {"Inactive computers"}, "active": {"Active Computers"}},
+		// Name, DNS name, Domain, OU path, Operating system, Last activity, Activity source, Days since, Status, Created
+		columns:    []string{"name", "dns_host_name", "domain", "dn", "operating_system", "last_activity", "activity_source", "days_since_activity", "enabled", "when_created"},
+		filters:    map[string][]string{"inactive": {"enabled", "last_activity"}, "active": {"last_activity"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "gMSA objects are counted in the header; cluster objects wait for the servicePrincipalName values (follow-up ticket)"}},
+	{id: "ou-01", title: "Organizational units", category: report.CategoryOUs, dataset: "inventory.ous",
+		presets: map[string][]string{"all": {"All OUs"}, "empty": {"Empty OUs"}, "users_only": {"Users-Only OUs"}, "computers_only": {"Computers-Only OUs"}, "recently_created": {"Recently Created OUs"}},
+		// Name, Domain, Path, Users, Computers, Groups, Other objects, Objects in subtree, Created
+		columns: []string{"name", "domain", "dn", "subtree_users", "subtree_computers", "subtree_groups", "subtree_other", "subtree_objects", "when_created"},
+		filters: map[string][]string{"all": nil, "empty": {"subtree_computers", "subtree_groups", "subtree_other", "subtree_users"},
+			"users_only": {"subtree_computers", "subtree_groups", "subtree_other", "subtree_users"}, "computers_only": {"subtree_computers", "subtree_groups", "subtree_other", "subtree_users"},
+			"recently_created": {"when_created"}},
+		deviations: []string{"Users, Computers, Groups and Other count the whole subtree, the same set the Empty, Users-only and Computers-only filters test"}},
+	{id: "ctc-01", title: "Contacts", category: report.CategoryContacts, dataset: "inventory.contacts",
+		presets: map[string][]string{"all": {"All Contacts"}, "mail_enabled": {"Mail Enabled Contacts"}, "recently_created": {"Recently Created Contacts"}},
+		// Name, E-mail, Domain, OU path, Created
+		columns:    []string{"name", "mail", "domain", "dn", "when_created"},
+		filters:    map[string][]string{"all": nil, "mail_enabled": {"mail"}, "recently_created": {"when_created"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)"}},
 }
 
 // reports_library_matches_spec (AC-01): each batch-1 report has the ID, category, dataset, presets and
@@ -54,12 +135,21 @@ var specRows = []specRow{
 func Test_reports_library_matches_spec(t *testing.T) {
 	l := shipped(t)
 	items := l.List()
+	// 16 reports in the spec; USR-04 and PWD-03 are the per-DC pair (B8, T-0963).
 	if len(items) != len(specRows) {
 		t.Fatalf("library lists %d reports, want %d", len(items), len(specRows))
 	}
-	for i, row := range specRows {
-		d := items[i].Def
-		if string(d.ID) != row.id || d.Title != row.title || d.Category != row.category || d.Dataset != row.dataset || d.Version != 1 {
+	byID := map[string]report.Definition{}
+	for _, it := range items {
+		byID[string(it.Def.ID)] = it.Def
+	}
+	for _, row := range specRows {
+		d, ok := byID[row.id]
+		if !ok {
+			t.Errorf("%s is not in the library", row.id)
+			continue
+		}
+		if d.Title != row.title || d.Category != row.category || d.Dataset != row.dataset || d.Version != 1 {
 			t.Errorf("%s: got %s %q %s %s v%d", row.id, d.ID, d.Title, d.Category, d.Dataset, d.Version)
 		}
 		if got := d.Columns; !slices.Equal(got, toCols(row.columns)) {
@@ -73,6 +163,21 @@ func Test_reports_library_matches_spec(t *testing.T) {
 			if !ok || !slices.Equal(p.Names, names) {
 				t.Errorf("%s/%s: names %v, want %v", row.id, pid, p.Names, names)
 			}
+			if row.filters != nil {
+				want, stated := row.filters[pid]
+				if !stated {
+					t.Errorf("%s/%s: the spec row states no filter columns for this preset", row.id, pid)
+				}
+				if got := filterColumns(p.Where); !slices.Equal(got, want) {
+					t.Errorf("%s/%s: the filter reads %v, the spec row says %v", row.id, pid, got, want)
+				}
+			}
+			switch {
+			case row.subject == "" && p.Requires != nil:
+				t.Errorf("%s/%s requires subjects", row.id, pid)
+			case row.subject != "" && (p.Requires == nil || p.Requires.Kind+":"+string(p.Requires.Column) != row.subject):
+				t.Errorf("%s/%s: subjects %+v, want %s", row.id, pid, p.Requires, row.subject)
+			}
 		}
 		if len(row.deviations) == 0 {
 			t.Errorf("%s: no deviations listed; delete this check if there are none", row.id)
@@ -82,6 +187,37 @@ func Test_reports_library_matches_spec(t *testing.T) {
 	if n := len(l.Names()); n != 54 {
 		t.Errorf("crosswalk lists %d names, spec 6.2 says 54", n)
 	}
+}
+
+// filterColumns lists, sorted and once each, the columns an expression reads.
+func filterColumns(e report.Expr) []string {
+	set := map[string]bool{}
+	var walk func(report.Expr)
+	walk = func(e report.Expr) {
+		switch x := e.(type) {
+		case report.And:
+			for _, t := range x.Terms {
+				walk(t)
+			}
+		case report.Or:
+			for _, t := range x.Terms {
+				walk(t)
+			}
+		case report.Not:
+			walk(x.Term)
+		case report.Cmp:
+			set[string(x.Column)] = true
+		}
+	}
+	if e != nil {
+		walk(e)
+	}
+	var out []string
+	for c := range set {
+		out = append(out, c)
+	}
+	slices.Sort(out)
+	return out
 }
 
 func toCols(s []string) []report.ColumnID {
@@ -157,7 +293,7 @@ func Test_reports_search_by_me_name(t *testing.T) {
 		t.Errorf("title search: %+v", h)
 	}
 	// Names of reports that ship later still answer, honestly.
-	if m, ok := l.Resolve("Password Expired Users"); !ok || m.Report != "pwd-01" || m.Available || m.Preset != "" {
+	if m, ok := l.Resolve("Real Last Logon"); !ok || m.Report != "usr-04" || m.Available || m.Preset != "" {
 		t.Errorf("unshipped: %+v", m)
 	}
 	// A shipped report whose preset waits for data says why.
@@ -185,7 +321,11 @@ func Test_reports_library_is_immutable(t *testing.T) {
 	opt := library.Options{Datasets: inventory.Datasets(), Registry: reg}
 	fresh := func() fstest.MapFS {
 		m := fstest.MapFS{}
-		for _, n := range []string{"LOCK", "crosswalk.tsv", "usr-01.v1.json", "usr-02.v1.json", "usr-03.v1.json", "usr-05.v1.json"} {
+		files, err := fs.Glob(library.Shipped(), "*.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, n := range append(files, "LOCK", "crosswalk.tsv") {
 			b, err := fsReadFile(n)
 			if err != nil {
 				t.Fatal(err)

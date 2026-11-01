@@ -2592,7 +2592,7 @@ func (v *ReportExportCreate) Validate(at jsontext.Pointer, errs *apitypes.Errors
 	}
 }
 
-// ReportExportFormat: An export format. csv and xlsx exist at the 2a demo; pdf and html arrive by M2 exit. A definition lists the formats this installation can produce.
+// ReportExportFormat: An export format. csv, xlsx, pdf and html all exist. A definition lists the formats this installation can produce for it: no pdf when the report has more columns than a PDF page lays out (24).
 type ReportExportFormat string
 
 const (

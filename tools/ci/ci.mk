@@ -13,10 +13,10 @@ gen-proto: ## T-0157: regenerate the connector contract's Go code (internal/prot
 gen-check: ## T-0157: fail if the generated Go code under internal/proto is stale, hand-edited or orphaned (regenerates in memory and compares)
 	go run ./tools/gen/proto -check
 
-gen-modules: ## T-0997: regenerate internal/platform/store/owners/owners.gen.go (table -> owner key and write class) from the migrations
+gen-modules: ## T-0997: regenerate internal/platform/store/owners/owners.gen.tsv (table -> owner key and write class) from the migrations
 	go run ./tools/gen/modules
 
-gen-modules-check: ## T-0997: fail if owners.gen.go is stale, hand-edited or missing, or a migration table has no `-- write-class: <table> config|system` line (run `make gen-modules`)
+gen-modules-check: ## T-0997: fail if owners.gen.tsv is stale, hand-edited or missing, or a migration table has no `-- write-class: <table> config|system` line (run `make gen-modules`)
 	go run ./tools/gen/modules -check
 
 web-install: ## Install the pinned web dependencies from the lockfile (npm ci)

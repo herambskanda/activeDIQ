@@ -61,10 +61,10 @@ spec clicks "Use a security key"; a console without it fails at the first test.
 
 ```bash
 npm ci --prefix web && npm --prefix web run build           # (boot-lab-server.sh runs `make web-embed` itself if internal/webui/dist is empty)
-dir=$(web/e2e/support/boot-lab-server.sh up)                # lab build + PostgreSQL 16 container + kek init + server on https://localhost:<port>
+dir=$(lab/e2e/boot-lab-server.sh up)                # lab build + PostgreSQL 16 container + kek init + server on https://localhost:<port>
 . "$dir/env"                                                # ADIQ_BASE_URL, ADIQ_E2E_SERVER_BIN, ADIQ_E2E_CA, ACTIVEDIQ_*
 cd web && ADIQ_E2E_EVIDENCE_DIR=../factory/demos/evidence/<ticket> npx playwright test webauthn-sign-in
-cd .. && web/e2e/support/boot-lab-server.sh down "$dir"     # stops the server and removes the container
+cd .. && lab/e2e/boot-lab-server.sh down "$dir"     # stops the server and removes the container
 ```
 
 What the boot recipe does: builds `go build -tags lab ./cmd/server`; starts a throwaway PostgreSQL container

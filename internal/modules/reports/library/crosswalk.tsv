@@ -16,43 +16,43 @@ Recently Logged on Users	usr-03	Logon activity	recent
 Users Never Logged On	usr-03	Logon activity	never	
 Real Last Logon	usr-04	Real last logon	-	
 Locked-out Users	usr-05	Locked-out users	locked_out	
-Password Expired Users	pwd-01	Password status	-	
-Soon-to-expire User Passwords	pwd-01	Password status	-	
-Users with Password Never Expires	pwd-01	Password status	-	
-Users with Change Password at Next Logon	pwd-01	Password status	-	
-Password Changed Users	pwd-02	Password age	-	
-Password Unchanged Users	pwd-02	Password age	-	
+Password Expired Users	pwd-01	Password status	expired	
+Soon-to-expire User Passwords	pwd-01	Password status	soon	
+Users with Password Never Expires	pwd-01	Password status	never	
+Users with Change Password at Next Logon	pwd-01	Password status	must_change	
+Password Changed Users	pwd-02	Password age	changed	
+Password Unchanged Users	pwd-02	Password age	unchanged	
 Recent Logon Failures	pwd-03	Recent logon failures	-	
-All Groups	grp-01	Groups	-	
-Security Groups	grp-01	Groups	-	
-Distribution Groups	grp-01	Groups	-	
-Group Type and Scope	grp-01	Groups	-	
-Groups Without Members	grp-01	Groups	-	
-Managed Groups	grp-01	Groups	-	
-Unmanaged Groups	grp-01	Groups	-	
-Top N Big Groups	grp-01	Groups	-	
-Recently Created Groups	grp-01	Groups	-	
-Group Members	grp-02	Group members	-	
-Detailed Group Members	grp-02	Group members	-	
-Users in Groups	grp-02	Group members	-	
-Groups for Users	grp-03	Groups for users	-	
-Users Not in Groups	grp-04	Not in any group	-	
-Computers Not in Groups	grp-04	Not in any group	-	
-All computers	cmp-01	Computers	-	
-Enabled Computers	cmp-01	Computers	-	
-Disabled Computers	cmp-01	Computers	-	
-Workstation Computers	cmp-01	Computers	-	
-Domain Controllers	cmp-01	Computers	-	
-Computers Trusted for Delegation	cmp-01	Computers	-	
-OS based computers	cmp-01	Computers	-	
-Recently Created Computers	cmp-01	Computers	-	
-Inactive computers	cmp-02	Computer activity	-	
-Active Computers	cmp-02	Computer activity	-	
-All OUs	ou-01	Organizational units	-	
-Empty OUs	ou-01	Organizational units	-	
-Users-Only OUs	ou-01	Organizational units	-	
-Computers-Only OUs	ou-01	Organizational units	-	
-Recently Created OUs	ou-01	Organizational units	-	
-All Contacts	ctc-01	Contacts	-	
-Mail Enabled Contacts	ctc-01	Contacts	-	
-Recently Created Contacts	ctc-01	Contacts	-	
+All Groups	grp-01	Groups	all	
+Security Groups	grp-01	Groups	security	
+Distribution Groups	grp-01	Groups	distribution	
+Group Type and Scope	grp-01	Groups	type_scope	
+Groups Without Members	grp-01	Groups	no_members	
+Managed Groups	grp-01	Groups	managed	
+Unmanaged Groups	grp-01	Groups	unmanaged	
+Top N Big Groups	grp-01	Groups	top	
+Recently Created Groups	grp-01	Groups	recently_created	
+Group Members	grp-02	Group members	members	
+Detailed Group Members	grp-02	Group members	detailed	
+Users in Groups	grp-02	Group members	users	
+Groups for Users	grp-03	Groups for users	groups_for_users	
+Users Not in Groups	grp-04	Not in any group	users	
+Computers Not in Groups	grp-04	Not in any group	computers	
+All computers	cmp-01	Computers	all	
+Enabled Computers	cmp-01	Computers	enabled	
+Disabled Computers	cmp-01	Computers	disabled	
+Workstation Computers	cmp-01	Computers	workstation	
+Domain Controllers	cmp-01	Computers	domain_controller	
+Computers Trusted for Delegation	cmp-01	Computers	delegation	
+OS based computers	cmp-01	Computers	os	
+Recently Created Computers	cmp-01	Computers	recently_created	
+Inactive computers	cmp-02	Computer activity	inactive	
+Active Computers	cmp-02	Computer activity	active	
+All OUs	ou-01	Organizational units	all	
+Empty OUs	ou-01	Organizational units	empty	
+Users-Only OUs	ou-01	Organizational units	users_only	
+Computers-Only OUs	ou-01	Organizational units	computers_only	
+Recently Created OUs	ou-01	Organizational units	recently_created	
+All Contacts	ctc-01	Contacts	all	
+Mail Enabled Contacts	ctc-01	Contacts	mail_enabled	
+Recently Created Contacts	ctc-01	Contacts	recently_created	

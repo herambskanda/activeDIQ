@@ -78,7 +78,7 @@ func directoryFacts(reads client.Reads, opts ...client.Option) *client.Client {
 // TM-D19 rule 5 backing-object guard wired to the account and correlation stores and a live root
 // resolver over facts, and the TM-D18 group-membership guard over inventory's group edges. Without a
 // guard its permissions are refused.
-func rbacAuthorizer(db *store.DB, facts rbac.FactsReader) (operation.Authorizer, error) {
+func rbacAuthorizer(db *store.DB, facts rbac.FactsReader) (*rbac.Authorizer, error) {
 	src, err := rbac.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("server: rbac store: %w", err)

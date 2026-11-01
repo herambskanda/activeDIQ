@@ -16,7 +16,9 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/blob"
 	pexport "github.com/skenzeriq/activediq/internal/platform/export"
 	"github.com/skenzeriq/activediq/internal/platform/export/csv"
+	"github.com/skenzeriq/activediq/internal/platform/export/pdf"
 	"github.com/skenzeriq/activediq/internal/platform/export/xlsx"
+	"github.com/skenzeriq/activediq/internal/platform/htmlx"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -262,6 +264,10 @@ func (s *Service) write(ctx context.Context, jt jobs.TenantTx, c jobs.Claimed, e
 		f = csv.Format(csv.Options{MaxRows: cap})
 	case XLSX:
 		f = xlsx.Format(xlsx.Options{Sheet: xlsx.ParseSheetName(def.Def.Title), Title: def.Def.Title, MaxRows: cap, About: s.about(r, def, q, e)})
+	case PDF:
+		f = pdf.Format(pdf.Options{Title: def.Def.Title, MaxRows: cap, About: s.about(r, def, q, e)})
+	case HTML:
+		f = htmlx.Format(htmlx.Options{Title: def.Def.Title, MaxRows: cap, About: s.about(r, def, q, e)})
 	default:
 		return blob.Info{}, "", &outcome{reason: run.FailInternal}
 	}

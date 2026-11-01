@@ -1,6 +1,6 @@
 ---
 title: State of the product
-updated: 2026-10-31
+updated: 2026-11-01
 budget: 120 lines
 ---
 
@@ -8,6 +8,7 @@ budget: 120 lines
 
 Newest first. One dated line per material change; link the source.
 
+- 2026-11-01 · **Report result storage ratified on record: ADR-0010** (notice D-0015, reviewed on T-0865 on 2026-10-30). A run's result is stored as RLS rows in `report_run_rows`. Pages, sorts and totals read those rows, and exports are serialised only from them, so every format carries the run's digest. Retention is 7 days. `fitness-reports` RP3–RP5 already pass on main. ADR-0010 becomes `accepted` through T-0968 once T-1144 lands. (knowledge/development/decisions/0010-report-results-stored-as-rows-in-postgres.md; T-1145)
 - 2026-10-31 · **Universal search architecture ratified: ADR-0011** (notice D-0014). Search reads the inventory, not live LDAP. Fuzzy matching uses `pg_trgm`, a contrib extension. Each search is one statement that `reportsql.CompileSearch` compiles and the existing `scopeSQL` trims. The scope is applied before every limit. A work ceiling W shows every caller the same "keep typing" state. Shared databases get exact and prefix search only until T-1136 lands. ADR-0011 becomes `accepted` when `fitness-search` (T-1126) is green. Build: T-1094/1095/1096/1097/1100/1102. The live search is retired by T-1127. (T-1093)
 - 2026-10-30 · **`fitness-profiles` (red, 93 findings) ruled: ADR-0002 errata E-1 to E-4 ratified** (notice D-0013, current board). Graph/Entra names go in a sourced registry, while invented profile words still fail. Seven activation deferrals expire by 2027-01-30. ADR-0002 is accepted only when they clear. Fixes: T-0919–T-0935. (T-0889)
 - 2026-10-07 · **Job queue settled: our own `SKIP LOCKED` table in `platform/jobs`, River not adopted** (T-0209; ADR-0001 E3 and ADR-0002/0003/0005 amendments ratified, notice D-0017). The DB refuses cross-tenant enqueue; no pool leaves `store`. T-0084 re-cut and building; T-0153 (operation pipeline) follows it.

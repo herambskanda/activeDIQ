@@ -36,6 +36,8 @@ type Query struct {
 	nReq    int
 	nHidden int
 	reasons []string
+	// search is set on a Query built by CompileSearch: it is run by ExecSearch, not Exec.
+	search *searchMeta
 }
 
 // ScopeReasons says why the scope renders narrower than the assignments suggest: the reasons the

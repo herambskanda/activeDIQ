@@ -43,7 +43,7 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 - **`gen-modules-check`** (T-0997; the table ownership map): a new migration table needs a `-- write-class: <table> config|system` line
   directly above its `CREATE TABLE` (`config`: a principal changes it, so writes are Actions that take a `step.Step`; `system`: bookkeeping its
   owner writes, the closed list in ADR-0005 rule 10; a partition takes its parent's class). The owner key is the migration's file-name
-  segment. Then run `make gen-modules` and commit `owners.gen.go`; never edit it. A `DROP TABLE` or rename needs `tools/gen/modules`
+  segment. Then run `make gen-modules` and commit `owners.gen.tsv`; never edit it. A `DROP TABLE` or rename needs `tools/gen/modules`
   extended first (the generator refuses it rather than guess).
 - **`gen-api-check`** (stale or missing generated file): run `make gen-api` and commit the result; never edit a `*.gen.*` file.
   **`lint-api`**: vacuum findings on the bundled contract. Both: `runbooks/api-contract-workflow.md`.
@@ -324,8 +324,10 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
 - **Proof it fails:** `hostcheck_test.go` has one violating fixture per case (and asserts no other case trips);
   `make ci-proof` runs `host evaluate` on a compliant observation and on eight mutated ones.
 - **Setup secret (T-0636):** on linux-oci `HOST-SETUP-SECRET-SINGLE-USE` is active: the harness reads the
-  secret file's tar header (mode/owner), POSTs it twice to `/api/v1/setup/claim` over verified TLS (first 204,
-  second must be 401), and boots a second server with `ACTIVEDIQ_SETUP_TTL=2s` to present an expired secret
+  secret file's tar header (mode/owner), POSTs it twice to `/api/v1/setup/claim` over verified TLS with a valid
+  `owner{displayName,email}` block (the route validates the owner before the secret, so a body without one gets a
+  400 that proves nothing, T-1161; `claim_test.go` judges the body with the server's own validator) (first 204,
+  second must be 401; an unexpected status prints the server log), and boots a second server with `ACTIVEDIQ_SETUP_TTL=2s` to present an expired secret
   (must be 401). The harness also provisions the KEK (`kek init` into a volume) because the server has no
   default custody model; without it no boot gets past start-up. Windows stays INACTIVE for this case until the
   MSI exists (T-0635) and the lab collector grows the same probe.

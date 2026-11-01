@@ -12,9 +12,12 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/modules/reports"
+	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	lib "github.com/skenzeriq/activediq/internal/modules/reports/library"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
+	"github.com/skenzeriq/activediq/internal/platform/export/pdf"
+	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/reportsql"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
@@ -30,6 +33,13 @@ type defEnv struct {
 }
 
 func defSetup(t *testing.T, s *storetest.Server, withLibrary bool) *defEnv {
+	t.Helper()
+	return defSetupExports(t, s, withLibrary, false)
+}
+
+// defSetupExports is defSetup with, when withExports, an export service wired in (never called: the
+// definition view only asks whether exports exist on this installation).
+func defSetupExports(t *testing.T, s *storetest.Server, withLibrary, withExports bool) *defEnv {
 	t.Helper()
 	ctx := context.Background()
 	d := s.NewDatabase(t)
@@ -58,6 +68,9 @@ func defSetup(t *testing.T, s *storetest.Server, withLibrary bool) *defEnv {
 	h := &reports.Handlers{}
 	if withLibrary {
 		h.Library = l
+	}
+	if withExports {
+		h.Exports = &export.Service{}
 	}
 	doc, err := apihost.LoadDocument()
 	if err != nil {
@@ -126,9 +139,10 @@ func TestListReportDefinitionsEveryShippedDefinitionOnceInStableOrder(t *testing
 		if code != 200 {
 			t.Fatalf("list: %d %v", code, all)
 		}
-		// All four shipped reports are in the users category, so the order is by name:
-		// Account expiry, Locked-out users, Logon activity, Users.
-		want := []string{"usr-02", "usr-05", "usr-03", "usr-01"}
+		// The order is the category order, then the title: users (Account expiry, Locked-out users, Logon
+		// activity, Users), passwords (Password changes, Password expiry), groups (Group members, Groups,
+		// Groups for users, Not in any group), computers (Computer inactivity, Computers), contacts, OUs.
+		want := []string{"usr-02", "usr-05", "usr-03", "usr-01", "pwd-02", "pwd-01", "grp-02", "grp-01", "grp-03", "grp-04", "cmp-02", "cmp-01", "ctc-01", "ou-01"}
 		if got := ids(all); !slices.Equal(got, want) {
 			t.Fatalf("ids = %v, want %v", got, want)
 		}
@@ -145,7 +159,11 @@ func TestListReportDefinitionsEveryShippedDefinitionOnceInStableOrder(t *testing
 		for _, raw := range all["items"].([]any) {
 			it := raw.(map[string]any)
 			d := byID[it["id"].(string)].Def
-			if it["name"] != d.Title || it["category"] != "users" || it["version"] != float64(d.Version) || it["dataset"] != string(d.Dataset) ||
+			wantCategory := string(d.Category)
+			if wantCategory == "ous" { // the API names it in full
+				wantCategory = "organizational_units"
+			}
+			if it["name"] != d.Title || it["category"] != wantCategory || it["version"] != float64(d.Version) || it["dataset"] != string(d.Dataset) ||
 				it["description"] != d.Description || it["freshnessKind"] != "nc_watermark" {
 				t.Errorf("%s: summary %v does not match its definition", d.ID, it)
 			}
@@ -160,19 +178,19 @@ func TestListReportDefinitionsEveryShippedDefinitionOnceInStableOrder(t *testing
 			}
 		}
 
-		// A page of two, then the rest: the cursor walks the same order, once each.
+		// A page of two, then the next two: the cursor walks the same order, once each.
 		code, p1 := e.get("/api/v1/reports/definitions?limit=2")
 		if code != 200 || !slices.Equal(ids(p1), want[:2]) || cursorOf(p1) == "" {
 			t.Fatalf("page 1: %d %v", code, p1)
 		}
 		code, p2 := e.get("/api/v1/reports/definitions?limit=2&cursor=" + url.QueryEscape(cursorOf(p1)))
-		if code != 200 || !slices.Equal(ids(p2), want[2:]) || cursorOf(p2) != "" {
+		if code != 200 || !slices.Equal(ids(p2), want[2:4]) || cursorOf(p2) == "" {
 			t.Fatalf("page 2: %d %v", code, p2)
 		}
 		// Page size one visits every report exactly once.
 		var seen []string
 		cur := ""
-		for i := 0; i < 10; i++ {
+		for i := 0; i < 2*len(want); i++ {
 			q := "/api/v1/reports/definitions?limit=1"
 			if cur != "" {
 				q += "&cursor=" + url.QueryEscape(cur)
@@ -238,11 +256,11 @@ func TestListReportDefinitionsSearchByMEName(t *testing.T) {
 		}
 
 		code, users := e.get("/api/v1/reports/definitions?category=users")
-		if code != 200 || len(ids(users)) != len(e.lib.List()) {
+		if code != 200 || !slices.Equal(ids(users), []string{"usr-02", "usr-05", "usr-03", "usr-01"}) {
 			t.Errorf("category users: %d %v", code, ids(users))
 		}
-		if code, other := e.get("/api/v1/reports/definitions?category=groups"); code != 200 || len(ids(other)) != 0 {
-			t.Errorf("category groups has no shipped report yet: %d %v", code, other)
+		if code, other := e.get("/api/v1/reports/definitions?category=groups"); code != 200 || !slices.Equal(ids(other), []string{"grp-02", "grp-01", "grp-03", "grp-04"}) {
+			t.Errorf("category groups: %d %v", code, ids(other))
 		}
 		if code, _ := e.get("/api/v1/reports/definitions?category=organizational_units"); code != 200 {
 			t.Errorf("organizational_units is a category: %d", code)
@@ -276,11 +294,11 @@ func TestGetReportDefinition(t *testing.T) {
 				t.Fatalf("%s: %d %v", d.ID, code, got)
 			}
 			if got["id"] != string(d.ID) || got["version"] != float64(d.Version) || got["name"] != d.Title || got["perDc"] != false ||
-				got["minScheduleIntervalHours"] != float64(1) || got["subjectKind"] != "none" {
+				got["minScheduleIntervalHours"] != float64(1) || got["subjectKind"] != wantSubjectKind(d) {
 				t.Errorf("%s: header %v", d.ID, got)
 			}
 			if ef := got["exportFormats"].([]any); len(ef) != 0 {
-				t.Errorf("%s: exports are not built, yet the installation offers %v", d.ID, ef)
+				t.Errorf("%s: this host has no export service, yet the definition offers %v", d.ID, ef)
 			}
 			var presets []string
 			for _, p := range got["presets"].([]any) {
@@ -400,4 +418,52 @@ func TestDefinitionsWithoutLibraryAreNotReady(t *testing.T) {
 			t.Errorf("get without a library: %d, want 503", code)
 		}
 	})
+}
+
+// AC-4: a definition lists the formats this installation can produce. With the export service wired every
+// shipped definition (all within a PDF page's 24 columns) offers csv, xlsx, pdf and html; without it, none.
+func TestDefinitionOffersExportFormats(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		with := defSetupExports(t, s, true, true)
+		for _, it := range with.lib.List() {
+			code, got := with.get("/api/v1/reports/definitions/" + string(it.Def.ID))
+			if code != 200 {
+				t.Fatalf("%s: %d", it.Def.ID, code)
+			}
+			var offered []string
+			for _, f := range got["exportFormats"].([]any) {
+				offered = append(offered, f.(string))
+			}
+			want := []string{"csv", "xlsx", "pdf", "html"}
+			if widest(it.Def) > pdf.MaxColumns {
+				want = []string{"csv", "xlsx", "html"}
+			}
+			if !slices.Equal(offered, want) {
+				t.Errorf("%s (%d columns): exportFormats = %v, want %v", it.Def.ID, widest(it.Def), offered, want)
+			}
+		}
+	})
+}
+
+func widest(d report.Definition) int {
+	n := len(d.Columns)
+	for _, p := range d.Presets {
+		n = max(n, len(p.Columns))
+	}
+	return n
+}
+
+// wantSubjectKind is what the API says a definition's subjects are: none without a preset that needs
+// subjects, otherwise the kind the preset names ("object" when it names none).
+func wantSubjectKind(d report.Definition) string {
+	kind := "none"
+	for _, p := range d.Presets {
+		if p.Requires != nil {
+			kind = "object"
+			if p.Requires.Kind != "" {
+				kind = p.Requires.Kind
+			}
+		}
+	}
+	return kind
 }

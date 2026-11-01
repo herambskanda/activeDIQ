@@ -629,8 +629,8 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
     `authz_assignment_roots`, `authz_roles` and `authz_role_permissions`, plus any later
     `authz_*` table that the owners map assigns to `rbac`. No non-test Go SQL text names them
     outside `internal/platform/rbac` and `internal/platform/authz`. The generated
-    `internal/platform/store/owners/owners.gen.go` map is exempt because it holds table names, not
-    SQL. `internal/compose/server/localaccount.go` is the one listed exception, reported as
+    ownership map is `internal/platform/store/owners/owners.gen.tsv`, data rather than Go source (T-1155),
+    so no exemption is needed. `internal/compose/server/localaccount.go` is the one listed exception, reported as
     `pending` until T-1138 moves its `authz_roles` count into `rbac`.
   - **Migrations that name the RBAC tables.** A migration may create, alter and index those tables,
     and may put policies and grants on them. It may define **no view, materialised view, rule, or

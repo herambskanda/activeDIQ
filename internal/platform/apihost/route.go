@@ -65,12 +65,14 @@ type Upload struct{ io.Reader }
 //
 // A download sets FileBase and FileFormat: the headers (Content-Disposition, Content-Type, nosniff) then
 // come from httpx.Headers, the one place that builds them (safe-primitives P7, §12.5 rule 5). ContentType
-// is for a stream that is not a download.
+// is for a stream that is not a download. FileOptions are passed to httpx.Headers (an HTML download
+// pins the hash of its style block with httpx.WithStyleSHA256).
 type Stream struct {
 	io.Reader
 	ContentType string
 	FileBase    string
 	FileFormat  httpx.Format
+	FileOptions []httpx.Option
 }
 
 // Input is the generated, typed input of one operation. apihost drives it in rule 6 order:

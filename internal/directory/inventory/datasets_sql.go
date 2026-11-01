@@ -148,4 +148,31 @@ const (
 
 	activityReasonSQL = "CASE WHEN " + activityKnown + " THEN 'none' WHEN ({t}.inputs_read & 10) = 0 THEN 'activity_inputs_not_read'" +
 		" WHEN ({t}.inputs_read & 2) = 0 THEN 'pwd_last_set_not_read' ELSE 'last_logon_not_read' END"
+
+	// PWD-02 (T-0962). pwdLastSet 0 is stored as NULL with its input read: the account must change its
+	// password at next logon, which is "none recorded", not "unread".
+	pwdSetRecordedSQL  = "CASE WHEN ({t}.inputs_read & 2) = 0 THEN " + unknown + " WHEN {t}.pwd_last_set IS NULL THEN 'none_recorded' ELSE 'recorded' END"
+	daysSincePwdSetSQL = "CASE WHEN ({t}.inputs_read & 2) = 0 OR {t}.pwd_last_set IS NULL THEN NULL" +
+		" ELSE floor(extract(epoch FROM ({now} - {t}.pwd_last_set)) / 86400) END"
+
+	// CMP-01 and CMP-02 (T-0962). The type follows the account, not a guess: a gMSA by class, a read-only DC by
+	// PARTIAL_SECRETS_ACCOUNT (0x4000000), a DC by SERVER_TRUST_ACCOUNT (0x2000), then the operating system name
+	// (a name with "server" is a server, spec 6.2). No operating system name and no DC flag is Unknown: the
+	// report never calls an unlabelled machine a workstation.
+	osName       = "jsonb_typeof({t}.attributes -> 'operatingSystem')"
+	computerType = "CASE WHEN {t}.kind = 'gmsa' THEN 'managed_account' WHEN " + uac + " IS NULL THEN " + unknown +
+		" WHEN (" + uac + " & 67108864) <> 0 THEN 'read_only_dc' WHEN (" + uac + " & 8192) <> 0 THEN 'domain_controller'" +
+		" WHEN " + osName + " IS DISTINCT FROM 'string' THEN " + unknown +
+		" WHEN position('server' in lower({t}.attributes ->> 'operatingSystem')) > 0 THEN 'server' ELSE 'workstation' END"
+	// Delegation: unconstrained (0x80000, DCs carry it too), else constrained when msDS-AllowedToDelegateTo has a
+	// target, with protocol transition when TRUSTED_TO_AUTH_FOR_DELEGATION (0x1000000) is also set.
+	delegationTargets = "(CASE WHEN jsonb_typeof({t}.attributes -> 'msDS-AllowedToDelegateTo') = 'array' THEN jsonb_array_length({t}.attributes -> 'msDS-AllowedToDelegateTo') > 0 ELSE false END)"
+	delegationSQL     = "CASE WHEN " + uac + " IS NULL THEN " + unknown + " WHEN (" + uac + " & 524288) <> 0 THEN 'unconstrained'" +
+		" WHEN " + delegationTargets + " THEN (CASE WHEN (" + uac + " & 16777216) <> 0 THEN 'protocol_transition' ELSE 'constrained' END) ELSE 'none' END"
+	daysSinceActivitySQL = "floor(extract(epoch FROM ({now} - (" + activitySQL + "))) / 86400)"
+
+	// The object's own name: the value of the RDN ("CN=PC01" is PC01). A user shows the display name when set.
+	rdnName       = "substring({t}.rdn from position('=' in {t}.rdn) + 1)"
+	nameSQL       = rdnName
+	userOrRdnName = "CASE WHEN {t}.kind IN ('user', 'inetorgperson') THEN COALESCE(NULLIF({t}.display_name, ''), " + rdnName + ") ELSE " + rdnName + " END"
 )

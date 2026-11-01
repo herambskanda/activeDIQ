@@ -77,13 +77,13 @@ type Options struct {
 }
 
 // AboutLine is one label and value of the About sheet.
-type AboutLine struct{ Label, Value string }
+type AboutLine = export.AboutLine
 
 // AboutSheetName is the name of the About sheet. A data sheet of the same name gets a suffix.
 const AboutSheetName = "About"
 
 // MaxAboutLines bounds the About sheet.
-const MaxAboutLines = 100
+const MaxAboutLines = export.MaxAboutLines
 
 // Style indexes in styles.xml cellXfs.
 const (
