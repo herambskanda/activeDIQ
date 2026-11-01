@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/authn"
+	"github.com/skenzeriq/activediq/internal/platform/authn/throttlejob"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -16,7 +17,7 @@ import (
 // every boot, or on several nodes, leaves one cadence. There is no general scheduler for tenant-carrying
 // periodic kinds yet (DM-44): this is the boot-time enqueue the audit and connection cadences also use.
 func startThrottlePurge(ctx context.Context, db *store.DB, jreg *jobs.Registry, creds *authn.LocalCredentials, tid tenant.ID) error {
-	tj, err := authn.RegisterThrottleJobs(jreg, creds, 0)
+	tj, err := throttlejob.Register(jreg, creds, 0)
 	if err != nil {
 		return fmt.Errorf("server: throttle purge job: %w", err)
 	}
