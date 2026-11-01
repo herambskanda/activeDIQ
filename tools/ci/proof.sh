@@ -112,14 +112,18 @@ fresh_fa_tree() {
   printf 'const g = ["fetch", "XMLHttpRequest", "EventSource"]; // axios, src/api exempt\nconst lit = "Literal[value=/^\\\\/api(\\\\/|$)/]";\n' >"$fa/web/eslint.config.js"
   printf 'export const a = fetch("/x");\n' >"$fa/web/proof/api-client-violation.ts"
   printf 'anonymous: []\nauthenticated:\n  - operation: listUsers\n    ref: TM-D16\n    reason: Any signed-in principal lists users.\nnonApiRoutes: []\nsecretResponses: []\nstepUp: []\nlargeBodies: []\n' >"$fa/api/openapi/policy.yaml"
-  printf '{"paths": {"/users": {"get": {}}, "/orders": {"get": {}}}}\n' >"$fa/internal/platform/apihost/spec/openapi.gen.json"
+  printf '{"paths": {"/users": {"get": {"operationId": "listUsers", "tags": ["users"], "x-permission": "authenticated"}}, "/orders": {"get": {"operationId": "listOrders", "tags": ["orders"], "x-permission": "orders.read"}}}}\n' >"$fa/internal/platform/apihost/spec/openapi.gen.json"
   mkdir -p "$fa/knowledge/development/architecture"
   printf '| AN-1 | Health | Console/API | None |\n' >"$fa/knowledge/development/architecture/threat-model.md"
 }
-fitapi() { go run ./tools/fitness/api -root "$fa" "$@"; }
+# The throw-away trees hold the static half (A1, A3, A5, A7 static, A8, A10-A13). A4, A6, A7 runtime and A14 run the
+# repository's own server (apihost.Build, the compose/server policy), which a fixture tree cannot mirror, so they are
+# excluded here with -checks; the real tree runs them in make fitness-api, and the tool's own tests prove them.
+fa_checks=A1,A3,A5,A7,A8,A10,A11,A12,A13
+fitapi() { go run ./tools/fitness/api -root "$fa" -checks "$fa_checks" "$@"; }
 fresh_fa_tree
 must_pass "fitness-api on a clean contract tree" fitapi
-must_pass "fitness-api prints A1, A3, A5, A7, A8, A10, A11, A12 and A13 as active and A2, A4, A6, A9, A14 as inactive (<missing input>)" bash -c "go run ./tools/fitness/api -root '$fa' | awk '/^fitness-api A(1|3|5|7|8|10|11|12|13) /{a++; if (\$0 !~ / active/) bad=1} /^fitness-api A(2|4|6|9|14) /{n++; if (\$0 !~ /inactive \(.+\)/) bad=1} END{exit (bad || n != 5 || a != 9)}'"
+must_pass "fitness-api prints A1, A3-A8 and A10-A14 as active and A2, A9 as inactive (<missing input>)" bash -c "go run ./tools/fitness/api -root '$fa' -checks '$fa_checks' | awk '/^fitness-api A(1|3|4|5|6|7|8|10|11|12|13|14) /{a++; if (\$0 !~ / active/) bad=1} /^fitness-api A(2|9) /{n++; if (\$0 !~ /inactive \(.+\)/) bad=1} END{exit (bad || n != 2 || a != 12)}'"
 must_pass "fitness-api on the repository itself lists all fourteen checks" bash -c "go run ./tools/fitness/api | grep -c '^fitness-api A' | grep -qx 14"
 fresh_fa_tree; mkdir -p "$fa/api/openapi/extra"; printf 'a: b\n' >"$fa/api/openapi/extra/stray.yaml"
 must_fail_with "fitness-api A1 on a file outside the rule 1 places" 'api/openapi/extra/stray.yaml: \[ADR-0004 A1\] outside the rule 1 places' fitapi
@@ -172,11 +176,11 @@ must_fail_with "fitness-api A3 on a policy row citing AN-10 for an AN-1 operatio
 # A10 against main, in a throw-away git repository, with the pinned oasdiff of tools/apitools.
 fresh_fa_tree
 ln -s "$root/tools/apitools" "$fa/tools-apitools-link" && mkdir -p "$fa/tools" && mv "$fa/tools-apitools-link" "$fa/tools/apitools"
-b='{"openapi":"3.1.0","info":{"title":"t","version":"1.0.0"},"paths":{"/users":{"get":{"operationId":"listUsers","x-activediq-stability":"stable","responses":{"200":{"description":"ok"}}}},"/orders":{"get":{"operationId":"listOrders","x-activediq-stability":"stable","responses":{"200":{"description":"ok"}}}}}}'
+b='{"openapi":"3.1.0","info":{"title":"t","version":"1.0.0"},"paths":{"/users":{"get":{"operationId":"listUsers","tags":["users"],"x-permission":"authenticated","x-activediq-stability":"stable","responses":{"200":{"description":"ok"}}}},"/orders":{"get":{"operationId":"listOrders","tags":["orders"],"x-permission":"orders.read","x-activediq-stability":"stable","responses":{"200":{"description":"ok"}}}}}}'
 printf '%s\n' "$b" >"$fa/internal/platform/apihost/spec/openapi.gen.json"
 git -C "$fa" init -q -b main && git -C "$fa" add -A && git -C "$fa" -c user.name=proof -c user.email=proof@example.invalid commit -q -m base
 must_pass "fitness-api A10 on a bundle identical to main" fitapi
-b2='{"openapi":"3.1.0","info":{"title":"t","version":"1.0.0"},"paths":{"/users":{"get":{"operationId":"listUsers","x-activediq-stability":"stable","parameters":[{"name":"q","in":"query","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"ok"}}}},"/orders":{"get":{"operationId":"listOrders","x-activediq-stability":"stable","responses":{"200":{"description":"ok"}}}}}}'
+b2='{"openapi":"3.1.0","info":{"title":"t","version":"1.0.0"},"paths":{"/users":{"get":{"operationId":"listUsers","tags":["users"],"x-permission":"authenticated","x-activediq-stability":"stable","parameters":[{"name":"q","in":"query","required":true,"schema":{"type":"string"}}],"responses":{"200":{"description":"ok"}}}},"/orders":{"get":{"operationId":"listOrders","tags":["orders"],"x-permission":"orders.read","x-activediq-stability":"stable","responses":{"200":{"description":"ok"}}}}}}'
 printf '%s\n' "$b2" >"$fa/internal/platform/apihost/spec/openapi.gen.json"
 must_fail_with "fitness-api A10 on a required parameter added to a stable operation (oasdiff against main)" '\[ADR-0004 A10\] breaking change against main on a stable operation' fitapi
 # A7: the v1 baseline may not grow against main (same throw-away repository, a baseline now committed on main).
@@ -194,6 +198,11 @@ opbin="$tmp/fitness-operation"; go build -o "$opbin" ./tools/fitness/operation
 opt="$tmp/op"; adr=knowledge/development/decisions/0005-operation-pipeline-and-audit-trail.md
 mkdir -p "$opt/internal/platform/tenant" "$opt/internal/platform/store" "$opt/internal/platform/audit" "$opt/internal/platform/authz/actions" "$opt/internal/platform/audit/chain" "$opt/$(dirname "$adr")"
 printf 'module op.test\n\ngo 1.27.0\n' >"$opt/go.mod"
+# CheckO8 reads the O8 manifest of the tree it is given. The throw-away tree has no pipeline to test, so it
+# carries a one-clause manifest that is a Gap (pending, never a pass); the real manifest is checked by the
+# 'on the repository itself' case below and by tools/fitness/operation's own tests.
+mkdir -p "$opt/internal/platform/operation"
+printf 'package operation\n\ntype o8Clause struct{ ID, Rule, Gap string }\n\nvar o8Manifest = []o8Clause{{ID: "O8.proof-tree", Rule: "throw-away tree", Gap: "T-0393 the proof tree holds no pipeline"}}\n' >"$opt/internal/platform/operation/o8_manifest_test.go"
 cp "$adr" "$opt/$adr"
 op_put() { printf 'package p\n\nimport _ "op.test/internal/platform/%s"\n' "$2" >"$opt/internal/platform/$1/p.go"; }
 printf 'package p\n' >"$opt/internal/platform/tenant/p.go"; printf 'package p\n' >"$opt/internal/platform/audit/p.go"; printf 'package p\n' >"$opt/internal/platform/audit/chain/p.go"
@@ -1159,6 +1168,8 @@ rm -rf "$adv"
 
 # --- fitness-packaging (T-0104) -----------------------------------------------------------------
 pk="$tmp/packaging"; mkdir -p "$pk"; cp -r "$root/packaging" "$pk/packaging"
+# The gate reads the digest-pinned PowerShell image from the oracles engine (one pin, not two), so the tree carries it.
+mkdir -p "$pk/tools/fitness/oracles" && cp "$root/tools/fitness/oracles/engine.go" "$pk/tools/fitness/oracles/engine.go"
 sed -i 's/SetAccessRuleProtection(\$true, \$false)/SetAccessRuleProtection($false, $false)/' "$pk/packaging/windows/Set-ApiTlsDirAcl.ps1"
 must_fail_with "fitness-packaging on an ACL script that leaves inheritance on" 'inheritance must be disabled' go run ./tools/fitness/packaging "$pk"
 cp "$root/packaging/windows/Set-ApiTlsDirAcl.ps1" "$pk/packaging/windows/"
