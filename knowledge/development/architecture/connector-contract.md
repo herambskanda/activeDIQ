@@ -793,9 +793,21 @@ T-0577):**
   identity and a PROTECTED, inheritable DACL of the service identity and SYSTEM only (the
   ProgramData default would let `BUILTIN\Users` create files in it, so a local user could pre-create
   `baseline.json` or `records.log` and switch the shrink audit off). A directory that is wider, a
-  link, or owned by anyone else is `ErrDirUnsafe` and the connector refuses to start. The parent must
-  exist and be installer- or root-owned. The startup wiring is T-0596; until it lands nothing calls
-  `EnsureDir`, so the refusal is proven at function level only.
+  link, or owned by anyone else is `ErrDirUnsafe` and the connector refuses to start. `EnsureDir`
+  creates only the last path element, and `C:\ProgramData` lets `BUILTIN\Users` create subfolders,
+  so a local user could pre-create or rename the state directory (stale-baseline rollback).
+  **Chosen (T-0596, security review of T-0577): startup runs `EnsureDir` on the parent of `data_dir`
+  and then on `data_dir` itself**, before `dial.Load`, the AD bind or the tunnel dial-out
+  (`compose/connector.ensureStateDir`). The parent is therefore the connector's own state root
+  (for example `C:\ProgramData\skenzeriq\connector` holding `data`), not a shared directory such
+  as `/var/lib` or `C:\ProgramData`; if it is missing the connector creates it protected, and a
+  pre-existing one that is wider, linked or owned by anyone else is refused. The installer may
+  create it first, but only with the service identity and SYSTEM (no Administrators ACE, which
+  the check also refuses). A `data_dir` with no parent of its own (a filesystem root) is refused.
+  Any failure exits non-zero with `ErrStateDirUnsafe`, naming the directory, before any state is
+  read or written. Proven by unit tests on real directories (Unix modes: wider, symlink, foreign
+  owner, missing parent) and by the T-0577 Windows evidence for the DACL cases; a start on a
+  Windows host with the real service identity is a Windows-lab check (T-1208).
 - **The shrink-record file** (`records.log`, `rights.FileRecordSink`) is opened through
   `ownerfile.OpenAppend`, so it is owner-only from creation; a trusted-owner file that was wider is
   corrected and a `records_acl_corrected` line is written before the record.
