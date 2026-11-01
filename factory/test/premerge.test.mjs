@@ -154,9 +154,47 @@ test('the baseline run is cached per main commit', async () => {
     const dir = path.join(f.ctx.stateDir, 'premerge');
     const cached = fs.readdirSync(dir).filter((n) => /^baseline-.*\.json$/.test(n));
     assert.equal(cached.length, 1);
-    const logMtime = fs.statSync(path.join(dir, cached[0].replace('.json', '.log'))).mtimeMs;
-    await runPreMergeGate(f.ctx, await branchWith(f, 'T-0002', [OLD1, NEW1]));
-    assert.equal(fs.statSync(path.join(dir, cached[0].replace('.json', '.log'))).mtimeMs, logMtime, 'not re-run');
+    const baseLog = JSON.parse(fs.readFileSync(path.join(dir, cached[0]), 'utf8')).log;
+    const logMtime = fs.statSync(baseLog).mtimeMs;
+    const again = await runPreMergeGate(f.ctx, await branchWith(f, 'T-0002', [OLD1, NEW1]));
+    assert.equal(again.baseLog, baseLog, 'the cached baseline is used');
+    assert.equal(fs.statSync(baseLog).mtimeMs, logMtime, 'not re-run');
+  } finally { f.cleanup(); }
+});
+
+// T-0696: scratch trees were named cand-<ticket> and base-<main sha>, so a worker's dry run and the
+// dispatcher's gate (or an orphaned make from a killed run) deleted each other's tree mid-run, and
+// the truncated output was judged and cached as main's baseline.
+const SLOW = `import fs from 'node:fs';
+fs.writeFileSync('.alive', String(process.pid));
+setTimeout(async () => {
+  if (!fs.existsSync('.alive')) { console.error('tree.go:1: T0 (ADR-0002 fitness function): scratch tree vanished under the run'); process.exit(1); }
+  await import('./check.mjs');
+}, 1500);
+`;
+
+test('overlapping runs for the same ticket and main never share a scratch tree or a log', async () => {
+  const f = setup({ main: [OLD1], gate: { argv: ['node', 'slow.mjs'] } });
+  try {
+    fs.writeFileSync(path.join(f.root, 'slow.mjs'), SLOW);
+    commitAll(f.root, 'slow ci');
+    const t = await branchWith(f, 'T-0001', [OLD1]);
+    const [a, b] = await Promise.all([runPreMergeGate(f.ctx, t), runPreMergeGate(f.ctx, t)]);
+    assert.deepEqual([a.status, a.mode, a.findings], ['pass', 'ratchet', []]);
+    assert.deepEqual([b.status, b.mode, b.findings], ['pass', 'ratchet', []]);
+    assert.notEqual(a.log, b.log, 'each run writes its own log');
+    assert.notEqual(a.baseLog, b.baseLog, 'each uncached baseline run writes its own log');
+    assert.equal(git(f.root, 'worktree', 'list').split('\n').length, 2, 'both runs removed their own trees');
+  } finally { f.cleanup(); }
+});
+
+test('a run whose scratch tree is removed while it runs is not a verdict', async () => {
+  const f = setup({ gate: { argv: ['node', '-e', "require('fs').rmSync(process.cwd(), { recursive: true, force: true })"] } });
+  try {
+    const t = await branchWith(f, 'T-0001', []);
+    await assert.rejects(runPreMergeGate(f.ctx, t), /removed or replaced while the command ran/);
+    const cached = fs.readdirSync(path.join(f.ctx.stateDir, 'premerge')).filter((n) => /^baseline-.*\.json$/.test(n));
+    assert.deepEqual(cached, [], 'nothing cached');
   } finally { f.cleanup(); }
 });
 

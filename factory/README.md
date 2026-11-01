@@ -315,8 +315,10 @@ claude -p "<rendered templates/worker-prompt.md>" \
   Red while `main` is green is refused. Red while `main` is also red is refused only if the result
   has a finding `main` does not (multiset of check-and-message keys, line numbers removed; a newly
   red make target counts; baseline cached per `main` commit). A refused ticket is reopened for its
-  owner with the findings and log paths (`state/premerge/`). A gate that cannot judge (timeout,
-  worktree error) merges nothing and retries after 10 minutes. One ticket at a time goes through the
+  owner with the findings and log paths (`state/premerge/`). Every run gets its own scratch tree and
+  log, named with a per-run tag, so a dry run never touches the dispatcher's run. A run whose tree
+  was removed or replaced while it ran is not a verdict and is not cached (T-0696). A gate that cannot judge (timeout,
+  worktree error, vanished tree) merges nothing and retries after 10 minutes. One ticket at a time goes through the
   gate, in the background. Before the full run a cheap `pre_merge.numbering` check (the migration-number
   test, T-1067) runs on the same merge result and refuses with the free number to renumber to. `factory premerge ID [-- CMD…]` is the dry run. Details:
   `knowledge/development/standards/ci-gates.md`.

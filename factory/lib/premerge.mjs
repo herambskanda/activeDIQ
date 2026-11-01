@@ -218,12 +218,33 @@ function readLog(file) {
 function gateDir(ctx) { return path.join(ctx.stateDir, 'premerge'); }
 function scratchRoot(ctx) { return path.resolve(ctx.root, ctx.config.dispatcher.worktree_root, '.premerge'); }
 
+/**
+ * A tag unique to one gate invocation. Every scratch worktree and log name carries it (T-0696): with
+ * fixed names (`cand-<ticket>`, `base-<sha>`) two overlapping runs — the dispatcher and a worker's
+ * dry run, or an orphaned `make` left by a killed run — deleted each other's tree mid-run, and the
+ * truncated output was judged and cached as main's baseline.
+ */
+function runTag() { return `${process.pid}-${crypto.randomBytes(4).toString('hex')}`; }
+
+/** @returns {Promise<string>} the identity (device:inode) of the new tree, for {@link assertTreeIntact} */
 async function addDetached(ctx, dir, ref) {
   fs.rmSync(dir, { recursive: true, force: true });
   await git(ctx.root, ['worktree', 'prune']);
   fs.mkdirSync(path.dirname(dir), { recursive: true });
   const added = await git(ctx.root, ['worktree', 'add', '--detach', dir, ref]);
   if (added.code !== 0) throw new FactoryError(`pre-merge: git worktree add failed: ${added.stderr.trim()}`);
+  return treeIdentity(dir);
+}
+
+function treeIdentity(dir) {
+  try { const st = fs.statSync(dir); return `${st.dev}:${st.ino}`; } catch { return null; }
+}
+
+/** A run whose tree was removed or replaced while it ran says nothing about the code: refuse to judge it. */
+function assertTreeIntact(dir, identity, log) {
+  if (treeIdentity(dir) !== identity) {
+    throw new FactoryError(`pre-merge: the scratch worktree ${dir} was removed or replaced while the command ran, so its output is not a verdict (${log})`);
+  }
 }
 
 async function dropWorktree(ctx, dir) {
@@ -243,14 +264,19 @@ async function baseline(ctx, settings, mainSha, { signal }) {
     const hit = JSON.parse(fs.readFileSync(cache, 'utf8'));
     return { code: hit.code, findings: new Map(hit.findings), log: hit.log, cached: true };
   } catch { /* no usable cache */ }
-  const dir = path.join(scratchRoot(ctx), `base-${mainSha.slice(0, 12)}`);
-  const log = path.join(gateDir(ctx), `baseline-${mainSha.slice(0, 12)}-${tag}.log`);
-  await addDetached(ctx, dir, mainSha);
+  const run = runTag();
+  const dir = path.join(scratchRoot(ctx), `base-${mainSha.slice(0, 12)}-${run}`);
+  const log = path.join(gateDir(ctx), `baseline-${mainSha.slice(0, 12)}-${tag}-${run}.log`);
+  const identity = await addDetached(ctx, dir, mainSha);
   try {
     const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
     if (ran.timedOut || ran.aborted) throw new FactoryError(`pre-merge: the baseline run on main ${ran.timedOut ? 'timed out' : 'was stopped'} (${log})`);
+    assertTreeIntact(dir, identity, log);
     const findings = extractFindings(readLog(log), [fs.realpathSync(dir), dir]);
-    fs.writeFileSync(cache, JSON.stringify({ code: ran.code, findings: [...findings], log }));
+    // Written whole and renamed into place, so a concurrent reader never parses half a file.
+    const tmp = `${cache}.${run}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ code: ran.code, findings: [...findings], log }));
+    fs.renameSync(tmp, cache);
     return { code: ran.code, findings, log, cached: false };
   } finally {
     await dropWorktree(ctx, dir);
@@ -289,9 +315,9 @@ export function planRenumber(mainNames, addedNames) {
  * Run the numbering check on the merge result in `dir`. Returns a `blocked` verdict when it fails
  * (naming the number to renumber to), or null when it passes. A check that cannot run throws.
  */
-async function checkMigrationNumbering(ctx, settings, dir, mainSha, ticket, { signal }) {
+async function checkMigrationNumbering(ctx, settings, dir, mainSha, ticket, { signal, run }) {
   const cfg = settings.numbering;
-  const log = path.join(gateDir(ctx), `${ticket.id}-${mainSha.slice(0, 12)}-numbering.log`);
+  const log = path.join(gateDir(ctx), `${ticket.id}-${mainSha.slice(0, 12)}-${run}-numbering.log`);
   const started = Date.now();
   const ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal });
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
@@ -336,9 +362,10 @@ export async function runPreMergeGate(ctx, ticket, { signal, argv } = {}) {
   if ((await git(ctx.root, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`])).code !== 0) {
     throw new FactoryError(`pre-merge: branch "${branch}" not found`);
   }
-  const dir = path.join(scratchRoot(ctx), `cand-${ticket.id}`);
-  const log = path.join(gateDir(ctx), `${ticket.id}-${mainSha.slice(0, 12)}.log`);
-  await addDetached(ctx, dir, mainSha);
+  const run = runTag();
+  const dir = path.join(scratchRoot(ctx), `cand-${ticket.id}-${run}`);
+  const log = path.join(gateDir(ctx), `${ticket.id}-${mainSha.slice(0, 12)}-${run}.log`);
+  const identity = await addDetached(ctx, dir, mainSha);
   try {
     const merged = await git(dir, ['merge', '--no-ff', '--no-edit', '-m', `Merge ${ticket.id}: ${ticket.title}`, branch]);
     if (merged.code !== 0) {
@@ -348,7 +375,7 @@ export async function runPreMergeGate(ctx, ticket, { signal, argv } = {}) {
     }
     let numberingSeconds = null;
     if (settings.numbering) {
-      const checked = await checkMigrationNumbering(ctx, settings, dir, mainSha, ticket, { signal });
+      const checked = await checkMigrationNumbering(ctx, settings, dir, mainSha, ticket, { signal, run });
       if (checked.refused) { const { refused, ...verdict } = checked; return verdict; }
       numberingSeconds = checked.seconds;
     }
@@ -356,6 +383,7 @@ export async function runPreMergeGate(ctx, ticket, { signal, argv } = {}) {
     const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
     if (ran.timedOut) throw new FactoryError(`pre-merge: ${settings.argv.join(' ')} on ${ticket.id} timed out after ${settings.timeout_minutes} minutes (${log})`);
     if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${ticket.id} was stopped (${log})`);
+    assertTreeIntact(dir, identity, log);
     if (ran.code === 0) return { status: 'pass', mode: 'green', findings: [], summary: withTiming(`${settings.argv.join(' ')} passed on the merge result`), log };
 
     const head = extractFindings(readLog(log), [fs.realpathSync(dir), dir]);
