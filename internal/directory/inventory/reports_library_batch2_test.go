@@ -252,13 +252,13 @@ func buildSeed() seed {
 		o.WhenCreated = old
 		return o
 	}
-	add(mk(s.u.alice, "alice", 1101, s.g.only, uacNormal))   // primary group is not Domain Users, member of nothing else (AC-19)
-	add(mk(s.u.bob, "bob", 1102, s.g.du, uacNormal))         // in Other
-	add(mk(s.u.carol, "carol", 1103, s.g.du, uacNormal))     // only Domain Users
-	add(mk(s.u.dave, "dave", 1104, s.g.du, uacNormal|2))     // disabled member of B
-	add(mk(s.u.eve, "eve", 1105, s.g.du, uacNormal))         // only Domain Users
-	add(mk(s.u.u1, "u1", 1106, s.g.du, uacNormal))           // direct member of A
-	add(fsp(s.f, 9001))                                      // a foreign security principal in C
+	add(mk(s.u.alice, "alice", 1101, s.g.only, uacNormal)) // primary group is not Domain Users, member of nothing else (AC-19)
+	add(mk(s.u.bob, "bob", 1102, s.g.du, uacNormal))       // in Other
+	add(mk(s.u.carol, "carol", 1103, s.g.du, uacNormal))   // only Domain Users
+	add(mk(s.u.dave, "dave", 1104, s.g.du, uacNormal|2))   // disabled member of B
+	add(mk(s.u.eve, "eve", 1105, s.g.du, uacNormal))       // only Domain Users
+	add(mk(s.u.u1, "u1", 1106, s.g.du, uacNormal))         // direct member of A
+	add(fsp(s.f, 9001))                                    // a foreign security principal in C
 	grp := func(g, name string, rid uint32, created time.Time, attrs map[string]any, members ...string) inventory.Observation {
 		return withAttrs(hGroup(g, name, rid, members...), created, attrs)
 	}
@@ -350,7 +350,9 @@ func buildSeed() seed {
 	pe := ouObs(s.o.parentEmpty, "Nested", s.o.parent, s.o.parent, hDom)
 	pe.WhenCreated = old
 	add(pe)
-	place := func(o inventory.Observation, ouG string) inventory.Observation { return (&env{}).under(o, ouG, ouG, hDom) }
+	place := func(o inventory.Observation, ouG string) inventory.Observation {
+		return (&env{}).under(o, ouG, ouG, hDom)
+	}
 	for i := 0; i < 2; i++ {
 		x := hUser{guid: hGUID(1, 200+i), sam: fmt.Sprintf("ou-user-%d", i), rid: uint32(7000 + i), uac: i64(uacNormal), read: allRead}.obs()
 		x.WhenCreated = old
@@ -456,7 +458,9 @@ func (s seed) reach(g string) map[string]bool {
 	return seen
 }
 
-func isUser(k inventory.Kind) bool { return k == inventory.KindUser || k == inventory.KindInetOrgPerson }
+func isUser(k inventory.Kind) bool {
+	return k == inventory.KindUser || k == inventory.KindInetOrgPerson
+}
 
 func (s seed) isMemberAnywhere(x string) bool {
 	for _, o := range s.obs {
@@ -640,7 +644,10 @@ func Test_reports_library_batch2_rows_equal_ground_truth(t *testing.T) {
 
 		// ---- PWD-01 and PWD-02 (AC-13): one case per row of the spec 6.4 table
 		t.Run("pwd-01", func(t *testing.T) {
-			soon := func(p pwCase) bool { d, ok := daysToExpiry(p); return ok && pwState(p) == "expires" && d >= 0 && d <= 14 }
+			soon := func(p pwCase) bool {
+				d, ok := daysToExpiry(p)
+				return ok && pwState(p) == "expires" && d >= 0 && d <= 14
+			}
 			for preset, pred := range map[string]func(pwCase) bool{
 				"expired":     func(p pwCase) bool { return pwState(p) == "expired" },
 				"soon":        soon,
@@ -991,14 +998,17 @@ func Test_reports_library_batch2_rows_equal_ground_truth(t *testing.T) {
 				return
 			}
 			want := map[string][]string{
-				"all":               pick(func(inventory.Observation) bool { return true }),
-				"enabled":           pick(func(o inventory.Observation) bool { return *o.Enabled }),
-				"disabled":          pick(func(o inventory.Observation) bool { return !*o.Enabled }),
-				"workstation":       pick(func(o inventory.Observation) bool { return compType(o) == "workstation" }),
-				"domain_controller": pick(func(o inventory.Observation) bool { t := compType(o); return t == "domain_controller" || t == "read_only_dc" }),
-				"delegation":        pick(func(o inventory.Observation) bool { return delegation(o) != "none" }),
-				"os":                pick(func(o inventory.Observation) bool { _, ok := o.Attributes["operatingSystem"].(string); return ok }),
-				"recently_created":  pick(func(o inventory.Observation) bool { return now.Sub(o.WhenCreated) < day(30) }),
+				"all":         pick(func(inventory.Observation) bool { return true }),
+				"enabled":     pick(func(o inventory.Observation) bool { return *o.Enabled }),
+				"disabled":    pick(func(o inventory.Observation) bool { return !*o.Enabled }),
+				"workstation": pick(func(o inventory.Observation) bool { return compType(o) == "workstation" }),
+				"domain_controller": pick(func(o inventory.Observation) bool {
+					t := compType(o)
+					return t == "domain_controller" || t == "read_only_dc"
+				}),
+				"delegation":       pick(func(o inventory.Observation) bool { return delegation(o) != "none" }),
+				"os":               pick(func(o inventory.Observation) bool { _, ok := o.Attributes["operatingSystem"].(string); return ok }),
+				"recently_created": pick(func(o inventory.Observation) bool { return now.Sub(o.WhenCreated) < day(30) }),
 			}
 			for preset, w := range want {
 				rows := run("cmp-01", preset)
