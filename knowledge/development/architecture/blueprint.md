@@ -1,11 +1,11 @@
 ---
 title: "Architecture blueprint v0"
 date: 2026-10-02
-updated: 2026-10-31
+updated: 2026-11-01
 status: review
 owner: heramb
 ticket: T-0035, T-0041, T-0107, T-0212, T-0874, T-0915, T-0993, T-1093
-binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), ADR-0004 (ratified), ADR-0005 (ratified), ADR-0010 (proposed), ADR-0011 (ratified), safe-primitives.md (review), modules/reports.md (draft)
+binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), ADR-0004 (ratified), ADR-0005 (ratified), ADR-0010 (accepted), ADR-0011 (ratified), safe-primitives.md (review), modules/reports.md (draft)
 ---
 
 # activeDIQ architecture blueprint v0
@@ -1612,7 +1612,7 @@ class, display snapshots); the operation, item, step, request and correlation ID
 ## 10. Reporting
 
 The build contract is [modules/reports.md](modules/reports.md) (T-0865). Result storage is
-[ADR-0010](../decisions/0010-report-results-stored-as-rows-in-postgres.md) (`proposed`). This
+[ADR-0010](../decisions/0010-report-results-stored-as-rows-in-postgres.md) (`accepted` 2026-11-01, T-0968). This
 section summarises both, and the names and signatures in it are copied from the module page. If
 they differ, the module page wins, and this section is corrected in the same change.
 
@@ -1926,7 +1926,7 @@ There are 83 rows with `phase = P1` and `importance = must` in
 | Public API (ADR-0004): layout and bundle, dialect, one permission per operation, route set per profile and hostname with an HTTP probe, generated client and server, strict JSON (static, type closure, corpus, ajv cross-check), secrets out, versioning, problems, limits, policy hygiene, responses conform (§1, §6) | `fitness-api` A1–A14 (`tools/fitness/api/`, in `make ci`; A9 is T5 in `fitness-tenancy`). A1 and A13 run today; every other check prints `inactive` until its input exists ([ci-gates](../standards/ci-gates.md)) | A1, A13: T-0011 (done); static half: T-0017; runtime half: T-0018 (ADR-0004 becomes `accepted` when none is inactive and all are green) |
 | Operation pipeline (ADR-0005): step escape, write surface, configuration writes and table write classes, state machine, registry and contract coverage, contract and pipeline behaviour, kernel DAG (§2.3, §4.2, §8) | `fitness-operation` O1–O9 (`tools/fitness/operation/`) | old T-0154 (ADR-0005 becomes `accepted` when both rows are green) |
 | Audit trail (ADR-0005; threat-model TM-F-AUDIT): role grants and the genesis trigger, AG-1/AG-2 and hook wiring, concurrency, seeded-tenant verify, tamper corpus, anchoring, classification, AG-8 coverage, retention (§9) | `fitness-audit` A1–A9 (`tools/fitness/audit/`) | old T-0154 |
-| Reports (ADR-0010; [modules/reports.md §9](modules/reports.md)): `reportsql` provenance, one read-scope producer and one renderer, compiler calls confined to `reports/run`, stored runs immutable and expired runs not served, export digest equals run digest, compiled scope equals the per-target oracle, library lock, derived columns, run reads bound to runner and scope, delivery links bound to the Delivery row, no dataset reveals anything outside scope (§10) | `fitness-reports` RP1–RP11 (`tools/fitness/reports/`, in `make ci`; RP1 runs inside FF-SP2 `sqlconst`; [runbook](../runbooks/reports-fitness.md)). A check whose code has not landed prints `pending`, which is not a pass | T-0873 (done). ADR-0010 becomes `accepted` at row B14 of the module page, when RP3–RP5 are green |
+| Reports (ADR-0010; [modules/reports.md §9](modules/reports.md)): `reportsql` provenance, one read-scope producer and one renderer, compiler calls confined to `reports/run`, stored runs immutable and expired runs not served, export digest equals run digest, compiled scope equals the per-target oracle, library lock, derived columns, run reads bound to runner and scope, delivery links bound to the Delivery row, no dataset reveals anything outside scope (§10) | `fitness-reports` RP1–RP11 (`tools/fitness/reports/`, in `make ci`; RP1 runs inside FF-SP2 `sqlconst`; [runbook](../runbooks/reports-fitness.md)). A check whose code has not landed prints `pending`, which is not a pass | T-0873 (done). ADR-0010 `accepted` 2026-11-01 at row B14 of the module page (T-0968): RP3–RP5 green in `make ci` |
 | Universal search (ADR-0011): one scope renderer (`Terms`/`Token` only in `reportsql`; no `Admits`/`SearchRoots` callers; `CompileSearch` only from `inventory`; no SQL re-deriving scope from the RBAC tables), no `LIKE`/regex or string-built search SQL, no views or functions over the RBAC tables, `inventory_search_keys` read only by the template, trigram operators only in the template; search scope equals the read oracle below and above the work ceiling, hostile, folding and secret-attribute vectors, bounded rows examined (asserted on the scan nodes), p95 ≤ 200 ms at 50k objects | `fitness-search` SE1–SE5 (`tools/fitness/search/`, planned for `make ci`), SE6 nightly | T-1126 (backlog). ADR-0011 becomes `accepted` when SE1–SE5 are green with none pending and SE6 has passed once |
 | Safe primitives: imports, banned APIs, literal shapes, corpus, fuzz, oracles, `psx` manifest; the one secret decode path (`secretjson`: decode only via `secretjson.Decode`, called only from `apihost`, no string tokens in a `Secret` decoder; safe-primitives §5.6, ADR-0004 rule 6) | FF-SP1–SP9 (`fitness-safeprim`, in `make ci`) | delivered under the earlier board numbering (old T-0033, old T-0034) |
 

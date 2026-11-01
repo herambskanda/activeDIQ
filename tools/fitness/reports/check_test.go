@@ -592,3 +592,46 @@ func TestRP11LandedWithNoTestFails(t *testing.T) {
 	r := run(t, tree(t, nil), Options{Bindings: landed(rp11), Runner: fake()})
 	expect(t, r, "RP11", "test-missing", rp11, "no package declares")
 }
+
+// Passed lists a check only when it ran and found nothing: pending and failing checks never appear,
+// so the CI log can be cited as evidence when an ADR moves to accepted.
+func TestPassedListsOnlyChecksThatRanClean(t *testing.T) {
+	has := func(r *Result, check string) bool {
+		for _, p := range r.Passed {
+			if checkOf(p) == check {
+				return true
+			}
+		}
+		return false
+	}
+	name := "Test_export_digest_equals_run_digest"
+	r := run(t, tree(t, nil), Options{Bindings: landed(name), Runner: fake(ev("pass", name))})
+	if !has(r, "RP2") || !has(r, "RP3") || !has(r, "RP5") {
+		t.Fatalf("RP2, RP3 and a passing RP5 must be listed: %v", r.Passed)
+	}
+	if has(r, "RP7") {
+		t.Fatalf("RP7 is pending without a library, so it is not a pass: %v", r.Passed)
+	}
+	r = run(t, tree(t, nil), Options{Bindings: landed(name), Runner: fake(ev("fail", name))})
+	if has(r, "RP5") {
+		t.Fatalf("a failing RP5 is listed as passed: %v", r.Passed)
+	}
+	r = run(t, tree(t, map[string]string{"internal/modules/reports/export/bad.go": `package export
+
+import (
+	"` + mod + `/internal/platform/authz"
+	"` + mod + `/internal/platform/store/reportsql"
+)
+
+func Rerun(r *reportsql.Registry) error { return r.Exec(r.Compile(authz.ReadScope{})) }
+`}), Options{})
+	expect(t, r, "RP3", "export-compiles", "internal/modules/reports/export/bad.go:", "reportsql.Compile")
+	if has(r, "RP3") {
+		t.Fatalf("a violating RP3 is listed as passed: %v", r.Passed)
+	}
+	root := t.TempDir()
+	write(t, root, map[string]string{"go.mod": "module " + mod + "\n\ngo 1.22\n", "main.go": "package main\n\nfunc main() {}\n"})
+	if r = run(t, root, Options{}); len(r.Passed) != 0 {
+		t.Fatalf("a tree with nothing landed passes nothing: %v", r.Passed)
+	}
+}
