@@ -151,17 +151,17 @@ type Observation struct {
 	// onPremisesSyncBehavior.isCloudManaged. They decide cloud_seen_at (DM-16.I9).
 	OnPremisesSyncEnabled *bool
 	CloudManaged          bool
-	// OnPremisesSyncRead says the sync read onPremisesSyncEnabled on this Entra group. With it set,
+	// OnPremisesSyncEnabledRead says the sync read onPremisesSyncEnabled on this Entra group. With it set,
 	// a nil OnPremisesSyncEnabled is Graph's JSON null (never synced); without it the key is stored
 	// absent, which the judge treats as unknown. OnPremisesSyncEnabled set requires it.
-	OnPremisesSyncRead bool
+	OnPremisesSyncEnabledRead bool
 	// Entra only, users and groups: the other inputs of the DM-20.I4 gate, kept so that a later AD-side
-	// cycle can run the gate again. OnPremisesSID is onPremisesSecurityIdentifier (binary),
+	// cycle can run the gate again. OnPremisesSecurityIdentifier is onPremisesSecurityIdentifier (binary),
 	// OnPremisesDomainName is onPremisesDomainName ("" when not populated) and OnPremisesImmutableID is
 	// the decoded onPremisesImmutableId (the anchor, 16 bytes for a GUID anchor).
-	OnPremisesSID         []byte
-	OnPremisesDomainName  string
-	OnPremisesImmutableID []byte
+	OnPremisesSecurityIdentifier []byte
+	OnPremisesDomainName         string
+	OnPremisesImmutableID        []byte
 
 	// The D7 inputs of the derived states (reports spec §6.4, T-0958). A nil pointer or a zero time is
 	// "absent"; InputsRead says which of the four time inputs the sync read, so absent-and-read
@@ -228,7 +228,7 @@ func (o *Observation) checkInputs() error {
 // GroupFacts are the judge's inputs, typed so the producer cannot store one without the others it
 // depends on. A nil pointer or nil slice is "not read", which the judge treats as unknown. AD groups
 // use GroupType, BroadMembershipWrite(+At) and WrittenBack; Entra groups use SecurityEnabled,
-// Visibility and GroupTypes (and Observation.OnPremisesSyncRead).
+// Visibility and GroupTypes (and Observation.OnPremisesSyncEnabledRead).
 type GroupFacts struct {
 	GroupType *int32 // AD groupType
 	// BroadMembershipWrite is the computed fact (TM-D18); BroadMembershipWriteAt is when it was
@@ -265,19 +265,19 @@ func (o *Observation) merged(entra bool) (map[string]any, error) {
 	}
 	f := o.Facts
 	if o.Kind != KindGroup {
-		if f.ad() || f.entra() || o.OnPremisesSyncRead {
+		if f.ad() || f.entra() || o.OnPremisesSyncEnabledRead {
 			return nil, fmt.Errorf("group facts on a non-group")
 		}
 		return o.Attributes, nil
 	}
-	if entra && f.ad() || !entra && (f.entra() || o.OnPremisesSyncRead) {
+	if entra && f.ad() || !entra && (f.entra() || o.OnPremisesSyncEnabledRead) {
 		return nil, fmt.Errorf("group facts of the other plane")
 	}
 	if (f.BroadMembershipWrite == nil) != f.BroadMembershipWriteAt.IsZero() {
 		return nil, fmt.Errorf("broadMembershipWrite and its computed-at come together")
 	}
-	if entra && o.OnPremisesSyncEnabled != nil && !o.OnPremisesSyncRead {
-		return nil, fmt.Errorf("onPremisesSyncEnabled set without OnPremisesSyncRead")
+	if entra && o.OnPremisesSyncEnabled != nil && !o.OnPremisesSyncEnabledRead {
+		return nil, fmt.Errorf("onPremisesSyncEnabled set without OnPremisesSyncEnabledRead")
 	}
 	out := make(map[string]any, len(o.Attributes)+8)
 	for k, v := range o.Attributes {
@@ -302,7 +302,7 @@ func (o *Observation) merged(entra bool) (map[string]any, error) {
 	if f.GroupTypes != nil {
 		out[AttrGroupTypes] = f.GroupTypes
 	}
-	if o.OnPremisesSyncRead {
+	if o.OnPremisesSyncEnabledRead {
 		if o.OnPremisesSyncEnabled != nil {
 			out[AttrOnPremisesSyncEnabled] = *o.OnPremisesSyncEnabled
 		} else {
@@ -425,12 +425,12 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			cloud = observed.UTC()
 		}
 		// The gate inputs are stored for Entra users and groups only; for anything else they stay NULL.
-		var onPremSync, onPremCloud any
+		var syncEnabledVal, cloudManagedVal any
 		if entra && (o.Kind == KindUser || o.Kind == KindGroup) {
 			if o.OnPremisesSyncEnabled != nil {
-				onPremSync = *o.OnPremisesSyncEnabled
+				syncEnabledVal = *o.OnPremisesSyncEnabled
 			}
-			onPremCloud = o.CloudManaged
+			cloudManagedVal = o.CloudManaged
 		}
 		anc := make([]string, len(o.Ancestry))
 		for j, a := range o.Ancestry {
@@ -449,7 +449,7 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			nullGUID(o.Parent), anc, o.DN, o.RDN, sid, o.SAMAccountName, o.UPN, o.DisplayName, o.Enabled,
 			nullTime(o.LockoutTime), nullTime(o.PwdLastSet), nullTime(o.AccountExpires),
 			cg, string(attrs[i]), nullTime(o.WhenCreated), nullTime(o.WhenChanged), observed.UTC(), o.ObservedDSA, cloud, string(o.State),
-			onPremSync, onPremCloud, nilIfEmpty(o.OnPremisesSID), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID),
+			syncEnabledVal, cloudManagedVal, nilIfEmpty(o.OnPremisesSecurityIdentifier), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID),
 			o.UserAccountControl, o.PrimaryGroupID, nullTime(o.LastLogonTimestamp), o.HasSPN, int16(o.InputsRead)).
 			Scan(&w.inserted, &w.moved, &w.completeChanged)
 		if store.IsNoRows(err) {
@@ -640,7 +640,7 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 		return bad(err.Error())
 	}
 	if entra {
-		if len(o.OnPremisesSID) != 0 && (len(o.OnPremisesSID) < 8 || len(o.OnPremisesSID) > 68) {
+		if len(o.OnPremisesSecurityIdentifier) != 0 && (len(o.OnPremisesSecurityIdentifier) < 8 || len(o.OnPremisesSecurityIdentifier) > 68) {
 			return bad("onPremisesSecurityIdentifier")
 		}
 		if len(o.OnPremisesImmutableID) > 64 || len(o.OnPremisesDomainName) > 255 || strings.ContainsRune(o.OnPremisesDomainName, 0) {
@@ -651,7 +651,7 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 		}
 	} else {
 		if !validGUID(o.NC) || !adStates[o.State] || o.OnPremisesSyncEnabled != nil || o.CloudManaged ||
-			len(o.OnPremisesSID) > 0 || o.OnPremisesDomainName != "" || len(o.OnPremisesImmutableID) > 0 {
+			len(o.OnPremisesSecurityIdentifier) > 0 || o.OnPremisesDomainName != "" || len(o.OnPremisesImmutableID) > 0 {
 			return bad("AD object nc, state or cloud fields")
 		}
 		if len(o.ConsistencyGUID) != 0 {
