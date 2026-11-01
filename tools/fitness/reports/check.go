@@ -29,16 +29,20 @@ type Options struct {
 	Bindings []binding
 }
 
-// Result is everything a run found. Pending lists parts whose code has not landed.
+// Result is everything a run found. Pending lists parts whose code has not landed. Passed lists
+// each check that ran and found nothing, so the CI log itself is the evidence an ADR cites when it
+// moves to accepted (ADR-0010 names RP3, RP4 and RP5).
 type Result struct {
 	Violations []Violation
 	Pending    []string
 	Notes      []string
+	Passed     []string
 }
 
 // Run executes every check.
 func Run(ctx context.Context, o Options) (*Result, error) {
 	res := &Result{}
+	ran := []string{"RP2 ReadScope.Terms/.Token and NewReadScope callers", "RP3 reportsql.Compile/CompileCount/Exec callers under internal/modules/reports", "RP7 library/LOCK hashes and append-only history"}
 	st, err := checkStatic(o.Root)
 	if err != nil {
 		return nil, err
@@ -67,9 +71,19 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
+		for _, b := range bs {
+			if b.Landed {
+				where := b.Pkg
+				if b.PerDataset {
+					where = fmt.Sprintf("%d dataset subtests", len(st.Datasets))
+				}
+				ran = append(ran, b.Check+" "+b.Name+" ("+where+")")
+			}
+		}
 		res.Violations = append(res.Violations, bv...)
 		res.Pending = append(res.Pending, bp...)
 	}
+	res.Passed = passed(ran, res.Pending, res.Violations)
 	sort.SliceStable(res.Violations, func(i, j int) bool {
 		a, b := res.Violations[i], res.Violations[j]
 		if a.Check != b.Check {
@@ -79,6 +93,26 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	})
 	return res, nil
 }
+
+// passed keeps each check that ran ("RPn …") with no pending part and no violation.
+func passed(ran, pending []string, vs []Violation) []string {
+	bad := map[string]bool{}
+	for _, p := range pending {
+		bad[checkOf(p)] = true
+	}
+	for _, v := range vs {
+		bad[v.Check] = true
+	}
+	var out []string
+	for _, r := range ran {
+		if !bad[checkOf(r)] {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func checkOf(s string) string { c, _, _ := strings.Cut(s, " "); return c }
 
 // relSlash returns p relative to root with forward slashes.
 func relSlash(root, p string) string {

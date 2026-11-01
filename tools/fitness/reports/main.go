@@ -41,11 +41,14 @@ func main() {
 	for _, p := range r.Pending {
 		fmt.Printf("  pending   %s (not yet checked, not a pass)\n", p)
 	}
+	for _, p := range r.Passed {
+		fmt.Printf("  pass      %s\n", p)
+	}
 	for _, n := range r.Notes {
 		fmt.Printf("  note      %s\n", n)
 	}
 	if len(r.Violations) == 0 {
-		fmt.Println("fitness-reports: ok (RP2, RP3, RP7 and the landed bound tests as listed; RP1 runs in fitness-safeprim; pending parts above; ADR-0010 stays out of accepted until none is pending)")
+		fmt.Println("fitness-reports: ok (every check listed as pass ran and passed; pending parts are not a pass; RP1 runs in fitness-safeprim; ADR-0010 is bound to RP3, RP4 and RP5)")
 		return
 	}
 	for _, v := range r.Violations {
