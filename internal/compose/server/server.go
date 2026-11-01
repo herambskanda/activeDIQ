@@ -215,7 +215,21 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	// Modules and platform packages contribute job kinds to this registry (created above); the worker runs it.
-	connKernel, err := buildConnections(db, ok.Chainer, dirClient, jreg)
+	// The directory sync (T-1192): sync.full over the engine, and the supervisor that queues it. Its
+	// activation hook goes to the connection service, so a newly active connection is read at once.
+	holder := cfg.InstanceID
+	if holder == "" {
+		holder = nodeHolder()
+	}
+	syncEvery := cfg.SyncInterval
+	if syncEvery == 0 {
+		syncEvery = config.DefaultSyncInterval
+	}
+	syncKernel, err := buildSync(db, conns, csrc, jreg, holder, syncEvery, 0)
+	if err != nil {
+		return err
+	}
+	connKernel, err := buildConnections(db, ok.Chainer, dirClient, jreg, connection.WithActivationHook(syncKernel.Jobs))
 	if err != nil {
 		return err
 	}
@@ -258,8 +272,11 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	defer cancel()
 	workerErr := make(chan error, 1)
 	go func() {
-		workerErr <- runWorker(wctx, db, jreg, jobs.WorkerConfig{Holder: cfg.InstanceID, ShutdownGrace: cfg.ShutdownGrace})
+		workerErr <- runWorker(wctx, db, jreg, jobs.WorkerConfig{Holder: holder, ShutdownGrace: cfg.ShutdownGrace})
 	}()
+	// Queue the directory sync for every active AD connection now and on the interval.
+	supDone := make(chan struct{})
+	go func() { defer close(supDone); syncKernel.Supervisor.run(wctx, tid) }()
 
 	var firstErr error
 	select {
@@ -272,6 +289,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		firstErr = fmt.Errorf("server: ops listener: %w", err)
 	}
 	cancel()
+	<-supDone
 	// The listener stops accepting and in-flight requests get the shutdown grace.
 	sctx, scancel := context.WithTimeout(context.WithoutCancel(ctx), cfg.ShutdownGrace)
 	defer scancel()

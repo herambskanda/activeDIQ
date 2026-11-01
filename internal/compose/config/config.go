@@ -92,6 +92,14 @@ const (
 	MaxSetupTTL     = 24 * time.Hour
 	// DefaultAPIAddr binds loopback only. A non-loopback bind needs EnvAPITLSDir (the listener is TLS-only).
 	DefaultAPIAddr = "127.0.0.1:8080"
+	// EnvSyncInterval is how often the server queues a full read for every active AD connection (a Go
+	// duration; default 1h, at least 5m, at most 24h). The install is the tenant of a self-hosted server, so
+	// this is where the tenant shortens the cadence.
+	EnvSyncInterval = "ACTIVEDIQ_SYNC_INTERVAL"
+	// DefaultSyncInterval, MinSyncInterval and MaxSyncInterval bound EnvSyncInterval.
+	DefaultSyncInterval = time.Hour
+	MinSyncInterval     = 5 * time.Minute
+	MaxSyncInterval     = 24 * time.Hour
 	// DefaultAPIBodyBudget is 64 MiB, the same default as apihost.DefaultBodyBudget.
 	DefaultAPIBodyBudget int64 = 64 << 20
 )
@@ -129,6 +137,8 @@ type Config struct {
 	OpsTokenFile string
 	// SetupTTL is the life of the one-time first-run setup secret.
 	SetupTTL time.Duration
+	// SyncInterval is the cadence of the supervisor that queues the directory sync (EnvSyncInterval).
+	SyncInterval time.Duration
 	// ConnectorConfigPath is the connector role's local configuration file; the connector refuses to run
 	// without it, every other role ignores it.
 	ConnectorConfigPath string
@@ -138,7 +148,8 @@ type Config struct {
 // An invalid value is an error; it is never silently replaced by a default.
 func Load(getenv func(string) string) (Config, error) {
 	c := Config{LogLevel: slog.LevelInfo, ShutdownGrace: DefaultShutdownGrace, StopTimeout: DefaultStopTimeout,
-		APIAddr: DefaultAPIAddr, APIBodyBudget: DefaultAPIBodyBudget, SetupTTL: DefaultSetupTTL, Nodes: 1, PrincipalStore: PrincipalStorePostgres}
+		APIAddr: DefaultAPIAddr, APIBodyBudget: DefaultAPIBodyBudget, SetupTTL: DefaultSetupTTL, Nodes: 1, PrincipalStore: PrincipalStorePostgres,
+		SyncInterval: DefaultSyncInterval}
 	if v := getenv(EnvLogLevel); v != "" {
 		if err := c.LogLevel.UnmarshalText([]byte(v)); err != nil {
 			return Config{}, fmt.Errorf("%s: %w", EnvLogLevel, err)
@@ -158,6 +169,12 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if c.SetupTTL > MaxSetupTTL {
 		return Config{}, fmt.Errorf("%s: at most %s, got %s", EnvSetupTTL, MaxSetupTTL, c.SetupTTL)
+	}
+	if c.SyncInterval, err = duration(getenv, EnvSyncInterval, c.SyncInterval); err != nil {
+		return Config{}, err
+	}
+	if c.SyncInterval < MinSyncInterval || c.SyncInterval > MaxSyncInterval {
+		return Config{}, fmt.Errorf("%s: between %s and %s, got %s", EnvSyncInterval, MinSyncInterval, MaxSyncInterval, c.SyncInterval)
 	}
 	if v := getenv(EnvAPIAddr); v != "" {
 		c.APIAddr = v
