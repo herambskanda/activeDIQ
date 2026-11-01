@@ -14,3 +14,4 @@ metadata:
 - go-ldap's `gssapi` package bundles gokrb5 v8 with the SSPI client: importing it on Windows links gokrb5.
 - Lab gotcha: lab may be running from a deleted worktree (no `.lab.env`); use own compose project + shifted ports.
 - zsh does not word-split `set -- $var`; use explicit args in test scripts.
+- T-0856: go-krb5 pin (f89757a) registers only AES etypes by default; rc4 needs `crypto.RegisterDeprecatedRC4HMAC()` (global; tests must undo it). Fake-KDC tests need a real channel binding or the client refuses before touching the KDC. Keytab filter (`dropNonAESKeys`) is the barrier if RC4 ever gets registered.

@@ -94,6 +94,9 @@ func open(ctx context.Context, cfg Config, gc bool) (*Session, error) {
 		if err := cfg.Kerberos.validate(); err != nil {
 			return nil, err
 		}
+		if err := cfg.Kerberos.checkKeytab(); err != nil { // before any network traffic (T-0856)
+			return nil, err
+		}
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultTimeout
