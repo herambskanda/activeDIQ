@@ -56,7 +56,7 @@ const (
 		" WHEN EXISTS (SELECT 1 FROM {rel.mgr} WHERE mgr.connection_id = {t}.connection_id AND mgr.state = 'live'" +
 		" AND lower(mgr.dn) = lower({t}.attributes ->> 'managedBy')) THEN {t}.attributes ->> 'managedBy'" +
 		" ELSE '(manager outside your scope)' END"
-	hasManagerSQL = "jsonb_typeof({t}.attributes -> 'managedBy') = 'string'"
+	hasManagerSQL = "COALESCE(jsonb_typeof({t}.attributes -> 'managedBy') = 'string', false)" // a missing key is false, not NULL
 
 	// A group whose nesting is deeper than the closure follows: some effective members are not listed.
 	nestingCutSQL = "EXISTS (SELECT 1 FROM {rel.clo} WHERE clo.connection_id = {t}.connection_id AND clo.group_guid = {t}.object_guid AND clo.cut)"

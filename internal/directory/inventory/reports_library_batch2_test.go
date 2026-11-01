@@ -32,7 +32,13 @@ type b2Row struct {
 	hidden []string
 }
 
-func (r b2Row) s(col string) string { return cellStr(r.c, report.ColumnID(col)) }
+// s is the cell's text; an unknown cell reads as the label the oracle uses for it.
+func (r b2Row) s(col string) string {
+	if r.c[report.ColumnID(col)].IsUnknown() {
+		return "unknown_input_missing"
+	}
+	return cellStr(r.c, report.ColumnID(col))
+}
 
 // runB2 runs a library report preset. A request the resolver refuses is returned as an error.
 func (e *env) runB2(t *testing.T, l *library.Library, id, preset string, rp report.RunParams, scope authz.ReadScope, now time.Time) ([]b2Row, error) {
@@ -260,7 +266,21 @@ func buildSeed() seed {
 	add(mk(s.u.u1, "u1", 1106, s.g.du, uacNormal))         // direct member of A
 	add(fsp(s.f, 9001))                                    // a foreign security principal in C
 	grp := func(g, name string, rid uint32, created time.Time, attrs map[string]any, members ...string) inventory.Observation {
-		return withAttrs(hGroup(g, name, rid, members...), created, attrs)
+		// groupType is a judge key: it enters through the typed Facts, never the attribute bag.
+		bag := map[string]any{}
+		o := hGroup(g, name, rid, members...)
+		for k, v := range attrs {
+			if k == "groupType" {
+				t := int32(v.(int))
+				o.Facts.GroupType = &t
+				continue
+			}
+			bag[k] = v
+		}
+		if len(bag) == 0 {
+			bag = nil
+		}
+		return withAttrs(o, created, bag)
 	}
 	gt := func(v int) map[string]any { return map[string]any{"groupType": v} }
 	add(grp(s.g.du, "Domain Users", 513, old, gt(gtGlobalSecurity)))
@@ -380,6 +400,16 @@ func buildSeed() seed {
 			en := *s.obs[i].UserAccountControl&2 == 0
 			s.obs[i].Enabled = &en
 		}
+	}
+	// every user outside the password seed changed its password 5 days ago, so the password reports have a
+	// complete oracle (a user with pwdLastSet 0 would be "must change" / "never changed").
+	for i := range s.obs {
+		o := &s.obs[i]
+		if _, ok := s.pw[string(o.Object)]; o.Kind != inventory.KindUser || ok || o.UserAccountControl == nil {
+			continue
+		}
+		o.PwdLastSet = s.now.Add(-day(5))
+		s.pw[string(o.Object)] = pwCase{sam: o.SAMAccountName, disabled: *o.UserAccountControl&2 != 0, age: day(5)}
 	}
 	// the computer that is a direct member of a group
 	for i := range s.obs {
@@ -763,11 +793,10 @@ func Test_reports_library_batch2_rows_equal_ground_truth(t *testing.T) {
 		t.Run("grp-01", func(t *testing.T) {
 			groups := sd.ofKind(inventory.KindGroup)
 			typeOf := func(o inventory.Observation) string {
-				v, ok := o.Attributes["groupType"].(int)
 				switch {
-				case !ok:
+				case o.Facts.GroupType == nil:
 					return "unknown_input_missing"
-				case uint32(int32(v))&0x80000000 != 0:
+				case uint32(*o.Facts.GroupType)&0x80000000 != 0:
 					return "security"
 				}
 				return "distribution"
