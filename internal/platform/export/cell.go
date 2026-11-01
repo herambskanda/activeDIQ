@@ -174,6 +174,14 @@ func FormatFloat(f float64) string { return strconv.FormatFloat(f, 'g', -1, 64) 
 // TimeLayout is the invariant spelling of a Time cell in text outputs.
 const TimeLayout = "2006-01-02T15:04:05Z"
 
+// AboutLine is one label and one value of an export's About block (reports-2a §8.3): the facts about
+// a file (report, scope, filters, freshness, who and when, row count, digest). XLSX writes it as a first
+// sheet, PDF and HTML as a header. Labels and values are data and go through the same rules as cells.
+type AboutLine struct{ Label, Value string }
+
+// MaxAboutLines bounds an About block.
+const MaxAboutLines = 100
+
 // Column is a header cell. The label is data and goes through the same cell rules as a value.
 type Column struct{ Label string }
 

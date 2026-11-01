@@ -280,14 +280,14 @@ must_fail_with "gen-check on a missing generated file" "missing" go run ./tools/
 gm="$tmp/genmodules"
 mkdir -p "$gm/migrations" "$gm/internal/platform/store/owners"
 printf -- '-- write-class: tenants system\nCREATE TABLE public.tenants (id uuid PRIMARY KEY);\n' >"$gm/migrations/0001_tenant_tenants.sql"
-must_fail_with "gen-modules -check on a missing owners.gen.go" "is missing" go run ./tools/gen/modules -root "$gm" -check
+must_fail_with "gen-modules -check on a missing owners.gen.tsv" "is missing" go run ./tools/gen/modules -root "$gm" -check
 go run ./tools/gen/modules -root "$gm" || fails=$((fails + 1))
 must_pass "gen-modules -check on a fresh generation" go run ./tools/gen/modules -root "$gm" -check
-sed -i 's/class: System/class: Config/' "$gm/internal/platform/store/owners/owners.gen.go"
-must_fail_with "gen-modules -check on a hand-edited owners.gen.go" "stale or hand-edited" go run ./tools/gen/modules -root "$gm" -check
+sed -i 's/\tsystem$/\tconfig/' "$gm/internal/platform/store/owners/owners.gen.tsv"
+must_fail_with "gen-modules -check on a hand-edited owners.gen.tsv" "stale or hand-edited" go run ./tools/gen/modules -root "$gm" -check
 go run ./tools/gen/modules -root "$gm" || fails=$((fails + 1))
 printf -- '-- write-class: authz_roles config\nCREATE TABLE public.authz_roles (id uuid PRIMARY KEY);\n' >"$gm/migrations/0002_authz_roles.sql"
-must_fail_with "gen-modules -check on a migration newer than owners.gen.go" "stale or hand-edited" go run ./tools/gen/modules -root "$gm" -check
+must_fail_with "gen-modules -check on a migration newer than owners.gen.tsv" "stale or hand-edited" go run ./tools/gen/modules -root "$gm" -check
 printf 'CREATE TABLE public.authz_roles (id uuid PRIMARY KEY);\n' >"$gm/migrations/0002_authz_roles.sql"
 must_fail_with "gen-modules -check on a table with no write class" "has no .-- write-class: authz_roles" go run ./tools/gen/modules -root "$gm" -check
 printf -- '-- write-class: authz_roles maybe\nCREATE TABLE public.authz_roles (id uuid PRIMARY KEY);\n' >"$gm/migrations/0002_authz_roles.sql"

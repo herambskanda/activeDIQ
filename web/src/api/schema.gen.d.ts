@@ -1472,7 +1472,7 @@ export interface components {
             format: components["schemas"]["ReportExportFormat"];
         };
         /**
-         * @description An export format. csv and xlsx exist at the 2a demo; pdf and html arrive by M2 exit. A definition lists the formats this installation can produce.
+         * @description An export format. csv, xlsx, pdf and html all exist. A definition lists the formats this installation can produce for it: no pdf when the report has more columns than a PDF page lays out (24).
          * @enum {string}
          */
         ReportExportFormat: "csv" | "xlsx" | "pdf" | "html";

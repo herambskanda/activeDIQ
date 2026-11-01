@@ -1,2 +1,4 @@
 # The reports library holds the SHA-256 of every shipped definition (RP7): git must not rewrite line endings.
 internal/modules/reports/library/** -text
+# owners.gen.tsv is parsed at init (class field compared exactly): a CRLF checkout would read 'system\r' and panic.
+internal/platform/store/owners/owners.gen.tsv -text

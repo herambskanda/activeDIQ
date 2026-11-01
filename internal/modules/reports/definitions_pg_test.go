@@ -12,9 +12,12 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/modules/reports"
+	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	lib "github.com/skenzeriq/activediq/internal/modules/reports/library"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
+	"github.com/skenzeriq/activediq/internal/platform/export/pdf"
+	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/reportsql"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
@@ -30,6 +33,13 @@ type defEnv struct {
 }
 
 func defSetup(t *testing.T, s *storetest.Server, withLibrary bool) *defEnv {
+	t.Helper()
+	return defSetupExports(t, s, withLibrary, false)
+}
+
+// defSetupExports is defSetup with, when withExports, an export service wired in (never called: the
+// definition view only asks whether exports exist on this installation).
+func defSetupExports(t *testing.T, s *storetest.Server, withLibrary, withExports bool) *defEnv {
 	t.Helper()
 	ctx := context.Background()
 	d := s.NewDatabase(t)
@@ -58,6 +68,9 @@ func defSetup(t *testing.T, s *storetest.Server, withLibrary bool) *defEnv {
 	h := &reports.Handlers{}
 	if withLibrary {
 		h.Library = l
+	}
+	if withExports {
+		h.Exports = &export.Service{}
 	}
 	doc, err := apihost.LoadDocument()
 	if err != nil {
@@ -280,7 +293,7 @@ func TestGetReportDefinition(t *testing.T) {
 				t.Errorf("%s: header %v", d.ID, got)
 			}
 			if ef := got["exportFormats"].([]any); len(ef) != 0 {
-				t.Errorf("%s: exports are not built, yet the installation offers %v", d.ID, ef)
+				t.Errorf("%s: this host has no export service, yet the definition offers %v", d.ID, ef)
 			}
 			var presets []string
 			for _, p := range got["presets"].([]any) {
@@ -400,4 +413,37 @@ func TestDefinitionsWithoutLibraryAreNotReady(t *testing.T) {
 			t.Errorf("get without a library: %d, want 503", code)
 		}
 	})
+}
+
+// AC-4: a definition lists the formats this installation can produce. With the export service wired every
+// shipped definition (all within a PDF page's 24 columns) offers csv, xlsx, pdf and html; without it, none.
+func TestDefinitionOffersExportFormats(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		with := defSetupExports(t, s, true, true)
+		for _, it := range with.lib.List() {
+			code, got := with.get("/api/v1/reports/definitions/" + string(it.Def.ID))
+			if code != 200 {
+				t.Fatalf("%s: %d", it.Def.ID, code)
+			}
+			var offered []string
+			for _, f := range got["exportFormats"].([]any) {
+				offered = append(offered, f.(string))
+			}
+			want := []string{"csv", "xlsx", "pdf", "html"}
+			if widest(it.Def) > pdf.MaxColumns {
+				want = []string{"csv", "xlsx", "html"}
+			}
+			if !slices.Equal(offered, want) {
+				t.Errorf("%s (%d columns): exportFormats = %v, want %v", it.Def.ID, widest(it.Def), offered, want)
+			}
+		}
+	})
+}
+
+func widest(d report.Definition) int {
+	n := len(d.Columns)
+	for _, p := range d.Presets {
+		n = max(n, len(p.Columns))
+	}
+	return n
 }

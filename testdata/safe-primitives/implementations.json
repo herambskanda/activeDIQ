@@ -98,13 +98,16 @@
       ]
     },
     {
-      "name": "go/httpx",
+      "name": "go/html",
       "language": "go",
       "tier": "S",
       "units": [
         "html"
       ],
-      "package": "internal/platform/httpx"
+      "package": "internal/platform/htmlx",
+      "covers": [
+        "internal/platform/httpx"
+      ]
     },
     {
       "name": "go/sd",
@@ -151,6 +154,15 @@
         "mail"
       ],
       "package": "internal/platform/notify/mail"
+    },
+    {
+      "name": "go/pdf",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "pdf"
+      ],
+      "package": "internal/platform/export/pdf"
     }
   ],
   "fuzz": [
@@ -247,12 +259,13 @@
       ]
     },
     {
-      "implementation": "go/httpx",
+      "implementation": "go/html",
       "unit": "html",
       "target": "FuzzAttachment",
       "properties": [
         "independentParse"
-      ]
+      ],
+      "package": "internal/platform/httpx"
     },
     {
       "implementation": "go/sd",
@@ -303,6 +316,22 @@
       "implementation": "go/mail",
       "unit": "mail",
       "target": "FuzzMessage",
+      "properties": [
+        "independentParse"
+      ]
+    },
+    {
+      "implementation": "go/pdf",
+      "unit": "pdf",
+      "target": "FuzzAnyTextIsInertString",
+      "properties": [
+        "independentParse"
+      ]
+    },
+    {
+      "implementation": "go/html",
+      "unit": "html",
+      "target": "FuzzAnyTextIsInertString",
       "properties": [
         "independentParse"
       ]

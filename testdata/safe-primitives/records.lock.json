@@ -394,10 +394,14 @@
       "DN-P19": false
     },
     "html": {
+      "HT-01": true,
+      "HT-04": true,
       "HT-05": true,
       "HT-06": true,
       "HT-07": true,
       "HT-08": true,
+      "HT-11": true,
+      "HT-12": true,
       "HT-13": true,
       "HT-14": true,
       "HT-15": true,
@@ -405,7 +409,14 @@
       "HT-17": true,
       "HT-18": true,
       "HT-19": true,
-      "HT-20": true
+      "HT-20": true,
+      "HT-23": false,
+      "HT-24": false,
+      "HT-30": true,
+      "HT-31": true,
+      "HT-32": true,
+      "HT-33": true,
+      "HT-34": true
     },
     "ldapfilter": {
       "LF-01": true,
@@ -552,6 +563,27 @@
       "OK-11": true,
       "OK-T0171a": true,
       "OK-T0171b": true
+    },
+    "pdf": {
+      "PDF-01": true,
+      "PDF-02#1": true,
+      "PDF-02#2": true,
+      "PDF-02#3": true,
+      "PDF-03#1": true,
+      "PDF-03#2": true,
+      "PDF-04#1": true,
+      "PDF-04#2": true,
+      "PDF-05": true,
+      "PDF-06": true,
+      "PDF-07#1": true,
+      "PDF-07#2": true,
+      "PDF-08": true,
+      "PDF-09": true,
+      "PDF-10": true,
+      "PDF-11": true,
+      "PDF-12": true,
+      "PDF-13": false,
+      "PDF-14": false
     },
     "pslit": {
       "PSQ-01": true,

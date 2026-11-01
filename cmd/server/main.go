@@ -68,14 +68,10 @@ func runSetup(args []string) int {
 	return 0
 }
 
-// labAccountCommand is set only by a lab build (account_lab.go): extra `account` subcommands for the lab
-// end-to-end suite. It is nil in every other build, so the shipped binary has no such command.
-var labAccountCommand func(name string, args []string) (code int, ok bool)
-
 // runAccount is `activediq-server account <command>`. Only init-local exists: it creates the first local
 // console account (password on stdin, TOTP enrolled interactively).
 func runAccount(args []string) int {
-	if len(args) > 0 && labAccountCommand != nil {
+	if len(args) > 0 {
 		if code, ok := labAccountCommand(args[0], args[1:]); ok {
 			return code
 		}
