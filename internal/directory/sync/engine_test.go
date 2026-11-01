@@ -122,18 +122,43 @@ func (f *forest) chain(n uint64) []string {
 	return out
 }
 
-// activate makes e.conn an active AD connection with a verified identity.
+// activate takes e.conn through the DM-10 lifecycle to active with a verified identity. It is idempotent.
 func (e *env) activate(t *testing.T, id inventory.ConnectionID) {
 	t.Helper()
-	if err := e.d.ExecOwner(context.Background(), `UPDATE public.connections SET directory_identity = $2, state = 'active' WHERE id = $1::uuid`, string(id), forestRoot); err != nil {
+	ctx := context.Background()
+	reg := connection.NewRegistry(e.db)
+	cid := connection.ID(id)
+	if c, err := reg.Get(ctx, e.a, cid); err != nil || c.State != connection.StateDraft {
+		return // already taken through the lifecycle (possibly suspended since)
+	}
+	if _, err := reg.Transition(ctx, e.a, cid, connection.StateDraft, connection.StateVerifying); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	if _, err := reg.SetDirectoryIdentity(ctx, e.a, cid, connection.DirectoryIdentity(forestRoot)); err != nil {
+		t.Fatalf("activate: %v", err)
+	}
+	err := e.tx(e.a, func(ctx context.Context, tx store.Tx) error {
+		if _, err := (connection.Store{}).RecordVerification(ctx, tx, connection.NewVerification{
+			ID: "00000000-0000-4000-b000-000000000001", ConnectionID: cid, CredentialID: cred, Kind: connection.KindManual,
+			RequestedBy: "principal-test", StartedAt: time.Now(), CheckListVersion: 1, Verdict: connection.VerdictPass,
+			Outcomes: map[connection.Check]connection.Outcome{"V5": connection.OutcomePass,
+				connection.CheckV7OverPrivilege: connection.OutcomePass, connection.CheckV8ReadSufficient: connection.OutcomePass},
+		}); err != nil {
+			return err
+		}
+		_, err := (connection.Store{}).Activate(ctx, tx, cid)
+		return err
+	})
+	if err != nil {
 		t.Fatalf("activate: %v", err)
 	}
 }
 
-func (e *env) setState(t *testing.T, id inventory.ConnectionID, state string) {
+// suspend moves an active connection to suspended through the registry.
+func (e *env) suspend(t *testing.T, id inventory.ConnectionID) {
 	t.Helper()
-	if err := e.d.ExecOwner(context.Background(), `UPDATE public.connections SET state = $2 WHERE id = $1::uuid`, string(id), state); err != nil {
-		t.Fatalf("set state: %v", err)
+	if _, err := connection.NewRegistry(e.db).Transition(context.Background(), e.a, connection.ID(id), connection.StateActive, connection.StateSuspended); err != nil {
+		t.Fatalf("suspend: %v", err)
 	}
 }
 
@@ -182,6 +207,7 @@ type rig struct {
 	list   *managedDomains
 	logs   *bytes.Buffer
 	holder string
+	held   map[string]jobs.Lease
 }
 
 type managedDomains struct{ list []dsync.Domain }
@@ -193,18 +219,26 @@ func (m *managedDomains) ManagedDomains(context.Context, tenant.ID, connection.I
 func (e *env) rig(t *testing.T, f *fakeConnector, ncs ...uint64) *rig {
 	t.Helper()
 	e.activate(t, e.conn)
-	r := &rig{e: e, fake: f, src: &connSource{cc: f}, list: &managedDomains{list: domainsOf(ncs...)}, logs: &bytes.Buffer{}, holder: "engine"}
+	r := &rig{e: e, fake: f, src: &connSource{cc: f}, list: &managedDomains{list: domainsOf(ncs...)}, logs: &bytes.Buffer{}, holder: "engine", held: map[string]jobs.Lease{}}
 	r.ingest = &ingestLog{inner: dsync.NewIngester()}
 	r.eng = &dsync.Engine{Tenants: e.db, Conns: connection.NewRegistry(e.db), Domains: r.list, Source: r.src, Ingester: r.ingest,
 		Cursors: dsync.Store{}, Log: slog.New(slog.NewJSONHandler(r.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))}
 	return r
 }
 
+// leases hands the engine a per-NC lease; a lease this rig took on an earlier run is released first (the
+// job that owns the engine does that between runs), so every run gets a fresh, higher fencing token.
 func (r *rig) leases(ctx context.Context, name string) (jobs.Lease, error) {
+	if old, ok := r.held[name]; ok {
+		if err := jobs.ReleaseLease(ctx, r.e.db, old); err != nil {
+			return jobs.Lease{}, err
+		}
+	}
 	l, ok, err := jobs.AcquireLease(ctx, r.e.db, name, r.holder, time.Minute)
 	if err != nil || !ok {
 		return jobs.Lease{}, fmt.Errorf("lease %s: %v %v", name, ok, err)
 	}
+	r.held[name] = l
 	return l, nil
 }
 
@@ -519,8 +553,8 @@ func TestFullCycleRefusesBeforeReading(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				f := newFake(twoDomains().doms...)
 				r := e.rig(t, f, ncA)
-				if tc.state != "" {
-					e.setState(t, tc.conn, tc.state)
+				if tc.state == "suspended" {
+					e.suspend(t, tc.conn)
 				}
 				_, err := r.eng.FullCycle(context.Background(), e.a, connection.ID(tc.conn), r.leases)
 				var ref *dsync.Refusal
@@ -593,6 +627,7 @@ func TestFullCycleReadsOnlyManagedDomains(t *testing.T) {
 			f := newFake(twoDomains().doms...)
 			f.extraNCs[cfg] = connectorv1.NamingContextKind_NAMING_CONTEXT_KIND_CONFIGURATION
 			f.extraNCs[sch] = connectorv1.NamingContextKind_NAMING_CONTEXT_KIND_SCHEMA
+			r := e.rig(t, f, ncA)
 			for name, list := range map[string][]dsync.Domain{
 				"labelled configuration":   {{NC: cfg, Kind: dsync.NCConfiguration}},
 				"labelled schema":          {{NC: sch, Kind: dsync.NCSchema}},
@@ -600,7 +635,6 @@ func TestFullCycleReadsOnlyManagedDomains(t *testing.T) {
 				"a domain among them":      {{NC: inventory.GUID(gtext(ncA)), Kind: dsync.NCDomain}, {NC: sch, Kind: dsync.NCDomain}},
 				"unknown to the connector": {{NC: "dddddddd-0000-4000-8000-0000000000ff", Kind: dsync.NCDomain}},
 			} {
-				r := e.rig(t, f, ncA)
 				r.list.list = list
 				_, err := r.run(context.Background())
 				if !errors.Is(err, dsync.ErrNotDomainNC) {

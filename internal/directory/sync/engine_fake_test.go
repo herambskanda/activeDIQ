@@ -2,6 +2,7 @@ package sync_test
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
@@ -101,11 +102,11 @@ func (f *fakeConnector) Describe(_ context.Context, _ *connectorv1.DescribeReque
 }
 
 func mustWire(text string) *connectorv1.Guid {
-	var b [16]byte
-	if _, err := fmt.Sscanf(strings.ReplaceAll(text, "-", ""), "%32x", &b); err != nil {
-		panic(err)
+	b, err := hex.DecodeString(strings.ReplaceAll(text, "-", ""))
+	if err != nil || len(b) != 16 {
+		panic("bad guid text " + text)
 	}
-	return &connectorv1.Guid{Value: b[:]}
+	return &connectorv1.Guid{Value: b}
 }
 
 func (f *fakeConnector) ScopedSearch(_ context.Context, req *connectorv1.ScopedSearchRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ScopedSearchResponse], error) {
