@@ -213,7 +213,11 @@ func Test_reports_library_batch1_rows_equal_ground_truth(t *testing.T) {
 		e, l, now := libSetup(t, s, 14)
 		scope := e.scopeNC(e.adA)
 		seed := libSeed()
+		batch1 := map[report.DefinitionID]bool{"usr-01": true, "usr-02": true, "usr-03": true, "usr-05": true}
 		for _, item := range l.List() {
+			if !batch1[item.Def.ID] { // batch 2 has its own oracle: Test_reports_library_batch2_rows_equal_ground_truth
+				continue
+			}
 			for _, p := range item.Def.Presets {
 				key := string(item.Def.ID) + "/" + p.ID
 				t.Run(key, func(t *testing.T) {
