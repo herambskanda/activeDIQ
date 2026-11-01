@@ -12,3 +12,4 @@ metadata:
 - `CompleteScan` leaves NO cookie; incremental + no cookie = "prime the feed" (DirSync ticket must handle).
 - Errors never wrap the gRPC error (its text may hold a DN): keep only the code (`ConnectorError`).
 - Tests are fake connector + Postgres only. Not proved on Samba or Windows; ranged `member`, `SchemaSecrets` and `DnValue.guid` (T-1202) are real-connector gaps.
+- A running read must re-check the connection every batch (`Conns.Get` + `refuse`) and the cursor (`StatePaused`) in the batch tx; `wrap` must pass `ErrPaused`/`ErrRefused` through so a stop aborts the cycle, not one domain. Decommissioning sets RetiredAt, so its refusal reason is `retired`. Never log `err.Error()` of a store error (`errClass`).
