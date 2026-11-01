@@ -15,3 +15,5 @@ metadata:
 - Ranking `nm` is lower(display_name) COLLATE "C", not the normalised key (deviation: avoids a per-hit key lookup).
 - Map iteration order leaked into SQL text (fuzzy kind list): always iterate searchkey.AllKinds.
 - Test helper names taken in package inventory_test: oid, guids, pop, rpID, hGUID, hUser, explain/catalog now mine.
+- Pre-existing red on main at 398b0e6c1 (not T-1095): RP1 vet in datasets_groups.go:146,148 (viaPathSQL/findingSQL); TestOnlyPermittedFilesImportTenantref (modules/reports/handlers.go).
+- Plan-shape tests: the planner's natural pick depends on LIMIT and flat `<%` estimates; prove index *eligibility* in a rolled-back owner txn (drop other indexes + pkey constraint, disable RLS), not by hoping.
