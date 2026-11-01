@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/skenzeriq/activediq/internal/platform/httpx"
 	"github.com/skenzeriq/activediq/internal/platform/notify/mailaddr"
 )
 
@@ -27,13 +28,12 @@ const (
 
 // Attachment is one file of a message.
 type Attachment struct {
-	// Filename is reduced to a safe base name: the characters outside letters, digits, dot, dash,
-	// underscore and space become "_", and a path is cut to its last element.
+	// Filename is a base name, mapped by httpx (control and path characters become "_"); the
+	// extension and the media type come from Format, never from the name.
 	Filename string
-	// ContentType is a media type such as "text/csv". An invalid or empty value becomes
-	// application/octet-stream.
-	ContentType string
-	Data        []byte
+	// Format is httpx.CSV, XLSX or PDF. Any other value refuses the message.
+	Format httpx.Format
+	Data   []byte
 }
 
 // Message is one message to one recipient. Every header value is built here from validated parts;
@@ -112,14 +112,10 @@ func (m Message) build() (raw []byte, messageID string, err error) {
 		return nil, "", err
 	}
 	for _, a := range m.Attachments {
-		name := safeFilename(a.Filename)
-		ct := "application/octet-stream"
-		if mt, _, err := mime.ParseMediaType(a.ContentType); err == nil && mt != "" {
-			ct = mt
-		}
 		ah := textproto.MIMEHeader{}
-		ah.Set("Content-Type", mime.FormatMediaType(ct, map[string]string{"name": name}))
-		ah.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+		if err := httpx.PartHeaders(ah, a.Filename, a.Format); err != nil {
+			return nil, "", badMessage("attachment format is not supported")
+		}
 		ah.Set("Content-Transfer-Encoding", "base64")
 		w, err := mw.CreatePart(ah)
 		if err != nil {
@@ -150,27 +146,4 @@ func writeQP(w interface{ Write([]byte) (int, error) }, s string) error {
 func normalizeCRLF(b []byte) []byte {
 	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
 	return bytes.ReplaceAll(b, []byte("\n"), []byte("\r\n"))
-}
-
-func safeFilename(s string) string {
-	if i := strings.LastIndexAny(s, `/\`); i >= 0 {
-		s = s[i+1:]
-	}
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_', r == ' ':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	out := strings.Trim(b.String(), " .")
-	if out == "" {
-		return "attachment"
-	}
-	if len(out) > 100 {
-		out = out[:100]
-	}
-	return out
 }
