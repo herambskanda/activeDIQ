@@ -1,6 +1,6 @@
 ---
 title: Conventions in force
-updated: 2026-10-02
+updated: 2026-11-01
 budget: 120 lines
 ---
 
@@ -20,3 +20,4 @@ budget: 120 lines
 - The repository layout and package roots come from the architecture blueprint §1/§1.1. Where a skill or older spec names a path, the blueprint wins until T-0048 aligns them. Each binary links only its own `internal/compose/<role>` package. (2026-10-02, T-0004)
 - Go module path `github.com/skenzeriq/activediq`, toolchain `go 1.27.3`; `make ci` is the merge gate and every gate has a failing case in `tools/ci/proof.sh` (standard: knowledge/development/standards/ci-gates.md). (2026-10-02, T-0014)
 - An accepted ADR may take an **erratum** (`E<n>` on its Amendments line). It must fix a false factual statement, quote the original wording, and change no rule or fitness check; director + notice. Anything that changes what the decision requires or forbids supersedes. (2026-10-02, T-0134; `adr` skill §5)
+- A ticket AC "make ci passes" is met when the pre-merge gate on the merge result (`factory premerge T-…`) reports no new finding vs `main` and the ticket's own targeted checks pass; red causes outside the diff get their own tickets, and no ticket blocks on main-green. Same rule the gate applies (standards/ci-gates.md, red-and-main-red). (2026-11-01, T-1186)
