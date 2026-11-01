@@ -1,6 +1,6 @@
 import type { components } from "../api/schema.gen";
 import type { PaletteChip, PaletteGroup, PaletteItem } from "../ds/components";
-import type { PaletteEntry, RouteSpec } from "./modules";
+import { matchRoute, type PaletteEntry, type RouteSpec } from "./modules";
 
 export type DirectorySearchHit = components["schemas"]["DirectorySearchHit"];
 export type DirectorySearchResult = components["schemas"]["DirectorySearchResult"];
@@ -134,6 +134,25 @@ export function mapHitToPaletteItem(hit: DirectorySearchHit): PaletteItem {
   return item;
 }
 
+/** The hits behind a result, by the id of the palette row they render as. */
+export function indexHits(result: DirectorySearchResult): Map<string, DirectorySearchHit> {
+  const byId = new Map<string, DirectorySearchHit>();
+  for (const g of result.groups ?? []) {
+    for (const h of g.items ?? []) byId.set(h.objectId, h);
+  }
+  return byId;
+}
+
+/**
+ * Where a hit opens: a user in the Users screen, everything else in universal search. The search
+ * term is the hit's own identifier (sAMAccountName, then UPN, then mail, then display name).
+ */
+export function hitHref(hit: DirectorySearchHit): string {
+  const term = hit.samAccountName || hit.userPrincipalName || hit.mail || hit.displayName;
+  const q = encodeURIComponent(term);
+  return hit.type === "users" ? `/directory/users?q=${q}` : `/search?q=${q}`;
+}
+
 export function matchPages(
   registeredPalette: readonly PaletteEntry[],
   routes: readonly RouteSpec[],
@@ -144,11 +163,7 @@ export function matchPages(
 
   const matched: PaletteItem[] = [];
   for (const entry of registeredPalette) {
-    const routeExists = routes.some(
-      (r) =>
-        r.path === entry.route ||
-        (r.path.endsWith("/*") && entry.route.startsWith(r.path.slice(0, -2))),
-    );
+    const routeExists = matchRoute(routes, entry.route) !== undefined;
     if (!routeExists) continue;
 
     const matchesLabel = entry.label.toLowerCase().includes(q);

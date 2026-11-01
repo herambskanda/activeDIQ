@@ -5,6 +5,7 @@ import { api, type Problem } from "../api/client";
 import {
   Button,
   CommandPalette,
+  usePaletteShortcut,
   Kbd,
   Skeleton,
   StatePanel,
@@ -19,6 +20,9 @@ import { SignInPage } from "./sign-in";
 import { navigate } from "./location";
 import {
   buildPaletteGroups,
+  hitHref,
+  indexHits,
+  type DirectorySearchHit,
   formatTime,
   isRecoveryPassword,
   QUERY_TTL_MS,
@@ -68,6 +72,8 @@ export function Shell({
 
   const lastQueryTimeRef = useRef<number>(0);
   const requestIdRef = useRef<number>(0);
+  /** The hits behind the rendered rows, by item id: navigation reads the hit, never display text. */
+  const hitsRef = useRef<ReadonlyMap<string, DirectorySearchHit>>(new Map());
 
   const check = useCallback(() => {
     setSession("checking");
@@ -101,19 +107,25 @@ export function Shell({
     setPath(currentPath());
   }, [session, path]);
 
+  // The palette's open state is mirrored in a ref so the key handler decides outside any state
+  // updater (updaters must be pure; StrictMode runs them twice).
+  const paletteOpenRef = useRef(false);
+
   const openPalette = useCallback(() => {
-    const now = Date.now();
-    // 5-minute TTL: reset query if older than 5 minutes
-    if (now - lastQueryTimeRef.current > QUERY_TTL_MS) {
+    // 5-minute TTL: a query older than that is not kept.
+    if (Date.now() - lastQueryTimeRef.current > QUERY_TTL_MS) {
       setQuery("");
       setGroups([]);
+      hitsRef.current = new Map();
       setStatus("idle");
       setNotice(undefined);
     }
+    paletteOpenRef.current = true;
     setPaletteOpen(true);
   }, []);
 
   const closePalette = useCallback(() => {
+    paletteOpenRef.current = false;
     setPaletteOpen(false);
   }, []);
 
@@ -122,60 +134,12 @@ export function Shell({
     lastQueryTimeRef.current = Date.now();
   }, []);
 
-  // Global keyboard shortcuts: Ctrl/Cmd+K (toggle) and '/' outside text fields (open)
-  useEffect(() => {
-    if (session !== "active") return;
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.isComposing) return;
-      const mod = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey;
-      const k = e.key.toLowerCase();
-
-      if (mod && k === "k") {
-        e.preventDefault();
-        setPaletteOpen((wasOpen) => {
-          if (!wasOpen) {
-            const now = Date.now();
-            if (now - lastQueryTimeRef.current > QUERY_TTL_MS) {
-              setQuery("");
-              setGroups([]);
-              setStatus("idle");
-              setNotice(undefined);
-            }
-            return true;
-          }
-          return false;
-        });
-        return;
-      }
-
-      if (e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        const target = e.target;
-        const isField =
-          target instanceof HTMLElement &&
-          (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
-        if (!isField) {
-          e.preventDefault();
-          setPaletteOpen((wasOpen) => {
-            if (!wasOpen) {
-              const now = Date.now();
-              if (now - lastQueryTimeRef.current > QUERY_TTL_MS) {
-                setQuery("");
-                setGroups([]);
-                setStatus("idle");
-                setNotice(undefined);
-              }
-              return true;
-            }
-            return wasOpen;
-          });
-        }
-      }
-    };
-
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [session]);
+  // Ctrl/Cmd+K anywhere and '/' outside a field: the design system's one shortcut matcher. A second
+  // press closes the open palette.
+  usePaletteShortcut(() => {
+    if (paletteOpenRef.current) closePalette();
+    else openPalette();
+  }, session === "active");
 
   // Debounced universal directory search
   useEffect(() => {
@@ -190,6 +154,7 @@ export function Shell({
 
     // AC 5: 48-digit recovery password is refused in browser with IA message and never sent
     if (isRecoveryPassword(trimmed)) {
+      lastQueryTimeRef.current = 0; // a refused query is not kept for the next open
       setStatus("error");
       setGroups([]);
       setNotice({
@@ -269,6 +234,7 @@ export function Shell({
         if (data) {
           setAsOf(data.asOf);
           const built = buildPaletteGroups(data, registeredPalette, routes, trimmed);
+          hitsRef.current = indexHits(data);
           setGroups(built);
           setStatus("results");
           if (built.length === 0) {
@@ -303,7 +269,7 @@ export function Shell({
 
   const handleSelect = useCallback(
     (item: PaletteItem) => {
-      setPaletteOpen(false);
+      closePalette();
       // Page from registered palette entries
       if (item.id.startsWith("page:")) {
         const entryId = item.id.slice("page:".length);
@@ -311,22 +277,15 @@ export function Shell({
         if (entry) navigate(entry.route);
         return;
       }
-      // User hit (exact or users group) -> /directory/users?q=
-      if (item.typeTag === "User") {
-        const target = item.identifier?.split(" · ")[0] || item.name;
-        navigate(`/directory/users?q=${encodeURIComponent(target)}`);
-        return;
-      }
-      // Group, Computer, Contact -> /search?q=
-      const target = item.identifier?.split(" · ")[0] || item.name;
-      navigate(`/search?q=${encodeURIComponent(target)}`);
+      const hit = hitsRef.current.get(item.id);
+      if (hit) navigate(hitHref(hit));
     },
-    [registeredPalette],
+    [registeredPalette, closePalette],
   );
 
   const handleShowAll = useCallback(
     (group: PaletteGroup) => {
-      setPaletteOpen(false);
+      closePalette();
       const trimmed = query.trim();
       if (group.id === "exact") {
         navigate(`/search?q=${encodeURIComponent(trimmed)}`);
@@ -334,7 +293,7 @@ export function Shell({
         navigate(`/search?q=${encodeURIComponent(trimmed)}&type=${encodeURIComponent(group.id)}`);
       }
     },
-    [query],
+    [query, closePalette],
   );
 
   if (session === "checking") {
@@ -395,7 +354,7 @@ export function Shell({
           onClick={openPalette}
         >
           <span className="diq-shell__search-placeholder">
-            Search people, groups, computers, reports and actions
+            Search people, groups, computers and pages
           </span>
           <span className="diq-shell__search-kbd">
             <Kbd>Ctrl</Kbd> <Kbd>K</Kbd>
@@ -423,6 +382,7 @@ export function Shell({
         onQueryChange={handleQueryChange}
         status={status}
         groups={groups}
+        placeholder="Search people, groups, computers and pages"
         onSelect={handleSelect}
         onShowAll={handleShowAll}
         onRetry={handleRetry}

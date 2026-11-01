@@ -22,7 +22,7 @@ let calls: { path: string; method: string; csrf: string | null; body: string }[]
 let container: HTMLElement;
 let root: Root;
 let totpOk: boolean;
-let searchHandler: (q: string) => Response;
+let searchHandler: (q: string) => Response | Promise<Response>;
 
 const client = () =>
   createApiClient({
@@ -111,6 +111,21 @@ async function submit() {
       ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
   });
 }
+const ctrlK = () =>
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+async function pressCtrlK() {
+  await act(async () => ctrlK());
+}
+const paletteInput = () =>
+  requireInput(document.querySelector<HTMLInputElement>('input[role="combobox"]'));
+/** Types a query and lets the debounce (250 ms) elapse. Needs fake timers. */
+async function typeQuery(q: string) {
+  await act(async () => {
+    setValue(paletteInput(), q);
+    vi.advanceTimersByTime(300);
+  });
+}
+const searchCalls = () => calls.filter((c) => c.path === "/directory/search");
 async function mount() {
   await act(async () => root.render(<Shell modules={modules} client={client()} />));
 }
@@ -592,33 +607,299 @@ describe("T-1101 AC 5: Unhappy states (403, 429, 500, empty, recovery password)"
     expect(document.body.textContent).toContain(RECOVERY_PASSWORD_MESSAGE);
   });
 
-  it("shows matching state and Trace ID on 403, 429, and 500", async () => {
-    vi.useFakeTimers();
-    searchHandler = () =>
-      new Response(
-        JSON.stringify({
-          type: "about:blank",
-          title: "Forbidden",
-          status: 403,
-          traceId: "trace-403-xyz",
-        }),
-        { status: 403, headers: { "content-type": "application/problem+json" } },
-      );
+  const problem = (status: number, title: string) =>
+    new Response(
+      JSON.stringify({ type: "about:blank", title, status, traceId: `trace-${status}-xyz` }),
+      { status, headers: { "content-type": "application/problem+json" } },
+    );
 
+  async function searchFor(q: string) {
+    vi.useFakeTimers();
     await mount();
+    await pressCtrlK();
+    await typeQuery(q);
+  }
+
+  it("403: names the denial and shows the Trace ID", async () => {
+    searchHandler = () => problem(403, "Forbidden");
+    await searchFor("test");
+    expect(document.body.textContent).toContain("Search forbidden");
+    expect(document.body.textContent).toContain("trace-403-xyz");
+  });
+
+  it("429: says to wait and shows the Trace ID", async () => {
+    searchHandler = () => problem(429, "Too Many Requests");
+    await searchFor("test");
+    expect(document.body.textContent).toContain("Too many searches");
+    expect(document.body.textContent).toContain("trace-429-xyz");
+  });
+
+  it("500: says the search failed, shows the Trace ID and offers a retry that searches again", async () => {
+    searchHandler = () => problem(500, "Internal Server Error");
+    await searchFor("test");
+    expect(document.body.textContent).toContain("The search failed");
+    expect(document.body.textContent).toContain("trace-500-xyz");
+    const retry = [...document.querySelectorAll("button")].find((b) =>
+      /try again/i.test(b.textContent ?? ""),
+    );
+    expect(retry).toBeDefined();
+    await act(async () => retry?.click());
     await act(async () => {
-      document.dispatchEvent(
+      vi.advanceTimersByTime(300);
+    });
+    expect(calls.filter((c) => c.path === "/directory/search")).toHaveLength(2);
+  });
+
+  it("empty list: says nothing matched in the user's scope", async () => {
+    searchHandler = () => json(200, { asOf: null, refine: false, groups: [] });
+    await searchFor("zzzz");
+    expect(document.body.textContent).toContain("No objects match “zzzz” in your scope");
+  });
+
+  it("server unreachable: says so instead of rendering blank", async () => {
+    searchHandler = () => Promise.reject(new TypeError("Failed to fetch"));
+    await searchFor("test");
+    expect(document.body.textContent).toContain("Can't reach the server");
+  });
+});
+
+describe("T-1101 AC 1: focus returns to the opener", () => {
+  beforeEach(() => {
+    hasSession = true;
+  });
+
+  it("returns focus to the top-bar button after Escape", async () => {
+    await mount();
+    const btn = container.querySelector<HTMLButtonElement>('[data-testid="top-bar-search"]');
+    btn?.focus();
+    await act(async () => btn?.click());
+    expect(document.activeElement).toBe(paletteInput());
+    await act(async () => {
+      document
+        .querySelector('[role="dialog"]')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(btn);
+  });
+
+  it("returns focus to the element that had it when Ctrl+K was pressed, on a second press", async () => {
+    await mount();
+    const btn = container.querySelector<HTMLButtonElement>('[data-testid="top-bar-search"]');
+    btn?.focus();
+    await pressCtrlK();
+    expect(document.activeElement).toBe(paletteInput());
+    await act(async () => {
+      paletteInput().dispatchEvent(
         new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }),
       );
     });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(document.activeElement).toBe(btn);
+  });
+});
 
-    const input = requireInput(document.querySelector<HTMLInputElement>('input[role="combobox"]'));
-    await act(async () => {
-      setValue(input, "test");
-      vi.advanceTimersByTime(300);
+describe("T-1101 AC 2: request count and stale answers", () => {
+  beforeEach(() => {
+    hasSession = true;
+  });
+
+  const answer = (name: string) =>
+    json(200, {
+      asOf: null,
+      refine: false,
+      groups: [
+        {
+          type: "users",
+          count: 1,
+          items: [
+            {
+              objectId: `u-${name}`,
+              type: "users",
+              displayName: name,
+              samAccountName: name.toLowerCase(),
+              matchClass: "prefix",
+              distinguishedName: `CN=${name},DC=corp,DC=test`,
+              domain: "corp.test",
+              status: [],
+              highlights: [],
+            },
+          ],
+        },
+      ],
     });
 
-    expect(document.body.textContent).toContain("Search forbidden");
-    expect(document.body.textContent).toContain("trace-403-xyz");
+  it("a burst of keystrokes inside the debounce window makes exactly one request", async () => {
+    vi.useFakeTimers();
+    await mount();
+    await pressCtrlK();
+    for (const q of ["a", "al", "alo", "alov"]) {
+      await act(async () => {
+        setValue(paletteInput(), q);
+        vi.advanceTimersByTime(100);
+      });
+    }
+    expect(searchCalls()).toHaveLength(0);
+    await act(async () => {
+      vi.advanceTimersByTime(300);
+    });
+    expect(searchCalls()).toHaveLength(1);
+    expect(JSON.parse(searchCalls()[0]?.body ?? "{}")).toEqual({ q: "alov" });
+  });
+
+  it("ignores an earlier answer that arrives after a later one", async () => {
+    vi.useFakeTimers();
+    const resolvers: Record<string, (r: Response) => void> = {};
+    searchHandler = (q) => new Promise<Response>((resolve) => (resolvers[q] = resolve));
+    await mount();
+    await pressCtrlK();
+    await typeQuery("first");
+    await typeQuery("second");
+    expect(searchCalls()).toHaveLength(2);
+
+    await act(async () => resolvers["second"]?.(answer("Second Person")));
+    expect(document.body.textContent).toContain("Second Person");
+    await act(async () => resolvers["first"]?.(answer("First Person")));
+    expect(document.body.textContent).toContain("Second Person");
+    expect(document.body.textContent).not.toContain("First Person");
+  });
+
+  it("ignores a late failure of an earlier request", async () => {
+    vi.useFakeTimers();
+    const resolvers: Record<string, (r: Response) => void> = {};
+    const rejecters: Record<string, (e: unknown) => void> = {};
+    searchHandler = (q) =>
+      new Promise<Response>((resolve, reject) => {
+        resolvers[q] = resolve;
+        rejecters[q] = reject;
+      });
+    await mount();
+    await pressCtrlK();
+    await typeQuery("first");
+    await typeQuery("second");
+    await act(async () => resolvers["second"]?.(answer("Second Person")));
+    await act(async () => rejecters["first"]?.(new TypeError("Failed to fetch")));
+    expect(document.body.textContent).toContain("Second Person");
+    expect(document.body.textContent).not.toContain("Can't reach the server");
+  });
+});
+
+describe("T-1101 AC 4: Show all N", () => {
+  beforeEach(() => {
+    hasSession = true;
+  });
+
+  const tenUsers = () =>
+    json(200, {
+      asOf: null,
+      refine: false,
+      groups: [
+        {
+          type: "users",
+          count: 10,
+          items: [
+            {
+              objectId: "u-exact",
+              type: "users",
+              displayName: "Ada Lovelace",
+              samAccountName: "alovelace",
+              matchClass: "exact",
+              distinguishedName: "CN=Ada,DC=corp,DC=test",
+              domain: "corp.test",
+              status: [],
+              highlights: [],
+            },
+            {
+              objectId: "u-2",
+              type: "users",
+              displayName: "Adam Smith",
+              samAccountName: "asmith",
+              matchClass: "prefix",
+              distinguishedName: "CN=Adam,DC=corp,DC=test",
+              domain: "corp.test",
+              status: [],
+              highlights: [],
+            },
+          ],
+        },
+      ],
+    });
+
+  const showAllRow = () =>
+    [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((o) =>
+      /show all/i.test(o.textContent ?? ""),
+    );
+
+  it("the Users group's 'Show all 10' row opens /search?q=…&type=users", async () => {
+    vi.useFakeTimers();
+    searchHandler = tenUsers;
+    await mount();
+    await pressCtrlK();
+    await typeQuery("ad");
+    const row = showAllRow();
+    expect(row?.textContent).toContain("Show all 10");
+    await act(async () => row?.click());
+    expect(window.location.pathname).toBe("/search");
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("q")).toBe("ad");
+    expect(params.get("type")).toBe("users");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("Enter on the 'Show all' row opens it too", async () => {
+    vi.useFakeTimers();
+    searchHandler = tenUsers;
+    await mount();
+    await pressCtrlK();
+    await typeQuery("ad");
+    // Rows: Exact(Ada), Users(Adam), Show all 10. Walk down to the last row.
+    await act(async () => {
+      paletteInput().dispatchEvent(
+        new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }),
+      );
+    });
+    await act(async () => {
+      paletteInput().dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }),
+      );
+    });
+    expect(window.location.pathname).toBe("/search");
+    expect(new URLSearchParams(window.location.search).get("type")).toBe("users");
+  });
+
+  it("opens a user without a sAMAccountName by its UPN, and a name containing ' · ' correctly", async () => {
+    vi.useFakeTimers();
+    searchHandler = () =>
+      json(200, {
+        asOf: null,
+        refine: false,
+        groups: [
+          {
+            type: "users",
+            count: 1,
+            items: [
+              {
+                objectId: "u-x",
+                type: "users",
+                displayName: "Odd · Name",
+                userPrincipalName: "odd@corp.test",
+                mail: "odd.name@corp.test",
+                matchClass: "prefix",
+                distinguishedName: "CN=Odd,DC=corp,DC=test",
+                domain: "corp.test",
+                status: [],
+                highlights: [],
+              },
+            ],
+          },
+        ],
+      });
+    await mount();
+    await pressCtrlK();
+    await typeQuery("odd");
+    const row = document.querySelector<HTMLElement>('[role="option"]');
+    await act(async () => row?.click());
+    expect(window.location.pathname).toBe("/directory/users");
+    expect(new URLSearchParams(window.location.search).get("q")).toBe("odd@corp.test");
   });
 });

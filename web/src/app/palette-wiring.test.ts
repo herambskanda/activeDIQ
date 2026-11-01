@@ -8,6 +8,8 @@ import type {
 import {
   buildPaletteGroups,
   formatDate,
+  hitHref,
+  indexHits,
   formatTime,
   isRecoveryPassword,
   mapHitToPaletteItem,
@@ -15,7 +17,8 @@ import {
   matchPages,
   RECOVERY_PASSWORD_MESSAGE,
 } from "./palette-wiring";
-import type { PaletteEntry, RouteSpec } from "./modules";
+import { collectContributions, matchRoute, type PaletteEntry, type RouteSpec } from "./modules";
+import { webModules } from "./modules.gen";
 
 describe("palette-wiring: isRecoveryPassword", () => {
   it("refuses 48-digit recovery passwords in plain, dashed, and full-width formats", () => {
@@ -228,5 +231,72 @@ describe("palette-wiring: matchPages and buildPaletteGroups", () => {
     expect(groups[3]?.label).toBe("Pages");
     // Verify no actions group exists
     expect(groups.some((g) => g.id === "actions")).toBe(false);
+  });
+});
+
+describe("palette-wiring: the real registered entries", () => {
+  it("every palette entry the console boots with resolves to a registered route", () => {
+    const { routes, palette } = collectContributions(webModules);
+    expect(palette.length).toBeGreaterThan(0);
+    for (const entry of palette) {
+      expect(matchRoute(routes, entry.route), `${entry.id} -> ${entry.route}`).toBeDefined();
+    }
+  });
+
+  it("every real entry is offered as a Pages row when its label is typed", () => {
+    const { routes, palette } = collectContributions(webModules);
+    for (const entry of palette) {
+      const rows = matchPages(palette, routes, entry.label);
+      expect(
+        rows.map((r) => r.id),
+        entry.id,
+      ).toContain(`page:${entry.id}`);
+    }
+  });
+});
+
+describe("palette-wiring: hit destinations", () => {
+  const base = {
+    objectId: "o-1",
+    displayName: "Priya · Raman",
+    distinguishedName: "CN=P,DC=corp,DC=test",
+    domain: "corp.test",
+    matchClass: "exact" as const,
+    status: [],
+    highlights: [],
+  };
+
+  it("opens a user in the Users screen by sAMAccountName, then UPN, then mail, then name", () => {
+    expect(hitHref({ ...base, type: "users", samAccountName: "praman" })).toBe(
+      "/directory/users?q=praman",
+    );
+    expect(hitHref({ ...base, type: "users", userPrincipalName: "p@corp.test" })).toBe(
+      "/directory/users?q=p%40corp.test",
+    );
+    expect(hitHref({ ...base, type: "users", mail: "pr@corp.test" })).toBe(
+      "/directory/users?q=pr%40corp.test",
+    );
+    expect(hitHref({ ...base, type: "users" })).toBe(
+      `/directory/users?q=${encodeURIComponent("Priya · Raman")}`,
+    );
+  });
+
+  it("opens every other object type in universal search", () => {
+    expect(hitHref({ ...base, type: "groups", samAccountName: "GG-A" })).toBe("/search?q=GG-A");
+    expect(hitHref({ ...base, type: "computers", samAccountName: "PC1$" })).toBe(
+      "/search?q=PC1%24",
+    );
+  });
+
+  it("indexes the hits of every group by object id", () => {
+    const map = indexHits({
+      asOf: null,
+      refine: false,
+      groups: [
+        { type: "users", count: 1, items: [{ ...base, objectId: "a", type: "users" }] },
+        { type: "groups", count: 1, items: [{ ...base, objectId: "b", type: "groups" }] },
+      ],
+    } as DirectorySearchResult);
+    expect([...map.keys()]).toEqual(["a", "b"]);
   });
 });
