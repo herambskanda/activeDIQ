@@ -1,0 +1,44 @@
+{
+  "id": "grp-03",
+  "version": 1,
+  "category": "groups",
+  "title": "Groups for users",
+  "description": "The groups the users you name belong to, directly, through nesting and through the primary group, with the groups each membership came through.",
+  "dataset": "inventory.group_members",
+  "columns": [
+    "member_name",
+    "group_name",
+    "group_type",
+    "group_scope",
+    "edge_kind",
+    "via_path"
+  ],
+  "sort": [
+    {
+      "column": "member_name",
+      "dir": "asc"
+    },
+    {
+      "column": "group_name",
+      "dir": "asc"
+    }
+  ],
+  "caveats": [
+    "covered_domains",
+    "primary_group_is_a_membership"
+  ],
+  "presets": [
+    {
+      "id": "groups_for_users",
+      "names": [
+        "Groups for Users"
+      ],
+      "requires": {
+        "min": 1,
+        "max": 100,
+        "column": "member_guid",
+        "kind": "user"
+      }
+    }
+  ]
+}

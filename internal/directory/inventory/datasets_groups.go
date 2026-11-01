@@ -28,6 +28,13 @@ const (
 	groupScopeSQL = "CASE WHEN " + groupType + " IS NULL THEN 'unknown_input_missing' WHEN (" + groupType + " & 2) <> 0 THEN 'global'" +
 		" WHEN (" + groupType + " & 4) <> 0 THEN 'domain_local' WHEN (" + groupType + " & 8) <> 0 THEN 'universal' ELSE 'unknown_input_missing' END"
 
+	// The same two tests on the group of a group_members row (the joined group alias, not the base table).
+	memberGroupType = "(CASE WHEN jsonb_typeof({rel.grp}.attributes -> 'groupType') = 'number' AND length({rel.grp}.attributes ->> 'groupType') <= 11" +
+		" AND NOT ({rel.grp}.attributes ->> 'groupType') ~ '[^0-9-]' THEN ({rel.grp}.attributes ->> 'groupType')::bigint END)"
+	memberGroupTypeSQL  = "CASE WHEN " + memberGroupType + " IS NULL THEN 'unknown_input_missing' WHEN (" + memberGroupType + " & 2147483648) <> 0 THEN 'security' ELSE 'distribution' END"
+	memberGroupScopeSQL = "CASE WHEN " + memberGroupType + " IS NULL THEN 'unknown_input_missing' WHEN (" + memberGroupType + " & 2) <> 0 THEN 'global'" +
+		" WHEN (" + memberGroupType + " & 4) <> 0 THEN 'domain_local' WHEN (" + memberGroupType + " & 8) <> 0 THEN 'universal' ELSE 'unknown_input_missing' END"
+
 	// A member reached through a closure row counts when it is a live, in-scope object. A cycle row and an
 	// over-budget marker are findings, not members.
 	memberCount = "(SELECT count(*) FROM {rel.clo} JOIN {rel.mem} ON mem.connection_id = clo.connection_id AND mem.object_guid = clo.member_guid" +
@@ -86,6 +93,7 @@ func init() {
 
 func objectColumns() []report.Column {
 	return []report.Column{
+		derived("name", "Name", report.TypeText, report.SQL(nameSQL), opsText),
 		attr("object_guid", "Object GUID", report.TypeGUID, "object_guid", opsGUID, true),
 		attr("connection_id", "Connection", report.TypeGUID, "connection_id", opsGUID, false),
 		attr("domain", "Domain (naming context)", report.TypeGUID, "nc_guid", opsGUID, false),
@@ -160,6 +168,9 @@ func groupMembersDataset() report.Dataset {
 		derived("member_sid", "Member SID", report.TypeText, report.SQL("{rel.mbr}.sid_text"), opsText),
 		derived("member_enabled", "Member enabled", report.TypeBool, report.SQL("{rel.mbr}.enabled"), opsBool),
 		derived("member_unresolved", "External principal (unresolved)", report.TypeBool, report.SQL("{rel.mbr}.kind = 'fsp'"), opsBool),
+		derived("member_domain", "Member domain (naming context)", report.TypeGUID, report.SQL("{rel.mbr}.nc_guid"), opsGUID),
+		state("group_type", "Group type", report.SQL(memberGroupTypeSQL), "security", "distribution", report.UnknownInputMissing),
+		state("group_scope", "Group scope", report.SQL(memberGroupScopeSQL), "global", "domain_local", "universal", report.UnknownInputMissing),
 		kind, edge,
 		attr("depth", "Depth", report.TypeInt, "depth", opsInt, false),
 		via, finding,
@@ -201,6 +212,7 @@ func ousDataset() report.Dataset {
 		counted("subtree_objects", "Objects in the subtree", report.SQL(subtreeCount+")")),
 		counted("subtree_users", "Users in the subtree", report.SQL(subtreeCount+" AND sub.kind IN ('user', 'inetorgperson'))")),
 		counted("subtree_computers", "Computers in the subtree", report.SQL(subtreeCount+" AND sub.kind IN ('computer', 'gmsa'))")),
+		counted("subtree_other", "Other objects in the subtree", report.SQL(subtreeCount+" AND sub.kind NOT IN ('user', 'inetorgperson', 'computer', 'gmsa', 'group', 'ou'))")),
 		counted("subtree_groups", "Groups in the subtree", report.SQL(subtreeCount+" AND sub.kind = 'group')")),
 		counted("subtree_contacts", "Contacts in the subtree", report.SQL(subtreeCount+" AND sub.kind = 'contact')")),
 		counted("subtree_ous", "Organizational units in the subtree", report.SQL(subtreeCount+" AND sub.kind = 'ou')")),

@@ -127,9 +127,23 @@ func Resolve(def Definition, preset string, p RunParams, ds Dataset) (Query, err
 	if q.Sort, err = r.sortKeys(p, pr); err != nil {
 		return Query{}, err
 	}
+	subs, err := subjects(p, pr)
+	if err != nil {
+		return Query{}, err
+	}
 	var terms []Expr
 	if pr.Where != nil {
 		terms = append(terms, pr.Where)
+	}
+	if pr.Requires != nil && pr.Requires.Column != "" {
+		// Subjects of a preset that names a column are an ordinary IN term on it, so the scope, the
+		// narrowing and the row key of the dataset apply unchanged.
+		vals := make([]Value, len(subs))
+		for i, s := range subs {
+			vals[i] = GUIDV(s)
+		}
+		terms = append(terms, Cmp{Column: pr.Requires.Column, Op: OpIn, Values: vals})
+		subs = nil
 	}
 	terms = append(terms, p.Filters...)
 	if len(terms) > 0 {
@@ -147,9 +161,7 @@ func Resolve(def Definition, preset string, p RunParams, ds Dataset) (Query, err
 	if q.Hidden, err = r.hidden(p, pr); err != nil {
 		return Query{}, err
 	}
-	if q.Subjects, err = subjects(p, pr); err != nil {
-		return Query{}, err
-	}
+	q.Subjects = subs
 	q.Narrowing = Narrowing{
 		Connections: slices.Clone(p.Connections),
 		Include:     slices.Clone(p.Include),
