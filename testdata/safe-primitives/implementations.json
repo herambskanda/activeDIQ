@@ -142,6 +142,15 @@
         "cellsafe"
       ],
       "package": "internal/platform/export/cellsafe"
+    },
+    {
+      "name": "go/mail",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "mail"
+      ],
+      "package": "internal/platform/notify/mail"
     }
   ],
   "fuzz": [
@@ -288,6 +297,14 @@
       "target": "FuzzClassify",
       "properties": [
         "noFormulaLead"
+      ]
+    },
+    {
+      "implementation": "go/mail",
+      "unit": "mail",
+      "target": "FuzzMessage",
+      "properties": [
+        "independentParse"
       ]
     }
   ]
