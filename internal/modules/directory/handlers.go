@@ -64,8 +64,10 @@ type Handlers struct {
 	Search      UserSearcher
 	Scopes      ReadScopes
 	Hybrid      Classifier
-	Now         func() time.Time
-	Log         *slog.Logger
+	// Searcher answers searchDirectory (universal search over the inventory, T-1096). Nil refuses every search.
+	Searcher UniversalSearch
+	Now      func() time.Time
+	Log      *slog.Logger
 }
 
 var _ api.Handlers = Handlers{}

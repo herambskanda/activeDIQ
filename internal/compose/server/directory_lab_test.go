@@ -142,7 +142,7 @@ func newLabDirectory(t *testing.T, s *storetest.Server) *labDirectory {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tag, err := buildDirectory(db, conns, src, reads, txReadScopes{db: db, rs: rs})
+	tag, err := buildDirectory(ctx, db, conns, src, reads, txReadScopes{db: db, rs: rs})
 	if err != nil {
 		t.Fatal(err)
 	}
