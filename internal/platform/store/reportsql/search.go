@@ -237,8 +237,11 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 	}
 	if q.Fuzzy != "" {
 		var ks []searchkey.Kind
-		for k := range allowed {
-			ks = append(ks, k)
+		// In kind order, so the statement text is the same for the same caller.
+		for _, k := range searchkey.AllKinds {
+			if allowed[k] {
+				ks = append(ks, k)
+			}
 		}
 		if list := fuzzyKindList(ks); list != "" {
 			// The list is a subset of the index predicate, so the planner can prove the partial index.

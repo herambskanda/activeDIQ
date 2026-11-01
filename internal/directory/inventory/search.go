@@ -94,10 +94,11 @@ func (s *Searcher) Search(ctx context.Context, tx store.Tx, tid tenant.ID, scope
 		return SearchResult{}, err
 	}
 	if p.Fuzzy != "" {
-		// Transaction-local, bound: the only place the trigram threshold is set (SE2).
-		if _, err := tx.Exec(ctx, `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`, searchThreshold); err != nil {
-			return SearchResult{}, fmt.Errorf("inventory: search threshold: %w", err)
+		restore, err := fuzzySettings(ctx, tx)
+		if err != nil {
+			return SearchResult{}, err
 		}
+		defer restore()
 	}
 	res, err := reportsql.ExecSearch(ctx, tx, cq)
 	if err != nil {
@@ -108,4 +109,20 @@ func (s *Searcher) Search(ctx context.Context, tx store.Tx, tid tenant.ID, scope
 		res.Count = nil
 	}
 	return res, nil
+}
+
+// fuzzySettings sets, for the caller's transaction only, the trigram threshold. It is the only place the
+// threshold is set (SE2). restore puts the earlier value back for whatever else the transaction runs.
+func fuzzySettings(ctx context.Context, tx store.Tx) (restore func(), err error) {
+	var prior string
+	if err := tx.QueryRow(ctx, `SELECT current_setting('pg_trgm.word_similarity_threshold')`).Scan(&prior); err != nil {
+		return nil, fmt.Errorf("inventory: search settings: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`, searchThreshold); err != nil {
+		return nil, fmt.Errorf("inventory: search settings: %w", err)
+	}
+	return func() {
+		// Best effort: a failed transaction is rolled back by the caller and the setting goes with it.
+		_, _ = tx.Exec(ctx, `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`, prior)
+	}, nil
 }

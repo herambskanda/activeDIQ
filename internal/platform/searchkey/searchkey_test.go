@@ -31,6 +31,8 @@ func Test_NormName_vectors(t *testing.T) {
 		{"москва", []string{"Москва"}},
 		{"αθηνα", []string{"Αθήνα"}},
 		{"東京", []string{"東京"}},
+		// Cherokee case-folds to upper case; the final lower-casing keeps the fold idempotent
+		{"ꭰꮿ", []string{"ꭰꮿ", "ᎠᏯ", "Ꭰꮿ"}},
 	} {
 		for _, in := range c.in {
 			if got := searchkey.NormName(in); got != c.want {
