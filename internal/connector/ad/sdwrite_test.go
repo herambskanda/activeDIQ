@@ -93,3 +93,92 @@ func TestWriteDACLStaleBaseSendsNothing(t *testing.T) {
 		t.Fatalf("matching base: err=%v sent=%d modifies=%d", err, sent, up.modifyCount())
 	}
 }
+
+// pwDenySD is a DACL-only SD with the two Cannot Change Password deny ACEs (T-1019), built by hand.
+func pwDenySD(t *testing.T, trustees ...string) []byte {
+	t.Helper()
+	return pwSD(t, false, trustees...)
+}
+
+// pwSD is pwDenySD, optionally with an explicit allow of the right for Everyone stored BEFORE the denies:
+// a non-canonical order in which Windows lets the user change the password.
+func pwSD(t *testing.T, allowFirst bool, trustees ...string) []byte {
+	t.Helper()
+	gb := []byte{0x53, 0x1a, 0x72, 0xab, 0x2f, 0x1e, 0xd0, 0x11, 0x98, 0x19, 0x00, 0xaa, 0x00, 0x40, 0x52, 0x9b}
+	var aces []byte
+	n := len(trustees)
+	if allowFirst {
+		ev, err := sid.Parse("S-1-1-0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ace := []byte{0x05, 0, 0, 0, 0x00, 0x01, 0, 0, 0x01, 0, 0, 0}
+		ace = append(ace, gb...)
+		ace = append(ace, ev.Bytes()...)
+		binary.LittleEndian.PutUint16(ace[2:], uint16(len(ace)))
+		aces = append(aces, ace...)
+		n++
+	}
+	for _, s := range trustees {
+		tr, err := sid.Parse(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ace := []byte{0x06, 0, 0, 0, 0x00, 0x01, 0, 0, 0x01, 0, 0, 0}
+		ace = append(ace, gb...)
+		ace = append(ace, tr.Bytes()...)
+		binary.LittleEndian.PutUint16(ace[2:], uint16(len(ace)))
+		aces = append(aces, ace...)
+	}
+	acl := []byte{4, 0, 0, 0, 0, 0, 0, 0}
+	binary.LittleEndian.PutUint16(acl[2:], uint16(8+len(aces)))
+	binary.LittleEndian.PutUint16(acl[4:], uint16(n))
+	hdr := make([]byte, 20)
+	hdr[0] = 1
+	binary.LittleEndian.PutUint16(hdr[2:], 0x8004)
+	binary.LittleEndian.PutUint32(hdr[16:], 20)
+	return append(append(hdr, acl...), aces...)
+}
+
+// ReadPasswordChange classifies what the DC served and never reports a state next to an error.
+func TestReadPasswordChange(t *testing.T) {
+	obj := guid.GUID{0xC0, 15: 7}
+	ref := dn.GUIDRef(obj)
+	cases := []struct {
+		name    string
+		serving map[string][][]byte
+		want    sd.PasswordChange
+		code    string
+	}{
+		{"both denies", map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {pwDenySD(t, "S-1-1-0", "S-1-5-10")}}, sd.PasswordChangeBlocked, ""},
+		{"one deny", map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {pwDenySD(t, "S-1-5-10")}}, sd.PasswordChangeBlockedOneACE, ""},
+		{"no deny", map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {pwDenySD(t)}}, sd.PasswordChangeNoDenyACE, ""},
+		{"allow ahead of the denies", map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {pwSD(t, true, "S-1-1-0", "S-1-5-10")}}, sd.PasswordChangeNotConfirmed, "acl.order_outcome"},
+		{"malformed", map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {pwDenySD(t, "S-1-1-0")[:30]}}, sd.PasswordChangeNotConfirmed, "sd.truncated"},
+		{"garbage", map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {{1, 2, 3}}}, sd.PasswordChangeNotConfirmed, "sd.truncated_header"},
+		{"not returned", map[string][][]byte{"objectGUID": {obj.Bytes()}}, sd.PasswordChangeNotConfirmed, string(CodeProtocol)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			up := startFakeUpstream(t, 0)
+			up.sdAttrs = c.serving
+			s, _ := faultSession(t, up.dial, injectPlan{skip: 1 << 30})
+			g, got, err := s.ReadPasswordChange(context.Background(), ref)
+			if got != c.want {
+				t.Fatalf("state %v, want %v (err %v)", got, c.want, err)
+			}
+			if c.code == "" {
+				if err != nil || g != obj {
+					t.Fatalf("err=%v guid=%v", err, g)
+				}
+				return
+			}
+			if err == nil || (codec.Code(err) != c.code && string(CodeOf(err)) != c.code) {
+				t.Fatalf("want error %q, got %v (code %q / %q)", c.code, err, codec.Code(err), CodeOf(err))
+			}
+			if g != (guid.GUID{}) {
+				t.Fatal("GUID reported next to an error")
+			}
+		})
+	}
+}

@@ -14,6 +14,9 @@ func tree(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
 	files["go.mod"] = "module " + mod + "\n\ngo 1.27.0\n"
+	if _, ok := files[blueprintPath]; !ok {
+		files[blueprintPath] = catalogueFor(files)
+	}
 	for p, c := range files {
 		full := filepath.Join(root, filepath.FromSlash(p))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -24,6 +27,36 @@ func tree(t *testing.T, files map[string]string) string {
 		}
 	}
 	return root
+}
+
+// blueprintDoc renders a blueprint with the three §5 tables, one body per section.
+func blueprintDoc(s51, s52, s53 string) string {
+	tbl := func(h, rows string) string {
+		return "### " + h + "\n\n| Package | Owner | Interface | EPs |\n| --- | --- | --- | --- |\n" + rows + "\n"
+	}
+	return "## 5. Component catalogue\n\n" + tbl("5.1 Platform kernel (`internal/platform/`)", s51) +
+		tbl("5.2 Directory domain (`internal/directory`)", s52) + tbl("5.3 Connector root (`internal/connector/`)", s53) +
+		"### 5.4 Server feature modules\n\n| Package | Owner |\n| --- | --- |\n| `objects` | x |\n"
+}
+
+func row(first string) string { return "| " + first + " | owner | interface | — |\n" }
+
+// catalogueFor writes one correct row for every package directory under the three roots.
+func catalogueFor(files map[string]string) string {
+	var rows [3]string
+	seen := map[string]bool{}
+	for p := range files {
+		for i, r := range catalogueRoots {
+			if rest, ok := strings.CutPrefix(p, r.dir+"/"); ok && strings.Contains(rest, "/") && strings.HasSuffix(p, ".go") {
+				name, _, _ := strings.Cut(rest, "/")
+				if !seen[r.dir+name] {
+					seen[r.dir+name] = true
+					rows[i] += row("`" + name + "`")
+				}
+			}
+		}
+	}
+	return blueprintDoc(rows[0], rows[1], rows[2])
 }
 
 // goPkg renders a Go file importing the given repository-relative packages.
@@ -180,4 +213,76 @@ func TestRule8WebAppAndDsNeverImportModules(t *testing.T) {
 	expect(t, web("web/src/ds/button.tsx", "import { modules } from '../modules/modules.gen';\n"), "2.8", "web/src/ds")
 	// modules may import app and ds.
 	expectClean(t, web("web/src/modules/objects/screen.tsx", "import { Button } from '../../ds/button';\n"))
+}
+
+// M7 (ADR-0003 closed catalogue). Each case starts from a tree whose catalogue is correct and breaks
+// one thing.
+func TestM7CatalogueRows(t *testing.T) {
+	pkgs := map[string]string{
+		"internal/platform/store/s.go":     leaf("store"),
+		"internal/platform/store/sub/x.go": leaf("sub"),
+		"internal/platform/deps.go":        leaf("platform"),
+		"internal/directory/dn/d.go":       leaf("dn"),
+		"internal/directory/doc.go":        leaf("directory"),
+		"internal/connector/read/r.go":     leaf("read"),
+		"internal/connector/empty/.keep":   "",
+	}
+	fixture := func(s51, s52, s53 string) map[string]string {
+		m := map[string]string{blueprintPath: blueprintDoc(s51, s52, s53)}
+		for k, v := range pkgs {
+			m[k] = v
+		}
+		return m
+	}
+	good := func() (string, string, string) {
+		return row("`store` (+`store/reportsql`)") + row("`store/reportsql`") + row("`planned`"), row("`dn`"), row("`read`")
+	}
+
+	t.Run("complete catalogue passes; planned names, subpackage rows and non-packages are fine", func(t *testing.T) {
+		a, b, c := good()
+		expectClean(t, fixture(a, b, c))
+	})
+	t.Run("missing row", func(t *testing.T) {
+		_, b, c := good()
+		expect(t, fixture(row("`planned`"), b, c), "M7", "package internal/platform/store has no row in blueprint §5.1")
+	})
+	t.Run("duplicated row", func(t *testing.T) {
+		a, b, c := good()
+		expect(t, fixture(a+row("`store`"), b, c), "M7", "internal/platform/store has 2 rows in blueprint §5.1")
+	})
+	t.Run("row in the wrong section", func(t *testing.T) {
+		a, _, c := good()
+		expect(t, fixture(a, "", c+row("`dn`")), "M7", "internal/directory/dn is named only in blueprint §5.3, not in its own §5.2")
+	})
+	t.Run("a (+sub) mention does not count", func(t *testing.T) {
+		_, b, c := good()
+		expect(t, fixture(row("`other` (+`store`)"), b, c), "M7", "internal/platform/store has no row")
+	})
+	t.Run("a subpackage-only row does not count", func(t *testing.T) {
+		_, b, c := good()
+		expect(t, fixture(row("`store/reportsql`"), b, c), "M7", "internal/platform/store has no row")
+	})
+	t.Run("one row naming two packages counts for each", func(t *testing.T) {
+		a, _, c := good()
+		expectClean(t, fixture(a, row("`dn`, `ldapfilter`"), c))
+	})
+	t.Run("the failure names the package, section and rule", func(t *testing.T) {
+		_, b, c := good()
+		vs, err := Check(tree(t, fixture(row("`planned`"), b, c)))
+		if err != nil || len(vs) != 1 {
+			t.Fatalf("want one violation, got %v, %v", vs, err)
+		}
+		for _, want := range []string{"ADR-0003 M7", "internal/platform/store", "§5.1", "closed catalogue"} {
+			if !strings.Contains(vs[0].String(), want) {
+				t.Fatalf("%q missing from %q", want, vs[0])
+			}
+		}
+	})
+	t.Run("a missing blueprint or section is an error, not a pass", func(t *testing.T) {
+		m := fixture("", "", "")
+		m[blueprintPath] = "## 5. Component catalogue\n"
+		if _, err := Check(tree(t, m)); err == nil {
+			t.Fatal("want an error for a blueprint without §5.1")
+		}
+	})
 }

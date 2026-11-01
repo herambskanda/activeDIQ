@@ -27,6 +27,7 @@ paths:
       x-activediq-limits:
         class: auth
         maxBodyBytes: 4096
+      x-activediq-peer-ip: true
       security: []
       requestBody:
         required: true
@@ -232,6 +233,8 @@ paths:
       x-permission: authenticated
       x-activediq-stability: preview
       x-activediq-parity: [ADM-145]
+      x-activediq-limits:
+        class: write
       security:
         - sessionCookie: []
           csrfToken: []
@@ -264,6 +267,8 @@ paths:
         session, readable only with that session cookie, and not a credential: it authorises nothing alone.
       x-permission: authenticated
       x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
       security:
         - sessionCookie: []
       responses:

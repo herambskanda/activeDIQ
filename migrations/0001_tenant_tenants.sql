@@ -102,6 +102,7 @@ $guard$;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO activediq_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO activediq_app;
 
+-- write-class: tenants system
 CREATE TABLE public.tenants (
   id uuid PRIMARY KEY,
   parent_tenant_id uuid REFERENCES public.tenants (id),

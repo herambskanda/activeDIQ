@@ -1,11 +1,11 @@
 ---
 title: "Threat model v0 — activeDIQ security architecture"
 date: 2026-10-02
-updated: 2026-10-29
+updated: 2026-10-30
 status: review
 owner: heramb
 author: security-architect
-ticket: T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395, T-0178, T-0623, T-0633, T-0631, T-0738
+ticket: T-0893, T-0212, T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395, T-0178, T-0623, T-0633, T-0631, T-0738
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -365,7 +365,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB8-T4 | R | SSO sign-ins not attributable | Audit records issuer, subject, session and factors claimed | TM-F-AUDIT | — |
 | TM-TB8-T5 | I | Raw assertions or tokens in logs | Never logged; only issuer + subject | TM-F-SECRETOUT | — |
 | TM-TB8-T6 | D | IdP outage locks every admin out | Break-glass local accounts with MFA and alert on use (ADM-142) | TM-F-SESSION | — |
-| TM-TB8-T7 | E | IdP group claims grant roles; a compromised IdP (X12) signs anyone in | Claim-to-role mappings are explicit tenant configuration, audited; `tenant-owner` never granted by a claim alone `[OPEN → ADM-143 spec]` | TM-F-AUTHZ | A compromised IdP gets console access within RBAC — still not Tier 0 (TM-O1) |
+| TM-TB8-T7 | E | IdP group claims grant roles; a compromised IdP (X12) signs anyone in | Claim-to-role mappings are explicit tenant configuration, exact-string on one named claim (Entra: group object ID), changed only with step-up, audited and alerted (console-sso.md §7.1 MAP-1, MAP-4). No claim maps to `tenant-owner` or a role with a `control_plane` permission (MAP-2), and a role that gains one loses its mappings and the sessions holding it by claim (MAP-2a, §7.2a). Claim-derived roles live on the session only (MAP-3); `tier0` objects are outside every write scope (DM-35.I5) | TM-F-AUTHZ; TM-F-SSO X-05, X-16 | A compromised IdP gets console access within RBAC — still not Tier 0 (TM-O1) |
 | TM-TB8-T8 | S/E | An Entra role that controls the **authentication plane** signs in as a synced technician bound by `oid` or `onprem_sid` and inherits the AD-side group grants of a legitimately `matched` correlation (DM-20.I6): a Privileged Authentication Administrator or Authentication Administrator issues a TAP or resets methods; an Authentication Policy Administrator lets TAPs be used; a Hybrid Identity Administrator federates the domain. Also the history case: an object taken over while the takeover flags were off keeps the attacker's methods | The Entra sign-in alone never carries AD-side authority: correlation-derived AD grants need an activeDIQ-held authority factor enrolled with an AD-plane proof (TM-D19, §6.9); console-backing objects are escalation objects | TM-F-HYBRID (TM-D19 cases) | Someone who controls both planes at enrolment (TM-R12) |
 
 ### 5.9 TB9 — Server → outbound integrations (SMTP, SMS, SIEM, ITSM, HR/DB, [M3] webhooks)
@@ -470,6 +470,9 @@ both kinds of agent, so both command sets are closed (TM-D13).
 | TM-TB15-T6 | R | Bulk data leaves with no record | Every export, download and delivery audited with actor and row count | TM-F-AUDIT | — |
 | TM-TB15-T7 | I | The SIEM stream travels in clear | TLS syslog (verified, port 6514) by default; UDP is not offered; plaintext TCP only with an explicit, audited operator opt-in shown in the API/UI with a warning | TM-F-EGRESS | Customer opts in |
 | TM-TB15-T8 | D | Huge exports exhaust the server | Streaming encoders, row caps, asynchronous jobs | T-0150 | — |
+| TM-TB15-T9 | I/E | **A standing exfiltration channel.** X4 with a hijacked session creates or edits a report schedule that mails owner-scope directory data (privileged membership, stale passwords, service accounts) to an outside address; it keeps firing after the session is revoked | DECISION TM-D30 ([reports-schedules-security-review.md](reports-schedules-security-review.md) §2): a schedule write whose after-state has an external recipient needs a fresh MFA, enforced by the operation kernel for every origin (token writes are held for a step-up approval); `reports.deliver.external` at write time and at every fire; the confirmed addresses are in the Action audit event; an address that became external later is not delivered until re-confirmed (SX-6) | T-0980 kernel tests; T-0965 `Test_schedule_external_needs_step_up` | TM-R26 |
+| TM-TB15-T10 | E | Widening the allowed recipient domains (or re-pointing the SMTP relay) turns external addresses internal and bypasses `reports.deliver.external` and TM-D30; a lax address parser classifies `"a@ok.example"@evil.example` as internal | `notify.settings.update` carries step-up (§7.4); exact domain match after IDNA, no implicit subdomains; one strict addr-spec parser whose canonical string is both classified and used as `RCPT TO` (TM-D30 SX-7); an account recipient's mail address is classified too (SX-5) | T-0950 parser corpus and catalogue row | — |
+| TM-TB15-T11 | E | **Confused deputy through a schedule.** A non-owner (e.g. a `reports.schedule.manage_all` holder with a narrow scope) edits another owner's schedule, adding recipients or changing the report, and receives what the owner's wider scope sees at the next fire | Schedule update and delete are owner-only; `manage_all` sees, pauses and reassigns only (spec §8.5); a reassigned schedule stays paused until the new owner resumes it with the external recipients confirmed and step-up (TM-D30, R1/R2/R5) | T-0979 contract test; T-0965 build tests | — |
 
 ### 5.16 TB16 — Host and installer
 
@@ -1727,9 +1730,13 @@ authority through activeDIQ.
    Every enrolment is audited and notifies the account and every `tenant-owner`. No Entra role can
    enrol, reset or remove the factor. A reset is a `tenant-owner` action with step-up, and it is
    audited.
-3. **AD-plane alternative.** Where the PRD offers SPNEGO sign-in, a session that authenticated the
-   correlated AD account by Kerberos satisfies rule 1 without the factor. This is zero-touch on a
-   domain-joined admin workstation `[OPEN → ADM-143 spec]`.
+3. **AD-plane alternative.** SPNEGO sign-in is offered in v1 (console-sso.md §9, SSO-D7). A
+   session that authenticated the correlated AD account by Kerberos (AN-9, NEG-2) satisfies rule 1
+   without the factor (NEG-4). This is zero-touch on a domain-joined admin workstation. The
+   Kerberos authority counts from session creation, so the AN-10 that follows does not make it
+   stale; at a §7.4 step-up it is renewed only by a fresh AN-9 exchange that maps to the same
+   principal, or by the WebAuthn authority factor. A TOTP step-up makes it stale, as for any
+   authority factor (`Session.AuthorityCurrent`; NEG-4a, §7.2a).
 4. **Signals, alert only.** With `AuditLog.Read.All`, the TM-D17 monitor also watches the bound
    Entra objects of technicians that hold correlation-derived grants. It raises an alert to every
    `tenant-owner` when one of these is detected: a TAP created, methods reset or registered by
@@ -1956,17 +1963,115 @@ security-architect reviews every change here.
   signature-wrapping fuzz corpus. The lesson is the competitor's pre-auth RCE through an outdated
   XML-DSig library in SAML handling, CVE-2022-47966 (ME-SEC §4.1, §4.3 "third-party components").
 - **MFA for every console user.** WebAuthn/passkeys are preferred; TOTP is allowed. **Once an account owns a passkey, or holds an owner/control-plane role, TOTP no longer completes AN-10 (factor policy, `factor-policy-phishing-resistant-mfa.md`, T-0574).** MFA claims from
-  the IdP are accepted only when the tenant configures that IdP as MFA-asserting `[OPEN → ADM-143
-  spec]`. Local accounts exist only for break-glass, always require MFA (DM-30.I1, ADM-142), and
+  the IdP are accepted only when the tenant marks that IdP MFA-asserting **and** each response
+  carries the configured evidence (console-sso.md §6.1, SSO-D4, MFA-1 to MFA-6; amended in §7.2a).
+  An account that holds `tenant-owner` or any `control_plane` permission always completes AN-10
+  with an activeDIQ-held factor, whatever the IdP asserts (MFA-5), and IdP-asserted MFA never
+  satisfies the TM-D19 authority factor (MFA-6). Local accounts exist only for break-glass, always require MFA (DM-30.I1, ADM-142), and
   every use raises an alert to all `tenant-owner` accounts. AD-side grants that reach an `sso`
   account through a correlation also need the activeDIQ-held authority factor (TM-D19).
 - **First run.** TLS from first boot with a per-install generated certificate; its fingerprint is
   shown by the installer. The first account is created with a one-time setup secret. There is never
   a default credential (DM-30.I3, ADM-145).
-- **AD-identity sign-in** (if the PRD offers it) goes only through the connector's `VerifyUser` or
+- **AD-identity sign-in** is offered in v1 as AN-9, Kerberos by SPNEGO only (console-sso.md §9,
+  SSO-D7; NTLM is not offered, §7.6 rule 5). It goes only through the connector's `VerifyUser` or
   SPNEGO acceptor, never an LDAP bind from platform code (BP §11). The empty-password guard applies
   (an empty password is an anonymous bind that "succeeds"; SP PW-08). Our per-account failure
   counter stops below the domain's lockout threshold, so sign-in cannot be used to lock users out.
+
+### 7.2a Review of the ADM-143 sign-in decisions (T-0212)
+
+security-architect reviewed SSO-D4, SSO-D5 and SSO-D7 of `console-sso.md` against this model and
+against the code built so far (`internal/platform/authn/sso/{oidc,saml,signin}`, `authn/store.go`).
+All three are **accepted**. Four amendments are made in console-sso.md, and this model wins where
+the two differ (console-sso.md header rule).
+
+| Decision | Verdict | Verified how | Amendment |
+| --- | --- | --- | --- |
+| SSO-D4 MFA-asserting IdP, per-response proof | Accepted | `signin.go` grants a session only when the IdP mode is `claim`, the response carried the evidence and `Privileges.HoldsControlPlane` is false; an error from that check counts as holding (`Test_sso_mfa_asserted_privileged_is_pending`, subtests "holds" and "check fails"). A role change bumps the session epoch and revokes sessions (`authn.Store.OnRoleChanged`, T-0429), so a technician given `tenant-owner` after an IdP-MFA sign-in loses that session | **MFA-1a, MFA-2a** below |
+| MFA-5 control-plane holders always pass AN-10 | Accepted as written | As above. It is consistent with the factor policy (`factor-policy-phishing-resistant-mfa.md`): such an account completes AN-10 with WebAuthn, not TOTP. MAP-2 keeps claim-derived roles free of `control_plane`, so checking direct assignments (DM-36.I4) is sufficient once MAP-2a holds | — |
+| SSO-D5 claim-to-role mapping (MAP-1 to MAP-5) | Accepted | Specification only; the mapping build is T-0570. `tier0` objects are outside every write scope (DM-35.I5), so the TM-TB8-T7 residual "console access within RBAC, still not Tier 0" holds for claim-derived roles | **MAP-2a** below |
+| SSO-D7 SPNEGO offered, Kerberos only (NEG-1 to NEG-9) | Accepted | Core built in T-0206 (`authn/negotiate`: SPNEGO NegTokenInit must offer Kerberos first, NTLM never reaches an acceptor; PAC SID maps to exactly one account; every refusal is one `ErrSignInFailed`). NEG-10 added by T-0495. AN-9 is not reachable until T-0492 mounts it behind the NEG-9 gate | **NEG-4a** below; NEG-7 residual recorded |
+
+**Amendments.**
+
+- **MFA-1a. OIDC evidence is an allow-list.** MFA-1 names what an administrator may add (`hwk`,
+  `otp`, `fpt`, `face`, `sc`) next to the default `mfa`. The built check (`sso/oidc/config.go`,
+  `mfaForbidden`) is a deny-list of five values, so `wia` (Windows integrated authentication),
+  `rba` (risk-based), `geo`, `swk`, `pin`, `mca`, a misspelling or any IdP-specific string can be
+  saved as MFA evidence ([RFC 8176 §2](https://www.rfc-editor.org/rfc/rfc8176)). `wia` alone is a
+  single-factor sign-in, so one such setting turns every non-control-plane single-factor IdP
+  sign-in into a session without an activeDIQ second factor. Rule: the configured set is a subset of
+  `{mfa, hwk, otp, fpt, face, sc}`, matched case-sensitively; anything else is refused at save and
+  at verify. Bug T-0912.
+- **MFA-2a. SAML evidence cannot be a standard single-factor class.** The built SAML check refuses
+  only an empty evidence list, so
+  `urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport` can be saved as MFA evidence.
+  Rule: no value in the `urn:oasis:names:tc:SAML:2.0:ac:classes:` namespace is evidence. Most
+  standard classes name a single mechanism (`Password`, `PasswordProtectedTransport`, `Kerberos`,
+  `X509`, `unspecified`)
+  ([SAML Authentication Context](https://docs.oasis-open.org/security/saml/v2.0/saml-authn-context-2.0-os.pdf)).
+  The few that describe two factors (the `MobileTwoFactor*` classes `[UNVERIFIED — that IdPs in
+  our target set emit them]`) are refused too, so the rule stays one prefix check. The evidence is the Entra and AD FS preset (MFA-2) or an IdP-specific value chosen from the last
+  verified response on the setup screen. Same bug, T-0912.
+- **MFA-2b. No single-factor URI and no variant of the OASIS prefix is SAML evidence** (T-0938,
+  from the T-0912 review). MFA-2a covers only the OASIS 2.0 classes. Without MFA-2b, these could
+  still be saved as evidence: AD FS Integrated Windows Authentication (`urn:federation:authentication:windows`),
+  the Microsoft `.../identity/authenticationmethod/` values (`password`, `windows`), the SAML 1.x
+  methods and the REFEDS single-factor profile. Rule: the namespaces `urn:federation:authentication:`,
+  `http://schemas.microsoft.com/ws/2008/06/identity/authenticationmethod/`,
+  `urn:oasis:names:tc:SAML:1.0:am:` and `urn:ietf:rfc:` are refused. The last is there because
+  SAML 1.1 core §7.1 puts the Kerberos, SRP, TLS-client and XML-DSig methods outside the `am:`
+  namespace
+  ([SAML 1.1 core](https://groups.oasis-open.org/higherlogic/ws/public/download/3406/oasis-sstc-saml-core-1.1.pdf)).
+  The MFA-2a prefix is refused too, and so are two exact values:
+  `https://refeds.org/profile/sfa` ([REFEDS SFA](https://refeds.org/profile/sfa)) and
+  `http://schemas.microsoft.com/claims/wiaormultiauthn`. Matching is ASCII case-insensitive. A
+  value with surrounding whitespace is refused, not trimmed. `multipleauthn` and
+  `https://refeds.org/profile/mfa` stay acceptable. Built in `sso/saml/config.go`
+  (`mfaEvidenceAllowed`) and tested by `TestSAMLConfig_RefusesSingleFactorMicrosoftURIsAsMFAEvidence` at save,
+  Start and Complete (corpus X-18). Residual: this is a deny-list of values, so an unknown
+  single-factor value from another IdP is still the administrator's to rule out from the
+  last-response values (MFA-2). A Unicode-variant value also passes, but it never matches what an
+  IdP sends and therefore fails closed.
+- **MFA-2c. The SAML evidence attribute is an allow-list** (T-0974, from the T-0938 review).
+  MFA-2a and MFA-2b deny *values*. `MFAAttribute` is free-form, so an administrator, or an attacker
+  holding step-up, can name an attribute that every response carries with a constant value and
+  then make every sign-in "MFA". Example: Entra's
+  `http://schemas.microsoft.com/identity/claims/tenantid` with the tenant GUID as evidence
+  ([Entra SAML token reference](https://learn.microsoft.com/en-us/entra/identity-platform/reference-saml-tokens)).
+  A probe against `ValidateConfig` at d47c30bc8 accepted that configuration, and the
+  `identityprovider` claim works the same way. Rule: `MFAAttribute` is either empty
+  (AuthnContextClassRef) or exactly `http://schemas.microsoft.com/claims/authnmethodsreferences`.
+  Anything else, including a case or whitespace variant, is refused with `saml.config` at save, Start and
+  Complete. Built in `sso/saml/config.go` (`mfaAttributeAllowed`) and tested by
+  `TestSAMLConfig_RefusesNonMethodMFAAttribute` (corpus X-19). MFA-2b also refuses the namespace
+  `http://schemas.microsoft.com/ws/2008/06/identity/claims/authenticationmethod/` `[UNVERIFIED that any IdP
+  emits it]`. MFA-5 still bounds any future bypass: it reaches console access within RBAC, never the
+  control plane, and MFA-4 alerts every `tenant-owner` to the change.
+- **MAP-2a. A role that gains `control_plane` ends the claim sessions that hold it.** MAP-2 drops
+  the role's claim mappings, but MAP-3 holds claim-derived roles on live sessions. Without more, a
+  session that entered through a compromised MFA-asserting IdP (TM-X12), without an
+  activeDIQ-held factor, would hold the new `control_plane` permission until it expires. That is
+  exactly what MFA-5 forbids. Rule: (a) the role change and the revocation of every session that
+  holds the role by claim (reason `role_changed`) commit in one transaction; (b) the authorisation
+  evaluator never grants a `control_plane` permission through a claim-derived role, whatever the
+  role's definition (defence in depth). Test X-16. Builder: T-0570.
+- **NEG-4a. The Kerberos authority counts from session creation.** `authorityCurrent` treats the
+  authority as stale once `mfa_at` passes `authority_factor_at` (`authn/store.go`). The AN-10 that
+  always follows AN-9 (NEG-3) sets `mfa_at` after the Kerberos exchange. So `authority_factor_at`
+  is written when the session is created, equal to its `mfa_at`, not when the AP-REQ is verified.
+  A §7.4 step-up renews it only through a fresh AN-9 that maps to the same principal (NEG-2), or
+  through the WebAuthn authority factor. A TOTP step-up leaves it stale (TM-D19 rule 3). Test
+  X-17. Builder: T-0493.
+
+**Residual recorded for NEG-7 (channel binding not required in v1).** A captured AP-REQ for our
+`HTTP/` service principal can be replayed only within the acceptor's replay window, which NEG-6
+closes. It can be forwarded only by someone who terminates the browser's TLS session to the
+console under our certificate. That needs a TLS compromise first; with that, the session cookie
+is exposed anyway. NEG-7 asks for binding where the browser offers it. The residual stays at
+"TLS interception defeats SPNEGO as it defeats the cookie". It moves to the register only if the
+lab (NEG-9) shows that a browser offers no binding at all.
 
 ### 7.3 Sessions
 
@@ -1998,6 +2103,8 @@ These operations require a fresh MFA within a short window, whatever the session
 | HybridLink confirmation (`connections.hybrid_link.confirm`); starting an attestation (`connections.takeover.attest`); re-confirming a correlation (TM-D17) | Opens a cross-directory authority path |
 | Approving, enrolling or resetting an authority factor (TM-D19) | Gates AD-side authority reached through Entra sign-in |
 | Designating or un-designating `tier0` objects (§6.4) | Widens or narrows the guard |
+| Report schedule writes (`reports.schedule.create`, `update`, `resume`, and their undo) whose after-state has an **external** recipient; conditional, kernel-enforced (DECISION TM-D30, T-0893) | Opens a standing outbound data channel that outlives the session (TM-TB15-T9) |
+| Notification settings: allowed recipient domains and SMTP relay (`notify.settings.update`, TM-D30 SX-7) | Turns external addresses internal, or re-points every outbound mail (TM-TB15-T10) |
 
 **Secret-reveal harvesting.** A technician (X4) may reveal secrets one by one within scope. Each
 reveal is audited; reveals per technician are rate-limited, and a burst above a tenant threshold
@@ -2027,7 +2134,7 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
 | AN-6 | Fleet `Enroll` RPC | L2 fleet gRPC | Not on the HTTP router | Single-use, short-lived, rate-limited token |
 | AN-7 [M4] | SSPR flows | Edge tunnel router, or L1 console/API by hostname binding | Operation (L1) or edge contract | Factors inside the flow |
 | AN-8 | Local break-glass sign-in, password step (ADM-142, DM-30.I1) | L1 console/API; never on an AN-5/AN-7 hostname | Operation, rate class `auth` | The local account's password. Success yields **only** a pending sign-in (AN-10), never a session |
-| AN-9 | AD-identity sign-in by SPNEGO (Kerberos), if the PRD offers it (BP §11; ADR-0002 rule 3) | L1 console/API; never on an AN-5/AN-7 hostname | Non-API: `GET /auth/negotiate` (HTTP Negotiate, [RFC 4559](https://www.rfc-editor.org/rfc/rfc4559), is a header exchange, not JSON), rate class `auth` | A Kerberos AP-REQ for our HTTP service principal, verified by the connector's SPNEGO acceptor. Success yields **only** a pending sign-in (AN-10), never a session |
+| AN-9 | AD-identity sign-in by SPNEGO (Kerberos), offered in v1 (console-sso.md §9, SSO-D7) and enabled per profile only when its lab gate passes (NEG-9) (BP §11; ADR-0002 rule 3) | L1 console/API; never on an AN-5/AN-7 hostname | Non-API: `GET /auth/negotiate` (HTTP Negotiate, [RFC 4559](https://www.rfc-editor.org/rfc/rfc4559), is a header exchange, not JSON), rate class `auth` | A Kerberos AP-REQ for our HTTP service principal, verified by the connector's SPNEGO acceptor. Success yields **only** a pending sign-in (AN-10), never a session |
 | AN-10 | Sign-in second factor (WebAuthn challenge and assertion, TOTP) for a pending sign-in from AN-3 (when the IdP is not MFA-asserting), AN-8 or AN-9 | L1 console/API | Operations, rate class `auth` | The pending-sign-in handle plus the account's enrolled factor |
 | AN-11 | Return from the IdP sign-in of a TM-D17 takeover-protection attestation (§6.8) | L1 console/API | Operation `completeTakeoverAttestation` (`GET /api/v1/connections/takeover-attestation/callback`): `x-activediq-scope: platform`, rate class `auth`, plus the in-handler per-source and per-tenant limit below | The single-use `state` issued by an authorised, step-up-fresh start (random, only its SHA-256 stored, ten minutes, consumed first), with the PKCE verifier. The tenant is read from the state and used only to look it up. Every failure answers one 303 and is audited under `system:attestation-callback` |
 
@@ -2069,10 +2176,29 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
       step 3, before the body is read) and the global limits below. They are decided before the
       submitted name is known or by values that do not depend on it. A failure of the shared
       store refuses the request with the same `401` (fail closed, no evaluation).
+      **In-flight gate with per-source fair share (T-0783, T-0809).** At most 4 password
+      verifications run at once (64 MiB of hash memory each), and one source holds at most 1 of
+      them. A source is the canonical §7.8 prefix of the client address (`limiter.SourcePrefix`,
+      the same function the per-IP rate limiter uses): IPv4 /32, IPv6 /64, an IPv4-mapped or NAT64
+      (`64:ff9b::/96`) address counts as its IPv4, and the operator's prefix lengths apply to both
+      controls. An address that did not parse is one shared source. Above either limit the answer
+      is the name-independent `429`; it never queues. What this gives: **one source cannot hold
+      more than 1 of 4 slots**, so a single saturating client no longer locks the break-glass
+      admin out, and a host cannot widen its share by rotating addresses inside its prefix. What
+      it does not give: an attacker with at least 4 sources (4 IPv4 addresses, or one IPv6 /62)
+      holds every slot, and sustained saturation needs more because each source is also bound by
+      the §7.8 per-IP `auth` rate. Sources that share an address (one NAT or CGNAT, or a reverse
+      proxy without `ACTIVEDIQ_TRUSTED_PROXIES`, where every client is one source) share one slot,
+      so an attacker behind that address can lock out the others behind it. Residual R-AN8-2.
    e. **Bounded state.** The key table has a cap. When it is full, a *new* key falls into one
       shared overflow bucket for all new keys; the answer is still the uniform `401`, so the cap
       is not observable per name. The delay window uses no waiting goroutine, so a flood of
       names does not exhaust connections.
+      Only rows inside the window count toward the cap, but a row of a one-off name is replaced
+      only if that name returns, so dead rows would pile up without bound. The tenant job
+      `authn.throttle.purge` (T-0868, every 10 minutes, first run at boot) deletes rows whose
+      window ended more than `ThrottleWindow` + 5 minutes ago and whose `not_before` has passed,
+      in the tenant's own transaction.
    f. **Counting.** A non-evaluated attempt counts as a failure for rule 3 (otherwise
       hammering during the window would be free), capped at the rule-3 ceiling of 15 minutes.
       Residual R-AN8-1: anyone on L1 can push a known break-glass name into the delay window with
@@ -2171,8 +2297,9 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
    Enforcement and both tests are T-0050.
 
 Other AD-password sign-in (a username and password checked by connector `VerifyUser` on the console)
-is **not** on this list. If the ADM-143 spec wants it, it is a new row through RT-7, and TM-TB1-T9's
-counter rule applies.
+is **not** on this list. The ADM-143 spec does not offer it (console-sso.md §1 and §11: OIDC, SAML
+and Kerberos only). Adding it later is a new row through RT-7, and TM-TB1-T9's counter rule
+applies.
 
 **Proof TM-F-ANON.** The set of routes the built router serves without authentication equals a
 reviewed allow-list file kept in the API contract tree (`api/openapi/policy.yaml`, sections
@@ -2186,7 +2313,7 @@ appears in the body, and that the 200 body is exactly `{"status":"ok"}` (rule 8)
 1 MiB `Content-Length` and with a chunked body to a `BodyNone` operation, and asserts 413 with the
 handler never called, and that `Content-Length: 0` reaches the handler (rule 9). Adding a
 row to the table above is a §14 trigger (RT-7). TM-F-SESSION adds cases for rules 1 to 4, and
-TM-F-ABUSE for rules 2 and 3. **TM-F-ABUSE AN-8 tests (T-0359; package `internal/platform/authn`, each run against the real handler with the store faked only at its port):** `TestAN8ThrottledKnownEqualsUnknown` (a known local account and an unknown name, each driven past burst 5 and past the rule-3 window, give byte-identical status, body and header sets, and no `Retry-After`), `TestAN8NeverAnswersPerAccount429` (100 requests for one name spread over 10 source IPs, each under the per-IP `auth` burst of 30, and none is `429`), `TestAN8ThrottledCorrectPasswordRefused` (the right password sent while the bucket is empty answers the `401` and creates no pending sign-in), `TestAN8ThrottleKeyIgnoresExistence` (the store sees one key per submitted name for existing, unknown, non-local and disabled accounts, and a case or Unicode-normalisation variant maps to the same key) and `TestAN8TableFullIsNameIndependent` (with the key table full, a new existing and a new unknown name both get the uniform `401`). `fitness-api` A12 additionally refuses an AN-8 operation that declares a `429` response outside the source-IP form. Rows AN-8 to AN-10 were added under RT-7 by T-0032 (2026-10-21).
+TM-F-ABUSE for rules 2 and 3. **TM-F-ABUSE AN-8 tests (T-0359; package `internal/platform/authn`, each run against the real handler with the store faked only at its port):** `TestAN8ThrottledKnownEqualsUnknown` (a known local account and an unknown name, each driven past burst 5 and past the rule-3 window, give byte-identical status, body and header sets, and no `Retry-After`), `TestAN8NeverAnswersPerAccount429` (100 requests for one name spread over 10 source IPs, each under the per-IP `auth` burst of 30, and none is `429`), `TestAN8ThrottledCorrectPasswordRefused` (the right password sent while the bucket is empty answers the `401` and creates no pending sign-in), `TestAN8ThrottleKeyIgnoresExistence` (the store sees one key per submitted name for existing, unknown, non-local and disabled accounts, and a case or Unicode-normalisation variant maps to the same key) and `TestAN8TableFullIsNameIndependent` (with the key table full, a new existing and a new unknown name both get the uniform `401`). **In-flight gate tests (T-0783, T-0809):** `TestInFlightGateRefusesAboveTheCap`, `TestInFlightGateGivesEachSourceAFairShare`, `TestSourceKeyGroupsIPv6By64AndUnmapsIPv4` (incl. `64:ff9b::c000:201` = `192.0.2.1`, and two NAT64 clients are two sources), `TestSourceKeyHonoursConfiguredPrefixLengths` (two /64s in one /48 share a slot at IPv6 /48), `TestUnparsedSourceIsOneSharedSource` and `limiter.TestSourcePrefixCanonicalForms` in `internal/platform/authn` and `limiter`, and the Postgres integration test `TestSignInFairShareLetsASecondSourceIn` in `internal/compose/server` (8 hog goroutines on one IP; a second IP gets its pending cookie). `fitness-api` A12 additionally refuses an AN-8 operation that declares a `429` response outside the source-IP form. Rows AN-8 to AN-10 were added under RT-7 by T-0032 (2026-10-21).
 
 **Which rows are in `policy.yaml` today.** An entry that names an operation absent from the
 contract is stale and fails A13, and an entry with a `host` fails until T-0018 lands the
@@ -2194,9 +2321,9 @@ hostname-binding table. So the seed carries the non-API routes of AN-1 to AN-3, 
 operations entered with their contract (T-0034). AN-8 and AN-10
 (`signInBreakGlassPassword`, `createWebAuthnSignInChallenge`, `verifyWebAuthnSignIn`, `verifyTotpSignIn`)
 and the `authenticated` rows `signOut` and `getCsrfToken` entered with theirs (T-0193); their handlers
-answer 501 until the build tickets land (`createWebAuthnSignInChallenge` and `verifyWebAuthnSignIn` are real once a `WebAuthnCookieVerifier` is supplied, T-0207: the challenge is consumed by the first assertion naming the pending sign-in, `webauthn_replay`; user verification is required; the signature counter must advance when the authenticator counts). The AN-8 failure is one `401 /problems/sign-in-failed` for
+answer 501 until the build tickets land (`getCsrfToken` is real since T-0854; `signOut` stays 501 until T-0802; `createWebAuthnSignInChallenge` and `verifyWebAuthnSignIn` are real once a `WebAuthnCookieVerifier` is supplied, T-0207: the challenge is consumed by the first assertion naming the pending sign-in, `webauthn_replay`; user verification is required; the signature counter must advance when the authenticator counts). The AN-8 failure is one `401 /problems/sign-in-failed` for
 every cause (rule 2). AN-4, AN-5 and AN-7 enter with their operations. AN-5 and AN-7 also need their hostname binding
-from T-0018. AN-9 enters when the PRD offers SPNEGO. The file's header lists each pending row.
+from T-0018. AN-9 (`GET /auth/negotiate`) enters with its route mounting in T-0492 (console-sso.md §9). The file's header lists each pending row.
 
 ### 7.7 Authorisation
 
@@ -2417,6 +2544,10 @@ calls per technician per day, then charges per extra call (parity matrix row 18,
   admitted. A12 (fitness-api) refuses an unknown class, an anonymous operation outside
   `anonymous`/`auth`, a `secretResponses` operation outside `reveal`, and a `SecretInput` request
   outside `secret`.
+  The burst + 1 and /64-sharing cases for every row of the table above run in
+  `internal/platform/limiter/proof_test.go` (`TestLimiter/limiter_burst_plus_one_<class>`,
+  `TestLimiter/limiter_v6_prefix`, T-0208); it pins the §7.8 numbers as literals, so a changed default
+  fails there until this table changes with it.
 
 ---
 
@@ -2952,7 +3083,7 @@ Existing proofs this document relies on: FF-SP1–SP9 (`tools/fitness/safeprim`)
 | TM-F-UPDATE | A tampered, rolled-back, frozen, revoked-key or server-signed update is accepted, on either courier (§10) | CI, extends P5 | T-0138 (ENH-07 spec) + T-0139 (proof) | TB10 |
 | TM-F-AUTHZ | Scope escape, move-between-check-and-write, bulk item out of scope, self-escalation, dead-owner token, a report beyond its owner's scope, a synced Entra group with a weak or unknown AD source, or a dynamic-membership group grants (§7.7, TM-D18 extension) | CI + Samba lab | T-0072 (backend-engineer) | TB1-T8/T11/T12, TB2-T8, TB15-T2 |
 | TM-F-SESSION | Cookie, CSRF, timeout, revocation, step-up or token rules of §7.3–§7.5 do not hold; a session exists without a completed AN-10 second factor, or a pending sign-in outlives 5 minutes or 5 attempts (§7.6 rules 1, 4); a rate class admits burst + 1 (§7.8) | CI | T-0073 (backend-engineer) | TB1, TB2-T1, TB2-T7, TB8-T3/T6 |
-| TM-F-SSO | A forged, wrapped, replayed or mis-addressed SAML/OIDC response is accepted (§7.7) | CI fuzz corpus | T-0073 (backend-engineer), with ADM-143 spec | TB8 |
+| TM-F-SSO | A forged, wrapped, replayed, mis-addressed or malformed SAML/OIDC response is accepted, or refused with another reason code; a fuzzed response yields a `Verified` the test IdP never signed, or the same response ID twice; a sign-in outcome case X-01 to X-17 does not hold (§7.2, §7.2a; console-sso.md §10: corpus records under `internal/platform/authn/sso/testdata/corpus/`, `FuzzSAMLComplete`, `FuzzOIDCComplete`); a §4/§5 check number is cited by no record (FIT-SSO-2); an XML-DSig or JOSE import escapes its package or goxmldsig is pinned below v1.6.0 (FIT-SSO-1) | CI corpus + fuzz (60 s per `make ci`, 10 min nightly) | T-0073 (backend-engineer); corpus with T-0201 and T-0202; FIT-SSO-1/2 T-0211 | TB8 |
 | TM-F-SECRETOUT | A canary secret appears in any log, error, audit detail, response, metric or export; a response schema carries a secret field (§9.7) | CI | `tools/fitness/safeprim` (FF-SP extension, `secretjson` delivered) + `fitness-api` A8 (T-0017) | TB1-T7, TB2-T6, TB8-T5, TB9-T5/T6 |
 | TM-F-EGRESS | An integration reaches loopback, link-local, metadata or private ranges without an allow-list entry; a redirect escapes; DNS rebinding works; TLS is unverified; webhooks are unsigned | CI | T-0071 (backend-engineer) | TB9, TB15-T7 |
 | TM-F-ABUSE | Responses differ for existing vs non-existing accounts (body, status, timing class), including AN-8 and AN-9 (§7.6 rule 2); AN-8 answers a per-account `429` or any status, body or header difference between a throttled known name and a throttled unknown name (rule 2 a to g, T-0359); a break-glass account locks rather than throttles (§7.6 rule 3); our counter lets the domain lockout threshold be reached; an OTP works twice or late; enrolment proceeds without the user's own authentication | CI + Samba lab | T-0073 (backend-engineer); ENH-09 spec; M4 SSPR spec | TB1-T9/T13, TB3-T8, TB11, TB13-T5 |
@@ -2989,7 +3120,7 @@ control.
 | TM-R9 | Secret copies we cannot zero (runtime buffers, pagefile, hibernation) | Language runtimes and OS (§9.5) | security-architect | `runtime/secret` graduates; Go adds Windows support |
 | TM-R10 | A SaaS cell workload-identity compromise unwraps every tenant's DEK while it lasts | Shared cell by design (ADR-0002) | security-architect | SaaS launch revision (E5.6) |
 | TM-R11 | Hybrid: whoever controls the sync client, the tenant sync features or SOA transfer can make a correlation `matched`. Takeovers that happened before install go unseen, and so do takeovers in the install-time population (correlations eligible before the tenant's first `attested` state, including an `open` window before it) that our sync never saw cloud-only (TM-D17 rule 4); TM-D19 rule 2 still withholds AD-side authority from them. Between monitor polls a flag flip is undetected; without the optional monitor, it is undetected until the attestation ages out (≤ 90 days) | The correlation gate trusts the sync client by construction (DM-20.I6) | security-architect | Lab G8; if Graph adds app-only read of sync features |
-| TM-R12 | Someone who controls both planes at enrolment (the AD password or a `tenant-owner` approval, plus the Entra sign-in) can enrol a TM-D19 authority factor | Such an attacker is, in effect, the technician; the history residual reduces to this case (§6.9) | security-architect | ADM-143 spec (SPNEGO); lab G10 |
+| TM-R12 | Someone who controls both planes at enrolment (the AD password or a `tenant-owner` approval, plus the Entra sign-in) can enrol a TM-D19 authority factor | Such an attacker is, in effect, the technician; the history residual reduces to this case (§6.9) | security-architect | NEG-4 build (T-0493), which makes a Kerberos enrolment ceremony available; lab G10 |
 | TM-R13 | RADIUS PAP over UDP for clients without RADIUS/TLS: a leaked or weak shared secret plus captured traffic reveals passwords | Many NAS devices support only UDP; activeDIQ-generated 32-byte secrets and internal-only exposure narrow it (TM-TB19-T4) | security-architect | M4 RADIUS spec (TM-Q18) |
 | TM-R14 | **R-T0CTX-1 (contract §8.3 F6), accepted with tightenings.** A compromised server sends a remote AD connector a password reset for an on-premises account synced to an Entra role holder, and leaves the C16 peer out of the context. The reset succeeds, password hash sync carries it to the cloud, and the attacker takes the cloud account. The same omission works for a designation | Only the server holds DM-20 correlations. Giving a connector the other directory's credentials (option b) doubles its blast radius. Signing (option c) adds nothing while the Entra connector is embedded. The cases closed: wrong, stale, unbound or inconsistent context is refused (TM-D23 rules 1 to 5 and 7). The case narrowed: an object the connector was already told about cannot be unprotected silently (rule 8, `tier0_set_shrink`). The case left: an object that became C16 or designated after the server was compromised and before the connector heard of it. Customer-side mitigation: Microsoft's guidance to keep privileged cloud accounts cloud-only ([protect M365](https://learn.microsoft.com/en-us/entra/architecture/protect-m365-from-on-premises-attacks)) | security-architect | Entra connectors run remote (option c becomes worth it); SaaS launch (E5.6) |
 | TM-R15 | **D11, accepted.** A forged `WriteGateOverride` lets an over-privileged connector identity write non-`tier0` objects with rights beyond §6.3 | The override is server state (DM-25). The connector checks only that every blocking fingerprint is acknowledged; V8, EV4 and `COULD_NOT_VERIFY` cannot be overridden; the Tier-0 refusal never reads the override (CC-WRITE-08). Each admission is logged on the connector host (TM-D23 rule 9). The excess is limited to typed write kinds on non-`tier0` objects, the same class as TM-R2 | security-architect | With TM-R2; if a write kind can change a security descriptor |
@@ -3004,6 +3135,9 @@ control.
 | TM-R24 | **In-place rollback of integration credentials, accepted (T-0178).** An attacker with application-role database write can replace a DM-63 / DM-82 / DM-85 `sealed_credentials` blob with an older one for the same cell and DEK version, and `Open` accepts it (TM-D29) | Edited in place by design because rules, runs and schedules reference the connection. The older token was revoked at its source when the admin rotated it, so the likely effect is a failed use that audit and `last_test` show; a source that did not revoke it gives the attacker an older credential, not a new one. A counter in the same row would not help (rolled back with the blob) | security-architect | If a source is found that cannot revoke a replaced credential, or the integrations move to new-row-on-change |
 | TM-R25 | **R-KEYADM-1, accepted (T-0623).** A hidden Key Admins (526) or Enterprise Key Admins (527) on a domain below functional level 2016 that has a 2016+ PDC emulator is not detected: `protectedList` accepts their absence below level 7, but they exist from the first 2016 PDC | Level ≥ 7 implies a 2016+ PDC, so only the mixed migration state is affected; the attacker needs WRITE_DAC/WRITE_OWNER on the group; the exact fail-closed rule needs the PDC emulator OS version (new connector code and lab matrix); the ratchet (TM-D23 rule 8) covers a group read earlier in the epoch (§6.4 signed note) | security-architect | **Narrowed by T-0631:** a 2016+ PDC emulator now fails closed; remaining residual is a domain whose PDC role moved back to a pre-2016 DC after the groups were created (§6.4). Revisit when the Windows lab gains a mixed-level forest or a customer reports the state |
 | R-AN8-1 | Anyone who reaches AN-8 on L1 can push a known break-glass name into the rule 3 delay window with 5 bad guesses, delaying the legitimate operator (T-0359, §7.6 rule 2f) | "Throttled, never locked" (rule 3) trades lockout for delay; a hard lock would let L1 disable recovery | security-architect | alerts at 10 failures/hour, CIDR allow-list (rule 4); a customer asking for a second recovery path |
+| R-AN8-2 | Multi-source and shared-address saturation of the AN-8 in-flight gate (T-0809, §7.6 rule 2d): an attacker with 4 sources (4 IPv4 addresses, or an IPv6 /62) holds all 4 slots and every other source gets the `429`; an attacker sharing an address with the break-glass admin (same NAT/CGNAT, or a proxy not listed in `ACTIVEDIQ_TRUSTED_PROXIES`) holds that address's one slot | A slot gate cannot tell sources apart beyond the address; per-source share lifts the bar from one client to four distinct prefixes, each also held to the §7.8 per-IP `auth` rate. A larger global cap costs 64 MiB per slot | security-architect | console source-CIDR allow-list (§7.6 rule 4), per-IP `auth` rate (§7.8), edge rate limits (TM-O8), uniform name-independent `429`; revisit if a deployment reports a break-glass lock-out, or when prefix lengths are tightened (§7.8 rule 3) |
+
+| TM-R26 | **External report schedule with a stolen second factor, accepted (T-0893).** An attacker holding a hijacked session and the victim's MFA factor can still create a schedule that mails owner-scope data outside the organisation | Step-up cannot defend a stolen factor; the schedule is visible to its owner and `manage_all` holders, every write, fire and delivery is audited with the confirmed addresses, and the owner-authority rule pauses it when the owner is disabled (TM-D30) | security-architect | If customers ask for four-eyes on external delivery, add an optional approval gate for SX-1 writes |
 
 ### 16.2 Decisions owed to the CEO (not asked now)
 
@@ -3022,7 +3156,7 @@ Each goes through the `ceo-decisions` skill in business terms when its trigger a
 | --- | --- | --- | --- |
 | TM-Q1 | Enrolment integrity of the v1 end-user TOTP page | User's own AD authentication; notice to existing contact data (TM-TB1-T13) | ENH-09 spec |
 | TM-Q2 | Rate limits and size caps per operation | Declared per operation in the contract; default numbers per class set by TM-D22 (§7.8) | `fitness-api` A12 (T-0017); numbers T-0032; limiter T-0054 |
-| TM-Q3 | IdP claim-to-role mapping; MFA claims from the IdP | `tenant-owner` never from a claim alone | ADM-143 spec |
+| TM-Q3 | **Answered (T-0212): console-sso.md §6.1 SSO-D4 and §7.1 SSO-D5, amended in §7.2a.** IdP claim-to-role mapping; MFA claims from the IdP | `tenant-owner` and `control_plane` never from a claim (MAP-2, MAP-2a); IdP MFA never skips AN-10 for them (MFA-5) | closed |
 | TM-Q4 | Secret-reveal thresholds and alerts | Per-technician rate limit + burst alert | E2.5 helpdesk spec |
 | TM-Q5 | Password in notifications | Off by default; own review | E2.5 helpdesk spec |
 | TM-Q6 | Change-volume limits for HR-driven lifecycle | Through Plan and approvals | E2.9 lifecycle spec |
@@ -3158,6 +3292,9 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-10-30 · T-0938 (MFA-2b security review). §7.2a adds MFA-2b, which refuses single-factor Microsoft, AD FS, SAML 1.x (`am:` and `urn:ietf:rfc:`) and REFEDS SFA values and OASIS case/whitespace variants as SAML evidence; it is built and tested. It also adds MFA-2c: the SAML evidence attribute is an allow-list, because a constant claim such as Entra `tenantid` bypassed MFA-2a/2b in a probe. Bug T-0974 filed.
+- 2026-10-30 · T-0893 (reports schedule security review). New DECISION TM-D30 in [reports-schedules-security-review.md](reports-schedules-security-review.md): conditional, kernel-enforced step-up for schedule writes whose after-state has an external recipient (no `policy.yaml` row: the condition is in the input), step-up for allowed-recipient-domain and SMTP relay changes, account-address classification and confirmed-external at fire. §5.15 rows TM-TB15-T9 to T11; two §7.4 rows; TM-R26. Contract defects R1-R6 in `reports.yaml` filed as T-0979; kernel predicate T-0980; spec alignment T-0981.
+- 2026-10-30 · T-0212 (ADM-143 spec review). Every `[OPEN → ADM-143 spec]` marker now points at `console-sso.md`: §7.2 MFA-asserting (SSO-D4), TM-TB8-T7 (SSO-D5), TM-D19 rule 3 and AN-9 (SPNEGO offered in v1, SSO-D7); TM-F-SSO cites the console-sso.md §10 corpus, fuzz oracle and FIT-SSO-1/2. TM-Q3 closed. New §7.2a: SSO-D4, MFA-5, SSO-D5 and SSO-D7 accepted with amendments MFA-1a (OIDC `amr` evidence is an allow-list), MFA-2a (no OASIS `ac:classes` value is SAML MFA evidence), MAP-2a (a role that gains `control_plane` revokes its claim sessions; evaluator filter) and NEG-4a (Kerberos authority counts from session creation); NEG-7 residual recorded. Bug T-0912 filed for MFA-1a/2a in the built config checks; MAP-2a and NEG-4a noted on T-0570 and T-0493.
 - 2026-10-28 · T-0544 (from the T-0469 review). §7.7 TM-D18 extension: D18-1 synced Entra groups are judged from their matched AD source's `diq_broadMembershipWrite` (unknown unless the pair is matched, attested, fresh within 26 h and the fact is known and false; computed in one read, never stored on the Entra row); D18-2 dynamic-membership groups never grant in v1. Nine cases added to TM-F-AUTHZ. Residual R-D18-1; lab G18 routed to T-0075. Build changes routed to T-0541 and a new judge ticket.
 - 2026-10-27 · T-0495 (from the T-0206 review). §7.6 rule 10: AN-9 refuses AD-disabled, expired, locked-out, deleted or SID-changed principals by an inventory pre-check plus an authoritative live connector read at sign-in, failing closed; no ticket-age bound (authtime is the TGT logon time). Residual R-AN9-1 (DC replication lag), R-AN9-2 (timing). TM-F-SSO adds `an9_refuses_ad_disabled`.
 - 2026-10-27 · T-0388. §6.9 rule 5 rewritten from five changes to the closed `guarded v1` table (AD and Entra classes, a `denied` set, a tightening exemption), each with a source. New §6.9a DECISION TM-D28: typed constructors, one class per Action, a runtime check in `client.Write`, and fitness function `fitness-backing` rules B1 to B9 with a machine-readable `guarded-v1` block. New proof TM-F-BACKING, residual TM-R23, lab G17 (routed to T-0075), sources 86 to 94. DM-30.I7 updated to match.
@@ -3188,3 +3325,4 @@ External, in order of first use:
 - 2026-10-28 · T-0623: §6.4 carries the security-architect-signed note accepting the Key Admins / Enterprise Key Admins residual on a pre-2016-level domain with a 2016+ PDC emulator; new TM-R25 in §16.1; narrowing ticket T-0631 (P3).
 - 2026-10-28 · T-0631: §6.4 note and TM-R25 narrowed — 526/527 absence below level 7 now fails closed when the PDC emulator is 2016+ or unreadable; residual is a PDC role moved back to a pre-2016 DC.
 - 2026-10-28 · T-0633: T-0130 cancelled as superseded; operation-fitness proof cells repointed to the live `make fitness-operation` checks (O1/O2/O4/O9) or the ticket that lands each pending check (O3 T-0391, O5–O7 T-0392, O8 T-0393).
+- 2026-10-30 · T-0809: §7.6 rule 2d in-flight gate has a per-source fair share (1 of 4 slots) keyed by the shared §7.8 source prefix (`limiter.SourcePrefix`: NAT64, mapped, operator prefix lengths); claim narrowed to "one source cannot hold more than 1 of 4"; new residual R-AN8-2 (multi-source and shared-address saturation); proof note names the new tests.

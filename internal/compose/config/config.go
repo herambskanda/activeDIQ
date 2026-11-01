@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -53,8 +54,9 @@ const (
 	// (the default) leaves the attestation routes unmounted.
 	EnvAttestClientID = "ACTIVEDIQ_ATTEST_CLIENT_ID"
 	// EnvPublicURL is the https origin browsers reach this install by. The attestation's redirect URI is
-	// this origin plus the callback path, and must be registered on the app registration. Required with
-	// EnvAttestClientID.
+	// this origin plus the callback path, and must be registered on the app registration (required with
+	// EnvAttestClientID). It is also the WebAuthn relying party: the RP ID is its hostname and it is the one
+	// origin an assertion may be made for. Unset leaves WebAuthn sign-in off.
 	EnvPublicURL = "ACTIVEDIQ_PUBLIC_URL"
 	// EnvOpsAddr is the bind address of the operator (ops) listener that serves /metrics (T-0533). Unset
 	// means no ops listener and no metrics endpoint. It must differ from EnvAPIAddr: metrics list every
@@ -70,6 +72,9 @@ const (
 	// EnvConnectorConfig is the path of the connector role's local configuration file (connection_id, directory
 	// servers, Kerberos identity, enrolment and data directories). Only cmd/connector reads it.
 	EnvConnectorConfig = "ACTIVEDIQ_CONNECTOR_CONFIG"
+	// EnvBlobDir is the absolute directory of the filesystem blob store, where report exports are kept until they
+	// expire. Unset, exports answer 503 not-ready: no export file is ever held in the database or in memory.
+	EnvBlobDir = "ACTIVEDIQ_BLOB_DIR"
 )
 
 // Values of EnvPrincipalStore.
@@ -106,6 +111,8 @@ type Config struct {
 	APIAddr string
 	// APITLSDir is where the per-install API certificate lives; empty means an ephemeral in-memory one.
 	APITLSDir string
+	// BlobDir is the filesystem blob store's root (absolute); empty means no blob store is configured.
+	BlobDir string
 	// APIBodyBudget is passed to apihost.WithBodyBudget. Non-positive values fail startup.
 	APIBodyBudget int64
 	// TrustedProxies is passed to apihost.WithTrustedProxies.
@@ -113,7 +120,8 @@ type Config struct {
 	// Nodes is the number of server nodes; PrincipalStore is PrincipalStorePostgres or PrincipalStoreMemory.
 	Nodes          int
 	PrincipalStore string
-	// AttestClientID and PublicURL configure the TM-D17 attestation; both empty means it is not offered.
+	// AttestClientID and PublicURL configure the TM-D17 attestation (which needs both). PublicURL alone also
+	// configures the WebAuthn relying party; empty means WebAuthn sign-in is off.
 	AttestClientID string
 	PublicURL      string
 	// OpsAddr and OpsTokenFile configure the operator metrics listener; both empty means it is off.
@@ -155,6 +163,9 @@ func Load(getenv func(string) string) (Config, error) {
 		c.APIAddr = v
 	}
 	c.APITLSDir = getenv(EnvAPITLSDir)
+	if c.BlobDir = getenv(EnvBlobDir); c.BlobDir != "" && !filepath.IsAbs(c.BlobDir) {
+		return Config{}, fmt.Errorf("%s: must be an absolute path", EnvBlobDir)
+	}
 	c.ConnectorConfigPath = getenv(EnvConnectorConfig)
 	if err := c.ValidateAPIListen(); err != nil {
 		return Config{}, err
@@ -202,6 +213,10 @@ func Load(getenv func(string) string) (Config, error) {
 	c.AttestClientID, c.PublicURL = getenv(EnvAttestClientID), getenv(EnvPublicURL)
 	if err := c.ValidateAttestation(); err != nil {
 		return Config{}, err
+	}
+	if c.PublicURL != "" { // keep only the canonical origin, so no consumer sees the operator's spelling
+		po, _ := ParsePublicURL(c.PublicURL) // validated just above
+		c.PublicURL = po.Origin
 	}
 	c.OpsAddr, c.OpsTokenFile = getenv(EnvOpsAddr), getenv(EnvOpsTokenFile)
 	if err := c.ValidateOps(); err != nil {
@@ -260,6 +275,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("stop_timeout", r.StopTimeout),
 		slog.String("api_addr", r.APIAddr),
 		slog.String("api_tls_dir", r.APITLSDir),
+		slog.String("blob_dir", r.BlobDir),
 		slog.Int64("api_body_budget", r.APIBodyBudget),
 		slog.Any("trusted_proxies", r.TrustedProxies),
 		slog.Int("nodes", r.Nodes),
@@ -320,20 +336,113 @@ func requireLoopback(addr string) error {
 	return errors.New("must bind a loopback address (127.0.0.0/8, ::1 or localhost) unless a TLS directory is configured")
 }
 
-// ValidateAttestation refuses a half-configured attestation, and a public URL that is not a plain https
-// origin: the redirect URI is built from it and the authorization code returns there.
+// ValidateAttestation refuses an attestation client ID without a public URL, and a public URL that is not
+// a plain https origin on a domain name (see ParsePublicURL). A public URL alone is valid (WebAuthn sign-in
+// without the attestation).
 func (c Config) ValidateAttestation() error {
-	if c.AttestClientID == "" && c.PublicURL == "" {
+	if c.PublicURL == "" {
+		if c.AttestClientID != "" {
+			return fmt.Errorf("%s requires %s", EnvAttestClientID, EnvPublicURL)
+		}
 		return nil
 	}
-	if c.AttestClientID == "" || c.PublicURL == "" {
-		return fmt.Errorf("%s and %s must be set together", EnvAttestClientID, EnvPublicURL)
+	_, err := ParsePublicURL(c.PublicURL)
+	return err
+}
+
+// PublicOrigin is the canonical form of an ACTIVEDIQ_PUBLIC_URL: the one value the WebAuthn relying party
+// and the attestation redirect URI are both built from (T-0861).
+type PublicOrigin struct {
+	// Origin is the https origin browsers see: lowercase host, no default port, no path, no trailing slash.
+	Origin string
+	// RPID is the WebAuthn relying party ID: the lowercase host without the port.
+	RPID string
+}
+
+// maxHostBytes is the DNS limit on a presentation-form name without the trailing dot.
+const maxHostBytes = 253
+
+// validHostLabel reports whether l matches [a-z0-9]([a-z0-9-]{0,61}[a-z0-9])? (l is already lowercase).
+func validHostLabel(l string) bool {
+	if len(l) == 0 || len(l) > 63 || l[0] == '-' || l[len(l)-1] == '-' {
+		return false
 	}
-	u, err := url.Parse(c.PublicURL)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("%s: must be an https origin such as https://diq.example.com", EnvPublicURL)
+	for i := 0; i < len(l); i++ {
+		c := l[i]
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			return false
+		}
 	}
-	return nil
+	return true
+}
+
+// ParsePublicURL canonicalises ACTIVEDIQ_PUBLIC_URL. The host is lowercased and an explicit :443 dropped (a
+// browser never sends it, so an origin carrying it would never match); any other port is kept in the origin
+// and left out of the RP ID. It refuses what no browser can satisfy: anything but a bare https origin, an IP
+// literal or numeric-looking host (WebAuthn needs a registrable-style domain as RP ID), a trailing dot, and
+// a non-ASCII host (write the punycode form). Errors name ACTIVEDIQ_PUBLIC_URL and never echo credentials.
+func ParsePublicURL(raw string) (PublicOrigin, error) {
+	const shape = "must be an https origin on a domain name such as https://diq.example.com"
+	bad := func(why string) (PublicOrigin, error) {
+		return PublicOrigin{}, fmt.Errorf("%s: %s: %s", EnvPublicURL, why, shape)
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		return bad("not a plain https origin")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return bad("no host")
+	}
+	if strings.HasSuffix(host, ".") {
+		return bad("the host ends in a dot")
+	}
+	for _, r := range host {
+		if r > 0x7e || r <= 0x20 {
+			return bad("the host is not plain ASCII (use the punycode form of an internationalised name)")
+		}
+	}
+	host = strings.ToLower(host)
+	if strings.ContainsAny(host, ":[]%") {
+		return bad("the host is an IP address")
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return bad("the host is an IP address")
+	}
+	if len(host) > maxHostBytes {
+		return bad("the host is longer than 253 bytes")
+	}
+	// Allow-list, not deny-list: every label is letters, digits and inner hyphens, 1 to 63 bytes. This is
+	// what a browser can use as an RP ID, and it refuses <, >, quotes, ';', '*', '_' and the like.
+	labels := strings.Split(host, ".")
+	for _, l := range labels {
+		if l == "" {
+			return bad("the host has an empty label")
+		}
+		if !validHostLabel(l) {
+			return bad("the host has a label that is not letters, digits and inner hyphens of at most 63 characters")
+		}
+	}
+	// A browser reads a host whose last label is numeric (10.1, 0x7f.1, 2130706433) as an IPv4 address.
+	if last := labels[len(labels)-1]; last[0] >= '0' && last[0] <= '9' {
+		return bad("the host looks like an IP address")
+	}
+	port := u.Port()
+	if port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return bad("the port is out of range")
+		}
+		port = strconv.Itoa(n) // drops leading zeros
+		if n == 443 {
+			port = ""
+		}
+	}
+	origin := "https://" + host
+	if port != "" {
+		origin += ":" + port
+	}
+	return PublicOrigin{Origin: origin, RPID: host}, nil
 }
 
 // ValidatePrincipalStore refuses an unknown store and the in-memory store on more than one node: each

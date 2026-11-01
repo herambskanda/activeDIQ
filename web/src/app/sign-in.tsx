@@ -1,9 +1,16 @@
 import { type FormEvent, useRef, useState } from "react";
 
-import { ApiError } from "../api/client";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import { Button, StatePanel, TextInput } from "../ds/components";
-import { type SessionClient, submitPassword, submitTotp } from "./session";
+import {
+  type CredentialStore,
+  KeyPromptError,
+  type SessionClient,
+  submitPassword,
+  submitTotp,
+  submitWebAuthn,
+  webAuthnAvailable,
+} from "./session";
 
 type Step = "password" | "code";
 
@@ -19,13 +26,16 @@ function messageOf(error: unknown): string {
 }
 
 /**
- * The console sign-in: the break-glass account's password (AN-8), then its authenticator code
- * (AN-10). Failures use the server's one generic answer, so the screen never says which part was wrong.
+ * The console sign-in: the break-glass account's password (AN-8), then its second factor, an authenticator code
+ * or a security key (AN-10). Failures use the server's one generic answer, so the screen never says which part was wrong.
  */
 export function SignInPage({
   client = api,
   onSignedIn,
+  credentials,
 }: {
+  /** Stands in for the browser's credential store (tests). */
+  readonly credentials?: CredentialStore;
   readonly client?: SessionClient;
   /** Called once a session exists. */
   readonly onSignedIn: () => void;
@@ -38,6 +48,30 @@ export function SignInPage({
   const [error, setError] = useState<string>();
   const [fieldError, setFieldError] = useState<string>();
   const codeInput = useRef<HTMLInputElement>(null);
+
+  const useKey = async () => {
+    if (busy) return;
+    setError(undefined);
+    setFieldError(undefined);
+    setBusy(true);
+    try {
+      await submitWebAuthn(client, credentials);
+      onSignedIn();
+      return;
+    } catch (err) {
+      if (err instanceof KeyPromptError) {
+        setError("The security key was not used. Touch your key when asked, or enter a code.");
+      } else {
+        setError(messageOf(err));
+        // The server may have used up the pending sign-in; start over on a refusal.
+        if (err instanceof ApiError && err.status === 401) {
+          setStep("password");
+          setCode("");
+        }
+      }
+    }
+    setBusy(false);
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -121,6 +155,11 @@ export function SignInPage({
           <Button type="submit" variant="primary" loading={busy}>
             {step === "password" ? "Continue" : "Sign in"}
           </Button>
+          {step === "code" && webAuthnAvailable(credentials) && (
+            <Button type="button" onClick={() => void useKey()} disabled={busy}>
+              Use a security key
+            </Button>
+          )}
         </p>
       </form>
     </main>

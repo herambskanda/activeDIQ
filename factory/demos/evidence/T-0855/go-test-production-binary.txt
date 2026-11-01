@@ -1,0 +1,5 @@
+# go test ./cmd/server -run TestProductionBinaryHasNoPasskeySeeding -count=1 -v  (clean)
+=== RUN   TestProductionBinaryHasNoPasskeySeeding
+--- PASS: TestProductionBinaryHasNoPasskeySeeding (5.19s)
+PASS
+ok  	github.com/skenzeriq/activediq/cmd/server	5.217s

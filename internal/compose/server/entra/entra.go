@@ -222,7 +222,7 @@ func (g *GraphReader) ReadSyncFeatures(ctx context.Context, token connections.Be
 			return ErrGraphRefused
 		}
 		// The URL is built by the odata primitive, never by concatenation (safe-primitives-odata §6).
-		u, err := odata.Get(odata.Seg(gs.SegDirectory), odata.Seg(gs.SegOnPremisesSync)).
+		u, err := odata.Get(odata.Seg(gs.SegDirectory), odata.Seg(gs.SegOnPremisesSynchronization)).
 			With(odata.Query{}.Select(gs.SyncFeatures)).URL(bu)
 		if err != nil {
 			return ErrGraphRefused

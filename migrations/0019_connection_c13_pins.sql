@@ -4,6 +4,7 @@
 -- objectGUID, pinned at first discovery, and passes the pins on every Classify. A renamed group stays
 -- Tier 0 only while its pin survives, so pins are append-only: no UPDATE, no DELETE for the app role.
 
+-- write-class: connection_c13_pins system
 CREATE TABLE public.connection_c13_pins (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,

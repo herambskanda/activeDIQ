@@ -30,7 +30,10 @@
 // leases. On cancellation it stops claiming, lets running bodies finish for ShutdownGrace, then cancels
 // them; a cancelled body records nothing (Interrupted) so its claim lapses and Rescue requeues it.
 //
-// Not here: running platform jobs, schedules (DM-44), and the per-tenant quota and claim fairness that must exist before the saas
+// Schedule (schedule.go) is the DM-44 recurrence value: next occurrence in an IANA zone with the DST rules,
+// the one-hour floor, and a missed run firing once. It holds no state; the stored table and tick are not here.
+//
+// Not here: running platform jobs, the stored schedule table and tick, and the per-tenant quota and claim fairness that must exist before the saas
 // profile hosts a second tenant (T-0214).
 package jobs
 

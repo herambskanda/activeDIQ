@@ -1,0 +1,112 @@
+{
+ "banners/light": {
+  "violations": [],
+  "passes": 14
+ },
+ "banners_dom": [
+  {
+   "role": "status",
+   "text": "ⓘNot synced yet: labs.exampleThat domain has not finished its first sync, so it ",
+   "glyph": [
+    "ⓘ"
+   ]
+  },
+  {
+   "role": "status",
+   "text": "⚠Stale dataThe last successful sync of emea.corp.example was 3 hours ago (06:41)",
+   "glyph": [
+    "⚠"
+   ]
+  },
+  {
+   "role": "alert",
+   "text": "✕Sync failedThe connection to emea.corp.example was refused. Nothing was changed",
+   "glyph": [
+    "✕"
+   ]
+  }
+ ],
+ "banners/overflow320": false,
+ "banner-long-content/light": {
+  "violations": [],
+  "passes": 12
+ },
+ "banner-long-content/overflow320": false,
+ "chips/light": {
+  "violations": [],
+  "passes": 8
+ },
+ "chips": [
+  "✓ Synced|rgb(23, 102, 58)",
+  "○ Expired: was synced 09:41 on 23 Oct|rgb(86, 83, 76)",
+  "⚠Stale: last sync 3 h ago (emea.corp.example)|rgb(127, 75, 0)",
+  "✕Failed|rgb(174, 36, 28)"
+ ],
+ "chips/overflow320": false,
+ "progress-states/light": {
+  "violations": [],
+  "passes": 18
+ },
+ "progress": [
+  [
+   "Run progress",
+   "0",
+   "100",
+   "33"
+  ],
+  [
+   "Run progress",
+   "0",
+   "100",
+   null
+  ],
+  [
+   "Complete",
+   "0",
+   "100",
+   "100"
+  ]
+ ],
+ "progress-states/overflow320": false,
+ "keys/light": {
+  "violations": [],
+  "passes": 10
+ },
+ "state-panel-with-actions/light": {
+  "violations": [],
+  "passes": 14
+ },
+ "sp_buttons": [
+  "Copy a request for your administrator",
+  "Retry",
+  "Back to the library"
+ ],
+ "sp_after": "Your role covers no directory objects | Ask an administrator to grant a scope. Nothing is broken. Copied 1 times. | Copy a request for your administrator | This run failed: the query timed out | The database did not answer within 30 s. Nothing was changed. | Retry | Back to the library",
+ "sp_after_kbd": "Your role covers no directory objects | Ask an administrator to grant a scope. Nothing is broken. Copied 3 times. | Copy a request for your administrator | This run failed: the query timed out | The database did not answer within 30 s. Nothing was changed. | Retry | Back to the library",
+ "focusOutline": "solid 2px",
+ "state-panel-with-actions/overflow320": false,
+ "banners/dark": {
+  "violations": [],
+  "passes": 14
+ },
+ "banner-long-content/dark": {
+  "violations": [],
+  "passes": 12
+ },
+ "chips/dark": {
+  "violations": [],
+  "passes": 8
+ },
+ "progress-states/dark": {
+  "violations": [],
+  "passes": 18
+ },
+ "keys/dark": {
+  "violations": [],
+  "passes": 10
+ },
+ "state-panel-with-actions/dark": {
+  "violations": [],
+  "passes": 14
+ }
+}

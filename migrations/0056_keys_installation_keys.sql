@@ -9,6 +9,7 @@
 -- The runtime role (activediq_app) can SELECT and INSERT only: no UPDATE, DELETE or TRUNCATE. Rotation
 -- and re-wrap are owner-role maintenance steps, never a runtime path.
 
+-- write-class: installation_keys system
 CREATE TABLE public.installation_keys (
   version integer PRIMARY KEY CHECK (version > 0),
   state text NOT NULL CHECK (state IN ('active', 'retired')),

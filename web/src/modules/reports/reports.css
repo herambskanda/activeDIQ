@@ -1,0 +1,143 @@
+/* The reports screens' layout. Tokens only; every control is a design-system component. */
+.rp-page {
+  max-width: 1600px;
+}
+.rp-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-3);
+  align-items: baseline;
+  justify-content: space-between;
+}
+.rp-head__title a {
+  color: inherit;
+  text-decoration: none;
+}
+.rp-title {
+  margin: 0 0 var(--diq-space-2);
+  font-size: var(--diq-text-section);
+}
+.rp-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2) var(--diq-space-5);
+  margin: var(--diq-space-3) 0;
+  padding: var(--diq-space-2) var(--diq-space-3);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line);
+}
+.rp-strip > div {
+  display: flex;
+  gap: var(--diq-space-2);
+  align-items: center;
+  min-width: 0;
+}
+.rp-strip dt {
+  font-size: var(--diq-text-micro);
+  letter-spacing: var(--diq-tracking-label);
+  text-transform: uppercase;
+  color: var(--diq-text-2);
+}
+.rp-strip dd {
+  margin: 0;
+}
+.rp-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-3);
+  align-items: flex-end;
+  margin: var(--diq-space-3) 0;
+}
+.rp-applied {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2);
+  margin: 0 0 var(--diq-space-3);
+  padding: 0;
+  list-style: none;
+}
+.rp-pager {
+  margin: var(--diq-space-2) 0 0;
+  color: var(--diq-text-2);
+}
+.rp-cols,
+.rp-filter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--diq-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.rp-search {
+  display: flex;
+  flex-direction: column;
+  gap: var(--diq-space-2);
+  min-width: min(60ch, 90vw);
+}
+.rp-search__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rp-search__hit {
+  display: flex;
+  flex-direction: column;
+  padding: var(--diq-space-2) var(--diq-space-3);
+  cursor: pointer;
+  border-inline-start: var(--diq-space-1) solid transparent;
+}
+.rp-search__hit[aria-selected="true"] {
+  background: var(--diq-signal-soft);
+  border-inline-start-color: var(--diq-signal);
+}
+.rp-search__sub {
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}
+.rp-search__title {
+  font-weight: var(--diq-weight-medium);
+}
+.rp-search__note p {
+  margin: 0 0 var(--diq-space-1);
+}
+.rp-lib__filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-3);
+  align-items: flex-end;
+  margin-bottom: var(--diq-space-4);
+}
+.rp-lib__cat {
+  margin: var(--diq-space-4) 0 var(--diq-space-1);
+  font-size: var(--diq-text-micro);
+  letter-spacing: var(--diq-tracking-label);
+  text-transform: uppercase;
+  color: var(--diq-text-2);
+}
+.rp-lib__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.rp-lib__row {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--diq-space-3);
+  align-items: center;
+  padding: var(--diq-space-2) var(--diq-space-3);
+  border-bottom: var(--diq-border) solid var(--diq-line);
+}
+.rp-lib__name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.rp-lib__desc,
+.rp-lib__aka {
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

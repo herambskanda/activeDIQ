@@ -1,0 +1,43 @@
+=== before
+build,gssapi,junction-target,out,tools,audit-gpo.ps1,boot.ps1,ca.pem,common.ps1,dc.ps1,entra-ready.ps1,entra-ready.txt,member.ps1,provision.log,set-static-ip.ps1,stage
+10
+=== ownerfile
+=== RUN   TestWindowsEnsureDirAndReadFile
+    ownerfile_windows_test.go:43: icacls state dir
+        C:\lab\t0577-fix\TestWindowsEnsureDirAndReadFile2133895203\001\state WINLAB\Administrator:(OI)(CI)(F)
+                                                                             NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+        
+        Successfully processed 1 files; Failed processing 0 files
+--- PASS: TestWindowsEnsureDirAndReadFile (0.03s)
+=== RUN   TestWindowsWiderDirRefused
+=== RUN   TestWindowsWiderDirRefused/users-read
+=== RUN   TestWindowsWiderDirRefused/users-modify
+=== RUN   TestWindowsWiderDirRefused/everyone-full
+=== RUN   TestWindowsWiderDirRefused/authenticated-w
+--- PASS: TestWindowsWiderDirRefused (0.07s)
+    --- PASS: TestWindowsWiderDirRefused/users-read (0.02s)
+    --- PASS: TestWindowsWiderDirRefused/users-modify (0.02s)
+    --- PASS: TestWindowsWiderDirRefused/everyone-full (0.02s)
+    --- PASS: TestWindowsWiderDirRefused/authenticated-w (0.02s)
+=== RUN   TestWindowsReadFileCases
+--- PASS: TestWindowsReadFileCases (0.08s)
+PASS
+exit=0
+=== rights
+=== RUN   TestWindowsBaselineAndRecordDACL
+    baseline_acl_windows_test.go:59: icacls baseline.json
+        C:\lab\t0577-fix\TestWindowsBaselineAndRecordDACL1161291633\001\baseline.json WINLAB\Administrator:(F)
+                                                                                      NT AUTHORITY\SYSTEM:(F)
+        
+        Successfully processed 1 files; Failed processing 0 files
+    baseline_acl_windows_test.go:59: icacls records.log
+        C:\lab\t0577-fix\TestWindowsBaselineAndRecordDACL1161291633\001\records.log WINLAB\Administrator:(F)
+                                                                                    NT AUTHORITY\SYSTEM:(F)
+        
+        Successfully processed 1 files; Failed processing 0 files
+--- PASS: TestWindowsBaselineAndRecordDACL (0.04s)
+PASS
+exit=0
+=== after
+build,gssapi,junction-target,out,tools,audit-gpo.ps1,boot.ps1,ca.pem,common.ps1,dc.ps1,entra-ready.ps1,entra-ready.txt,member.ps1,provision.log,set-static-ip.ps1,stage
+10

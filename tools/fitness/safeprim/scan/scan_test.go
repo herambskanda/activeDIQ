@@ -925,6 +925,11 @@ func TestT0800Exceptions(t *testing.T) {
 	u := gofile("\t\"unsafe\"\n", "var _ = unsafe.Sizeof(0)")
 	want(t, "unsafe in the windows host", map[string]string{"internal/platform/agent/token_windows.go": u, "cmd/agentsetup/run_windows.go": u}, "", "", "")
 	want(t, "unsafe in a non-windows host file", map[string]string{"internal/platform/agent/token.go": u}, "FF-SP2", "unsafe-import", "internal/platform/agent/token.go")
+	// T-0883: the owner-file helpers' Windows files are homes; their non-windows files and other packages are not.
+	want(t, "unsafe in the owner-file windows helpers", map[string]string{"internal/platform/ownerfile/ownerfile_windows.go": u, "internal/platform/ownerfile/ownerfile_read_windows.go": u, "internal/platform/fleet/dial/files_windows.go": u}, "", "", "")
+	want(t, "unsafe in a non-windows ownerfile file", map[string]string{"internal/platform/ownerfile/ownerfile.go": u}, "FF-SP2", "unsafe-import", "internal/platform/ownerfile/ownerfile.go")
+	want(t, "unsafe in a non-windows dial file", map[string]string{"internal/platform/fleet/dial/files.go": u}, "FF-SP2", "unsafe-import", "internal/platform/fleet/dial/files.go")
+	want(t, "unsafe in another package's windows file", map[string]string{"internal/platform/fleet/other/files_windows.go": u}, "FF-SP2", "unsafe-import", "internal/platform/fleet/other/files_windows.go")
 	want(t, "unsafe in an agent module", map[string]string{"internal/agentmodules/addc/source_windows.go": u}, "FF-SP2", "unsafe-import", "internal/agentmodules/addc/source_windows.go")
 
 	sqlOK := "DO $$ BEGIN EXECUTE format($p$CREATE POLICY %I ON %I$p$, t || '_x', t); END $$;\n"

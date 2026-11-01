@@ -1,6 +1,6 @@
 ---
 name: capacity-knobs-ask-the-number
-description: When the CEO asks to change a capacity/spend knob (slots, run cap) without a number, ask for the number in one line — don't pick a cautious value
+description: CEO sets capacity numbers (slots, run cap) — ask for the number, never pick a cautious one; numbers in an answer note override the option label
 metadata:
   type: feedback
 ---
@@ -16,3 +16,8 @@ and they treat the number as theirs to set.
 **How to apply:** the AskUserQuestion uses the real headroom data (cores, RAM, MB per worker, $ per run)
 and puts the higher value first when the data supports it. Apply the answer at once; config reloads
 live, no restart needed.
+
+**Answer notes override option labels.** On D-0016 (2026-11-01) the CEO picked a ("held work in 1 slot")
+but wrote "Resume M1/lab in 5 slot; keep 1 slots for M2a". Apply the note's numbers as written, file a
+notice that names the inversion, and give way when the split would leave slots idle (veto offered). The
+dispatcher has no milestone split (`candidates.mjs`), so ticket it (T-1207) and bridge with priority.

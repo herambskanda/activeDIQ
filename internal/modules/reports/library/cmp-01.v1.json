@@ -1,0 +1,181 @@
+{
+  "id": "cmp-01",
+  "version": 1,
+  "category": "computers",
+  "title": "Computers",
+  "description": "Every live computer account in the directories you may read, with its type, operating system, status and delegation. The type comes from the account's flags and operating system name; a machine with neither is Unknown, not a workstation.",
+  "dataset": "inventory.computers",
+  "columns": [
+    "name",
+    "dns_host_name",
+    "domain",
+    "dn",
+    "computer_type",
+    "operating_system",
+    "operating_system_version",
+    "enabled",
+    "delegation",
+    "when_created"
+  ],
+  "sort": [
+    {
+      "column": "name",
+      "dir": "asc"
+    }
+  ],
+  "params": [
+    {
+      "name": "recent_days",
+      "kind": "days",
+      "default": {
+        "days": 30
+      },
+      "min": 1,
+      "max": 365
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn"
+  ],
+  "presets": [
+    {
+      "id": "all",
+      "names": [
+        "All computers"
+      ]
+    },
+    {
+      "id": "enabled",
+      "names": [
+        "Enabled Computers"
+      ],
+      "where": {
+        "cmp": {
+          "col": "enabled",
+          "op": "eq",
+          "value": {
+            "bool": true
+          }
+        }
+      }
+    },
+    {
+      "id": "disabled",
+      "names": [
+        "Disabled Computers"
+      ],
+      "where": {
+        "cmp": {
+          "col": "enabled",
+          "op": "eq",
+          "value": {
+            "bool": false
+          }
+        }
+      }
+    },
+    {
+      "id": "workstation",
+      "names": [
+        "Workstation Computers"
+      ],
+      "where": {
+        "cmp": {
+          "col": "computer_type",
+          "op": "eq",
+          "value": {
+            "enum": "workstation"
+          }
+        }
+      }
+    },
+    {
+      "id": "domain_controller",
+      "names": [
+        "Domain Controllers"
+      ],
+      "where": {
+        "cmp": {
+          "col": "computer_type",
+          "op": "in",
+          "values": [
+            {
+              "enum": "domain_controller"
+            },
+            {
+              "enum": "read_only_dc"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "delegation",
+      "names": [
+        "Computers Trusted for Delegation"
+      ],
+      "where": {
+        "cmp": {
+          "col": "delegation",
+          "op": "in",
+          "values": [
+            {
+              "enum": "unconstrained"
+            },
+            {
+              "enum": "constrained"
+            },
+            {
+              "enum": "protocol_transition"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "os",
+      "names": [
+        "OS based computers"
+      ],
+      "where": {
+        "cmp": {
+          "col": "operating_system",
+          "op": "present"
+        }
+      },
+      "sort": [
+        {
+          "column": "operating_system",
+          "dir": "asc"
+        },
+        {
+          "column": "operating_system_version",
+          "dir": "asc"
+        },
+        {
+          "column": "name",
+          "dir": "asc"
+        }
+      ]
+    },
+    {
+      "id": "recently_created",
+      "names": [
+        "Recently Created Computers"
+      ],
+      "where": {
+        "cmp": {
+          "col": "when_created",
+          "op": "within_last_days",
+          "param": "recent_days"
+        }
+      },
+      "sort": [
+        {
+          "column": "when_created",
+          "dir": "desc"
+        }
+      ]
+    }
+  ]
+}

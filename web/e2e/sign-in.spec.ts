@@ -76,3 +76,70 @@ test("no session shows the sign-in screen; signing in returns to the requested p
   await expect.poll(() => seen.length).toBeGreaterThan(0);
   expect(seen[0]?.url).toContain("q=ada");
 });
+
+test("a security key signs in as the second factor (T-0772)", async ({ page }) => {
+  let signedIn = false;
+  let assertionBody: Record<string, string> | undefined;
+  await page.addInitScript(() => {
+    // A stand-in key: the browser prompt itself cannot run headless. The console's own encoding,
+    // challenge handling and the API calls are the real ones.
+    const u8 = (...n: number[]) => new Uint8Array(n).buffer;
+    navigator.credentials.get = async () =>
+      ({
+        type: "public-key",
+        rawId: u8(1, 2, 3),
+        response: {
+          authenticatorData: u8(4, 5),
+          clientDataJSON: u8(6, 7),
+          signature: u8(8, 9),
+          userHandle: null,
+        },
+      }) as unknown as Credential;
+  });
+  await page.route("**/api/v1/auth/csrf", (route) =>
+    signedIn
+      ? route.fulfill({ json: { header: "X-CSRF-Token", value: "csrf-key" } })
+      : route.fulfill({
+          ...failed,
+          body: JSON.stringify({ type: "about:blank", title: "Unauthenticated", status: 401 }),
+        }),
+  );
+  await page.route("**/api/v1/auth/break-glass/password", (route) =>
+    route.fulfill({ status: 204 }),
+  );
+  await page.route("**/api/v1/auth/second-factor/webauthn/challenge", (route) =>
+    route.fulfill({
+      json: {
+        challenge: "AQID",
+        rpId: "localhost",
+        timeoutMs: 60000,
+        userVerification: "preferred",
+        allowCredentials: [{ type: "public-key", id: "AQID" }],
+      },
+    }),
+  );
+  await page.route("**/api/v1/auth/second-factor/webauthn/verify", (route) => {
+    assertionBody = route.request().postDataJSON() as Record<string, string>;
+    signedIn = true;
+    return route.fulfill({ status: 204 });
+  });
+  await page.route("**/api/v1/directory/users?*", (route) =>
+    route.fulfill({ json: { items: [] } }),
+  );
+
+  await page.goto("/directory/users?q=ada");
+  await page.getByLabel("Account name").fill("breakglass");
+  await page.getByLabel("Password").fill("right");
+  await page.keyboard.press("Enter");
+  const key = page.getByRole("button", { name: "Use a security key" });
+  await expect(key).toBeVisible();
+  await page.screenshot({ path: `../factory/demos/evidence/T-0772/sign-in-security-key.png` });
+  await key.click();
+  await expect(page).toHaveURL(/\/directory\/users\?q=ada$/);
+  expect(assertionBody).toEqual({
+    credentialId: "AQID",
+    authenticatorData: "BAU",
+    clientDataJson: "Bgc",
+    signature: "CAk",
+  });
+});

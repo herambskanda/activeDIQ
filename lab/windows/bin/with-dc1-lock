@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Serialise every session against the Windows lab DC (dc1, Proxmox VM 119) (T-0839).
+#
+# About seven tickets share dc1, and some of them reboot it, change LDAP signing / channel-binding
+# policy, install and remove the agent or clear the Security log. Two of those at once give both a
+# wrong answer. Every worker session that talks to dc1 over WinRM (or runs a test against its LDAPS
+# port) runs under this wrapper:
+#
+#   lab/windows/bin/with-dc1-lock [--] COMMAND [ARGS...]
+#
+# It takes an exclusive flock on the lock file, waits for it (default 3600 s), prints who holds it
+# while it waits, runs COMMAND with the lock held, and exits with COMMAND's status. The lock is
+# released when COMMAND (and anything it left running) exits, or when this process dies.
+# Exit 75 = timed out waiting; 2 = usage or lock file unusable.
+#
+# Nesting is safe: a COMMAND that is itself wrapped (agent-verify, windows-lab test-connector) sees
+# DIQ_DC1_LOCK_HELD=<pid of the holder> and runs straight through instead of deadlocking on itself.
+#
+# Settings (environment): DIQ_DC1_LOCK lock file (default /tmp/claude-1000/activediq-dc1.lock),
+# DIQ_DC1_LOCK_WAIT seconds to wait (default 3600), DIQ_DC1_LOCK_WHO text shown to waiters.
+# Runbook: knowledge/development/runbooks/windows-lab.md section 10.
+set -uo pipefail
+
+LOCK="${DIQ_DC1_LOCK:-/tmp/claude-1000/activediq-dc1.lock}"
+WAIT="${DIQ_DC1_LOCK_WAIT:-3600}"
+HOLDER="$LOCK.holder"   # who holds it; written under the lock, only read while the lock is busy
+
+die() { echo "with-dc1-lock: $*" >&2; exit "${2:-2}"; }
+
+[ "${1:-}" = "--" ] && shift
+[ "$#" -ge 1 ] || die "usage: with-dc1-lock [--] COMMAND [ARGS...]"
+[[ "$WAIT" =~ ^[0-9]+$ ]] || die "DIQ_DC1_LOCK_WAIT must be whole seconds (got '$WAIT')"
+command -v flock >/dev/null 2>&1 || die "flock not found (util-linux)"
+
+# Re-entrant: only trust the marker if that holder process is still alive.
+if [ -n "${DIQ_DC1_LOCK_HELD:-}" ] && [[ "$DIQ_DC1_LOCK_HELD" =~ ^[0-9]+$ ]] && kill -0 "$DIQ_DC1_LOCK_HELD" 2>/dev/null; then
+  exec "$@"
+fi
+
+mkdir -p "$(dirname "$LOCK")" 2>/dev/null || die "cannot create $(dirname "$LOCK") (set DIQ_DC1_LOCK to a writable path)"
+exec 9>>"$LOCK" || die "cannot open lock file $LOCK"
+
+started=$SECONDS
+if ! flock -n 9; then
+  echo "with-dc1-lock: dc1 is busy; waiting up to ${WAIT}s. Held by: $(cat "$HOLDER" 2>/dev/null || echo 'unknown (holder is starting)')" >&2
+  flock -w "$WAIT" 9 || die "gave up after ${WAIT}s; dc1 still held by: $(cat "$HOLDER" 2>/dev/null || echo unknown)" 75
+fi
+waited=$((SECONDS - started))
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+cmd="$*"
+printf '%s\n' "${DIQ_DC1_LOCK_WHO:-user=$(id -un) pid=$$ branch=${branch:-none} cwd=$PWD since=$(date -u +%Y-%m-%dT%H:%M:%SZ) cmd=${cmd:0:120}}" > "$HOLDER"
+trap 'rm -f "$HOLDER"' EXIT   # still under the lock: fd 9 closes after this trap
+
+export DIQ_DC1_LOCK_HELD=$$ DIQ_DC1_LOCK_WAITED=$waited
+echo "with-dc1-lock: holding dc1 lock $LOCK (pid $$, waited ${waited}s)" >&2
+"$@"
+exit $?

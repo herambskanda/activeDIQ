@@ -38,10 +38,29 @@ type noRep struct{}
 
 func (noRep) ProtocolError(context.Context, fleet.Identity, fleet.Violation) error { return nil }
 
+// wantEvents is how many events the test appends and expects the server to see.
+const wantEvents = 3
+
+// deliveryCeiling bounds how long the test waits for the agent's sender to deliver. It is a failure
+// ceiling, never a synchronisation delay: the wait ends the moment the server has seen wantEvents. The
+// sender drains on a 1s tick (Append does not wake it), so under a loaded CI box delivery is
+// scheduler-bound and the ceiling must be far above that tick.
+const deliveryCeiling = 45 * time.Second
+
 type ingest struct {
 	agentv1.UnimplementedEventIngestServer
-	mu  sync.Mutex
-	got []uint64
+	mu   sync.Mutex
+	got  []uint64
+	full chan struct{} // closed once wantEvents events have been seen
+}
+
+func newIngest() *ingest { return &ingest{full: make(chan struct{})} }
+
+// seen returns a copy of the sequences the server has stored so far.
+func (i *ingest) seen() []uint64 {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return append([]uint64(nil), i.got...)
 }
 
 func (i *ingest) SubmitEvents(_ context.Context, in *agentv1.SubmitEventsRequest) (*agentv1.SubmitEventsResponse, error) {
@@ -49,6 +68,13 @@ func (i *ingest) SubmitEvents(_ context.Context, in *agentv1.SubmitEventsRequest
 	defer i.mu.Unlock()
 	for _, e := range in.Events {
 		i.got = append(i.got, e.AgentSeq)
+	}
+	if len(i.got) >= wantEvents {
+		select {
+		case <-i.full:
+		default:
+			close(i.full)
+		}
 	}
 	return &agentv1.SubmitEventsResponse{Accepted: uint64(len(in.Events)), HighestStoredSeq: in.Events[len(in.Events)-1].AgentSeq}, nil
 }
@@ -69,7 +95,7 @@ func TestContractOverTunnel(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, b := make(chan fleet.Frame, 64), make(chan fleet.Frame, 64)
-	ing := &ingest{}
+	ing := newIngest()
 	srv, err := fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleServer, Identity: id, Reporter: noRep{}, Transport: pipeEnd{in: a, out: b},
 		Binding: fleet.Binding{Contract: c, Register: func(_ fleet.Identity, reg grpc.ServiceRegistrar) { agentv1.RegisterEventIngestServer(reg, ing) }}})
 	if err != nil {
@@ -80,7 +106,7 @@ func TestContractOverTunnel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), deliveryCeiling+15*time.Second)
 	defer cancel()
 	go func() { _ = srv.Run(ctx) }()
 	go func() { _ = comp.Run(ctx) }()
@@ -97,20 +123,20 @@ func TestContractOverTunnel(t *testing.T) {
 		t.Fatalf("GetCollectionState %v", err)
 	}
 	// Agent -> server: events flow through the outbox and sender.
-	for i := 0; i < 3; i++ {
-		_, _ = h.Outbox().Append(&agentv1.AgentEvent{Kind: agentv1.EventKind_EVENT_KIND_EVENT, Channel: "security", EventRecordId: uint64(i + 1)})
-	}
-	for i := 0; i < 600; i++ {
-		ing.mu.Lock()
-		n := len(ing.got)
-		ing.mu.Unlock()
-		if n >= 3 {
-			break
+	for i := 0; i < wantEvents; i++ {
+		if _, err := h.Outbox().Append(&agentv1.AgentEvent{Kind: agentv1.EventKind_EVENT_KIND_EVENT, Channel: "security", EventRecordId: uint64(i + 1)}); err != nil {
+			t.Fatalf("Append %d: %v", i, err)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	if len(ing.got) < 3 {
-		t.Fatalf("server saw %v", ing.got)
+	select {
+	case <-ing.full:
+	case <-time.After(deliveryCeiling):
+		t.Fatalf("server saw %v of %d events within %s; outbox %+v", ing.seen(), wantEvents, deliveryCeiling, h.Outbox().Stats())
+	case <-ctx.Done():
+		t.Fatalf("tunnel context ended: server saw %v; outbox %+v", ing.seen(), h.Outbox().Stats())
+	}
+	if got := ing.seen(); len(got) != wantEvents || got[0] != 1 || got[1] != 2 || got[2] != 3 {
+		t.Fatalf("server saw %v, want sequences 1,2,3 in order", got)
 	}
 	// A method outside the contract is refused by the tunnel, not by the handler.
 	err = srv.Conn().Invoke(ctx, "/skenzeriq.agent.v1.EventIngest/SubmitEvents", &agentv1.SubmitEventsRequest{}, &agentv1.SubmitEventsResponse{})

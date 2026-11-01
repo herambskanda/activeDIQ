@@ -19,11 +19,18 @@ const (
 	ProblemTypeNotFound                = "/problems/not-found"
 	ProblemTypeNotImplemented          = "/problems/not-implemented"
 	ProblemTypeNotReady                = "/problems/not-ready"
+	ProblemTypeOperationNotUndoable    = "/problems/operation-not-undoable"
 	ProblemTypePasswordPolicyViolation = "/problems/password-policy-violation"
 	ProblemTypePayloadTooLarge         = "/problems/payload-too-large"
 	ProblemTypePreconditionFailed      = "/problems/precondition-failed"
 	ProblemTypePreconditionRequired    = "/problems/precondition-required"
 	ProblemTypeRateLimited             = "/problems/rate-limited"
+	ProblemTypeReportResultExpired     = "/problems/report-result-expired"
+	ProblemTypeReportRowCapExceeded    = "/problems/report-row-cap-exceeded"
+	ProblemTypeReportScopeEmpty        = "/problems/report-scope-empty"
+	ProblemTypeReportScopeUnsupported  = "/problems/report-scope-unsupported"
+	ProblemTypeSearchQueryInvalid      = "/problems/search-query-invalid"
+	ProblemTypeSearchUnavailable       = "/problems/search-unavailable"
 	ProblemTypeSetupRefused            = "/problems/setup-refused"
 	ProblemTypeSignInFailed            = "/problems/sign-in-failed"
 	ProblemTypeStepUpRequired          = "/problems/step-up-required"
@@ -97,6 +104,11 @@ func NotReady(detail string) *Problem {
 	return newProblem(ProblemTypeNotReady, "The service is not ready", 503, detail)
 }
 
+// OperationNotUndoable builds a 409 /problems/operation-not-undoable problem.
+func OperationNotUndoable(detail string) *Problem {
+	return newProblem(ProblemTypeOperationNotUndoable, "The operation cannot be undone", 409, detail)
+}
+
 // PasswordPolicyViolation builds a 422 /problems/password-policy-violation problem.
 func PasswordPolicyViolation(detail string) *Problem {
 	return newProblem(ProblemTypePasswordPolicyViolation, "The password does not meet the policy", 422, detail)
@@ -120,6 +132,36 @@ func PreconditionRequired(detail string) *Problem {
 // RateLimited builds a 429 /problems/rate-limited problem.
 func RateLimited(detail string) *Problem {
 	return newProblem(ProblemTypeRateLimited, "Too many requests", 429, detail)
+}
+
+// ReportResultExpired builds a 410 /problems/report-result-expired problem.
+func ReportResultExpired(detail string) *Problem {
+	return newProblem(ProblemTypeReportResultExpired, "The stored result has expired", 410, detail)
+}
+
+// ReportRowCapExceeded builds a 422 /problems/report-row-cap-exceeded problem.
+func ReportRowCapExceeded(detail string) *Problem {
+	return newProblem(ProblemTypeReportRowCapExceeded, "The result is over the row cap of the format", 422, detail)
+}
+
+// ReportScopeEmpty builds a 422 /problems/report-scope-empty problem.
+func ReportScopeEmpty(detail string) *Problem {
+	return newProblem(ProblemTypeReportScopeEmpty, "The scope covers no directory objects", 422, detail)
+}
+
+// ReportScopeUnsupported builds a 409 /problems/report-scope-unsupported problem.
+func ReportScopeUnsupported(detail string) *Problem {
+	return newProblem(ProblemTypeReportScopeUnsupported, "The scope uses a kind that reports cannot evaluate", 409, detail)
+}
+
+// SearchQueryInvalid builds a 400 /problems/search-query-invalid problem.
+func SearchQueryInvalid(detail string) *Problem {
+	return newProblem(ProblemTypeSearchQueryInvalid, "The search text cannot be used", 400, detail)
+}
+
+// SearchUnavailable builds a 503 /problems/search-unavailable problem.
+func SearchUnavailable(detail string) *Problem {
+	return newProblem(ProblemTypeSearchUnavailable, "Search is unavailable", 503, detail)
 }
 
 // SetupRefused builds a 401 /problems/setup-refused problem.

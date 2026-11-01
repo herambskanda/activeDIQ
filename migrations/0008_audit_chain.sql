@@ -16,6 +16,7 @@
 --   Tail-keeping: (tenant_id, seq) is the primary key of audit_event, so a stale head cannot fork the chain,
 --   and (tenant_id, event_id) is unique so a retried append after an ambiguous COMMIT is not recorded twice.
 
+-- write-class: audit_head system
 CREATE TABLE public.audit_head (
   tenant_id uuid PRIMARY KEY REFERENCES public.tenants (id),
   seq bigint NOT NULL CHECK (seq >= 0),
@@ -23,6 +24,7 @@ CREATE TABLE public.audit_head (
   at timestamptz NOT NULL
 );
 
+-- write-class: audit_event system
 CREATE TABLE public.audit_event (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   seq bigint NOT NULL CHECK (seq >= 1),
@@ -39,6 +41,7 @@ CREATE TABLE public.audit_event (
 
 CREATE UNIQUE INDEX audit_event_event_id ON public.audit_event (tenant_id, event_id);
 
+-- write-class: audit_checkpoint system
 CREATE TABLE public.audit_checkpoint (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   seq bigint NOT NULL CHECK (seq >= 1),
@@ -53,6 +56,7 @@ CREATE TABLE public.audit_checkpoint (
 
 -- The tenant's Ed25519 checkpoint keys (ADR-0005 rule 11). The private key is sealed under the tenant data
 -- key (TM-D7); the window of a key is stated in the chain by its created and retired events, not here.
+-- write-class: audit_checkpoint_key system
 CREATE TABLE public.audit_checkpoint_key (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   key_id text NOT NULL CHECK (key_id ~ '^[0-9a-f]{64}$'),

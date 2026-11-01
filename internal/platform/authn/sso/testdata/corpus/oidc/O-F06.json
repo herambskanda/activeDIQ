@@ -1,0 +1,10 @@
+{
+ "id": "O-F06",
+ "class": "forged",
+ "cites": [
+  "OIDC-9"
+ ],
+ "build": "signature_broken",
+ "expect": "refuse",
+ "reason": "oidc.signature"
+}

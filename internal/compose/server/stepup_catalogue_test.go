@@ -10,6 +10,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/modules/delegation"
 	"github.com/skenzeriq/activediq/internal/modules/inventory"
+	"github.com/skenzeriq/activediq/internal/modules/notify"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/module/moduletest"
@@ -36,6 +37,8 @@ var stepUpTable = map[operation.ActionID]string{
 	// withholds data from erasure; both are a compliance officer's act and need a fresh MFA.
 	compliance.SetHoldActionID:     "Placing a legal hold on a personal subject",
 	compliance.ReleaseHoldActionID: "Releasing a legal hold (lets the retention purge destroy evidence)",
+	// notify.settings.update widens the allowed recipient domains and re-points the SMTP relay (TM-D30 SX-7).
+	notify.UpdateSettingsActionID: "Widening allowed recipient domains / re-pointing the SMTP relay (TM-D30 SX-7)",
 	// RBAC changes (§7.4): every role or assignment change is a step-up operation.
 	delegation.RoleCreateID: "RBAC change: creating a custom role",
 	delegation.RoleUpdateID: "RBAC change: editing a custom role's permissions",

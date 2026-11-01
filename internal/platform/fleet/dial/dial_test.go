@@ -135,9 +135,6 @@ var nil2t *testing.T
 
 func setup(t *testing.T) (*issuer, Material, string) {
 	t.Helper()
-	if !runtimeUnix() {
-		t.Skip("enrolment state is refused on non-unix hosts until T-0291")
-	}
 	nil2t = t
 	ca, srv := newCA(t, "tenant client CA"), newCA(t, "installation server CA")
 	addr := serve(t, srv, true)
@@ -401,9 +398,6 @@ func serveSpliced(t *testing.T, real, attacker authority) string {
 }
 
 func TestEnrollRefusesSplicedChain(t *testing.T) {
-	if !runtimeUnix() {
-		t.Skip("unix only")
-	}
 	good, attacker := newCA(t, "installation CA"), newCA(t, "attacker CA")
 	iss := &issuer{ca: good, tid: tenant.New()}
 	dir := filepath.Join(t.TempDir(), "state")
@@ -465,9 +459,6 @@ func TestDialOutRefusesUnpinnedServers(t *testing.T) {
 }
 
 func TestLoadReportsExpiredLeaf(t *testing.T) {
-	if !runtimeUnix() {
-		t.Skip("unix only")
-	}
 	iss, m, dir := setup(t)
 	if _, err := Enroll(context.Background(), m, dir, iss.exchange); err != nil {
 		t.Fatal(err)

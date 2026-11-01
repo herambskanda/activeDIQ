@@ -151,17 +151,30 @@ type Observation struct {
 	// onPremisesSyncBehavior.isCloudManaged. They decide cloud_seen_at (DM-16.I9).
 	OnPremisesSyncEnabled *bool
 	CloudManaged          bool
-	// OnPremisesSyncRead says the sync read onPremisesSyncEnabled on this Entra group. With it set,
+	// OnPremisesSyncEnabledRead says the sync read onPremisesSyncEnabled on this Entra group. With it set,
 	// a nil OnPremisesSyncEnabled is Graph's JSON null (never synced); without it the key is stored
 	// absent, which the judge treats as unknown. OnPremisesSyncEnabled set requires it.
-	OnPremisesSyncRead bool
+	OnPremisesSyncEnabledRead bool
 	// Entra only, users and groups: the other inputs of the DM-20.I4 gate, kept so that a later AD-side
-	// cycle can run the gate again. OnPremisesSID is onPremisesSecurityIdentifier (binary),
+	// cycle can run the gate again. OnPremisesSecurityIdentifier is onPremisesSecurityIdentifier (binary),
 	// OnPremisesDomainName is onPremisesDomainName ("" when not populated) and OnPremisesImmutableID is
 	// the decoded onPremisesImmutableId (the anchor, 16 bytes for a GUID anchor).
-	OnPremisesSID         []byte
-	OnPremisesDomainName  string
-	OnPremisesImmutableID []byte
+	OnPremisesSecurityIdentifier []byte
+	OnPremisesDomainName         string
+	OnPremisesImmutableID        []byte
+
+	// The D7 inputs of the derived states (reports spec §6.4, T-0958). A nil pointer or a zero time is
+	// "absent"; InputsRead says which of the four time inputs the sync read, so absent-and-read
+	// ("not locked", "must change", "never") is told from not read ("unknown"). A zero LockoutTime
+	// with ReadLockoutTime set is lockoutTime 0; a zero AccountExpires with ReadAccountExpires set is
+	// "never" (0 or 0x7FFFFFFFFFFFFFFF; the filetime codec decides).
+	UserAccountControl *int64
+	PrimaryGroupID     *int64
+	LastLogonTimestamp time.Time
+	// HasSPN says whether servicePrincipalName has a value (nil: not read). The values themselves are
+	// not stored.
+	HasSPN     *bool
+	InputsRead InputsRead
 
 	// PrimaryGroup is a user's primaryGroupID resolved to the group (DM-17.I2). Zero: none observed.
 	PrimaryGroup GUID
@@ -175,10 +188,47 @@ type Observation struct {
 	RemovedMembers []GUID
 }
 
+// InputsRead is the bitmask of time inputs a sync read for an object (directory_objects.inputs_read).
+type InputsRead uint8
+
+// The inputs.
+const (
+	ReadLockoutTime InputsRead = 1 << iota
+	ReadPwdLastSet
+	ReadAccountExpires
+	ReadLastLogonTimestamp
+	readAll = ReadLockoutTime | ReadPwdLastSet | ReadAccountExpires | ReadLastLogonTimestamp
+)
+
+func (r InputsRead) valid() bool { return r&^readAll == 0 }
+
+// checkInputs refuses a time that was set without its read bit and out-of-range values.
+func (o *Observation) checkInputs() error {
+	if !o.InputsRead.valid() {
+		return fmt.Errorf("unknown InputsRead bits")
+	}
+	for _, c := range []struct {
+		t   time.Time
+		bit InputsRead
+		n   string
+	}{{o.LockoutTime, ReadLockoutTime, "LockoutTime"}, {o.PwdLastSet, ReadPwdLastSet, "PwdLastSet"},
+		{o.AccountExpires, ReadAccountExpires, "AccountExpires"}, {o.LastLogonTimestamp, ReadLastLogonTimestamp, "LastLogonTimestamp"}} {
+		if !c.t.IsZero() && o.InputsRead&c.bit == 0 {
+			return fmt.Errorf("%s set without its InputsRead bit", c.n)
+		}
+	}
+	for _, v := range []*int64{o.UserAccountControl, o.PrimaryGroupID} {
+		if v != nil && (*v < 0 || *v > 1<<32-1) {
+			return fmt.Errorf("account control or primary group out of range")
+		}
+	}
+	return nil
+}
+
 // GroupFacts are the judge's inputs, typed so the producer cannot store one without the others it
 // depends on. A nil pointer or nil slice is "not read", which the judge treats as unknown. AD groups
 // use GroupType, BroadMembershipWrite(+At) and WrittenBack; Entra groups use SecurityEnabled,
-// Visibility and GroupTypes (and Observation.OnPremisesSyncRead).
+// Visibility and GroupTypes (and Observation.OnPremisesSyncEnabledRead).
 type GroupFacts struct {
 	GroupType *int32 // AD groupType
 	// BroadMembershipWrite is the computed fact (TM-D18); BroadMembershipWriteAt is when it was
@@ -215,19 +265,19 @@ func (o *Observation) merged(entra bool) (map[string]any, error) {
 	}
 	f := o.Facts
 	if o.Kind != KindGroup {
-		if f.ad() || f.entra() || o.OnPremisesSyncRead {
+		if f.ad() || f.entra() || o.OnPremisesSyncEnabledRead {
 			return nil, fmt.Errorf("group facts on a non-group")
 		}
 		return o.Attributes, nil
 	}
-	if entra && f.ad() || !entra && (f.entra() || o.OnPremisesSyncRead) {
+	if entra && f.ad() || !entra && (f.entra() || o.OnPremisesSyncEnabledRead) {
 		return nil, fmt.Errorf("group facts of the other plane")
 	}
 	if (f.BroadMembershipWrite == nil) != f.BroadMembershipWriteAt.IsZero() {
 		return nil, fmt.Errorf("broadMembershipWrite and its computed-at come together")
 	}
-	if entra && o.OnPremisesSyncEnabled != nil && !o.OnPremisesSyncRead {
-		return nil, fmt.Errorf("onPremisesSyncEnabled set without OnPremisesSyncRead")
+	if entra && o.OnPremisesSyncEnabled != nil && !o.OnPremisesSyncEnabledRead {
+		return nil, fmt.Errorf("onPremisesSyncEnabled set without OnPremisesSyncEnabledRead")
 	}
 	out := make(map[string]any, len(o.Attributes)+8)
 	for k, v := range o.Attributes {
@@ -252,7 +302,7 @@ func (o *Observation) merged(entra bool) (map[string]any, error) {
 	if f.GroupTypes != nil {
 		out[AttrGroupTypes] = f.GroupTypes
 	}
-	if o.OnPremisesSyncRead {
+	if o.OnPremisesSyncEnabledRead {
 		if o.OnPremisesSyncEnabled != nil {
 			out[AttrOnPremisesSyncEnabled] = *o.OnPremisesSyncEnabled
 		} else {
@@ -300,6 +350,27 @@ func nullTime(t time.Time) any {
 
 func validGUID(g GUID) bool { c, ok := canon(string(g)); return ok && c == string(g) }
 
+// lockConnection makes the writers of one (tenant, connection) take turns, until the transaction ends
+// (DM-16.I10). ancestry_complete is checked against the parent row and rewriteDescendants and
+// repairCompleteness see committed rows only, so two overlapping writers (a delta and a full pass, or
+// two batches) could store a child under a parent's old chain as complete while a move commits beside
+// it, which widens an OU-delegated read scope. Under the lock the second writer waits for the first to
+// commit and then reads its result. READ COMMITTED is required: a snapshot taken before the lock would
+// still show the pre-move rows, so any other level is refused before anything is read.
+func lockConnection(ctx context.Context, tx store.Tx, connection ConnectionID) error {
+	var iso string
+	if err := tx.QueryRow(ctx, `SELECT current_setting('transaction_isolation')`).Scan(&iso); err != nil {
+		return fmt.Errorf("inventory: read isolation: %w", err)
+	}
+	if iso != "read committed" {
+		return ErrIsolation
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('inventory.populate:' || current_setting('app.tenant_id', true) || '|' || $1::text, 0))`, string(connection)); err != nil {
+		return fmt.Errorf("inventory: lock connection: %w", err)
+	}
+	return nil
+}
+
 // Populate upserts the observations of connection observed at the given time (the cycle's as-of) and
 // writes their edges. All or nothing: any invalid observation fails the call before the first write, so a
 // caller's transaction never holds half a batch. An observation older than the stored row is counted
@@ -313,6 +384,9 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		return out, ErrTooMany
 	}
 	if err := requireTenant(ctx, tx); err != nil {
+		return out, err
+	}
+	if err := lockConnection(ctx, tx, connection); err != nil {
 		return out, err
 	}
 	var ck string
@@ -343,6 +417,9 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		attrs[i] = b
 	}
 
+	// The search keys of the objects this call wrote, replaced in this transaction after the loop.
+	keyed := map[GUID][]searchKeyRow{}
+	var keyOrder []GUID
 	for i := range obs {
 		o := &obs[i]
 		var cloud any
@@ -351,12 +428,12 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			cloud = observed.UTC()
 		}
 		// The gate inputs are stored for Entra users and groups only; for anything else they stay NULL.
-		var onPremSync, onPremCloud any
+		var syncEnabledVal, cloudManagedVal any
 		if entra && (o.Kind == KindUser || o.Kind == KindGroup) {
 			if o.OnPremisesSyncEnabled != nil {
-				onPremSync = *o.OnPremisesSyncEnabled
+				syncEnabledVal = *o.OnPremisesSyncEnabled
 			}
-			onPremCloud = o.CloudManaged
+			cloudManagedVal = o.CloudManaged
 		}
 		anc := make([]string, len(o.Ancestry))
 		for j, a := range o.Ancestry {
@@ -369,33 +446,15 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		if len(o.ConsistencyGUID) > 0 {
 			cg = o.ConsistencyGUID
 		}
-		var inserted bool
-		err := tx.QueryRow(ctx, `INSERT INTO public.directory_objects AS d (tenant_id, connection_id, object_guid, nc_guid, kind, object_class,
-				parent_guid, ancestry, dn, rdn, sid, sam_account_name, upn, display_name, enabled, lockout_time, pwd_last_set, account_expires,
-				consistency_guid, attributes, when_created, when_changed, observed_at, observed_dsa, cloud_seen_at, state,
-				on_prem_sync_enabled, on_prem_cloud_managed, on_prem_sid, on_prem_domain_name, on_prem_immutable_id)
-			VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $4, $5,
-				$6::uuid, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25,
-				$26, $27, $28, $29, $30)
-			ON CONFLICT (tenant_id, connection_id, object_guid) DO UPDATE SET
-				nc_guid = EXCLUDED.nc_guid, kind = EXCLUDED.kind, object_class = EXCLUDED.object_class, parent_guid = EXCLUDED.parent_guid,
-				ancestry = EXCLUDED.ancestry, dn = EXCLUDED.dn, rdn = EXCLUDED.rdn, sid = EXCLUDED.sid,
-				sam_account_name = EXCLUDED.sam_account_name, upn = EXCLUDED.upn, display_name = EXCLUDED.display_name,
-				enabled = EXCLUDED.enabled, lockout_time = EXCLUDED.lockout_time, pwd_last_set = EXCLUDED.pwd_last_set,
-				account_expires = EXCLUDED.account_expires, consistency_guid = EXCLUDED.consistency_guid, attributes = EXCLUDED.attributes,
-				when_created = EXCLUDED.when_created, when_changed = EXCLUDED.when_changed, observed_at = EXCLUDED.observed_at,
-				observed_dsa = EXCLUDED.observed_dsa, state = EXCLUDED.state,
-				on_prem_sync_enabled = EXCLUDED.on_prem_sync_enabled, on_prem_cloud_managed = EXCLUDED.on_prem_cloud_managed,
-				on_prem_sid = EXCLUDED.on_prem_sid, on_prem_domain_name = EXCLUDED.on_prem_domain_name,
-				on_prem_immutable_id = EXCLUDED.on_prem_immutable_id,
-				cloud_seen_at = GREATEST(d.cloud_seen_at, EXCLUDED.cloud_seen_at)
-			WHERE d.observed_at <= EXCLUDED.observed_at
-			RETURNING (xmax = 0)`,
+		var w written
+		err := tx.QueryRow(ctx, upsertObjectSQL,
 			string(connection), string(o.Object), nullGUID(o.NC), string(o.Kind), o.Class,
 			nullGUID(o.Parent), anc, o.DN, o.RDN, sid, o.SAMAccountName, o.UPN, o.DisplayName, o.Enabled,
 			nullTime(o.LockoutTime), nullTime(o.PwdLastSet), nullTime(o.AccountExpires),
 			cg, string(attrs[i]), nullTime(o.WhenCreated), nullTime(o.WhenChanged), observed.UTC(), o.ObservedDSA, cloud, string(o.State),
-			onPremSync, onPremCloud, nilIfEmpty(o.OnPremisesSID), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID)).Scan(&inserted)
+			syncEnabledVal, cloudManagedVal, nilIfEmpty(o.OnPremisesSecurityIdentifier), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID),
+			o.UserAccountControl, o.PrimaryGroupID, nullTime(o.LastLogonTimestamp), o.HasSPN, int16(o.InputsRead)).
+			Scan(&w.inserted, &w.moved, &w.completeChanged)
 		if store.IsNoRows(err) {
 			out.Stale++
 			continue
@@ -403,16 +462,39 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		if err != nil {
 			return out, writeErr("upsert object", err)
 		}
-		if inserted {
+		if w.inserted {
 			out.Inserted++
 		} else {
 			out.Updated++
+		}
+		if _, ok := keyed[o.Object]; !ok {
+			keyOrder = append(keyOrder, o.Object)
+		}
+		keyed[o.Object] = searchKeys(sourceOf(o))
+		// The row moved (its parent or chain changed) or its completeness changed, or it is new and
+		// descendants may be waiting for it: bring the rows below it up to date in this transaction.
+		if w.moved {
+			if err := rewriteDescendants(ctx, tx, connection, o.Object); err != nil {
+				return out, err
+			}
+		}
+		if w.inserted || w.moved || w.completeChanged {
+			if err := repairCompleteness(ctx, tx, connection, o.Object); err != nil {
+				return out, err
+			}
 		}
 		if cloud != nil {
 			out.CloudSeen++
 		}
 
 		if o.Kind == KindGroup {
+			// A group row that arrived or changed (state, kind) is a closure root to recompute, with
+			// the groups that contain it.
+			if _, err := tx.Exec(ctx, `INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+				VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid) ON CONFLICT DO NOTHING`,
+				string(connection), string(o.Object)); err != nil {
+				return out, writeErr("mark group dirty", err)
+			}
 			for _, m := range o.Members {
 				if err := p.SetMember(ctx, tx, connection, o.Object, m, observed); err != nil {
 					return out, err
@@ -440,7 +522,136 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			}
 		}
 	}
+	// The search index follows the objects in the same transaction (ADR-0011 rule 5): a rollback leaves both.
+	var keyRows []searchKeyRow
+	for _, g := range keyOrder {
+		keyRows = append(keyRows, keyed[g]...)
+	}
+	if _, err := writeSearchKeys(ctx, tx, connection, keyOrder, keyRows); err != nil {
+		return out, err
+	}
+	// The membership closure the group datasets read follows the links of this batch in the same transaction.
+	if _, err := p.RefreshClosure(ctx, tx, connection); err != nil {
+		return out, err
+	}
 	return out, nil
+}
+
+// written is what one upsert reports about the row it wrote.
+type written struct {
+	inserted bool
+	// moved: the row existed and its parent or ancestry changed.
+	moved bool
+	// completeChanged: the row existed and ancestry_complete changed.
+	completeChanged bool
+}
+
+// upsertObjectSQL writes one row and reports what changed against the stored one (read in the same
+// statement, so it is the value before this write; it is read without FOR UPDATE, which would skip the
+// row the same statement then updates). ancestry_complete is derived here from the database,
+// never taken from the observation (reports.md §4.5): true only when
+//   - the row is the NC head itself (no parent, nc_guid = object_guid, empty chain), or
+//   - its parent is its NC head (parent = nc_guid) and the chain is exactly [parent], or
+//   - the parent row exists, is complete, and the chain is the parent plus the parent's chain.
+//
+// A row with no parent and no NC (Entra) has no chain to be complete about, and is false. A stale
+// observation matches no row and returns no rows.
+const upsertObjectSQL = `WITH old AS (
+		SELECT parent_guid, ancestry, ancestry_complete FROM public.directory_objects
+		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND object_guid = $2::uuid),
+	ins AS (
+		INSERT INTO public.directory_objects AS d (tenant_id, connection_id, object_guid, nc_guid, kind, object_class,
+			parent_guid, ancestry, dn, rdn, sid, sam_account_name, upn, display_name, enabled, lockout_time, pwd_last_set, account_expires,
+			consistency_guid, attributes, when_created, when_changed, observed_at, observed_dsa, cloud_seen_at, state,
+			on_prem_sync_enabled, on_prem_cloud_managed, on_prem_sid, on_prem_domain_name, on_prem_immutable_id, ancestry_complete,
+			user_account_control, primary_group_id, last_logon_timestamp, spn_present, inputs_read)
+		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $4, $5,
+			$6::uuid, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25,
+			$26, $27, $28, $29, $30,
+			CASE
+				WHEN $6::uuid IS NULL THEN $3::uuid IS NOT NULL AND $3::uuid = $2::uuid AND cardinality($7::uuid[]) = 0
+				WHEN $3::uuid IS NOT NULL AND $6::uuid = $3::uuid THEN $7::uuid[] = ARRAY[$6::uuid]
+				ELSE COALESCE((SELECT p.ancestry_complete AND $7::uuid[] = ARRAY[p.object_guid] || p.ancestry
+					FROM public.directory_objects p
+					WHERE p.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND p.connection_id = $1::uuid
+					AND p.object_guid = $6::uuid), false)
+			END,
+			$31::bigint, $32::bigint, $33::timestamptz, $34::boolean, $35::smallint)
+		ON CONFLICT (tenant_id, connection_id, object_guid) DO UPDATE SET
+			nc_guid = EXCLUDED.nc_guid, kind = EXCLUDED.kind, object_class = EXCLUDED.object_class, parent_guid = EXCLUDED.parent_guid,
+			ancestry = EXCLUDED.ancestry, ancestry_complete = EXCLUDED.ancestry_complete, dn = EXCLUDED.dn, rdn = EXCLUDED.rdn, sid = EXCLUDED.sid,
+			sam_account_name = EXCLUDED.sam_account_name, upn = EXCLUDED.upn, display_name = EXCLUDED.display_name,
+			enabled = EXCLUDED.enabled, lockout_time = EXCLUDED.lockout_time, pwd_last_set = EXCLUDED.pwd_last_set,
+			account_expires = EXCLUDED.account_expires, consistency_guid = EXCLUDED.consistency_guid, attributes = EXCLUDED.attributes,
+			when_created = EXCLUDED.when_created, when_changed = EXCLUDED.when_changed, observed_at = EXCLUDED.observed_at,
+			observed_dsa = EXCLUDED.observed_dsa, state = EXCLUDED.state,
+			on_prem_sync_enabled = EXCLUDED.on_prem_sync_enabled, on_prem_cloud_managed = EXCLUDED.on_prem_cloud_managed,
+			on_prem_sid = EXCLUDED.on_prem_sid, on_prem_domain_name = EXCLUDED.on_prem_domain_name,
+			on_prem_immutable_id = EXCLUDED.on_prem_immutable_id,
+			user_account_control = EXCLUDED.user_account_control, primary_group_id = EXCLUDED.primary_group_id,
+			last_logon_timestamp = EXCLUDED.last_logon_timestamp, spn_present = EXCLUDED.spn_present, inputs_read = EXCLUDED.inputs_read,
+			cloud_seen_at = GREATEST(d.cloud_seen_at, EXCLUDED.cloud_seen_at)
+		WHERE d.observed_at <= EXCLUDED.observed_at
+		RETURNING (xmax = 0) AS inserted, d.parent_guid, d.ancestry, d.ancestry_complete)
+	SELECT ins.inserted,
+		COALESCE((SELECT o.parent_guid IS DISTINCT FROM ins.parent_guid OR o.ancestry <> ins.ancestry FROM old o), false),
+		COALESCE((SELECT o.ancestry_complete <> ins.ancestry_complete FROM old o), false)
+	FROM ins`
+
+// rewriteDescendants rewrites, in the caller's transaction, the chain of every row below moved: the
+// part up to and including moved is kept, and what follows it becomes moved's current chain. The
+// chain is nearest parent first, so a descendant's old chain beyond moved (its old ancestors) is
+// replaced and its own nearer part is untouched. A chain that would pass 128 hops cannot be stored;
+// the row gets an empty chain and ancestry_complete = false, which is "unknown" and out of scope,
+// never a stale chain.
+//
+// Rows are found by ancestry (a grandchild whose parent is not yet synced is still below moved), so
+// this is a scan until the GIN index on ancestry (row B3) lands. It runs only for a row that moved.
+func rewriteDescendants(ctx context.Context, tx store.Tx, connection ConnectionID, moved GUID) error {
+	_, err := tx.Exec(ctx, `UPDATE public.directory_objects d SET
+			ancestry = CASE WHEN array_position(d.ancestry, $2::uuid) + cardinality(m.ancestry) <= 128
+				THEN d.ancestry[1:array_position(d.ancestry, $2::uuid)] || m.ancestry ELSE '{}' END,
+			ancestry_complete = d.ancestry_complete AND array_position(d.ancestry, $2::uuid) + cardinality(m.ancestry) <= 128
+		FROM public.directory_objects m
+		WHERE m.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND m.connection_id = $1::uuid AND m.object_guid = $2::uuid
+		AND d.tenant_id = m.tenant_id AND d.connection_id = m.connection_id AND d.object_guid <> m.object_guid
+		AND d.ancestry @> ARRAY[$2::uuid]`, string(connection), string(moved))
+	if err != nil {
+		return writeErr("rewrite descendants", err)
+	}
+	return nil
+}
+
+// repairCompleteness recomputes ancestry_complete for every row reachable below root through
+// parent_guid, top down: a row is complete when its parent is and its chain is the parent's chain
+// plus the parent. It sets waiting descendants true when a parent arrives and unsets them when a
+// parent stops being complete. root's own flag was set by the upsert. The walk is bounded by the
+// chain limit and never revisits root, so a parent cycle in bad data ends.
+func repairCompleteness(ctx context.Context, tx store.Tx, connection ConnectionID, root GUID) error {
+	_, err := tx.Exec(ctx, `WITH RECURSIVE sub AS (
+			SELECT c.object_guid, c.ancestry, 1 AS depth,
+				r.ancestry_complete AND c.ancestry = ARRAY[r.object_guid] || r.ancestry AS ok
+			FROM public.directory_objects r
+			JOIN public.directory_objects c ON c.tenant_id = r.tenant_id AND c.connection_id = r.connection_id AND c.parent_guid = r.object_guid
+			WHERE r.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND r.connection_id = $1::uuid AND r.object_guid = $2::uuid
+			AND c.object_guid <> r.object_guid
+		UNION ALL
+			SELECT c.object_guid, c.ancestry, s.depth + 1, s.ok AND c.ancestry = ARRAY[s.object_guid] || s.ancestry
+			FROM sub s
+			JOIN public.directory_objects c ON c.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+				AND c.connection_id = $1::uuid AND c.parent_guid = s.object_guid
+			WHERE s.depth <= 128 AND c.object_guid <> $2::uuid
+		), verdict AS (
+			SELECT object_guid, bool_and(ok) AS ok FROM sub GROUP BY object_guid
+		)
+		UPDATE public.directory_objects d SET ancestry_complete = v.ok
+		FROM verdict v
+		WHERE d.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND d.connection_id = $1::uuid
+		AND d.object_guid = v.object_guid AND d.ancestry_complete <> v.ok`, string(connection), string(root))
+	if err != nil {
+		return writeErr("repair ancestry completeness", err)
+	}
+	return nil
 }
 
 func validateObservation(o *Observation, entra bool) ([]byte, error) {
@@ -451,8 +662,11 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 	if !validKinds[o.Kind] || o.Class == "" || len(o.Class) > 100 {
 		return bad("kind or class")
 	}
+	if err := o.checkInputs(); err != nil {
+		return bad(err.Error())
+	}
 	if entra {
-		if len(o.OnPremisesSID) != 0 && (len(o.OnPremisesSID) < 8 || len(o.OnPremisesSID) > 68) {
+		if len(o.OnPremisesSecurityIdentifier) != 0 && (len(o.OnPremisesSecurityIdentifier) < 8 || len(o.OnPremisesSecurityIdentifier) > 68) {
 			return bad("onPremisesSecurityIdentifier")
 		}
 		if len(o.OnPremisesImmutableID) > 64 || len(o.OnPremisesDomainName) > 255 || strings.ContainsRune(o.OnPremisesDomainName, 0) {
@@ -463,7 +677,7 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 		}
 	} else {
 		if !validGUID(o.NC) || !adStates[o.State] || o.OnPremisesSyncEnabled != nil || o.CloudManaged ||
-			len(o.OnPremisesSID) > 0 || o.OnPremisesDomainName != "" || len(o.OnPremisesImmutableID) > 0 {
+			len(o.OnPremisesSecurityIdentifier) > 0 || o.OnPremisesDomainName != "" || len(o.OnPremisesImmutableID) > 0 {
 			return bad("AD object nc, state or cloud fields")
 		}
 		if len(o.ConsistencyGUID) != 0 {
@@ -481,10 +695,13 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 	if len(o.Ancestry) > maxAncestryHops {
 		return bad("ancestry")
 	}
+	seen := make(map[GUID]bool, len(o.Ancestry))
 	for _, a := range o.Ancestry {
-		if !validGUID(a) {
+		// A chain that holds the object itself or repeats an ancestor is a cycle, not a chain.
+		if !validGUID(a) || a == o.Object || seen[a] {
 			return bad("ancestry")
 		}
+		seen[a] = true
 	}
 	if o.PrimaryGroup != "" && (!validGUID(o.PrimaryGroup) || o.PrimaryGroup == o.Object || o.Kind == KindGroup) {
 		return bad("primary group")
@@ -534,9 +751,13 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 // removeUnseen marks the active attr edges of group that this cycle did not refresh (observed_at older
 // than the cycle) removed: the cycle read the whole membership.
 func (Writer) removeUnseen(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group GUID, observed time.Time) error {
-	_, err := tx.Exec(ctx, `UPDATE public.links SET state = 'removed', observed_at = $3
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-		AND source_guid = $2::uuid AND link_attr = $4 AND state = 'active' AND observed_at < $3`,
+	_, err := tx.Exec(ctx, `WITH edge AS (
+			UPDATE public.links SET state = 'removed', observed_at = $3
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
+			AND source_guid = $2::uuid AND link_attr = $4 AND state = 'active' AND observed_at < $3
+			RETURNING tenant_id, connection_id, source_guid)
+		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
 		string(connection), string(group), observed.UTC(), attr)
 	if err != nil {
 		return writeErr("remove unseen "+attr, err)
@@ -547,9 +768,13 @@ func (Writer) removeUnseen(ctx context.Context, tx store.Tx, attr string, connec
 // removeOtherPrimaryGroups: a user has one primary group, so any other active primary_group edge to the
 // user is stale once the new one is observed.
 func (Writer) removeOtherPrimaryGroups(ctx context.Context, tx store.Tx, connection ConnectionID, group, user GUID, observed time.Time) error {
-	_, err := tx.Exec(ctx, `UPDATE public.links SET state = 'removed', observed_at = $4
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-		AND link_attr = 'primary_group' AND target_guid = $3::uuid AND source_guid <> $2::uuid AND state = 'active' AND observed_at <= $4`,
+	_, err := tx.Exec(ctx, `WITH edge AS (
+			UPDATE public.links SET state = 'removed', observed_at = $4
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
+			AND link_attr = 'primary_group' AND target_guid = $3::uuid AND source_guid <> $2::uuid AND state = 'active' AND observed_at <= $4
+			RETURNING tenant_id, connection_id, source_guid)
+		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
 		string(connection), string(group), string(user), observed.UTC())
 	if err != nil {
 		return writeErr("remove stale primary group", err)

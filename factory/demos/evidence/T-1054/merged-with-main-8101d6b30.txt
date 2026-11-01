@@ -1,0 +1,3 @@
+ok  	github.com/skenzeriq/activediq/internal/platform/report	0.008s
+ok  	github.com/skenzeriq/activediq/internal/platform/store/reportsql	60.709s
+exit=0

@@ -18,6 +18,7 @@ import {
 } from './items.mjs';
 import { createHandoff, latestHandoff } from './handoffs.mjs';
 import { Dispatcher, planDryRun } from './dispatcher.mjs';
+import { blockedNote, runPreMergeGate } from './premerge.mjs';
 import { pollAdvisories } from './advisories.mjs';
 import { runDoctor } from './doctor.mjs';
 import { buildDigest, buildStatus } from './status.mjs';
@@ -35,6 +36,7 @@ const USAGE = `usage: factory <command>
   up | down | status [--json] | pause [--reason R] | resume | doctor
   board [--port N]                  run the board in the foreground
   run [--once] [--dry-run]          run the dispatcher in the foreground
+  premerge ID [-- CMD ARGS…]        dry-run the pre-merge gate for a ticket's branch (changes nothing); CMD overrides dispatcher.pre_merge.argv
 
   ticket new --title T --type TYPE --owner ROLE [--priority P2] [--epic E] [--milestone M]
              [--depends T-1,T-2] [--decisions D-1] [--tags a,b] [--parity ADM-1] [--summary S]
@@ -132,6 +134,16 @@ const COMMANDS = {
     }
     await new Dispatcher(c.ctx).run({ once: c.values.once });
     return undefined;
+  } },
+
+  premerge: { options: {}, run: async (c) => {
+    const ticket = requireEntity(c.ctx, 'tickets', c.pos[0], 'ticket');
+    const argv = c.pos.length > 1 ? c.pos.slice(1) : undefined;
+    const verdict = await runPreMergeGate(c.ctx, ticket, { argv });
+    c.print(verdict, () => (verdict.status === 'blocked'
+      ? `REFUSED: ${blockedNote(verdict, c.ctx.config.dispatcher.main_branch)}`
+      : `${verdict.status.toUpperCase()} (${verdict.mode ?? '-'}): ${verdict.summary}${verdict.log ? `\nlog: ${verdict.log}` : ''}`));
+    return verdict.status === 'pass' ? 0 : 1;
   } },
 
   'ticket new': { options: { title: str, type: str, owner: str, priority: str, epic: str, milestone: str, depends: str, decisions: str, tags: str, parity: str, summary: str, 'body-file': str, ac: many, status: str, by: str }, run: (c) => {
@@ -311,7 +323,7 @@ function transitionCommand(c, fn, past) {
 
 const SUBCOMMAND_GROUPS = new Set(['ticket', 'decision', 'action', 'feedback', 'epic', 'milestone', 'handoff']);
 /** Commands whose first positional argument is an entity id. */
-const NEEDS_ID = /^(ticket (show|ready|note|advance|reject|block|unblock|cancel|set)|decision (show|answer|applied|withdraw|ack|veto)|action done|feedback triage|epic (show|set)|milestone (show|set)|handoff (new|latest))$/;
+const NEEDS_ID = /^(ticket (show|ready|note|advance|reject|block|unblock|cancel|set)|decision (show|answer|applied|withdraw|ack|veto)|action done|feedback triage|epic (show|set)|milestone (show|set)|handoff (new|latest)|premerge)$/;
 
 function lookup(argv) {
   if (!argv.length || argv[0] === 'help' || argv[0] === '--help' || argv[0] === '-h') return { help: true };

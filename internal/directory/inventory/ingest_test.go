@@ -118,7 +118,7 @@ func adUserCG(g string, cg []byte) inventory.Observation {
 
 func enUserFor(g string, anchorOf []byte, s []byte) inventory.Observation {
 	o := enUser(g, &yes)
-	o.OnPremisesSID, o.OnPremisesImmutableID, o.OnPremisesDomainName = s, anchorOf, "corp.example"
+	o.OnPremisesSecurityIdentifier, o.OnPremisesImmutableID, o.OnPremisesDomainName = s, anchorOf, "corp.example"
 	return o
 }
 
@@ -133,8 +133,8 @@ func TestIngestFormsMatchedPairWithMembersInOneTransaction(t *testing.T) {
 		if _, err := x.ingest(t, x.adA, x.now.Add(-20*time.Minute), adDomainHead(), adUserCG(usr1, cg), grp); err != nil {
 			t.Fatal(err)
 		}
-		egrp := inventory.Observation{Object: enG, Kind: inventory.KindGroup, Class: "group", OnPremisesSyncEnabled: &yes, OnPremisesSyncRead: true,
-			State: inventory.ObjActive, OnPremisesSID: sid, OnPremisesDomainName: "corp.example"}
+		egrp := inventory.Observation{Object: enG, Kind: inventory.KindGroup, Class: "group", OnPremisesSyncEnabled: &yes, OnPremisesSyncEnabledRead: true,
+			State: inventory.ObjActive, OnPremisesSecurityIdentifier: sid, OnPremisesDomainName: "corp.example"}
 		res, err := x.ingest(t, x.enA, x.now.Add(-10*time.Minute), enUserFor(enU1, cg, userSID), egrp)
 		if err != nil || res.Pairs != 2 || res.Created != 2 || res.Matched != 2 {
 			t.Fatalf("entra cycle: %+v %v", res, err)

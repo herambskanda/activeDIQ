@@ -9,6 +9,1106 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 )
 
+// DirectorySearchChip: One status chip of a hit. kind says which; at or days carry its value when it has one.
+type DirectorySearchChip struct {
+	// When it happened or will happen (locked, accountExpires, deleted).
+	At *apitypes.Timestamp `json:"at,omitzero"`
+	// Whole days left (passwordExpiresInDays).
+	Days *int64                  `json:"days,omitzero"`
+	Kind DirectorySearchChipKind `json:"kind"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *DirectorySearchChip) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = DirectorySearchChip{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "at":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.At); err != nil {
+				return err
+			}
+		case "days":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Days); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *DirectorySearchChip) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// at
+	if v.p.Decoded() && v.p.IsNull(0) {
+		errs.NullNotAllowed(at, "at")
+	}
+	// days
+	if v.p.Decoded() && v.p.IsNull(1) {
+		errs.NullNotAllowed(at, "days")
+	}
+	if v.Days != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("days"), int64((*v.Days)), 0, 36500)
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+}
+
+// DirectorySearchChipKind: One status of the object, as the IA 5.3 chips show it. at is present for locked, accountExpires and deleted when the time is known; days is present for passwordExpiresInDays. There is no free-form status text: the client words every chip.
+type DirectorySearchChipKind string
+
+const (
+	DirectorySearchChipKindLocked                DirectorySearchChipKind = "locked"
+	DirectorySearchChipKindDisabled              DirectorySearchChipKind = "disabled"
+	DirectorySearchChipKindPasswordExpired       DirectorySearchChipKind = "passwordExpired"
+	DirectorySearchChipKindPasswordExpiresInDays DirectorySearchChipKind = "passwordExpiresInDays"
+	DirectorySearchChipKindAccountExpires        DirectorySearchChipKind = "accountExpires"
+	DirectorySearchChipKindDeleted               DirectorySearchChipKind = "deleted"
+	DirectorySearchChipKindTier0                 DirectorySearchChipKind = "tier0"
+	DirectorySearchChipKindCloudOnly             DirectorySearchChipKind = "cloudOnly"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v DirectorySearchChipKind) Valid() bool {
+	switch v {
+	case DirectorySearchChipKindLocked, DirectorySearchChipKindDisabled, DirectorySearchChipKindPasswordExpired, DirectorySearchChipKindPasswordExpiresInDays, DirectorySearchChipKindAccountExpires, DirectorySearchChipKindDeleted, DirectorySearchChipKindTier0, DirectorySearchChipKindCloudOnly:
+		return true
+	}
+	return false
+}
+
+// DirectorySearchDisambiguator: What tells two objects with one name apart. Each member is present only when the inventory holds it; the client joins what is there (title, then office or department).
+type DirectorySearchDisambiguator struct {
+	Department *string `json:"department,omitzero"`
+	Office     *string `json:"office,omitzero"`
+	Title      *string `json:"title,omitzero"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *DirectorySearchDisambiguator) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = DirectorySearchDisambiguator{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "department":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Department); err != nil {
+				return err
+			}
+		case "office":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Office); err != nil {
+				return err
+			}
+		case "title":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Title); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *DirectorySearchDisambiguator) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// department
+	if v.p.Decoded() && v.p.IsNull(0) {
+		errs.NullNotAllowed(at, "department")
+	}
+	if v.Department != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("department"), string((*v.Department)), 0, 256)
+	}
+	// office
+	if v.p.Decoded() && v.p.IsNull(1) {
+		errs.NullNotAllowed(at, "office")
+	}
+	if v.Office != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("office"), string((*v.Office)), 0, 256)
+	}
+	// title
+	if v.p.Decoded() && v.p.IsNull(2) {
+		errs.NullNotAllowed(at, "title")
+	}
+	if v.Title != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("title"), string((*v.Title)), 0, 256)
+	}
+}
+
+// DirectorySearchGroup: The permitted hits of one type. count, more and nextCursor describe only objects the caller may read; none of them can be used to infer what the scope hides. Under refine, count, more and nextCursor are all absent.
+type DirectorySearchGroup struct {
+	// How many objects of this type the caller may see for this text: the trimmed result, never a total over the directory. Absent when the normalised text has under 3 characters, and when refine is true.
+	Count *int64               `json:"count,omitzero"`
+	Items []DirectorySearchHit `json:"items"`
+	// True when paging stopped at 1,000 permitted hits. The client shows "refine your search"; there is no further cursor. The stop depends only on permitted hits.
+	LimitReached *bool `json:"limitReached,omitzero"`
+	// True when the caller may see more hits than items holds. A flag, never a number. Absent when refine is true.
+	More *bool `json:"more,omitzero"`
+	// Pass back with the same q and type to get the next page. Absent on the last page, and when refine is true.
+	NextCursor *string                   `json:"nextCursor,omitzero"`
+	Type       DirectorySearchObjectType `json:"type"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *DirectorySearchGroup) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = DirectorySearchGroup{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "count":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Count); err != nil {
+				return err
+			}
+		case "items":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Items); err != nil {
+				return err
+			}
+		case "limitReached":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.LimitReached); err != nil {
+				return err
+			}
+		case "more":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.More); err != nil {
+				return err
+			}
+		case "nextCursor":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.NextCursor); err != nil {
+				return err
+			}
+		case "type":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Type); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *DirectorySearchGroup) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// count
+	if v.p.Decoded() && v.p.IsNull(0) {
+		errs.NullNotAllowed(at, "count")
+	}
+	if v.Count != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("count"), int64((*v.Count)), 0, 1000000)
+	}
+	// items
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "items")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "items")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("items"), len(v.Items), 0, 50, apitypes.CodeMaxItems)
+		for i := range v.Items {
+			v.Items[i].Validate(apitypes.Index(at.AppendToken("items"), i), errs)
+		}
+	}
+	// limitReached
+	if v.p.Decoded() && v.p.IsNull(2) {
+		errs.NullNotAllowed(at, "limitReached")
+	}
+	// more
+	if v.p.Decoded() && v.p.IsNull(3) {
+		errs.NullNotAllowed(at, "more")
+	}
+	// nextCursor
+	if v.p.Decoded() && v.p.IsNull(4) {
+		errs.NullNotAllowed(at, "nextCursor")
+	}
+	if v.NextCursor != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("nextCursor"), string((*v.NextCursor)), 0, 1024)
+	}
+	// type
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "type")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "type")
+		}
+	}
+}
+
+// DirectorySearchHighlight: A matched stretch of one field, counted in Unicode code points from the start of the field's value (not UTF-16 units, not bytes). A hit that matched on a key the row does not show (a SID, say) has no highlight.
+type DirectorySearchHighlight struct {
+	Field  DirectorySearchHighlightField `json:"field"`
+	Length int64                         `json:"length"`
+	Start  int64                         `json:"start"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *DirectorySearchHighlight) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = DirectorySearchHighlight{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "field":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Field); err != nil {
+				return err
+			}
+		case "length":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Length); err != nil {
+				return err
+			}
+		case "start":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Start); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *DirectorySearchHighlight) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// field
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "field")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "field")
+		}
+	}
+	// length
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "length")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "length")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("length"), int64(v.Length), 1, 1024)
+	}
+	// start
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "start")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "start")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("start"), int64(v.Start), 0, 1024)
+	}
+}
+
+// DirectorySearchHighlightField: The field of the hit a highlight range refers to.
+type DirectorySearchHighlightField string
+
+const (
+	DirectorySearchHighlightFieldDisplayName       DirectorySearchHighlightField = "displayName"
+	DirectorySearchHighlightFieldSamAccountName    DirectorySearchHighlightField = "samAccountName"
+	DirectorySearchHighlightFieldUserPrincipalName DirectorySearchHighlightField = "userPrincipalName"
+	DirectorySearchHighlightFieldMail              DirectorySearchHighlightField = "mail"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v DirectorySearchHighlightField) Valid() bool {
+	switch v {
+	case DirectorySearchHighlightFieldDisplayName, DirectorySearchHighlightFieldSamAccountName, DirectorySearchHighlightFieldUserPrincipalName, DirectorySearchHighlightFieldMail:
+		return true
+	}
+	return false
+}
+
+// DirectorySearchHit: One permitted object, with everything a row shows. objectId is the key; distinguishedName is an attribute for display and may change when the object moves.
+type DirectorySearchHit struct {
+	Disambiguator     *DirectorySearchDisambiguator `json:"disambiguator,omitzero"`
+	DisplayName       string                        `json:"displayName"`
+	DistinguishedName string                        `json:"distinguishedName"`
+	// The DNS name of the object's domain. The client shows it when the answer spans more than one.
+	Domain     string                     `json:"domain"`
+	Highlights []DirectorySearchHighlight `json:"highlights"`
+	Mail       *string                    `json:"mail,omitzero"`
+	MatchClass DirectorySearchMatchClass  `json:"matchClass"`
+	// The objectGUID.
+	ObjectID       apitypes.UUID `json:"objectId"`
+	SamAccountName *string       `json:"samAccountName,omitzero"`
+	// Status chips, most urgent first. Empty when none applies.
+	Status            []DirectorySearchChip     `json:"status"`
+	Type              DirectorySearchObjectType `json:"type"`
+	UserPrincipalName *string                   `json:"userPrincipalName,omitzero"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *DirectorySearchHit) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = DirectorySearchHit{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "disambiguator":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Disambiguator); err != nil {
+				return err
+			}
+		case "displayName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DisplayName); err != nil {
+				return err
+			}
+		case "distinguishedName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DistinguishedName); err != nil {
+				return err
+			}
+		case "domain":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Domain); err != nil {
+				return err
+			}
+		case "highlights":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Highlights); err != nil {
+				return err
+			}
+		case "mail":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Mail); err != nil {
+				return err
+			}
+		case "matchClass":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.MatchClass); err != nil {
+				return err
+			}
+		case "objectId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(7, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ObjectID); err != nil {
+				return err
+			}
+		case "samAccountName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(8, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.SamAccountName); err != nil {
+				return err
+			}
+		case "status":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(9, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Status); err != nil {
+				return err
+			}
+		case "type":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(10, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Type); err != nil {
+				return err
+			}
+		case "userPrincipalName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(11, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.UserPrincipalName); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *DirectorySearchHit) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// disambiguator
+	if v.p.Decoded() && v.p.IsNull(0) {
+		errs.NullNotAllowed(at, "disambiguator")
+	}
+	if v.Disambiguator != nil {
+		(*v.Disambiguator).Validate(at.AppendToken("disambiguator"), errs)
+	}
+	// displayName
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "displayName")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "displayName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("displayName"), string(v.DisplayName), 0, 256)
+	}
+	// distinguishedName
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "distinguishedName")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "distinguishedName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("distinguishedName"), string(v.DistinguishedName), 0, 4096)
+	}
+	// domain
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "domain")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "domain")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("domain"), string(v.Domain), 0, 255)
+	}
+	// highlights
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "highlights")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "highlights")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(4) && !v.p.IsNull(4)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("highlights"), len(v.Highlights), 0, 16, apitypes.CodeMaxItems)
+		for i := range v.Highlights {
+			v.Highlights[i].Validate(apitypes.Index(at.AppendToken("highlights"), i), errs)
+		}
+	}
+	// mail
+	if v.p.Decoded() && v.p.IsNull(5) {
+		errs.NullNotAllowed(at, "mail")
+	}
+	if v.Mail != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("mail"), string((*v.Mail)), 0, 1024)
+	}
+	// matchClass
+	if v.p.Decoded() {
+		if !v.p.Has(6) {
+			errs.Required(at, "matchClass")
+		}
+		if v.p.IsNull(6) {
+			errs.NullNotAllowed(at, "matchClass")
+		}
+	}
+	// objectId
+	if v.p.Decoded() {
+		if !v.p.Has(7) {
+			errs.Required(at, "objectId")
+		}
+		if v.p.IsNull(7) {
+			errs.NullNotAllowed(at, "objectId")
+		}
+	}
+	// samAccountName
+	if v.p.Decoded() && v.p.IsNull(8) {
+		errs.NullNotAllowed(at, "samAccountName")
+	}
+	if v.SamAccountName != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("samAccountName"), string((*v.SamAccountName)), 0, 256)
+	}
+	// status
+	if v.p.Decoded() {
+		if !v.p.Has(9) {
+			errs.Required(at, "status")
+		}
+		if v.p.IsNull(9) {
+			errs.NullNotAllowed(at, "status")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(9) && !v.p.IsNull(9)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("status"), len(v.Status), 0, 16, apitypes.CodeMaxItems)
+		for i := range v.Status {
+			v.Status[i].Validate(apitypes.Index(at.AppendToken("status"), i), errs)
+		}
+	}
+	// type
+	if v.p.Decoded() {
+		if !v.p.Has(10) {
+			errs.Required(at, "type")
+		}
+		if v.p.IsNull(10) {
+			errs.NullNotAllowed(at, "type")
+		}
+	}
+	// userPrincipalName
+	if v.p.Decoded() && v.p.IsNull(11) {
+		errs.NullNotAllowed(at, "userPrincipalName")
+	}
+	if v.UserPrincipalName != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("userPrincipalName"), string((*v.UserPrincipalName)), 0, 1024)
+	}
+}
+
+// DirectorySearchMatchClass: How the hit matched, best first. An object appears once, in its best class.
+type DirectorySearchMatchClass string
+
+const (
+	DirectorySearchMatchClassExact  DirectorySearchMatchClass = "exact"
+	DirectorySearchMatchClassPrefix DirectorySearchMatchClass = "prefix"
+	DirectorySearchMatchClassFuzzy  DirectorySearchMatchClass = "fuzzy"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v DirectorySearchMatchClass) Valid() bool {
+	switch v {
+	case DirectorySearchMatchClassExact, DirectorySearchMatchClassPrefix, DirectorySearchMatchClassFuzzy:
+		return true
+	}
+	return false
+}
+
+// DirectorySearchObjectType: The kind of object a group or a hit is. The group order of a full answer is users, groups, computers, contacts.
+type DirectorySearchObjectType string
+
+const (
+	DirectorySearchObjectTypeUsers     DirectorySearchObjectType = "users"
+	DirectorySearchObjectTypeGroups    DirectorySearchObjectType = "groups"
+	DirectorySearchObjectTypeComputers DirectorySearchObjectType = "computers"
+	DirectorySearchObjectTypeContacts  DirectorySearchObjectType = "contacts"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v DirectorySearchObjectType) Valid() bool {
+	switch v {
+	case DirectorySearchObjectTypeUsers, DirectorySearchObjectTypeGroups, DirectorySearchObjectTypeComputers, DirectorySearchObjectTypeContacts:
+		return true
+	}
+	return false
+}
+
+// DirectorySearchRequest: The search. q is typed text and never a filter. type narrows to one kind of object; it is required with a cursor.
+type DirectorySearchRequest struct {
+	Cursor *apitypes.Cursor `json:"cursor,omitzero"`
+	// The most hits per group; 5 when absent. With a cursor it is the page size.
+	GroupLimit *int64 `json:"groupLimit,omitzero"`
+	// The text to find, as the admin typed it: a name, a logon name, a UPN or e-mail, a SID, a GUID, a DN or a host name. Up to 256 characters. Never sent in a URL.
+	Q    string               `json:"q"`
+	Type *DirectorySearchType `json:"type,omitzero"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *DirectorySearchRequest) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = DirectorySearchRequest{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "cursor":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Cursor); err != nil {
+				return err
+			}
+		case "groupLimit":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.GroupLimit); err != nil {
+				return err
+			}
+		case "q":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Q); err != nil {
+				return err
+			}
+		case "type":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Type); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *DirectorySearchRequest) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// cursor
+	if v.p.Decoded() && v.p.IsNull(0) {
+		errs.NullNotAllowed(at, "cursor")
+	}
+	if v.Cursor != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("cursor"), string((*v.Cursor)), 1, 1024)
+	}
+	// groupLimit
+	if v.p.Decoded() && v.p.IsNull(1) {
+		errs.NullNotAllowed(at, "groupLimit")
+	}
+	if v.GroupLimit != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("groupLimit"), int64((*v.GroupLimit)), 1, 50)
+	}
+	// q
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "q")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "q")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("q"), string(v.Q), 1, 256)
+	}
+	// type
+	if v.p.Decoded() && v.p.IsNull(3) {
+		errs.NullNotAllowed(at, "type")
+	}
+	if v.Type != nil {
+		if !(*v.Type).Valid() {
+			errs.Add(apitypes.InBody, at.AppendToken("type"), apitypes.CodeEnum, "value is not one of the allowed values")
+		}
+	}
+}
+
+// DirectorySearchResult: The grouped, permitted hits of one search, with the freshness of the inventory behind them.
+type DirectorySearchResult struct {
+	// When the inventory behind this answer was last synced (the oldest of the connections the caller may read). The search reads the inventory, not the live directory. Null when nothing has synced yet.
+	AsOf *apitypes.Timestamp `json:"asOf"`
+	// One group per requested type, in the order users, groups, computers, contacts, even when a group is empty.
+	Groups []DirectorySearchGroup `json:"groups"`
+	// True when the text is too broad to rank. No group then carries a count, a more flag or a cursor. The same for every caller with the same permissions.
+	Refine bool `json:"refine"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *DirectorySearchResult) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = DirectorySearchResult{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "asOf":
+			v.p.Mark(0, false)
+			if err := json.UnmarshalDecode(d, &v.AsOf); err != nil {
+				return err
+			}
+		case "groups":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Groups); err != nil {
+				return err
+			}
+		case "refine":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Refine); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *DirectorySearchResult) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// asOf
+	if v.p.Decoded() && !v.p.Has(0) {
+		errs.Required(at, "asOf")
+	}
+	// groups
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "groups")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "groups")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("groups"), len(v.Groups), 0, 4, apitypes.CodeMaxItems)
+		for i := range v.Groups {
+			v.Groups[i].Validate(apitypes.Index(at.AppendToken("groups"), i), errs)
+		}
+	}
+	// refine
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "refine")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "refine")
+		}
+	}
+}
+
+// DirectorySearchType: The kind of object to search. Without it all four are searched.
+type DirectorySearchType string
+
+const (
+	DirectorySearchTypeUsers     DirectorySearchType = "users"
+	DirectorySearchTypeGroups    DirectorySearchType = "groups"
+	DirectorySearchTypeComputers DirectorySearchType = "computers"
+	DirectorySearchTypeContacts  DirectorySearchType = "contacts"
+)
+
+// Valid reports whether v is one of the closed set of values.
+func (v DirectorySearchType) Valid() bool {
+	switch v {
+	case DirectorySearchTypeUsers, DirectorySearchTypeGroups, DirectorySearchTypeComputers, DirectorySearchTypeContacts:
+		return true
+	}
+	return false
+}
+
+// Validate records a violation when v is not in the set.
+func (v DirectorySearchType) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	if !v.Valid() {
+		errs.AddBody(at, apitypes.CodeEnum, "value is not one of the allowed values")
+	}
+}
+
 // DirectoryUser: A user as search shows it. Only these fields; the objectGuid is the key.
 type DirectoryUser struct {
 	DisplayName       string               `json:"displayName"`

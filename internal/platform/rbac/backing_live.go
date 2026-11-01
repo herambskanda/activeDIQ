@@ -105,7 +105,7 @@ func (r *liveRoots) Resolve(ctx context.Context, _ tenant.ID, root Root) (authz.
 	case EntraTenant, Tier0Scope:
 		// A tenant or a connection is the head of its own tree: no ancestors to read.
 		return authz.ScopeRoot{ID: id, Complete: true}, nil
-	case NamingContext, OUSubtree:
+	case NamingContext, OUSubtree, OUOneLevel:
 	default:
 		return authz.ScopeRoot{}, fmt.Errorf("rbac: unknown root kind %q", root.Kind)
 	}

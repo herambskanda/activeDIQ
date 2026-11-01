@@ -1,0 +1,10 @@
+{
+ "id": "O-M01",
+ "class": "misaddressed",
+ "cites": [
+  "OIDC-10"
+ ],
+ "build": "issuer_wrong",
+ "expect": "refuse",
+ "reason": "oidc.iss"
+}

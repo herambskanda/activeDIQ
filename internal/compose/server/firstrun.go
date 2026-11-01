@@ -82,6 +82,10 @@ func (f *firstOwners) CreateFirstOwner(ctx context.Context, owner setupsecret.Ow
 		if len(held) > 0 {
 			return setupsecret.ErrOwnerExists
 		}
+		// A fresh install has no built-in roles yet and nothing else seeds them (T-1161); the call is idempotent.
+		if err := rbac.SeedBuiltIns(ctx, tx, t); err != nil {
+			return fmt.Errorf("server: first-run owner roles: %w", err)
+		}
 		acct, err := authn.CreateIn(ctx, tx, authn.NewAccount{
 			Tenant: t, Kind: authn.KindLocal, DisplayName: owner.DisplayName, Email: owner.Email, CreatedBy: "system",
 		})

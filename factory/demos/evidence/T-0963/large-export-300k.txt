@@ -1,0 +1,9 @@
+=== RUN   TestLargeExportTimings
+=== RUN   TestLargeExportTimings/pg18
+    large_pg_test.go:62: 300000 rows stored in 12.297768971s
+    large_pg_test.go:99: csv  300000 rows -> 1 MB in 2.157s (139100 rows/s), peak heap 3 MB
+    large_pg_test.go:99: xlsx 300000 rows -> 1 MB in 2.496s (120182 rows/s), peak heap 5 MB
+--- PASS: TestLargeExportTimings (21.87s)
+    --- PASS: TestLargeExportTimings/pg18 (21.87s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/modules/reports/export	23.845s

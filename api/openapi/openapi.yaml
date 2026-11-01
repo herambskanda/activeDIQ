@@ -32,7 +32,9 @@ tags:
   - name: delegation
     description: Roles and assignments. The input contracts of the delegation.* control-plane Actions; personal to an account, step-up required.
   - name: directory
-    description: Read-only directory queries. User search by plain text, tenant-scoped, permission directory.read.
+    description: Read-only directory queries. Universal search (grouped, ranked, trimmed to the caller's scope) and user search by plain text; permission directory.read.
+  - name: reports
+    description: Canned reports. The library, runs over a frozen result, paging and export of a stored run, and schedules with delivery. Permissions reports.run, reports.export, reports.schedule and reports.schedule.manage_all.
 components:
   securitySchemes:
     bearer:

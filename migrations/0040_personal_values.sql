@@ -9,6 +9,7 @@
 -- retention purge delete. A hold is therefore set when the subject row is created; changing it is the
 -- compliance PRD's work.
 
+-- write-class: personal_subject system
 CREATE TABLE public.personal_subject (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   subject_ref text NOT NULL CHECK (char_length(subject_ref) BETWEEN 3 AND 300),
@@ -18,6 +19,7 @@ CREATE TABLE public.personal_subject (
   PRIMARY KEY (tenant_id, subject_ref)
 );
 
+-- write-class: personal_value system
 CREATE TABLE public.personal_value (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   value_id uuid NOT NULL,

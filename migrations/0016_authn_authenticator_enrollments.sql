@@ -11,6 +11,7 @@
 --   subject         a console account (account_id), or a directory user as connection + objectGUID.
 -- Methods other than totp arrive with their own tickets; they get their own columns and checks.
 
+-- write-class: authn_authenticator_enrollments system
 CREATE TABLE public.authn_authenticator_enrollments (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

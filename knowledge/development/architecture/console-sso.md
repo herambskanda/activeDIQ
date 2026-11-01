@@ -1,11 +1,11 @@
 ---
 title: "Console SSO (ADM-143): OIDC and SAML verifier contract, MFA-asserting IdPs, forced SSO, SPNEGO"
 date: 2026-10-23
-updated: 2026-10-27
+updated: 2026-10-30
 status: review
 owner: heramb
 author: solution-architect
-ticket: T-0191, T-0495
+ticket: T-0191, T-0495, T-0212
 parity: ADM-143, ADM-142
 binding_sources: ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0005 (all ratified); threat-model.md (review) §5.8, §6.9, §7; domain-model.md DM-30, DM-31, DM-36, DM-37
 sources_last_checked: 2026-10-23
@@ -269,7 +269,11 @@ the default is `mfa.mode = off`.
 | # | Rule |
 | --- | --- |
 | MFA-1 | **OIDC evidence**: the ID token's `amr` array contains at least one configured value. The default set is `{"mfa"}` ([RFC 8176](https://www.rfc-editor.org/rfc/rfc8176)); the administrator may add `hwk`, `otp`, `fpt`, `face`, `sc`. `pwd`, `kba`, `sms`, `tel` and `user` cannot be added, because each names one factor at most. `acr` is recorded but is not evidence on its own, because its values are IdP-defined |
+| MFA-1a | **The OIDC evidence set is an allow-list**: exactly `{mfa, hwk, otp, fpt, face, sc}`, matched case-sensitively, enforced at save, Start and Complete (`oidc.config`). `wia`, `rba`, `geo`, `swk`, `pin`, `mca`, `PWD`, `Mfa` and any other string are refused: they are ambient signals or one factor, and a deny-list would let an admin (or an attacker holding step-up) turn Windows-integrated sign-in into "MFA" |
 | MFA-2 | **SAML evidence**: the verified Assertion's `AuthnContextClassRef`, or a named attribute, contains a configured value. Presets: Entra ID and AD FS, attribute `http://schemas.microsoft.com/claims/authnmethodsreferences` containing `http://schemas.microsoft.com/claims/multipleauthn` `[UNVERIFIED — lab G9]`; others are configured by the administrator, and the setup screen shows the last verified response's values so the rule is chosen from evidence |
+| MFA-2a | **No OASIS class is SAML evidence**: any value with prefix `urn:oasis:names:tc:SAML:2.0:ac:classes:` (`Password`, `PasswordProtectedTransport`, `Kerberos`, `X509`, `unspecified`, …) is refused at save, Start and Complete (`saml.config`). Evidence is an IdP-specific class or an attribute value |
+| MFA-2b | **No single-factor URI and no variant of the OASIS prefix is SAML evidence** (T-0938): a deny-list of namespaces on top of MFA-2a, checked at save, Start and Complete (`saml.config`): `urn:federation:authentication:` (AD FS `windows` = Integrated Windows Authentication), `http://schemas.microsoft.com/ws/2008/06/identity/authenticationmethod/` (`password`, `windows`) and the claim-type spelling `http://schemas.microsoft.com/ws/2008/06/identity/claims/authenticationmethod/` (T-0974; `[UNVERIFIED that any IdP emits it]`), `urn:oasis:names:tc:SAML:1.0:am:` and `urn:ietf:rfc:` (the SAML 1.x methods; SAML 1.1 core §7.1 puts Kerberos, SRP, TLS client and XML-DSig in the `urn:ietf:rfc:` namespace) and the MFA-2a prefix, plus two exact values: the REFEDS Single Factor profile `https://refeds.org/profile/sfa` and `http://schemas.microsoft.com/claims/wiaormultiauthn` (Integrated Windows Authentication alone satisfies it). `https://refeds.org/profile/mfa` stays acceptable. Matching is case-insensitive (the URN NID is case-insensitive, RFC 8141; scheme and host are too). A value with leading or trailing whitespace is refused, not trimmed, because evidence is compared exact-string against what the IdP sends. `http://schemas.microsoft.com/claims/multipleauthn` is in none of these namespaces and stays acceptable. The list is still a deny-list: an unknown single-factor URI from another IdP is the administrator's to rule out from the setup screen's last-response values (MFA-2) |
+| MFA-2c | **The SAML evidence attribute is an allow-list** (T-0974): `MFAAttribute` is empty (`AuthnContextClassRef`) or exactly `http://schemas.microsoft.com/claims/authnmethodsreferences`, the MFA-2 preset. Anything else, including `.../identity/claims/tenantid`, `identityprovider`, a group attribute and a case or whitespace variant of the preset (attribute names are compared exact-string, so a variant would be dead config), is refused at save, Start and Complete (`saml.config`). MFA-2a and MFA-2b deny values; without this rule an attribute every response carries with a constant value makes every sign-in MFA. A new attribute needs a spec change and a source showing it carries authentication methods |
 | MFA-3 | `Verified.MFAAsserted` is true only when `mfa.mode = claim` **and** the response carries the evidence. With the mode on and the evidence absent, sign-in proceeds as non-MFA (a pending sign-in, AN-10) and audit records `sso.mfa_evidence_absent`; it is never a silent session |
 | MFA-4 | Switching `mfa.mode` on, or changing the evidence rule, is an IdP configuration change: step-up, audited, every `tenant-owner` alerted (TM-TB8-T3) |
 | MFA-5 | **What MFA-asserting buys**: an account whose sign-in has `MFAAsserted` gets a session directly from AN-3, **unless** the account holds `tenant-owner` or any `control_plane` permission (DM-33.I3; both are held only by assignment to the account itself, DM-36.I4); such an account always completes AN-10 with an activeDIQ-held factor. A compromised IdP (TM-X12) then reaches console access within RBAC but never the control plane (TM-TB8-T7, TM-O1) |
@@ -308,7 +312,7 @@ is verified at every step-up as TM-D19 rule 1 says; the IdP round trip does not 
 | # | Rule |
 | --- | --- |
 | MAP-1 | A mapping is explicit tenant configuration on the IdP: one named claim (OIDC claim name, SAML attribute name), a value, and a role. Values are matched as exact strings. For Entra the value must be a group object ID (GUID); display names are never matched |
-| MAP-2 | A mapping cannot target `tenant-owner` or a role that contains any `control_plane` permission (DM-33.I3). The save is refused, and roles that later gain such a permission drop their claim mappings with an audit event. This is the same limit DM-36.I2 sets for correlation-derived grants |
+| MAP-2 | A mapping cannot target `tenant-owner` or a role that contains any `control_plane` permission (DM-33.I3). The save is refused, and roles that later gain such a permission drop their claim mappings with an audit event. This is the same limit DM-36.I2 sets for correlation-derived grants. **MAP-2a (T-0212):** the role change and the revocation of every session holding that role by claim (reason `role_changed`) commit in one transaction, and the authorisation evaluator never grants a `control_plane` permission through a claim-derived role whatever the role's definition, so MFA-5 cannot be bypassed by editing a mapped role (TM §7.2a; build T-0570) |
 | MAP-3 | Claim-derived roles are computed at each sign-in from the verified claims, held on the session (DM-31 `methods` records `claim:<idpId>`), and never written as a DM-36 assignment. They end with the session, so removing a user from the IdP group takes effect at the next sign-in or session expiry |
 | MAP-4 | Creating, changing or deleting a mapping is an IdP configuration change: step-up, audited, every `tenant-owner` alerted |
 | MAP-5 | Group overage (OIDC-16; Entra's SAML limit is 150 groups) yields no claim-derived roles and an audit warning. Entra customers are pointed to bound-account group grants (DM-36.I2 through DM-30.I5), which read inventory and have no overage |
@@ -375,7 +379,7 @@ The route, gate and rules are TM §7.6 AN-9 and rules 2, 5, 6 and 7, unchanged. 
 | NEG-1 | AN-9 is off until an administrator enables it and supplies the `HTTP/<console FQDN>` service principal registration (installer or administrator step; activeDIQ never writes `servicePrincipalName`) |
 | NEG-2 | The client principal maps through the PAC logon-info user SID, verified by the acceptor with the service key, resolved once to an objectGUID through inventory. It maps to exactly one console account: the `directory` account with that GUID, or the `sso` account whose bound object is, or has a `matched` correlation to, that GUID. Zero or more than one gives the generic failure, and audit records `negotiate.unmapped` or `negotiate.ambiguous` |
 | NEG-3 | A successful AN-9 is a first factor only; AN-10 always follows (rule 7) |
-| NEG-4 | **TM-D19 rule 3 / DM-30.I6 apply in v1.** A session whose first factor was a Kerberos sign-in of the correlated AD account sets `authority_factor_at` (DM-31.I3), so a hybrid technician on a domain-joined workstation needs no separate authority-factor touch |
+| NEG-4 | **TM-D19 rule 3 / DM-30.I6 apply in v1.** A session whose first factor was a Kerberos sign-in of the correlated AD account sets `authority_factor_at` (DM-31.I3), so a hybrid technician on a domain-joined workstation needs no separate authority-factor touch. **NEG-4a (T-0212):** `authority_factor_at` is written when the session is created, equal to its `mfa_at` (after AN-10), so `Session.AuthorityCurrent` does not see it stale at birth; a §7.4 step-up renews it only through a fresh AN-9 that maps to the same principal or the WebAuthn authority factor, and a TOTP step-up leaves it stale (TM §6.9 rule 3, §7.2a; build T-0493) |
 | NEG-5 | The browser offers Negotiate only to hosts in its intranet zone or policy allow-list (customer GPO, setup guide). A browser that answers `401 Negotiate` with nothing, or with NTLM only, gets the sign-in page, not an error loop |
 | NEG-6 | Replay: the acceptor refuses a replayed AP-REQ (SSPI's replay detection on `windows`; on `linux-oci` the krb5 adapter's replay cache `[UNVERIFIED — lab]`) |
 | NEG-7 | Channel binding to the TLS session is requested where the browser offers it; its absence is not a refusal in v1, because browser support varies `[UNVERIFIED — lab]` |
@@ -388,9 +392,14 @@ When T-0206 lands, AN-9's `GET /auth/negotiate` enters `api/openapi/policy.yaml`
 
 **Built (T-0206).** `internal/platform/authn/negotiate` is the core: `RequireKerberos` refuses by structure
 anything but a SPNEGO NegTokenInit that offers Kerberos first with a krb5 AP-REQ (NTLM never reaches an
-acceptor), `Service.SignIn` maps the acceptor's verified PAC user SID through `inventory.Reader.ObjectsBySID`
-and `authn.AccountIndex.BackedBy` to exactly one active account (NEG-2) and begins a `kerberos` pending
-sign-in; every refusal is one `ErrSignInFailed` with the reason going to a `Recorder`. `httpx/negotiatehttp`
+acceptor), `Service.SignIn` maps the acceptor's verified PAC user SID (`Principal.SID`, canonical `S-1-…`
+text) through the `negotiate.Directory` port and `authn.AccountIndex.BackedBy` to exactly one active account
+(NEG-2) and begins a `kerberos` pending sign-in; every refusal is one `ErrSignInFailed` with the reason going
+to a `Recorder`. The package imports no directory package (ADR-0002 rule 10, T-0945). `Directory.ObjectsBySID`
+takes the SID text and returns `[]authn.DirectoryRef`; `negotiate` owns the ambiguity rule (more than one match
+is ambiguous). The adapter `negotiateDirectory` in `internal/compose/server` fills the port: it parses the
+text with `sid.Parse` (malformed text is unmapped, so the same `ErrSignInFailed`), queries
+`inventory.Reader.ObjectsBySID` and caps the matches at `inventory.MaxSIDMatches`. `httpx/negotiatehttp`
 is the header binding (64 KiB cap, 431) and renders through `apihost.ServeNonAPI`, the only place a route
 outside the document writes status. The `Acceptor`, route mounting, audit kinds and NEG-1 switch are T-0492;
 NEG-4 and the sso-correlation mapping route are T-0493. AN-9 is therefore not reachable yet (NEG-9).
@@ -526,8 +535,10 @@ stays `[UNVERIFIED — lab]`.
 | O-M03 | misaddressed | `aud` is another client; `aud` has an extra value; `azp` mismatch | OIDC-11 |
 | O-M04 | misaddressed | Valid token for tenant A on tenant B's hostname | SSO-2 |
 | O-M05 | misaddressed | Discovery `issuer` differs from the configured issuer; an HTTP endpoint | OIDC-17 |
-| O-D01 | malformed | ID token over 32 KiB; three or more dots; token response over 64 KiB | OIDC-5, OIDC-6 |
+| O-D01 | malformed | ID token over 32 KiB; three or more dots | OIDC-6 |
+| O-D01b | malformed | Token response over 64 KiB (split from O-D01: a record carries one reason code, and this one is `oidc.token`) | OIDC-5 |
 | O-D02 | malformed | `sub` missing, empty, over 255 bytes | OIDC-14 |
+| O-D03 | malformed | A claim the configuration needs (`oid` and `tid`, `onprem_sid`) absent from the ID token: refused, never fetched from UserInfo, the access token or Graph | OIDC-16 |
 
 ### 10.4 Sign-in outcome cases (TM-F-SSO with TM-F-SESSION and TM-F-HYBRID)
 
@@ -546,6 +557,12 @@ stays `[UNVERIFIED — lab]`.
 | X-11 | `forced` on; `/signin/break-glass` | AN-8 still served | FSSO-3 |
 | X-12 | Callback return path is absolute, `//host` or not a console route | ignored; console root | §3 |
 | X-13 | Refusal page body is identical for every SAML-n / OIDC-n reason | same body and status | §3 |
+| X-14 | OIDC MFA evidence is any value outside `{mfa,hwk,otp,fpt,face,sc}` (`wia`, `rba`, `geo`, `swk`, `pin`, `mca`, `PWD`, `Mfa`, `x`) | save, Start and Complete refused, `oidc.config` | MFA-1a |
+| X-15 | SAML MFA evidence is a `urn:oasis:names:tc:SAML:2.0:ac:classes:` value (`Password`, `PasswordProtectedTransport`, `unspecified`, `Kerberos`, `X509`) | save, Start and Complete refused, `saml.config` | MFA-2a |
+| X-18 | SAML MFA evidence `urn:federation:authentication:windows`, a `.../identity/authenticationmethod/` value, a `urn:oasis:names:tc:SAML:1.0:am:` or `urn:ietf:rfc:` value, REFEDS `sfa`, `wiaormultiauthn`, an OASIS class with a case-variant `urn:` prefix, or any value with surrounding whitespace | save, Start and Complete refused, `saml.config` | MFA-2b |
+| X-19 | SAML `MFAAttribute` is `.../identity/claims/tenantid`, `identityprovider`, a group attribute, or a case or whitespace variant of `authnmethodsreferences`; or MFA evidence is in the `.../identity/claims/authenticationmethod/` namespace | save, Start and Complete refused, `saml.config` | MFA-2c, MFA-2b |
+| X-16 | A role held by claim on a live session gains a `control_plane` permission | mappings dropped, that session revoked (`role_changed`) in the same transaction; evaluator grants no `control_plane` permission through any claim-derived role | MAP-2a |
+| X-17 | Kerberos first factor of a correlated account, then TOTP AN-10; later a TOTP step-up | authority current after AN-10; stale after the TOTP step-up; current again after a fresh AN-9 of the same principal | NEG-4, NEG-4a |
 
 ---
 
@@ -584,12 +601,30 @@ invariants carry SAML-16 (replay rows) and the Transaction (§3) as tenant table
 The verifier build tickets cannot merge without FIT-SSO-1 green, so the fence exists before the
 first line that parses SAML.
 
+**As built (T-0211).** `make fitness-sso` (part of `make fitness` and so of `make ci`) runs
+`tools/fitness/sso`. FIT-SSO-1 parses import clauses of every `.go` file (tests included) and reads
+`go.mod` (a `replace` of goxmldsig or gosaml2 to an older version, another module or a local path fails
+too). FIT-SSO-2 reads the check numbers from the §4 and §5 tables of this file, so a new row fails CI until
+a record cites it, then runs `TestCorpus` of each protocol's package and requires a passing subtest named
+after every record. Class coverage is per protocol: SAML needs all five classes, OIDC the four without
+`wrapped` (XML signature wrapping has no JWS analogue; §10.3 has none). The OIDC corpus
+(T-0911) is `testdata/corpus/oidc/` and `TestCorpus` in `sso/oidc/corpus_test.go`; it is enforced like the SAML one, and a
+missing corpus for either protocol fails. Each record's `build` names a Go builder in that test file that drives
+`Start` and `Complete` against the stub IdP once per variant of the §10.3 row; every variant must be refused with the
+record's reason, and a builder no record names fails the run. O-R02 asserts the single-use code at the IdP and
+SSO-1's consume-once on the Transaction store's in-memory twin; O-M04 asserts that tenant A's token is refused by
+tenant B's pinned IdP (the hostname-to-tenant binding itself is `signin`'s, T-0203).
+The SAML-only `TestCorpusCoverage` in `sso/saml` is removed: this check supersedes it.
+
 ## 14. Follow-ups filed by this spec
 
 | Ticket | Owner | What |
 | --- | --- | --- |
 | T-0211 | devops-engineer | FIT-SSO-1 and FIT-SSO-2 (§13), green before T-0201/T-0202 merge |
-| T-0212 | security-architect | Threat-model pointers for the closed `[OPEN → ADM-143 spec]` markers, TM-Q3, review of SSO-D4/D5/D7; blueprint `authn` library row |
+| T-0212 | security-architect | Done: threat-model pointers, TM-Q3 closed, SSO-D4/D5/D7 accepted with amendments MFA-1a, MFA-2a, MAP-2a, NEG-4a (TM §7.2a); blueprint `authn` library row |
+| T-0912 | backend-engineer | MFA-1a/MFA-2a in `sso/oidc` and `sso/saml` config validation (bug from the T-0212 review) |
+| T-0938 | backend-engineer | MFA-2b: single-factor Microsoft/SAML 1.x URIs and OASIS case/whitespace variants refused as SAML evidence (bug from the T-0912 review) |
+| T-0974 | backend-engineer | MFA-2c: SAML `MFAAttribute` allow-list (`""` or `authnmethodsreferences`) and the `.../identity/claims/authenticationmethod/` namespace in MFA-2b (bug from the T-0938 review) |
 | T-0213 | project-manager | Re-groom T-0201, T-0202, T-0203, T-0206 with these check numbers; T-0206 is not cancelled |
 | T-0214 | docs-writer | IdP setup guide with Entra, Okta and AD FS presets |
 | D-0002 | CEO (notice) | The customer-visible calls of §6.1, §9 and §11 |
@@ -604,6 +639,7 @@ first line that parses SAML.
 - Module versions and dates: Go module proxy `https://proxy.golang.org/<module>/@latest`, read 2026-10-23
 - Entra ID token claims: https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
 - OIDC Core 1.0 §3.1.3.7: https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation
+- SAML 2.0 Authentication Context: https://docs.oasis-open.org/security/saml/v2.0/saml-authn-context-2.0-os.pdf
 - RFC 8176 (amr values): https://www.rfc-editor.org/rfc/rfc8176 ; RFC 9207 (iss parameter): https://www.rfc-editor.org/rfc/rfc9207 ; RFC 4559 (Negotiate): https://www.rfc-editor.org/rfc/rfc4559
 - SAML 2.0 Core: https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf
 - Somorovsky et al., "On Breaking SAML", USENIX Security 2012: https://www.usenix.org/conference/usenixsecurity12/technical-sessions/presentation/somorovsky

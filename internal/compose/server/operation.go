@@ -47,10 +47,10 @@ func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveF
 }
 
 // directoryReads builds the connector read adapter (client.ConnectorReads) over the connection
-// registry, so a read resolves its connection under the context's tenant. It returns nil reads, which
-// directoryFacts turns into fail-closed ErrNoReads, when no connector source is supplied: none exists
-// in the server yet (follow-ups on T-0366); the Tier-0 verdict comes with the Read header (T-0433), and a half-wired adapter must
-// not answer.
+// registry, so a read resolves its connection under the context's tenant. The Tier-0 verdict is not a
+// separate source: it arrives in the Read header from the connector (T-0433), and a response without
+// it is an error. A nil src returns nil reads, which directoryFacts turns into fail-closed ErrNoReads;
+// the server always supplies the tunnel source, so only a test passes nil.
 func directoryReads(conns client.ConnectionSource, src client.ConnectorSource) (client.Reads, error) {
 	if src == nil {
 		return nil, nil
@@ -78,7 +78,7 @@ func directoryFacts(reads client.Reads, opts ...client.Option) *client.Client {
 // TM-D19 rule 5 backing-object guard wired to the account and correlation stores and a live root
 // resolver over facts, and the TM-D18 group-membership guard over inventory's group edges. Without a
 // guard its permissions are refused.
-func rbacAuthorizer(db *store.DB, facts rbac.FactsReader) (operation.Authorizer, error) {
+func rbacAuthorizer(db *store.DB, facts rbac.FactsReader) (*rbac.Authorizer, error) {
 	src, err := rbac.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("server: rbac store: %w", err)

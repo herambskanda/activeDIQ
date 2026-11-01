@@ -1,10 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The tests build a small repository in a temporary directory: a clean baseline that passes every
@@ -107,19 +110,46 @@ import (
 
 func main() { _ = os.Getenv; _ = config.Load; _ = profile.Windows }
 `,
+	"internal/directory/graphnames/names.go": `package graphnames
+
+// Microsoft's own names, registered in manifest.json externalVocabulary (ADR-0002 E-1).
+const (
+	OnPremisesSyncEnabled     = "onPremisesSyncEnabled"
+	AttrOnPremisesSyncEnabled = "onPremisesSyncEnabled"
+	OnPremisesDomainName      = "onPremisesDomainName"
+	OnPremisesImmutableID     = "onPremisesImmutableId"
+	OnPremisesSecurityIdentifier = "onPremisesSecurityIdentifier"
+	SegOnPremisesSynchronization = "onPremisesSynchronization"
+	AnchorOnpremSID           = "onprem_sid"
+)
+`,
 	"internal/directory/ldapfilter/f.go": "package ldapfilter\n\nimport \"example.test/diq/internal/platform/tenant\"\n\nvar _ = tenant.New\n",
+}
+
+// deferralLine matches one `"deferral": {...},` line of the real manifest.
+var deferralLine = regexp.MustCompile(`\n[ \t]*"deferral": \{[^}]*\},`)
+
+// shippedWithoutDeferrals is the manifest `make ci` runs with every deferral removed, so a row whose subject
+// exists and whose check is missing shows as "not implemented" in the cases below. The deferral
+// cases add exactly the deferral they exercise (withDeferral).
+func shippedWithoutDeferrals(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return deferralLine.ReplaceAllString(string(b), "")
 }
 
 // copyReal brings in the real manifest and denylist, so the tests exercise what `make ci` runs.
 func copyReal(t *testing.T, files map[string]string) {
 	t.Helper()
-	for _, n := range []string{"manifest.json", "uem-denylist.json"} {
-		b, err := os.ReadFile(n)
-		if err != nil {
-			t.Fatal(err)
-		}
-		files["tools/fitness/profiles/"+n] = string(b)
+	files["tools/fitness/profiles/manifest.json"] = shippedWithoutDeferrals(t)
+	b, err := os.ReadFile("uem-denylist.json")
+	if err != nil {
+		t.Fatal(err)
 	}
+	files["tools/fitness/profiles/uem-denylist.json"] = string(b)
 }
 
 // repo writes the baseline plus the given files (an empty string deletes a baseline file).
@@ -149,7 +179,10 @@ func repo(t *testing.T, extra map[string]string) string {
 	return root
 }
 
-var onlyMain = Options{Branches: []string{"main", "factory/T-0038"}}
+// testToday is the date the deferral cases run on, so none of them depends on the wall clock.
+var testToday = time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+
+var onlyMain = Options{Branches: []string{"main", "factory/T-0038"}, Now: testToday}
 
 func run(t *testing.T, root string, checks ...string) []Violation {
 	t.Helper()
@@ -475,13 +508,14 @@ func TestActivationPendingIsPrinted(t *testing.T) {
 
 func TestActivationSubjectWithoutCheckFails(t *testing.T) {
 	for check, path := range map[string]string{
-		"P2": "packaging/windows/installer.wxs",
-		"P6": "packaging/oci/Dockerfile",
-		"P3": "internal/connector/ldap/ldap.go",
-		"P4": "internal/connector/ldap/ldap.go",
-		"P5": "internal/platform/updater/updater.go",
-		"U3": "proto/skenzeriq/agent/v1/agent.proto",
-		"U4": "proto/skenzeriq/agent/v1/agent.proto",
+		"P2-msi": "packaging/windows/installer.wxs",
+		"P2-oci": "packaging/linux-oci/Dockerfile.server",
+		"P6":     "packaging/linux-oci/Dockerfile.server",
+		"P3":     "internal/connector/ldap/ldap.go",
+		"P4":     "internal/connector/ldap/ldap.go",
+		"P5":     "internal/platform/updater/updater.go",
+		"U3":     "proto/skenzeriq/agent/v1/agent.proto",
+		"U4":     "proto/skenzeriq/agent/v1/agent.proto",
 	} {
 		t.Run(check, func(t *testing.T) {
 			vs := run(t, repo(t, map[string]string{path: "package x\n"}), "ACT")
@@ -500,11 +534,7 @@ func TestActivationDirectoryOnlyPattern(t *testing.T) {
 
 func withCommand(t *testing.T, check string, command string) map[string]string {
 	t.Helper()
-	b, err := os.ReadFile("manifest.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(b)
+	s := shippedWithoutDeferrals(t)
 	i := strings.Index(s, `"check": "`+check+`"`)
 	j := strings.Index(s[i:], `"command": []`)
 	if i < 0 || j < 0 {
@@ -539,11 +569,7 @@ func TestActivationImplementedCheckMustPass(t *testing.T) {
 }
 
 func TestActivationRowCannotBeDeleted(t *testing.T) {
-	b, err := os.ReadFile("manifest.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := string(b)
+	s := shippedWithoutDeferrals(t)
 	i := strings.Index(s, `    {
       "check": "U4"`)
 	j := strings.Index(s[i:], "    }\n")
@@ -553,8 +579,388 @@ func TestActivationRowCannotBeDeleted(t *testing.T) {
 	expect(t, vs, "ACT", "activation table U4", "no row")
 }
 
+// --- Activation deferrals (ADR-0002 erratum E-3) ----------------------------------------------
+
+// adrDeferrals is an ADR whose "Activation deferrals" table approves two deferrals.
+const adrDeferrals = `---
+status: ratified
+---
+# ADR
+
+**Activation deferrals** (parsed by fitness-profiles; columns 1 to 3 are machine-read):
+
+| Check | Ticket | Expires | Evidence the check needs | Producer |
+| --- | --- | --- | --- | --- |
+| P2-oci | T-0927 | 2026-12-15 | images | devops-engineer |
+| P3 | T-0929 | 2026-11-30 | conformance | directory-engineer |
+
+Text after the table.
+
+| Check | Ticket | Expires |
+| --- | --- | --- |
+| U3 | T-0933 | 2026-11-30 |
+`
+
+// only keeps the violations of one activation row, so a case about P2-oci is not about P6, which
+// the same packaging/linux-oci/ path also activates.
+func only(vs []Violation, check string) []Violation {
+	var out []Violation
+	for _, v := range vs {
+		if v.Pos == "activation table "+check {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// deferralRepo is a repository where the subject of check exists and the real manifest carries the
+// given deferral on that check's row. The ADR is the one with the table above.
+func deferralRepo(t *testing.T, check, path, deferral string, mutate func(string) string) string {
+	t.Helper()
+	s := shippedWithoutDeferrals(t)
+	i := strings.Index(s, `"check": "`+check+`"`)
+	j := strings.Index(s[i:], `"command": [],`)
+	if i < 0 || j < 0 {
+		t.Fatalf("no row for %s", check)
+	}
+	j += i + len(`"command": [],`)
+	s = s[:j] + "\n      \"deferral\": " + deferral + "," + s[j:]
+	if mutate != nil {
+		s = mutate(s)
+	}
+	return repo(t, map[string]string{
+		"tools/fitness/profiles/manifest.json":                     s,
+		"knowledge/development/decisions/0002-deployment-model.md": adrDeferrals,
+		path: "x",
+	})
+}
+
+const d2oci = `{"ticket": "T-0927", "expires": "2026-12-15", "adr": "0002-deployment-model.md"}`
+
+// A deferral listed in the ADR table and not yet expired prints ACTIVE, DEFERRED and is no violation.
+func TestActivationDeferralApprovedByADRPasses(t *testing.T) {
+	root := deferralRepo(t, "P2-oci", "packaging/linux-oci/Dockerfile.server", d2oci, nil)
+	vs, rows, err := Run(root, defaultManifest, []string{"ACT"}, onlyMain)
+	if err != nil || len(only(vs, "P2-oci")) != 0 {
+		t.Fatalf("err=%v\n%s", err, dump(vs))
+	}
+	var b strings.Builder
+	PrintTable(&b, rows)
+	if !strings.Contains(b.String(), "P2-oci ACTIVE, DEFERRED (T-0927 until 2026-12-15)") {
+		t.Errorf("table lacks the deferred row:\n%s", b.String())
+	}
+	// The last day is still inside the deferral; a table row after prose and a second table is found.
+	onDay := Options{Branches: onlyMain.Branches, Now: time.Date(2026, 12, 15, 23, 59, 0, 0, time.UTC)}
+	if vs, _, _ := Run(root, defaultManifest, []string{"ACT"}, onDay); len(only(vs, "P2-oci")) != 0 {
+		t.Fatalf("a deferral is valid on its expiry date:\n%s", dump(vs))
+	}
+}
+
+func TestActivationDeferralExpiredFails(t *testing.T) {
+	root := deferralRepo(t, "P2-oci", "packaging/linux-oci/Dockerfile.server", d2oci, nil)
+	late := Options{Branches: onlyMain.Branches, Now: time.Date(2026, 12, 16, 0, 0, 1, 0, time.UTC)}
+	vs, _, err := Run(root, defaultManifest, []string{"ACT"}, late)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, vs, "ACT", "activation table P2-oci", "deferral", "expired on 2026-12-15")
+	// An expiry that is not an ISO date cannot be compared and fails too.
+	root = deferralRepo(t, "P2-oci", "packaging/linux-oci/Dockerfile.server", d2oci, func(s string) string { return strings.Replace(s, "2026-12-15", "15/12/2026", 1) })
+	expect(t, run(t, root, "ACT"), "ACT", "activation table P2-oci", "deferral", "not a YYYY-MM-DD date")
+}
+
+func TestActivationDeferralMalformedTicketFails(t *testing.T) {
+	for _, tk := range []string{"T-927", "927", "t-0927", "T-0927x", "T-"} {
+		t.Run(tk, func(t *testing.T) {
+			root := deferralRepo(t, "P2-oci", "packaging/linux-oci/Dockerfile.server", d2oci, func(s string) string { return strings.Replace(s, "T-0927", tk, 1) })
+			expect(t, run(t, root, "ACT"), "ACT", "activation table P2-oci", "deferral", "ticket", "malformed")
+		})
+	}
+	// Five digits are well formed; the ADR table has no such row, so it fails there instead.
+	root := deferralRepo(t, "P2-oci", "packaging/linux-oci/Dockerfile.server", d2oci, func(s string) string { return strings.Replace(s, "T-0927", "T-10927", 1) })
+	vs := run(t, root, "ACT")
+	for _, v := range vs {
+		if strings.Contains(v.Msg, "malformed") {
+			t.Errorf("T-10927 is well formed: %s", v)
+		}
+	}
+	expect(t, vs, "ACT", "activation table P2-oci", "no row")
+}
+
+func TestActivationDeferralOnRowWithCommandIsStale(t *testing.T) {
+	root := deferralRepo(t, "P2-oci", "packaging/linux-oci/Dockerfile.server", d2oci, func(s string) string {
+		i := strings.Index(s, `"check": "P2-oci"`)
+		j := strings.Index(s[i:], `"command": []`)
+		return s[:i+j] + `"command": ["go", "version"]` + s[i+j+len(`"command": []`):]
+	})
+	vs := run(t, root, "ACT")
+	expect(t, vs, "ACT", "activation table P2-oci", "deferral", "stale", "remove the deferral")
+	// The command still runs: the stale deferral does not hide a failing check.
+	root = deferralRepo(t, "P2-oci", "packaging/linux-oci/Dockerfile.server", d2oci, func(s string) string {
+		i := strings.Index(s, `"check": "P2-oci"`)
+		j := strings.Index(s[i:], `"command": []`)
+		return s[:i+j] + `"command": ["go", "tool", "no-such-tool-xyz"]` + s[i+j+len(`"command": []`):]
+	})
+	expect(t, run(t, root, "ACT"), "ACT", "activation table P2-oci", "fails")
+}
+
+func TestActivationDeferralNotInADRTableFails(t *testing.T) {
+	// The manifest alone cannot approve: P6 has a deferral here, and the ADR table has no P6 row.
+	root := deferralRepo(t, "P6", "packaging/linux-oci/Dockerfile.server", `{"ticket": "T-0932", "expires": "2026-12-15", "adr": "0002-deployment-model.md"}`, nil)
+	expect(t, run(t, root, "ACT"), "ACT", "activation table P6", "deferral", "no row", "Activation deferrals")
+	// A row for the check with a different ticket, or a later expiry, is not the approved deferral.
+	for name, mut := range map[string]func(string) string{
+		"ticket":  func(s string) string { return strings.Replace(s, "T-0927", "T-0999", 1) },
+		"expires": func(s string) string { return strings.Replace(s, "2026-12-15", "2027-03-01", 1) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := deferralRepo(t, "P2-oci", "packaging/linux-oci/Dockerfile.server", d2oci, mut)
+			expect(t, run(t, root, "ACT"), "ACT", "activation table P2-oci", "deferral", "no row")
+		})
+	}
+	// A different check with the same ticket and expiry does not count either.
+	root = deferralRepo(t, "P2-msi", "packaging/windows/installer.wxs", `{"ticket": "T-0927", "expires": "2026-12-15", "adr": "0002-deployment-model.md"}`, nil)
+	expect(t, run(t, root, "ACT"), "ACT", "activation table P2-msi", "deferral", "no row")
+}
+
+func TestActivationDeferralADRMustGrant(t *testing.T) {
+	root := deferralRepo(t, "P2-oci", "packaging/linux-oci/Dockerfile.server", d2oci, nil)
+	for name, tc := range map[string]struct{ file, content, frag string }{
+		"proposed": {"knowledge/development/decisions/0002-deployment-model.md", strings.Replace(adrDeferrals, "ratified", "proposed", 1), "ratified or accepted"},
+		"no table": {"knowledge/development/decisions/0002-deployment-model.md", adrRatified, "no **Activation deferrals** heading"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := filepath.Join(root, filepath.FromSlash(tc.file))
+			if err := os.WriteFile(p, []byte(tc.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			expect(t, run(t, root, "ACT"), "ACT", "activation table P2-oci", "deferral", tc.frag)
+		})
+	}
+	// An adr that is a path, not a file name in decisionsDir, is refused.
+	root = deferralRepo(t, "P2-oci", "packaging/linux-oci/Dockerfile.server", d2oci, func(s string) string {
+		return strings.Replace(s, `"expires": "2026-12-15", "adr": "0002-deployment-model.md"`, `"expires": "2026-12-15", "adr": "../0002-deployment-model.md"`, 1)
+	})
+	expect(t, run(t, root, "ACT"), "ACT", "activation table P2-oci", "deferral", "must be the file name")
+}
+
+// A deferral changes nothing for a row whose subject does not exist yet: it stays pending.
+func TestActivationDeferralOnPendingRowStaysPending(t *testing.T) {
+	root := deferralRepo(t, "P5", "unrelated.txt", `{"ticket": "T-0999", "expires": "2026-12-15", "adr": "0002-deployment-model.md"}`, nil)
+	vs, rows, err := Run(root, defaultManifest, []string{"ACT"}, onlyMain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, vs, "ACT", "activation table P5", "deferral", "no row") // the deferral is still judged
+	for _, r := range rows {
+		if r.Check == "P5" && r.State() != "pending" {
+			t.Errorf("P5 state = %q, want pending", r.State())
+		}
+	}
+}
+
+// The manifest as shipped: P2 split by artefact, every path under packaging/linux-oci/, no row on
+// the wrong packaging/oci/ path (acceptance 3).
+func TestShippedManifestActivationPaths(t *testing.T) {
+	b, err := os.ReadFile("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "packaging/oci") {
+		t.Error("manifest.json names packaging/oci/, which is not in the tree; the OCI artefacts are in packaging/linux-oci/")
+	}
+	cfg, err := LoadConfig("../../..", defaultManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths := map[string]string{}
+	for _, a := range cfg.Activation {
+		paths[a.Check] = strings.Join(a.Paths, ",")
+	}
+	for check, want := range map[string]string{"P2-oci": "packaging/linux-oci/", "P2-msi": "packaging/windows/", "P6": "packaging/linux-oci/"} {
+		if paths[check] != want {
+			t.Errorf("%s paths = %q, want %q", check, paths[check], want)
+		}
+	}
+	if _, ok := paths["P2"]; ok {
+		t.Error("the unsplit P2 row is back")
+	}
+}
+
+// Every deferral in the shipped manifest is approved by the ADR table as it is today, so the real
+// table and the real manifest agree. It judges them on the date the ADR was written: the wall
+// clock is the job's business (`make fitness-profiles`), not this test's.
+func TestShippedDeferralsMatchADRTable(t *testing.T) {
+	cfg, err := LoadConfig("../../..", defaultManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &Ctx{Root: "../../..", Cfg: cfg, Now: testToday}
+	n := 0
+	for _, a := range cfg.Activation {
+		if a.Deferral == nil {
+			continue
+		}
+		n++
+		if ps := c.deferralProblems(a); len(ps) != 0 {
+			t.Errorf("%s: %s", a.Check, strings.Join(ps, "; "))
+		}
+	}
+	if n != 7 {
+		t.Errorf("manifest carries %d deferrals, ADR-0002 lists seven", n)
+	}
+}
+
 func TestUnknownCheck(t *testing.T) {
 	if _, _, err := Run(repo(t, nil), defaultManifest, []string{"P9"}, onlyMain); err == nil {
 		t.Fatal("unknown check should be an error")
+	}
+}
+
+// --- P1 erratum E-1: registered external vocabulary ------------------------------------------
+
+// withVocab returns the real manifest with its externalVocabulary replaced.
+func withVocab(t *testing.T, entries string) map[string]string {
+	t.Helper()
+	b, err := os.ReadFile("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["externalVocabulary"] = json.RawMessage(entries)
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]string{"tools/fitness/profiles/manifest.json": string(out)}
+}
+
+func TestP1ExternalVocabularyIdentifiers(t *testing.T) {
+	for _, id := range []string{"IsOnPremDeployment", "OnPremisesProfile", "OnPremisesSyncEnabledForSaaS", "onPremMode", "SaaSOnPremisesDomainName"} {
+		t.Run("fails/"+id, func(t *testing.T) {
+			root := repo(t, map[string]string{"internal/directory/dn/dn.go": "package dn\n\nvar " + id + " = 1\n"})
+			expect(t, run(t, root, "P1"), "P1", "internal/directory/dn/dn.go:3", id, "names a deployment profile")
+		})
+	}
+	// The registered names pass: graphnames/names.go in the baseline holds four of them, and a
+	// domain package may use them as well.
+	src := "package dn\n\nvar (\n\tOnPremisesSyncEnabled = 1\n\tAttrOnPremisesSyncEnabled = 1\n\tOnPremisesDomainName = 1\n\tAnchorOnpremSID = 1\n\tonPremisesImmutableId = 1\n)\n"
+	root := repo(t, map[string]string{"internal/directory/dn/dn.go": src})
+	if vs := run(t, root, "P1"); len(vs) != 0 {
+		t.Fatalf("registered Graph and token-claim names pass:\n%s", dump(vs))
+	}
+}
+
+func TestP1ExternalVocabularyDoesNotLoosenCapabilityValues(t *testing.T) {
+	root := repo(t, map[string]string{"internal/platform/capability/capability.go": "package capability\n\ntype ID string\n\nconst (\n\tDirectoryAD ID = \"directory.ad\"\n\tDirectoryEntra ID = \"directory.entra\"\n\tProvisioning ID = \"tenant-provisioning\"\n\tHosted ID = \"onprem-mode\"\n)\n"})
+	expect(t, run(t, root, "P1"), "P1", "internal/platform/capability/capability.go:9", "onprem-mode", "named after a profile")
+}
+
+func TestP1ExternalVocabularyEntryRefused(t *testing.T) {
+	const src = "https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0"
+	for name, c := range map[string]struct{ entry, id, why string }{
+		"no source":        {`{"term":"onPremisesSyncEnabled","kind":"graph-property","source":""}`, "OnPremisesSyncEnabled", "no https source"},
+		"http source":      {`{"term":"onPremisesSyncEnabled","kind":"graph-property","source":"http://learn.microsoft.com/x"}`, "OnPremisesSyncEnabled", "no https source"},
+		"unknown kind":     {`{"term":"onPremisesSyncEnabled","kind":"invented","source":"` + src + `"}`, "OnPremisesSyncEnabled", "kind"},
+		"no denylist word": {`{"term":"displayName","kind":"graph-property","source":"` + src + `"}`, "DisplayName", "needs no registration"},
+		"token onprem":     {`{"term":"onprem","kind":"graph-property","source":"` + src + `"}`, "OnPremMode", "a denylist token"},
+		"token on_prem":    {`{"term":"on_prem","kind":"graph-property","source":"` + src + `"}`, "OnPremMode", "a denylist token"},
+		"token saas":       {`{"term":"SaaS","kind":"graph-property","source":"` + src + `"}`, "IsSaaS", "a denylist token"},
+		"stem onPremises":  {`{"term":"onPremises","kind":"graph-property","source":"` + src + `"}`, "OnPremisesProfile", "refused stem"},
+		"stem onPremise":   {`{"term":"onPremise","kind":"graph-property","source":"` + src + `"}`, "OnPremiseProfile", "refused stem"},
+		"stale":            {`{"term":"onPremisesLastSyncDateTime","kind":"graph-property","source":"` + src + `"}`, "Unrelated", "stale"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := withVocab(t, "["+c.entry+"]")
+			files["internal/directory/dn/dn.go"] = "package dn\n\nvar " + c.id + " = 1\n"
+			vs := run(t, repo(t, files), "P1")
+			expect(t, vs, "P1", "tools/fitness/profiles/manifest.json", "externalVocabulary entry", c.why)
+		})
+	}
+}
+
+// A refused entry cuts nothing: registering the stem must not exempt the identifier that holds it.
+func TestP1RefusedEntryDoesNotExempt(t *testing.T) {
+	files := withVocab(t, `[{"term":"onPremises","kind":"graph-segment","source":"https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0"}]`)
+	files["internal/directory/dn/dn.go"] = "package dn\n\nvar OnPremisesProfile = 1\n"
+	expect(t, run(t, repo(t, files), "P1"), "P1", "internal/directory/dn/dn.go:3", "names a deployment profile")
+}
+
+func TestP1ExternalVocabularyAcceptsOnpremSID(t *testing.T) {
+	files := withVocab(t, `[{"term":"onprem_sid","kind":"token-claim","source":"https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims-reference"}]`)
+	files["internal/directory/dn/dn.go"] = "package dn\n\nvar AnchorOnpremSID = 1\n"
+	files["internal/directory/graphnames/names.go"] = "package graphnames\n"
+	if vs := run(t, repo(t, files), "P1"); len(vs) != 0 {
+		t.Fatalf("onprem_sid with AnchorOnpremSID in the tree validates:\n%s", dump(vs))
+	}
+}
+
+func TestP1RealRegistryIsSourced(t *testing.T) {
+	cfg, err := LoadConfig("../../..", defaultManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ExternalVocabulary) == 0 {
+		t.Fatal("the registry registers the terms the tree uses")
+	}
+	for _, e := range cfg.ExternalVocabulary {
+		if !strings.HasPrefix(e.Source, "https://learn.microsoft.com/") {
+			t.Errorf("%s: source %q is not a Microsoft Learn page", e.Term, e.Source)
+		}
+	}
+}
+
+// --- P1 erratum E-2: forwarding the environment ------------------------------------------------
+
+func TestP1EnvironForwarding(t *testing.T) {
+	const head = "package dn\n\nimport (\n\t\"os\"\n\t\"os/exec\"\n)\n\nconst envA = \"X=1\"\n\nvar _ = exec.Command\nvar _ = os.Args\n\n"
+	for name, body := range map[string]string{
+		"plain":            "func F(cmd *exec.Cmd) { cmd.Env = os.Environ() }\n",
+		"append":           "func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), \"X=1\") }\n",
+		"append several":   "func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), \"X=1\", \"CGO_ENABLED=0\") }\n",
+		"constant concat":  "func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), \"GOTRACEBACK=\"+\"crash\") }\n",
+		"package constant": "func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), envA) }\n",
+		"method":           "func F(cmd *exec.Cmd) { cmd.Env = append(cmd.Environ(), \"GOOS=linux\") }\n",
+	} {
+		t.Run("allowed/"+name, func(t *testing.T) {
+			root := repo(t, map[string]string{"internal/directory/dn/dn.go": head + body})
+			if vs := run(t, root, "P1"); len(vs) != 0 {
+				t.Fatalf("no finding:\n%s", dump(vs))
+			}
+		})
+	}
+	for name, c := range map[string]struct{ body, why string }{
+		"range":             {"func F() { for range os.Environ() {} }\n", "other than as the right side"},
+		"index":             {"func F() string { return os.Environ()[0] }\n", "other than as the right side"},
+		"argument":          {"func F(f func([]string)) { f(os.Environ()) }\n", "passed on or consumed"},
+		"range method":      {"func F(cmd *exec.Cmd) { for range cmd.Environ() {} }\n", "other than as the right side"},
+		"profile name":      {"func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), \"ACTIVEDIQ_PROFILE=saas\") }\n", "profile-selecting"},
+		"profile method":    {"func F(cmd *exec.Cmd) { cmd.Env = append(cmd.Environ(), \"DIQ_SAAS=1\") }\n", "profile-selecting"},
+		"variable arg":      {"func F(cmd *exec.Cmd, v string) { cmd.Env = append(os.Environ(), v) }\n", "not a constant string"},
+		"function call arg": {"func mk(s string) string { return \"ACTIVEDIQ_PROFILE=saas\" }\nfunc F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), mk(\"A=1\")) }\n", "not a constant string"},
+		"conversion arg":    {"func F(cmd *exec.Cmd) { cmd.Env = append(os.Environ(), string(\"A=1\")) }\n", "not a constant string"},
+		"prefix arg":        {"func F(cmd *exec.Cmd, v string) { cmd.Env = append(os.Environ(), \"X=\"+v) }\n", "not a constant string"},
+		"spread":            {"func F(cmd *exec.Cmd, v []string) { cmd.Env = append(os.Environ(), v...) }\n", "passed on or consumed"},
+		"not Env field":     {"func F(cmd *exec.Cmd) { x := os.Environ(); _ = x }\n", "other than as the right side"},
+		"other field":       {"type T struct{ Vars []string }\n\nfunc F(t *T) { t.Vars = os.Environ() }\n", "other than a child's Env"},
+		"append first":      {"func F(cmd *exec.Cmd) { cmd.Env = append([]string{\"X=1\"}, os.Environ()...) }\n", "passed on or consumed"},
+	} {
+		t.Run("fails/"+name, func(t *testing.T) {
+			root := repo(t, map[string]string{"internal/directory/dn/dn.go": head + c.body})
+			expect(t, run(t, root, "P1"), "P1", "internal/directory/dn/dn.go:", "Environ", c.why)
+		})
+	}
+}
+
+func TestP1EnvironInConfigLoaderAndToolsIsExempt(t *testing.T) {
+	root := repo(t, map[string]string{
+		"internal/compose/config/env.go": "package config\n\nimport \"os\"\n\nfunc All() []string { return os.Environ() }\n",
+		"tools/x/x.go":                   "package x\n\nimport \"os\"\n\nfunc All() []string { return os.Environ() }\n",
+	})
+	if vs := run(t, root, "P1"); len(vs) != 0 {
+		t.Fatalf("the config loader and tools may read the environment:\n%s", dump(vs))
 	}
 }

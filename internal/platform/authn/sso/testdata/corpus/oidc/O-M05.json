@@ -1,0 +1,10 @@
+{
+ "id": "O-M05",
+ "class": "misaddressed",
+ "cites": [
+  "OIDC-17"
+ ],
+ "build": "discovery_changed",
+ "expect": "refuse",
+ "reason": "oidc.config"
+}

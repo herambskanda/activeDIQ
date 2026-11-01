@@ -1,0 +1,21 @@
+--- host
+DC1
+Microsoft Windows Server 2025 Standard Evaluation
+26100
+--- whoami
+winlab\administrator
+--- C:\lab\t0577 exists?
+False
+--- ProgramData ACL
+C:\ProgramData NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+               BUILTIN\Administrators:(OI)(CI)(F)
+               CREATOR OWNER:(OI)(CI)(IO)(F)
+               BUILTIN\Users:(OI)(CI)(RX)
+               BUILTIN\Users:(CI)(WD,AD,WEA,WA)
+
+Successfully processed 1 files; Failed processing 0 files
+--- ProgramData\skenzeriq exists?
+False
+--- ProgramData child count
+15
+

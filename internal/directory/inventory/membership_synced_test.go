@@ -47,7 +47,7 @@ func syncedGroup(g string, members ...string) inventory.Observation {
 	o := enGroup(g, true, "", members...)
 	yes := true
 	o.OnPremisesSyncEnabled = &yes
-	o.OnPremisesSID = sidG
+	o.OnPremisesSecurityIdentifier = sidG
 	return o
 }
 
@@ -171,10 +171,10 @@ func TestMembership_synced_tier0(t *testing.T) { // case 4
 func TestMembership_sync_flag(t *testing.T) { // case 5
 	run(t, func(s synced) {
 		g := enGroup(sEG, true, "", sUser)
-		g.OnPremisesSyncRead = false // not read
+		g.OnPremisesSyncEnabledRead = false // not read
 		s.populate_(s.enA, t1, enUser(sUser, nil), g)
 		s.want("absent", s.groups("attested"), false)
-		g.OnPremisesSyncRead, g.OnPremisesSyncEnabled = true, nil
+		g.OnPremisesSyncEnabledRead, g.OnPremisesSyncEnabled = true, nil
 		s.populate_(s.enA, t2, g)
 		s.want("null", s.groups("attested"), true, sEG)
 		no := false
@@ -211,7 +211,7 @@ func TestMembership_forged_peer(t *testing.T) { // case 7
 		run(t, func(s synced) {
 			now := time.Now()
 			forged := syncedGroup(sEG, sUser)
-			forged.OnPremisesSID = []byte{1, 1, 0, 0, 0, 0, 0, 5, 21, 0, 0, 0, 7, 7, 0, 0} // another forest's group
+			forged.OnPremisesSecurityIdentifier = []byte{1, 1, 0, 0, 0, 0, 0, 5, 21, 0, 0, 0, 7, 7, 0, 0} // another forest's group
 			s.populate_(s.enA, t1, enUser(sUser, nil), forged)
 			s.populate_(s.adA, t1, adSrc(sADG, false, now))
 			s.pair("matched", "", false, now)

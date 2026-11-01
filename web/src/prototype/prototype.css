@@ -314,13 +314,14 @@
   margin: 0;
   overflow-wrap: anywhere;
 }
-.pt table {
+/* :where keeps these element rules below the design-system Table and DataGrid. */
+:where(.pt) table {
   width: 100%;
   border-collapse: collapse;
   background: var(--diq-surface);
   border: 1px solid var(--diq-line);
 }
-.pt th {
+:where(.pt) th {
   text-align: left;
   font-size: var(--diq-text-micro);
   letter-spacing: var(--diq-tracking-label);
@@ -329,7 +330,7 @@
   padding: var(--diq-space-2) var(--diq-space-3);
   background: var(--diq-surface-2);
 }
-.pt td {
+:where(.pt) td {
   padding: var(--diq-space-1) var(--diq-space-3);
   min-height: var(--diq-row);
   border-top: 1px solid var(--diq-line);

@@ -1,0 +1,1588 @@
+=== RUN   TestReadFileRefusesSymlinkAndWider
+--- PASS: TestReadFileRefusesSymlinkAndWider (0.00s)
+=== RUN   TestReadFileRefusesSymlinkToOwnFile
+--- PASS: TestReadFileRefusesSymlinkToOwnFile (0.00s)
+=== RUN   TestReadFileOwnerOnly
+--- PASS: TestReadFileOwnerOnly (0.00s)
+=== RUN   TestEnsureDir
+--- PASS: TestEnsureDir (0.00s)
+=== RUN   TestReadFileRefusesFIFO
+--- PASS: TestReadFileRefusesFIFO (0.00s)
+=== RUN   TestOpenAppendCreatesOwnerOnly
+--- PASS: TestOpenAppendCreatesOwnerOnly (0.00s)
+=== RUN   TestOpenAppendCorrectsWiderExistingFile
+--- PASS: TestOpenAppendCorrectsWiderExistingFile (0.00s)
+=== RUN   TestSymlinkAndNonRegularRefused
+--- PASS: TestSymlinkAndNonRegularRefused (0.00s)
+=== RUN   TestOwnedBy
+--- PASS: TestOwnedBy (0.00s)
+=== RUN   TestCreateTempIsOwnerOnlyBeforeWrite
+--- PASS: TestCreateTempIsOwnerOnlyBeforeWrite (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/ownerfile	0.006s
+?   	github.com/skenzeriq/activediq/internal/connector	[no test files]
+=== RUN   TestSDFlagsSACLNotConstructible
+--- PASS: TestSDFlagsSACLNotConstructible (0.00s)
+=== RUN   TestSDControlEncoding
+--- PASS: TestSDControlEncoding (0.00s)
+=== RUN   TestCredentialRedacted
+--- PASS: TestCredentialRedacted (0.00s)
+=== RUN   TestOpenDoesNotRetainPassword
+--- PASS: TestOpenDoesNotRetainPassword (0.00s)
+=== RUN   TestSDControlIsCritical
+--- PASS: TestSDControlIsCritical (0.00s)
+=== RUN   TestSDHasSACL
+--- PASS: TestSDHasSACL (0.00s)
+=== RUN   TestAbsorbDropsUnrequestedAttributes
+--- PASS: TestAbsorbDropsUnrequestedAttributes (0.00s)
+=== RUN   TestWatchCancelAtCompletionRace
+--- PASS: TestWatchCancelAtCompletionRace (0.01s)
+=== RUN   TestSplitRange
+--- PASS: TestSplitRange (0.00s)
+=== RUN   TestAttributePolicy
+--- PASS: TestAttributePolicy (0.00s)
+=== RUN   TestSearchRejectsBeforeAnyIO
+--- PASS: TestSearchRejectsBeforeAnyIO (0.00s)
+=== RUN   TestHostileValuesAreEscaped
+--- PASS: TestHostileValuesAreEscaped (0.00s)
+=== RUN   TestOpenRefusals
+--- PASS: TestOpenRefusals (0.00s)
+=== RUN   TestSchemaOIDsMatchMSADA3
+--- PASS: TestSchemaOIDsMatchMSADA3 (0.00s)
+=== RUN   TestSiteOf
+--- PASS: TestSiteOf (0.00s)
+=== RUN   TestOracleRenderParsedByGoLDAP
+--- PASS: TestOracleRenderParsedByGoLDAP (0.00s)
+=== RUN   TestOracleGoLDAPEscapeParsedByDN
+--- PASS: TestOracleGoLDAPEscapeParsedByDN (0.00s)
+=== RUN   TestOracleWireTextsAgree
+--- PASS: TestOracleWireTextsAgree (0.00s)
+=== RUN   TestOpenGCReadsSecretSchemaFromDCPort
+--- PASS: TestOpenGCReadsSecretSchemaFromDCPort (0.01s)
+=== RUN   TestKerberosValidate
+--- PASS: TestKerberosValidate (0.00s)
+=== RUN   TestKerberosConfigTypedAESOnly
+--- PASS: TestKerberosConfigTypedAESOnly (0.00s)
+=== RUN   TestZeroKeytabWipesEveryKey
+--- PASS: TestZeroKeytabWipesEveryKey (0.02s)
+=== RUN   TestBindWithKeytabZeroisesParsedKeytab
+--- PASS: TestBindWithKeytabZeroisesParsedKeytab (0.01s)
+=== RUN   TestBindWithKeytabUnreadable
+--- PASS: TestBindWithKeytabUnreadable (0.00s)
+=== RUN   TestKerberosRedacted
+--- PASS: TestKerberosRedacted (0.00s)
+=== RUN   TestOpenRejectsBothOrNeitherIdentity
+--- PASS: TestOpenRejectsBothOrNeitherIdentity (0.00s)
+=== RUN   TestNTLMStaticGuard
+--- PASS: TestNTLMStaticGuard (0.01s)
+=== RUN   TestGSSAPIBindBuildsChannelBinding
+--- PASS: TestGSSAPIBindBuildsChannelBinding (0.00s)
+=== RUN   TestReferralFaultControlNoInjection
+--- PASS: TestReferralFaultControlNoInjection (0.01s)
+=== RUN   TestReferralEndsScopedSearch
+--- PASS: TestReferralEndsScopedSearch (0.01s)
+=== RUN   TestReferralMidStreamIsNotComplete
+--- PASS: TestReferralMidStreamIsNotComplete (0.02s)
+=== RUN   TestReferralOnSecondRootKeepsEarlierCountHonest
+--- PASS: TestReferralOnSecondRootKeepsEarlierCountHonest (0.00s)
+=== RUN   TestReferralWithSeveralURLs
+--- PASS: TestReferralWithSeveralURLs (0.01s)
+=== RUN   TestReferralWindowsRealDCPending
+    referral_fault_test.go:133: PENDING(windows-lab): LF-32 on a real Windows DC is unproven until `make windows-lab-up` can host a referral; fault-injection proof above stands in
+--- SKIP: TestReferralWindowsRealDCPending (0.00s)
+=== RUN   TestScopedSearchResolvesParentsOncePerDistinctParent
+--- PASS: TestScopedSearchResolvesParentsOncePerDistinctParent (0.08s)
+=== RUN   TestScopedSearchWithoutResolveParentsReadsNothingExtra
+--- PASS: TestScopedSearchWithoutResolveParentsReadsNothingExtra (0.00s)
+=== RUN   TestCheckControls
+--- PASS: TestCheckControls (0.00s)
+=== RUN   TestScopedSearchRejectsBeforeAnyIO
+--- PASS: TestScopedSearchRejectsBeforeAnyIO (0.00s)
+=== RUN   TestSecretSchemaRefusals
+--- PASS: TestSecretSchemaRefusals (0.00s)
+=== RUN   TestReadSecretRefusals
+--- PASS: TestReadSecretRefusals (0.00s)
+=== RUN   TestReadSecretFailedReadAndFailedAudit
+--- PASS: TestReadSecretFailedReadAndFailedAudit (0.00s)
+=== RUN   TestCollectSecretSchemaFailsClosedOnEmpty
+--- PASS: TestCollectSecretSchemaFailsClosedOnEmpty (0.00s)
+=== RUN   TestWriteDACLRefusesZeroWrite
+--- PASS: TestWriteDACLRefusesZeroWrite (0.00s)
+=== RUN   TestWriteDACLStaleBaseSendsNothing
+--- PASS: TestWriteDACLStaleBaseSendsNothing (0.01s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/ad	0.210s
+=== RUN   TestChannelBindingIsRFC5929
+--- PASS: TestChannelBindingIsRFC5929 (0.00s)
+=== RUN   TestNegotiateSelectsNoLayerOverTLS
+--- PASS: TestNegotiateSelectsNoLayerOverTLS (0.00s)
+=== RUN   TestNegotiateRefusesServerWithoutNoLayer
+--- PASS: TestNegotiateRefusesServerWithoutNoLayer (0.00s)
+=== RUN   TestNegotiateRefusesBeforeMutualAuth
+--- PASS: TestNegotiateRefusesBeforeMutualAuth (0.00s)
+=== RUN   TestNegotiateRejectsTamperedOffer
+--- PASS: TestNegotiateRejectsTamperedOffer (0.00s)
+=== RUN   TestDeleteSecContextWipesKeys
+--- PASS: TestDeleteSecContextWipesKeys (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/ad/gssapi	0.007s
+=== RUN   TestCertificateAssertionAndNoSecretInLogs
+--- PASS: TestCertificateAssertionAndNoSecretInLogs (0.08s)
+=== RUN   TestAssertionRejectedWhenCertUnregistered
+--- PASS: TestAssertionRejectedWhenCertUnregistered (0.19s)
+=== RUN   TestReadsReturnExactly
+--- PASS: TestReadsReturnExactly (0.15s)
+=== RUN   TestAppWithNoExtraKeysReturnsEmptyNotNil
+--- PASS: TestAppWithNoExtraKeysReturnsEmptyNotNil (0.13s)
+=== RUN   TestThrottleRetryAfterAndPaging
+--- PASS: TestThrottleRetryAfterAndPaging (0.18s)
+=== RUN   TestThrottleExhaustedIsTypedWithRetryAfter
+--- PASS: TestThrottleExhaustedIsTypedWithRetryAfter (0.23s)
+=== RUN   TestRetryAfterBeyondMaxWaitIsNotSlept
+--- PASS: TestRetryAfterBeyondMaxWaitIsNotSlept (0.13s)
+=== RUN   TestErrorsAreTypedNeverEmptySuccess
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/403/app
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/403/assign
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/403/roles
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/403/owners
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/403/groups
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/403/members
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/403/sp
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/404/app
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/404/assign
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/404/roles
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/404/owners
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/404/groups
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/404/members
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/404/sp
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/500/members
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/500/sp
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/500/app
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/500/assign
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/500/roles
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/500/owners
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/500/groups
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/200_garbage/groups
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/200_garbage/members
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/200_garbage/sp
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/200_garbage/app
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/200_garbage/assign
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/200_garbage/roles
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/200_garbage/owners
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/redirect/groups
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/redirect/members
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/redirect/sp
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/redirect/app
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/redirect/assign
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/redirect/roles
+=== RUN   TestErrorsAreTypedNeverEmptySuccess/redirect/owners
+--- PASS: TestErrorsAreTypedNeverEmptySuccess (4.51s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/403/app (0.16s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/403/assign (0.10s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/403/roles (0.23s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/403/owners (0.03s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/403/groups (0.19s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/403/members (0.12s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/403/sp (0.08s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/404/app (0.15s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/404/assign (0.04s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/404/roles (0.06s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/404/owners (0.09s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/404/groups (0.17s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/404/members (0.22s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/404/sp (0.06s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/500/members (0.06s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/500/sp (0.09s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/500/app (0.08s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/500/assign (0.04s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/500/roles (0.21s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/500/owners (0.10s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/500/groups (0.09s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/200_garbage/groups (0.04s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/200_garbage/members (0.18s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/200_garbage/sp (0.20s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/200_garbage/app (0.24s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/200_garbage/assign (0.25s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/200_garbage/roles (0.09s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/200_garbage/owners (0.06s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/redirect/groups (0.26s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/redirect/members (0.23s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/redirect/sp (0.10s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/redirect/app (0.18s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/redirect/assign (0.10s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/redirect/roles (0.10s)
+    --- PASS: TestErrorsAreTypedNeverEmptySuccess/redirect/owners (0.09s)
+=== RUN   TestErrorInLaterPageFailsWholeRead
+--- PASS: TestErrorInLaterPageFailsWholeRead (0.26s)
+=== RUN   TestUnreachableTenant
+--- PASS: TestUnreachableTenant (0.03s)
+=== RUN   TestUntrustedTLSIsTransportSecurity
+2026/10/30 07:30:58 http: TLS handshake error from 127.0.0.1:34446: read tcp 127.0.0.1:43133->127.0.0.1:34446: use of closed network connection
+--- PASS: TestUntrustedTLSIsTransportSecurity (0.26s)
+=== RUN   TestTokenForOtherTenantRefused
+--- PASS: TestTokenForOtherTenantRefused (0.06s)
+=== RUN   TestTokenEndpointFailures
+--- PASS: TestTokenEndpointFailures (0.66s)
+=== RUN   TestExpiredTokenRefreshedOn401
+--- PASS: TestExpiredTokenRefreshedOn401 (0.12s)
+=== RUN   TestNextLinkOffOriginRefusedAndNoTokenSent
+--- PASS: TestNextLinkOffOriginRefusedAndNoTokenSent (0.22s)
+=== RUN   TestInvalidInputsRejectedBeforeAnyRequest
+--- PASS: TestInvalidInputsRejectedBeforeAnyRequest (0.08s)
+=== RUN   TestContextCancelIsNotATypedDirectoryError
+--- PASS: TestContextCancelIsNotATypedDirectoryError (0.20s)
+=== RUN   TestAssertionHeaderIsPS256WithThumbprint
+--- PASS: TestAssertionHeaderIsPS256WithThumbprint (0.12s)
+=== RUN   TestFakeRefusesPKCS1v15Assertion
+--- PASS: TestFakeRefusesPKCS1v15Assertion (0.11s)
+=== RUN   TestDomainTenantIDRefused
+--- PASS: TestDomainTenantIDRefused (0.19s)
+=== RUN   TestRetryAfterOverflowIsNotSlept
+--- PASS: TestRetryAfterOverflowIsNotSlept (0.19s)
+=== RUN   TestDirectoryRoleAssignmentsRefusesZeroGUID
+--- PASS: TestDirectoryRoleAssignmentsRefusesZeroGUID (0.09s)
+=== RUN   TestDebugLogCarriesPathTemplateNotKeyValue
+--- PASS: TestDebugLogCarriesPathTemplateNotKeyValue (0.03s)
+=== RUN   TestUniqueZeroAndManyNeverReturnAnIdentity
+--- PASS: TestUniqueZeroAndManyNeverReturnAnIdentity (0.15s)
+=== RUN   TestUniqueMismatchIsRefused
+--- PASS: TestUniqueMismatchIsRefused (0.07s)
+=== RUN   TestUniqueRefusesNonGUIDIDFromGraph
+--- PASS: TestUniqueRefusesNonGUIDIDFromGraph (0.31s)
+=== RUN   TestNoHandBuiltODataText
+--- PASS: TestNoHandBuiltODataText (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/graph	8.759s
+?   	github.com/skenzeriq/activediq/internal/connector/graph/graphtest	[no test files]
+?   	github.com/skenzeriq/activediq/internal/connector/labadmin	[no test files]
+=== RUN   TestPinnedReadIsServedByThePinnedDCWithVerdict
+--- PASS: TestPinnedReadIsServedByThePinnedDCWithVerdict (0.01s)
+=== RUN   TestPinToAnotherDCFailsBeforeAnyRead
+--- PASS: TestPinToAnotherDCFailsBeforeAnyRead (0.00s)
+=== RUN   TestDCChangingDuringTheReadFails
+--- PASS: TestDCChangingDuringTheReadFails (0.00s)
+=== RUN   TestVerdictFailureIsAnErrorNeverFalse
+--- PASS: TestVerdictFailureIsAnErrorNeverFalse (0.00s)
+=== RUN   TestNoVerdictUnlessAsked
+--- PASS: TestNoVerdictUnlessAsked (0.00s)
+=== RUN   TestObjectNotFound
+--- PASS: TestObjectNotFound (0.00s)
+=== RUN   TestRequestShapeIsRefused
+--- PASS: TestRequestShapeIsRefused (0.00s)
+=== RUN   TestTypedValuesAndRangedChunks
+--- PASS: TestTypedValuesAndRangedChunks (0.01s)
+=== RUN   TestUnreadableParentFailsTheRead
+--- PASS: TestUnreadableParentFailsTheRead (0.00s)
+=== RUN   TestNamingContextHeadHasNoParent
+--- PASS: TestNamingContextHeadHasNoParent (0.00s)
+=== RUN   TestInstanceTypeIsAskedForButNotReturnedUnlessRequested
+--- PASS: TestInstanceTypeIsAskedForButNotReturnedUnlessRequested (0.00s)
+=== RUN   TestSecurityDescriptorIsRefusedUntilItsTicket
+--- PASS: TestSecurityDescriptorIsRefusedUntilItsTicket (0.00s)
+=== RUN   TestSecurityDescriptorByOIDIsRefused
+--- PASS: TestSecurityDescriptorByOIDIsRefused (0.00s)
+=== RUN   TestOEMInformationOIDIsNotTheSecurityDescriptor
+--- PASS: TestOEMInformationOIDIsNotTheSecurityDescriptor (0.00s)
+=== RUN   TestAttributeRequestedByOIDIsReturned
+--- PASS: TestAttributeRequestedByOIDIsReturned (0.00s)
+=== RUN   TestADSourceRefusesAProviderOverAnotherSession
+--- PASS: TestADSourceRefusesAProviderOverAnotherSession (0.00s)
+=== RUN   TestScopedSearchStreamsBatchesThenCompleted
+--- PASS: TestScopedSearchStreamsBatchesThenCompleted (0.00s)
+=== RUN   TestScopedSearchLongAttributeIsFirstRangeIncomplete
+--- PASS: TestScopedSearchLongAttributeIsFirstRangeIncomplete (0.00s)
+=== RUN   TestScopedSearchRefusals
+--- PASS: TestScopedSearchRefusals (0.02s)
+=== RUN   TestScopedSearchFilterRejectedCarriesRuleNotValue
+--- PASS: TestScopedSearchFilterRejectedCarriesRuleNotValue (0.00s)
+=== RUN   TestScopedSearchRootGoneAndMidStreamFailureAreErrorsNotCompletion
+--- PASS: TestScopedSearchRootGoneAndMidStreamFailureAreErrorsNotCompletion (0.00s)
+=== RUN   TestScopedSearchDCSwitchDuringSearchIsRefused
+--- PASS: TestScopedSearchDCSwitchDuringSearchIsRefused (0.00s)
+=== RUN   TestScopedSearchWithoutSearcherIsUnsupported
+--- PASS: TestScopedSearchWithoutSearcherIsUnsupported (0.00s)
+=== RUN   TestScopedSearchSetsParentGUIDExceptNCHead
+--- PASS: TestScopedSearchSetsParentGUIDExceptNCHead (0.00s)
+=== RUN   TestScopedSearchUnresolvedParentIsFailure
+--- PASS: TestScopedSearchUnresolvedParentIsFailure (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/read	0.093s
+=== RUN   TestC19IdentityRights
+=== RUN   TestC19IdentityRights/reset_password_on_krbtgt
+=== RUN   TestC19IdentityRights/WP_msDS-KeyCredentialLink_on_a_DC
+=== RUN   TestC19IdentityRights/WP_member_on_a_C1_group_via_nested_group
+=== RUN   TestC19IdentityRights/owner_of_a_DC_object
+=== RUN   TestC19IdentityRights/WP_gPLink_on_the_DC_OU
+=== RUN   TestC19IdentityRights/generic_all
+=== RUN   TestC19IdentityRights/delete_child_on_the_DC_OU
+=== RUN   TestC19IdentityRights/someone_else's_right
+=== RUN   TestC19IdentityRights/someone_else_owns_it
+=== RUN   TestC19IdentityRights/authenticated_users_hold_WP_member_(token_SID)
+=== RUN   TestC19IdentityRights/everyone_holds_WP_member_(token_SID)
+=== RUN   TestC19IdentityRights/interactive_holds_a_C19_right_(token_SID)
+=== RUN   TestC19IdentityRights/network_holds_a_C19_right_(not_in_tokenGroups)
+=== RUN   TestC19IdentityRights/this_organization_holds_a_C19_right_(not_in_tokenGroups)
+--- PASS: TestC19IdentityRights (0.00s)
+    --- PASS: TestC19IdentityRights/reset_password_on_krbtgt (0.00s)
+    --- PASS: TestC19IdentityRights/WP_msDS-KeyCredentialLink_on_a_DC (0.00s)
+    --- PASS: TestC19IdentityRights/WP_member_on_a_C1_group_via_nested_group (0.00s)
+    --- PASS: TestC19IdentityRights/owner_of_a_DC_object (0.00s)
+    --- PASS: TestC19IdentityRights/WP_gPLink_on_the_DC_OU (0.00s)
+    --- PASS: TestC19IdentityRights/generic_all (0.00s)
+    --- PASS: TestC19IdentityRights/delete_child_on_the_DC_OU (0.00s)
+    --- PASS: TestC19IdentityRights/someone_else's_right (0.00s)
+    --- PASS: TestC19IdentityRights/someone_else_owns_it (0.00s)
+    --- PASS: TestC19IdentityRights/authenticated_users_hold_WP_member_(token_SID) (0.00s)
+    --- PASS: TestC19IdentityRights/everyone_holds_WP_member_(token_SID) (0.00s)
+    --- PASS: TestC19IdentityRights/interactive_holds_a_C19_right_(token_SID) (0.00s)
+    --- PASS: TestC19IdentityRights/network_holds_a_C19_right_(not_in_tokenGroups) (0.00s)
+    --- PASS: TestC19IdentityRights/this_organization_holds_a_C19_right_(not_in_tokenGroups) (0.00s)
+=== RUN   TestC19SnapshotFailureFailsClosed
+--- PASS: TestC19SnapshotFailureFailsClosed (0.00s)
+=== RUN   TestStreamShape
+--- PASS: TestStreamShape (0.00s)
+=== RUN   TestStreamChunksLargeSets
+--- PASS: TestStreamChunksLargeSets (0.02s)
+=== RUN   TestInvalidCorrelatedIsRejectedBeforeAnyRead
+=== RUN   TestInvalidCorrelatedIsRejectedBeforeAnyRead/wrong_basis
+=== RUN   TestInvalidCorrelatedIsRejectedBeforeAnyRead/no_basis
+=== RUN   TestInvalidCorrelatedIsRejectedBeforeAnyRead/two_bases
+=== RUN   TestInvalidCorrelatedIsRejectedBeforeAnyRead/no_object
+=== RUN   TestInvalidCorrelatedIsRejectedBeforeAnyRead/E5_on_AD
+--- PASS: TestInvalidCorrelatedIsRejectedBeforeAnyRead (0.00s)
+    --- PASS: TestInvalidCorrelatedIsRejectedBeforeAnyRead/wrong_basis (0.00s)
+    --- PASS: TestInvalidCorrelatedIsRejectedBeforeAnyRead/no_basis (0.00s)
+    --- PASS: TestInvalidCorrelatedIsRejectedBeforeAnyRead/two_bases (0.00s)
+    --- PASS: TestInvalidCorrelatedIsRejectedBeforeAnyRead/no_object (0.00s)
+    --- PASS: TestInvalidCorrelatedIsRejectedBeforeAnyRead/E5_on_AD (0.00s)
+=== RUN   TestCorrelatedGroupBlocksAndIsReported
+--- PASS: TestCorrelatedGroupBlocksAndIsReported (0.00s)
+=== RUN   TestShrinkRecord
+--- PASS: TestShrinkRecord (1.63s)
+=== RUN   TestBaselineMissing
+--- PASS: TestBaselineMissing (0.02s)
+=== RUN   TestLocalRecordFailureNeverShrinksAndFailsClosed
+--- PASS: TestLocalRecordFailureNeverShrinksAndFailsClosed (0.02s)
+=== RUN   TestStreamEndsWithoutCompletedOnLocalRecordFailure
+--- PASS: TestStreamEndsWithoutCompletedOnLocalRecordFailure (0.04s)
+=== RUN   TestStreamCompletedCarriesDirectoryIdentity
+--- PASS: TestStreamCompletedCarriesDirectoryIdentity (0.00s)
+=== RUN   TestStreamRefusesWithoutDirectoryIdentity
+--- PASS: TestStreamRefusesWithoutDirectoryIdentity (0.00s)
+=== RUN   TestStreamPinnedC13KeepsRenamedGroupInTier0Set
+--- PASS: TestStreamPinnedC13KeepsRenamedGroupInTier0Set (0.00s)
+=== RUN   TestMalformedPinnedC13IsInvalidArgument
+=== RUN   TestMalformedPinnedC13IsInvalidArgument/nil
+=== RUN   TestMalformedPinnedC13IsInvalidArgument/short
+=== RUN   TestMalformedPinnedC13IsInvalidArgument/empty
+--- PASS: TestMalformedPinnedC13IsInvalidArgument (0.00s)
+    --- PASS: TestMalformedPinnedC13IsInvalidArgument/nil (0.00s)
+    --- PASS: TestMalformedPinnedC13IsInvalidArgument/short (0.00s)
+    --- PASS: TestMalformedPinnedC13IsInvalidArgument/empty (0.00s)
+=== RUN   TestPass
+--- PASS: TestPass (0.00s)
+=== RUN   TestNeverRequestsSACL
+--- PASS: TestNeverRequestsSACL (0.00s)
+=== RUN   TestMembershipPaths
+--- PASS: TestMembershipPaths (0.00s)
+=== RUN   TestMembershipPrimaryGroupEdge
+--- PASS: TestMembershipPrimaryGroupEdge (0.00s)
+=== RUN   TestDesignatedAndCorrelatedGroups
+--- PASS: TestDesignatedAndCorrelatedGroups (0.00s)
+=== RUN   TestStep2EffectiveRights
+--- PASS: TestStep2EffectiveRights (0.00s)
+=== RUN   TestStep3DACL
+=== RUN   TestStep3DACL/generic_all
+=== RUN   TestStep3DACL/write_dac_via_group
+=== RUN   TestStep3DACL/control_access_typed
+=== RUN   TestStep3DACL/control_access_all
+=== RUN   TestStep3DACL/validated_write
+=== RUN   TestStep3DACL/confidential_read
+=== RUN   TestStep3DACL/plain_read_of_a_normal_attribute
+=== RUN   TestStep3DACL/inherit_only_skipped
+=== RUN   TestStep3DACL/other_trustee
+=== RUN   TestStep3DACL/authenticated_users_baseline_is_not_the_identity's
+=== RUN   TestStep3DACL/deny_first_removes_the_grant
+--- PASS: TestStep3DACL (0.00s)
+    --- PASS: TestStep3DACL/generic_all (0.00s)
+    --- PASS: TestStep3DACL/write_dac_via_group (0.00s)
+    --- PASS: TestStep3DACL/control_access_typed (0.00s)
+    --- PASS: TestStep3DACL/control_access_all (0.00s)
+    --- PASS: TestStep3DACL/validated_write (0.00s)
+    --- PASS: TestStep3DACL/confidential_read (0.00s)
+    --- PASS: TestStep3DACL/plain_read_of_a_normal_attribute (0.00s)
+    --- PASS: TestStep3DACL/inherit_only_skipped (0.00s)
+    --- PASS: TestStep3DACL/other_trustee (0.00s)
+    --- PASS: TestStep3DACL/authenticated_users_baseline_is_not_the_identity's (0.00s)
+    --- PASS: TestStep3DACL/deny_first_removes_the_grant (0.00s)
+=== RUN   TestStep5Delegation
+--- PASS: TestStep5Delegation (0.00s)
+=== RUN   TestReadErrorsNeverPass
+=== RUN   TestReadErrorsNeverPass/tier0_object_unreadable
+=== RUN   TestReadErrorsNeverPass/security_descriptor_not_returned
+=== RUN   TestReadErrorsNeverPass/security_descriptor_malformed
+=== RUN   TestReadErrorsNeverPass/null_dacl
+=== RUN   TestReadErrorsNeverPass/group_read_fails
+=== RUN   TestReadErrorsNeverPass/rbcd_search_fails
+=== RUN   TestReadErrorsNeverPass/managed_domain_read_fails
+=== RUN   TestReadErrorsNeverPass/managed_root_read_fails
+--- PASS: TestReadErrorsNeverPass (0.00s)
+    --- PASS: TestReadErrorsNeverPass/tier0_object_unreadable (0.00s)
+    --- PASS: TestReadErrorsNeverPass/security_descriptor_not_returned (0.00s)
+    --- PASS: TestReadErrorsNeverPass/security_descriptor_malformed (0.00s)
+    --- PASS: TestReadErrorsNeverPass/null_dacl (0.00s)
+    --- PASS: TestReadErrorsNeverPass/group_read_fails (0.00s)
+    --- PASS: TestReadErrorsNeverPass/rbcd_search_fails (0.00s)
+    --- PASS: TestReadErrorsNeverPass/managed_domain_read_fails (0.00s)
+    --- PASS: TestReadErrorsNeverPass/managed_root_read_fails (0.00s)
+=== RUN   TestSnapshotErrorAndIdentityError
+--- PASS: TestSnapshotErrorAndIdentityError (0.00s)
+=== RUN   TestV8MissingRead
+--- PASS: TestV8MissingRead (0.00s)
+=== RUN   TestV9ExcessAndMissing
+--- PASS: TestV9ExcessAndMissing (0.00s)
+=== RUN   TestParseSDNeverPanicsOnTruncation
+--- PASS: TestParseSDNeverPanicsOnTruncation (0.00s)
+=== RUN   TestGUIDRoundTrip
+--- PASS: TestGUIDRoundTrip (0.00s)
+=== RUN   TestBroadPrincipalExposure
+=== RUN   TestBroadPrincipalExposure/auth_users_reset_password
+=== RUN   TestBroadPrincipalExposure/auth_users_CA_on_confidential_attr
+=== RUN   TestBroadPrincipalExposure/domain_users_reset_password
+=== RUN   TestBroadPrincipalExposure/everyone_get-changes-all
+=== RUN   TestBroadPrincipalExposure/auth_users_all_extended_rights
+=== RUN   TestBroadPrincipalExposure/auth_users_confidential_read
+=== RUN   TestBroadPrincipalExposure/everyone_write_dac
+=== RUN   TestBroadPrincipalExposure/domain_users_ROSS-sync_CA
+=== RUN   TestBroadPrincipalExposure/auth_users_reanimate_CA
+=== RUN   TestBroadPrincipalExposure/domain_users_validated_SPN
+=== RUN   TestBroadPrincipalExposure/network_write_dac
+=== RUN   TestBroadPrincipalExposure/this_organization_write_dac
+=== RUN   TestBroadPrincipalExposure/ntlm_auth_write_dac
+=== RUN   TestBroadPrincipalExposure/auth_authority_asserted_write_dac
+=== RUN   TestBroadPrincipalExposure/network_get-changes-all
+=== RUN   TestBroadPrincipalExposure/this_organization_get-changes-all
+=== RUN   TestBroadPrincipalExposure/default:_everyone_change_password
+=== RUN   TestBroadPrincipalExposure/default:_auth_users_plain_read
+=== RUN   TestBroadPrincipalExposure/default:_auth_users_read_all
+=== RUN   TestBroadPrincipalExposure/self_is_not_broad
+=== RUN   TestBroadPrincipalExposure/inherit_only_skipped
+--- PASS: TestBroadPrincipalExposure (0.00s)
+    --- PASS: TestBroadPrincipalExposure/auth_users_reset_password (0.00s)
+    --- PASS: TestBroadPrincipalExposure/auth_users_CA_on_confidential_attr (0.00s)
+    --- PASS: TestBroadPrincipalExposure/domain_users_reset_password (0.00s)
+    --- PASS: TestBroadPrincipalExposure/everyone_get-changes-all (0.00s)
+    --- PASS: TestBroadPrincipalExposure/auth_users_all_extended_rights (0.00s)
+    --- PASS: TestBroadPrincipalExposure/auth_users_confidential_read (0.00s)
+    --- PASS: TestBroadPrincipalExposure/everyone_write_dac (0.00s)
+    --- PASS: TestBroadPrincipalExposure/domain_users_ROSS-sync_CA (0.00s)
+    --- PASS: TestBroadPrincipalExposure/auth_users_reanimate_CA (0.00s)
+    --- PASS: TestBroadPrincipalExposure/domain_users_validated_SPN (0.00s)
+    --- PASS: TestBroadPrincipalExposure/network_write_dac (0.00s)
+    --- PASS: TestBroadPrincipalExposure/this_organization_write_dac (0.00s)
+    --- PASS: TestBroadPrincipalExposure/ntlm_auth_write_dac (0.00s)
+    --- PASS: TestBroadPrincipalExposure/auth_authority_asserted_write_dac (0.00s)
+    --- PASS: TestBroadPrincipalExposure/network_get-changes-all (0.00s)
+    --- PASS: TestBroadPrincipalExposure/this_organization_get-changes-all (0.00s)
+    --- PASS: TestBroadPrincipalExposure/default:_everyone_change_password (0.00s)
+    --- PASS: TestBroadPrincipalExposure/default:_auth_users_plain_read (0.00s)
+    --- PASS: TestBroadPrincipalExposure/default:_auth_users_read_all (0.00s)
+    --- PASS: TestBroadPrincipalExposure/self_is_not_broad (0.00s)
+    --- PASS: TestBroadPrincipalExposure/inherit_only_skipped (0.00s)
+=== RUN   TestBroadOwnerWarns
+--- PASS: TestBroadOwnerWarns (0.00s)
+=== RUN   TestAbsentSDRightsEffectiveCouldNotVerify
+--- PASS: TestAbsentSDRightsEffectiveCouldNotVerify (0.00s)
+=== RUN   TestOwnerImplicitWriteDAC
+--- PASS: TestOwnerImplicitWriteDAC (0.00s)
+=== RUN   TestForeignPrivilegedTokenSID
+--- PASS: TestForeignPrivilegedTokenSID (0.00s)
+=== RUN   TestUniversalSIDsAreBroad
+--- PASS: TestUniversalSIDsAreBroad (0.00s)
+=== RUN   TestPinsReachSnapshotAndC13GroupsAreReturned
+--- PASS: TestPinsReachSnapshotAndC13GroupsAreReturned (0.00s)
+=== RUN   TestFixtureTokenGroupsLackImplicitSIDs
+--- PASS: TestFixtureTokenGroupsLackImplicitSIDs (0.00s)
+=== RUN   TestExpectedRightGrantedToUniversalSIDIsCovered
+--- PASS: TestExpectedRightGrantedToUniversalSIDIsCovered (0.00s)
+=== RUN   TestV8EmptyManagedDomainsReadsBoundRoot
+=== RUN   TestV8EmptyManagedDomainsReadsBoundRoot/unreadable_root_blocks
+=== RUN   TestV8EmptyManagedDomainsReadsBoundRoot/readable_root_is_read,_not_vacuous
+=== RUN   TestV8EmptyManagedDomainsReadsBoundRoot/non-empty_list_leaves_the_root_alone
+=== RUN   TestV8EmptyManagedDomainsReadsBoundRoot/no_root_and_no_domains_cannot_verify
+--- PASS: TestV8EmptyManagedDomainsReadsBoundRoot (0.00s)
+    --- PASS: TestV8EmptyManagedDomainsReadsBoundRoot/unreadable_root_blocks (0.00s)
+    --- PASS: TestV8EmptyManagedDomainsReadsBoundRoot/readable_root_is_read,_not_vacuous (0.00s)
+    --- PASS: TestV8EmptyManagedDomainsReadsBoundRoot/non-empty_list_leaves_the_root_alone (0.00s)
+    --- PASS: TestV8EmptyManagedDomainsReadsBoundRoot/no_root_and_no_domains_cannot_verify (0.00s)
+=== RUN   TestFileBaselineStoreSaveThenLoadRoundTrip
+--- PASS: TestFileBaselineStoreSaveThenLoadRoundTrip (0.04s)
+=== RUN   TestFileBaselineStoreLoadRefusesWiderAccess
+--- PASS: TestFileBaselineStoreLoadRefusesWiderAccess (0.02s)
+=== RUN   TestEpochStateTreatsUnsafeBaselineAsMissing
+--- PASS: TestEpochStateTreatsUnsafeBaselineAsMissing (0.01s)
+=== RUN   TestFileBaselineStoreLoadRefusesSymlinkSwap
+--- PASS: TestFileBaselineStoreLoadRefusesSymlinkSwap (0.00s)
+=== RUN   TestCheckName
+--- PASS: TestCheckName (0.00s)
+=== RUN   TestFingerprintRecipe
+--- PASS: TestFingerprintRecipe (0.00s)
+=== RUN   TestEveryFindingHasAUniqueFingerprintForExposures
+--- PASS: TestEveryFindingHasAUniqueFingerprintForExposures (0.00s)
+=== RUN   TestVerify_error_no_dn
+2026/10/30 07:30:54 WARN connector: verify connection failed ad_code=INSUFFICIENT_RIGHTS local_record_failed=false
+2026/10/30 07:30:54 WARN connector: verify connection failed ad_code="" local_record_failed=false
+--- PASS: TestVerify_error_no_dn (0.00s)
+=== RUN   TestVerifyADFailureKinds
+2026/10/30 07:30:54 WARN connector: verify connection failed ad_code=INSUFFICIENT_RIGHTS local_record_failed=false
+2026/10/30 07:30:54 WARN connector: verify connection failed ad_code=DC_UNREACHABLE local_record_failed=false
+2026/10/30 07:30:54 WARN connector: verify connection failed ad_code=BIND_FAILED local_record_failed=false
+2026/10/30 07:30:54 WARN connector: verify connection failed ad_code=OBJECT_NOT_FOUND local_record_failed=false
+2026/10/30 07:30:54 WARN connector: verify connection failed ad_code="" local_record_failed=false
+--- PASS: TestVerifyADFailureKinds (0.00s)
+=== RUN   TestConnectorErrorMapsADCodes
+--- PASS: TestConnectorErrorMapsADCodes (0.00s)
+=== RUN   TestVerifyMalformedVerificationID
+--- PASS: TestVerifyMalformedVerificationID (0.00s)
+=== RUN   TestVerifyLocalRecordFailedMapsToLOCAL_RECORD_FAILED
+2026/10/30 07:30:54 WARN connector: verify connection failed ad_code="" local_record_failed=true
+--- PASS: TestVerifyLocalRecordFailedMapsToLOCAL_RECORD_FAILED (0.00s)
+=== RUN   TestVerifyHappyPath
+--- PASS: TestVerifyHappyPath (0.00s)
+=== RUN   TestNewVerifyHandlerFailsClosedWithoutHook
+--- PASS: TestNewVerifyHandlerFailsClosedWithoutHook (0.00s)
+=== RUN   TestVerifyFeedsGateBookAndLRFClosesIt
+2026/10/30 07:30:54 WARN connector: verify connection failed ad_code="" local_record_failed=true
+--- PASS: TestVerifyFeedsGateBookAndLRFClosesIt (0.00s)
+=== RUN   TestVerifyRequiresConnectionID
+--- PASS: TestVerifyRequiresConnectionID (0.00s)
+=== RUN   TestVerifyLogsCodeOnly
+--- PASS: TestVerifyLogsCodeOnly (0.00s)
+=== RUN   TestVerifyBoundConnectionMismatchRefused
+--- PASS: TestVerifyBoundConnectionMismatchRefused (0.00s)
+=== RUN   TestVerifyBoundConnectionLRFClosesBoundGate
+2026/10/30 07:30:54 WARN connector: verify connection failed ad_code="" local_record_failed=true
+--- PASS: TestVerifyBoundConnectionLRFClosesBoundGate (0.01s)
+=== RUN   TestPIMGroupReadsRequiredWithWrites
+--- PASS: TestPIMGroupReadsRequiredWithWrites (0.22s)
+=== RUN   TestConditionalAccessReadIsNotExcess
+--- PASS: TestConditionalAccessReadIsNotExcess (0.16s)
+=== RUN   TestRoleManagementPolicyWriteIsRefused
+--- PASS: TestRoleManagementPolicyWriteIsRefused (0.45s)
+=== RUN   TestCorrectlyGrantedAppPasses
+--- PASS: TestCorrectlyGrantedAppPasses (0.05s)
+=== RUN   TestEveryDenyListPermissionRefuses
+=== RUN   TestEveryDenyListPermissionRefuses/Directory.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/RoleManagement.ReadWrite.Directory
+=== RUN   TestEveryDenyListPermissionRefuses/RoleAssignmentSchedule.ReadWrite.Directory
+=== RUN   TestEveryDenyListPermissionRefuses/RoleEligibilitySchedule.ReadWrite.Directory
+=== RUN   TestEveryDenyListPermissionRefuses/PrivilegedAccess.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/PrivilegedAccess.ReadWrite.Directory
+=== RUN   TestEveryDenyListPermissionRefuses/PrivilegedAccess.ReadWrite.AzureADGroup
+=== RUN   TestEveryDenyListPermissionRefuses/PrivilegedAssignmentSchedule.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/PrivilegedAssignmentSchedule.ReadWrite.Directory
+=== RUN   TestEveryDenyListPermissionRefuses/PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup
+=== RUN   TestEveryDenyListPermissionRefuses/PrivilegedEligibilitySchedule.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/PrivilegedEligibilitySchedule.ReadWrite.Directory
+=== RUN   TestEveryDenyListPermissionRefuses/PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup
+=== RUN   TestEveryDenyListPermissionRefuses/Application.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/Application.ReadWrite.OwnedBy
+=== RUN   TestEveryDenyListPermissionRefuses/AppRoleAssignment.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/DelegatedPermissionGrant.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/EntitlementManagement.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/UserAuthenticationMethod.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/Policy.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/Policy.ReadWrite.Directory
+=== RUN   TestEveryDenyListPermissionRefuses/Policy.ReadWrite.AzureADGroup
+=== RUN   TestEveryDenyListPermissionRefuses/RoleManagementPolicy.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/RoleManagementPolicy.ReadWrite.Directory
+=== RUN   TestEveryDenyListPermissionRefuses/RoleManagementPolicy.ReadWrite.AzureADGroup
+=== RUN   TestEveryDenyListPermissionRefuses/Domain.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/AdministrativeUnit.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/User-OnPremisesSyncBehavior.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/Group-OnPremisesSyncBehavior.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/OrgContact-OnPremisesSyncBehavior.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/OnPremDirectorySynchronization.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/Synchronization.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/User-Phone.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/User-Mail.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/User.ManageIdentities.All
+=== RUN   TestEveryDenyListPermissionRefuses/full_access_as_app
+=== RUN   TestEveryDenyListPermissionRefuses/Exchange.ManageAsApp
+=== RUN   TestEveryDenyListPermissionRefuses/Sites.FullControl.All
+=== RUN   TestEveryDenyListPermissionRefuses/Mail.ReadWrite
+=== RUN   TestEveryDenyListPermissionRefuses/Mail.Send
+=== RUN   TestEveryDenyListPermissionRefuses/Mail-Advanced.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/MailboxItem.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/MailboxItem.ImportExport.All
+=== RUN   TestEveryDenyListPermissionRefuses/Files.ReadWrite.All
+=== RUN   TestEveryDenyListPermissionRefuses/Sites.ReadWrite.All
+--- PASS: TestEveryDenyListPermissionRefuses (5.09s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Directory.ReadWrite.All (0.13s)
+    --- PASS: TestEveryDenyListPermissionRefuses/RoleManagement.ReadWrite.Directory (0.15s)
+    --- PASS: TestEveryDenyListPermissionRefuses/RoleAssignmentSchedule.ReadWrite.Directory (0.09s)
+    --- PASS: TestEveryDenyListPermissionRefuses/RoleEligibilitySchedule.ReadWrite.Directory (0.09s)
+    --- PASS: TestEveryDenyListPermissionRefuses/PrivilegedAccess.ReadWrite.All (0.11s)
+    --- PASS: TestEveryDenyListPermissionRefuses/PrivilegedAccess.ReadWrite.Directory (0.05s)
+    --- PASS: TestEveryDenyListPermissionRefuses/PrivilegedAccess.ReadWrite.AzureADGroup (0.05s)
+    --- PASS: TestEveryDenyListPermissionRefuses/PrivilegedAssignmentSchedule.ReadWrite.All (0.20s)
+    --- PASS: TestEveryDenyListPermissionRefuses/PrivilegedAssignmentSchedule.ReadWrite.Directory (0.14s)
+    --- PASS: TestEveryDenyListPermissionRefuses/PrivilegedAssignmentSchedule.ReadWrite.AzureADGroup (0.16s)
+    --- PASS: TestEveryDenyListPermissionRefuses/PrivilegedEligibilitySchedule.ReadWrite.All (0.12s)
+    --- PASS: TestEveryDenyListPermissionRefuses/PrivilegedEligibilitySchedule.ReadWrite.Directory (0.15s)
+    --- PASS: TestEveryDenyListPermissionRefuses/PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup (0.06s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Application.ReadWrite.All (0.04s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Application.ReadWrite.OwnedBy (0.11s)
+    --- PASS: TestEveryDenyListPermissionRefuses/AppRoleAssignment.ReadWrite.All (0.04s)
+    --- PASS: TestEveryDenyListPermissionRefuses/DelegatedPermissionGrant.ReadWrite.All (0.16s)
+    --- PASS: TestEveryDenyListPermissionRefuses/EntitlementManagement.ReadWrite.All (0.18s)
+    --- PASS: TestEveryDenyListPermissionRefuses/UserAuthenticationMethod.ReadWrite.All (0.07s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Policy.ReadWrite.All (0.17s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Policy.ReadWrite.Directory (0.04s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Policy.ReadWrite.AzureADGroup (0.06s)
+    --- PASS: TestEveryDenyListPermissionRefuses/RoleManagementPolicy.ReadWrite.All (0.10s)
+    --- PASS: TestEveryDenyListPermissionRefuses/RoleManagementPolicy.ReadWrite.Directory (0.09s)
+    --- PASS: TestEveryDenyListPermissionRefuses/RoleManagementPolicy.ReadWrite.AzureADGroup (0.12s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Domain.ReadWrite.All (0.18s)
+    --- PASS: TestEveryDenyListPermissionRefuses/AdministrativeUnit.ReadWrite.All (0.10s)
+    --- PASS: TestEveryDenyListPermissionRefuses/User-OnPremisesSyncBehavior.ReadWrite.All (0.03s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Group-OnPremisesSyncBehavior.ReadWrite.All (0.12s)
+    --- PASS: TestEveryDenyListPermissionRefuses/OrgContact-OnPremisesSyncBehavior.ReadWrite.All (0.08s)
+    --- PASS: TestEveryDenyListPermissionRefuses/OnPremDirectorySynchronization.ReadWrite.All (0.05s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Synchronization.ReadWrite.All (0.17s)
+    --- PASS: TestEveryDenyListPermissionRefuses/User-Phone.ReadWrite.All (0.20s)
+    --- PASS: TestEveryDenyListPermissionRefuses/User-Mail.ReadWrite.All (0.13s)
+    --- PASS: TestEveryDenyListPermissionRefuses/User.ManageIdentities.All (0.27s)
+    --- PASS: TestEveryDenyListPermissionRefuses/full_access_as_app (0.06s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Exchange.ManageAsApp (0.08s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Sites.FullControl.All (0.11s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Mail.ReadWrite (0.15s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Mail.Send (0.05s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Mail-Advanced.ReadWrite.All (0.20s)
+    --- PASS: TestEveryDenyListPermissionRefuses/MailboxItem.ReadWrite.All (0.05s)
+    --- PASS: TestEveryDenyListPermissionRefuses/MailboxItem.ImportExport.All (0.11s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Files.ReadWrite.All (0.11s)
+    --- PASS: TestEveryDenyListPermissionRefuses/Sites.ReadWrite.All (0.17s)
+=== RUN   TestDenyListMatching
+--- PASS: TestDenyListMatching (0.00s)
+=== RUN   TestAnyDirectoryRoleRefuses
+=== RUN   TestAnyDirectoryRoleRefuses/eligible=false
+=== RUN   TestAnyDirectoryRoleRefuses/eligible=true
+--- PASS: TestAnyDirectoryRoleRefuses (0.27s)
+    --- PASS: TestAnyDirectoryRoleRefuses/eligible=false (0.12s)
+    --- PASS: TestAnyDirectoryRoleRefuses/eligible=true (0.15s)
+=== RUN   TestExtraAndMissingPermissionsReported
+--- PASS: TestExtraAndMissingPermissionsReported (0.22s)
+=== RUN   TestMissingWriteRowOnlyWarns
+--- PASS: TestMissingWriteRowOnlyWarns (0.07s)
+=== RUN   TestAlternativeSatisfiesNeed
+--- PASS: TestAlternativeSatisfiesNeed (0.07s)
+=== RUN   TestPermissionOnAnotherResourceSatisfiesNothing
+--- PASS: TestPermissionOnAnotherResourceSatisfiesNothing (0.14s)
+=== RUN   TestExtraKeyCredentialsSecretsAndOwnersFlagged
+--- PASS: TestExtraKeyCredentialsSecretsAndOwnersFlagged (0.34s)
+=== RUN   TestHeldCertificateAloneIsNotFlagged
+--- PASS: TestHeldCertificateAloneIsNotFlagged (0.14s)
+=== RUN   TestUnresolvableGrantNeverPasses
+--- PASS: TestUnresolvableGrantNeverPasses (0.11s)
+=== RUN   TestRoleReadFailureNeverPasses
+--- PASS: TestRoleReadFailureNeverPasses (0.17s)
+=== RUN   TestDenyListWithUnreadableRolesStillShowsBlock
+--- PASS: TestDenyListWithUnreadableRolesStillShowsBlock (0.09s)
+=== RUN   TestIdentityReadFailureIsAnError
+--- PASS: TestIdentityReadFailureIsAnError (0.04s)
+=== RUN   TestFindingsHoldIdentifiersOnly
+--- PASS: TestFindingsHoldIdentifiersOnly (0.04s)
+=== RUN   TestSpoofedCustomKeyIdentifierIsExtra
+--- PASS: TestSpoofedCustomKeyIdentifierIsExtra (0.15s)
+=== RUN   TestHeldCertificateWithoutLabelIsRecognisedOnce
+--- PASS: TestHeldCertificateWithoutLabelIsRecognisedOnce (0.07s)
+=== RUN   TestRoleHeldThroughRoleAssignableGroupRefuses
+=== RUN   TestRoleHeldThroughRoleAssignableGroupRefuses/eligible=false
+=== RUN   TestRoleHeldThroughRoleAssignableGroupRefuses/eligible=true
+--- PASS: TestRoleHeldThroughRoleAssignableGroupRefuses (0.55s)
+    --- PASS: TestRoleHeldThroughRoleAssignableGroupRefuses/eligible=false (0.15s)
+    --- PASS: TestRoleHeldThroughRoleAssignableGroupRefuses/eligible=true (0.40s)
+=== RUN   TestRoleOnNonAssignableGroupIsNotCounted
+--- PASS: TestRoleOnNonAssignableGroupIsNotCounted (0.16s)
+=== RUN   TestNonGUIDRoleAssignableGroupIDNeverPasses
+=== RUN   TestNonGUIDRoleAssignableGroupIDNeverPasses/not-a-guid
+=== RUN   TestNonGUIDRoleAssignableGroupIDNeverPasses/00000000-0000-0000-0000-000000000000
+--- PASS: TestNonGUIDRoleAssignableGroupIDNeverPasses (0.25s)
+    --- PASS: TestNonGUIDRoleAssignableGroupIDNeverPasses/not-a-guid (0.20s)
+    --- PASS: TestNonGUIDRoleAssignableGroupIDNeverPasses/00000000-0000-0000-0000-000000000000 (0.05s)
+=== RUN   TestNonGUIDAppRoleResourceIDNeverPasses
+--- PASS: TestNonGUIDAppRoleResourceIDNeverPasses (0.12s)
+=== RUN   TestGroupMembershipReadFailureNeverPasses
+--- PASS: TestGroupMembershipReadFailureNeverPasses (0.08s)
+=== RUN   TestOwnerReadFailureIsReported
+--- PASS: TestOwnerReadFailureIsReported (0.15s)
+=== RUN   TestTMD5aDenyListOnAnyResource
+=== RUN   TestTMD5aDenyListOnAnyResource/00000002-0000-0ff1-ce00-000000000000/full_access_as_app
+=== RUN   TestTMD5aDenyListOnAnyResource/00000002-0000-0ff1-ce00-000000000000/Exchange.ManageAsApp
+=== RUN   TestTMD5aDenyListOnAnyResource/00000007-0000-0ff1-ce00-000000000000/Exchange.ManageAsApp
+=== RUN   TestTMD5aDenyListOnAnyResource/00000007-0000-0ff1-ce00-000000000000/full_access_as_app
+=== RUN   TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/Sites.FullControl.All
+=== RUN   TestTMD5aDenyListOnAnyResource/00000003-0000-0ff1-ce00-000000000000/Sites.FullControl.All
+=== RUN   TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/Mail.ReadWrite
+=== RUN   TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/Mail.Send
+=== RUN   TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/Mail-Advanced.ReadWrite.All
+=== RUN   TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/MailboxItem.ReadWrite.All
+=== RUN   TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/MailboxItem.ImportExport.All
+=== RUN   TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/Files.ReadWrite.All
+=== RUN   TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/Sites.ReadWrite.All
+=== RUN   TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/mail.readwrite
+=== RUN   TestTMD5aDenyListOnAnyResource/00000002-0000-0ff1-ce00-000000000000/Mail.ReadWrite
+=== RUN   TestTMD5aDenyListOnAnyResource/00000007-0000-0ff1-ce00-000000000000/Files.ReadWrite.All
+--- PASS: TestTMD5aDenyListOnAnyResource (2.74s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000002-0000-0ff1-ce00-000000000000/full_access_as_app (0.11s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000002-0000-0ff1-ce00-000000000000/Exchange.ManageAsApp (0.22s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000007-0000-0ff1-ce00-000000000000/Exchange.ManageAsApp (0.13s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000007-0000-0ff1-ce00-000000000000/full_access_as_app (0.09s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/Sites.FullControl.All (0.22s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000003-0000-0ff1-ce00-000000000000/Sites.FullControl.All (0.30s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/Mail.ReadWrite (0.05s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/Mail.Send (0.20s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/Mail-Advanced.ReadWrite.All (0.28s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/MailboxItem.ReadWrite.All (0.07s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/MailboxItem.ImportExport.All (0.18s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/Files.ReadWrite.All (0.07s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/Sites.ReadWrite.All (0.10s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000003-0000-0000-c000-000000000000/mail.readwrite (0.09s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000002-0000-0ff1-ce00-000000000000/Mail.ReadWrite (0.46s)
+    --- PASS: TestTMD5aDenyListOnAnyResource/00000007-0000-0ff1-ce00-000000000000/Files.ReadWrite.All (0.08s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/rights	13.787s
+=== RUN   TestADClassifyRowsC1ToC15
+=== RUN   TestADClassifyRowsC1ToC15/C1_protected_group
+=== RUN   TestADClassifyRowsC1ToC15/C1_builtin_Administrators
+=== RUN   TestADClassifyRowsC1ToC15/C1_Administrator_account
+=== RUN   TestADClassifyRowsC1ToC15/C2_direct_member_without_adminCount
+=== RUN   TestADClassifyRowsC1ToC15/C2_member_of_nested_group,_comma_in_DN
+=== RUN   TestADClassifyRowsC1ToC15/C2_nested_(circular)_group_itself
+=== RUN   TestADClassifyRowsC1ToC15/C2_primary-group_edge
+=== RUN   TestADClassifyRowsC1ToC15/C3_AdminSDHolder
+=== RUN   TestADClassifyRowsC1ToC15/C4_krbtgt
+=== RUN   TestADClassifyRowsC1ToC15/C4_RODC_krbtgt
+=== RUN   TestADClassifyRowsC1ToC15/C5_DC_by_SERVER_TRUST
+=== RUN   TestADClassifyRowsC1ToC15/C5_DC_in_default_OU
+=== RUN   TestADClassifyRowsC1ToC15/C6_Domain_Controllers_OU
+=== RUN   TestADClassifyRowsC1ToC15/C6_OU_holding_a_moved_DC
+=== RUN   TestADClassifyRowsC1ToC15/C7_domain_head
+=== RUN   TestADClassifyRowsC1ToC15/C7_configuration
+=== RUN   TestADClassifyRowsC1ToC15/C7_schema
+=== RUN   TestADClassifyRowsC1ToC15/C8_CN=System
+=== RUN   TestADClassifyRowsC1ToC15/C8_RID_Manager
+=== RUN   TestADClassifyRowsC1ToC15/C8_KDS_root_keys
+=== RUN   TestADClassifyRowsC1ToC15/C9_GPO_on_domain_head
+=== RUN   TestADClassifyRowsC1ToC15/C9_GPO_on_DC_OU
+=== RUN   TestADClassifyRowsC1ToC15/C9_GPO_on_OU_holding_a_DC
+=== RUN   TestADClassifyRowsC1ToC15/C9_GPO_on_DC_site_(disabled_link)
+=== RUN   TestADClassifyRowsC1ToC15/C9_GPO_on_OU_above_a_C2_account
+=== RUN   TestADClassifyRowsC1ToC15/C10_template
+=== RUN   TestADClassifyRowsC1ToC15/C11_DCSync_user
+=== RUN   TestADClassifyRowsC1ToC15/C11_DCSync_group
+=== RUN   TestADClassifyRowsC1ToC15/C11_member_of_DCSync_group
+=== RUN   TestADClassifyRowsC1ToC15/C12_unconstrained
+=== RUN   TestADClassifyRowsC1ToC15/C12_constrained_to_DC
+=== RUN   TestADClassifyRowsC1ToC15/C12_RBCD_on_DC
+=== RUN   TestADClassifyRowsC1ToC15/C13_DnsAdmins
+=== RUN   TestADClassifyRowsC1ToC15/C13_DnsAdmins_member
+=== RUN   TestADClassifyRowsC1ToC15/C14_AZUREADSSOACC$
+=== RUN   TestADClassifyRowsC1ToC15/C15_site_holding_a_DC
+=== RUN   TestADClassifyRowsC1ToC15/plain_CN=carol,OU=Staff,DC=lab,DC=test
+=== RUN   TestADClassifyRowsC1ToC15/plain_CN=Sales,OU=Staff,DC=lab,DC=test
+=== RUN   TestADClassifyRowsC1ToC15/plain_OU=Staff,DC=lab,DC=test
+=== RUN   TestADClassifyRowsC1ToC15/plain_OU=Workstations,DC=lab,DC=test
+=== RUN   TestADClassifyRowsC1ToC15/plain_CN=ws1,OU=Workstations,DC=lab,DC=test
+=== RUN   TestADClassifyRowsC1ToC15/plain_CN=erin,OU=Staff,DC=lab,DC=test
+=== RUN   TestADClassifyRowsC1ToC15/plain_CN=half,OU=Staff,DC=lab,DC=test
+=== RUN   TestADClassifyRowsC1ToC15/plain_CN=app2,OU=Workstations,DC=lab,DC=test
+=== RUN   TestADClassifyRowsC1ToC15/plain_CN={11111111-0000-0000-0000-000000000003},CN=Policies,CN=System,DC=lab,DC=test
+=== RUN   TestADClassifyRowsC1ToC15/plain_CN={11111111-0000-0000-0000-000000000007},CN=Policies,CN=System,DC=lab,DC=test
+=== RUN   TestADClassifyRowsC1ToC15/plain_CN=Branch,CN=Sites,CN=Configuration,DC=lab,DC=test
+=== RUN   TestADClassifyRowsC1ToC15/plain_CN=Group_Policy_Creator_Owners,CN=Users,DC=lab,DC=test
+=== RUN   TestADClassifyRowsC1ToC15/plain_CN=Services,CN=Configuration,DC=lab,DC=test
+--- PASS: TestADClassifyRowsC1ToC15 (1.17s)
+    --- PASS: TestADClassifyRowsC1ToC15/C1_protected_group (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C1_builtin_Administrators (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C1_Administrator_account (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C2_direct_member_without_adminCount (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C2_member_of_nested_group,_comma_in_DN (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C2_nested_(circular)_group_itself (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C2_primary-group_edge (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C3_AdminSDHolder (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C4_krbtgt (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C4_RODC_krbtgt (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C5_DC_by_SERVER_TRUST (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C5_DC_in_default_OU (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C6_Domain_Controllers_OU (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C6_OU_holding_a_moved_DC (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C7_domain_head (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C7_configuration (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C7_schema (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C8_CN=System (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C8_RID_Manager (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C8_KDS_root_keys (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C9_GPO_on_domain_head (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C9_GPO_on_DC_OU (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C9_GPO_on_OU_holding_a_DC (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C9_GPO_on_DC_site_(disabled_link) (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C9_GPO_on_OU_above_a_C2_account (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C10_template (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C11_DCSync_user (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C11_DCSync_group (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C11_member_of_DCSync_group (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/C12_unconstrained (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C12_constrained_to_DC (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C12_RBCD_on_DC (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C13_DnsAdmins (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C13_DnsAdmins_member (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C14_AZUREADSSOACC$ (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/C15_site_holding_a_DC (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_CN=carol,OU=Staff,DC=lab,DC=test (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_CN=Sales,OU=Staff,DC=lab,DC=test (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_OU=Staff,DC=lab,DC=test (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_OU=Workstations,DC=lab,DC=test (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_CN=ws1,OU=Workstations,DC=lab,DC=test (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_CN=erin,OU=Staff,DC=lab,DC=test (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_CN=half,OU=Staff,DC=lab,DC=test (0.03s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_CN=app2,OU=Workstations,DC=lab,DC=test (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_CN={11111111-0000-0000-0000-000000000003},CN=Policies,CN=System,DC=lab,DC=test (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_CN={11111111-0000-0000-0000-000000000007},CN=Policies,CN=System,DC=lab,DC=test (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_CN=Branch,CN=Sites,CN=Configuration,DC=lab,DC=test (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_CN=Group_Policy_Creator_Owners,CN=Users,DC=lab,DC=test (0.02s)
+    --- PASS: TestADClassifyRowsC1ToC15/plain_CN=Services,CN=Configuration,DC=lab,DC=test (0.02s)
+=== RUN   TestADLiveReadAfterMembershipChange
+--- PASS: TestADLiveReadAfterMembershipChange (0.03s)
+=== RUN   TestADC16
+--- PASS: TestADC16 (0.08s)
+=== RUN   TestADReadErrorFailsClosed
+--- PASS: TestADReadErrorFailsClosed (0.04s)
+=== RUN   TestADAttributelessProtectedEntryNamesSIDAndDN
+--- PASS: TestADAttributelessProtectedEntryNamesSIDAndDN (0.00s)
+=== RUN   TestADMalformedInputsFailClosed
+--- PASS: TestADMalformedInputsFailClosed (0.02s)
+=== RUN   TestADDesignations
+--- PASS: TestADDesignations (0.11s)
+=== RUN   TestSnapshotDeterministic
+--- PASS: TestSnapshotDeterministic (0.04s)
+=== RUN   TestQueryFilterEscapes
+--- PASS: TestQueryFilterEscapes (0.00s)
+=== RUN   TestQueryAnyGUIDRendersAgainstSchema
+--- PASS: TestQueryAnyGUIDRendersAgainstSchema (0.00s)
+=== RUN   TestGrantsOf
+--- PASS: TestGrantsOf (0.00s)
+=== RUN   TestC11SplitGrant
+--- PASS: TestC11SplitGrant (0.05s)
+=== RUN   TestUnresolvableBroadSIDFailsClosed
+--- PASS: TestUnresolvableBroadSIDFailsClosed (0.01s)
+=== RUN   TestC12DelegationToDCAlias
+--- PASS: TestC12DelegationToDCAlias (0.04s)
+=== RUN   TestMembershipWalkGroupWithoutSIDFailsClosed
+--- PASS: TestMembershipWalkGroupWithoutSIDFailsClosed (0.00s)
+=== RUN   TestMembershipWalkUnrequestableDNFailsClosed
+=== RUN   TestMembershipWalkUnrequestableDNFailsClosed/opaque_hex_RDN
+=== RUN   TestMembershipWalkUnrequestableDNFailsClosed/renders_over_MaxDNLen
+--- PASS: TestMembershipWalkUnrequestableDNFailsClosed (0.00s)
+    --- PASS: TestMembershipWalkUnrequestableDNFailsClosed/opaque_hex_RDN (0.00s)
+    --- PASS: TestMembershipWalkUnrequestableDNFailsClosed/renders_over_MaxDNLen (0.00s)
+=== RUN   TestMembershipWalkUnreadableMemberFailsClosed
+--- PASS: TestMembershipWalkUnreadableMemberFailsClosed (0.00s)
+=== RUN   TestUnreadableDCServerObjectFailsClosed
+--- PASS: TestUnreadableDCServerObjectFailsClosed (0.00s)
+=== RUN   TestUnreadableLinkedGPOFailsClosed
+--- PASS: TestUnreadableLinkedGPOFailsClosed (0.01s)
+=== RUN   TestHiddenProtectedGroupFailsClosed
+--- PASS: TestHiddenProtectedGroupFailsClosed (0.00s)
+=== RUN   TestKeyAdminsHiddenWith2016PDCFailsClosed
+--- PASS: TestKeyAdminsHiddenWith2016PDCFailsClosed (0.00s)
+=== RUN   TestKeyAdminsAbsentWith2012R2PDCSucceeds
+--- PASS: TestKeyAdminsAbsentWith2012R2PDCSucceeds (0.04s)
+=== RUN   TestKeyAdminsAbsentAtLevel2016FailsClosedRegardlessOfPDC
+--- PASS: TestKeyAdminsAbsentAtLevel2016FailsClosedRegardlessOfPDC (0.00s)
+=== RUN   TestKeyAdminsUnreadablePDCFailsClosed
+--- PASS: TestKeyAdminsUnreadablePDCFailsClosed (0.00s)
+=== RUN   TestUnreadableFunctionalLevelFailsClosed
+--- PASS: TestUnreadableFunctionalLevelFailsClosed (0.00s)
+=== RUN   TestChildDomainRootGroupsMayBeAbsent
+--- PASS: TestChildDomainRootGroupsMayBeAbsent (0.02s)
+=== RUN   TestC17WriteDACL
+--- PASS: TestC17WriteDACL (0.03s)
+=== RUN   TestC17Rights
+=== RUN   TestC17Rights/WriteOwner
+=== RUN   TestC17Rights/GenericAll
+=== RUN   TestC17Rights/GenericWrite
+=== RUN   TestC17Rights/WriteProperty_all_properties
+=== RUN   TestC17Rights/WriteProperty_gPLink
+=== RUN   TestC17Rights/all_extended_rights
+=== RUN   TestC17Rights/WriteProperty_description
+=== RUN   TestC17Rights/one_extended_right
+=== RUN   TestC17Rights/read_only
+=== RUN   TestC17Rights/WriteDACL_but_inherit-only
+--- PASS: TestC17Rights (0.16s)
+    --- PASS: TestC17Rights/WriteOwner (0.02s)
+    --- PASS: TestC17Rights/GenericAll (0.02s)
+    --- PASS: TestC17Rights/GenericWrite (0.01s)
+    --- PASS: TestC17Rights/WriteProperty_all_properties (0.01s)
+    --- PASS: TestC17Rights/WriteProperty_gPLink (0.01s)
+    --- PASS: TestC17Rights/all_extended_rights (0.02s)
+    --- PASS: TestC17Rights/WriteProperty_description (0.02s)
+    --- PASS: TestC17Rights/one_extended_right (0.02s)
+    --- PASS: TestC17Rights/read_only (0.02s)
+    --- PASS: TestC17Rights/WriteDACL_but_inherit-only (0.01s)
+=== RUN   TestC17Owner
+--- PASS: TestC17Owner (0.07s)
+=== RUN   TestC17Group
+--- PASS: TestC17Group (0.06s)
+=== RUN   TestC17AdminSDHolderAndConfig
+--- PASS: TestC17AdminSDHolderAndConfig (0.11s)
+=== RUN   TestC17Broad
+--- PASS: TestC17Broad (0.02s)
+=== RUN   TestC17NotSplit
+--- PASS: TestC17NotSplit (0.06s)
+=== RUN   TestCallbackACEs
+--- PASS: TestCallbackACEs (0.08s)
+=== RUN   TestC18PrivilegedHistory
+--- PASS: TestC18PrivilegedHistory (0.16s)
+=== RUN   TestC18PrefixAndUnresolved
+--- PASS: TestC18PrefixAndUnresolved (0.05s)
+=== RUN   TestC18Group
+--- PASS: TestC18Group (0.04s)
+=== RUN   TestC18InsideACE
+--- PASS: TestC18InsideACE (0.06s)
+=== RUN   TestC18FailClosed
+--- PASS: TestC18FailClosed (0.02s)
+=== RUN   TestC8DirectoryService
+--- PASS: TestC8DirectoryService (0.05s)
+=== RUN   TestC13ByRIDAndPinnedGUID
+--- PASS: TestC13ByRIDAndPinnedGUID (0.15s)
+=== RUN   TestC17Live
+--- PASS: TestC17Live (0.08s)
+=== RUN   TestC18BatchedResolution
+--- PASS: TestC18BatchedResolution (0.04s)
+=== RUN   TestC18BatchLookupFailsClosed
+--- PASS: TestC18BatchLookupFailsClosed (0.01s)
+=== RUN   TestQueryAnySIDRendersEscapedBinary
+--- PASS: TestQueryAnySIDRendersEscapedBinary (0.00s)
+=== RUN   TestC18ForeignDomainViaGC
+--- PASS: TestC18ForeignDomainViaGC (0.10s)
+=== RUN   TestDnsAdminsMissingFinding
+--- PASS: TestDnsAdminsMissingFinding (0.08s)
+=== RUN   TestC18DesignationClosure
+--- PASS: TestC18DesignationClosure (0.05s)
+=== RUN   TestC18WellKnownHistoryFailsClosed
+--- PASS: TestC18WellKnownHistoryFailsClosed (0.03s)
+=== RUN   TestDnsAdminsUndeterminedWhenZonesUnreadable
+--- PASS: TestDnsAdminsUndeterminedWhenZonesUnreadable (0.07s)
+=== RUN   TestC19GroupMember
+--- PASS: TestC19GroupMember (0.06s)
+=== RUN   TestC19GroupACL
+--- PASS: TestC19GroupACL (0.16s)
+=== RUN   TestC19SelfMembership
+--- PASS: TestC19SelfMembership (0.06s)
+=== RUN   TestC19Krbtgt
+--- PASS: TestC19Krbtgt (0.19s)
+=== RUN   TestC19DCShadow
+--- PASS: TestC19DCShadow (0.07s)
+=== RUN   TestC19DCMoved
+--- PASS: TestC19DCMoved (0.02s)
+=== RUN   TestC19DCOU
+--- PASS: TestC19DCOU (0.07s)
+=== RUN   TestC19DCHolder
+--- PASS: TestC19DCHolder (0.02s)
+=== RUN   TestC19GPO
+--- PASS: TestC19GPO (0.03s)
+=== RUN   TestC19Owner
+--- PASS: TestC19Owner (0.03s)
+=== RUN   TestC19GroupTrustee
+--- PASS: TestC19GroupTrustee (0.05s)
+=== RUN   TestC19Broad
+--- PASS: TestC19Broad (0.02s)
+=== RUN   TestC19Ignore
+--- PASS: TestC19Ignore (0.05s)
+=== RUN   TestC19Callback
+--- PASS: TestC19Callback (0.04s)
+=== RUN   TestC19Live
+--- PASS: TestC19Live (0.03s)
+=== RUN   TestC19Fail
+--- PASS: TestC19Fail (0.05s)
+=== RUN   TestC19NotTransitive
+--- PASS: TestC19NotTransitive (0.03s)
+=== RUN   TestC19SelfMembershipGroup
+--- PASS: TestC19SelfMembershipGroup (0.05s)
+=== RUN   TestC19UnresolvedGUID
+--- PASS: TestC19UnresolvedGUID (0.11s)
+=== RUN   TestBroadSIDWithFSPFailsClosed
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-1-0
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-1-0
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-5-4
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-5-4
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-5-11
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-5-11
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-5-15
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-5-15
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-5-64-10
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-5-64-10
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-5-64-14
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-5-64-14
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-5-64-21
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-5-64-21
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-5-65-1
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-5-65-1
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-18-1
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-18-1
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-18-2
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-18-2
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-2-0
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-2-0
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-2-1
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-2-1
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-5-113
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-5-113
+=== RUN   TestBroadSIDWithFSPFailsClosed/C19/S-1-5-114
+=== RUN   TestBroadSIDWithFSPFailsClosed/C17/S-1-5-114
+--- PASS: TestBroadSIDWithFSPFailsClosed (0.35s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-1-0 (0.02s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-1-0 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-5-4 (0.02s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-5-4 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-5-11 (0.02s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-5-11 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-5-15 (0.02s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-5-15 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-5-64-10 (0.02s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-5-64-10 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-5-64-14 (0.02s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-5-64-14 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-5-64-21 (0.02s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-5-64-21 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-5-65-1 (0.02s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-5-65-1 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-18-1 (0.02s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-18-1 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-18-2 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-18-2 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-2-0 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-2-0 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-2-1 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-2-1 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-5-113 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-5-113 (0.01s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C19/S-1-5-114 (0.02s)
+    --- PASS: TestBroadSIDWithFSPFailsClosed/C17/S-1-5-114 (0.01s)
+=== RUN   TestForeignDomainAccountFSPStaysPrincipal
+--- PASS: TestForeignDomainAccountFSPStaysPrincipal (0.03s)
+=== RUN   TestC19RightsExposed
+--- PASS: TestC19RightsExposed (0.02s)
+=== RUN   TestC19RightsBroadTrusteeWithFSPs
+    ad_tm27_test.go:417: S-1-1-0: snapshot failed closed: tier0: grant to unresolvable SID S-1-1-0 may cover every principal
+    ad_tm27_test.go:417: S-1-5-4: snapshot failed closed: tier0: grant to unresolvable SID S-1-5-4 may cover every principal
+    ad_tm27_test.go:417: S-1-5-11: snapshot failed closed: tier0: grant to unresolvable SID S-1-5-11 may cover every principal
+--- PASS: TestC19RightsBroadTrusteeWithFSPs (0.06s)
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C19/S-1-1-0
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C17/S-1-1-0
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C19nested/S-1-1-0
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C19/S-1-5-4
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C17/S-1-5-4
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C19nested/S-1-5-4
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C19/S-1-5-11
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C17/S-1-5-11
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C19nested/S-1-5-11
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C19/S-1-5-15
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C17/S-1-5-15
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C19nested/S-1-5-15
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C19/S-1-5-2
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C17/S-1-5-2
+=== RUN   TestNestedBroadFSPInTrusteeClosureFailsClosed/C19nested/S-1-5-2
+--- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed (0.23s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C19/S-1-1-0 (0.02s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C17/S-1-1-0 (0.01s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C19nested/S-1-1-0 (0.02s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C19/S-1-5-4 (0.01s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C17/S-1-5-4 (0.01s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C19nested/S-1-5-4 (0.02s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C19/S-1-5-11 (0.01s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C17/S-1-5-11 (0.01s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C19nested/S-1-5-11 (0.03s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C19/S-1-5-15 (0.02s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C17/S-1-5-15 (0.01s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C19nested/S-1-5-15 (0.02s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C19/S-1-5-2 (0.02s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C17/S-1-5-2 (0.01s)
+    --- PASS: TestNestedBroadFSPInTrusteeClosureFailsClosed/C19nested/S-1-5-2 (0.02s)
+=== RUN   TestNestedForeignAccountFSPInTrusteeClosureIsMarked
+--- PASS: TestNestedForeignAccountFSPInTrusteeClosureIsMarked (0.04s)
+=== RUN   TestForeignBroadRIDFSPFailsClosed
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C19/512
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C17/512
+=== RUN   TestForeignBroadRIDFSPFailsClosed/nested/512
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C19/513
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C17/513
+=== RUN   TestForeignBroadRIDFSPFailsClosed/nested/513
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C19/514
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C17/514
+=== RUN   TestForeignBroadRIDFSPFailsClosed/nested/514
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C19/515
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C17/515
+=== RUN   TestForeignBroadRIDFSPFailsClosed/nested/515
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C19/516
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C17/516
+=== RUN   TestForeignBroadRIDFSPFailsClosed/nested/516
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C19/525
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C17/525
+=== RUN   TestForeignBroadRIDFSPFailsClosed/nested/525
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C19/999
+=== RUN   TestForeignBroadRIDFSPFailsClosed/C17/999
+=== RUN   TestForeignBroadRIDFSPFailsClosed/nested/999
+--- PASS: TestForeignBroadRIDFSPFailsClosed (0.31s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C19/512 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C17/512 (0.01s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/nested/512 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C19/513 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C17/513 (0.01s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/nested/513 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C19/514 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C17/514 (0.01s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/nested/514 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C19/515 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C17/515 (0.01s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/nested/515 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C19/516 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C17/516 (0.01s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/nested/516 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C19/525 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C17/525 (0.01s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/nested/525 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C19/999 (0.02s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/C17/999 (0.01s)
+    --- PASS: TestForeignBroadRIDFSPFailsClosed/nested/999 (0.02s)
+=== RUN   TestForeignWellKnownAccountFSPStaysPrincipal
+--- PASS: TestForeignWellKnownAccountFSPStaysPrincipal (0.06s)
+=== RUN   TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer
+=== RUN   TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/no-seam/C19
+=== RUN   TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/no-seam/C17
+=== RUN   TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/no-seam/nested
+=== RUN   TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/error/C19
+=== RUN   TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/error/C17
+=== RUN   TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/error/nested
+=== RUN   TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/unknown/C19
+=== RUN   TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/unknown/C17
+=== RUN   TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/unknown/nested
+--- PASS: TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer (0.13s)
+    --- PASS: TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/no-seam/C19 (0.02s)
+    --- PASS: TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/no-seam/C17 (0.01s)
+    --- PASS: TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/no-seam/nested (0.02s)
+    --- PASS: TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/error/C19 (0.01s)
+    --- PASS: TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/error/C17 (0.01s)
+    --- PASS: TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/error/nested (0.01s)
+    --- PASS: TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/unknown/C19 (0.02s)
+    --- PASS: TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/unknown/C17 (0.01s)
+    --- PASS: TestForeignCustomRIDFSPFailsClosedWithoutTrustAnswer/unknown/nested (0.02s)
+=== RUN   TestForeignCustomGroupFSPMembersAreMarked
+=== RUN   TestForeignCustomGroupFSPMembersAreMarked/C19
+=== RUN   TestForeignCustomGroupFSPMembersAreMarked/nested
+--- PASS: TestForeignCustomGroupFSPMembersAreMarked (0.06s)
+    --- PASS: TestForeignCustomGroupFSPMembersAreMarked/C19 (0.03s)
+    --- PASS: TestForeignCustomGroupFSPMembersAreMarked/nested (0.03s)
+=== RUN   TestForeignCustomRIDHolderNoFSPResolvesThroughTrust
+=== RUN   TestForeignCustomRIDHolderNoFSPResolvesThroughTrust/failclosed/no-seam
+=== RUN   TestForeignCustomRIDHolderNoFSPResolvesThroughTrust/failclosed/error
+=== RUN   TestForeignCustomRIDHolderNoFSPResolvesThroughTrust/failclosed/unknown
+=== RUN   TestForeignCustomRIDHolderNoFSPResolvesThroughTrust/group
+=== RUN   TestForeignCustomRIDHolderNoFSPResolvesThroughTrust/user
+--- PASS: TestForeignCustomRIDHolderNoFSPResolvesThroughTrust (0.14s)
+    --- PASS: TestForeignCustomRIDHolderNoFSPResolvesThroughTrust/failclosed/no-seam (0.01s)
+    --- PASS: TestForeignCustomRIDHolderNoFSPResolvesThroughTrust/failclosed/error (0.02s)
+    --- PASS: TestForeignCustomRIDHolderNoFSPResolvesThroughTrust/failclosed/unknown (0.02s)
+    --- PASS: TestForeignCustomRIDHolderNoFSPResolvesThroughTrust/group (0.05s)
+    --- PASS: TestForeignCustomRIDHolderNoFSPResolvesThroughTrust/user (0.04s)
+=== RUN   TestRulePropsMatchesMicrosoftList
+--- PASS: TestRulePropsMatchesMicrosoftList (0.00s)
+=== RUN   TestRulePropsEveryMappingRefuses
+--- PASS: TestRulePropsEveryMappingRefuses (0.00s)
+=== RUN   TestDirectoryExtensionName
+--- PASS: TestDirectoryExtensionName (0.00s)
+=== RUN   TestT0DynNest
+--- PASS: TestT0DynNest (1.03s)
+=== RUN   TestT0DynNestFail
+--- PASS: TestT0DynNestFail (0.18s)
+=== RUN   TestT0DynDevice
+--- PASS: TestT0DynDevice (0.06s)
+=== RUN   TestT0DynDirectReports
+--- PASS: TestT0DynDirectReports (0.12s)
+=== RUN   TestT0DynCreateInviteNull
+--- PASS: TestT0DynCreateInviteNull (0.51s)
+=== RUN   TestT0DynLicense
+--- PASS: TestT0DynLicense (0.19s)
+=== RUN   TestT0DynExtensionContainer
+--- PASS: TestT0DynExtensionContainer (0.36s)
+=== RUN   TestT0DynUnknownAndUnlexable
+--- PASS: TestT0DynUnknownAndUnlexable (0.66s)
+=== RUN   TestT0DynMemberOf
+--- PASS: TestT0DynMemberOf (0.23s)
+=== RUN   TestT0DynADHybrid
+--- PASS: TestT0DynADHybrid (0.37s)
+=== RUN   TestT0DynLiveReread
+--- PASS: TestT0DynLiveReread (0.05s)
+=== RUN   TestT0DynClosureCarriesHash
+--- PASS: TestT0DynClosureCarriesHash (0.35s)
+=== RUN   TestPropertyWriteMalformedIsRefused
+--- PASS: TestPropertyWriteMalformedIsRefused (0.06s)
+=== RUN   TestT0DynLicGroupMember
+--- PASS: TestT0DynLicGroupMember (0.38s)
+=== RUN   TestPropertyWriteNonCanonicalKeyIsRefused
+--- PASS: TestPropertyWriteNonCanonicalKeyIsRefused (0.14s)
+=== RUN   TestT0DynMapPreferredLanguageDeviceOS
+--- PASS: TestT0DynMapPreferredLanguageDeviceOS (0.48s)
+=== RUN   TestClassifyBases
+=== RUN   TestClassifyBases/role_holder
+=== RUN   TestClassifyBases/PIM-eligible_holder
+=== RUN   TestClassifyBases/role-assignable_group
+=== RUN   TestClassifyBases/group_member
+=== RUN   TestClassifyBases/group_owner
+=== RUN   TestClassifyBases/owner_of_app_with_deny-listed_permission_(application)
+=== RUN   TestClassifyBases/owner_of_app_with_deny-listed_permission_(SP)
+=== RUN   TestClassifyBases/hybrid_identity_administrator
+=== RUN   TestClassifyBases/plain_user
+=== RUN   TestClassifyBases/owner_of_app_with_harmless_permission
+--- PASS: TestClassifyBases (0.13s)
+    --- PASS: TestClassifyBases/role_holder (0.01s)
+    --- PASS: TestClassifyBases/PIM-eligible_holder (0.00s)
+    --- PASS: TestClassifyBases/role-assignable_group (0.00s)
+    --- PASS: TestClassifyBases/group_member (0.01s)
+    --- PASS: TestClassifyBases/group_owner (0.00s)
+    --- PASS: TestClassifyBases/owner_of_app_with_deny-listed_permission_(application) (0.00s)
+    --- PASS: TestClassifyBases/owner_of_app_with_deny-listed_permission_(SP) (0.00s)
+    --- PASS: TestClassifyBases/hybrid_identity_administrator (0.00s)
+    --- PASS: TestClassifyBases/plain_user (0.00s)
+    --- PASS: TestClassifyBases/owner_of_app_with_harmless_permission (0.00s)
+=== RUN   TestE5AnyCorrelationState
+--- PASS: TestE5AnyCorrelationState (0.29s)
+=== RUN   TestDesignatedAdditions
+--- PASS: TestDesignatedAdditions (0.14s)
+=== RUN   TestMissingCorrelationRefuses
+--- PASS: TestMissingCorrelationRefuses (0.06s)
+=== RUN   TestFailClosedOnGraphError
+--- PASS: TestFailClosedOnGraphError (0.13s)
+=== RUN   TestEveryReadFailsClosed
+--- PASS: TestEveryReadFailsClosed (0.10s)
+=== RUN   TestUnknownPrincipalTypeRefuses
+--- PASS: TestUnknownPrincipalTypeRefuses (0.20s)
+=== RUN   TestSyncClientAppIsE4
+--- PASS: TestSyncClientAppIsE4 (0.13s)
+=== RUN   TestOwnerOfSPInRoleAssignableGroupIsE3
+=== RUN   TestOwnerOfSPInRoleAssignableGroupIsE3/member
+=== RUN   TestOwnerOfSPInRoleAssignableGroupIsE3/owner
+--- PASS: TestOwnerOfSPInRoleAssignableGroupIsE3 (0.17s)
+    --- PASS: TestOwnerOfSPInRoleAssignableGroupIsE3/member (0.09s)
+    --- PASS: TestOwnerOfSPInRoleAssignableGroupIsE3/owner (0.08s)
+=== RUN   TestOwnerChainsAreTransitive
+--- PASS: TestOwnerChainsAreTransitive (0.28s)
+=== RUN   TestUnknownOwnerOrMemberTypeRefuses
+--- PASS: TestUnknownOwnerOrMemberTypeRefuses (0.61s)
+=== RUN   TestGrantWithoutPrincipalTypeRefuses
+--- PASS: TestGrantWithoutPrincipalTypeRefuses (0.22s)
+=== RUN   TestADTier0CaseFoldingKeepsTrue
+--- PASS: TestADTier0CaseFoldingKeepsTrue (6.56s)
+=== RUN   TestApplicationLookupFailsClosedExceptNotFound
+=== RUN   TestApplicationLookupFailsClosedExceptNotFound/THROTTLED
+=== RUN   TestApplicationLookupFailsClosedExceptNotFound/INSUFFICIENT_RIGHTS
+=== RUN   TestApplicationLookupFailsClosedExceptNotFound/PROVIDER_FAILURE
+=== RUN   TestApplicationLookupFailsClosedExceptNotFound/UNREACHABLE_DC
+=== RUN   TestApplicationLookupFailsClosedExceptNotFound/notfound
+--- PASS: TestApplicationLookupFailsClosedExceptNotFound (0.17s)
+    --- PASS: TestApplicationLookupFailsClosedExceptNotFound/THROTTLED (0.02s)
+    --- PASS: TestApplicationLookupFailsClosedExceptNotFound/INSUFFICIENT_RIGHTS (0.00s)
+    --- PASS: TestApplicationLookupFailsClosedExceptNotFound/PROVIDER_FAILURE (0.00s)
+    --- PASS: TestApplicationLookupFailsClosedExceptNotFound/UNREACHABLE_DC (0.01s)
+    --- PASS: TestApplicationLookupFailsClosedExceptNotFound/notfound (0.00s)
+=== RUN   TestPIMSchedulesAreE2
+=== RUN   TestPIMSchedulesAreE2/eligible-only_member
+=== RUN   TestPIMSchedulesAreE2/eligible-only_owner
+=== RUN   TestPIMSchedulesAreE2/pending_approval
+=== RUN   TestPIMSchedulesAreE2/future-dated_assignment_member
+--- PASS: TestPIMSchedulesAreE2 (1.98s)
+    --- PASS: TestPIMSchedulesAreE2/eligible-only_member (0.05s)
+    --- PASS: TestPIMSchedulesAreE2/eligible-only_owner (0.63s)
+    --- PASS: TestPIMSchedulesAreE2/pending_approval (0.81s)
+    --- PASS: TestPIMSchedulesAreE2/future-dated_assignment_member (0.48s)
+=== RUN   TestExpiredScheduleIsNotTier0
+--- PASS: TestExpiredScheduleIsNotTier0 (0.45s)
+=== RUN   TestGroupTypeSchedulePrincipalJoinsClosure
+--- PASS: TestGroupTypeSchedulePrincipalJoinsClosure (2.22s)
+=== RUN   TestClosureEndsOnCycle
+--- PASS: TestClosureEndsOnCycle (0.04s)
+=== RUN   TestSPInScheduleSeedsOwnerClosure
+--- PASS: TestSPInScheduleSeedsOwnerClosure (0.07s)
+=== RUN   TestDesignatedGroupReach
+--- PASS: TestDesignatedGroupReach (0.75s)
+=== RUN   TestDesignatedAndRoleAssignableBasesBoth
+--- PASS: TestDesignatedAndRoleAssignableBasesBoth (0.12s)
+=== RUN   TestDesignatedKindMustBeKnown
+--- PASS: TestDesignatedKindMustBeKnown (0.25s)
+=== RUN   TestScheduleReadFailureRefusesEveryTarget
+=== RUN   TestScheduleReadFailureRefusesEveryTarget/eligibilitySchedules-403
+=== RUN   TestScheduleReadFailureRefusesEveryTarget/eligibilitySchedules-500
+=== RUN   TestScheduleReadFailureRefusesEveryTarget/eligibilitySchedules-404
+=== RUN   TestScheduleReadFailureRefusesEveryTarget/assignmentSchedules-403
+=== RUN   TestScheduleReadFailureRefusesEveryTarget/assignmentSchedules-500
+=== RUN   TestScheduleReadFailureRefusesEveryTarget/assignmentSchedules-404
+--- PASS: TestScheduleReadFailureRefusesEveryTarget (1.07s)
+    --- PASS: TestScheduleReadFailureRefusesEveryTarget/eligibilitySchedules-403 (0.11s)
+    --- PASS: TestScheduleReadFailureRefusesEveryTarget/eligibilitySchedules-500 (0.46s)
+    --- PASS: TestScheduleReadFailureRefusesEveryTarget/eligibilitySchedules-404 (0.11s)
+    --- PASS: TestScheduleReadFailureRefusesEveryTarget/assignmentSchedules-403 (0.20s)
+    --- PASS: TestScheduleReadFailureRefusesEveryTarget/assignmentSchedules-500 (0.10s)
+    --- PASS: TestScheduleReadFailureRefusesEveryTarget/assignmentSchedules-404 (0.09s)
+=== RUN   TestUnlicensedNeedsCorroboration
+=== RUN   TestUnlicensedNeedsCorroboration/corroborated,_no_PIM_plan
+=== RUN   TestUnlicensedNeedsCorroboration/corroborated,_plan_disabled
+=== RUN   TestUnlicensedNeedsCorroboration/a_PIM_plan_is_enabled
+=== RUN   TestUnlicensedNeedsCorroboration/no_corroborating_SKU_read
+=== RUN   TestUnlicensedNeedsCorroboration/G11_not_run_(nothing_pinned)
+=== RUN   TestUnlicensedNeedsCorroboration/pinned_plans_unknown
+=== RUN   TestUnlicensedNeedsCorroboration/different_error_code
+=== RUN   TestUnlicensedNeedsCorroboration/different_status
+--- PASS: TestUnlicensedNeedsCorroboration (0.90s)
+    --- PASS: TestUnlicensedNeedsCorroboration/corroborated,_no_PIM_plan (0.10s)
+    --- PASS: TestUnlicensedNeedsCorroboration/corroborated,_plan_disabled (0.05s)
+    --- PASS: TestUnlicensedNeedsCorroboration/a_PIM_plan_is_enabled (0.05s)
+    --- PASS: TestUnlicensedNeedsCorroboration/no_corroborating_SKU_read (0.19s)
+    --- PASS: TestUnlicensedNeedsCorroboration/G11_not_run_(nothing_pinned) (0.18s)
+    --- PASS: TestUnlicensedNeedsCorroboration/pinned_plans_unknown (0.14s)
+    --- PASS: TestUnlicensedNeedsCorroboration/different_error_code (0.13s)
+    --- PASS: TestUnlicensedNeedsCorroboration/different_status (0.05s)
+=== RUN   TestScheduleShapesFailTheSnapshot
+=== RUN   TestScheduleShapesFailTheSnapshot/no_status
+=== RUN   TestScheduleShapesFailTheSnapshot/principal_not_GUID
+=== RUN   TestScheduleShapesFailTheSnapshot/unknown_accessId
+=== RUN   TestScheduleShapesFailTheSnapshot/empty_accessId
+=== RUN   TestScheduleShapesFailTheSnapshot/unknown_principal
+=== RUN   TestScheduleShapesFailTheSnapshot/no_principal_type
+--- PASS: TestScheduleShapesFailTheSnapshot (0.69s)
+    --- PASS: TestScheduleShapesFailTheSnapshot/no_status (0.10s)
+    --- PASS: TestScheduleShapesFailTheSnapshot/principal_not_GUID (0.08s)
+    --- PASS: TestScheduleShapesFailTheSnapshot/unknown_accessId (0.15s)
+    --- PASS: TestScheduleShapesFailTheSnapshot/empty_accessId (0.11s)
+    --- PASS: TestScheduleShapesFailTheSnapshot/unknown_principal (0.16s)
+    --- PASS: TestScheduleShapesFailTheSnapshot/no_principal_type (0.08s)
+=== RUN   TestLiveScheduleCheckPerWrite
+--- PASS: TestLiveScheduleCheckPerWrite (0.08s)
+=== RUN   TestScheduleFiltersGoThroughBuilder
+--- PASS: TestScheduleFiltersGoThroughBuilder (0.12s)
+=== RUN   TestRoleManagementPolicyGrantMakesOwnersE3
+=== RUN   TestRoleManagementPolicyGrantMakesOwnersE3/RoleManagementPolicy.ReadWrite.Directory
+=== RUN   TestRoleManagementPolicyGrantMakesOwnersE3/RoleManagementPolicy.ReadWrite.AzureADGroup
+=== RUN   TestRoleManagementPolicyGrantMakesOwnersE3/RoleManagementPolicy.ReadWrite.EntraAppRole
+--- PASS: TestRoleManagementPolicyGrantMakesOwnersE3 (0.47s)
+    --- PASS: TestRoleManagementPolicyGrantMakesOwnersE3/RoleManagementPolicy.ReadWrite.Directory (0.10s)
+    --- PASS: TestRoleManagementPolicyGrantMakesOwnersE3/RoleManagementPolicy.ReadWrite.AzureADGroup (0.08s)
+    --- PASS: TestRoleManagementPolicyGrantMakesOwnersE3/RoleManagementPolicy.ReadWrite.EntraAppRole (0.29s)
+=== RUN   TestDynamicRuleRefusesReferencedProperty
+--- PASS: TestDynamicRuleRefusesReferencedProperty (0.56s)
+=== RUN   TestDynamicRuleUntokenisableOrMemberOfRefusesAll
+--- PASS: TestDynamicRuleUntokenisableOrMemberOfRefusesAll (0.60s)
+=== RUN   TestNoDynamicGroupRefusesNothing
+--- PASS: TestNoDynamicGroupRefusesNothing (0.30s)
+=== RUN   TestDynamicRuleLexer
+--- PASS: TestDynamicRuleLexer (0.00s)
+=== RUN   TestDirectReportsRuleRefusesManagerWrite
+--- PASS: TestDirectReportsRuleRefusesManagerWrite (0.09s)
+=== RUN   TestRuleWithNoPropertiesRefusesAll
+--- PASS: TestRuleWithNoPropertiesRefusesAll (0.15s)
+=== RUN   TestNestedDynamicGroupIsRuleScoped
+--- PASS: TestNestedDynamicGroupIsRuleScoped (0.22s)
+=== RUN   TestExtensionAttributeContainerWrites
+--- PASS: TestExtensionAttributeContainerWrites (0.29s)
+=== RUN   FuzzLexRule
+=== RUN   FuzzLexRule/seed#0
+=== RUN   FuzzLexRule/seed#1
+=== RUN   FuzzLexRule/seed#2
+=== RUN   FuzzLexRule/seed#3
+=== RUN   FuzzLexRule/seed#4
+=== RUN   FuzzLexRule/seed#5
+=== RUN   FuzzLexRule/seed#6
+=== RUN   FuzzLexRule/seed#7
+=== RUN   FuzzLexRule/seed#8
+=== RUN   FuzzLexRule/seed#9
+=== RUN   FuzzLexRule/seed#10
+=== RUN   FuzzLexRule/seed#11
+--- PASS: FuzzLexRule (0.00s)
+    --- PASS: FuzzLexRule/seed#0 (0.00s)
+    --- PASS: FuzzLexRule/seed#1 (0.00s)
+    --- PASS: FuzzLexRule/seed#2 (0.00s)
+    --- PASS: FuzzLexRule/seed#3 (0.00s)
+    --- PASS: FuzzLexRule/seed#4 (0.00s)
+    --- PASS: FuzzLexRule/seed#5 (0.00s)
+    --- PASS: FuzzLexRule/seed#6 (0.00s)
+    --- PASS: FuzzLexRule/seed#7 (0.00s)
+    --- PASS: FuzzLexRule/seed#8 (0.00s)
+    --- PASS: FuzzLexRule/seed#9 (0.00s)
+    --- PASS: FuzzLexRule/seed#10 (0.00s)
+    --- PASS: FuzzLexRule/seed#11 (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/tier0	31.680s
+=== RUN   TestPlanRefusedWhenBoundDCIsNotThePinnedOne
+--- PASS: TestPlanRefusedWhenBoundDCIsNotThePinnedOne (0.01s)
+=== RUN   TestPlanRefusedWhenBoundDCUnreadableOrProviderCannotSay
+2026/10/30 07:30:52 WARN connector write op=plan outcome=refused code=ERROR_CODE_UNREACHABLE_DC stage=2 operation_id=00000032-0000-0000-0000-000000000001 item=1 step=2 attempt=0 account_id=00000033-0000-0000-0000-000000000001 api_token_id="" plan_digest="" tier0_revision=7 statements=1 peers=0 statements_ignored=0
+--- PASS: TestPlanRefusedWhenBoundDCUnreadableOrProviderCannotSay (0.00s)
+=== RUN   TestPlanWithoutAUsablePinIsInvalidBeforeAnyDirectoryCall
+--- PASS: TestPlanWithoutAUsablePinIsInvalidBeforeAnyDirectoryCall (0.01s)
+=== RUN   TestApplyWithoutPreconditionDCIsInvalid
+--- PASS: TestApplyWithoutPreconditionDCIsInvalid (0.00s)
+=== RUN   TestMatchingPinReachesTheKindCheck
+--- PASS: TestMatchingPinReachesTheKindCheck (0.00s)
+=== RUN   TestPlanPreconditionDCEqualsThePin
+--- PASS: TestPlanPreconditionDCEqualsThePin (0.00s)
+=== RUN   TestApplyRefusedWhenPreconditionDCIsNotTheBoundOne
+--- PASS: TestApplyRefusedWhenPreconditionDCIsNotTheBoundOne (0.00s)
+=== RUN   TestADProviderShareOneSession
+--- PASS: TestADProviderShareOneSession (0.00s)
+=== RUN   TestEntraLiveTier0Refused
+--- PASS: TestEntraLiveTier0Refused (0.06s)
+=== RUN   TestEntraCorrelatedToADTier0RefusedBeforeGraph
+--- PASS: TestEntraCorrelatedToADTier0RefusedBeforeGraph (0.12s)
+=== RUN   TestADCorrelatedToEntraTier0RefusedBeforeDirectory
+--- PASS: TestADCorrelatedToEntraTier0RefusedBeforeDirectory (0.00s)
+=== RUN   TestNoWriteCallOutsideTheGuard
+--- PASS: TestNoWriteCallOutsideTheGuard (0.04s)
+=== RUN   TestOpsPackageImportedOnlyByGuard
+--- PASS: TestOpsPackageImportedOnlyByGuard (0.04s)
+=== RUN   TestLimitsHaveNoSetting
+--- PASS: TestLimitsHaveNoSetting (0.03s)
+=== RUN   TestLabAdminImportedOnlyByTests
+--- PASS: TestLabAdminImportedOnlyByTests (0.02s)
+=== RUN   TestTier0RefusedBeforeAnyDirectoryCall
+--- PASS: TestTier0RefusedBeforeAnyDirectoryCall (0.01s)
+=== RUN   TestTier0FoundByLiveReread
+--- PASS: TestTier0FoundByLiveReread (0.00s)
+=== RUN   TestNonTier0IsUnsupported
+--- PASS: TestNonTier0IsUnsupported (0.00s)
+=== RUN   TestClassificationErrorFailsClosed
+--- PASS: TestClassificationErrorFailsClosed (0.00s)
+=== RUN   TestStep1RequestShape
+--- PASS: TestStep1RequestShape (0.00s)
+=== RUN   TestContextRules
+--- PASS: TestContextRules (0.00s)
+=== RUN   TestEvidenceBoundToObject
+--- PASS: TestEvidenceBoundToObject (0.00s)
+=== RUN   TestRatchet
+--- PASS: TestRatchet (0.00s)
+=== RUN   TestRatchetAppendFailureClosesGate
+--- PASS: TestRatchetAppendFailureClosesGate (0.00s)
+=== RUN   TestFileBaselineIsDurableAndPrivate
+--- PASS: TestFileBaselineIsDurableAndPrivate (0.71s)
+=== RUN   TestGateStates
+--- PASS: TestGateStates (0.00s)
+=== RUN   TestOverrideNeverBypassesTier0
+--- PASS: TestOverrideNeverBypassesTier0 (0.00s)
+=== RUN   TestLimitsAreConstants
+--- PASS: TestLimitsAreConstants (0.00s)
+=== RUN   TestRefusalRecordHoldsNoValues
+--- PASS: TestRefusalRecordHoldsNoValues (0.00s)
+=== RUN   TestKnownKindTouchedSetAndStep9
+--- PASS: TestKnownKindTouchedSetAndStep9 (0.00s)
+=== RUN   TestStep9ReportsBasis
+--- PASS: TestStep9ReportsBasis (0.00s)
+=== RUN   TestPlanThroughKnownKind
+--- PASS: TestPlanThroughKnownKind (0.00s)
+=== RUN   TestOwnDesignatedGroupCheckedLive
+--- PASS: TestOwnDesignatedGroupCheckedLive (0.01s)
+=== RUN   TestStep9UsesDesignatedSet
+--- PASS: TestStep9UsesDesignatedSet (0.00s)
+=== RUN   TestFileBaselineWidenedIsRecorded
+--- PASS: TestFileBaselineWidenedIsRecorded (0.55s)
+=== RUN   TestFileBaselineOmitsZeroRevision
+--- PASS: TestFileBaselineOmitsZeroRevision (0.00s)
+=== RUN   TestApplyDACLRefusesWithoutGuardToken
+--- PASS: TestApplyDACLRefusesWithoutGuardToken (0.00s)
+=== RUN   TestProofEntraE1ToE5
+--- PASS: TestProofEntraE1ToE5 (0.11s)
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/context_stale
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/designated_target
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/live_re-read
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/other_forest
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/never_verified
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/overprivileged
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/partly_acknowledged
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/context_contradicted
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/C16_peer
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/connector_set
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/override_never_opens_tier0
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/live_re-read_fails
+=== RUN   TestProofRefusalsAreIdenticalOnBothTransports/context_missing
+--- PASS: TestProofRefusalsAreIdenticalOnBothTransports (0.03s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/context_stale (0.00s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/designated_target (0.00s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/live_re-read (0.00s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/other_forest (0.00s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/never_verified (0.00s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/overprivileged (0.00s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/partly_acknowledged (0.00s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/context_contradicted (0.00s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/C16_peer (0.00s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/connector_set (0.00s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/override_never_opens_tier0 (0.00s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/live_re-read_fails (0.00s)
+    --- PASS: TestProofRefusalsAreIdenticalOnBothTransports/context_missing (0.00s)
+=== RUN   TestProofCanaryNeverEscapes
+--- PASS: TestProofCanaryNeverEscapes (0.00s)
+=== RUN   TestAC1RegistrationWithoutPropertyWriteFailsTheBuildCheck
+--- PASS: TestAC1RegistrationWithoutPropertyWriteFailsTheBuildCheck (0.00s)
+=== RUN   TestAC2RefusedAtStep4OnBothRPCsAndTransportsOverrideDoesNotAdmit
+--- PASS: TestAC2RefusedAtStep4OnBothRPCsAndTransportsOverrideDoesNotAdmit (0.00s)
+=== RUN   TestPropertyGuardAllowsAndPassesTheDeclaration
+--- PASS: TestPropertyGuardAllowsAndPassesTheDeclaration (0.00s)
+=== RUN   TestPropertyGuardFailsClosedOnBadDeclarationOrNoSnapshot
+--- PASS: TestPropertyGuardFailsClosedOnBadDeclarationOrNoSnapshot (0.00s)
+=== RUN   TestProvidersNeverReturnANilGuard
+--- PASS: TestProvidersNeverReturnANilGuard (0.00s)
+=== RUN   TestK0RealSnapshotThroughTheHandler
+--- PASS: TestK0RealSnapshotThroughTheHandler (0.07s)
+=== RUN   TestPropertyRefusalRecordNeverCarriesValues
+--- PASS: TestPropertyRefusalRecordNeverCarriesValues (0.00s)
+=== RUN   TestWrongPlaneDeclarationHasItsOwnReason
+--- PASS: TestWrongPlaneDeclarationHasItsOwnReason (0.00s)
+=== RUN   TestGPOCNMustBeAGUID
+--- PASS: TestGPOCNMustBeAGUID (0.00s)
+=== RUN   TestADProviderDesignated
+--- PASS: TestADProviderDesignated (0.00s)
+=== RUN   TestADProviderClassifierAnswersFailClosed
+--- PASS: TestADProviderClassifierAnswersFailClosed (0.00s)
+=== RUN   TestEntraDesignatedMembership
+--- PASS: TestEntraDesignatedMembership (0.17s)
+=== RUN   TestADProviderPlumbsPinnedC13
+--- PASS: TestADProviderPlumbsPinnedC13 (0.00s)
+=== RUN   TestHandlerRefusesRenamedPinnedGroup
+--- PASS: TestHandlerRefusesRenamedPinnedGroup (0.00s)
+=== RUN   TestADProviderClassifierInputCarriesPinsAndDesignations
+--- PASS: TestADProviderClassifierInputCarriesPinsAndDesignations (0.00s)
+=== RUN   TestApplyDACLRefusals
+=== RUN   TestApplyDACLRefusals/zero_token
+=== RUN   TestApplyDACLRefusals/token_for_another_kind
+=== RUN   TestApplyDACLRefusals/zero_write
+=== RUN   TestApplyDACLRefusals/token_for_another_object
+=== RUN   TestApplyDACLRefusals/token_not_bound_to_a_DC
+=== RUN   TestApplyDACLRefusals/session_bound_to_another_DC
+--- PASS: TestApplyDACLRefusals (0.00s)
+    --- PASS: TestApplyDACLRefusals/zero_token (0.00s)
+    --- PASS: TestApplyDACLRefusals/token_for_another_kind (0.00s)
+    --- PASS: TestApplyDACLRefusals/zero_write (0.00s)
+    --- PASS: TestApplyDACLRefusals/token_for_another_object (0.00s)
+    --- PASS: TestApplyDACLRefusals/token_not_bound_to_a_DC (0.00s)
+    --- PASS: TestApplyDACLRefusals/session_bound_to_another_DC (0.00s)
+=== RUN   TestApplyDACLReadBack
+--- PASS: TestApplyDACLReadBack (0.00s)
+=== RUN   TestApplyDACLTokenBindsDeclaredProperty
+=== RUN   TestApplyDACLTokenBindsDeclaredProperty/title_kind
+=== RUN   TestApplyDACLTokenBindsDeclaredProperty/DACL_kind
+--- PASS: TestApplyDACLTokenBindsDeclaredProperty (0.00s)
+    --- PASS: TestApplyDACLTokenBindsDeclaredProperty/title_kind (0.00s)
+    --- PASS: TestApplyDACLTokenBindsDeclaredProperty/DACL_kind (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/write	2.029s
+?   	github.com/skenzeriq/activediq/internal/connector/write/ops	[no test files]

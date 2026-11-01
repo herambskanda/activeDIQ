@@ -210,9 +210,11 @@ func TestODataRulesIgnoreProse(t *testing.T) {
 func TestODataHomeAndTestsExempt(t *testing.T) {
 	home := "internal/directory/odata/render.go"
 	test := "internal/modules/m/m_test.go"
+	sqlHome := "internal/platform/store/reportsql/c.go" // SQL text: "COALESCE(" is not an OData key
 	files := map[string]string{
-		home: "package odata\n\nimport \"strings\"\n\nfunc r(q, v string) string { return \"$filter=\" + q + \" eq '\" + strings.ReplaceAll(v, \"'\", \"''\") + \"'\" }\n",
-		test: "package m\n\nfunc f(x string) string { return \"$filter=a eq '\" + x + \"'\" }\n",
+		sqlHome: "package reportsql\n\nfunc c(a string) string { return \"COALESCE(\" + a + \" = ANY(x), false)\" }\n",
+		home:    "package odata\n\nimport \"strings\"\n\nfunc r(q, v string) string { return \"$filter=\" + q + \" eq '\" + strings.ReplaceAll(v, \"'\", \"''\") + \"'\" }\n",
+		test:    "package m\n\nfunc f(x string) string { return \"$filter=a eq '\" + x + \"'\" }\n",
 	}
 	root := tree(t, withStubs(files))
 	fs, err := Scan(root, AllChecks())
@@ -220,7 +222,7 @@ func TestODataHomeAndTestsExempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range fs {
-		if f.File == home || f.File == test {
+		if f.File == home || f.File == test || (f.File == sqlHome && strings.HasPrefix(f.Rule, "odata-")) {
 			t.Fatalf("unexpected finding in an exempt file: %v", f)
 		}
 	}

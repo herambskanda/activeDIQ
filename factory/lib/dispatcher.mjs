@@ -11,7 +11,7 @@ import { FactoryError } from './errors.mjs';
 import { loadAgents } from './agents.mjs';
 import { checkLaunchPolicy } from './policy.mjs';
 import { isCodeType } from './flows.mjs';
-import { LogScanner, detectRateLimit, resultKeyword } from './runlog.mjs';
+import { LogScanner, detectConnectivityError, detectRateLimit, resultKeyword } from './runlog.mjs';
 import { claimTicket, createTicket, blockTicket, reopenTicket, setTicketLinks } from './tickets.mjs';
 import { applyAdvisoryDefaults } from './decisions.mjs';
 import { pollAdvisories } from './advisories.mjs';
@@ -19,10 +19,11 @@ import { applyNoProgress } from './escalation.mjs';
 import { buildPrompt } from './prompt.mjs';
 import { buildWorkerArgs, launchWorker, runFiles, signalPid } from './launcher.mjs';
 import {
-  branchName, cleanupWorktree, ensureWorktree, mergeTicket, repoState, usesSharedCheckout,
+  branchName, branchesAheadOfMain, cleanupWorktree, ensureWorktree, mergeTicket, repoState, usesSharedCheckout,
 } from './worktree.mjs';
 import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
+import { blockedNote, preMergeSettings, runPreMergeGate } from './premerge.mjs';
 
 export { selectCandidates, launchGate } from './candidates.mjs';
 
@@ -95,6 +96,9 @@ export class Dispatcher {
     this.lastTick = 0;
     this.lastHeartbeat = 0;
     this.wake = null;
+    this.gateRun = null; // the pre-merge gate + merge in flight (one at a time)
+    this.gateAbort = null;
+    this.gateRetryAt = new Map(); // ticket id → ms before which a gate that could not judge is not retried
   }
 
   // ---- bookkeeping ------------------------------------------------------------------------
@@ -308,6 +312,9 @@ export class Dispatcher {
     const sessionId = result?.session_id ?? s.session_id ?? run.session_id;
     const rateLimited = !kill && (detectRateLimit({ result, stderr }) || Boolean(signal?.session && signal.session === sessionId));
 
+    // A usage limit wins over a connectivity error; a killed run is neither.
+    const unreachable = !kill && !rateLimited && detectConnectivityError({ result, stderr });
+
     let status = 'failed';
     if (kill) status = 'killed';
     else if (result && !result.is_error && keyword !== 'failed') status = keyword === 'handoff' ? 'handoff' : 'done';
@@ -326,6 +333,7 @@ export class Dispatcher {
     this.children.delete(run.id);
     this.tails.delete(run.id);
     this.killing.delete(run.id);
+    if (!kill && !unreachable && !rateLimited) this.unreachableStreak = 0;
 
     const ticket = getEntity(ctx, 'tickets', run.ticket);
     let consequence = '';
@@ -333,6 +341,8 @@ export class Dispatcher {
       const until = new Date(this.#nowMs() + ctx.config.dispatcher.rate_limit_backoff_minutes * 60_000).toISOString();
       updateDispatcherState(ctx, { backoff_until: until });
       consequence = `; usage limit hit, backing off until ${until}`;
+    } else if (unreachable) {
+      consequence = this.applyConnectivityError(run);
     } else if (ticket && kill?.reason !== 'shutdown' && run.snapshot && !madeProgress(run.snapshot, ticket)) {
       const agent = loadAgents(ctx).get(ticket.stage_role ?? run.role) ?? null;
       consequence = `; no progress → ${applyNoProgress(ctx, ticket.id, agent, run.id).action}`;
@@ -343,18 +353,67 @@ export class Dispatcher {
     });
   }
 
+  /**
+   * The API could not be reached: not the ticket's fault, so no attempt, no escalation and no
+   * stage reassignment — back off and let the ticket be retried. The Nth consecutive failure
+   * (any tickets) means an outage: a longer pause and a single 'api unreachable' event.
+   * @returns {string} the consequence text for the run event
+   */
+  applyConnectivityError(run) {
+    const { ctx } = this;
+    const threshold = setting(ctx.config, 'api_unreachable_threshold');
+    this.unreachableStreak = (this.unreachableStreak ?? 0) + 1;
+    const outage = this.unreachableStreak >= threshold;
+    const minutes = setting(ctx.config, outage ? 'api_unreachable_backoff_minutes' : 'connectivity_backoff_minutes');
+    const until = new Date(this.#nowMs() + minutes * 60_000).toISOString();
+    const current = readDispatcherState(ctx).backoff_until;
+    if (!current || Date.parse(current) < Date.parse(until)) updateDispatcherState(ctx, { backoff_until: until });
+    if (this.unreachableStreak === threshold) {
+      appendEvent(ctx, {
+        actor: 'dispatcher', kind: 'dispatcher', run: run.id,
+        text: `api unreachable: ${threshold} consecutive runs failed to reach the API; dispatching paused until ${until}, no tickets blocked`,
+      });
+    }
+    return `; API unreachable (${this.unreachableStreak} in a row), no attempt counted, retrying after ${until}`;
+  }
+
   // ---- merging ----------------------------------------------------------------------------
 
-  /** Merge every finished code ticket that still has a worktree. */
+  /**
+   * Merge every finished ticket that has work on its branch: code tickets that still have a
+   * worktree, and any other type whose `factory/<id>` branch has commits ahead of main (a spec
+   * or docs ticket must never reach done with its commits stranded on a branch — T-0986).
+   * With the pre-merge gate enabled (`dispatcher.pre_merge.enabled`) the gate runs CI on the
+   * merge result first, which takes minutes to an hour, so one ticket at a time goes through it
+   * in the background: this pass starts it and returns, and the ticket merges (or is reopened)
+   * when the gate finishes.
+   */
   async mergePass() {
     if (this.shared) return;
-    const finished = listEntities(this.ctx, 'tickets')
-      .filter((t) => t.status === 'done' && t.links?.worktree && isCodeType(this.ctx.config, t.type));
+    const gated = preMergeSettings(this.ctx.config).enabled;
+    if (gated && this.gateRun) return;
+    const done = listEntities(this.ctx, 'tickets').filter((t) => t.status === 'done');
+    const code = (t) => isCodeType(this.ctx.config, t.type);
+    const stranded = done.some((t) => !code(t)) ? await branchesAheadOfMain(this.ctx) : new Map();
+    const finished = done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id)));
     for (const ticket of finished) {
       if (this.stopping) return;
       if (this.holdEmbargoed(ticket)) continue;
-      await this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket));
+      if (!gated || !code(ticket)) { // spec/docs branches carry no product code to gate
+        await this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket));
+        continue;
+      }
+      if ((this.gateRetryAt.get(ticket.id) ?? 0) > this.#nowMs()) continue;
+      this.gateAbort = new AbortController();
+      this.gateRun = this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket, { gate: true }))
+        .finally(() => { this.gateRun = null; this.gateAbort = null; this.requestTick = true; this.wake?.(); });
+      return;
     }
+  }
+
+  /** Wait for a pre-merge gate in flight (tests, shutdown). */
+  async gateIdle() {
+    while (this.gateRun) await this.gateRun;
   }
 
   /**
@@ -375,15 +434,36 @@ export class Dispatcher {
     return true;
   }
 
-  async mergeOne(ticket) {
+  async mergeOne(ticket, { gate = false } = {}) {
     const { ctx } = this;
+    const main = ctx.config.dispatcher.main_branch;
+    if (gate) {
+      let verdict;
+      try {
+        verdict = await runPreMergeGate(ctx, ticket, { signal: this.gateAbort?.signal });
+      } catch (err) {
+        // The gate could not judge (timeout, stop, worktree failure): never merge on that. Retry later.
+        this.gateRetryAt.set(ticket.id, this.#nowMs() + 10 * 60_000);
+        throw err;
+      }
+      this.gateRetryAt.delete(ticket.id);
+      if (verdict.status === 'blocked') {
+        appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merge refused by the pre-merge gate: ${verdict.summary}` });
+        reopenTicket(ctx, ticket.id, 'dispatcher', blockedNote(verdict, main));
+        return;
+      }
+      if (verdict.status === 'pass') {
+        appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} pre-merge gate passed (${verdict.mode}): ${verdict.summary}` });
+      }
+      // a 'conflict' verdict falls through: mergeTicket reports and reopens it the usual way
+    }
     const merged = await mergeTicket(ctx, ticket);
     if (merged.status === 'merged') {
       const problems = await cleanupWorktree(ctx, ticket.id);
       setTicketLinks(ctx, ticket.id, { worktree: null, held: null, merged: nowIso(ctx), merge_commit: merged.commit });
-      appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merged into ${ctx.config.dispatcher.main_branch} (${merged.commit.slice(0, 8)})${problems.length ? `; cleanup: ${problems.join('; ')}` : ''}` });
+      appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merged into ${main} (${merged.commit.slice(0, 8)})${problems.length ? `; cleanup: ${problems.join('; ')}` : ''}` });
     } else if (merged.status === 'conflict') {
-      reopenTicket(ctx, ticket.id, 'dispatcher', `merging ${branchName(ticket.id)} into ${ctx.config.dispatcher.main_branch} conflicted (${merged.detail}). Merge ${ctx.config.dispatcher.main_branch} into the branch, resolve the conflicts, re-run the tests and advance again.`);
+      reopenTicket(ctx, ticket.id, 'dispatcher', `merging ${branchName(ticket.id)} into ${ctx.config.dispatcher.main_branch} conflicted (${merged.detail}). Merge ${ctx.config.dispatcher.main_branch} into the branch, resolve the conflicts, re-run the tests and advance again.${ticket.links?.worktree ? '' : ` This ${ticket.type} ticket works in the main checkout, so do the merge in a temporary worktree: git worktree add <dir> ${branchName(ticket.id)}.`}`);
     } else {
       throw new FactoryError(`merging ${ticket.id} failed: ${merged.detail}`);
     }
@@ -514,6 +594,7 @@ export class Dispatcher {
   stop() {
     if (this.stopping) this.forceStop = true;
     this.stopping = true;
+    this.gateAbort?.abort();
     this.wake?.();
   }
 
@@ -584,6 +665,7 @@ export class Dispatcher {
       if (this.active.size) await this.sleep(Math.min(500, Math.max(10, killEnds - this.#nowMs())));
     }
     for (const run of [...this.active.values()]) await this.reap(run, { code: null, signal: 'SIGKILL' });
+    await this.gateIdle();
   }
 }
 

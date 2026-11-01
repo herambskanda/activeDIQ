@@ -72,6 +72,41 @@ func (a *Admin) add(dn string, attrs map[string][]string) string {
 	return dn
 }
 
+// AddMember makes the account with sAMAccountName sam a member of the group at groupDN, and removes
+// the membership when the test ends, so a test that puts the service account in a Tier-0 group
+// leaves the shared lab as it found it. Failure fails the test.
+func (a *Admin) AddMember(groupDN, sam string) {
+	a.tb.Helper()
+	r, err := a.conn.Search(ldap.NewSearchRequest(a.baseDN(), ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 0, false,
+		"(&(objectClass=user)(sAMAccountName="+ldap.EscapeFilter(sam)+"))", []string{"distinguishedName"}, nil))
+	if err != nil || len(r.Entries) != 1 {
+		a.tb.Fatalf("find account %q: %v", sam, err)
+	}
+	member := r.Entries[0].DN
+	mod := ldap.NewModifyRequest(groupDN, nil)
+	mod.Add("member", []string{member})
+	if err := a.conn.Modify(mod); err != nil {
+		a.tb.Fatal(err)
+	}
+	a.tb.Cleanup(func() {
+		undo := ldap.NewModifyRequest(groupDN, nil)
+		undo.Delete("member", []string{member})
+		if err := a.conn.Modify(undo); err != nil {
+			a.tb.Errorf("LAB DIRTY: could not remove %q from %s: %v", sam, groupDN, err)
+		}
+	})
+}
+
+// baseDN is the domain naming context of the session's DC.
+func (a *Admin) baseDN() string {
+	a.tb.Helper()
+	r, err := a.conn.Search(ldap.NewSearchRequest("", ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 0, false, "(objectClass=*)", []string{"defaultNamingContext"}, nil))
+	if err != nil || len(r.Entries) != 1 {
+		a.tb.Fatalf("rootDSE: %v", err)
+	}
+	return r.Entries[0].GetAttributeValue("defaultNamingContext")
+}
+
 // Move renames dn's parent to newParent (an LDAP ModifyDN keeping the RDN) and deletes the object at its
 // new DN when the test ends. The objectGUID is unchanged. It returns the new DN.
 func (a *Admin) Move(dn, newParent string) string {

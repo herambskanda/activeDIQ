@@ -202,6 +202,7 @@ with a one-line message; usage errors exit 2.
 up | down | status [--json] | pause [--reason …] | resume | doctor
 board [--port N]                     run the board in the foreground
 run [--once] [--dry-run]             run the dispatcher in the foreground
+premerge ID [-- CMD ARGS…]           dry-run the pre-merge gate on a ticket's branch (changes nothing; CMD overrides pre_merge.argv)
 
 ticket new --title T --type TYPE --owner ROLE [--priority P2] [--epic E] [--milestone M]
            [--depends T-1,T-2] [--decisions D-1] [--tags a,b] [--parity ADM-1,ADM-2]
@@ -263,6 +264,7 @@ Deterministic loop; never calls a model itself. Every `dispatcher.tick_seconds` 
      `principal-engineer`) → then `blocked`. With the current policy every ladder tops out at `high`,
      so a stuck Sonnet stage goes straight to `principal-engineer`.
    - a usage-limit or rate-limit error → set `backoff_until` (15 min), do not count an attempt.
+   - an API connectivity error (DNS, reset, timeout) → short back-off, no attempt, no escalation; 3 in a row → longer pause + one `api unreachable` event.
 3. **Defaults**: advisory decisions past `default_at` → `status: defaulted`, answer = default.
 4. If `control.paused`, `backoff_until` in the future, or `runs_today ≥ daily_run_cap` → stop here.
 5. **Fill free slots** (`max_parallel` − running), one candidate per slot, in this order:
@@ -308,10 +310,26 @@ claude -p "<rendered templates/worker-prompt.md>" \
 - Branch `factory/<ticket-id>`, worktree at `<dispatcher.worktree_root>/<ticket-id>`, created from
   `main` on first claim and reused for every later stage of the same ticket.
 - A ticket tagged `embargoed` is never merged (security-disclosure runbook §6, public repo): the dispatcher records `links.held` + one event and the board shows "merge held"; removing the tag merges it on the next pass.
-- When a code-bearing ticket reaches `done`, the dispatcher merges with
+- **Pre-merge gate** (`dispatcher.pre_merge`, T-0941): before it merges, the dispatcher builds
+  `main` + the branch in a scratch worktree and runs `pre_merge.argv` (`make -k ci`). Green merges.
+  Red while `main` is green is refused. Red while `main` is also red is refused only if the result
+  has a finding `main` does not (multiset of check-and-message keys, line numbers removed; a newly
+  red make target counts; baseline cached per `main` commit). A refused ticket is reopened for its
+  owner with the findings and log paths (`state/premerge/`). A gate that cannot judge (timeout,
+  worktree error) merges nothing and retries after 10 minutes. One ticket at a time goes through the
+  gate, in the background. Before the full run a cheap `pre_merge.numbering` check (the migration-number
+  test, T-1067) runs on the same merge result and refuses with the free number to renumber to. `factory premerge ID [-- CMD…]` is the dry run. Details:
+  `knowledge/development/standards/ci-gates.md`.
+- When a code-bearing ticket reaches `done` (and passes the gate), the dispatcher merges with
   `git merge --no-ff factory/<id>` in the main checkout. On conflict: `git merge --abort`, the
   ticket returns to `in_progress` with a note, owner unchanged. On success: remove the worktree,
   delete the branch, append an event.
+- **Nothing is stranded at `done` (T-0986).** The merge is not limited to code-bearing types: on
+  every pass the dispatcher also merges any `done` ticket of another type (spec, docs, research…)
+  whose `factory/<id>` branch has commits ahead of `main`, with the same `--no-ff` merge, embargo
+  hold and cleanup. A conflict reopens the ticket for its owner with a note naming the branch (and,
+  for a type that works in the main checkout, how to resolve it in a temporary worktree). A `done`
+  ticket with no branch, or a branch with nothing ahead of `main`, is left as it is.
 - If the repository has no commits, or `isolation` is `none`, workers run in the main checkout and
   `max_parallel` is forced to 1 for code-bearing types.
 
@@ -424,6 +442,9 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 | `shutdown_grace_seconds` | 120 | on SIGTERM, running workers may finish for this long, then get SIGTERM |
 | `kill_grace_seconds` | 30 | after SIGTERM (timeout or shutdown), SIGKILL follows |
 | `launch_failure_backoff_minutes` | 5 | back-off after `claude` could not be started |
+| `connectivity_backoff_minutes` | 1 | back-off after a run failed to reach the API (no attempt counted) |
+| `api_unreachable_backoff_minutes` | 5 | dispatch pause once `api_unreachable_threshold` consecutive runs hit connectivity errors |
+| `api_unreachable_threshold` | 3 | consecutive connectivity failures (any tickets) that count as an outage |
 | `blocked_retriage_hours` | 6 | a blocked ticket is offered to triage again after this long |
 
 ### Fields and files beyond the reference above
@@ -442,6 +463,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 - **Refused launches:** a missing agent file or a policy violation skips that candidate with one deduplicated event and leaves the ticket `ready`; a worktree failure blocks the ticket. A model other than Opus or Sonnet is always a violation.
 - **Effort overrides** (escalation) are exempt from `models.escalation_only` but must be in `models.allowed`.
 - **Rate limits** are detected from an error result or stderr (`rate limit`, `usage limit`, `overloaded`, `429`), or from a `StopFailure` signal for the run's session; the signal also backs the dispatcher off when it comes from the CEO's own session (the limit is account-wide). No attempt is counted.
+- **Connectivity errors** (`EAI_AGAIN`, `ENOTFOUND`, `ECONNRESET`, `ETIMEDOUT`, "Can't reach the API server") in an error result or stderr are an outage on our side: no attempt, no escalation, no stage reassignment; the dispatcher backs off `connectivity_backoff_minutes` and the ticket is retried. The third consecutive one (across tickets) pauses dispatching for `api_unreachable_backoff_minutes` and logs one `api unreachable` event. Any run that ends otherwise resets the streak. A usage limit takes precedence.
 - **Spawn failure** (`claude` missing) backs off `launch_failure_backoff_minutes` and counts no attempt.
 - **`factory run --once`** performs one tick and returns; workers it started keep running and are adopted by the next dispatcher.
 - **`factory feedback triage --done`** closes feedback that needs no ticket.

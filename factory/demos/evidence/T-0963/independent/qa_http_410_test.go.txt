@@ -1,0 +1,44 @@
+package reports_test
+
+import (
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/skenzeriq/activediq/internal/modules/reports/export"
+	"github.com/skenzeriq/activediq/internal/modules/reports/run"
+	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
+)
+
+func TestQAHTTPExpired410(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := apiSetup(t, s)
+		_, rn := e.do(alice, "POST", "/api/v1/reports/runs", `{"definitionId":"tst-01"}`)
+		runID := rn["id"].(string)
+		e.work()
+		_, x := e.do(alice, "POST", "/api/v1/reports/runs/"+runID+"/exports", `{"format":"csv"}`)
+		id := x["id"].(string)
+		e.work()
+		w := e.raw(alice, "GET", "/api/v1/reports/exports/"+id+"/file")
+		t.Logf("fresh download: %d %s", w.Code, w.Header().Get("Content-Disposition"))
+		// not creator
+		w = e.raw(bob, "GET", "/api/v1/reports/exports/"+id+"/file")
+		t.Logf("bob download: %d %s", w.Code, strings.TrimSpace(w.Body.String()))
+		future := time.Now().Add(run.ResultRetention + time.Hour)
+		e.svc.Now = func() time.Time { return future }
+		e.exp.Now = e.svc.Now
+		w = e.raw(alice, "GET", "/api/v1/reports/exports/"+id+"/file")
+		t.Logf("expired download: %d %s %s", w.Code, w.Header().Get("Content-Type"), strings.TrimSpace(w.Body.String()))
+		if w.Code != 410 {
+			t.Fatalf("want 410, got %d", w.Code)
+		}
+		code, g := e.do(alice, "GET", "/api/v1/reports/exports/"+id, "")
+		t.Logf("get after expiry: %d state=%v", code, g["state"])
+		var kinds []string
+		for _, ev := range e.xsink.ev {
+			kinds = append(kinds, string(ev.Kind)+"/"+string(ev.Outcome)+"/"+ev.Reason)
+		}
+		t.Logf("audit: %v", kinds)
+		_ = export.KindCreated
+	})
+}

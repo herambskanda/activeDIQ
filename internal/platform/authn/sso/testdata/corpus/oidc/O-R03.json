@@ -1,0 +1,10 @@
+{
+ "id": "O-R03",
+ "class": "replayed",
+ "cites": [
+  "OIDC-12"
+ ],
+ "build": "nonce_wrong",
+ "expect": "refuse",
+ "reason": "oidc.nonce"
+}

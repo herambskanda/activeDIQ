@@ -154,6 +154,7 @@ components:
             type: /problems/forbidden
             title: You are not allowed to do this
             status: 403
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736
     DirectoryAccessDenied:
       description: The directory refused our service account
       content:
@@ -284,6 +285,7 @@ components:
             type: /problems/rate-limited
             title: Too many requests
             status: 429
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736
     Internal:
       description: Internal error
       content:
@@ -304,6 +306,39 @@ components:
             type: /problems/directory-unavailable
             title: The directory is unavailable
             status: 503
+    SearchQueryInvalid:
+      description: >-
+        The search text or cursor cannot be used. errors[].code says why: query_too_short (empty after normalisation), query_too_long (over 256
+        characters), query_invalid (NUL or invalid UTF-8), query_refused (the text looks like a 48-digit BitLocker recovery password: refused
+        without echoing, logging or tracing it; the same answer whatever the digits), cursor_invalid (bad, forged or mismatched cursor),
+        cursor_requires_type. Neither detail nor errors ever repeat the text.
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/search-query-invalid
+            title: The search text cannot be used
+            status: 400
+            detail: The search text is empty.
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+            errors:
+              - in: body
+                pointer: /q
+                code: query_too_short
+                detail: Enter at least one character.
+    SearchUnavailable:
+      description: Search could not finish in time
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/search-unavailable
+            title: Search is unavailable
+            status: 503
+            detail: Search could not finish. Try again, or narrow the text.
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736
     NotImplemented:
       description: The operation is declared but not built yet
       content:
@@ -324,3 +359,53 @@ components:
             type: /problems/not-ready
             title: The service is not ready
             status: 503
+    ReportResultExpired:
+      description: The stored result or file has expired
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/report-result-expired
+            title: The stored result has expired
+            status: 410
+    ReportScopeEmpty:
+      description: The scope covers no directory objects
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/report-scope-empty
+            title: The scope covers no directory objects
+            status: 422
+    OperationNotUndoable:
+      description: The operation cannot be undone; errors[].code says why (irreversible, already_undone, superseded, not_finished, tier0_blocked, plan_refused)
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/operation-not-undoable
+            title: The operation cannot be undone
+            status: 409
+    ReportScopeUnsupported:
+      description: The scope uses a kind that reports cannot evaluate
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/report-scope-unsupported
+            title: The scope uses a kind that reports cannot evaluate
+            status: 409
+    ReportRowCapExceeded:
+      description: The result is over the row cap of the format
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/report-row-cap-exceeded
+            title: The result is over the row cap of the format
+            status: 422

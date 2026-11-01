@@ -239,6 +239,9 @@ func (a *Authorizer) resolve(ctx context.Context, tn tenant.ID, r Root) (authz.S
 	if a.roots == nil {
 		return authz.ScopeRoot{}, errors.New("rbac: no root resolver")
 	}
+	if r.Kind == OUOneLevel && r.Exclude {
+		return authz.ScopeRoot{}, errors.New("rbac: ou_one_level is an include root only")
+	}
 	sr, err := a.roots.Resolve(ctx, tn, r)
 	if err != nil {
 		return authz.ScopeRoot{}, err
@@ -246,5 +249,7 @@ func (a *Authorizer) resolve(ctx context.Context, tn tenant.ID, r Root) (authz.S
 	if sr.ID != id {
 		return authz.ScopeRoot{}, errors.New("rbac: resolver returned another root")
 	}
+	// Set here, not by the resolver, so no resolver can return a one-level root as a subtree.
+	sr.OneLevel = r.Kind == OUOneLevel
 	return sr, nil
 }

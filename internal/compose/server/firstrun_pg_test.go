@@ -42,9 +42,7 @@ func firstOwnerEnv(t *testing.T, s *storetest.Server, sink audit.Sink) (*firstOw
 	}
 	t.Cleanup(db.Close)
 	ten := tenanttest.Seed(t, d.ExecOwner, "A")
-	if err := db.WithTenant(ctx, ten, func(ctx context.Context, tx store.Tx) error { return rbac.SeedBuiltIns(ctx, tx, ten) }); err != nil {
-		t.Fatal(err)
-	}
+	// The built-in roles are deliberately not seeded: a fresh install has none, and the claim must cope (T-1161).
 	console, err := buildConsole(db, nopSink{}, testKeys(), nil)
 	if err != nil {
 		t.Fatal(err)

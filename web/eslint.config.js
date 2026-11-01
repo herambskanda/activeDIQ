@@ -1,6 +1,7 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 import safePrimitives from "./eslint/safe-primitives.js";
+import moduleBoundary from "./eslint/module-boundary.js";
 
 // Tier W implements no security primitive (blueprint §6): React escapes by default and the console
 // never sets raw HTML.
@@ -104,6 +105,32 @@ export default tseslint.config(
       ],
       "no-restricted-syntax": ["error", ...rawHtmlSyntax, ...apiClientSyntax],
     },
+  },
+  {
+    // Blueprint §2 rule 8 (ADR-0003): the shell and the design system never import a web module, and
+    // one web module never imports another. The rule resolves each import against the importing file
+    // (eslint/module-boundary.js), so nested folders and ../../modules/<other> spellings are caught.
+    // The generated module list is the one place that names a module. The HTTP-library pattern is
+    // restated because a later no-restricted-imports setting replaces an earlier one.
+    files: ["src/app/**/*.{ts,tsx}", "src/ds/**/*.{ts,tsx}", "src/modules/**/*.{ts,tsx}"],
+    ignores: ["src/api/**"],
+    plugins: { "module-boundary": moduleBoundary },
+    rules: {
+      "module-boundary/module-boundary": "error",
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            { regex: httpLibraryPattern, message: "No HTTP library: " + apiClientMessage },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The generated module list names every module by design.
+    files: ["src/app/modules.gen.ts"],
+    rules: { "module-boundary/module-boundary": "off" },
   },
   {
     // Build-time Node scripts (the API type generator).

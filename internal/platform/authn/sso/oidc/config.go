@@ -66,8 +66,11 @@ const (
 // pinnable are the algorithms an administrator may pin (OIDC-7). "none" and HS* are not on it.
 var pinnable = []string{"RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384"}
 
-// mfaForbidden cannot be evidence of MFA: each names at most one factor (spec MFA-1).
-var mfaForbidden = []string{"pwd", "kba", "sms", "tel", "user"}
+// mfaEvidenceAllowed is the whole set of amr values that can be configured as MFA evidence (spec MFA-1a).
+// It is an allow-list, matched case-sensitively: RFC 8176 values that name one factor (pwd, kba, sms, tel,
+// user) or an ambient signal (wia, rba, geo, swk, pin, mca) are not evidence of a second factor, and neither
+// is a string the IdP defines for itself.
+var mfaEvidenceAllowed = []string{"mfa", "hwk", "otp", "fpt", "face", "sc"}
 
 // Discover fetches and parses the discovery document of issuer. It is a setup-time call (OIDC-17): the
 // result is pinned in the IdP configuration and checked by ValidateConfig.
@@ -165,7 +168,7 @@ func ValidateConfig(c *sso.OIDCConfig) error {
 			return sso.Refuse(ReasonConfig)
 		}
 		for _, e := range c.MFAEvidence {
-			if e == "" || slices.Contains(mfaForbidden, e) {
+			if !slices.Contains(mfaEvidenceAllowed, e) {
 				return sso.Refuse(ReasonConfig)
 			}
 		}

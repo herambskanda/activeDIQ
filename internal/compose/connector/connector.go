@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
+	"github.com/skenzeriq/activediq/internal/compose/tunnelbind"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/tunnelclient"
@@ -64,6 +65,6 @@ func run(ctx context.Context, cfg config.Config, e env) error {
 	if err != nil {
 		return err
 	}
-	e.serve(ctx, tunnelclient.Config{State: st, Identity: id, Binding: binding, Log: log})
+	e.serve(ctx, tunnelclient.Config{State: st, Identity: id, Binding: binding, Log: log, Open: tunnelbind.Open})
 	return nil
 }

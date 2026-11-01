@@ -44,3 +44,16 @@ targetRules = ["generic-api-key"]
 paths = ['''^internal/platform/rbac/authorizer\.go$''']
 regexTarget = "line"
 regexes = ['''ReasonScopeOnly\s+authz\.Reason\s*=\s*"tier0_scope_permission_off_scope"''']
+
+# T-1162: two committed T-0577 QA evidence logs (qa3/qa4 linux test output) contain a slog line
+# `... api_token_id="" plan_digest="" tier0_revision=7 ...`. generic-api-key reads the field NAME
+# `plan_digest=` as the "secret" (the value is empty and the neighbouring ids are all-zero test UUIDs).
+# It is log output, not a credential. Scoped to ONE rule AND these two exact files AND this exact line
+# text (condition = AND), so a different value planted in these files, or this line elsewhere, is still scanned.
+[[allowlists]]
+description = "T-0577 evidence logs: empty plan_digest log field (T-1162)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^factory/demos/evidence/T-0577/qa[34]-linux-tests-[0-9a-f]+\.txt$''']
+regexTarget = "line"
+regexes = ['''api_token_id="" plan_digest="" tier0_revision=7 ''']

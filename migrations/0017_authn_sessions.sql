@@ -18,6 +18,7 @@
 --   ended_at, end_reason  when and why it ended; end_reason is a closed set.
 -- Rows are kept after they end (the audit trail refers to them); the runtime role cannot delete them.
 
+-- write-class: authn_sessions system
 CREATE TABLE public.authn_sessions (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

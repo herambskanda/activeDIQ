@@ -30,6 +30,7 @@ ALTER TABLE public.authn_authenticator_enrollments ADD CONSTRAINT authn_authenti
 ALTER TABLE public.authn_authenticator_enrollments ADD CONSTRAINT authn_enrollments_pending_expires
   CHECK (state <> 'pending' OR expires_at IS NOT NULL);
 
+-- write-class: authn_totp_failures system
 CREATE TABLE public.authn_totp_failures (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

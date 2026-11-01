@@ -1,0 +1,151 @@
+{
+  "id": "usr-02",
+  "version": 1,
+  "category": "users",
+  "title": "Account expiry",
+  "description": "Accounts by their expiry date: expired, recently expired, expiring soon, or never expiring.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "domain",
+    "dn",
+    "account_expires",
+    "days_to_account_expiry",
+    "enabled"
+  ],
+  "sort": [
+    {
+      "column": "account_expires",
+      "dir": "asc"
+    }
+  ],
+  "params": [
+    {
+      "name": "recent_days",
+      "kind": "days",
+      "default": {
+        "days": 30
+      },
+      "min": 1,
+      "max": 365
+    },
+    {
+      "name": "soon_days",
+      "kind": "days",
+      "default": {
+        "days": 14
+      },
+      "min": 1,
+      "max": 365
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn"
+  ],
+  "presets": [
+    {
+      "id": "expired",
+      "names": [
+        "Account Expired Users"
+      ],
+      "where": {
+        "cmp": {
+          "col": "account_expired",
+          "op": "eq",
+          "value": {
+            "enum": "expired"
+          }
+        }
+      }
+    },
+    {
+      "id": "recently_expired",
+      "names": [
+        "Recently Account Expired Users"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "account_expired",
+              "op": "eq",
+              "value": {
+                "enum": "expired"
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "account_expires",
+              "op": "within_last_days",
+              "param": "recent_days"
+            }
+          }
+        ]
+      },
+      "sort": [
+        {
+          "column": "account_expires",
+          "dir": "desc"
+        }
+      ]
+    },
+    {
+      "id": "soon",
+      "names": [
+        "Soon-to-expire User Accounts"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "account_expired",
+              "op": "eq",
+              "value": {
+                "enum": "not_expired"
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "account_expires",
+              "op": "within_next_days",
+              "param": "soon_days"
+            }
+          }
+        ]
+      },
+      "hidden": [
+        {
+          "id": "disabled_accounts",
+          "label": "disabled accounts hidden",
+          "where": {
+            "cmp": {
+              "col": "enabled",
+              "op": "eq",
+              "value": {
+                "bool": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "never",
+      "names": [
+        "Account Never Expires Users"
+      ],
+      "where": {
+        "cmp": {
+          "col": "account_expired",
+          "op": "eq",
+          "value": {
+            "enum": "never"
+          }
+        }
+      }
+    }
+  ]
+}

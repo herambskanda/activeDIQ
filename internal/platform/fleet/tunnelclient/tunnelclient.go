@@ -1,7 +1,9 @@
 // Package tunnelclient is the component side of the reverse tunnel, shared by cmd/agent and
-// cmd/connector: it dials the pinned server over fleet/dial's mTLS, opens Fleet.Tunnel and serves a
-// fleet.Binding on the component's Mux until the context ends, reconnecting with capped, jittered
-// backoff. A component has no listener; this outbound stream is its only network use.
+// cmd/connector: it dials the pinned server over fleet/dial's mTLS, opens the tunnel stream through
+// Config.Open and serves a fleet.Binding on the component's Mux until the context ends, reconnecting
+// with capped, jittered backoff. A component has no listener; this outbound stream is its only
+// network use. The package is contract-agnostic: it speaks fleet.Frame, and the wire binding
+// (activediq.fleet.v1) is supplied from outside the platform root by internal/compose/tunnelbind.
 package tunnelclient
 
 import (
@@ -16,8 +18,10 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
-	fleetv1 "github.com/skenzeriq/activediq/internal/proto/activediq/fleet/v1"
 )
+
+// Opener opens one tunnel stream on conn. The stream ends when ctx is done.
+type Opener func(ctx context.Context, conn grpc.ClientConnInterface) (fleet.Transport, error)
 
 // Config is what Run serves.
 type Config struct {
@@ -25,70 +29,12 @@ type Config struct {
 	Identity fleet.Identity
 	Binding  fleet.Binding
 	Log      *slog.Logger
+	// Open opens the tunnel stream on a dialled connection as a fleet.Transport. Required: it is where
+	// the wire contract binds (compose/tunnelbind.Open).
+	Open Opener
 	// OnConnect, when set, receives the client side of each established tunnel (calls component → server)
 	// and returns the function to run when that tunnel ends. nil means the component makes no calls.
 	OnConnect func(c grpc.ClientConnInterface) (onClose func())
-}
-
-// Transport adapts the Fleet.Tunnel client stream to fleet.Transport.
-type transport struct {
-	st grpc.BidiStreamingClient[fleetv1.TunnelFrame, fleetv1.TunnelFrame]
-}
-
-func (t transport) Recv() (fleet.Frame, error) {
-	f, err := t.st.Recv()
-	if err != nil {
-		return fleet.Frame{}, err
-	}
-	return frameFromProto(f), nil
-}
-
-func (t transport) Send(f fleet.Frame) error {
-	pf, ok := frameToProto(f)
-	if !ok {
-		return errors.New("fleet: frame has no body")
-	}
-	return t.st.Send(pf)
-}
-
-func frameFromProto(f *fleetv1.TunnelFrame) fleet.Frame {
-	out := fleet.Frame{CallID: f.GetCallId()}
-	switch b := f.GetBody().(type) {
-	case *fleetv1.TunnelFrame_Open:
-		out.Body, out.Method, out.TimeoutMS = fleet.BodyOpen, b.Open.GetMethod(), b.Open.GetTimeoutMs()
-	case *fleetv1.TunnelFrame_Data:
-		out.Body, out.Payload = fleet.BodyData, b.Data.GetPayload()
-	case *fleetv1.TunnelFrame_HalfClose:
-		out.Body = fleet.BodyHalfClose
-	case *fleetv1.TunnelFrame_Close:
-		out.Body, out.Code, out.Message = fleet.BodyClose, b.Close.GetStatusCode(), b.Close.GetStatusMessage()
-	case *fleetv1.TunnelFrame_Cancel:
-		out.Body = fleet.BodyCancel
-	case *fleetv1.TunnelFrame_Credit:
-		out.Body, out.Messages = fleet.BodyCredit, b.Credit.GetMessages()
-	}
-	return out
-}
-
-func frameToProto(f fleet.Frame) (*fleetv1.TunnelFrame, bool) {
-	out := &fleetv1.TunnelFrame{CallId: f.CallID}
-	switch f.Body {
-	case fleet.BodyOpen:
-		out.Body = &fleetv1.TunnelFrame_Open{Open: &fleetv1.CallOpen{Method: f.Method, TimeoutMs: f.TimeoutMS}}
-	case fleet.BodyData:
-		out.Body = &fleetv1.TunnelFrame_Data{Data: &fleetv1.CallData{Payload: f.Payload}}
-	case fleet.BodyHalfClose:
-		out.Body = &fleetv1.TunnelFrame_HalfClose{HalfClose: &fleetv1.CallHalfClose{}}
-	case fleet.BodyClose:
-		out.Body = &fleetv1.TunnelFrame_Close{Close: &fleetv1.CallClose{StatusCode: f.Code, StatusMessage: f.Message}}
-	case fleet.BodyCancel:
-		out.Body = &fleetv1.TunnelFrame_Cancel{Cancel: &fleetv1.CallCancel{}}
-	case fleet.BodyCredit:
-		out.Body = &fleetv1.TunnelFrame_Credit{Credit: &fleetv1.FlowCredit{Messages: f.Messages}}
-	default:
-		return nil, false
-	}
-	return out, true
 }
 
 // Run serves the binding until ctx is done. It returns only then.
@@ -151,11 +97,14 @@ func serveOnce(ctx context.Context, c Config) error {
 func serveConn(ctx context.Context, conn *grpc.ClientConn, c Config) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stream, err := fleetv1.NewFleetClient(conn).Tunnel(ctx)
+	if c.Open == nil {
+		return errors.New("tunnelclient: no stream opener")
+	}
+	stream, err := c.Open(ctx, conn)
 	if err != nil {
 		return err
 	}
-	m, err := fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleComponent, Identity: c.Identity, Binding: c.Binding, Transport: transport{stream}})
+	m, err := fleet.NewMux(fleet.MuxConfig{Role: fleet.RoleComponent, Identity: c.Identity, Binding: c.Binding, Transport: stream})
 	if err != nil {
 		return err
 	}

@@ -17,6 +17,7 @@
 --                   '' = none yet. Compared as a version by the verifier, not by SQL, so the guard only
 --                   refuses clearing it.
 
+-- write-class: update_verifier_floor system
 CREATE TABLE public.update_verifier_floor (
   singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
   root_version bigint NOT NULL DEFAULT 0 CHECK (root_version >= 0),

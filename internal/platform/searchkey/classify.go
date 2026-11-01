@@ -1,0 +1,193 @@
+package searchkey
+
+import (
+	"regexp"
+	"strings"
+	"unicode/utf8"
+)
+
+// Kind is the key_kind stored with a key (ADR-0011 rule 9). The numbers are stored: never renumber.
+type Kind int16
+
+// The key kinds of the 2a set. Every one is read under DirectoryRead.
+const (
+	KindName            Kind = 1  // display name and rdn value, NormName form
+	KindNameWord        Kind = 2  // one word of a multi-word name
+	KindSAM             Kind = 3  // sAMAccountName (computers also without the trailing $)
+	KindUPN             Kind = 4  // userPrincipalName
+	KindMail            Kind = 5  // contact mail
+	KindDNSHost         Kind = 6  // dNSHostName
+	KindSID             Kind = 7  // S-1-5-… canonical text
+	KindGUID            Kind = 8  // objectGUID canonical text
+	KindConsistencyGUID Kind = 9  // ms-DS-ConsistencyGuid as a GUID, and as base64
+	KindDN              Kind = 10 // dn snapshot
+)
+
+// DirectoryRead is the permission every 2a kind is read under. A gated kind (the BitLocker key ID,
+// T-1129) names another permission here and is only searched with a scope for that permission.
+const DirectoryRead = "directory.read"
+
+// AllKinds lists the kinds in key order.
+var AllKinds = []Kind{KindName, KindNameWord, KindSAM, KindUPN, KindMail, KindDNSHost, KindSID, KindGUID, KindConsistencyGUID, KindDN}
+
+// Valid reports whether k is a known kind.
+func (k Kind) Valid() bool { return k >= KindName && k <= KindDN }
+
+// FuzzyEligible kinds are in the partial trigram index.
+func (k Kind) FuzzyEligible() bool {
+	switch k {
+	case KindName, KindNameWord, KindSAM, KindUPN, KindMail:
+		return true
+	}
+	return false
+}
+
+// Permission is the permission the kind is read under.
+func (k Kind) Permission() string { return DirectoryRead }
+
+// Shape is what a query looks like (rule 9). A query can have several: "jsmith" is both a sam and a host name.
+type Shape uint8
+
+// Shapes.
+const (
+	ShapeText Shape = iota + 1
+	ShapeSAM
+	ShapeDomainSAM // DOMAIN\sam
+	ShapeEmail     // x@y: a UPN, a mail, or sam@dnsdomain
+	ShapeHost      // a host name or FQDN
+	ShapeSID
+	ShapeGUID
+	ShapeDN
+)
+
+// Probe is one exact lookup: the key of Kind equals Key.
+type Probe struct {
+	Kind Kind
+	Key  string
+}
+
+// Prefix is one prefix lookup: the keys of Kind that start with Lo. Hi is the exclusive upper bound
+// (PrefixUpper); Bounded false means there is none.
+type Prefix struct {
+	Kind    Kind
+	Lo, Hi  string
+	Bounded bool
+}
+
+// Parsed is a prepared and classified query: the only form the search statement is built from. It
+// holds normalised text for bind parameters, never SQL.
+type Parsed struct {
+	Shapes []Shape
+	// Name is the NormName form. Runes counts its characters: fuzzy matching and counts need three.
+	Name  string
+	Runes int
+	// Domain is the DOMAIN or dnsdomain part of DOMAIN\sam or sam@domain, NormIdent form. It narrows to
+	// the connection with that name when the connection record holds one; at 2a it holds none, so it is
+	// dropped and the sam matches in every connection (rule 9). It is never an error.
+	Domain string
+	Exact  []Probe
+	Prefix []Prefix
+	// Fuzzy is the text for the trigram operator; empty when the query is shorter than three characters.
+	Fuzzy string
+}
+
+var (
+	guidRE   = regexp.MustCompile(`^\{?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\}?$`)
+	sidRE    = regexp.MustCompile(`^s-1-[0-9]+(-[0-9]+){1,15}$`)
+	b64GUID  = regexp.MustCompile(`^[a-z0-9+/]{22}==$`)
+	hostRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*(\.[a-z0-9_-]+)*\$?$`)
+	dnStartR = regexp.MustCompile(`^(cn|ou|dc|uid|o)=`)
+)
+
+// Classify prepares a query (rule 7 refusals) and works out which exact and prefix lookups and which
+// fuzzy text apply. A refused query returns the refusal and nothing else.
+func Classify(raw string) (Parsed, error) {
+	s, err := Prepare(raw)
+	if err != nil {
+		return Parsed{}, err
+	}
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return Parsed{}, ErrEmpty
+	}
+	p := Parsed{Name: NormName(s)}
+	p.Runes = utf8.RuneCountInString(p.Name)
+	ident := NormIdent(s)
+	noSpace := !strings.ContainsAny(ident, " \t\r\n")
+
+	addExact := func(k Kind, key string) {
+		if key != "" {
+			p.Exact = append(p.Exact, Probe{k, key})
+		}
+	}
+	addPrefix := func(k Kind, lo string) {
+		if lo == "" {
+			return
+		}
+		hi, ok := PrefixUpper(lo)
+		p.Prefix = append(p.Prefix, Prefix{Kind: k, Lo: lo, Hi: hi, Bounded: ok})
+	}
+
+	switch {
+	case guidRE.MatchString(ident):
+		g := guidRE.FindStringSubmatch(ident)[1]
+		p.Shapes = append(p.Shapes, ShapeGUID)
+		addExact(KindGUID, g)
+		addExact(KindConsistencyGUID, g)
+	case b64GUID.MatchString(ident):
+		p.Shapes = append(p.Shapes, ShapeGUID)
+		addExact(KindConsistencyGUID, ident)
+	case sidRE.MatchString(ident):
+		p.Shapes = append(p.Shapes, ShapeSID)
+		addExact(KindSID, ident)
+	case dnStartR.MatchString(ident) && strings.Contains(ident, ","):
+		p.Shapes = append(p.Shapes, ShapeDN)
+		addExact(KindDN, NormDN(s))
+	case noSpace && strings.Count(ident, `\`) == 1 && !strings.Contains(ident, "="):
+		dom, sam, _ := strings.Cut(ident, `\`)
+		p.Shapes = append(p.Shapes, ShapeDomainSAM)
+		p.Domain = dom
+		addExact(KindSAM, sam)
+		addPrefix(KindSAM, sam)
+	case noSpace && strings.Count(ident, "@") == 1 && !strings.HasPrefix(ident, "@") && !strings.HasSuffix(ident, "@"):
+		local, dom, _ := strings.Cut(ident, "@")
+		p.Shapes = append(p.Shapes, ShapeEmail)
+		p.Domain = dom
+		addExact(KindUPN, ident)
+		addExact(KindMail, ident)
+		addExact(KindSAM, local)
+		addPrefix(KindUPN, ident)
+		addPrefix(KindMail, ident)
+	case noSpace && hostRE.MatchString(ident):
+		p.Shapes = append(p.Shapes, ShapeSAM, ShapeHost)
+		addExact(KindSAM, ident)
+		addExact(KindDNSHost, ident)
+		addExact(KindName, p.Name)
+		addPrefix(KindSAM, ident)
+		addPrefix(KindDNSHost, ident)
+		addPrefix(KindUPN, ident)
+		addPrefix(KindMail, ident)
+	default:
+		p.Shapes = append(p.Shapes, ShapeText)
+	}
+	if len(p.Shapes) == 0 {
+		p.Shapes = []Shape{ShapeText}
+	}
+
+	// Name matching always runs: "jsmith" also prefix-matches "jsmith2" and "pri" finds "Priya Raman".
+	addPrefix(KindName, p.Name)
+	if p.Name != "" && !strings.Contains(p.Name, " ") {
+		addPrefix(KindNameWord, p.Name)
+	}
+	// "Raman, Priya": exactly one comma with text on both sides is also tried swapped.
+	if strings.Count(s, ",") == 1 {
+		l, r, _ := strings.Cut(s, ",")
+		if sw := NormName(r + " " + l); NormName(l) != "" && NormName(r) != "" && sw != p.Name {
+			addPrefix(KindName, sw)
+		}
+	}
+	if p.Runes >= 3 {
+		p.Fuzzy = p.Name
+	}
+	return p, nil
+}

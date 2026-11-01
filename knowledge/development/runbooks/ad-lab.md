@@ -82,6 +82,8 @@ counts that `make lab-test-live` asserts against the live directory.
 | Edge-case users (`OU=EdgeCases`) | comma, leading `#`, `+`, double quotes, backslash, `<>;=`, `()*`, accents NFC and NFD, CJK, non-BMP (emoji, math letters), 64-character CN, 20-character sAMAccountName, dot/hyphen, leading and trailing space in the CN |
 | Password policy | complexity on, max age **90 days**, lockout after **5** bad passwords (until an admin unlocks) |
 
+The lockout, PSO and expiry cases the report engine must match, with expected results and which run on Samba, are the LAB-LK, LAB-PS, LAB-PW and LAB-AX rows of [`domain/account-state-lab-rows.md`](../domain/account-state-lab-rows.md) (T-1016). They are specified, not yet seeded or run.
+
 Ages ("stale", "expiring") are relative to the day the lab was **built** (`manifest.json` → `now`).
 A snapshot ages like a real directory: after about a month the "expiring" users have expired. Run
 `make lab-rebuild` to refresh, or write your own timestamps in tests. Set `LAB_SEED_NOW=<unix>` for a
@@ -241,3 +243,7 @@ but skipped with that ticket id (`TestO8RemovedFromScopeNonAncestryRoots`, `Test
 delete the `t.Skip` lines when it is fixed) and the manifest lists those clauses as Gaps, not coverage; the
 Entra arm then also needs a Graph fake. Open gaps: T-0830
 (undo of a failed item), T-0831 (Provenance implementation).
+
+`make fitness-operation` (T-0393) runs every manifest test on each invocation (Docker needed) and fails if one is
+missing, failed or skipped; add `-o8-lab` (`go run ./tools/fitness/operation -o8-lab`, lab up) to run the Samba
+arm too. See ci-and-build.md, `fitness-operation`.

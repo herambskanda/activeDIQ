@@ -1,0 +1,10 @@
+{
+ "id": "O-R05",
+ "class": "replayed",
+ "cites": [
+  "OIDC-15"
+ ],
+ "build": "stepup_stale",
+ "expect": "refuse",
+ "reason": "oidc.stale"
+}

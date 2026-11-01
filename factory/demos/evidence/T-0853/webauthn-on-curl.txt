@@ -1,0 +1,26 @@
+##### AC1 challenge
+{"allowCredentials":[{"id":"XVjml_2N8aFZ9MuvuPwZWzks7ZnhhVrOmgfTqsYOYq8","type":"public-key"}],"challenge":"iSngjQp2qwJ7KMo42ugT3t5yDkDPTc220MgPq0_tfus","rpId":"diq.example.com","timeoutMs":300000,"userVerification":"required"}
+credId expected: XVjml_2N8aFZ9MuvuPwZWzks7ZnhhVrOmgfTqsYOYq8
+##### AC2 valid assertion
+HTTP/2 204 
+set-cookie: __Host-adiq_session=6b9bbc2c-b532-46bb-af5b-06ca97f15f86.Mp3A0Ogw3Ck17wmhnxDziRnzPcXKDU7bYCbBthxPe54; Path=/; Max-Age=28799; HttpOnly; Secure; SameSite=Strict
+set-cookie: __Host-adiq_pending=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict
+-- replay same assertion (should 401)
+HTTP/2 401 
+{"instance":"/api/v1/auth/second-factor/webauthn/verify","status":401,"title":"Sign-in failed","traceId":"f260fbbcd0dd429c09c00ef4f297b711","type":"/problems/sign-in-failed"}
+##### AC3 refusals
+tampered:
+HTTP/2 401 
+{"instance":"/api/v1/auth/second-factor/webauthn/verify","status":401,"title":"Sign-in failed","traceId":"321fd2fbea0a6a4b278c55e7a788aefc","type":"/problems/sign-in-failed"}
+other origin:
+HTTP/2 401 
+{"instance":"/api/v1/auth/second-factor/webauthn/verify","status":401,"title":"Sign-in failed","traceId":"119c88f2c8b7f1f7efc3e3cbc08ad3b9","type":"/problems/sign-in-failed"}
+wrong rpId:
+HTTP/2 401 
+{"instance":"/api/v1/auth/second-factor/webauthn/verify","status":401,"title":"Sign-in failed","traceId":"9b8e3cb55fcff3fe66c58f2a2e8b3e72","type":"/problems/sign-in-failed"}
+no pending cookie:
+HTTP/2 401 
+{"instance":"/api/v1/auth/second-factor/webauthn/verify","status":401,"title":"Sign-in failed","traceId":"ff458c3212725e7018e9669f14caea38","type":"/problems/sign-in-failed"}
+metachar/garbage body:
+HTTP/2 400 
+{"errors":[{"code":"pattern","detail":"value does not match the required pattern","in":"body","pointer":"/authenticatorData"},{"code":"pattern","detail":"value does not match the required pattern","in":"body","pointer":"/clientDataJson"},{"code":"pattern","detail":"value does not match the required pattern","in":"body","pointer":"/credentialId"}],"instance":"/api/v1/auth/second-factor/webauthn/verify","status":400,"title":"The request is invalid","traceId":"ee662f9cad6669e91eb48371af92b60e","type":"/problems/validation"}

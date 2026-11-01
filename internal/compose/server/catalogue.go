@@ -6,6 +6,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/modules/directory"
+	"github.com/skenzeriq/activediq/internal/modules/reports"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/notify/syslog"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
@@ -17,6 +18,11 @@ import (
 var moduleOperationPermissions = []string{
 	string(connections.TakeoverAttestPermission),
 	string(directory.ReadPermission),
+	string(reports.DeliverExternalPermission),
+	string(reports.ExportPermission),
+	string(reports.RunPermission),
+	string(reports.ScheduleManageAllPermission),
+	string(reports.SchedulePermission),
 	syslog.ManagePermission,
 	syslog.ReadPermission,
 }
