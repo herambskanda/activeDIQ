@@ -10,107 +10,21 @@ package tier0
 // Gaps that this lab cannot cover (single DC, no RODC, single domain) are listed in the runbook, not faked here.
 
 import (
-	"bufio"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
 
-	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
-	"github.com/skenzeriq/activediq/internal/platform/secret"
 )
 
-const (
-	lDomDN  = "DC=win,DC=activediq,DC=test"
-	wConf = "CN=Configuration," + lDomDN
-)
-
-func lPath(envVar, def string) string {
-	if p := os.Getenv(envVar); p != "" {
-		return p
-	}
-	return filepath.Join("..", "..", "..", "lab", "windows", def)
-}
-
-func wEnv(t *testing.T) map[string]string {
-	t.Helper()
-	f, err := os.Open(lPath("WIN_LAB_ENV", ".win-lab.env"))
-	if err != nil {
-		t.Fatalf("windows lab not configured: %v", err)
-	}
-	defer f.Close()
-	env := map[string]string{}
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		if k, v, ok := strings.Cut(strings.TrimSpace(sc.Text()), "="); ok && !strings.HasPrefix(k, "#") {
-			env[k] = strings.Trim(v, `"'`)
-		}
-	}
-	return env
-}
-
-func wHostName() (host, name string) {
-	host, name = os.Getenv("WIN_LAB_DC_ADDR"), os.Getenv("WIN_LAB_TLS_NAME")
-	if host == "" {
-		host = "192.168.77.10"
-	}
-	if name == "" {
-		name = "dc1.win.activediq.test"
-	}
-	return
-}
-
-func wPool(t *testing.T) *x509.CertPool {
-	t.Helper()
-	pem, err := os.ReadFile(lPath("WIN_LAB_CA", ".win-lab-ca.pem"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		t.Fatal("bad windows lab CA")
-	}
-	return pool
-}
-
-// wAdmin binds as Administrator (provisioning identity) with certificate verification on.
-func wAdmin(t *testing.T) *ldap.Conn {
-	t.Helper()
-	host, name := wHostName()
-	c, err := ldap.DialURL("ldaps://"+host+":636", ldap.DialWithTLSConfig(&tls.Config{RootCAs: wPool(t), ServerName: name}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { c.Close() })
-	if err := c.Bind("Administrator@win.activediq.test", wEnv(t)["WIN_LAB_ADMIN_PASSWORD"]); err != nil {
-		t.Fatal(err)
-	}
-	return c
-}
-
-func wClassifier(t *testing.T, ctx context.Context) *ADClassifier {
-	t.Helper()
-	host, name := wHostName()
-	sess, err := ad.Open(ctx, ad.Config{
-		Servers: []string{host + ":636"}, ServerName: name, RootCAs: wPool(t), PageSize: 500,
-		Credential: ad.Credential{BindName: "svc-activediq@win.activediq.test", Password: secret.FromBytes([]byte(wEnv(t)["WIN_LAB_SVC_PASSWORD"]))},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { sess.Close() })
-	return NewAD(SessionDirectory{S: sess})
-}
+// wConf is the forest Configuration NC; the domain head is the shared winDom (win_lab_helper_test.go).
+const wConf = "CN=Configuration," + winDom
 
 func wClassify(t *testing.T, ctx context.Context, c *ADClassifier, dnStr string) ADResult {
 	t.Helper()
@@ -257,7 +171,7 @@ func lAppendACE(t *testing.T, c *ldap.Conn, obj string, ace []byte) {
 
 func wFixtureOU(t *testing.T, c *ldap.Conn) string {
 	t.Helper()
-	ou := fmt.Sprintf("OU=t0226-%d,%s", time.Now().UnixNano()%1_000_000, lDomDN)
+	ou := fmt.Sprintf("OU=t0226-%d,%s", time.Now().UnixNano()%1_000_000, winDom)
 	a := ldap.NewAddRequest(ou, nil)
 	a.Attribute("objectClass", []string{"top", "organizationalUnit"})
 	if err := c.Add(a); err != nil {
@@ -275,9 +189,9 @@ func wFixtureOU(t *testing.T, c *ldap.Conn) string {
 func TestWindowsLabC5C15(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	adm := wAdmin(t)
-	c := wClassifier(t, ctx)
-	dcs := wSearch(t, adm, "OU=Domain Controllers,"+lDomDN, ldap.ScopeSingleLevel, "(objectClass=computer)", "distinguishedName")
+	l := newWinLab(t)
+	adm, c := l.admin, l.cls
+	dcs := wSearch(t, adm, "OU=Domain Controllers,"+winDom, ldap.ScopeSingleLevel, "(objectClass=computer)", "distinguishedName")
 	if len(dcs) == 0 {
 		t.Fatal("no DC computer in OU=Domain Controllers")
 	}
@@ -294,8 +208,8 @@ func TestWindowsLabC5C15(t *testing.T) {
 func TestWindowsLabC8(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	adm := wAdmin(t)
-	c := wClassifier(t, ctx)
+	l := newWinLab(t)
+	adm, c := l.admin, l.cls
 	kds := "CN=Group Key Distribution Service,CN=Services," + wConf
 	if len(wSearch(t, adm, kds, ldap.ScopeBaseObject, "(objectClass=*)", "cn")) != 1 {
 		t.Fatal("KDS container absent")
@@ -310,13 +224,13 @@ func TestWindowsLabC8(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = adm.Del(ldap.NewDelRequest(child, nil)) })
 	wWant(t, ctx, c, child, C8)
-	for _, rel := range []string{"CN=System," + lDomDN, "CN=RID Manager$,CN=System," + lDomDN,
+	for _, rel := range []string{"CN=System," + winDom, "CN=RID Manager$,CN=System," + winDom,
 		"CN=Directory Service,CN=Windows NT,CN=Services," + wConf} {
 		wWant(t, ctx, c, rel, C8)
 	}
 	// The Password Settings Container's default ACL hides it from the delegated service account (no readable
 	// objectGUID): the classifier must fail closed (an error / Unknown), never answer "plain".
-	psc, perr := dn.ParseObjectRef("CN=Password Settings Container,CN=System," + lDomDN)
+	psc, perr := dn.ParseObjectRef("CN=Password Settings Container,CN=System," + winDom)
 	if perr != nil {
 		t.Fatal(perr)
 	}
@@ -326,23 +240,24 @@ func TestWindowsLabC8(t *testing.T) {
 		t.Errorf("error without fail-closed tier0: %+v %v", r, err)
 	}
 	// Negatives: a neighbouring CN=System container that is not in the list, and a user.
-	wWantPlain(t, ctx, c, "CN=Policies,CN=System,"+lDomDN+"")
+	wWantPlain(t, ctx, c, "CN=Policies,CN=System,"+winDom+"")
 }
 
 // C11: a principal with Get-Changes + Get-Changes-All on the live domain-root DACL; one with only Get-Changes is not.
 func TestWindowsLabC11(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	adm := wAdmin(t)
+	l := newWinLab(t)
+	adm := l.admin
 	ou := wFixtureOU(t, adm)
 	both, bothSID := wAddUser(t, adm, ou, "t0226-dcsync")
 	half, halfSID := wAddUser(t, adm, ou, "t0226-halfsync")
 	getChanges := guidBytes(t, "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2")
 	getAll := guidBytes(t, "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2")
-	lAppendACE(t, adm, lDomDN, aceObject(getChanges, bothSID, 0x100))
-	lAppendACE(t, adm, lDomDN, aceObject(getAll, bothSID, 0x100))
-	lAppendACE(t, adm, lDomDN, aceObject(getChanges, halfSID, 0x100))
-	c := wClassifier(t, ctx)
+	lAppendACE(t, adm, winDom, aceObject(getChanges, bothSID, 0x100))
+	lAppendACE(t, adm, winDom, aceObject(getAll, bothSID, 0x100))
+	lAppendACE(t, adm, winDom, aceObject(getChanges, halfSID, 0x100))
+	c := l.cls
 	wWant(t, ctx, c, both, C11)
 	wWantPlain(t, ctx, c, half)
 }
@@ -351,11 +266,12 @@ func TestWindowsLabC11(t *testing.T) {
 func TestWindowsLabC12(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	adm := wAdmin(t)
+	l := newWinLab(t)
+	adm := l.admin
 	ou := wFixtureOU(t, adm)
 	trustee, tSID := wAddUser(t, adm, ou, "t0226-rbcd")
 	bystander, _ := wAddUser(t, adm, ou, "t0226-bystander")
-	dcs := wSearch(t, adm, "OU=Domain Controllers,"+lDomDN, ldap.ScopeSingleLevel, "(objectClass=computer)", "distinguishedName")
+	dcs := wSearch(t, adm, "OU=Domain Controllers,"+winDom, ldap.ScopeSingleLevel, "(objectClass=computer)", "distinguishedName")
 	if len(dcs) == 0 {
 		t.Fatal("no DC")
 	}
@@ -372,7 +288,7 @@ func TestWindowsLabC12(t *testing.T) {
 			t.Errorf("RESTORE RBCD on %s FAILED: %v", dc, err)
 		}
 	})
-	c := wClassifier(t, ctx)
+	c := l.cls
 	wWant(t, ctx, c, trustee, C12)
 	wWantPlain(t, ctx, c, bystander)
 }
@@ -381,8 +297,9 @@ func TestWindowsLabC12(t *testing.T) {
 func TestWindowsLabC9(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	adm := wAdmin(t)
-	pol := "CN=Policies,CN=System," + lDomDN
+	l := newWinLab(t)
+	adm := l.admin
+	pol := "CN=Policies,CN=System," + winDom
 	mk := func(id string) string {
 		d := "CN={" + id + "}," + pol
 		a := ldap.NewAddRequest(d, nil)
@@ -402,7 +319,7 @@ func TestWindowsLabC9(t *testing.T) {
 	linked := mk(fmt.Sprintf("0226A%03d-0000-4000-8000-%012d", n%1000, n))
 	unlinked := mk(fmt.Sprintf("0226B%03d-0000-4000-8000-%012d", n%1000, n))
 
-	dcOU := "OU=Domain Controllers," + lDomDN
+	dcOU := "OU=Domain Controllers," + winDom
 	es := wSearch(t, adm, dcOU, ldap.ScopeBaseObject, "(objectClass=*)", "gPLink")
 	orig := es[0].GetAttributeValue("gPLink")
 	link := "[LDAP://" + linked + ";0]"
@@ -422,7 +339,7 @@ func TestWindowsLabC9(t *testing.T) {
 			t.Errorf("RESTORE gPLink on %s FAILED: %v", dcOU, err)
 		}
 	})
-	c := wClassifier(t, ctx)
+	c := l.cls
 	wWant(t, ctx, c, linked, C9)
 	wWantPlain(t, ctx, c, unlinked)
 }

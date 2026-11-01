@@ -1,0 +1,145 @@
+//go:build windows
+
+package ownerfile
+
+import (
+	"unsafe"
+	"golang.org/x/sys/windows"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+func icacls(t *testing.T, args ...string) string {
+	out, err := exec.Command("icacls", args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("icacls %v: %v\n%s", args, err, out)
+	}
+	return string(out)
+}
+
+// QA scratch: AC1 wider directory refused with typed error at "startup" (EnsureDir/CheckDir).
+func TestQAWiderDirRefused(t *testing.T) {
+	d := filepath.Join(t.TempDir(), "state")
+	if err := EnsureDir(d); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("before widening\n%s", icacls(t, d))
+	icacls(t, d, "/grant", "*S-1-5-32-545:(OI)(CI)(RX)") // BUILTIN\Users read
+	t.Logf("after granting Users RX\n%s", icacls(t, d))
+	err := EnsureDir(d)
+	if !errors.Is(err, ErrDirUnsafe) {
+		t.Fatalf("EnsureDir on widened dir: got %v want ErrDirUnsafe", err)
+	}
+	if err := CheckDir(d); !errors.Is(err, ErrDirUnsafe) {
+		t.Fatalf("CheckDir widened: %v", err)
+	}
+	t.Logf("typed error: %v", err)
+	// Users with create rights (the pre-creation DoS shape)
+	d2 := filepath.Join(t.TempDir(), "state2")
+	if err := EnsureDir(d2); err != nil {
+		t.Fatal(err)
+	}
+	icacls(t, d2, "/grant", "*S-1-5-32-545:(OI)(CI)(M)")
+	if err := EnsureDir(d2); !errors.Is(err, ErrDirUnsafe) {
+		t.Fatalf("Users modify: %v", err)
+	}
+	// Everyone
+	d3 := filepath.Join(t.TempDir(), "state3")
+	_ = EnsureDir(d3)
+	icacls(t, d3, "/grant", "*S-1-1-0:(OI)(CI)(F)")
+	if err := CheckDir(d3); !errors.Is(err, ErrDirUnsafe) {
+		t.Fatalf("Everyone: %v", err)
+	}
+}
+
+// QA scratch: AC2 file with widened DACL refused by ReadFile; junction/symlink refused; plain file ok.
+func TestQAReadFileCases(t *testing.T) {
+	d := filepath.Join(t.TempDir(), "state")
+	if err := EnsureDir(d); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(d, "baseline.json")
+	f, err := OpenAppend(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString(`{"ok":1}`)
+	f.Close()
+	b, err := ReadFile(p)
+	if err != nil || string(b) != `{"ok":1}` {
+		t.Fatalf("legit read: %q %v", b, err)
+	}
+	// widened file DACL
+	icacls(t, p, "/grant", "*S-1-1-0:(R)")
+	if b, err := ReadFile(p); !errors.Is(err, ErrUnsafe) || len(b) != 0 {
+		t.Fatalf("widened file: %q %v", b, err)
+	}
+	// foreign content behind symlink (target readable by Everyone)
+	foreign := filepath.Join(t.TempDir(), "foreign.json")
+	os.WriteFile(foreign, []byte("FORGED"), 0o666)
+	icacls(t, foreign, "/grant", "*S-1-1-0:(F)")
+	link := filepath.Join(d, "swapped.json")
+	// create the legit file, check it, then swap: Check passes, then replace with symlink, ReadFile must refuse
+	g, _ := OpenAppend(link)
+	g.WriteString("legit")
+	g.Close()
+	if err := Check(link); err != nil {
+		t.Fatalf("check legit: %v", err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(foreign, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if b, err := ReadFile(link); !errors.Is(err, ErrUnsafe) || len(b) != 0 {
+		t.Fatalf("symlink swap: %q %v", b, err)
+	}
+	// directory junction at the file path
+	jn := filepath.Join(d, "junc.json")
+	if out, err := exec.Command("cmd", "/c", "mklink", "/J", jn, t.TempDir()).CombinedOutput(); err != nil {
+		t.Logf("mklink /J: %v %s", err, out)
+	} else if b, err := ReadFile(jn); err == nil || len(b) != 0 {
+		t.Fatalf("junction: %q %v", b, err)
+	} else {
+		t.Logf("junction refused: %v", err)
+	}
+}
+
+func TestQADiag(t *testing.T) {
+	d := `C:\lab\t0577\dbg`
+	os.RemoveAll(d)
+	err := EnsureDir(d)
+	t.Logf("EnsureDir err=%v", err)
+}
+
+func TestQADiag2(t *testing.T) {
+	d := `C:\lab\t0577\dbg`
+	p, _ := windows.UTF16PtrFromString(d)
+	h, err := windows.CreateFile(p, windows.FILE_LIST_DIRECTORY|windows.READ_CONTROL, windows.FILE_SHARE_READ, nil,
+		windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var info windows.ByHandleFileInformation
+	err = windows.GetFileInformationByHandle(h, &info)
+	t.Logf("attrs=%#x err=%v", info.FileAttributes, err)
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	t.Logf("sd=%v err=%v", sd, err)
+	system, self, _ := principals()
+	owner, def, err := sd.Owner()
+	t.Logf("owner=%v defaulted=%v err=%v self=%v system=%v", owner, def, err, self, system)
+	ctrl, rev, err := sd.Control()
+	t.Logf("ctrl=%#x rev=%d err=%v", ctrl, rev, err)
+	acl, present, err := sd.DACL()
+	t.Logf("acl present=%v err=%v count=%d", present, err, acl.AceCount)
+	for i := uint32(0); i < uint32(acl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		err := windows.GetAce(acl, i, &ace)
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		t.Logf("ace %d type=%d mask=%#x sid=%v err=%v", i, ace.Header.AceType, ace.Mask, sid, err)
+	}
+}

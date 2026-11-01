@@ -373,6 +373,12 @@ func validRoots(tn tenant.ID, roots []Root) bool {
 		}
 		switch r.Kind {
 		case NamingContext, OUSubtree:
+		case OUOneLevel:
+			// An include root only, and never a connection or tenant ID: the one-level match reads the
+			// nearest parent, and the chain's last element is the connection.
+			if r.Exclude || r.Connection == r.GUID {
+				return false
+			}
 		case EntraTenant, Tier0Scope:
 			if r.Connection != r.GUID {
 				return false
@@ -400,6 +406,27 @@ func validRoots(tn tenant.ID, roots []Root) bool {
 // tenant-owner or a control-plane permission (DM-36.I4). It returns ErrExists for an ID that is
 // taken, including a repeat of the identical grant (the caller treats a retry of a committed Action as done).
 func (g *Grants) Grant(ctx context.Context, tx store.Tx, by authority.Chain, in GrantInput) error {
+	return g.grant(ctx, tx, by, in, false)
+}
+
+// BootstrapPrincipal is the only system principal GrantBootstrap accepts: the install-time CLI that creates
+// the first console account. Any other system chain (jobs, connectors, authn) is refused.
+const BootstrapPrincipal authority.PrincipalID = "cli-account-init-local"
+
+// GrantBootstrap is Grant for a host operator: the one path where the grantor is a system principal, not a
+// person holding the privilege. It exists for the install-time CLI that creates the first console account
+// (T-0783), which has no human to act as; it borrows no human's authority and the assignment's granted_by
+// names the system principal. A chain that is not exactly the BootstrapPrincipal system principal is
+// refused. It bypasses the grantor-holds-the-privilege check, so the static half of the guard is the
+// fitness function tools/fitness/grantbootstrap (T-0808): no reference outside the CLI path.
+func (g *Grants) GrantBootstrap(ctx context.Context, tx store.Tx, by authority.Chain, in GrantInput) error {
+	if by.Validate() != nil || by.Requester.Kind != authority.System || by.Requester.ID != BootstrapPrincipal || len(by.Via) > 0 {
+		return ErrActorNotDirect
+	}
+	return g.grant(ctx, tx, by, in, true)
+}
+
+func (g *Grants) grant(ctx context.Context, tx store.Tx, by authority.Chain, in GrantInput, bootstrap bool) error {
 	if !accountIDRe.MatchString(in.ID) || !accountIDRe.MatchString(in.RoleID) || !in.Subject.Valid() ||
 		(in.ValidFrom != nil && in.ValidUntil != nil && !in.ValidUntil.After(*in.ValidFrom)) {
 		return ErrInvalid
@@ -421,12 +448,14 @@ func (g *Grants) Grant(ctx context.Context, tx store.Tx, by authority.Chain, in 
 	if err := platformOnlyErr(role.perms); err != nil {
 		return err
 	}
-	actor, err := g.actorAssignments(ctx, tn, by)
-	if err != nil {
-		return err
-	}
-	if err := g.mustHold(ctx, tn, by, actor, role.perms, in.Roots); err != nil {
-		return err
+	if !bootstrap {
+		actor, err := g.actorAssignments(ctx, tn, by)
+		if err != nil {
+			return err
+		}
+		if err := g.mustHold(ctx, tn, by, actor, role.perms, in.Roots); err != nil {
+			return err
+		}
 	}
 	var exists int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authz_assignments WHERE tenant_id = $1::uuid AND id = $2::uuid`, tn.String(), in.ID).Scan(&exists); err != nil {

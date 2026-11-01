@@ -1,0 +1,15 @@
+EnsureDir new: <nil>
+mode=-rwx------
+EnsureDir again (idempotent): <nil>
+CheckDir 755 -> ownerfile: state directory is not restricted to the service identity: state (typed ErrDirUnsafe=true)
+EnsureDir 755 -> ownerfile: state directory is not restricted to the service identity: state
+CheckDir 770 -> ownerfile: state directory is not restricted to the service identity: state (typed ErrDirUnsafe=true)
+EnsureDir 770 -> ownerfile: state directory is not restricted to the service identity: state
+CheckDir 701 -> ownerfile: state directory is not restricted to the service identity: state (typed ErrDirUnsafe=true)
+EnsureDir 701 -> ownerfile: state directory is not restricted to the service identity: state
+legit read: "legit" <nil>
+symlink->foreign0666: bytes="" err=ownerfile: file is not restricted to the service identity: baseline.json
+symlink->own0600: bytes="" err=ownerfile: file is not restricted to the service identity: baseline.json
+Check: <nil>
+after swap: bytes="" err=ownerfile: file is not restricted to the service identity: baseline.json
+0644 file: bytes="" err=ownerfile: file is not restricted to the service identity: baseline.json

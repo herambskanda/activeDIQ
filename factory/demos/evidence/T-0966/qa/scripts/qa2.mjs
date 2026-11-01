@@ -1,0 +1,20 @@
+import { chromium } from "/home/khushi/AD/.activeDIQ-worktrees/T-0966/web/node_modules/playwright-core/index.mjs";
+const BASE="http://127.0.0.1:4180"; const OUT="/home/khushi/AD/.activeDIQ-worktrees/T-0966/factory/demos/evidence/T-0966/qa";
+const b=await chromium.launch(); const p=await (await b.newContext({viewport:{width:1280,height:800}})).newPage();
+await p.route("**/api/v1/auth/csrf",r=>r.fulfill({json:{header:"X-CSRF-Token",value:"c"}}));
+await p.route(/\/api\/v1\/reports\//,r=>r.fulfill({status:403,contentType:"application/problem+json",body:JSON.stringify({type:"about:blank",title:"Forbidden",status:403})}));
+const reqs=[]; p.on("request",q=>{if(q.url().includes("/api/v1/reports"))reqs.push(q.url())});
+await p.goto(BASE+"/reports"); await p.getByText("You don't have access to reports").waitFor();
+await p.getByLabel("Filter reports").fill("abc"); await p.waitForTimeout(800);
+await p.getByLabel("Category").selectOption({label:"Groups"}); await p.waitForTimeout(800);
+console.log("403: after filter+category, url=",p.url(), "panel still:",await p.getByText("You don't have access to reports").count(), "reqs:",reqs.length);
+await p.screenshot({path:OUT+"/lib-403-controls.png"});
+await b.close();
+// Esc on search (visible?)
+const b2=await chromium.launch(); const p2=await (await b2.newContext()).newPage();
+await p2.route("**/api/v1/auth/csrf",r=>r.fulfill({json:{header:"X-CSRF-Token",value:"c"}}));
+await p2.route(/\/api\/v1\/reports\//,r=>r.fulfill({json:{items:[],page:{nextCursor:null}}}));
+await p2.goto(BASE+"/reports"); await p2.getByText("No reports are available").waitFor();
+await p2.keyboard.press("/"); console.log("open visible:",await p2.getByRole("combobox",{name:"Search reports"}).isVisible());
+await p2.keyboard.press("Escape"); console.log("after Esc visible:",await p2.getByRole("combobox",{name:"Search reports"}).isVisible(), "count",await p2.getByRole("combobox",{name:"Search reports"}).count());
+await b2.close();

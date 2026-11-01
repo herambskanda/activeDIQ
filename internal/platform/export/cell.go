@@ -69,6 +69,7 @@ const (
 	kTime
 	kNever
 	kMulti
+	kUnknown
 )
 
 // Cell is one typed value. The zero Cell is Empty. Build cells with the constructors only.
@@ -106,6 +107,13 @@ const NeverText = "Never"
 // Never marks an attribute whose value means "never" (for example lastLogon 0): it is text, not a date.
 func Never() Cell { return Cell{k: kNever} }
 
+// UnknownText is the label an Unknown cell shows.
+const UnknownText = "Unknown (input missing)"
+
+// Unknown marks a derived value whose input is missing (FR-09). It is text in the file, never blank and
+// never "Never": a reader can tell "not collected" from "no value" from "never".
+func Unknown() Cell { return Cell{k: kUnknown} }
+
 // Multi is a multi-valued attribute; encoders join it with "; " into one cell.
 func Multi(vs ...string) Cell { return Cell{k: kMulti, multi: append([]string(nil), vs...)} }
 
@@ -141,6 +149,8 @@ func (c Cell) Resolve() (Resolved, error) {
 		return Resolved{Kind: KindText, Text: c.s}, nil
 	case kNever:
 		return Resolved{Kind: KindText, Text: NeverText}, nil
+	case kUnknown:
+		return Resolved{Kind: KindText, Text: UnknownText}, nil
 	case kMulti:
 		return Resolved{Kind: KindText, Text: strings.Join(c.multi, "; ")}, nil
 	case kInt:
@@ -163,6 +173,14 @@ func FormatFloat(f float64) string { return strconv.FormatFloat(f, 'g', -1, 64) 
 
 // TimeLayout is the invariant spelling of a Time cell in text outputs.
 const TimeLayout = "2006-01-02T15:04:05Z"
+
+// AboutLine is one label and one value of an export's About block (reports-2a §8.3): the facts about
+// a file (report, scope, filters, freshness, who and when, row count, digest). XLSX writes it as a first
+// sheet, PDF and HTML as a header. Labels and values are data and go through the same rules as cells.
+type AboutLine struct{ Label, Value string }
+
+// MaxAboutLines bounds an About block.
+const MaxAboutLines = 100
 
 // Column is a header cell. The label is data and goes through the same cell rules as a value.
 type Column struct{ Label string }

@@ -1,12 +1,12 @@
 ---
 title: "ADR-0002: Two self-hosted profiles from one codebase, multi-tenant from migration 1, SaaS by composition, standalone from UEM with a shared agent-host contract"
 date: 2026-10-02
-updated: 2026-10-29
+updated: 2026-10-30
 status: ratified
 owner: heramb
 kind: strategic-fork
 ticket: T-0003
-decision: D-0002, D-0003, D-0005, D-0007
+decision: D-0002, D-0003, D-0005, D-0007, D-0013
 ratified_on: 2026-10-02
 ratified_by: factory-director
 ---
@@ -23,6 +23,13 @@ ratified_by: factory-director
 > - 2026-10-02 · solution-architect · T-0155, applying ADR-0005 rule 6 (ratified 2026-10-02, D-0015; backend-engineer finding B1) · **Jobs row, `ManagedTx` mode.** The bullet "One job wrapper opens `WithTenantTx` before the job body runs" becomes: "the wrapper establishes the tenant before the body runs; a kind either runs inside one wrapper transaction (the default) or declares `ManagedTx` and receives the tenant-bound transaction runner". The operation job kinds use `ManagedTx`, so a job never holds a transaction across a directory call. The tenant is still established by the wrapper and never by the body, every job still carries `tenant_id`, and `fitness-tenancy` T5 (`job-carries-tenant`) is unchanged. T-0084 implements both modes. No other rule changes.
 > - 2026-10-02 · solution-architect · T-0209, from T-0084's block; security-architect consulted (concurs with conditions, all applied; objects to A); ratified 2026-10-07 by factory-director at the T-0209 review, notice **D-0017** · **Jobs: our own `SKIP LOCKED` queue replaces River.** River's driver is built from a raw pool (`riverpgxv5.New(dbPool *pgxpool.Pool)`, [riverpgxv5](https://pkg.go.dev/github.com/riverqueue/river/riverdriver/riverpgxv5)), and its transactional insert takes the driver's transaction type ([river](https://pkg.go.dev/github.com/riverqueue/river)). Our `store` keeps both private (Transaction row; `store.go`: unexported pool, `store.Tx` with only `Exec`/`Query`/`QueryRow`). **Chosen (B):** a `jobs` table owned by `platform/jobs`, reached only through `store.WithTenant`/`WithPlatform`. Enqueue runs natively in the caller's `store.Tx`, and a trigger makes the database refuse cross-tenant enqueue. No pool leaves `store`, and the MPL-2.0 legal check disappears. **Rejected (A):** keep River behind a store accessor that hands the pool to `platform/jobs`, vendor River's migrations, and enqueue transactionally with a hand-written `INSERT` into `river_job`. A buys a mature runner: retries, the rescuer, the cleaner, `LISTEN` wake-up, leader election, a UI. It costs: (1) a second route to a connection that skips `store`'s `set_config` and `statement_timeout`, at a Tier-0 tenancy boundary; (2) an insert coupled to River's internal schema (state, unique-key hash, unique-states bitmask), which breaks silently on upgrade; (3) a global `river_job` that trusts tenant IDs from Go arguments. We would also use none of River's other features. ADR-0005 makes the domain record the system of record with its own fenced `SKIP LOCKED` claims and sweeper, DM-06 leases are ours, and DM-44 schedules (IANA zones, misfire-once) are ours. Only the easy part of a queue was left to River. Changes: Transaction row (the `tenants`/job-table sentence); Jobs row (last bullet replaced by four); rule 4's starting registry; Consequences (River's tables outside RLS → four bullets); T5 (River rule retired, `job-args-reference` added, T-0213); Bypasses (job-table example, new cross-tenant-enqueue bullet). Follow-ons: T-0213 (fitness), T-0214 (SaaS fairness), T-0215 (threat model). T-0084 is re-cut to build the queue. ADR-0001 erratum E3 and the licence register (River **Rejected**) carry the same change.
 > - 2026-10-29 · solution-architect · T-0712 (security-sensitive; security-architect review on the ticket) · **Rule 4: a second registered cross-tenant mechanism, the column-limited `SECURITY DEFINER` reader.** The gateway's client-CA pool must read every tenant's `fleet_ca` certificates, and `fleet_ca` stays a Tenant table. **Chosen:** `public.fleet_ca_trust_anchors()`, owned by a dedicated `NOLOGIN NOBYPASSRLS` role that holds `SELECT` on public columns only plus one policy, callable only in platform scope, from one registered `WithPlatform` site. **Rejected:** a global trust table (readable by every tenant transaction, drifts), a `tablekind` "platform-readable" extension (row-level, would expose `sealed_key`), BYPASSRLS. A registered `securityDefiner` entry for a cross-tenant read must name its role, its column list and its single call site, and the role must lack privilege on every non-public column. Detail and fitness functions: [fleet-contract](../architecture/fleet-contract.md) "Gateway client-CA pool". The installer creates a third role.
+> - 2026-10-30 · solution-architect · T-0889 (rulings on the red `fitness-profiles` run); ratified 2026-10-30 by factory-director at the T-0889 review, notice **D-0013** (current board) · **Errata E-1 to E-4 to the `fitness-profiles` checks.**
+>   - E-1: P1 accepts a profile word only inside a registered Microsoft Graph or Entra term, such as `onPremisesSyncEnabled` or `onprem_sid`. A bare token or stem such as `onPremises` cannot be registered. A profile word in an identifier we invent still fails.
+>   - E-2: forwarding the environment unchanged to a child process is not a read.
+>   - E-3: P2 is split into `P2-oci` and `P2-msi`; the activation paths become `packaging/linux-oci/`; and activation rows get time-boxed deferrals, each approved only by this ADR's "Activation deferrals" table.
+>   - E-4: P6 runs on every merge against `linux-oci`, and the `windows` profile runs nightly.
+>
+>   The detail, the ruling for each class and the deferral table are in Fitness function, "Rulings on the 2026-10-30 red run". The rule text above is unchanged; where the errata differ, they prevail.
 
 ## Context
 
@@ -333,7 +340,7 @@ These go beyond the literal text of D-0002 and D-0003. The factory takes them, a
 
 ## Fitness function
 
-There are two jobs. Both are Go programs invoked by `make ci` (T-0014) and run by the dispatcher's pre-merge gate (T-0015) until hosted CI exists. Paths follow T-0004.
+There are two jobs. Both are Go programs invoked by `make ci` (T-0014) and run by the dispatcher's pre-merge gate (T-0941; first named T-0015, an id that went to the Go upgrade) until hosted CI exists. Paths follow T-0004.
 
 **Job `fitness-tenancy`** (`tools/fitness/tenancy/`). It runs against an ephemeral PostgreSQL 16 and 18, with every migration applied.
 
@@ -383,6 +390,66 @@ The job therefore holds an **activation table**: each check lists the path that 
 
 **Status path.** Ratified at review of T-0003 (notice D-0007). It becomes `accepted` when two conditions hold:
 - `fitness-tenancy` (T1–T5) and `fitness-profiles` (P1, P7, U1, U2 and the activation table) run green in `make ci` on `main`;
-- the activation table holds an entry for every remaining check: P2–P6, U3 and U4.
+- the activation table holds an entry for every remaining check: P2-oci, P2-msi, P3 to P6, U3 and U4.
 
 From then on, a subject such as the MSI, the connector, the updater or the agent protos cannot merge without its check.
+
+### Rulings on the 2026-10-30 red run (T-0889)
+
+On 2026-10-30, `make fitness-profiles` on `main` (10ce82fe9, re-run on c773b413b) reported 93 violations, and six activation rows printed `ACTIVE, FAILING`. Each class below has one ruling. Errata E-1 to E-4 amend the checks above. **Where E-1 to E-4 differ from the P1, P2 or P6 rows or from the activation paragraph, the errata prevail.** No other rule changes.
+
+| Class (count) | Ruling | Reason | Ticket |
+| --- | --- | --- | --- |
+| P1: identifiers that contain a Microsoft Graph name. `OnPremisesSyncEnabled` 17, `OnPremisesSyncRead` 10, `OnPremisesSID` 10, `AttrOnPremisesSyncEnabled` 9, `OnPremisesDomainName` 7, `OnPremisesImmutableID` 5, `SegOnPremisesSync` 1 | **Erratum E-1, plus renames.** The identifiers that already carry the exact Graph name pass under E-1. `OnPremisesSID`, `OnPremisesSyncRead` and `SegOnPremisesSync` are renamed to contain the exact name. | `onPremises*` is Microsoft's schema vocabulary for objects synced from AD ([user resource](https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0), [onPremisesSynchronization](https://learn.microsoft.com/en-us/graph/api/onpremisesdirectorysynchronization-get?view=graph-rest-1.0)). It describes a directory object, not our deployment profile. Renaming the identifiers away from Graph's names would make the code harder to trace to the API it reads, and would protect nothing. | E-1: T-0919. Renames: T-0920 |
+| P1: `AnchorOnpremSID` (7) | **Erratum E-1, no code change.** | The constant's value is the Entra token claim `onprem_sid` ([optional claims](https://learn.microsoft.com/en-us/entra/identity-platform/optional-claims-reference)), the anchor DM-30.I5 binds by. The identifier is ours, but the word in it is Microsoft's. | T-0919 |
+| P1: `onPremSync` 3, `onPremCloud` 3 (locals in `inventory/objects.go`) | **Fix.** Rename to `syncEnabledArg` and `cloudManagedArg`. | These names are ours and are not Graph names, so E-1 does not cover them. | T-0920 |
+| P1: `os.Getenv` with a non-constant name, in three Windows-lab test helpers | **Fix, rule unchanged.** Pass the value, not the name. Merge the two cloned `tier0` helpers. | Reading environment variables by constant name keeps the check decidable. The fix costs three call sites. | T-0921 |
+| P1: `os.Environ` in two `prochardening` tests (`cmd.Env = append(os.Environ(), …)`) | **Erratum E-2.** | Handing the environment unchanged to a child process reads no variable and selects nothing. Every other use stays a finding. | T-0919 |
+| P1: `internal/modules/connections` test imports `internal/compose/server/entra` | **Fix.** Move the test into the composition root. | It tests composed adapters, so it belongs with the composition. A module never imports `compose`. | T-0922 |
+| P4: two `Callback` log lines without `tenant_id` | **Fix.** | TM-TB17-T8 has no exceptions for sign-in. | T-0923 |
+| U2: `authn/negotiate` and `httpx/negotiatehttp` import `directory/attr/sid` and `directory/inventory` (6) | **Fix by dependency inversion.** `negotiate` declares a port that takes canonical SID text and returns `authn.DirectoryRef`. The adapter in `compose/server` parses the text with `sid.Parse` and queries the inventory. | The sign-in core is platform. The directory lookup is a port, as `authn` already does for accounts. Moving `negotiate` out of the platform would split AN-9 from the rest of authn. Moving `sid` into the platform would pull a directory codec into the kernel. | T-0924 |
+| U2: `fleet/tunnelclient` imports `internal/proto/activediq/fleet/v1` (1) | **Fix.** The generic client stays in the platform over `fleet.Frame`. The `activediq.fleet.v1` binding moves under `internal/compose/`. | Blueprint §5.1 and fleet-contract "Placement" already require this, and the server side already follows it (`compose/server/fleettunnel.go`). | T-0925 |
+| Activation rows P2, P3, P4, P6, U3, U4: `ACTIVE, FAILING` | **Erratum E-3:** time-boxed deferrals listed below, plus a path fix. **Erratum E-4:** scope of P6. | The subjects landed before their checks. That is the failure the table exists to prevent. A permanently red job hides new regressions. A deferral with an owner and an expiry keeps the gap visible without hiding new failures. | Mechanism: T-0926 |
+
+**E-1 (registered external vocabulary).**
+- **What changes.** A P1 identifier can contain a denylist token only inside a *registered external term*. A registered term is an exact Microsoft Graph property or segment name, or an Entra token-claim name. It is listed in `tools/fitness/profiles/manifest.json` `externalVocabulary` with its kind and the https URL of the page that defines it. The check normalises the identifier, cuts out every registered term, and runs the denylist over what remains.
+- **What the rule still catches.** A profile word in any identifier we invent still fails, even when it sits beside a Graph name: `IsOnPremDeployment`, `OnPremisesProfile`, `onPremMode`, `OnPremisesSyncEnabledForSaaS` and `SaaSOnPremisesDomainName` all fail.
+- **What an entry cannot do.** It cannot be a stem. Registry validation normalises each term (`normIdent`, hyphens dropped) and refuses it when the result:
+  - contains no denylist token, because such a term needs no registration;
+  - equals a denylist token, so `onprem`, `onPrem` and `on_prem` are refused;
+  - equals an entry of the refused-stem list, which starts as `onpremise` and `onpremises`, so `onPremise` and `onPremises` are refused.
+
+  The refused-stem list is a constant in the tool's source, not in `manifest.json`, so editing the registry cannot loosen it. Adding a stem is a code change, reviewed against this erratum. A term that is an exact external name passes. For example, `onprem_sid` normalises to `onpremsid`, which is neither a token nor a stem. Cutting it out of `AnchorOnpremSID` leaves `anchor`, which contains no profile word. A length threshold cannot do this job: `onpremsid` (token + 3) must pass and `onpremises` (token + 4) must fail. An entry with no https source also fails, and so does an entry that no identifier in the tree uses (stale). The source URL is the only guard against an invented term that is not a stem, so reviewers of any `externalVocabulary` change open the URL.
+- **Proof.** The fixtures are in T-0919's acceptance criteria. AC1 covers identifiers. AC2 covers registry validation: registering `onprem_sid` is accepted, and registering `onPremises`, `onPremise` or `onprem` is refused. The literal denylist (`saas`, `linux-oci`) is unchanged.
+
+**E-2 (environment forwarding).**
+- **What is allowed.** Outside the config loader, `os.Environ()` may appear only as `X.Env = os.Environ()` or `X.Env = append(os.Environ(), <constant strings>)`. No appended string may name a variable that matches the profile-environment pattern.
+- **What still fails.** Every other use is still a finding. `(*exec.Cmd).Environ()` counts as `os.Environ()`.
+- **Proof.** The fixtures are in T-0919.
+
+**E-3 (activation table).**
+- **P2 split.** P2 becomes two rows: `P2-oci`, which activates on `packaging/linux-oci/`, and `P2-msi`, which activates on `packaging/windows/`. Each artefact then brings its own half into force.
+- **P6 path.** P6 activates on `packaging/linux-oci/`.
+- **Path fix.** The path `packaging/oci/` in the table was wrong. The tree and the profile are `linux-oci`, and blueprint §1 is corrected with this erratum.
+- **Deferral entries.** A row may carry a deferral only if the table below lists it. While deferred, the row prints `ACTIVE, DEFERRED` and passes.
+- **When a deferral fails.** A deferral fails the job when it expires, when its row gains a command (stale), or when this table does not list it.
+- **Effect on acceptance.** While any deferral stands, this ADR cannot become `accepted`. Status path condition 2 requires the activation table to hold a working entry for every remaining check.
+
+**E-4 (P6 scope).**
+- **Per-merge run.** P6 runs on every merge against the `linux-oci` profile: one server binary, one boot path, and the network denied except to the lab DC and PostgreSQL.
+- **Windows.** The `windows` profile's egress-denied run is nightly in the Windows lab. It starts once a server MSI exists (T-0928 files it).
+- **Why this is enough.** Mandatory egress comes from code, not from the OS. The adapters that differ on Windows (service host, key provider) make no outbound call by design. The nightly run checks that design.
+
+**Activation deferrals** (parsed by `fitness-profiles`, T-0926; columns 1 to 3 are machine-read):
+
+| Check | Ticket | Expires | Evidence the check needs | Producer |
+| --- | --- | --- | --- | --- |
+| P2-oci | T-0927 | 2026-12-15 | amd64 and arm64 server images; boot of `linux-oci` and `saas` against PostgreSQL 16 and 18; migrations, health, exactly one tenant or a provisioned tenant | devops-engineer |
+| P2-msi | T-0928 | 2027-01-30 | build, install, upgrade and uninstall of every MSI on `main` on WS2025, then WS2022 (WS2019 nightly), against the Windows lab; fails when the host is unreachable | devops-engineer (windows-engineer for MSI content) |
+| P3 | T-0929 | 2026-11-30 | `internal/connector/conformance` under the embedded and remote transports on Samba (T-0929); library and unseal fences outside `internal/connector` (T-0930) | directory-engineer, devops-engineer |
+| P4 | T-0931 | 2026-11-30 | `saas` composed with two tenants and two remote connectors: certificate, message-body and Entra-certificate crossings refused | backend-engineer |
+| P6 | T-0932 | 2026-12-15 | `linux-oci` boot, sign-in and directory read with egress denied except to the lab DC and PostgreSQL | devops-engineer |
+| U3 | T-0933 | 2026-11-30 | no `activediq.*` reference in `skenzeriq.agent.v1`; golden-descriptor breaking-change check on both namespaces, with no new dependency | devops-engineer |
+| U4 | T-0934 | 2026-11-20 | freeze marker `// contract: frozen` gated on `agent-contract-review.md` `status: accepted` | devops-engineer |
+
+All seven deferrals expire within three months of 2026-10-30, the latest on 2027-01-30. An extension is a new amendment line in this ADR with its reason. Editing the date in the manifest does not extend anything.

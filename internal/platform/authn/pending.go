@@ -296,6 +296,23 @@ func (f *SecondFactor) VerifyTOTP(ctx context.Context, h PendingHandle, code str
 	}
 	var res CreateResult
 	err = f.DB.WithTenant(ctx, ref.Tenant, func(ctx context.Context, tx store.Tx) error {
+		// The passkey lock (P1, factor-policy D-FP3): an account that holds an active second-factor
+		// WebAuthn credential does not finish sign-in with a code. The check comes before any code is
+		// looked at, so no TOTP step is spent and no enrolment budget is charged; the attempt itself was
+		// already charged to the pending sign-in above. The account row is read FOR SHARE first and
+		// insertCredential takes it FOR UPDATE, so a credential activated concurrently either commits
+		// before this read (and is seen) or waits until this transaction, session included, has
+		// committed (FP-T8).
+		if err := lockAccountShared(ctx, tx, ref.Tenant, ref.Account); err != nil {
+			return err
+		}
+		keys, err := credentials(ctx, tx, ref.Tenant, ref.Account, purposeSecondFactor)
+		if err != nil {
+			return err
+		}
+		if len(keys) > 0 {
+			return &refusal{reason: RefusedFactorPolicy}
+		}
 		ids, err := activeTOTPIDs(ctx, tx, ref.Tenant, ref.Account)
 		if err != nil {
 			return err
@@ -367,6 +384,17 @@ func (f *SecondFactor) VerifyTOTP(ctx context.Context, h PendingHandle, code str
 		return CreateResult{}, fmt.Errorf("authn: second factor: %w", err)
 	}
 	return res, nil
+}
+
+// lockAccountShared takes the account row FOR SHARE for the rest of tx. A missing row is not an error
+// here: the later reads find no active account and refuse.
+func lockAccountShared(ctx context.Context, tx store.Tx, t tenant.ID, account string) error {
+	var one int
+	err := tx.QueryRow(ctx, `SELECT 1 FROM public.authn_accounts WHERE tenant_id = $1::uuid AND id = $2::uuid FOR SHARE`, t.String(), account).Scan(&one)
+	if err != nil && !store.IsNoRows(err) {
+		return err
+	}
+	return nil
 }
 
 // accountActive reports whether the console account exists and is active.

@@ -1,0 +1,162 @@
+{
+  "id": "pwd-01",
+  "version": 1,
+  "category": "passwords",
+  "title": "Password status",
+  "description": "Each user's password state computed when the report runs from pwdLastSet and the effective maximum password age (the fine-grained policy that applies, else the domain policy). Must change at next logon is never shown as expired.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "domain",
+    "dn",
+    "pwd_last_set",
+    "password_expires_at",
+    "password_state",
+    "policy_source",
+    "enabled",
+    "probable_service_account",
+    "probable_service_account_reason"
+  ],
+  "sort": [
+    {
+      "column": "password_expires_at",
+      "dir": "asc"
+    }
+  ],
+  "params": [
+    {
+      "name": "soon_days",
+      "kind": "days",
+      "default": {
+        "days": 14
+      },
+      "min": 1,
+      "max": 365
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn",
+    "password_state_is_computed"
+  ],
+  "presets": [
+    {
+      "id": "expired",
+      "names": [
+        "Password Expired Users"
+      ],
+      "where": {
+        "cmp": {
+          "col": "password_state",
+          "op": "eq",
+          "value": {
+            "enum": "expired"
+          }
+        }
+      },
+      "hidden": [
+        {
+          "id": "service_accounts",
+          "label": "probable service accounts hidden",
+          "where": {
+            "cmp": {
+              "col": "probable_service_account",
+              "op": "eq",
+              "value": {
+                "bool": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "soon",
+      "names": [
+        "Soon-to-expire User Passwords"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "password_state",
+              "op": "eq",
+              "value": {
+                "enum": "expires"
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "password_expires_at",
+              "op": "within_next_days",
+              "param": "soon_days"
+            }
+          }
+        ]
+      },
+      "hidden": [
+        {
+          "id": "service_accounts",
+          "label": "probable service accounts hidden",
+          "where": {
+            "cmp": {
+              "col": "probable_service_account",
+              "op": "eq",
+              "value": {
+                "bool": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "never",
+      "names": [
+        "Users with Password Never Expires"
+      ],
+      "where": {
+        "cmp": {
+          "col": "password_state",
+          "op": "in",
+          "values": [
+            {
+              "enum": "never_account_flag"
+            },
+            {
+              "enum": "never_policy"
+            }
+          ]
+        }
+      },
+      "sort": [
+        {
+          "column": "display_name",
+          "dir": "asc"
+        }
+      ]
+    },
+    {
+      "id": "must_change",
+      "names": [
+        "Users with Change Password at Next Logon"
+      ],
+      "where": {
+        "cmp": {
+          "col": "password_state",
+          "op": "eq",
+          "value": {
+            "enum": "must_change"
+          }
+        }
+      },
+      "sort": [
+        {
+          "column": "display_name",
+          "dir": "asc"
+        }
+      ]
+    }
+  ]
+}

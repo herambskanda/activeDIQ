@@ -122,13 +122,8 @@ var _ apihost.Limiter = (*Limiter)(nil)
 // New validates the configuration and returns the Limiter. A prefix length outside IPv4 /24../32 or
 // IPv6 /48../64 fails (startup must fail). Non-default settings are logged.
 func New(c Config) (*Limiter, error) {
-	if c.IPv4Bits == 0 {
-		c.IPv4Bits = DefaultIPv4Bits
-	}
-	if c.IPv6Bits == 0 {
-		c.IPv6Bits = DefaultIPv6Bits
-	}
-	if err := checkBits(c.IPv4Bits, c.IPv6Bits); err != nil {
+	var err error
+	if c.IPv4Bits, c.IPv6Bits, err = NormaliseBits(c.IPv4Bits, c.IPv6Bits); err != nil {
 		return nil, err
 	}
 	if c.MaxBuckets < 0 {

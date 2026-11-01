@@ -105,7 +105,7 @@ func TestPopulate_refuses_inconsistent_facts(t *testing.T) {
 			}},
 			"sync enabled without Read": {e.enA, func() inventory.Observation {
 				g := enGroup(mEPriv, true, "Private")
-				g.OnPremisesSyncEnabled, g.OnPremisesSyncRead = &yes, false
+				g.OnPremisesSyncEnabled, g.OnPremisesSyncEnabledRead = &yes, false
 				return g
 			}},
 		} {

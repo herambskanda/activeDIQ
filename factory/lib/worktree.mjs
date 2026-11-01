@@ -73,6 +73,27 @@ export async function ensureWorktree(ctx, ticketId) {
 }
 
 /**
+ * Ticket branches (`factory/<id>`) that exist and have commits ahead of the main branch, as
+ * `ticketId → commits ahead`. One `for-each-ref` plus one `rev-list` per existing branch, so a
+ * pass over many done tickets costs nothing when no branches are left behind.
+ * @param {object} ctx
+ * @returns {Promise<Map<string, number>>}
+ */
+export async function branchesAheadOfMain(ctx) {
+  const prefix = branchName('');
+  const refs = await git(ctx.root, ['for-each-ref', '--format=%(refname:short)', `refs/heads/${prefix}`]);
+  const ahead = new Map();
+  if (refs.code !== 0) return ahead;
+  const main = ctx.config.dispatcher.main_branch;
+  for (const name of refs.stdout.split('\n').map((l) => l.trim()).filter(Boolean)) {
+    const count = await git(ctx.root, ['rev-list', '--count', `${main}..${name}`]);
+    const n = count.code === 0 ? Number.parseInt(count.stdout, 10) : 0;
+    if (n > 0) ahead.set(name.slice(prefix.length), n);
+  }
+  return ahead;
+}
+
+/**
  * Merge a finished ticket's branch into the main branch of the main checkout with `--no-ff`.
  * A conflict is aborted cleanly and reported as such.
  * @param {object} ctx
@@ -84,6 +105,12 @@ export async function mergeTicket(ctx, ticket) {
   const current = await git(ctx.root, ['symbolic-ref', '--short', '-q', 'HEAD']);
   if (current.stdout.trim() !== main) {
     return { status: 'error', detail: `the main checkout is on "${current.stdout.trim() || 'a detached HEAD'}", not "${main}"` };
+  }
+  // A merge already in progress in the main checkout is not this ticket's conflict: git would refuse with
+  // "You have not concluded your merge", and the MERGE_HEAD check below would blame this ticket and reopen it.
+  const pending = await git(ctx.root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+  if (pending.code === 0) {
+    return { status: 'error', detail: `the main checkout is mid-merge (MERGE_HEAD ${pending.stdout.trim().slice(0, 8)}); finish or abort that merge first, then ${ticket.id} merges on the next pass` };
   }
   const merged = await git(ctx.root, ['merge', '--no-ff', '--no-edit', '-m', `Merge ${ticket.id}: ${ticket.title}`, branchName(ticket.id)]);
   if (merged.code === 0) {

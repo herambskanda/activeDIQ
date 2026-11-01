@@ -167,7 +167,6 @@ func TestAttestationSettings(t *testing.T) {
 	}
 	for name, m := range map[string]map[string]string{
 		"client without url": {config.EnvAttestClientID: "app"},
-		"url without client": {config.EnvPublicURL: "https://diq.example.com"},
 		"http":               {config.EnvAttestClientID: "app", config.EnvPublicURL: "http://diq.example.com"},
 		"path":               {config.EnvAttestClientID: "app", config.EnvPublicURL: "https://diq.example.com/x"},
 		"userinfo":           {config.EnvAttestClientID: "app", config.EnvPublicURL: "https://u:p@diq.example.com"},
@@ -175,6 +174,28 @@ func TestAttestationSettings(t *testing.T) {
 	} {
 		if _, err := config.Load(env(m)); err == nil {
 			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+// T-0853: the public URL is the WebAuthn relying party, so it stands alone.
+func TestPublicURLAloneIsValid(t *testing.T) {
+	c, err := config.Load(env(map[string]string{config.EnvPublicURL: "https://diq.example.com"}))
+	if err != nil || c.PublicURL != "https://diq.example.com" || c.AttestClientID != "" {
+		t.Fatalf("%+v, %v", c, err)
+	}
+}
+
+func TestAttestClientIDNeedsPublicURL(t *testing.T) {
+	if _, err := config.Load(env(map[string]string{config.EnvAttestClientID: "app"})); err == nil {
+		t.Fatal("an attestation client ID without a public URL was accepted")
+	}
+}
+
+func TestPublicURLMustBeHTTPSOrigin(t *testing.T) {
+	for _, bad := range []string{"http://diq.example.com", "https://diq.example.com/x", "https://u:p@diq.example.com", "https://diq.example.com/?a=b", "https://diq.example.com/#f", "diq.example.com", "https://"} {
+		if _, err := config.Load(env(map[string]string{config.EnvPublicURL: bad})); err == nil {
+			t.Errorf("%q accepted with no attestation client", bad)
 		}
 	}
 }
@@ -228,5 +249,71 @@ func TestConnectorConfigPathFromEnv(t *testing.T) {
 	c, err = config.Load(env(map[string]string{config.EnvConnectorConfig: "/etc/diq/connector.json"}))
 	if err != nil || c.ConnectorConfigPath != "/etc/diq/connector.json" {
 		t.Fatalf("set: %q %v", c.ConnectorConfigPath, err)
+	}
+}
+
+// T-0861: the public URL is canonicalised once, at load; every consumer sees only the canonical origin.
+func TestPublicURLIsCanonicalised(t *testing.T) {
+	for in, want := range map[string]struct{ origin, rp string }{
+		"https://DIQ.Example.com:443":                         {"https://diq.example.com", "diq.example.com"},
+		"https://diq.example.com:443/":                        {"https://diq.example.com", "diq.example.com"},
+		"HTTPS://Diq.Example.COM/":                            {"https://diq.example.com", "diq.example.com"},
+		"https://diq.example.com:":                            {"https://diq.example.com", "diq.example.com"},
+		"https://diq.example.com:8443":                        {"https://diq.example.com:8443", "diq.example.com"},
+		"https://DIQ:08443":                                   {"https://diq:8443", "diq"},
+		"https://xn--dq-8ma.example.com":                      {"https://xn--dq-8ma.example.com", "xn--dq-8ma.example.com"},
+		"https://a-b.c--d.example.com":                        {"https://a-b.c--d.example.com", "a-b.c--d.example.com"},
+		"https://" + strings.Repeat("a", 63) + ".example.com": {"https://" + strings.Repeat("a", 63) + ".example.com", strings.Repeat("a", 63) + ".example.com"},
+	} {
+		got, err := config.ParsePublicURL(in)
+		if err != nil || got.Origin != want.origin || got.RPID != want.rp {
+			t.Errorf("%s: %+v, %v", in, got, err)
+		}
+		c, err := config.Load(env(map[string]string{config.EnvPublicURL: in}))
+		if err != nil || c.PublicURL != want.origin {
+			t.Errorf("%s: Load kept %q, %v", in, c.PublicURL, err)
+		}
+	}
+}
+
+// T-0861: a host no browser can satisfy as an RP ID stops start-up, and the error names the variable.
+func TestPublicURLMustBeADomain(t *testing.T) {
+	for _, bad := range []string{
+		"https://10.0.0.5", "https://10.0.0.5:8443", "https://[::1]", "https://[2001:db8::1]:8443", "https://[fe80::1%25eth0]",
+		"https://127.1", "https://0x7f.1", "https://2130706433", "https://diq.example.com.", "https://diq.example.com.:8443",
+		"https://diq..example.com", "https://dïq.example.com", "https://diq.example.com:0", "https://diq.example.com:99999",
+		// T-0890: anything outside [a-z0-9.-] per label, edge hyphens, over-long labels and hosts.
+		"https://diq.example.com\"><x", "https://diq.exa'mple.com", "https://diq.example.com;evil", "https://*.example.com",
+		"https://-diq.example.com", "https://diq-.example.com", "https://diq_ex.com", "https://diq.exa mple.com",
+		"https://" + strings.Repeat("a", 64) + ".example.com",
+		"https://" + strings.Repeat(strings.Repeat("a", 60)+".", 5) + "com",
+	} {
+		_, err := config.Load(env(map[string]string{config.EnvPublicURL: bad}))
+		if err == nil {
+			t.Errorf("%q accepted", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), config.EnvPublicURL) {
+			t.Errorf("%q: error does not name %s: %v", bad, config.EnvPublicURL, err)
+		}
+	}
+	if _, err := config.Load(env(map[string]string{config.EnvPublicURL: "https://u:secret@10.0.0.5"})); err == nil || strings.Contains(err.Error(), "secret") {
+		t.Errorf("credentials echoed or accepted: %v", err)
+	}
+}
+
+// T-0890: a host of exactly 253 bytes is accepted, 254 is refused.
+func TestPublicURLHostLengthBoundary(t *testing.T) {
+	// 63+1+63+1+63+1+61 = 253
+	ok := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 61)
+	if len(ok) != 253 {
+		t.Fatalf("fixture is %d bytes", len(ok))
+	}
+	if _, err := config.ParsePublicURL("https://" + ok); err != nil {
+		t.Errorf("253-byte host refused: %v", err)
+	}
+	_, err := config.Load(env(map[string]string{config.EnvPublicURL: "https://" + ok + "e"}))
+	if err == nil || !strings.Contains(err.Error(), config.EnvPublicURL) {
+		t.Errorf("254-byte host: %v", err)
 	}
 }

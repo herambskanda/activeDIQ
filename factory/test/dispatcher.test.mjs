@@ -172,6 +172,57 @@ test('a usage-limit failure backs the whole dispatcher off and does not count ag
   });
 });
 
+test('a connectivity error counts no attempt, escalates nothing, and the ticket is retried after a short back-off', async () => {
+  await withFactory({ config: (c) => { c.dispatcher.connectivity_backoff_minutes = 0.0005; } }, { FAKE_CLAUDE_MODE: 'offline' }, async (f) => {
+    const t = createTicket(f.ctx, ticketInput({ type: 'docs', owner: 'docs-writer', status: 'ready' }), 'x');
+    const d = new Dispatcher(f.ctx);
+    await drive(f, d, () => runs(f).length === 1 && runs(f)[0].status === 'failed', 'connectivity-failed run');
+    const after = tickets(f)[t.id];
+    assert.deepEqual([after.attempts, after.escalations, after.stage_role, after.effort_override, after.reassigned_from], [0, 0, 'docs-writer', null, undefined]);
+    assert.equal(after.status, 'in_progress');
+    assert.match(texts(f).join('\n'), /API unreachable \(1 in a row\), no attempt counted/);
+    assert.doesNotMatch(texts(f).join('\n'), /api unreachable:/, 'one failure is not an outage');
+    assert.ok(readDispatcherState(f.ctx).backoff_until, 'a back-off is set');
+    await drive(f, d, () => runs(f).length >= 2, 'the retry after the back-off');
+    assert.equal(tickets(f)[t.id].attempts, 0);
+  });
+});
+
+test('every connectivity error signature is exempt; a non-connectivity error still climbs the ladder', async () => {
+  const signatures = ['getaddrinfo ENOTFOUND api.anthropic.com', 'read ECONNRESET', 'connect ETIMEDOUT 1.2.3.4:443', "API Error: Can’t reach the API server"];
+  for (const text of signatures) {
+    await withFactory({}, { FAKE_CLAUDE_MODE: 'offline', FAKE_CLAUDE_ERROR: text }, async (f) => {
+      const t = createTicket(f.ctx, ticketInput({ type: 'docs', owner: 'docs-writer', status: 'ready' }), 'x');
+      await drive(f, new Dispatcher(f.ctx), () => runs(f).length === 1 && runs(f)[0].status === 'failed', text);
+      assert.equal(tickets(f)[t.id].attempts, 0, text);
+    });
+  }
+  await withFactory({}, { FAKE_CLAUDE_MODE: 'offline', FAKE_CLAUDE_ERROR: 'segfault in the tool runner' }, async (f) => {
+    const t = createTicket(f.ctx, ticketInput({ type: 'docs', owner: 'docs-writer', status: 'ready' }), 'x');
+    await drive(f, new Dispatcher(f.ctx), () => /no progress → retry/.test(texts(f).join('\n')), 'genuine failure');
+    assert.ok(tickets(f)[t.id].attempts >= 1, 'a genuine no-progress run still counts');
+  });
+});
+
+test('three consecutive connectivity errors across tickets pause dispatching with one "api unreachable" event and block nothing', async () => {
+  await withFactory({ config: (c) => { c.dispatcher.max_parallel = 3; } }, { FAKE_CLAUDE_MODE: 'offline' }, async (f) => {
+    const ids = [1, 2, 3].map(() => createTicket(f.ctx, ticketInput({ type: 'docs', owner: 'docs-writer', status: 'ready' }), 'x').id);
+    const d = new Dispatcher(f.ctx);
+    await drive(f, d, () => runs(f).length === 3 && runs(f).every((r) => r.status === 'failed'), 'three connectivity-failed runs');
+    const events = texts(f).filter((x) => /api unreachable:/.test(x));
+    assert.equal(events.length, 1, events.join('\n'));
+    const until = readDispatcherState(f.ctx).backoff_until;
+    assert.ok(Date.parse(until) > Date.now() + 4 * 60_000, `backoff_until=${until}`);
+    for (const id of ids) {
+      const t = tickets(f)[id];
+      assert.deepEqual([t.status, t.attempts, t.escalations], ['in_progress', 0, 0]);
+    }
+    await d.tick();
+    assert.equal(runs(f).length, 3, 'nothing launches during the outage window');
+    console.log(`dispatcher event: ${events[0]}`);
+  });
+});
+
 function writeSignal(f, signal) {
   const dir = path.join(f.ctx.stateDir, 'signals');
   fs.mkdirSync(dir, { recursive: true });
@@ -458,6 +509,83 @@ test('a merge conflict reopens the ticket for its owner and leaves main clean', 
     assert.match(out[b.id].notes.at(-1).text, /conflicted/);
     assert.equal(git(f.root, 'status', '--porcelain', '--untracked-files=no'), '');
     assert.equal(fs.readFileSync(path.join(f.root, 'shared.txt'), 'utf8'), 'from A\n');
+  });
+});
+
+/** A spec ticket that did its work on factory/<id> (no worktree link) and reached done. */
+async function finishNonCodeTicket(f, { commit, file = 'contract.yaml', text = 'v1\n', title = 'A spec' }) {
+  const t = createTicket(f.ctx, ticketInput({ title, type: 'spec', owner: 'solution-architect', status: 'ready' }), 'x');
+  if (commit) {
+    const wt = await ensureWorktree(f.ctx, t.id);
+    fs.writeFileSync(path.join(wt.path, file), text);
+    commitAll(wt.path, `spec ${t.id}`);
+    // the spec worker ran in the main checkout; only the branch survives
+    git(f.root, 'worktree', 'remove', '--force', wt.path);
+  }
+  claimTicket(f.ctx, t.id);
+  for (let i = 0; i < 4 && tickets(f)[t.id].status !== 'done'; i++) advanceTicket(f.ctx, t.id, 'w', 'ok');
+  assert.equal(tickets(f)[t.id].status, 'done');
+  return t;
+}
+
+test('T-0986: a done non-code ticket with commits on factory/<id> is merged --no-ff and its branch removed', async () => {
+  await withFactory({}, {}, async (f) => {
+    initRepo(f.root);
+    const t = await finishNonCodeTicket(f, { commit: true });
+    assert.equal(fs.existsSync(path.join(f.root, 'contract.yaml')), false, 'stranded before the pass');
+    const d = new Dispatcher(f.ctx);
+    d.shared = false;
+    await d.mergePass();
+    assert.equal(fs.readFileSync(path.join(f.root, 'contract.yaml'), 'utf8'), 'v1\n');
+    assert.match(git(f.root, 'log', '-1', '--format=%s'), /^Merge T-0001: A spec$/);
+    assert.equal(git(f.root, 'log', '-1', '--format=%P').split(' ').length, 2, 'a merge commit');
+    assert.equal(git(f.root, 'branch', '--list', 'factory/T-0001'), '');
+    const after = tickets(f)[t.id];
+    assert.equal(after.status, 'done');
+    assert.match(after.links.merge_commit, /^[0-9a-f]{40}$/);
+    assert.match(texts(f).join('\n'), /T-0001 merged into main/);
+    const head = git(f.root, 'rev-parse', 'HEAD');
+    await d.mergePass();
+    assert.equal(git(f.root, 'rev-parse', 'HEAD'), head, 'a second pass is a no-op');
+  });
+});
+
+test('T-0986: a done non-code ticket with no branch, or a branch with nothing ahead of main, is left alone', async () => {
+  await withFactory({}, {}, async (f) => {
+    initRepo(f.root);
+    const none = await finishNonCodeTicket(f, { commit: false, title: 'no branch' });
+    const empty = createTicket(f.ctx, ticketInput({ title: 'empty branch', type: 'spec', owner: 'solution-architect', status: 'ready' }), 'x');
+    await ensureWorktree(f.ctx, empty.id);
+    claimTicket(f.ctx, empty.id);
+    for (let i = 0; i < 4 && tickets(f)[empty.id].status !== 'done'; i++) advanceTicket(f.ctx, empty.id, 'w', 'ok');
+    const head = git(f.root, 'rev-parse', 'HEAD');
+    const d = new Dispatcher(f.ctx);
+    d.shared = false;
+    await d.mergePass();
+    assert.equal(git(f.root, 'rev-parse', 'HEAD'), head, 'main is untouched');
+    assert.deepEqual([tickets(f)[none.id].status, tickets(f)[none.id].links?.merged], ['done', undefined]);
+    assert.deepEqual([tickets(f)[empty.id].status, tickets(f)[empty.id].links?.merged], ['done', undefined]);
+    assert.notEqual(git(f.root, 'branch', '--list', `factory/${empty.id}`), '', 'an empty branch is not our business');
+  });
+});
+
+test('T-0986: a conflicting stranded branch returns the non-code ticket to its owner with a note naming the branch', async () => {
+  await withFactory({}, {}, async (f) => {
+    initRepo(f.root);
+    fs.writeFileSync(path.join(f.root, 'contract.yaml'), 'base\n');
+    commitAll(f.root, 'base');
+    const t = await finishNonCodeTicket(f, { commit: true, text: 'from spec\n' });
+    fs.writeFileSync(path.join(f.root, 'contract.yaml'), 'from main\n');
+    commitAll(f.root, 'main moved');
+    const d = new Dispatcher(f.ctx);
+    d.shared = false;
+    await d.mergePass();
+    const after = tickets(f)[t.id];
+    assert.deepEqual([after.status, after.stage_role], ['in_progress', 'solution-architect']);
+    assert.match(after.notes.at(-1).text, /factory\/T-0001 into main conflicted/);
+    assert.match(after.notes.at(-1).text, /git worktree add/);
+    assert.equal(git(f.root, 'status', '--porcelain', '--untracked-files=no'), '');
+    assert.equal(fs.readFileSync(path.join(f.root, 'contract.yaml'), 'utf8'), 'from main\n');
   });
 });
 
