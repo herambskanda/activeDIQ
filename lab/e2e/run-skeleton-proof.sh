@@ -60,7 +60,7 @@ rc=0
 for s in "$svcpw" "$adminpw"; do
   if [ -n "$s" ] && grep -qF -- "$s" "$dir/server.log"; then die "a lab password is in the server log: not saving it"; fi
 done
-grep -v '^$' "$dir/server.log" > "$ADIQ_E2E_EVIDENCE_DIR/$mode-server.log"
+grep -v '^$' "$dir/server.log" > "$ADIQ_E2E_EVIDENCE_DIR/$mode-server.log.txt"
 if [ "$mode" = windows ]; then
   python3 "$root/lab/windows/bin/skeleton-proof-evidence" > "$ADIQ_E2E_EVIDENCE_DIR/windows-dc1-proof.txt" || rc=1
 fi
