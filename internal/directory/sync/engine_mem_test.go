@@ -97,7 +97,9 @@ func heapGrowth(t *testing.T, n int) (peak uint64, ing *countingIngest) {
 		Ingester: ing, Cursors: memCursors{},
 		Conns: memConns{connection.Connection{ID: "00000000-0000-4000-8000-0000000000c1", Kind: connection.KindADForest,
 			State: connection.StateActive, DirectoryIdentity: connection.DirectoryIdentity(forestRoot)}}}
-	lease := func(_ context.Context, name string) (jobs.Lease, error) { return jobs.Lease{Name: name, Holder: "mem", Token: 1}, nil }
+	lease := func(_ context.Context, name string) (jobs.Lease, error) {
+		return jobs.Lease{Name: name, Holder: "mem", Token: 1}, nil
+	}
 	runtime.GC()
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
