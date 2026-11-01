@@ -7,8 +7,11 @@
    go run ./tools/fitness/host evaluate obs.json
 
  Expected on a DC: msiexec exits 1603 (a launch condition failed), the log holds the DC message, and no
- install directory, service or Uninstall entry exists. The MSI path and log path reach msiexec as separate
- arguments (Start-Process -ArgumentList array), never as one interpolated command line.
+ install directory, service or Uninstall entry exists. Start-Process -ArgumentList joins its array
+ with single spaces and does no quoting (https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-process),
+ so an array is not a safe primitive by itself. Both paths are therefore resolved to full paths, refused if
+ they contain a double quote or begin with '/' or '-' (a path such as 'x.msi /a' must not become an msiexec
+ switch; /a skips LaunchConditions), and each is wrapped in explicit double quotes.
 #>
 [CmdletBinding()]
 param(
@@ -20,14 +23,21 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path -LiteralPath $MsiPath -PathType Leaf)) { throw "MSI not found: $MsiPath" }
+function Assert-SafeMsiexecPath([string]$Name, [string]$Value) {
+  if ($Value.Contains('"') -or $Value.StartsWith('/') -or $Value.StartsWith('-')) { throw "$Name is not a safe msiexec argument: $Value" }
+}
+$MsiPath = [IO.Path]::GetFullPath($MsiPath)
+$LogPath = [IO.Path]::GetFullPath($LogPath)
+Assert-SafeMsiexecPath 'MsiPath' $MsiPath
+Assert-SafeMsiexecPath 'LogPath' $LogPath
 if (Test-Path -LiteralPath $LogPath) { Remove-Item -LiteralPath $LogPath -Force }
 
 $productType = (Get-CimInstance Win32_OperatingSystem).ProductType   # 1 workstation, 2 DC, 3 server
 $role = (Get-CimInstance Win32_ComputerSystem).DomainRole           # 4/5 = DC
 if (($productType -eq 2) -ne ($role -ge 4)) { throw "ProductType $productType and DomainRole $role disagree about domain controller" }
 
-$args = @('/i', $MsiPath, '/qn', '/norestart', '/l*v', $LogPath)
-$p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') -ArgumentList $args -Wait -PassThru -NoNewWindow
+$msiArgs = @('/i', ('"{0}"' -f $MsiPath), '/qn', '/norestart', '/l*v', ('"{0}"' -f $LogPath))
+$p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') -ArgumentList $msiArgs -Wait -PassThru -NoNewWindow
 $log = if (Test-Path -LiteralPath $LogPath) { Get-Content -LiteralPath $LogPath -Raw } else { '' }
 $msg = 'cannot be installed on a domain controller'
 

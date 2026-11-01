@@ -28,7 +28,7 @@
     <Launch Condition="Installed OR (MsiNTProductType &lt;&gt; 2)"
             Message="activeDIQ Server cannot be installed on a domain controller. Install it on a member server (Windows Server 2019 or later); domain controllers host only the activeDIQ agent." />
     <Launch Condition="Installed OR (VersionNT64)"
-            Message="activeDIQ Server requires a 64-bit version of Windows Server 2019 or later." />
+            Message="activeDIQ Server requires a 64-bit version of Windows." />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="activeDIQ">

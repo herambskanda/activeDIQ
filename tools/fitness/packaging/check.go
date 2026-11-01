@@ -74,16 +74,18 @@ func Check(root string) []string {
 	need(&v, winTest, t, "read a file inside", "the probe must read a file, not only list")
 
 	// T-0635, TM-TB16-T1: the MSI refuses a domain controller before it changes anything.
-	m := read(root, winMsi, &v)
-	need(&v, winMsi, m, `Condition="Installed OR (MsiNTProductType &lt;&gt; 2)"`, "the server MSI must refuse a domain controller (ProductType 2) with a LaunchCondition; Installed stays exempt so uninstall works")
-	need(&v, winMsi, m, "cannot be installed on a domain controller", "the refusal message is the contract the lab proof matches")
-	forbid(&v, winMsi, m, "<CustomAction", "the refusal is a LaunchCondition: a custom action runs after costing and could leave state")
-	forbid(&v, winMsi, m, "LocalSystem", "the server never runs as LocalSystem")
-	forbid(&v, winMsi, m, "<SetProperty", "a type-51 set-property action can rewrite MsiNTProductType at runtime and silently disable the refusal")
-	forbid(&v, winMsi, m, `Id="MsiNTProductType"`, "the product type is read from the OS and must not be authored or overridden")
-	forbid(&v, winMsi, m, `Id="Installed"`, "Installed is the uninstall exemption and must not be authored or overridden")
+	if m := read(root, winMsi, &v); m != "" {
+		v = append(v, checkServerWxs(winMsi, []byte(m))...)
+	}
+	v = append(v, checkBuiltMsi(os.Getenv("ADIQ_SERVER_MSI"))...)
 	d := read(root, winDC, &v)
-	need(&v, winDC, d, "-ArgumentList $args", "msiexec arguments must be an array, never one interpolated string")
+	need(&v, winDC, d, "-ArgumentList $msiArgs", "msiexec arguments must be built as an array of separately quoted elements, never one interpolated string")
+	need(&v, winDC, d, "Assert-SafeMsiexecPath 'MsiPath' $MsiPath", "the MSI path must be validated (no quote, no leading / or -) before it reaches msiexec: Start-Process joins the array with spaces")
+	need(&v, winDC, d, "Assert-SafeMsiexecPath 'LogPath' $LogPath", "the log path must be validated before it reaches msiexec")
+	need(&v, winDC, d, "GetFullPath($MsiPath)", "the MSI path must be resolved to a full path before validation")
+	need(&v, winDC, d, `('"{0}"' -f $MsiPath)`, "the MSI path must be quoted explicitly: -ArgumentList does not quote")
+	need(&v, winDC, d, `('"{0}"' -f $LogPath)`, "the log path must be quoted explicitly: -ArgumentList does not quote")
+	forbid(&v, winDC, d, "$args", "$args is a PowerShell automatic variable")
 	need(&v, winDC, d, "1603", "the lab driver must assert the launch-condition exit code")
 	need(&v, winDC, d, "Get-HostObservation.ps1", "the lab driver must feed the TM-F-HOST evaluator")
 	need(&v, winDC, d, "DomainRole", "ProductType and DomainRole must agree on dc1")
