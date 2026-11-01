@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { type createApiClient, unwrap } from "../../api/client";
+import { ApiError, type createApiClient, problemOf } from "../../api/client";
 import { type Failure } from "./search-model";
 import {
   PAGE_SIZE,
   type SearchResult,
+  readSearchResult,
   type SearchType,
   searchFailureOf,
 } from "./search-results-model";
@@ -68,8 +69,8 @@ export function useDirectorySearch(
   useEffect(() => {
     if (q === "") return;
     const controller = new AbortController();
-    unwrap(
-      client.POST("/directory/search", {
+    client
+      .POST("/directory/search", {
         body: {
           q,
           groupLimit: PAGE_SIZE,
@@ -77,23 +78,27 @@ export function useDirectorySearch(
           ...(cursor === undefined ? {} : { cursor }),
         },
         signal: controller.signal,
-      }),
-    ).then(
-      (result) => {
-        if (controller.signal.aborted) return;
-        setSettled({ for: requestKey, status: "done", result });
-        if (type === undefined && !result.refine) {
-          const counts: Partial<Record<string, number>> = {};
-          for (const g of result.groups) if (g.count !== undefined) counts[g.type] = g.count;
-          setKnown({ q, counts });
-        }
-      },
-      (error: unknown) => {
-        if (!controller.signal.aborted) {
-          setSettled({ for: requestKey, status: "failed", failure: searchFailureOf(error) });
-        }
-      },
-    );
+      })
+      .then(({ data, error, response }): SearchResult => {
+        if (!response.ok) throw new ApiError(problemOf(error, response), response.status);
+        return readSearchResult(data, response.headers.get("X-Trace-Id") ?? undefined);
+      })
+      .then(
+        (result) => {
+          if (controller.signal.aborted) return;
+          setSettled({ for: requestKey, status: "done", result });
+          if (type === undefined && !result.refine) {
+            const counts: Partial<Record<string, number>> = {};
+            for (const g of result.groups) if (g.count !== undefined) counts[g.type] = g.count;
+            setKnown({ q, counts });
+          }
+        },
+        (error: unknown) => {
+          if (!controller.signal.aborted) {
+            setSettled({ for: requestKey, status: "failed", failure: searchFailureOf(error) });
+          }
+        },
+      );
     return () => controller.abort();
   }, [client, q, type, cursor, requestKey]);
 

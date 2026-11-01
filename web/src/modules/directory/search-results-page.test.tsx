@@ -463,6 +463,31 @@ describe("states", () => {
     expect(text()).toContain("No objects match");
   });
 
+  it.each([
+    ["200 with an empty body", () => new Response("", { status: 200 })],
+    ["204 with no content", () => new Response(null, { status: 204 })],
+    ["200 with another shape", () => json(200, { nonsense: true })],
+    ["200 with null groups", () => json(200, { asOf: null, refine: false, groups: null })],
+    ["200 with a group that has no items", () => json(200, result([{ type: "users" }]))],
+    [
+      "200 with a hit that is not an object",
+      () => json(200, result([grp("users", [null as never])])),
+    ],
+  ])("shows the error state with Retry, not a blank page, for a %s", async (_name, answer) => {
+    respond = () => {
+      const r = answer();
+      r.headers.set("X-Trace-Id", "trace-ok");
+      return r;
+    };
+    await mount("/search?q=priya");
+    expect(text()).toContain("The search answer could not be read");
+    expect(text()).toContain("trace-ok");
+    expect(hasButton("Retry")).toBe(true);
+    respond = () => json(200, result([grp("users", [user(1)])]));
+    await click(button("Retry"));
+    expect(rows()).toHaveLength(1);
+  });
+
   it("says when the inventory has never synced", async () => {
     respond = () => json(200, { asOf: null, refine: false, groups: [grp("users", [user(1)])] });
     await mount("/search?q=pr");
@@ -565,6 +590,33 @@ describe("a recovery-password-looking query", () => {
     expect(window.location.href).not.toContain("123456");
     expect(window.location.search).toBe("?type=users");
     expect((container.querySelector("input[type=search]") as HTMLInputElement).value).toBe("");
+  });
+
+  it.each([
+    ["full-width digits", "１２３４５６-".repeat(7) + "１２３４５６"],
+    ["Arabic-Indic digits", "١٢٣٤٥٦-".repeat(7) + "١٢٣٤٥٦"],
+    ["dots between groups", rp.replaceAll("-", ".")],
+    ["underscores between groups", rp.replaceAll("-", "_")],
+    ["text before the digits", `key ${rp}`],
+  ])("%s typed in the box is refused before any request", async (_name, value) => {
+    await mount("/search");
+    await type(value);
+    await settle(2 * DEBOUNCE_MS);
+    await act(async () => {
+      container
+        .querySelector("form")
+        ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(calls).toHaveLength(0);
+    expect(text()).toContain(RECOVERY_PASSWORD_MESSAGE);
+    expect(window.location.pathname + window.location.search).toBe("/search");
+  });
+
+  it("full-width digits arriving in the address are refused and removed from it", async () => {
+    await mount(`/search?q=${encodeURIComponent("１２３４５６-".repeat(7) + "１２３４５６")}`);
+    expect(calls).toHaveLength(0);
+    expect(text()).toContain(RECOVERY_PASSWORD_MESSAGE);
+    expect(window.location.search).toBe("");
   });
 
   it("is refused when the server refuses it too, with the same words and the trace ID", async () => {

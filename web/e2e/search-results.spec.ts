@@ -248,6 +248,42 @@ test("a recovery-password-looking query is refused in the browser, sent nowhere 
   expect(page.url()).not.toContain("123456");
 });
 
+test("full-width digits are refused in the browser too, and kept out of the address", async ({
+  page,
+}) => {
+  let sent = 0;
+  await answerWith(page, () => {
+    sent++;
+    return { json: { asOf, refine: false, groups: [] } };
+  });
+  const fullWidth = "１２３４５６-".repeat(7) + "１２３４５６";
+  await page.goto("/search");
+  await page.getByRole("searchbox", { name: "Search the directory" }).fill(fullWidth);
+  await expect(page.getByText("That looks like a recovery password.")).toBeVisible();
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(600);
+  expect(sent).toBe(0);
+  expect(new URL(page.url()).pathname + new URL(page.url()).search).toBe("/search");
+});
+
+test("an answer with nothing usable shows the error state with Retry, not a blank console", async ({
+  page,
+}) => {
+  let mode: "empty" | "ok" = "empty";
+  await page.route("**/api/v1/directory/search", (route) =>
+    mode === "empty"
+      ? route.fulfill({ status: 204, headers: { "X-Trace-Id": "trace-e2e" } })
+      : route.fulfill({ json: { asOf, refine: false, groups: [] } }),
+  );
+  await page.goto("/search?q=priya");
+  await expect(page.getByText("The search answer could not be read")).toBeVisible();
+  await expect(page.getByText("trace-e2e")).toBeVisible();
+  await noSeriousViolations(page);
+  mode = "ok";
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(page.getByText("No objects match")).toBeVisible();
+});
+
 test("every control works from the keyboard", async ({ page }) => {
   await answerWith(page, (b) => ({
     json: {

@@ -48,11 +48,30 @@ describe("recovery passwords and search text", () => {
     expect(looksLikeRecoveryPassword(dashed.replaceAll("-", " "))).toBe(true);
     expect(validateSearchText(dashed)).toBe(RECOVERY_PASSWORD_MESSAGE);
   });
+  it("refuses it in the forms ADR-0011 names: full-width and other scripts' digits", () => {
+    const groups = dashed.split("-");
+    const shift = (t: string, base: number) =>
+      t.replace(/\d/g, (d) => String.fromCharCode(base + Number(d)));
+    expect(looksLikeRecoveryPassword(shift(dashed, 0xff10))).toBe(true);
+    expect(looksLikeRecoveryPassword(shift(dashed, 0x660))).toBe(true);
+    expect(looksLikeRecoveryPassword(shift(groups.join(""), 0xff10))).toBe(true);
+    expect(looksLikeRecoveryPassword(groups.join("\u2013"))).toBe(true); // en dash
+    expect(looksLikeRecoveryPassword(groups.join("\u3000"))).toBe(true); // ideographic space
+    expect(validateSearchText(shift(dashed, 0xff10))).toBe(RECOVERY_PASSWORD_MESSAGE);
+  });
+  it("refuses it with dots, underscores or other separators, or beside other text", () => {
+    const groups = dashed.split("-");
+    for (const sep of [".", "_", ",", ":", ";", "/"]) {
+      expect(looksLikeRecoveryPassword(groups.join(sep))).toBe(true);
+    }
+    expect(looksLikeRecoveryPassword(`key ${dashed}`)).toBe(true);
+    expect(looksLikeRecoveryPassword(`${dashed} extra`)).toBe(true);
+    expect(looksLikeRecoveryPassword("1".repeat(49))).toBe(true);
+  });
   it("does not refuse other digit strings or text", () => {
     expect(looksLikeRecoveryPassword("12345678")).toBe(false);
     expect(looksLikeRecoveryPassword("1".repeat(47))).toBe(false);
-    expect(looksLikeRecoveryPassword("1".repeat(49))).toBe(false);
-    expect(looksLikeRecoveryPassword(`${"1".repeat(48)}x`)).toBe(false);
+    expect(looksLikeRecoveryPassword("1".repeat(47) + "x" + "1".repeat(47))).toBe(false);
     expect(validateSearchText("Raman, Priya")).toBeUndefined();
   });
   it("accepts syntax characters, which are typed text to this search", () => {

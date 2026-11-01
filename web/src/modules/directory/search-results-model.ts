@@ -41,11 +41,61 @@ export const RECOVERY_PASSWORD_MESSAGE =
 /**
  * A BitLocker recovery password is 48 digits, usually typed as eight groups of six joined by
  * dashes (IA 5.2). It is a secret, so the console refuses it before any request and never keeps it
- * in the address bar. Digits with only dashes or spaces between them count.
+ * in the address bar. The rule follows ADR-0011 rule 7: decide on the NFKC form (full-width digits
+ * become ASCII), take out whitespace and every dash (`Pd`), and refuse when a run of 48 or more
+ * decimal digits (`Nd`, so other scripts' digits count too) is left. The browser is stricter than
+ * the server in one way: it also takes out the separators `. _ , : ; /`, because refusing a
+ * secret early costs nothing and a miss puts it in the address bar and history.
  */
 export function looksLikeRecoveryPassword(q: string): boolean {
-  if (!/^[\d\s-]+$/.test(q)) return false;
-  return q.replace(/\D/g, "").length === 48;
+  const folded = q.normalize("NFKC").replace(/[\s\p{Z}\p{Pd}._,:;/]/gu, "");
+  return /\p{Nd}{48,}/u.test(folded);
+}
+
+/** The server answered successfully but not with a search result this page can read. */
+export class MalformedAnswerError extends Error {
+  readonly traceId: string | undefined;
+
+  constructor(traceId: string | undefined) {
+    super("The search answer could not be read");
+    this.name = "MalformedAnswerError";
+    this.traceId = traceId;
+  }
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Checks that an answer has the shape the page reads (groups of hits, the refine flag, asOf) and
+ * returns it typed, or throws MalformedAnswerError. A 200 with no body, a 204 or a body of another
+ * shape must reach the error state with Retry, never a blank console.
+ */
+export function readSearchResult(data: unknown, traceId?: string): SearchResult {
+  const ok =
+    isObject(data) &&
+    typeof data["refine"] === "boolean" &&
+    Array.isArray(data["groups"]) &&
+    data["groups"].every(
+      (g: unknown) =>
+        isObject(g) &&
+        typeof g["type"] === "string" &&
+        Array.isArray(g["items"]) &&
+        g["items"].every(
+          (h: unknown) =>
+            isObject(h) &&
+            typeof h["objectId"] === "string" &&
+            typeof h["type"] === "string" &&
+            typeof h["displayName"] === "string" &&
+            typeof h["distinguishedName"] === "string" &&
+            typeof h["domain"] === "string" &&
+            Array.isArray(h["highlights"]) &&
+            Array.isArray(h["status"]),
+        ),
+    );
+  if (!ok) throw new MalformedAnswerError(traceId);
+  return data as SearchResult;
 }
 
 /**
@@ -228,6 +278,15 @@ function codeOf(error: ApiError): string | undefined {
  * stack trace or an unknown payload; the trace ID is carried so an admin can quote it.
  */
 export function searchFailureOf(error: unknown): Failure {
+  if (error instanceof MalformedAnswerError) {
+    return {
+      kind: "error",
+      title: "The search answer could not be read",
+      detail:
+        "The server answered, but not with search results. Retry; if it keeps failing, quote the trace ID to your administrator.",
+      ...(error.traceId === undefined ? {} : { traceId: error.traceId }),
+    };
+  }
   if (error instanceof ApiError) {
     const traceId = typeof error.problem.traceId === "string" ? error.problem.traceId : undefined;
     const withId = traceId === undefined ? {} : { traceId };
