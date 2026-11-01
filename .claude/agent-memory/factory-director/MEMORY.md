@@ -19,7 +19,7 @@
 - [CEO action handover](ceo-action-handover.md) — build one-command bootstrap tooling before re-queuing; done-without-note ≠ evidence
 - [Conflicting CEO holds](conflicting-ceo-holds.md) — newer hold wins, scoped to goal tickets; notice not question; dated hold → ask once on its date
 - [Stored-result contract checks](stored-result-contract-review-checks.md) — who reads stored runs; token AND layer; stored vs live ancestry; fragment scoping; state Go types
-- [Erratum guards vs own examples](erratum-guards-vs-own-examples.md) — run own examples/confirmations through the rule (T-0889 onprem_sid; T-1221 class criterion, callers [])
+- [Erratum guards vs own examples](erratum-guards-vs-own-examples.md) — run own examples/confirmations through the rule (T-0889 onprem_sid; T-1221 class criterion, callers [], actor word, widening-row callers)
 - [Ticket notes vs YAML](review-ticket-notes-vs-yaml.md) — verify each security note in the artefact, not the commit msg; new routes vs existing R-n findings
 - [Merge-conflict blocks](triage-merge-conflict-blocks.md) — primary MERGE_HEAD, merge-tree vs current main, migrations-number test on main
 - [Search ADR review checks](search-adr-review-checks.md) — fold step order vs own examples; LIMIT≠bound unless index-ordered (GIN can't); cap before scope leaks
