@@ -322,9 +322,12 @@ service.
      with a reason, a ticket and an expiry in `tools/fitness/modules/exempt.json`.
    - **Every table has a write class** (ADR-0005 rule 10; ADR-0003 amendment). `config` means the
      product makes a *widening decision* to it: a principal chooses a value that can, by itself,
-     widen what anyone may do, see or keep, so those writes are Actions. `system` means bookkeeping
-     written by its owner: values read or derived, narrowing-only or releasing-only writes (the
-     closed list in ADR-0005 rule 10, T-1221). The class is declared
+     widen what anyone may do, see or keep, from any surface (request, Action, anonymous route, job,
+     fleet listener or CLI). Those writes are Actions, except a closed set of no-Step widening writes
+     (bootstrap and host CLI, the takeover attestation callback, the end-user enrolment page).
+     `system` means bookkeeping written by its owner: values read or derived, narrowing-only or
+     releasing-only writes, and an account's own first factor inside its sign-in (the closed list in
+     ADR-0005 rule 10, T-1221). The class is declared
      beside the migration that creates the table, one line per table: `-- write-class: <table>
      config|system`. A partition takes its parent's class. `tools/gen/modules` copies it into the
      ownership map.
