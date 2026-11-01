@@ -77,7 +77,8 @@ T-0874 carries the spec and blueprint edits.
 | --- | --- | --- | --- |
 | `internal/platform/report` | reporting-engineer | EP-8 host: `Dataset`, `Column`, `Definition`, `Query` (the AST), `Cell`, `Narrowing`, `Freshness`, `PerDCReader` port, `Host`. Pure types and validation, with **no SQL driver** (FF-SP1) | `authz` (types), `tenant`, stdlib |
 | `internal/platform/store/reportsql` | reporting-engineer. security-architect reviews every change (P5 rule 3) | `Registry` (pre-quoted, built once), `Compile`, `CompileCount`, `Exec`, `Count`, `CatalogSchema`, `Query`, `CompiledSQL`, term rendering | `report`, `authz`, `store`, pgx (it sits under `store`) |
-| `internal/directory/inventory` | directory-engineer | descendant ancestry rewrite on move and `ancestry_complete` (row P2); the datasets `inventory.users`, `.computers`, `.groups`, `.group_members`, `.ous` and `.contacts` through `inventory.Datasets() []report.Dataset`; the D4 policy-input tables; the D6 watermarks through `Reader.Freshness` (built, row P1) | `report` (types only) |
+| `internal/platform/searchkey` | directory-engineer | the search-key normaliser and query classifier (leaf, no I/O); fuzzed and vector-tested | stdlib, `x/text` |
+| `internal/directory/inventory` | directory-engineer | the search keys, their backfill and the `Searcher` port (§4.7a); descendant ancestry rewrite on move and `ancestry_complete` (row P2); the datasets `inventory.users`, `.computers`, `.groups`, `.group_members`, `.ous` and `.contacts` through `inventory.Datasets() []report.Dataset`; the D4 policy-input tables; the D6 watermarks through `Reader.Freshness` (built, row P1) | `report` (types only) |
 | `internal/platform/authz` + `internal/platform/rbac` + `modules/delegation` | backend-engineer | `authz.ReadScope` (**T-0880**), the `ou_one_level` root kind (**T-0881**) and the producer `rbac.ReadScopes` (**T-0882**), fed by the EP-6 `ScopeEvaluator`s that `delegation` registers (T-0880) | as today |
 | `internal/modules/reports` (+ `run`, `library`, `export`, `schedule` subpackages) | reporting-engineer | DM-71 to DM-73 tables, the library, the run path, export jobs, schedules, API handlers | `platform/...`, `directory` via `directory.Services` (ADR-0003) |
 
@@ -908,6 +909,35 @@ in memory** rather than filter through inventory.
   a child-domain OU root relies on the connector resolving the GUID on the bound DC. The token layer is
   applied after the query, not pushed into the roots, so a narrow token on a broad grant reads more
   candidates than it returns.
+
+### 4.7a As built (T-1095): the search index, the statement and the port
+
+- **Keys.** `platform/searchkey` (leaf: `NormName`, `NormIdent`, `Classify`, `PrefixUpper`, `Version`) turns a
+  name or identifier into the normalised key and a query into probes. `inventory.Populate` writes the keys
+  of every written object with it (`searchkeys.go`: one statement per batch, delete-unwanted plus upsert),
+  inside the sync transaction and before `RefreshClosure`, so a rollback takes them with it. The allow-list
+  of sources is `searchKeys` (display name and its words, RDN, sAMAccountName, UPN, DN, SID, objectGUID,
+  consistency GUID; `mail` for contacts and `dNSHostName` for computers, only when they are JSON strings):
+  keys are built from named columns, never from the attribute bag, so a secret attribute cannot reach the
+  index. Purged objects have no keys; deleted and out-of-scope objects keep theirs and rank after live ones.
+  Table `inventory_search_keys` (migration 0069): B-tree `(tenant_id, key_kind, key)`, partial GIN on kinds
+  1-5, RLS + FORCE.
+- **Backfill.** `Reader.Backfill(ctx, tenant, progress)` walks `directory_objects` in `(connection, object)`
+  pages of 500 and never reads the key table; it rewrites rows of an older `norm_version`, and a second run
+  changes nothing. Entra objects are indexed but admitted by no 2a scope kind (T-1131), so they are
+  unfindable. The `dn` keys of descendants of a moved OU stay stale until T-0988 (it rewrites ancestry
+  only). The `Domain` part of `DOMAIN\sam` and `sam@dns` is dropped from queries: the connection record
+  holds no NetBIOS or DNS name.
+- **Statement.** `reportsql.CompileSearch(src, SearchQuery, SearchScopes)` and `ExecSearch`: `m_exact`,
+  `m_prefix`, `m_fuzzy` (MATERIALIZED, `LIMIT W+1`), `ceil`, `cand`, `hits` (scope by `scopeSQL` per
+  permission, `DISTINCT ON` object), `visible`, `paged`. Key kinds are integer literals so the partial
+  index predicate is provable. `inventory.Searcher.Search(ctx, tx, tenant, scopes, SearchRequest)` is the
+  port; counts only from three characters and never in the refine state. The fuzzy threshold is
+  transaction-local, 0.3 (0.5 cannot find the 'Pryia Ramn' vector, whose word similarity is 0.333).
+- **Known limit.** Under FORCE RLS the planner cannot use the trigram GIN (pg_trgm's operators are not
+  leakproof): the fuzzy probe filters the tenant's kind 1-5 rows. `Test_search_plan_uses_the_indexes` pins
+  it; T-1180 decides the fix. The per-script vectors (Latin with diacritics, Cyrillic, Greek, CJK) all
+  match fuzzily on the bundled pg16 and pg18 images.
 
 ## 5. The compiler: `store/reportsql`
 
