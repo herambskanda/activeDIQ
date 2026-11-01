@@ -58,3 +58,25 @@ func (t GRPCVerifyTransport) VerifyConnection(ctx context.Context, req *connecto
 	}
 	return cc.VerifyConnection(ctx, req)
 }
+
+// GRPCPerDCTransport is the PerDCTransport over the generated Connector client.
+type GRPCPerDCTransport struct{ src ConnectorSource }
+
+var _ PerDCTransport = GRPCPerDCTransport{}
+
+// NewGRPCPerDCTransport returns the transport over src.
+func NewGRPCPerDCTransport(src ConnectorSource) (GRPCPerDCTransport, error) {
+	if src == nil {
+		return GRPCPerDCTransport{}, errors.New("client: per-DC transport needs a connector source")
+	}
+	return GRPCPerDCTransport{src: src}, nil
+}
+
+// ReadPerDC implements PerDCTransport.
+func (t GRPCPerDCTransport) ReadPerDC(ctx context.Context, req *connectorv1.ReadPerDCRequest) (PerDCStream, error) {
+	cc, err := t.src.Connector(ctx, req.GetConnection().GetConnectionId())
+	if err != nil {
+		return nil, err
+	}
+	return cc.ReadPerDC(ctx, req)
+}
