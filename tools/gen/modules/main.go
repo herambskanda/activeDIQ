@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-const out = "internal/platform/store/owners/owners.gen.go"
+const out = "internal/platform/store/owners/owners.gen.tsv"
 
 func main() {
 	check := flag.Bool("check", false, "fail if "+out+" is stale, hand-edited or missing instead of writing it")
