@@ -1,6 +1,7 @@
 package inventory_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -27,7 +28,7 @@ func typedAD(g string, broad bool, at time.Time, members ...string) inventory.Ob
 
 func typedEntra(g string, syncRead bool, visibility *string, groupTypes []string, members ...string) inventory.Observation {
 	o := inventory.Observation{Object: inventory.GUID(g), Kind: inventory.KindGroup, Class: "group", State: inventory.ObjActive,
-		Facts: inventory.GroupFacts{GroupTypes: groupTypes, SecurityEnabled: ptr(true)}, OnPremisesSyncRead: syncRead, MembersComplete: true}
+		Facts: inventory.GroupFacts{GroupTypes: groupTypes, SecurityEnabled: ptr(true)}, OnPremisesSyncEnabledRead: syncRead, MembersComplete: true}
 	if visibility != nil {
 		o.Facts.Visibility = *visibility
 	}
@@ -35,6 +36,18 @@ func typedEntra(g string, syncRead bool, visibility *string, groupTypes []string
 		o.Members = append(o.Members, inventory.GUID(m))
 	}
 	return o
+}
+
+func (e *env) onPremSID(t *testing.T, c inventory.ConnectionID, g string) (sid []byte) {
+	t.Helper()
+	err := e.db.WithTenant(context.Background(), e.a, func(ctx context.Context, tx store.Tx) error {
+		return tx.QueryRow(ctx, `SELECT on_prem_sid FROM public.directory_objects
+			WHERE connection_id = $1::uuid AND object_guid = $2::uuid`, string(c), g).Scan(&sid)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return
 }
 
 func (e *env) attrs(t *testing.T, c inventory.ConnectionID, g string) (attrs string, col *bool) {
@@ -78,13 +91,16 @@ func TestGroupFacts_stored_together(t *testing.T) {
 		}
 		// Synced: true in the attributes and the typed column and on_prem_sid.
 		g := typedEntra(sOuter, true, nil, []string{})
-		g.OnPremisesSyncEnabled, g.OnPremisesSID = ptr(true), sidG
+		g.OnPremisesSyncEnabled, g.OnPremisesSecurityIdentifier = ptr(true), sidG
 		if _, err := e.populate(t, e.enA, t1, g); err != nil {
 			t.Fatal(err)
 		}
 		a, col = e.attrs(t, e.enA, sOuter)
 		if !strings.Contains(a, `"onPremisesSyncEnabled":true`) || col == nil || !*col {
 			t.Fatalf("synced: %s col=%v", a, col)
+		}
+		if got := e.onPremSID(t, e.enA, sOuter); !bytes.Equal(got, sidG) {
+			t.Fatalf("on_prem_sid = %x, want %x", got, sidG)
 		}
 	})
 }
