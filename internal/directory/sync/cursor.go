@@ -116,7 +116,7 @@ func (e *TransitionError) Error() string {
 func (e *TransitionError) Is(target error) bool { return target == ErrIllegalTransition }
 
 var (
-	guidText     = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	guidTextRE     = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	graphPartRe  = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	nilGUID      = "00000000-0000-0000-0000-000000000000"
 	errBadCookie = fmt.Errorf("%w: cookie must be 1..%d bytes", ErrInvalid, maxCookieBytes)
@@ -129,7 +129,7 @@ type Partition string
 // NCPartition is the partition of an AD naming context. The GUID is the canonical lower-case text form.
 func NCPartition(guid string) (Partition, error) {
 	g := strings.ToLower(guid)
-	if !guidText.MatchString(g) || g == nilGUID {
+	if !guidTextRE.MatchString(g) || g == nilGUID {
 		return "", fmt.Errorf("%w: a naming context partition is its objectGUID", ErrInvalid)
 	}
 	return Partition(g), nil
@@ -145,7 +145,7 @@ func GraphPartition(resource string) (Partition, error) {
 
 func (p Partition) valid() bool {
 	s := string(p)
-	if guidText.MatchString(s) {
+	if guidTextRE.MatchString(s) {
 		return s != nilGUID
 	}
 	return len(s) <= maxGraphPartitionLength && graphPartRe.MatchString(s)
@@ -159,7 +159,7 @@ type Key struct {
 
 func (k Key) validate() error {
 	c := string(k.Connection)
-	if !guidText.MatchString(c) || c == nilGUID || !k.Partition.valid() {
+	if !guidTextRE.MatchString(c) || c == nilGUID || !k.Partition.valid() {
 		return fmt.Errorf("%w: key", ErrInvalid)
 	}
 	return nil
@@ -557,7 +557,7 @@ func (Store) ResumeConnection(ctx context.Context, tx store.Tx, c inventory.Conn
 }
 
 func checkConnection(ctx context.Context, tx store.Tx, c inventory.ConnectionID) error {
-	if s := string(c); !guidText.MatchString(s) || s == nilGUID {
+	if s := string(c); !guidTextRE.MatchString(s) || s == nilGUID {
 		return fmt.Errorf("%w: connection", ErrInvalid)
 	}
 	return requireTenant(ctx, tx)
@@ -584,7 +584,7 @@ func (Store) Get(ctx context.Context, tx store.Tx, k Key) (Cursor, error) {
 
 // List returns the cursors of one connection ordered by partition. It never carries a cookie.
 func (Store) List(ctx context.Context, tx store.Tx, c inventory.ConnectionID) ([]Cursor, error) {
-	if s := string(c); !guidText.MatchString(s) || s == nilGUID {
+	if s := string(c); !guidTextRE.MatchString(s) || s == nilGUID {
 		return nil, fmt.Errorf("%w: connection", ErrInvalid)
 	}
 	if err := requireTenant(ctx, tx); err != nil {
@@ -615,7 +615,7 @@ func optGUID(s string) (*string, error) {
 		return nil, nil
 	}
 	g := strings.ToLower(s)
-	if !guidText.MatchString(g) || g == nilGUID {
+	if !guidTextRE.MatchString(g) || g == nilGUID {
 		return nil, fmt.Errorf("%w: issuing DSA GUID", ErrInvalid)
 	}
 	return &g, nil
