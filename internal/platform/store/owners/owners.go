@@ -17,7 +17,6 @@ package owners
 import (
 	_ "embed"
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -72,14 +71,4 @@ func Lookup(table string) (owner string, ok bool) {
 func ClassOf(table string) (class Class, ok bool) {
 	e, ok := byTable[table]
 	return e.class, ok
-}
-
-// Tables returns every mapped table, sorted.
-func Tables() []string {
-	out := make([]string, 0, len(byTable))
-	for t := range byTable {
-		out = append(out, t)
-	}
-	sort.Strings(out)
-	return out
 }
