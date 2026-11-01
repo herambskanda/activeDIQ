@@ -299,6 +299,15 @@ A call streams `ChangeBatch` messages and ends with the one that has `cycle_comp
 with zero changes, so the cookie's `issued_at` advances. A stream that ends without it, or with an
 error, was cut off: the caller keeps its last committed cookie (CC-FEED-14).
 
+Server side: `client.ChangeFeedReader.Read` (T-1195) opens the call, hands each `ChangeBatch` to the
+caller's callback in order (the place to commit rows with `cookie_after`, DM-19.I1), and returns
+success only after a `cycle_complete` batch; a cut-off is `ErrFeedIncomplete`, a sequence gap, a batch
+after the last or a batch without a cookie is `ErrFeedProtocol`. `STALE_COOKIE` (with its
+`ResyncReason`), `UNREACHABLE_DC`, `THROTTLED` (`retry_after`, capped at one hour) and
+`SECRET_ATTRIBUTE` map to typed errors with no DC name, attribute or message; `ResyncRequired(err)` is
+true for the stale one only. A non-ACTIVE or non-AD connection, or a partition outside the managed set
+(`ManagedPartitions`, DM-14), is refused before any connector call.
+
 ### 6.2 DirSync is object-security mode only (TM §6.3 R2)
 
 The AD feed sends the DirSync control with `LDAP_DIRSYNC_OBJECT_SECURITY` (0x1) and
