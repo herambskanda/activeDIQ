@@ -239,8 +239,10 @@ func (e *Engine) logDomain(r DomainReport, err error) {
 		attrs = append(attrs, "refused."+k.Attr+"."+string(k.Code), r.RefusedBy[k])
 	}
 	if err != nil {
-		// The error type's text is fixed vocabulary; it is safe to log.
-		attrs = append(attrs, "error", err.Error())
+		// Never err.Error(): a store error can carry a database message that repeats a bound value. Log the
+		// phase and a class from a fixed vocabulary.
+		phase, class := errClass(err)
+		attrs = append(attrs, "error_phase", phase, "error_class", class)
 	}
 	e.log().Log(context.Background(), lvl, "sync: full read of a domain", attrs...)
 }
@@ -355,5 +357,39 @@ func (r *readJob) connErr(ctx context.Context, err error) error {
 	return &ConnectorError{Code: status.Code(err)}
 }
 
-// now is a shorthand for the engine clock, UTC.
+// errClass is the phase and the class of a failure of a domain read, both from a fixed vocabulary: the
+// phase of a *DomainError, and the sentinel (with the gRPC code of a connector failure or the reason of a
+// refusal) that matches. Anything else is "other", whatever its text.
+func errClass(err error) (phase, class string) {
+	phase = "cycle"
+	var de *DomainError
+	if errors.As(err, &de) {
+		phase = de.Phase
+	}
+	var ce *ConnectorError
+	var rf *Refusal
+	switch {
+	case errors.As(err, &ce):
+		return phase, "connector:" + ce.Code.String()
+	case errors.As(err, &rf):
+		return phase, "refused:" + string(rf.Reason)
+	case errors.Is(err, ErrFenced):
+		return phase, "fenced"
+	case errors.Is(err, ErrPaused):
+		return phase, "paused"
+	case errors.Is(err, ErrIncomplete):
+		return phase, "incomplete"
+	case errors.Is(err, ErrProtocol):
+		return phase, "protocol"
+	case errors.Is(err, ErrNotDomainNC):
+		return phase, "not_domain_nc"
+	case errors.Is(err, ErrSource):
+		return phase, "source"
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return phase, "context"
+	}
+	return phase, "other"
+}
+
+// utc is the engine clock, UTC.
 func (e *Engine) utc() time.Time { return e.now().UTC() }

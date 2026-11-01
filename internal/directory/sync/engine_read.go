@@ -3,6 +3,7 @@ package sync
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -45,6 +46,11 @@ func (r *readJob) run(ctx context.Context) error {
 	pre, err := r.prescan(ctx)
 	if err != nil {
 		return &DomainError{NC: r.nc, Phase: "prescan", Err: err}
+	}
+	// The pre-scan can take minutes: the connection may have been suspended or removed, or the partition
+	// paused, since the read began. A stop is not a domain failure, it ends the cycle.
+	if err := r.stillAllowed(ctx); err != nil {
+		return err
 	}
 	mp, err := NewMapper(Config{NC: r.nc, Groups: pre.groups})
 	if err != nil {
@@ -94,7 +100,7 @@ func (r *readJob) run(ctx context.Context) error {
 
 func (r *readJob) wrap(err error, phase string) error {
 	var de *DomainError
-	if errors.As(err, &de) || errors.Is(err, ErrFenced) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.As(err, &de) || errors.Is(err, ErrFenced) || errors.Is(err, ErrPaused) || errors.Is(err, ErrRefused) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
 	return &DomainError{NC: r.nc, Phase: phase, Err: err}
@@ -226,21 +232,60 @@ func (p *prescan) chain(parent, head inventory.GUID) ([]inventory.GUID, bool) {
 	return nil, false
 }
 
+// stillAllowed re-reads the connection and re-applies the gate of FullCycle: a connection suspended, retired
+// or decommissioning since the read began is a typed *Refusal (DM-10 I10: suspended stops sync). It does not
+// depend on the partition cursor having been paused. A failure to read the connection is ErrSource.
+func (r *readJob) stillAllowed(ctx context.Context) error {
+	conn, err := r.e.Conns.Get(ctx, r.tid, r.conn)
+	if err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("%w: connection: %w", ErrSource, err)
+	}
+	if _, err := r.e.refuse(conn, r.conn); err != nil {
+		return err
+	}
+	return r.e.Tenants.WithTenant(ctx, r.tid, func(ctx context.Context, tx store.Tx) error {
+		cur, err := r.e.Cursors.Claim(ctx, tx, r.key, r.lease)
+		if err != nil {
+			return err
+		}
+		if cur.State == StatePaused {
+			return ErrPaused
+		}
+		return nil
+	})
+}
+
 // flush commits one batch in a tenant transaction of its own: it claims the cursor again (the compare-and-set
 // that fences a deposed holder out of every batch, not only the last), ingests, and on the last batch records
 // the pass and moves the cursor in the same transaction.
 func (r *readJob) flush(ctx context.Context, obs []inventory.Observation, last bool) error {
+	// Before every batch: a suspended, retired or decommissioning connection stops the read, whatever the
+	// partition cursor says (nothing may rely on PauseConnection having been called).
+	if conn, err := r.e.Conns.Get(ctx, r.tid, r.conn); err != nil {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return fmt.Errorf("%w: connection: %w", ErrSource, err)
+	} else if _, err := r.e.refuse(conn, r.conn); err != nil {
+		return err
+	}
 	var res inventory.Ingested
 	err := r.e.Tenants.WithTenant(ctx, r.tid, func(ctx context.Context, tx store.Tx) error {
-		if _, err := r.e.Cursors.Claim(ctx, tx, r.key, r.lease); err != nil {
+		cur, err := r.e.Cursors.Claim(ctx, tx, r.key, r.lease)
+		if err != nil {
 			return err
+		}
+		if cur.State == StatePaused {
+			return ErrPaused // checked in the batch's own transaction, before anything is written
 		}
 		c := inventory.Cycle{Connection: inventory.ConnectionID(r.conn), Observed: r.observed, Observations: obs,
 			Now: r.e.utc(), MoreBatches: !last}
 		if last {
 			c.PassNCs = []inventory.GUID{r.nc}
 		}
-		var err error
 		if res, err = r.e.Ingester.Ingest(ctx, tx, c); err != nil {
 			return err
 		}

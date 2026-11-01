@@ -740,3 +740,123 @@ func TestFullCycleHonoursTheSearchLimits(t *testing.T) {
 		}
 	})
 }
+
+// TestFullCycleStopsWhenSuspendedMidRead: a suspension (or removal) that lands while a domain is being read
+// stops the cycle at the next batch, with or without the partition cursors having been paused. Rows
+// committed before the stop stay; no pass or cursor moves; nothing more is searched, and the second domain
+// is never read. The stop is a typed refusal, not a per-domain failure.
+func TestFullCycleStopsWhenSuspendedMidRead(t *testing.T) {
+	pause := func(t *testing.T, e *env) {
+		t.Helper()
+		err := e.tx(e.a, func(ctx context.Context, tx store.Tx) error {
+			_, err := dsync.Store{}.PauseConnection(ctx, tx, e.conn)
+			return err
+		})
+		if err != nil {
+			t.Fatalf("pause: %v", err)
+		}
+	}
+	cases := []struct {
+		name string
+		// at is true when the stop should land: searches issued so far, batches committed so far.
+		at     func(searches, committed int) bool
+		stop   func(t *testing.T, e *env)
+		want   error
+		reason dsync.RefusalReason
+		rows   int
+		state  dsync.State
+	}{
+		{"suspended and paused", func(_, c int) bool { return c == 1 }, func(t *testing.T, e *env) { e.suspend(t, e.conn); pause(t, e) },
+			dsync.ErrRefused, dsync.RefusedNotActive, 500, dsync.StatePaused},
+		{"suspended, cursors not paused", func(_, c int) bool { return c == 1 }, func(t *testing.T, e *env) { e.suspend(t, e.conn) },
+			dsync.ErrRefused, dsync.RefusedNotActive, 500, dsync.StateInitialSync},
+		{"decommissioning", func(_, c int) bool { return c == 1 }, func(t *testing.T, e *env) {
+			if _, err := connection.NewRegistry(e.db).Transition(context.Background(), e.a, connection.ID(e.conn), connection.StateActive, connection.StateDecommissioning); err != nil {
+				t.Fatalf("decommission: %v", err)
+			}
+		}, dsync.ErrRefused, dsync.RefusedRetired, 500, dsync.StateInitialSync},
+		{"cursors paused only", func(_, c int) bool { return c == 1 }, pause, dsync.ErrPaused, "", 500, dsync.StatePaused},
+		{"suspended during the pre-scan", func(s, c int) bool { return s == 1 && c == 0 }, func(t *testing.T, e *env) { e.suspend(t, e.conn) },
+			dsync.ErrRefused, dsync.RefusedNotActive, 0, dsync.StateInitialSync},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			each(t, func(t *testing.T, e *env) {
+				f := newForest()
+				f.build(ncA, 1, 1600, 50)
+				f.build(ncB, 2, 300, 10)
+				fk := newFake(f.doms...)
+				r := e.rig(t, fk, ncA, ncB)
+				stopped, searchesAtStop := false, 0
+				fk.onBatch = func() {
+					s, _ := fk.calls()
+					if stopped || !tc.at(len(s), len(r.ingest.cycles)) {
+						return
+					}
+					stopped, searchesAtStop = true, len(s)
+					tc.stop(t, e)
+				}
+				rep, err := r.run(context.Background())
+				if !stopped {
+					t.Fatal("the stop never landed")
+				}
+				var de *dsync.DomainError
+				if !errors.Is(err, tc.want) || errors.As(err, &de) {
+					t.Fatalf("err = %v, want %v and not a DomainError", err, tc.want)
+				}
+				var ref *dsync.Refusal
+				if tc.want == dsync.ErrRefused && (!errors.As(err, &ref) || ref.Reason != tc.reason) {
+					t.Fatalf("err = %v, want the %s refusal", err, tc.reason)
+				}
+				if s, _ := fk.calls(); len(s) != searchesAtStop {
+					t.Fatalf("%d searches after the stop", len(s)-searchesAtStop)
+				}
+				for _, s := range func() []searchRec { s, _ := fk.calls(); return s }() {
+					if s.nc == gtext(ncB) {
+						t.Fatal("the second domain was searched after the stop")
+					}
+				}
+				if len(rep.Domains) != 2 || rep.Domains[0].Completed || rep.Domains[1].Completed {
+					t.Fatalf("report = %+v", rep.Domains)
+				}
+				if n := e.count(t, `SELECT count(*) FROM public.directory_objects WHERE connection_id = $1::uuid`, string(e.conn)); n != tc.rows {
+					t.Fatalf("rows = %d, want %d (what was committed before the stop)", n, tc.rows)
+				}
+				if n := e.count(t, `SELECT count(*) FROM public.nc_sync_passes WHERE connection_id = $1::uuid AND last_pass_at IS NOT NULL`, string(e.conn)); n != 0 {
+					t.Fatalf("%d passes recorded after a stop", n)
+				}
+				for _, nc := range []uint64{ncA, ncB} {
+					if c := e.get(t, e.key(t, gtext(nc))); c.State != tc.state || !c.LastFullSync.IsZero() {
+						t.Fatalf("cursor %x = %+v, want %s and no full sync", nc, c, tc.state)
+					}
+				}
+			})
+		})
+	}
+}
+
+type failingIngest struct{ err error }
+
+func (f failingIngest) Ingest(context.Context, store.Tx, inventory.Cycle) (inventory.Ingested, error) {
+	return inventory.Ingested{}, f.err
+}
+
+// TestFullCycleLogsOnlyAFixedClass: a store error that repeats a bound value (as a PgError message can)
+// reaches the caller but never the log.
+func TestFullCycleLogsOnlyAFixedClass(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		r := e.rig(t, newFake(twoDomains().doms...), ncA)
+		r.eng.Ingester = failingIngest{err: errors.New("invalid input syntax for type uuid: \"" + leakSentinel + "\"")}
+		_, err := r.run(context.Background())
+		if err == nil {
+			t.Fatal("a failing ingest was a success")
+		}
+		out := r.logs.String()
+		if strings.Contains(out, "SENTINEL") || strings.Contains(out, "invalid input") {
+			t.Fatalf("a database error text reached the log:\n%s", out)
+		}
+		if !strings.Contains(out, `"error_phase":"store"`) || !strings.Contains(out, `"error_class":"other"`) {
+			t.Fatalf("the log carries no fixed error class:\n%s", out)
+		}
+	})
+}
