@@ -166,6 +166,8 @@ func Test_dataset_reveals_nothing_outside_scope(t *testing.T) {
 					rpOUs(t, e, reg, c, cols, now, at)
 				case inventory.DatasetContacts:
 					rpContacts(t, e, reg, c, cols, now, at)
+				case inventory.DatasetPrincipals:
+					rpPrincipals(t, e, reg, c, cols, now, at)
 				default:
 					t.Fatalf("no RP11 world for %s", src.ID)
 				}
@@ -501,7 +503,36 @@ func rpOUs(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Connection
 	}
 	checkNoLeaks(t, res, map[string]string{strings.ToLower(base): "OU=base-ou," + parentOUs})
 	aggregate(t, dsOf(inventory.DatasetOUs), res.rows[base], map[report.ColumnID]string{"subtree_objects": "1", "subtree_users": "1", "subtree_computers": "0",
-		"subtree_groups": "0", "subtree_contacts": "0", "subtree_ous": "0", "child_objects": "1"})
+		"subtree_groups": "0", "subtree_contacts": "0", "subtree_ous": "0", "subtree_other": "0", "child_objects": "1"})
+}
+
+// rpPrincipals: users and computers in one dataset; the out-of-scope ones of both kinds, and the group
+// that holds them, appear nowhere in an in-scope row.
+func rpPrincipals(t *testing.T, e *env, reg *reportsql.Registry, c inventory.ConnectionID, cols []report.ColumnID, now, at time.Time) {
+	user := func(guid, sam string, rid uint32) inventory.Observation {
+		return named(hUser{guid: guid, sam: sam, rid: rid, uac: i64(uacNormal), read: 15}.obs(), sam)
+	}
+	comp := func(guid, sam string, rid uint32) inventory.Observation {
+		o := hUser{guid: guid, sam: sam, rid: rid, uac: i64(uacWks), read: 15, kind: inventory.KindComputer, class: "computer"}.obs()
+		o.Attributes = map[string]any{"operatingSystem": "Windows Server 2022"}
+		return named(o, sam)
+	}
+	baseU, baseC := hGUID(1, 1), hGUID(4, 1)
+	obs := []inventory.Observation{
+		user(baseU, "base-user", 1101),
+		comp(baseC, "BASE-PC$", 3001),
+		user(sentinelGUID(1), sentinel+"-user", 1201),
+		comp(sentinelGUID(2), sentinel+"-PC$", 3002),
+		hGroup(hGUID(2, 1), sentinel+"-group", 2001, baseU, baseC, sentinelGUID(1), sentinelGUID(2)),
+	}
+	if _, err := e.populate(t, c, at, obs...); err != nil {
+		t.Fatal(err)
+	}
+	res := e.run(t, reg, hQuery{dataset: inventory.DatasetPrincipals, cols: cols, scope: scopeOf(c, baseU, baseC), now: now})
+	if len(res.rows) != 2 || res.count != 2 {
+		t.Fatalf("rows = %d, count = %d, want 2 and 2", len(res.rows), res.count)
+	}
+	checkNoLeaks(t, res, map[string]string{strings.ToLower(baseU): realDN("base-user"), strings.ToLower(baseC): realDN("BASE-PC$")})
 }
 
 func rpContacts(t *testing.T, e *env, reg *reportsql.Registry, c inventory.ConnectionID, cols []report.ColumnID, now, at time.Time) {

@@ -1,0 +1,130 @@
+{
+  "id": "pwd-02",
+  "version": 1,
+  "category": "passwords",
+  "title": "Password age",
+  "description": "When each user's password was last set and how many whole days ago. Changed lists passwords set in the period; Unchanged lists enabled accounts whose password is older than the threshold or was never set.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "domain",
+    "dn",
+    "pwd_last_set",
+    "days_since_password_set",
+    "enabled"
+  ],
+  "sort": [
+    {
+      "column": "pwd_last_set",
+      "dir": "desc"
+    }
+  ],
+  "params": [
+    {
+      "name": "changed_days",
+      "kind": "days",
+      "default": {
+        "days": 30
+      },
+      "min": 1,
+      "max": 365
+    },
+    {
+      "name": "unchanged_days",
+      "kind": "days",
+      "default": {
+        "days": 90
+      },
+      "min": 1,
+      "max": 3650
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn"
+  ],
+  "presets": [
+    {
+      "id": "changed",
+      "names": [
+        "Password Changed Users"
+      ],
+      "where": {
+        "cmp": {
+          "col": "pwd_last_set",
+          "op": "within_last_days",
+          "param": "changed_days"
+        }
+      }
+    },
+    {
+      "id": "unchanged",
+      "names": [
+        "Password Unchanged Users"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "enabled",
+              "op": "eq",
+              "value": {
+                "bool": true
+              }
+            }
+          },
+          {
+            "or": [
+              {
+                "and": [
+                  {
+                    "cmp": {
+                      "col": "pwd_set_recorded",
+                      "op": "eq",
+                      "value": {
+                        "enum": "recorded"
+                      }
+                    }
+                  },
+                  {
+                    "cmp": {
+                      "col": "pwd_last_set",
+                      "op": "older_than_days",
+                      "param": "unchanged_days"
+                    }
+                  }
+                ]
+              },
+              {
+                "and": [
+                  {
+                    "cmp": {
+                      "col": "pwd_set_recorded",
+                      "op": "eq",
+                      "value": {
+                        "enum": "none_recorded"
+                      }
+                    }
+                  },
+                  {
+                    "cmp": {
+                      "col": "when_created",
+                      "op": "older_than_days",
+                      "param": "unchanged_days"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "sort": [
+        {
+          "column": "pwd_last_set",
+          "dir": "asc"
+        }
+      ]
+    }
+  ]
+}
