@@ -116,7 +116,7 @@ func (e *TransitionError) Error() string {
 func (e *TransitionError) Is(target error) bool { return target == ErrIllegalTransition }
 
 var (
-	guidTextRE     = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	guidTextRE   = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	graphPartRe  = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	nilGUID      = "00000000-0000-0000-0000-000000000000"
 	errBadCookie = fmt.Errorf("%w: cookie must be 1..%d bytes", ErrInvalid, maxCookieBytes)
@@ -487,6 +487,32 @@ func (Store) CompleteFull(ctx context.Context, tx store.Tx, k Key, l jobs.Lease,
 		last_full_sync_at = GREATEST(last_full_sync_at, $7::timestamptz), state_changed_at = now(), lease_fencing_token = $3, updated_at = now()
 		WHERE `+keyMatch+` AND lease_fencing_token <= $3 AND state = ANY($4)
 		RETURNING `+cursorColumns, string(k.Connection), string(k.Partition), l.Token, movesTo(StateIncremental), f.Cookie.Bytes(), dsa, f.At.UTC()))
+}
+
+// CompleteScan records that a full read of the partition by a scoped search (no change feed) finished: an
+// initial_sync or resync_required cursor moves to incremental with last_full_sync_at at the read's start, and
+// an incremental one keeps its state and cookie and only moves last_full_sync_at forward. It writes no
+// cookie, because an AD initial state is a ScopedSearch and not a DirSync read (connector contract §6.1): the
+// change-feed ticket primes the cookie, so an incremental cursor with no cookie (Position's Cookie.IsZero)
+// means "no feed position yet", never "feed caught up". A paused cursor is ErrIllegalTransition. Call it in
+// the transaction that stores the last batch of the read's inventory rows (DM-19.I1).
+func (Store) CompleteScan(ctx context.Context, tx store.Tx, k Key, l jobs.Lease, at time.Time) (Cursor, error) {
+	if err := k.checkLease(l); err != nil {
+		return Cursor{}, err
+	}
+	if err := notFuture(ctx, tx, at); err != nil {
+		return Cursor{}, err
+	}
+	if err := requireTenant(ctx, tx); err != nil {
+		return Cursor{}, err
+	}
+	return written(ctx, tx, k, l.Token, StateIncremental, tx.QueryRow(ctx, `UPDATE public.sync_cursors SET state = 'incremental',
+		last_full_sync_at = GREATEST(last_full_sync_at, $5::timestamptz),
+		state_changed_at = CASE WHEN state = 'incremental' THEN state_changed_at ELSE now() END,
+		lease_fencing_token = $3, updated_at = now()
+		WHERE `+keyMatch+` AND lease_fencing_token <= $3 AND state = ANY($4)
+		RETURNING `+cursorColumns, string(k.Connection), string(k.Partition), l.Token,
+		[]string{string(StateInitialSync), string(StateResyncRequired), string(StateIncremental)}, at.UTC()))
 }
 
 // RequireResync records that the cookie is unusable (DM-19.I3: invalid or expired; I4: issued by another
