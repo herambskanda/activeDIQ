@@ -9,7 +9,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -39,6 +41,8 @@ var (
 	ErrUnknownFormat = errors.New("httpx: unknown download format")
 	// ErrMissingStyleHash: an HTML download needs the SHA-256 of its single <style> block for its CSP.
 	ErrMissingStyleHash = errors.New("httpx: an HTML attachment needs WithStyleSHA256")
+	// ErrPartFormat: HTML is not attached to a message; its sandboxing policy is a response header.
+	ErrPartFormat = errors.New("httpx: HTML is not a message attachment format")
 )
 
 // MaxBaseRunes caps the base name (R5). A longer base is cut on a rune boundary: a label, not an input.
@@ -89,14 +93,40 @@ func Headers(h http.Header, base string, f Format, opts ...Option) error {
 	if f == HTML && !o.hasStyleHash {
 		return ErrMissingStyleHash
 	}
-	name := fileName(base) + spec.ext
-	h.Set("Content-Disposition", `attachment; filename="`+asciiFallback(name)+`"; filename*=UTF-8''`+pctEncode(name))
+	h.Set("Content-Disposition", disposition(fileName(base)+spec.ext))
 	h.Set("Content-Type", spec.mediaType)
 	h.Set("X-Content-Type-Options", "nosniff")
 	if f == HTML {
 		h.Set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'sha256-"+
 			base64.StdEncoding.EncodeToString(o.styleHash[:])+"'; img-src data:")
 	}
+	return nil
+}
+
+// disposition is the attachment Content-Disposition value for a mapped file name.
+func disposition(name string) string {
+	return `attachment; filename="` + asciiFallback(name) + `"; filename*=UTF-8''` + pctEncode(name)
+}
+
+// PartHeaders sets Content-Disposition and Content-Type on the header of one MIME part of an
+// outgoing message, with the same file-name mapping and format table as Headers (EM-11): the
+// disposition is attachment, the name is the O3-mapped base plus the format's extension, and the
+// media type comes from the format. HTML is refused (ErrPartFormat). On error it sets nothing.
+func PartHeaders(h textproto.MIMEHeader, base string, f Format) error {
+	spec, ok := formats[f]
+	if !ok {
+		return ErrUnknownFormat
+	}
+	if f == HTML {
+		return ErrPartFormat
+	}
+	name := fileName(base) + spec.ext
+	mt, _, err := mime.ParseMediaType(spec.mediaType)
+	if err != nil {
+		return err
+	}
+	h.Set("Content-Disposition", disposition(name))
+	h.Set("Content-Type", mime.FormatMediaType(mt, map[string]string{"name": asciiFallback(name)}))
 	return nil
 }
 

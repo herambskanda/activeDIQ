@@ -113,13 +113,7 @@ func (d *Dispatcher) DispatchDue(ctx context.Context, t tenant.ID, limit int) (S
 		if err := d.closeExhausted(ctx, tx, t, cfg); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `UPDATE public.notify_deliveries SET attempts = attempts + 1, lease_until = now() + make_interval(secs => $2), updated_at = now()
-			WHERE (tenant_id, id) IN (
-			  SELECT tenant_id, id FROM public.notify_deliveries
-			  WHERE tenant_id = $1::uuid AND state IN ('queued', 'failed') AND next_attempt_at <= now()
-			    AND (lease_until IS NULL OR lease_until < now()) AND attempts < max_attempts
-			  ORDER BY next_attempt_at, id LIMIT $3 FOR UPDATE SKIP LOCKED)
-			RETURNING `+cols, t.String(), lease.Seconds(), limit)
+		rows, err := tx.Query(ctx, sqlClaimDue, t.String(), lease.Seconds(), limit)
 		if err != nil {
 			return err
 		}
@@ -167,10 +161,7 @@ func (d *Dispatcher) DispatchDue(ctx context.Context, t tenant.ID, limit int) (S
 // closeExhausted gives up a Delivery whose last attempt was claimed and never recorded (the worker
 // died): its lease has expired and it has no attempt left.
 func (d *Dispatcher) closeExhausted(ctx context.Context, tx store.Tx, t tenant.ID, cfg settings.Settings) error {
-	rows, err := tx.Query(ctx, `UPDATE public.notify_deliveries SET state = 'given_up', next_attempt_at = NULL, lease_until = NULL,
-		last_error_code = $2, updated_at = now()
-		WHERE tenant_id = $1::uuid AND state IN ('queued', 'failed') AND attempts >= max_attempts AND (lease_until IS NULL OR lease_until < now())
-		RETURNING `+cols, t.String(), CodeAttemptsExhausted)
+	rows, err := tx.Query(ctx, sqlCloseExhausted, t.String(), CodeAttemptsExhausted)
 	if err != nil {
 		return err
 	}
@@ -313,19 +304,13 @@ func (d *Dispatcher) record(ctx context.Context, t tenant.ID, del Delivery, res 
 		switch {
 		case code == "":
 			final = Sent
-			upd, err = scan(tx.QueryRow(ctx, `UPDATE public.notify_deliveries SET state = 'sent', next_attempt_at = NULL, lease_until = NULL,
-				last_error_code = NULL, provider_message_id = $3, sent_at = now(), updated_at = now()
-				WHERE tenant_id = $1::uuid AND id = $2::uuid AND attempts = $4 AND state IN ('queued', 'failed') RETURNING `+cols, t.String(), del.ID, res.MessageID, del.Attempts))
+			upd, err = scan(tx.QueryRow(ctx, sqlRecordSent, t.String(), del.ID, res.MessageID, del.Attempts))
 		case permanent || del.Attempts >= del.MaxAttempts:
 			final = GivenUp
-			upd, err = scan(tx.QueryRow(ctx, `UPDATE public.notify_deliveries SET state = 'given_up', next_attempt_at = NULL, lease_until = NULL,
-				last_error_code = $3, updated_at = now()
-				WHERE tenant_id = $1::uuid AND id = $2::uuid AND attempts = $4 AND state IN ('queued', 'failed') RETURNING `+cols, t.String(), del.ID, code, del.Attempts))
+			upd, err = scan(tx.QueryRow(ctx, sqlRecordGivenUp, t.String(), del.ID, code, del.Attempts))
 		default:
 			final = Failed
-			upd, err = scan(tx.QueryRow(ctx, `UPDATE public.notify_deliveries SET state = 'failed', lease_until = NULL, last_error_code = $3,
-				next_attempt_at = now() + make_interval(secs => $4), updated_at = now()
-				WHERE tenant_id = $1::uuid AND id = $2::uuid AND attempts = $5 AND state IN ('queued', 'failed') RETURNING `+cols,
+			upd, err = scan(tx.QueryRow(ctx, sqlRecordFailed,
 				t.String(), del.ID, code, d.backoff(del.Attempts).Seconds(), del.Attempts))
 		}
 		if store.IsNoRows(err) { // claimed or finished by another worker after a lease expiry: nothing to record

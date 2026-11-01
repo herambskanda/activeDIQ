@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"net/url"
 	"strings"
 	"testing"
@@ -154,4 +155,40 @@ func checkHeader(t testing.TB, base string) {
 func FuzzAttachment(f *testing.F) {
 	corpustest.Seed(f, "html")
 	f.Fuzz(func(t *testing.T, in []byte) { checkHeader(t, string(in)) })
+}
+
+func TestPartHeaders(t *testing.T) {
+	h := textproto.MIMEHeader{}
+	if err := PartHeaders(h, "x\r\nContent-Type: text/html", CSV); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(h); got != 2 {
+		t.Fatalf("headers = %v, want Content-Disposition and Content-Type only", h)
+	}
+	if got, want := h.Get("Content-Disposition"), `attachment; filename="x__Content-Type_ text_html.csv"; filename*=UTF-8''x__Content-Type_%20text_html.csv`; got != want {
+		t.Fatalf("Content-Disposition = %q, want %q", got, want)
+	}
+	if got, want := h.Get("Content-Type"), `text/csv; name="x__Content-Type_ text_html.csv"`; got != want {
+		t.Fatalf("Content-Type = %q, want %q", got, want)
+	}
+	// the same disposition value as the response header
+	rh := http.Header{}
+	if err := Headers(rh, "x\r\nContent-Type: text/html", CSV); err != nil {
+		t.Fatal(err)
+	}
+	if rh.Get("Content-Disposition") != h.Get("Content-Disposition") {
+		t.Fatalf("part %q and response %q disagree", h.Get("Content-Disposition"), rh.Get("Content-Disposition"))
+	}
+}
+
+func TestPartHeadersRefuse(t *testing.T) {
+	for _, c := range []struct {
+		f    Format
+		want error
+	}{{0, ErrUnknownFormat}, {Format(99), ErrUnknownFormat}, {HTML, ErrPartFormat}} {
+		h := textproto.MIMEHeader{}
+		if err := PartHeaders(h, "report", c.f); !errors.Is(err, c.want) || len(h) != 0 {
+			t.Errorf("PartHeaders(%d) = %v, headers %v; want %v and nothing set", c.f, err, h, c.want)
+		}
+	}
 }
