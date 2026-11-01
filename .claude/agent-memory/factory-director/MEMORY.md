@@ -1,5 +1,5 @@
 - [Check CEO answers vs draft time on reviews](review-check-ceo-answers-vs-draft-time.md) — check vs every answered D-id (not just the ticket's), RLS bypasses, notice completeness
-- [ADR ratification flow](adr-ratification-flow.md) — ratify in one pass after must-fixes close; nits go to the fitness ticket; fitness/accepted_on wait for accepted
+- [ADR ratification flow](adr-ratification-flow.md) — ratify in the approving advance (fields + notice); nits to fitness ticket; no "ratify after sec review" done
 - [Blueprint review: link graph](blueprint-review-link-graph.md) — import rules must be satisfiable by the package layout; per-role compose; script AC traces
 - [Taste questions need previews](taste-questions-need-previews.md) — option `preview` field set (not just context links); D-0005 override; apply literally + notice
 - [Domain-model review checks](domain-model-review-checks.md) — ME map vs scope lock; derived states; gPLink; Entra scopes; authz join keys; Graph perms; "only X" vs "X or Y"; backstop predicates
