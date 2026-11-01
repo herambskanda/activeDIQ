@@ -4,7 +4,7 @@ date: 2026-10-02
 updated: 2026-11-01
 status: review
 owner: heramb
-ticket: T-0035, T-0041, T-0107, T-0212, T-0874, T-0915, T-0993, T-1093
+ticket: T-0035, T-0041, T-0107, T-0212, T-0874, T-0915, T-0993, T-1093, T-1221
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), ADR-0004 (ratified), ADR-0005 (ratified), ADR-0010 (accepted), ADR-0011 (ratified), safe-primitives.md (review), modules/reports.md (draft)
 ---
 
@@ -320,13 +320,26 @@ service.
    - **The ownership map** `internal/platform/store/owners/owners.gen.tsv` (table → owner key and
      write class) is generated from the migrations by `tools/gen/modules` (`make gen-modules`; `gen-modules-check` in `make ci`, T-0997). Cross-owner data migrations need an entry
      with a reason, a ticket and an expiry in `tools/fitness/modules/exempt.json`.
-   - **Every table has a write class** (ADR-0005 rule 10; ADR-0003 amendment). `config` means a
-     principal changes it, so its writes are Actions: every function whose SQL writes it takes a
-     `step.Step` and runs in `Step.Tx()`. `system` means bookkeeping written by its owner (the
-     closed list in ADR-0005 rule 10). The class is declared beside the migration that creates
-     the table, one line per table: `-- write-class: <table> config|system`. A partition takes
-     its parent's class. `tools/gen/modules` copies it into the ownership map, and O3 fails a
-     table with no class and a `config` write without a `Step`.
+   - **Every table has a write class** (ADR-0005 rule 10; ADR-0003 amendment). `config` means the
+     product makes a *widening decision* to it: a principal chooses a value that can, by itself,
+     widen what anyone may do, see or keep, from any surface (request, Action, anonymous route, job,
+     fleet listener or CLI). Those writes are Actions, except a closed set of no-Step widening writes
+     (bootstrap and host CLI, the takeover attestation callback, the end-user enrolment page).
+     `system` means bookkeeping written by its owner: values read or derived, narrowing-only or
+     releasing-only writes, and an account's own first factor inside its sign-in (the closed list in
+     ADR-0005 rule 10, T-1221). The class is declared
+     beside the migration that creates the table, one line per table: `-- write-class: <table>
+     config|system`. A partition takes its parent's class. `tools/gen/modules` copies it into the
+     ownership map.
+   - **The O3 rule: a `step.Step` at the package boundary** (ADR-0005 rule 10, T-1221). Each SQL
+     write to a `config` table must have a guarded root. The root can be an exported function
+     that takes a `step.Step` and writes only in `Step.Tx()`, or an unexported helper called
+     directly, and only, from guarded functions of its own package (the `settings.Store.Set` →
+     `set(tx)` shape). Otherwise it must be a `system` row of
+     `tools/fitness/operation/o3-writers.json`, whose named `callers` are the only functions
+     allowed to reference it. Existing violations are `convert` rows naming their conversion
+     ticket (T-1228 to T-1232, T-1246), and O3 prints them as pending. O3 also fails a table with no
+     class.
 7. **Binary hygiene** (ADR-0003 rule 7). Planes are separated by the link graph, not only by the
    manifest (ADR-0002 rule 2). `go list -deps ./cmd/<role>`, for `GOOS=windows` and `GOOS=linux`,
    must contain none of the packages listed for it:
