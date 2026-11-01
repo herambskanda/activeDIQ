@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
+	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	dirsync "github.com/skenzeriq/activediq/internal/directory/sync"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
@@ -23,7 +24,7 @@ import (
 //	make lab-up && go test -tags lab ./internal/connector/read -run TestLabSyncMapping
 //	SYNC_CAPTURE_DIR=$PWD/internal/directory/sync/testdata/lab go test -tags lab ./internal/connector/read -run TestLabSyncMapping
 func TestLabSyncMapping(t *testing.T) {
-	l := newSearchLab(t)
+	l := newSearchLabSchema(t, syncExtraAttrs())
 	ou := "OU=syncmap-" + l.stamp + "," + labDom
 	l.add(t, ou, map[string][]string{"objectClass": {"organizationalUnit"}, "description": {"sync mapping lab"}})
 	t.Cleanup(func() { l.delTree(ou) })
@@ -44,7 +45,7 @@ func TestLabSyncMapping(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pull := func(root, class string) *connectorv1.DirectoryEntry {
+	pull := func(root, class, cn string) *connectorv1.DirectoryEntry {
 		t.Helper()
 		got, _, err := rpc(t, l.client, l.request(l.guid(t, root), connectorv1.SearchDepth_SEARCH_DEPTH_SUBTREE, class, m.Attributes()...))
 		if err != nil {
@@ -52,7 +53,8 @@ func TestLabSyncMapping(t *testing.T) {
 		}
 		var hit *connectorv1.DirectoryEntry
 		for _, e := range got {
-			if class == "domainDNS" || class == "organizationalUnit" || strings.Contains(e.GetDn().GetDisplayDn(), l.stamp) {
+			// objectClass=user also matches computers: pick the object by its own CN, not by the class alone.
+			if class == "domainDNS" || class == "organizationalUnit" || strings.HasPrefix(e.GetDn().GetDisplayDn(), "CN="+cn) {
 				hit = e
 			}
 		}
@@ -62,16 +64,16 @@ func TestLabSyncMapping(t *testing.T) {
 		return hit
 	}
 	cases := []struct {
-		name, root, class string
-		kind              inventory.Kind
+		name, root, class, cn string
+		kind                  inventory.Kind
 	}{
-		{"user", ou, "user", inventory.KindUser}, {"computer", ou, "computer", inventory.KindComputer},
-		{"group", ou, "group", inventory.KindGroup}, {"contact", ou, "contact", inventory.KindContact},
-		{"ou", ou, "organizationalUnit", inventory.KindOU}, {"domain", labDom, "domainDNS", inventory.KindOther},
+		{"user", ou, "user", "Ramán\\, Priya " + l.stamp, inventory.KindUser}, {"computer", ou, "computer", "SYNCWS" + l.stamp, inventory.KindComputer},
+		{"group", ou, "group", "Team " + l.stamp, inventory.KindGroup}, {"contact", ou, "contact", "Vendor " + l.stamp, inventory.KindContact},
+		{"ou", ou, "organizationalUnit", "", inventory.KindOU}, {"domain", labDom, "domainDNS", "", inventory.KindOther},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			e := pull(c.root, c.class)
+			e := pull(c.root, c.class, c.cn)
 			if dir := os.Getenv("SYNC_CAPTURE_DIR"); dir != "" {
 				b, err := protojson.MarshalOptions{Multiline: true, Indent: "  "}.Marshal(e)
 				if err != nil || os.MkdirAll(dir, 0o755) != nil || os.WriteFile(filepath.Join(dir, c.name+".json"), append(b, '\n'), 0o644) != nil {
@@ -89,8 +91,13 @@ func TestLabSyncMapping(t *testing.T) {
 			if o.DN != e.GetDn().GetDisplayDn() && !strings.EqualFold(o.DN, e.GetDn().GetDisplayDn()) {
 				t.Errorf("dn = %q, DC said %q", o.DN, e.GetDn().GetDisplayDn())
 			}
-			if c.name == "group" && (len(o.Members) != 3 || !o.MembersComplete) {
-				t.Errorf("group members = %d complete=%v", len(o.Members), o.MembersComplete)
+			if c.name == "group" {
+				// Today's connector never sets DnValue.guid (it does not request the extended-DN control), so a
+				// member value has no identity: the mapper must say so (3 unresolved, set incomplete, no
+				// edges invented from DNs) rather than guess. Follow-up: connector emits DnValue.guid/sid.
+				if len(o.Members) != 0 || o.MembersComplete || got.MembersUnresolved != 3 {
+					t.Errorf("group members = %d complete=%v unresolved=%d", len(o.Members), o.MembersComplete, got.MembersUnresolved)
+				}
 			}
 			if c.name == "user" {
 				if o.SAMAccountName != "pr"+l.stamp || o.DisplayName != "Ramán, Priya" || len(o.SID) == 0 || o.HasSPN == nil || !*o.HasSPN {
@@ -114,4 +121,19 @@ func guidText(t *testing.T, g *connectorv1.Guid) string {
 		t.Fatal("guid")
 	}
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// syncExtraAttrs are the closed-list attributes ad.DefaultSchema (the connector's request allowlist) does not
+// carry today. The product allowlist is deliberately not widened by this ticket; the lab test widens its own
+// session so the mapping is proven on real DC output (follow-up: wire the list into the connector allowlist).
+func syncExtraAttrs() []ldapfilter.AttrInfo {
+	s, i64 := ldapfilter.SynString, ldapfilter.SynInt64
+	return []ldapfilter.AttrInfo{
+		{Name: "mail", Syntax: s}, {Name: "company", Syntax: s}, {Name: "operatingSystem", Syntax: s},
+		{Name: "managedBy", Syntax: ldapfilter.SynDN}, {Name: "lastKnownParent", Syntax: ldapfilter.SynDN},
+		{Name: "mS-DS-ConsistencyGuid", Syntax: ldapfilter.SynOctet},
+		{Name: "lockoutTime", Syntax: i64}, {Name: "pwdLastSet", Syntax: i64},
+		{Name: "accountExpires", Syntax: i64}, {Name: "lastLogonTimestamp", Syntax: i64},
+		{Name: "isDeleted", Syntax: ldapfilter.SynBool}, {Name: "isRecycled", Syntax: ldapfilter.SynBool},
+	}
 }

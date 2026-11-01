@@ -1,0 +1,71 @@
+{
+  "objectGuid":  {
+    "value":  "i9sB0vuuSyuYqRuHAkKFFw=="
+  },
+  "dn":  {
+    "displayDn":  "CN=Vendor 66339810,OU=syncmap-66339810,DC=lab,DC=activediq,DC=test"
+  },
+  "parentGuid":  {
+    "value":  "Js8dolmYRde8hiTz271q9Q=="
+  },
+  "attributes":  [
+    {
+      "name":  "company",
+      "values":  [
+        {
+          "text":  "Vendor"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "mail",
+      "values":  [
+        {
+          "text":  "v@vendor.test"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectclass",
+      "values":  [
+        {
+          "text":  "top"
+        },
+        {
+          "text":  "person"
+        },
+        {
+          "text":  "organizationalPerson"
+        },
+        {
+          "text":  "contact"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whenchanged",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-01T06:37:35Z"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whencreated",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-01T06:37:35Z"
+          }
+        }
+      ],
+      "complete":  true
+    }
+  ]
+}

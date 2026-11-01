@@ -1,0 +1,56 @@
+{
+  "objectGuid":  {
+    "value":  "Js8dolmYRde8hiTz271q9Q=="
+  },
+  "dn":  {
+    "displayDn":  "OU=syncmap-66339810,DC=lab,DC=activediq,DC=test"
+  },
+  "parentGuid":  {
+    "value":  "3Cy3lKBuRkyhG/2I6I/i/g=="
+  },
+  "attributes":  [
+    {
+      "name":  "description",
+      "values":  [
+        {
+          "text":  "sync mapping lab"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectclass",
+      "values":  [
+        {
+          "text":  "top"
+        },
+        {
+          "text":  "organizationalUnit"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whenchanged",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-01T06:37:34Z"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whencreated",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-01T06:37:34Z"
+          }
+        }
+      ],
+      "complete":  true
+    }
+  ]
+}
