@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
@@ -131,79 +130,6 @@ func (s *Slot[T]) Take(tx Tx) (v *T, ok bool) {
 func HasHook(tx Tx) bool {
 	st, err := stateOf(tx)
 	return err == nil && st.hooked
-}
-
-// isTxControl reports whether sql contains a statement that starts or ends a transaction or a
-// savepoint. It looks at the first word of every ';'-separated statement.
-func isTxControl(sql string) bool {
-	for _, stmt := range strings.Split(stripComments(sql), ";") {
-		f := strings.Fields(stmt)
-		if len(f) == 0 {
-			continue
-		}
-		switch strings.ToUpper(f[0]) {
-		case "COMMIT", "ROLLBACK", "SAVEPOINT", "RELEASE", "BEGIN", "START", "END", "ABORT":
-			return true
-		case "PREPARE":
-			if len(f) > 1 && strings.EqualFold(f[1], "TRANSACTION") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// stripComments replaces "-- ..." and (nested) "/* ... */" comments with a space, leaving quoted text
-// alone, so a comment cannot hide a COMMIT from isTxControl. An unterminated block comment hides the
-// rest, as it does for PostgreSQL.
-func stripComments(s string) string {
-	var out strings.Builder
-	for i := 0; i < len(s); {
-		switch {
-		case s[i] == '\'':
-			j := i + 1
-			for j < len(s) {
-				if s[j] == '\'' {
-					if j+1 < len(s) && s[j+1] == '\'' {
-						j += 2
-						continue
-					}
-					break
-				}
-				j++
-			}
-			end := min(j+1, len(s))
-			out.WriteString(s[i:end])
-			i = end
-		case strings.HasPrefix(s[i:], "--"):
-			j := strings.IndexByte(s[i:], '\n')
-			if j < 0 {
-				return out.String()
-			}
-			out.WriteByte(' ')
-			i += j
-		case strings.HasPrefix(s[i:], "/*"):
-			depth := 1
-			i += 2
-			for i < len(s) && depth > 0 {
-				switch {
-				case strings.HasPrefix(s[i:], "/*"):
-					depth++
-					i += 2
-				case strings.HasPrefix(s[i:], "*/"):
-					depth--
-					i += 2
-				default:
-					i++
-				}
-			}
-			out.WriteByte(' ')
-		default:
-			out.WriteByte(s[i])
-			i++
-		}
-	}
-	return out.String()
 }
 
 type errRow struct{ err error }

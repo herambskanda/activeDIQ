@@ -13,6 +13,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/module/moduletest"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
 // TestMain points the coverage file at a temp path for the whole package, so the suite's own
@@ -38,6 +39,7 @@ type fixtureAction struct {
 	// planWritesDir / planWritesSQL make Plan write; nonIdempotent appends a fresh value on every
 	// Apply; verifyBlind makes Verify pass whatever the directory holds.
 	planWritesSQL bool
+	planSQL       string // the statement planWritesSQL sends; empty means a plain INSERT
 	planSwallows  bool
 	nonIdempotent bool
 	verifyBlind   bool
@@ -53,7 +55,11 @@ func (a *fixtureAction) Describe() operation.Descriptor {
 
 func (a *fixtureAction) Plan(ctx context.Context, pc operation.PlanContext, _ operation.Input) ([]operation.StepPlan, error) {
 	if a.planWritesSQL {
-		_, err := pc.Tx.Exec(ctx, "INSERT INTO thing (id) VALUES ($1)", "x")
+		sql := a.planSQL
+		if sql == "" {
+			sql = "INSERT INTO thing (id) VALUES ($1)"
+		}
+		_, err := pc.Tx.Exec(ctx, sql)
 		if err != nil && !a.planSwallows {
 			return nil, err
 		}
@@ -387,11 +393,51 @@ func TestSQLClassification(t *testing.T) {
 		"WITH x AS (DELETE FROM t RETURNING *) SELECT 1": true,
 		"WITH x AS (SELECT 1) SELECT * FROM x":           false,
 		"UPDATE t SET a = 1":                             true,
-		"SET TRANSACTION READ ONLY":                      false,
-		"SELECT set_config('a', 'b', true)":              false,
+		"SELECT * INTO new_t FROM t":                     true,
+		"SELECT nextval('s')":                            true,
 	} {
-		if got := isWrite(sqlWords(sql)); got != want {
+		words := sqlWords(strings.Join(store.Statements(sql), ";"))
+		if got := isWrite(words); got != want {
 			t.Errorf("isWrite(%q) = %v, want %v", sql, got, want)
+		}
+	}
+}
+
+// TestPlanStatementsThatMustFailTheClause sends each statement from a Plan that swallows the error, so
+// only the harness's own bookkeeping can catch it.
+func TestPlanStatementsThatMustFailTheClause(t *testing.T) {
+	for sql, wantViolation := range map[string]bool{
+		// forms the first version caught
+		"INSERT INTO t VALUES (1)":                       true,
+		"/**/UPDATE t SET a = 1":                         true,
+		"WITH x AS (DELETE FROM t RETURNING *) SELECT 1": true,
+		// forms that hid from it
+		"/* x */ INSERT INTO t VALUES (1)":                      true,
+		"-- note\nINSERT INTO t VALUES (1)":                     true,
+		"SELECT 1; DELETE FROM t":                               true,
+		`select "a'b" from t; insert into t values (1)`:         true,
+		"SET transaction_read_only = off":                       true,
+		"SET LOCAL default_transaction_read_only TO 'off'":      true,
+		"SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE": true,
+		"SET TRANSACTION READ WRITE":                            true,
+		"SELECT set_config('transaction_read_only','off',true)": true,
+		"COMMIT":                  true,
+		"SELECT 1; ROLLBACK":      true,
+		"SAVEPOINT s":             true,
+		"PREPARE TRANSACTION 'x'": true,
+		"SELECT $$ ' $$; INSERT INTO t VALUES (1)": true,
+		"SELECT * INTO new_t FROM t":               true,
+		"SELECT nextval('s')":                      true,
+		// negatives
+		"SELECT 'INSERT INTO x'":                   false,
+		"SELECT 1 -- INSERT INTO t":                false,
+		"SELECT \"insert\" FROM t WHERE a = 'b;c'": false,
+	} {
+		a, fx := newFixture("test.thing.modify")
+		a.planWritesSQL, a.planSwallows, a.planSQL = true, true, sql
+		got := slices.Contains(clauses(Check(a, fx)), ClausePlanReadOnly)
+		if got != wantViolation {
+			t.Errorf("Plan sending %q: plan-read-only violation = %v, want %v", sql, got, wantViolation)
 		}
 	}
 }

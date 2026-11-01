@@ -2,13 +2,9 @@ package operationtest
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"unicode"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -32,6 +28,7 @@ func (d *rolledBackDB) WithTenant(ctx context.Context, id tenant.ID, fn func(con
 		return store.ErrNoTenant
 	}
 	tx := &recordingTx{}
+	tx.Observe = tx.observe
 	d.mu.Lock()
 	d.txs = append(d.txs, tx)
 	d.mu.Unlock()
@@ -48,31 +45,6 @@ type recordingTx struct {
 	roAttempts int // write statements refused or attempted while READ ONLY
 }
 
-func (t *recordingTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	if err := t.observe(sql); err != nil {
-		return pgconn.CommandTag{}, err
-	}
-	return t.FakeTx.Exec(ctx, sql, args...)
-}
-
-func (t *recordingTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	if err := t.observe(sql); err != nil {
-		return nil, err
-	}
-	return t.FakeTx.Query(ctx, sql, args...)
-}
-
-func (t *recordingTx) QueryRow(_ context.Context, sql string, _ ...any) pgx.Row {
-	if err := t.observe(sql); err != nil {
-		return errRow{err}
-	}
-	return errRow{errors.New("operationtest: the rolled-back store returns no rows")}
-}
-
-type errRow struct{ err error }
-
-func (r errRow) Scan(...any) error { return r.err }
-
 func (t *recordingTx) isReadOnly() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -85,62 +57,93 @@ func (t *recordingTx) counts() (writes, roAttempts int) {
 	return t.writes, t.roAttempts
 }
 
-// observe classifies one statement. It is a text classification of what the Action sent, never a
-// way to build SQL. The PostgreSQL-backed run (storetest) is the authority; this is the unit-level
-// stand-in.
+// observe classifies what the Action sent. It is a text classification, never a way to build SQL,
+// and it is the unit-level stand-in: the PostgreSQL-backed run (storetest) is the authority. Text is
+// split with store.Statements, the scanner the transaction-control guard uses, so a comment, a quoted
+// identifier or a second statement cannot hide a write. Residuals only the PostgreSQL run catches: a
+// writing function called from a SELECT, and other side-effecting built-ins not named below.
 func (t *recordingTx) observe(sql string) error {
-	words := sqlWords(sql)
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if len(words) >= 3 && words[0] == "SET" && words[1] == "TRANSACTION" && words[2] == "READ" && len(words) >= 4 {
-		switch words[3] {
-		case "ONLY":
-			t.ReadOnly = true
-			return nil
-		case "WRITE":
-			if t.ReadOnly { // leaving READ ONLY is itself a write attempt
-				t.roAttempts++
-				return readOnlyErr("SET TRANSACTION READ WRITE")
-			}
-			return nil
+	var first error
+	for _, stmt := range store.Statements(sql) {
+		if err := t.observeStatement(stmt); err != nil && first == nil {
+			first = err
 		}
 	}
-	if !isWrite(words) {
+	return first
+}
+
+func (t *recordingTx) observeStatement(stmt string) error {
+	words := sqlWords(stmt)
+	if len(words) == 0 {
 		return nil
 	}
-	if t.ReadOnly {
-		t.roAttempts++
-		return readOnlyErr(words[0])
+	if !t.ReadOnly && len(words) >= 4 && words[0] == "SET" && words[1] == "TRANSACTION" && words[2] == "READ" && words[3] == "ONLY" {
+		t.ReadOnly = true
+		return nil
 	}
-	t.writes++
+	if store.IsTxControlStatement(stmt) {
+		// The real store refuses these inside a body (store.ErrTxControl); a Plan that sends one is trying
+		// to leave its READ ONLY transaction.
+		if t.ReadOnly {
+			t.roAttempts++
+		}
+		return store.ErrTxControl
+	}
+	switch {
+	case changesReadOnly(words):
+		// Leaving READ ONLY is itself a write attempt; so is any other change to the mode.
+		if t.ReadOnly {
+			t.roAttempts++
+			return readOnlyErr(words[0] + " (read-only mode)")
+		}
+		return nil
+	case isWrite(words):
+		if t.ReadOnly {
+			t.roAttempts++
+			return readOnlyErr(words[0])
+		}
+		t.writes++
+	}
 	return nil
 }
 
 func readOnlyErr(stmt string) error {
-	return &pgconn.PgError{Severity: "ERROR", Code: "25006", Message: "cannot execute " + stmt + " in a read-only transaction"}
+	return storetest.ReadOnlyError(stmt)
 }
 
-// sqlWords returns the upper-case words of a statement with string literals removed.
-func sqlWords(sql string) []string {
-	var b strings.Builder
-	in := false
-	for _, r := range sql {
-		switch {
-		case r == '\'':
-			in = !in
-			b.WriteRune(' ')
-		case in:
-		default:
-			b.WriteRune(r)
+// sqlWords returns the upper-case words of one statement from store.Statements (quoted text is
+// already blanked).
+func sqlWords(stmt string) []string {
+	return strings.FieldsFunc(strings.ToUpper(stmt), func(r rune) bool { return !unicode.IsLetter(r) && r != '_' })
+}
+
+// changesReadOnly reports a statement that changes the transaction's read-only mode: SET [LOCAL |
+// SESSION] [default_]transaction_read_only, SET SESSION CHARACTERISTICS … READ WRITE, SET TRANSACTION
+// READ WRITE, or any set_config call (its setting name is a literal the scanner blanks, so every call
+// is treated as one: a read-only Plan has no reason to make it).
+func changesReadOnly(words []string) bool {
+	for _, w := range words {
+		if w == "SET_CONFIG" || w == "TRANSACTION_READ_ONLY" || w == "DEFAULT_TRANSACTION_READ_ONLY" {
+			return true
 		}
 	}
-	return strings.FieldsFunc(strings.ToUpper(b.String()), func(r rune) bool { return !unicode.IsLetter(r) && r != '_' })
+	if words[0] == "SET" {
+		for i := 1; i+1 < len(words); i++ {
+			if words[i] == "READ" && words[i+1] == "WRITE" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var writeVerbs = map[string]bool{
 	"INSERT": true, "UPDATE": true, "DELETE": true, "MERGE": true, "TRUNCATE": true, "CREATE": true,
 	"ALTER": true, "DROP": true, "GRANT": true, "REVOKE": true, "COPY": true, "CALL": true, "DO": true,
-	"REFRESH": true, "COMMENT": true, "LOCK": true, "NOTIFY": true,
+	"REFRESH": true, "COMMENT": true, "LOCK": true, "NOTIFY": true, "REINDEX": true, "CLUSTER": true,
+	"VACUUM": true, "IMPORT": true, "SECURITY": true, "DISCARD": true, "LISTEN": true, "UNLISTEN": true,
 }
 
 func isWrite(words []string) bool {
@@ -156,6 +159,10 @@ func isWrite(words []string) bool {
 			return true
 		case w == "FOR" && i+1 < len(words) && (words[i+1] == "UPDATE" || words[i+1] == "SHARE" || words[i+1] == "NO" || words[i+1] == "KEY"):
 			return true // row locks are refused in a READ ONLY transaction
+		case w == "INTO" && (words[0] == "SELECT" || words[0] == "WITH" || words[0] == "TABLE" || words[0] == "VALUES"):
+			return true // SELECT … INTO creates a table
+		case w == "NEXTVAL" || w == "SETVAL":
+			return true // sequences are written by reading them
 		}
 	}
 	return false

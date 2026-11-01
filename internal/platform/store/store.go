@@ -452,21 +452,21 @@ type tx struct {
 }
 
 func (x tx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	if x.guard && isTxControl(sql) {
+	if x.guard && IsTxControl(sql) {
 		return pgconn.CommandTag{}, ErrTxControl
 	}
 	return x.t.Exec(ctx, sql, args...)
 }
 
 func (x tx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	if x.guard && isTxControl(sql) {
+	if x.guard && IsTxControl(sql) {
 		return nil, ErrTxControl
 	}
 	return x.t.Query(ctx, sql, args...)
 }
 
 func (x tx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	if x.guard && isTxControl(sql) {
+	if x.guard && IsTxControl(sql) {
 		return errRow{ErrTxControl}
 	}
 	return x.t.QueryRow(ctx, sql, args...)
