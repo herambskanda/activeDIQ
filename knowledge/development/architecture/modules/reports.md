@@ -508,6 +508,11 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   ("(group outside your scope)"), `finding` ("Circular nesting: A → B → A") for cycle rows, and "External principal (unresolved)"
   for an FSP member. `inventory.ous` counts the subtree per kind over the `sub` `FilterAnchor` (in-scope objects only).
   `inventory.contacts` is a plain dataset. `inventory.users` and `.computers` gained `primary_group` and `in_other_groups`.
+  **Added for library batch 2 (T-0962, B7).** `inventory.principals` is users and computers in one dataset (GRP-04 is one report with a Users and a
+  Computers preset, and a preset cannot switch dataset); it carries the primary group and the in-another-group test. New columns: `name` (the RDN value) on
+  users, computers, groups, OUs and contacts; users `pwd_set_recorded` and `days_since_password_set`; computers `computer_type` (gMSA by class, RODC by
+  0x4000000, DC by 0x2000, then an OS name containing "server"; no OS and no flag is Unknown, never "workstation"), `delegation`, `days_since_activity`;
+  OUs `subtree_other`; `group_members` `member_domain`, `group_type`, `group_scope`.
   Every count joins a `FilterAnchor`, so it counts in-scope objects only (RP11).
 - **DN disclosure rule applied to `group_members`.** A row is about two in-scope objects (both anchors are row anchors), so
   `group_dn` and `member_dn` each render one own-object DN. The RP11 world allows exactly that (`leaksWhere`) and proves a
@@ -559,7 +564,7 @@ type Preset struct {
     Columns []ColumnID              // nil = the definition's
     Sort    []SortKey
     Top     int                     // 0 = no top-N; GRP-01 "Top N Big Groups" = 25
-    Requires *Subjects              // GRP-02, GRP-03: one or more group / user GUIDs required
+    Requires *Subjects              // GRP-02, GRP-03: 1..100 group / user GUIDs required; Column names the GUID column they bind to, Kind ("group"|"user") what the console asks for
 }
 
 type HiddenGroup struct{ ID string; Label string; Where Expr; Locked bool } // Locked: counted, and ShowHidden may not include it (T-0960)
@@ -666,8 +671,7 @@ replicated-logon thresholds (spec §6.4) is `Min: 30` on USR-03's `days` paramet
     `definitionId`). `columns` are every column of the dataset a run may use (a per-DC column only on a per-DC report), the
     definition's default columns first with `defaultVisible`; presets render `Where` as the condition/group tree with a
     parameter shown as its default, and `periodDays` is the default of the first days parameter the filter reads.
-    `exportFormats` is `[]` until B9 lands; `subjectKind` is `none`, or `object` when a preset requires subjects (the GRP
-    reports refine it in B7); `freshnessKind` is `nc_watermark`, `policy_read` or `per_dc` from the dataset.
+    `exportFormats` is `[]` until B9 lands; `subjectKind` is `none`, `group` or `user` when a preset requires subjects and names their kind (GRP-02, GRP-03), or `object` when it names none; `freshnessKind` is `nc_watermark`, `policy_read` or `per_dc` from the dataset.
   - Test: `definitions_pg_test.go` (whole HTTP stack, response conformance on, both PostgreSQL versions).
 - **Wired in production (T-1104):** `compose/server.bootReport` adds `inventory.Datasets()` to the host under owner key
   `inventory` (checked by `report.CheckTables` against `store/owners`); `buildReports` compiles the host's datasets with
@@ -978,7 +982,9 @@ func Count(ctx context.Context, tx store.Tx, q Query) (int64, error)
   Every term is wrapped `COALESCE(term, false)` (include) or `COALESCE(term, true)` (exclude), and the
   anchor's `ancestry_complete` is ANDed in front of the grants, so a NULL anywhere is "out".
 - **`Subjects`** apply to the object column of anchor `t`; a dataset whose base anchor has no such
-  column answers `ErrNoSubjects` (edge datasets are undecided: B6 may add a `Dataset` field).
+  column answers `ErrNoSubjects`. An edge dataset names the column instead (`Subjects.Column`, with `Kind`): `Resolve` then turns the
+  GUIDs into an `in` term on that column (GRP-02 `group_guid`, GRP-03 `member_guid`). The row anchors still apply scope, so a subject
+  outside the reader's scope returns no row.
 - **Filters.** Absent is SQL `NULL`; `ne` matches absent rows (two-valued comparison). `contains` and
   `prefix` are `ILIKE` with the pattern escaped by `store.LikePattern`. A `JSONAttr` read as time is
   refused at registry build (JSON has no time type).
@@ -1618,7 +1624,7 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | **B4** | `modules/reports` run path: module skeleton and page, `report_runs`/`report_run_rows` migrations and both triggers, `run.State`/`run.FailureReason`, `reports.run` job with row lock, `attempt` and interrupted rule, reuse window, concurrency cap, `run.ReadAccess` (§6.6), page queries, freshness label, permissions, run audit kinds with the full chain, retention job, run API handlers, **RP4**, **RP9** | reporting-engineer (backend-engineer reviews) | B1, B2, T-0882, P1, P2, T-0866 | FR-06, FR-07, FR-08, FR-11, FR-12, FR-13 (server-side sort and filter), FR-22 (run), FR-30, FR-31; AC-06–AC-11, AC-42, AC-48 |
 | **B5** (built, T-0960; §3.6 "As built") | Library batch 1: loader, `LOCK`, crosswalk search index, USR-01, USR-02, USR-03, USR-05 with presets and hidden groups, sync-interval-0 narrowing | reporting-engineer | B3, B4 | FR-01, FR-02, FR-03, FR-04, FR-06, FR-09, FR-14; AC-01–AC-04, AC-12, AC-16, AC-17, AC-18, AC-49 |
 | **B6** (built, T-0961; §3.3 "As built (T-0961)") | inventory: `inventory.groups`, `.group_members` (`grp` and `mbr` row anchors, primary-group edges, effective closure, cycle findings, FSP rows, `Via` hop as `MaskAnchor`), `.ous` (in-scope subtree counts over a `FilterAnchor`), `.contacts`, **RP11** for its datasets | directory-engineer | B1, B2, P2 | FR-15, FR-06; AC-19, AC-20, AC-21 |
-| **B7** | Library batch 2: PWD-01, PWD-02, GRP-01–GRP-04, CMP-01, CMP-02, OU-01, CTC-01 | reporting-engineer | B5, B6 | FR-01, FR-02, FR-09, FR-14, FR-15; AC-13, AC-19, AC-20, AC-22, AC-23 |
+| **B7** (built, T-0962) | Library batch 2: PWD-01, PWD-02, GRP-01–GRP-04, CMP-01, CMP-02, OU-01, CTC-01 | reporting-engineer | B5, B6 | FR-01, FR-02, FR-09, FR-14, FR-15; AC-13, AC-19, AC-20, AC-22, AC-23 |
 | **B8** | Per-DC runs: the §6.5 stages, read cap, coverage labels, `EvalPerDC`; USR-04, PWD-03 | reporting-engineer | B4, B5, P5 | FR-10; AC-39, AC-40, AC-41 |
 | **B9** | Export: `export.Digest` (canonical form and vectors, `u` tag included), `export.Unknown()`, `run.StoredSource`, About block, CSV and XLSX export jobs, `report_exports`, creator download through `run.ReadAccess` (§7.1), 410, delete, caps, export audit kinds, **RP5** | reporting-engineer | B4 | FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22 (export), FR-31; AC-24–AC-28, AC-50 |
 | **B10** | PDF and HTML encoders and export formats (before M2 exit). **Built (T-0964), §7.1b** | reporting-engineer | B9 | FR-16, FR-19 |

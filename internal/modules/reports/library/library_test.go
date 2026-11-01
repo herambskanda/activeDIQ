@@ -12,7 +12,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/report"
 )
 
-// specRow is one row of reports-2a 6.2 for a batch-1 report, as the spec table words it. Columns are the
+// specRow is one row of reports-2a 6.2 for a shipped report, as the spec table words it. Columns are the
 // registry column that shows each spec column. Deviations are the places the shipped definition differs
 // from the table today, each with the ticket that closes it; a deviation not listed here fails the test.
 type specRow struct {
