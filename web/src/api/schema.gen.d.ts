@@ -936,7 +936,7 @@ export interface components {
             disambiguator?: components["schemas"]["DirectorySearchDisambiguator"];
             displayName: string;
             distinguishedName: string;
-            /** @description The DNS name of the object's domain. The client shows it when the answer spans more than one. */
+            /** @description The DNS name of the object's domain, present only when the permitted hits of this answer span more than one domain; empty otherwise (and for an object whose DN holds no domain components). The client shows it when it is not empty. */
             domain: string;
             highlights: components["schemas"]["DirectorySearchHighlight"][];
             mail?: string;
