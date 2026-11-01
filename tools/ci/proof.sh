@@ -1220,6 +1220,13 @@ cp "$root/.github/workflows/release.yml" "$wf/"; sed -i -E 's/(uses: actions\/ch
 must_fail_with "workflows-check on an unpinned action" 'not pinned' tools/ci/workflows-check.sh "$wf"
 cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's/sign verify/sign noop/' "$wf/release.yml"
 must_fail_with "workflows-check on a release that does not verify" 'without verifying' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's|builtmsi -require|builtmsi|' "$wf/release.yml"
+must_fail_with "workflows-check on a release whose built-MSI gate dropped -require (T-0724)" 'built-MSI gate would be inactive' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's|name: agent-msi|name: agent-msi-x|' "$wf/release.yml"
+must_fail_with "workflows-check on a built-MSI gate with no agent-msi download before it (T-0724)" 'agent-msi artefact is not downloaded' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's|download-artifact@|upload-artifact@|' "$wf/release.yml"
+must_fail_with "workflows-check on a release that only uploads agent-msi, never downloads it (T-0724)" 'agent-msi artefact is not downloaded' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"
 
 # --- fitness-agent-host (T-0554) ----------------------------------------------------------------
 # The Go-test half (P1-P8, F1) is judged from `go test -json`; judgeTests' cases fail on a failed,
@@ -1648,7 +1655,7 @@ must_fail_with "fitness-built-msi on a DACL row keyed to the service (service-co
 must_fail_with "fitness-built-msi on settings that only apply on uninstall" 'does not apply on install' builtmsi -glob "$bm/neverapplies/neverapplies.msi"
 must_fail_with "fitness-built-msi on a SelfReg row (code run at install)" 'SelfReg row "F1"' builtmsi -glob "$bm/selfreg/selfreg.msi"
 must_fail_with "fitness-built-msi on a critical ErrorControl" 'ErrorControl' builtmsi -glob "$bm/critical/critical.msi"
-must_fail_with "fitness-built-msi when no MSI exists and one is required (release job)" 'no built MSI found' builtmsi -require -glob "$bm/none/*.msi"
+must_fail_with "fitness-built-msi when no MSI exists and one is required (release job)" 'no built MSI found \(-require\)' builtmsi -require -glob "$bm/none/*.msi"
 must_pass "fitness-built-msi prints inactive, not a pass, when no MSI exists" bash -c "go run ./tools/fitness/builtmsi -glob '$bm/none/*.msi' | grep -q '^fitness-built-msi: inactive'"
 
 # --- fitness-sso (T-0211, console-sso.md §13 FIT-SSO-1/2), the real CLI on throw-away trees ---------

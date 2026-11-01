@@ -48,8 +48,8 @@ jobs:
           path: dist
       - name: Judge the built installer (ADR-0006 A1 on the artefact, T-0697)
         # Runs after the build and before Publish, so it gates what is uploaded. Opens every dist/*.msi with msidump and fails on a LocalSystem or other unpinned service account,
-        # a non-restricted SID, privileges beyond the pinned set, or an unreviewed custom action. Prints
-        # -require: the release fails when the build job produced no MSI (T-0724).
+        # a non-restricted SID, privileges beyond the pinned set, or an unreviewed custom action.
+        # -require: the release fails when the build job produced no MSI (T-0724); without it the gate prints "inactive" and passes.
         run: |
           set -euo pipefail
           sudo apt-get update && sudo apt-get install -y --no-install-recommends msitools osslsigncode
