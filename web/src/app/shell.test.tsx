@@ -336,7 +336,9 @@ describe("T-1101 AC 1: Command palette entry points, focus, and 5-minute query T
         new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }),
       );
     });
-    const reopenedInput = requireInput(document.querySelector<HTMLInputElement>('input[role="combobox"]'));
+    const reopenedInput = requireInput(
+      document.querySelector<HTMLInputElement>('input[role="combobox"]'),
+    );
     expect(reopenedInput.value).toBe("alovelace");
 
     // Close again
@@ -353,7 +355,9 @@ describe("T-1101 AC 1: Command palette entry points, focus, and 5-minute query T
         new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }),
       );
     });
-    const resetInput = requireInput(document.querySelector<HTMLInputElement>('input[role="combobox"]'));
+    const resetInput = requireInput(
+      document.querySelector<HTMLInputElement>('input[role="combobox"]'),
+    );
     expect(resetInput.value).toBe("");
   });
 });
@@ -446,9 +450,9 @@ describe("T-1101 AC 2: Debounced search, grouping order, and stale answers", () 
     expect(JSON.parse(firstCall.body)).toEqual({ q: "ad" });
 
     // Groups rendered in order: Exact first, then Users, Groups
-    const groupHeadings = [
-      ...document.querySelectorAll<HTMLElement>('.diq-pal__gh'),
-    ].map((el) => el.textContent?.trim());
+    const groupHeadings = [...document.querySelectorAll<HTMLElement>(".diq-pal__gh")].map((el) =>
+      el.textContent?.trim(),
+    );
     expect(groupHeadings[0]).toContain("Exact");
     expect(groupHeadings[1]).toContain("Users");
     expect(groupHeadings[2]).toContain("Groups");
@@ -488,9 +492,9 @@ describe("T-1101 AC 3: Registered Pages group and navigation", () => {
     });
 
     // "Pages" group is visible with "Search users"
-    const groupHeadings = [
-      ...document.querySelectorAll<HTMLElement>('.diq-pal__gh'),
-    ].map((el) => el.textContent?.trim());
+    const groupHeadings = [...document.querySelectorAll<HTMLElement>(".diq-pal__gh")].map((el) =>
+      el.textContent?.trim(),
+    );
     expect(groupHeadings).toContain("Pages");
     expect(groupHeadings).not.toContain("Actions");
 

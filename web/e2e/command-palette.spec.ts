@@ -185,7 +185,9 @@ test("Refuses 48-digit recovery passwords in the browser with IA message and sen
 
   // Refusal message appears in StatePanel
   await expect(
-    page.getByText("That looks like a recovery password. Search by the 8-character key ID instead."),
+    page.getByText(
+      "That looks like a recovery password. Search by the 8-character key ID instead.",
+    ),
   ).toBeVisible();
   expect(searchCallCount).toBe(0);
 

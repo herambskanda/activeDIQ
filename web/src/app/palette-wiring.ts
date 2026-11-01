@@ -26,20 +26,7 @@ export function isRecoveryPassword(raw: string): boolean {
   return /\p{Nd}{48}/u.test(stripped);
 }
 
-const MONTHS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function formatTime(iso: string): string {
   try {
@@ -80,7 +67,10 @@ export function mapStatusChip(chip: DirectorySearchChip): PaletteChip | undefine
             : `Password expires in ${chip.days ?? 0} days`,
       };
     case "accountExpires":
-      return { tone: "warn", label: chip.at ? `Expires ${formatDate(chip.at)}` : "Account expires" };
+      return {
+        tone: "warn",
+        label: chip.at ? `Expires ${formatDate(chip.at)}` : "Account expires",
+      };
     case "deleted":
       return { tone: "muted", label: chip.at ? `Deleted ${formatDate(chip.at)}` : "Deleted" };
     case "tier0":

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { DirectorySearchChip, DirectorySearchHit, DirectorySearchResult } from "./palette-wiring";
+import type {
+  DirectorySearchChip,
+  DirectorySearchHit,
+  DirectorySearchResult,
+} from "./palette-wiring";
 import {
   buildPaletteGroups,
   formatDate,
@@ -25,7 +29,8 @@ describe("palette-wiring: isRecoveryPassword", () => {
     expect(isRecoveryPassword(spaced48)).toBe(true);
 
     // Full-width decimal digits
-    const fullWidth48 = "１２３４５６７８９０１２３４５６７８９０１２３４５６７８９０１２３４５６７８９０１２３４５６７８";
+    const fullWidth48 =
+      "１２３４５６７８９０１２３４５６７８９０１２３４５６７８９０１２３４５６７８９０１２３４５６７８";
     expect(isRecoveryPassword(fullWidth48)).toBe(true);
 
     expect(RECOVERY_PASSWORD_MESSAGE).toBe(
@@ -63,7 +68,10 @@ describe("palette-wiring: formatters and status chips", () => {
     expect(mapStatusChip(expired)).toEqual({ tone: "crit", label: "Password expired" });
 
     const expiresIn3d: DirectorySearchChip = { kind: "passwordExpiresInDays", days: 3 };
-    expect(mapStatusChip(expiresIn3d)).toEqual({ tone: "warn", label: "Password expires in 3 days" });
+    expect(mapStatusChip(expiresIn3d)).toEqual({
+      tone: "warn",
+      label: "Password expires in 3 days",
+    });
 
     const acctExpires: DirectorySearchChip = {
       kind: "accountExpires",

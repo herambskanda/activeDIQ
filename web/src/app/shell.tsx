@@ -253,8 +253,8 @@ export function Shell({
               body: (
                 <>
                   <p>
-                    The server could not answer. Retry; if it keeps failing, quote the trace ID
-                    to your administrator.
+                    The server could not answer. Retry; if it keeps failing, quote the trace ID to
+                    your administrator.
                   </p>
                   {traceEl}
                 </>
