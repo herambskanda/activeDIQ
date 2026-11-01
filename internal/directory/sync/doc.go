@@ -1,10 +1,12 @@
-// Package sync is the directory sync ingester's pure core (blueprint §5.2, §14 flow 1): it turns one
-// connector ScopedSearch entry into the inventory.Observation that Populate stores, and owns the
-// CLOSED list of attributes a sync asks the connector for.
+// Package sync is the directory sync ingester (blueprint §5.2, §14 flow 1): its pure core turns one
+// connector ScopedSearch entry into the inventory.Observation that Populate stores, owns the
+// CLOSED list of attributes a sync asks the connector for, and its engine reads whole domains.
 //
-// This package does no I/O. The caller (the cycle driver, a later brick of T-1188) owns the search,
-// the page loop, the lease and the transaction; everything here is a function of the entry and the
-// Mapper's configuration, so it is exercised with entries captured from the lab and with hostile ones.
+// The mapping (Mapper, Attributes) is pure: no I/O, a function of the entry and the Mapper's configuration,
+// exercised with entries captured from the lab and with hostile ones. The rest of the package does I/O only
+// through ports: the lease-fenced cursor store (Store, DM-19) and the full-read Engine, which pages one AD
+// connection's managed domain NCs through the connector's ScopedSearch into inventory.Ingester. The job that
+// schedules the engine, acquires its leases and supplies the managed set belongs to a later brick of T-1188.
 //
 // The rules the mapping holds to:
 //
