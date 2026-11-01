@@ -160,7 +160,7 @@ const emptyKeys = `SELECT NULL::uuid AS connection_id, NULL::uuid AS object_guid
 // CompileSearch renders the statement. The scope of each permission is planned with planScope and drawn
 // with scopeSQL, the functions RP6 proves.
 func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query, error) {
-	if q.Fuzzy != "" && (q.Threshold < 0.1 || q.Threshold > 1) {
+	if q.Fuzzy != "" && (float64(q.Threshold) < store.MinTrigramThreshold || float64(q.Threshold) > store.MaxTrigramThreshold) {
 		return Query{}, ErrInvalidQuery
 	}
 	if src.objects == nil || q.Ceiling < 1 || q.Ceiling > MaxSearchCeiling || q.GroupLimit < 1 || q.GroupLimit > MaxSearchGroupLimit {
@@ -334,13 +334,13 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 	sb.WriteString(" SELECT cl.c, p.connection_id::text, p.object_guid::text, p.kind, p.state, p.enabled, p.display_name, p.grp, p.cls, p.dead, p.dis, p.whole, p.klen, p.simr, p.nm, p.sim, p.grp_n " +
 		"FROM ceil cl LEFT JOIN paged p ON p.rn <= " + b.bind("int", q.GroupLimit+1) +
 		" ORDER BY p.grp, p.cls, p.dead, p.dis, p.whole, p.klen, p.simr, p.nm, p.connection_id, p.object_guid")
-	return Query{sql: CompiledSQL(sb.String()), args: b.args, reasons: b.reasons, search: &searchMeta{limit: q.GroupLimit, fuzzy: q.Fuzzy != "", threshold: strconv.FormatFloat(float64(q.Threshold), 'f', 3, 32)}}, nil
+	return Query{sql: CompiledSQL(sb.String()), args: b.args, reasons: b.reasons, search: &searchMeta{limit: q.GroupLimit, fuzzy: q.Fuzzy != "", threshold: float64(q.Threshold)}}, nil
 }
 
 type searchMeta struct {
 	limit     int
 	fuzzy     bool
-	threshold string
+	threshold float64
 }
 
 // SearchHit is one admitted hit.
@@ -375,15 +375,11 @@ func ExecSearch(ctx context.Context, tx store.Tx, q Query) (SearchResult, error)
 		return res, ErrInvalidQuery
 	}
 	if q.search.fuzzy {
-		var prior string
-		if err := tx.QueryRow(ctx, `SELECT current_setting('pg_trgm.word_similarity_threshold')`).Scan(&prior); err != nil {
+		restore, err := store.SetTrigramThreshold(ctx, tx, q.search.threshold)
+		if err != nil {
 			return res, wrapErr(ctx, err)
 		}
-		if _, err := tx.Exec(ctx, `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`, q.search.threshold); err != nil {
-			return res, wrapErr(ctx, err)
-		}
-		// Best effort: a failed transaction is rolled back by the caller and the setting goes with it.
-		defer func() { _, _ = tx.Exec(ctx, `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`, prior) }()
+		defer restore()
 	}
 	rs, err := tx.Query(ctx, string(q.sql), append([]any{pgx.QueryExecModeExec}, q.args...)...)
 	if err != nil {

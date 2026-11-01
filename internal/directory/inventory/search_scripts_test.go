@@ -167,19 +167,24 @@ func Test_search_plan_uses_the_indexes(t *testing.T) {
 		if strings.Contains(plan, "inventory_search_keys_fuzzy") {
 			t.Errorf("under row security the planner now uses the trigram index: make this test require it (follow-up closed?):\n%s", plan)
 		}
-		// Row security off, as the owner: the same statement proves and uses the partial GIN index.
-		if err := e.d.ExecOwner(context.Background(), `ALTER TABLE public.inventory_search_keys DISABLE ROW LEVEL SECURITY`); err != nil {
-			t.Fatal(err)
-		}
-		c, err := e.d.Owner(context.Background())
+		// Row security off and every other index dropped, as the owner, inside a transaction that is rolled
+		// back: the statement proves the partial index's kind list and reads the GIN. (Which index the
+		// planner prefers on its own depends on the LIMIT and its flat estimate; eligibility is the point.)
+		ctx := context.Background()
+		c, err := e.d.Owner(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer c.Close(context.Background())
-		if _, err := c.Exec(context.Background(), `SET app.tenant_id = '`+e.a.String()+`'`); err != nil {
-			t.Fatal(err)
+		defer c.Close(ctx)
+		for _, ddl := range []string{`BEGIN`, `DROP INDEX public.inventory_search_keys_by_version, public.inventory_search_keys_by_key`,
+			`ALTER TABLE public.inventory_search_keys DROP CONSTRAINT inventory_search_keys_pkey`,
+			`ALTER TABLE public.inventory_search_keys DISABLE ROW LEVEL SECURITY`} {
+			if _, err := c.Exec(ctx, ddl); err != nil {
+				t.Fatalf("%s: %v", ddl, err)
+			}
 		}
-		rs, err := c.Query(context.Background(), "EXPLAIN (COSTS OFF) "+sql, args...)
+		// The tenant setting stays unset: EXPLAIN plans the statement and runs nothing.
+		rs, err := c.Query(ctx, "EXPLAIN (COSTS OFF) "+sql, args...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -192,6 +197,9 @@ func Test_search_plan_uses_the_indexes(t *testing.T) {
 			lines = append(lines, l)
 		}
 		rs.Close()
+		if _, err := c.Exec(ctx, `ROLLBACK`); err != nil {
+			t.Fatal(err)
+		}
 		if all := strings.Join(lines, "\n"); !strings.Contains(all, "inventory_search_keys_fuzzy") {
 			t.Errorf("without row security the fuzzy probe uses the partial GIN index:\n%s", all)
 		}
