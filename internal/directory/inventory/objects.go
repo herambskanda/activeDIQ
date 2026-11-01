@@ -417,6 +417,9 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		attrs[i] = b
 	}
 
+	// The search keys of the objects this call wrote, replaced in this transaction after the loop.
+	keyed := map[GUID][]searchKeyRow{}
+	var keyOrder []GUID
 	for i := range obs {
 		o := &obs[i]
 		var cloud any
@@ -464,6 +467,10 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		} else {
 			out.Updated++
 		}
+		if _, ok := keyed[o.Object]; !ok {
+			keyOrder = append(keyOrder, o.Object)
+		}
+		keyed[o.Object] = searchKeys(sourceOf(o))
 		// The row moved (its parent or chain changed) or its completeness changed, or it is new and
 		// descendants may be waiting for it: bring the rows below it up to date in this transaction.
 		if w.moved {
@@ -514,6 +521,14 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 				return out, err
 			}
 		}
+	}
+	// The search index follows the objects in the same transaction (ADR-0011 rule 5): a rollback leaves both.
+	var keyRows []searchKeyRow
+	for _, g := range keyOrder {
+		keyRows = append(keyRows, keyed[g]...)
+	}
+	if _, err := writeSearchKeys(ctx, tx, connection, keyOrder, keyRows); err != nil {
+		return out, err
 	}
 	// The membership closure the group datasets read follows the links of this batch in the same transaction.
 	if _, err := p.RefreshClosure(ctx, tx, connection); err != nil {
