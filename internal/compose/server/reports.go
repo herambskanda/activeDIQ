@@ -33,11 +33,12 @@ import (
 // One port has no production implementation yet, and it fails closed rather than guess: the blob store
 // when blobDir is empty, so an export answers 503 not-ready rather than keep a file anywhere else.
 //
-// scopes is the read-scope producer (rbac.ReadScopes, built by buildReadScopes, T-0916). A nil scopes
-// refuses every run with run.ErrScopesUnavailable, never reads unscoped.
+// scopes is the read-scope producer: the composed *rbac.ReadScopes that buildReadScopes builds (T-0916),
+// the same one search reads through. It is required; a nil scopes stops start-up, so no installation can
+// run reports without it and none reads unscoped.
 func buildReports(ctx context.Context, db *store.DB, host *report.Host, jreg *jobs.Registry, sink audit.Sink, reader *inventory.Reader, scopes run.ReadScopes, az operation.Authorizer, blobDir string) (*run.Service, apihost.TagHandlers, error) {
 	if scopes == nil {
-		scopes = noScopes{}
+		return nil, apihost.TagHandlers{}, errors.New("server: reports need the read-scope producer")
 	}
 	lib, err := reportLibrary(ctx, db, host)
 	if err != nil {
@@ -114,13 +115,6 @@ func startReportRetention(ctx context.Context, db *store.DB, svc *run.Service, t
 		return fmt.Errorf("server: schedule report retention: %w", err)
 	}
 	return nil
-}
-
-// noScopes is the read-scope producer of an installation that has not wired rbac.ReadScopes.
-type noScopes struct{}
-
-func (noScopes) For(context.Context, store.Tx, tenant.ID, authority.Chain, authz.Permission) (authz.ReadScope, error) {
-	return authz.ReadScope{}, run.ErrScopesUnavailable
 }
 
 // inventoryFreshness reads the sync watermarks of the connections a result covers from the inventory

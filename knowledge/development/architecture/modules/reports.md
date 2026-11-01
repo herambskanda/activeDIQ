@@ -1584,8 +1584,10 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   - Covered NCs for the freshness label = `ReadScope.Connections()` intersected with the narrowing.
   - Cancel is audited as `reports.run.failed` with Reason `cancelled`. Token principals (a Via chain) are
     refused at 2a (403). `too_many_report_jobs` is `errors[].code` on a 429.
-  - Production wiring is incomplete on purpose: compose passes `noScopes` (503 `not-ready`, no
-    `rbac.ReadScopes` adapters yet); the catalogue is the shipped library since T-1104 (an unknown id is 404
+  - Production wiring: compose passes the composed `*rbac.ReadScopes` (T-0916, the producer search shares)
+    to `buildReports`, which refuses to start without it; `noScopes` and its 503 `not-ready` fallback are gone
+    (T-1151). The handler still maps `run.ErrScopesUnavailable` to 503 for any other host that builds the
+    service without a producer. The catalogue is the shipped library since T-1104 (an unknown id is 404
     `definition_not_found`).
   - Page timings, 500k-row result, PostgreSQL 16, after `ANALYZE` (`TestLargeResultPageTimings`, opt-in
     via `ACTIVEDIQ_REPORTS_LARGE_ROWS`): ordinal first page 10 ms; ordinal offset 250k 254 ms; sorted
