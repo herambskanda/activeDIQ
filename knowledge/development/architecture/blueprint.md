@@ -320,9 +320,11 @@ service.
    - **The ownership map** `internal/platform/store/owners/owners.gen.tsv` (table → owner key and
      write class) is generated from the migrations by `tools/gen/modules` (`make gen-modules`; `gen-modules-check` in `make ci`, T-0997). Cross-owner data migrations need an entry
      with a reason, a ticket and an expiry in `tools/fitness/modules/exempt.json`.
-   - **Every table has a write class** (ADR-0005 rule 10; ADR-0003 amendment). `config` means a
-     principal's decision sets some row or column of it, so its writes are Actions. `system` means
-     bookkeeping written by its owner (the closed list in ADR-0005 rule 10). The class is declared
+   - **Every table has a write class** (ADR-0005 rule 10; ADR-0003 amendment). `config` means the
+     product makes a *widening decision* to it: a principal chooses a value that can, by itself,
+     widen what anyone may do, see or keep, so those writes are Actions. `system` means bookkeeping
+     written by its owner: values read or derived, narrowing-only or releasing-only writes (the
+     closed list in ADR-0005 rule 10, T-1221). The class is declared
      beside the migration that creates the table, one line per table: `-- write-class: <table>
      config|system`. A partition takes its parent's class. `tools/gen/modules` copies it into the
      ownership map.
@@ -333,7 +335,7 @@ service.
      `set(tx)` shape). Otherwise it must be a `system` row of
      `tools/fitness/operation/o3-writers.json`, whose named `callers` are the only functions
      allowed to reference it. Existing violations are `convert` rows naming their conversion
-     ticket (T-1228 to T-1232), and O3 prints them as pending. O3 also fails a table with no
+     ticket (T-1228 to T-1232, T-1246), and O3 prints them as pending. O3 also fails a table with no
      class.
 7. **Binary hygiene** (ADR-0003 rule 7). Planes are separated by the link graph, not only by the
    manifest (ADR-0002 rule 2). `go list -deps ./cmd/<role>`, for `GOOS=windows` and `GOOS=linux`,

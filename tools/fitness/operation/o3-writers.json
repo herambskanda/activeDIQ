@@ -5,8 +5,9 @@
     "signin": "Sign-in, sessions, and the signing-in user's own factor enrolment (rule 10 list item 1; DM-31, DM-37 self-service)",
     "bootstrap": "The first-run bootstrap (ADR-0002 platform path internal/platform/tenant/provision FirstRun and the setup-secret owner claim) and the host-local `activediq-server account init-local` command, whose authority is host access (T-0808 precedent, principal cli-account-init-local) (rule 10 list item 2)",
     "verification": "Connection verification runs and what they record from the directory: run results, findings, the directory identity, the draft/verifying moves of a run, and takeover-attestation demotion signals (rule 10 list item 4, as amended by T-1221)",
-    "attestation": "The Entra takeover attestation callback: the IdP redirect of a sign-in that a principal started after passing the permission and step-up checks; it records only the attested_* evidence columns (rule 10 list item 9, added by T-1221)",
-    "sync": "Sync and inventory (rule 10 list item 4; DM-14..DM-23)"
+    "attestation": "The Entra takeover attestation callback: the IdP redirect of a Global Administrator sign-in that a principal started after passing the permission and step-up checks. It records the attested_* values the server read from Graph, sets first_attested_at once (DM-10.I7(f)) and clears demoted_at; the last two can move a stale takeover back to attested, so this write widens (rule 10 list item 9, added by T-1221)",
+    "sync": "Sync and inventory (rule 10 list item 4; DM-14..DM-23)",
+    "handshake": "Connector and agent enrollment handshakes: redeeming (consuming) a single-use enrollment token (rule 10 list item 3)"
   },
   "writers": [
     {
@@ -89,7 +90,7 @@
       "callers": [
         "internal/modules/connections.Attester.Callback"
       ],
-      "reason": "Records the evidence of the Entra Global Administrator sign-in that a principal started (Attester.Start checks permission and step-up). The callback is an unauthenticated IdP redirect (ADR-0002 platform path internal/modules/connections StateTenant), so no principal and no Step exist when it runs; it writes only the attested_* columns and appends its own audit event."
+      "reason": "Records the result of the Entra Global Administrator sign-in that a principal started (Attester.Start checks connections.takeover.attest and step-up, DM-10.I7(a)). The callback is an unauthenticated IdP redirect (ADR-0002 platform path internal/modules/connections StateTenant), so no principal and no Step exist when it runs. It writes the attested_* columns, sets first_attested_at on the first move to attested (I7(f)), and clears demoted_at. Clearing demoted_at can move a stale takeover back to attested, so this write widens. That is accepted: I7(d) says a demotion lasts until a new attestation, and this is that attestation. The values are read from Graph by the server with the Global Administrator's token, never typed in (I7(a)); the permission and step-up are checked when the attempt starts; the callback appends its own audit event naming who started it and who signed in (I7(b))."
     },
     {
       "package": "internal/directory/connection",
@@ -100,8 +101,10 @@
       "disposition": "system",
       "category": "verification",
       "ticket": "T-1221",
-      "callers": [],
-      "reason": "Stores a demotion signal (I7(d)) observed from the directory; it can only make a takeover stale, never grant one. No product caller yet: the change that wires the signal adds its caller here."
+      "callers": [
+        "internal/directory/connection.Registry.RecordDemotion"
+      ],
+      "reason": "Stores a demotion signal (I7(d)) observed from the directory; it can only make a takeover stale, never grant one. Its one caller is the dead wrapper Registry.RecordDemotion, a convert row that T-1229 deletes; T-1229 removes it from these callers in the same change. The change that wires the signal adds its real caller here."
     },
     {
       "package": "internal/directory/connection",
@@ -111,7 +114,7 @@
       ],
       "disposition": "convert",
       "ticket": "T-1229",
-      "reason": "Dead exported wrapper (no product caller) that re-exports the system writer Store.RecordDemotion from the owning package, so it breaks the closure rule. Delete it."
+      "reason": "Dead exported wrapper (no product caller) that re-exports the system writer Store.RecordDemotion from the owning package, so it breaks the closure rule. It is listed as the system row's caller until it is deleted, so O3 stays green meanwhile. Delete it."
     },
     {
       "package": "internal/directory/connection",
@@ -153,8 +156,10 @@
       "disposition": "system",
       "category": "sync",
       "ticket": "T-1221",
-      "callers": [],
-      "reason": "A link discovered by inventory sync (origin discovered) is a sync result; confirming or removing it is a principal's Action (TransitionHybridLink). No product caller yet: the ingest change that calls it adds its caller here."
+      "callers": [
+        "internal/directory/connection.Registry.DiscoverHybridLink"
+      ],
+      "reason": "A link discovered by inventory sync (origin discovered) is a sync result; confirming or removing it is a principal's Action (TransitionHybridLink). Its one caller is the dead wrapper Registry.DiscoverHybridLink, a convert row that T-1229 deletes or turns into a system row with named callers; T-1229 updates these callers in the same change."
     },
     {
       "package": "internal/directory/connection",
@@ -164,7 +169,7 @@
       ],
       "disposition": "convert",
       "ticket": "T-1229",
-      "reason": "Dead exported wrapper (no product caller) that re-exports the system writer Store.DiscoverHybridLink from the owning package, so it breaks the closure rule. Delete it, or list it as a system row with named callers in the ingest change that needs it."
+      "reason": "Dead exported wrapper (no product caller) that re-exports the system writer Store.DiscoverHybridLink from the owning package, so it breaks the closure rule. It is listed as the system row's caller until it is deleted, so O3 stays green meanwhile. Delete it, or list it as a system row with named callers in the ingest change that needs it."
     },
     {
       "package": "internal/directory/connection",
@@ -197,6 +202,68 @@
       "reason": "Reached from the inventory.tier0_designation.set Action's Apply; pass the step.Step."
     },
     {
+      "package": "internal/directory/inventory",
+      "function": "Writer.Form",
+      "tables": [
+        "correlations"
+      ],
+      "disposition": "system",
+      "category": "sync",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/directory/inventory.Ingester.judge"
+      ],
+      "reason": "Forms or re-forms a correlation from what sync read from both directories and the I4 gate's verdict (DM-20.I4 (a)-(g)). The state it sets, matched or candidate, is derived, never chosen by a principal; a re-formed correlation inherits the I4(g) markers but makes no decision. Reached through the Populator embedded in Ingester (a static, promoted call)."
+    },
+    {
+      "package": "internal/directory/inventory",
+      "function": "Writer.Remove",
+      "tables": [
+        "correlations"
+      ],
+      "disposition": "system",
+      "category": "sync",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "Marks a correlation removed when sync no longer sees the pair. It can only withdraw a correlation's authority and routing, never grant it. No product caller yet: the ingest change that calls it adds its caller here."
+    },
+    {
+      "package": "internal/directory/inventory",
+      "function": "Writer.RecordLiveFacts",
+      "tables": [
+        "correlations"
+      ],
+      "disposition": "system",
+      "category": "sync",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/directory/inventory.Facts.RecordLiveFacts"
+      ],
+      "reason": "Stores the Tier-0 verdict of a live directory read on the object's correlations (rule 7 live facts). The value is what the directory reports, even when a principal's Plan started the read."
+    },
+    {
+      "package": "internal/directory/inventory",
+      "function": "Facts.RecordLiveFacts",
+      "tables": [
+        "correlations"
+      ],
+      "disposition": "system",
+      "category": "sync",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "The transaction-opening wrapper of Writer.RecordLiveFacts. Listed because it re-exports a system writer (the closure rule). It is reached only through the internal/directory/client FactsStore interface, which is not a static reference, so callers is empty; the interface and fitness-modules' import rules bound who can hold it."
+    },
+    {
+      "package": "internal/directory/inventory",
+      "function": "Writer.Reconfirm",
+      "tables": [
+        "correlations"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1232",
+      "reason": "A tenant owner's re-confirmation makes a correlation matched, and a matched correlation carries authority and write routing across the two directories (DM-20, I4(g)), so it is a principal's widening decision (table reclassified config by the T-1221 rework). Already reached only from the connections.correlation.reconfirm Action's Apply with s.Tx(); pass the step.Step."
+    },
+    {
       "package": "internal/directory/invhost",
       "function": "PGStore.Insert",
       "tables": [
@@ -219,7 +286,7 @@
         "internal/compose/server.firstOwners.CreateFirstOwner",
         "internal/compose/server.createLocalAccount"
       ],
-      "reason": "Creates the first owner at the setup-secret claim and the break-glass local account from the host CLI. An administrator creating an account is an authn.account.* Action (T-0096) and does not use this function."
+      "reason": "Creates the first owner at the setup-secret claim and the break-glass local account from the host CLI. An administrator creating an account is an authn.account.* Action (T-0096) and does not use this function. Widens: it creates an account that will hold tenant-owner. Bounded by the one-time setup secret (first run) or by host access (init-local), with no principal and so no Step yet."
     },
     {
       "package": "internal/platform/authn",
@@ -257,7 +324,7 @@
       "callers": [
         "internal/compose/server.confirmTOTP"
       ],
-      "reason": "Activates the local account once the host CLI confirms its TOTP. An administrator disabling, enabling or deleting an account is an authn.account.* Action (T-0096) with its own Step-taking writer; it does not call this function."
+      "reason": "Activates the local account once the host CLI confirms its TOTP (confirmTOTP, the second step of `account init-local`). The first-owner claim does not call it. An administrator disabling, enabling or deleting an account is an authn.account.* Action (T-0096) with its own Step-taking writer; it does not call this function. Widens: an active account can sign in. Bounded by host access and the TOTP code the operator just enrolled."
     },
     {
       "package": "internal/platform/authn",
@@ -271,7 +338,7 @@
       "callers": [
         "internal/compose/server.createLocalAccount"
       ],
-      "reason": "Sets the local account's password from the host CLI. An administrator's password reset is an authn.account.* Action with its own Step-taking writer."
+      "reason": "Sets the local account's password from the host CLI. An administrator's password reset is an authn.account.* Action with its own Step-taking writer. Widens: it sets a credential. Bounded by host access; the account cannot sign in until confirmTOTP activates it."
     },
     {
       "package": "internal/platform/authn",
@@ -330,6 +397,50 @@
       "reason": "As Reset. Not mounted yet."
     },
     {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "Enrollment.Issue",
+      "tables": [
+        "enrollment_tokens"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1246",
+      "reason": "Issuing a token issues the means to obtain a component certificate, which admits an agent or connector to the tenant: a credential and a data source (table reclassified config by the T-1221 rework). Checks PermissionIssue and step-up inline today and has no product caller; it becomes the Step-taking writer of a fleet Store Action."
+    },
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "Reenroller.ReenrolAddc",
+      "tables": [
+        "enrollment_tokens"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1246",
+      "reason": "The ADDC re-enrolment sweep revokes each agent and issues its successor's token (reenrol.go, via the unexported one). The revoke narrows; the token issue widens, as Enrollment.Issue does. No product caller yet; it becomes the Step-taking writer of a fleet Store Action."
+    },
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "Enrollment.Redeem",
+      "tables": [
+        "enrollment_tokens"
+      ],
+      "disposition": "system",
+      "category": "handshake",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "Consumes a token (sets used_at once, DM-12.I2, enforced by the enrollment_tokens_guard trigger) through redeemWith. Consuming can only spend a credential a principal already issued. No product caller yet."
+    },
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "Enroller.Enroll",
+      "tables": [
+        "enrollment_tokens"
+      ],
+      "disposition": "system",
+      "category": "handshake",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "The Enroll handshake: redeems the token through redeemWith in the transaction that records the component's certificate. It is reached through the internal/compose/server enrollBackend interface, which is not a static reference, so callers is empty. Not wired in product code yet."
+    },
+    {
       "package": "internal/platform/notify/syslog",
       "function": "Store.Create",
       "tables": [
@@ -363,7 +474,7 @@
         "internal/compose/server.firstOwners.CreateFirstOwner",
         "internal/compose/server.createLocalAccount"
       ],
-      "reason": "Idempotent seed of the built-in roles of a new tenant, in the tenant's bootstrap transaction. Built-in roles are not edited by principals."
+      "reason": "Idempotent seed of the built-in roles of a new tenant, in the tenant's bootstrap transaction. Built-in roles are not edited by principals. Widens only in the sense that the roles exist; it assigns them to no one."
     },
     {
       "package": "internal/platform/rbac",
@@ -410,7 +521,7 @@
       "callers": [
         "internal/compose/server.grantDirectoryReader"
       ],
-      "reason": "The host CLI's grant path that skips the grantor-holds-it check, accepted only for principal cli-account-init-local (T-0808; fitness-grantbootstrap already restricts its mentions to localaccount.go)."
+      "reason": "The host CLI's grant path that skips the grantor-holds-it check, accepted only for principal cli-account-init-local (T-0808; fitness-grantbootstrap already restricts its mentions to localaccount.go). Widens: it grants directory-reader to the CLI's local account. Bounded by host access and the single principal it accepts."
     },
     {
       "package": "internal/platform/rbac",
@@ -436,7 +547,7 @@
         "internal/compose/server.firstOwners.CreateFirstOwner",
         "internal/compose/server.createLocalAccount"
       ],
-      "reason": "Grants tenant-owner to the first owner at the setup-secret claim, and to the CLI's local account only when the tenant has no owner."
+      "reason": "Grants tenant-owner to the first owner at the setup-secret claim, and to the CLI's local account only when the tenant has no owner. Widens: tenant-owner. Bounded by the setup secret, or by host access only while the tenant has no owner."
     },
     {
       "package": "internal/platform/rbac",
