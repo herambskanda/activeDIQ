@@ -340,7 +340,7 @@ These go beyond the literal text of D-0002 and D-0003. The factory takes them, a
 
 ## Fitness function
 
-There are two jobs. Both are Go programs invoked by `make ci` (T-0014) and run by the dispatcher's pre-merge gate (T-0015) until hosted CI exists. Paths follow T-0004.
+There are two jobs. Both are Go programs invoked by `make ci` (T-0014) and run by the dispatcher's pre-merge gate (T-0941; first named T-0015, an id that went to the Go upgrade) until hosted CI exists. Paths follow T-0004.
 
 **Job `fitness-tenancy`** (`tools/fitness/tenancy/`). It runs against an ephemeral PostgreSQL 16 and 18, with every migration applied.
 

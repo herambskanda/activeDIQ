@@ -65,11 +65,14 @@ type Preset struct {
 	Requires *Subjects
 }
 
-// HiddenGroup is a set of rows counted in the header and not stored (E2).
+// HiddenGroup is a set of rows counted in the header and not stored (E2). A Locked group cannot be
+// shown: a run that names it in ShowHidden is refused. It carries a narrowing the admin may not undo,
+// such as the domains where replicated logon is not usable (AC-16).
 type HiddenGroup struct {
-	ID    string
-	Label string
-	Where Expr
+	ID     string
+	Label  string
+	Where  Expr
+	Locked bool
 }
 
 // Subjects says a preset needs objects named by GUID (GRP-02, GRP-03).
@@ -117,6 +120,12 @@ func GUIDsP(ids ...authz.ObjectID) ParamValue {
 
 // Kind returns the value's kind.
 func (p ParamValue) Kind() ParamKind { return p.kind }
+
+// Days returns the whole days of a ParamDays value.
+func (p ParamValue) Days() int64 { return p.days }
+
+// Enum returns the choice ID of a ParamEnum value.
+func (p ParamValue) Enum() string { return p.enum }
 
 // PerDCSpec marks a definition that reads per-DC attributes live (USR-04, PWD-03).
 type PerDCSpec struct{ Scope PerDCScope }

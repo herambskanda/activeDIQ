@@ -12,6 +12,12 @@
 # the same pattern as manage_all. reports.deliver.external is bound to no operation. Schedule writes are Actions (ADR-0005 rule 10, reports.schedule.*);
 # runs, exports and deliveries are system bookkeeping and are not.
 #
+# Preview and undo (ADR-0004 rule 14, T-0892). Each schedule write has a preview twin, POST <resource>/previews/<verb>, with the same
+# x-permission, parameters and body, answering the shared OperationPreview (shared/operation.yaml): it writes, persists and audits nothing.
+# Each write answers ActiveDIQ-Operation-Id, the undo handle, and 202 OperationRef (with holdReason) when the gate or a kernel hold holds it. The family's undo pair is
+# POST /reports/schedules/operations/{operationId}/undo and .../previews/undo, bound to reports.schedule; the kernel plans the inverse
+# (reports.schedule.restore) for the caller with the checks of the transition it makes (ADR-0005 rule 10; modules/reports.md 8).
+#
 # Closed on purpose: columns are the ReportColumnId enum, filters are the typed ReportFilter tree, values are typed. There is no member that takes
 # a raw filter string, a DN, SQL, or a column name that is not in the registry (FR-05). The compiler's AST is not modelled here.
 # Request enums are closed; their response twins (...Value) are open (ADR-0004 rule 2).
@@ -543,6 +549,8 @@ paths:
         or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only. Scheduled data is what the owner
         can see, not what a recipient can see. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner,
         so a retried create is a 400 with code name_taken and changes nothing.
+        Preview it first with previewCreateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle
+        for undoReportScheduleOperation.
       x-permission: reports.schedule
       x-activediq-stability: preview
       x-activediq-limits:
@@ -559,6 +567,13 @@ paths:
         "201":
           description: The schedule is created
           headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The operation that made this change. It is the undo handle for undoReportScheduleOperation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
             ETag:
               required: true
               schema:
@@ -572,6 +587,23 @@ paths:
             application/json:
               schema:
                 $ref: modules/reports.yaml#/components/schemas/ReportSchedule
+        "202":
+          description: >-
+            Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which, for example step_up when a
+            token or automation makes a change whose after-state has an external recipient (TM-D30 SX-1, SX-4). Nothing changed
+            yet; it applies when approved
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The held operation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
         "400":
           $ref: shared/problems.yaml#/components/responses/Validation
         "401":
@@ -638,6 +670,8 @@ paths:
         Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version.
         Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external
         address that is new or changed. Changing another owner's schedule additionally needs reports.schedule.manage_all. The scope refusals of create apply.
+        Preview it first with previewUpdateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle
+        for undoReportScheduleOperation.
       x-permission: reports.schedule
       x-activediq-stability: preview
       x-activediq-limits:
@@ -657,6 +691,13 @@ paths:
         "200":
           description: The schedule as stored
           headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The operation that made this change. It is the undo handle for undoReportScheduleOperation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
             ETag:
               required: true
               schema:
@@ -666,6 +707,23 @@ paths:
             application/json:
               schema:
                 $ref: modules/reports.yaml#/components/schemas/ReportSchedule
+        "202":
+          description: >-
+            Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which, for example step_up when a
+            token or automation makes a change whose after-state has an external recipient (TM-D30 SX-1, SX-4). Nothing changed
+            yet; it applies when approved
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The held operation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
         "400":
           $ref: shared/problems.yaml#/components/responses/Validation
         "401":
@@ -696,6 +754,8 @@ paths:
       summary: Delete a schedule
       description: >-
         Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire.
+        Preview it first with previewDeleteReportSchedule (same parameters, including If-Match; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle
+        for undoReportScheduleOperation.
       x-permission: reports.schedule
       x-activediq-stability: preview
       x-activediq-limits:
@@ -707,6 +767,30 @@ paths:
       responses:
         "204":
           description: The schedule is deleted
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The operation that made this change. It is the undo handle for undoReportScheduleOperation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+        "202":
+          description: >-
+            Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. This Action never steps up
+            (TM-D30 SX-2), so it is never held step_up. Nothing changed yet; it applies when approved
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The held operation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
         "401":
           $ref: shared/problems.yaml#/components/responses/Unauthenticated
         "403":
@@ -728,6 +812,8 @@ paths:
       summary: Pause a schedule
       description: >-
         Pauses the schedule, as the Action reports.schedule.pause (ADR-0005 rule 10). A paused schedule fires nothing until it is resumed. Pausing another owner's schedule additionally needs reports.schedule.manage_all. A pause the system makes under the owner-authority rule is not this operation; it is audited as an event and shows as pausedReason.
+        Preview it first with previewPauseReportSchedule (same parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle
+        for undoReportScheduleOperation.
       x-permission: reports.schedule
       x-activediq-stability: preview
       x-activediq-limits:
@@ -739,6 +825,13 @@ paths:
         "200":
           description: The schedule, paused
           headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The operation that made this change. It is the undo handle for undoReportScheduleOperation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
             ETag:
               required: true
               schema:
@@ -748,6 +841,22 @@ paths:
             application/json:
               schema:
                 $ref: modules/reports.yaml#/components/schemas/ReportSchedule
+        "202":
+          description: >-
+            Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. This Action never steps up
+            (TM-D30 SX-2), so it is never held step_up. Nothing changed yet; it applies when approved
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The held operation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
         "401":
           $ref: shared/problems.yaml#/components/responses/Unauthenticated
         "403":
@@ -765,6 +874,8 @@ paths:
       summary: Resume a schedule
       description: >-
         Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this.
+        Preview it first with previewResumeReportSchedule (same parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle
+        for undoReportScheduleOperation.
       x-permission: reports.schedule
       x-activediq-stability: preview
       x-activediq-limits:
@@ -776,6 +887,13 @@ paths:
         "200":
           description: The schedule, active
           headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The operation that made this change. It is the undo handle for undoReportScheduleOperation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
             ETag:
               required: true
               schema:
@@ -785,6 +903,23 @@ paths:
             application/json:
               schema:
                 $ref: modules/reports.yaml#/components/schemas/ReportSchedule
+        "202":
+          description: >-
+            Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which, for example step_up when a
+            token or automation makes a change whose after-state has an external recipient (TM-D30 SX-1, SX-4). Nothing changed
+            yet; it applies when approved
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The held operation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
         "401":
           $ref: shared/problems.yaml#/components/responses/Unauthenticated
         "403":
@@ -806,6 +941,8 @@ paths:
       summary: Reassign a schedule's owner
       description: >-
         Hands the schedule to another account, as the Action reports.schedule.reassign (ADR-0005 rule 10). This is the one schedule operation bound to reports.schedule.manage_all. The schedule pauses until the new owner resumes it, so a reassignment cannot widen what recipients receive without the new owner's act. The new owner must hold reports.run, reports.export and reports.schedule (400 with code owner_lacks_permission otherwise). Needs If-Match.
+        Preview it first with previewReassignReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle
+        for undoReportScheduleOperation.
       x-permission: reports.schedule.manage_all
       x-activediq-stability: preview
       x-activediq-limits:
@@ -825,6 +962,13 @@ paths:
         "200":
           description: The schedule, paused under its new owner
           headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The operation that made this change. It is the undo handle for undoReportScheduleOperation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
             ETag:
               required: true
               schema:
@@ -834,6 +978,22 @@ paths:
             application/json:
               schema:
                 $ref: modules/reports.yaml#/components/schemas/ReportSchedule
+        "202":
+          description: >-
+            Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. This Action never steps up
+            (TM-D30 SX-2), so it is never held step_up. Nothing changed yet; it applies when approved
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The held operation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
         "400":
           $ref: shared/problems.yaml#/components/responses/Validation
         "401":
@@ -890,6 +1050,379 @@ paths:
           $ref: shared/problems.yaml#/components/responses/NotFound
         "409":
           $ref: shared/problems.yaml#/components/responses/Conflict
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/schedules/previews/create:
+    post:
+      tags: [reports]
+      operationId: previewCreateReportSchedule
+      summary: Preview creating a schedule
+      description: >-
+        The dry run of createReportSchedule as the Action reports.schedule.create (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and
+        answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up.
+        A refusal the plan finds is a 200 with outcome refused and blocked[].code report_scope_empty, report_scope_unsupported, external_not_permitted or name_taken, never a problem; so is a gate denial.
+        Same x-permission and body as createReportSchedule. Create has no target yet, so the 404 is that of the write (the definition is unknown or not visible).
+      x-permission: reports.schedule
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+        maxBodyBytes: 32768
+      x-activediq-parity: [ADM-101]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/reports.yaml#/components/schemas/ReportScheduleWrite
+      responses:
+        "200":
+          description: The preview
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationPreview
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/schedules/{scheduleId}/previews/update:
+    post:
+      tags: [reports]
+      operationId: previewUpdateReportSchedule
+      summary: Preview replacing a schedule's settings
+      description: >-
+        The dry run of updateReportSchedule as the Action reports.schedule.update (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and
+        answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up.
+        A refusal the plan finds is a 200 with outcome refused and blocked[].code report_scope_empty, report_scope_unsupported, external_not_permitted or name_taken, never a problem; so is a gate denial.
+        Same x-permission, parameters (including If-Match) and body as updateReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+      x-permission: reports.schedule
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+        maxBodyBytes: 32768
+      x-activediq-parity: [ADM-101]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/ScheduleId
+        - $ref: modules/reports.yaml#/components/parameters/RequiredIfMatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/reports.yaml#/components/schemas/ReportScheduleWrite
+      responses:
+        "200":
+          description: The preview
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationPreview
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "412":
+          $ref: shared/problems.yaml#/components/responses/PreconditionFailed
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "428":
+          $ref: shared/problems.yaml#/components/responses/PreconditionRequired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/schedules/{scheduleId}/previews/delete:
+    post:
+      tags: [reports]
+      operationId: previewDeleteReportSchedule
+      summary: Preview deleting a schedule
+      description: >-
+        The dry run of deleteReportSchedule as the Action reports.schedule.delete (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and
+        answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up.
+        This Action has no plan refusal of its own; a gate denial is a 200 with outcome refused, never a problem.
+        Same x-permission and parameters (including If-Match) as deleteReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+      x-permission: reports.schedule
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-101]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/ScheduleId
+        - $ref: modules/reports.yaml#/components/parameters/RequiredIfMatch
+      responses:
+        "200":
+          description: The preview
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationPreview
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "412":
+          $ref: shared/problems.yaml#/components/responses/PreconditionFailed
+        "428":
+          $ref: shared/problems.yaml#/components/responses/PreconditionRequired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/schedules/{scheduleId}/previews/pause:
+    post:
+      tags: [reports]
+      operationId: previewPauseReportSchedule
+      summary: Preview pausing a schedule
+      description: >-
+        The dry run of pauseReportSchedule as the Action reports.schedule.pause (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and
+        answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up.
+        This Action has no plan refusal of its own: pausing a paused schedule is outcome no_change, and a gate denial is a 200 with outcome refused, never a problem.
+        Same x-permission and parameters as pauseReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+      x-permission: reports.schedule
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-101]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/ScheduleId
+      responses:
+        "200":
+          description: The preview
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationPreview
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/schedules/{scheduleId}/previews/resume:
+    post:
+      tags: [reports]
+      operationId: previewResumeReportSchedule
+      summary: Preview resuming a schedule
+      description: >-
+        The dry run of resumeReportSchedule as the Action reports.schedule.resume (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and
+        answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up.
+        A refusal the plan finds is a 200 with outcome refused and blocked[].code owner_only, report_scope_empty or report_scope_unsupported, never a problem; so is a gate denial. Resuming an active schedule is outcome no_change.
+        Same x-permission and parameters as resumeReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+      x-permission: reports.schedule
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-101]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/ScheduleId
+      responses:
+        "200":
+          description: The preview
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationPreview
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/schedules/{scheduleId}/previews/reassign:
+    post:
+      tags: [reports]
+      operationId: previewReassignReportSchedule
+      summary: Preview reassigning a schedule's owner
+      description: >-
+        The dry run of reassignReportSchedule as the Action reports.schedule.reassign (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and
+        answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up.
+        A refusal the plan finds is a 200 with outcome refused and blocked[].code owner_lacks_permission, never a problem; so is a gate denial.
+        Same x-permission, parameters (including If-Match) and body as reassignReportSchedule; its x-permission already is reports.schedule.manage_all.
+      x-permission: reports.schedule.manage_all
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+        maxBodyBytes: 1024
+      x-activediq-parity: [ADM-101]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/ScheduleId
+        - $ref: modules/reports.yaml#/components/parameters/RequiredIfMatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/reports.yaml#/components/schemas/ReportScheduleReassign
+      responses:
+        "200":
+          description: The preview
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationPreview
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "412":
+          $ref: shared/problems.yaml#/components/responses/PreconditionFailed
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "428":
+          $ref: shared/problems.yaml#/components/responses/PreconditionRequired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/schedules/operations/{operationId}/previews/undo:
+    post:
+      tags: [reports]
+      operationId: previewUndoReportScheduleOperation
+      summary: Preview undoing a schedule change
+      description: >-
+        The dry run of undoing one reports.schedule.* operation (ADR-0004 rule 14): it plans the inverse, reports.schedule.restore, against the live schedule for the caller, with the checks of
+        the transition it makes (modules/reports.md 8): undoing a pause resumes, so only the owner may (owner_only); undoing a reassignment needs reports.schedule.manage_all and leaves the
+        schedule paused (lossy); restoring external recipients needs reports.deliver.external, lists them in requiredConfirmations and sets stepUpRequired (TM-D30 SX-1). A plan refusal is a 200 with outcome refused. It writes,
+        persists and audits nothing. 404 when the operation is unknown, is not a reports.schedule.* operation, or its schedule is not visible to the caller. 409 operation-not-undoable when no
+        inverse can be planned at all, errors[].code irreversible, already_undone, superseded (the schedule changed after this operation; undo the later change first) or not_finished.
+      x-permission: reports.schedule
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-101]
+      parameters:
+        - $ref: shared/operation.yaml#/components/parameters/OperationId
+      responses:
+        "200":
+          description: The preview of the undo
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationPreview
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "409":
+          $ref: shared/problems.yaml#/components/responses/OperationNotUndoable
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/schedules/operations/{operationId}/undo:
+    post:
+      tags: [reports]
+      operationId: undoReportScheduleOperation
+      summary: Undo a schedule change
+      description: >-
+        Undoes one reports.schedule.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14, ADR-0005 rule 10). The undo is a new operation of the Action
+        reports.schedule.restore, planned against the live schedule for the caller with the checks of the transition it makes, run inline, audited, and itself undoable. It restores the
+        version before the operation: undoing a create archives the schedule, a delete restores it, an update restores the previous version, a pause resumes it (owner only), a resume pauses
+        it, and a reassignment restores the previous owner with the schedule still paused. It sends nothing, and a fire that ran in between is not recalled. confirmations must repeat the
+        requiredConfirmations of the undo preview (external recipients the undo restores); otherwise 400 with code external_not_confirmed. 403 when the inverse needs a permission the caller
+        lacks (errors[].code external_not_permitted, owner_only, manage_all_required). 404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone,
+        superseded, not_finished or plan_refused (the scope refusals of create). Undoing an operation that itself needed approval is always held (202).
+        Step-up (TM-D30 SX-1): undoing a create, update or resume whose restored state has an external recipient needs a fresh MFA. An interactive caller
+        without one is answered 401 step-up-required and nothing changes (401 unauthenticated without a session, as everywhere); an API token or an automation
+        is held for an approval that carries step-up (202, holdReason step_up, SX-4). The undo preview says so in stepUpRequired.
+      x-permission: reports.schedule
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: write
+        maxBodyBytes: 32768
+      x-activediq-parity: [ADM-101]
+      parameters:
+        - $ref: shared/operation.yaml#/components/parameters/OperationId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: shared/operation.yaml#/components/schemas/OperationUndoRequest
+      responses:
+        "200":
+          description: The undo operation; undoes names the operation it undid
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The undo operation. Undoing it re-applies the original change.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
+        "202":
+          description: >-
+            The undo is held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which: undo_needed_approval
+            when the undone operation needed approval, step_up when a token or automation restores an external recipient (TM-D30
+            SX-1, SX-4). Nothing changed yet
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The held undo operation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/StepUpRequired
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "409":
+          $ref: shared/problems.yaml#/components/responses/OperationNotUndoable
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
         "429":
           $ref: shared/problems.yaml#/components/responses/RateLimited
         "500":
@@ -1691,6 +2224,13 @@ components:
       type: string
       x-activediq-enum: open
       enum: [synced, stale, not_synced_yet, per_dc_read]
+    ReportStaleCause:
+      description: >-
+        Why a naming context makes a result stale. older_than_threshold: its last sync pass is older than the staleness threshold. resync_required: its change feed is unusable and a full resync is
+        needed. paused: its sync is paused, or its connection is suspended.
+      type: string
+      x-activediq-enum: open
+      enum: [older_than_threshold, resync_required, paused]
     ReportRunState:
       description: >-
         Run states (spec 8.1): queued, running, then succeeded, failed or cancelled; a succeeded run becomes expired when its result is removed.
@@ -2055,15 +2595,71 @@ components:
           type: boolean
     ReportFreshness:
       description: >-
-        The freshness label of spec 8.2. label is the text to show, such as Synced 09:41.
+        The freshness label of spec 8.2. label is the text to show, such as Synced 09:41. When state is stale, stale names every naming context that makes it stale, oldest first: the connection
+        (by id and display name), the naming context, why it is stale and when its last sync pass was. It is empty in every other state. thresholdSeconds is the staleness threshold the run was
+        judged against; it is null when the run was judged against no connection. The console shows these and derives nothing from label.
       type: object
-      required: [state, label]
+      required: [state, label, stale, thresholdSeconds]
       properties:
         state:
           $ref: modules/reports.yaml#/components/schemas/ReportFreshnessState
         label:
           type: string
           maxLength: 256
+        stale:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportStaleSource
+        thresholdSeconds:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 31536000
+    ReportStaleSource:
+      description: >-
+        One naming context behind a stale result. connectionName is the connection's display name when the run was made; it is the connection id's text when the run record predates names.
+        lastPassAt is the start of the last successful sync pass of the naming context and ageSeconds is its age when the run was made. cause says why it counts as stale.
+      type: object
+      required: [connectionId, connectionName, namingContextId, cause, lastPassAt, ageSeconds]
+      properties:
+        connectionId:
+          type: string
+          format: uuid
+        connectionName:
+          type: string
+          maxLength: 200
+        namingContextId:
+          type: string
+          format: uuid
+        cause:
+          $ref: modules/reports.yaml#/components/schemas/ReportStaleCause
+        lastPassAt:
+          type: string
+          format: date-time
+        ageSeconds:
+          type: integer
+          minimum: 0
+          maximum: 31536000
+    ReportHiddenGroup:
+      description: >-
+        A set of rows the run counted and did not store, such as probable service accounts (E2). count is the number of hidden rows after scope trimming and is at least 1: a group with nothing
+        hidden is not listed. label is the group's name in the report definition. locked is true when the report cannot show the group, so the console offers no Show control for it.
+      type: object
+      required: [id, label, count, locked]
+      properties:
+        id:
+          type: string
+          maxLength: 64
+          minLength: 1
+        label:
+          type: string
+          maxLength: 200
+        count:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        locked:
+          type: boolean
     ReportDcCoverage:
       description: >-
         How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5).
@@ -2183,9 +2779,9 @@ components:
           $ref: shared/paging.yaml#/components/schemas/PageInfo
     ReportRun:
       description: >-
-        The run record (DM-72). asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header.
+        The run record (DM-72). hiddenGroups lists the sets of rows counted and not stored; it is empty when nothing was hidden or the run has not succeeded. asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header.
       type: object
-      required: [id, definitionId, definitionVersion, presetId, state, createdBy, createdAt, startedAt, finishedAt, expiresAt, asOf, freshness, rowCount, objectsChecked, digest, scopeApplied, skippedConnections, progress, parameters]
+      required: [id, definitionId, definitionVersion, presetId, state, createdBy, createdAt, startedAt, finishedAt, expiresAt, asOf, freshness, rowCount, objectsChecked, digest, scopeApplied, skippedConnections, hiddenGroups, progress, parameters]
       properties:
         id:
           type: string
@@ -2244,6 +2840,11 @@ components:
           maxItems: 64
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportSkippedConnection
+        hiddenGroups:
+          type: array
+          maxItems: 64
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportHiddenGroup
         progress:
           $ref: modules/reports.yaml#/components/schemas/ReportRunProgress
         failure:

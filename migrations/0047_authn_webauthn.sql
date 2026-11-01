@@ -14,6 +14,7 @@
 --                               is evaluated, so a captured assertion can be submitted once and never again.
 --                               The challenge is public to the client by design; it carries no secret.
 
+-- write-class: authn_webauthn_credentials system
 CREATE TABLE public.authn_webauthn_credentials (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -69,6 +70,7 @@ CREATE TRIGGER authn_webauthn_credentials_guard BEFORE UPDATE ON public.authn_we
   FOR EACH ROW EXECUTE FUNCTION public.authn_webauthn_credentials_guard();
 ALTER TABLE public.authn_webauthn_credentials ENABLE ALWAYS TRIGGER authn_webauthn_credentials_guard;
 
+-- write-class: authn_webauthn_challenges system
 CREATE TABLE public.authn_webauthn_challenges (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   pending_id uuid NOT NULL,

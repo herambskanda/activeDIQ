@@ -7,6 +7,7 @@ import (
 	"net/url"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
+	"github.com/skenzeriq/activediq/internal/platform/httpx"
 )
 
 // BodyKind says what an operation's request body is.
@@ -61,10 +62,15 @@ type HeaderLists interface {
 type Upload struct{ io.Reader }
 
 // Stream is a binary response body (an export download).
+//
+// A download sets FileBase and FileFormat: the headers (Content-Disposition, Content-Type, nosniff) then
+// come from httpx.Headers, the one place that builds them (safe-primitives P7, §12.5 rule 5). ContentType
+// is for a stream that is not a download.
 type Stream struct {
 	io.Reader
 	ContentType string
-	Filename    string
+	FileBase    string
+	FileFormat  httpx.Format
 }
 
 // Input is the generated, typed input of one operation. apihost drives it in rule 6 order:

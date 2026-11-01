@@ -1,0 +1,52 @@
+=== RUN   TestQAHTTPExpired410
+=== RUN   TestQAHTTPExpired410/pg16
+2026/10/31 13:34:57 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:34:57 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:34:57 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:34:57 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:34:57 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:34:57 INFO api tag not mounted: no module contributes it tag=platform.setup
+    qa_http_410_test.go:23: fresh download: 200 attachment; filename="tst-01-all-20261031-1334Z.csv"; filename*=UTF-8''tst-01-all-20261031-1334Z.csv
+    qa_http_410_test.go:26: bob download: 404 {"detail":"no such export","errors":[{"code":"export_not_found","detail":"","in":"path","pointer":"exportId"}],"instance":"/api/v1/reports/exports/c4351a2e-5b70-4186-b516-08f3cdb4a69d/file","status":404,"title":"Not found","traceId":"15a6aaa4867ce069a507f24b14b96f1d","type":"/problems/not-found"}
+    qa_http_410_test.go:31: expired download: 410 application/problem+json {"detail":"the export file has expired; export the report again","instance":"/api/v1/reports/exports/c4351a2e-5b70-4186-b516-08f3cdb4a69d/file","status":410,"title":"The stored result has expired","traceId":"196ffe4a447e63612fb254bd0e465739","type":"/problems/report-result-expired"}
+    qa_http_410_test.go:36: get after expiry: 200 state=expired
+    qa_http_410_test.go:41: audit: [reports.export.created/success/ reports.export.downloaded/success/ reports.export.download_denied/denied/creator reports.export.download_denied/denied/expired]
+=== RUN   TestQAHTTPExpired410/pg18
+2026/10/31 13:35:01 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:35:01 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:35:01 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:35:01 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:35:01 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:35:01 INFO api tag not mounted: no module contributes it tag=platform.setup
+    qa_http_410_test.go:23: fresh download: 200 attachment; filename="tst-01-all-20261031-1335Z.csv"; filename*=UTF-8''tst-01-all-20261031-1335Z.csv
+    qa_http_410_test.go:26: bob download: 404 {"detail":"no such export","errors":[{"code":"export_not_found","detail":"","in":"path","pointer":"exportId"}],"instance":"/api/v1/reports/exports/cbc97543-e59a-4e15-a852-2d4b6caad3fd/file","status":404,"title":"Not found","traceId":"68f248a7f2e110cb59fbe8fa6302781e","type":"/problems/not-found"}
+    qa_http_410_test.go:31: expired download: 410 application/problem+json {"detail":"the export file has expired; export the report again","instance":"/api/v1/reports/exports/cbc97543-e59a-4e15-a852-2d4b6caad3fd/file","status":410,"title":"The stored result has expired","traceId":"fd3d6b04db3012a37c8a9d5fcb1aa410","type":"/problems/report-result-expired"}
+    qa_http_410_test.go:36: get after expiry: 200 state=expired
+    qa_http_410_test.go:41: audit: [reports.export.created/success/ reports.export.downloaded/success/ reports.export.download_denied/denied/creator reports.export.download_denied/denied/expired]
+--- PASS: TestQAHTTPExpired410 (9.23s)
+    --- PASS: TestQAHTTPExpired410/pg16 (5.22s)
+    --- PASS: TestQAHTTPExpired410/pg18 (4.01s)
+=== RUN   TestQANoBlob
+=== RUN   TestQANoBlob/pg16
+2026/10/31 13:35:03 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:35:03 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:35:03 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:35:03 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:35:03 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:35:03 INFO api tag not mounted: no module contributes it tag=platform.setup
+    qa_noblob_503_test.go:17: no blob store: 503 map[detail:exports are not available until a file store is configured for this installation instance:/api/v1/reports/runs/d3a9c414-728e-47b7-8ab2-11e0c6ba77c3/exports status:503 title:The service is not ready traceId:e63533b3120d6a9691d1aeee1bbb27e7 type:/problems/not-ready]
+    qa_noblob_503_test.go:19: report_exports rows: 0
+=== RUN   TestQANoBlob/pg18
+2026/10/31 13:35:04 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 13:35:04 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 13:35:04 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 13:35:04 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 13:35:04 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/10/31 13:35:04 INFO api tag not mounted: no module contributes it tag=platform.setup
+    qa_noblob_503_test.go:17: no blob store: 503 map[detail:exports are not available until a file store is configured for this installation instance:/api/v1/reports/runs/a858edf6-5192-4343-8f08-cd5d1ce80dab/exports status:503 title:The service is not ready traceId:cc270e243eae7be9348be1d1e3d07de8 type:/problems/not-ready]
+    qa_noblob_503_test.go:19: report_exports rows: 0
+--- PASS: TestQANoBlob (2.26s)
+    --- PASS: TestQANoBlob/pg16 (1.55s)
+    --- PASS: TestQANoBlob/pg18 (0.71s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/modules/reports	13.527s

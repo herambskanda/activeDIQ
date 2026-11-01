@@ -181,6 +181,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/directory/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search the directory (universal search)
+         * @description Universal search (directory.search; IA 5.3, ADR-0011). Answers users, groups, computers and contacts whose name or identifier matches q, grouped by type, each group ranked (exact identifier, then prefix, then fuzzy; live before deleted, enabled before disabled) and already carrying what an admin needs to tell two objects apart: no second call is needed to render a row. The query travels in the POST body, never in a path or query string, so it stays out of URLs and access logs (ADR-0011 rule 15); this is a read, it changes nothing, and it needs no Idempotency-Key. q is typed text, not a filter: LDAP, SQL and wildcard syntax have no meaning and are never passed through. The server normalises q (Unicode NFKC, case folding) before matching.
+         *     Trimming comes before counting (LF-39, T-0875). Every hit, count, flag and cursor in the answer is computed from objects the caller is permitted to read under directory.read, and from nothing else. There is no total over the unscoped directory, and no field changes with what the scope hides. A group never says how many objects exist, only how many the caller may see, and a truncated group says so with the flag more instead of a number.
+         *     refine. When the text matches so many keys in the tenant that the server will not rank them (ADR-0011 rule 13), refine is true. The answer then carries no count, no more flag and no cursor on any group, so the client shows "Keep typing to narrow the search". Hits of a better match class than the one that overflowed are still returned (an exact identifier still finds its object). refine is the same for every caller who holds the same permissions, whatever their scope, so it is never a zero-result answer that a hidden OU could cause.
+         *     counts. A group's count is present only when the normalised q has at least 3 characters and refine is false. For a shorter q, a group shows its first hits and "Show all" with no number.
+         *     Show all. A group's nextCursor, passed back with the same q and type, pages that one group, 50 hits per page (groupLimit applies up to 50), in the same order, and stops at 1,000 permitted hits with limitReached true. A cursor is opaque and bound to the query, class set, type and the caller's scope; a cursor presented with anything else is refused with 400 and reads nothing. Pages re-run the search, so they can shift if the inventory changes in between.
+         *     Refusals. 400 (errors[].code): query_too_short (q is empty after normalisation), query_too_long (over 256 characters), query_invalid (a NUL or invalid UTF-8), query_refused (q looks like a 48-digit BitLocker recovery password; it is refused and never echoed, logged or traced), cursor_invalid (bad, forged or mismatched cursor), cursor_requires_type (a cursor without type). 403 when the caller lacks directory.read. 429 when the client is over its rate limit. 503 search-unavailable, with a trace ID and no count, when the search cannot finish in time. No refusal repeats q.
+         */
+        post: operations["searchDirectory"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/directory/users": {
         parameters: {
             query?: never;
@@ -509,7 +534,7 @@ export interface paths {
         put?: never;
         /**
          * Create a schedule
-         * @description Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal ("Data leaves your organisation"), or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only. Scheduled data is what the owner can see, not what a recipient can see. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner, so a retried create is a 400 with code name_taken and changes nothing.
+         * @description Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal ("Data leaves your organisation"), or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only. Scheduled data is what the owner can see, not what a recipient can see. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner, so a retried create is a 400 with code name_taken and changes nothing. Preview it first with previewCreateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         post: operations["createReportSchedule"];
         delete?: never;
@@ -532,13 +557,13 @@ export interface paths {
         get: operations["getReportSchedule"];
         /**
          * Replace a schedule's settings
-         * @description Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version. Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external address that is new or changed. Changing another owner's schedule additionally needs reports.schedule.manage_all. The scope refusals of create apply.
+         * @description Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version. Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external address that is new or changed. Changing another owner's schedule additionally needs reports.schedule.manage_all. The scope refusals of create apply. Preview it first with previewUpdateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         put: operations["updateReportSchedule"];
         post?: never;
         /**
          * Delete a schedule
-         * @description Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire.
+         * @description Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire. Preview it first with previewDeleteReportSchedule (same parameters, including If-Match; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         delete: operations["deleteReportSchedule"];
         options?: never;
@@ -556,7 +581,7 @@ export interface paths {
         get?: never;
         /**
          * Reassign a schedule's owner
-         * @description Hands the schedule to another account, as the Action reports.schedule.reassign (ADR-0005 rule 10). This is the one schedule operation bound to reports.schedule.manage_all. The schedule pauses until the new owner resumes it, so a reassignment cannot widen what recipients receive without the new owner's act. The new owner must hold reports.run, reports.export and reports.schedule (400 with code owner_lacks_permission otherwise). Needs If-Match.
+         * @description Hands the schedule to another account, as the Action reports.schedule.reassign (ADR-0005 rule 10). This is the one schedule operation bound to reports.schedule.manage_all. The schedule pauses until the new owner resumes it, so a reassignment cannot widen what recipients receive without the new owner's act. The new owner must hold reports.run, reports.export and reports.schedule (400 with code owner_lacks_permission otherwise). Needs If-Match. Preview it first with previewReassignReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         put: operations["reassignReportSchedule"];
         post?: never;
@@ -577,9 +602,109 @@ export interface paths {
         put?: never;
         /**
          * Pause a schedule
-         * @description Pauses the schedule, as the Action reports.schedule.pause (ADR-0005 rule 10). A paused schedule fires nothing until it is resumed. Pausing another owner's schedule additionally needs reports.schedule.manage_all. A pause the system makes under the owner-authority rule is not this operation; it is audited as an event and shows as pausedReason.
+         * @description Pauses the schedule, as the Action reports.schedule.pause (ADR-0005 rule 10). A paused schedule fires nothing until it is resumed. Pausing another owner's schedule additionally needs reports.schedule.manage_all. A pause the system makes under the owner-authority rule is not this operation; it is audited as an event and shows as pausedReason. Preview it first with previewPauseReportSchedule (same parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         post: operations["pauseReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/previews/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview deleting a schedule
+         * @description The dry run of deleteReportSchedule as the Action reports.schedule.delete (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. This Action has no plan refusal of its own; a gate denial is a 200 with outcome refused, never a problem. Same x-permission and parameters (including If-Match) as deleteReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         */
+        post: operations["previewDeleteReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/previews/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview pausing a schedule
+         * @description The dry run of pauseReportSchedule as the Action reports.schedule.pause (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. This Action has no plan refusal of its own: pausing a paused schedule is outcome no_change, and a gate denial is a 200 with outcome refused, never a problem. Same x-permission and parameters as pauseReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         */
+        post: operations["previewPauseReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/previews/reassign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview reassigning a schedule's owner
+         * @description The dry run of reassignReportSchedule as the Action reports.schedule.reassign (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code owner_lacks_permission, never a problem; so is a gate denial. Same x-permission, parameters (including If-Match) and body as reassignReportSchedule; its x-permission already is reports.schedule.manage_all.
+         */
+        post: operations["previewReassignReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/previews/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview resuming a schedule
+         * @description The dry run of resumeReportSchedule as the Action reports.schedule.resume (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code owner_only, report_scope_empty or report_scope_unsupported, never a problem; so is a gate denial. Resuming an active schedule is outcome no_change. Same x-permission and parameters as resumeReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         */
+        post: operations["previewResumeReportSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/{scheduleId}/previews/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview replacing a schedule's settings
+         * @description The dry run of updateReportSchedule as the Action reports.schedule.update (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code report_scope_empty, report_scope_unsupported, external_not_permitted or name_taken, never a problem; so is a gate denial. Same x-permission, parameters (including If-Match) and body as updateReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         */
+        post: operations["previewUpdateReportSchedule"];
         delete?: never;
         options?: never;
         head?: never;
@@ -597,7 +722,7 @@ export interface paths {
         put?: never;
         /**
          * Resume a schedule
-         * @description Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this.
+         * @description Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this. Preview it first with previewResumeReportSchedule (same parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         post: operations["resumeReportSchedule"];
         delete?: never;
@@ -620,6 +745,66 @@ export interface paths {
          * @description Fires the schedule once now, exactly as a scheduled fire: a run of the pinned definition under the owner's current scope and permissions, then delivery to each recipient, every external address re-evaluated against the current allowed domains. Answers the run. Only the schedule's owner may call this, because the run is the owner's and reports.schedule.manage_all never opens another owner's runs (modules/reports.md 6.6); anyone else, a manage_all holder included, gets 404. It is bookkeeping, not an Action. A per-DC schedule cannot be run now more often than daily (409). A schedule whose owner is disabled or has lost a permission is paused instead (409).
          */
         post: operations["runReportScheduleNow"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/operations/{operationId}/previews/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview undoing a schedule change
+         * @description The dry run of undoing one reports.schedule.* operation (ADR-0004 rule 14): it plans the inverse, reports.schedule.restore, against the live schedule for the caller, with the checks of the transition it makes (modules/reports.md 8): undoing a pause resumes, so only the owner may (owner_only); undoing a reassignment needs reports.schedule.manage_all and leaves the schedule paused (lossy); restoring external recipients needs reports.deliver.external, lists them in requiredConfirmations and sets stepUpRequired (TM-D30 SX-1). A plan refusal is a 200 with outcome refused. It writes, persists and audits nothing. 404 when the operation is unknown, is not a reports.schedule.* operation, or its schedule is not visible to the caller. 409 operation-not-undoable when no inverse can be planned at all, errors[].code irreversible, already_undone, superseded (the schedule changed after this operation; undo the later change first) or not_finished.
+         */
+        post: operations["previewUndoReportScheduleOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/operations/{operationId}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a schedule change
+         * @description Undoes one reports.schedule.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14, ADR-0005 rule 10). The undo is a new operation of the Action reports.schedule.restore, planned against the live schedule for the caller with the checks of the transition it makes, run inline, audited, and itself undoable. It restores the version before the operation: undoing a create archives the schedule, a delete restores it, an update restores the previous version, a pause resumes it (owner only), a resume pauses it, and a reassignment restores the previous owner with the schedule still paused. It sends nothing, and a fire that ran in between is not recalled. confirmations must repeat the requiredConfirmations of the undo preview (external recipients the undo restores); otherwise 400 with code external_not_confirmed. 403 when the inverse needs a permission the caller lacks (errors[].code external_not_permitted, owner_only, manage_all_required). 404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded, not_finished or plan_refused (the scope refusals of create). Undoing an operation that itself needed approval is always held (202). Step-up (TM-D30 SX-1): undoing a create, update or resume whose restored state has an external recipient needs a fresh MFA. An interactive caller without one is answered 401 step-up-required and nothing changes (401 unauthenticated without a session, as everywhere); an API token or an automation is held for an approval that carries step-up (202, holdReason step_up, SX-4). The undo preview says so in stepUpRequired.
+         */
+        post: operations["undoReportScheduleOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/schedules/previews/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview creating a schedule
+         * @description The dry run of createReportSchedule as the Action reports.schedule.create (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code report_scope_empty, report_scope_unsupported, external_not_permitted or name_taken, never a problem; so is a gate denial. Same x-permission and body as createReportSchedule. Create has no target yet, so the 404 is that of the write (the definition is unknown or not visible).
+         */
+        post: operations["previewCreateReportSchedule"];
         delete?: never;
         options?: never;
         head?: never;
@@ -700,6 +885,109 @@ export interface components {
         DelegationId: string;
         /** @description Permission names, each of the form family.noun.verb. Duplicates are collapsed. */
         DelegationPermissions: string[];
+        /** @description One status chip of a hit. kind says which; at or days carry its value when it has one. */
+        DirectorySearchChip: {
+            /**
+             * Format: date-time
+             * @description When it happened or will happen (locked, accountExpires, deleted).
+             */
+            at?: string;
+            /** @description Whole days left (passwordExpiresInDays). */
+            days?: number;
+            kind: components["schemas"]["DirectorySearchChipKind"];
+        };
+        /**
+         * @description One status of the object, as the IA 5.3 chips show it. at is present for locked, accountExpires and deleted when the time is known; days is present for passwordExpiresInDays. There is no free-form status text: the client words every chip.
+         * @enum {string}
+         */
+        DirectorySearchChipKind: "locked" | "disabled" | "passwordExpired" | "passwordExpiresInDays" | "accountExpires" | "deleted" | "tier0" | "cloudOnly" | (string & {});
+        /** @description What tells two objects with one name apart. Each member is present only when the inventory holds it; the client joins what is there (title, then office or department). */
+        DirectorySearchDisambiguator: {
+            department?: string;
+            office?: string;
+            title?: string;
+        };
+        /** @description The permitted hits of one type. count, more and nextCursor describe only objects the caller may read; none of them can be used to infer what the scope hides. Under refine, count, more and nextCursor are all absent. */
+        DirectorySearchGroup: {
+            /** @description How many objects of this type the caller may see for this text: the trimmed result, never a total over the directory. Absent when the normalised text has under 3 characters, and when refine is true. */
+            count?: number;
+            items: components["schemas"]["DirectorySearchHit"][];
+            /** @description True when paging stopped at 1,000 permitted hits. The client shows "refine your search"; there is no further cursor. The stop depends only on permitted hits. */
+            limitReached?: boolean;
+            /** @description True when the caller may see more hits than items holds. A flag, never a number. Absent when refine is true. */
+            more?: boolean;
+            /** @description Pass back with the same q and type to get the next page. Absent on the last page, and when refine is true. */
+            nextCursor?: string;
+            type: components["schemas"]["DirectorySearchObjectType"];
+        };
+        /** @description A matched stretch of one field, counted in Unicode code points from the start of the field's value (not UTF-16 units, not bytes). A hit that matched on a key the row does not show (a SID, say) has no highlight. */
+        DirectorySearchHighlight: {
+            field: components["schemas"]["DirectorySearchHighlightField"];
+            length: number;
+            start: number;
+        };
+        /**
+         * @description The field of the hit a highlight range refers to.
+         * @enum {string}
+         */
+        DirectorySearchHighlightField: "displayName" | "samAccountName" | "userPrincipalName" | "mail" | (string & {});
+        /** @description One permitted object, with everything a row shows. objectId is the key; distinguishedName is an attribute for display and may change when the object moves. */
+        DirectorySearchHit: {
+            disambiguator?: components["schemas"]["DirectorySearchDisambiguator"];
+            displayName: string;
+            distinguishedName: string;
+            /** @description The DNS name of the object's domain. The client shows it when the answer spans more than one. */
+            domain: string;
+            highlights: components["schemas"]["DirectorySearchHighlight"][];
+            mail?: string;
+            matchClass: components["schemas"]["DirectorySearchMatchClass"];
+            /**
+             * Format: uuid
+             * @description The objectGUID.
+             */
+            objectId: string;
+            samAccountName?: string;
+            /** @description Status chips, most urgent first. Empty when none applies. */
+            status: components["schemas"]["DirectorySearchChip"][];
+            type: components["schemas"]["DirectorySearchObjectType"];
+            userPrincipalName?: string;
+        };
+        /**
+         * @description How the hit matched, best first. An object appears once, in its best class.
+         * @enum {string}
+         */
+        DirectorySearchMatchClass: "exact" | "prefix" | "fuzzy" | (string & {});
+        /**
+         * @description The kind of object a group or a hit is. The group order of a full answer is users, groups, computers, contacts.
+         * @enum {string}
+         */
+        DirectorySearchObjectType: "users" | "groups" | "computers" | "contacts" | (string & {});
+        /** @description The search. q is typed text and never a filter. type narrows to one kind of object; it is required with a cursor. */
+        DirectorySearchRequest: {
+            cursor?: components["schemas"]["Cursor"];
+            /** @description The most hits per group; 5 when absent. With a cursor it is the page size. */
+            groupLimit?: number;
+            /** @description The text to find, as the admin typed it: a name, a logon name, a UPN or e-mail, a SID, a GUID, a DN or a host name. Up to 256 characters. Never sent in a URL. */
+            q: string;
+            type?: components["schemas"]["DirectorySearchType"];
+        };
+        /** @description The grouped, permitted hits of one search, with the freshness of the inventory behind them. */
+        DirectorySearchResult: {
+            /**
+             * Format: date-time
+             * @description When the inventory behind this answer was last synced (the oldest of the connections the caller may read). The search reads the inventory, not the live directory. Null when nothing has synced yet.
+             */
+            asOf: string | null;
+            /** @description One group per requested type, in the order users, groups, computers, contacts, even when a group is empty. */
+            groups: components["schemas"]["DirectorySearchGroup"][];
+            /** @description True when the text is too broad to rank. No group then carries a count, a more flag or a cursor. The same for every caller with the same permissions. */
+            refine: boolean;
+        };
+        /**
+         * @description The kind of object to search. Without it all four are searched.
+         * @enum {string}
+         */
+        DirectorySearchType: "users" | "groups" | "computers" | "contacts";
         /** @description A user as search shows it. Only these fields; the objectGuid is the key. */
         DirectoryUser: {
             displayName: string;
@@ -784,6 +1072,171 @@ export interface components {
             /** Format: uuid */
             guid: string;
             rdns: components["schemas"]["Rdn"][];
+        };
+        OperationBlocked: {
+            code: string;
+            target: components["schemas"]["OperationTarget"];
+        };
+        /** @description One changed field. field is the camelCase member path in the target's resource schema. before is absent when the field is set for the first time or the target is created; after is absent when it is removed or the target deleted. (The dialect allows only primitive nullables, so absence is a variant of OperationValue, not null.) */
+        OperationChange: {
+            after: components["schemas"]["OperationValue"];
+            before: components["schemas"]["OperationValue"];
+            field: string;
+        };
+        /** @description One confirmation the caller gives after reading the preview. items repeats, exactly, the items of the requiredConfirmations entry of the same kind. */
+        OperationConfirmation: {
+            items: string[];
+            kind: components["schemas"]["OperationConfirmationKind"];
+        };
+        /**
+         * @description What the caller confirms. A closed request enum.
+         * @enum {string}
+         */
+        OperationConfirmationKind: "external_recipients";
+        /**
+         * @description A confirmation the submit needs. external_recipients is "Data leaves your organisation". Clients accept values they do not know, and a client that does not know a kind cannot submit.
+         * @enum {string}
+         */
+        OperationConfirmationKindValue: "external_recipients" | (string & {});
+        /**
+         * @description Why an operation is held for approval (ADR-0005 rule 8), mirroring the kernel's HoldReason (internal/platform/operation/holds.go). step_up: the Action needs a fresh MFA and the initiator cannot give one (an API token or an automation, TM-D30 SX-4); an approval that carries step-up releases it. blast_radius: an automation touches more objects than its limit. irreversible: the tenant requires approval for irreversible changes. undo_needed_approval: the undo of an operation that itself needed approval. gate: the registered approval gate asked for it. none: not held. (The dialect has no nullable $ref, so "not held" is a value, as HoldNone is in the kernel.) Clients accept values they do not know.
+         * @enum {string}
+         */
+        OperationHoldReasonValue: "none" | "step_up" | "blast_radius" | "irreversible" | "undo_needed_approval" | "gate" | (string & {});
+        /** @description What submitting the previewed request would do now. holdReason is the hold the submit would get when outcome is needs_approval, and none otherwise. stepUpRequired is true when the submit needs a fresh MFA (TM-D30 SX-1): an interactive caller without one is answered 401 step-up-required, and a token or automation is held step_up. */
+        OperationPreview: {
+            action: string;
+            actionVersion: number;
+            blocked: components["schemas"]["OperationBlocked"][];
+            holdReason: components["schemas"]["OperationHoldReasonValue"];
+            outcome: components["schemas"]["OperationPreviewOutcome"];
+            planHash: string;
+            requiredConfirmations: components["schemas"]["OperationRequiredConfirmation"][];
+            reversibility: components["schemas"]["OperationReversibilityValue"];
+            steps: components["schemas"]["OperationStepPreview"][];
+            stepUpRequired: boolean;
+            undo: components["schemas"]["OperationUndoPlan"];
+        };
+        /**
+         * @description What submitting this exact request would do now: ready, no_change, needs_approval (ADR-0005 rule 8), refused (a step is blocked or the gate denies). Clients accept values they do not know.
+         * @enum {string}
+         */
+        OperationPreviewOutcome: "ready" | "no_change" | "needs_approval" | "refused" | (string & {});
+        /** @description An operation as a write answers it. holdReason says why a held (awaiting_approval) operation waits, so a client can tell an approval that carries step-up from a policy approval; it is none when the operation is not held. */
+        OperationRef: {
+            action: string;
+            holdReason: components["schemas"]["OperationHoldReasonValue"];
+            /** Format: uuid */
+            id: string;
+            state: components["schemas"]["OperationStateValue"];
+            /** Format: uuid */
+            undoes: string | null;
+        };
+        OperationRequiredConfirmation: {
+            items: string[];
+            kind: components["schemas"]["OperationConfirmationKindValue"];
+        };
+        /**
+         * @description How far an undo restores the before-state (ADR-0005 rule 1). Clients accept values they do not know.
+         * @enum {string}
+         */
+        OperationReversibilityValue: "reversible" | "lossy" | "irreversible" | (string & {});
+        /**
+         * @description An operation's state (ADR-0005 rule 3, DM-41). Clients accept values they do not know.
+         * @enum {string}
+         */
+        OperationStateValue: "draft" | "planning" | "planned" | "awaiting_approval" | "approved" | "queued" | "running" | "cancelling" | "no_change" | "plan_failed" | "rejected" | "succeeded" | "partially_succeeded" | "failed" | "cancelled" | (string & {});
+        OperationStepPreview: {
+            changes: components["schemas"]["OperationChange"][];
+            reversibility: components["schemas"]["OperationReversibilityValue"];
+            reversibilityReason: string | null;
+            target: components["schemas"]["OperationTarget"];
+        };
+        OperationTarget: components["schemas"]["OperationTargetStore"] | components["schemas"]["OperationTargetDirectory"];
+        OperationTargetDirectory: {
+            /** Format: uuid */
+            connectionId: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationTargetDirectory";
+            /** Format: uuid */
+            objectGuid: string | null;
+        };
+        OperationTargetStore: {
+            id: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationTargetStore";
+            resource: string;
+        };
+        OperationUndoPlan: {
+            possible: boolean;
+            reversibility: components["schemas"]["OperationReversibilityValue"];
+        };
+        /** @description Starts the undo of an operation. confirmations carries every confirmation the undo preview listed in requiredConfirmations; an empty list when it listed none. */
+        OperationUndoRequest: {
+            confirmations: components["schemas"]["OperationConfirmation"][];
+        };
+        /** @description One side of a change, rendered by the Action for display. redacted stands for a secret or an erased personal value. */
+        OperationValue: components["schemas"]["OperationValueText"] | components["schemas"]["OperationValueTextList"] | components["schemas"]["OperationValueInteger"] | components["schemas"]["OperationValueBoolean"] | components["schemas"]["OperationValueTime"] | components["schemas"]["OperationValueRedacted"] | components["schemas"]["OperationValueAbsent"];
+        OperationValueAbsent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueAbsent";
+        };
+        OperationValueBoolean: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueBoolean";
+            value: boolean;
+        };
+        OperationValueInteger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueInteger";
+            value: number;
+        };
+        OperationValueRedacted: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueRedacted";
+        };
+        OperationValueText: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueText";
+            value: string;
+        };
+        OperationValueTextList: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueTextList";
+            values: string[];
+        };
+        OperationValueTime: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "OperationValueTime";
+            /** Format: date-time */
+            value: string;
         };
         /** @description Cursor paging of a directory collection. Order is stable; nextCursor is null on the last page. */
         PageInfo: {
@@ -1135,16 +1588,25 @@ export interface components {
         };
         /** @description A filter as the server stores it. A condition's column is a registry column ID. */
         ReportFilterView: components["schemas"]["ReportFilterGroupView"] | components["schemas"]["ReportFilterConditionView"];
-        /** @description The freshness label of spec 8.2. label is the text to show, such as Synced 09:41. */
+        /** @description The freshness label of spec 8.2. label is the text to show, such as Synced 09:41. When state is stale, stale names every naming context that makes it stale, oldest first: the connection (by id and display name), the naming context, why it is stale and when its last sync pass was. It is empty in every other state. thresholdSeconds is the staleness threshold the run was judged against; it is null when the run was judged against no connection. The console shows these and derives nothing from label. */
         ReportFreshness: {
             label: string;
+            stale: components["schemas"]["ReportStaleSource"][];
             state: components["schemas"]["ReportFreshnessState"];
+            thresholdSeconds: number | null;
         };
         /**
          * @description The freshness label of spec 8.2. per_dc_read is the only state that may be called live.
          * @enum {string}
          */
         ReportFreshnessState: "synced" | "stale" | "not_synced_yet" | "per_dc_read" | (string & {});
+        /** @description A set of rows the run counted and did not store, such as probable service accounts (E2). count is the number of hidden rows after scope trimming and is at least 1: a group with nothing hidden is not listed. label is the group's name in the report definition. locked is true when the report cannot show the group, so the console offers no Show control for it. */
+        ReportHiddenGroup: {
+            count: number;
+            id: string;
+            label: string;
+            locked: boolean;
+        };
         /** @description The latest fire. */
         ReportLastRun: {
             outcome: components["schemas"]["ReportLastRunOutcome"];
@@ -1390,7 +1852,7 @@ export interface components {
             /** Format: uuid */
             runId: string;
         };
-        /** @description The run record (DM-72). asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header. */
+        /** @description The run record (DM-72). hiddenGroups lists the sets of rows counted and not stored; it is empty when nothing was hidden or the run has not succeeded. asOf is the oldest sync watermark among the covered naming contexts. rowCount, objectsChecked and digest are set when the run succeeds; both counts are after scope trimming. digest is the SHA-256 over the canonical form of the stored rows (spec 8.3). scopeApplied is the human-readable summary shown in the header. */
         ReportRun: {
             /** Format: date-time */
             asOf: string | null;
@@ -1408,6 +1870,7 @@ export interface components {
             /** Format: date-time */
             finishedAt: string | null;
             freshness: components["schemas"]["ReportFreshness"];
+            hiddenGroups: components["schemas"]["ReportHiddenGroup"][];
             /** Format: uuid */
             id: string;
             objectsChecked: number | null;
@@ -1570,6 +2033,23 @@ export interface components {
          * @enum {string}
          */
         ReportSortOrder: "asc" | "desc";
+        /**
+         * @description Why a naming context makes a result stale. older_than_threshold: its last sync pass is older than the staleness threshold. resync_required: its change feed is unusable and a full resync is needed. paused: its sync is paused, or its connection is suspended.
+         * @enum {string}
+         */
+        ReportStaleCause: "older_than_threshold" | "resync_required" | "paused" | (string & {});
+        /** @description One naming context behind a stale result. connectionName is the connection's display name when the run was made; it is the connection id's text when the run record predates names. lastPassAt is the start of the last successful sync pass of the naming context and ageSeconds is its age when the run was made. cause says why it counts as stale. */
+        ReportStaleSource: {
+            ageSeconds: number;
+            cause: components["schemas"]["ReportStaleCause"];
+            /** Format: uuid */
+            connectionId: string;
+            connectionName: string;
+            /** Format: date-time */
+            lastPassAt: string;
+            /** Format: uuid */
+            namingContextId: string;
+        };
         /** @description A group or user a report is about (GRP-02, GRP-03), by connection and objectGUID. */
         ReportSubjectRef: {
             /** Format: uuid */
@@ -1853,6 +2333,7 @@ export interface components {
                  * @example {
                  *       "status": 403,
                  *       "title": "You are not allowed to do this",
+                 *       "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
                  *       "type": "/problems/forbidden"
                  *     }
                  */
@@ -1971,6 +2452,22 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description The operation cannot be undone; errors[].code says why (irreversible, already_undone, superseded, not_finished, tier0_blocked, plan_refused) */
+        OperationNotUndoable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 409,
+                 *       "title": "The operation cannot be undone",
+                 *       "type": "/problems/operation-not-undoable"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description The password does not meet the policy */
         PasswordPolicyViolation: {
             headers: {
@@ -2045,6 +2542,7 @@ export interface components {
                  * @example {
                  *       "status": 429,
                  *       "title": "Too many requests",
+                 *       "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
                  *       "type": "/problems/rate-limited"
                  *     }
                  */
@@ -2110,6 +2608,50 @@ export interface components {
                  *       "status": 409,
                  *       "title": "The scope uses a kind that reports cannot evaluate",
                  *       "type": "/problems/report-scope-unsupported"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The search text or cursor cannot be used. errors[].code says why: query_too_short (empty after normalisation), query_too_long (over 256 characters), query_invalid (NUL or invalid UTF-8), query_refused (the text looks like a 48-digit BitLocker recovery password: refused without echoing, logging or tracing it; the same answer whatever the digits), cursor_invalid (bad, forged or mismatched cursor), cursor_requires_type. Neither detail nor errors ever repeat the text. */
+        SearchQueryInvalid: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "detail": "The search text is empty.",
+                 *       "errors": [
+                 *         {
+                 *           "code": "query_too_short",
+                 *           "detail": "Enter at least one character.",
+                 *           "in": "body",
+                 *           "pointer": "/q"
+                 *         }
+                 *       ],
+                 *       "status": 400,
+                 *       "title": "The search text cannot be used",
+                 *       "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+                 *       "type": "/problems/search-query-invalid"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description Search could not finish in time */
+        SearchUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "detail": "Search could not finish. Try again, or narrow the text.",
+                 *       "status": 503,
+                 *       "title": "Search is unavailable",
+                 *       "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+                 *       "type": "/problems/search-unavailable"
                  *     }
                  */
                 "application/problem+json": components["schemas"]["Problem"];
@@ -2231,6 +2773,8 @@ export interface components {
         IdempotencyKey: string;
         /** @description The ETag of the version being changed; a stale value answers precondition-failed. */
         IfMatch: string;
+        /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+        OperationId: string;
         /** @description The nextCursor of the previous page. */
         PageCursor: components["schemas"]["Cursor"];
         /** @description The page size. */
@@ -2525,6 +3069,37 @@ export interface operations {
             400: components["responses"]["Validation"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
+        };
+    };
+    searchDirectory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DirectorySearchRequest"];
+            };
+        };
+        responses: {
+            /** @description The groups, each trimmed to the caller's scope */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DirectorySearchResult"];
+                };
+            };
+            400: components["responses"]["SearchQueryInvalid"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            501: components["responses"]["NotImplemented"];
+            503: components["responses"]["SearchUnavailable"];
         };
     };
     searchDirectoryUsers: {
@@ -3159,12 +3734,25 @@ export interface operations {
             /** @description The schedule is created */
             201: {
                 headers: {
+                    /** @description The operation that made this change. It is the undo handle for undoReportScheduleOperation. */
+                    "ActiveDIQ-Operation-Id": string;
                     ETag: string;
                     Location?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which, for example step_up when a token or automation makes a change whose after-state has an external recipient (TM-D30 SX-1, SX-4). Nothing changed yet; it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
                 };
             };
             400: components["responses"]["Validation"];
@@ -3230,11 +3818,24 @@ export interface operations {
             /** @description The schedule as stored */
             200: {
                 headers: {
+                    /** @description The operation that made this change. It is the undo handle for undoReportScheduleOperation. */
+                    "ActiveDIQ-Operation-Id": string;
                     ETag: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which, for example step_up when a token or automation makes a change whose after-state has an external recipient (TM-D30 SX-1, SX-4). Nothing changed yet; it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
                 };
             };
             400: components["responses"]["Validation"];
@@ -3266,9 +3867,22 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. This Action never steps up (TM-D30 SX-2), so it is never held step_up. Nothing changed yet; it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
             /** @description The schedule is deleted */
             204: {
                 headers: {
+                    /** @description The operation that made this change. It is the undo handle for undoReportScheduleOperation. */
+                    "ActiveDIQ-Operation-Id": string;
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -3304,11 +3918,24 @@ export interface operations {
             /** @description The schedule, paused under its new owner */
             200: {
                 headers: {
+                    /** @description The operation that made this change. It is the undo handle for undoReportScheduleOperation. */
+                    "ActiveDIQ-Operation-Id": string;
                     ETag: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. This Action never steps up (TM-D30 SX-2), so it is never held step_up. Nothing changed yet; it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
                 };
             };
             400: components["responses"]["Validation"];
@@ -3338,6 +3965,8 @@ export interface operations {
             /** @description The schedule, paused */
             200: {
                 headers: {
+                    /** @description The operation that made this change. It is the undo handle for undoReportScheduleOperation. */
+                    "ActiveDIQ-Operation-Id": string;
                     ETag: string;
                     [name: string]: unknown;
                 };
@@ -3345,9 +3974,189 @@ export interface operations {
                     "application/json": components["schemas"]["ReportSchedule"];
                 };
             };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. This Action never steps up (TM-D30 SX-2), so it is never held step_up. Nothing changed yet; it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewDeleteReportSchedule: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewPauseReportSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewReassignReportSchedule: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleReassign"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewResumeReportSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUpdateReportSchedule: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path: {
+                /** @description The schedule. */
+                scheduleId: components["parameters"]["ScheduleId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleWrite"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };
@@ -3367,11 +4176,24 @@ export interface operations {
             /** @description The schedule, active */
             200: {
                 headers: {
+                    /** @description The operation that made this change. It is the undo handle for undoReportScheduleOperation. */
+                    "ActiveDIQ-Operation-Id": string;
                     ETag: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["ReportSchedule"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which, for example step_up when a token or automation makes a change whose after-state has an external recipient (TM-D30 SX-1, SX-4). Nothing changed yet; it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -3409,6 +4231,116 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUndoReportScheduleOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview of the undo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["OperationNotUndoable"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    undoReportScheduleOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationUndoRequest"];
+            };
+        };
+        responses: {
+            /** @description The undo operation; undoes names the operation it undid */
+            200: {
+                headers: {
+                    /** @description The undo operation. Undoing it re-applies the original change. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description The undo is held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which: undo_needed_approval when the undone operation needed approval, step_up when a token or automation restores an external recipient (TM-D30 SX-1, SX-4). Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held undo operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["StepUpRequired"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["OperationNotUndoable"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewCreateReportSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleWrite"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };

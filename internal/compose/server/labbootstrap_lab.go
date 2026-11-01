@@ -175,18 +175,33 @@ func labDisplayName(sp labSpec) string { return "lab: " + sp.Name }
 
 // openLab opens the lab session and serves it, verification and reads, from an in-process connector.
 func openLab(ctx context.Context, sp labSpec) (client.LabConnector, func(), error) {
+	srv, closeSrv, err := openLabServer(ctx, sp)
+	if err != nil {
+		return client.LabConnector{}, nil, err
+	}
+	cl, stop, err := client.DialInProcess(srv)
+	if err != nil {
+		closeSrv()
+		return client.LabConnector{}, nil, err
+	}
+	return cl, func() { stop(); closeSrv() }, nil
+}
+
+// openLabServer opens the lab session and builds the connector's served side over it: the real rights
+// check and the real read handler. openLab dials it in process; the tunnel e2e serves it over a fleet tunnel.
+func openLabServer(ctx context.Context, sp labSpec) (*labServer, func(), error) {
 	pem, err := os.ReadFile(sp.CAPath)
 	if err != nil {
-		return client.LabConnector{}, nil, errors.New("CA file unreadable")
+		return nil, nil, errors.New("CA file unreadable")
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pem) {
-		return client.LabConnector{}, nil, errors.New("CA file is not valid PEM")
+		return nil, nil, errors.New("CA file is not valid PEM")
 	}
 	sess, err := ad.Open(ctx, ad.Config{Servers: []string{sp.Server}, ServerName: sp.ServerName, RootCAs: pool, PageSize: 500,
 		Credential: ad.Credential{BindName: sp.BindName, Password: sp.Password}})
 	if err != nil {
-		return client.LabConnector{}, nil, fmt.Errorf("open directory session: code %s", ad.CodeOf(err))
+		return nil, nil, fmt.Errorf("open directory session: code %s", ad.CodeOf(err))
 	}
 	ok := false
 	defer func() {
@@ -197,45 +212,45 @@ func openLab(ctx context.Context, sp labSpec) (client.LabConnector, func(), erro
 	// The directory identity is the forest root NC head's objectGUID, read from the DC.
 	rd, err := sess.RootDSE(ctx)
 	if err != nil {
-		return client.LabConnector{}, nil, fmt.Errorf("rootDSE: code %s", ad.CodeOf(err))
+		return nil, nil, fmt.Errorf("rootDSE: code %s", ad.CodeOf(err))
 	}
 	ref, err := dn.ParseObjectRef(rd.RootDomainNamingContext)
 	if err != nil {
-		return client.LabConnector{}, nil, errors.New("root naming context is not a DN")
+		return nil, nil, errors.New("root naming context is not a DN")
 	}
 	head, err := sess.Read(ctx, ref, []string{"objectGUID"}, ad.ReadOptions{})
 	if err != nil {
-		return client.LabConnector{}, nil, fmt.Errorf("read forest root: code %s", ad.CodeOf(err))
+		return nil, nil, fmt.Errorf("read forest root: code %s", ad.CodeOf(err))
 	}
 	g, err := head.GUID()
 	if err != nil {
-		return client.LabConnector{}, nil, errors.New("forest root has no objectGUID")
+		return nil, nil, errors.New("forest root has no objectGUID")
 	}
 	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{ForestRootNcGuid: write.GUIDToWire(g)}}}
 
 	self, err := selfRef(ctx, sess, ref, sp.BindName)
 	if err != nil {
-		return client.LabConnector{}, nil, err
+		return nil, nil, err
 	}
 	prov := write.NewADProvider(sess, nil, ident, &labPinStore{})
 	src, err := read.NewADSource(sess, prov)
 	if err != nil {
-		return client.LabConnector{}, nil, errors.New("read source")
+		return nil, nil, errors.New("read source")
 	}
 	h, err := read.New(src)
 	if err != nil {
-		return client.LabConnector{}, nil, errors.New("read handler")
+		return nil, nil, errors.New("read handler")
 	}
 	// The verification handler: the real rights check over this session. Its epoch baseline and records
 	// live in a private directory that goes with the process (a lab connector has no host to keep them).
 	dir, err := os.MkdirTemp("", "activediq-lab-connector-")
 	if err != nil {
-		return client.LabConnector{}, nil, errors.New("lab connector state directory")
+		return nil, nil, errors.New("lab connector state directory")
 	}
 	gate, err := write.NewGateBook(labBaseline{}, nil)
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		return client.LabConnector{}, nil, errors.New("lab write gate")
+		return nil, nil, errors.New("lab write gate")
 	}
 	epoch := rights.NewEpochState(rights.FileBaselineStore{Path: filepath.Join(dir, "baseline.json")},
 		rights.FileRecordSink{Path: filepath.Join(dir, "records.log")}, nil)
@@ -243,15 +258,10 @@ func openLab(ctx context.Context, sp labSpec) (client.LabConnector, func(), erro
 		Directory: ident, Gate: gate, OnLocalRecordFailed: gate.CloseLocalRecordFailed})
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		return client.LabConnector{}, nil, errors.New("verify handler")
-	}
-	cl, stop, err := client.DialInProcess(&labServer{verify: rights.NewServer(vh), read: read.NewServer(h)})
-	if err != nil {
-		_ = os.RemoveAll(dir)
-		return client.LabConnector{}, nil, err
+		return nil, nil, errors.New("verify handler")
 	}
 	ok = true
-	return cl, func() { stop(); sess.Close(); _ = os.RemoveAll(dir) }, nil
+	return &labServer{verify: rights.NewServer(vh), read: read.NewServer(h)}, func() { sess.Close(); _ = os.RemoveAll(dir) }, nil
 }
 
 // labBaseline is the in-memory write.Baseline of a lab connector: the ratchet needs no durability

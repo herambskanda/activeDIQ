@@ -1,0 +1,8 @@
+ok  	github.com/skenzeriq/activediq/tools/fitness/tenancy	98.926s
+?   	github.com/skenzeriq/activediq/tools/fitness/tenancy/registry	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/tenancy/static	9.369s
+ok  	github.com/skenzeriq/activediq/tools/fitness/reports	2.969s
+?   	github.com/skenzeriq/activediq/tools/fitness/safeprim	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/safeprim/scan	242.019s
+ok  	github.com/skenzeriq/activediq/tools/fitness/ports	24.578s
+ok  	github.com/skenzeriq/activediq/tools/fitness/objectid	6.175s

@@ -17,8 +17,8 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/labadmin"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
-	"github.com/skenzeriq/activediq/internal/modules/directory"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
@@ -148,7 +148,7 @@ func newLabDirectory(t *testing.T, s *storetest.Server) *labDirectory {
 		t.Fatal(err)
 	}
 	lp := labPorts{tenant: tid.String()}
-	srv, err := apihost.Build(doc, []apihost.TagHandlers{tag}, pol, apihost.Permissions{string(directory.ReadPermission), "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"},
+	srv, err := apihost.Build(doc, []apihost.TagHandlers{tag}, pol, apitest.Catalogue(doc),
 		apihost.Ports{Authn: lp, Authz: lp, Limits: lp, StepUp: lp})
 	if err != nil {
 		t.Fatal(err)

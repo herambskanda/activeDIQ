@@ -2,7 +2,8 @@ package report
 
 import (
 	"encoding/binary"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strconv"
 	"time"
 
@@ -76,6 +77,24 @@ func ListCell(vs ...string) Cell {
 // Kind returns the cell's kind.
 func (c Cell) Kind() CellKind { return c.kind }
 
+// Text is the text of a text or enum cell (an enum's stable ID); "" for any other kind.
+func (c Cell) Text() string { return c.s }
+
+// Int is the value of an integer cell; 0 for any other kind.
+func (c Cell) Int() int64 { return c.i }
+
+// Bool is the value of a boolean cell; false for any other kind.
+func (c Cell) Bool() bool { return c.b }
+
+// Time is the instant of a time cell (UTC, whole seconds); the zero time for any other kind.
+func (c Cell) Time() time.Time { return c.t }
+
+// GUID is the value of a GUID cell; the zero ID for any other kind.
+func (c Cell) GUID() authz.ObjectID { return c.g }
+
+// List is a copy of the elements of a text-list cell; nil for any other kind.
+func (c Cell) List() []string { return append([]string(nil), c.l...) }
+
 // IsUnknown reports whether the cell is Unknown.
 func (c Cell) IsUnknown() bool { return c.kind == CellUnknown }
 
@@ -120,24 +139,24 @@ func (c Cell) MarshalJSON() ([]byte, error) {
 	tag := c.Tag()
 	switch c.kind {
 	case CellText, CellEnum:
-		return json.Marshal([]any{tag, c.s})
+		return json.Marshal([]any{tag, c.s}, wireOpts)
 	case CellInt:
-		return json.Marshal([]any{tag, strconv.FormatInt(c.i, 10)})
+		return json.Marshal([]any{tag, strconv.FormatInt(c.i, 10)}, wireOpts)
 	case CellBool:
-		return json.Marshal([]any{tag, c.b})
+		return json.Marshal([]any{tag, c.b}, wireOpts)
 	case CellTime:
-		return json.Marshal([]any{tag, c.t.Format(time.RFC3339)})
+		return json.Marshal([]any{tag, c.t.Format(time.RFC3339)}, wireOpts)
 	case CellGUID:
-		return json.Marshal([]any{tag, GUIDString(c.g)})
+		return json.Marshal([]any{tag, GUIDString(c.g)}, wireOpts)
 	case CellTextList:
-		return json.Marshal([]any{tag, c.l})
+		return json.Marshal([]any{tag, c.l}, wireOpts)
 	}
-	return json.Marshal([]any{tag})
+	return json.Marshal([]any{tag}, wireOpts)
 }
 
 // UnmarshalJSON reads what MarshalJSON writes and refuses any other shape.
 func (c *Cell) UnmarshalJSON(b []byte) error {
-	var parts []json.RawMessage
+	var parts []jsontext.Value
 	if err := json.Unmarshal(b, &parts); err != nil || len(parts) == 0 || len(parts) > 2 {
 		return verr(CodeBadValue, "cell")
 	}

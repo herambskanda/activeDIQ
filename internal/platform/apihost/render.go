@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
+	"github.com/skenzeriq/activediq/internal/platform/httpx"
 )
 
 // This file and chain.go are the only code in internal/** that writes an HTTP status
@@ -121,13 +122,21 @@ func writeResponse(w http.ResponseWriter, r *http.Request, meta RouteMeta, resp 
 	case nil:
 		w.WriteHeader(status)
 	case Stream:
-		ct := b.ContentType
-		if ct == "" {
-			ct = "application/octet-stream"
+		if c, ok := b.Reader.(io.Closer); ok {
+			defer c.Close() // a file or blob handle is released whether or not the body is sent
 		}
-		h.Set("Content-Type", ct)
-		// Content-Disposition is set only by httpx.Attachment (safe-primitives P7, §12.5 rule 5), which
-		// does not exist yet: a Stream's Filename is not emitted until it does.
+		if b.FileFormat != 0 {
+			if err := httpx.Headers(h, b.FileBase, b.FileFormat); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+		} else {
+			ct := b.ContentType
+			if ct == "" {
+				ct = "application/octet-stream"
+			}
+			h.Set("Content-Type", ct)
+		}
 		w.WriteHeader(status)
 		if r.Method != http.MethodHead && b.Reader != nil {
 			_, _ = io.Copy(w, b.Reader) // the status is out; a mid-stream failure can only close the connection

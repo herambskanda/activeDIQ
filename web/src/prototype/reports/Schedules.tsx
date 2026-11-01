@@ -1,6 +1,13 @@
 import { useId, useMemo, useState } from "react";
 
-import { type Column, DataGrid, type DataGridColumn, Table } from "../../ds/components";
+import {
+  type Column,
+  DataGrid,
+  type DataGridColumn,
+  SegmentedControl,
+  SideSheet,
+  Table,
+} from "../../ds/components";
 import type { RecipientState, SchedRecipient, Schedule } from "./fixtures";
 
 const STATE_LABEL: Record<RecipientState, string> = {
@@ -134,26 +141,20 @@ export function Schedules(props: {
           </p>
         </div>
       </div>
-      <div className="rp__filters" role="radiogroup" aria-label="Show">
-        {(
-          [
-            ["all", `All ${schedules.length}`],
-            ["attention", `Needs attention ${attention}`],
-            ["paused", `Paused ${schedules.filter((s) => s.state === "paused").length}`],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            role="radio"
-            aria-checked={filter === id}
-            className={`rp__seg${filter === id ? " rp__seg--on" : ""}`}
-            onClick={() => setFilter(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        className="rp__filters"
+        label="Show"
+        value={filter}
+        onChange={(id) => id !== null && setFilter(id as typeof filter)}
+        options={[
+          { value: "all", label: `All ${schedules.length}` },
+          { value: "attention", label: `Needs attention ${attention}` },
+          {
+            value: "paused",
+            label: `Paused ${schedules.filter((s) => s.state === "paused").length}`,
+          },
+        ]}
+      />
       {picked.length > 0 ? (
         <div className="rp__bulk" role="region" aria-label="Selected schedules" id={bulkId}>
           {confirm === null ? (
@@ -288,76 +289,67 @@ function Detail(props: {
   readonly onDelete: () => void;
 }) {
   const { s, onClose, onToggle, onDelete } = props;
-  const uid = useId();
   const [confirmDelete, setConfirmDelete] = useState(false);
   return (
-    <div className="pt__sheetwrap" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div
-        className="pt__sheet rp__sheet--wide"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={`${uid}-h`}
-        onKeyDown={(e) => e.key === "Escape" && onClose()}
-      >
-        <div>
-          <h2 id={`${uid}-h`}>{s.name}</h2>
-          <p className="pt__sub">
-            {s.report} · {s.when} · owner {s.owner}
-          </p>
+    <SideSheet
+      open
+      onClose={onClose}
+      width="wide"
+      title={s.name}
+      description={`${s.report} · ${s.when} · owner ${s.owner}`}
+    >
+      {s.state === "paused" && s.pausedWhy ? (
+        <div className="pt__banner" role="status">
+          <span>
+            <strong>⏸ Paused.</strong> {s.pausedWhy}
+          </span>
         </div>
-        {s.state === "paused" && s.pausedWhy ? (
-          <div className="pt__banner" role="status">
-            <span>
-              <strong>⏸ Paused.</strong> {s.pausedWhy}
-            </span>
-          </div>
-        ) : null}
-        <h3 className="rp__h3">Delivery, per recipient (last run)</h3>
-        <Table
-          caption="Delivery, per recipient (last run)"
-          rows={s.recipients}
-          rowKey={(r) => r.who}
-          columns={RECIPIENT_COLUMNS}
-        />
-        <h3 className="rp__h3">Runs</h3>
-        {s.runs.length === 0 ? (
-          <p className="pt__sub">
-            Not run yet. The first run is {s.next}. Each run is listed here with the scope it used.
-          </p>
-        ) : (
-          <Table caption="Runs" rows={s.runs} rowKey={(r) => r.at} columns={RUN_COLUMNS} />
-        )}
-        {s.notifyOnlyIfData ? <p className="pt__sub">“Only send if there is data” is on.</p> : null}
-        <div className="pt__actions rp__sticky">
-          {s.owner === "You" ? (
-            <button type="button" className="btn" onClick={onToggle}>
-              {s.state === "active" ? "Pause" : "Resume"}
-            </button>
-          ) : (
-            <span className="pt__sub">Only {s.owner} or a schedule manager can change this.</span>
-          )}
-          {s.owner === "You" ? (
-            confirmDelete ? (
-              <>
-                <span>Delete this schedule and its run history link?</span>
-                <button type="button" className="btn btn--danger" onClick={onDelete}>
-                  Delete schedule
-                </button>
-                <button type="button" className="btn" onClick={() => setConfirmDelete(false)}>
-                  Keep
-                </button>
-              </>
-            ) : (
-              <button type="button" className="btn" onClick={() => setConfirmDelete(true)}>
-                Delete…
-              </button>
-            )
-          ) : null}
-          <button type="button" className="btn" onClick={onClose}>
-            Close <span className="pt__kbd">Esc</span>
+      ) : null}
+      <h3 className="rp__h3">Delivery, per recipient (last run)</h3>
+      <Table
+        caption="Delivery, per recipient (last run)"
+        rows={s.recipients}
+        rowKey={(r) => r.who}
+        columns={RECIPIENT_COLUMNS}
+      />
+      <h3 className="rp__h3">Runs</h3>
+      {s.runs.length === 0 ? (
+        <p className="pt__sub">
+          Not run yet. The first run is {s.next}. Each run is listed here with the scope it used.
+        </p>
+      ) : (
+        <Table caption="Runs" rows={s.runs} rowKey={(r) => r.at} columns={RUN_COLUMNS} />
+      )}
+      {s.notifyOnlyIfData ? <p className="pt__sub">“Only send if there is data” is on.</p> : null}
+      <div className="pt__actions rp__sticky">
+        {s.owner === "You" ? (
+          <button type="button" className="btn" onClick={onToggle}>
+            {s.state === "active" ? "Pause" : "Resume"}
           </button>
-        </div>
+        ) : (
+          <span className="pt__sub">Only {s.owner} or a schedule manager can change this.</span>
+        )}
+        {s.owner === "You" ? (
+          confirmDelete ? (
+            <>
+              <span>Delete this schedule and its run history link?</span>
+              <button type="button" className="btn btn--danger" onClick={onDelete}>
+                Delete schedule
+              </button>
+              <button type="button" className="btn" onClick={() => setConfirmDelete(false)}>
+                Keep
+              </button>
+            </>
+          ) : (
+            <button type="button" className="btn" onClick={() => setConfirmDelete(true)}>
+              Delete…
+            </button>
+          )
+        ) : null}
+        <button type="button" className="btn" onClick={onClose}>
+          Close <span className="pt__kbd">Esc</span>
+        </button>
       </div>
-    </div>
+    </SideSheet>
   );
 }

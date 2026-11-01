@@ -1,0 +1,32 @@
+ok  	github.com/skenzeriq/activediq/internal/compose/agent	1.348s
+ok  	github.com/skenzeriq/activediq/internal/compose/config	0.019s
+ok  	github.com/skenzeriq/activediq/internal/compose/connector	0.050s
+ok  	github.com/skenzeriq/activediq/internal/compose/edge	0.005s
+ok  	github.com/skenzeriq/activediq/internal/compose/fleetproof	17.679s
+ok  	github.com/skenzeriq/activediq/internal/compose/profile	0.008s
+ok  	github.com/skenzeriq/activediq/internal/compose/server	108.981s
+ok  	github.com/skenzeriq/activediq/internal/compose/server/entra	0.061s
+ok  	github.com/skenzeriq/activediq/internal/compose/tunnelbind	0.018s
+ok  	github.com/skenzeriq/activediq/internal/platform/store	52.237s
+?   	github.com/skenzeriq/activediq/internal/platform/store/exempt	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/store/owners	0.005s
+ok  	github.com/skenzeriq/activediq/internal/platform/store/reportsql	17.081s
+ok  	github.com/skenzeriq/activediq/internal/platform/store/storetest	7.628s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost	0.113s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitest	0.025s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitypes	0.013s
+ok  	github.com/skenzeriq/activediq/tools/gen/api	2.624s
+ok  	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture	0.017s
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/internal/modules/widgets/api	[no test files]
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/shared	[no test files]
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/stub/filter	[no test files]
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/stub/secret	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/gen/modules	0.183s
+ok  	github.com/skenzeriq/activediq/tools/gen/policyjson	0.008s
+ok  	github.com/skenzeriq/activediq/tools/gen/proto	4.657s
+ok  	github.com/skenzeriq/activediq/tools/fitness/reports	3.146s
+ok  	github.com/skenzeriq/activediq/tools/fitness/modules	0.308s
+ok  	github.com/skenzeriq/activediq/migrations	21.810s
+  pending   RP10 Test_delivery_link_authorised_by_delivery_row (row B11 has not landed it) (not yet checked, not a pass)
+  note      RP7 lock history: not compared (no -lock-base): a LOCK edited together with its definition passes
+fitness-reports: ok (RP2, RP3, RP7 and the landed bound tests as listed; RP1 runs in fitness-safeprim; pending parts above; ADR-0010 stays out of accepted until none is pending)

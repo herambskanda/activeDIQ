@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,9 +15,11 @@ import (
 	"github.com/skenzeriq/activediq/internal/modules/reports"
 	"github.com/skenzeriq/activediq/internal/modules/reports/api"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
+	"github.com/skenzeriq/activediq/internal/platform/operation"
 )
 
-const wantOperations = 21
+const wantOperations = 29 // 21 on main (T-0866, T-0891) + 6 preview twins + the undo pair (T-0892, ADR-0004 rule 14)
 
 var fivePermissions = map[string]bool{
 	string(reports.RunPermission):               true,
@@ -28,7 +31,7 @@ var fivePermissions = map[string]bool{
 
 // Acceptance 1 and 3: every reports operation binds exactly one of the five permissions of spec 8.5 and
 // carries a limit class; reports.deliver.external is bound to none (it guards the external-recipient case
-// inside the schedule Action), and reports.schedule.manage_all only to the reassign operation.
+// inside the schedule Action), and reports.schedule.manage_all only to the reassign operation and its preview twin.
 func TestEveryReportsOperationBindsOneSpecPermissionAndAClass(t *testing.T) {
 	doc, err := apihost.LoadDocument()
 	if err != nil {
@@ -46,8 +49,8 @@ func TestEveryReportsOperationBindsOneSpecPermissionAndAClass(t *testing.T) {
 		if op.Permission == string(reports.DeliverExternalPermission) {
 			t.Errorf("%s binds reports.deliver.external; it may only guard the external-recipient case", op.ID)
 		}
-		if op.Permission == string(reports.ScheduleManageAllPermission) && op.ID != "reassignReportSchedule" {
-			t.Errorf("%s binds reports.schedule.manage_all; only reassignReportSchedule may", op.ID)
+		if op.Permission == string(reports.ScheduleManageAllPermission) && op.ID != "reassignReportSchedule" && op.ID != "previewReassignReportSchedule" {
+			t.Errorf("%s binds reports.schedule.manage_all; only reassignReportSchedule and its preview twin may", op.ID)
 		}
 		if op.ID == "reassignReportSchedule" && op.Permission != string(reports.ScheduleManageAllPermission) {
 			t.Errorf("reassignReportSchedule binds %q", op.Permission)
@@ -210,8 +213,7 @@ func postRun(t *testing.T, s *stub, body string) *httptest.ResponseRecorder {
 	if err != nil {
 		t.Fatal(err)
 	}
-	perms := apihost.Permissions{"reports.deliver.external", "reports.export", "reports.run", "reports.schedule", "reports.schedule.manage_all",
-		"directory.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}
+	perms := apitest.Catalogue(doc)
 	srv, err := apihost.Build(doc, []apihost.TagHandlers{api.Bind(s)}, pol, perms, apihost.Ports{Authn: ports{}, Authz: ports{}, Limits: ports{}, StepUp: ports{}})
 	if err != nil {
 		t.Fatal(err)
@@ -346,4 +348,197 @@ func TestRunReadGateIsDeclaredOnEveryRunRead(t *testing.T) {
 			t.Errorf("ReportFailureReason lacks %s", reason)
 		}
 	}
+}
+
+// T-0892, ADR-0004 rule 14 (the per-module evidence until fitness-api A15, T-0976, checks every tag): each
+// reports.schedule.* write has a preview twin with the same permission, path parameters, If-Match and request
+// body that answers the shared OperationPreview; every 2xx of the write carries ActiveDIQ-Operation-Id and it
+// declares 202 OperationRef; and the family has its undo pair bound to reports.schedule.
+func TestScheduleActionsHavePreviewTwinsAndAnUndoPair(t *testing.T) {
+	raw, err := os.ReadFile("../../platform/apihost/spec/openapi.gen.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d map[string]any
+	if err := jsonv2.Unmarshal(raw, &d); err != nil {
+		t.Fatal(err)
+	}
+	type found struct {
+		path, method string
+		op           map[string]any
+	}
+	ops := map[string]found{}
+	for path, item := range at(t, d, "paths") {
+		for method, o := range item.(map[string]any) {
+			om, ok := o.(map[string]any)
+			if !ok {
+				continue
+			}
+			if id, _ := om["operationId"].(string); id != "" {
+				ops[id] = found{path, method, om}
+			}
+		}
+	}
+	ref := func(v any) string {
+		m, _ := v.(map[string]any)
+		r, _ := m["$ref"].(string)
+		return r
+	}
+	params := func(o map[string]any) []string {
+		var out []string
+		for _, p := range anyList(o["parameters"]) {
+			out = append(out, ref(p))
+		}
+		return out
+	}
+	bodyRef := func(o map[string]any) string {
+		rb, _ := o["requestBody"].(map[string]any)
+		if rb == nil {
+			return ""
+		}
+		c, _ := rb["content"].(map[string]any)
+		j, _ := c["application/json"].(map[string]any)
+		return ref(j["schema"])
+	}
+	respRef := func(o map[string]any, code string) (schema string, headers map[string]any) {
+		r, _ := o["responses"].(map[string]any)[code].(map[string]any)
+		if r == nil {
+			return "", nil
+		}
+		headers, _ = r["headers"].(map[string]any)
+		if c, _ := r["content"].(map[string]any); c != nil {
+			j, _ := c["application/json"].(map[string]any)
+			schema = ref(j["schema"])
+		}
+		return schema, headers
+	}
+	const (
+		preview = "#/components/schemas/OperationPreview"
+		opRef   = "#/components/schemas/OperationRef"
+		header  = "ActiveDIQ-Operation-Id"
+	)
+	writes := map[string]struct{ twin, verb, ok string }{
+		"createReportSchedule":   {"previewCreateReportSchedule", "create", "201"},
+		"updateReportSchedule":   {"previewUpdateReportSchedule", "update", "200"},
+		"deleteReportSchedule":   {"previewDeleteReportSchedule", "delete", "204"},
+		"pauseReportSchedule":    {"previewPauseReportSchedule", "pause", "200"},
+		"resumeReportSchedule":   {"previewResumeReportSchedule", "resume", "200"},
+		"reassignReportSchedule": {"previewReassignReportSchedule", "reassign", "200"},
+	}
+	for id, w := range writes {
+		wr, ok := ops[id]
+		if !ok {
+			t.Fatalf("%s is missing", id)
+		}
+		tw, ok := ops[w.twin]
+		if !ok {
+			t.Errorf("%s has no preview twin %s", id, w.twin)
+			continue
+		}
+		if tw.method != "post" || !strings.HasSuffix(tw.path, "/previews/"+w.verb) {
+			t.Errorf("%s: twin is %s %s, want POST .../previews/%s", id, tw.method, tw.path, w.verb)
+		}
+		if tw.op["x-permission"] != wr.op["x-permission"] {
+			t.Errorf("%s: twin binds %v, write binds %v", id, tw.op["x-permission"], wr.op["x-permission"])
+		}
+		if a, b := strings.Join(params(tw.op), ","), strings.Join(params(wr.op), ","); a != b {
+			t.Errorf("%s: twin parameters %q, write parameters %q", id, a, b)
+		}
+		if a, b := bodyRef(tw.op), bodyRef(wr.op); a != b {
+			t.Errorf("%s: twin body %q, write body %q", id, a, b)
+		}
+		if s, _ := respRef(tw.op, "200"); s != preview {
+			t.Errorf("%s: twin answers %q, want %s", w.twin, s, preview)
+		}
+		for code := range wr.op["responses"].(map[string]any) {
+			if code[0] != '2' {
+				continue
+			}
+			if _, h := respRef(wr.op, code); h[header] == nil {
+				t.Errorf("%s %s lacks the %s header", id, code, header)
+			}
+		}
+		if s, _ := respRef(wr.op, w.ok); w.ok != "204" && s == "" {
+			t.Errorf("%s %s has no body", id, w.ok)
+		}
+		if s, _ := respRef(wr.op, "202"); s != opRef {
+			t.Errorf("%s: 202 answers %q, want %s", id, s, opRef)
+		}
+	}
+	for id, want := range map[string]string{"undoReportScheduleOperation": opRef, "previewUndoReportScheduleOperation": preview} {
+		u, ok := ops[id]
+		if !ok {
+			t.Errorf("the reports.schedule family has no %s", id)
+			continue
+		}
+		if u.op["x-permission"] != string(reports.SchedulePermission) {
+			t.Errorf("%s binds %v, want the family base permission %s", id, u.op["x-permission"], reports.SchedulePermission)
+		}
+		if !strings.HasPrefix(u.path, "/reports/schedules/operations/{operationId}/") {
+			t.Errorf("%s path %q", id, u.path)
+		}
+		if s, _ := respRef(u.op, "200"); s != want {
+			t.Errorf("%s answers %q, want %s", id, s, want)
+		}
+	}
+	if s, h := respRef(ops["undoReportScheduleOperation"].op, "200"); s == "" || h[header] == nil {
+		t.Errorf("undoReportScheduleOperation 200 lacks %s", header)
+	}
+	if s, _ := respRef(ops["undoReportScheduleOperation"].op, "202"); s != opRef {
+		t.Errorf("undoReportScheduleOperation 202 answers %q, want %s", s, opRef)
+	}
+
+	// The held answer says why it is held (TM-D30 SX-4): OperationRef carries a required holdReason of the
+	// open enum that mirrors the kernel's HoldReason, and the preview uses the same enum.
+	const holdRef = "#/components/schemas/OperationHoldReasonValue"
+	schemas := at(t, d, "components", "schemas")
+	for _, name := range []string{"OperationRef", "OperationPreview"} {
+		sc, _ := schemas[name].(map[string]any)
+		props, _ := sc["properties"].(map[string]any)
+		if ref(props["holdReason"]) != holdRef {
+			t.Errorf("%s.holdReason is %v, want $ref %s", name, props["holdReason"], holdRef)
+		}
+		if !slices.Contains(anyList(sc["required"]), any("holdReason")) {
+			t.Errorf("%s does not require holdReason", name)
+		}
+	}
+	hr, _ := schemas["OperationHoldReasonValue"].(map[string]any)
+	if hr["x-activediq-enum"] != "open" {
+		t.Errorf("OperationHoldReasonValue is a response enum and must be open")
+	}
+	got := map[string]bool{}
+	for _, v := range anyList(hr["enum"]) {
+		got[v.(string)] = true
+	}
+	for _, h := range []operation.HoldReason{operation.HoldStepUp, operation.HoldBlastRadius, operation.HoldIrreversible, operation.HoldUndoNeededAppr, operation.HoldGate} {
+		if !got[string(h)] {
+			t.Errorf("OperationHoldReasonValue lacks the kernel hold reason %q", h)
+		}
+	}
+	if !got["none"] || len(got) != 6 {
+		t.Errorf("OperationHoldReasonValue is %v, want none plus the five kernel hold reasons", hr["enum"])
+	}
+
+	// The undo restores external recipients under step-up (TM-D30 SX-1, R6): it declares 401 step-up-required.
+	r401, _ := ops["undoReportScheduleOperation"].op["responses"].(map[string]any)["401"]
+	if ref(r401) != "#/components/responses/StepUpRequired" {
+		t.Errorf("undoReportScheduleOperation 401 is %v, want $ref StepUpRequired", r401)
+	}
+	// The header that names the undo handle has the format of the OperationId path parameter it feeds.
+	for id := range writes {
+		for code, r := range ops[id].op["responses"].(map[string]any) {
+			if code[0] != '2' {
+				continue
+			}
+			h, _ := r.(map[string]any)["headers"].(map[string]any)[header].(map[string]any)
+			if sc, _ := h["schema"].(map[string]any); sc["format"] != "uuid" {
+				t.Errorf("%s %s: %s is not format uuid", id, code, header)
+			}
+		}
+	}
+}
+
+func anyList(v any) []any {
+	l, _ := v.([]any)
+	return l
 }
