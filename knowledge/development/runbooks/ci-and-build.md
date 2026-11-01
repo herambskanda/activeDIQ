@@ -324,8 +324,10 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
 - **Proof it fails:** `hostcheck_test.go` has one violating fixture per case (and asserts no other case trips);
   `make ci-proof` runs `host evaluate` on a compliant observation and on eight mutated ones.
 - **Setup secret (T-0636):** on linux-oci `HOST-SETUP-SECRET-SINGLE-USE` is active: the harness reads the
-  secret file's tar header (mode/owner), POSTs it twice to `/api/v1/setup/claim` over verified TLS (first 204,
-  second must be 401), and boots a second server with `ACTIVEDIQ_SETUP_TTL=2s` to present an expired secret
+  secret file's tar header (mode/owner), POSTs it twice to `/api/v1/setup/claim` over verified TLS with a valid
+  `owner{displayName,email}` block (the route validates the owner before the secret, so a body without one gets a
+  400 that proves nothing, T-1161; `claim_test.go` judges the body with the server's own validator) (first 204,
+  second must be 401; an unexpected status prints the server log), and boots a second server with `ACTIVEDIQ_SETUP_TTL=2s` to present an expired secret
   (must be 401). The harness also provisions the KEK (`kek init` into a volume) because the server has no
   default custody model; without it no boot gets past start-up. Windows stays INACTIVE for this case until the
   MSI exists (T-0635) and the lab collector grows the same probe.
