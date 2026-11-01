@@ -16,3 +16,5 @@ When a blocked ticket only waits for another ticket to finish (for example T-003
 - Leave a note on both tickets.
 
 Re-triage is throttled by `triaged_at` and `blocked_retriage_hours`, so leaving the ticket blocked does not cause triage spam.
+- Walk the whole chain down to its root. A blocker sitting in backlog never runs (T-1077 → T-1044/T-0987 → T-0916, 2026-11-01), so ready every link and raise the root's priority.
+- `ticket ready` refuses a ticket with no acceptance criteria, and no CLI command adds AC later. Cancel it and re-create it with `--ac` (T-1044 → T-1151), then point the waiting ticket's depends_on at the new ID.

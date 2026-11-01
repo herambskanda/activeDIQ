@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "../api/client";
 import { Skeleton, StatePanel, Button } from "../ds/components";
-import { collectContributions, type WebModule } from "./modules";
+import { collectContributions, matchRoute, type WebModule } from "./modules";
 import { loadSession, SIGN_IN_PATH, type SessionClient, safeNext } from "./session";
 import { SignInPage } from "./sign-in";
 
@@ -98,7 +98,7 @@ export function Shell({
 
   if (path === SIGN_IN_PATH) return null; // signed in already: the effect above moves on
   if (routes.length === 0) return null;
-  const route = routes.find((r) => r.path === (path === "/" ? HOME_PATH : path));
+  const route = matchRoute(routes, path === "/" ? HOME_PATH : path);
   if (!route) {
     return (
       <main style={{ padding: "var(--diq-space-5)" }}>

@@ -69,7 +69,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	defer db.Close()
 	// Capabilities come from the deployment profile once config selects one; no module requires
 	// one yet. The directory services are built from the store, so boot follows the open.
-	_, reportHost, err := bootReport(ctx, capability.NewSet(), directoryServices(db), owners.Lookup)
+	contrib, reportHost, err := bootReport(ctx, capability.NewSet(), directoryServices(db), owners.Lookup)
 	if err != nil {
 		return fmt.Errorf("server: boot modules: %w", err)
 	}
@@ -183,7 +183,13 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	tags = append(tags, setupTags...)
 	// directory.users.search: the connection registry for the active connection and its service-account
 	// gate, the connector source for the ScopedSearch RPC (over the tunnel the connector dialled).
-	dirTag, err := buildDirectory(db, conns, csrc, reads, nil)
+	// The read-scope producer search and reports share (T-0916): rbac.ReadScopes over the authorizer and
+	// the EP-6 evaluators the booted modules contributed.
+	readScopes, err := buildReadScopes(authzr, contrib)
+	if err != nil {
+		return err
+	}
+	dirTag, err := buildDirectory(db, conns, csrc, reads, txReadScopes{db: db, rs: readScopes})
 	if err != nil {
 		return err
 	}
@@ -192,7 +198,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// before the API is built so the kinds register with the handlers; the retention cadence is seeded
 	// once the tenant exists.
 	jreg := jobs.NewRegistry()
-	reportRuns, reportTag, err := buildReports(ctx, db, reportHost, jreg, ok.Chainer, inventory.NewReader(db, nil), nil, authzr, cfg.BlobDir)
+	reportRuns, reportTag, err := buildReports(ctx, db, reportHost, jreg, ok.Chainer, inventory.NewReader(db, nil), readScopes, authzr, cfg.BlobDir)
 	if err != nil {
 		return err
 	}

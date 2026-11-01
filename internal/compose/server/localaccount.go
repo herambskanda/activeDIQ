@@ -15,6 +15,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
+	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -157,6 +158,10 @@ func grantDirectoryReader(ctx context.Context, d localAccountDeps, t tenant.ID, 
 	if err != nil {
 		return err
 	}
+	conns, err := activeADConnections(ctx, d.DB, t)
+	if err != nil {
+		return err
+	}
 	rid := roleID(t)
 	return d.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
 		// The role is created in its own savepoint-free step: an existing role (a second account) is fine.
@@ -173,11 +178,46 @@ func grantDirectoryReader(ctx context.Context, d localAccountDeps, t tenant.ID, 
 		if err := tx.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&aid); err != nil {
 			return err
 		}
-		return g.GrantBootstrap(ctx, tx, cliActor, rbac.GrantInput{
+		if err := g.GrantBootstrap(ctx, tx, cliActor, rbac.GrantInput{
 			ID: aid, RoleID: rid, Subject: rbac.SubjectRef{Kind: rbac.SubjectAccount, Account: account},
 			Roots: []rbac.Root{{Kind: rbac.TenantStore, Connection: t.String(), GUID: t.String()}},
-		})
+		}); err != nil {
+			return err
+		}
+		// The tenant-store root reaches activeDIQ's own store and contributes nothing to directory reads
+		// (rbac.ReadScopes), so the account also reads each AD connection that is active now: one
+		// naming_context assignment on the connection's directory identity (T-0987). A connection
+		// activated later is granted by an administrator through the role API; nothing here widens
+		// to a connection the account was not created beside.
+		for _, c := range conns {
+			if err := tx.QueryRow(ctx, `SELECT gen_random_uuid()::text`).Scan(&aid); err != nil {
+				return err
+			}
+			if err := g.GrantBootstrap(ctx, tx, cliActor, rbac.GrantInput{
+				ID: aid, RoleID: rid, Subject: rbac.SubjectRef{Kind: rbac.SubjectAccount, Account: account},
+				Roots: []rbac.Root{{Kind: rbac.NamingContext, Connection: string(c.ID), GUID: string(c.DirectoryIdentity)}},
+			}); err != nil {
+				return fmt.Errorf("server: grant directory read on connection %s: %w", c.ID, err)
+			}
+		}
+		return nil
 	})
+}
+
+// activeADConnections lists the tenant's active AD connections: the ones a naming_context assignment can
+// name (the head of the forest root naming context is the connection's directory identity).
+func activeADConnections(ctx context.Context, db *store.DB, t tenant.ID) ([]connection.Connection, error) {
+	all, err := connection.NewRegistry(db).List(ctx, t, false)
+	if err != nil {
+		return nil, fmt.Errorf("server: list connections: %w", err)
+	}
+	var out []connection.Connection
+	for _, c := range all {
+		if c.Kind == connection.KindADForest && c.State == connection.StateActive && c.DirectoryIdentity != "" {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
 
 // confirmTOTP activates the enrolment with the first code from the administrator's authenticator, then

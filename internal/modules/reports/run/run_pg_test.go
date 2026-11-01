@@ -517,6 +517,10 @@ func Test_expired_run_is_not_served(t *testing.T) {
 		if err := e.svc.Read(ctx, e.tid, run.OpGet, r.ID, chainOf(alice), run.ForGet, nil); !errors.Is(err, run.ErrRunNotFound) {
 			t.Fatalf("after the record is deleted: %v", err)
 		}
+		// the rest of ADR-0010's RP4 list, each on a database of its own (rp4_test.go)
+		t.Run("export of an expired run makes a new run", func(t *testing.T) { rp4ExportOfExpiredRunReruns(t, s) })
+		t.Run("a succeeded run needs expires_at", func(t *testing.T) { rp4SucceededNeedsExpiry(t, s) })
+		t.Run("every state edge at the trigger", func(t *testing.T) { rp4StateEdgesAtTheTrigger(t, s) })
 	})
 }
 
