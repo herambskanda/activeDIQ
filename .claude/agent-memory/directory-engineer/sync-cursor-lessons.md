@@ -12,3 +12,4 @@ metadata:
 - RequireResync must exclude `paused` from its allowed-from set even though paused→resync_required is legal (only ResumeConnection resumes) — the all-states × all-ops matrix test caught it.
 - No doc.go in directory/sync from this ticket: T-1189 owns it (parallel ticket).
 - Package is named `sync`: tests import it as `dsync`; never import std `sync` in the same file.
+- Redacting types (Cookie): String/Format/LogValue are NOT enough — fmt/slog use reflection on values in unexported fields and print a []byte field. Hold secret bytes in a closure (`get func() []byte`); test through an unexported-field struct, slices, maps, slog text+JSON.
