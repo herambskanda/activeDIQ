@@ -61,7 +61,7 @@ func (s *StateStore) Load(id fleet.Identity) (*agentpolicy.Verifier, error) {
 		return fresh, s.setAside(path)
 	}
 	var d stateDoc
-	if json.Unmarshal(b, &d, json.RejectUnknownMembers(true)) != nil || d.Version != stateVer {
+	if json.Unmarshal(b, &d) != nil || d.Version != stateVer {
 		return fresh, s.setAside(path)
 	}
 	if d.Tenant != id.Tenant.String() {

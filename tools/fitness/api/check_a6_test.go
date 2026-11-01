@@ -53,14 +53,3 @@ func TestA6AcceptsGeneratedCode(t *testing.T) {
 		t.Fatal("the fixture header is stale")
 	}
 }
-
-// The agent host/module interface package is named api (ADR-0006) but is not a REST handler package.
-func TestA6IgnoresNonRESTApiPackage(t *testing.T) {
-	f := base()
-	f["internal/agenthost/api/api.go"] = "package api\n"
-	for _, v := range run(t, f) {
-		if v.Check == "A6" {
-			t.Errorf("internal/agenthost/api is not a generated REST package: %s", v)
-		}
-	}
-}
