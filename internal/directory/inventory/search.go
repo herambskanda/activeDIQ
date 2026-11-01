@@ -20,9 +20,11 @@ const (
 	// DefaultSearchCeiling is W: matched key rows per class above which a class is withheld and the
 	// caller is told to refine. [PROPOSED] 10,000; T-1102 measures and sets it.
 	DefaultSearchCeiling = 10000
-	// searchThreshold is pg_trgm.word_similarity_threshold for the fuzzy class. [PROPOSED] 0.5; tuned
-	// against the 'Pryia Ramn' vector.
-	searchThreshold = "0.5"
+	// searchThreshold is pg_trgm.word_similarity_threshold for the fuzzy class. Tuned on the 'Pryia Ramn'
+	// vector (T-1095): its word_similarity to 'priya raman' is 0.333 on pg16 and pg18, a transposition
+	// costing four trigrams, so 0.5 cannot find it; the nearest unrelated name measured ('praveen
+	// ramesh') scores 0.294. Ranking by similarity and the ceiling bound the extra candidates.
+	searchThreshold = "0.3"
 )
 
 // ErrSearchRefused: the search text is refused (rule 7). It carries no text.

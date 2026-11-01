@@ -49,7 +49,7 @@ func sSrchUser(i int, sam, name string) inventory.Observation {
 	return o
 }
 
-func guids(res inventory.SearchResult) []string {
+func searchGUIDs(res inventory.SearchResult) []string {
 	var out []string
 	for _, h := range res.Hits {
 		out = append(out, h.Object)
@@ -70,7 +70,7 @@ func Test_search_keys_follow_the_object_in_its_transaction(t *testing.T) {
 		if _, err := e.populate(t, e.adA, hBase, u); err != nil {
 			t.Fatal(err)
 		}
-		got := strings.Join(e.keys(t, u.Object.String()), "|")
+		got := strings.Join(e.keys(t, string(u.Object)), "|")
 		for _, want := range []string{"1:priya raman", "1:praman", "2:priya", "2:raman", "3:praman", "4:praman@example.test", "8:" + hGUID(1, 1), "10:cn=praman,ou=people,dc=example,dc=test"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("keys %q lack %q", got, want)
@@ -82,12 +82,12 @@ func Test_search_keys_follow_the_object_in_its_transaction(t *testing.T) {
 		if _, err := e.populate(t, e.adA, hBase.Add(time.Hour), u2); err != nil {
 			t.Fatal(err)
 		}
-		got = strings.Join(e.keys(t, u.Object.String()), "|")
+		got = strings.Join(e.keys(t, string(u.Object)), "|")
 		if strings.Contains(got, "1:priya raman|") || !strings.Contains(got, "1:priya raman iyer") || !strings.Contains(got, "2:iyer") {
 			t.Errorf("rename: %q", got)
 		}
 		// Fault injection: a cycle that fails after the object write rolls the keys back with it.
-		before := e.keys(t, u.Object.String())
+		before := e.keys(t, string(u.Object))
 		u3 := u
 		u3.DisplayName = "Never Committed"
 		err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
@@ -103,7 +103,7 @@ func Test_search_keys_follow_the_object_in_its_transaction(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected the injected failure")
 		}
-		if after := e.keys(t, u.Object.String()); strings.Join(after, "|") != strings.Join(before, "|") {
+		if after := e.keys(t, string(u.Object)); strings.Join(after, "|") != strings.Join(before, "|") {
 			t.Errorf("rollback changed the keys:\n%v\n%v", before, after)
 		}
 		// Deleted: still indexed (ranked after live); purged: no keys.
@@ -112,7 +112,7 @@ func Test_search_keys_follow_the_object_in_its_transaction(t *testing.T) {
 		if _, err := e.populate(t, e.adA, hBase.Add(3*time.Hour), u4); err != nil {
 			t.Fatal(err)
 		}
-		if len(e.keys(t, u.Object.String())) == 0 {
+		if len(e.keys(t, string(u.Object))) == 0 {
 			t.Error("a deleted object stays findable")
 		}
 		u5 := u2
@@ -120,7 +120,7 @@ func Test_search_keys_follow_the_object_in_its_transaction(t *testing.T) {
 		if _, err := e.populate(t, e.adA, hBase.Add(4*time.Hour), u5); err != nil {
 			t.Fatal(err)
 		}
-		if k := e.keys(t, u.Object.String()); len(k) != 0 {
+		if k := e.keys(t, string(u.Object)); len(k) != 0 {
 			t.Errorf("a purged object has no keys: %v", k)
 		}
 	})
@@ -205,7 +205,7 @@ func Test_search_is_trimmed_by_the_scope(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if g := guids(res); len(g) != 1 || g[0] != hGUID(1, 1) {
+		if g := searchGUIDs(res); len(g) != 1 || g[0] != hGUID(1, 1) {
 			t.Fatalf("an OU-scoped caller sees only the OU: %v", g)
 		}
 		if res.Count[reportsql.TypeUser] != 1 {
@@ -213,7 +213,7 @@ func Test_search_is_trimmed_by_the_scope(t *testing.T) {
 		}
 		all, _ := e.search(t, sr, e.scopeNC(e.adA), inventory.SearchRequest{Text: "match"})
 		if len(all.Hits) != 2 {
-			t.Errorf("the NC-wide caller sees both: %v", guids(all))
+			t.Errorf("the NC-wide caller sees both: %v", searchGUIDs(all))
 		}
 		// An empty scope answers nothing, with its reason.
 		none, err := e.search(t, sr, authz.ReadScope{}, inventory.SearchRequest{Text: "match"})
@@ -238,8 +238,8 @@ func Test_search_ceiling_withholds_a_class_whole(t *testing.T) {
 		if _, err := e.populate(t, e.adA, hBase, obs...); err != nil {
 			t.Fatal(err)
 		}
-		// W=10: nothing hits the ceiling and the scoped caller sees exactly its six.
-		w10, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed", Ceiling: 10, GroupLimit: 50})
+		// W=100: nothing hits the ceiling and the scoped caller sees exactly its six.
+		w10, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed", Ceiling: 100, GroupLimit: 50})
 		if w10.Refine || len(w10.Hits) != 6 || w10.Count[reportsql.TypeUser] != 6 {
 			t.Fatalf("below the ceiling: refine=%v hits=%d count=%v", w10.Refine, len(w10.Hits), w10.Count)
 		}
@@ -259,15 +259,15 @@ func Test_search_ceiling_withholds_a_class_whole(t *testing.T) {
 			t.Errorf("exact survives: %+v", r.Hits)
 		}
 		// More: the group limit.
-		lim, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed", Ceiling: 10, GroupLimit: 2})
+		lim, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed", Ceiling: 100, GroupLimit: 2})
 		if len(lim.Hits) != 2 || !lim.More[reportsql.TypeUser] || lim.Count[reportsql.TypeUser] != 6 {
 			t.Errorf("limit: hits=%d more=%v count=%v", len(lim.Hits), lim.More, lim.Count)
 		}
 		// Keyset: the second page starts after the first.
 		last := lim.Hits[len(lim.Hits)-1].Rank
-		next, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed", Ceiling: 10, GroupLimit: 2, After: &last})
+		next, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed", Ceiling: 100, GroupLimit: 2, After: &last})
 		if len(next.Hits) != 2 || next.Hits[0].Object == lim.Hits[0].Object || next.Hits[0].Object == lim.Hits[1].Object {
-			t.Errorf("page 2: %v after %v", guids(next), guids(lim))
+			t.Errorf("page 2: %v after %v", searchGUIDs(next), searchGUIDs(lim))
 		}
 	})
 }
@@ -291,7 +291,7 @@ func Test_search_text_is_a_bound_parameter(t *testing.T) {
 				t.Errorf("%q: %v", c.text, err)
 				continue
 			}
-			g := guids(res)
+			g := searchGUIDs(res)
 			if c.want == "" && len(g) != 0 || c.want != "" && (len(g) == 0 || g[0] != c.want) {
 				t.Errorf("%q matched %v, want %q", c.text, g, c.want)
 			}
@@ -360,8 +360,11 @@ func Test_search_backfill_indexes_each_object_once(t *testing.T) {
 			t.Fatal("no keys")
 		}
 		// An existing inventory that predates the index: no keys at all.
-		if err := e.d.ExecOwner(context.Background(), `DELETE FROM public.inventory_search_keys`); err != nil {
+		if err := e.exec(e.a, `DELETE FROM public.inventory_search_keys`); err != nil {
 			t.Fatal(err)
+		}
+		if n := e.count(t, `SELECT count(*) FROM public.inventory_search_keys`); n != 0 {
+			t.Fatalf("the fixture delete left %d keys", n)
 		}
 		var ticks int
 		got, err := e.r.Backfill(context.Background(), e.a, func(inventory.BackfillProgress) { ticks++ })
@@ -380,8 +383,10 @@ func Test_search_backfill_indexes_each_object_once(t *testing.T) {
 			t.Fatalf("a second run changes nothing: %+v %v", again, err)
 		}
 		// A key built by another normaliser version, and a key of nothing, are corrected.
-		if err := e.d.ExecOwner(context.Background(), `UPDATE public.inventory_search_keys SET norm_version = 2 WHERE key_kind = 1;
-			INSERT INTO public.inventory_search_keys (tenant_id, connection_id, object_guid, key_kind, key, norm_version)
+		if err := e.exec(e.a, `UPDATE public.inventory_search_keys SET norm_version = 2 WHERE key_kind = 1`); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.exec(e.a, `INSERT INTO public.inventory_search_keys (tenant_id, connection_id, object_guid, key_kind, key, norm_version)
 			SELECT tenant_id, connection_id, object_guid, 1, 'stale key', 1 FROM public.directory_objects LIMIT 1`); err != nil {
 			t.Fatal(err)
 		}
@@ -393,7 +398,7 @@ func Test_search_backfill_indexes_each_object_once(t *testing.T) {
 		sr := e.searcher(t)
 		res, err := e.search(t, sr, e.scopeNC(e.adA), inventory.SearchRequest{Text: "User Number 7"})
 		if err != nil || len(res.Hits) == 0 || res.Hits[0].Object != hGUID(1, 7) {
-			t.Fatalf("search after backfill: %v %v", guids(res), err)
+			t.Fatalf("search after backfill: %v %v", searchGUIDs(res), err)
 		}
 	})
 }

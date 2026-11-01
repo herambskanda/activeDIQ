@@ -198,12 +198,20 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 		pp.kinds = append(pp.kinds, k)
 		allowed[k] = true
 	}
-	w1 := b.bind("int", q.Ceiling+1)
+	// W+1 is bound on first use: a parameter no statement text refers to has no type and the server
+	// refuses the statement.
+	w1s := ""
+	w1 := func() string {
+		if w1s == "" {
+			w1s = b.bind("int", q.Ceiling+1)
+		}
+		return w1s
+	}
 	limit := func(sel []string) string {
 		if len(sel) == 0 {
 			return emptyKeys
 		}
-		return "SELECT connection_id, object_guid, key_kind, key FROM (" + strings.Join(sel, " UNION ALL ") + ") u LIMIT " + w1
+		return "SELECT connection_id, object_guid, key_kind, key FROM (" + strings.Join(sel, " UNION ALL ") + ") u LIMIT " + w1()
 	}
 	keyCols := "k.connection_id, k.object_guid, k.key_kind, k.key"
 	var exact, prefix, fuzzy []string
@@ -212,7 +220,7 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 			continue
 		}
 		exact = append(exact, "(SELECT "+keyCols+" FROM public."+src.keys+" k WHERE k.tenant_id = "+tenantExpr+" AND k.key_kind = "+strconv.Itoa(int(p.Kind))+
-			" AND k.key = "+b.bind("text", p.Key)+" LIMIT "+w1+")")
+			" AND k.key = "+b.bind("text", p.Key)+" LIMIT "+w1()+")")
 	}
 	var wholeLo []string
 	for _, p := range q.Prefix {
@@ -225,7 +233,7 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 		}
 		wholeLo = append(wholeLo, p.Lo)
 		prefix = append(prefix, "(SELECT "+keyCols+" FROM public."+src.keys+" k WHERE k.tenant_id = "+tenantExpr+" AND k.key_kind = "+strconv.Itoa(int(p.Kind))+
-			" AND "+cond+" LIMIT "+w1+")")
+			" AND "+cond+" LIMIT "+w1()+")")
 	}
 	if q.Fuzzy != "" {
 		var ks []searchkey.Kind
@@ -235,7 +243,7 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 		if list := fuzzyKindList(ks); list != "" {
 			// The list is a subset of the index predicate, so the planner can prove the partial index.
 			fuzzy = append(fuzzy, "(SELECT "+keyCols+" FROM public."+src.keys+" k WHERE k.tenant_id = "+tenantExpr+" AND k.key_kind IN ("+list+
-				") AND "+b.bind("text", q.Fuzzy)+" <% k.key LIMIT "+w1+")")
+				") AND "+b.bind("text", q.Fuzzy)+" <% k.key LIMIT "+w1()+")")
 		}
 	}
 	if q.Fuzzy == "" {

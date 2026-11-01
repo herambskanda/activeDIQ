@@ -353,5 +353,5 @@ const backfillObjectsSQL = `SELECT connection_id::text, object_guid::text, kind,
 		CASE WHEN jsonb_typeof(attributes -> 'dNSHostName') = 'string' THEN attributes ->> 'dNSHostName' ELSE '' END
 	FROM public.directory_objects
 	WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-	AND ($1 = '' OR (connection_id, object_guid) > ($1::uuid, $2::uuid))
+	AND ($1::text = '' OR (connection_id, object_guid) > ($1::text::uuid, $2::text::uuid))
 	ORDER BY connection_id, object_guid LIMIT $3`
