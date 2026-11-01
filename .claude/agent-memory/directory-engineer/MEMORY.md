@@ -24,3 +24,4 @@
 - [closure decision lessons](closure-decision-lessons.md) — T-0961: decide the budget from the whole graph each refresh, oracle test after every refresh
 - [search index lessons](search-index-lessons.md) — T-1095: pg_trgm GIN unusable under RLS (T-1180), threshold 0.3, bind-typing and FORCE-RLS fixture traps
 - [sync cursor lessons](sync-cursor-lessons.md) — T-1190: fitness traps (tenant_id guard, SQL const, platform_leases), fencing limits
+- [sync mapper lessons](sync-mapper-lessons.md) — T-1189: allowlist gap, no DnValue.guid today, Samba UAC 546, capture recipe
