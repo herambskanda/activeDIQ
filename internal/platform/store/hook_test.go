@@ -12,6 +12,15 @@ func TestIsTxControl(t *testing.T) {
 		`select "a'b" from t; commit`: true, "SELECT $$ ' $$; COMMIT": true, "SELECT $t$ ; commit $t$": false,
 		"SELECT E'\\'; commit'": false, "SELECT $1; COMMIT": true,
 		"INSERT INTO t VALUES (1)": false, "": false,
+		// PostgreSQL ends a "--" comment at CR as well as LF
+		"-- x\rCOMMIT": true, "SELECT 1; -- x\rCOMMIT": true, "SELECT 1; -- x\r\nCOMMIT": true,
+		// a literal continued over a newline is lexed like the first segment
+		"SELECT E'a'\n'x\\'' ; COMMIT": true, "SELECT E'a'\r'x\\'' ; COMMIT": true,
+		"SELECT E'a' -- c\n'x\\'' ; COMMIT": true,
+		// standard_conforming_strings = off makes a plain literal honour the backslash
+		"SELECT 'x\\'' ; COMMIT": true,
+		// no newline between two literals is a syntax error in PostgreSQL, not a hiding place
+		"SELECT E'a' 'b'; SELECT 1": false, "SELECT E'a' 'b'; COMMIT": true,
 	} {
 		if got := IsTxControl(sql); got != want {
 			t.Errorf("IsTxControl(%q) = %v; want %v", sql, got, want)
@@ -55,5 +64,18 @@ func TestStatements(t *testing.T) {
 				t.Errorf("Statements(%q)[%d] = %q; want %q", c.sql, i, got[i], c.want[i])
 			}
 		}
+	}
+}
+
+func TestLexingsFailClosed(t *testing.T) {
+	if got := Lexings("SELECT 1; INSERT INTO t VALUES ('a')"); len(got) != 1 {
+		t.Errorf("an unambiguous text has %d lexings; want 1", len(got))
+	}
+	got := Lexings("SELECT 'x\\'' ; COMMIT")
+	if len(got) != 2 {
+		t.Fatalf("Lexings = %q; want 2 lexings", got)
+	}
+	if len(got[0]) != 1 || len(got[1]) != 2 || got[1][1] != "COMMIT" {
+		t.Errorf("Lexings = %q; the backslash lexing must expose COMMIT", got)
 	}
 }

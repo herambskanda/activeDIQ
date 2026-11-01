@@ -59,16 +59,18 @@ func (t *recordingTx) counts() (writes, roAttempts int) {
 
 // observe classifies what the Action sent. It is a text classification, never a way to build SQL,
 // and it is the unit-level stand-in: the PostgreSQL-backed run (storetest) is the authority. Text is
-// split with store.Statements, the scanner the transaction-control guard uses, so a comment, a quoted
+// split with store.Lexings (store.Statements), the scanner the transaction-control guard uses, so a comment, a quoted
 // identifier or a second statement cannot hide a write. Residuals only the PostgreSQL run catches: a
 // writing function called from a SELECT, and other side-effecting built-ins not named below.
 func (t *recordingTx) observe(sql string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var first error
-	for _, stmt := range store.Statements(sql) {
-		if err := t.observeStatement(stmt); err != nil && first == nil {
-			first = err
+	for _, lexing := range store.Lexings(sql) { // both string lexings: the session's setting is unknown
+		for _, stmt := range lexing {
+			if err := t.observeStatement(stmt); err != nil && first == nil {
+				first = err
+			}
 		}
 	}
 	return first

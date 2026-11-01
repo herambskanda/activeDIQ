@@ -428,6 +428,11 @@ func TestPlanStatementsThatMustFailTheClause(t *testing.T) {
 		"SELECT $$ ' $$; INSERT INTO t VALUES (1)": true,
 		"SELECT * INTO new_t FROM t":               true,
 		"SELECT nextval('s')":                      true,
+		// CR ends a comment, E-string continuation, standard_conforming_strings = off
+		"SELECT 1; -- x\rINSERT INTO t VALUES (1)":       true,
+		"SELECT E'a'\n'x\\'' ; INSERT INTO t VALUES (1)": true,
+		"SELECT 'x\\'' ; INSERT INTO t VALUES (1)":       true,
+		"SELECT 1; -- x\rCOMMIT":                         true,
 		// negatives
 		"SELECT 'INSERT INTO x'":                   false,
 		"SELECT 1 -- INSERT INTO t":                false,
