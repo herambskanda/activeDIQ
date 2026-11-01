@@ -306,7 +306,11 @@ func definitionView(rd run.Definition, exports bool) (api.ReportDefinition, erro
 	}
 	for _, p := range d.Presets {
 		if p.Requires != nil {
-			out.SubjectKind = "object" // the objects are named by GUID; which kind is the dataset's
+			// the objects are named by GUID; a preset that names their kind (group, user) says so
+			out.SubjectKind = "object"
+			if p.Requires.Kind != "" {
+				out.SubjectKind = p.Requires.Kind
+			}
 		}
 		pv, err := presetView(d, p)
 		if err != nil {
