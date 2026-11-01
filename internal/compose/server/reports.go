@@ -30,11 +30,11 @@ import (
 // API handlers. The catalogue is the shipped report library (T-1104), loaded over the datasets the sealed
 // EP-8 host holds, so a definition that does not resolve against its dataset stops start-up.
 //
-// Two ports have no production implementation yet, and each fails closed rather than guess:
-//   - the read-scope producer (rbac.ReadScopes needs the owner-status and object-connection sources), so a
-//     run cannot be created or read and the API answers 503 not-ready (filed as a follow-up on T-0959);
-//   - the blob store when blobDir is empty: an export answers 503 not-ready rather than keep a file
-//     anywhere else.
+// One port has no production implementation yet, and it fails closed rather than guess: the blob store
+// when blobDir is empty, so an export answers 503 not-ready rather than keep a file anywhere else.
+//
+// scopes is the read-scope producer (rbac.ReadScopes, built by buildReadScopes, T-0916). A nil scopes
+// refuses every run with run.ErrScopesUnavailable, never reads unscoped.
 func buildReports(ctx context.Context, db *store.DB, host *report.Host, jreg *jobs.Registry, sink audit.Sink, reader *inventory.Reader, scopes run.ReadScopes, az operation.Authorizer, blobDir string) (*run.Service, apihost.TagHandlers, error) {
 	if scopes == nil {
 		scopes = noScopes{}
