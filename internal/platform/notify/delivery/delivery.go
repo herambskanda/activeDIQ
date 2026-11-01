@@ -136,9 +136,6 @@ func New(sink audit.Sink) (*Deliveries, error) {
 	return &Deliveries{audit: sink}, nil
 }
 
-const cols = `id::text, purpose, template_version, variables, recipient_account::text, recipient_address, source_kind, source_id,
-	requested_by, require_internal, state, attempts, max_attempts, next_attempt_at, last_error_code, provider_message_id, sent_at, created_at`
-
 func scan(row interface{ Scan(dest ...any) error }) (Delivery, error) {
 	var (
 		d              Delivery
@@ -224,18 +221,12 @@ func (s *Deliveries) Enqueue(ctx context.Context, tx store.Tx, nd NewDelivery, b
 	} else {
 		addr = &nd.Recipient.Address
 	}
-	row := tx.QueryRow(ctx, `INSERT INTO public.notify_deliveries
-		(tenant_id, dedup_key, purpose, template_version, variables, recipient_kind, recipient_account, recipient_address,
-		 source_kind, source_id, requested_by, require_internal, state, max_attempts, next_attempt_at)
-		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1, $2, $3, $4::jsonb, $5, $6::uuid, $7, $8, $9, $10, $11, 'queued', $12, now())
-		ON CONFLICT (tenant_id, dedup_key) DO NOTHING
-		RETURNING `+cols,
+	row := tx.QueryRow(ctx, sqlInsert,
 		nd.DedupKey, nd.Purpose, nd.TemplateVersion, string(vars), recipientKind(nd.Recipient), acct, addr,
 		nd.Source.Kind, nd.Source.ID, by.Requester.ID, nd.RequireInternal, nd.MaxAttempts)
 	d, err := scan(row)
 	if store.IsNoRows(err) { // the key exists: idempotent only for the same delivery
-		prior, err := scan(tx.QueryRow(ctx, `SELECT `+cols+` FROM public.notify_deliveries
-			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND dedup_key = $1`, nd.DedupKey))
+		prior, err := scan(tx.QueryRow(ctx, sqlByDedupKey, nd.DedupKey))
 		if err != nil {
 			return Delivery{}, fmt.Errorf("delivery: read existing: %w", err)
 		}
@@ -289,10 +280,7 @@ func (s *Deliveries) ForSource(ctx context.Context, tx store.Tx, source SourceRe
 		!kindRe.MatchString(source.Kind) || !idRe.MatchString(source.ID) {
 		return Delivery{}, false, nil
 	}
-	d, err := scan(tx.QueryRow(ctx, `SELECT `+cols+` FROM public.notify_deliveries
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-		  AND source_kind = $1 AND source_id = $2 AND recipient_account = $3::uuid AND state <> 'given_up'
-		ORDER BY created_at DESC, id DESC LIMIT 1`, source.Kind, source.ID, recipient.Account))
+	d, err := scan(tx.QueryRow(ctx, sqlLatestForSource, source.Kind, source.ID, recipient.Account))
 	if store.IsNoRows(err) {
 		return Delivery{}, false, nil
 	}
@@ -307,8 +295,7 @@ func (s *Deliveries) Get(ctx context.Context, tx store.Tx, id string) (Delivery,
 	if !uuidRe.MatchString(id) {
 		return Delivery{}, ErrInvalid
 	}
-	d, err := scan(tx.QueryRow(ctx, `SELECT `+cols+` FROM public.notify_deliveries
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND id = $1::uuid`, id))
+	d, err := scan(tx.QueryRow(ctx, sqlByID, id))
 	if store.IsNoRows(err) {
 		return Delivery{}, ErrNotFound
 	}

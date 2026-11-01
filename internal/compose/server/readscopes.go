@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/skenzeriq/activediq/internal/modules/directory"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/module"
@@ -97,6 +98,9 @@ func buildReadScopes(az *rbac.Authorizer, c *module.Contributions) (*rbac.ReadSc
 	}
 	return rs, nil
 }
+
+// The composition root's producer is what the directory module asks for (T-0987: buildDirectory gets it).
+var _ directory.ReadScopes = txReadScopes{}
 
 // txReadScopes adapts rbac.ReadScopes, which reads in a caller's transaction, to directory.ReadScopes,
 // which has none: it opens the tenant transaction the producer needs.

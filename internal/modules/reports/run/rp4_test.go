@@ -12,8 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
-
 	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -76,11 +74,11 @@ func rp4ExportOfExpiredRunReruns(t *testing.T, s *storetest.Server) {
 // raised before any AFTER trigger runs), and the SQLSTATE found otherwise. 0064 leaves the constraint
 // unnamed, so PostgreSQL names it report_runs_check<n>.
 func checkViolation(err error) (bool, string) {
-	var pe *pgconn.PgError
-	if !errors.As(err, &pe) {
+	code, table, constraint := store.SQLConstraint(err)
+	if code == "" {
 		return false, ""
 	}
-	return pe.Code == "23514" && pe.TableName == "report_runs" && strings.HasPrefix(pe.ConstraintName, "report_runs_check"), pe.Code + " " + pe.ConstraintName
+	return code == "23514" && table == "report_runs" && strings.HasPrefix(constraint, "report_runs_check"), code + " " + constraint
 }
 
 // rp4SucceededNeedsExpiry: a run cannot be written as succeeded without expires_at; the refusing guard is the

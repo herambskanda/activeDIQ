@@ -40,8 +40,9 @@ const (
 	// A group's cost is estimated before anything is written: an upper bound of the rows it would hold, its
 	// own member and primary-group links plus the bound of each group it holds, computed once per group over
 	// the strongly connected components (estimates). A diamond (a group reachable by several paths) is
-	// counted once per path, so it can only turn a group Unknown, never give it a wrong count. A group whose estimate exceeds defaultRootRows, or what is left of defaultConnRows
-	// after the groups admitted before it, is not expanded: it gets one over_budget marker row, its counts
+	// counted once per path, so it can only turn a group Unknown, never give it a wrong count. A group
+	// whose estimate exceeds defaultRootRows, or what is left of defaultConnRows after the groups
+	// admitted before it, is not expanded: it gets one over_budget marker row, its counts
 	// read Unknown and group_members says so. The refresh succeeds.
 	//
 	// Which groups are expanded is a function of the current links alone (security review of T-0961: an
