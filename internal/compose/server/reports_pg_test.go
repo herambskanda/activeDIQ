@@ -117,7 +117,7 @@ func TestReportsCatalogServesShippedLibrary(t *testing.T) {
 		}
 		scope := authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermNamingContext, Connection: connID, Root: domID}}})
 		jreg := jobs.NewRegistry()
-		svc, tag, err := buildReports(ctx, db, host, jreg, rptSink{}, inventory.NewReader(db, nil), rptScopes{scope})
+		svc, tag, err := buildReports(ctx, db, host, jreg, rptSink{}, inventory.NewReader(db, nil), rptScopes{scope}, nil, "")
 		if err != nil {
 			t.Fatalf("buildReports: %v", err)
 		}

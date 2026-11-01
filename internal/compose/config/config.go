@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -71,6 +72,9 @@ const (
 	// EnvConnectorConfig is the path of the connector role's local configuration file (connection_id, directory
 	// servers, Kerberos identity, enrolment and data directories). Only cmd/connector reads it.
 	EnvConnectorConfig = "ACTIVEDIQ_CONNECTOR_CONFIG"
+	// EnvBlobDir is the absolute directory of the filesystem blob store, where report exports are kept until they
+	// expire. Unset, exports answer 503 not-ready: no export file is ever held in the database or in memory.
+	EnvBlobDir = "ACTIVEDIQ_BLOB_DIR"
 )
 
 // Values of EnvPrincipalStore.
@@ -107,6 +111,8 @@ type Config struct {
 	APIAddr string
 	// APITLSDir is where the per-install API certificate lives; empty means an ephemeral in-memory one.
 	APITLSDir string
+	// BlobDir is the filesystem blob store's root (absolute); empty means no blob store is configured.
+	BlobDir string
 	// APIBodyBudget is passed to apihost.WithBodyBudget. Non-positive values fail startup.
 	APIBodyBudget int64
 	// TrustedProxies is passed to apihost.WithTrustedProxies.
@@ -157,6 +163,9 @@ func Load(getenv func(string) string) (Config, error) {
 		c.APIAddr = v
 	}
 	c.APITLSDir = getenv(EnvAPITLSDir)
+	if c.BlobDir = getenv(EnvBlobDir); c.BlobDir != "" && !filepath.IsAbs(c.BlobDir) {
+		return Config{}, fmt.Errorf("%s: must be an absolute path", EnvBlobDir)
+	}
 	c.ConnectorConfigPath = getenv(EnvConnectorConfig)
 	if err := c.ValidateAPIListen(); err != nil {
 		return Config{}, err
@@ -266,6 +275,7 @@ func (c Config) LogValue() slog.Value {
 		slog.Duration("stop_timeout", r.StopTimeout),
 		slog.String("api_addr", r.APIAddr),
 		slog.String("api_tls_dir", r.APITLSDir),
+		slog.String("blob_dir", r.BlobDir),
 		slog.Int64("api_body_budget", r.APIBodyBudget),
 		slog.Any("trusted_proxies", r.TrustedProxies),
 		slog.Int("nodes", r.Nodes),

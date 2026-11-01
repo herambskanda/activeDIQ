@@ -1,8 +1,11 @@
 ---
 title: "ADR-0008: The fleet gateway is authenticated by one installation-scope server CA; component identities stay under per-tenant CAs"
 date: 2026-10-29
-updated: 2026-10-29
-status: proposed
+updated: 2026-11-01
+status: ratified
+ratified_on: 2026-10-29
+ratified_by: factory-director
+decision: D-0009
 owner: solution-architect
 kind: technical
 ticket: T-0713
@@ -11,7 +14,7 @@ fitness: fitness-fleet-ca-scope (`make fitness-fleet-ca-scope`, in `make ci` sin
 
 # ADR-0008: The fleet gateway is authenticated by one installation-scope server CA; component identities stay under per-tenant CAs
 
-**Status:** proposed. Ratified by factory-director after security-architect review; `accepted` when `fitness-fleet-ca-scope` runs green in CI. **Kind:** technical (no CEO fork: nothing here changes who can buy, cost or platform strategy; ADR-0002's "self-hosted first, SaaS-ready" is the constraint). **Ticket:** T-0713. Builds on [fleet-contract](../architecture/fleet-contract.md), TM-D24 (§9.8), TM-D29 (§9.2.1), TM-A11.
+**Status:** ratified 2026-10-29 by factory-director after security-architect review (T-0713, notice D-0009; fields recorded 2026-11-01, T-1145); `accepted` when `fitness-fleet-ca-scope` runs green in CI. **Kind:** technical (no CEO fork: nothing here changes who can buy, cost or platform strategy; ADR-0002's "self-hosted first, SaaS-ready" is the constraint). **Ticket:** T-0713. Builds on [fleet-contract](../architecture/fleet-contract.md), TM-D24 (§9.8), TM-D29 (§9.2.1), TM-A11.
 
 ## Context
 

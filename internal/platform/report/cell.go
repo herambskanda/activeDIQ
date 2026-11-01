@@ -77,6 +77,24 @@ func ListCell(vs ...string) Cell {
 // Kind returns the cell's kind.
 func (c Cell) Kind() CellKind { return c.kind }
 
+// Text is the text of a text or enum cell (an enum's stable ID); "" for any other kind.
+func (c Cell) Text() string { return c.s }
+
+// Int is the value of an integer cell; 0 for any other kind.
+func (c Cell) Int() int64 { return c.i }
+
+// Bool is the value of a boolean cell; false for any other kind.
+func (c Cell) Bool() bool { return c.b }
+
+// Time is the instant of a time cell (UTC, whole seconds); the zero time for any other kind.
+func (c Cell) Time() time.Time { return c.t }
+
+// GUID is the value of a GUID cell; the zero ID for any other kind.
+func (c Cell) GUID() authz.ObjectID { return c.g }
+
+// List is a copy of the elements of a text-list cell; nil for any other kind.
+func (c Cell) List() []string { return append([]string(nil), c.l...) }
+
 // IsUnknown reports whether the cell is Unknown.
 func (c Cell) IsUnknown() bool { return c.kind == CellUnknown }
 

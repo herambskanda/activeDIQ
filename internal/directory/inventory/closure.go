@@ -15,7 +15,7 @@ var _ = tablekind.Declare(tablekind.Table{Name: "public.inventory_group_members"
 var _ = tablekind.Declare(tablekind.Table{Name: "public.inventory_group_closure_dirty", Entity: "DM-17", Kind: tablekind.Directory})
 
 // The effective-membership closure (reports spec §6.6, FR-15) is materialised in
-// inventory_group_members (migration 0067) by RefreshClosure, which Populate calls at the end of every
+// inventory_group_members (migration 0068) by RefreshClosure, which Populate calls at the end of every
 // batch. It is derived only from the stored DM-17 links and the live group rows, never from a live
 // LDAP walk. See the migration for what a row means.
 

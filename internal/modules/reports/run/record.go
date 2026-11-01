@@ -246,7 +246,9 @@ WHERE runner_account = $1::uuid AND query_hash = $2 AND scope_fingerprint = $3
   AND (state <> 'succeeded' OR expires_at > now())
 ORDER BY created_at DESC, id DESC LIMIT 1`
 
-const countOpen = `SELECT count(*) FROM public.report_runs WHERE state IN ('queued', 'running')`
+// countOpen counts runs and exports not yet finished: they share the tenant's job limit (spec §8.3).
+const countOpen = `SELECT (SELECT count(*) FROM public.report_runs WHERE state IN ('queued', 'running'))
+  + (SELECT count(*) FROM public.report_exports WHERE state IN ('queued', 'running'))`
 
 const lockTenantJobs = `SELECT pg_advisory_xact_lock(hashtextextended('reports.jobs:' || current_setting('app.tenant_id', true), 0))`
 

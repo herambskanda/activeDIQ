@@ -1,0 +1,8 @@
+ok  	github.com/skenzeriq/activediq/migrations	20.813s
+ok  	github.com/skenzeriq/activediq/internal/platform/report	0.018s
+ok  	github.com/skenzeriq/activediq/tools/fitness/tenancy	110.364s
+ok  	github.com/skenzeriq/activediq/tools/fitness/tenancy/static	9.750s
+ok  	github.com/skenzeriq/activediq/tools/fitness/reports	1.992s
+ok  	github.com/skenzeriq/activediq/tools/fitness/safeprim/scan	272.548s
+ok  	github.com/skenzeriq/activediq/tools/fitness/ports	24.332s
+ok  	github.com/skenzeriq/activediq/tools/fitness/objectid	7.157s

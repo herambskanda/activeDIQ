@@ -70,6 +70,7 @@ var byTable = map[string]entry{
 	"personal_value":                   {owner: "personal", class: System},
 	"platform_leases":                  {owner: "jobs", class: System},
 	"platform_rate_buckets":            {owner: "limiter", class: System},
+	"report_exports":                   {owner: "reports", class: System},
 	"report_run_rows":                  {owner: "reports", class: System},
 	"report_runs":                      {owner: "reports", class: System},
 	"tenant_keys":                      {owner: "keys", class: System},
