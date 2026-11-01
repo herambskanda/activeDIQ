@@ -58,7 +58,7 @@ func (e *Engine) FullCycle(ctx context.Context, tid tenant.ID, id connection.ID,
 	if err := e.ready(); err != nil {
 		return rep, err
 	}
-	if lease == nil || tid.String() == "" {
+	if lease == nil || tid.IsZero() {
 		return rep, fmt.Errorf("%w: lease or tenant", ErrNotConfigured)
 	}
 	conn, err := e.Conns.Get(ctx, tid, id)
