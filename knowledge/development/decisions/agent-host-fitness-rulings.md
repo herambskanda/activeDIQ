@@ -190,7 +190,7 @@ Windows proofs (identity, privileges, ACE, rollback leaves nothing) stay lab ite
 Every change to an allowlist is a security-architect review; do not add lines to make the check pass.
 
 
-## T-0724 addendum (windows-engineer, pending security-architect confirmation)
+## T-0724 addendum (windows-engineer, confirmed by security-architect (T-0724 review))
 
 The first real MSI (WiX 5.0.2 on the lab DC, `msidump`) showed what T-0688 could not: the core
 `ServiceConfig` does write the restricted SID (MsiServiceConfig ConfigType 5, Argument 3) and the single privilege
@@ -202,3 +202,5 @@ anticipated, they are now two fixed verbs of `agentsetup` (`configure-service`, 
 three pinned custom actions (`ConfigureService`, `RollbackConfigureService`, `UnconfigureService`), same shape as
 the five reviewed ones: SYSTEM, deferred or rollback, no impersonation, no argument. Nothing was loosened in
 `fitness-built-msi`; its ConfigType constants were corrected from 3/4 to 5/6 (they had judged neither).
+
+The no-reboot, no-command recovery rule that `fitness-built-msi` used to enforce on `MsiServiceConfigFailureActions` is now carried by `TestRecoveryPolicyIsRestartOnly` and `TestRecoveryPolicyValues` in `cmd/agentsetup/recovery_scan_test.go`. They run on Linux CI and fail on `ServiceReboot`, `ServiceRunCommand`, `NoAction`, `SetRecoveryCommand`, `SetRebootMessage` or `SetRecoveryActionsOnNonCrashFailures`, and on any recovery number other than 3 restarts, 30 s, reset after 86400 s. `TestRecoveryScanBites` proves the scan fails on each. Workflow token hygiene for `release.yml` (read-only top level, `contents: write` on the publish job only, `persist-credentials: false` on every checkout) is pinned by `tools/ci/workflows-check.sh`.

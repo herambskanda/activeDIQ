@@ -1227,6 +1227,13 @@ must_fail_with "workflows-check on a built-MSI gate with no agent-msi download b
 cp "$root/.github/workflows/release.yml" "$wf/"; sed -i 's|download-artifact@|upload-artifact@|' "$wf/release.yml"
 must_fail_with "workflows-check on a release that only uploads agent-msi, never downloads it (T-0724)" 'agent-msi artefact is not downloaded' tools/ci/workflows-check.sh "$wf"
 cp "$root/.github/workflows/release.yml" "$wf/"
+sed -i '0,/contents: read/s//contents: write/' "$wf/release.yml"
+must_fail_with "workflows-check on a release with write permissions at the top level (T-0724)" 'top-level permissions grant contents: write' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i '/runs-on: windows-2022/{n;n;s/contents: read/contents: write/}' "$wf/release.yml"
+must_fail_with "workflows-check on a build job that can write contents (T-0724)" 'job build-msi requests contents: write' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"; sed -i '0,/persist-credentials: false/{/persist-credentials: false/d}' "$wf/release.yml"
+must_fail_with "workflows-check on a checkout that keeps the token (T-0724)" 'has no persist-credentials: false' tools/ci/workflows-check.sh "$wf"
+cp "$root/.github/workflows/release.yml" "$wf/"
 
 # --- fitness-agent-host (T-0554) ----------------------------------------------------------------
 # The Go-test half (P1-P8, F1) is judged from `go test -json`; judgeTests' cases fail on a failed,
