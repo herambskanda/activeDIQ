@@ -433,6 +433,9 @@ func TestPlanStatementsThatMustFailTheClause(t *testing.T) {
 		"SELECT E'a'\n'x\\'' ; INSERT INTO t VALUES (1)": true,
 		"SELECT 'x\\'' ; INSERT INTO t VALUES (1)":       true,
 		"SELECT 1; -- x\rCOMMIT":                         true,
+		// scan.l continuation: a "--" comment before the newline, and \v
+		"SELECT E'a' -- c\n'x\\'', 'y\\' ; INSERT INTO t VALUES (1)": true,
+		"SELECT E'a'\n\v'x\\'', 'y\\' ; INSERT INTO t VALUES (1)":    true,
 		// negatives
 		"SELECT 'INSERT INTO x'":                   false,
 		"SELECT 1 -- INSERT INTO t":                false,

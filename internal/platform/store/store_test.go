@@ -525,3 +525,52 @@ func TestWithTenantSeparateCommitsBesideRolledBackOuter(t *testing.T) {
 		}
 	})
 }
+
+// TestIsTxControlMatchesPostgres pins the transaction-control guard to the real PostgreSQL lexer: each
+// corpus string goes to a server by the simple protocol inside an open transaction, with
+// standard_conforming_strings on and off, and whenever PostgreSQL left the transaction IsTxControl must
+// have said so. The hand-written scanner drifted from scan.l three times; this is what stops a fourth.
+func TestIsTxControlMatchesPostgres(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		ctx := context.Background()
+		db := s.NewDatabase(t)
+		conn, err := db.App(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close(ctx)
+		pg := conn.PgConn()
+		simple := func(sql string) error {
+			_, err := pg.Exec(ctx, sql).ReadAll() // Exec is the simple query protocol: the whole text, unparsed by pgx
+			return err
+		}
+		ended := 0
+		for sql, want := range txControlCases {
+			for _, scs := range []string{"on", "off"} {
+				if err := simple("SET standard_conforming_strings = " + scs); err != nil {
+					t.Fatal(err)
+				}
+				if err := simple("BEGIN"); err != nil {
+					t.Fatal(err)
+				}
+				_ = simple(sql) // a syntax error is an expected outcome for many corpus strings
+				left := pg.TxStatus() == 'I'
+				if pg.TxStatus() != 'I' {
+					_ = simple("ROLLBACK")
+				}
+				if left {
+					ended++
+					if !IsTxControl(sql) {
+						t.Errorf("PostgreSQL left the transaction (standard_conforming_strings=%s) but IsTxControl(%q) = false", scs, sql)
+					}
+				}
+				if want && !IsTxControl(sql) {
+					t.Errorf("IsTxControl(%q) = false; the corpus says true", sql)
+				}
+			}
+		}
+		if ended == 0 {
+			t.Fatal("no corpus string ended the transaction on PostgreSQL: the probe is not working")
+		}
+	})
+}

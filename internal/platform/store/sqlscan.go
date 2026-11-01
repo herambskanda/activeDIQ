@@ -6,9 +6,10 @@ import "strings"
 // comment ("--" to the next CR or LF, and nested "/* */") becomes a space, and the content of every
 // quoted run (a '…' literal, an E'…' literal with backslash escapes, a "…" identifier and a
 // $tag$…$tag$ body) is replaced by an empty ” so a ';', an apostrophe or a keyword inside quotes can
-// neither split nor hide a statement. A literal followed by whitespace that holds a newline and then
-// another literal is one literal in PostgreSQL (a continuation), and the second segment is lexed like
-// the first, so an E'…' continuation keeps its backslash escapes. An unterminated comment or quote
+// neither split nor hide a statement. A literal followed by whitespace (including "--" comments) and
+// then another literal is treated as one literal, the continuation PostgreSQL allows over a newline;
+// the second segment is lexed like the first, so an E'…' continuation keeps its backslash escapes.
+// Treating it as one without requiring the newline is deliberate over-approximation (see continuation). An unterminated comment or quote
 // hides the rest of the text, as it does for PostgreSQL. Empty statements are dropped.
 //
 // This is the lexing for standard_conforming_strings = on, where a plain '…' literal has no backslash
@@ -137,29 +138,29 @@ func skipQuoted(s string, i int, q byte, esc bool) int {
 	return len(s)
 }
 
-// continuation reports whether the literal that ended at i is continued: PostgreSQL joins 'a' and 'b'
-// when only horizontal space, a newline (CR or LF) and further whitespace or "--" comments, each ending
-// at a newline, lie between them. It returns the index of the second literal's opening quote.
+// continuation reports whether the literal that ended at i is continued, and returns the index of the
+// second literal's opening quote. PostgreSQL (scan.l, REL_18_STABLE: quotecontinue,
+// whitespace_with_newline, special_whitespace) joins 'a' and 'b' only when whitespace holding a newline
+// separates them, where whitespace is [ \t\n\r\f\v] and a "--" comment (to its CR or LF). The scanner
+// over-approximates on purpose and fails closed: ANY run of those whitespace bytes and "--" comments
+// followed by a quote continues the literal, newline or not. Without a newline PostgreSQL rejects two
+// adjacent literals as a syntax error and runs nothing, so the over-approximation cannot hide a
+// statement, while an exact copy of the rule has drifted from the lexer three times. A block comment
+// between the literals is not whitespace in scan.l, so it is not skipped here either.
 func continuation(s string, i int) (int, bool) {
 	j := i
-	for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '\f') {
-		j++
-	}
-	if j >= len(s) || (s[j] != '\n' && s[j] != '\r') {
-		return 0, false
-	}
 	for j < len(s) {
 		switch {
-		case s[j] == ' ' || s[j] == '\t' || s[j] == '\f' || s[j] == '\n' || s[j] == '\r':
+		case s[j] == ' ' || s[j] == '\t' || s[j] == '\n' || s[j] == '\r' || s[j] == '\f' || s[j] == '\v':
 			j++
 		case strings.HasPrefix(s[j:], "--"):
 			k := strings.IndexAny(s[j:], "\r\n")
 			if k < 0 {
 				return 0, false
 			}
-			j += k + 1
+			j += k
 		default:
-			if s[j] == '\'' {
+			if s[j] == '\'' && j > i {
 				return j, true
 			}
 			return 0, false

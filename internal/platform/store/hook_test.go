@@ -2,26 +2,33 @@ package store
 
 import "testing"
 
+// txControlCases is the IsTxControl corpus: the SQL text and whether the guard must report it. The
+// PostgreSQL-backed TestIsTxControlMatchesPostgres runs the same corpus against the real lexer.
+var txControlCases = map[string]bool{
+	"COMMIT": true, " rollback ": true, "SAVEPOINT s": true, "release s": true, "BEGIN": true, "start transaction": true,
+	"END": true, "abort": true, "PREPARE TRANSACTION 'x'": true, "SELECT 1; COMMIT": true, "select 1;\n  rollback;": true,
+	"-- x\nCOMMIT": true, "/**/COMMIT": true, "/* ; */ COMMIT": true, "/* a /* nested */ b */ ROLLBACK": true,
+	"SELECT 1; -- c\n COMMIT": true, "SELECT 'it''s -- not a comment'": false, "SELECT 1 -- COMMIT": false, "/* COMMIT */ SELECT 1": false,
+	"SELECT 'a;b'":                false,
+	`select "a'b" from t; commit`: true, "SELECT $$ ' $$; COMMIT": true, "SELECT $t$ ; commit $t$": false,
+	"SELECT E'\\'; commit'": false, "SELECT $1; COMMIT": true,
+	"INSERT INTO t VALUES (1)": false, "": false,
+	// PostgreSQL ends a "--" comment at CR as well as LF
+	"-- x\rCOMMIT": true, "SELECT 1; -- x\rCOMMIT": true, "SELECT 1; -- x\r\nCOMMIT": true,
+	// a literal continued over a newline is lexed like the first segment
+	"SELECT E'a'\n'x\\'' ; COMMIT": true, "SELECT E'a'\r'x\\'' ; COMMIT": true,
+	"SELECT E'a' -- c\n'x\\'' ; COMMIT": true,
+	// standard_conforming_strings = off makes a plain literal honour the backslash
+	"SELECT 'x\\'' ; COMMIT": true,
+	// no newline between two literals is a syntax error in PostgreSQL, not a hiding place
+	"SELECT E'a' 'b'; SELECT 1": false, "SELECT E'a' 'b'; COMMIT": true,
+	// scan.l continuation: a "--" comment before the newline, and \v anywhere, still continue the literal
+	"SELECT E'a' -- c\n'x\\'', 'y\\' ; COMMIT": true, "SELECT E'a' -- c\r'x\\'', 'y\\' ; COMMIT": true,
+	"SELECT E'a'\n\v'x\\'', 'y\\' ; COMMIT": true, "SELECT E'a'\v\n'x\\'', 'y\\' ; COMMIT": true,
+}
+
 func TestIsTxControl(t *testing.T) {
-	for sql, want := range map[string]bool{
-		"COMMIT": true, " rollback ": true, "SAVEPOINT s": true, "release s": true, "BEGIN": true, "start transaction": true,
-		"END": true, "abort": true, "PREPARE TRANSACTION 'x'": true, "SELECT 1; COMMIT": true, "select 1;\n  rollback;": true,
-		"-- x\nCOMMIT": true, "/**/COMMIT": true, "/* ; */ COMMIT": true, "/* a /* nested */ b */ ROLLBACK": true,
-		"SELECT 1; -- c\n COMMIT": true, "SELECT 'it''s -- not a comment'": false, "SELECT 1 -- COMMIT": false, "/* COMMIT */ SELECT 1": false,
-		"SELECT 'a;b'":                false,
-		`select "a'b" from t; commit`: true, "SELECT $$ ' $$; COMMIT": true, "SELECT $t$ ; commit $t$": false,
-		"SELECT E'\\'; commit'": false, "SELECT $1; COMMIT": true,
-		"INSERT INTO t VALUES (1)": false, "": false,
-		// PostgreSQL ends a "--" comment at CR as well as LF
-		"-- x\rCOMMIT": true, "SELECT 1; -- x\rCOMMIT": true, "SELECT 1; -- x\r\nCOMMIT": true,
-		// a literal continued over a newline is lexed like the first segment
-		"SELECT E'a'\n'x\\'' ; COMMIT": true, "SELECT E'a'\r'x\\'' ; COMMIT": true,
-		"SELECT E'a' -- c\n'x\\'' ; COMMIT": true,
-		// standard_conforming_strings = off makes a plain literal honour the backslash
-		"SELECT 'x\\'' ; COMMIT": true,
-		// no newline between two literals is a syntax error in PostgreSQL, not a hiding place
-		"SELECT E'a' 'b'; SELECT 1": false, "SELECT E'a' 'b'; COMMIT": true,
-	} {
+	for sql, want := range txControlCases {
 		if got := IsTxControl(sql); got != want {
 			t.Errorf("IsTxControl(%q) = %v; want %v", sql, got, want)
 		}
