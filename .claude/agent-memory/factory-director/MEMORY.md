@@ -5,12 +5,12 @@
 - [Domain-model review checks](domain-model-review-checks.md) — ME map vs scope lock; derived states; gPLink; Entra scopes; authz join keys; Graph perms; "only X" vs "X or Y"; backstop predicates
 - [Benchmark review checks](benchmark-review-checks.md) — script step tables vs totals, recompute model times, read screenshot hints for shorter paths, secrets vs TM/SP
 - [AD research review checks](ad-research-review-checks.md) — fetch cited pages for verbatim quotes; trial-vs-paid condition drift; grep stale copies
-- [Blocked on another ticket](triage-blocked-on-another-ticket.md) — don't unblock (skips dep gating); set depends_on, raise blocker's priority, note both
+- [Blocked on another ticket](triage-blocked-on-another-ticket.md) — don't unblock (skips dep gating); set depends_on; walk the AC's data path for missing writers
 - [Spike review checks](spike-review-checks.md) — gh-api upstream claims; amend disproved ADRs; histogram weighting; recs vs own data; grep ratified ADRs
 - [ADR review: allowlist + ownership](adr-review-allowlist-and-ownership.md) — allowlist matrix must cover every package incl. roots; run every DM owner through table rules
 - [Generator ADR checks](generator-adr-review-checks.md) — read codegen templates per allowed construct; nested strictness; secretjson/FF-SP2; host↔kernel cycles
 - [Pipeline/audit ADR checks](pipeline-adr-review-checks.md) — draw import DAG for token-typed write APIs; authz re-check per DM-35 root kind incl. Entra; transitions edges
-- [Capacity knobs: ask the number](capacity-knobs-ask-the-number.md) — CEO sets slots/run-cap numbers; ask in one line, lead with the higher value
+- [Capacity knobs: ask the number](capacity-knobs-ask-the-number.md) — CEO sets slot/run-cap numbers; answer-note numbers beat option text (D-0016)
 - [Derived state vs retention pins](derived-state-retention-pins.md) — pin every row a derivation reads; no restricted IDs in audit events; spec flow lacks a security stage
 - [Env blockers: measure first](triage-env-blockers.md) — df/docker before deciding; name the worker's own leftovers; outage-window failures still need a root cause
 - [No claude.ai Artifacts for activeDIQ](no-claude-artifacts-for-activediq.md) — visuals go to the factory Library in board theme, never published to the Claude site
@@ -23,3 +23,4 @@
 - [Ticket notes vs YAML](review-ticket-notes-vs-yaml.md) — verify each security note in the artefact, not the commit msg; new routes vs existing R-n findings
 - [Merge-conflict blocks](triage-merge-conflict-blocks.md) — primary MERGE_HEAD, merge-tree vs current main, migrations-number test on main
 - [Search ADR review checks](search-adr-review-checks.md) — fold step order vs own examples; LIMIT≠bound unless index-ordered (GIN can't); cap before scope leaks
+- [Main-green umbrella is a bad cut](triage-main-green-umbrella.md) — 2nd 'new causes outside scope' block → re-scope ACs to premerge ratchet; cancel dup fixes

@@ -1,6 +1,6 @@
 ---
 title: CEO preferences
-updated: 2026-10-30
+updated: 2026-11-01
 budget: 120 lines
 ---
 
@@ -25,6 +25,7 @@ CEO unless they state otherwise.
 - 2026-08-12 · Status reports in very few lines; no summaries of things they did not ask about. (../UEM/.claude/skills/domain-model/SKILL.md)
 
 ## Models and cost
+- 2026-11-01 · On the date their "M2a only" hold ran out, they put finishing M1 (the lab proofs, the RC4 security fix) ahead of M2a speed. They gave the split as numbers in the answer note ("Resume M1/lab in 5 slot; keep 1 slots for M2a"), the reverse of the recommended 1-slot option. When an answer note gives numbers, apply the note over the option label and file a notice. When capacity is being split, offer the bolder split as an option too. (D-0016, notice D-0018)
 - 2026-10-22 · On lab spend, took the free route (Developer Program sandbox) over a small paid tenant or deferring. They did not defer the least-privilege proof. Lead with free-if-eligible and give a priced fallback. Keep their hands-on steps to one command, with no credential pasting. (D-0001, current board)
 - 2026-10-02 · **Nothing runs above `high` effort** (this replaces the kickoff's xhigh/max-on-escalation rule). Use Sonnet at high for most roles and Opus at high only for the important ones ("like yourself"). Daily run cap 300. They prefer more runs on cheaper settings over fewer runs at maximum effort. (CLI answer 2026-10-02)
 - 2026-10-02 · Wanted 6 parallel worker slots and corrected the factory's cautious choice of 4. On throughput they lean towards more capacity, within the 300/day cap. When they ask to change a capacity setting without giving a number, ask for the number in one line. Don't pick a conservative value for them. (CLI, 2026-10-02)
