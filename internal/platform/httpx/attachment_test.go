@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/skenzeriq/activediq/internal/platform/corpus/corpustest"
 )
@@ -190,5 +192,88 @@ func TestPartHeadersRefuse(t *testing.T) {
 		if err := PartHeaders(h, "report", c.f); !errors.Is(err, c.want) || len(h) != 0 {
 			t.Errorf("PartHeaders(%d) = %v, headers %v; want %v and nothing set", c.f, err, h, c.want)
 		}
+	}
+}
+
+// partLines writes the part header as a message would carry it, reads it back with net/textproto
+// and returns the raw lines and the parsed header.
+func partLines(t *testing.T, h textproto.MIMEHeader) ([]string, textproto.MIMEHeader) {
+	t.Helper()
+	var raw strings.Builder
+	for k, vs := range h {
+		for _, v := range vs {
+			raw.WriteString(k + ": " + v + "\r\n")
+		}
+	}
+	raw.WriteString("\r\n")
+	back, err := textproto.NewReader(bufio.NewReader(strings.NewReader(raw.String()))).ReadMIMEHeader()
+	if err != nil {
+		t.Fatalf("part header does not parse: %v\n%q", err, raw.String())
+	}
+	return strings.Split(strings.TrimSuffix(raw.String(), "\r\n\r\n"), "\r\n"), back
+}
+
+// O7 / EM-12: no part header line over 998 octets for any rune width, and the decoded name is the
+// mapped, capped name.
+func TestPartHeadersLongNameLineBound(t *testing.T) {
+	for _, c := range []struct {
+		f   Format
+		ext string
+	}{{CSV, ".csv"}, {XLSX, ".xlsx"}, {PDF, ".pdf"}} {
+		for _, base := range []string{
+			strings.Repeat("\U0001F600", MaxBaseRunes),      // 4-byte runes: the 1.4 KB case
+			strings.Repeat("\u20ac", MaxBaseRunes),          // 3-byte runes
+			strings.Repeat("\u00e9", MaxBaseRunes),          // 2-byte runes
+			strings.Repeat("a", MaxBaseRunes),               // ASCII, not cut
+			strings.Repeat("x\U0001F600", MaxBaseRunes/2+3), // mixed
+			strings.Repeat("\x00", 500) + strings.Repeat("\U0001F600", 500),
+		} {
+			h := textproto.MIMEHeader{}
+			if err := PartHeaders(h, base, c.f); err != nil {
+				t.Fatal(err)
+			}
+			lines, back := partLines(t, h)
+			for _, l := range lines {
+				if len(l) > 998 {
+					t.Errorf("%d: line of %d octets", c.f, len(l))
+				}
+			}
+			if len(back) != 2 || len(back["Content-Disposition"]) != 1 {
+				t.Errorf("%d: headers %v, want Content-Disposition and Content-Type once each", c.f, back)
+			}
+			want := partFileName(base) + c.ext
+			if !strings.HasPrefix(fileName(base), partFileName(base)) || len(pctEncode(partFileName(base))) > MaxPartEncodedBase {
+				t.Errorf("%d: %q is not a bounded prefix of the mapped name", c.f, want)
+			}
+			_, params, err := mime.ParseMediaType(back.Get("Content-Disposition"))
+			if err != nil || params["filename"] != want {
+				t.Errorf("%d: decoded name %q err %v, want %q", c.f, params["filename"], err, want)
+			}
+			_, tp, err := mime.ParseMediaType(back.Get("Content-Type"))
+			if err != nil || !strings.HasSuffix(tp["name"], c.ext) {
+				t.Errorf("%d: Content-Type name %q err %v", c.f, tp["name"], err)
+			}
+		}
+	}
+}
+
+// The cap is on rune boundaries, keeps the extension, and leaves names that fit alone.
+func TestPartFileNameCap(t *testing.T) {
+	long := strings.Repeat("\U0001F600", MaxBaseRunes)
+	if got := partFileName(long); got != strings.Repeat("\U0001F600", MaxPartEncodedBase/12) {
+		t.Errorf("partFileName(120 x U+1F600) = %d runes", len([]rune(got)))
+	}
+	h := textproto.MIMEHeader{}
+	if err := PartHeaders(h, long, PDF); err != nil {
+		t.Fatal(err)
+	}
+	if v := h.Get("Content-Disposition"); !strings.HasSuffix(v, ".pdf") || !utf8.ValidString(v) {
+		t.Errorf("Content-Disposition %q must keep the .pdf extension", v)
+	}
+	if got := partFileName("Q3 report"); got != "Q3 report" {
+		t.Errorf("partFileName(short) = %q", got)
+	}
+	if got := partFileName(strings.Repeat("a", MaxBaseRunes)); len(got) != MaxBaseRunes {
+		t.Errorf("an ASCII base of MaxBaseRunes was cut to %d", len(got))
 	}
 }

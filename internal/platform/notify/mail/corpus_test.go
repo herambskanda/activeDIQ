@@ -39,7 +39,7 @@ func baseMessage() Message {
 	return Message{From: mustAddr("noreply@ok.example"), To: mustAddr("bob@ok.example"), Subject: "Weekly report", Text: "Hello"}
 }
 
-// wireOK is the SMTP-smuggling check of EM-07 on what the relay receives: the message has no bare
+// wireOK is the SMTP-smuggling check of EM-07 and the line bound of EM-12 on what the relay receives: the message has no bare
 // CR or LF, and once the DATA writer of net/smtp has dot-stuffed it (net/textproto DotWriter), the
 // only line that is a single dot is the terminator.
 func wireOK(raw []byte) error {
@@ -49,6 +49,12 @@ func wireOK(raw []byte) error {
 		}
 		if c == '\r' && (i+1 >= len(raw) || raw[i+1] != '\n') {
 			return errors.New("bare CR in the message")
+		}
+	}
+	// O7 / EM-12: RFC 5322 section 2.1.1, no line over 998 octets (CRLF excluded).
+	for _, line := range bytes.Split(raw, []byte("\r\n")) {
+		if len(line) > 998 {
+			return fmt.Errorf("a line of %d octets in the message", len(line))
 		}
 	}
 	var wire bytes.Buffer
@@ -265,4 +271,41 @@ func FuzzMessage(f *testing.F) {
 			}
 		}
 	})
+}
+
+// T-1173 (O7, EM-12): a 120 four-byte-rune base in each format builds a message with no line over
+// 998 octets, and multipart's own FileName() decodes the mapped name (cut to httpx.MaxPartEncodedBase
+// encoded octets: 50 of the 120 runes).
+func TestLongAttachmentNameLineBound(t *testing.T) {
+	base := strings.Repeat("\U0001F600", httpx.MaxBaseRunes)
+	for f, ext := range map[httpx.Format]string{httpx.CSV: ".csv", httpx.XLSX: ".xlsx", httpx.PDF: ".pdf"} {
+		want := strings.Repeat("\U0001F600", httpx.MaxPartEncodedBase/12) + ext
+		m := baseMessage()
+		m.Attachments = []Attachment{{Filename: base, Format: f, Data: []byte("a,b\n")}}
+		raw, _, err := m.build()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range bytes.Split(raw, []byte("\r\n")) {
+			if len(line) > 998 {
+				t.Fatalf("format %d: line of %d octets", f, len(line))
+			}
+		}
+		msg, err := netmail.ReadMessage(bytes.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, params, _ := mime.ParseMediaType(msg.Header.Get("Content-Type"))
+		mr := multipart.NewReader(msg.Body, params["boundary"])
+		if _, err := mr.NextPart(); err != nil {
+			t.Fatal(err)
+		}
+		p, err := mr.NextPart()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := p.FileName(); got != want {
+			t.Fatalf("format %d: FileName() = %q, want %q", f, got, want)
+		}
+	}
 }
