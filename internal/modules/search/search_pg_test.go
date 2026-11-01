@@ -10,11 +10,8 @@ import (
 	"os"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
@@ -310,46 +307,14 @@ func Test_ranking_table(t *testing.T) {
 	})
 }
 
-type stmtLog struct {
-	mu   sync.Mutex
-	list []string
-}
-
-func (l *stmtLog) add(s string) { l.mu.Lock(); l.list = append(l.list, s); l.mu.Unlock() }
-func (l *stmtLog) count(sub string) (n int) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	for _, s := range l.list {
-		if strings.Contains(s, sub) {
-			n++
-		}
-	}
-	return
-}
-
-type countTx struct {
-	store.Tx
-	l *stmtLog
-}
-
-func (c countTx) Query(ctx context.Context, sql string, a ...any) (pgx.Rows, error) {
-	c.l.add(sql)
-	return c.Tx.Query(ctx, sql, a...)
-}
-
-func (c countTx) QueryRow(ctx context.Context, sql string, a ...any) pgx.Row {
-	c.l.add(sql)
-	return c.Tx.QueryRow(ctx, sql, a...)
-}
-
 // countDB counts the statements of each tenant transaction a search opens.
 type countDB struct {
 	db *store.DB
-	l  *stmtLog
+	l  *storetest.StatementLog
 }
 
 func (c countDB) WithTenant(ctx context.Context, id tenant.ID, fn func(context.Context, store.Tx) error) error {
-	return c.db.WithTenant(ctx, id, func(ctx context.Context, tx store.Tx) error { return fn(ctx, countTx{Tx: tx, l: c.l}) })
+	return c.db.WithTenant(ctx, id, func(ctx context.Context, tx store.Tx) error { return fn(ctx, storetest.Record(tx, c.l)) })
 }
 
 // AC4: 5 visible and 500 hidden matches. The count, the per-group limit, the "more" flag and the "show all"
@@ -368,7 +333,7 @@ func Test_counts_limits_and_pages_come_after_trimming(t *testing.T) {
 		w.populate(t, obs...)
 
 		svc, _ := w.service(t, w.tech())
-		l := &stmtLog{}
+		l := &storetest.StatementLog{}
 		svc.DB = countDB{db: w.db, l: l}
 		res, err := svc.Search(context.Background(), search.Call{Tenant: w.tid, Text: "quentin v", Limit: 2})
 		if err != nil {
@@ -378,10 +343,10 @@ func Test_counts_limits_and_pages_come_after_trimming(t *testing.T) {
 		if res.Refine || u.Count == nil || *u.Count != 5 || len(u.Items) != 2 || !u.More || u.NextCursor == "" {
 			t.Fatalf("5 visible: refine %v count %v items %d more %v cursor %q", res.Refine, u.Count, len(u.Items), u.More, u.NextCursor)
 		}
-		if n := l.count("inventory_search_keys"); n != 1 {
+		if n := l.Count("inventory_search_keys"); n != 1 {
 			t.Errorf("%d search statements for one request", n)
 		}
-		if n := l.count("unnest($2::uuid[], $3::uuid[])"); n != 1 {
+		if n := l.Count("unnest($2::uuid[], $3::uuid[])"); n != 1 {
 			t.Errorf("%d metadata reads for one request", n)
 		}
 		// "Show all": pages of the visible five only, in rank order, through a signed cursor.
