@@ -88,8 +88,11 @@ What the dispatcher does now for a finished code ticket (`factory/lib/premerge.m
    that moves does not count, a second copy of an old one does, and a job that turns red counts as the
    finding `FAILED <target>`. A run that fails with no recognisable finding line is refused.
 5. A refused ticket returns to `in_progress` for its owner with the findings and the log paths in the
-   note. If the gate cannot judge (timeout, worktree failure) nothing merges and it is retried after
-   10 minutes.
+   note. If the gate cannot judge (timeout, worktree failure, a scratch tree removed or replaced while
+   the command ran) nothing merges and it is retried after 10 minutes.
+6. Every run, dry or real, has its own scratch tree and log (a per-run tag in the name), so runs that
+   overlap cannot delete each other's tree. A truncated run is never judged or cached as `main`'s
+   baseline (T-0696).
 
 **Migration numbering (T-1067).** Before the full command the gate runs a cheap check on the same merge
 result (`dispatcher.pre_merge.numbering`: `go test ./migrations/ -run ^TestMigrationNumbersAreUniqueAndContiguous$`,
@@ -123,7 +126,8 @@ fitness tool adds its line there, and prints one self-contained line per violati
 into `findingKey` (or, for a heading with indented violations, `FAIL_BLOCK`) in `extractFindings`.
 
 Dry run, changes nothing: `factory/bin/factory premerge T-NNNN` (or `… -- make fitness-profiles` to
-run one job). Tests: `node --test factory/test/premerge.test.mjs`. Runbook: `runbooks/ci-and-build.md`.
+run one job). On a red `main` with no cached baseline it runs `make -k ci` twice and can outlast a
+worker's 90-minute run budget, so run it in the background (T-1217). Tests: `node --test factory/test/premerge.test.mjs`. Runbook: `runbooks/ci-and-build.md`.
 
 ## Rules for adding a gate
 
