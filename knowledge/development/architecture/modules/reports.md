@@ -37,7 +37,7 @@ scope decision, not a platform asymmetry.
 | `internal/platform/report` (EP-8 host), `Registrar.Dataset` | **Built (T-0956, row B1).** Pure types and `Resolve` (no SQL driver), `Registrar.Dataset`, `Contributions.Datasets()`, `platform.Deps.Report`, and the Boot table-ownership check (`report.CheckTables`). Deviations below | §2, §3, row B1 |
 | `internal/platform/store/reportsql` | **Built (T-0957, row B2).** `NewRegistry`, `Compile`, `CompileCount`, `Exec`, `Count`, the scope and narrowing renderers, SQL vectors (FF-SP4) and RP6. `sqlconst` (FF-SP2) lets a value of type `reportsql.CompiledSQL` reach `Exec` and `string(x)` of one is a constant for it. Deviations in §5 | §5, row B2, RP1, RP6 |
 | Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. **Wired in `compose/server` (T-0916, `readscopes.go`):** `rbac.OwnerStatus` over `authn_accounts` (active only), `rbac.ObjectConnections` over `directory_objects` (one connection, else ok=false), `buildReadScopes(authorizer, module.Contributions)`, and `txReadScopes` (opens the tenant tx) for `directory.ReadScopes`; search and report runs both receive it | §4 |
-| Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. There is no group closure. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed Row P1 (T-0949, migration 0063) is built: `nc_sync_passes` (one row per tenant, connection, NC) holds `last_pass_at` and `state` (`ok`, `resync_required`, `paused`). `Writer.RecordPass` sets the pass as-of (start of the read) in the cycle's transaction and `Ingest` calls it on the last batch for each `Cycle.PassNCs`, so a quiet domain is fresh; `Writer.MarkNC` records resync or pause; `Reader.Freshness` returns `[]report.NCWatermark` and the `report.Label` result, with `DefaultStalenessThreshold` = 60 min | §3.4, §4.5, rows P1, **P2**, B3, B6 |
+| Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. **Row B6 (T-0961, migration 0068) added** the group closure `inventory_group_members` and its dirty set `inventory_group_closure_dirty`. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed Row P1 (T-0949, migration 0063) is built: `nc_sync_passes` (one row per tenant, connection, NC) holds `last_pass_at` and `state` (`ok`, `resync_required`, `paused`). `Writer.RecordPass` sets the pass as-of (start of the read) in the cycle's transaction and `Ingest` calls it on the last batch for each `Cycle.PassNCs`, so a quiet domain is fresh; `Writer.MarkNC` records resync or pause; `Reader.Freshness` returns `[]report.NCWatermark` and the `report.Label` result, with `DefaultStalenessThreshold` = 60 min | §3.4, §4.5, rows P1, **P2**, B3, B6 |
 | Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. **T-1105 added the two library reads** (`listReportDefinitions`, `getReportDefinition`, `modules/reports/definitions.go`, §3.6). The export operations are built in row B9 (T-0963); the other 9 operations answer 501 until B11 | §6, §9, row B4 |
 | Console screens (`web/src/modules/reports`) | **Built (T-0966, row B12 part 1; export and schedule are B12b, T-0902).** Routes `/reports` (library) and `/reports/<id>`; the run starts when the report opens and the grid reads `listReportRunRows` (500 a page, server sort, windowed DataGrid). Client state is the URL plus `use-definitions.ts` and `use-report-run.ts` (start, poll `getReportRun`, cancel, retry). The stale banner and header chip render `ReportFreshness.stale[]` (connection name, cause, age) and the hidden-group banner renders `ReportRun.hiddenGroups[]` (count, `locked` removes Show), all from the API (T-1074); the console derives neither. Open gaps: no report+object composite hit (T-1075), subject reports need an object picker (T-1076), live-stack check (T-1077) | §6, row B12 |
 | `platform/export` | CSV, XLSX and PDF encoders (HTML is `platform/htmlx`), `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150), the canonical `Digest`/`Digester` and `Unknown()`. **Built (T-0963, row B9):** `modules/reports/export` (service, `reports.export` job, About block), migration 0065, RP5 landed. **PDF and HTML built (T-0964, row B10)**, §7.1b | §7, rows B9, B10 |
@@ -304,8 +304,24 @@ parent RDNs are not an exception to the masking rules; they are part of the obje
 - **Reason (AD semantics).** A DN is the object's name and its path from the naming context head.
   AD returns the same string, parent RDNs included, to any principal who can read the object, so
   the `dn` cell tells a reader with the grant nothing the directory would not.
-- **Where it applies.** Only a column that renders the row's own `dn` (today `dn` on
-  `inventory.users` and `inventory.computers`), and only for the row's own object.
+- **Where it applies.** Only a column that renders the row's own `dn`, and only for the row's own
+  object: `dn` on `inventory.users`, `.computers`, `.groups`, `.ous` and `.contacts`; `group_dn` and
+  `member_dn` on `inventory.group_members` (each the own DN of an in-scope object the row is about);
+  and `managed_by` on `inventory.groups`, but only once the manager resolves to a live, in-scope
+  object **of the same connection** (a DN is unique within a forest, not across connections; the
+  match is on connection and DN, and a later GUID link, T-1071, replaces the DN string).
+- **Named exception: `in_other_groups`.** On `inventory.users` and `.computers` this boolean is
+  true when the object has a `member` link to any group, in scope or not. It is one bit about the
+  in-scope object's own `memberOf`, which AD returns to anyone who can read the object; counting only
+  in-scope groups would mislead a help-desk runner on "users in no other group" clean-ups. It must
+  never widen into a group name or a count. RP11 (`rpUsers`) pins the value: true when the only other
+  group is out of scope.
+- **Named exceptions: `nesting_cut` and `membership_listing`.** On `inventory.groups`, `nesting_cut` is true when the walk
+  stopped at the depth cap below the group, and `membership_listing` is `unknown_input_missing` when the group is over the closure
+  row budget (below). Each is one bit about the in-scope group's own listing ("the members shown for this group are incomplete"):
+  it names no object and carries no count, and it cannot be scoped without turning a true "incomplete" into a misleading "complete".
+  The group's member counts and `has_members` read Unknown (`UnknownWhen`) in that case, never a number. RP11 pins both
+  (`rpGroups`, `rpOverBudget`). They must never widen into a name, a GUID or a size.
 - **Where it does not.** No other column may carry an out-of-scope ancestor's name or GUID:
   not a second copy of the DN, not a parent-DN or OU-path column (T-1041 must mask it or scope
   it to the in-scope part), not another row's DN, and not a name or GUID of an out-of-scope
@@ -412,7 +428,7 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   DONT_EXPIRE plus tenant pattern list leg needs a text bind route. (6) `Datasets()` is not wired to
   `compose/server`: the table-owner map is empty (T-0997), so boot would refuse it.
 - **Cost.** The CTE runs per row and per derived column that needs it, only in the branches that reach it.
-  It is O(users x group depth) and unmeasured at 200,000 users; a materialised closure (B6) replaces it.
+  It is O(users x group depth) and unmeasured at 200,000 users. Row B6 built the materialised closure for the group datasets, but this CTE in the users policy resolution was **not** moved onto it (it still walks `links`); that is a follow-up.
 - **Secret keys.** `inventory.SecretKey` is the writer's refusal predicate, passed as
   `reportsql.Options.SecretKey`; a column reading any `secretattr.Static()` name is refused at
   registration (`Test_secret_attribute_keys_are_refused`).
@@ -423,6 +439,98 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   `datasets_ac_test.go`. `reportsql.Query.Statement()` exposes the compiled text for the AC-49 assertion.
   Samba AD cannot prove PSO group-membership semantics, GUID byte order on a real DC or
   `msDS-UserPasswordExpiryTimeComputed` as an oracle: a Windows-lab ticket is filed.
+
+**As built (T-0961, row B6): `inventory.groups`, `.group_members`, `.ous`, `.contacts`** (`internal/directory/inventory/closure.go`,
+`datasets_groups.go`, migration 0068; tests `closure_test.go`, `datasets_groups_test.go`, `rp11_inventory_test.go`).
+
+- **Fragment allowlist (T-1033).** A report fragment may not call `unnest`, `string_agg`, `get_byte` or `generate_series`. `Via` is built
+  by a recursive CTE that walks `{t}.via[i]` and names each hop through the `via` `MaskAnchor`; `member_sid` reads the generated column
+  `directory_objects.sid_text` (`directory_sid_text(sid)`, migration 0068; stored, so adding it rewrites the table once).
+- **Closure table.** `inventory_group_members (tenant_id, connection_id, group_guid, member_guid, edge_kind, depth, via uuid[])`,
+  one row per (group, effective member). `edge_kind` is `direct`, `primary_group`, `nested`, `cycle` or `over_budget` (plus the flag `cut`); `via` holds the
+  groups between the group and the member (`cardinality(via) = depth - 1`), the shortest path with the lowest GUID as tie-break. A cycle is a
+  row with `group_guid = member_guid`, `edge_kind = 'cycle'` and `via` = the loop. `inventory_group_closure_dirty` holds the
+  groups whose own edges or state changed. It is derived data: the runtime role keeps DELETE (the links table does not).
+- **Refresh seam.** `Writer.RefreshClosure` runs at the end of `Populate`, in the same transaction and under the connection
+  advisory lock. It recomputes the dirty groups and every live group above them by a Go breadth-first walk, replaces their
+  rows with one `INSERT … SELECT`, and clears the set. The dirty marks are written by the statements that change an edge
+  (`setEdge`, `removeEdge`, `removeUnseen`, `removeOtherPrimaryGroups`) and by each group observation. Depth is capped at 128:
+  the walk stops there, the nested row of a group at the cap that still has members is flagged `cut`, and the refresh
+  succeeds. `inventory.group_members.finding` then reads "Nesting deeper than 128 levels: members of X and below are not
+  listed" and `inventory.groups.nesting_cut` is true. Failing the refresh instead (the first design) let anyone who can
+  create a 129-deep chain of groups roll back every sync cycle of the connection. The primary-group edge is a closure row of depth 1, so a group whose only members are
+  primary-group users is not empty. Entra groups produce no closure (the walk needs state `live` AD groups).
+- **Closure row budget (security review of T-0961).** Depth is not the only way to freeze a sync: breadth does it too. Whoever can
+  write the `member` attribute of K groups (a group delegate, a managedBy owner with "can update membership", anyone who can create a
+  group) adds one big group to each, and the closure grows to K x N rows; every later change to the big group rewrites all of them
+  inside the sync transaction (measured by the reviewer: 50 one-value writes, N = 6,000, 306,050 rows, 13-15 s per batch; with
+  BUILTIN\Users containing Domain Users it also happens without an attacker). The refresh therefore has a declared budget
+  (`closure.go`): **250,000 rows per group and 500,000 per connection** (a 200,000-user Domain Users, and BUILTIN\Users which contains it,
+  fit). Before writing anything, `splitByBudget` estimates each live group as an upper bound of its rows: its own member and
+  primary-group links plus the bound of each group it holds, computed **once per group over the strongly connected components** of
+  the nesting graph (iterative Tarjan; a cycle is one component, counted once; saturating arithmetic). **The decision's work is
+  O(groups + nesting edges)**: no group's reach set is built to estimate (third security review: building each reach set cost
+  K x W, 18.6 s and 9.3 GB per refresh from about 16,000 attacker writes), and only a group that is admitted and rewritten is
+  walked, bounded by its estimate. A nested group reachable by several paths (a diamond) is counted once per path, so the bound can
+  exceed the exact row count: that can only turn a group Unknown, never give it a wrong count. **Which groups are expanded is a function of the
+  current links alone** (second security review: an outcome that depended on what earlier refreshes held let someone fill the budget
+  first and then blank Domain Admins' membership at the moment they joined it). Every refresh decides over *all* live groups of the
+  connection: well-known privileged groups first (domain RIDs 512 Domain Admins, 516 Domain Controllers, 518 Schema Admins, 519 Enterprise Admins, 521 Read-only Domain
+  Controllers, 526 Key Admins, 527 Enterprise Key Admins (the last two write msDS-KeyCredentialLink); BUILTIN 544, 548-551; an
+  attacker cannot create a group with such a SID. RIDs 520 Group Policy Creator Owners and BUILTIN 552 Replicator stay out on purpose), then smallest estimate, then lowest GUID, so a container never displaces the group it contains and arrival
+  order never matters. A group whose estimate exceeds the per-group limit, or what is left of the connection budget at its turn, gets
+  one `over_budget` marker row (`group_guid = member_guid`) and no member rows. A group already expanded is **evicted** to a marker
+  when the decision no longer admits it (a smaller or privileged group pre-empts it); a group that was left out is expanded when it
+  now fits; groups the decision leaves as they were keep their rows. Its counts, `has_members` and `nesting_cut` read Unknown,
+  `membership_listing` is `unknown_input_missing`, and `inventory.group_members` shows one row "Membership too large to list: the
+  members of X are not expanded" (it names only the group itself). The refresh succeeds. **Bounds:** a refresh deletes and inserts at most 500,000 rows plus one marker per
+  group, whatever fan-out the directory has (the stored rows always total at most the connection budget). **Measured** (PG16 and PG18, in-process, one-member change to the big group): at a
+  scaled-down budget (600-member group, 10 containers, 2,500 rows) 1.0-1.3 s per batch; **at the declared budget** (30,000-user
+  group, 15 admitted containers, 480,025 rows, 10 groups left unexpanded) a user added through the primary group, which makes the
+  refresh rewrite every row: **14-16 s per batch** (PG16 and PG18), with every statement far under the store's 30 s timeout because
+  an INSERT carries at most about 25,000 estimated rows (`closureChunkRows`; the first version put whole roots in one statement and
+  timed out on PG16 at this size). Re-reading a 30,000-member group's links in the same batch adds 20-25 s. Building the 25
+  containers took 12-38 s once. **Residual risk:** (1) the decision reads every live group, its
+  nesting edges and its own link count on every refresh with a dirty group: that work is linear in the groups and nesting links, not
+  in the budget (measured: a hub of 4,000 groups held by 4,000 groups, 8,001 groups and 12,000 edges, decides in about 10 ms and
+  2 MB; the same graph was 18.6 s and 9.3 GB with per-group reach sets), filed with the threat model row (T-1142); (1b) diamonds over-count
+  as above, so a legitimately diamond-shaped big group can read Unknown while its exact count would have fitted; (2) an attacker can still
+  push an ordinary *legitimate* big group out of the budget by creating enough smaller groups to fill it (500,000 rows of them);
+  privileged groups cannot be pushed out, and a group out of the budget shows Unknown, never a wrong number; (3) over-budget groups
+  show Unknown until the budget has room, and there is no setting to raise it per tenant yet. `nesting_cut` and `membership_listing`
+  are named one-bit exceptions (see above). Tests: `Test_group_closure_fanout_is_bounded`, `Test_group_closure_no_displacement` (the displacement probe as a regression, with the
+  stored decision compared to a from-scratch one after every refresh), `Test_splitByBudget`, `Test_splitByBudget_privileged_and_small_first`, `Test_splitByBudget_work_is_linear_in_the_graph` (4,000 + 4,000 hub fan under 1 s and 64 MB), `Test_estimates_are_an_upper_bound_of_the_reach_set`, `Test_splitByBudget_diamond_turns_a_group_unknown`, `Test_group_closure_hub_fan_is_bounded` (database level, from-scratch invariant, Domain Admins listed), `Test_live_groups_privileged_classification`, `Test_closure_budget_is_the_declared_one`,
+  RP11 `rpOverBudget`.
+- **Datasets.** `inventory.groups` counts `direct_members` (depth 1: member values and primary group), `effective_members`
+  (every non-cycle closure row), `primary_group_members`; `has_members` is the Groups Without Members test; `managed_by` shows the
+  manager DN only when it resolves to a live, in-scope object of the same connection (`FilterAnchor mgr`, matched on connection and DN), else "(manager outside your scope)".
+  `inventory.group_members` is keyed `group|member` with the `grp` and `mbr` row anchors, the `via` hop as `MaskAnchor`
+  ("(group outside your scope)"), `finding` ("Circular nesting: A → B → A") for cycle rows, and "External principal (unresolved)"
+  for an FSP member. `inventory.ous` counts the subtree per kind over the `sub` `FilterAnchor` (in-scope objects only).
+  `inventory.contacts` is a plain dataset. `inventory.users` and `.computers` gained `primary_group` and `in_other_groups`.
+  Every count joins a `FilterAnchor`, so it counts in-scope objects only (RP11).
+- **DN disclosure rule applied to `group_members`.** A row is about two in-scope objects (both anchors are row anchors), so
+  `group_dn` and `member_dn` each render one own-object DN. The RP11 world allows exactly that (`leaksWhere`) and proves a
+  swapped or foreign DN is caught.
+- **Deviations to know.** (1) `includes_members_outside_inventory` is true when a member edge's target has no
+  `directory_objects` row at all; a member in a covered domain that is out of the runner's scope is counted nowhere and not
+  flagged. (2) FSP resolution to a connection in the inventory (DM-17.I4) is not done: the FSP row shows the unresolved label.
+  (3) `groupType` and `managedBy` come from `attributes`; a sync that does not write them leaves `group_type` Unknown and
+  `has_manager` false. (4) The B3 policy-resolution CTE still walks `links` (see its cost note). (5) `Datasets()` is still not
+  wired to `compose/server` (T-0997).
+- **Cost, measured** (7,501 objects; groups of 1,501 and 6,000 direct members; PostgreSQL 16 and 18, in-process): populate of both
+  groups including edges and closure refresh 6-7 s; `inventory.groups` with `direct_members` and `effective_members` 60-95 ms;
+  first page of `group_members` for the 6,000-member group 55-70 ms. **These need table statistics.** Measured on tables
+  that had never been analysed (a fresh bulk load, before autovacuum) the same populate took 40-45 s and the two counts
+  8-14 s: the planner assumed empty tables and chose a nested loop that probed every object per closure row. The scale test
+  runs `ANALYZE` as the table owner to stand in for autovacuum; the runtime role cannot. After a first sync of a large
+  domain, reads are slow until autovacuum has analysed `inventory_group_members` and `directory_objects`. A 200,000-object
+  initial sync is not measured.
+- **Tests.** `Test_group_closure*` (closure rows, self loop, depth cap), `Test_group_members_nested_cycle_fsp` (AC-20 against a
+  Go-model oracle), `Test_primary_group_user_and_group_without_member_values` (AC-19), `Test_group_member_counts_at_scale` (AC-21),
+  `Test_ou_subtree_counts_in_scope_only` (AC-5), RP11 subtests for all six inventory datasets. All run on PostgreSQL only.
+  The `tokenGroups` oracle, real LDAP ground truth and Windows behaviour (FSP, primary group via `tokenGroups`) need the lab:
+  a lab ticket is filed.
 
 ### 3.4 Definitions, presets and the AST a run executes
 
@@ -1509,7 +1617,7 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | **B3** (built, T-0958; §3.3 "As built") | inventory: `inventory.users` and `inventory.computers` datasets, D4 policy-input tables and sync, D7 inputs, GIN index on `ancestry`, derived-state fragments, PSO `MaskAnchor` for `policy_source`, service-account signal, secret-key refusal, **RP8**, **RP11** for its datasets | directory-engineer (ad-expert consult) | B1, B2, P2 | FR-09, FR-14, FR-21; AC-12, AC-13, AC-14, AC-15, AC-29, AC-49 |
 | **B4** | `modules/reports` run path: module skeleton and page, `report_runs`/`report_run_rows` migrations and both triggers, `run.State`/`run.FailureReason`, `reports.run` job with row lock, `attempt` and interrupted rule, reuse window, concurrency cap, `run.ReadAccess` (§6.6), page queries, freshness label, permissions, run audit kinds with the full chain, retention job, run API handlers, **RP4**, **RP9** | reporting-engineer (backend-engineer reviews) | B1, B2, T-0882, P1, P2, T-0866 | FR-06, FR-07, FR-08, FR-11, FR-12, FR-13 (server-side sort and filter), FR-22 (run), FR-30, FR-31; AC-06–AC-11, AC-42, AC-48 |
 | **B5** (built, T-0960; §3.6 "As built") | Library batch 1: loader, `LOCK`, crosswalk search index, USR-01, USR-02, USR-03, USR-05 with presets and hidden groups, sync-interval-0 narrowing | reporting-engineer | B3, B4 | FR-01, FR-02, FR-03, FR-04, FR-06, FR-09, FR-14; AC-01–AC-04, AC-12, AC-16, AC-17, AC-18, AC-49 |
-| **B6** | inventory: `inventory.groups`, `.group_members` (`grp` and `mbr` row anchors, primary-group edges, effective closure, cycle findings, FSP rows, `Via` hop as `MaskAnchor`), `.ous` (in-scope subtree counts over a `FilterAnchor`), `.contacts`, **RP11** for its datasets | directory-engineer | B1, B2, P2 | FR-15, FR-06; AC-19, AC-20, AC-21 |
+| **B6** (built, T-0961; §3.3 "As built (T-0961)") | inventory: `inventory.groups`, `.group_members` (`grp` and `mbr` row anchors, primary-group edges, effective closure, cycle findings, FSP rows, `Via` hop as `MaskAnchor`), `.ous` (in-scope subtree counts over a `FilterAnchor`), `.contacts`, **RP11** for its datasets | directory-engineer | B1, B2, P2 | FR-15, FR-06; AC-19, AC-20, AC-21 |
 | **B7** | Library batch 2: PWD-01, PWD-02, GRP-01–GRP-04, CMP-01, CMP-02, OU-01, CTC-01 | reporting-engineer | B5, B6 | FR-01, FR-02, FR-09, FR-14, FR-15; AC-13, AC-19, AC-20, AC-22, AC-23 |
 | **B8** | Per-DC runs: the §6.5 stages, read cap, coverage labels, `EvalPerDC`; USR-04, PWD-03 | reporting-engineer | B4, B5, P5 | FR-10; AC-39, AC-40, AC-41 |
 | **B9** | Export: `export.Digest` (canonical form and vectors, `u` tag included), `export.Unknown()`, `run.StoredSource`, About block, CSV and XLSX export jobs, `report_exports`, creator download through `run.ReadAccess` (§7.1), 410, delete, caps, export audit kinds, **RP5** | reporting-engineer | B4 | FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22 (export), FR-31; AC-24–AC-28, AC-50 |
@@ -1631,6 +1739,10 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 - 2026-10-30 · T-0958 · row B3 built: `inventory.users` and `inventory.computers`, migration 0061 (D7 inputs, D4
   policy tables, GIN index on `ancestry`), `PolicyWriter`, derived states with the effective policy resolved in
   SQL, RP8 and RP11 landed in `tools/fitness/reports`, `reportsql.Query.Statement`. See §3.3 "As built".
+- 2026-11-01 · T-0961 · closure decision made linear (O(groups + nesting edges): memoised bound over SCCs, no per-group reach sets); privileged set adds RIDs 521, 526, 527 (third security review). See §3.3.
+- 2026-11-01 · T-0961 · closure expansion decided from the current links alone (privileged first, eviction), no history dependence (second security review). See §3.3.
+- 2026-10-31 · T-0961 · closure row budget (250,000 per group, 500,000 per connection), `over_budget` marker, `membership_listing`; `nesting_cut` named as a one-bit exception (security review). See §3.3.
+- 2026-10-31 · T-0961 · row B6 built: `inventory.groups`, `.group_members`, `.ous`, `.contacts`, migration 0068 (group closure and dirty set, refreshed by `Populate`), `primary_group` and `in_other_groups` on users and computers, RP11 for the four datasets. See §3.3 "As built (T-0961)".
 - 2026-10-31 · T-0960 · row B5 built: `internal/modules/reports/library` (loader, `LOCK`, crosswalk search, USR-01, USR-02,
   USR-03, USR-05), `HiddenGroup.Locked`, four derived columns on `inventory.users`. See §3.6 "As built".
 - 2026-10-31 · T-1105 · reports API: `listReportDefinitions` and `getReportDefinition` answer from the library (the 501 stubs are

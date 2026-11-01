@@ -481,6 +481,13 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		}
 
 		if o.Kind == KindGroup {
+			// A group row that arrived or changed (state, kind) is a closure root to recompute, with
+			// the groups that contain it.
+			if _, err := tx.Exec(ctx, `INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+				VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid) ON CONFLICT DO NOTHING`,
+				string(connection), string(o.Object)); err != nil {
+				return out, writeErr("mark group dirty", err)
+			}
 			for _, m := range o.Members {
 				if err := p.SetMember(ctx, tx, connection, o.Object, m, observed); err != nil {
 					return out, err
@@ -507,6 +514,10 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 				return out, err
 			}
 		}
+	}
+	// The membership closure the group datasets read follows the links of this batch in the same transaction.
+	if _, err := p.RefreshClosure(ctx, tx, connection); err != nil {
+		return out, err
 	}
 	return out, nil
 }
@@ -725,9 +736,13 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 // removeUnseen marks the active attr edges of group that this cycle did not refresh (observed_at older
 // than the cycle) removed: the cycle read the whole membership.
 func (Writer) removeUnseen(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group GUID, observed time.Time) error {
-	_, err := tx.Exec(ctx, `UPDATE public.links SET state = 'removed', observed_at = $3
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-		AND source_guid = $2::uuid AND link_attr = $4 AND state = 'active' AND observed_at < $3`,
+	_, err := tx.Exec(ctx, `WITH edge AS (
+			UPDATE public.links SET state = 'removed', observed_at = $3
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
+			AND source_guid = $2::uuid AND link_attr = $4 AND state = 'active' AND observed_at < $3
+			RETURNING tenant_id, connection_id, source_guid)
+		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
 		string(connection), string(group), observed.UTC(), attr)
 	if err != nil {
 		return writeErr("remove unseen "+attr, err)
@@ -738,9 +753,13 @@ func (Writer) removeUnseen(ctx context.Context, tx store.Tx, attr string, connec
 // removeOtherPrimaryGroups: a user has one primary group, so any other active primary_group edge to the
 // user is stale once the new one is observed.
 func (Writer) removeOtherPrimaryGroups(ctx context.Context, tx store.Tx, connection ConnectionID, group, user GUID, observed time.Time) error {
-	_, err := tx.Exec(ctx, `UPDATE public.links SET state = 'removed', observed_at = $4
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-		AND link_attr = 'primary_group' AND target_guid = $3::uuid AND source_guid <> $2::uuid AND state = 'active' AND observed_at <= $4`,
+	_, err := tx.Exec(ctx, `WITH edge AS (
+			UPDATE public.links SET state = 'removed', observed_at = $4
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
+			AND link_attr = 'primary_group' AND target_guid = $3::uuid AND source_guid <> $2::uuid AND state = 'active' AND observed_at <= $4
+			RETURNING tenant_id, connection_id, source_guid)
+		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
 		string(connection), string(group), string(user), observed.UTC())
 	if err != nil {
 		return writeErr("remove stale primary group", err)
