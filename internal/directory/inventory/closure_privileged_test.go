@@ -22,7 +22,7 @@ func hBuiltinSID(rid uint32) []byte {
 }
 
 // Test_live_groups_privileged_classification pins the SQL that decides which groups are the well-known
-// privileged ones: domain RIDs 512, 516, 518, 519 and BUILTIN 544, 548-551 - and nothing near them.
+// privileged ones: domain RIDs 512, 516, 518, 519, 521 (RODC), 526 (Key Admins), 527 (Enterprise Key Admins) and BUILTIN 544, 548-551 - and nothing near them.
 func Test_live_groups_privileged_classification(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
@@ -45,10 +45,10 @@ func Test_live_groups_privileged_classification(t *testing.T) {
 			o.SID = hBuiltinSID(rid)
 			groups = append(groups, g{fmt.Sprintf("builtin-%d", rid), o, want})
 		}
-		for _, rid := range []uint32{512, 516, 518, 519} {
+		for _, rid := range []uint32{512, 516, 518, 519, 521, 526, 527} {
 			domain(rid, true)
 		}
-		for _, rid := range []uint32{513, 520, 1512, 5120, 51, 5512} {
+		for _, rid := range []uint32{513, 520, 522, 525, 528, 1521, 5260, 52, 5527} {
 			domain(rid, false)
 		}
 		for _, rid := range []uint32{544, 548, 549, 550, 551} {

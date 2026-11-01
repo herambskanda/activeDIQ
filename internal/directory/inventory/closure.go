@@ -37,9 +37,10 @@ const (
 	// group then rewrites all of them inside the sync transaction, under the connection's lock (security
 	// review of T-0961: 50 one-value writes made 306,050 rows and 13-15 s per batch).
 	//
-	// A group's cost is estimated before anything is written: the number of member and primary-group links
-	// of every group it reaches, an upper bound of the rows it would hold (a member reachable several
-	// ways has one row). A group whose estimate exceeds defaultRootRows, or what is left of defaultConnRows
+	// A group's cost is estimated before anything is written: an upper bound of the rows it would hold, its
+	// own member and primary-group links plus the bound of each group it holds, computed once per group over
+	// the strongly connected components (estimates). A diamond (a group reachable by several paths) is
+	// counted once per path, so it can only turn a group Unknown, never give it a wrong count. A group whose estimate exceeds defaultRootRows, or what is left of defaultConnRows
 	// after the groups admitted before it, is not expanded: it gets one over_budget marker row, its counts
 	// read Unknown and group_members says so. The refresh succeeds.
 	//
@@ -50,8 +51,10 @@ const (
 	// the group it contains. A group already expanded is evicted to a marker when the new decision no longer
 	// admits it; a group that was left out is expanded when it now fits. Groups the decision leaves as they
 	// were keep their rows, so a refresh deletes and inserts at most the connection budget of rows. The
-	// reads for the decision (the live groups, their nesting edges and per-group link counts) are not
-	// bounded by the budget; they grow with the groups, not with the members.
+	// decision's work is O(groups + nesting edges): the reads (live groups, nesting edges, per-group link
+	// counts) grow with the groups, not with the members, and no reach set is built to estimate (security
+	// review 3 of T-0961: that cost K x W, 18 s and 9 GB per refresh at 16,000 attacker writes). Only a
+	// group that is admitted and rewritten is walked, and its walk is bounded by its estimate.
 	//
 	// defaultRootRows holds a 200,000-user Domain Users (the largest group a customer domain has);
 	// defaultConnRows holds it and BUILTIN\Users, which contains it, with room for the rest.
@@ -242,11 +245,12 @@ type liveSet struct {
 }
 
 // liveGroups lists the live groups of the connection and which of them are the well-known privileged ones:
-// the domain-relative RIDs 512 (Domain Admins), 516, 518, 519 and BUILTIN 544 (Administrators) and 548-551
+// the domain-relative RIDs 512 (Domain Admins), 516 (Domain Controllers), 518, 519, 521 (Read-only Domain Controllers),
+// 526 (Key Admins), 527 (Enterprise Key Admins; the last two write msDS-KeyCredentialLink) and BUILTIN 544 (Administrators) and 548-551
 // (the operator groups). An attacker cannot create a group with such a SID.
 func liveGroups(ctx context.Context, tx store.Tx, connection ConnectionID) (liveSet, error) {
 	rows, err := tx.Query(ctx, `SELECT object_guid::text,
-			COALESCE(sid_text ~ '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-(512|516|518|519)$' OR sid_text IN ('S-1-5-32-544', 'S-1-5-32-548', 'S-1-5-32-549', 'S-1-5-32-550', 'S-1-5-32-551'), false)
+			COALESCE(sid_text ~ '^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-(512|516|518|519|521|526|527)$' OR sid_text IN ('S-1-5-32-544', 'S-1-5-32-548', 'S-1-5-32-549', 'S-1-5-32-550', 'S-1-5-32-551'), false)
 		FROM public.directory_objects
 		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND kind = 'group' AND state = 'live'`, string(connection))
 	if err != nil {
@@ -298,27 +302,21 @@ func memberCounts(ctx context.Context, tx store.Tx, connection ConnectionID) (ma
 	return counts, nil
 }
 
-// splitByBudget decides which groups are expanded, from the graph alone. Each group's estimate is the sum
-// of counts over the groups it reaches. Groups are taken privileged first, then smallest estimate, then
-// lowest GUID; one is admitted when its estimate is within the per-group limit and what is left of the
-// connection budget. The result does not depend on the order of groups or on any earlier decision.
+// splitByBudget decides which groups are expanded, from the graph alone. Each group's estimate is an upper
+// bound of the rows it would hold (estimates). Groups are taken privileged first, then smallest estimate,
+// then lowest GUID; one is admitted when its estimate is within the per-group limit and what is left of the
+// connection budget. The result does not depend on the order of groups or on any earlier decision, and
+// its work is O(groups + nesting edges): no group's reach set is built here.
 func splitByBudget(groups []string, privileged map[string]bool, edges map[string][]string, counts map[string]int, b budget) (admitted, over []string) {
 	type cand struct {
 		root string
 		est  int
 		priv bool
 	}
+	est := estimates(groups, edges, counts, max(b.root, b.conn)+1)
 	cands := make([]cand, 0, len(groups))
 	for _, r := range groups {
-		est := counts[r]
-		if len(edges[r]) > 0 {
-			est = 0
-			reach, _ := reachFrom(r, edges)
-			for _, g := range reach {
-				est += counts[g.Grp]
-			}
-		}
-		cands = append(cands, cand{r, est, privileged[r]})
+		cands = append(cands, cand{r, est[r], privileged[r]})
 	}
 	sort.Slice(cands, func(i, j int) bool {
 		if cands[i].priv != cands[j].priv {
@@ -339,6 +337,125 @@ func splitByBudget(groups []string, privileged map[string]bool, edges map[string
 		admitted = append(admitted, c.root)
 	}
 	return admitted, over
+}
+
+// estimates returns, per group, an upper bound of the member rows its closure would hold: the member and
+// primary-group links of its own plus the bound of each group it holds directly, computed once per group
+// over the strongly connected components of the nesting graph (a cycle is one component, counted once).
+// Every group reached is counted at least once, so the bound is never below the exact sum of counts over
+// the reach set; a group reachable by several paths (a diamond) is counted once per path, so the bound can
+// be above it. That can only leave a group out (Unknown), never show a wrong number. Values saturate at
+// limit, so a long chain of big groups cannot overflow. Iterative (Tarjan), because the nesting is
+// attacker-deep, and linear in groups + edges, because it is attacker-wide: the work of the decision must
+// not grow with chosen fan-out (security review of T-0961: 16,000 writes made a 18 s, 9 GB decision when
+// each group's reach set was built).
+func estimates(groups []string, edges map[string][]string, counts map[string]int, limit int) map[string]int {
+	idx := make(map[string]int, len(groups))
+	for i, g := range groups {
+		idx[g] = i
+	}
+	n := len(groups)
+	adj := make([][]int, n)
+	for i, g := range groups {
+		for _, c := range edges[g] {
+			if j, ok := idx[c]; ok {
+				adj[i] = append(adj[i], j)
+			}
+		}
+	}
+	sat := func(a, b int) int {
+		if a >= limit || b >= limit || a+b >= limit {
+			return limit
+		}
+		return a + b
+	}
+	// Tarjan, iterative. Components come out children first, which is the order the bound needs.
+	const unvisited = -1
+	index := make([]int, n)
+	low := make([]int, n)
+	comp := make([]int, n)
+	onStack := make([]bool, n)
+	for i := range index {
+		index[i], comp[i] = unvisited, unvisited
+	}
+	var stack []int
+	type frame struct{ v, next int }
+	var call []frame
+	var members [][]int // members[c] are the groups of component c
+	next := 0
+	for root := 0; root < n; root++ {
+		if index[root] != unvisited {
+			continue
+		}
+		call = append(call, frame{root, 0})
+		index[root], low[root] = next, next
+		next++
+		stack = append(stack, root)
+		onStack[root] = true
+		for len(call) > 0 {
+			f := &call[len(call)-1]
+			v := f.v
+			if f.next < len(adj[v]) {
+				w := adj[v][f.next]
+				f.next++
+				if index[w] == unvisited {
+					index[w], low[w] = next, next
+					next++
+					stack = append(stack, w)
+					onStack[w] = true
+					call = append(call, frame{w, 0})
+				} else if onStack[w] {
+					low[v] = min(low[v], index[w])
+				}
+				continue
+			}
+			if low[v] == index[v] {
+				c := len(members)
+				var ms []int
+				for {
+					w := stack[len(stack)-1]
+					stack = stack[:len(stack)-1]
+					onStack[w] = false
+					comp[w] = c
+					ms = append(ms, w)
+					if w == v {
+						break
+					}
+				}
+				members = append(members, ms)
+			}
+			call = call[:len(call)-1]
+			if len(call) > 0 {
+				p := call[len(call)-1].v
+				low[p] = min(low[p], low[v])
+			}
+		}
+	}
+	bound := make([]int, len(members))
+	lastSeen := make([]int, len(members)) // component c was already added to the one being summed
+	for i := range lastSeen {
+		lastSeen[i] = -1
+	}
+	for c, ms := range members {
+		total := 0
+		for _, v := range ms {
+			total = sat(total, counts[groups[v]])
+		}
+		for _, v := range ms {
+			for _, w := range adj[v] {
+				if d := comp[w]; d != c && lastSeen[d] != c {
+					lastSeen[d] = c
+					total = sat(total, bound[d])
+				}
+			}
+		}
+		bound[c] = total
+	}
+	out := make(map[string]int, n)
+	for i, g := range groups {
+		out[g] = bound[comp[i]]
+	}
+	return out
 }
 
 // markCutSQL flags the member rows of groups the walk did not descend into (see maxClosureDepth), when
