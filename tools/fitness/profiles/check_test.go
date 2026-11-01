@@ -118,6 +118,8 @@ const (
 	AttrOnPremisesSyncEnabled = "onPremisesSyncEnabled"
 	OnPremisesDomainName      = "onPremisesDomainName"
 	OnPremisesImmutableID     = "onPremisesImmutableId"
+	OnPremisesSecurityIdentifier = "onPremisesSecurityIdentifier"
+	SegOnPremisesSynchronization = "onPremisesSynchronization"
 	AnchorOnpremSID           = "onprem_sid"
 )
 `,
@@ -869,7 +871,7 @@ func TestP1ExternalVocabularyEntryRefused(t *testing.T) {
 		"token saas":       {`{"term":"SaaS","kind":"graph-property","source":"` + src + `"}`, "IsSaaS", "a denylist token"},
 		"stem onPremises":  {`{"term":"onPremises","kind":"graph-property","source":"` + src + `"}`, "OnPremisesProfile", "refused stem"},
 		"stem onPremise":   {`{"term":"onPremise","kind":"graph-property","source":"` + src + `"}`, "OnPremiseProfile", "refused stem"},
-		"stale":            {`{"term":"onPremisesSecurityIdentifier","kind":"graph-property","source":"` + src + `"}`, "Unrelated", "stale"},
+		"stale":            {`{"term":"onPremisesLastSyncDateTime","kind":"graph-property","source":"` + src + `"}`, "Unrelated", "stale"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			files := withVocab(t, "["+c.entry+"]")
