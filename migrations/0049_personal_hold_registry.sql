@@ -7,7 +7,7 @@
 -- the retention purge serialise on a tenant advisory lock taken in personal (SetHold shared, LockHolds
 -- exclusive), not on row locks. The runtime role can INSERT, SELECT and DELETE (release); nobody UPDATEs.
 
--- write-class: personal_hold system
+-- write-class: personal_hold config
 CREATE TABLE public.personal_hold (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   subject_ref text NOT NULL CHECK (char_length(subject_ref) BETWEEN 3 AND 300),

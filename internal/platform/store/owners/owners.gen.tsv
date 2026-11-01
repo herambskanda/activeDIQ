@@ -11,7 +11,7 @@ audit_forward_cursor	audit	system
 audit_head	audit	system
 authn_accounts	authn	config
 authn_authenticator_enrollments	authn	system
-authn_authority_approvals	authn	system
+authn_authority_approvals	authn	config
 authn_authority_challenges	authn	system
 authn_authority_notices	authn	system
 authn_local_credentials	authn	config
@@ -61,7 +61,7 @@ operation_items	operation	system
 operation_secrets	operation	system
 operation_steps	operation	system
 operations	operation	system
-personal_hold	personal	system
+personal_hold	personal	config
 personal_subject	personal	system
 personal_value	personal	system
 platform_leases	jobs	system

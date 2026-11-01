@@ -4,7 +4,7 @@ date: 2026-10-02
 updated: 2026-11-01
 status: review
 owner: heramb
-ticket: T-0035, T-0041, T-0107, T-0212, T-0874, T-0915, T-0993, T-1093
+ticket: T-0035, T-0041, T-0107, T-0212, T-0874, T-0915, T-0993, T-1093, T-1221
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), ADR-0004 (ratified), ADR-0005 (ratified), ADR-0010 (accepted), ADR-0011 (ratified), safe-primitives.md (review), modules/reports.md (draft)
 ---
 
@@ -321,12 +321,20 @@ service.
      write class) is generated from the migrations by `tools/gen/modules` (`make gen-modules`; `gen-modules-check` in `make ci`, T-0997). Cross-owner data migrations need an entry
      with a reason, a ticket and an expiry in `tools/fitness/modules/exempt.json`.
    - **Every table has a write class** (ADR-0005 rule 10; ADR-0003 amendment). `config` means a
-     principal changes it, so its writes are Actions: every function whose SQL writes it takes a
-     `step.Step` and runs in `Step.Tx()`. `system` means bookkeeping written by its owner (the
-     closed list in ADR-0005 rule 10). The class is declared beside the migration that creates
-     the table, one line per table: `-- write-class: <table> config|system`. A partition takes
-     its parent's class. `tools/gen/modules` copies it into the ownership map, and O3 fails a
-     table with no class and a `config` write without a `Step`.
+     principal's decision sets some row or column of it, so its writes are Actions. `system` means
+     bookkeeping written by its owner (the closed list in ADR-0005 rule 10). The class is declared
+     beside the migration that creates the table, one line per table: `-- write-class: <table>
+     config|system`. A partition takes its parent's class. `tools/gen/modules` copies it into the
+     ownership map.
+   - **The O3 rule: a `step.Step` at the package boundary** (ADR-0005 rule 10, T-1221). Each SQL
+     write to a `config` table must have a guarded root. The root can be an exported function
+     that takes a `step.Step` and writes only in `Step.Tx()`, or an unexported helper called
+     directly, and only, from guarded functions of its own package (the `settings.Store.Set` →
+     `set(tx)` shape). Otherwise it must be a `system` row of
+     `tools/fitness/operation/o3-writers.json`, whose named `callers` are the only functions
+     allowed to reference it. Existing violations are `convert` rows naming their conversion
+     ticket (T-1228 to T-1232), and O3 prints them as pending. O3 also fails a table with no
+     class.
 7. **Binary hygiene** (ADR-0003 rule 7). Planes are separated by the link graph, not only by the
    manifest (ADR-0002 rule 2). `go list -deps ./cmd/<role>`, for `GOOS=windows` and `GOOS=linux`,
    must contain none of the packages listed for it:
