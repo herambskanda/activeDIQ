@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"reflect"
@@ -713,11 +714,12 @@ func TestCookieNeverLeaks(t *testing.T) {
 		lg.Info("cursor", "cursor", cur, "list", list, "cookie", ck)
 		lg.Info("cursor", slog.Any("c", list[0]), slog.Any("k", ck))
 		renderings := []string{logBuf.String()}
-		for _, v := range []any{cur, &cur, list, ck, &ck, struct{ C dsync.Cookie }{ck}, map[string]any{"c": ck}} {
+		for _, v := range []any{cur, &cur, list} {
 			for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d"} {
 				renderings = append(renderings, fmt.Sprintf(verb, v))
 			}
 		}
+		renderings = append(renderings, renderCookieEverywhere(ck)...)
 		renderings = append(renderings, cur.String(), ck.String(), ck.GoString())
 		if b, err := json.Marshal(cur); err == nil {
 			renderings = append(renderings, string(b))
@@ -741,6 +743,69 @@ func TestCookieNeverLeaks(t *testing.T) {
 			t.Errorf("error for a missing cursor = %v", err)
 		}
 	})
+}
+
+// holder mimics the cycle-driver state the next tickets write: the cookie sits in an UNEXPORTED field, where
+// fmt and slog cannot call its methods and fall back to reflection.
+type holder struct {
+	conn   string
+	cookie dsync.Cookie
+}
+
+// renderCookieEverywhere formats a cookie in every shape a caller could log it in: bare, behind a pointer,
+// in exported and unexported struct fields, nested, in slices and maps, under every fmt verb and under the
+// slog text and JSON handlers.
+func renderCookieEverywhere(ck dsync.Cookie) []string {
+	type nested struct{ In holder }
+	values := []any{
+		ck, &ck,
+		struct{ C dsync.Cookie }{ck},
+		holder{"c1", ck}, &holder{"c1", ck},
+		[]holder{{"c1", ck}}, []*holder{{"c1", ck}},
+		map[string]dsync.Cookie{"k": ck}, map[string]holder{"k": {"c1", ck}},
+		map[string]any{"c": ck, "h": holder{"c1", ck}},
+		nested{holder{"c1", ck}}, &nested{holder{"c1", ck}},
+		[]any{ck, holder{"c1", ck}},
+	}
+	var out []string
+	for _, v := range values {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d"} {
+			out = append(out, fmt.Sprintf(verb, v))
+		}
+		for _, h := range []func(io.Writer) slog.Handler{
+			func(w io.Writer) slog.Handler { return slog.NewTextHandler(w, nil) },
+			func(w io.Writer) slog.Handler { return slog.NewJSONHandler(w, nil) },
+		} {
+			var b bytes.Buffer
+			slog.New(h(&b)).Info("v", "v", v)
+			out = append(out, b.String())
+		}
+	}
+	return out
+}
+
+// A cookie in an unexported field must not print, with no database involved.
+func TestCookieNeverPrintsFromUnexportedFields(t *testing.T) {
+	secret := []byte("SENTINEL-cookie-bytes")
+	ck, err := dsync.NewCookie(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hex := fmt.Sprintf("%x", secret)
+	for i, r := range renderCookieEverywhere(ck) {
+		low := strings.ToLower(r)
+		if strings.Contains(r, string(secret)) || strings.Contains(r, "SENTINEL") || strings.Contains(low, hex) ||
+			strings.Contains(r, "83 69 78 84") /* the bytes as a decimal list */ {
+			t.Errorf("rendering %d leaks the cookie: %.160q", i, r)
+		}
+	}
+	if !bytes.Equal(ck.Bytes(), secret) || ck.IsZero() {
+		t.Error("the holder must still read the bytes back")
+	}
+	var zero dsync.Cookie
+	if !zero.IsZero() || zero.Bytes() != nil {
+		t.Error("the zero Cookie must be empty")
+	}
 }
 
 // Input checks that need no database.

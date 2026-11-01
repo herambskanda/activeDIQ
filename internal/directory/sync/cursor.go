@@ -191,21 +191,35 @@ func (k Key) checkLease(l jobs.Lease) error {
 // Cookie is the opaque change-feed position: a DirSync cookie or a Graph delta token. It is never parsed
 // here, never compared and never printed: every formatting verb, slog and encoding/json show a fixed
 // placeholder. Only the lease holder that resumes the feed reads the bytes, through Bytes.
-type Cookie struct{ b []byte }
+//
+// The bytes live in a closure, not a field: fmt and slog fall back to reflection when a Cookie sits in an
+// unexported field of another struct (they cannot call its methods there), and reflection prints a []byte
+// field. A func value prints as an address, never as its captured bytes.
+type Cookie struct{ get func() []byte }
+
+func newCookie(b []byte) Cookie {
+	held := append([]byte(nil), b...)
+	return Cookie{get: func() []byte { return held }}
+}
 
 // NewCookie wraps the bytes the directory returned. They are copied.
 func NewCookie(b []byte) (Cookie, error) {
 	if len(b) == 0 || len(b) > maxCookieBytes {
 		return Cookie{}, errBadCookie
 	}
-	return Cookie{b: append([]byte(nil), b...)}, nil
+	return newCookie(b), nil
 }
 
 // IsZero reports whether there is no cookie (a feed that must start from a full sync).
-func (c Cookie) IsZero() bool { return len(c.b) == 0 }
+func (c Cookie) IsZero() bool { return c.get == nil || len(c.get()) == 0 }
 
 // Bytes returns a copy of the cookie for the request that resumes the feed.
-func (c Cookie) Bytes() []byte { return append([]byte(nil), c.b...) }
+func (c Cookie) Bytes() []byte {
+	if c.get == nil {
+		return nil
+	}
+	return append([]byte(nil), c.get()...)
+}
 
 // String, GoString, Format, LogValue and the encoders never reveal the bytes.
 func (Cookie) String() string   { return redacted }
@@ -393,7 +407,7 @@ func (Store) Position(ctx context.Context, tx store.Tx, k Key, l jobs.Lease) (Cu
 	if len(raw) == 0 {
 		return c, Cookie{}, nil
 	}
-	return c, Cookie{b: raw}, nil
+	return c, newCookie(raw), nil
 }
 
 // Move is one incremental step of the feed: the new position, and when the directory last changed.
@@ -436,7 +450,7 @@ func (Store) Advance(ctx context.Context, tx store.Tx, k Key, l jobs.Lease, m Mo
 	return written(ctx, tx, k, l.Token, StateIncremental, tx.QueryRow(ctx, `UPDATE public.sync_cursors SET cookie = $5, issuing_dsa_guid = $6::uuid,
 		last_change_at = GREATEST(last_change_at, $7::timestamptz), lease_fencing_token = $3, updated_at = now()
 		WHERE `+keyMatch+` AND lease_fencing_token <= $3 AND state = ANY($4)
-		RETURNING `+cursorColumns, string(k.Connection), string(k.Partition), l.Token, []string{string(StateIncremental)}, m.Cookie.b, dsa, change))
+		RETURNING `+cursorColumns, string(k.Connection), string(k.Partition), l.Token, []string{string(StateIncremental)}, m.Cookie.Bytes(), dsa, change))
 }
 
 // FullSync is the outcome of a completed full sync (the first one, or a resync).
@@ -472,7 +486,7 @@ func (Store) CompleteFull(ctx context.Context, tx store.Tx, k Key, l jobs.Lease,
 	return written(ctx, tx, k, l.Token, StateIncremental, tx.QueryRow(ctx, `UPDATE public.sync_cursors SET state = 'incremental', cookie = $5, issuing_dsa_guid = $6::uuid,
 		last_full_sync_at = GREATEST(last_full_sync_at, $7::timestamptz), state_changed_at = now(), lease_fencing_token = $3, updated_at = now()
 		WHERE `+keyMatch+` AND lease_fencing_token <= $3 AND state = ANY($4)
-		RETURNING `+cursorColumns, string(k.Connection), string(k.Partition), l.Token, movesTo(StateIncremental), f.Cookie.b, dsa, f.At.UTC()))
+		RETURNING `+cursorColumns, string(k.Connection), string(k.Partition), l.Token, movesTo(StateIncremental), f.Cookie.Bytes(), dsa, f.At.UTC()))
 }
 
 // RequireResync records that the cookie is unusable (DM-19.I3: invalid or expired; I4: issued by another
