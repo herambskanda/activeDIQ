@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -279,5 +280,18 @@ func TestEscapeOIDsOnlyInScope(t *testing.T) {
 				t.Errorf("%s names %s outside scope", f, oid)
 			}
 		}
+	}
+}
+
+// A caller cannot ask for other flags, DirSync EX or another control: the request has no field for any
+// of them, and a new field must be a deliberate change to this list.
+func TestDirSyncRequestHasNoFlagsOrControls(t *testing.T) {
+	rt := reflect.TypeOf(DirSyncRequest{})
+	var got []string
+	for i := 0; i < rt.NumField(); i++ {
+		got = append(got, rt.Field(i).Name)
+	}
+	if want := []string{"NC", "Cookie", "Attributes"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("DirSyncRequest fields %v, want %v", got, want)
 	}
 }
