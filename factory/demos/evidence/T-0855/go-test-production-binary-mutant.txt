@@ -1,0 +1,7 @@
+# MUTANT: '//go:build lab' removed from account_lab.go and labpasskey_lab.go
+=== RUN   TestProductionBinaryHasNoPasskeySeeding
+    passkeyseed_test.go:68: the production binary contains server.LabAddPasskey
+--- FAIL: TestProductionBinaryHasNoPasskeySeeding (2.50s)
+FAIL
+FAIL	github.com/skenzeriq/activediq/cmd/server	2.520s
+FAIL

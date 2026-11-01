@@ -272,6 +272,12 @@ func (s *Service) Callback(ctx context.Context, req CallbackRequest) (Result, er
 	if req.Tenant.IsZero() || !s.ready() {
 		return Result{}, errors.New("signin: service not configured")
 	}
+	// One logger for the whole Callback, built with the tenant, so no line added here can omit tenant_id
+	// (ADR-0002 logs; TM-TB17-T8).
+	log := s.Log
+	if log != nil {
+		log = log.With("tenant_id", req.Tenant.String())
+	}
 	base := Outcome{Tenant: req.Tenant, IdP: req.IdPID, ClientIP: req.ClientIP}
 	refuse := func(reason string) error { o := base; o.Reason = reason; return s.refuse(ctx, o) }
 
@@ -309,8 +315,8 @@ func (s *Service) Callback(ctx context.Context, req CallbackRequest) (Result, er
 		if reason == "" {
 			// A verifier fault that is not a Refusal (for example a replay store that is down). Fail
 			// closed, and tell the log; the browser still sees the generic failure.
-			if s.Log != nil {
-				s.Log.ErrorContext(ctx, "sso: verifier failed", "idp", req.IdPID, "error", err)
+			if log != nil {
+				log.ErrorContext(ctx, "sso: verifier failed", "idp", req.IdPID, "error", err)
 			}
 			reason = "sso.verifier_error"
 		}
@@ -356,8 +362,8 @@ func (s *Service) Callback(ctx context.Context, req CallbackRequest) (Result, er
 	if asserted {
 		privileged, perr := s.Privileges.HoldsControlPlane(ctx, req.Tenant, acct.ID)
 		if perr != nil {
-			if s.Log != nil {
-				s.Log.ErrorContext(ctx, "sso: privilege check failed; completing with the second factor", "error", perr)
+			if log != nil {
+				log.ErrorContext(ctx, "sso: privilege check failed; completing with the second factor", "error", perr)
 			}
 			privileged = true // fail closed
 		}

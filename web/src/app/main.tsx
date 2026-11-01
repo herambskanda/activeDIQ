@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import "../ds/tokens.css";
 import "../ds/base.css";
 import "../ds/brand.css";
+import "../ds/components/components.css";
 import { webModules } from "./modules.gen";
 import { Shell } from "./shell";
 

@@ -1,0 +1,10 @@
+{
+ "id": "O-M03",
+ "class": "misaddressed",
+ "cites": [
+  "OIDC-11"
+ ],
+ "build": "audience_wrong",
+ "expect": "refuse",
+ "reason": "oidc.aud"
+}

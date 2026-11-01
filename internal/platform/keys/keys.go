@@ -172,7 +172,11 @@ func Seal(dek DEK, ctx Context, plaintext []byte) ([]byte, error) {
 	if err := ctx.validate(); err != nil {
 		return nil, err
 	}
-	if dek.Version != ctx.Version {
+	return sealAAD(dek, ctx.Version, ctx.aad(), plaintext)
+}
+
+func sealAAD(dek DEK, version uint32, aad, plaintext []byte) ([]byte, error) {
+	if dek.Version != version {
 		return nil, newErr(KeyVersionMismatch)
 	}
 	a, err := aeadFor(dek)
@@ -181,11 +185,11 @@ func Seal(dek DEK, ctx Context, plaintext []byte) ([]byte, error) {
 	}
 	blob := make([]byte, blobHeader, blobHeader+len(plaintext)+tagSize)
 	blob[0] = blobFormat
-	blob[1], blob[2], blob[3], blob[4] = byte(ctx.Version>>24), byte(ctx.Version>>16), byte(ctx.Version>>8), byte(ctx.Version)
+	blob[1], blob[2], blob[3], blob[4] = byte(version>>24), byte(version>>16), byte(version>>8), byte(version)
 	if _, err := rand.Read(blob[5:blobHeader]); err != nil {
 		return nil, &Error{Code: EntropyFailure, err: err}
 	}
-	return a.Seal(blob, blob[5:blobHeader], plaintext, ctx.aad()), nil
+	return a.Seal(blob, blob[5:blobHeader], plaintext, aad), nil
 }
 
 // BlobVersion reads the (unauthenticated) key version from a sealed blob so the caller can fetch the
@@ -204,18 +208,22 @@ func Open(dek DEK, ctx Context, blob []byte) ([]byte, error) {
 	if err := ctx.validate(); err != nil {
 		return nil, err
 	}
+	return openAAD(dek, ctx.Version, ctx.aad(), blob)
+}
+
+func openAAD(dek DEK, version uint32, aad, blob []byte) ([]byte, error) {
 	bv, err := BlobVersion(blob)
 	if err != nil {
 		return nil, err
 	}
-	if dek.Version != ctx.Version || bv != ctx.Version {
+	if dek.Version != version || bv != version {
 		return nil, newErr(KeyVersionMismatch)
 	}
 	a, err := aeadFor(dek)
 	if err != nil {
 		return nil, err
 	}
-	pt, err := a.Open(nil, blob[5:blobHeader], blob[blobHeader:], ctx.aad())
+	pt, err := a.Open(nil, blob[5:blobHeader], blob[blobHeader:], aad)
 	if err != nil {
 		return nil, newErr(OpenFailed)
 	}

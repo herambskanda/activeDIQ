@@ -2,7 +2,8 @@
 // contributes the four Actions that change who may do what: create and edit a custom role, grant and
 // revoke an assignment. It owns no table (F1): it writes DM-34 to DM-36 through rbac.Grants inside the
 // runner's transaction, so the change, its audit event and its no-escalation proof commit together
-// (DM-36.I1). It decides nothing about who may call it: the permission of each Action does, in the runner.
+// (DM-36.I1). It also owns the EP-6 scope evaluators for the directory root kinds (scope.go).
+// It decides nothing about who may call it: the permission of each Action does, in the runner.
 package delegation
 
 import (
@@ -43,5 +44,5 @@ func (m *Module) Register(r *module.Registrar) error {
 			return err
 		}
 	}
-	return nil
+	return registerScopeEvaluators(r)
 }

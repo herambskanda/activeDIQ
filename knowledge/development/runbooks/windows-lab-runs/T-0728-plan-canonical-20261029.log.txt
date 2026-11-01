@@ -1,0 +1,20 @@
+=== RUN   TestWindowsLabSDWriteInheritance
+    sdwrite_windows_lab_test.go:348: RESULT child created under parent ACE: ctl=0x8c04 n=58 [05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00000010/S-1-5-21-3048684280-3061665338
+    sdwrite_windows_lab_test.go:355: RESULT new child control has DI (auto-inherited) = true
+    sdwrite_windows_lab_test.go:363: RESULT explicit add: VerifyAfter accepted; DC re-ordered=true first difference at ACE 0: planned 00/00000010/S-1-5-21-3048684280-3061665338-2348266937-1338, stored 05/00000010/S-1-5-21-3048684280-3061665338-2348266937-553
+    sdwrite_windows_lab_test.go:364: RESULT after explicit add (marker): ctl=0x8c04 n=59 [05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00000010/S-1-5-21-3048684280-3061665338-23
+    sdwrite_windows_lab_test.go:390: RESULT DACL written without DI: inherited t1 copies=1 explicit t1 copies=0; ctl=0x8c04 n=59 [05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00
+    sdwrite_windows_lab_test.go:396: RESULT PlanInheritance CN=sdv-inh-c3,OU=sdv-inh,OU=Managed,DC=win,DC=activediq,DC=test: moves=0 rights-changes=0
+    sdwrite_windows_lab_test.go:402: RESULT BlockKeepInherited: VerifyAfter accepted; DC re-ordered=true first difference at ACE 0: planned 05/00000010/S-1-5-21-3048684280-3061665338-2348266937-553, stored 05/00000010/S-1-5-32-554
+    sdwrite_windows_lab_test.go:408: RESULT BlockKeepInherited: planned canonical order differs from the DC's (rules 3/4 or tie order): first difference at ACE 0: planned 05/00000010/S-1-5-21-3048684280-3061665338-2348266937-553, stored 05/00000010/S-1-5-32-55
+    sdwrite_windows_lab_test.go:410: RESULT BlockKeepInherited before: ctl=0x8c04 n=58 [05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00000010/S-1-5-21-3048684280-3061665338-2348
+        RESULT BlockKeepInherited after:  ctl=0x9c04 n=58 [05/02/00000010/S-1-5-32-554 05/02/00000010/S-1-5-32-554 05/02/00000010/S-1-5-32-554 05/02/00000010/S-1-5-32-554 05/02/00000010/S-1-5-32-554 05/0a/00000010/S-1-5-32-554 05/0a/00000010/S-1-5-32-554 05/0a
+    sdwrite_windows_lab_test.go:426: RESULT PlanInheritance CN=sdv-inh-c4,OU=sdv-inh,OU=Managed,DC=win,DC=activediq,DC=test: moves=0 rights-changes=0
+    sdwrite_windows_lab_test.go:434: RESULT BlockRemoveInherited before: ctl=0x8c04 n=58 [05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00000010/S-1-5-21-3048684280-3061665338-23
+        RESULT BlockRemoveInherited after:  ctl=0x9c04 n=24 [05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00000010/S-1-5-21-3048684280-3061665338-2348266937-553 05/00/00000010/S
+    sdwrite_windows_lab_test.go:450: RESULT PlanInheritance CN=sdv-inh-c3,OU=sdv-inh,OU=Managed,DC=win,DC=activediq,DC=test: moves=0 rights-changes=0
+    sdwrite_windows_lab_test.go:458: RESULT RestoreInheritance after: ctl=0x8c04 n=93 [05/02/00000010/S-1-5-32-554 05/02/00000010/S-1-5-32-554 05/02/00000010/S-1-5-32-554 05/02/00000010/S-1-5-32-554 05/02/00000010/S-1-5-32-554 05/0a/00000010/S-1-5-32-554 05/0a
+    sdwrite_windows_lab_test.go:465: RESULT RestoreInheritance leaves the earlier explicit copy of t1: explicit t1 count = 1 (the plan writes the old copies back unchanged, so a duplicate is the DC's doing if > 0)
+--- PASS: TestWindowsLabSDWriteInheritance (2.19s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/ad	2.215s

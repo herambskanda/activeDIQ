@@ -1,0 +1,9 @@
+# env -u ADIQ_BASE_URL npx playwright test webauthn-sign-in --reporter=list
+Running 6 tests using 1 worker
+  -  1 [chromium] › e2e/webauthn-sign-in.spec.ts:162:1 › a registered security key signs in: session cookie set by the server, CSRF served, console loads
+  -  2 [chromium] › e2e/webauthn-sign-in.spec.ts:202:1 › a valid TOTP code is refused for an account that has a registered key
+  -  3 [chromium] › e2e/webauthn-sign-in.spec.ts:225:1 › control: the same kind of code IS accepted for an account without a key
+  -  4 [chromium] › e2e/webauthn-sign-in.spec.ts:238:1 › an authenticator that does not hold the credential cannot sign in
+  -  5 [chromium] › e2e/webauthn-sign-in.spec.ts:253:1 › an authenticator that fails user verification cannot sign in
+  -  6 [chromium] › e2e/webauthn-sign-in.spec.ts:269:1 › the registered credential ID with a different private key is refused by the server
+  6 skipped

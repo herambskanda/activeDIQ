@@ -1,7 +1,7 @@
 ---
 title: "ADR-0004: The public API is one OpenAPI 3.1 contract, one file per tag, generated in-house into strict json/v2 types and per-tag handlers on net/http.ServeMux, one permission per operation, and one /api/v1 that only grows"
 date: 2026-10-02
-updated: 2026-10-21
+updated: 2026-10-31
 status: ratified
 owner: heramb
 kind: technical
@@ -13,11 +13,13 @@ ratified_by: factory-director
 
 # ADR-0004: The public API is one OpenAPI 3.1 contract, one file per tag, generated in-house into strict `encoding/json/v2` types and per-tag handlers on `net/http.ServeMux`, one permission per operation, and one `/api/v1` that only grows
 
-**Status:** ratified 2026-10-02 by factory-director at the T-0046 review (rework 1), notice D-0014. It becomes `accepted` when `fitness-api` (A1–A14 below) runs green in `make ci` on `main`.
+**Status:** ratified 2026-10-02 by factory-director at the T-0046 review (rework 1), notice D-0014. It becomes `accepted` when `fitness-api` (A1–A15 below) runs green in `make ci` on `main`.
 **Kind:** technical. No customer, partner or brand sees the generator or the router. Customers see the result: one documented, stable, unmetered API. That result follows from decisions the CEO already made: the house stack (D-0003) and the API-first, unmetered positioning (parity matrix enhancement 18).
 **Deciders:** solution-architect (author). api-engineer was consulted twice on 2026-10-02, both recorded on T-0046. The first consult covered the generator, router, client and tooling evaluation and a local test of `encoding/json/v2` defaults. The second, in the rework, covered in-house type emission, the size estimate and gaps in the construct table. factory-director ratifies. **Ticket:** T-0046. **Parity / scope refs:** ADM-188, ADM-189 (ADM-190 indirectly, through rate classes).
 
 > Amendments (ratified ADRs only):
+> - 2026-10-31 · solution-architect · T-0892 review, from T-0893 (TM-D30 SX-1, SX-4) · **Rule 14, held and step-up answers.** `OperationRef` gains a required `holdReason` (`OperationHoldReasonValue`: `none`, `step_up`, `blast_radius`, `irreversible`, `undo_needed_approval`, `gate`), which `OperationPreview.holdReason` also uses. A write or undo whose Action can step up declares `401 StepUpRequired`.
+> - 2026-10-30 · solution-architect · T-0892, from T-0866 and ADR-0005 rule 10 · **Rule 14 (new): Actions on the HTTP surface.** An Action-backed write gets a **preview twin** beside it (`POST <resource>/previews/<verb>`: same tag, permission, parameters and body; answers the shared `OperationPreview`), answers its operation ID in `ActiveDIQ-Operation-Id` (the undo handle) and `202 OperationRef` when held, and every Action family gets **one undo pair** on its own tag (`POST <collection>/operations/{operationId}/undo` and `…/previews/undo`), bound to the family's base permission, with the kernel planning the inverse under the inverse Action's own permission. All shapes live in `shared/operation.yaml`. Rejected: one platform `/operations/{id}/undo` (it can bind only `authenticated` or a permission that grants nothing), a `dryRun` flag on the write (two `200` schemas on one operation), and a generic `POST /operations/preview {action, input}` (untyped input). Rule 3 gains `x-activediq-action`; fitness gains **A15** (T-0976). First users: the six `reports.schedule.*` writes. Kernel: T-0977; reports handlers: T-0978. ADR-0005 rule 10 is amended by the same ticket (how a configuration undo is planned).
 > - 2026-10-28 · solution-architect · T-0499, from T-0359 and threat model §7.6 / TM-D22 · **Rule 10, rate-class table.** The `auth` per-account row is split. AN-8 is keyed on the HMAC of the normalised submitted name, applies delay plus a uniform `401`, and never returns `429`; AN-10 keeps `429` on its pending handle. The generic "limited request gets 429" sentence now states the AN-8 exception. Clarification to match the threat model: no fitness check changes.
 > - 2026-10-21 · solution-architect · T-0044, from T-0034 and threat model §7.6 v0.4 · **Rule 5, AN-1 health operations.** T-0034 added `getLiveness` (`GET /api/v1/health/live`) and `getReadiness` (`GET /api/v1/health/ready`) to `api/openapi/platform/health.yaml`, for clients that reach only `/api/v1`. Being JSON on this listener, they are operations, so rule 5 lists them first among the anonymous operations in the contract, and its AN-1 row of non-API routes notes that the same answers under `/api/v1` are those operations. The rule 3 extension table's `x-activediq-anonymous` row lists every operation row in use (AN-1, AN-4, AN-5, AN-7, AN-8, AN-10). The non-API probes `/healthz` and `/readyz` stay. This is a clarification: no rule or fitness check changes, because A3, A4 and A12 already cover these operations.
 >
@@ -167,6 +169,7 @@ We use OpenAPI **3.1** with the JSON Schema 2020-12 dialect ([OAS 3.1.1](https:/
 | `x-activediq-secret` | schema | on `SecretInput` only | The schema carries a secret, so it is write-only (rule 9) |
 | `x-activediq-enum` | schema | on every enum reachable from a response | `open` (rule 2) |
 | `x-activediq-parity` | operation | no | ManageEngine feature IDs, for traceability |
+| `x-activediq-action` | operation | on every Action-backed write (rule 14) | The EP-3 Action ID the operation submits (`<owner>.<noun>.<verb>`, ADR-0005 rule 1). A15 derives the preview twin and the family undo pair from it, and its runtime half checks the ID is in `operation.Catalogue()`. Lands with T-0976; until then the write's description names the Action |
 
 Any other `x-` key fails A2. Third-party generator keys (`x-go-type` and similar) have no meaning here, because no third-party Go generator reads the bundle.
 
@@ -451,6 +454,38 @@ The tenant never travels in the contract (ADR-0002 rule 5). T5 (`openapi-tenant-
 - vacuum lints the bundle with our ruleset (`api/openapi/.vacuum.yaml`: OpenAPI 3.1 validity, rule 1 names, the rule 2 dialect).
 - oasdiff compares the bundle with `main` and with the latest release tag (A10).
 
+### Rule 14: Actions on the HTTP surface: a preview twin per write, the operation ID as the undo handle, one undo pair per Action family
+
+ADR-0005 makes every principal's write an EP-3 Action with preview, gate, step-up, audit and undo (rules 1 and 10). This rule fixes how that reaches the contract, once, for every module. The shapes are in `shared/operation.yaml`, and no tag defines its own preview or undo schema (parameterise, don't clone).
+
+- **Action-backed write.** An operation whose handler submits an Action. It names the Action in `x-activediq-action` (rule 3). An Action family is the set of Action IDs that share `<owner>.<noun>.` (for example `reports.schedule.*`).
+- **The submit is the write itself.**
+  - Every `2xx` answer carries the required response header `ActiveDIQ-Operation-Id`: the DM-41 operation ID. It is the **undo handle**.
+  - When a kernel hold or the gate holds the Action (ADR-0005 rule 8), the write answers `202` with `OperationRef` (state `awaiting_approval`) and the same header. The change applies when it is approved. `OperationRef.holdReason` (the open enum `OperationHoldReasonValue`, mirroring the kernel's `HoldReason`) says why, so a client can tell an approval that carries step-up (`step_up`, a token or automation under a step-up Action, TM-D30 SX-4) from a policy approval. It is `none` when not held: the dialect has no nullable `$ref`.
+  - A write whose Action can step up declares `401` as `StepUpRequired`: an interactive caller without a fresh MFA changes nothing.
+  - Its refusals stay the write's declared problems.
+- **The preview twin.** For each Action-backed write with Action `<owner>.<noun>.<verb>`, the tag declares `POST <R>/previews/<verb>`. `<R>` is the write's path up to and including its last path parameter, or the collection path for a `create`. So `PUT /reports/schedules/{scheduleId}` has `POST /reports/schedules/{scheduleId}/previews/update`, and `POST /reports/schedules/{scheduleId}/pause` has `…/{scheduleId}/previews/pause`.
+  - Its `operationId` is `preview` followed by the write's `operationId` with the first letter upper-cased (`previewUpdateReportSchedule`).
+  - It has the same tag, the same `x-permission`, the same path parameters, the same `If-Match` header when the write declares one, and the same request body schema as the write. Its class is `read`, and its `maxBodyBytes` is the write's.
+  - It answers `200 OperationPreview`. It runs `Plan`, authorisation over live facts and the gate's routing in a read-only transaction. It writes nothing, persists nothing and records no audit event, so it needs no step-up and no confirmation.
+  - **A plan refusal is a `200`, not a problem.** Blocked targets and a gate denial answer `outcome: refused` with `blocked[].code` (`report_scope_empty`, `external_not_permitted`, `owner_only`). The preview is where the admin learns why. Problems are kept for a request that cannot be planned: `400`, `401`, `403` (the caller lacks the `x-permission`), `404` (the target is unknown or not visible), `412`/`428`, `413`, `415`, `429` and `500`.
+  - **What binds the submit to what was shown.** The submit plans again against the live state. `If-Match` pins the version the admin read. The preview lists `requiredConfirmations` (for example `external_recipients`, "Data leaves your organisation"), and a submit whose confirmation differs from what its own plan needs is refused. A person therefore never consents to a different set than the one applied. The submit does not echo `planHash`: a Store Action's plan is not persisted at preview (ADR-0005 rule 11 records `operation.planned` only for a persisted plan). Approvals of held operations still bind to `plan_hash` (rule 8).
+- **One undo pair per Action family**, on the tag that serves the family, under the family's collection path `<C>`:
+  - `POST <C>/operations/{operationId}/undo` (`undo<Family>Operation`, for example `undoReportScheduleOperation`), with body `OperationUndoRequest` and class `write`. It answers `200 OperationRef` for the new undo operation (`undoes` = the original, with its own `ActiveDIQ-Operation-Id`, so an undo can itself be undone), or `202 OperationRef` when held. An undo of an operation that needed approval is always held (ADR-0005 rule 8). When an inverse in the family can step up (for `reports.schedule.*`, restoring an external recipient, TM-D30 SX-1), the undo declares `401 StepUpRequired` like a write, and a token is held `step_up`.
+  - `POST <C>/operations/{operationId}/previews/undo` (`previewUndo<Family>Operation`), with no body and class `read`. It answers `200 OperationPreview` for the inverse, under the same refusal rules as a preview twin.
+  - Both bind the family's **base permission**: the permission of its create and update Actions. The kernel then plans the inverse under the inverse Action's own Descriptor permission, for the principal undoing, with the checks of the transition it makes (ADR-0005 rules 7 and 10). The route's permission is therefore a floor and never the whole check, as with `manage_all` inside the reports operations.
+  - `404` when the operation does not exist, its Action is outside the family, or the caller cannot see its target, so there is no existence oracle. `403` when the inverse needs a permission the caller lacks. `409 /problems/operation-not-undoable` when no inverse can be applied, with `errors[].code` one of `irreversible`, `already_undone`, `superseded` (the target changed after this operation, so undo the later change first), `not_finished`, `tier0_blocked` or `plan_refused`.
+- **Directory Actions** follow the same rule when their first write reaches the contract. `OperationTargetDirectory` already exists for them. Their queued submit answers `202 OperationRef`. The operation status and approval routes are a later amendment.
+
+Why this shape, and not the alternatives:
+
+| Alternative | Why not |
+| --- | --- |
+| One platform route `POST /operations/{id}/undo` | It can bind only `authenticated` or a synthetic `operations.undo`. `authenticated` lets a principal with no permission reach the handler, which breaks A4's probe and TM-D16's deny by default. `operations.undo` grants nothing by itself, must be added to every role, and says nothing about who may undo what. A capability-disabled module's operations would also need special handling. Per family, the route's permission means something, and it sits on the module's tag (ADR-0003). One kernel handler, parameterised by family prefix and base permission, serves every family (T-0977), so nothing is cloned |
+| A `dryRun` query flag or `Prefer: return=preview` on the write | One operation would have two `200` schemas (the preview and the resource), and rule 4 types one schema per status. A read would also sit under a write's rate class |
+| A generic `POST /operations/preview {action, input}` | `input` would be untyped. Rule 2 bans that, and A7 cannot build a corpus for it. It also cannot bind one permission |
+| A preview that reserves the operation ID for the submit | It turns the preview into a write of a reservation, and duplicates the Idempotency-Key rule (ADR-0005 rule 4) |
+
 ## Alternatives considered
 
 | Alternative | What it would buy us | Why not |
@@ -558,6 +593,7 @@ Every check has a failing fixture in `check_test.go`, so a check that silently m
 | **A12** Limits | <ul><li>An unknown rate class.</li><li>An anonymous operation not in class `anonymous` or `auth`.</li><li>An upload operation without `maxBodyBytes`.</li><li>`maxBodyBytes` above 16 MiB without a `largeBodies` entry.</li><li>A `secret` operation above 64 KiB, of a class other than `secret`, or with a binary body.</li></ul> | TM-Q2; secret buffer size |
 | **A13** Policy hygiene | <ul><li>A `policy.yaml` entry that is stale: it names a missing route, operation, permission or hostname binding.</li><li>An entry with no reason, or with no AN/TM reference.</li></ul> | Exemptions becoming permanent |
 | **A14** Responses conform | In the runtime tests (A4 probe, A7 corpus, and every module's contract tests through the shared harness), each response body is validated against the operation's declared response schema with the generated validators before it is encoded. A violation fails the test. | Handlers drifting from the contract on output |
+| **A15** Action surface (rule 14) | <ul><li>An operation with `x-activediq-action` whose preview twin is missing, or differs from it in tag, `x-permission`, path parameters, `If-Match` or request body schema, or does not answer `200` with the shared `OperationPreview`.</li><li>An Action-backed write with a `2xx` answer that lacks the `ActiveDIQ-Operation-Id` header, or with no `202 OperationRef`.</li><li>An Action family served by a tag without its undo pair, or an undo pair whose permission is not the family's base permission or whose body or answers are not the shared schemas.</li><li>A schema outside `shared/operation.yaml` whose name starts with `Operation`.</li><li>Runtime half: an `x-activediq-action` ID that is not in `operation.Catalogue()`, or whose Descriptor permission is neither the operation's `x-permission` nor checked inside it as the description states.</li></ul> | A write that skips the preview or the undo (ENH-04); per-module copies of the pipeline's shapes |
 
 **The A7 corpus cases.**
 - **At every object node:** an unknown member, a wrong-case member, a duplicate member, each missing required member, and `null` for each non-nullable member. "Every object node" includes nested objects, each `oneOf` variant, each map value, each array item and each bound primitive AST.
@@ -583,4 +619,4 @@ Every check has a failing fixture in `check_test.go`, so a check that silently m
 - Whether an operation belongs in `policy.authenticated` at all. security-architect checks it, through the `policy.yaml` review.
 - Who reviews `policy.yaml` and binding-table changes. security-architect does, by ticket tag, until CODEOWNERS can enforce it.
 
-**Status path.** Ratified 2026-10-02 (D-0014). Accepted when `fitness-api` A1–A14 (A9 delegated to T5) all run **active** and green in `make ci` on `main`.
+**Status path.** Ratified 2026-10-02 (D-0014). Accepted when `fitness-api` A1–A15 (A9 delegated to T5) all run **active** and green in `make ci` on `main`.

@@ -47,6 +47,9 @@ import (
 var agentGolden = map[protoreflect.FullName]map[protoreflect.Name]map[protoreflect.Name]bool{
 	"skenzeriq.agent.v1": {
 		"Host": {"GetStatus": true, "ApplyPolicy": true, "ApplyKeyset": true, "StageUpdate": true, "AckEvents": true},
+		// EventIngest is served by the server and called by the agent (contract §2). It is on the list so
+		// the verb, stream, free-text and password rules apply to it too.
+		"EventIngest": {"SubmitEvents": true},
 	},
 	"activediq.addc.v1": {
 		"Addc": {"GetCollectionState": true},

@@ -3,10 +3,13 @@ package server
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
@@ -36,7 +39,7 @@ func TestConsoleAuthzAllowsATenantSessionOnlyWhenRBACGrants(t *testing.T) {
 	tn := tenant.New().String()
 	p := apihost.Principal{ID: tenant.New().String(), Tenant: tn, Kind: apihost.KindSession, SessionID: "s"}
 	ra := &recAuthz{}
-	ok, err := consoleAuthz{ra}.Allow(context.Background(), p, "connections.takeover.attest", "tenant")
+	ok, err := consoleAuthz{ra, testCatalogue()}.Allow(context.Background(), p, "connections.takeover.attest", "tenant")
 	if err != nil || !ok {
 		t.Fatalf("allow = %v, %v", ok, err)
 	}
@@ -45,11 +48,11 @@ func TestConsoleAuthzAllowsATenantSessionOnlyWhenRBACGrants(t *testing.T) {
 		t.Fatalf("authorizer saw %+v", ra)
 	}
 	// RBAC refusal is a clean "no"; any other error is a fault and propagates.
-	if ok, err := (consoleAuthz{&recAuthz{err: rbac.ErrDenied}}).Allow(context.Background(), p, "x", "tenant"); ok || err != nil {
+	if ok, err := (consoleAuthz{&recAuthz{err: rbac.ErrDenied}, testCatalogue()}).Allow(context.Background(), p, "x", "tenant"); ok || err != nil {
 		t.Errorf("denied = %v, %v", ok, err)
 	}
 	boom := errors.New("db down")
-	if ok, err := (consoleAuthz{&recAuthz{err: boom}}).Allow(context.Background(), p, "x", "tenant"); ok || !errors.Is(err, boom) {
+	if ok, err := (consoleAuthz{&recAuthz{err: boom}, testCatalogue()}).Allow(context.Background(), p, "x", "tenant"); ok || !errors.Is(err, boom) {
 		t.Errorf("fault = %v, %v", ok, err)
 	}
 }
@@ -67,11 +70,11 @@ func TestConsoleAuthzDeniesByDefault(t *testing.T) {
 		p     apihost.Principal
 		scope string
 	}{
-		"platform scope": {consoleAuthz{&recAuthz{}}, good, "platform"},
-		"api token":      {consoleAuthz{&recAuthz{}}, tok, "tenant"},
-		"no account":     {consoleAuthz{&recAuthz{}}, noID, "tenant"},
-		"bad tenant":     {consoleAuthz{&recAuthz{}}, badTenant, "tenant"},
-		"no authorizer":  {consoleAuthz{}, good, "tenant"},
+		"platform scope": {consoleAuthz{&recAuthz{}, testCatalogue()}, good, "platform"},
+		"api token":      {consoleAuthz{&recAuthz{}, testCatalogue()}, tok, "tenant"},
+		"no account":     {consoleAuthz{&recAuthz{}, testCatalogue()}, noID, "tenant"},
+		"bad tenant":     {consoleAuthz{&recAuthz{}, testCatalogue()}, badTenant, "tenant"},
+		"no authorizer":  {consoleAuthz{cat: testCatalogue()}, good, "tenant"},
 	} {
 		if ok, err := c.a.Allow(context.Background(), c.p, "x", c.scope); ok || err != nil {
 			t.Errorf("%s: allowed (%v, %v)", name, ok, err)
@@ -90,15 +93,15 @@ func TestSessionStepUpRefusesWithoutAStack(t *testing.T) {
 
 // The console stack is assembled with real authn types and mounts every port.
 func TestBuildConsolePorts(t *testing.T) {
-	c, err := buildConsole(&store.DB{}, nopSink{}, nil)
+	c, err := buildConsole(&store.DB{}, nopSink{}, testKeys(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := c.ports(testLimiter(t), &recAuthz{})
+	p := c.ports(testLimiter(t), &recAuthz{}, testCatalogue())
 	if p.Authn == nil || p.Authz == nil || p.Limits == nil || p.StepUp == nil {
 		t.Fatalf("ports = %+v", p)
 	}
-	if _, err := buildConsole(nil, nopSink{}, nil); err == nil {
+	if _, err := buildConsole(nil, nopSink{}, testKeys(), nil); err == nil {
 		t.Error("nil database accepted")
 	}
 }
@@ -143,9 +146,77 @@ func TestConsoleAuthzOverRealRBAC(t *testing.T) {
 			t.Fatal(err)
 		}
 		p := apihost.Principal{ID: tenant.New().String(), Tenant: tn.String(), Kind: apihost.KindSession, SessionID: "s"}
-		ok, err := consoleAuthz{az}.Allow(context.Background(), p, perm, "tenant")
+		ok, err := consoleAuthz{az, testCatalogue()}.Allow(context.Background(), p, perm, "tenant")
 		if err != nil || ok != c.want {
 			t.Errorf("%s: allow = %v, %v; want %v", name, ok, err, c.want)
+		}
+	}
+}
+
+// testCatalogue is the real catalogue plus "x", the placeholder permission some cases ask for.
+func testCatalogue() apihost.Permissions { return append(permissionCatalogue(), "x") }
+
+// The relying party is the public URL's origin: RP ID without the port, exactly one origin, nothing else.
+func TestWebAuthnRelyingPartyFromPublicURL(t *testing.T) {
+	for in, want := range map[string]authn.WebAuthnConfig{
+		"https://diq.example.com":      {RPID: "diq.example.com", RPDisplayName: "activeDIQ", Origins: []string{"https://diq.example.com"}},
+		"https://diq.example.com/":     {RPID: "diq.example.com", RPDisplayName: "activeDIQ", Origins: []string{"https://diq.example.com"}},
+		"https://DIQ.Example.com:443":  {RPID: "diq.example.com", RPDisplayName: "activeDIQ", Origins: []string{"https://diq.example.com"}},
+		"https://diq.example.com:8443": {RPID: "diq.example.com", RPDisplayName: "activeDIQ", Origins: []string{"https://diq.example.com:8443"}},
+	} {
+		got, err := webAuthnRelyingParty(in)
+		if err != nil || got.RPID != want.RPID || len(got.Origins) != 1 || got.Origins[0] != want.Origins[0] {
+			t.Errorf("%s: %+v, %v", in, got, err)
+		}
+	}
+	for _, bad := range []string{"", "https://10.0.0.5", "https://[::1]", "https://diq.example.com.", "http://diq.example.com", "https://diq.example.com/x", "https://u:p@diq.example.com", "https://diq.example.com/?a=b", "diq.example.com", "https://"} {
+		if _, err := webAuthnRelyingParty(bad); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+// Without a public URL the stack has no WebAuthn factor, so Tags leaves the interface nil (a typed nil
+// would turn the 501 into a panic); with one it is built over the shared stores.
+func TestBuildConsoleWebAuthnOnlyWithPublicURL(t *testing.T) {
+	off, err := buildConsole(&store.DB{}, nopSink{}, testKeys(), nil)
+	if err != nil || off.WebAuthn != nil {
+		t.Fatalf("off: %v %v", off.WebAuthn, err)
+	}
+	on, err := buildConsole(&store.DB{}, nopSink{}, testKeys(), nil, withPublicURL("https://diq.example.com"))
+	if err != nil || on.WebAuthn == nil {
+		t.Fatalf("on: %v %v", on.WebAuthn, err)
+	}
+	if _, err := buildConsole(&store.DB{}, nopSink{}, testKeys(), nil, withPublicURL("http://diq.example.com")); err == nil {
+		t.Error("a non-https public URL built a relying party")
+	}
+}
+
+// T-0861: the WebAuthn origin and the attestation redirect URI come from the same canonical value, however
+// the operator spelled the URL.
+func TestRelyingPartyAndRedirectURIShareOneCanonicalOrigin(t *testing.T) {
+	for _, in := range []string{"https://DIQ.Example.com:443", "https://diq.example.com/", "https://Diq.example.com:443/"} {
+		rp, err := webAuthnRelyingParty(in)
+		if err != nil {
+			t.Fatalf("%s: %v", in, err)
+		}
+		po, err := config.ParsePublicURL(in)
+		if err != nil {
+			t.Fatalf("%s: %v", in, err)
+		}
+		redirect := po.Origin + attestCallbackPath
+		if rp.Origins[0] != po.Origin || !strings.HasPrefix(redirect, rp.Origins[0]+"/") || rp.RPID != "diq.example.com" {
+			t.Errorf("%s: rp %+v, redirect %s", in, rp, redirect)
+		}
+		// The loaded config carries the canonical origin, so buildAttestation sees the same bytes.
+		c, err := config.Load(func(k string) string {
+			if k == config.EnvPublicURL {
+				return in
+			}
+			return ""
+		})
+		if err != nil || c.PublicURL != rp.Origins[0] {
+			t.Errorf("%s: loaded %q, rp origin %q, %v", in, c.PublicURL, rp.Origins[0], err)
 		}
 	}
 }

@@ -86,11 +86,13 @@ func (GetCSRFToken200) isGetCSRFTokenOutput()              {}
 
 // SignInBreakGlassPasswordInput is the decoded input of signInBreakGlassPassword: path, query and header parameters, then the body.
 type SignInBreakGlassPasswordInput struct {
-	Body BreakGlassPasswordRequest
+	PeerIP string // the client address: the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy (ACTIVEDIQ_TRUSTED_PROXIES)
+	Body   BreakGlassPasswordRequest
 }
 
 func (in *SignInBreakGlassPasswordInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
 	_ = r
+	in.PeerIP = r.PeerIP
 }
 
 func (in *SignInBreakGlassPasswordInput) BodyTarget() any { return &in.Body }

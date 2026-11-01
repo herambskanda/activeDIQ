@@ -9,7 +9,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
-	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -51,13 +50,9 @@ func NewDCDirectory(conns ConnectionSource, src ConnectorSource) (*DCDirectory, 
 // resolved under the tenant of ctx. A DC with a nil or malformed identity is an error, never skipped
 // into a partial answer. An nc the connection does not describe is ErrDCNC.
 func (d *DCDirectory) WritableDCs(ctx context.Context, connectionID string, nc authority.NamingContextID) ([]WritableDC, error) {
-	tidText, ok := authority.TenantFrom(ctx)
-	if !ok {
-		return nil, ErrReadTenant
-	}
-	tid, err := tenant.Parse(tidText)
+	tid, err := readTenant(ctx)
 	if err != nil {
-		return nil, ErrReadTenant
+		return nil, err
 	}
 	conn, err := d.conns.Get(ctx, tid, connection.ID(connectionID))
 	if err != nil || string(conn.ID) != connectionID || conn.RetiredAt != nil {

@@ -291,3 +291,30 @@ func TestGuardPrefixesMatchNeverCrosses(t *testing.T) {
 		}
 	}
 }
+
+// T-0250 (TM-D1): a role listing a platform-scope-only permission can be neither created, edited to
+// include one, nor granted at tenant or delegation scope, even by the tenant owner.
+func TestGrantsRefusePlatformOnlyPermission(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e, g, _ := grantsSetup(t, s)
+		owner := human(ownerAcct)
+		const p authz.Permission = "connections.tier0_override.acknowledge"
+		err := e.do(t, func(ctx context.Context, tx store.Tx) error {
+			return g.CreateRole(ctx, tx, owner, roleA, "override", Tier1, []authz.Permission{p})
+		})
+		if !errors.Is(err, authz.ErrInvalidGrant) || !errors.Is(err, ErrInvalid) {
+			t.Fatalf("create role: %v, want ErrInvalidGrant", err)
+		}
+		if err := e.do(t, func(ctx context.Context, tx store.Tx) error {
+			return g.CreateRole(ctx, tx, owner, roleB, "plain", Tier2, []authz.Permission{"objects.user.reset_password"})
+		}); err != nil {
+			t.Fatal(err)
+		}
+		err = e.do(t, func(ctx context.Context, tx store.Tx) error {
+			return g.SetRolePermissions(ctx, tx, owner, roleB, []authz.Permission{"objects.user.reset_password", p})
+		})
+		if !errors.Is(err, authz.ErrInvalidGrant) {
+			t.Fatalf("set permissions: %v, want ErrInvalidGrant", err)
+		}
+	})
+}

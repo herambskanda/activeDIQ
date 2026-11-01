@@ -2,6 +2,7 @@
 // exists; until then it is edited by hand, one line per module, and it is the only file in
 // src/app that names a module (blueprint §2 rule 8).
 import { directoryModule } from "../modules/directory";
+import { reportsModule } from "../modules/reports";
 import type { WebModule } from "./modules";
 
-export const webModules: readonly WebModule[] = [directoryModule];
+export const webModules: readonly WebModule[] = [directoryModule, reportsModule];

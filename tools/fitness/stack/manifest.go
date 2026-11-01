@@ -68,6 +68,10 @@ type Exceptions struct {
 	BuildScripts     []Exception `json:"buildScripts"`
 	DevNodeTools     []Exception `json:"devNodeTools"`
 	NativeComponents []Exception `json:"nativeComponents"`
+	// LabBuilds are single non-test Go files that may carry exactly `//go:build lab` or
+	// `//go:build !lab` (ADR-0001 rule 2, amendment A1): lab-only composition the compiler keeps out
+	// of every production binary. Any other expression, and any other test tag, still fails F2.
+	LabBuilds []Exception `json:"labBuilds"`
 }
 
 // LicenceExcept allows one module whose licence text trips the strong-copyleft scan (F4).
@@ -133,6 +137,7 @@ func (m *Manifest) allExceptions() []labelled {
 	add("buildScripts", x.BuildScripts)
 	add("devNodeTools", x.DevNodeTools)
 	add("nativeComponents", x.NativeComponents)
+	add("labBuilds", x.LabBuilds)
 	for i, l := range m.LicenceExcepts {
 		out = append(out, labelled{fmt.Sprintf("licenceExceptions[%d] (%s)", i, l.Module), l.ADR, "", "licence"})
 	}

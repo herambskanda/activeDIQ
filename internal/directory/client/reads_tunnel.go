@@ -24,7 +24,7 @@ type BindingSource interface {
 	Bindings(ctx context.Context, tid tenant.ID, id connection.ID) ([]connection.Binding, error)
 }
 
-// Tunnels gives the client connection of an enrolled component. *fleet.Hub satisfies it. The
+// Tunnels gives the client connection of an enrolled component. *gateway.Hub satisfies it. The
 // component dialled the server over mutual TLS and the fleet gateway verified its certificate against
 // the tenant's CAs and its current serial; this package never dials and has no credentials option, so
 // there is no way to reach a connector without that mutual-TLS tunnel.
@@ -58,11 +58,21 @@ func NewTunnelSource(conns ConnectionSource, bindings BindingSource, tunnels Tun
 	return &TunnelSource{conns: conns, bindings: bindings, tunnels: tunnels}, nil
 }
 
+// readTenant is the tenant the runner put on ctx, or ErrReadTenant. It is the one place in this package
+// that turns the authority context into a tenant.ID (ADR-0002 rule 5), so a read never mints its own.
+func readTenant(ctx context.Context) (tid tenant.ID, _ error) {
+	got, err := tenantref.TenantFromContext(ctx)
+	if err != nil {
+		return tid, ErrReadTenant
+	}
+	return got, nil
+}
+
 // Connector implements ConnectorSource.
 func (s *TunnelSource) Connector(ctx context.Context, connectionID string) (connectorv1.ConnectorClient, error) {
-	tid, err := tenantref.TenantFromContext(ctx)
+	tid, err := readTenant(ctx)
 	if err != nil {
-		return nil, ErrReadTenant
+		return nil, err
 	}
 	id, err := connection.ParseID(connectionID)
 	if err != nil {

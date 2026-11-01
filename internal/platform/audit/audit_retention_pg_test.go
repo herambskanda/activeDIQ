@@ -832,21 +832,27 @@ func TestLegalHoldRawInsertSerialisesWithPurge(t *testing.T) {
 			t.Fatalf("setup: subject has %d values, %d salts; want none", v, s)
 		}
 
-		c, err := r.d.App(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer c.Close(ctx)
-		tx, err := c.Begin(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true)`, r.id.String()); err != nil {
-			t.Fatal(err)
-		}
-		// A raw INSERT as the runtime role, not personal.SetHold: the database trigger must serialise it.
-		if _, err := tx.Exec(ctx, `INSERT INTO public.personal_hold (tenant_id, subject_ref) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`, r.id.String(), pSubject); err != nil {
-			t.Fatal(err)
+		// A raw INSERT as the runtime role, not personal.SetHold: the database trigger must serialise it. The
+		// tenant transaction (store.WithTenant sets the tenant) stays open, uncommitted, until released.
+		inserted := make(chan struct{})
+		release := make(chan bool) // true commits the hold, false rolls it back
+		holdDone := make(chan error, 1)
+		go func() {
+			holdDone <- r.db.WithTenant(ctx, r.id, func(ctx context.Context, tx store.Tx) error {
+				if _, err := tx.Exec(ctx, `INSERT INTO public.personal_hold (tenant_id, subject_ref) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`, r.id.String(), pSubject); err != nil {
+					return err
+				}
+				close(inserted)
+				if !<-release {
+					return errors.New("hold rolled back by the test")
+				}
+				return nil
+			})
+		}()
+		select {
+		case <-inserted:
+		case err := <-holdDone:
+			t.Fatalf("hold insert: %v", err)
 		}
 		type out struct {
 			res audit.PurgeResult
@@ -859,11 +865,13 @@ func TestLegalHoldRawInsertSerialisesWithPurge(t *testing.T) {
 		}()
 		select {
 		case o := <-done:
-			_ = tx.Rollback(ctx)
+			release <- false
+			<-holdDone
 			t.Fatalf("purge finished while a hold was uncommitted: %+v, %v", o.res, o.err)
 		case <-time.After(1500 * time.Millisecond):
 		}
-		if err := tx.Commit(ctx); err != nil {
+		release <- true
+		if err := <-holdDone; err != nil {
 			t.Fatal(err)
 		}
 		o := <-done

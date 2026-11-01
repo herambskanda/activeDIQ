@@ -1,0 +1,46 @@
+K1 initial focus: INPUT:_r_0_|outline=solid 2px|shadow=none
+K1 after Tab 1: INPUT:_r_1_|outline=solid 2px|shadow=none
+K1 code step focus after 500ms: BODY:Sign in to activeDIQAuthenticator codeSign inUse a security key|outline=none 3px|shadow=none
+K1 code step Tab1: INPUT:_r_2_|outline=solid 2px|shadow=none
+K1 code step Tab2: BUTTON:Sign in|outline=solid 2px|shadow=none
+K1 Tab3: BUTTON:Use a security key|outline=solid 2px|shadow=none
+K1 keyboard-only key sign-in OK; landing text: Users | Search users | Results | Type a name, account name or user principal name to find users.
+K2 no-key account: calls=POST /api/v1/auth/second-factor/webauthn/challenge 401 | text=Sign in to activeDIQ |  | Couldn't sign you in |  | Sign-in failed. Check the details and try again. |  | Account name | Password |  | Continue
+K2 after failure, back at password step: true
+K3 TOTP refused for key account, then key sign-in after restart OK
+K4 password: 204
+K4 totp for key acct: 401 set-cookie=none body={"instance":"/api/v1/auth/second-factor/totp/verify","status":401,"title":"Sign-in failed","traceId":"c27e52d7aa745f5a078c7db29bd02145","type":"/problems/sign-in-failed"}
+K4 challenge w/o pending: 200 {"allowCredentials":[{"id":"XfPWGQez9D0Tre1JXjvvHm6TYRAuQ8Rpoqix_tfLDPY","type":"public-key"}],"challenge":"wUwFxXco8ioz4noMVRbwD8WYw8hpjfJb1rI9Olr41us","rpId":"localhost","timeoutMs":300000,"userVerification":"required"}
+K4 verify garbage: 400 {"errors":[{"code":"pattern","detail":"value does not match the required pattern","in":"body","pointer":"/authenticatorData"},{"code":"pattern","detail":"value 
+K4 csrf no session: 401
+K4 directory no session: 401
+K5 panel: Couldn't sign you in |  | Sign-in failed. Check the details and try again.
+K5 echoed-as-markup(<img in DOM)? 0
+K5 user=*)(cn=*… -> generic error; username echoed in DOM text? false
+K5 panel: Couldn't sign you in |  | Sign-in failed. Check the details and try again.
+K5 echoed-as-markup(<img in DOM)? 0
+K5 user=<img src=x onerror=a… -> generic error; username echoed in DOM text? true
+K5 panel: Couldn't sign you in |  | Sign-in failed. Check the details and try again.
+K5 echoed-as-markup(<img in DOM)? 0
+K5 user=o'brien"; DROP… -> generic error; username echoed in DOM text? false
+K5 panel: Couldn't sign you in |  | The request is invalid
+K5 echoed-as-markup(<img in DOM)? 0
+K5 user=Ünïcödé-名前-xxxxxxxxx… -> generic error; username echoed in DOM text? false
+K6 dblclick challenge requests=1; state after prompt failure: codeField=true keyBtn=true
+K7 challenge 503 text: Sign in to activeDIQ |  | Couldn't sign you in |  | The server could not complete the sign-in. Try again. |  | Authenticator code |  | Sign inUse a security key
+K7 challenge network failure text: Sign in to activeDIQ |  | Couldn't sign you in |  | Can't reach the server. Check your connection, then try again. |  | Authenticator code |  | Sign inUse a security key
+K8 light password step axe violations: []
+K8 light code step axe violations: []
+K8 light error panel axe violations: []
+K8 width 320 horizontal overflow=false
+K8 width 1024 horizontal overflow=false
+K8 width 1920 horizontal overflow=false
+K8 dark password step axe violations: []
+K8 dark code step axe violations: []
+K8 dark error panel axe violations: []
+K9 after refresh at code step shows: Sign in to activeDIQ | Account name | Password |  | Continue
+K9 next=//evil → landed on https://localhost:41669/directory/users
+K10 challenge no pending: 401 set-cookie=none {"instance":"/api/v1/auth/second-factor/webauthn/challenge","status":401,"title":"Sign-in failed","traceId":"733402ea54eecd83e813abd207e256df","type":"/problems/sign-in-failed"}
+K10 verify no pending: 401 set-cookie=none {"instance":"/api/v1/auth/second-factor/webauthn/verify","status":401,"title":"Sign-in failed","traceId":"d8884f9fd821f73dc387cc455bccde40","type":"/problems/sign-in-failed"}
+K10 totp no pending: 401 {"instance":"/api/v1/auth/second-factor/totp/verify","status":401,"title":"Sign-in failed","traceId":"b6440e1675077b8c2059947e57224f7a","type":"/problems/sign-in-failed"}
+K11 server down, key click: Sign in to activeDIQ |  | Couldn't sign you in |  | Can't reach the server. Check your connection, then try again. |  | Authenticator code |  | Sign inUse a security key

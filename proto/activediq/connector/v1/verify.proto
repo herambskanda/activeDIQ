@@ -394,6 +394,11 @@ message VerifyConnectionRequest {
   // `correlated_tier0` lacks an object the previous epoch had reported writes a tier0_set_shrink
   // record on the connector host (contract §8.3a).
   repeated Tier0Member correlated_tier0 = 8;
+  // TM-D26 rule 10: the C13 group GUIDs pinned for the connection on the server (persisted at first
+  // discovery). The connector treats a pinned group as C13 even after it is renamed, so a renamed
+  // DnsAdmins / Exchange group stays in the tier0 set. A malformed GUID is
+  // ERROR_CODE_INVALID_ARGUMENT before any directory call.
+  repeated Guid pinned_c13 = 9;
 }
 
 enum VerificationRunKind {

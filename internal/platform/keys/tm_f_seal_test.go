@@ -178,3 +178,67 @@ func TestTMFSealDEKBoundToTenantContext(t *testing.T) {
 		t.Fatalf("B's value opened via swapped wrapped DEK: %v %v", pt, err)
 	}
 }
+
+// Installation scope (T-0715, ADR-0008): a value sealed under the installation DEK is bound to its table,
+// row, column and version, never opens through the tenant API or under a tenant DEK, and the installation
+// DEK's wrap never unwraps as a tenant's (nor a tenant's as it).
+func TestTMFSealInstallationScope(t *testing.T) {
+	s := newSealedStore(t)
+	inst, err := keys.NewDEK(version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := keys.InstallationContext{Table: "public.fleet_server_ca", Row: sRowA, Column: sColumn, Version: version}
+	blob, err := keys.SealInstallation(inst, home, []byte("server ca key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := keys.OpenInstallation(inst, home, blob); err != nil || string(got) != "server ca key" {
+		t.Fatalf("control: %q %v", got, err)
+	}
+	for name, c := range map[string]keys.InstallationContext{
+		"another table":  {Table: sTable, Row: sRowA, Column: sColumn, Version: version},
+		"another row":    {Table: home.Table, Row: sRowA2, Column: sColumn, Version: version},
+		"another column": {Table: home.Table, Row: sRowA, Column: "other", Version: version},
+	} {
+		pt, err := keys.OpenInstallation(inst, c, blob)
+		wantOpenFailed(t, name, pt, err)
+	}
+	// A tenant DEK (same key bytes are irrelevant: a different key) and the tenant API both refuse it.
+	pt, err := keys.OpenInstallation(s.deks[s.aTen], home, blob)
+	wantOpenFailed(t, "tenant DEK", pt, err)
+	tctx := keys.Context{Tenant: s.aTen, Table: home.Table, Row: sRowA, Column: sColumn, Version: version}
+	pt, err = keys.Open(inst, tctx, blob)
+	wantOpenFailed(t, "tenant context, installation DEK", pt, err)
+	// And the reverse: a tenant-sealed blob does not open as an installation value.
+	tb, _ := keys.Seal(inst, tctx, []byte("x"))
+	pt, err = keys.OpenInstallation(inst, home, tb)
+	wantOpenFailed(t, "tenant blob as installation value", pt, err)
+	// Other version / one flipped bit.
+	if pt, err := keys.OpenInstallation(inst, keys.InstallationContext{Table: home.Table, Row: sRowA, Column: sColumn, Version: version + 1}, blob); pt != nil || keys.Code(err) != keys.KeyVersionMismatch {
+		t.Errorf("other version: %v %v", pt, err)
+	}
+	for i := range blob {
+		m := append([]byte(nil), blob...)
+		m[i] ^= 1
+		if pt, err := keys.OpenInstallation(inst, home, m); pt != nil || keys.Code(err) == "" {
+			t.Fatalf("flip at %d opened", i)
+		}
+	}
+
+	// Wrap domains: installation wrap <-> tenant wrap.
+	raw := make([]byte, keys.DEKSize)
+	wrapped, ref, err := keys.WrapPlatform(s.kms, keys.InstallationPurpose, version, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := keys.UnwrapDEK(s.kms, s.aTen, version, ref, wrapped); keys.Code(err) != keys.UnwrapFailed {
+		t.Fatalf("installation wrap unwrapped as tenant DEK: %v", err)
+	}
+	if _, err := keys.UnwrapPlatform(s.kms, keys.InstallationPurpose, version, s.ref[s.aTen], s.wrapped[s.aTen]); keys.Code(err) != keys.UnwrapFailed {
+		t.Fatalf("tenant wrap unwrapped as installation DEK: %v", err)
+	}
+	if _, err := keys.UnwrapPlatform(s.kms, "api-tls", version, ref, wrapped); keys.Code(err) != keys.UnwrapFailed {
+		t.Fatalf("installation wrap unwrapped under another purpose: %v", err)
+	}
+}

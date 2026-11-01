@@ -6,6 +6,9 @@
 --   activediq_owner  runs migrations (this script) and owns every object. Not a superuser, no BYPASSRLS.
 --   activediq_app    the runtime role. Owns nothing, no BYPASSRLS, no TRUNCATE, no CREATE, no TEMPORARY.
 --
+--   activediq_catrust  (T-0734) the NOLOGIN trust-anchor reader of the client-CA pool. Created by the installer too;
+--                      the owner is its only member and activediq_app must never be one (guard below).
+--
 -- Both roles are created by the installer before the first run (a cluster-level act the owner cannot
 -- do: it has no CREATEROLE). The script fails here, loudly, if the split is not in place, rather than
 -- creating tables the runtime role could not use or that it could bypass.
@@ -36,6 +39,7 @@ BEGIN
   FOR r IN
     SELECT x.rolname, CASE
         WHEN x.rolname = current_user THEN 'the migration role: activediq_app must not be a member of it'
+        WHEN x.rolname = 'activediq_catrust' THEN 'the trust-anchor reader: the runtime role may only EXECUTE its function, never be a member of it'
         WHEN x.rolsuper THEN 'a superuser'
         WHEN x.rolbypassrls THEN 'a BYPASSRLS role'
         WHEN x.rolname IN ('pg_execute_server_program', 'pg_read_server_files', 'pg_write_server_files') THEN 'a predefined role that is superuser-equivalent'
@@ -98,6 +102,7 @@ $guard$;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO activediq_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO activediq_app;
 
+-- write-class: tenants system
 CREATE TABLE public.tenants (
   id uuid PRIMARY KEY,
   parent_tenant_id uuid REFERENCES public.tenants (id),

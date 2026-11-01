@@ -37,7 +37,7 @@ func DefaultConfig(repo string) *Config {
 			{Schema: "GUIDRef", Import: mod + "/internal/directory/dn", Type: "GUIDRef", Pending: true, Owner: "P2 (internal/directory/dn)"},
 			{Schema: "ObjectView", Import: mod + "/internal/directory/dn", Type: "ObjectView", Pending: true, Owner: "P2 (internal/directory/dn)"},
 			{Schema: "FilterAst", Import: mod + "/internal/directory/ldapfilter", Type: "Filter", Pending: true, Owner: "P1 (internal/directory/ldapfilter)"},
-			{Schema: "ReportAst", Import: mod + "/internal/platform/store/reportsql", Type: "Report", Pending: true, Owner: "P5 (internal/platform/store/reportsql)"},
+			{Schema: "ReportAst", Import: mod + "/internal/platform/report", Type: "Query"},
 		},
 	}
 }

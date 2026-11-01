@@ -1,0 +1,105 @@
+{
+  "id": "grp-02",
+  "version": 1,
+  "category": "groups",
+  "title": "Group members",
+  "description": "The members of the groups you name. Group Members lists direct members, Detailed Group Members every effective member with the groups it came through, and Users in Groups the effective user members. Circular nesting, groups too large to expand and external principals are listed, not dropped.",
+  "dataset": "inventory.group_members",
+  "columns": [
+    "group_name",
+    "member_name",
+    "member_kind",
+    "member_domain",
+    "member_dn",
+    "member_enabled",
+    "edge_kind",
+    "via_path",
+    "finding"
+  ],
+  "sort": [
+    {
+      "column": "group_name",
+      "dir": "asc"
+    },
+    {
+      "column": "member_name",
+      "dir": "asc"
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn",
+    "covered_domains",
+    "primary_group_is_a_membership"
+  ],
+  "presets": [
+    {
+      "id": "members",
+      "names": [
+        "Group Members"
+      ],
+      "where": {
+        "cmp": {
+          "col": "depth",
+          "op": "eq",
+          "value": {
+            "int": 1
+          }
+        }
+      },
+      "requires": {
+        "min": 1,
+        "max": 100,
+        "column": "group_guid",
+        "kind": "group"
+      }
+    },
+    {
+      "id": "detailed",
+      "names": [
+        "Detailed Group Members"
+      ],
+      "requires": {
+        "min": 1,
+        "max": 100,
+        "column": "group_guid",
+        "kind": "group"
+      }
+    },
+    {
+      "id": "users",
+      "names": [
+        "Users in Groups"
+      ],
+      "where": {
+        "or": [
+          {
+            "cmp": {
+              "col": "member_kind",
+              "op": "in",
+              "values": [
+                {
+                  "enum": "user"
+                },
+                {
+                  "enum": "inetorgperson"
+                }
+              ]
+            }
+          },
+          {
+            "cmp": {
+              "col": "finding",
+              "op": "present"
+            }
+          }
+        ]
+      },
+      "requires": {
+        "min": 1,
+        "max": 100,
+        "column": "group_guid",
+        "kind": "group"
+      }
+    }
+  ]
+}

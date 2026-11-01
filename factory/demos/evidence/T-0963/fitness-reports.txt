@@ -1,0 +1,3 @@
+  pending   RP10 Test_delivery_link_authorised_by_delivery_row (row B11 has not landed it) (not yet checked, not a pass)
+  pending   RP7 library/LOCK (internal/modules/reports/library has not landed: row B5; the rule applies the moment the directory exists) (not yet checked, not a pass)
+fitness-reports: ok (RP2, RP3, RP7 and the landed bound tests as listed; RP1 runs in fitness-safeprim; pending parts above; ADR-0010 stays out of accepted until none is pending)

@@ -1,0 +1,114 @@
+{
+  "id": "cmp-02",
+  "version": 1,
+  "category": "computers",
+  "title": "Computer activity",
+  "description": "Computers by last activity: the later of the replicated logon and the machine password change, else the creation date. A heuristic, not a Microsoft definition; the Activity source column says which value decided.",
+  "dataset": "inventory.computers",
+  "columns": [
+    "name",
+    "dns_host_name",
+    "domain",
+    "dn",
+    "operating_system",
+    "last_activity",
+    "activity_source",
+    "days_since_activity",
+    "enabled",
+    "when_created"
+  ],
+  "sort": [
+    {
+      "column": "last_activity",
+      "dir": "asc"
+    }
+  ],
+  "params": [
+    {
+      "name": "days",
+      "kind": "days",
+      "default": {
+        "days": 90
+      },
+      "min": 30,
+      "max": 3650
+    },
+    {
+      "name": "recent_days",
+      "kind": "days",
+      "default": {
+        "days": 30
+      },
+      "min": 30,
+      "max": 365
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn",
+    "accurate_to_sync_interval",
+    "activity_is_heuristic",
+    "machine_password_rotation"
+  ],
+  "presets": [
+    {
+      "id": "inactive",
+      "names": [
+        "Inactive computers"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "enabled",
+              "op": "eq",
+              "value": {
+                "bool": true
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "last_activity",
+              "op": "older_than_days",
+              "param": "days"
+            }
+          }
+        ]
+      },
+      "hidden": [
+        {
+          "id": "managed_accounts",
+          "label": "group managed service accounts excluded (cluster objects cannot be told apart yet)",
+          "where": {
+            "cmp": {
+              "col": "managed_service_account",
+              "op": "eq",
+              "value": {
+                "bool": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "active",
+      "names": [
+        "Active Computers"
+      ],
+      "where": {
+        "cmp": {
+          "col": "last_activity",
+          "op": "within_last_days",
+          "param": "recent_days"
+        }
+      },
+      "sort": [
+        {
+          "column": "last_activity",
+          "dir": "desc"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+=== RUN   TestQA3Probe
+    zz_qa3_probe_test.go:13: EnsureDir new: <nil>
+    zz_qa3_probe_test.go:15: mode=drwx------
+    zz_qa3_probe_test.go:16: EnsureDir again: <nil>
+    zz_qa3_probe_test.go:21: 755 CheckDir typed=true EnsureDir typed=true
+    zz_qa3_probe_test.go:21: 770 CheckDir typed=true EnsureDir typed=true
+    zz_qa3_probe_test.go:21: 701 CheckDir typed=true EnsureDir typed=true
+    zz_qa3_probe_test.go:21: 750 CheckDir typed=true EnsureDir typed=true
+    zz_qa3_probe_test.go:26: symlinked dir: typed=true
+    zz_qa3_probe_test.go:31: legit: "legit" <nil>
+    zz_qa3_probe_test.go:35: symlink->foreign0666: bytes="" typed=true
+    zz_qa3_probe_test.go:35: symlink->own0600: bytes="" typed=true
+    zz_qa3_probe_test.go:40: pre-check ok; swapping
+    zz_qa3_probe_test.go:42: after swap: bytes="" typed=true
+--- PASS: TestQA3Probe (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/ownerfile	0.012s

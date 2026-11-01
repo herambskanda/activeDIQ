@@ -30,6 +30,7 @@ type Config struct {
 	AuthnDir     string // may mint tenant.ID
 	JobsDir      string // the job wrapper: may mint tenant.ID, the only importer of River
 	ReportSQLDir string // the report compiler's identifier registry
+	FleetSQLDir  string // the only package that may name fleet_ca_trust_anchors in SQL (F-POOL-1)
 	Registry     *registry.Registry
 }
 
@@ -37,8 +38,11 @@ type Config struct {
 func DefaultConfig(module string, reg *registry.Registry) *Config {
 	return &Config{Module: module, StoreDir: "internal/platform/store", TenantDir: "internal/platform/tenant",
 		AuthnDir: "internal/platform/authn", JobsDir: "internal/platform/jobs",
-		ReportSQLDir: "internal/platform/store/reportsql", Registry: reg}
+		ReportSQLDir: "internal/platform/store/reportsql", FleetSQLDir: "internal/platform/fleet/fleetsql", Registry: reg}
 }
+
+// PoolFunction is the SECURITY DEFINER reader of every tenant's CA certificates (fleet-contract, T-0712).
+const PoolFunction = "fleet_ca_trust_anchors"
 
 // Observed records what the analysis saw, for the registry's staleness check.
 type Observed struct {
@@ -63,6 +67,7 @@ const (
 	RuleRiver      = "river-boundary"
 	RuleSetConfig  = "set-config-text"
 	RuleGlobalSQL  = "global-table-sql"
+	RulePoolSQL    = "pool-function-sql"
 	RuleMint       = "tenant-id-minting"
 	RuleWithPlat   = "with-platform-site"
 	RuleJob        = "job-carries-tenant"
@@ -235,6 +240,9 @@ func (r *runner) strings(f *ast.File, isTest bool) {
 			if why := SQLTextProblem(s); why != "" {
 				r.report(e.Pos(), RuleSetConfig, "string "+why+" outside the tenancy package "+r.cfg.StoreDir+" (the transaction's tenant is set only by WithTenantTx)")
 			}
+		}
+		if strings.Contains(s, PoolFunction) && !UnderDir(r.dir, r.cfg.FleetSQLDir) {
+			r.report(e.Pos(), RulePoolSQL, "SQL names "+PoolFunction+"() outside "+r.cfg.FleetSQLDir+" (F-POOL-1: the trust-anchor reader has one caller)")
 		}
 		for _, g := range r.globals {
 			bare := strings.Trim(strings.TrimSpace(s), `"`)

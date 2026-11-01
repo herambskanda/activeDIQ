@@ -20,3 +20,14 @@ func SQLState(err error) string {
 	}
 	return ""
 }
+
+// SQLConstraint returns the SQLSTATE and the table and constraint names of a database error in err's
+// chain, or three empty strings when there is none. Schema names only: never the message or the detail,
+// which carry values. It lets a test tell which CHECK refused a write without importing pgx.
+func SQLConstraint(err error) (state, table, constraint string) {
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		return pe.Code, pe.TableName, pe.ConstraintName
+	}
+	return "", "", ""
+}

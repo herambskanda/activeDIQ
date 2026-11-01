@@ -1,0 +1,10 @@
+{
+ "id": "O-M04",
+ "class": "misaddressed",
+ "cites": [
+  "SSO-2"
+ ],
+ "build": "tenant_other",
+ "expect": "refuse",
+ "reason": "oidc.iss"
+}

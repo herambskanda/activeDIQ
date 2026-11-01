@@ -1,0 +1,1 @@
+- [Windows craft lessons](craft.md) — x/sys gaps, SDDL, wxs scan, lab limits

@@ -1,0 +1,10 @@
+{
+ "id": "O-D02",
+ "class": "malformed",
+ "cites": [
+  "OIDC-14"
+ ],
+ "build": "sub_invalid",
+ "expect": "refuse",
+ "reason": "oidc.sub"
+}

@@ -1,0 +1,354 @@
+=== RUN   TestDigestVectors
+--- PASS: TestDigestVectors (0.00s)
+=== RUN   TestDigestIsSensitive
+--- PASS: TestDigestIsSensitive (0.00s)
+=== RUN   TestAbsentNeverUnknownDiffer
+--- PASS: TestAbsentNeverUnknownDiffer (0.00s)
+=== RUN   TestDigesterStreamsLikeDigest
+--- PASS: TestDigesterStreamsLikeDigest (0.00s)
+=== RUN   TestUnknownCellIsVisibleText
+--- PASS: TestUnknownCellIsVisibleText (0.00s)
+=== RUN   TestRunToBlobCSVAndReport
+--- PASS: TestRunToBlobCSVAndReport (0.05s)
+=== RUN   TestRunToBlobXLSXIsAValidArchive
+--- PASS: TestRunToBlobXLSXIsAValidArchive (0.03s)
+=== RUN   TestRowCapStopsUnboundedExport
+=== RUN   TestRowCapStopsUnboundedExport/csv
+=== RUN   TestRowCapStopsUnboundedExport/xlsx
+--- PASS: TestRowCapStopsUnboundedExport (0.02s)
+    --- PASS: TestRowCapStopsUnboundedExport/csv (0.01s)
+    --- PASS: TestRowCapStopsUnboundedExport/xlsx (0.01s)
+=== RUN   TestCountRefusesBeforeWriting
+--- PASS: TestCountRefusesBeforeWriting (0.00s)
+=== RUN   TestFailedExportKeepsPreviousBlob
+--- PASS: TestFailedExportKeepsPreviousBlob (0.15s)
+=== RUN   TestCancelStopsTheJob
+--- PASS: TestCancelStopsTheJob (0.01s)
+=== RUN   TestRetentionRequired
+--- PASS: TestRetentionRequired (0.00s)
+=== RUN   TestStreamsWithBoundedMemory
+=== RUN   TestStreamsWithBoundedMemory/csv
+    run_test.go:213: csv: 500000 rows, 7 MiB out, first byte after 5120 rows, peak heap 7 MiB
+=== RUN   TestStreamsWithBoundedMemory/xlsx
+    run_test.go:213: xlsx: 500000 rows, 5 MiB out, first byte after 651 rows, peak heap 3 MiB
+--- PASS: TestStreamsWithBoundedMemory (1.68s)
+    --- PASS: TestStreamsWithBoundedMemory/csv (0.56s)
+    --- PASS: TestStreamsWithBoundedMemory/xlsx (1.12s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/export	1.955s
+=== RUN   TestTableMatchesNFKC
+--- PASS: TestTableMatchesNFKC (0.17s)
+=== RUN   TestCorpus
+--- PASS: TestCorpus (0.00s)
+=== RUN   TestClassifyEdges
+--- PASS: TestClassifyEdges (0.00s)
+=== RUN   FuzzClassify
+=== RUN   FuzzClassify/seed#0
+=== RUN   FuzzClassify/seed#1
+=== RUN   FuzzClassify/seed#2
+=== RUN   FuzzClassify/seed#3
+=== RUN   FuzzClassify/seed#4
+=== RUN   FuzzClassify/seed#5
+=== RUN   FuzzClassify/seed#6
+=== RUN   FuzzClassify/seed#7
+=== RUN   FuzzClassify/seed#8
+=== RUN   FuzzClassify/seed#9
+=== RUN   FuzzClassify/seed#10
+=== RUN   FuzzClassify/seed#11
+=== RUN   FuzzClassify/seed#12
+=== RUN   FuzzClassify/seed#13
+=== RUN   FuzzClassify/seed#14
+=== RUN   FuzzClassify/seed#15
+=== RUN   FuzzClassify/seed#16
+=== RUN   FuzzClassify/seed#17
+=== RUN   FuzzClassify/seed#18
+=== RUN   FuzzClassify/seed#19
+=== RUN   FuzzClassify/seed#20
+=== RUN   FuzzClassify/seed#21
+=== RUN   FuzzClassify/seed#22
+=== RUN   FuzzClassify/seed#23
+=== RUN   FuzzClassify/seed#24
+=== RUN   FuzzClassify/seed#25
+=== RUN   FuzzClassify/seed#26
+=== RUN   FuzzClassify/seed#27
+=== RUN   FuzzClassify/seed#28
+=== RUN   FuzzClassify/seed#29
+=== RUN   FuzzClassify/seed#30
+=== RUN   FuzzClassify/seed#31
+=== RUN   FuzzClassify/seed#32
+=== RUN   FuzzClassify/seed#33
+=== RUN   FuzzClassify/seed#34
+=== RUN   FuzzClassify/seed#35
+=== RUN   FuzzClassify/seed#36
+=== RUN   FuzzClassify/seed#37
+=== RUN   FuzzClassify/seed#38
+=== RUN   FuzzClassify/seed#39
+=== RUN   FuzzClassify/seed#40
+=== RUN   FuzzClassify/seed#41
+--- PASS: FuzzClassify (0.00s)
+    --- PASS: FuzzClassify/seed#0 (0.00s)
+    --- PASS: FuzzClassify/seed#1 (0.00s)
+    --- PASS: FuzzClassify/seed#2 (0.00s)
+    --- PASS: FuzzClassify/seed#3 (0.00s)
+    --- PASS: FuzzClassify/seed#4 (0.00s)
+    --- PASS: FuzzClassify/seed#5 (0.00s)
+    --- PASS: FuzzClassify/seed#6 (0.00s)
+    --- PASS: FuzzClassify/seed#7 (0.00s)
+    --- PASS: FuzzClassify/seed#8 (0.00s)
+    --- PASS: FuzzClassify/seed#9 (0.00s)
+    --- PASS: FuzzClassify/seed#10 (0.00s)
+    --- PASS: FuzzClassify/seed#11 (0.00s)
+    --- PASS: FuzzClassify/seed#12 (0.00s)
+    --- PASS: FuzzClassify/seed#13 (0.00s)
+    --- PASS: FuzzClassify/seed#14 (0.00s)
+    --- PASS: FuzzClassify/seed#15 (0.00s)
+    --- PASS: FuzzClassify/seed#16 (0.00s)
+    --- PASS: FuzzClassify/seed#17 (0.00s)
+    --- PASS: FuzzClassify/seed#18 (0.00s)
+    --- PASS: FuzzClassify/seed#19 (0.00s)
+    --- PASS: FuzzClassify/seed#20 (0.00s)
+    --- PASS: FuzzClassify/seed#21 (0.00s)
+    --- PASS: FuzzClassify/seed#22 (0.00s)
+    --- PASS: FuzzClassify/seed#23 (0.00s)
+    --- PASS: FuzzClassify/seed#24 (0.00s)
+    --- PASS: FuzzClassify/seed#25 (0.00s)
+    --- PASS: FuzzClassify/seed#26 (0.00s)
+    --- PASS: FuzzClassify/seed#27 (0.00s)
+    --- PASS: FuzzClassify/seed#28 (0.00s)
+    --- PASS: FuzzClassify/seed#29 (0.00s)
+    --- PASS: FuzzClassify/seed#30 (0.00s)
+    --- PASS: FuzzClassify/seed#31 (0.00s)
+    --- PASS: FuzzClassify/seed#32 (0.00s)
+    --- PASS: FuzzClassify/seed#33 (0.00s)
+    --- PASS: FuzzClassify/seed#34 (0.00s)
+    --- PASS: FuzzClassify/seed#35 (0.00s)
+    --- PASS: FuzzClassify/seed#36 (0.00s)
+    --- PASS: FuzzClassify/seed#37 (0.00s)
+    --- PASS: FuzzClassify/seed#38 (0.00s)
+    --- PASS: FuzzClassify/seed#39 (0.00s)
+    --- PASS: FuzzClassify/seed#40 (0.00s)
+    --- PASS: FuzzClassify/seed#41 (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/export/cellsafe	0.200s
+=== RUN   TestCorpus
+--- PASS: TestCorpus (0.01s)
+=== RUN   TestFieldEdges
+--- PASS: TestFieldEdges (0.00s)
+=== RUN   TestCSV13HeaderSepDirective
+--- PASS: TestCSV13HeaderSepDirective (0.00s)
+=== RUN   TestCSV14Truncation
+--- PASS: TestCSV14Truncation (0.00s)
+=== RUN   TestCSV15Multi
+--- PASS: TestCSV15Multi (0.00s)
+=== RUN   TestCSV16TabDelimiterRefused
+--- PASS: TestCSV16TabDelimiterRefused (0.00s)
+=== RUN   TestTypedCells
+--- PASS: TestTypedCells (0.00s)
+=== RUN   TestNonFiniteAndShape
+--- PASS: TestNonFiniteAndShape (0.00s)
+=== RUN   TestRowCap
+--- PASS: TestRowCap (0.00s)
+=== RUN   TestInvalidUTF8Mapped
+--- PASS: TestInvalidUTF8Mapped (0.00s)
+=== RUN   TestNeutralisedCount
+--- PASS: TestNeutralisedCount (0.00s)
+=== RUN   TestReaderLimitsAndSyntax
+--- PASS: TestReaderLimitsAndSyntax (0.00s)
+=== RUN   TestReaderDoubledQuoteFieldLimit
+--- PASS: TestReaderDoubledQuoteFieldLimit (0.00s)
+=== RUN   TestReaderRecordByteLimit
+--- PASS: TestReaderRecordByteLimit (0.02s)
+=== RUN   FuzzRoundTrip
+=== RUN   FuzzRoundTrip/seed#0
+=== RUN   FuzzRoundTrip/seed#1
+=== RUN   FuzzRoundTrip/seed#2
+=== RUN   FuzzRoundTrip/seed#3
+=== RUN   FuzzRoundTrip/seed#4
+=== RUN   FuzzRoundTrip/seed#5
+=== RUN   FuzzRoundTrip/seed#6
+=== RUN   FuzzRoundTrip/seed#7
+=== RUN   FuzzRoundTrip/seed#8
+=== RUN   FuzzRoundTrip/seed#9
+=== RUN   FuzzRoundTrip/seed#10
+=== RUN   FuzzRoundTrip/seed#11
+=== RUN   FuzzRoundTrip/seed#12
+=== RUN   FuzzRoundTrip/seed#13
+=== RUN   FuzzRoundTrip/seed#14
+=== RUN   FuzzRoundTrip/seed#15
+=== RUN   FuzzRoundTrip/seed#16
+=== RUN   FuzzRoundTrip/seed#17
+=== RUN   FuzzRoundTrip/seed#18
+=== RUN   FuzzRoundTrip/seed#19
+=== RUN   FuzzRoundTrip/seed#20
+=== RUN   FuzzRoundTrip/seed#21
+=== RUN   FuzzRoundTrip/seed#22
+--- PASS: FuzzRoundTrip (0.02s)
+    --- PASS: FuzzRoundTrip/seed#0 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#1 (0.01s)
+    --- PASS: FuzzRoundTrip/seed#2 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#3 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#4 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#5 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#6 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#7 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#8 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#9 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#10 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#11 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#12 (0.01s)
+    --- PASS: FuzzRoundTrip/seed#13 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#14 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#15 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#16 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#17 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#18 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#19 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#20 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#21 (0.00s)
+    --- PASS: FuzzRoundTrip/seed#22 (0.00s)
+=== RUN   FuzzReaderLimits
+=== RUN   FuzzReaderLimits/seed#0
+=== RUN   FuzzReaderLimits/seed#1
+--- PASS: FuzzReaderLimits (0.00s)
+    --- PASS: FuzzReaderLimits/seed#0 (0.00s)
+    --- PASS: FuzzReaderLimits/seed#1 (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/export/csv	0.069s
+=== RUN   TestLeadCellsAreQuotePrefixedStrings
+--- PASS: TestLeadCellsAreQuotePrefixedStrings (0.02s)
+=== RUN   TestXL05EscapeSpoofing
+--- PASS: TestXL05EscapeSpoofing (0.02s)
+=== RUN   TestXL06to08ControlsStayWellFormed
+--- PASS: TestXL06to08ControlsStayWellFormed (0.01s)
+=== RUN   TestXL09XL10Injection
+--- PASS: TestXL09XL10Injection (0.01s)
+=== RUN   TestXL11XL12Truncation
+--- PASS: TestXL11XL12Truncation (0.03s)
+=== RUN   TestXL13SheetNames
+--- PASS: TestXL13SheetNames (0.00s)
+=== RUN   TestXL14RowCap
+--- PASS: TestXL14RowCap (0.00s)
+=== RUN   TestXL15NonFinite
+--- PASS: TestXL15NonFinite (0.02s)
+=== RUN   TestXL16WorkbookShape
+--- PASS: TestXL16WorkbookShape (0.00s)
+=== RUN   TestXL17TitleEscaped
+--- PASS: TestXL17TitleEscaped (0.00s)
+=== RUN   TestXL20XL21Typed
+--- PASS: TestXL20XL21Typed (0.00s)
+=== RUN   TestHeaderAndMismatch
+--- PASS: TestHeaderAndMismatch (0.00s)
+=== RUN   TestColName
+--- PASS: TestColName (0.00s)
+=== RUN   TestCorpus
+--- PASS: TestCorpus (0.05s)
+=== RUN   TestAboutSheetIsFirstAndNeutralised
+--- PASS: TestAboutSheetIsFirstAndNeutralised (0.00s)
+=== RUN   FuzzAnyTextIsInertString
+=== RUN   FuzzAnyTextIsInertString/seed#0
+=== RUN   FuzzAnyTextIsInertString/seed#1
+=== RUN   FuzzAnyTextIsInertString/seed#2
+=== RUN   FuzzAnyTextIsInertString/seed#3
+=== RUN   FuzzAnyTextIsInertString/seed#4
+=== RUN   FuzzAnyTextIsInertString/seed#5
+=== RUN   FuzzAnyTextIsInertString/seed#6
+=== RUN   FuzzAnyTextIsInertString/seed#7
+=== RUN   FuzzAnyTextIsInertString/seed#8
+=== RUN   FuzzAnyTextIsInertString/seed#9
+=== RUN   FuzzAnyTextIsInertString/seed#10
+=== RUN   FuzzAnyTextIsInertString/seed#11
+=== RUN   FuzzAnyTextIsInertString/seed#12
+=== RUN   FuzzAnyTextIsInertString/seed#13
+=== RUN   FuzzAnyTextIsInertString/seed#14
+=== RUN   FuzzAnyTextIsInertString/seed#15
+=== RUN   FuzzAnyTextIsInertString/seed#16
+=== RUN   FuzzAnyTextIsInertString/seed#17
+=== RUN   FuzzAnyTextIsInertString/seed#18
+=== RUN   FuzzAnyTextIsInertString/seed#19
+=== RUN   FuzzAnyTextIsInertString/seed#20
+=== RUN   FuzzAnyTextIsInertString/seed#21
+=== RUN   FuzzAnyTextIsInertString/seed#22
+--- PASS: FuzzAnyTextIsInertString (0.04s)
+    --- PASS: FuzzAnyTextIsInertString/seed#0 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#1 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#2 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#3 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#4 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#5 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#6 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#7 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#8 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#9 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#10 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#11 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#12 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#13 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#14 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#15 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#16 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#17 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#18 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#19 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#20 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#21 (0.00s)
+    --- PASS: FuzzAnyTextIsInertString/seed#22 (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/export/xlsx	0.235s
+=== RUN   TestRetentionBatchMatchesDeleteLimit
+--- PASS: TestRetentionBatchMatchesDeleteLimit (0.00s)
+=== RUN   TestStoredExportStreamsInBoundedMemory
+    stored_test.go:83: 300k rows, 19 MB file, peak heap 4 MB
+--- PASS: TestStoredExportStreamsInBoundedMemory (2.31s)
+=== RUN   TestStoredSourceRefusesOverCapBeforeReading
+--- PASS: TestStoredSourceRefusesOverCapBeforeReading (0.00s)
+=== RUN   TestStoredSourceRejectsCellCountMismatch
+--- PASS: TestStoredSourceRejectsCellCountMismatch (0.00s)
+=== RUN   TestNewStoredSourceChecksColumns
+--- PASS: TestNewStoredSourceChecksColumns (0.00s)
+=== RUN   TestExportCellTotal
+--- PASS: TestExportCellTotal (0.00s)
+=== RUN   TestLargeResultPageTimings
+    large_pg_test.go:23: needs ACTIVEDIQ_REPORTS_LARGE_ROWS to measure
+--- SKIP: TestLargeResultPageTimings (0.00s)
+=== RUN   TestRunStoresRowsFreshnessAndPages
+=== RUN   TestRunStoresRowsFreshnessAndPages/pg16
+=== RUN   TestRunStoresRowsFreshnessAndPages/pg18
+--- PASS: TestRunStoresRowsFreshnessAndPages (8.46s)
+    --- PASS: TestRunStoresRowsFreshnessAndPages/pg16 (5.05s)
+    --- PASS: TestRunStoresRowsFreshnessAndPages/pg18 (3.41s)
+=== RUN   Test_run_read_bound_to_runner_and_scope
+=== RUN   Test_run_read_bound_to_runner_and_scope/pg16
+=== RUN   Test_run_read_bound_to_runner_and_scope/pg18
+--- PASS: Test_run_read_bound_to_runner_and_scope (1.91s)
+    --- PASS: Test_run_read_bound_to_runner_and_scope/pg16 (1.28s)
+    --- PASS: Test_run_read_bound_to_runner_and_scope/pg18 (0.63s)
+=== RUN   Test_expired_run_is_not_served
+=== RUN   Test_expired_run_is_not_served/pg16
+=== RUN   Test_expired_run_is_not_served/pg18
+--- PASS: Test_expired_run_is_not_served (2.10s)
+    --- PASS: Test_expired_run_is_not_served/pg16 (1.39s)
+    --- PASS: Test_expired_run_is_not_served/pg18 (0.71s)
+=== RUN   TestJobFindingRunningFailsInterruptedNeverResumes
+=== RUN   TestJobFindingRunningFailsInterruptedNeverResumes/pg16
+=== RUN   TestJobFindingRunningFailsInterruptedNeverResumes/pg18
+--- PASS: TestJobFindingRunningFailsInterruptedNeverResumes (2.00s)
+    --- PASS: TestJobFindingRunningFailsInterruptedNeverResumes/pg16 (1.34s)
+    --- PASS: TestJobFindingRunningFailsInterruptedNeverResumes/pg18 (0.66s)
+=== RUN   TestFailuresAreNamedAndLeaveNoRows
+=== RUN   TestFailuresAreNamedAndLeaveNoRows/pg16
+=== RUN   TestFailuresAreNamedAndLeaveNoRows/pg18
+--- PASS: TestFailuresAreNamedAndLeaveNoRows (4.00s)
+    --- PASS: TestFailuresAreNamedAndLeaveNoRows/pg16 (3.10s)
+    --- PASS: TestFailuresAreNamedAndLeaveNoRows/pg18 (0.90s)
+=== RUN   TestReuseCapCancelAndRetry
+=== RUN   TestReuseCapCancelAndRetry/pg16
+=== RUN   TestReuseCapCancelAndRetry/pg18
+--- PASS: TestReuseCapCancelAndRetry (2.09s)
+    --- PASS: TestReuseCapCancelAndRetry/pg16 (1.37s)
+    --- PASS: TestReuseCapCancelAndRetry/pg18 (0.72s)
+=== RUN   TestGoConstantsEqualTheCheckLists
+--- PASS: TestGoConstantsEqualTheCheckLists (0.00s)
+=== RUN   TestStateEdges
+--- PASS: TestStateEdges (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/modules/reports/run	24.251s

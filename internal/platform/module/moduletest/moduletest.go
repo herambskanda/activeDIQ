@@ -13,10 +13,13 @@ import (
 
 // Register boots m alone, with every capability it requires enabled, and returns what it
 // contributed. Any Boot validation failure (namespacing, duplicates, ID rules) is the error.
-func Register(m module.Module) (*module.Contributions, error) {
+//
+// A module that registers datasets passes module.WithTableOwners with the ownership map it wants
+// the table check to read.
+func Register(m module.Module, opts ...module.BootOption) (*module.Contributions, error) {
 	if m == nil {
 		return nil, fmt.Errorf("%w: nil module", module.ErrInvalid)
 	}
 	enabled := capability.NewSet(m.Requires()...)
-	return module.Boot(context.Background(), []module.Entry{{ID: m.ID(), Module: m}}, enabled)
+	return module.Boot(context.Background(), []module.Entry{{ID: m.ID(), Module: m}}, enabled, opts...)
 }

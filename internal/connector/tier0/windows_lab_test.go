@@ -10,15 +10,10 @@ package tier0
 // is never skipped when missing: the run fails loudly. Each test restores the DACL it changed.
 
 import (
-	"bufio"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,85 +23,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
-	"github.com/skenzeriq/activediq/internal/platform/secret"
 )
-
-const (
-	wBase = "DC=win,DC=activediq,DC=test"
-	wDom  = "win.activediq.test"
-)
-
-type winLab struct {
-	env    map[string]string
-	pool   *x509.CertPool
-	host   string
-	admin  *ldap.Conn
-	sess   *ad.Session
-	svcSID []byte
-}
-
-func wPath(envVar, def string) string {
-	if p := os.Getenv(envVar); p != "" {
-		return p
-	}
-	return filepath.Join("..", "..", "..", "lab", "windows", def)
-}
-
-func openWinLab(t *testing.T) *winLab {
-	t.Helper()
-	f, err := os.Open(wPath("WIN_LAB_ENV", ".win-lab.env"))
-	if err != nil {
-		t.Fatalf("windows lab not up (make windows-lab-up): %v", err)
-	}
-	defer f.Close()
-	w := &winLab{env: map[string]string{}, host: os.Getenv("WIN_LAB_DC_ADDR")}
-	if w.host == "" {
-		w.host = "192.168.77.10"
-	}
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		if k, v, ok := strings.Cut(strings.TrimSpace(sc.Text()), "="); ok && !strings.HasPrefix(k, "#") {
-			w.env[k] = strings.Trim(v, `"'`)
-		}
-	}
-	pem, err := os.ReadFile(wPath("WIN_LAB_CA", ".win-lab-ca.pem"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	w.pool = x509.NewCertPool()
-	if !w.pool.AppendCertsFromPEM(pem) {
-		t.Fatal("bad windows lab CA")
-	}
-	name := os.Getenv("WIN_LAB_TLS_NAME")
-	if name == "" {
-		name = "dc1." + wDom
-	}
-	w.admin, err = ldap.DialURL("ldaps://"+w.host+":636", ldap.DialWithTLSConfig(&tls.Config{RootCAs: w.pool, ServerName: name}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { w.admin.Close() })
-	if err := w.admin.Bind("Administrator@"+wDom, w.env["WIN_LAB_ADMIN_PASSWORD"]); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	w.sess, err = ad.Open(ctx, ad.Config{
-		Servers: []string{w.host + ":636"}, ServerName: name, RootCAs: w.pool, PageSize: 500,
-		Credential: ad.Credential{BindName: "svc-activediq@" + wDom, Password: secret.FromBytes([]byte(w.env["WIN_LAB_SVC_PASSWORD"]))},
-	})
-	if err != nil {
-		t.Fatalf("open as connector: %v", err)
-	}
-	t.Cleanup(func() { w.sess.Close() })
-	r, err := w.admin.Search(ldap.NewSearchRequest(wBase, ldap.ScopeWholeSubtree, 0, 0, 0, false,
-		"(sAMAccountName=svc-activediq)", []string{"objectSid"}, nil))
-	if err != nil || len(r.Entries) != 1 {
-		t.Fatalf("connector account: %v", err)
-	}
-	w.svcSID = r.Entries[0].GetRawAttributeValue("objectSid")
-	return w
-}
 
 // daclOnly is the SD_FLAGS control (OID 1.2.840.113556.1.4.801) asking for the DACL part only.
 func daclOnly() ldap.Control {
@@ -193,22 +110,22 @@ func (w *winLab) observe(t *testing.T, dnText string) {
 
 func (w *winLab) classifier() (*ADClassifier, dn.ObjectRef) {
 	c := NewAD(SessionDirectory{S: w.sess})
-	target, _ := dn.ParseObjectRef("CN=Administrator,CN=Users," + wBase)
+	target, _ := dn.ParseObjectRef("CN=Administrator,CN=Users," + winDom)
 	return c, target
 }
 
 // AC1: a deny-read ACE on a group nested in Domain Admins: Classify is Unknown with an error that
 // names the cause (a member the connector cannot read, listed by Domain Admins), not any read error.
 func TestWindowsLabTier0DenyReadNestedGroupFailsClosed(t *testing.T) {
-	w := openWinLab(t)
+	w := newWinLab(t)
 	name := fmt.Sprintf("t0404-nest-%d", time.Now().UnixNano()%1_000_000)
-	nested := "CN=" + name + ",CN=Users," + wBase
+	nested := "CN=" + name + ",CN=Users," + winDom
 	add := ldap.NewAddRequest(nested, nil)
 	add.Attribute("objectClass", []string{"top", "group"})
 	add.Attribute("sAMAccountName", []string{name})
 	add.Attribute("groupType", []string{"-2147483646"}) // global security
 	w.mustAdd(t, add)
-	da := "CN=Domain Admins,CN=Users," + wBase
+	da := "CN=Domain Admins,CN=Users," + winDom
 	m := ldap.NewModifyRequest(da, nil)
 	m.Add("member", []string{nested})
 	if err := w.admin.Modify(m); err != nil {
@@ -245,8 +162,8 @@ func TestWindowsLabTier0DenyReadNestedGroupFailsClosed(t *testing.T) {
 
 // AC2: deny-read on CN=Backup Operators,CN=Builtin: the snapshot fails closed naming S-1-5-32-551.
 func TestWindowsLabTier0DenyReadBackupOperatorsFailsClosed(t *testing.T) {
-	w := openWinLab(t)
-	bo := "CN=Backup Operators,CN=Builtin," + wBase
+	w := newWinLab(t)
+	bo := "CN=Backup Operators,CN=Builtin," + winDom
 	c, _ := w.classifier()
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -268,8 +185,8 @@ func TestWindowsLabTier0DenyReadBackupOperatorsFailsClosed(t *testing.T) {
 // Enterprise Key Admins exist, so a run on a pre-2016 domain with 2016+ DCs can be read off the log.
 // This lab is a fresh WS2025 forest, so it cannot by itself show the pre-2016 case (see ticket notes).
 func TestWindowsLabKeyAdminsPresenceVsFunctionalLevel(t *testing.T) {
-	w := openWinLab(t)
-	r, err := w.admin.Search(ldap.NewSearchRequest(wBase, ldap.ScopeBaseObject, 0, 0, 0, false, "(objectClass=*)",
+	w := newWinLab(t)
+	r, err := w.admin.Search(ldap.NewSearchRequest(winDom, ldap.ScopeBaseObject, 0, 0, 0, false, "(objectClass=*)",
 		[]string{"msDS-Behavior-Version", "objectSid"}, nil))
 	if err != nil || len(r.Entries) != 1 {
 		t.Fatal(err)
@@ -280,7 +197,7 @@ func TestWindowsLabKeyAdminsPresenceVsFunctionalLevel(t *testing.T) {
 		t.Fatalf("functional level %q: %v", lvlText, err)
 	}
 	for _, n := range []string{"Key Admins", "Enterprise Key Admins"} {
-		g, err := w.admin.Search(ldap.NewSearchRequest(wBase, ldap.ScopeWholeSubtree, 0, 0, 0, false,
+		g, err := w.admin.Search(ldap.NewSearchRequest(winDom, ldap.ScopeWholeSubtree, 0, 0, 0, false,
 			"(&(objectClass=group)(sAMAccountName="+ldap.EscapeFilter(n)+"))", []string{"objectSid"}, nil))
 		if err != nil {
 			t.Fatal(err)

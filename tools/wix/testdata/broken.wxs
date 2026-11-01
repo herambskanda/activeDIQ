@@ -1,0 +1,5 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="broken" Manufacturer="skenzeriq" Version="1.0.0.0" UpgradeCode="6B1F2D44-3C0E-4E8B-9D55-0A7C2E5B8F32">
+    <Feature Id="F" Level="1"><ComponentRef Id="DoesNotExist" /></Feature>
+  </Package>
+</Wix>

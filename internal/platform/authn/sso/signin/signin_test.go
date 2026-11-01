@@ -3,6 +3,8 @@ package signin_test
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -266,5 +268,100 @@ func Test_sso_success_audit_failure_keeps_session(t *testing.T) {
 	res, err := r.Callback(context.Background(), started(t, r))
 	if err != nil || res.Kind != signin.ResultSession || len(r.Sessions.Created) != 1 {
 		t.Fatalf("res=%v err=%v sessions=%d, want the session kept", res.Kind, err, len(r.Sessions.Created))
+	}
+}
+
+// captureLog is a slog.Handler that keeps every record's attributes.
+type captureLog struct {
+	mu   sync.Mutex
+	recs []map[string]string
+	with []slog.Attr
+}
+
+func (c *captureLog) Enabled(context.Context, slog.Level) bool { return true }
+
+func (c *captureLog) Handle(_ context.Context, r slog.Record) error {
+	m := map[string]string{"msg": r.Message}
+	for _, a := range c.with {
+		m[a.Key] = a.Value.String()
+	}
+	r.Attrs(func(a slog.Attr) bool { m[a.Key] = a.Value.String(); return true })
+	c.mu.Lock()
+	c.recs = append(c.recs, m)
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *captureLog) WithAttrs(as []slog.Attr) slog.Handler {
+	// Share the record store; extend the pre-set attributes.
+	return &captureLogChild{parent: c, with: append(append([]slog.Attr{}, c.with...), as...)}
+}
+
+func (c *captureLog) WithGroup(string) slog.Handler { return c }
+
+type captureLogChild struct {
+	parent *captureLog
+	with   []slog.Attr
+}
+
+func (c *captureLogChild) Enabled(context.Context, slog.Level) bool { return true }
+
+func (c *captureLogChild) Handle(ctx context.Context, r slog.Record) error {
+	child := &captureLog{recs: nil, with: c.with}
+	if err := child.Handle(ctx, r); err != nil {
+		return err
+	}
+	c.parent.mu.Lock()
+	c.parent.recs = append(c.parent.recs, child.recs...)
+	c.parent.mu.Unlock()
+	return nil
+}
+
+func (c *captureLogChild) WithAttrs(as []slog.Attr) slog.Handler {
+	return &captureLogChild{parent: c.parent, with: append(append([]slog.Attr{}, c.with...), as...)}
+}
+
+func (c *captureLogChild) WithGroup(string) slog.Handler { return c }
+
+// TM-TB17-T8 / ADR-0002 logs: every log line Callback writes carries tenant_id equal to the request's
+// tenant, for a non-Refusal verifier fault and for a failed privilege check.
+func Test_sso_callback_logs_carry_tenant_id(t *testing.T) {
+	cases := map[string]struct {
+		setup func(r *signintest.Rig)
+		msg   string
+	}{
+		"verifier fault": {
+			setup: func(r *signintest.Rig) { r.Verifier.Err = errors.New("replay store down") },
+			msg:   "sso: verifier failed",
+		},
+		"privilege check fails": {
+			setup: func(r *signintest.Rig) {
+				r.SetMFA()
+				r.Verifier.Out.MFAAsserted = true
+				r.Priv.Err = errors.New("db down")
+			},
+			msg: "sso: privilege check failed; completing with the second factor",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := signintest.NewRig()
+			cl := &captureLog{}
+			r.Service.Log = slog.New(cl)
+			tc.setup(r)
+			_, _ = r.Callback(context.Background(), started(t, r))
+			var seen bool
+			for _, rec := range cl.recs {
+				if rec["msg"] == tc.msg {
+					seen = true
+				}
+				if got := rec["tenant_id"]; got != signintest.Tenant.String() {
+					t.Fatalf("log %q has tenant_id %q, want %q", rec["msg"], got, signintest.Tenant.String())
+				}
+			}
+			if !seen {
+				t.Fatalf("expected log %q, got %v", tc.msg, cl.recs)
+			}
+		})
 	}
 }

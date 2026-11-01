@@ -32,6 +32,20 @@ func tree(t *testing.T, txt, md string) string {
 			t.Fatal(err)
 		}
 	}
+	// The advisory template is part of the intake set (advisory_test.go covers its absence).
+	tpl := filepath.Join(d, advisoriesDir, templateDir)
+	if err := os.MkdirAll(tpl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{advisoryFile, recordFile} {
+		b, err := os.ReadFile(filepath.Join(repoTemplate, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tpl, f), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return d
 }
 

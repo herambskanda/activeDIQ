@@ -82,6 +82,8 @@ counts that `make lab-test-live` asserts against the live directory.
 | Edge-case users (`OU=EdgeCases`) | comma, leading `#`, `+`, double quotes, backslash, `<>;=`, `()*`, accents NFC and NFD, CJK, non-BMP (emoji, math letters), 64-character CN, 20-character sAMAccountName, dot/hyphen, leading and trailing space in the CN |
 | Password policy | complexity on, max age **90 days**, lockout after **5** bad passwords (until an admin unlocks) |
 
+The lockout, PSO and expiry cases the report engine must match, with expected results and which run on Samba, are the LAB-LK, LAB-PS, LAB-PW and LAB-AX rows of [`domain/account-state-lab-rows.md`](../domain/account-state-lab-rows.md) (T-1016). They are specified, not yet seeded or run.
+
 Ages ("stale", "expiring") are relative to the day the lab was **built** (`manifest.json` → `now`).
 A snapshot ages like a real directory: after about a month the "expiring" users have expired. Run
 `make lab-rebuild` to refresh, or write your own timestamps in tests. Set `LAB_SEED_NOW=<unix>` for a
@@ -125,6 +127,11 @@ tier (50k users) and a second DC (`2dc`) are not built yet — see §8.
 - Tests may not edit the seed to make a test pass: change `generate.py` (this changes the seed
   version) and add a unit test.
 - Tests needing Windows are tagged (`windowslab`) so CI on Samba skips them loudly (§6).
+- ScopedSearch RPC over a real session (T-0695): `go test -tags lab ./internal/connector/read -run TestLabScopedSearch`
+  (`internal/connector/read/search_lab_test.go`). It seeds `OU=t0695*` trees (nested OUs, hostile RDNs, 1600 users plus a
+  1600-member group, a deleted root), compares the bufconn RPC with an admin LDAP query and deletes its OUs.
+  The 1600-user test takes ~5 min on a loaded host (`-short` skips it). Samba does not range `member`; the
+  first-range `complete=false` it asserts is the handler's 1500 cap. DC-side ranging needs the Windows lab.
 
 ## 5. Entra lab (Microsoft 365 Developer sandbox) — T-0183
 
@@ -223,3 +230,20 @@ belongs to the CI ticket (T-0015).
 - Snapshots live in a Docker volume. CI caching of snapshots by seed version (playbook §4) is part
   of the CI integration ticket.
 - Lab ages drift with real time (§2); `make lab-rebuild` refreshes.
+
+## O8 pipeline suite (T-0788)
+
+ADR-0005 fitness row O8 is pinned by `internal/platform/operation/o8_manifest_test.go`, which maps each
+clause to named tests and fails if a named test disappears. Postgres tests run in
+`go test ./internal/platform/operation/...` (both PG versions); the Samba arm is
+`go test -tags lab ./internal/compose/server -run TestLabO8` (needs `make lab-up`; it moves a user out of
+the delegated OU with `labadmin.Admin.Move`). The group_members, administrative_unit and
+include_correlated root kinds are not evaluated by the product (bug T-0824): their assertions are written
+but skipped with that ticket id (`TestO8RemovedFromScopeNonAncestryRoots`, `TestO8UnknownRootIsRefused`;
+delete the `t.Skip` lines when it is fixed) and the manifest lists those clauses as Gaps, not coverage; the
+Entra arm then also needs a Graph fake. Open gaps: T-0830
+(undo of a failed item), T-0831 (Provenance implementation).
+
+`make fitness-operation` (T-0393) runs every manifest test on each invocation (Docker needed) and fails if one is
+missing, failed or skipped; add `-o8-lab` (`go run ./tools/fitness/operation -o8-lab`, lab up) to run the Samba
+arm too. See ci-and-build.md, `fitness-operation`.

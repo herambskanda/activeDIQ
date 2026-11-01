@@ -104,8 +104,12 @@ type Attempt struct {
 // HashState is the stored form of an attempt's state value: the raw value is never stored.
 func HashState(state string) [32]byte { return sha256.Sum256([]byte(state)) }
 
-const takeoverColumns = `attested_by, attested_at, attested_block_hard_match, attested_block_soft_match,
-	attestation_max_age_seconds, first_attested_at, demoted_at`
+// The two takeover reads are whole constants (safe-primitives §7); the locked one only adds FOR UPDATE.
+const (
+	selectTakeover = `SELECT attested_by, attested_at, attested_block_hard_match, attested_block_soft_match,
+	attestation_max_age_seconds, first_attested_at, demoted_at FROM public.connections WHERE id = $1::uuid AND kind = 'entra_tenant'`
+	selectTakeoverForUpdate = selectTakeover + ` FOR UPDATE`
+)
 
 func scanTakeover(r scanner) (TakeoverRecord, error) {
 	var by *string
@@ -130,11 +134,13 @@ func (s Store) entraRecord(ctx context.Context, tx store.Tx, id ID, lock bool) (
 	if _, err := ParseID(string(id)); err != nil {
 		return TakeoverRecord{}, err
 	}
-	q := `SELECT ` + takeoverColumns + ` FROM public.connections WHERE id = $1::uuid AND kind = 'entra_tenant'`
+	var row scanner
 	if lock {
-		q += ` FOR UPDATE`
+		row = tx.QueryRow(ctx, selectTakeoverForUpdate, string(id))
+	} else {
+		row = tx.QueryRow(ctx, selectTakeover, string(id))
 	}
-	rec, err := scanTakeover(tx.QueryRow(ctx, q, string(id)))
+	rec, err := scanTakeover(row)
 	if store.IsNoRows(err) {
 		return TakeoverRecord{}, ErrNotFound
 	}

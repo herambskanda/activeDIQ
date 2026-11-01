@@ -17,6 +17,7 @@
 -- Who may confirm (connections.hybrid_link.confirm over both scopes) and the audited Operation are
 -- the caller's: this table only records the result.
 
+-- write-class: hybrid_links config
 CREATE TABLE public.hybrid_links (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

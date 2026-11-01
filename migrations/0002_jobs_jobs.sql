@@ -6,6 +6,7 @@
 -- makes the database itself refuse a job enqueued for a tenant other than the transaction's context.
 -- Only the owning package may name the table in SQL (fitness-tenancy T5 global-table-sql).
 
+-- write-class: jobs system
 CREATE TABLE public.jobs (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   tenant_id uuid REFERENCES public.tenants (id),

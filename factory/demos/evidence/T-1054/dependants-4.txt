@@ -1,0 +1,594 @@
+ok  	github.com/skenzeriq/activediq/internal/compose/agent	1.031s
+ok  	github.com/skenzeriq/activediq/internal/compose/config	0.016s
+ok  	github.com/skenzeriq/activediq/internal/compose/connector	0.076s
+ok  	github.com/skenzeriq/activediq/internal/compose/edge	0.011s
+ok  	github.com/skenzeriq/activediq/internal/compose/fleetproof	72.214s
+ok  	github.com/skenzeriq/activediq/internal/compose/profile	0.023s
+ok  	github.com/skenzeriq/activediq/internal/compose/server	217.014s
+ok  	github.com/skenzeriq/activediq/internal/compose/server/entra	0.029s
+ok  	github.com/skenzeriq/activediq/internal/compose/tunnelbind	0.008s
+?   	github.com/skenzeriq/activediq/internal/platform	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/agent	6.267s
+ok  	github.com/skenzeriq/activediq/internal/platform/agentingest	82.973s
+ok  	github.com/skenzeriq/activediq/internal/platform/agentpolicy	0.188s
+ok  	github.com/skenzeriq/activediq/internal/platform/agentpolicy/rotation	42.152s
+ok  	github.com/skenzeriq/activediq/internal/platform/agentpolicy/signer	57.559s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost	0.079s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitest	0.008s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitypes	0.007s
+ok  	github.com/skenzeriq/activediq/internal/platform/apitls	5.812s
+ok  	github.com/skenzeriq/activediq/internal/platform/audit	209.103s
+ok  	github.com/skenzeriq/activediq/internal/platform/audit/canon	0.007s
+ok  	github.com/skenzeriq/activediq/internal/platform/audit/chain	0.031s
+ok  	github.com/skenzeriq/activediq/internal/platform/authn	384.401s
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/api	0.009s
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/negotiate	0.012s
+?   	github.com/skenzeriq/activediq/internal/platform/authn/sso	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/sso/oidc	0.567s
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/sso/saml	97.156s
+?   	github.com/skenzeriq/activediq/internal/platform/authn/sso/saml/samltest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/sso/signin	75.810s
+?   	github.com/skenzeriq/activediq/internal/platform/authn/sso/signin/signintest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/tenantref	0.055s
+?   	github.com/skenzeriq/activediq/internal/platform/authority	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/authz	0.007s
+ok  	github.com/skenzeriq/activediq/internal/platform/authz/authztest	0.004s
+ok  	github.com/skenzeriq/activediq/internal/platform/blob	4.791s
+ok  	github.com/skenzeriq/activediq/internal/platform/capability	0.004s
+ok  	github.com/skenzeriq/activediq/internal/platform/corpus	0.030s
+ok  	github.com/skenzeriq/activediq/internal/platform/corpus/corpustest	0.004s
+ok  	github.com/skenzeriq/activediq/internal/platform/egress	0.269s
+ok  	github.com/skenzeriq/activediq/internal/platform/egress/oidchttp	0.008s
+ok  	github.com/skenzeriq/activediq/internal/platform/export	2.938s
+ok  	github.com/skenzeriq/activediq/internal/platform/export/cellsafe	0.091s
+ok  	github.com/skenzeriq/activediq/internal/platform/export/csv	0.080s
+ok  	github.com/skenzeriq/activediq/internal/platform/export/xlsx	0.133s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet	2.413s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/dial	1.570s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/fleetsql	196.931s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/gateway	70.273s
+ok  	github.com/skenzeriq/activediq/internal/platform/fleet/tunnelclient	0.019s
+ok  	github.com/skenzeriq/activediq/internal/platform/health	0.318s
+?   	github.com/skenzeriq/activediq/internal/platform/health/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/httpx	0.030s
+ok  	github.com/skenzeriq/activediq/internal/platform/httpx/authnhttp	0.030s
+ok  	github.com/skenzeriq/activediq/internal/platform/httpx/negotiatehttp	0.047s
+ok  	github.com/skenzeriq/activediq/internal/platform/httpx/ssohttp	0.019s
+ok  	github.com/skenzeriq/activediq/internal/platform/jobs	194.881s
+?   	github.com/skenzeriq/activediq/internal/platform/jobs/jobstest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/keys	152.547s
+?   	github.com/skenzeriq/activediq/internal/platform/keys/keystest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/limiter	136.508s
+ok  	github.com/skenzeriq/activediq/internal/platform/module	0.031s
+?   	github.com/skenzeriq/activediq/internal/platform/module/moduletest	[no test files]
+?   	github.com/skenzeriq/activediq/internal/platform/notify/api	[no test files]
+2026/10/31 09:46:27 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 09:46:27 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 09:46:27 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 09:46:27 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 09:46:27 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 09:46:27 INFO api tag not mounted: no module contributes it tag=reports
+2026/10/31 09:46:50 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 09:46:50 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 09:46:50 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 09:46:50 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 09:46:50 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 09:46:50 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestRoutesAndViewShape (48.22s)
+    --- FAIL: TestRoutesAndViewShape/pg16 (25.89s)
+        http_test.go:96: apihost: cancelReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: createReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: deleteReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: deleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: downloadReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportDefinition: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: listReportDefinitions: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRunRows: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRuns: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportSchedules: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: pauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewCreateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewDeleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewPauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewReassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: previewResumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUndoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUpdateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: reassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: resumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: retryReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: runReportScheduleNow: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: undoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: updateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+    --- FAIL: TestRoutesAndViewShape/pg18 (22.34s)
+        http_test.go:96: apihost: cancelReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: createReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: deleteReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: deleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: downloadReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportDefinition: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: listReportDefinitions: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRunRows: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRuns: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportSchedules: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: pauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewCreateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewDeleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewPauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewReassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: previewResumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUndoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUpdateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: reassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: resumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: retryReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: runReportScheduleNow: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: undoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: updateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+2026/10/31 09:46:52 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 09:46:52 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 09:46:52 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 09:46:52 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 09:46:52 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 09:46:52 INFO api tag not mounted: no module contributes it tag=reports
+2026/10/31 09:46:53 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 09:46:53 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 09:46:53 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 09:46:53 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 09:46:53 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 09:46:53 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestWithoutPermissionEveryRouteIs403AndWritesNothing (3.07s)
+    --- FAIL: TestWithoutPermissionEveryRouteIs403AndWritesNothing/pg16 (2.27s)
+        http_test.go:146: apihost: cancelReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: createReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: deleteReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: deleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: downloadReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportDefinition: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: listReportDefinitions: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRunRows: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRuns: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportSchedules: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: pauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewCreateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewDeleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewPauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewReassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: previewResumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUndoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUpdateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: reassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: resumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: retryReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: runReportScheduleNow: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: undoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: updateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+    --- FAIL: TestWithoutPermissionEveryRouteIs403AndWritesNothing/pg18 (0.80s)
+        http_test.go:146: apihost: cancelReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: createReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: deleteReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: deleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: downloadReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportDefinition: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: listReportDefinitions: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRunRows: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRuns: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportSchedules: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: pauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewCreateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewDeleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewPauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewReassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: previewResumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUndoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUpdateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: reassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: resumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: retryReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: runReportScheduleNow: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: undoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: updateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+2026/10/31 09:46:54 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 09:46:54 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 09:46:54 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 09:46:54 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 09:46:54 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 09:46:54 INFO api tag not mounted: no module contributes it tag=reports
+2026/10/31 09:46:55 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 09:46:55 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 09:46:55 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 09:46:55 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 09:46:55 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 09:46:55 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestRetriedCreateIsIdempotent (2.57s)
+    --- FAIL: TestRetriedCreateIsIdempotent/pg16 (1.50s)
+        http_test.go:167: apihost: cancelReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: createReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: deleteReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: deleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: downloadReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportDefinition: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: listReportDefinitions: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRunRows: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRuns: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportSchedules: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: pauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewCreateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewDeleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewPauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewReassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: previewResumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUndoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUpdateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: reassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: resumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: retryReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: runReportScheduleNow: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: undoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: updateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+    --- FAIL: TestRetriedCreateIsIdempotent/pg18 (1.08s)
+        http_test.go:167: apihost: cancelReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: createReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: deleteReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: deleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: downloadReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportDefinition: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: listReportDefinitions: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRunRows: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRuns: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportSchedules: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: pauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewCreateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewDeleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewPauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewReassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: previewResumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUndoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUpdateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: reassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: resumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: retryReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: runReportScheduleNow: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: undoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: updateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+2026/10/31 09:47:02 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 09:47:02 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 09:47:02 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 09:47:02 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 09:47:02 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 09:47:02 INFO api tag not mounted: no module contributes it tag=reports
+2026/10/31 09:47:05 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 09:47:05 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 09:47:05 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 09:47:05 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 09:47:05 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 09:47:05 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestRefusalsAndTenantIsolation (9.48s)
+    --- FAIL: TestRefusalsAndTenantIsolation/pg16 (7.05s)
+        http_test.go:191: apihost: cancelReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: createReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: deleteReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: deleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: downloadReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportDefinition: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: listReportDefinitions: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRunRows: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRuns: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportSchedules: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: pauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewCreateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewDeleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewPauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewReassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: previewResumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUndoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUpdateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: reassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: resumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: retryReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: runReportScheduleNow: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: undoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: updateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+    --- FAIL: TestRefusalsAndTenantIsolation/pg18 (2.43s)
+        http_test.go:191: apihost: cancelReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: createReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: deleteReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: deleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: downloadReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportDefinition: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: listReportDefinitions: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRunRows: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRuns: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportSchedules: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: pauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewCreateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewDeleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewPauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewReassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: previewResumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUndoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUpdateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: reassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: resumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: retryReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: runReportScheduleNow: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: undoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: updateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+2026/10/31 09:47:07 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 09:47:07 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 09:47:07 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 09:47:07 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 09:47:07 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 09:47:07 INFO api tag not mounted: no module contributes it tag=reports
+2026/10/31 09:47:08 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 09:47:08 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 09:47:08 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 09:47:08 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 09:47:08 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 09:47:08 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestWritesNeedStepUpReadsDoNot (3.36s)
+    --- FAIL: TestWritesNeedStepUpReadsDoNot/pg16 (2.48s)
+        http_test.go:225: apihost: cancelReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: createReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: deleteReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: deleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: downloadReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportDefinition: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: listReportDefinitions: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRunRows: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRuns: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportSchedules: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: pauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewCreateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewDeleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewPauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewReassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: previewResumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUndoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUpdateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: reassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: resumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: retryReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: runReportScheduleNow: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: undoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: updateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+    --- FAIL: TestWritesNeedStepUpReadsDoNot/pg18 (0.88s)
+        http_test.go:225: apihost: cancelReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: createReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: deleteReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: deleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: downloadReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportDefinition: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: listReportDefinitions: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRunRows: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRuns: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportSchedules: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: pauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewCreateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewDeleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewPauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewReassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: previewResumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUndoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUpdateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: reassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: resumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: retryReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: runReportScheduleNow: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: undoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: updateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+2026/10/31 09:47:10 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 09:47:10 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 09:47:10 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 09:47:10 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 09:47:10 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 09:47:10 INFO api tag not mounted: no module contributes it tag=reports
+2026/10/31 09:47:11 INFO api tag not mounted: no module contributes it tag=connections
+2026/10/31 09:47:11 INFO api tag not mounted: no module contributes it tag=directory
+2026/10/31 09:47:11 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/10/31 09:47:11 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/10/31 09:47:11 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/10/31 09:47:11 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestReadOnlyPrincipalCannotWrite (2.95s)
+    --- FAIL: TestReadOnlyPrincipalCannotWrite/pg16 (1.52s)
+        http_test.go:255: apihost: cancelReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: createReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: deleteReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: deleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: downloadReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportDefinition: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: listReportDefinitions: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRunRows: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRuns: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportSchedules: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: pauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewCreateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewDeleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewPauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewReassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: previewResumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUndoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUpdateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: reassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: resumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: retryReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: runReportScheduleNow: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: undoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: updateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+    --- FAIL: TestReadOnlyPrincipalCannotWrite/pg18 (1.42s)
+        http_test.go:255: apihost: cancelReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: createReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: createReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: deleteReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: deleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: downloadReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportDefinition: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportExport: x-permission "reports.export" is not in the permission catalogue
+            apihost: getReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: getReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: listReportDefinitions: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRunRows: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportRuns: x-permission "reports.run" is not in the permission catalogue
+            apihost: listReportSchedules: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: pauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewCreateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewDeleteReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewPauseReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewReassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: previewResumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUndoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: previewUpdateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: reassignReportSchedule: x-permission "reports.schedule.manage_all" is not in the permission catalogue
+            apihost: resumeReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: retryReportRun: x-permission "reports.run" is not in the permission catalogue
+            apihost: runReportScheduleNow: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: undoReportScheduleOperation: x-permission "reports.schedule" is not in the permission catalogue
+            apihost: updateReportSchedule: x-permission "reports.schedule" is not in the permission catalogue
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/platform/notify/syslog	125.088s
+ok  	github.com/skenzeriq/activediq/internal/platform/operation	284.337s
+ok  	github.com/skenzeriq/activediq/internal/platform/operation/step	0.008s
+ok  	github.com/skenzeriq/activediq/internal/platform/opsmetrics	0.006s
+ok  	github.com/skenzeriq/activediq/internal/platform/ownerfile	0.009s
+ok  	github.com/skenzeriq/activediq/internal/platform/personal	137.337s
+ok  	github.com/skenzeriq/activediq/internal/platform/prochardening	8.049s
+ok  	github.com/skenzeriq/activediq/internal/platform/rbac	177.021s
+ok  	github.com/skenzeriq/activediq/internal/platform/report	0.010s
+?   	github.com/skenzeriq/activediq/internal/platform/secret	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/secret/secretjson	0.005s
+ok  	github.com/skenzeriq/activediq/internal/platform/setup	0.020s
+?   	github.com/skenzeriq/activediq/internal/platform/setup/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/store	182.028s
+?   	github.com/skenzeriq/activediq/internal/platform/store/exempt	[no test files]
+?   	github.com/skenzeriq/activediq/internal/platform/store/owners	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/store/reportsql	98.758s
+ok  	github.com/skenzeriq/activediq/internal/platform/store/storetest	35.055s
+ok  	github.com/skenzeriq/activediq/internal/platform/tablekind	0.004s
+ok  	github.com/skenzeriq/activediq/internal/platform/tenant	0.009s
+ok  	github.com/skenzeriq/activediq/internal/platform/tenant/provision	108.115s
+?   	github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/updateverify	0.509s
+ok  	github.com/skenzeriq/activediq/internal/platform/updateverify/floorpg	98.335s
+ok  	github.com/skenzeriq/activediq/internal/platform/webhook	0.015s
+--- FAIL: TestRunOnRepositoryTreeIsConsistent (2.20s)
+    check_test.go:999: A4: [agent closure imports github.com/skenzeriq/activediq/internal/compose/tunnelbind, which is not on the allowlist tools/fitness/agenthost/closure-allow.txt (review what it can reach, then add it there) (GOOS=windows)]
+FAIL
+FAIL	github.com/skenzeriq/activediq/tools/fitness/agenthost	7.032s
+--- FAIL: TestFixtureEnvIsClean (0.08s)
+    check_runtime_test.go:145: A7: the clean fixture must pass, got [profile windows, fxCreate: [ADR-0004 A7] ajv cross-check could not run: exit status 1: node:internal/modules/cjs/loader:1564
+          const err = new Error(message);
+                      ^
+        
+        Error: Cannot find module 'ajv/dist/2020'
+        Require stack:
+        - /home/khushi/AD/.activeDIQ-worktrees/T-1054/web/package.json
+            at Module._resolveFilename (node:internal/modules/cjs/loader:1564:15)
+            at wrapResolveFilename (node:internal/modules/cjs/loader:1118:27)
+            at defaultResolveImplForCJSLoading (node:internal/modules/cjs/loader:1142:10)
+            at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1169:12)
+            at Module._load (node:internal/modules/cjs/loader:1341:5)
+            at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+            at Module.require (node:internal/modules/cjs/loader:1674:12)
+            at require (node:internal/modules/helpers:157:16)
+            at file:///home/khushi/AD/.activeDIQ-worktrees/T-1054/tools/fitness/api/[eval1]:9:17
+            at ModuleJob.run (node:internal/modules/esm/module_job:561:25) {
+          code: 'MODULE_NOT_FOUND',
+          requireStack: [ '/home/khushi/AD/.activeDIQ-worktrees/T-1054/web/package.json' ]
+        }
+        
+        Node.js v24.21.0 (is `make web-install` done? ajv is a web dependency) (ADR-0004 A7)]
+FAIL
+FAIL	github.com/skenzeriq/activediq/tools/fitness/api	5.854s
+ok  	github.com/skenzeriq/activediq/tools/fitness/audit	54.616s
+ok  	github.com/skenzeriq/activediq/tools/fitness/builtmsi	0.553s
+ok  	github.com/skenzeriq/activediq/tools/fitness/corpus	7.015s
+ok  	github.com/skenzeriq/activediq/tools/fitness/disclosure	0.048s
+ok  	github.com/skenzeriq/activediq/tools/fitness/domainkeys	112.559s
+ok  	github.com/skenzeriq/activediq/tools/fitness/fleetca	0.033s
+ok  	github.com/skenzeriq/activediq/tools/fitness/grantbootstrap	0.737s
+?   	github.com/skenzeriq/activediq/tools/fitness/host	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/host/hostcheck	0.127s
+?   	github.com/skenzeriq/activediq/tools/fitness/internal/adr	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/internal/boundtest	0.013s
+ok  	github.com/skenzeriq/activediq/tools/fitness/keycustody	66.164s
+ok  	github.com/skenzeriq/activediq/tools/fitness/modules	0.156s
+ok  	github.com/skenzeriq/activediq/tools/fitness/objectid	6.997s
+ok  	github.com/skenzeriq/activediq/tools/fitness/operation	6.804s
+ok  	github.com/skenzeriq/activediq/tools/fitness/oracles	86.619s
+ok  	github.com/skenzeriq/activediq/tools/fitness/packaging	140.727s
+?   	github.com/skenzeriq/activediq/tools/fitness/pgharness	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/ports	90.786s
+ok  	github.com/skenzeriq/activediq/tools/fitness/profiles	0.951s
+ok  	github.com/skenzeriq/activediq/tools/fitness/proto	0.739s
+ok  	github.com/skenzeriq/activediq/tools/fitness/reports	2.030s
+?   	github.com/skenzeriq/activediq/tools/fitness/safeprim	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/safeprim/scan	294.696s
+ok  	github.com/skenzeriq/activediq/tools/fitness/sso	0.122s
+ok  	github.com/skenzeriq/activediq/tools/fitness/stack	30.057s
+ok  	github.com/skenzeriq/activediq/tools/fitness/tenancy	190.038s
+?   	github.com/skenzeriq/activediq/tools/fitness/tenancy/registry	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/tenancy/static	10.617s
+ok  	github.com/skenzeriq/activediq/tools/fitness/update	6.617s
+ok  	github.com/skenzeriq/activediq/tools/gen/api	8.024s
+ok  	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture	0.009s
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/internal/modules/widgets/api	[no test files]
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/shared	[no test files]
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/stub/filter	[no test files]
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/stub/secret	[no test files]
+FAIL

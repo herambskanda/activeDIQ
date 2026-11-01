@@ -7,6 +7,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
+	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 )
 
 // HoldReason is why the kernel holds an operation for approval (rule 8). Kernel holds come first and
@@ -121,6 +122,14 @@ type Alert struct {
 	Reason    string
 	Operation string
 	Principal authority.PrincipalID
+	// The fields below are set by the tier0_after_write alert (ADR-0005 rule 7): the objects with
+	// their bases (empty = unclassified), which source found them, the DC the finding was read on,
+	// the step, and the initiator chain behind the write.
+	Objects   []step.Tier0Finding
+	Source    string // Tier0SourceConnector, Tier0SourceServer or Tier0SourceAction
+	DC        string
+	Step      step.Key
+	Initiator authority.Chain
 }
 
 // Errors of the approval path. None names a person's attributes.

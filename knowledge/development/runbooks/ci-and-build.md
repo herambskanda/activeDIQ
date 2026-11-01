@@ -40,6 +40,11 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 
 - **`gofmt`**: run `make fmt`.
 - **`go mod tidy -diff`**: run `go mod tidy` and commit `go.mod`/`go.sum`.
+- **`gen-modules-check`** (T-0997; the table ownership map): a new migration table needs a `-- write-class: <table> config|system` line
+  directly above its `CREATE TABLE` (`config`: a principal changes it, so writes are Actions that take a `step.Step`; `system`: bookkeeping its
+  owner writes, the closed list in ADR-0005 rule 10; a partition takes its parent's class). The owner key is the migration's file-name
+  segment. Then run `make gen-modules` and commit `owners.gen.tsv`; never edit it. A `DROP TABLE` or rename needs `tools/gen/modules`
+  extended first (the generator refuses it rather than guess).
 - **`gen-api-check`** (stale or missing generated file): run `make gen-api` and commit the result; never edit a `*.gen.*` file.
   **`lint-api`**: vacuum findings on the bundled contract. Both: `runbooks/api-contract-workflow.md`.
 - **`fuzz-saml`** (T-0490; `tools/ci/fuzz-target.sh`): `FuzzSAMLComplete` found a forged or replayed login. Go writes the crasher to
@@ -153,12 +158,20 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   - U1: remove the module. Ported UEM or PatchIQ code is copied with its source named in the commit
     and placed under `internal/platform/`; it is never imported or `replace`d.
   - U2: the platform root imports nothing from the directory domain, connector, modules or compose.
-  - Activation (`activation table P2: ... not implemented`): a subject has landed (an installer
+  - Activation (`activation table P2-oci: ... not implemented`): a subject has landed (an installer
     directory, the first connector package, the updater, the agent protos) and its check does not
     exist yet. Implement the check and register its `command` in
     `tools/fitness/profiles/manifest.json`; never delete the row. A new subject path is a change to
     the row's `paths` and is reviewed like a rule change.
-  - Lab runs the table cannot do yet (P2 on a `windows-2025` runner, P3 against the Samba lab, P6
+  - Deferral (`activation table P2-oci: deferral ...`, ADR-0002 erratum E-3): a row may carry
+    `"deferral": {"ticket", "expires", "adr"}`, which prints `ACTIVE, DEFERRED (T-NNNN until
+    YYYY-MM-DD)` instead of failing. It is valid only while the row has no `command`, the ticket is
+    `T-` and four or more digits, the expiry (UTC date) is today or later, and the "Activation
+    deferrals" table of the named ADR (in `decisionsDir`, ratified or accepted) lists the same
+    check, ticket and expiry. Editing the date in the manifest extends nothing: extend by an
+    amendment line and a new table row in the ADR. When the check lands, add its `command` **and
+    remove the deferral** in the same change, or the job calls the deferral stale.
+  - Lab runs the table cannot do yet (P2-msi on a `windows-2025` runner, P3 against the Samba lab, P6
     with egress denied) are the registered commands' job; the lab and runner must be documented
     in a runbook by the ticket that registers them.
 - **`fitness-modules`**: the message names the file, line and blueprint rule. Fix the import. Do not
@@ -168,11 +181,33 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   with `authz.ObjectIDFromOctets` (raw objectGUID bytes) or `authz.ParseObjectID` (text); `guid.GUID`
   is also `[16]byte` but its byte order differs. Type errors in other packages are printed as
   warnings (the build gate owns them). Proof: `go test ./tools/fitness/objectid` (positive and negative fixtures).
+- **`fitness-sso`** (T-0211, console-sso.md §13): FIT-SSO-1 and FIT-SSO-2. Output lines name the file and
+  line (`internal/platform/x/y.go:3: imports github.com/russellhaering/goxmldsig; only
+  internal/platform/authn/sso/saml may`), the go.mod line, or the check number (`saml: SAML-7 is cited by
+  no corpus record`). Fixes: move the parsing into `sso/saml` or `sso/oidc` (never widen the fence, which
+  changes only by amending the spec); raise the module in `go.mod`; add a corpus record that cites the
+  number (records are `sso/testdata/corpus/{saml,oidc}/<id>.json`, spec §10.1) and make sure `TestCorpus`
+  in that package runs it as a subtest named `<id>`. The check numbers are read from the spec's tables, so
+  adding a check to §4 or §5 turns this red until a record cites it. A deleted record, or one whose subtest
+  is missing or skipped, fails the same way for OIDC (T-0911) as for SAML. Proof: `go test ./tools/fitness/sso` and the `fitness-sso` cases of `make ci-proof`.
+- **`fitness-grantbootstrap`** (T-0808): fails on any identifier or string mention of `GrantBootstrap`
+  outside `internal/compose/server/localaccount.go`, the method declaration in
+  `internal/platform/rbac/grants.go` and `_test.go` files, as `file:line:col`. `GrantBootstrap`
+  skips the grantor's own-authority check, so only the first-account CLI may call it (and the method
+  itself accepts only `rbac.BootstrapPrincipal`). Fix: use `rbac.Grants.Grant`, which requires the
+  actor to hold what it grants. Proof: `go test ./tools/fitness/grantbootstrap` (a new reference fails).
+- **`fitness-update`** (T-0139): TM-F-UPDATE, see `tm-f-update.md`.
 - **`fitness-disclosure`** (T-0258): checks `SECURITY.md` and `.well-known/security.txt`
   (RFC 9116). It fails **30 days before `Expires`** on purpose: that failure is the renewal job.
   Renew by setting `Expires` to a date 9–12 months ahead (RFC 3339, UTC), and change `Contact` only
   together with the channel named in `SECURITY.md` (the check requires both to match). Do not move
   the date without reading `SECURITY.md` for anything stale. Owner: security-architect.
+  It also checks advisories (T-0260): the message names `security/advisories/<CVE-ID>/advisory.md` or
+  `record.json` and what differs. Fix the advisory or the record so that both say the same thing; never
+  change the score to make the files agree without the second scorer
+  (`security-disclosure.md` §3.2). If the gate says `target_met` is wrong, the advisory must admit the miss.
+- **`fitness-keys`** (FF-KEY-1..6 of `keys-custody-design.md` §7; T-0525): `make fitness-keys` (needs Docker for FF-KEY-1 and the bound database tests). A violation prints `file:line CHECK [rule]: …`. FF-KEY-2/3/5 are source scans (`-static-only` runs just those; `internal/compose/server` is the only place that may name the KEK settings, and `internal/platform/keys` the only owner of `tenant_keys`). Parts whose code has not landed are printed `pending` on every run (not a pass): the boot checks and `keys provision --missing` (FF-KEY-4/5), `installation_kek` privileges, the problem-body/audit non-leak and transition property test (FF-KEY-6). The ticket that lands each removes its `pending` line and adds the test to `bindings.go`; when `Rotate`, `ShredTenant` or `OpenMaintenance` land, add their allowed caller packages to `callersAllow` in `static5.go` in the same change.
+- **`fitness-fleet-ca-scope`** (ADR-0008 fitness items 1-6, TM-TB6-T15..T18; T-0738): `make fitness-fleet-ca-scope` (no Docker). A violation prints `file:line FCS-n [rule]: …`. Code that has not landed (the server CA, `SignServerLeaf`, `dial.PinnedRoots`, the `fleet_server_ca` migration) is printed as `pending`, which is not a pass: **ADR-0008 stays `proposed`/`ratified` until nothing is pending.** Each build ticket of the ADR lands its tests and then flips `Landed: true` on its row in `tools/fitness/fleetca/bindings.go` using the test names listed there (a test that exists while its row is not landed fails, and a landed test that is missing, failed or skipped fails). The static rules switch on by themselves when their code appears; a `fleet_server_ca` migration without `SignServerLeaf` fails. The rules' own failing fixtures are `go test ./tools/fitness/fleetca`; the real CLI is proven failing and passing in `make ci-proof`. When the last pending line disappears, ask solution-architect to move ADR-0008 to `accepted`.
 - **`fitness-audit`** (A1–A9 of ADR-0005, TM-F-AUDIT; T-0133): `make fitness-audit` (needs Docker).
   - **A1** runs the real migrations in PostgreSQL 16 and 18 containers and prints
     `A1 <rule> [<table>]: …` for a runtime-role privilege (UPDATE/DELETE/TRUNCATE on the audit tables,
@@ -197,7 +232,8 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     import)` means the row of `operation` itself.
   - `pending` packages are not checked until they exist; a `self-test` finding means the
     `internal/platform/<name>` mapping found none of the listed packages while the tree has them
-    elsewhere. O1 (step escape) also runs `tools/analyzers/stepescape` type-aware: the module must build first. To exempt a deliberate smuggle in a test, put `//fitness:allow-step-escape <reason>` on or above the line (test files only). O2 (write surface) and the SQL half of O4 (state column) run on every invocation; violations read `file:line: O2 [rule 2] …` / `O4 [rule 3] …`. O3, O5–O7 and O8 print `pending <id> … (owner T-…)` until their code lands (T-0391, T-0392, T-0393); the owner replaces the pending entry in `pendingChecks` (tools/fitness/operation/main.go) with the check. A pending line is not a pass.
+    elsewhere. O1 (step escape) also runs `tools/analyzers/stepescape` type-aware: the module must build first. To exempt a deliberate smuggle in a test, put `//fitness:allow-step-escape <reason>` on or above the line (test files only). O2 (write surface) and the SQL half of O4 (state column) run on every invocation; violations read `file:line: O2 [rule 2] …` / `O4 [rule 3] …`. O3 and O5–O7 print `pending <id> … (owner T-…)` until their code lands (T-0391, T-0392); the owner replaces the pending entry in `pendingChecks` (tools/fitness/operation/main.go) with the check. A pending line is not a pass.
+  - **O8 (pipeline behaviour, T-0393)** reads `internal/platform/operation/o8_manifest_test.go` (it parses the Go source; the list is never copied into the tool), then runs every test the manifest names with `go test -json -count=1` and fails, as `<dir> <Test>: O8 [pipeline behaviour] …`, when a named test is missing (renamed or deleted), fails, is skipped, or has a skipped subtest. **No Docker is a failure, not a skip**: the Postgres tests need the Docker daemon, exactly as `fitness-audit` does. A clause the manifest lists as a `Gap` prints `pending O8 <id>: T-nnnn …` (today the non-ancestry scope roots on T-0824, undo of a failed item T-0830, the Provenance implementation T-0831); when the ticket lands, the manifest owner moves the clause to `Tests`. Tests in `lab`-tagged files must exist but are listed `not run` unless you pass `-o8-lab` (`make lab-up` first, then `go run ./tools/fitness/operation -o8-lab`); a failing run of the lab arm fails the check. Proof: `go test ./tools/fitness/operation` (o8_test.go runs a real `go test` in a throw-away module: failing, skipped, subtest-skipped, renamed, deleted, unbuildable and gap-without-ticket each fail; the clean tree passes).
 - **`fitness-safeprim`** (FF-SP1 to FF-SP3, safe-primitives §8): each finding reads
   `file:line: FF-SPn [rule] message`. `make fitness-safeprim` re-runs it alone;
   `go run ./tools/fitness/safeprim -checks FF-SP1,FF-SP3 -no-analyzers` runs a subset without the
@@ -287,8 +323,16 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
   ratchet: a gap that passes fails the build until its entry is deleted. Never add a gap without a ticket.
 - **Proof it fails:** `hostcheck_test.go` has one violating fixture per case (and asserts no other case trips);
   `make ci-proof` runs `host evaluate` on a compliant observation and on eight mutated ones.
-- **Open gaps:** `HOST-NO-DUMPS` on linux-oci (T-0634); `HOST-DC-REFUSED` (T-0635) and `HOST-SETUP-SECRET-SINGLE-USE`
-  (T-0636) are INACTIVE until their product subject exists. The positive verify-full DSN control needs a TLS
+- **Setup secret (T-0636):** on linux-oci `HOST-SETUP-SECRET-SINGLE-USE` is active: the harness reads the
+  secret file's tar header (mode/owner), POSTs it twice to `/api/v1/setup/claim` over verified TLS with a valid
+  `owner{displayName,email}` block (the route validates the owner before the secret, so a body without one gets a
+  400 that proves nothing, T-1161; `claim_test.go` judges the body with the server's own validator) (first 204,
+  second must be 401; an unexpected status prints the server log), and boots a second server with `ACTIVEDIQ_SETUP_TTL=2s` to present an expired secret
+  (must be 401). The harness also provisions the KEK (`kek init` into a volume) because the server has no
+  default custody model; without it no boot gets past start-up. Windows stays INACTIVE for this case until the
+  MSI exists (T-0635) and the lab collector grows the same probe.
+- **Open gaps:** `HOST-NO-DUMPS` on linux-oci (T-0634); `HOST-DC-REFUSED` (T-0635) and the Windows half of
+  `HOST-SETUP-SECRET-SINGLE-USE` are INACTIVE until their product subject exists. The positive verify-full DSN control needs a TLS
   PostgreSQL and is covered by `store.CheckTransport`'s own tests.
 
 ## `fitness-agent-host` (T-0554: ADR-0006 A1/A4, ADR-0007 P1-P8, contract R1-R5, F1)
@@ -305,8 +349,54 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
 
 A core MSI with no agent in it is still judged by rules 2-4 and the LocalSystem/registry text rules, so its own custom actions and system-account services need an `installer-allow.txt` line or a different packaging path: raise it in the MSI ticket.
 
-**R3 and A4 are allowlists.** R3: an agent module (`internal/agentmodules/**`) may import only the standard-library packages in `r3AllowedStd` plus our `<module>/internal/agentmodules/...`, exactly `<module>/internal/platform/agentpolicy` and exactly `<module>/internal/agenthost/api` (module path read from `go.mod`; a look-alike path under another module or a longer name fails); `syscall`, `unsafe`, `import "C"`, `io/ioutil`, `golang.org/x/sys/*`, `plugin`, `os/exec` and every dot or blank import fail by name, and `filepath.WalkDir/Walk/Glob/EvalSymlinks` fail (reads go through the host's dependency struct); package `os` is allowed only as `os.Getenv`, `os.LookupEnv`, `os.Err*` and `os.Is*` (everything else, including `OpenRoot`, `CopyFS`, `FindProcess`, `*os.File`, fails: methods on values cannot be told apart by name); the file-mutating call denylist is a second layer; and any non-`.go` file in a module directory (`.s`, `.syso`, `.c`, `.h`, ...; `testdata/` excepted) fails because it links code the scan cannot see. To give modules another package, add it to `r3AllowedStd`/`r3OwnPrefix`/`r3OwnExact` with a security-architect review. R4: every own-module package in `go list -deps ./cmd/agent` (windows and linux), not a fixed directory list, is scanned; any selector named `Listen*`, `Serve*`, `ListenConfig`, `NewServer`, or `Bind` on `syscall`/`windows`/`unix` fails whatever it is called on. A4: the agent closure may hold only the non-stdlib packages in `tools/fitness/agenthost/closure-allow.txt` (today our own `cmd/agent`, `internal/compose/agent`, `internal/compose/config`); anything else fails, and the named LDAP/SMB/RPC/Kerberos/SSPI bans stay as messages and win over the allowlist. Adding a line to `closure-allow.txt` needs a security-architect review. The tool also fails when ADR-0006/0007 front-matter says `status: accepted` while any check is inactive.
+**R3 and A4 are allowlists.** R3: an agent module (`internal/agentmodules/**`) may import only the standard-library packages in `r3AllowedStd` plus our `<module>/internal/agentmodules/...`, exactly `<module>/internal/platform/agentpolicy` and exactly `<module>/internal/agenthost/hostapi` (module path read from `go.mod`; a look-alike path under another module or a longer name fails); `syscall`, `unsafe`, `import "C"`, `io/ioutil`, `golang.org/x/sys/*`, `plugin`, `os/exec` and every dot or blank import fail by name, and `filepath.WalkDir/Walk/Glob/EvalSymlinks` fail (reads go through the host's dependency struct); package `os` is allowed only as `os.Getenv`, `os.LookupEnv`, `os.Err*` and `os.Is*` (everything else, including `OpenRoot`, `CopyFS`, `FindProcess`, `*os.File`, fails: methods on values cannot be told apart by name); the file-mutating call denylist is a second layer; and any non-`.go` file in a module directory (`.s`, `.syso`, `.c`, `.h`, ...; `testdata/` excepted) fails because it links code the scan cannot see. To give modules another package, add it to `r3AllowedStd`/`r3OwnPrefix`/`r3OwnExact` with a security-architect review. R4: every own-module package in `go list -deps ./cmd/agent` (windows and linux), not a fixed directory list, is scanned; any selector named `Listen*`, `Serve*`, `ListenConfig`, `NewServer`, or `Bind` on `syscall`/`windows`/`unix` fails whatever it is called on. A4: the agent closure may hold only the non-stdlib packages in `tools/fitness/agenthost/closure-allow.txt` (today our own `cmd/agent`, `internal/compose/agent`, `internal/compose/config`); anything else fails, and the named LDAP/SMB/RPC/Kerberos/SSPI bans stay as messages and win over the allowlist. Adding a line to `closure-allow.txt` needs a security-architect review. The tool also fails when ADR-0006/0007 front-matter says `status: accepted` while any check is inactive.
+
+**A1 walker fails closed (T-0677).** A1 does not guess what MSBuild evaluates (`%XX` escapes, properties, globs, `Directory.Build.props`/imports), and it does not trust file names: WiX compiles any file and `<?include?>` takes any name. It scans every WiX-named file (`.wxs/.wxi/.wxl/.wixproj` and their templates) **and, by content, every other text file in the repo (except `.git`; **no extension, binary ones included, exempts a file**, a real binary has NULs and is not text; UTF-16 and UTF-32 are decoded) that is an XML document rooted at `Wix`, `Include` or `WixLocalization`**, wherever it sits; Go/shell files holding a snippet in a string are not XML documents and pass. Consequence: test fixtures must never be WiX on disk (keep them as Go strings written to `t.TempDir()`); WiX under `tools/fitness` fails A1. Prebuilt WiX intermediates (`.wixlib/.wixipl/.wixobj`, or any zip holding `wix-ir.json`) anywhere are violations: we build from source only. A path the walk cannot read (e.g. a mode-000 directory) is a violation. A symbolic link anywhere (except `.git`) is a violation if it is WiX-named, dangling or looping, leaves the repo root, resolves to a directory, or targets a WiX file (by name or content); plain in-repo file links (`node_modules/.bin/*`) pass. Proofs: `TestA1Installer` and `tools/ci/proof.sh` (one fixture per bypass; the unreadable-directory case is skipped as root). **Residual risk:** a Compile Include of an absolute path or one leaving the repo root cannot be checked statically; and so is WiX generated at build time (MSBuild `Exec`/`UsingTask` inline tasks, `WixExtension`/`PackageReference`); that is judged on the built artefact by **`make fitness-built-msi`** (T-0697, below), not by A1's source scan.
+
+**Built-MSI check, `make fitness-built-msi` (T-0697).** After the build, `go run ./tools/fitness/builtmsi -glob 'dist/*.msi'` dumps each MSI with `msidump -t` (msitools) and judges the tables Windows Installer executes: every `ServiceInstall` row must have `StartName` = `NT SERVICE\<its own Name>` (the agent: `NT SERVICE\activeDIQAgent`, exactly one row, no `Password`; empty `StartName` is LocalSystem and fails), every installed service needs an `MsiServiceConfig` row `ConfigType 3` with `Argument 3` (restricted SID) and `ConfigType 4` with exactly `SeChangeNotifyPrivilege`, and any other row for those config types that differs fails; a `ServiceConfig` (util) table with rows fails; every `CustomAction` row must be in both `tools/fitness/agenthost/installer-allow.txt` and `tools/fitness/builtmsi/pinned-actions.txt` with the same Type/Source/Target (the Type numbers there are derived from the flags; verify them against the first real WiX build, and a mismatch is a review item, never a loosening); any `Binary` row fails; every `MsiLockPermissionsEx`/`LockPermissions` row fails (no DACL is reviewed; `installer-allow.txt` lists CustomAction Ids and never vouches for a permission, because MSI keys are per table; a future reviewed DACL needs its own pin keyed by Table+LockObject with the exact SDDL); the `ConfigType 3`/`4` rows count only when `Event` includes install (bit 1), their `Component_` is the one that installs the service, and that component has no `Condition`; any `MsiEmbeddedChainer`/`MsiEmbeddedUI` row fails, `MsiServiceConfigFailureActions` may only restart (0/1, no reboot, no `Command`), and `ServiceControl` may name only the agent service; `Registry`/`RemoveRegistry` rows under HKLM\SYSTEM (or built from a property) fail. Each message names the table and row key. With no MSI the check prints `inactive` (never a pass); the release job runs it on `dist/*.msi` and the ticket that makes the pipeline build the MSI must add `-require` there (`make fitness-built-msi` takes `BUILT_MSI=<glob>`). **Prerequisite:** `apt-get install msitools` (LGPL-2.1+, CI tooling only, never shipped; `wixl` from the same family is needed only by `make ci-proof` and the `TestRealMSI` test, which build real throw-away MSIs). Proof: `tools/ci/proof.sh` builds MSIs whose `.wxs` is generated into `obj/` at build time (as an MSBuild inline task would) and requires the clean one to pass and LocalSystem, an unrestricted SID, an extra privilege, an unreviewed custom action, a service-keyed DACL row, uninstall-only settings and a missing required MSI to fail.
 
 **If it fails.** The line names the rule and the file. A4: the import path is in the message; the agent has no directory or network-identity client, so remove the import, never the ban. P/F1: the test name is printed; fix the verifier or the bound, never the test. A missing test means a rename: P1-P8 are found by the prefixes `TestP1`…`TestP8`, `TestF1`, `FuzzF1`. A `FuzzF1` crasher is written to `internal/platform/agentpolicy/testdata/fuzz/`: commit it as a regression seed. `make fitness-agent-host AGENT_POLICY_FUZZ_TIME=2s` for a quick local run.
 
 **Not covered here (lab or other tickets).** The contract §3 bound "event_ids in the compiled-in catalogue" and the local-ceiling clamp are not enforced by `agentpolicy.Validate` (they need the module catalogue and the host's local config) and so are not in F1: owning ticket T-0555 (agent host and addc module). ADR-0006 A2/A3 (token privilege refusal, channel ACE read, write-denied outside the data directory) run in the Windows lab; F2/F3 (hostile in-bounds policy has no side effect beyond verdicts, applying a policy writes the local entry) need the agent host and rule engine; S1 is T-0556's ingest test.
+
+## The pre-merge gate (T-0941)
+
+**What it is.** The dispatcher builds `main` + `factory/T-NNNN` in a scratch worktree
+(`<worktree_root>/.premerge/`) and runs `dispatcher.pre_merge.argv` (default `make -k ci`) there before
+it merges. Settings: `factory/config.json` `dispatcher.pre_merge` (`enabled`, `argv`,
+`timeout_minutes`). Logs and the per-`main`-commit baseline cache: `factory/state/premerge/`.
+Rules and the comparison: `standards/ci-gates.md` "The pre-merge gate". It needs what `make ci` needs
+(Docker for the container jobs, Node, network once for toolchains).
+
+**See what it would do:** `factory/bin/factory premerge T-NNNN` (exit 0 pass, 1 refused or conflict).
+`factory/bin/factory premerge T-NNNN -- make fitness-profiles` runs one job instead.
+
+**A ticket was reopened by the gate.** The note lists the new findings. Fix them in code; merge `main`
+into the branch first, because the findings are judged against current `main`. Never edit the
+check, add `continue-on-error` or delete a baseline file to get through.
+
+**Reopened with "Renumber to NNNN" (T-1067).** Another branch landed the same migration number
+first. Merge `main` into the branch, run the `git mv` the note gives, fix references to the old
+number (tests, comments, docs), run `go test ./migrations/ -run TestMigrationNumbersAreUniqueAndContiguous`,
+advance again. Settings: `dispatcher.pre_merge.numbering` (`dir`, `argv`, `timeout_seconds`); remove the key
+to turn the check off (do not, without the director).
+
+**Everything is refused for the same unrelated reason.** `main` is green and a job is red in the
+merge result with no change of ours (an expired token, a tool missing on the dispatcher host): the
+refusal names `FAILED <target>`. Fix the environment; the gate fails closed on purpose. To stop the
+gate temporarily set `dispatcher.pre_merge.enabled` to `false`, say why in an event, and re-enable it
+as soon as the cause is fixed; the director owns that call.
+
+**A red job that is not ratcheted.** Findings are recognised by shape (the table in
+`standards/ci-gates.md`, Pre-merge gate). If a job prints violations in another shape, new ones in
+it pass while it is red on `main`. Print one self-contained line per violation, add a sample of it
+to `JOBS` in `factory/test/premerge.test.mjs` (the test fails for a `make fitness` job without one)
+and, for a new shape, extend `findingKey` in `factory/lib/premerge.mjs`. Check a log by hand:
+`node -e "import('./factory/lib/premerge.mjs').then(m=>console.log(m.extractFindings(require('fs').readFileSync('job.log','utf8'))))"`
+prints the findings it counts; fewer than the job's own violation count means a shape is missed.
+
+**Merges fail with "the main checkout is mid-merge".** A previous merge left `MERGE_HEAD` in the main
+checkout (a failed `merge --abort`, for example "Unable to write index"). `mergeTicket` now reports
+that as an error and retries, instead of calling it the next ticket's conflict and reopening it
+(T-0941 was reopened twice that way). Finish or abort that merge by hand (`git -C <root> merge --abort`
+once its index is writable); every pending merge then proceeds on the next pass.

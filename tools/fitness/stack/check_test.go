@@ -276,6 +276,33 @@ func TestF2NoFalsePositives(t *testing.T) {
 	none(t, f.run("F2", true))
 }
 
+// ADR-0001 rule 2, amendment A1 (T-0792): a file declared in exceptions.labBuilds may carry exactly
+// lab or !lab and nothing else; undeclared files, other expressions and stale entries still fail.
+func TestF2LabBuildException(t *testing.T) {
+	f := newFixture(t)
+	f.write("internal/a/boot_lab.go", "//go:build lab\n\npackage p\n")
+	f.write("internal/a/boot_off.go", "//go:build !lab\n\npackage p\n")
+	f.m.Exceptions.LabBuilds = []Exception{{Path: "internal/a/boot_lab.go", ADR: "0001-technology-stack.md"}, {Path: "internal/a/boot_off.go", ADR: "0001-technology-stack.md"}}
+	none(t, f.run("F2,F5", true))
+
+	f.write("internal/a/other.go", "//go:build lab\n\npackage p\n")
+	want(t, f.run("F2", true), "F2", "internal/a/other.go", "only allowed in _test.go")
+
+	f = newFixture(t)
+	f.write("internal/a/boot_lab.go", "//go:build lab && windowslab\n\npackage p\n")
+	f.write("internal/a/boot_off.go", "//go:build !lab || enterprise\n\npackage p\n")
+	f.write("internal/a/plain.go", "package p\n")
+	f.write("internal/a/x_test.go", "package p\n")
+	f.m.Exceptions.LabBuilds = []Exception{{Path: "internal/a/boot_lab.go", ADR: "0001-technology-stack.md"}, {Path: "internal/a/boot_off.go", ADR: "0001-technology-stack.md"},
+		{Path: "internal/a/plain.go", ADR: "0001-technology-stack.md"}, {Path: "internal/a/x_test.go", ADR: "0001-technology-stack.md"}, {Path: "internal/a", ADR: "0001-technology-stack.md"}}
+	vs := f.run("F2,F5", true)
+	want(t, vs, "F2", "internal/a/boot_lab.go", "only //go:build lab or //go:build !lab")
+	want(t, vs, "F2", "internal/a/boot_off.go", "only //go:build lab or //go:build !lab")
+	want(t, vs, "F2", "internal/a/plain.go", "remove the stale entry")
+	want(t, vs, "F5", "manifest.json", "exceptions.labBuilds[3] (internal/a/x_test.go): a lab build entry names one non-test .go file")
+	want(t, vs, "F5", "manifest.json", "exceptions.labBuilds[4] (internal/a): a lab build entry names one non-test .go file")
+}
+
 func TestF2PlatformAdapterMayNameAnOS(t *testing.T) {
 	f := newFixture(t)
 	f.write("internal/winsvc/svc_windows.go", "package winsvc\n")
@@ -320,6 +347,24 @@ func TestF2CrossBuildFailsWhenACgoOnlyPackageCannotBuild(t *testing.T) {
 	want(t, vs, "F2", "go.mod", "CGO_ENABLED=0 go build ./... fails for linux/amd64")
 	want(t, vs, "F2", "go.mod", "fails for windows/arm64")
 	want(t, vs, "F2", "internal/c/c.go", `import "C"`)
+}
+
+// Amendment A1 (T-0792): with lab build files declared, F2 also builds -tags lab, so a broken lab half
+// fails the build even though no production target compiles it.
+func TestF2CrossBuildCompilesTheLabHalf(t *testing.T) {
+	f := newFixture(t)
+	f.write("internal/a/boot_lab.go", "//go:build lab\n\npackage a\n\nconst Lab = undefinedName\n")
+	f.write("internal/a/boot_off.go", "//go:build !lab\n\npackage a\n\nconst Lab = false\n")
+	f.m.Exceptions.LabBuilds = []Exception{{Path: "internal/a/boot_lab.go", ADR: "0001-technology-stack.md"}, {Path: "internal/a/boot_off.go", ADR: "0001-technology-stack.md"}}
+	vs := f.run("F2", false)
+	want(t, vs, "F2", "go.mod", "CGO_ENABLED=0 go build -tags lab ./... fails for linux/amd64")
+	for _, v := range vs {
+		if strings.Contains(v.Msg, "go build ./... fails") {
+			t.Errorf("the production build must pass: %s", v)
+		}
+	}
+	f.write("internal/a/boot_lab.go", "//go:build lab\n\npackage a\n\nconst Lab = true\n")
+	none(t, f.run("F2", false))
 }
 
 func TestF2CrossBuildPassesOnPureGo(t *testing.T) {

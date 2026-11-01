@@ -376,3 +376,53 @@ func TestLabReadSecretAuditFailureDestroysValue(t *testing.T) {
 		t.Errorf("audit attempts = %d, want 2", events)
 	}
 }
+
+// T-0694 AC1 on the lab: in a subtree search every entry carries the parent GUID Read reports for it,
+// and a naming-context head carries none.
+func TestLabScopedSearchParentEqualsRead(t *testing.T) {
+	adm, cfg := labAdmin(t)
+	s := labOpen(t, cfg)
+	stamp := time.Now().Format("150405")
+	ou := "OU=t0694\\," + stamp + "," + labBase
+	inner := "OU=in," + ou
+	adminAdd(t, adm, ou, map[string][]string{"objectClass": {"top", "organizationalUnit"}})
+	adminAdd(t, adm, inner, map[string][]string{"objectClass": {"top", "organizationalUnit"}})
+	users := []string{"CN=u1," + ou, "CN=u2," + inner}
+	for i, u := range users {
+		adminAdd(t, adm, u, userAttrs("t0694u"+stamp+strconv.Itoa(i)))
+	}
+	t.Cleanup(func() {
+		for _, d := range []string{users[1], users[0], inner, ou} {
+			_ = adm.Del(ldap.NewDelRequest(d, nil))
+		}
+	})
+	cls, _ := ldapfilter.ParseAttrName("objectClass", s.schema)
+	n := 0
+	_, err := s.ScopedSearch(context.Background(), ScopedRequest{
+		Roots: []dn.ObjectRef{dn.GUIDRef(adminGUID(t, adm, ou))}, Depth: ScopeSubtree, PageSize: 1, ResolveParents: true,
+		Filter: ldapfilter.Present(cls), Attributes: []string{"distinguishedName"},
+	}, func(e *Entry) error {
+		n++
+		pg, has, resolved := e.Parent()
+		if !resolved || !has {
+			t.Errorf("%s: resolved=%v has=%v", e.DN, resolved, has)
+			return nil
+		}
+		id, err := e.GUID()
+		if err != nil {
+			return err
+		}
+		re, err := s.Read(context.Background(), dn.GUIDRef(id), []string{"instanceType"}, ReadOptions{})
+		if err != nil {
+			return err
+		}
+		want, _, err := s.Parent(context.Background(), re)
+		if err != nil || want != pg {
+			t.Errorf("%s: search parent %v, Read parent %v (%v)", e.DN, pg, want, err)
+		}
+		return nil
+	})
+	if err != nil || n != 4 {
+		t.Fatalf("err=%v entries=%d", err, n)
+	}
+}

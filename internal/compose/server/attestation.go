@@ -38,11 +38,15 @@ func buildAttestation(cfg config.Config, db *store.DB, sink audit.Sink, az opera
 	if err != nil {
 		return nil, fmt.Errorf("server: attestation egress: %w", err)
 	}
+	po, err := config.ParsePublicURL(cfg.PublicURL)
+	if err != nil {
+		return nil, fmt.Errorf("server: attestation redirect URI: %w", err)
+	}
 	at, err := connections.NewAttester(connections.AttestConfig{
 		DB: db, Audit: sink, Authz: connectionAuthorizer{az}, StepUp: su,
 		IdP:      &entra.OIDCIdP{HTTP: hc, Authority: entraAuthority, ClientID: cfg.AttestClientID},
 		Graph:    &entra.GraphReader{HTTP: hc, Base: graphBase},
-		ClientID: cfg.AttestClientID, RedirectURI: publicOrigin(cfg.PublicURL) + attestCallbackPath, Authority: entraAuthority,
+		ClientID: cfg.AttestClientID, RedirectURI: po.Origin + attestCallbackPath, Authority: entraAuthority,
 		Component: "connections",
 	})
 	if err != nil {
@@ -50,13 +54,6 @@ func buildAttestation(cfg config.Config, db *store.DB, sink audit.Sink, az opera
 	}
 	h := &connections.AttestHandlers{Attester: at, Gate: &connections.WindowGate{}}
 	return []apihost.TagHandlers{h.Bind()}, nil
-}
-
-func publicOrigin(u string) string {
-	for len(u) > 0 && u[len(u)-1] == '/' {
-		u = u[:len(u)-1]
-	}
-	return u
 }
 
 // connectionAuthorizer adapts the operation Authorizer's two-step question to the single call the

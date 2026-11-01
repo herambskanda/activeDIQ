@@ -194,6 +194,7 @@ func checkConnConfig(cc *pgx.ConnConfig) error {
 // used to gain superuser-level access. migrations/0001 repeats
 // this logic in plpgsql for the role named activediq_app; keep the two in step.
 const roleRisk = `SELECT x.rolname, CASE
+		WHEN x.rolname = 'activediq_catrust' THEN 'trust-anchor reader (column-limited reader of fleet_ca; the runtime role may only EXECUTE its function)'
 		WHEN x.rolsuper THEN 'superuser'
 		WHEN x.rolbypassrls THEN 'BYPASSRLS'
 		WHEN x.rolname IN ('pg_execute_server_program', 'pg_read_server_files', 'pg_write_server_files') THEN 'predefined role that is superuser-equivalent'
@@ -266,6 +267,19 @@ func (d *DB) Transport() TransportStatus {
 		return TransportStatus{}
 	}
 	return d.transport
+}
+
+// Ping checks that the database answers on the main pool. It opens no transaction and touches no table, so
+// it needs no tenant and no platform-scope entry; the readiness probe (AN-1) is its caller. The error text
+// is for the log, never for a client.
+func (d *DB) Ping(ctx context.Context) error {
+	if d == nil || d.pool == nil {
+		return ErrClosed
+	}
+	if err := d.pool.Ping(ctx); err != nil {
+		return fmt.Errorf("store: ping: %w", err)
+	}
+	return nil
 }
 
 // Close releases the pool. Entry points called afterwards fail.

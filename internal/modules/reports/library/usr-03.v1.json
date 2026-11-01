@@ -1,0 +1,216 @@
+{
+  "id": "usr-03",
+  "version": 1,
+  "category": "users",
+  "title": "Logon activity",
+  "description": "Accounts by their replicated last logon: inactive, recently logged on, or never logged on. The replicated value lags the real logon by up to the domain's sync interval.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "domain",
+    "dn",
+    "last_logon_timestamp",
+    "days_since_logon",
+    "when_created",
+    "enabled",
+    "probable_service_account",
+    "probable_service_account_reason"
+  ],
+  "sort": [
+    {
+      "column": "last_logon_timestamp",
+      "dir": "asc"
+    }
+  ],
+  "params": [
+    {
+      "name": "days",
+      "kind": "days",
+      "default": {
+        "days": 90
+      },
+      "min": 30,
+      "max": 3650
+    },
+    {
+      "name": "recent_days",
+      "kind": "days",
+      "default": {
+        "days": 30
+      },
+      "min": 30,
+      "max": 365
+    }
+  ],
+  "caveats": [
+    "accurate_to_sync_interval",
+    "ou_path_is_dn"
+  ],
+  "presets": [
+    {
+      "id": "inactive",
+      "names": [
+        "Inactive Users"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "enabled",
+              "op": "eq",
+              "value": {
+                "bool": true
+              }
+            }
+          },
+          {
+            "or": [
+              {
+                "and": [
+                  {
+                    "cmp": {
+                      "col": "logon_recorded",
+                      "op": "eq",
+                      "value": {
+                        "enum": "recorded"
+                      }
+                    }
+                  },
+                  {
+                    "cmp": {
+                      "col": "last_logon_timestamp",
+                      "op": "older_than_days",
+                      "param": "days"
+                    }
+                  }
+                ]
+              },
+              {
+                "and": [
+                  {
+                    "cmp": {
+                      "col": "logon_recorded",
+                      "op": "eq",
+                      "value": {
+                        "enum": "none_recorded"
+                      }
+                    }
+                  },
+                  {
+                    "cmp": {
+                      "col": "when_created",
+                      "op": "older_than_days",
+                      "param": "days"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "hidden": [
+        {
+          "id": "sync_off",
+          "label": "accounts in domains where logon time sync is off (replicated logon is not kept)",
+          "locked": true,
+          "where": {
+            "cmp": {
+              "col": "logon_sync_interval_days",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          }
+        },
+        {
+          "id": "service_accounts",
+          "label": "probable service accounts hidden",
+          "where": {
+            "cmp": {
+              "col": "probable_service_account",
+              "op": "eq",
+              "value": {
+                "bool": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "recent",
+      "names": [
+        "Recently Logged on Users"
+      ],
+      "where": {
+        "cmp": {
+          "col": "last_logon_timestamp",
+          "op": "within_last_days",
+          "param": "recent_days"
+        }
+      },
+      "sort": [
+        {
+          "column": "last_logon_timestamp",
+          "dir": "desc"
+        }
+      ],
+      "hidden": [
+        {
+          "id": "sync_off",
+          "label": "accounts in domains where logon time sync is off (replicated logon is not kept)",
+          "locked": true,
+          "where": {
+            "cmp": {
+              "col": "logon_sync_interval_days",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "never",
+      "names": [
+        "Users Never Logged On"
+      ],
+      "where": {
+        "cmp": {
+          "col": "logon_recorded",
+          "op": "eq",
+          "value": {
+            "enum": "none_recorded"
+          }
+        }
+      },
+      "sort": [
+        {
+          "column": "when_created",
+          "dir": "desc"
+        }
+      ],
+      "hidden": [
+        {
+          "id": "sync_off",
+          "label": "accounts in domains where logon time sync is off (replicated logon is not kept)",
+          "locked": true,
+          "where": {
+            "cmp": {
+              "col": "logon_sync_interval_days",
+              "op": "eq",
+              "value": {
+                "int": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

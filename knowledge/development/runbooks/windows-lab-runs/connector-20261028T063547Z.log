@@ -1,0 +1,8 @@
+=== RUN   TestWindowsLabNoSideDialOnPlantedUNC
+--- PASS: TestWindowsLabNoSideDialOnPlantedUNC (2.04s)
+=== RUN   TestWindowsLabLDAPSBindAndRootDSE
+--- PASS: TestWindowsLabLDAPSBindAndRootDSE (0.04s)
+=== RUN   TestWindowsLabRejectsWrongPasswordAndUntrustedCert
+--- PASS: TestWindowsLabRejectsWrongPasswordAndUntrustedCert (0.03s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/ad	2.120s

@@ -3,5 +3,25 @@
 # .vbs .js .wsf ...) that names the agent, fails unless it is listed here: the account, SID type and
 # privileges are declared by ServiceInstall/ServiceConfig, so nothing may compute them in a script.
 # One entry per line: a CustomAction/Binary Id, or a repo-relative path (`dir/...` for a subtree).
+# SetDirectory and SetProperty (Type 51 actions) are listed here by Id like a CustomAction (T-0742), but no
+# entry can excuse a Property sharing a Directory's Id, or retargeting a directory a Permission acts on.
+# Any UI, UIRef, Dialog, Control or Publish element fails A1 and cannot be listed here (T-0742): UI sets
+# directories through formatted and indirect properties. Lifting that needs a UI threat model.
+# Any element outside the WiX core namespace and the reviewed list (util only) fails A1 and cannot be listed
+# here, and neither can an Id for a Directory/Property/SetProperty/SetDirectory/Type 35-51 action written as a
+# variable ($(var.X), !(wix.X)) (T-0742).
+# Ids here cover CustomAction/Binary/ServiceInstall-account exceptions only. They never approve a
+# Permission/PermissionEx: those are pinned by parent element type + Id + exact attributes in check.go
+# (pinnedPermissions, T-0725), because WiX Ids are per table and can collide.
 # Adding a line is a security-architect review: say what the action runs and as whom in the commit message.
-# (Empty today.)
+#
+# T-0688 ruling 4 (knowledge/development/decisions/agent-host-fitness-rulings.md). Each action below runs
+# `agentsetup.exe <one fixed verb>` from the private directory [AgentDir], as SYSTEM, deferred or rollback,
+# no impersonation, no argument. The attributes are pinned in check.go (pinnedActions): changing the
+# command line, Execute, Impersonate, Return or Directory of any of them fails A1 until re-reviewed.
+# No Binary, no script, no PowerShell, no immediate-sequence action.
+WriteConfig
+PrepareDataDir
+GrantChannel
+RollbackGrantChannel
+RevokeChannel

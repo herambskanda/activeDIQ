@@ -9,6 +9,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit/chain"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
+	"github.com/skenzeriq/activediq/internal/platform/fleet/gateway"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
@@ -16,7 +17,7 @@ import (
 // (TM-TB6-T14).
 const KindSupersededCertificate audit.Kind = "fleet.component.superseded_certificate"
 
-// SupersededReporter implements fleet.SupersededReporter: one fleet alert (same channel as
+// SupersededReporter implements gateway.SupersededReporter: one fleet alert (same channel as
 // AlertCAMaterial) and one audit event naming the component, the presented serial and the serial that
 // is current. The response to either reading (stale component or thief who rotated first) is Revoke.
 // Rate limiting is the gateway's, not this type's.
@@ -27,7 +28,7 @@ type SupersededReporter struct {
 	Clock  func() time.Time // tests only
 }
 
-var _ fleet.SupersededReporter = (*SupersededReporter)(nil)
+var _ gateway.SupersededReporter = (*SupersededReporter)(nil)
 
 // Superseded appends the audit event in the component's tenant and raises the alert. The alert is
 // raised even if the audit append fails, and the append error is returned.

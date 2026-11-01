@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
@@ -58,6 +59,33 @@ type Result struct {
 	// NoOp: Plan found the target already in the requested state; nothing was sent to Apply.
 	NoOp  bool
 	Apply *connectorv1.ApplyResponse
+}
+
+// Tier0AfterWrite returns the connector's step-9 report as findings: each object by canonical GUID
+// text with its bases (C1..C11 and so on), an empty Bases meaning unclassified. An object whose GUID
+// is unusable is still reported, by an empty Object, because the report counts whatever it lists.
+func (r Result) Tier0AfterWrite() []step.Tier0Finding {
+	var out []step.Tier0Finding
+	for _, m := range r.Apply.GetTier0AfterWrite() {
+		f := step.Tier0Finding{}
+		if v := m.GetObject().GetValue(); len(v) == 16 {
+			f.Object = formatUUID(v)
+		}
+		for _, b := range m.GetBasis() {
+			f.Bases = append(f.Bases, basisName(b))
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// basisName is "C2" for TIER0_BASIS_C2_PROTECTED_GROUP_MEMBER.
+func basisName(b connectorv1.Tier0Basis) string {
+	n := strings.TrimPrefix(b.String(), "TIER0_BASIS_")
+	if i := strings.IndexByte(n, '_'); i > 0 {
+		return n[:i]
+	}
+	return n
 }
 
 // Client is the write path. Build it with New; the zero Client refuses every write.

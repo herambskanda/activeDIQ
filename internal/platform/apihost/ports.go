@@ -3,6 +3,8 @@ package apihost
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -30,6 +32,33 @@ type Principal struct {
 	// AuthorityFactor is true when the session holds a current activeDIQ authority factor (TM-D19
 	// rule 1): verified, and not older than the session's latest step-up. Set by the Authenticator.
 	AuthorityFactor bool
+	// CSRF is the session's CSRF value (authnhttp.CSRFValue of the session token) for a KindSession
+	// principal; empty for a token. It is derived by the Authenticator so the session token itself never
+	// reaches a handler: only GET /auth/csrf reads it. It is not a credential alone, but it is
+	// secret-adjacent, so String, GoString and LogValue leave it out.
+	CSRF string
+}
+
+// String formats the principal without its CSRF value (it is printed by %v, %+v and %s).
+func (p Principal) String() string {
+	return fmt.Sprintf("Principal{ID:%s Tenant:%s Kind:%s SessionID:%s AuthorityFactor:%t CSRF:%s}",
+		p.ID, p.Tenant, p.Kind, p.SessionID, p.AuthorityFactor, redactedIfSet(p.CSRF))
+}
+
+// GoString formats the principal for %#v, again without its CSRF value.
+func (p Principal) GoString() string { return "apihost." + p.String() }
+
+// LogValue keeps the CSRF value out of structured logs.
+func (p Principal) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("id", p.ID), slog.String("tenant", p.Tenant), slog.String("kind", string(p.Kind)),
+		slog.String("session_id", p.SessionID), slog.Bool("authority_factor", p.AuthorityFactor))
+}
+
+func redactedIfSet(s string) string {
+	if s == "" {
+		return "<none>"
+	}
+	return "[redacted]"
 }
 
 // ErrUnauthenticated is what an Authenticator returns for a missing or invalid credential. Any
@@ -93,6 +122,7 @@ type ctxKey int
 const (
 	principalKey ctxKey = iota
 	traceKey
+	sourceIPKey
 )
 
 // PrincipalFrom returns the authenticated principal of the request, or false for an anonymous one.
@@ -113,4 +143,15 @@ func withTrace(ctx context.Context, id string) context.Context {
 
 func withPrincipal(ctx context.Context, p Principal) context.Context {
 	return context.WithValue(ctx, principalKey, p)
+}
+
+// SourceIPFrom returns the request's client address as the rate limiter saw it (the TCP peer, or the
+// forwarded hop behind a trusted proxy). It is "" outside a request. Handlers use it for audit only.
+func SourceIPFrom(ctx context.Context) string {
+	s, _ := ctx.Value(sourceIPKey).(string)
+	return s
+}
+
+func withSourceIP(ctx context.Context, ip string) context.Context {
+	return context.WithValue(ctx, sourceIPKey, ip)
 }

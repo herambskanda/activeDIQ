@@ -9,7 +9,7 @@ import (
 // T-0445 acceptance 2: the owner writer is built with the authn implementations, and a missing
 // collaborator fails startup instead of leaving an unguarded writer.
 func TestBuildOwnerAssignmentsRequiresEveryPort(t *testing.T) {
-	c, err := buildConsole(&store.DB{}, nopSink{}, nil)
+	c, err := buildConsole(&store.DB{}, nopSink{}, testKeys(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

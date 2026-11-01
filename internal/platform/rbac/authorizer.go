@@ -377,7 +377,20 @@ func objectView(as []Assignment, t authority.TargetRef, f authority.Facts) (auth
 				// An unparsable exclude must narrow: a zero root makes the whole scope cover nothing.
 				rid = authz.ObjectID{}
 			}
-			root := authz.ScopeRoot{ID: rid, Complete: true}
+			switch r.Kind {
+			case NamingContext, OUSubtree, EntraTenant:
+			case OUOneLevel:
+				if r.Exclude {
+					rid = authz.ObjectID{} // never written (schema and grant refuse it); fail closed
+				} else if r.GUID == t.Connection {
+					// The target's chain ends in the connection, so for a parentless object the
+					// nearest "parent" would be the connection: such a root grants nothing.
+					continue
+				}
+			default:
+				rid = authz.ObjectID{} // a kind this view does not know is never read as a subtree
+			}
+			root := authz.ScopeRoot{ID: rid, Complete: true, OneLevel: r.Kind == OUOneLevel}
 			if r.Exclude {
 				sc.Exclude = append(sc.Exclude, root)
 			} else {

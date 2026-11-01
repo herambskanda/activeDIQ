@@ -115,17 +115,24 @@ const (
 	lockUpdate          // permission edit: waits for in-flight grants, blocks new ones
 )
 
+const (
+	sqlRole       = `SELECT role_name, built_in, tier FROM public.authz_roles WHERE tenant_id = $1::uuid AND id = $2::uuid`
+	sqlRoleShare  = sqlRole + ` FOR SHARE`
+	sqlRoleUpdate = sqlRole + ` FOR UPDATE`
+)
+
 func readRole(ctx context.Context, tx store.Tx, tn tenant.ID, id string, lock roleLock) (roleRow, error) {
 	var r roleRow
-	q := `SELECT role_name, built_in, tier FROM public.authz_roles WHERE tenant_id = $1::uuid AND id = $2::uuid`
-	switch lock { // fixed clauses only; nothing from the caller reaches the statement text
+	var row interface{ Scan(...any) error }
+	switch lock { // three whole constants; nothing from the caller reaches the statement text
 	case lockShare:
-		q += ` FOR SHARE`
+		row = tx.QueryRow(ctx, sqlRoleShare, tn.String(), id)
 	case lockUpdate:
-		q += ` FOR UPDATE`
+		row = tx.QueryRow(ctx, sqlRoleUpdate, tn.String(), id)
+	default:
+		row = tx.QueryRow(ctx, sqlRole, tn.String(), id)
 	}
-	err := tx.QueryRow(ctx, q,
-		tn.String(), id).Scan(&r.name, &r.builtIn, &r.tier)
+	err := row.Scan(&r.name, &r.builtIn, &r.tier)
 	if store.IsNoRows(err) {
 		return r, ErrNotFound
 	} else if err != nil {
@@ -144,6 +151,15 @@ func readRole(ctx context.Context, tx store.Tx, tn tenant.ID, id string, lock ro
 		r.perms = append(r.perms, authz.Permission(p))
 	}
 	return r, rows.Err()
+}
+
+// platformOnlyErr refuses a role that lists a platform-scope-only permission: a tenant or delegation
+// grant cannot carry one (T-0250). It is ErrInvalid and authz.ErrInvalidGrant at once.
+func platformOnlyErr(perms []authz.Permission) error {
+	if slices.ContainsFunc(perms, authz.IsPlatformOnly) {
+		return fmt.Errorf("%w: %w", ErrInvalid, authz.ErrInvalidGrant)
+	}
+	return nil
 }
 
 func controlPlane(perms []authz.Permission) bool {
@@ -187,6 +203,9 @@ func (g *Grants) CreateRole(ctx context.Context, tx store.Tx, by authority.Chain
 		if !permissionRe.MatchString(string(p)) {
 			return ErrInvalid
 		}
+	}
+	if err := platformOnlyErr(perms); err != nil {
+		return err
 	}
 	if err := ValidateRoles([]Role{{Name: name, Tier: tier, Permissions: perms}}); err != nil {
 		return ErrInvalid
@@ -283,6 +302,9 @@ func (g *Grants) SetRolePermissions(ctx context.Context, tx store.Tx, by authori
 			return ErrInvalid
 		}
 	}
+	if err := platformOnlyErr(perms); err != nil {
+		return err
+	}
 	tn, err := tenantOf(ctx, tx)
 	if err != nil {
 		return err
@@ -351,6 +373,12 @@ func validRoots(tn tenant.ID, roots []Root) bool {
 		}
 		switch r.Kind {
 		case NamingContext, OUSubtree:
+		case OUOneLevel:
+			// An include root only, and never a connection or tenant ID: the one-level match reads the
+			// nearest parent, and the chain's last element is the connection.
+			if r.Exclude || r.Connection == r.GUID {
+				return false
+			}
 		case EntraTenant, Tier0Scope:
 			if r.Connection != r.GUID {
 				return false
@@ -378,6 +406,27 @@ func validRoots(tn tenant.ID, roots []Root) bool {
 // tenant-owner or a control-plane permission (DM-36.I4). It returns ErrExists for an ID that is
 // taken, including a repeat of the identical grant (the caller treats a retry of a committed Action as done).
 func (g *Grants) Grant(ctx context.Context, tx store.Tx, by authority.Chain, in GrantInput) error {
+	return g.grant(ctx, tx, by, in, false)
+}
+
+// BootstrapPrincipal is the only system principal GrantBootstrap accepts: the install-time CLI that creates
+// the first console account. Any other system chain (jobs, connectors, authn) is refused.
+const BootstrapPrincipal authority.PrincipalID = "cli-account-init-local"
+
+// GrantBootstrap is Grant for a host operator: the one path where the grantor is a system principal, not a
+// person holding the privilege. It exists for the install-time CLI that creates the first console account
+// (T-0783), which has no human to act as; it borrows no human's authority and the assignment's granted_by
+// names the system principal. A chain that is not exactly the BootstrapPrincipal system principal is
+// refused. It bypasses the grantor-holds-the-privilege check, so the static half of the guard is the
+// fitness function tools/fitness/grantbootstrap (T-0808): no reference outside the CLI path.
+func (g *Grants) GrantBootstrap(ctx context.Context, tx store.Tx, by authority.Chain, in GrantInput) error {
+	if by.Validate() != nil || by.Requester.Kind != authority.System || by.Requester.ID != BootstrapPrincipal || len(by.Via) > 0 {
+		return ErrActorNotDirect
+	}
+	return g.grant(ctx, tx, by, in, true)
+}
+
+func (g *Grants) grant(ctx context.Context, tx store.Tx, by authority.Chain, in GrantInput, bootstrap bool) error {
 	if !accountIDRe.MatchString(in.ID) || !accountIDRe.MatchString(in.RoleID) || !in.Subject.Valid() ||
 		(in.ValidFrom != nil && in.ValidUntil != nil && !in.ValidUntil.After(*in.ValidFrom)) {
 		return ErrInvalid
@@ -396,12 +445,17 @@ func (g *Grants) Grant(ctx context.Context, tx store.Tx, by authority.Chain, in 
 	if err := CheckGrantable(RoleView{Name: role.name, BuiltIn: role.builtIn, Tier: Tier(role.tier), Permissions: role.perms}, in.Subject); err != nil {
 		return err
 	}
-	actor, err := g.actorAssignments(ctx, tn, by)
-	if err != nil {
+	if err := platformOnlyErr(role.perms); err != nil {
 		return err
 	}
-	if err := g.mustHold(ctx, tn, by, actor, role.perms, in.Roots); err != nil {
-		return err
+	if !bootstrap {
+		actor, err := g.actorAssignments(ctx, tn, by)
+		if err != nil {
+			return err
+		}
+		if err := g.mustHold(ctx, tn, by, actor, role.perms, in.Roots); err != nil {
+			return err
+		}
 	}
 	var exists int
 	if err := tx.QueryRow(ctx, `SELECT count(*) FROM public.authz_assignments WHERE tenant_id = $1::uuid AND id = $2::uuid`, tn.String(), in.ID).Scan(&exists); err != nil {

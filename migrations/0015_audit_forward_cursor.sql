@@ -9,6 +9,7 @@
 --       de-duplicates. DELETE is revoked so a sink's history of failures is not erased by the runtime role.
 --   I3  failure state holds a snake_case code, never error text (a sink's reply can echo a credential).
 
+-- write-class: audit_forward_cursor system
 CREATE TABLE public.audit_forward_cursor (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   sink_id text NOT NULL CHECK (sink_id ~ '^[a-z][a-z0-9_]{0,39}$'),

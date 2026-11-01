@@ -19,6 +19,7 @@
 -- Who may acknowledge (platform scope, step-up, typed text) and the 15-minute and last-run rules of
 -- DM-25.I1 are the Action's and the store's: this file records the result.
 
+-- write-class: connection_verifications system
 CREATE TABLE public.connection_verifications (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -45,6 +46,7 @@ CREATE TABLE public.connection_verifications (
 );
 CREATE INDEX connection_verifications_conn ON public.connection_verifications (tenant_id, connection_id, completed_at DESC);
 
+-- write-class: connection_verification_findings system
 CREATE TABLE public.connection_verification_findings (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   verification_id uuid NOT NULL,
@@ -65,6 +67,7 @@ CREATE TABLE public.connection_verification_findings (
   UNIQUE (tenant_id, verification_id, fingerprint)
 );
 
+-- write-class: connection_tier0_overrides config
 CREATE TABLE public.connection_tier0_overrides (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

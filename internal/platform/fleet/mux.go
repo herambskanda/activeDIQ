@@ -130,8 +130,8 @@ func NewMux(cfg MuxConfig) (*Mux, error) {
 		m.nextID = 2
 	}
 	m.reg = newRegistrar(cfg.Binding.Contract, cfg.Role.peer())
-	if cfg.Binding.Serve != nil {
-		cfg.Binding.Serve(cfg.Identity, m.reg)
+	if cfg.Binding.Register != nil {
+		cfg.Binding.Register(cfg.Identity, m.reg)
 	}
 	if m.reg.err != nil {
 		return nil, m.reg.err
@@ -156,7 +156,7 @@ func (m *Mux) Conn() grpc.ClientConnInterface { return conn{m} }
 // returns every call has ended and every handler goroutine has returned.
 func (m *Mux) Run(ctx context.Context) error {
 	m.mu.Lock()
-	m.base = context.WithValue(ctx, ctxKey{}, m.id)
+	m.base = WithIdentity(ctx, m.id)
 	m.mu.Unlock()
 	stop := context.AfterFunc(ctx, func() { m.fail(ctx.Err()) })
 	defer stop()

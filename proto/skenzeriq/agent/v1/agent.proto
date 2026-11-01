@@ -1,0 +1,165 @@
+// skenzeriq.agent.v1 — the agent host contract (T-0555; agent-host-addc-contract.md §2, §4;
+// ADR-0006, ADR-0007; threat model §12, TB12).
+//
+// Host is the closed set of RPCs the server may call on an agent host over the reverse tunnel. It has
+// no verb that runs code, writes a file, deletes, changes a service or registry value, or updates
+// outside the signed channel (TM-D13); fitness-proto AG1 to AG8 pin that list. Every RPC is unary.
+// The signed policy and keyset travel as the canonical signed documents of ADR-0007 (opaque bytes the
+// agent verifies itself), never as re-encoded fields, so there is one encoding of what was signed.
+//
+// EventIngest is the other direction: the agent calls it on the server. The agent's identity (tenant,
+// component, kind) is stamped by the server from the client certificate and is deliberately not a
+// field of any message here (S1).
+//
+// Nothing here may carry a password, a hash of one, a path, a command or a fail mode (C15, C16).
+syntax = "proto3";
+
+package skenzeriq.agent.v1;
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/skenzeriq/agent/v1;agentv1";
+
+// Host is served by the agent. The server calls it; nothing else can.
+service Host {
+	// GetStatus reports health, versions, sequences and the outbox. It changes nothing.
+	rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+	// ApplyPolicy verifies a signed policy (ADR-0007 decision 2), then persists and activates it.
+	rpc ApplyPolicy(ApplyPolicyRequest) returns (ApplyPolicyResponse);
+	// ApplyKeyset verifies a signed keyset (ADR-0007 decisions 4 and 5), then persists it. The first
+	// keyset after enrolment is the trust anchor.
+	rpc ApplyKeyset(ApplyKeysetRequest) returns (ApplyKeysetResponse);
+	// StageUpdate hands over TUF metadata and an artefact digest. Nothing is unpacked before the one
+	// TUF verifier accepts it (TM-D12); activation waits for local approval.
+	rpc StageUpdate(StageUpdateRequest) returns (StageUpdateResponse);
+	// AckEvents lets the outbox drop records through a sequence the server has stored.
+	rpc AckEvents(AckEventsRequest) returns (AckEventsResponse);
+}
+
+// EventIngest is served by the server. The agent calls it.
+service EventIngest {
+	// SubmitEvents delivers a batch of outbox records, at least once. Records already stored are
+	// counted as duplicates.
+	rpc SubmitEvents(SubmitEventsRequest) returns (SubmitEventsResponse);
+}
+
+message GetStatusRequest {}
+
+// CollectionState says what the module is doing with its event subscription.
+enum CollectionState {
+	COLLECTION_STATE_UNSPECIFIED = 0;
+	// COLLECTION_STATE_NO_POLICY: no policy installed yet, so nothing is collected.
+	COLLECTION_STATE_NO_POLICY = 1;
+	COLLECTION_STATE_RUNNING = 2;
+	// COLLECTION_STATE_STOPPED_BY_POLICY: the installed policy turned collection off (TM-R7). Always reported.
+	COLLECTION_STATE_STOPPED_BY_POLICY = 3;
+	// COLLECTION_STATE_CHANNEL_UNREADABLE: the service SID cannot read a channel (ADR-0006: a GPO may reset the channel ACE).
+	COLLECTION_STATE_CHANNEL_UNREADABLE = 4;
+	COLLECTION_STATE_FAILED = 5;
+}
+
+message GetStatusResponse {
+	string agent_version = 1;
+	// anchored: the keyset anchor is set (ADR-0007 decision 5).
+	bool anchored = 2;
+	uint64 policy_seq = 3;
+	uint64 keyset_seq = 4;
+	CollectionState collection = 5;
+	// token_check_passed: at start the agent found no privilege outside the pinned list in its token (ADR-0006 decision 3).
+	bool token_check_passed = 6;
+	uint64 outbox_records = 7;
+	uint64 outbox_bytes = 8;
+	uint64 outbox_dropped_records = 9;
+	// last_agent_seq is the highest sequence the outbox has assigned.
+	uint64 last_agent_seq = 10;
+	// acked_through_seq is the highest sequence the server has acknowledged.
+	uint64 acked_through_seq = 11;
+}
+
+// SignedPolicy is the canonical signed policy document of ADR-0007, exactly as signed.
+message SignedPolicy {
+	bytes document = 1;
+}
+
+// SignedKeyset is the canonical signed keyset document of ADR-0007, exactly as signed.
+message SignedKeyset {
+	bytes document = 1;
+}
+
+message ApplyPolicyRequest {
+	SignedPolicy signed = 1;
+}
+
+message ApplyPolicyResponse {
+	uint64 policy_seq = 1;
+	string key_id = 2;
+}
+
+message ApplyKeysetRequest {
+	SignedKeyset signed = 1;
+}
+
+message ApplyKeysetResponse {
+	uint64 keyset_seq = 1;
+	bool anchored_now = 2;
+}
+
+message StageUpdateRequest {
+	// metadata_bundle is the TUF metadata set; it is parsed only by the one TUF verifier.
+	bytes metadata_bundle = 1;
+	// artefact_digest is the SHA-256 of the artefact the metadata names.
+	bytes artefact_digest = 2;
+}
+
+message StageUpdateResponse {
+	bool staged = 1;
+}
+
+message AckEventsRequest {
+	uint64 through_agent_seq = 1;
+}
+
+message AckEventsResponse {
+	uint64 outbox_records = 1;
+}
+
+// EventField is one rendered name and value of an event.
+message EventField {
+	string name = 1;
+	string value = 2;
+}
+
+// EventKind is the type of an outbox record.
+enum EventKind {
+	EVENT_KIND_UNSPECIFIED = 0;
+	EVENT_KIND_EVENT = 1;
+	// EVENT_KIND_GAP: the agent saw a discontinuity in event_record_id (log wrap) or lost the bookmark.
+	EVENT_KIND_GAP = 2;
+	// EVENT_KIND_DROPPED: the bounded outbox dropped records; first and last sequence are in the fields.
+	EVENT_KIND_DROPPED = 3;
+}
+
+// AgentEvent is one outbox record (contract §4). agent_seq is assigned by the agent and gapless
+// except where a dropped record says otherwise.
+message AgentEvent {
+	uint64 agent_seq = 1;
+	EventKind kind = 2;
+	// channel is "security" or "directory_service"; empty for a gap or dropped record without one.
+	string channel = 3;
+	// event_record_id is the log's own record id; 0 when the record is not an event.
+	uint64 event_record_id = 4;
+	// observed_at_unix_nanos is when the agent observed the event.
+	int64 observed_at_unix_nanos = 5;
+	// reported_dc_guid is what the agent says about its host: data to cross-check, never identity.
+	string reported_dc_guid = 6;
+	repeated EventField fields = 7;
+}
+
+message SubmitEventsRequest {
+	repeated AgentEvent events = 1;
+}
+
+message SubmitEventsResponse {
+	uint64 accepted = 1;
+	uint64 duplicates = 2;
+	// highest_stored_seq is the highest sequence now stored for this component; the agent may prune up to it.
+	uint64 highest_stored_seq = 3;
+}

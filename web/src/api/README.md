@@ -17,5 +17,10 @@ import { api, unwrap } from "../api/client";
 const page = await unwrap(api.GET("/users", { params: { query: { limit: 50 } } }));
 ```
 
+Open enums reach your code as declared (`"matched" | … | (string & {})`), with no cast: tsconfig maps
+`openapi-typescript-helpers` to `src/types/openapi-typescript-helpers.d.ts` (outside this directory: A5 allows only generated files and `client.ts` here), because upstream's
+`Readable<T>` rebuilds `string & {}` as a copy of `String`. `src/types/open-enum.test.ts` fails typecheck if
+that stops applying.
+
 A feature that needs data the contract does not offer gets an operation added to `api/openapi/`
 first (blueprint §6: no private endpoints), then `make gen-api`.

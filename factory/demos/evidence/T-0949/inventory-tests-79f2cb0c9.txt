@@ -1,0 +1,15 @@
+--- PASS: TestIngestFormsMatchedPairWithMembersInOneTransaction (12.04s)
+--- PASS: TestIngestGateReasonsFromStoredState (1.83s)
+--- PASS: TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair (3.46s)
+--- PASS: TestIngestPreconditions (1.63s)
+--- PASS: TestIngestPrincipalTypeMismatchNeverPassesTheGate (8.83s)
+--- PASS: TestFreshnessQuietDomainIsNotStale (1.57s)
+--- PASS: TestFreshnessResyncAndPausedAreStaleAndOthersStillReported (1.56s)
+--- PASS: TestFreshnessSuspendedConnectionIsPaused (1.69s)
+--- PASS: TestFreshnessNeverSyncedIsSkipped (1.65s)
+--- PASS: TestFreshnessAsOfIsTheOldestCoveredWatermark (4.33s)
+--- PASS: TestRecordPassIsMonotonicAndValidated (1.89s)
+--- PASS: TestFreshnessFailsClosed (1.49s)
+--- PASS: TestIngestRecordsPassOnLastBatchOnly (1.59s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/directory/inventory	45.064s

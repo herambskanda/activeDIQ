@@ -17,6 +17,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 )
 
 const (
@@ -24,7 +25,7 @@ const (
 	// Secure, with Path=/ and no Domain (threat model §7.3).
 	CookieName = "__Host-adiq_session"
 	// CSRFHeader carries the CSRF value on every cookie-session mutation.
-	CSRFHeader = "X-CSRF-Token"
+	CSRFHeader = authn.CSRFHeader
 )
 
 // SessionCookie is the cookie that hands tok to the browser: __Host- prefix, HttpOnly, Secure,
@@ -119,7 +120,7 @@ func (a *Authenticator) Authenticate(r *http.Request) (apihost.Principal, error)
 	default:
 		return apihost.Principal{}, err // an infrastructure failure: the chain refuses, fail closed
 	}
-	return apihost.Principal{ID: sess.Account, Tenant: sess.Tenant.String(), Kind: apihost.KindSession, SessionID: sess.ID, AuthorityFactor: sess.AuthorityCurrent()}, nil
+	return apihost.Principal{ID: sess.Account, Tenant: sess.Tenant.String(), Kind: apihost.KindSession, SessionID: sess.ID, AuthorityFactor: sess.AuthorityCurrent(), CSRF: CSRFValue(tok)}, nil
 }
 
 // CheckCSRF compares the X-CSRF-Token header with the value derived from the request's own session
@@ -258,4 +259,26 @@ func (c WebAuthnCookies) VerifyWebAuthnCookie(ctx context.Context, pendingCookie
 		return authn.CreateResult{}, nil, err
 	}
 	return res, []string{SessionCookie(res.Token, time.Until(res.Session.AbsoluteExpiry)).String(), ClearPendingCookie().String()}, nil
+}
+
+// PasswordBeginner is what PasswordCookies needs of authn.LocalCredentials.
+type PasswordBeginner interface {
+	BeginPassword(ctx context.Context, username string, password secret.Secret, from netip.Addr) (authn.PendingHandle, error)
+}
+
+var _ PasswordBeginner = (*authn.LocalCredentials)(nil)
+
+// PasswordCookies adapts a PasswordBeginner to authn.PasswordCookieBeginner, the shape authn.Handlers
+// takes: the pending cookie's attributes live here with the others.
+type PasswordCookies struct{ Factor PasswordBeginner }
+
+var _ authn.PasswordCookieBeginner = PasswordCookies{}
+
+// BeginPasswordCookie runs AN-8 and returns the one Set-Cookie line, the pending cookie.
+func (c PasswordCookies) BeginPasswordCookie(ctx context.Context, username string, password secret.Secret, from netip.Addr) (string, error) {
+	h, err := c.Factor.BeginPassword(ctx, username, password, from)
+	if err != nil {
+		return "", err
+	}
+	return PendingCookie(h).String(), nil
 }

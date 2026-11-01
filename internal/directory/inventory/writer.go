@@ -348,9 +348,14 @@ func setEdge(ctx context.Context, tx store.Tx, attr string, connection Connectio
 	if err := requireTenant(ctx, tx); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO public.links (tenant_id, connection_id, source_guid, link_attr, target_guid, state, observed_at)
-		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $5, $3::uuid, 'active', $4)
-		ON CONFLICT (tenant_id, connection_id, source_guid, link_attr, target_guid) DO UPDATE SET state = 'active', observed_at = EXCLUDED.observed_at`,
+	// The group is marked dirty in the same statement: its closure rows are stale until RefreshClosure.
+	_, err := tx.Exec(ctx, `WITH edge AS (
+			INSERT INTO public.links (tenant_id, connection_id, source_guid, link_attr, target_guid, state, observed_at)
+			VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $5, $3::uuid, 'active', $4)
+			ON CONFLICT (tenant_id, connection_id, source_guid, link_attr, target_guid) DO UPDATE SET state = 'active', observed_at = EXCLUDED.observed_at
+			RETURNING tenant_id, connection_id, source_guid)
+		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
 		string(connection), string(group), string(member), observed.UTC(), attr)
 	if err != nil {
 		return writeErr("set "+attr, err)
@@ -365,9 +370,13 @@ func removeEdge(ctx context.Context, tx store.Tx, attr string, connection Connec
 	if err := requireTenant(ctx, tx); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE public.links SET state = 'removed', observed_at = $4
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-		AND source_guid = $2::uuid AND link_attr = $5 AND target_guid = $3::uuid`,
+	_, err := tx.Exec(ctx, `WITH edge AS (
+			UPDATE public.links SET state = 'removed', observed_at = $4
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
+			AND source_guid = $2::uuid AND link_attr = $5 AND target_guid = $3::uuid
+			RETURNING tenant_id, connection_id, source_guid)
+		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
 		string(connection), string(group), string(member), observed.UTC(), attr)
 	if err != nil {
 		return writeErr("remove "+attr, err)
@@ -405,39 +414,64 @@ func (Writer) RecordLiveFacts(ctx context.Context, tx store.Tx, ref Ref, tier0 b
 	if future {
 		return 0, fmt.Errorf("%w: read time is in the future", ErrInvalid)
 	}
+	conn, obj := string(ref.Connection), string(ref.Object)
+	type rowScanner interface{ Scan(dest ...any) error }
+	sides := []struct {
+		missing func() rowScanner
+		update  func() (int64, error)
+	}{
+		{
+			func() rowScanner { return tx.QueryRow(ctx, adLiveFactsMissing, conn, obj) },
+			func() (int64, error) {
+				tag, err := tx.Exec(ctx, adLiveFactsUpdate, conn, obj, tier0, readAt.UTC())
+				return tag.RowsAffected(), err
+			},
+		},
+		{
+			func() rowScanner { return tx.QueryRow(ctx, entraLiveFactsMissing, conn, obj) },
+			func() (int64, error) {
+				tag, err := tx.Exec(ctx, entraLiveFactsUpdate, conn, obj, tier0, readAt.UTC())
+				return tag.RowsAffected(), err
+			},
+		},
+	}
 	n := 0
-	for _, q := range []struct{ update, missing string }{
-		{`UPDATE public.correlations SET ad_tier0 = $3, ad_tier0_bases = CASE WHEN $3 THEN ad_tier0_bases ELSE '{}' END,
-			ad_facts_as_of = GREATEST(COALESCE(ad_facts_as_of, facts_as_of, $4), $4), updated_at = now()
-			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-			AND ad_connection_id = $1::uuid AND ad_object_guid = $2::uuid AND state <> 'removed'
-			AND (NOT $3 OR cardinality(ad_tier0_bases) > 0)`,
-			`SELECT count(*) FROM public.correlations
-			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-			AND ad_connection_id = $1::uuid AND ad_object_guid = $2::uuid AND state <> 'removed' AND cardinality(ad_tier0_bases) = 0`},
-		{`UPDATE public.correlations SET entra_tier0 = $3, entra_tier0_bases = CASE WHEN $3 THEN entra_tier0_bases ELSE '{}' END,
-			entra_facts_as_of = GREATEST(COALESCE(entra_facts_as_of, facts_as_of, $4), $4), updated_at = now()
-			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-			AND entra_connection_id = $1::uuid AND entra_object_guid = $2::uuid AND state <> 'removed'
-			AND (NOT $3 OR cardinality(entra_tier0_bases) > 0)`,
-			`SELECT count(*) FROM public.correlations
-			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
-			AND entra_connection_id = $1::uuid AND entra_object_guid = $2::uuid AND state <> 'removed' AND cardinality(entra_tier0_bases) = 0`},
-	} {
+	for _, side := range sides {
 		if tier0 { // checked first so that nothing is written when a basis is missing
 			var missing int
-			if err := tx.QueryRow(ctx, q.missing, string(ref.Connection), string(ref.Object)).Scan(&missing); err != nil {
+			if err := side.missing().Scan(&missing); err != nil {
 				return 0, writeErr("record live facts", err)
 			}
 			if missing > 0 {
 				return 0, ErrBasisUnknown
 			}
 		}
-		tag, err := tx.Exec(ctx, q.update, string(ref.Connection), string(ref.Object), tier0, readAt.UTC())
+		rows, err := side.update()
 		if err != nil {
 			return 0, writeErr("record live facts", err)
 		}
-		n += int(tag.RowsAffected())
+		n += int(rows)
 	}
 	return n, nil
 }
+
+// The four statements of RecordLiveFacts are constants (safe-primitives §7): the AD and Entra sides differ
+// only in column names, so each is written out rather than assembled.
+const (
+	adLiveFactsUpdate = `UPDATE public.correlations SET ad_tier0 = $3, ad_tier0_bases = CASE WHEN $3 THEN ad_tier0_bases ELSE '{}' END,
+			ad_facts_as_of = GREATEST(COALESCE(ad_facts_as_of, facts_as_of, $4), $4), updated_at = now()
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+			AND ad_connection_id = $1::uuid AND ad_object_guid = $2::uuid AND state <> 'removed'
+			AND (NOT $3 OR cardinality(ad_tier0_bases) > 0)`
+	adLiveFactsMissing = `SELECT count(*) FROM public.correlations
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+			AND ad_connection_id = $1::uuid AND ad_object_guid = $2::uuid AND state <> 'removed' AND cardinality(ad_tier0_bases) = 0`
+	entraLiveFactsUpdate = `UPDATE public.correlations SET entra_tier0 = $3, entra_tier0_bases = CASE WHEN $3 THEN entra_tier0_bases ELSE '{}' END,
+			entra_facts_as_of = GREATEST(COALESCE(entra_facts_as_of, facts_as_of, $4), $4), updated_at = now()
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+			AND entra_connection_id = $1::uuid AND entra_object_guid = $2::uuid AND state <> 'removed'
+			AND (NOT $3 OR cardinality(entra_tier0_bases) > 0)`
+	entraLiveFactsMissing = `SELECT count(*) FROM public.correlations
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
+			AND entra_connection_id = $1::uuid AND entra_object_guid = $2::uuid AND state <> 'removed' AND cardinality(entra_tier0_bases) = 0`
+)

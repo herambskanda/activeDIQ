@@ -16,10 +16,10 @@ func buildAPI(cfg config.Config, lim apihost.Limiter, tags ...apihost.TagHandler
 	if err != nil {
 		return nil, fmt.Errorf("server: api policy: %w", err)
 	}
-	return buildAPIPortsWith(cfg, policy, failClosedPorts(lim), tags...)
+	return buildAPIPortsWith(cfg, policy, permissionCatalogue(), failClosedPorts(lim), tags...)
 }
 
 // buildAPIWith is buildAPI over a given policy; tests use it to prove the router follows policy.yaml.
 func buildAPIWith(cfg config.Config, policy apihost.Policy, lim apihost.Limiter, tags ...apihost.TagHandlers) (http.Handler, error) {
-	return buildAPIPortsWith(cfg, policy, failClosedPorts(lim), tags...)
+	return buildAPIPortsWith(cfg, policy, permissionCatalogue(), failClosedPorts(lim), tags...)
 }

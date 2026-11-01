@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Build the DC agent MSI on the lab DC and run lab/windows/guest/agent-verify.ps1 against it (T-0648).
+
+Cross-builds activediq-agent.exe and agentsetup.exe with the pinned Go toolchain, copies them, the
+.wxs and the guest script to C:\\lab\\build on the DC over WinRM (HTTP/5985, NTLM, lab network only),
+builds the MSI there with WiX, runs the cases, and writes the CASE lines to the log path given with
+--log. Needs: pip install pywinrm requests-ntlm. Credentials come from the gitignored lab env file
+(WIN_LAB_ENV, default lab/windows/.win-lab.env in the main checkout) and are never printed.
+The whole run holds the dc1 lock (lab/windows/bin/with-dc1-lock, T-0839).
+Runbook: knowledge/development/runbooks/windows-lab.md sections 10 and 13.
+"""
+import argparse, base64, hashlib, os, subprocess, sys, tempfile, time
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+# dc1 is shared by many tickets and this run reboots/installs/clears logs on it: hold the dc1 lock for the
+# whole run (T-0839, runbook section 10). Re-exec under the wrapper; the nested copy sees DIQ_DC1_LOCK_HELD.
+if not os.environ.get("DIQ_DC1_LOCK_HELD"):
+    os.execv(os.path.join(REPO, "lab", "windows", "bin", "with-dc1-lock"),
+             ["with-dc1-lock", "--", sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
+print(f"agent-verify: dc1 lock held (pid {os.environ['DIQ_DC1_LOCK_HELD']}, waited {os.environ.get('DIQ_DC1_LOCK_WAITED', '0')}s)",
+      file=sys.stderr)
+
+try:
+    from winrm.protocol import Protocol
+except ImportError:
+    sys.exit("agent-verify: pip install pywinrm requests-ntlm")
+
+WIX = "5.0.2"  # pinned; licence MS-RL, build tool only (licence register)
+DOTNET_CHANNEL = "8.0"
+
+
+def load_env():
+    env = dict(os.environ)
+    path = env.get("WIN_LAB_ENV") or os.path.join(REPO, "lab", "windows", ".win-lab.env")
+    if not os.path.exists(path):
+        sys.exit(f"agent-verify: lab env file not found: {path} (set WIN_LAB_ENV; runbook section 10)")
+    for line in open(path):
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            env.setdefault(k, v.strip().strip('"'))
+    return env
+
+
+class DC:
+    def __init__(self, addr, password):
+        self.p = Protocol(endpoint=f"http://{addr}:5985/wsman", transport="ntlm", username="Administrator",
+                          password=password, read_timeout_sec=900, operation_timeout_sec=800)
+
+    def ps(self, script):
+        sh = self.p.open_shell()
+        enc = base64.b64encode(script.encode("utf-16le")).decode()
+        cid = self.p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", enc])
+        out, err, rc = self.p.get_command_output(sh, cid)
+        self.p.cleanup_command(sh, cid)
+        self.p.close_shell(sh)
+        return rc, out.decode(errors="replace")
+
+    def put(self, src, dst):
+        data = open(src, "rb").read()
+        sh = self.p.open_shell()
+        ps = (f"$o=[IO.File]::Create('{dst}');$i=[Console]::OpenStandardInput();$b=New-Object byte[] 65536;"
+              "while(($n=$i.Read($b,0,$b.Length)) -gt 0){$o.Write($b,0,$n)};$o.Close()")
+        cid = self.p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand",
+                                                    base64.b64encode(ps.encode("utf-16le")).decode()])
+        for i in range(0, len(data), 32000):
+            self.p.send_command_input(sh, cid, data[i:i + 32000])
+        self.p.send_command_input(sh, cid, b"", end=True)
+        self.p.get_command_output(sh, cid)
+        self.p.cleanup_command(sh, cid)
+        self.p.close_shell(sh)
+        rc, out = self.ps(f"(Get-FileHash '{dst}').Hash")
+        want = hashlib.sha256(data).hexdigest().upper()
+        if want not in out:
+            sys.exit(f"agent-verify: upload of {os.path.basename(src)} corrupted (sha256 mismatch)")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--log", required=True, help="where to write the run log")
+    ap.add_argument("--version", default="0.0.1")
+    a = ap.parse_args()
+    env = load_env()
+    dc = DC(env.get("WIN_LAB_DC_ADDR", "192.168.1.9"), env["WIN_LAB_ADMIN_PASSWORD"])
+    work = tempfile.mkdtemp(prefix="agent-verify-")
+    genv = dict(os.environ, GOOS="windows", GOARCH="amd64", CGO_ENABLED="0")
+    for name, pkg in (("activediq-agent.exe", "./cmd/agent"), ("agentsetup.exe", "./cmd/agentsetup")):
+        subprocess.check_call(["go", "build", "-trimpath", "-buildvcs=false", "-o", os.path.join(work, name), pkg],
+                              cwd=REPO, env=genv)
+    rc, out = dc.ps(f"""
+$ProgressPreference='SilentlyContinue'
+New-Item -ItemType Directory -Force C:\\lab\\tools,C:\\lab\\build | Out-Null
+if(-not (Test-Path C:\\lab\\tools\\dotnet\\dotnet.exe)){{
+ Invoke-WebRequest https://dot.net/v1/dotnet-install.ps1 -OutFile C:\\lab\\tools\\dotnet-install.ps1 -UseBasicParsing
+ & C:\\lab\\tools\\dotnet-install.ps1 -Channel {DOTNET_CHANNEL} -InstallDir C:\\lab\\tools\\dotnet | Out-Null }}
+$env:DOTNET_ROOT='C:\\lab\\tools\\dotnet'; $env:DOTNET_CLI_TELEMETRY_OPTOUT=1
+if(-not (Test-Path C:\\lab\\tools\\wix\\wix.exe)){{ & C:\\lab\\tools\\dotnet\\dotnet.exe tool install wix --version {WIX} --tool-path C:\\lab\\tools\\wix | Out-Null }}
+& C:\\lab\\tools\\wix\\wix.exe extension add -g WixToolset.Util.wixext/{WIX} 2>&1 | Out-Null
+'tools ok'""")
+    print(out.strip().splitlines()[-1] if out.strip() else "no output", file=sys.stderr)
+    subprocess.check_call(["go", "test", "-c", "-tags", "windowslab", "-o", os.path.join(work, "agent.test.exe"),
+                           "./internal/platform/agent"], cwd=REPO, env=genv)
+    for name in ("activediq-agent.exe", "agentsetup.exe", "agent.test.exe"):
+        dc.put(os.path.join(work, name), f"C:\\lab\\build\\{name}")
+    dc.put(os.path.join(REPO, "packaging", "windows", "agent", "Agent.wxs"), "C:\\lab\\build\\Agent.wxs")
+    dc.put(os.path.join(REPO, "lab", "windows", "guest", "agent-verify.ps1"), "C:\\lab\\build\\agent-verify.ps1")
+    rc, out = dc.ps(f"""
+$env:DOTNET_ROOT='C:\\lab\\tools\\dotnet'; $env:PATH='C:\\lab\\tools\\dotnet;'+$env:PATH; cd C:\\lab\\build
+& C:\\lab\\tools\\wix\\wix.exe build Agent.wxs -ext WixToolset.Util.wixext -d Version={a.version} -d AgentExe=C:\\lab\\build\\activediq-agent.exe -d SetupExe=C:\\lab\\build\\agentsetup.exe -arch x64 -o activediq-agent-{a.version}.msi 2>&1
+"msi sha256 " + (Get-FileHash activediq-agent-{a.version}.msi).Hash""")
+    print(out.strip(), file=sys.stderr)
+    hashes = "\n".join(f"sha256 {hashlib.sha256(open(os.path.join(work, n), 'rb').read()).hexdigest()} {n}"
+                       for n in ("activediq-agent.exe", "agentsetup.exe"))
+    # Detached on the DC with its own log, polled here: a long run must not depend on one WinRM call.
+    dc.ps("Remove-Item C:\\lab\\out\\run.log,C:\\lab\\out\\run.done -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force C:\\lab\\out | Out-Null; "
+          "Start-Process powershell -WindowStyle Hidden -RedirectStandardOutput C:\\lab\\out\\launch.out -RedirectStandardError C:\\lab\\out\\launch.err -ArgumentList '-NoProfile','-Command',"
+          f"\"& C:\\lab\\build\\agent-verify.ps1 -Version {a.version} *>&1 | Out-File -Encoding utf8 -Width 400 C:\\lab\\out\\run.log; 'done' | Set-Content C:\\lab\\out\\run.done\"")
+    out = ""
+    for _ in range(360):  # up to 30 minutes
+        time.sleep(5)
+        rc, done = dc.ps("Test-Path C:\\lab\\out\\run.done")
+        if "True" in done:
+            break
+    rc, out = dc.ps("Get-Content C:\\lab\\out\\run.log -Raw")
+    out = "\n".join(l for l in out.splitlines() if not l.startswith("#< CLIXML") and not l.startswith("<Objs"))
+    lock = f"dc1 lock held by pid {os.environ['DIQ_DC1_LOCK_HELD']} for the whole run, waited {os.environ.get('DIQ_DC1_LOCK_WAITED', '0')}s"
+    open(a.log, "w").write(lock + "\n" + hashes + "\n" + out + "\n")
+    print(out)
+    sys.exit(0 if "SUMMARY failures=0" in out else 1)
+
+
+main()

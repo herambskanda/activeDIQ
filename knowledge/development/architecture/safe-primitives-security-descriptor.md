@@ -1,11 +1,11 @@
 ---
 title: "Safe primitive P6: the typed security-descriptor model (MS-DTYP SD/ACL), SD_FLAGS and diff-based DACL edits"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-31
 status: review
 owner: heramb
 ticket: T-0028
-implemented: "read half (T-0149) and write half (T-0583): internal/directory/sd, corpus units sd.read and sd.write"
+implemented: "read half (T-0149), write half (T-0583), password-change classifier (T-1019): internal/directory/sd, corpus units sd.read and sd.write"
 sources_last_checked: 2026-10-02
 ---
 
@@ -207,10 +207,10 @@ Rules the sketch encodes:
 - **SD-R4 Writes are DACL-only, by construction.** `DACLWrite.Control()` is `Parts{DACL}` (`30 03 02 01 04`), critical, and `Value()` zeroes the other offsets even though the server ignores them (6.1.3.2). Critical so that a server that does not understand the control fails instead of treating the value as flags 15. No API writes owner, group or SACL in this revision (owner/group/SACL writes need their own spec; SACL is Tier-0).
 - **SD-R5 Edits are diffs.** Callers state ACEs to add and ACEs to remove (identified by index **and** a digest of the ACE bytes, so a stale index cannot remove a different ACE). They never submit a whole DACL, and never submit a DACL built from another object's SD. The plan includes a before/after of the changed effective rights so the UI and audit can show what the edit does.
 - **SD-R6 Inherited ACEs are read-only.** An ACE with INHERITED (0x10) cannot be removed or modified: the DC recomputes inheritance from the parent, so the edit is either overwritten or leaves an explicit duplicate. Change the grant on the parent, or use `PlanInheritance`. New ACEs must not carry INHERITED.
-- **SD-R7 Inheritance flags are not editable by diff.** `PD` (protected) and `DI` (auto-inherited) are copied from the base SD unchanged. `PlanInheritance` is the only way to flip `PD`; it is a separate operation class for approvals, and "break inheritance, keep copies" and "break inheritance, remove inherited" are different, explicit options. Whether the DC keeps INHERITED markers when a client writes a DACL without `DI` is `[UNVERIFIED]` (Samba is known to strip `ACE_INHERITED` when `SEC_DESC_DACL_AUTO_INHERITED` is absent, per [this Samba/ixsystems note](https://jira.ixsystems.com/browse/NAS-109277), doc+blog; Windows unknown), hence "copy, don't compute".
+- **SD-R7 Inheritance flags are not editable by diff.** `PD` (protected) and `DI` (auto-inherited) are copied from the base SD unchanged. `PlanInheritance` is the only way to flip `PD`; it is a separate operation class for approvals, and "break inheritance, keep copies" and "break inheritance, remove inherited" are different, explicit options. Whether the DC keeps INHERITED markers when a client writes a DACL without `DI` is `[UNVERIFIED]` (Samba is known to strip `ACE_INHERITED` when `SEC_DESC_DACL_AUTO_INHERITED` is absent, per [this Samba/ixsystems note](https://jira.ixsystems.com/browse/NAS-109277), doc+blog; Windows unknown), hence "copy, don't compute". **Preview == stored (T-0728):** a Windows DC stores a DACL in canonical order (explicit before inherited, denies before allows), so `PlanInheritance` refuses a plan whose list would violate rule 1 or 2 (typically "keep inherited" turning an inherited deny into an explicit one behind an explicit allow) with `sd.plan_non_canonical` and the violations in `Plan.NonCanonicalResult`. With `PlanOpts{Normalize: true}` the plan is the canonical order itself, with `Moves` and the per-trustee `Changes` for the admin to confirm. A planned order that needs no re-sort is therefore what the DC stores for rules 1-2; rules 3-4 and tie order are the DC's (VerifyAfter ignores position).
 - **SD-R8 Canonical position on insert, never silent reorder of existing ACEs.** `PlanDACL` inserts a new ACE at its canonical position and leaves every existing ACE where it is. Position: explicit run before the inherited run; within the explicit run, denies before allows (a new deny goes after the last explicit deny, a new allow after the last explicit allow); within that run a whole-object ACE goes before the first object-scoped ACE of the same type if one exists, else at the end of the run. The base DACL need **not** satisfy rules 3-4 (§1: cosmetic; Microsoft's own User default does not). If the base violates an **outcome-changing** rule (1 or 2) it returns `sd.base_non_canonical`; the caller may pass `Normalize` explicitly, which reports the effective-rights change the reorder causes, and is audited as its own action. `Normalize` fixes rules 1-2 only and never touches 3-4.
 - **SD-R9 Gating anomalies make a DACL viewable, not editable.** See §4. `acl.order_cosmetic` is a Note, not an anomaly, and does not gate.
-- **SD-R10 Verify after write.** After the modify the connector re-reads the DACL and compares with the plan, tolerating only the documented server transformations. Mismatch ⇒ audit the actual state, raise `sd.write_diverged`, no automatic retry. There is no compare-and-swap on a single-valued attribute known to us: a concurrent writer between read and write is lost (last writer wins), so the base-digest check (`sd.stale_base`) immediately before the write narrows the window but does not close it. A delete-old-value/add-new-value modify as an atomic compare is **`[UNVERIFIED]`**: test on Windows before relying on it.
+- **SD-R10 Verify after write.** After the modify the connector re-reads the DACL and compares with the plan with `DACLWrite.VerifyAfter`: ACE multiset (bytes) and PD must match, and **position is not compared** — a Windows DC re-sorts a DACL on write (T-0606/T-0627); a reorder is accepted unless it inverts an allow/deny pair with overlapping masks (trustees and object GUIDs are *not* used to prove a pair disjoint — a property-set and an attribute GUID interact and no catalog is available here — so it fails closed) or a conditional/unknown ACE. **Status: `VerifyAfter` is called from `write.ApplyDACL` (T-0726) after a DACL-only read-back from the same DC; production `WriteOp` wiring is still pending; Windows read-back behaviour rests on T-0606.** DI is the DC's to recompute. Mismatch ⇒ audit the actual state, raise `sd.write_diverged`, no automatic retry. There is no compare-and-swap on a single-valued attribute known to us: a concurrent writer between read and write is lost (last writer wins), so the base-digest check (`sd.stale_base`) immediately before the write narrows the window but does not close it. A delete-old-value/add-new-value modify as an atomic compare is **`[UNVERIFIED]`**: test on Windows before relying on it.
 - **SD-R11 Effective-rights helper is three-valued and conservative.** Inputs are SID sets from the DC (`tokenGroups` + user SID; `tokenGroups` includes the primary group), never names. Evaluation is in **stored ACE order**, skipping INHERIT_ONLY ACEs for the object itself, object ACEs whose `ObjectType` does not match the asked right (exact-match skipping is correct only for ControlAccess, ValidatedWrite and Class asks; for an Attribute ask a held ACE with a different ObjectType that meets RP/WP makes the answer `Unknown`/`property_set_unresolved` until a RightsCatalog can show the GUID is not the attribute's `attributeSecurityGUID`), and ACEs whose trustee is not in the set; first match decides per bit. `InheritedObjectType` is ignored at evaluation (it only gates propagation; whether an inherited copy keeps the GUID is `[UNVERIFIED]`). `Unknown` for: callback ACEs, `SELF` (S-1-5-10) without a `SelfSID`, owner-implicit rights when the DACL holds an ACE for the owner SID (MS-DTYP 2.5.3.2 grants the implicit READ_CONTROL/WRITE_DAC only if it does not), an OWNER RIGHTS ACE exists, or the block-implicit-rights heuristic may apply, mandatory-label/claims. **Consumers that guard (T-0053) treat `Unknown` as `Yes`.** NULL DACL ⇒ Yes for every bit; empty DACL ⇒ No (plus implicit owner READ_CONTROL/WRITE_DAC ⇒ Unknown/Yes for those two). The DC's own answers (`allowedAttributesEffective`, `allowedChildClassesEffective`, `sDRightsEffective`, a bind as the identity) remain authoritative for *the connector's own* rights; the helper exists for third parties and for "who can do what" reports, and reports must show the source ACE so an admin can disprove it in ADUC's Effective Access in thirty seconds (feasibility row: "Must match Windows 'Effective Access'").
 
 ### Constants (provisional until load tests; R5)
@@ -490,4 +490,53 @@ Files `write.go` (types, codes, digests), `plan.go` (planners); corpus `testdata
 - Self-lockout: `Grants(connector, WRITE_DAC)` before and after; a definite No is `sd.self_lockout`; owners answer Unknown, so when the connector's WRITE_DAC is only the owner's implicit right, a DACL that names the owner or OWNER RIGHTS also refuses unless an explicit route remains (MS-DTYP 2.5.3.2). The check keys on the connector holding the owner SID (directly or via a group), not on the Grants reason text, so a base that already has an owner ACE is covered (SD-W23, W25; SD-W24 passes with an explicit route). Inherit-only OWNER RIGHTS/owner ACEs count too (MS-DTYP 2.5.3.2 skips INHERIT_ONLY only in the DACL walk, not in the owner clause): SD-W26, W27 refuse, SD-W28 passes with a route. An OWNER RIGHTS ACE that itself grants WRITE_DAC is not credited as a route, so that edit is refused (fails closed).
 - PD changes only through `PlanInheritance` (BlockKeepInherited, BlockRemoveInherited, RestoreInheritance); a diff whose WantControl differs in PD/DI is refused.
 - SDProp: `ObjectCtx.ProtectedBySDProp` is caller-supplied (from the computed protected set); the planner only refuses (`sd.sdprop_will_revert`).
-- **Windows-lab status (T-0606, 2026-10-28, WS2025):** SDProp revert, PD-clear recompute, INHERITED/DI survival and DACL-only write without SeSecurityPrivilege hold; the DC re-sorts the DACL on write (T-0627, SD-W10); inherit-only OWNER RIGHTS/owner ACEs do not strip the owner's WRITE_DAC (T-0628). Details: `runbooks/windows-lab-runs/sdwrite-assumptions-20261028.md`.
+- **Windows-lab status (T-0606, 2026-10-28, WS2025):** SDProp revert, PD-clear recompute, INHERITED/DI survival and DACL-only write without SeSecurityPrivilege hold; the DC re-sorts the DACL on write (T-0627/T-0728: SD-W10 is now refused as non-canonical, SD-W10N is the canonical plan; verify-after-write is `DACLWrite.VerifyAfter`, never positional); inherit-only OWNER RIGHTS/owner ACEs do not strip the owner's WRITE_DAC on WS2025 — SD-W26/W27 stay fail-closed by decision (T-0628): one DC build, Samba unverified, and a false refusal costs an operator a retry whereas a false allow can lock the connector out of an object. Their corpus `source` records this; `verified` stays `doc` because the lab disproved, not confirmed, the expectation. Narrow only with a multi-version lab run (WS2019/2022 + Samba) and security-architect sign-off. Details: `runbooks/windows-lab-runs/sdwrite-assumptions-20261028.md`.
+
+## 14. Implementation notes (T-1019, Cannot Change Password read)
+
+`internal/directory/sd/passwordchange.go`: `ClassifyPasswordChange(Raw)` and `SD.PasswordChange()` return the
+four-valued `PasswordChange` (`Blocked`, `BlockedOneACE`, `NoDenyACE`, `NotConfirmed`; reports-2-second-slice
+§4.2 rule 1). The zero value is `NotConfirmed`. It reads the decoded DACL only; no byte slicing, no SACL.
+
+- A counted ACE is an object-form deny (type 0x06) with the CONTROL_ACCESS bit, object type exactly
+  `ab721a53-1e2f-11d0-9819-00aa0040529b` (User-Change-Password), trustee Everyone (`S-1-1-0`) or SELF
+  (`S-1-5-10`), **not** INHERITED, **not** INHERIT_ONLY, no inherited-object type. Callback ACEs, plain
+  (non-object) denies of all control rights, inherited denies and allows are not counted, so `NoDenyACE`
+  never means "can change". The same trustee twice is one ACE.
+- **Order matters (security-architect finding, T-1019).** Windows evaluates ACEs in stored order (SD-R11), so an
+  allow stored before a counted deny can let the user change the password. A DACL with an outcome-changing
+  ordering anomaly (`acl.order_outcome`, rules 1 and 2: an explicit ACE after an inherited one, a deny after an
+  allow) is `NotConfirmed` with that code, never `Blocked`/`BlockedOneACE`/`NoDenyACE`. So is a conditional
+  allow (types 0x09/0x0B, not INHERIT_ONLY) stored ahead of a counted deny (`ace.callback_present`): its
+  condition is never evaluated. Only canonical DACLs (denies, then allows, explicit before inherited) classify.
+  Windows DCs re-sort on write (T-0606), but legacy and migrated objects can be non-canonical.
+  Other decode anomalies are tolerated, one line each: `ace.opaque` (unknown type: AccessCheck skips ACE types
+  it does not know, so it cannot grant); `ace.misplaced_type` (an audit/alarm-typed ACE in a DACL, or the reverse:
+  not an allow/deny, no effect on access); `ace.callback_present` on a deny-callback or after the counted denies
+  (a deny can only restrict; after the denies its position cannot override them); `ace.unknown_flags`,
+  `acl.zero_slack`, `acl.sbz_nonzero`, `sd.rm_bits_set`, `sd.null_dacl` (layout oddities with no effect on
+  who is allowed).
+- Any `Decode` error returns `NotConfirmed` and the typed code unchanged; a descriptor with no DACL at all
+  (the DC withheld it) is `sd.not_returned`; a NULL DACL is a real DACL with no ACEs (`NoDenyACE`). The
+  state is never non-zero next to an error (`TestClassifyPasswordChangeNoPartialValue` flips every byte).
+- Connector: `ad.Session.ReadPasswordChange(ctx, ref)` = `ReadDACL` (DACL-only critical SD_FLAGS, SACL
+  refused, same DC) + classify, returning the `objectGUID` the state belongs to. It is a per-object base
+  read: `nTSecurityDescriptor` is Read-only in the schema allowlist, so no paged search carries it.
+- The UAC "password cannot change" bit is never consulted (AD ignores it).
+- Tests: `passwordchange_test.go` (golden cases from an independent byte builder), `sdwrite_test.go`
+  (`TestReadPasswordChange`, fake upstream), `sdpwchange_lab_test.go` (Samba; writes the denies through
+  PlanDACL/WriteDACL). Samba does not prove the ACE shape the Windows tools write (flags, ordering): a
+  Windows-lab ticket covers that.
+
+**S1 (does DirSync deliver `nTSecurityDescriptor` changes?), ad-expert consult, T-1019 — `[UNVERIFIED]`, Windows lab
+needed.** By inference from the documented DirSync model (an attribute named in the request list that was modified
+since the cookie makes the object appear; [MS-ADTS DirSync](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/2213a7f2-0a36-483c-b2a4-8574d53aa1e3),
+[polling with DirSync](https://learn.microsoft.com/en-us/windows/win32/ad/polling-for-changes-using-the-dirsync-control)),
+an *explicit* ACL edit on a user appears in the next delta when `nTSecurityDescriptor` is requested; no document
+singles the attribute out (medium confidence). Not settled: whether DirSync honours the SD_FLAGS control; whether
+the attribute needs Replicating Directory Changes (All). Inheritance propagation (the SD propagator) is not
+replicated and does not modify replication metadata
+([MS-ADTS](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/05c8a4b6-43aa-49f7-8c31-df3ac72230f3)),
+so a user's *effective* ACL can change with no delta. Consequence for PWD-04 (reports-2 §4.2 rule 5): the column is
+labelled with the full-sync age, not the delta age, until the Windows lab proves otherwise. `uSNChanged` polling sees
+originating writes only. Samba's DirSync/propagation behaviour is not evidence for any of this.

@@ -18,6 +18,7 @@
 -- affinity, sync attribute set, takeover attestation, last_verification_id's DM-24 foreign key)
 -- arrive with the tickets that write them.
 
+-- write-class: connections config
 CREATE TABLE public.connections (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

@@ -50,7 +50,8 @@ func parse(b []byte) ([]field, []string) {
 	return fs, errs
 }
 
-// Check validates security.txt and SECURITY.md under root at time now and returns violations.
+// Check validates security.txt, SECURITY.md and the published advisories under root at time now
+// and returns violations.
 func Check(root string, now time.Time) []string {
 	var v []string
 	txt, err := os.ReadFile(filepath.Join(root, securityTxtPath))
@@ -119,5 +120,5 @@ func Check(root string, now time.Time) []string {
 			v = append(v, fmt.Sprintf("%s:%d: Policy %q does not point at %s", securityTxtPath, p.line, p.value, securityMdPath))
 		}
 	}
-	return v
+	return append(v, CheckAdvisories(root)...)
 }

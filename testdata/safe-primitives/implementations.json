@@ -10,6 +10,15 @@
       "package": "internal/directory/ldapfilter"
     },
     {
+      "name": "go/dn",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "dn"
+      ],
+      "package": "internal/directory/dn"
+    },
+    {
       "name": "go/odata",
       "language": "go",
       "tier": "S",
@@ -89,13 +98,16 @@
       ]
     },
     {
-      "name": "go/httpx",
+      "name": "go/html",
       "language": "go",
       "tier": "S",
       "units": [
         "html"
       ],
-      "package": "internal/platform/httpx"
+      "package": "internal/platform/htmlx",
+      "covers": [
+        "internal/platform/httpx"
+      ]
     },
     {
       "name": "go/sd",
@@ -106,6 +118,51 @@
         "sd.write"
       ],
       "package": "internal/directory/sd"
+    },
+    {
+      "name": "go/csv",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "csv"
+      ],
+      "package": "internal/platform/export/csv"
+    },
+    {
+      "name": "go/xlsx",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "xlsx"
+      ],
+      "package": "internal/platform/export/xlsx"
+    },
+    {
+      "name": "go/cellsafe",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "cellsafe"
+      ],
+      "package": "internal/platform/export/cellsafe"
+    },
+    {
+      "name": "go/pdf",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "pdf"
+      ],
+      "package": "internal/platform/export/pdf"
+    },
+    {
+      "name": "go/mail",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "mail"
+      ],
+      "package": "internal/platform/notify/mail"
     }
   ],
   "fuzz": [
@@ -113,6 +170,15 @@
       "implementation": "go/ldapfilter",
       "unit": "ldapfilter",
       "target": "FuzzFilter",
+      "properties": [
+        "roundtrip",
+        "noUnescapedSpecial"
+      ]
+    },
+    {
+      "implementation": "go/dn",
+      "unit": "dn",
+      "target": "FuzzDN",
       "properties": [
         "roundtrip",
         "noUnescapedSpecial"
@@ -193,12 +259,13 @@
       ]
     },
     {
-      "implementation": "go/httpx",
+      "implementation": "go/html",
       "unit": "html",
       "target": "FuzzAttachment",
       "properties": [
         "independentParse"
-      ]
+      ],
+      "package": "internal/platform/httpx"
     },
     {
       "implementation": "go/sd",
@@ -218,6 +285,55 @@
         "decodeRoundTrip",
         "daclOnly",
         "noPanic"
+      ]
+    },
+    {
+      "implementation": "go/csv",
+      "unit": "csv",
+      "target": "FuzzRoundTrip",
+      "properties": [
+        "roundtrip",
+        "noFormulaLead"
+      ]
+    },
+    {
+      "implementation": "go/xlsx",
+      "unit": "xlsx",
+      "target": "FuzzAnyTextIsInertString",
+      "properties": [
+        "independentParse"
+      ]
+    },
+    {
+      "implementation": "go/cellsafe",
+      "unit": "cellsafe",
+      "target": "FuzzClassify",
+      "properties": [
+        "noFormulaLead"
+      ]
+    },
+    {
+      "implementation": "go/pdf",
+      "unit": "pdf",
+      "target": "FuzzAnyTextIsInertString",
+      "properties": [
+        "independentParse"
+      ]
+    },
+    {
+      "implementation": "go/mail",
+      "unit": "mail",
+      "target": "FuzzMessage",
+      "properties": [
+        "independentParse"
+      ]
+    },
+    {
+      "implementation": "go/html",
+      "unit": "html",
+      "target": "FuzzAnyTextIsInertString",
+      "properties": [
+        "independentParse"
       ]
     }
   ]

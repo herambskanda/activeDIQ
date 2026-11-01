@@ -12,6 +12,40 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 )
 
+// SearchDirectoryInput is the decoded input of searchDirectory: path, query and header parameters, then the body.
+type SearchDirectoryInput struct {
+	Body DirectorySearchRequest
+}
+
+func (in *SearchDirectoryInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+}
+
+func (in *SearchDirectoryInput) BodyTarget() any { return &in.Body }
+
+func (in *SearchDirectoryInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	in.Body.Validate(jsontext.Pointer(""), errs)
+}
+
+func (in *SearchDirectoryInput) DestroySecrets() {}
+
+// SearchDirectoryOutput is one of the responses searchDirectory declares. Errors are returned as the error value.
+type SearchDirectoryOutput interface {
+	apihost.Response
+	isSearchDirectoryOutput()
+}
+
+// SearchDirectory200 is the 200 response.
+type SearchDirectory200 struct {
+	Body DirectorySearchResult
+}
+
+func (SearchDirectory200) StatusCode() int                    { return 200 }
+func (o SearchDirectory200) ResponseBody() any                { return o.Body }
+func (SearchDirectory200) ResponseHeaders() map[string]string { return nil }
+func (SearchDirectory200) isSearchDirectoryOutput()           {}
+
 // SearchDirectoryUsersInput is the decoded input of searchDirectoryUsers: path, query and header parameters, then the body.
 type SearchDirectoryUsersInput struct {
 	Q     string // query "q"
@@ -86,6 +120,7 @@ func (SearchDirectoryUsers200) isSearchDirectoryUsersOutput()      {}
 // Handlers is the tag's handler interface: one method per operation. A handler never sees
 // *http.Request, http.ResponseWriter or the raw body (ADR-0004 rule 5).
 type Handlers interface {
+	SearchDirectory(ctx context.Context, in SearchDirectoryInput) (SearchDirectoryOutput, error)
 	SearchDirectoryUsers(ctx context.Context, in SearchDirectoryUsersInput) (SearchDirectoryUsersOutput, error)
 }
 
@@ -93,6 +128,22 @@ type Handlers interface {
 // route constructors.
 func Bind(h Handlers) apihost.TagHandlers {
 	return apihost.NewTagHandlers("directory",
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "searchDirectory", Tag: "directory", Method: "POST", Path: "/directory/search",
+			Permission: "directory.read", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 4096, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
+		},
+			func() apihost.Input { return new(SearchDirectoryInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.SearchDirectory(ctx, *in.(*SearchDirectoryInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("SearchDirectory returned no output and no error")
+				}
+				return out, nil
+			}),
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "searchDirectoryUsers", Tag: "directory", Method: "GET", Path: "/directory/users",
 			Permission: "directory.read", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",

@@ -73,6 +73,18 @@ func (s *Session) Search(ctx context.Context, req SearchRequest, fn func(*Entry)
 	if fn == nil {
 		return fail(CodeInvalidArgument, "callback required", nil)
 	}
+	return s.search(ctx, req, func(page []*Entry) error {
+		for _, e := range page {
+			if err := fn(e); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// search validates req and runs the paged loop, handing each page to deliver.
+func (s *Session) search(ctx context.Context, req SearchRequest, deliver func([]*Entry) error) error {
 	scope, ok := req.Scope.ldap()
 	if !ok {
 		return fail(CodeInvalidArgument, "scope", nil)
@@ -100,38 +112,57 @@ func (s *Session) Search(ctx context.Context, req SearchRequest, fn func(*Entry)
 		ps = MaxPageSize
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.conn == nil {
-		return fail(CodeUnreachable, "session closed", nil)
-	}
-	stop := s.watch(ctx, s.conn)
-	defer stop()
+	return s.pages(ctx, base, scope, flt.String(), attrs, ps, deliver)
+}
 
+// SearchPages is Search delivering one whole page at a time. The session lock is NOT held while
+// page runs, so page may call Read and the other session methods (resolving parents, T-0694); the
+// lock is taken only around each page request, so a long page callback does not starve other users
+// of the session. Paging state lives on the DC per search, and AD allows other operations on the
+// connection while a cursor is open.
+func (s *Session) SearchPages(ctx context.Context, req SearchRequest, page func([]*Entry) error) error {
+	if page == nil {
+		return fail(CodeInvalidArgument, "callback required", nil)
+	}
+	return s.search(ctx, req, page)
+}
+
+// pages runs the paged loop. The lock is held only for each round trip, never across deliver.
+func (s *Session) pages(ctx context.Context, base string, scope int, flt string, attrs []string, ps uint32, deliver func([]*Entry) error) error {
+	// one round trip under the lock
+	trip := func(c []byte, size uint32) (*ldap.SearchResult, error) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.conn == nil {
+			return nil, fail(CodeUnreachable, "session closed", nil)
+		}
+		stop := s.watch(ctx, s.conn)
+		defer stop()
+		p := ldap.NewControlPaging(size)
+		p.SetCookie(c)
+		return s.searchOnceLocked(ctx, base, scope, flt, attrs, []ldap.Control{p})
+	}
 	// abandon tells the DC to drop a paging cursor: the same request with page size 0 and the cookie.
 	abandon := func(c []byte) {
-		if len(c) == 0 {
-			return
+		if len(c) != 0 {
+			_, _ = trip(c, 0)
 		}
-		p := ldap.NewControlPaging(0)
-		p.SetCookie(c)
-		_, _ = s.searchOnceLocked(ctx, base, scope, flt.String(), attrs, []ldap.Control{p})
 	}
 	var cookie []byte
 	for {
-		paging := ldap.NewControlPaging(ps)
-		paging.SetCookie(cookie)
-		res, err := s.searchOnceLocked(ctx, base, scope, flt.String(), attrs, []ldap.Control{paging})
+		res, err := trip(cookie, ps)
 		if err != nil {
 			return err
 		}
-		for _, e := range res.Entries {
-			if err := fn(toEntry(e)); err != nil {
-				abandon(pagingCookie(res.Controls))
-				return err
-			}
-		}
 		next := pagingCookie(res.Controls)
+		page := make([]*Entry, len(res.Entries))
+		for i, e := range res.Entries {
+			page[i] = toEntry(e)
+		}
+		if err := deliver(page); err != nil {
+			abandon(next)
+			return err
+		}
 		if len(next) == 0 {
 			return nil
 		}

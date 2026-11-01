@@ -1,0 +1,41 @@
+npm ci --prefix web
+
+added 333 packages, and audited 334 packages in 16s
+
+18 vulnerabilities (17 moderate, 1 high)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.
+npm warn install-scripts 1 package has install scripts not yet covered by allowScripts:
+npm warn install-scripts   esbuild@0.28.2 (postinstall: node install.js)
+npm warn install-scripts
+npm warn install-scripts Run `npm install-scripts ls` to review, or `npm install-scripts approve <pkg>` to allow.
+go run ./tools/fitness/api
+fitness-api A1   layout and sources                 active (bundle staleness is make gen-api-check, not repeated here)
+fitness-api A2   dialect and style                  inactive (owned by tools/gen/api (rejects the dialect, make gen-api-check) and vacuum (make lint-api), both in make ci; fitness-api does not re-run either, so the ADR owner must accept that delegation or ask for a re-run here)
+fitness-api A3   permission                         active (document half: x-permission, anonymous and authenticated rows); inactive part: runtime half: no EP-6 permission catalogue (Registrar and kernel contributions) to check each x-permission against
+fitness-api A4   route set (TM-F-ANON)              active (per profile (windows, linux-oci, saas): apihost.Build, served set against the enabled tags, the anonymous set per hostname binding and on an unbound hostname, and the HTTP probe (401, 403, CSRF)); inactive part: generated api package(s) no module mounts yet: internal/modules/connections/api, internal/modules/delegation/api, internal/modules/directory/api, internal/modules/reports/api, internal/platform/authn/api, internal/platform/health/api, internal/platform/notify/api, internal/platform/setup/api (Registrar.API is not built), so the router the checks build serves no route and they run on fixtures only; no server mounts a route outside the document, so nonApiRoutes is not compared with a served set
+fitness-api A5   generated client                   active (generated types cover every operation, open enums widened with a type-check fixture, web/src/api file set, rule 12 ESLint rule wired; byte-for-byte staleness is make gen-api-check and the rule 12 fire-test is make ci-proof)
+fitness-api A6   generated server                   active (source half: route constructors only in generated files, Registrar.API takes api.Bind, no net/http in handler packages, apihost imports no API-serving kernel package, api packages are generated only; *.gen.go staleness is make gen-api-check)
+fitness-api A7   strict JSON                        active (static half, then per profile over apihost.Build: type closure of Input, body target and observed responses, the generated corpus through the router, and the ajv cross-check on the same bundle); inactive part: secret-buffer zeroing is not observed (apihost has no test-build hook yet); generated api package(s) no module mounts yet: internal/modules/connections/api, internal/modules/delegation/api, internal/modules/directory/api, internal/modules/reports/api, internal/platform/authn/api, internal/platform/health/api, internal/platform/notify/api, internal/platform/setup/api (Registrar.API is not built), so the router the checks build serves no route and they run on fixtures only
+fitness-api A8   secrets out (TM-F-SECRETOUT)       active (linter half); inactive part: runtime half: the canary through every sink (T-0033, T-0034)
+fitness-api A9   tenancy                            inactive (no check in this job by design (ADR-0004): T5 openapi-tenant-param runs in make fitness-tenancy and must itself be active for the ADR to be accepted)
+fitness-api A10  versioning                         active (stability, sunset, and oasdiff of the stable operations against main); inactive part: no release tag (v<major>.<minor>.<patch>) exists yet to diff against; the tag diff starts with the first release
+fitness-api A11  problems                           active
+fitness-api A12  limits                             active
+fitness-api A13  policy hygiene                     active (host bindings are looked up in the apihost table; a route outside the document is matched against the routes the server mounts, once any is mounted; TM- references are shape-checked only (AN-n rows are resolved)); inactive part: no server mounts a route outside the document yet (/healthz, /readyz, the console), so anonymous and nonApiRoutes entries naming one cannot be matched to a served route
+fitness-api A14  responses conform                  active (every route is called through internal/platform/apihost/apitest, which validates each response body with the generated validators; module contract tests use the same harness)
+fitness-api: 12 of 14 checks active (6 of them with an inactive part), 2 INACTIVE: ADR-0004 stays ratified, not accepted, until none is
+internal/platform/report/cell.go:5: [ADR-0004 A7] imports encoding/json (v1): product code uses encoding/json/v2, which rejects invalid UTF-8 and duplicate names by default (ADR-0004 rule 7; lessons.md 2026-10-02)
+internal/platform/report/decode.go:5: [ADR-0004 A7] imports encoding/json (v1): product code uses encoding/json/v2, which rejects invalid UTF-8 and duplicate names by default (ADR-0004 rule 7; lessons.md 2026-10-02)
+internal/platform/report/expr.go:5: [ADR-0004 A7] imports encoding/json (v1): product code uses encoding/json/v2, which rejects invalid UTF-8 and duplicate names by default (ADR-0004 rule 7; lessons.md 2026-10-02)
+internal/platform/report/query.go:5: [ADR-0004 A7] imports encoding/json (v1): product code uses encoding/json/v2, which rejects invalid UTF-8 and duplicate names by default (ADR-0004 rule 7; lessons.md 2026-10-02)
+internal/platform/report/value.go:4: [ADR-0004 A7] imports encoding/json (v1): product code uses encoding/json/v2, which rejects invalid UTF-8 and duplicate names by default (ADR-0004 rule 7; lessons.md 2026-10-02)
+fitness-api: 5 violation(s)
+exit status 1
+make: *** [tools/ci/ci.mk:95: fitness-api] Error 1

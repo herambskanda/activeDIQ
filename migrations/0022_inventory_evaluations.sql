@@ -8,6 +8,7 @@
 -- (usually its start), never its completion time. It only moves forward (a stale run is refused by
 -- the writer) and is never later than the database clock plus five minutes.
 
+-- write-class: correlation_evaluations system
 CREATE TABLE public.correlation_evaluations (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,

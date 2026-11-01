@@ -1,0 +1,4 @@
+ok  	github.com/skenzeriq/activediq/internal/platform/notify/syslog	29.713s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost	0.053s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitest	0.009s
+ok  	github.com/skenzeriq/activediq/internal/platform/apihost/apitypes	0.011s

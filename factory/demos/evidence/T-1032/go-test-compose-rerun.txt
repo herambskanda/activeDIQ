@@ -1,0 +1,9 @@
+ok  	github.com/skenzeriq/activediq/internal/compose/agent	1.051s
+ok  	github.com/skenzeriq/activediq/internal/compose/config	0.007s
+ok  	github.com/skenzeriq/activediq/internal/compose/connector	0.042s
+ok  	github.com/skenzeriq/activediq/internal/compose/edge	0.008s
+ok  	github.com/skenzeriq/activediq/internal/compose/fleetproof	21.806s
+ok  	github.com/skenzeriq/activediq/internal/compose/profile	0.007s
+ok  	github.com/skenzeriq/activediq/internal/compose/server	109.908s
+ok  	github.com/skenzeriq/activediq/internal/compose/server/entra	0.020s
+ok  	github.com/skenzeriq/activediq/internal/compose/tunnelbind	0.010s

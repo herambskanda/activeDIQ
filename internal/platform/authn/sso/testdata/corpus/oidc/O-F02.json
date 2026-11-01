@@ -1,0 +1,10 @@
+{
+ "id": "O-F02",
+ "class": "forged",
+ "cites": [
+  "OIDC-7"
+ ],
+ "build": "alg_hs256_public_key",
+ "expect": "refuse",
+ "reason": "oidc.alg"
+}

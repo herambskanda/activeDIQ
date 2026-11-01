@@ -1,0 +1,12 @@
+=== RUN   TestQA4Probe
+    zz_qa4_probe_test.go:16: created mode=drwx------
+    zz_qa4_probe_test.go:19: 755 CheckDir typed=true EnsureDir typed=true
+    zz_qa4_probe_test.go:19: 770 CheckDir typed=true EnsureDir typed=true
+    zz_qa4_probe_test.go:19: 701 CheckDir typed=true EnsureDir typed=true
+    zz_qa4_probe_test.go:19: 750 CheckDir typed=true EnsureDir typed=true
+    zz_qa4_probe_test.go:25: legit: "GOOD" <nil>
+    zz_qa4_probe_test.go:27: symlink->foreign: "" unsafe=true
+    zz_qa4_probe_test.go:29: symlinked dir: unsafe=true
+--- PASS: TestQA4Probe (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/ownerfile	0.006s

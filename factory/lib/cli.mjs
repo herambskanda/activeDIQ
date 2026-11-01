@@ -18,6 +18,8 @@ import {
 } from './items.mjs';
 import { createHandoff, latestHandoff } from './handoffs.mjs';
 import { Dispatcher, planDryRun } from './dispatcher.mjs';
+import { blockedNote, runPreMergeGate } from './premerge.mjs';
+import { pollAdvisories } from './advisories.mjs';
 import { runDoctor } from './doctor.mjs';
 import { buildDigest, buildStatus } from './status.mjs';
 import { down, up } from './lifecycle.mjs';
@@ -34,6 +36,7 @@ const USAGE = `usage: factory <command>
   up | down | status [--json] | pause [--reason R] | resume | doctor
   board [--port N]                  run the board in the foreground
   run [--once] [--dry-run]          run the dispatcher in the foreground
+  premerge ID [-- CMD ARGS…]        dry-run the pre-merge gate for a ticket's branch (changes nothing); CMD overrides dispatcher.pre_merge.argv
 
   ticket new --title T --type TYPE --owner ROLE [--priority P2] [--epic E] [--milestone M]
              [--depends T-1,T-2] [--decisions D-1] [--tags a,b] [--parity ADM-1] [--summary S]
@@ -54,6 +57,7 @@ const USAGE = `usage: factory <command>
   milestone new --name N [--goal G] [--target D] | list | show ID | set ID status=…
   handoff new ID --by ROLE | latest ID
   event --actor A --kind K [--ticket T] "text"
+  security poll [--repo OWNER/NAME]  open an embargoed ticket per new private advisory (needs the security-manager role)
   digest [--json]
 
 Add --json for machine-readable output. FACTORY_HOME overrides home discovery.`;
@@ -130,6 +134,16 @@ const COMMANDS = {
     }
     await new Dispatcher(c.ctx).run({ once: c.values.once });
     return undefined;
+  } },
+
+  premerge: { options: {}, run: async (c) => {
+    const ticket = requireEntity(c.ctx, 'tickets', c.pos[0], 'ticket');
+    const argv = c.pos.length > 1 ? c.pos.slice(1) : undefined;
+    const verdict = await runPreMergeGate(c.ctx, ticket, { argv });
+    c.print(verdict, () => (verdict.status === 'blocked'
+      ? `REFUSED: ${blockedNote(verdict, c.ctx.config.dispatcher.main_branch)}`
+      : `${verdict.status.toUpperCase()} (${verdict.mode ?? '-'}): ${verdict.summary}${verdict.log ? `\nlog: ${verdict.log}` : ''}`));
+    return verdict.status === 'pass' ? 0 : 1;
   } },
 
   'ticket new': { options: { title: str, type: str, owner: str, priority: str, epic: str, milestone: str, depends: str, decisions: str, tags: str, parity: str, summary: str, 'body-file': str, ac: many, status: str, by: str }, run: (c) => {
@@ -214,6 +228,11 @@ const COMMANDS = {
     c.print(d, () => `${d.id} withdrawn`);
   } },
 
+  'security poll': { options: { repo: str }, run: async (c) => {
+    const cfg = c.ctx.config.security_intake ?? {};
+    const r = await pollAdvisories(c.ctx, { repo: c.values.repo ?? cfg.repo });
+    c.print(r, () => `${r.checked} advisor${r.checked === 1 ? 'y' : 'ies'} in triage; ${r.created.length} new ticket(s)${r.created.length ? `: ${r.created.join(', ')}` : ''}`);
+  } },
   'action new': { options: { title: str, detail: str, why: str, by: str }, run: (c) => {
     need(c.values, 'title');
     const a = createAction(c.ctx, { title: c.values.title, detail: c.values.detail ?? '', why: c.values.why ?? '', by: c.values.by ?? c.env.FACTORY_ROLE ?? 'factory-director' });
@@ -304,7 +323,7 @@ function transitionCommand(c, fn, past) {
 
 const SUBCOMMAND_GROUPS = new Set(['ticket', 'decision', 'action', 'feedback', 'epic', 'milestone', 'handoff']);
 /** Commands whose first positional argument is an entity id. */
-const NEEDS_ID = /^(ticket (show|ready|note|advance|reject|block|unblock|cancel|set)|decision (show|answer|applied|withdraw|ack|veto)|action done|feedback triage|epic (show|set)|milestone (show|set)|handoff (new|latest))$/;
+const NEEDS_ID = /^(ticket (show|ready|note|advance|reject|block|unblock|cancel|set)|decision (show|answer|applied|withdraw|ack|veto)|action done|feedback triage|epic (show|set)|milestone (show|set)|handoff (new|latest)|premerge)$/;
 
 function lookup(argv) {
   if (!argv.length || argv[0] === 'help' || argv[0] === '--help' || argv[0] === '-h') return { help: true };

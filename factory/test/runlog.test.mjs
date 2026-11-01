@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  LogScanner, detectRateLimit, findResultLine, parseResultMessage, readableLines, resultKeyword, summarizeToolInput,
+  LogScanner, detectConnectivityError, detectRateLimit, findResultLine, parseResultMessage, readableLines, resultKeyword, summarizeToolInput,
 } from '../lib/runlog.mjs';
 import { FIXTURES } from './helpers.mjs';
 
@@ -117,4 +117,14 @@ test('summarizeToolInput prefers command, then paths, then any string; clips at 
   assert.equal(summarizeToolInput('Odd', { n: 1, s: 'str' }), 'str');
   assert.equal(summarizeToolInput('None', undefined), '');
   assert.equal(summarizeToolInput('Bash', { command: 'a'.repeat(300) }).length, 100);
+});
+
+test('detectConnectivityError matches outage signatures only on failed runs', () => {
+  for (const text of ['API Error: Can\'t reach the API server (EAI_AGAIN)', 'getaddrinfo ENOTFOUND x', 'read ECONNRESET', 'connect ETIMEDOUT 1.2.3.4:443']) {
+    assert.equal(detectConnectivityError({ result: { is_error: true, result: text } }), true, text);
+    assert.equal(detectConnectivityError({ result: null, stderr: text }), true, `stderr: ${text}`);
+  }
+  assert.equal(detectConnectivityError({ result: { is_error: false, result: 'fixed the EAI_AGAIN retry docs' } }), false, 'a successful run is never an outage');
+  assert.equal(detectConnectivityError({ result: { is_error: true, result: 'tests failed at line 4290' } }), false);
+  assert.equal(detectConnectivityError({ result: null, stderr: 'segfault' }), false);
 });

@@ -27,6 +27,13 @@ type Pinner interface {
 	Pin(ctx context.Context, connection string, nc authority.NamingContextID, previous string) (DCPin, error)
 }
 
+// FallbackPinner is an optional Pinner capability: a writable DC other than exclude (matched by host,
+// case-insensitively, and by DSA GUID), for the server's Tier-0 re-read when the pinned DC cannot answer
+// (ADR-0005 rule 7). A Pinner without it has no fallback, and an unanswered re-read counts as tier0.
+type FallbackPinner interface {
+	PinOther(ctx context.Context, connection string, nc authority.NamingContextID, exclude DCPin) (DCPin, error)
+}
+
 // DCPin is one pinned DC: its host and its DSA GUID (the NTDS Settings objectGUID in canonical form).
 type DCPin struct {
 	Host    string

@@ -12,6 +12,9 @@ var crossing = map[authz.Permission]bool{
 	"objects.user.reset_password": true,
 	"objects.user.delete":         true,
 	"operation.approve":           true,
+	// directory.read is a read of the tenant's own directory (searchDirectoryUsers). It administers neither
+	// RBAC, scopes nor connections, so a matched, attested, non-tier0 correlation may carry it (TM-D17 rule 5).
+	"directory.read": true,
 }
 
 func TestHybridGateEveryBuiltInPermissionClassified(t *testing.T) {

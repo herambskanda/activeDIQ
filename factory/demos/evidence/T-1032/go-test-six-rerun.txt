@@ -1,0 +1,8 @@
+--- PASS: TestRoutesAndViewShape (7.66s)
+--- PASS: TestWithoutPermissionEveryRouteIs403AndWritesNothing (1.65s)
+--- PASS: TestRetriedCreateIsIdempotent (1.51s)
+--- PASS: TestRefusalsAndTenantIsolation (1.58s)
+--- PASS: TestWritesNeedStepUpReadsDoNot (1.68s)
+--- PASS: TestReadOnlyPrincipalCannotWrite (1.60s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/notify/syslog	23.298s

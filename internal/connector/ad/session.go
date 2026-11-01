@@ -276,6 +276,10 @@ func ldapCode(err error) string {
 	return "transport error"
 }
 
+// FilterSchema is the schema allowlist the session renders filters against; a caller parses a
+// request's filter AST with it (ldapfilter.ParseFilterAST) so the parse and the render agree.
+func (s *Session) FilterSchema() *ldapfilter.Schema { return s.schema }
+
 // AttrSyntax returns the value syntax the session's schema allowlist records for an attribute.
 func (s *Session) AttrSyntax(name string) (ldapfilter.Syntax, bool) { return s.schema.Syntax(name) }
 

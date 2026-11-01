@@ -79,10 +79,10 @@ func validMethodName(m string) bool { return len(m) <= MaxMethodBytes && utf8.Va
 // Binding is what a component kind is bound to.
 type Binding struct {
 	Contract Contract
-	// Serve registers the server-side handlers of the contract's component to server methods on the
+	// Register registers the server-side handlers of the contract's component to server methods on the
 	// per-tunnel registrar it is given. It runs once per tunnel. The registrar refuses a method
 	// outside the contract. Nil when the contract has no component to server methods.
-	Serve func(id Identity, reg grpc.ServiceRegistrar)
+	Register func(id Identity, reg grpc.ServiceRegistrar)
 }
 
 // Bindings maps a component kind (from the certificate SAN) to its binding. Nothing the component

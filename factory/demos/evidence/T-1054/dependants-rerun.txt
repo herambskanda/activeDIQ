@@ -1,0 +1,18 @@
+ok  	github.com/skenzeriq/activediq/internal/compose/agent	1.684s
+ok  	github.com/skenzeriq/activediq/internal/compose/config	0.011s
+ok  	github.com/skenzeriq/activediq/internal/compose/connector	1.867s
+ok  	github.com/skenzeriq/activediq/internal/compose/edge	0.006s
+ok  	github.com/skenzeriq/activediq/internal/compose/fleetproof	25.828s
+ok  	github.com/skenzeriq/activediq/internal/compose/profile	0.008s
+ok  	github.com/skenzeriq/activediq/internal/compose/server	121.714s
+ok  	github.com/skenzeriq/activediq/internal/compose/server/entra	0.032s
+ok  	github.com/skenzeriq/activediq/internal/compose/tunnelbind	0.007s
+ok  	github.com/skenzeriq/activediq/internal/platform/module	0.015s
+?   	github.com/skenzeriq/activediq/internal/platform/module/moduletest	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/reports	4.633s
+ok  	github.com/skenzeriq/activediq/tools/gen/api	5.813s
+ok  	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture	0.014s
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/internal/modules/widgets/api	[no test files]
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/shared	[no test files]
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/stub/filter	[no test files]
+?   	github.com/skenzeriq/activediq/tools/gen/api/internal/fixture/stub/secret	[no test files]

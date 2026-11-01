@@ -6,7 +6,8 @@
 //   - Kerberos only. A token that is not a SPNEGO NegTokenInit offering Kerberos first is refused by
 //     structure (RequireKerberos) before any acceptor sees it, so NTLM is never reachable (TM-X2).
 //   - The principal maps by the PAC logon-info user SID the acceptor verified, resolved to an
-//     objectGUID through the inventory, never by name or UPN (NEG-2).
+//     objectGUID through the Directory port (the composition root fills it from the inventory), never
+//     by name or UPN (NEG-2).
 //   - Every failure is the same ErrSignInFailed: unmapped, ambiguous, disabled, replayed, malformed,
 //     credentials changed. The reason goes only to the Recorder (audit) and the log.
 package negotiate
@@ -18,8 +19,6 @@ import (
 	"log/slog"
 	"net/netip"
 
-	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
-	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
@@ -39,8 +38,8 @@ const (
 )
 
 // Principal is what an Acceptor proved: the user SID of the PAC logon-info, verified with the service
-// key. It carries no name; names are mutable and are not an identity.
-type Principal struct{ SID sid.SID }
+// key, as canonical SID text ("S-1-..."). It carries no name; names are mutable and are not an identity.
+type Principal struct{ SID string }
 
 // Acceptor verifies a SPNEGO/Kerberos token for our HTTP service principal. Implementations must
 // refuse a replayed AP-REQ (NEG-6), verify the PAC signature with the service key, and never fall back
@@ -49,9 +48,13 @@ type Acceptor interface {
 	Accept(ctx context.Context, token []byte) (Principal, error)
 }
 
-// Directory resolves a SID to the live AD objects carrying it (at most inventory.MaxSIDMatches).
+// Directory is the port that resolves a SID to the live directory objects carrying it. The composition
+// root fills it; this package imports no directory package. sid is canonical SID text. An absent or
+// malformed SID is an empty answer (unmapped), not an error; an error is an infrastructure failure.
+// The implementation need not return more than a few matches: this package treats more than one as
+// ambiguous (NEG-2) and looks no further.
 type Directory interface {
-	ObjectsBySID(ctx context.Context, t tenant.ID, s sid.SID) ([]inventory.Ref, error)
+	ObjectsBySID(ctx context.Context, t tenant.ID, sid string) ([]authn.DirectoryRef, error)
 }
 
 // Accounts finds and reads console accounts.
@@ -161,8 +164,8 @@ func (s *Service) SignIn(ctx context.Context, req Request) (authn.PendingHandle,
 }
 
 // mapAccount resolves the SID to exactly one console account (NEG-2). A non-empty reason is a refusal.
-func (s *Service) mapAccount(ctx context.Context, t tenant.ID, id sid.SID) (account, reason string, err error) {
-	objs, err := s.Directory.ObjectsBySID(ctx, t, id)
+func (s *Service) mapAccount(ctx context.Context, t tenant.ID, sid string) (account, reason string, err error) {
+	objs, err := s.Directory.ObjectsBySID(ctx, t, sid)
 	if err != nil {
 		return "", "", fmt.Errorf("negotiate: resolve sid: %w", err)
 	}
@@ -174,7 +177,7 @@ func (s *Service) mapAccount(ctx context.Context, t tenant.ID, id sid.SID) (acco
 	default:
 		return "", ReasonAmbiguous, nil
 	}
-	ids, err := s.Accounts.BackedBy(ctx, t, authn.DirectoryRef{ConnectionID: string(objs[0].Connection), ObjectGUID: string(objs[0].Object)})
+	ids, err := s.Accounts.BackedBy(ctx, t, objs[0])
 	if err != nil {
 		return "", "", fmt.Errorf("negotiate: find account: %w", err)
 	}

@@ -26,6 +26,7 @@ ALTER TABLE public.tier0_designations
 
 REVOKE DELETE ON public.tier0_designations FROM activediq_app;
 
+-- write-class: links system
 CREATE TABLE public.links (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,

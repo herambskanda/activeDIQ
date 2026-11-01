@@ -1,0 +1,80 @@
+=== RUN   TestIngestFormsMatchedPairWithMembersInOneTransaction
+=== RUN   TestIngestFormsMatchedPairWithMembersInOneTransaction/pg16
+=== RUN   TestIngestFormsMatchedPairWithMembersInOneTransaction/pg18
+--- PASS: TestIngestFormsMatchedPairWithMembersInOneTransaction (9.36s)
+    --- PASS: TestIngestFormsMatchedPairWithMembersInOneTransaction/pg16 (5.26s)
+    --- PASS: TestIngestFormsMatchedPairWithMembersInOneTransaction/pg18 (4.10s)
+=== RUN   TestIngestGateReasonsFromStoredState
+=== RUN   TestIngestGateReasonsFromStoredState/pg16
+=== RUN   TestIngestGateReasonsFromStoredState/pg18
+--- PASS: TestIngestGateReasonsFromStoredState (1.79s)
+    --- PASS: TestIngestGateReasonsFromStoredState/pg16 (1.19s)
+    --- PASS: TestIngestGateReasonsFromStoredState/pg18 (0.60s)
+=== RUN   TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair
+=== RUN   TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair/pg16
+=== RUN   TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair/pg18
+--- PASS: TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair (3.52s)
+    --- PASS: TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair/pg16 (2.36s)
+    --- PASS: TestIngestAmbiguousAnchorFormsNothingAndDemotesTheExistingPair/pg18 (1.17s)
+=== RUN   TestIngestPreconditions
+=== RUN   TestIngestPreconditions/pg16
+=== RUN   TestIngestPreconditions/pg18
+--- PASS: TestIngestPreconditions (1.74s)
+    --- PASS: TestIngestPreconditions/pg16 (1.16s)
+    --- PASS: TestIngestPreconditions/pg18 (0.58s)
+=== RUN   TestIngestPrincipalTypeMismatchNeverPassesTheGate
+=== RUN   TestIngestPrincipalTypeMismatchNeverPassesTheGate/pg16
+=== RUN   TestIngestPrincipalTypeMismatchNeverPassesTheGate/pg18
+--- PASS: TestIngestPrincipalTypeMismatchNeverPassesTheGate (8.81s)
+    --- PASS: TestIngestPrincipalTypeMismatchNeverPassesTheGate/pg16 (5.79s)
+    --- PASS: TestIngestPrincipalTypeMismatchNeverPassesTheGate/pg18 (3.02s)
+=== RUN   TestFreshnessQuietDomainIsNotStale
+=== RUN   TestFreshnessQuietDomainIsNotStale/pg16
+=== RUN   TestFreshnessQuietDomainIsNotStale/pg18
+--- PASS: TestFreshnessQuietDomainIsNotStale (1.69s)
+    --- PASS: TestFreshnessQuietDomainIsNotStale/pg16 (1.13s)
+    --- PASS: TestFreshnessQuietDomainIsNotStale/pg18 (0.56s)
+=== RUN   TestFreshnessResyncAndPausedAreStaleAndOthersStillReported
+=== RUN   TestFreshnessResyncAndPausedAreStaleAndOthersStillReported/pg16
+=== RUN   TestFreshnessResyncAndPausedAreStaleAndOthersStillReported/pg18
+--- PASS: TestFreshnessResyncAndPausedAreStaleAndOthersStillReported (1.66s)
+    --- PASS: TestFreshnessResyncAndPausedAreStaleAndOthersStillReported/pg16 (1.08s)
+    --- PASS: TestFreshnessResyncAndPausedAreStaleAndOthersStillReported/pg18 (0.58s)
+=== RUN   TestFreshnessSuspendedConnectionIsPaused
+=== RUN   TestFreshnessSuspendedConnectionIsPaused/pg16
+=== RUN   TestFreshnessSuspendedConnectionIsPaused/pg18
+--- PASS: TestFreshnessSuspendedConnectionIsPaused (1.65s)
+    --- PASS: TestFreshnessSuspendedConnectionIsPaused/pg16 (1.12s)
+    --- PASS: TestFreshnessSuspendedConnectionIsPaused/pg18 (0.53s)
+=== RUN   TestFreshnessNeverSyncedIsSkipped
+=== RUN   TestFreshnessNeverSyncedIsSkipped/pg16
+=== RUN   TestFreshnessNeverSyncedIsSkipped/pg18
+--- PASS: TestFreshnessNeverSyncedIsSkipped (1.59s)
+    --- PASS: TestFreshnessNeverSyncedIsSkipped/pg16 (1.05s)
+    --- PASS: TestFreshnessNeverSyncedIsSkipped/pg18 (0.54s)
+=== RUN   TestFreshnessAsOfIsTheOldestCoveredWatermark
+=== RUN   TestFreshnessAsOfIsTheOldestCoveredWatermark/pg16
+=== RUN   TestFreshnessAsOfIsTheOldestCoveredWatermark/pg18
+--- PASS: TestFreshnessAsOfIsTheOldestCoveredWatermark (2.41s)
+    --- PASS: TestFreshnessAsOfIsTheOldestCoveredWatermark/pg16 (1.86s)
+    --- PASS: TestFreshnessAsOfIsTheOldestCoveredWatermark/pg18 (0.55s)
+=== RUN   TestRecordPassIsMonotonicAndValidated
+=== RUN   TestRecordPassIsMonotonicAndValidated/pg16
+=== RUN   TestRecordPassIsMonotonicAndValidated/pg18
+--- PASS: TestRecordPassIsMonotonicAndValidated (1.65s)
+    --- PASS: TestRecordPassIsMonotonicAndValidated/pg16 (1.12s)
+    --- PASS: TestRecordPassIsMonotonicAndValidated/pg18 (0.53s)
+=== RUN   TestFreshnessFailsClosed
+=== RUN   TestFreshnessFailsClosed/pg16
+=== RUN   TestFreshnessFailsClosed/pg18
+--- PASS: TestFreshnessFailsClosed (1.63s)
+    --- PASS: TestFreshnessFailsClosed/pg16 (1.00s)
+    --- PASS: TestFreshnessFailsClosed/pg18 (0.63s)
+=== RUN   TestIngestRecordsPassOnLastBatchOnly
+=== RUN   TestIngestRecordsPassOnLastBatchOnly/pg16
+=== RUN   TestIngestRecordsPassOnLastBatchOnly/pg18
+--- PASS: TestIngestRecordsPassOnLastBatchOnly (1.68s)
+    --- PASS: TestIngestRecordsPassOnLastBatchOnly/pg16 (1.11s)
+    --- PASS: TestIngestRecordsPassOnLastBatchOnly/pg18 (0.57s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/directory/inventory	40.108s

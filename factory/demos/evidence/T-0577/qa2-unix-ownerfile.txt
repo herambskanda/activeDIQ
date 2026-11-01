@@ -1,0 +1,9 @@
+--- PASS: TestReadFileRefusesSymlinkAndWider (0.00s)
+--- PASS: TestEnsureDir (0.00s)
+--- PASS: TestReadFileRefusesFIFO (0.00s)
+--- PASS: TestOpenAppendRefusesFIFO (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/ownerfile	0.013s
+--- PASS: TestFileBaselineStoreLoadRefusesSymlinkSwap (1.04s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/rights	1.060s

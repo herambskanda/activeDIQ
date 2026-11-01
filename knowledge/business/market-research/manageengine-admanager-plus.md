@@ -1,10 +1,10 @@
 ---
 title: "Competitive Benchmark: ManageEngine ADManager Plus"
 date: 2026-10-02
-updated: 2026-10-02
+updated: 2026-10-31
 status: draft
 owner: heramb
-sources_last_checked: 2026-10-02
+sources_last_checked: 2026-10-31
 ---
 
 # Competitive Benchmark: ManageEngine ADManager Plus
@@ -509,9 +509,9 @@ Managing permissions is **Pro only**. Permission reports are in K.
 |---|---|---|---|---|---|
 | ADM-083 | Reports | Prebuilt report library | Vendor claims 200+. The demo has 12 report categories in the Reports tab, plus a separate M365 report tree. The vendor's public report list enumerates **222 table rows (194 unique names)** in its page source; the page's own pagination label says "349 reports", which the visible rows do not reproduce. See "Report catalogue count" below. | Std+Pro | [product page](https://www.manageengine.com/products/ad-manager/), [demo](https://demo.admanagerplus.com/), [report list](https://www.manageengine.com/products/ad-manager/active-directory-reports-list.html) (checked 2026-10-02) |
 | ADM-084 | Reports | User reports (35) | All, inactive, never logged on, real last logon, empty or duplicate attributes, managers, logon hours, nested membership, Terminal Services and more | Std+Pro | [help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-user-reports.html) |
-| ADM-085 | Reports | Password reports (8) | Expired, soon to expire, never expires, cannot change, must change, changed, unchanged, recent logon failures | Std+Pro | [help](https://www.manageengine.com/products/ad-manager/help/reports/active-directory-password-reports.html) |
-| ADM-086 | Reports | Group reports (16) | Members (nested), detailed members, top-N largest, empty, unmanaged, by type and scope, users or computers not in groups | Std+Pro | [help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-group-reports.html) |
-| ADM-087 | Reports | Computer reports (18) | By OS, workstations, domain controllers, trusted for delegation, inactive, BitLocker enabled/disabled and recovery keys | Std+Pro | [help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-computer-reports.html) |
+| ADM-085 | Reports | Password reports (8) | Expired, soon to expire, never expires, cannot change, must change, changed, unchanged, recently bad logged on users (the public list also names it "Recent Logon Failures"; see K.1) | Std+Pro | [help](https://www.manageengine.com/products/ad-manager/help/reports/active-directory-password-reports.html) |
+| ADM-086 | Reports | Group reports (16) | Members (nested), detailed members, top-N largest, empty, unmanaged, by type and scope, users or computers not in the selected groups (K.1) | Std+Pro | [help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-group-reports.html) |
+| ADM-087 | Reports | Computer reports (18) | By OS, workstations (account type, member servers included), domain controllers, trusted for delegation (unconstrained flag), managed and unmanaged (`managedBy`), inactive, BitLocker enabled/disabled and recovery keys | Std+Pro | [help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-computer-reports.html) |
 | ADM-088 | Reports | Exchange reports (31) | Mailbox and mail-enabled objects, distribution lists, delivery and size limits, protocol features | Std+Pro | [help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-exchange-reports.html) |
 | ADM-089 | Reports | Contact and OU reports (13) | Contacts; empty OUs, user-only and computer-only OUs, OUs with linked GPOs or blocked inheritance | Std+Pro | [help](https://www.manageengine.com/products/ad-manager/help/reports/how-to-get-active-directory-contact-and-ou-report.html) |
 | ADM-090 | Reports | GPO reports (28) | GPO settings, Resultant Set of Policy, GPO modeling, GPO comparison, AD vs SYSVOL version compare, delegation, unlinked, empty and disabled GPOs | Std+Pro (no GPO settings report in Free) | [help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-gpo-reports.html), [pricing footnote](https://www.manageengine.com/products/ad-manager/pricing-details.html) |
@@ -925,6 +925,84 @@ Each item closes a former `[TODO]`. Source kind: **vendor documentation** unless
 - **Free edition.** 100 AD objects, Standard features only, and evaluation converts after 30 days (licensing FAQ, see row 9 in §1). Expired paid licences: not found in docs.
 - **Certifications.** ADMP is named in ManageEngine's compliance centre only under **SOC 2 + HIPAA, Type 2** (audit window 01-Dec-2023 to 30-Sep-2024), together with ServiceDesk Plus, ServiceDesk Plus Cloud, Endpoint Central and Endpoint Central MSP ([compliance centre](https://www.manageengine.com/compliance.html)). ISO 27001 is stated for "all cloud services and on-premise products of ManageEngine" on the same page. No FedRAMP mention on ADMP's own certifications page ([help](https://www.manageengine.com/products/ad-manager/help/compliance/standards-and-certifications.html)). See the AD360 file for the full list.
 
+### K.1 Report semantics the library specs depend on (T-1014, read 2026-10-31)
+
+ManageEngine's help pages carry a **"How it works"** line for most reports, with the LDAP attribute or
+query ADMP runs. That is the best source there is (vendor documentation). Every row below quotes it.
+Pages read 2026-10-31, none of them shows a last-updated date (the computer page shows only
+"© 2026, Zoho Corporation Pvt. Ltd."), so the check date is all we can state. "Spec guess" is what
+[reports-2a §6.2](../../product/specs/reports-2a.md) assumed before this research.
+
+| # | ME report (ID) | What ME's docs say it is | Source (kind) | Spec guess: right? |
+|---|---|---|---|---|
+| 1 | **Workstation Computers** (ADM-087) | "queries the LDAP server for the attribute `userAccountControl` and checks if the `ADS_UF_WORKSTATION_TRUST_ACCOUNT` flag is set" (0x1000). The same page adds: "All computers except domain controllers are categorized as workstations." The public report list says it "Shows all computers including member servers" | [computer reports help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-computer-reports.html) (vendor docs); [report list](https://www.manageengine.com/products/ad-manager/active-directory-reports-list.html) (vendor product page) | **No.** The guess was "OS name has no 'Server'". ME's meaning is the account type, and **member servers are included** |
+| 2 | **Computers Trusted for Delegation** (ADM-087) | "checks if the `ADS_UF_TRUSTED_FOR_DELEGATION` flag is set" (0x80000) on `userAccountControl`. Nothing about constrained delegation (`msDS-AllowedToDelegateTo`) or the protocol-transition flag (0x1000000) | same help page; flag values from [Microsoft ADS_USER_FLAG_ENUM](https://learn.microsoft.com/en-us/windows/win32/api/iads/ne-iads-ads_user_flag_enum) (Microsoft docs) | **Narrower than the guess.** The guess was "delegation is not none". ME's is the **unconstrained** flag only |
+| 3 | **Managed Computers / Unmanaged Computers** (ADM-087) | Managed: `(&(objectcategory=computer)(managedBy=*))`. Unmanaged: `(&(objectcategory=computer)(!managedBy=*))` | same help page (vendor docs) | **Yes.** The gate on CMP-05 clears (the page's prose "currently managed" is vague, the quoted query is not) |
+| 4 | **Users Not in Groups / Computers Not in Groups** (ADM-086) | A **parameterised** report: you pick the domain and the groups, and it lists the users (or computers) who "do not belong to the selected groups". The "How it works" line for the sibling "Users not in a Group" is: "querying the LDAP for all users and check 'memberOf' is specifiedGroup" | [group reports help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-group-reports.html); [report list](https://www.manageengine.com/products/ad-manager/active-directory-reports-list.html): "all user accounts which are not members of the selected groups" (vendor docs) | **No.** ME's report is "not in the *selected* groups", not "in no group at all". The "no group except the primary group" meaning is closest to ME's **"Users only Members of Domain Users Group"**: `(&(objectCategory=person)(objectClass=user)(!(sAMAccountType=805306370))(primaryGroupID=513)(!(memberOf=*)))` |
+| 5 | **Mail Enabled Contacts** (ADM-089) | `(&(objectCategory=person)(objectClass=contact)(mailnickname=*)(targetAddress=*))`: both `mailNickname` **and** `targetAddress` must have a value | [contact and OU help](https://www.manageengine.com/products/ad-manager/help/reports/how-to-get-active-directory-contact-and-ou-report.html) (vendor docs) | **No.** The guess was "the `mail` attribute has a value". A contact with only `mail` is **not** listed by ME |
+| 6 | **Recent Logon Failures** vs **Recently Bad Logged on Users** (ADM-085) | The password-reports help page has **no** report called "Recent Logon Failures". It has "Recently Bad Logged on Users": "the list of users who had failed in their allotted log in attempts", generated "by querying users with LDAP attributes (`badPasswordTime`>=specified time)", with the note "all the domain controllers have to be configured correctly". The time window is chosen by the admin (today, yesterday, last N days, this week, custom, and so on). The **public report list** shows both names: "Recent Logon Failures" ("Lists user accounts with failed logons during the specified period") and "Recently bad logged users" (its description there is a copy of another report's text) | [password reports help](https://www.manageengine.com/products/ad-manager/help/reports/active-directory-password-reports.html) (vendor docs); [report list](https://www.manageengine.com/products/ad-manager/active-directory-reports-list.html) (vendor product page) | **Partly.** One failed-logon report is documented, on `badPasswordTime`. That the two list names are **one report** is `[UNVERIFIED]` (two catalogue entries with near-identical descriptions; only the help page's behaviour is documented) |
+
+**What the six findings change in the specs (for `product-manager`; not decided here):**
+
+1. *Workstation Computers.* The OS-name test would hide member servers that ME lists. The ME-named
+   preset should be the account-type test; a separate "excluding servers" view can be our own
+   preset. The page also says the report is auto-generated daily at 06:00 (a snapshot); ours is live.
+2. *Trusted for Delegation.* The ME-named preset is the unconstrained flag. A broader "any
+   delegation" view is our addition, not ME parity. Domain controllers carry this flag by default
+   (a DC's `userAccountControl` is 0x82000 = SERVER_TRUST_ACCOUNT + TRUSTED_FOR_DELEGATION, per
+   [Microsoft's UAC article](https://learn.microsoft.com/en-us/archive/blogs/kaushika/understanding-the-useraccountcontrol-attribute-in-active-directory),
+   a Microsoft engineering blog whose flag table is partly garbled; the value itself is consistent with the
+   Microsoft flag enum above). Whether ADMP removes DCs from this list is **not stated** `[UNVERIFIED]`.
+3. *Managed/Unmanaged Computers.* Confirmed; build as `managedBy` set / not set. ME's Managed
+   Groups and Unmanaged Groups use the same test on groups
+   (`(&(objectcategory=group)(managedBy=*)` and `(!managedBy=*)`, [group help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-group-reports.html)).
+4. *Not in Groups.* "Users Not in Groups" answers a different question than reports-2a GRP-04.
+   To resolve the ME name, the report needs a **group picker** and a "not a member of the selected
+   groups" test. Our "in no group" view stays valuable but is an activeDIQ report, not ME's.
+5. *Mail Enabled Contacts.* Use the two-attribute test to match ME. A `mail`-only view would be a
+   different, broader preset.
+6. *Recent Logon Failures.* ME's window is admin-chosen; ME says nothing about which DC supplies
+   `badPasswordTime` or how a multi-DC result is merged `[UNVERIFIED]`. Our per-DC rule (never summed) is
+   our design, not ME's documented behaviour.
+
+**Open `[UNVERIFIED]` (only a running ADMP can settle; ticket T-1117, blocked on A-0024):**
+(a) how Workstation Computers treats read-only DCs: the page's flag test and its "all computers
+except domain controllers" note could differ for them, if their accounts carry the workstation-trust
+flag (not sourced here; `ad-expert` to confirm) `[UNVERIFIED]`; (b) whether Trusted for Delegation lists DCs; (c) for Users/Computers Not in
+Groups with several groups selected, "not in any of them" or "not in all of them", and whether
+nested membership counts (the docs say `memberOf`, which is direct membership: that is our reading,
+the page does not say "direct"); (d) the two Recent Logon Failures names being one report and which
+DC's `badPasswordTime` it reads.
+
+**Export password protection (ADM-100, ADM-207).**
+
+- **Where and what.** Admin > General Settings > Security and Privacy > Privacy Settings > **Data
+  Security**. Two separate checkboxes: **Exported Reports** ("password protect reports that are
+  exported from ADManager Plus, and specify the password that must be used to view the reports")
+  and **ZIP files** (for "product ZIP files like database backups, audit archive logs", with its own
+  password). Source: [security and privacy help](https://www.manageengine.com/products/ad-manager/help/admin-settings/security-and-privacy-settings-admanager-plus.html) (vendor docs).
+- **Shape.** One setting with **one shared password for the whole installation**, as documented: no
+  per-report, per-schedule or per-recipient password is described. This is our reading of a page that
+  shows a single password field; the page does not say "single".
+- **History.** Introduced in build 6633 (June 2018) as a GDPR enhancement, "Password protection for
+  exported reports, database backup, and archived audit report files". Two later fixes: build 7181
+  (16 January 2023) "prevented users from opening the password-protected reports"; build 8001
+  (date not on the page) "exporting reports in XLSX format when password protection was enabled"
+  ([release notes](https://www.manageengine.com/products/ad-manager/help/introduction/release_notes.html), vendor release notes). Both fixes suggest the XLSX/PDF path is an
+  office-file password, which is our inference, not stated.
+- **Logo and serial number** are per-schedule checkboxes ("Include Logo", "Include Serial Number")
+  in the scheduled report's export settings; formats listed there are PDF, HTML, XLSX, CSV, CSVDE
+  ([scheduled reports help](https://www.manageengine.com/products/ad-manager/help/reports/active-directory-scheduled-reports.html), vendor docs).
+- **Related, relevant to our secrets rule.** A separate option, "Allow technicians to export LAPS
+  password in reports", lets technicians export LAPS password values from AD Explorer and the
+  **Workstation Computers** report (same privacy page). ME's Workstation Computers report can therefore carry secrets.
+- **Not found in docs as of 2026-10-31 (all `[UNVERIFIED]`):** which formats the password applies to
+  (a CSV cannot be password-protected by itself); whether scheduled and emailed attachments are
+  covered; whether a scheduled "zipped file" is covered by *Exported Reports* or *ZIP files*; the
+  cipher, KDF and ZIP encryption method; where the password is stored; edition gating (Standard or
+  Professional: "n/s"). A running ADMP would settle all of these. Search of ME's pages and
+  release notes found no further description.
+
 ## Remaining gaps
 
 - **[TODO]** G2 own-page review text, TrustRadius, Gartner Peer Insights sentiment: blocked (HTTP 403 or no archive access from this environment). Ratings live in the customer-voice file.
@@ -955,3 +1033,4 @@ Each item closes a former `[TODO]`. Source kind: **vendor documentation** unless
 
 - **2026-10-02:** Initial draft. All sections researched against the sources above on 2026-10-02 (`sources_last_checked` covers the whole file). Feature IDs ADM-001 to ADM-213 assigned. Review-site sentiment beyond Capterra and PeerSpot is open **[TODO]**.
 - **2026-10-02 (T-0001):** Closed gaps: report catalogue count, export/migration formats, free-edition terms, certifications. Re-tagged the rest in "Remaining gaps". ADM-083 and ADM-158 rows extended; no edition, importance or stance changed.
+- **2026-10-31 (T-1014):** New §K.1: sourced semantics for Workstation Computers, Computers Trusted for Delegation, Managed/Unmanaged Computers, Users/Computers Not in Groups, Mail Enabled Contacts, Recent Logon Failures and export password protection, from ME help pages and release notes read that day. ADM-085/086/087 row text corrected. No ID, edition, importance or stance changed; no new ID needed (password protection is ADM-100 + ADM-207).

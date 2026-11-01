@@ -7,6 +7,7 @@
 --   transport tcp  -> plaintext_opt_in is true  (plaintext; the opt-in is audited by the store)
 -- UDP is not a transport. Rows are not deleted by the runtime role.
 
+-- write-class: notify_syslog_destinations config
 CREATE TABLE public.notify_syslog_destinations (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

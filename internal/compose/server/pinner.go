@@ -25,7 +25,10 @@ type DCLister interface {
 // unreachable) another writable DC is pinned. Any failure is an error and never a partial pin.
 type dcPinner struct{ dcs DCLister }
 
-var _ operation.Pinner = dcPinner{}
+var (
+	_ operation.Pinner         = dcPinner{}
+	_ operation.FallbackPinner = dcPinner{}
+)
 
 func newDCPinner(dcs DCLister) (dcPinner, error) {
 	if dcs == nil {
@@ -56,4 +59,22 @@ func (p dcPinner) Pin(ctx context.Context, connectionID string, nc authority.Nam
 		return operation.DCPin{}, ErrNoPinnableDC
 	}
 	return pick(list[0])
+}
+
+// PinOther returns a writable DC of the naming context that is not exclude, by host or by DSA GUID.
+func (p dcPinner) PinOther(ctx context.Context, connectionID string, nc authority.NamingContextID, exclude operation.DCPin) (operation.DCPin, error) {
+	list, err := p.dcs.WritableDCs(ctx, connectionID, nc)
+	if err != nil {
+		return operation.DCPin{}, fmt.Errorf("server: pin other: %w", err)
+	}
+	for _, dc := range list {
+		if strings.EqualFold(dc.Host, exclude.Host) || strings.EqualFold(dc.DSAGUID, exclude.DSAGUID) {
+			continue
+		}
+		if dc.Host == "" || dc.DSAGUID == "" {
+			continue
+		}
+		return operation.DCPin{Host: dc.Host, DSAGUID: dc.DSAGUID}, nil
+	}
+	return operation.DCPin{}, ErrNoPinnableDC
 }

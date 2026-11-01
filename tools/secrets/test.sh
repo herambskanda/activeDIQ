@@ -82,6 +82,22 @@ check "scan --history-only fails after a key was committed with --no-verify" non
 git rm -q leaked.txt; git commit -q --no-verify -m "remove (secret still in history)"
 check "scan (all) still fails after the file is deleted — history keeps it" nonzero tools/secrets/scan.sh
 
+# T-1162: the scoped allowlist for the T-0577 evidence logs hides ONLY that exact line in those exact files
+new_repo "$work/r5"
+ev=factory/demos/evidence/T-0577; mkdir -p "$ev"
+pd() { printf '%s%s' 'plan_' 'digest'; }   # fragment: this file must stay clean under the scan it tests
+logline() { printf 'WARN connector write api_token_id="" %s="" tier0_revision=7 statements=1\n' "$(pd)"; }
+logline > "$ev/qa3-linux-tests-0123abcd.txt"
+check "T-1162: the known empty-digest log line in the T-0577 evidence file is allowlisted" 0 tools/secrets/scan.sh --tree-only
+logline > elsewhere.txt
+check "T-1162: the same line in any other path is still flagged" nonzero tools/secrets/scan.sh --tree-only
+rm elsewhere.txt
+fake_aws >> "$ev/qa3-linux-tests-0123abcd.txt"
+check "T-1162: a planted key inside the allowlisted evidence file is still flagged" nonzero tools/secrets/scan.sh --tree-only
+: > "$ev/qa3-linux-tests-0123abcd.txt"
+fake_aws > planted-new-file.txt
+check "T-1162: a planted key in a new file is flagged" nonzero tools/secrets/scan.sh --tree-only
+
 # gitignored secrets stay out of scope
 new_repo "$work/r2"
 fake_aws > .env; printf '.env\n' >> .gitignore

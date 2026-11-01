@@ -1,0 +1,222 @@
+import { appendFileSync, existsSync } from "node:fs";
+import { createHash, randomBytes, X509Certificate } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import AxeBuilder from "@axe-core/playwright";
+import { expect, test, type Page, type BrowserContext } from "@playwright/test";
+import { addPasskey, createLocalAccount, nextStepCode, newPasskey, type Passkey } from "./support/lab-server";
+
+const base = process.env["ADIQ_BASE_URL"]!;
+const ev = process.env["QA_EV"]!;
+const log: string[] = [];
+const note = (s: string) => { appendFileSync(`${ev}/qa-log.txt`, s + "\n"); };
+const spki = createHash("sha256").update(new X509Certificate(readFileSync(process.env["ADIQ_E2E_CA"]!)).publicKey.export({ type: "spki", format: "der" })).digest("base64");
+test.use({ ignoreHTTPSErrors: true, launchOptions: { args: [`--ignore-certificate-errors-spki-list=${spki}`] } });
+test.beforeEach(async ({ page }) => { page.on("requestfailed", (r) => note(`   [reqfailed] ${r.method()} ${new URL(r.url()).pathname} ${r.failure()?.errorText}`)); page.on("response", (r) => { if (r.url().includes("/api/") && r.status() >= 400) note(`   [net] ${r.request().method()} ${new URL(r.url()).pathname} ${r.status()} retry-after=${r.headers()["retry-after"] ?? "-"}`); }); });
+const uniq = () => `qa-${randomBytes(4).toString("hex")}`;
+
+async function va(context: BrowserContext, page: Page, uv = true) {
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("WebAuthn.enable");
+  const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", { options: { protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: uv, automaticPresenceSimulation: true } });
+  return { cdp, authenticatorId };
+}
+async function hold(cdp: any, authenticatorId: string, key: Passkey) {
+  await cdp.send("WebAuthn.addCredential", { authenticatorId, credential: { credentialId: key.credentialId.toString("base64"), isResidentCredential: true, rpId: new URL(base).hostname, privateKey: key.privateKey.export({ type: "pkcs8", format: "der" }).toString("base64"), userHandle: key.userHandle.toString("base64"), signCount: 0 } });
+}
+async function acct(key?: Passkey) { const a = await createLocalAccount(uniq()); if (key) await addPasskey(a.id, key); return a; }
+async function pw(page: Page, a: { username: string; password: string }) {
+  await page.goto("/directory/users");
+  await page.getByLabel("Account name").fill(a.username);
+  await page.getByLabel("Password").fill(a.password);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByLabel("Authenticator code")).toBeVisible();
+}
+const sess = async (c: BrowserContext) => (await c.cookies()).filter((x) => x.name === "__Host-adiq_session").length;
+
+test.setTimeout(60000);
+test("K1 keyboard-only sign-in with a key + focus order + screenshots", async ({ page, context }) => {
+  const key = newPasskey(); const a = await acct(key);
+  const { cdp, authenticatorId } = await va(context, page); await hold(cdp, authenticatorId, key);
+  await page.goto("/directory/users");
+  await page.screenshot({ path: `${ev}/01-password-step.png` });
+  const focus = async () => page.evaluate(() => { const e = document.activeElement as HTMLElement; const cs = getComputedStyle(e); return `${e.tagName}:${e.getAttribute("aria-label") || e.textContent?.trim() || (e as HTMLInputElement).name || e.id}|outline=${cs.outlineStyle} ${cs.outlineWidth}|shadow=${cs.boxShadow.slice(0,40)}`; });
+  note("K1 initial focus: " + await focus());
+  await page.keyboard.type(a.username); await page.keyboard.press("Tab");
+  note("K1 after Tab 1: " + await focus());
+  await page.keyboard.type(a.password); await page.keyboard.press("Enter");
+  await expect(page.getByLabel("Authenticator code")).toBeVisible();
+  await page.waitForTimeout(500);
+  note("K1 code step focus after 500ms: " + await focus());
+  await page.screenshot({ path: `${ev}/02-code-step-key-button.png` });
+  await page.keyboard.press("Tab"); note("K1 code step Tab1: " + await focus());
+  await page.keyboard.press("Tab"); note("K1 code step Tab2: " + await focus());
+  await page.screenshot({ path: `${ev}/03-focus-key-button.png` });
+  const f = await focus(); if (!f.includes("security key")) { await page.keyboard.press("Tab"); note("K1 Tab3: " + await focus()); }
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/directory\/users/);
+  expect(await sess(context)).toBe(1);
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: `${ev}/05-signed-in-landing.png` });
+  note("K1 keyboard-only key sign-in OK; landing text: " + (await page.locator("main").innerText()).slice(0, 200).replace(/\n/g, " | "));
+});
+
+test("K2 account WITHOUT a key clicks 'Use a security key'", async ({ page, context }) => {
+  const a = await acct(); await va(context, page);
+  await pw(page, a);
+  const calls: string[] = [];
+  page.on("response", (r) => { if (r.url().includes("/auth/")) calls.push(`${r.request().method()} ${new URL(r.url()).pathname} ${r.status()}`); });
+  await page.getByRole("button", { name: "Use a security key" }).click();
+  await page.waitForTimeout(1500);
+  note("K2 no-key account: calls=" + calls.join(", ") + " | text=" + (await page.locator("main").innerText()).replace(/\n/g, " | "));
+  await page.screenshot({ path: `${ev}/06-no-key-account-clicks-key.png` });
+  expect(await sess(context)).toBe(0);
+  // can the user recover with TOTP afterwards?
+  const step = await page.getByLabel("Account name").isVisible();
+  note("K2 after failure, back at password step: " + step);
+});
+
+test("K3 key account: TOTP refused; error text; screenshot; then key still works after restart of flow", async ({ page, context }) => {
+  const key = newPasskey(); const a = await acct(key);
+  const { cdp, authenticatorId } = await va(context, page); await hold(cdp, authenticatorId, key);
+  await pw(page, a);
+  await page.getByLabel("Authenticator code").fill(nextStepCode(a.seed));
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByText("Sign-in failed")).toBeVisible();
+  await page.screenshot({ path: `${ev}/07-totp-refused-key-account.png` });
+  expect(await sess(context)).toBe(0);
+  await page.getByLabel("Account name").fill(a.username);
+  await page.getByLabel("Password").fill(a.password);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Use a security key" }).click();
+  await expect(page).toHaveURL(/\/directory\/users/);
+  note("K3 TOTP refused for key account, then key sign-in after restart OK");
+});
+
+test("K4 API-level: pending cookie + TOTP for key account; verify without pending; garbage; wrong content", async ({ page }) => {
+  const request = page.request;
+  const key = newPasskey(); const a = await acct(key);
+  const r1 = await page.request.post("/api/v1/auth/break-glass/password", { data: { username: a.username, password: a.password } });
+  note("K4 password: " + r1.status());
+  const r2 = await page.request.post("/api/v1/auth/second-factor/totp/verify", { data: { code: nextStepCode(a.seed) } });
+  note(`K4 totp for key acct: ${r2.status()} set-cookie=${r2.headers()["set-cookie"] ?? "none"} body=${await r2.text()}`);
+  const r3 = await request.post("/api/v1/auth/second-factor/webauthn/challenge");
+  note(`K4 challenge w/o pending: ${r3.status()} ${await r3.text()}`);
+  const r4 = await request.post("/api/v1/auth/second-factor/webauthn/verify", { data: { credentialId: "x*)(cn=*", authenticatorData: "<script>", clientDataJson: "a", signature: "b" } });
+  note(`K4 verify garbage: ${r4.status()} ${(await r4.text()).slice(0, 160)}`);
+  const csrf = await request.get("/api/v1/auth/csrf"); note("K4 csrf no session: " + csrf.status());
+  const dir = await request.get("/api/v1/directory/users?q=ab"); note("K4 directory no session: " + dir.status());
+});
+
+test("K5 hostile + unicode usernames, XSS not executed, generic error", async ({ page }) => {
+  let dialogs = 0; page.on("dialog", async (d) => { dialogs++; await d.dismiss(); });
+  for (const u of ["*)(cn=*", "<img src=x onerror=alert(1)>", "o'brien\"; DROP", "Ünïcödé-名前-" + "x".repeat(300)]) {
+    await page.goto("/sign-in");
+    await page.getByLabel("Account name").fill(u);
+    await page.getByLabel("Password").fill("whatever");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByText("Couldn't sign you in")).toBeVisible();
+    note("K5 panel: " + (await page.getByRole("alert").innerText()).replace(/\n/g, " | "));
+    const html = await page.locator("main").innerHTML(); note("K5 echoed-as-markup(<img in DOM)? " + (await page.locator("main img").count()));
+    note(`K5 user=${u.slice(0, 20)}… -> generic error; username echoed in DOM text? ${html.includes("onerror=alert") }`);
+  }
+  expect(dialogs).toBe(0);
+  await page.screenshot({ path: `${ev}/08-hostile-username.png` });
+});
+
+test("K6 prompt dismissed / authenticator empty / UV failure messages + double-click sends one challenge", async ({ page, context }) => {
+  const key = newPasskey(); const a = await acct(key);
+  await va(context, page);
+  await pw(page, a);
+  let ch = 0; page.on("request", (r) => { if (r.url().endsWith("/webauthn/challenge")) ch++; });
+  await page.getByRole("button", { name: "Use a security key" }).dblclick();
+  await expect(page.getByText("The security key was not used.")).toBeVisible();
+  await page.screenshot({ path: `${ev}/09-key-not-used.png` });
+  note(`K6 dblclick challenge requests=${ch}; state after prompt failure: codeField=${await page.getByLabel("Authenticator code").isVisible()} keyBtn=${await page.getByRole("button", { name: "Use a security key" }).isVisible()}`);
+  // from this state, can user retry without re-entering the password?
+  const holdKey = key;
+});
+
+test("K7 server errors on challenge/verify (route fault injection)", async ({ page, context }) => {
+  const key = newPasskey(); const a = await acct(key);
+  const { cdp, authenticatorId } = await va(context, page); await hold(cdp, authenticatorId, key);
+  await pw(page, a);
+  await page.route("**/webauthn/challenge", (r) => r.fulfill({ status: 503, contentType: "application/problem+json", body: JSON.stringify({ type: "/problems/unavailable", title: "Service unavailable", status: 503 }) }));
+  await page.getByRole("button", { name: "Use a security key" }).click();
+  await expect(page.getByText("Couldn't sign you in")).toBeVisible();
+  note("K7 challenge 503 text: " + (await page.locator("main").innerText()).replace(/\n/g, " | "));
+  await page.screenshot({ path: `${ev}/10-challenge-503.png` });
+  await page.unroute("**/webauthn/challenge");
+  await page.route("**/webauthn/challenge", (r) => r.abort("connectionrefused"));
+  await page.getByRole("button", { name: "Use a security key" }).click().catch(() => {});
+  await page.waitForTimeout(800);
+  note("K7 challenge network failure text: " + (await page.locator("main").innerText()).replace(/\n/g, " | "));
+  await page.screenshot({ path: `${ev}/11-challenge-network-fail.png` });
+});
+
+for (const scheme of ["light", "dark"] as const) {
+  test(`K8 axe + layout, ${scheme}`, async ({ page, context }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    const key = newPasskey(); const a = await acct(key);
+    await va(context, page);
+    await page.goto("/sign-in");
+    let r = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+    note(`K8 ${scheme} password step axe violations: ${JSON.stringify(r.violations.map((v) => [v.id, v.impact, v.nodes.length]))}`);
+    await page.screenshot({ path: `${ev}/12-${scheme}-password.png` });
+    await page.getByLabel("Account name").fill(a.username); await page.getByLabel("Password").fill(a.password);
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByLabel("Authenticator code")).toBeVisible();
+    r = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+    note(`K8 ${scheme} code step axe violations: ${JSON.stringify(r.violations.map((v) => [v.id, v.impact, v.nodes.length]))}`);
+    await page.screenshot({ path: `${ev}/13-${scheme}-code-step.png` });
+    await page.getByRole("button", { name: "Use a security key" }).click();
+    await expect(page.getByText("The security key was not used.")).toBeVisible();
+    r = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"]).analyze();
+    note(`K8 ${scheme} error panel axe violations: ${JSON.stringify(r.violations.map((v) => [v.id, v.impact, v.nodes.length]))}`);
+    if (scheme === "light") for (const w of [[320, 700], [1024, 768], [1920, 1080]]) {
+      await page.setViewportSize({ width: w[0]!, height: w[1]! });
+      const over = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
+      note(`K8 width ${w[0]} horizontal overflow=${over}`);
+      await page.screenshot({ path: `${ev}/14-width-${w[0]}.png` });
+    }
+  });
+}
+
+test("K9 next= open-redirect and refresh at code step", async ({ page, context }) => {
+  const key = newPasskey(); const a = await acct(key);
+  const { cdp, authenticatorId } = await va(context, page); await hold(cdp, authenticatorId, key);
+  await page.goto("/sign-in?next=//evil.example.org/x");
+  await page.getByLabel("Account name").fill(a.username); await page.getByLabel("Password").fill(a.password);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByLabel("Authenticator code")).toBeVisible();
+  await page.reload();
+  note("K9 after refresh at code step shows: " + (await page.locator("main").innerText()).replace(/\n/g, " | ").slice(0, 120));
+  await page.getByLabel("Account name").fill(a.username); await page.getByLabel("Password").fill(a.password);
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Use a security key" }).click();
+  await page.waitForTimeout(1500);
+  note("K9 next=//evil → landed on " + page.url());
+  expect(new URL(page.url()).host).toBe(new URL(base).host);
+});
+
+test("K10 fresh client with no pending cookie: challenge/verify refused", async ({ playwright }) => {
+  const rc = await playwright.request.newContext({ baseURL: base, ignoreHTTPSErrors: true });
+  const c = await rc.post("/api/v1/auth/second-factor/webauthn/challenge");
+  note(`K10 challenge no pending: ${c.status()} set-cookie=${c.headers()["set-cookie"] ?? "none"} ${await c.text()}`);
+  const v = await rc.post("/api/v1/auth/second-factor/webauthn/verify", { data: { credentialId: "AAAA", authenticatorData: "AAAA", clientDataJson: "AAAA", signature: "AAAA" } });
+  note(`K10 verify no pending: ${v.status()} set-cookie=${v.headers()["set-cookie"] ?? "none"} ${await v.text()}`);
+  const t = await rc.post("/api/v1/auth/second-factor/totp/verify", { data: { code: "123456" } });
+  note(`K10 totp no pending: ${t.status()} ${await t.text()}`);
+});
+
+test("K11 server stopped after password step: key button + Continue show the unreachable state", async ({ page, context }) => {
+  const key = newPasskey(); const a = await acct(key);
+  const { cdp, authenticatorId } = await va(context, page); await hold(cdp, authenticatorId, key);
+  await pw(page, a);
+  writeFileSync(`${ev}/stop-now`, "1");
+  for (let i = 0; i < 60 && !existsSync(`${ev}/stopped`); i++) await page.waitForTimeout(500);
+  await page.getByRole("button", { name: "Use a security key" }).click();
+  await expect(page.getByText("Couldn't sign you in")).toBeVisible();
+  note("K11 server down, key click: " + (await page.locator("main").innerText()).replace(/\n/g, " | "));
+  await page.screenshot({ path: `${ev}/15-server-down.png` });
+  expect(await sess(context)).toBe(0);
+});

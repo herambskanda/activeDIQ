@@ -20,11 +20,13 @@ const (
 	ErrObjectTypeMismatch    = "sd.object_type_mismatch"
 	ErrInertACE              = "sd.inert_ace"
 	ErrBaseNonCanonical      = "sd.base_non_canonical"
+	ErrPlanNonCanonical      = "sd.plan_non_canonical"
 	ErrACLTooLarge           = "sd.acl_too_large"
 	ErrACEDigestMismatch     = "sd.ace_digest_mismatch"
 	ErrACEIndexOutOfRange    = "sd.ace_index_out_of_range"
 	ErrDuplicateRemove       = "sd.duplicate_remove"
 	ErrStaleBase             = "sd.stale_base"
+	ErrWriteDiverged         = "sd.write_diverged"
 	ErrSDPropWillRevert      = "sd.sdprop_will_revert"
 	ErrSelfLockout           = "sd.self_lockout"
 	ErrProtectFlagChange     = "sd.protect_flag_change"
@@ -163,9 +165,10 @@ type Plan struct {
 	// trustee in isolation). ChangesIncomplete is set when the bound was reached or a GUID has no catalog kind.
 	Changes           []RightsChange
 	ChangesIncomplete bool
-	// NonCanonicalResult lists outcome-changing order violations the new DACL has. Only
-	// PlanInheritance can produce it (converting inherited ACEs to explicit ones keeps their order,
-	// so effective rights do not change).
+	// NonCanonicalResult lists the outcome-changing order violations (rules 1 and 2) the planned DACL
+	// would have. Only PlanInheritance can produce it, and then it is refused (sd.plan_non_canonical)
+	// because the DC would re-sort the list and change effective rights; the violations are returned
+	// with the error so the caller can offer PlanOpts.Normalize.
 	NonCanonicalResult []OrderViolation
 }
 
@@ -218,4 +221,78 @@ func (w DACLWrite) VerifyBase(current SD) error {
 		return fail(ErrStaleBase)
 	}
 	return nil
+}
+
+// Verified is the outcome of a successful VerifyAfter.
+type Verified struct {
+	// Reordered is set when the DC stored the same ACEs in a different order than the plan wrote
+	// (a Windows DC re-sorts a DACL on write, T-0627). Effective rights were checked equal.
+	Reordered bool
+}
+
+// VerifyAfter is SD-R10: called with a re-read (DACL-only) of the object after the modify. It accepts
+// the DC's canonical re-ordering and flags only real differences:
+//
+//   - the stored ACEs are the planned ACEs as a multiset (every ACE's bytes, so type, flags, mask,
+//     trustee and object GUIDs);
+//   - the stored DACL's PD bit is the planned one (DI is the DC's to recompute and is not compared);
+//   - every pair of ACEs the DC put in the opposite order from the plan is harmless: two allows or two
+//     denies, or an allow and a deny that cannot meet (disjoint masks).
+//     Reordering an allow/deny pair with overlapping masks (whatever their trustees or object GUIDs: no
+//     catalog is available to prove them disjoint), or any conditional or unknown ACE, may change what the
+//     DACL grants and fails. This is conservative: it fails closed, never open.
+//
+// Position is never compared. A mismatch is sd.write_diverged: the caller audits the actual state
+// and does not retry.
+func (w DACLWrite) VerifyAfter(stored SD) (Verified, error) {
+	var v Verified
+	if !w.ok {
+		return v, fail(ErrNotEditable)
+	}
+	planned, err := Decode(Raw(w.value))
+	if err != nil || stored.DACL.Kind != planned.DACL.Kind ||
+		stored.Control.Protected() != planned.Control.Protected() ||
+		len(stored.DACL.ACEs) != len(planned.DACL.ACEs) {
+		return v, fail(ErrWriteDiverged)
+	}
+	// Match each stored ACE to a planned one by bytes; the k-th duplicate to the k-th duplicate.
+	slots := map[string][]int{}
+	for i, a := range planned.DACL.ACEs {
+		slots[string(a.Raw)] = append(slots[string(a.Raw)], i)
+	}
+	perm := make([]int, len(stored.DACL.ACEs)) // stored position -> planned position
+	for pos, a := range stored.DACL.ACEs {
+		q := slots[string(a.Raw)]
+		if len(q) == 0 {
+			return v, fail(ErrWriteDiverged)
+		}
+		perm[pos], slots[string(a.Raw)] = q[0], q[1:]
+	}
+	for p := range perm {
+		for q := p + 1; q < len(perm); q++ {
+			if perm[p] < perm[q] {
+				continue
+			}
+			v.Reordered = true
+			if interacts(stored.DACL.ACEs[p], stored.DACL.ACEs[q]) {
+				return v, fail(ErrWriteDiverged)
+			}
+		}
+	}
+	return v, nil
+}
+
+// interacts reports whether swapping two ACEs can change what a DACL grants.
+func interacts(a, b ACE) bool {
+	if !(a.allow() || a.deny()) || !(b.allow() || b.deny()) {
+		return true // conditional, unknown or non-decision ACE: never prove it harmless
+	}
+	if a.allow() == b.allow() || a.Mask&b.Mask == 0 {
+		return false
+	}
+	// Object GUIDs are deliberately not used to prove two ACEs disjoint: a property-set GUID and a
+	// member-attribute GUID interact (SD-R11), and without a RightsCatalog we cannot tell. Trustees are
+	// not compared either: two different trustees can both be in one token. Overlapping masks of an
+	// allow and a deny therefore always count as interacting (fail closed).
+	return true
 }

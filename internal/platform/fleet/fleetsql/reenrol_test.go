@@ -40,17 +40,22 @@ func TestReenrolAddc(t *testing.T) {
 
 		// Refusals write nothing: no step-up, missing right, bad reason.
 		before := len(e.sink.evs)
-		if _, err := mk(bothAuthz{true, true}, false).ReenrolAddc(ctx, e.a, admin, req); !errors.Is(err, fleetsql.ErrStepUpRequired) {
+		if _, err := mk(bothAuthz{true, true}, false).ReenrolAddc(ctx, e.a, adminIn(e.a), req); !errors.Is(err, fleetsql.ErrStepUpRequired) {
 			t.Fatalf("no step-up: %v", err)
 		}
-		if _, err := mk(bothAuthz{true, false}, true).ReenrolAddc(ctx, e.a, admin, req); !errors.Is(err, fleetsql.ErrReenrolForbidden) {
+		for name, pr := range map[string]apihost.Principal{"other tenant": adminIn(e.b), "platform": admin} {
+			if _, err := mk(bothAuthz{true, true}, true).ReenrolAddc(ctx, e.a, pr, req); !errors.Is(err, fleetsql.ErrReenrolForbidden) {
+				t.Fatalf("%s: %v", name, err)
+			}
+		}
+		if _, err := mk(bothAuthz{true, false}, true).ReenrolAddc(ctx, e.a, adminIn(e.a), req); !errors.Is(err, fleetsql.ErrReenrolForbidden) {
 			t.Fatalf("missing issue right: %v", err)
 		}
-		if _, err := mk(bothAuthz{true, true}, true).ReenrolAddc(ctx, e.a, admin, fleetsql.ReenrolRequest{Reason: "because", EnrolledBefore: cutoff}); !errors.Is(err, fleetsql.ErrReenrolReason) {
+		if _, err := mk(bothAuthz{true, true}, true).ReenrolAddc(ctx, e.a, adminIn(e.a), fleetsql.ReenrolRequest{Reason: "because", EnrolledBefore: cutoff}); !errors.Is(err, fleetsql.ErrReenrolReason) {
 			t.Fatalf("bad reason: %v", err)
 		}
 		for _, bad := range []time.Time{{}, time.Now().Add(time.Hour)} {
-			if _, err := mk(bothAuthz{true, true}, true).ReenrolAddc(ctx, e.a, admin, fleetsql.ReenrolRequest{Reason: fleetsql.ReasonKeyExposure, EnrolledBefore: bad}); !errors.Is(err, fleetsql.ErrReenrolCutoff) {
+			if _, err := mk(bothAuthz{true, true}, true).ReenrolAddc(ctx, e.a, adminIn(e.a), fleetsql.ReenrolRequest{Reason: fleetsql.ReasonKeyExposure, EnrolledBefore: bad}); !errors.Is(err, fleetsql.ErrReenrolCutoff) {
 				t.Fatalf("bad cutoff %v: %v", bad, err)
 			}
 		}
@@ -61,7 +66,7 @@ func TestReenrolAddc(t *testing.T) {
 			t.Fatal("refused sweep revoked an agent")
 		}
 
-		res, err := mk(bothAuthz{true, true}, true).ReenrolAddc(ctx, e.a, admin, req)
+		res, err := mk(bothAuthz{true, true}, true).ReenrolAddc(ctx, e.a, adminIn(e.a), req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -121,7 +126,7 @@ func TestReenrolAddc(t *testing.T) {
 
 		// Rerun with the same cutoff: the redeemed successors are newer than the cutoff, so
 		// nothing is swept and they stay usable (idempotent).
-		res2, err := mk(bothAuthz{true, true}, true).ReenrolAddc(ctx, e.a, admin, req)
+		res2, err := mk(bothAuthz{true, true}, true).ReenrolAddc(ctx, e.a, adminIn(e.a), req)
 		if err != nil || len(res2.Items) != 0 {
 			t.Fatalf("second sweep: %v %+v", err, res2.Items)
 		}

@@ -1,0 +1,10 @@
+{
+ "id": "O-M02",
+ "class": "misaddressed",
+ "cites": [
+  "OIDC-4"
+ ],
+ "build": "idp_mixup",
+ "expect": "refuse",
+ "reason": "oidc.mixup"
+}

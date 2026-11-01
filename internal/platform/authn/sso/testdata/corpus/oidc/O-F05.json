@@ -1,0 +1,10 @@
+{
+ "id": "O-F05",
+ "class": "forged",
+ "cites": [
+  "OIDC-8"
+ ],
+ "build": "kid_unknown",
+ "expect": "refuse",
+ "reason": "oidc.key"
+}

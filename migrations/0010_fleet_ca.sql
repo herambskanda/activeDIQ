@@ -13,6 +13,7 @@
 -- At most one 'active' CA per tenant signs leaves; a 'retired' CA stays in the bundle until removed so
 -- that leaves it signed keep verifying.
 
+-- write-class: fleet_ca system
 CREATE TABLE public.fleet_ca (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

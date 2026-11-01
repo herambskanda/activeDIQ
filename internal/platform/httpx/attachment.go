@@ -9,7 +9,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -39,6 +41,8 @@ var (
 	ErrUnknownFormat = errors.New("httpx: unknown download format")
 	// ErrMissingStyleHash: an HTML download needs the SHA-256 of its single <style> block for its CSP.
 	ErrMissingStyleHash = errors.New("httpx: an HTML attachment needs WithStyleSHA256")
+	// ErrPartFormat: HTML is not attached to a message; its sandboxing policy is a response header.
+	ErrPartFormat = errors.New("httpx: HTML is not a message attachment format")
 )
 
 // MaxBaseRunes caps the base name (R5). A longer base is cut on a rune boundary: a label, not an input.
@@ -89,14 +93,63 @@ func Headers(h http.Header, base string, f Format, opts ...Option) error {
 	if f == HTML && !o.hasStyleHash {
 		return ErrMissingStyleHash
 	}
-	name := fileName(base) + spec.ext
-	h.Set("Content-Disposition", `attachment; filename="`+asciiFallback(name)+`"; filename*=UTF-8''`+pctEncode(name))
+	h.Set("Content-Disposition", disposition(fileName(base)+spec.ext))
 	h.Set("Content-Type", spec.mediaType)
 	h.Set("X-Content-Type-Options", "nosniff")
 	if f == HTML {
 		h.Set("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'sha256-"+
 			base64.StdEncoding.EncodeToString(o.styleHash[:])+"'; img-src data:")
 	}
+	return nil
+}
+
+// disposition is the attachment Content-Disposition value for a mapped file name.
+func disposition(name string) string {
+	return `attachment; filename="` + asciiFallback(name) + `"; filename*=UTF-8''` + pctEncode(name)
+}
+
+// MaxPartEncodedBase bounds the percent-encoded length of a part's base name (O7, EM-12). RFC 5322
+// section 2.1.1 allows no line over 998 octets, and a base of MaxBaseRunes four-byte runes
+// encodes to about 1.4 KB in filename*=. A longer base is cut on a rune boundary. Folding the line
+// into RFC 2231 continuations is not an option here: CRLF in a header is built only in notify/mail
+// (FF-SP3 mail-header-shape). With this cap the Content-Disposition line is at most about 800
+// octets and the Content-Type line about 300. Plain ASCII names up to MaxBaseRunes are unaffected.
+const MaxPartEncodedBase = 600
+
+// partFileName is fileName cut so that its percent-encoding is at most MaxPartEncodedBase octets.
+func partFileName(base string) string {
+	name := fileName(base)
+	n := 0
+	for i, r := range name {
+		n += len(pctEncode(string(r)))
+		if n > MaxPartEncodedBase {
+			return name[:i]
+		}
+	}
+	return name
+}
+
+// PartHeaders sets Content-Disposition and Content-Type on the header of one MIME part of an
+// outgoing message, with the same file-name mapping and format table as Headers (EM-11): the
+// disposition is attachment, the name is the O3-mapped base plus the format's extension, and the
+// media type comes from the format. No resulting header line exceeds 998 octets (O7, EM-12): the
+// base is cut to MaxPartEncodedBase encoded octets. HTML is refused (ErrPartFormat). On error it sets
+// nothing.
+func PartHeaders(h textproto.MIMEHeader, base string, f Format) error {
+	spec, ok := formats[f]
+	if !ok {
+		return ErrUnknownFormat
+	}
+	if f == HTML {
+		return ErrPartFormat
+	}
+	name := partFileName(base) + spec.ext
+	mt, _, err := mime.ParseMediaType(spec.mediaType)
+	if err != nil {
+		return err
+	}
+	h.Set("Content-Disposition", disposition(name))
+	h.Set("Content-Type", mime.FormatMediaType(mt, map[string]string{"name": asciiFallback(name)}))
 	return nil
 }
 

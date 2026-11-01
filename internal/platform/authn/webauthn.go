@@ -137,6 +137,15 @@ func (f *WebAuthnFactor) AddCredential(ctx context.Context, t tenant.ID, account
 
 // insertCredential stores a verified credential of the purpose for the account.
 func insertCredential(ctx context.Context, tx store.Tx, t tenant.ID, account, purpose string, c WebAuthnCredential) (string, error) {
+	if purpose == purposeSecondFactor {
+		// Activating a second-factor credential changes what AN-10 accepts (the passkey lock). Take the
+		// account row exclusively first: VerifyTOTP holds it FOR SHARE while it reads the credentials
+		// and mints the session, so the two cannot interleave (FP-T8).
+		var one int
+		if err := tx.QueryRow(ctx, `SELECT 1 FROM public.authn_accounts WHERE tenant_id = $1::uuid AND id = $2::uuid FOR UPDATE`, t.String(), account).Scan(&one); err != nil && !store.IsNoRows(err) {
+			return "", err
+		}
+	}
 	var id string
 	err := tx.QueryRow(ctx, `INSERT INTO public.authn_webauthn_credentials
   (tenant_id, account_id, credential_id, public_key, user_handle, backup_eligible, aaguid, sign_count, label, purpose)

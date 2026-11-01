@@ -203,11 +203,11 @@ func (r *Runner) verifyApplied(ctx context.Context, t tenant.ID, tx txFunc, c *c
 		return r.settle(ctx, q, t, string(c.key.Operation))
 	})
 	if err == nil && recorded && reason == ReasonTier0AfterWrite {
-		r.tier0Alert(context.WithoutCancel(ctx), string(c.key.Operation))
+		r.tier0Alert(context.WithoutCancel(ctx), c, nil)
 	}
 	if err == nil && !recorded && reason == ReasonTier0AfterWrite {
 		// Not the owner any more: state is untouched, but the signal is still acted on.
-		return r.tier0Superseded(context.WithoutCancel(ctx), t, tx, c)
+		return r.tier0Superseded(context.WithoutCancel(ctx), t, tx, c, nil)
 	}
 	return err
 }

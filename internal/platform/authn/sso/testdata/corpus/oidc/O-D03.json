@@ -1,0 +1,10 @@
+{
+ "id": "O-D03",
+ "class": "malformed",
+ "cites": [
+  "OIDC-16"
+ ],
+ "build": "claims_only_from_id_token",
+ "expect": "refuse",
+ "reason": "oidc.claims"
+}

@@ -22,6 +22,12 @@ type Typed[In, P, Out any] struct {
 	// Observe reads the target back on the pinned DC for reconciliation (rule 6). A Directory Action
 	// must provide it; a Store Action must not.
 	Observe func(ctx context.Context, pins authority.Pins, p TypedStep[P], claimedAt time.Time) (Observation, error)
+	// Tier0 returns the connector's step-9 report (ApplyResponse.tier0_after_write) from the typed
+	// outcome. A Directory Action fills it from client.Result.Tier0AfterWrite.
+	Tier0 func(o Out) []step.Tier0Finding
+	// Touched returns the objects besides the target that the step's typed change touches; the
+	// server's Tier-0 re-read covers each of them (ADR-0005 rule 7).
+	Touched func(p TypedStep[P]) []authority.TargetRef
 }
 
 // TypedStep is a StepPlan with a typed payload.
@@ -105,7 +111,23 @@ func (d defined[In, P, Out]) Apply(ctx context.Context, s step.Step, p StepPlan)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("%w: outcome does not encode", ErrInvalid)
 	}
-	return Outcome{Payload: b}, nil
+	o := Outcome{Payload: b}
+	if d.t.Tier0 != nil {
+		o.Tier0 = d.t.Tier0(out)
+	}
+	return o, nil
+}
+
+// Touched implements Toucher.
+func (d defined[In, P, Out]) Touched(p StepPlan) []authority.TargetRef {
+	if d.t.Touched == nil {
+		return nil
+	}
+	ts, err := d.unpack(p)
+	if err != nil {
+		return nil
+	}
+	return d.t.Touched(ts)
 }
 
 func (d defined[In, P, Out]) Verify(ctx context.Context, s step.Step, p StepPlan, o Outcome) (Verdict, error) {

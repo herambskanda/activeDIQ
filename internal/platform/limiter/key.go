@@ -25,6 +25,22 @@ const (
 // nat64 is the well-known NAT64 prefix (RFC 6052 §2.1).
 var nat64 = netip.MustParsePrefix("64:ff9b::/96")
 
+// NormaliseBits resolves the configured per-IP prefix lengths: 0 means the default (/32 and /64) and
+// any value outside the §7.8 ranges is an error. Every control that keys on source IP validates its
+// configuration through it, so a single range definition covers them all.
+func NormaliseBits(v4, v6 int) (int, int, error) {
+	if v4 == 0 {
+		v4 = DefaultIPv4Bits
+	}
+	if v6 == 0 {
+		v6 = DefaultIPv6Bits
+	}
+	if err := checkBits(v4, v6); err != nil {
+		return 0, 0, err
+	}
+	return v4, v6, nil
+}
+
 // checkBits fails for a prefix length outside the §7.8 ranges: IPv4 /24../32, IPv6 /48../64.
 func checkBits(v4, v6 int) error {
 	if v4 < minIPv4Bits || v4 > 32 {
@@ -36,12 +52,14 @@ func checkBits(v4, v6 int) error {
 	return nil
 }
 
-// ipKey derives the canonical masked prefix of a source address (§7.8 rules 1-3). It returns false
-// for anything net/netip cannot parse as a bare address; the raw string is never a key.
-func ipKey(raw string, v4, v6 int) (string, bool) {
-	a, err := netip.ParseAddr(raw)
-	if err != nil {
-		return "", false
+// SourcePrefix derives the canonical masked prefix of a source address (§7.8 rules 1-3): the zone is
+// dropped, an IPv4-mapped address and a NAT64 (64:ff9b::/96) address count as the IPv4 address they
+// carry, and the result is masked to v4 bits (IPv4) or v6 bits (IPv6). It is the one definition of
+// "source" every control keyed on source IP uses. It returns false for an invalid address or a prefix
+// length net/netip rejects; the caller decides how an unusable source is treated.
+func SourcePrefix(a netip.Addr, v4, v6 int) (netip.Prefix, bool) {
+	if !a.IsValid() || checkBits(v4, v6) != nil { // a finer key than §7.8 allows is never produced
+		return netip.Prefix{}, false
 	}
 	a = a.WithZone("").Unmap()
 	if a.Is6() && nat64.Contains(a) {
@@ -54,7 +72,21 @@ func ipKey(raw string, v4, v6 int) (string, bool) {
 	}
 	p, err := a.Prefix(bits)
 	if err != nil {
+		return netip.Prefix{}, false
+	}
+	return p.Masked(), true
+}
+
+// ipKey is SourcePrefix over a textual address. It returns false for anything net/netip cannot parse
+// as a bare address; the raw string is never a key.
+func ipKey(raw string, v4, v6 int) (string, bool) {
+	a, err := netip.ParseAddr(raw)
+	if err != nil {
 		return "", false
 	}
-	return p.Masked().String(), true
+	p, ok := SourcePrefix(a, v4, v6)
+	if !ok {
+		return "", false
+	}
+	return p.String(), true
 }

@@ -3,6 +3,7 @@
 import { StringDecoder } from 'node:string_decoder';
 
 const RATE_LIMIT = /rate.?limit|usage limit|overloaded|\b429\b/i;
+const CONNECTIVITY = /\b(EAI_AGAIN|ENOTFOUND|ECONNRESET|ETIMEDOUT)\b|can['\u2019]?t reach the API server/i;
 
 const oneLine = (s) => String(s).replace(/\s+/g, ' ').trim();
 const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -45,6 +46,16 @@ export function resultKeyword(resultLine) {
 export function detectRateLimit({ result = null, stderr = '' }) {
   if (result && !result.is_error) return false;
   return RATE_LIMIT.test(result?.result ?? '') || RATE_LIMIT.test(stderr);
+}
+
+/**
+ * Whether a finished run failed because the API could not be reached (DNS, reset, timeout) — an
+ * outage on our side of the wire, not a verdict on the ticket. A successful run is never one.
+ * @param {{result?: {is_error?: boolean, result?: string}|null, stderr?: string}} input
+ */
+export function detectConnectivityError({ result = null, stderr = '' }) {
+  if (result && !result.is_error) return false;
+  return CONNECTIVITY.test(result?.result ?? '') || CONNECTIVITY.test(stderr);
 }
 
 function activityOf(content) {

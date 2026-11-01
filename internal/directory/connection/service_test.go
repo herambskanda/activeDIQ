@@ -26,6 +26,7 @@ type fakeClient struct {
 	res   connection.VerifyResult
 	err   error
 	calls int
+	reqs  []connection.VerifyRequest
 }
 
 func (f *fakeClient) set(r connection.VerifyResult, err error) {
@@ -34,10 +35,11 @@ func (f *fakeClient) set(r connection.VerifyResult, err error) {
 	f.res, f.err = r, err
 }
 
-func (f *fakeClient) VerifyConnection(context.Context, connection.VerifyRequest) (connection.VerifyResult, error) {
+func (f *fakeClient) VerifyConnection(_ context.Context, r connection.VerifyRequest) (connection.VerifyResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
+	f.reqs = append(f.reqs, r)
 	return f.res, f.err
 }
 
@@ -413,4 +415,71 @@ func TestQualifiesRequiresOverPrivilegePassOnAPass(t *testing.T) {
 	if ok, _ := connection.Qualifies(connection.KindEntraTenant, v, nil); !ok {
 		t.Error("a pass with EV3 pass was refused")
 	}
+}
+
+// T-0358 / TM-D26 rule 10: onboarding pins the C13 groups the run found, and every later run is told
+// the connection's pins. A pin that cannot be stored interrupts the onboarding run (fail closed).
+func TestOnboardingPersistsC13GroupsAndLaterRunsSendThem(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := newSvc(t, s)
+		ctx := context.Background()
+		c := e.draft(t)
+		g1, g2 := "11111111-2222-4333-8444-555555555555", "66666666-7777-4888-8999-aaaaaaaaaaaa"
+		r := passing()
+		r.C13Groups = []string{g1, g2}
+		e.cl.set(r, nil)
+		if _, err := e.svc.Verify(ctx, e.a, c.ID, connection.KindOnboarding, human("alice")); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.cl.reqs[0].PinnedC13; len(got) != 0 {
+			t.Errorf("first discovery sent pins %v", got)
+		}
+		var pins []string
+		if err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx store.Tx) (err error) {
+			pins, err = connection.Store{}.PinnedC13(ctx, tx, c.ID)
+			return
+		}); err != nil || len(pins) != 2 {
+			t.Fatalf("pins after onboarding = %v %v", pins, err)
+		}
+		// Activate reuses the fresh onboarding pass (FR-17); a later manual run is told the pins, and a
+		// run that reports no C13 group does not unpin.
+		e.cl.set(passing(), nil)
+		if _, err := e.svc.Activate(ctx, e.a, c.ID, human("alice")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.svc.Verify(ctx, e.a, c.ID, connection.KindManual, human("alice")); err != nil {
+			t.Fatal(err)
+		}
+		last := e.cl.reqs[len(e.cl.reqs)-1]
+		if len(e.cl.reqs) < 2 || len(last.PinnedC13) != 2 {
+			t.Fatalf("later run sent %d requests, last pins %v", len(e.cl.reqs), last.PinnedC13)
+		}
+	})
+}
+
+// Only onboarding pins: a manual run that reports C13 groups does not widen the pin set.
+func TestOnlyOnboardingPinsC13Groups(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := newSvc(t, s)
+		ctx := context.Background()
+		c := e.draft(t)
+		e.cl.set(passing(), nil)
+		if _, err := e.svc.Activate(ctx, e.a, c.ID, human("alice")); err != nil {
+			t.Fatal(err)
+		}
+		r := passing()
+		r.C13Groups = []string{"11111111-2222-4333-8444-555555555555"}
+		e.cl.set(r, nil)
+		if _, err := e.svc.Verify(ctx, e.a, c.ID, connection.KindManual, human("alice")); err != nil {
+			t.Fatal(err)
+		}
+		var pins []string
+		_ = e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx store.Tx) (err error) {
+			pins, err = connection.Store{}.PinnedC13(ctx, tx, c.ID)
+			return
+		})
+		if len(pins) != 0 {
+			t.Fatalf("manual run pinned %v", pins)
+		}
+	})
 }

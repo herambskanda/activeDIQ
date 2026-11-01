@@ -291,13 +291,15 @@ func TestA11IgnoresTestsAndApihost(t *testing.T) {
 	f["internal/platform/apihost/h.go"] = src
 	f["internal/modules/users/h_test.go"] = src
 	f["internal/connector/graph/graphtest/fake.go"] = src // fake of an external service, not our API
+	f["internal/platform/opsmetrics/h.go"] = src          // operator /metrics listener, not the API document
+	f["internal/platform/opsmetrics2/h.go"] = "package other\n\nimport \"net/http\"\n\nfunc H(w http.ResponseWriter) { w.WriteHeader(500) }\n"
 	f["internal/connector/graph/other/fake.go"] = "package other\n\nimport \"net/http\"\n\nfunc H(w http.ResponseWriter) { w.WriteHeader(500) }\n"
 	sibling := false
 	for _, v := range run(t, f) {
 		if v.Check != "A11" {
 			continue
 		}
-		if strings.Contains(v.Pos, "graph/other/") {
+		if strings.Contains(v.Pos, "graph/other/") || strings.Contains(v.Pos, "opsmetrics2/") {
 			sibling = true // control: a sibling package is still checked
 			continue
 		}

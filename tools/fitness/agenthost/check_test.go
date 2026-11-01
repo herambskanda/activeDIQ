@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -380,6 +382,329 @@ func TestA1Installer(t *testing.T) {
 		write(t, r, "testdata/evil.wxs", lsys)
 		wantViolation(t, checkInstaller(r), "LocalSystem")
 	}
+	// T-0677: the walker fails closed.
+	// Security-architect review of T-0677: no reachability guessing. Every WiX-named file in the repo is
+	// scanned (tools/fitness included), so an include, escape, glob, property or import cannot hide one.
+	bypass := func(rel, body string) {
+		t.Helper()
+		r := t.TempDir()
+		write(t, r, "tools/fitness/agenthost/testdata/evil.wxs", lsys)
+		write(t, r, rel, body)
+		wantViolation(t, checkInstaller(r), "LocalSystem")
+	}
+	bypass("packaging/windows/A.wixproj", `<Project><ItemGroup><Compile Include="..\..\tools\fitness\agenthost\testdata\evil.wxs"/></ItemGroup></Project>`)
+	bypass("packaging/windows/A.wixproj", `<Project><ItemGroup><Compile Include="..\..\tools\%66itness\agenthost\testdata\evil.wxs"/></ItemGroup></Project>`)
+	bypass("packaging/windows/A.wixproj", `<Project><ItemGroup><Compile Include="..\..\**\*.wxs"/></ItemGroup></Project>`)
+	bypass("packaging/windows/A.wixproj", `<Project><PropertyGroup><F>fit</F><N>ness</N></PropertyGroup><ItemGroup><Compile Include="..\..\tools\$(F)$(N)\agenthost\testdata\evil.wxs"/></ItemGroup></Project>`)
+	bypass("packaging/windows/Directory.Build.props", `<Project><ItemGroup><Compile Include="..\..\tools\fitness\agenthost\testdata\evil.wxs"/></ItemGroup></Project>`)
+	{
+		r := t.TempDir() // a WiX-named file under tools/fitness on disk fails A1 by itself
+		write(t, r, "tools/fitness/agenthost/testdata/evil.wxs", lsys)
+		wantViolation(t, checkInstaller(r), "LocalSystem")
+	}
+	{
+		r := t.TempDir() // a non-WiX-named directory link outside packaging/ reaches the fixtures
+		write(t, r, "packaging/windows/A.wixproj", `<Project><ItemGroup><Compile Include="..\..\tools\fx\evil.wxs"/></ItemGroup></Project>`)
+		write(t, r, "tools/fitness/agenthost/testdata/evil.wxs", lsys)
+		if err := os.Symlink(filepath.Join(r, "tools/fitness/agenthost/testdata"), filepath.Join(r, "tools/fx")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		wantViolation(t, checkInstaller(r), "symbolic link to a directory")
+	}
+	{
+		r := t.TempDir() // a plain file link (node_modules/.bin style) stays clean
+		write(t, r, "web/node_modules/x/cli.js", "x")
+		write(t, r, "packaging/windows/agent.wxs", goodWxs)
+		if err := os.MkdirAll(filepath.Join(r, "web/node_modules/.bin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(r, "web/node_modules/x/cli.js"), filepath.Join(r, "web/node_modules/.bin/x")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		wantClean(t, checkInstaller(r))
+	}
+	{
+		r := t.TempDir() // (2) a symlinked directory holding a LocalSystem file
+		write(t, r, "packaging/windows/agent.wxs", goodWxs)
+		write(t, r, "elsewhere/x.wxs", lsys)
+		if err := os.Symlink(filepath.Join(r, "elsewhere"), filepath.Join(r, "packaging/windows/testdata")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		wantViolation(t, checkInstaller(r), "symbolic link")
+	}
+	{
+		r := t.TempDir() // a symlinked WiX file outside packaging/
+		write(t, r, "elsewhere/x.wxs", lsys)
+		if err := os.Symlink(filepath.Join(r, "elsewhere/x.wxs"), filepath.Join(r, "link.wxs")); err != nil {
+			t.Skip("symlinks unavailable:", err)
+		}
+		wantViolation(t, checkInstaller(r), "symbolic link")
+	}
+	{
+		r := t.TempDir() // (3) an unreadable directory
+		write(t, r, "packaging/windows/agent.wxs", goodWxs)
+		write(t, r, "packaging/windows/testdata/x.wxs", lsys)
+		d := filepath.Join(r, "packaging/windows/testdata")
+		if err := os.Chmod(d, 0); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chmod(d, 0o755)
+		if _, err := os.ReadDir(d); err == nil {
+			t.Skip("directory permissions are not enforced (running as root)")
+		}
+		wantViolation(t, checkInstaller(r), "cannot be walked")
+	}
+	// Security-architect review of T-0677, attempt 2: WiX is classified by CONTENT, not by name.
+	{
+		inc := func(rel string) string {
+			return `<Project><ItemGroup><Compile Include="` + rel + `"/></ItemGroup></Project>`
+		}
+		for _, name := range []string{"evil.xml", "evil.golden"} { // 1a, 1b: the ticket's case with the file renamed
+			r := t.TempDir()
+			write(t, r, "packaging/windows/A.wixproj", inc(`..\..\tools\fitness\x\testdata\`+name))
+			write(t, r, "tools/fitness/x/testdata/"+name, lsys)
+			wantViolation(t, checkInstaller(r), "LocalSystem")
+		}
+		{ // 1c: <?include?> takes any file name
+			r := t.TempDir()
+			write(t, r, "packaging/windows/core.wxs", `<Wix><?include ../../docs/evil.txt ?></Wix>`)
+			write(t, r, "docs/evil.txt", `<Include><ServiceInstall Name="x" Account="LocalSystem"/></Include>`)
+			wantViolation(t, checkInstaller(r), "LocalSystem")
+		}
+		{ // T-0677 attempt 3: an extension never exempts a file from the content check
+			for _, rel := range []string{"tools/x/evil.bin", "tools/x/evil.png", "tools/x/evil.dll", "tools/x/evil.gz"} {
+				r := t.TempDir()
+				write(t, r, "packaging/windows/A.wixproj", inc(`..\..\`+strings.ReplaceAll(rel, "/", `\`)))
+				write(t, r, rel, lsys)
+				wantViolation(t, checkInstaller(r), "LocalSystem")
+			}
+			r := t.TempDir()
+			write(t, r, "packaging/windows/evil.bin", lsys)
+			wantViolation(t, checkInstaller(r), "LocalSystem")
+			// UTF-32LE and BE evil.xml
+			for _, le := range []bool{true, false} {
+				r := t.TempDir()
+				var b []byte
+				if le {
+					b = []byte{0xFF, 0xFE, 0, 0}
+				} else {
+					b = []byte{0, 0, 0xFE, 0xFF}
+				}
+				for _, c := range lsys {
+					if le {
+						b = append(b, byte(c), 0, 0, 0)
+					} else {
+						b = append(b, 0, 0, 0, byte(c))
+					}
+				}
+				write(t, r, "tools/x/evil.xml", string(b))
+				wantViolation(t, checkInstaller(r), "LocalSystem")
+			}
+			// negative: a real PNG (NULs) under packaging/ passes
+			r = t.TempDir()
+			write(t, r, "packaging/windows/logo.png", "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x10"+lsys[:0])
+			write(t, r, "packaging/windows/Product.wxs", goodWxs)
+			wantClean(t, checkInstaller(r))
+		}
+		{ // T-0677 attempt 5: BOM-less UTF-32/UTF-16 detected from the first four bytes (XML Appendix F)
+			enc := func(unit int, be bool, s string) string {
+				var b []byte
+				for _, c := range s {
+					z := make([]byte, unit-1)
+					if be {
+						b = append(append(b, z...), byte(c))
+					} else {
+						b = append(append(b, byte(c)), z...)
+					}
+				}
+				return string(b)
+			}
+			pad := strings.Repeat("\x01\x4e", 40000) // U+4E01 code units: no NUL bytes
+			for name, content := range map[string]string{
+				"utf32le":     enc(4, false, lsys),
+				"utf32be":     enc(4, true, lsys),
+				"utf16le-pad": enc(2, false, "<?xml version=\"1.0\"?><!--") + pad + enc(2, false, "-->"+lsys),
+			} {
+				r := t.TempDir()
+				write(t, r, "packaging/windows/A.wixproj", inc(`..\..\tools\x\evil.xml`))
+				write(t, r, "tools/x/evil.xml", content)
+				if v := checkInstaller(r).Violations; len(v) == 0 {
+					t.Errorf("%s: want a violation, got none", name)
+				}
+			}
+			for _, sig := range []string{"\x00\x00\x3c\x00", "\x00\x3c\x00\x00", "\x4c\x6f\xa7\x94"} {
+				r := t.TempDir()
+				write(t, r, "tools/x/evil.xml", sig+"rest")
+				wantViolation(t, checkInstaller(r), "cannot decode")
+			}
+		}
+		{ // T-0677 attempt 6: mirror .NET DetectEncoding on the first two bytes; 3412/2143 BOMs fail closed
+			enc := func(be bool, s string) string {
+				var b []byte
+				for _, c := range s {
+					if be {
+						b = append(b, 0, byte(c))
+					} else {
+						b = append(b, byte(c), 0)
+					}
+				}
+				return string(b)
+			}
+			pad := strings.Repeat("\x01\x4e", 40000)
+			wixHead := "<Wix><Fragment><!--"
+			cases := map[string][2]string{
+				"np16le":    {"tools/x/evil.xml", enc(false, wixHead) + pad + enc(false, "-->"+lsys+"</Fragment></Wix>")},
+				"np16be":    {"tools/x/evil.xml", enc(true, wixHead) + pad[:0] + enc(true, "-->"+lsys+"</Fragment></Wix>")},
+				"cm16le":    {"tools/x/evil.xml", enc(false, "<!--") + pad + enc(false, "-->"+lsys)},
+				"pk16le":    {"packaging/windows/evil.dat", enc(false, wixHead) + pad + enc(false, "-->"+lsys+"</Fragment></Wix>")},
+				"bom3412":   {"tools/x/evil.xml", "\xfe\xff\x00\x00" + lsys},
+				"bom2143":   {"tools/x/evil.xml", "\x00\x00\xff\xfe" + lsys},
+				"bom3412pk": {"packaging/windows/evil.dat", "\xfe\xff\x00\x00" + lsys},
+			}
+			for name, c := range cases {
+				r := t.TempDir()
+				write(t, r, "packaging/windows/A.wixproj", inc(`..\..\`+strings.ReplaceAll(c[0], "/", `\`)))
+				write(t, r, c[0], c[1])
+				if v := checkInstaller(r).Violations; len(v) == 0 {
+					t.Errorf("%s: want a violation, got none", name)
+				}
+			}
+		}
+		{ // T-0677 attempt 7: the declared encoding name is mirrored (CheckEncoding/SwitchEncoding)
+			u16 := func(be bool, s string) string {
+				var b []byte
+				for _, c := range s {
+					if be {
+						b = append(b, byte(c>>8), byte(c))
+					} else {
+						b = append(b, byte(c), byte(c>>8))
+					}
+				}
+				return string(b)
+			}
+			u32 := func(s string) string {
+				var b []byte
+				for _, c := range s {
+					b = append(b, byte(c), byte(c>>8), 0, 0)
+				}
+				return string(b)
+			}
+			pad := strings.Repeat("\u4e01", 40000)
+			decl := func(n string) string { return `<?xml version="1.0" encoding="` + n + `"?>` }
+			body := "<Wix><Fragment><!--" + pad + "-->" + lsys + "</Fragment></Wix>"
+			cases := map[string]string{
+				"utf-32":      decl("utf-32") + u32("<Wix><Fragment>"+lsys+"</Fragment></Wix>"),
+				"utf-16BE":    decl("utf-16BE") + u16(true, body),
+				"unicodeFFFE": decl("unicodeFFFE") + u16(true, body),
+				"utf-7":       decl("utf-7") + lsys,
+			}
+			for name, content := range cases {
+				for _, where := range []string{"tools/x/evil.xml", "packaging/windows/evil.dat"} {
+					r := t.TempDir()
+					write(t, r, "packaging/windows/A.wixproj", inc(`..\..\`+strings.ReplaceAll(where, "/", `\`)))
+					write(t, r, where, content)
+					wantViolation(t, checkInstaller(r), "declares an encoding")
+					_ = name
+				}
+			}
+			// negatives: utf-8 declared good WiX, BOM'd UTF-16 declaring utf-16
+			for name, content := range map[string]string{
+				"utf-8":  decl("utf-8") + goodWxs,
+				"utf-16": "\xff\xfe" + u16(false, decl("utf-16")+goodWxs),
+			} {
+				r := t.TempDir()
+				write(t, r, "packaging/windows/agent.wxs", content)
+				if v := checkInstaller(r).Violations; len(v) != 0 {
+					t.Errorf("%s: good WiX flagged: %v", name, v)
+				}
+			}
+		}
+		{ // T-0677 attempt 9: us-ascii & co. only for pure-ASCII files (.NET maps bytes >= 0x80 to '?')
+			for _, enc := range []string{"us-ascii", "iso-8859-1", "windows-1252"} {
+				content := `<?xml version="1.0" encoding="` + enc + `"?><?x ` + "\x80" + `>` + "<Wix><Fragment>" + lsys + "</Fragment></Wix><?y ?>"
+				for _, where := range []string{"tools/x/evil.xml", "packaging/windows/evil.dat"} {
+					r := t.TempDir()
+					write(t, r, "packaging/windows/A.wixproj", inc(`..\..\`+strings.ReplaceAll(where, "/", `\`)))
+					write(t, r, where, content)
+					wantViolation(t, checkInstaller(r), "declares an encoding")
+				}
+			}
+			r := t.TempDir()
+			write(t, r, "packaging/windows/agent.wxs", `<?xml version="1.0" encoding="us-ascii"?>`+goodWxs)
+			if v := checkInstaller(r).Violations; len(v) != 0 {
+				t.Errorf("pure-ASCII us-ascii good WiX flagged: %v", v)
+			}
+		}
+		{ // T-0677 attempt 10: the rule also applies to the full re-read past the 64 KiB head
+			for where, enc := range map[string]string{"tools/x/evil.xml": "us-ascii", "tools/x/evil.png": "windows-1252"} {
+				r := t.TempDir()
+				write(t, r, where, `<?xml version="1.0" encoding="`+enc+`"?><!--`+strings.Repeat("a", 70000)+"--><?x \x80>"+"<Wix><Fragment>"+lsys+"</Fragment></Wix><?y ?>")
+				wantViolation(t, checkInstaller(r), "declares an encoding")
+			}
+		}
+		{ // a long prolog does not hide the root element
+			r := t.TempDir()
+			write(t, r, "docs/evil.txt", "<!--"+strings.Repeat("x", 100<<10)+"-->"+lsys)
+			wantViolation(t, checkInstaller(r), "LocalSystem")
+		}
+		{ // 2: prebuilt WiX intermediates, by extension and as a renamed zip
+			r := t.TempDir()
+			write(t, r, "vendor/core.wixlib", "PK")
+			wantViolation(t, checkInstaller(r), "prebuilt WiX intermediate")
+			r = t.TempDir()
+			var zb bytes.Buffer
+			zw := zip.NewWriter(&zb)
+			w, _ := zw.Create("wix-ir.json")
+			w.Write([]byte("{}"))
+			zw.Close()
+			write(t, r, "vendor/blob.dat", zb.String())
+			wantViolation(t, checkInstaller(r), "wix-ir.json")
+			r = t.TempDir() // an ordinary zip is not flagged
+			zb.Reset()
+			zw = zip.NewWriter(&zb)
+			w, _ = zw.Create("readme.txt")
+			w.Write([]byte("x"))
+			zw.Close()
+			write(t, r, "vendor/blob.dat", zb.String())
+			if res := checkInstaller(r); len(res.Violations) != 0 {
+				t.Fatalf("ordinary zip flagged: %v", res.Violations)
+			}
+		}
+		{ // 3a: a dangling link that is not WiX-named
+			r := t.TempDir()
+			write(t, r, "packaging/windows/A.wixproj", inc(`src\*.wxs`))
+			if err := os.Symlink("/nonexistent/agent-src", filepath.Join(r, "packaging/windows/src")); err != nil {
+				t.Skip("symlinks unavailable:", err)
+			}
+			wantViolation(t, checkInstaller(r), "cannot be resolved")
+		}
+		{ // 3b: a file link that leaves the repo
+			outside := t.TempDir()
+			write(t, outside, "evil.xml", lsys)
+			r := t.TempDir()
+			write(t, r, "packaging/windows/agent.wxs", goodWxs)
+			if err := os.Symlink(filepath.Join(outside, "evil.xml"), filepath.Join(r, "tools_fx.dat")); err != nil {
+				t.Skip("symlinks unavailable:", err)
+			}
+			wantViolation(t, checkInstaller(r), "leaves the repository")
+		}
+		{ // 3c: an in-repo file link to a WiX document by content
+			r := t.TempDir()
+			write(t, r, "docs/evil.xml", lsys)
+			if err := os.Symlink(filepath.Join(r, "docs/evil.xml"), filepath.Join(r, "fx.dat")); err != nil {
+				t.Skip("symlinks unavailable:", err)
+			}
+			wantViolation(t, checkInstaller(r), "symbolic link")
+		}
+		{ // negative: Go source holding the snippet in a string literal is not WiX
+			r := t.TempDir()
+			write(t, r, "tools/x/fix.go", "package x\n\nconst S = `"+lsys+"`\n")
+			write(t, r, "tools/x/fix.sh", "echo '"+lsys+"'\n")
+			if res := checkInstaller(r); len(res.Violations) != 0 || res.Inactive == "" {
+				t.Fatalf("a Go/sh file holding the snippet must not be WiX: %+v", res)
+			}
+		}
+	}
 	// Fifth review, 3: every service gets the full pin; an allowlisted Id is the only exception.
 	helper := `<Wix><Package><Component><ServiceInstall Id="SkzHelper" Name="skzHelper" Account="NT SERVICE\skzHelper"><ServiceConfig ServiceSid="unrestricted" RequiredPrivileges="SeDebugPrivilege,SeBackupPrivilege"/></ServiceInstall></Component></Package></Wix>`
 	wantViolation(t, third("Helper.wxs", helper), "service SID type of")
@@ -455,13 +780,102 @@ func TestA1Installer(t *testing.T) {
 		return strings.Replace(goodWxs, `<ServiceConfig ServiceSid`, p+`<ServiceConfig ServiceSid`, 1)
 	}
 	wantViolation(t, mk(svcWith(`<PermissionEx Sddl="D:(A;;GA;;;WD)"/>`)), "grants an ACL")
-	wantViolation(t, mk(svcWith(`<util:PermissionEx xmlns:util="u" User="Everyone" GenericAll="yes"/>`)), "grants an ACL")
+	wantViolation(t, mk(svcWith(`<util:PermissionEx xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util" User="Everyone" GenericAll="yes"/>`)), "grants an ACL")
 	wantViolation(t, mk(strings.Replace(goodWxs, `</Package>`, `<CreateFolder Directory="D"><Permission User="Users" GenericAll="yes"/></CreateFolder></Package>`, 1)), "grants an ACL")
-	wantClean(t, func() Result {
+	// T-0725: a parent Id that equals a reviewed CustomAction Id (installer-allow.txt) buys nothing.
+	svcColl := strings.Replace(goodWxs, `<ServiceInstall Name=`, `<ServiceInstall Id="GrantChannel" Name=`, 1)
+	svcColl = strings.Replace(svcColl, `<ServiceConfig ServiceSid`, `<PermissionEx Sddl="D:(A;;GA;;;WD)"/><ServiceConfig ServiceSid`, 1)
+	r1 := t.TempDir()
+	write(t, r1, "packaging/windows/agent.wxs", svcColl)
+	wantViolation(t, checkInstallerAllow(r1, []string{"GrantChannel", "WriteConfig"}), `PermissionEx under ServiceInstall "GrantChannel"`)
+	// Pinned permissions: exact parent type, Id and attributes; a changed SDDL fails.
+	pinSvc := func(sddl string) Result {
 		r := t.TempDir()
-		write(t, r, "packaging/windows/agent.wxs", strings.Replace(goodWxs, `</Package>`, `<CreateFolder Id="DataDir" Directory="D"><PermissionEx Sddl="x"/></CreateFolder></Package>`, 1))
-		return checkInstallerAllow(r, []string{"DataDir"})
-	}())
+		src := strings.Replace(goodWxs, `<ServiceInstall Name=`, `<ServiceInstall Id="AgentSvc" Name=`, 1)
+		src = strings.Replace(src, `<ServiceConfig ServiceSid`, `<PermissionEx Sddl="`+sddl+`"/><ServiceConfig ServiceSid`, 1)
+		write(t, r, "packaging/windows/agent.wxs", src)
+		return checkInstallerAllow(r, nil)
+	}
+	pinnedPermissions["ServiceInstall/AgentSvc"] = map[string]string{"": "PermissionEx", "sddl": "D:(A;;GA;;;SY)", "parent.name": "activediq-agent"}
+	defer delete(pinnedPermissions, "ServiceInstall/AgentSvc")
+	wantClean(t, pinSvc("D:(A;;GA;;;SY)"))
+	wantViolation(t, pinSvc("D:(A;;GA;;;WD)"), "differs from the reviewed pin")
+	// T-0730: retargeting the pinned parent fails; ONLY the Name changes here, so the retarget alone trips.
+	rr := t.TempDir()
+	rs := strings.Replace(goodWxs, `<ServiceInstall Name=`, `<ServiceInstall Id="AgentSvc" Name=`, 1)
+	rs = strings.Replace(rs, `<ServiceConfig ServiceSid`, `<PermissionEx Sddl="D:(A;;GA;;;SY)"/><ServiceConfig ServiceSid`, 1)
+	write(t, rr, "packaging/windows/agent.wxs", strings.Replace(rs, `Name="activediq-agent"`, `Name="activediq-agent2"`, 1))
+	wantViolation(t, checkInstallerAllow(rr, nil), "differs from the reviewed pin")
+	// T-0730: effective targets. Each parent type: a pinned case passes, then only an ancestor changes.
+	const sddl = `D:(A;;GA;;;SY)`
+	pinKey := func(k string, m map[string]string) func() {
+		m[""] = "PermissionEx"
+		m["sddl"] = sddl
+		pinnedPermissions[k] = m
+		return func() { delete(pinnedPermissions, k) }
+	}
+	eff := func(frag string) Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent.wxs", strings.Replace(goodWxs, `</Package>`, frag+`</Package>`, 1))
+		return checkInstallerAllow(r, nil)
+	}
+	px := `<PermissionEx Sddl="` + sddl + `"/>`
+	defer pinKey("CreateFolder/CF", map[string]string{"parent.directory": "Directory:LogDir:Logs"})()
+	wantClean(t, eff(`<Directory Id="LogDir" Name="Logs"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory>`))
+	wantViolation(t, eff(`<Directory Id="AgentBinDir" Name="Logs"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory>`), "differs from the reviewed pin")
+	wantViolation(t, eff(`<Directory Id="AgentBinDir" Name="b"/><Directory Id="LogDir" Name="Logs"><Component Id="C" Directory="AgentBinDir"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory>`), "differs from the reviewed pin")
+	wantViolation(t, eff(`<Directory Id="Outer" Name="x"><Directory Id="LogDir" Name="Logs"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></Directory></Directory>`), "differs from the reviewed pin")
+	// Unresolvable target (Component comes from a ComponentRef/another fragment): fail closed.
+	wantViolation(t, eff(`<Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component>`), "cannot be resolved")
+	// T-0730 (Id-named directories): the pin follows the Directory definition, not just its Id.
+	byID := func(def, comp, cf string) string {
+		return def + `<Component Id="C"` + comp + `><CreateFolder Id="CF"` + cf + `>` + px + `</CreateFolder></Component>`
+	}
+	logDef := `<Directory Id="LogDir" Name="Logs"/>`
+	wantClean(t, eff(byID(logDef, ` Directory="LogDir"`, ``)))
+	wantClean(t, eff(byID(logDef, ``, ` Directory="LogDir"`)))
+	for _, def := range []string{
+		`<Directory Id="LogDir" Name="."/>`,
+		`<Directory Id="AgentBinDir" Name="b"><Directory Id="LogDir" Name="Logs"/></Directory>`,
+		`<StandardDirectory Id="System64Folder"><Directory Id="LogDir" Name="Logs"/></StandardDirectory>`,
+	} {
+		wantViolation(t, eff(byID(def, ` Directory="LogDir"`, ``)), "differs from the reviewed pin")
+		wantViolation(t, eff(byID(def, ``, ` Directory="LogDir"`)), "differs from the reviewed pin")
+	}
+	wantViolation(t, eff(byID(``, ` Directory="X"`, ``)), "cannot be resolved")
+	wantViolation(t, eff(byID(logDef+logDef, ` Directory="LogDir"`, ``)), "cannot be resolved")
+	wantViolation(t, eff(`<DirectoryRef Id="LogDir"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></DirectoryRef>`), "cannot be resolved")
+	wantClean(t, eff(logDef+`<DirectoryRef Id="LogDir"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></DirectoryRef>`))
+	wantViolation(t, eff(`<Directory Id="LogDir" Name="Other"/><DirectoryRef Id="LogDir"><Component Id="C"><CreateFolder Id="CF">`+px+`</CreateFolder></Component></DirectoryRef>`), "differs from the reviewed pin")
+	defer pinKey("File/F", map[string]string{"parent.directory": "Directory:LogDir:Logs", "parent.name": "readme.txt"})()
+	fileFrag := func(dir, attrs string) string {
+		return `<Directory Id="` + dir + `" Name="Logs"><Component Id="C"><File Id="F" ` + attrs + `>` + px + `</File></Component></Directory>`
+	}
+	wantClean(t, eff(fileFrag("LogDir", `Source="src\readme.txt"`)))
+	wantViolation(t, eff(fileFrag("LogDir", `Source="src\readme.txt" Name="activediq-agent.exe"`)), "differs from the reviewed pin")
+	wantViolation(t, eff(fileFrag("AgentBinDir", `Source="src\readme.txt"`)), "differs from the reviewed pin")
+	defer pinKey("RegistryKey/RK", map[string]string{"parent.root": "HKLM", "parent.key": `Software\activeDIQ\Logs`})()
+	rk := func(outer string) string {
+		return `<Component Id="C"><RegistryKey Root="HKLM" Key="` + outer + `"><RegistryKey Id="RK" Key="Logs">` + px + `</RegistryKey></RegistryKey></Component>`
+	}
+	wantClean(t, eff(rk(`Software\activeDIQ`)))
+	wantViolation(t, eff(rk(`Software\activeDIQ\Agent\Config`)), "differs from the reviewed pin")
+	// Unknown parent types cannot be pinned.
+	defer pinKey("Shortcut/SC", map[string]string{})()
+	wantViolation(t, eff(`<Component Id="C"><Shortcut Id="SC">`+px+`</Shortcut></Component>`), "cannot be resolved")
+	// T-0730: case-variant, namespaced and duplicated attributes are rejected, not collapsed.
+	dupe := func(el string) Result {
+		r := t.TempDir()
+		write(t, r, "packaging/windows/agent.wxs", strings.Replace(goodWxs, `<ServiceConfig ServiceSid`, el+`<ServiceConfig ServiceSid`, 1))
+		return checkInstallerAllow(r, nil)
+	}
+	wantViolation(t, dupe(`<PermissionEx Sddl="D:(A;;GA;;;WD)" SDDL="D:(A;;GA;;;SY)"/>`), `element PermissionEx has attribute "sddl" more than once`)
+	wantViolation(t, dupe(`<PermissionEx Sddl="a" Sddl="b"/>`), `element PermissionEx has attribute "sddl" more than once`)
+	wantViolation(t, dupe(`<PermissionEx xmlns:x="u" Sddl="a" x:Sddl="b"/>`), `more than once`)
+	// The pin is keyed by parent type: the same Id on another element type is not reviewed.
+	rt := t.TempDir()
+	write(t, rt, "packaging/windows/agent.wxs", strings.Replace(goodWxs, `</Package>`, `<CreateFolder Id="AgentSvc" Directory="D"><PermissionEx Sddl="D:(A;;GA;;;SY)"/></CreateFolder></Package>`, 1))
+	wantViolation(t, checkInstallerAllow(rt, nil), "not in the reviewed permission pins")
 	// 4. Templates and unknown file types in the agent packaging are denied unless reviewed.
 	tmpl := func(allow []string, rel, body string) Result {
 		r := t.TempDir()

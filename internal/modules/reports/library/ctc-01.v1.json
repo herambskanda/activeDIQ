@@ -1,0 +1,74 @@
+{
+  "id": "ctc-01",
+  "version": 1,
+  "category": "contacts",
+  "title": "Contacts",
+  "description": "Every live contact object in the directories you may read, with its e-mail address.",
+  "dataset": "inventory.contacts",
+  "columns": [
+    "name",
+    "mail",
+    "domain",
+    "dn",
+    "when_created"
+  ],
+  "sort": [
+    {
+      "column": "name",
+      "dir": "asc"
+    }
+  ],
+  "params": [
+    {
+      "name": "recent_days",
+      "kind": "days",
+      "default": {
+        "days": 30
+      },
+      "min": 1,
+      "max": 365
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn"
+  ],
+  "presets": [
+    {
+      "id": "all",
+      "names": [
+        "All Contacts"
+      ]
+    },
+    {
+      "id": "mail_enabled",
+      "names": [
+        "Mail Enabled Contacts"
+      ],
+      "where": {
+        "cmp": {
+          "col": "mail",
+          "op": "present"
+        }
+      }
+    },
+    {
+      "id": "recently_created",
+      "names": [
+        "Recently Created Contacts"
+      ],
+      "where": {
+        "cmp": {
+          "col": "when_created",
+          "op": "within_last_days",
+          "param": "recent_days"
+        }
+      },
+      "sort": [
+        {
+          "column": "when_created",
+          "dir": "desc"
+        }
+      ]
+    }
+  ]
+}

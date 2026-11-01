@@ -23,6 +23,8 @@ tags:
     description: Liveness and readiness of the service, for load balancers and orchestrators. Status only; no version or configuration detail.
   - name: platform.authn
     description: Sign-in, second factor and sign-out for the console. A first factor yields a pending sign-in; only the second factor creates a session.
+  - name: platform.setup
+    description: First-run setup. The one-time setup secret claims setup once; it expires and is consumed on first use.
   - name: connections
     description: Directory connections. Attestation of an Entra connection's takeover protection (TM-D17), its maximum age, and the IdP callback.
   - name: platform.notify
@@ -30,7 +32,9 @@ tags:
   - name: delegation
     description: Roles and assignments. The input contracts of the delegation.* control-plane Actions; personal to an account, step-up required.
   - name: directory
-    description: Read-only directory queries. User search by plain text, tenant-scoped, permission directory.read.
+    description: Read-only directory queries. Universal search (grouped, ranked, trimmed to the caller's scope) and user search by plain text; permission directory.read.
+  - name: reports
+    description: Canned reports. The library, runs over a frozen result, paging and export of a stored run, and schedules with delivery. Permissions reports.run, reports.export, reports.schedule and reports.schedule.manage_all.
 components:
   securitySchemes:
     bearer:
