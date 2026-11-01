@@ -2,7 +2,7 @@
 // page.route: the real console, the real API, the real database and a Chromium virtual authenticator
 // (DevTools WebAuthn domain: CTAP2, internal transport, user verification on).
 //
-// Runs only when ADIQ_BASE_URL is set; boot the server with support/boot-lab-server.sh and `source` the env
+// Runs only when ADIQ_BASE_URL is set; boot the server with lab/e2e/boot-lab-server.sh and `source` the env
 // file it writes (see knowledge/development/runbooks/playwright-tooling.md §6). Inputs, all environment:
 //   ADIQ_BASE_URL          https://localhost:<port>, the server's ACTIVEDIQ_PUBLIC_URL
 //   ADIQ_E2E_SERVER_BIN    the `-tags lab` server binary (creates accounts, stores passkey public keys)
