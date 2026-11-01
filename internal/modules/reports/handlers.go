@@ -16,7 +16,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
-	"github.com/skenzeriq/activediq/internal/platform/httpx"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -302,11 +301,7 @@ func (h *Handlers) DownloadReportExport(ctx context.Context, in api.DownloadRepo
 	if err != nil {
 		return nil, h.problem(err)
 	}
-	ff := httpx.CSV
-	if d.Format == export.XLSX {
-		ff = httpx.XLSX
-	}
-	return api.DownloadReportExport200{Body: apihost.Stream{Reader: d.Reader, FileBase: d.Base, FileFormat: ff}}, nil
+	return api.DownloadReportExport200{Body: apihost.Stream{Reader: d.Reader, FileBase: d.Base, FileFormat: d.Format.HTTPX(), FileOptions: d.Format.DownloadOptions()}}, nil
 }
 
 // coded adds the machine-readable errors[].code a client branches on. The detail is fixed text.

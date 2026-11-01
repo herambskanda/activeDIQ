@@ -19,6 +19,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/blob"
+	"github.com/skenzeriq/activediq/internal/platform/export/pdf"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -79,8 +80,11 @@ const (
 
 // Limits.
 const (
-	// DefaultCap is the most rows a CSV or XLSX export holds. Configuration may only lower it (FR-18).
+	// DefaultCap is the most rows a CSV or XLSX export holds, PDFCap and HTMLCap the most a PDF or an HTML
+	// export holds (spec §8.3, FR-18). They are hard caps: configuration may only lower them.
 	DefaultCap = 1_000_000
+	PDFCap     = 5_000
+	HTMLCap    = 20_000
 	// JobKind is the reports.export job kind (EP-5), registered by the composition root.
 	JobKind = "reports.export"
 	// JobTimeout bounds one attempt of the job.
@@ -107,7 +111,7 @@ type Service struct {
 	// Authz checks reports.run on Create (see Authorizer).
 	Authz Authorizer
 	Now   func() time.Time
-	// Caps lowers the row cap of a format below DefaultCap. A value above it, or zero, is ignored.
+	// Caps lowers the row cap of a format below its HardCap. A value above it, or zero, is ignored.
 	Caps map[Format]int64
 	Log  *slog.Logger
 }
@@ -126,12 +130,23 @@ func (s *Service) log() *slog.Logger {
 	return slog.Default()
 }
 
-// Cap is the row cap of f: the hard cap, or the configured one when that is lower.
-func (s *Service) Cap(f Format) int64 {
-	if c, ok := s.Caps[f]; ok && c > 0 && c < DefaultCap {
-		return c
+// HardCap is the most rows format f can ever hold; configuration cannot raise it.
+func HardCap(f Format) int64 {
+	switch f {
+	case PDF:
+		return PDFCap
+	case HTML:
+		return HTMLCap
 	}
 	return DefaultCap
+}
+
+// Cap is the row cap of f: the hard cap, or the configured one when that is lower.
+func (s *Service) Cap(f Format) int64 {
+	if c, ok := s.Caps[f]; ok && c > 0 && c < HardCap(f) {
+		return c
+	}
+	return HardCap(f)
 }
 
 // capCheck refuses a result over the cap of f, naming the formats that would take it.
@@ -146,6 +161,19 @@ func (s *Service) capCheck(f Format, rows int64) error {
 		}
 	}
 	return ce
+}
+
+// FormatsFor lists the formats that can hold a table of the given number of columns: a PDF page lays out
+// pdf.MaxColumns at most, so a wider report is offered the other formats only.
+func FormatsFor(columns int) []Format {
+	out := make([]Format, 0, 4)
+	for _, f := range Formats() {
+		if f == PDF && columns > pdf.MaxColumns {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 func hexOf(b []byte) string { return hex.EncodeToString(b) }
@@ -203,6 +231,9 @@ func (s *Service) Create(ctx context.Context, tid tenant.ID, c authority.Chain, 
 		return nil
 	}); err != nil {
 		return Export{}, err
+	}
+	if !slices.Contains(FormatsFor(len(src.Columns)), f) {
+		return Export{}, ErrFormatUnavailable // the table is wider than f can lay out
 	}
 	now := s.now()
 	if src.State == run.StateExpired || (src.State == run.StateSucceeded && src.ExpiresAt != nil && !src.ExpiresAt.After(now)) {

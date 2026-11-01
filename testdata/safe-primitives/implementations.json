@@ -98,13 +98,16 @@
       ]
     },
     {
-      "name": "go/httpx",
+      "name": "go/html",
       "language": "go",
       "tier": "S",
       "units": [
         "html"
       ],
-      "package": "internal/platform/httpx"
+      "package": "internal/platform/htmlx",
+      "covers": [
+        "internal/platform/httpx"
+      ]
     },
     {
       "name": "go/sd",
@@ -142,6 +145,15 @@
         "cellsafe"
       ],
       "package": "internal/platform/export/cellsafe"
+    },
+    {
+      "name": "go/pdf",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "pdf"
+      ],
+      "package": "internal/platform/export/pdf"
     }
   ],
   "fuzz": [
@@ -238,12 +250,13 @@
       ]
     },
     {
-      "implementation": "go/httpx",
+      "implementation": "go/html",
       "unit": "html",
       "target": "FuzzAttachment",
       "properties": [
         "independentParse"
-      ]
+      ],
+      "package": "internal/platform/httpx"
     },
     {
       "implementation": "go/sd",
@@ -288,6 +301,22 @@
       "target": "FuzzClassify",
       "properties": [
         "noFormulaLead"
+      ]
+    },
+    {
+      "implementation": "go/pdf",
+      "unit": "pdf",
+      "target": "FuzzAnyTextIsInertString",
+      "properties": [
+        "independentParse"
+      ]
+    },
+    {
+      "implementation": "go/html",
+      "unit": "html",
+      "target": "FuzzAnyTextIsInertString",
+      "properties": [
+        "independentParse"
       ]
     }
   ]

@@ -11,33 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/skenzeriq/activediq/internal/platform/corpus"
 	"github.com/skenzeriq/activediq/internal/platform/corpus/corpustest"
 )
 
 var formatByName = map[string]Format{"csv": CSV, "xlsx": XLSX, "html": HTML, "pdf": PDF}
-
-// TestCorpus runs HT-13 to HT-17 (testdata/safe-primitives/html.jsonl, FF-SP4).
-func TestCorpus(t *testing.T) {
-	corpustest.Run(t, "go/httpx", "html", func(r corpus.Record) (corpus.Result, error) {
-		if r.Call != "httpx.Attachment" {
-			return corpus.Result{}, corpustest.Skip("unknown call " + r.Call)
-		}
-		base, err := r.Arg("base")
-		if err != nil {
-			return corpus.Result{}, err
-		}
-		fm, err := r.Arg("format")
-		if err != nil {
-			return corpus.Result{}, err
-		}
-		rec := httptest.NewRecorder()
-		if err := Attachment(rec, base.Text(), formatByName[fm.Text()], nil); err != nil {
-			return corpustest.Err("Unexpected"), nil
-		}
-		return corpustest.Render(rec.Header().Get("Content-Disposition")), nil
-	})
-}
 
 func TestExtensionComesFromFormat(t *testing.T) {
 	for f, ext := range map[Format]string{CSV: ".csv", XLSX: ".xlsx", PDF: ".pdf"} {

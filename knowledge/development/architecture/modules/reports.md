@@ -25,8 +25,8 @@ profiles (spec §10; ADR-0002 rule 1). Entra datasets are absent at 2a (spec §1
 scope decision, not a platform asymmetry.
 
 > **This page is the build contract, and the module page.** `internal/modules/reports/` exists since
-> row B4 (T-0959): the run path is built; since row B9 (T-0963) so are CSV and XLSX exports (see the
-> changelog for what differs from the text below).
+> row B4 (T-0959): the run path is built; since row B9 (T-0963) so are CSV and XLSX exports and since row
+> B10 (T-0964) PDF and HTML (see the changelog for what differs from the text below).
 > Every Go name below is the name the build tickets use. A ticket that needs a different name changes
 > this page in the same change.
 
@@ -40,7 +40,7 @@ scope decision, not a platform asymmetry.
 | Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. There is no group closure. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed Row P1 (T-0949, migration 0063) is built: `nc_sync_passes` (one row per tenant, connection, NC) holds `last_pass_at` and `state` (`ok`, `resync_required`, `paused`). `Writer.RecordPass` sets the pass as-of (start of the read) in the cycle's transaction and `Ingest` calls it on the last batch for each `Cycle.PassNCs`, so a quiet domain is fresh; `Writer.MarkNC` records resync or pause; `Reader.Freshness` returns `[]report.NCWatermark` and the `report.Label` result, with `DefaultStalenessThreshold` = 60 min | §3.4, §4.5, rows P1, **P2**, B3, B6 |
 | Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. **T-1105 added the two library reads** (`listReportDefinitions`, `getReportDefinition`, `modules/reports/definitions.go`, §3.6). The export operations are built in row B9 (T-0963); the other 9 operations answer 501 until B11 | §6, §9, row B4 |
 | Console screens (`web/src/modules/reports`) | **Built (T-0966, row B12 part 1; export and schedule are B12b, T-0902).** Routes `/reports` (library) and `/reports/<id>`; the run starts when the report opens and the grid reads `listReportRunRows` (500 a page, server sort, windowed DataGrid). Client state is the URL plus `use-definitions.ts` and `use-report-run.ts` (start, poll `getReportRun`, cancel, retry). The stale banner and header chip render `ReportFreshness.stale[]` (connection name, cause, age) and the hidden-group banner renders `ReportRun.hiddenGroups[]` (count, `locked` removes Show), all from the API (T-1074); the console derives neither. Open gaps: no report+object composite hit (T-1075), subject reports need an object picker (T-1076), live-stack check (T-1077) | §6, row B12 |
-| `platform/export` | CSV and XLSX encoders, `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150), the canonical `Digest`/`Digester` and `Unknown()`. **Built (T-0963, row B9):** `modules/reports/export` (service, `reports.export` job, About block), migration 0065, RP5 landed | §7, row B9 |
+| `platform/export` | CSV, XLSX and PDF encoders (HTML is `platform/htmlx`), `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150), the canonical `Digest`/`Digester` and `Unknown()`. **Built (T-0963, row B9):** `modules/reports/export` (service, `reports.export` job, About block), migration 0065, RP5 landed. **PDF and HTML built (T-0964, row B10)**, §7.1b | §7, rows B9, B10 |
 | `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
 | `platform/notify` | **Built (T-0950).** `notify/mailaddr` (strict address parser), `notify/settings` (allowed recipient domains, SMTP relay; migration 0062), `notify/mail` (SMTP over egress), `notify/mailtest`, `notify/delivery` (DM-84 `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue`), the `notify.settings.update` Action in `modules/notify`. **Not yet wired:** nothing calls `DispatchDue` (needs the DM-44 schedule, row P4, or a notify job), no `Renderer` per purpose, no SMTP AUTH credentials. Terminal failure state is `given_up` | §7.2, §8, row P3 |
 | Per-DC read | **Built (T-0970, row P5).** `client.ConnectorPerDC` (`directory/client/perdc.go`) implements `report.PerDCReader` over the connector's `ReadPerDC` (`GRPCPerDCTransport`): one call per object, at most `PerDCConfig.InFlight` (default 8, max 64) in flight **per tenant** across every `Read`, `FanOut` (default 4) as `max_concurrency`, `Reads()` counter. Attributes and scope are the closed enums (an undefined value is refused before any RPC). The batch summary is the weakest object's (largest `DCsInScope`, smallest `DCsAnswered`, COMPLETE only if all were). Coverage is derived from the answers accepted: a DC whose values are missing, mistyped or out of range becomes an errored result (`incomplete_values`, `invalid_value`), and a stream that deviates from results-then-one-summary is `ErrReadProtocol`. Per-DC `Err` is the lower-case connector code, never its message. A stream-level `OBJECT_NOT_FOUND` is an object with no answers and PARTIAL. **The connector has no `ReadPerDC` handler yet** (`internal/connector/read` serves `Read` and `ScopedSearch` only), so the client is proved over a real gRPC hop against a scripted server, not Samba | §6.5, row P5 |
@@ -1248,8 +1248,8 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - Every download appends `reports.export.downloaded`; every refusal appends
   `reports.export.download_denied {export_id, check}`.
 
-- **Encoders.** Bytes come only from the P7 encoders (FR-19, FF-SP10). PDF and HTML are row B10,
-  and the UI offers only formats that exist (FR-16).
+- **Encoders.** Bytes come only from the P7 encoders (FR-19, FF-SP10). PDF and HTML are row B10 (built,
+  §7.1b), and the UI offers only formats that exist (FR-16).
 
 ### 7.1a As built (T-0963, row B9)
 
@@ -1296,6 +1296,41 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - **Evidence.** `Test_export_digest_equals_run_digest` (RP5), the cap, hostile-cell, audit and
   retention tests in `export/export_pg_test.go`, the API tests in `reports/exports_api_pg_test.go`
   and the 300k-row memory test `run/stored_test.go` (`TestStoredExportStreamsInBoundedMemory`).
+
+### 7.1b As built (T-0964, row B10)
+
+- **Formats.** `export.Formats()` = csv, xlsx, pdf, html. `Format.HTTPX()` gives the download description and
+  `Format.DownloadOptions()` the extra header input of an HTML file (`httpx.WithStyleSHA256(htmlx.StyleSHA256())`,
+  carried by `apihost.Stream.FileOptions`), so the one place that builds `Content-Disposition` and the CSP stays
+  `httpx.Headers`.
+- **Encoders.** PDF: `platform/export/pdf`, a hand-built streaming writer (no library, so no link, action,
+  annotation, attachment or form API exists to call). A4 landscape, the header row repeated on every page, standard
+  non-embedded Helvetica, every string a hex string; a character with no glyph in WinAnsi is drawn with a visible
+  fallback glyph and a `/ToUnicode` map keeps the real code point, so extracted text equals the input. Controls, bidi
+  and format characters are drawn as `⟨U+XXXX⟩`; a cell is capped at 200 lines plus a `… [truncated: N chars]`
+  marker; at most 24 columns. HTML: `platform/htmlx`, a streaming `export.Encoder` over embedded `html/template`
+  files (CSP meta first, one hashed `<style>`, no script or URL, every value in `<bdi>`, text cells typed as text
+  for Excel). Both print the same About block as the XLSX About sheet (`pexport.AboutLine`, now shared).
+  Limitation: no CJK glyphs are drawn in the PDF (the text is still in the file and extractable); an embedded
+  font is a follow-up.
+- **Caps.** Per-format hard caps in `export.HardCap`: CSV and XLSX 1,000,000, **PDF 5,000, HTML 20,000**;
+  `Service.Caps` may only lower them. A larger result is refused before any record, job or file exists, with the
+  count, the cap and every format that would take it ("This export has 5001 rows. PDF allows 5000. Narrow the
+  filters or use CSV, XLSX or HTML."). The PDF encoder has its own backstop (`pdf.MaxRows` 100,000).
+- **Wide reports.** A PDF page lays out 24 columns. `export.FormatsFor(columns)` drops PDF for a wider table: the
+  definition view lists the formats per definition, and `Create` answers `format_unavailable` for a PDF of a run
+  with more columns.
+- **API.** `ReportDefinition.exportFormats` is the formats of `FormatsFor` when the host has an export service
+  (a blob store is configured) and empty otherwise; it was empty before B10.
+- **Digest.** Unchanged and format-independent: the job's `StoredSource` digests the rows it serves and compares
+  them with the run's before the file is kept (RP5); the test loop runs all four formats.
+- **Time zone.** Both encoders take a `Location`; the service passes none (UTC with the abbreviation) because a run
+  records no viewer zone. Spec §8.3 wants the owner's; follow-up ticket.
+- **Evidence.** `export/pdf` `TestCorpus` (PDF-01..14) with the independent oracle `export/pdf/pdftest`,
+  `htmlx` `TestCorpus` (HT-xx, which also runs `httpx.Attachment` records), both fuzz targets;
+  `export_pg_test.go` `Test_export_digest_equals_run_digest`, `TestHostileValuesAreInertInPDFAndHTML`,
+  `TestPageFormatCapsRefuse`; `reports/exports_api_pg_test.go` `TestExportPDFAndHTMLAPI`;
+  `definitions_pg_test.go` `TestDefinitionOffersExportFormats`.
 
 ### 7.2 Delivery-link downloads: authorised by the DM-84 Delivery row
 
@@ -1478,7 +1513,7 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | **B7** | Library batch 2: PWD-01, PWD-02, GRP-01–GRP-04, CMP-01, CMP-02, OU-01, CTC-01 | reporting-engineer | B5, B6 | FR-01, FR-02, FR-09, FR-14, FR-15; AC-13, AC-19, AC-20, AC-22, AC-23 |
 | **B8** | Per-DC runs: the §6.5 stages, read cap, coverage labels, `EvalPerDC`; USR-04, PWD-03 | reporting-engineer | B4, B5, P5 | FR-10; AC-39, AC-40, AC-41 |
 | **B9** | Export: `export.Digest` (canonical form and vectors, `u` tag included), `export.Unknown()`, `run.StoredSource`, About block, CSV and XLSX export jobs, `report_exports`, creator download through `run.ReadAccess` (§7.1), 410, delete, caps, export audit kinds, **RP5** | reporting-engineer | B4 | FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22 (export), FR-31; AC-24–AC-28, AC-50 |
-| **B10** | PDF and HTML encoders and export formats (before M2 exit) | reporting-engineer | B9 | FR-16, FR-19 |
+| **B10** | PDF and HTML encoders and export formats (before M2 exit). **Built (T-0964), §7.1b** | reporting-engineer | B9 | FR-16, FR-19 |
 | **B11** | Schedules: DM-73 tables, `reports.schedule.*` Actions, fire job, owner-authority checks, delivery links authorised by the Delivery row (§7.2), ZIP, notify-only-if-data, `manage_all` metadata view, delivery audit kinds, **RP10** | reporting-engineer (backend-engineer reviews) | B4, B9, P3, P4 | FR-22 (delivery), FR-23–FR-29, FR-31; AC-30–AC-38, AC-45, AC-46, AC-47 |
 | **B12** | Screens: library and `/` search, run and results grid (sort, column filters, column chooser, row count, freshness, coverage, hidden-group banner), export dialog, schedule sheet; empty, error, stale and loading states | frontend-engineer | T-0866, T-0867, B4 (then B9, B11 per screen) | FR-01, FR-02, FR-04, FR-13, FR-32; AC-44 |
 | **B13** | Scale-tier calibration: row caps, sort p95 on 1M rows (ADR-0010 budget), per-DC read cap, report accuracy | test-engineer | B7, B8, B9 | FR-12, FR-18; AC-21, AC-22, AC-23, AC-39 |
@@ -1609,3 +1644,6 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   limit refuses the export right after `Retry`. Security review F1 added the `reports.run` check inside
   `Create`; F2 its audited denial and 503 when unrecordable; F3 the adapter test and authority factor
   (see §7.1a).
+- 2026-11-01 · T-0964 · row B10 built: `platform/export/pdf` (+ `pdftest`), `platform/htmlx`, PDF and HTML formats with
+  caps of 5,000 and 20,000 rows, per-format `HardCap`, `FormatsFor`, `exportFormats` served by the API. As built:
+  §7.1b. Follow-ups: the owner's time zone on a run; an embedded font for CJK in the PDF.

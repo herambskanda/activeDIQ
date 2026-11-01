@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"path/filepath"
@@ -16,6 +17,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
+
+	"golang.org/x/net/html"
 
 	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
@@ -23,6 +27,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
 	"github.com/skenzeriq/activediq/internal/platform/export/cellsafe"
+	"github.com/skenzeriq/activediq/internal/platform/export/pdf/pdftest"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 )
@@ -130,8 +135,19 @@ func Test_export_digest_equals_run_digest(t *testing.T) {
 				if !strings.Contains(files["xl/workbook.xml"], "About") || strings.Index(files["xl/workbook.xml"], "About") > strings.Index(files["xl/workbook.xml"], "Test accounts") {
 					t.Errorf("the About sheet is not the first tab: %s", files["xl/workbook.xml"])
 				}
-			} else if strings.Contains(string(body), hex.EncodeToString(want[:])) {
+			} else if f == export.CSV && strings.Contains(string(body), hex.EncodeToString(want[:])) {
 				t.Errorf("CSV carries an About block")
+			}
+			if f == export.PDF || f == export.HTML {
+				// The About block of a PDF and an HTML page states the digest of the rows it holds, and the
+				// row count: what an auditor reads is the run's own digest.
+				shown := strings.Join(fileText(t, f, body), "")
+				if !strings.Contains(shown, hex.EncodeToString(want[:])) {
+					t.Errorf("%s: the About block does not carry the run digest", f)
+				}
+				if !strings.Contains(shown, "Test accounts") || !strings.Contains(shown, r.ID.String()) {
+					t.Errorf("%s: the About block lacks the report name or run", f)
+				}
 			}
 		}
 		// the digest is sensitive to value, column order, row order and null versus empty
@@ -195,12 +211,19 @@ func TestCapRefusesBeforeAnythingExists(t *testing.T) {
 			if !errors.As(err, &ce) || ce.Rows != n || ce.Cap != n-1 || ce.Format != f {
 				t.Fatalf("%s: err = %v", f, err)
 			}
-			other := export.CSV
-			if f == export.CSV {
-				other = export.XLSX
+			var others []export.Format // every other format, which this small run fits in
+			for _, o := range export.Formats() {
+				if o != f {
+					others = append(others, o)
+				}
 			}
-			if len(ce.Alternatives) != 1 || ce.Alternatives[0] != other || !strings.Contains(ce.Error(), strings.ToUpper(string(other))) {
-				t.Fatalf("%s: alternatives %v, message %q", f, ce.Alternatives, ce.Error())
+			if !slices.Equal(ce.Alternatives, others) {
+				t.Fatalf("%s: alternatives %v, want %v", f, ce.Alternatives, others)
+			}
+			for _, o := range others {
+				if !strings.Contains(ce.Error(), strings.ToUpper(string(o))) {
+					t.Fatalf("%s: message %q does not offer %s", f, ce.Error(), o)
+				}
 			}
 		}
 		if n := e.count(`SELECT count(*) FROM public.report_exports`); n != 0 {
@@ -217,8 +240,11 @@ func TestCapRefusesBeforeAnythingExists(t *testing.T) {
 		}
 		// config only lowers the cap
 		e.exp.Caps = map[export.Format]int64{export.CSV: 5_000_000}
-		if e.exp.Cap(export.CSV) != export.DefaultCap {
-			t.Fatalf("a configured cap raised the hard cap to %d", e.exp.Cap(export.CSV))
+		for _, f := range export.Formats() {
+			e.exp.Caps = map[export.Format]int64{f: 50_000_000}
+			if e.exp.Cap(f) != export.HardCap(f) {
+				t.Fatalf("a configured cap raised the hard cap of %s to %d", f, e.exp.Cap(f))
+			}
 		}
 		// AC-25 (at the cap): exactly the cap succeeds with every row
 		e.exp.Caps = map[export.Format]int64{export.CSV: n, export.XLSX: n}
@@ -395,8 +421,8 @@ func TestDeleteAndLimits(t *testing.T) {
 		e := setup(t, s)
 		ctx := context.Background()
 		r := e.finishedRun(alice)
-		if _, err := e.exp.Create(ctx, e.tid, chainOf(alice), r.ID, export.Format("pdf")); !errors.Is(err, export.ErrFormatUnavailable) {
-			t.Fatalf("pdf: %v", err)
+		if _, err := e.exp.Create(ctx, e.tid, chainOf(alice), r.ID, export.Format("docx")); !errors.Is(err, export.ErrFormatUnavailable) {
+			t.Fatalf("docx: %v", err)
 		}
 		// queued exports count against the shared open-job limit
 		var ids []export.ID
@@ -598,4 +624,200 @@ func TestRunDenialNotRecordedIsNotRefusedQuietly(t *testing.T) {
 			t.Errorf("denial events recorded despite the failing sink: %d", got)
 		}
 	})
+}
+
+// fileText is what a reader of the file sees as text lines, read with the independent oracle of the format
+// (pdftest for PDF, x/net/html for HTML). Either oracle fails t on an action, a script or a link.
+func fileText(t *testing.T, f export.Format, body []byte) []string {
+	t.Helper()
+	switch f {
+	case export.PDF:
+		return pdftest.Text(t, body)
+	case export.HTML:
+		return htmlText(t, body)
+	}
+	t.Fatalf("no text oracle for %s", f)
+	return nil
+}
+
+// htmlText parses the page with golang.org/x/net/html and returns the text of every cell, header cell and
+// About line in document order. It fails on any element or attribute that could act: a script, a frame, an
+// object, a link, a form, an image, an event handler, a style attribute or a URL-bearing attribute.
+func htmlText(t *testing.T, body []byte) []string {
+	t.Helper()
+	doc, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	var walk func(n *html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			switch n.Data {
+			case "script", "iframe", "frame", "object", "embed", "a", "form", "img", "link", "base", "input", "button", "svg", "math":
+				t.Errorf("the page holds a <%s>", n.Data)
+			case "meta":
+				ok := false
+				for _, a := range n.Attr {
+					if a.Key == "http-equiv" && strings.EqualFold(a.Val, "Content-Security-Policy") || a.Key == "charset" || a.Key == "name" {
+						ok = true
+					}
+				}
+				if !ok {
+					t.Errorf("an unexpected <meta> %v", n.Attr)
+				}
+			}
+			for _, a := range n.Attr {
+				if strings.HasPrefix(strings.ToLower(a.Key), "on") || a.Key == "href" || a.Key == "src" || a.Key == "style" || a.Key == "srcdoc" {
+					t.Errorf("<%s %s=%q>", n.Data, a.Key, a.Val)
+				}
+			}
+			if n.Data == "td" || n.Data == "th" || n.Data == "dd" || n.Data == "dt" || n.Data == "h1" {
+				var b strings.Builder
+				var text func(*html.Node)
+				text = func(c *html.Node) {
+					if c.Type == html.TextNode {
+						b.WriteString(c.Data)
+					}
+					for k := c.FirstChild; k != nil; k = k.NextSibling {
+						text(k)
+					}
+				}
+				text(n)
+				out = append(out, b.String())
+				return
+			}
+		}
+		for k := n.FirstChild; k != nil; k = k.NextSibling {
+			walk(k)
+		}
+	}
+	walk(doc)
+	return out
+}
+
+// shown is how a PDF or an HTML page draws a value: CRLF is one line break, and a control character is the
+// visible token <U+XXXX>. The PDF also tokenises format characters (the bidi override), because it has no <bdi>.
+func shown(v string, pdf bool) string {
+	var b strings.Builder
+	rs := []rune(v)
+	for i, r := range rs {
+		switch {
+		case r == '\n' || (r == '\t' && !pdf):
+			b.WriteRune(r)
+		case r == '\r' && i+1 < len(rs) && rs[i+1] == '\n':
+		case unicode.Is(unicode.Cc, r) || pdf && (unicode.Is(unicode.Cf, r) || r == 0x2028 || r == 0x2029):
+			fmt.Fprintf(&b, "\u27e8U+%04X\u27e9", r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// AC-3 (FF-SP10): the hostile values of the run reach PDF and HTML end to end, in order, escaped and inert:
+// the oracle of each format reads them back as the text they are, and finds no action, script or link.
+func TestHostileValuesAreInertInPDFAndHTML(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		r := e.finishedRun(alice)
+		_, rows := apiRows(e, alice, r.ID)
+		for _, f := range []export.Format{export.PDF, export.HTML} {
+			x := e.export(alice, r.ID, f)
+			if x.State != export.StateSucceeded {
+				t.Fatalf("%s: %+v", f, x)
+			}
+			body, _, err := e.download(alice, x.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := fileText(t, f, body) // fails the test on an action, script or link
+			// every hostile value appears, in row order, as the text the page shows: an HTML cell is one text
+			// node, a PDF cell is drawn a line at a time.
+			at := 0
+			next := func(want string) bool {
+				for ; at < len(lines); at++ {
+					if lines[at] == want {
+						at++
+						return true
+					}
+				}
+				return false
+			}
+			for i, row := range rows {
+				v := string(row[2].DigestValue())
+				wants := []string{shown(v, false)}
+				if f == export.PDF {
+					wants = strings.Split(shown(v, true), "\n")
+				}
+				for _, want := range wants {
+					if want != "" && !next(want) {
+						t.Fatalf("%s: row %d value %q (shown %q) not found in order", f, i, v, want)
+					}
+				}
+			}
+		}
+	})
+}
+
+// AC-2 (AC-24): the hard caps of the page formats refuse a larger result with the count, the cap and the
+// formats that would take it; nothing is written. A result inside the cap is exported, digest and all.
+func TestPageFormatCapsRefuse(t *testing.T) {
+	if export.HardCap(export.PDF) != 5_000 || export.HardCap(export.HTML) != 20_000 || export.HardCap(export.CSV) != 1_000_000 || export.HardCap(export.XLSX) != 1_000_000 {
+		t.Fatalf("hard caps: pdf %d html %d csv %d xlsx %d", export.HardCap(export.PDF), export.HardCap(export.HTML), export.HardCap(export.CSV), export.HardCap(export.XLSX))
+	}
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		over := e.storedRun(export.PDFCap + 1)
+		var ce *export.CapError
+		_, err := e.exp.Create(ctx, e.tid, chainOf(alice), over.ID, export.PDF)
+		if !errors.As(err, &ce) || ce.Rows != 5_001 || ce.Cap != 5_000 || ce.Format != export.PDF ||
+			!slices.Equal(ce.Alternatives, []export.Format{export.CSV, export.XLSX, export.HTML}) {
+			t.Fatalf("pdf over its cap: %v (%+v)", err, ce)
+		}
+		if msg := ce.Error(); !strings.Contains(msg, "5001 rows") || !strings.Contains(msg, "PDF allows 5000") {
+			t.Fatalf("message %q", msg)
+		}
+		if n := e.count(`SELECT count(*) FROM public.report_exports`); n != 0 || len(blobFiles(t, e.blobDir)) != 0 {
+			t.Fatalf("a refused PDF left %d records and files %v", n, blobFiles(t, e.blobDir))
+		}
+		if slices.Contains(e.workKinds(), e.exp.Kind().Name) {
+			t.Fatal("a refused PDF queued a job")
+		}
+		// the same result is fine as HTML, with its digest
+		x := e.export(alice, over.ID, export.HTML)
+		if x.State != export.StateSucceeded || *x.RowCount != 5_001 || !bytes.Equal(x.Digest, e.run(alice, over.ID).Digest) {
+			t.Fatalf("html at 5001 rows: %+v", x)
+		}
+		// exactly at the PDF cap succeeds and reproduces the digest
+		at := e.storedRun(export.PDFCap, "enabled")
+		x = e.export(alice, at.ID, export.PDF)
+		if x.State != export.StateSucceeded || *x.RowCount != 5_000 || !bytes.Equal(x.Digest, e.run(alice, at.ID).Digest) {
+			t.Fatalf("pdf at its cap: %+v", x)
+		}
+		// above the HTML cap
+		huge := e.storedRun(export.HTMLCap+1, "display")
+		_, err = e.exp.Create(ctx, e.tid, chainOf(alice), huge.ID, export.HTML)
+		if !errors.As(err, &ce) || ce.Rows != 20_001 || ce.Cap != 20_000 || ce.Format != export.HTML ||
+			!slices.Equal(ce.Alternatives, []export.Format{export.CSV, export.XLSX}) {
+			t.Fatalf("html over its cap: %v (%+v)", err, ce)
+		}
+		if _, err = e.exp.Create(ctx, e.tid, chainOf(alice), huge.ID, export.PDF); !errors.As(err, &ce) || ce.Cap != 5_000 {
+			t.Fatalf("pdf over html's cap: %v", err)
+		}
+		if n := e.count(`SELECT count(*) FROM public.report_exports WHERE row_count > 5000 AND format = 'pdf' OR row_count > 20000`); n != 0 {
+			t.Fatalf("%d export records for refused exports", n)
+		}
+	})
+}
+
+// A table wider than a PDF page lays out is offered every format but PDF, and a PDF of it is refused.
+func TestFormatsForWideTables(t *testing.T) {
+	if got := export.FormatsFor(24); !slices.Equal(got, export.Formats()) {
+		t.Errorf("24 columns: %v", got)
+	}
+	if got := export.FormatsFor(25); !slices.Equal(got, []export.Format{export.CSV, export.XLSX, export.HTML}) {
+		t.Errorf("25 columns: %v", got)
+	}
 }
