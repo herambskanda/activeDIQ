@@ -1,7 +1,7 @@
 ---
 title: "Runbook: the Windows Server 2025 lab (local KVM, evaluation licence)"
 date: 2026-10-23
-updated: 2026-10-30
+updated: 2026-11-01
 status: draft
 owner: devops-engineer
 ticket: T-0254
@@ -11,8 +11,9 @@ ticket: T-0254
 
 The lab for everything Samba cannot prove (Windows event logs, GPO/audit policy, NTLM events, real
 LDAPS/WS2025 hardening behaviour, ADWS, native components — see `ad-lab.md` §6). Chosen in D-0003
-(option a): **local evaluation VMs on KVM, free**. One DC (`dc1`) and one member/file server (`fs1`) in
-a throwaway forest. Code: `lab/windows/`. Samba stays the default lab (`ad-lab.md`); use this one only
+(option a): **local evaluation VMs on KVM, free**. In the local-KVM mode, a DC (`dc1`) and a member/file server
+(`fs1`) in a throwaway forest; the live lab (§10) is `dc1` on Proxmox VM 119 plus, once a human has built it,
+a child-domain DC `dc2` (§16). Code: `lab/windows/`. Samba stays the default lab (`ad-lab.md`); use this one only
 for tests tagged `windowslab`.
 
 ## 1. Quick start
@@ -178,6 +179,11 @@ as you found it (agent uninstalled, policy restored, test OUs removed): the next
 dc1 session, and workers have no Proxmox access: if a run leaves dc1 beyond repair by script, raise an
 `action new` for a rollback. Everything that runs *inside* dc1 is done by workers over WinRM.
 
+**dc2 (child domain) is human-only.** A-0025 covers `dc1` only: no worker may open WinRM, PowerShell remoting or
+any other session to `dc2` (VM, address or name), and the `with-dc1-lock` wrapper is not a licence to. In short,
+every step inside dc2 is done by a human (§16); workers verify the child domain only through dc1 (T-1234). Extending the
+authorisation to dc2 is a CEO decision, not a ticket step.
+
 **fs1 does not exist.** There is no member server in this lab: only dc1 (VM 119). The `fs1` rows in §1–§2
 describe the local-KVM mode, which was dropped. A human creates fs1 (A-0028; tickets T-0409, T-0413).
 Until then no worker step may assume `fs1`, and proofs that need a member server stay blocked on A-0028.
@@ -247,8 +253,8 @@ attribute on a DC and `gPLink` of the Domain Controllers OU are changed and rest
 `RESTORE … FAILED`: `qm rollback`). Classification runs as `svc-activediq`. Pinned: C5 (all DC computers), C15 (DC site),
 C8 (KDS container + a child, CN=System, RID Manager$, Directory Service; the Password Settings Container is unreadable to the
 service account and fails closed), C9 (GPO linked at the DC OU is tier0, an unlinked one is not), C11 (Get-Changes +
-Get-Changes-All ⇒ tier0; Get-Changes alone ⇒ not), C12 (RBCD trustee on a DC). Not coverable on this lab (single DC, single
-domain, no RODC): RODC corroboration, cross-domain GPO links, gPLink option/order edge cases, >1500-member ranged groups
+Get-Changes-All ⇒ tier0; Get-Changes alone ⇒ not), C12 (RBCD trustee on a DC). Not coverable on this lab (a single DC in the parent domain,
+no RODC; the child domain exists only after §16 is done): RODC corroboration, cross-domain GPO links, gPLink option/order edge cases, >1500-member ranged groups
 (Samba covers ranged retrieval); the ad-expert review of `c8Domain`/`c8SystemClasses` is separate (T-0620).
 From a git worktree the credentials live in the main checkout: set `WIN_LAB_ENV` and `WIN_LAB_CA` to its `lab/windows/` files.
 
@@ -415,3 +421,54 @@ Run log, dc1 before/after state and the broken-run proof: `windows-lab-runs/T-05
 `LdapEnforceChannelBindingTokens` is not re-read at runtime (setting 0 left enforcement on), so the "CBT off accepts a wrong binding"
 proof needs a reboot cycle and was not run. The test accounts stay on dc1 for the T-0846 fix; remove with `Remove-ADUser svc-t0566-gssapi`
 and `Remove-ADServiceAccount gmsa-t0566`.
+
+## 16. Child domain (dc2) (T-1233, for T-0786 / T-1234)
+
+Why: T-0786 (GC-routed sIDHistory) needs the global catalog to hold more than one domain's SIDs, so the forest
+needs a child domain. This section is the **human** procedure: a second DC is a second Proxmox VM and A-0025 covers
+`dc1` only (§10), so workers never touch dc2. They verify afterwards through dc1 (T-1234). The kit is
+`lab/windows/guest/child-dc-init.ps1` + `child-dc.ps1` (via `boot.ps1`, role `child-dc`), built on `common.ps1`.
+
+| Thing | Value |
+| --- | --- |
+| New domain | `child.win.activediq.test`, NetBIOS `WINCHILD`, child of `win.activediq.test` (dc1, `WINLAB`) |
+| Promotion | `Install-ADDSDomain -DomainType ChildDomain -CreateDnsDelegation -InstallDns -NoGlobalCatalog` (dc1 stays the only GC and holds the child's partial NC; T-0786 keeps dialling `dc1:3269`) |
+| VM | Windows Server 2025 **Evaluation**, 2 vCPU, 4 GiB RAM, 60 GB disk, one NIC on dc1's network (a fresh install; do not clone dc1) |
+| Host name / IP / DNS | `DC2`; a static IP on dc1's subnet (`<DC2_IP>`, a free address; same prefix and gateway as dc1); **DNS = dc1 only** (`<DC1_IP>`), never itself or a public resolver |
+| Secrets | You type the parent `WINLAB\Administrator` password once, at a hidden prompt (SecureString). It is never in argv, a file, a log or a note. The DSRM password is generated on dc2 into `C:\lab\dsrm-password.txt`, readable by SYSTEM and Administrators only |
+
+**Steps (human, on the new VM unless stated)**
+
+1. **Create the VM** in Proxmox from the same WS2025 evaluation ISO as dc1 (spec above). Log in as the local `Administrator`.
+2. **Name and network** (elevated PowerShell; check the alias with `Get-NetAdapter`):
+   `Rename-Computer -NewName DC2 -Restart`, then
+   `New-NetIPAddress -InterfaceAlias Ethernet -IPAddress <DC2_IP> -PrefixLength 24 -DefaultGateway <GATEWAY>` and
+   `Set-DnsClientServerAddress -InterfaceAlias Ethernet -ServerAddresses <DC1_IP>`.
+3. **Copy the guest scripts**: `lab/windows/guest/*.ps1` from the repo to the VM, e.g. `C:\guest\`.
+4. **Check and stage:** `powershell -ExecutionPolicy Bypass -File C:\guest\child-dc-init.ps1 -ParentDcIp <DC1_IP> -Dc2Ip <DC2_IP>`.
+   It refuses unless the name is `DC2`, the IP is configured, DNS includes dc1 and dc1 resolves the forest's locator
+   records. It writes `C:\lab` with the scripts and a `lab.json` that holds **no secret**.
+5. **Provision:** in an elevated console (not a scheduled task) run `powershell -ExecutionPolicy Bypass -File C:\lab\boot.ps1`.
+   It installs the roles (rebooting once if Windows asks; the `LabResume` task then waits and logs "waiting for a
+   human"), so after that reboot run the same `boot.ps1` again at a console. It prompts for the parent
+   Administrator password, generates the DSRM password, promotes (reboots by itself) and finishes through
+   `LabResume`. Done when `C:\lab\provision.log` ends with `dc2 provisioned`. A failed stage logs `FAILED stage=…`
+   there and re-runs at the next start; if promotion was refused, fix the cause and run `boot.ps1` again (the DSRM
+   file is reused).
+6. **Keep the DSRM password:** `scp` `C:\lab\dsrm-password.txt` to the lab host (mode 0600, never email or chat),
+   then delete it from dc2. Do not paste it anywhere.
+7. **Evidence** (paste the output into the CEO action / T-1234; none of these prints a secret):
+   - on dc1 and on dc2: `(Get-ADForest).Domains` and `(Get-ADForest).GlobalCatalogs` (expect both domains; dc1 is the GC);
+   - on dc1 and on dc2: `nltest /dclist:child.win.activediq.test` and `nltest /dclist:win.activediq.test`;
+   - on dc1 and on dc2: `repadmin /replsummary` (expect 0 failures, 0 errors) and, on dc1, `repadmin /showrepl` showing the
+     `DC=child,DC=win,DC=activediq,DC=test` partial replica;
+   - on dc1: `Resolve-DnsName child.win.activediq.test -Type NS` (the delegation).
+8. **Snapshot `clean`** (Proxmox host, dc2 shut down): `qm shutdown <DC2_VMID> && qm snapshot <DC2_VMID> clean --description "clean provisioned child DC" && qm start <DC2_VMID>`.
+   Revert later with `qm rollback <DC2_VMID> clean`. Note the build date: the evaluation licence is 180 days (§4); **rebuild, don't rearm**.
+   If dc1 is rolled back to its own `clean`, dc2 must be rolled back too (their replication partnership must agree), and vice versa.
+
+**Rebuild or abort.** Not promoted yet: delete `C:\lab` and start at step 4. Half-promoted or wrong: rebuild the VM
+(step 1), and tidy dc1 afterwards (`ntdsutil` metadata cleanup of the stale child domain and the DNS delegation) as a
+human; workers do not do that over WinRM.
+
+**Then:** the worker ticket T-1234 verifies through dc1 only (`DomainSIDs` >= 2, the child's partial NC on dc1) and then T-0786 runs.
