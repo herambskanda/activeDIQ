@@ -1,7 +1,7 @@
 ---
 title: fitness-reports — enforcing ADR-0010 and the reports contract (RP1–RP11)
 date: 2026-10-30
-updated: 2026-10-30
+updated: 2026-11-01
 ticket: T-0873
 status: draft
 owner: devops-engineer
@@ -23,8 +23,12 @@ Enforces [ADR-0010](../decisions/0010-report-results-stored-as-rows-in-postgres.
 
 ## Pending is not a pass
 
-Until a part's code exists the job prints it as `pending` on every run. ADR-0010 stays `proposed`
-(row B14) while anything is pending. Each rule turns active by itself when its code appears:
+Until a part's code exists the job prints it as `pending` on every run. Each check that ran and
+found nothing is printed as `pass` (with the bound test and package for RP4–RP11), so the CI log is
+the evidence an ADR cites. A check with a pending part or a violation is never listed as `pass`.
+ADR-0010 is bound to RP3, RP4 and RP5 only (its § Fitness function). It reached `accepted` on 2026-11-01 (row
+B14, T-0968), when it was ratified and those three printed `pass`; a later failure of any of them is a broken accepted ADR, not a pending one. The other RP checks enforce the
+reports contract (§9), not the ADR. Each rule turns active by itself when its code appears:
 `authz.ReadScope` (T-0880) activates RP2, `store/reportsql` (B2) activates RP3, `library/` (B5)
 activates RP7.
 
