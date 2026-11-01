@@ -15,6 +15,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/corpus/corpustest"
 	"github.com/skenzeriq/activediq/internal/platform/export"
+	"github.com/skenzeriq/activediq/internal/platform/export/pdf/pdftest"
 )
 
 // oneCell renders a table with one wide column and the given cells as rows.
@@ -48,23 +49,8 @@ func oneCol(vals ...string) ([]export.Column, [][]export.Cell) {
 	return []export.Column{{Label: "Value"}}, rows
 }
 
-// extract returns the text lines of page 1 that are table body lines (after the header line).
-func extract(t testing.TB, raw []byte) []string {
-	t.Helper()
-	d := parse(t, raw)
-	d.assertNoActions(t)
-	fonts := d.fonts(t)
-	var all []string
-	for _, p := range d.pages(t) {
-		for _, l := range d.textLines(t, p, fonts) {
-			if strings.HasPrefix(l, "Page ") {
-				continue
-			}
-			all = append(all, l)
-		}
-	}
-	return all
-}
+// extract returns the text lines of every page (the page footers aside).
+func extract(t testing.TB, raw []byte) []string { t.Helper(); return pdftest.Text(t, raw) }
 
 // TestExtractedTextEqualsInput is PDF-01 to PDF-04, PDF-08, PDF-13 and PDF-14: whatever a cell holds,
 // a reader extracts exactly that, and the object scan finds no action.
@@ -101,8 +87,8 @@ func TestSameOperatorsWhateverTheContent(t *testing.T) {
 	shape := func(v string) string {
 		cols, rows := oneCol(v)
 		raw, _ := render(t, Options{}, cols, rows...)
-		d := parse(t, raw)
-		return d.opShape(d.pages(t)[0])
+		d := pdftest.Parse(t, raw)
+		return d.OpShape(d.Pages(t)[0])
 	}
 	base := shape("x")
 	for _, in := range []string{") Tj ET BT /F1 99 Tf (pwned", "(", ")", `\`, "/OpenAction", "<>", "q Q BT ET"} {
@@ -153,17 +139,17 @@ func TestMetadataIsHex(t *testing.T) {
 	title := "x)>>/OpenAction<</S/JavaScript/JS(app.alert(1))>>"
 	cols, rows := oneCol("v")
 	raw, _ := render(t, Options{Title: title}, cols, rows...)
-	d := parse(t, raw)
-	d.assertNoActions(t)
-	info := d.objs[3].dict
+	d := pdftest.Parse(t, raw)
+	d.AssertNoActions(t)
+	info := d.Objs[3].Dict
 	if !strings.HasPrefix(info, "<< /Title <FEFF") || !strings.HasSuffix(info, "> /Producer (activeDIQ) >>") {
 		t.Fatalf("info = %q", info)
 	}
 	hex := info[len("<< /Title <FEFF"):strings.Index(info, "> /Producer")]
-	if got := utf16Text(hex); got != title {
+	if got := pdftest.UTF16Text(hex); got != title {
 		t.Errorf("title round trip: %q", got)
 	}
-	if got := namesIn(info); strings.Join(got, ",") != "Title,Producer" {
+	if got := pdftest.NamesIn(info); strings.Join(got, ",") != "Title,Producer" {
 		t.Errorf("info keys = %v", got)
 	}
 	if bytes.Contains(raw, []byte("/Metadata")) {
@@ -176,13 +162,13 @@ func TestMetadataIsHex(t *testing.T) {
 func TestFallbackGlyphs(t *testing.T) {
 	cols, rows := oneCol("漢字 😀 ñ")
 	raw, _ := render(t, Options{}, cols, rows...)
-	d := parse(t, raw)
+	d := pdftest.Parse(t, raw)
 	var sawFallback bool
-	for _, o := range d.objs {
-		if strings.Contains(o.dict, "/ToUnicode") {
+	for _, o := range d.Objs {
+		if strings.Contains(o.Dict, "/ToUnicode") {
 			sawFallback = true
-			if !strings.Contains(o.dict, "/question") {
-				t.Errorf("fallback font draws no visible glyph: %s", o.dict)
+			if !strings.Contains(o.Dict, "/question") {
+				t.Errorf("fallback font draws no visible glyph: %s", o.Dict)
 			}
 		}
 	}
@@ -212,8 +198,8 @@ func TestFallbackBound(t *testing.T) {
 	if rep.Mapped != 1 {
 		t.Errorf("Mapped = %d, want 1 (one cell changed)", rep.Mapped)
 	}
-	d := parse(t, raw)
-	d.assertNoActions(t)
+	d := pdftest.Parse(t, raw)
+	d.AssertNoActions(t)
 	var joined strings.Builder
 	for _, l := range extract(t, raw) {
 		joined.WriteString(l)
@@ -275,15 +261,15 @@ func TestPagination(t *testing.T) {
 	if rep.Rows != 400 {
 		t.Fatalf("rows = %d", rep.Rows)
 	}
-	d := parse(t, raw)
-	pages := d.pages(t)
+	d := pdftest.Parse(t, raw)
+	pages := d.Pages(t)
 	if len(pages) < 3 {
 		t.Fatalf("%d pages for 400 rows", len(pages))
 	}
-	fonts := d.fonts(t)
+	fonts := d.Fonts(t)
 	next := 0
 	for i, p := range pages {
-		lines := d.textLines(t, p, fonts)
+		lines := d.TextLines(t, p, fonts)
 		if !strings.Contains(strings.Join(lines, "|"), "N|Name|Active|When|Never|Unknown|Empty|Multi") {
 			t.Errorf("page %d lacks the header row", i+1)
 		}
@@ -411,7 +397,7 @@ func TestNoRowsStillValid(t *testing.T) {
 	if _, err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	parse(t, b.Bytes())
+	pdftest.Parse(t, b.Bytes())
 }
 
 // TestNoActiveContentAnywhere is rule 3 over a document that exercises every drawing path: no object
@@ -421,15 +407,15 @@ func TestNoActiveContentAnywhere(t *testing.T) {
 	cols := []export.Column{{Label: hostile}, {Label: "漢字"}}
 	raw, _ := render(t, Options{Title: hostile, About: []export.AboutLine{{Label: hostile, Value: hostile}}}, cols,
 		[]export.Cell{export.Text(hostile), export.Text("😀")})
-	d := parse(t, raw)
-	d.assertNoActions(t)
+	d := pdftest.Parse(t, raw)
+	d.AssertNoActions(t)
 	allowed := map[string]bool{"Type": true, "Catalog": true, "Pages": true, "Page": true, "Parent": true, "MediaBox": true, "Resources": true,
 		"Contents": true, "Filter": true, "FlateDecode": true, "Length": true, "Count": true, "Kids": true, "Title": true, "Producer": true,
 		"Font": true, "Subtype": true, "Type1": true, "BaseFont": true, "Helvetica": true, "Helvetica-Bold": true, "Encoding": true,
 		"WinAnsiEncoding": true, "FirstChar": true, "LastChar": true, "Widths": true, "BaseEncoding": true, "Differences": true, "ToUnicode": true,
 		"ProcSet": true, "PDF": true, "Text": true, "question": true, "guilsinglleft": true, "guilsinglright": true}
-	for id, o := range d.objs {
-		for _, n := range namesIn(o.dict) {
+	for id, o := range d.Objs {
+		for _, n := range pdftest.NamesIn(o.Dict) {
 			if !allowed[n] && !(len(n) > 1 && n[0] == 'F' && strings.Trim(n[1:], "0123456789") == "") {
 				t.Errorf("object %d has an unexpected name /%s", id, n)
 			}
@@ -479,10 +465,10 @@ func FuzzAnyTextIsInertString(f *testing.F) {
 		in := string(b)
 		cols := []export.Column{{Label: in}}
 		raw, _ := render(t, Options{Title: in, About: []export.AboutLine{{Label: in, Value: in}}}, cols, []export.Cell{export.Text(in)})
-		d := parse(t, raw)
-		d.assertNoActions(t)
-		for _, p := range d.pages(t) {
-			d.textLines(t, p, d.fonts(t))
+		d := pdftest.Parse(t, raw)
+		d.AssertNoActions(t)
+		for _, p := range d.Pages(t) {
+			d.TextLines(t, p, d.Fonts(t))
 		}
 	})
 }

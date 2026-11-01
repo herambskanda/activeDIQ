@@ -7,6 +7,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/htmlx"
 	"github.com/skenzeriq/activediq/internal/platform/httpx"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 )
@@ -29,27 +30,45 @@ func ParseID(s string) (ID, error) {
 // String is the canonical lower-case form, safe to bind.
 func (id ID) String() string { return id.r.String() }
 
-// Format is an export format. csv and xlsx exist at the 2a demo; pdf and html are row B10.
+// Format is an export format: csv and xlsx (row B9), pdf and html (row B10).
 type Format string
 
 // The formats that exist.
 const (
 	CSV  Format = "csv"
 	XLSX Format = "xlsx"
+	PDF  Format = "pdf"
+	HTML Format = "html"
 )
 
 // Ext is the file extension without the dot.
 func (f Format) Ext() string { return string(f) }
 
-func (f Format) httpx() httpx.Format {
-	if f == XLSX {
+// HTTPX is the download description of f: its media type and extension (httpx.Attachment). An HTML
+// download must also carry the style hash of the page (see Style).
+func (f Format) HTTPX() httpx.Format {
+	switch f {
+	case XLSX:
 		return httpx.XLSX
+	case PDF:
+		return httpx.PDF
+	case HTML:
+		return httpx.HTML
 	}
 	return httpx.CSV
 }
 
+// DownloadOptions are the extra header inputs of f's download: an HTML file's Content-Security-Policy
+// pins the hash of the one style block the encoder writes.
+func (f Format) DownloadOptions() []httpx.Option {
+	if f == HTML {
+		return []httpx.Option{httpx.WithStyleSHA256(htmlx.StyleSHA256())}
+	}
+	return nil
+}
+
 // Formats lists the formats this installation can produce, in the order the UI offers them.
-func Formats() []Format { return []Format{CSV, XLSX} }
+func Formats() []Format { return []Format{CSV, XLSX, PDF, HTML} }
 
 // State is an export's state (the API's ReportExportState).
 type State string

@@ -14,15 +14,16 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/corpus"
 	"github.com/skenzeriq/activediq/internal/platform/corpus/corpustest"
 	"github.com/skenzeriq/activediq/internal/platform/export"
+	"github.com/skenzeriq/activediq/internal/platform/export/pdf/pdftest"
 )
 
 // countActions is the object scan of rule 3: how many dictionary names in the file are an action,
 // a link, a script, an attachment or a form name.
-func countActions(d *doc) int {
+func countActions(d *pdftest.Doc) int {
 	n := 0
-	for _, o := range d.objs {
-		for _, name := range namesIn(o.dict) {
-			for _, f := range forbiddenNames {
+	for _, o := range d.Objs {
+		for _, name := range pdftest.NamesIn(o.Dict) {
+			for _, f := range pdftest.ForbiddenNames {
 				if name == f {
 					n++
 				}
@@ -50,17 +51,17 @@ func cellLine(t *testing.T, v string) (text, shape string, actions int) {
 	t.Helper()
 	cols, rows := oneCol(v)
 	raw, _ := render(t, Options{}, cols, rows...)
-	d := parse(t, raw)
-	fonts := d.fonts(t)
+	d := pdftest.Parse(t, raw)
+	fonts := d.Fonts(t)
 	var lines []string
-	for _, p := range d.pages(t) {
-		for _, l := range d.textLines(t, p, fonts) {
+	for _, p := range d.Pages(t) {
+		for _, l := range d.TextLines(t, p, fonts) {
 			if !strings.HasPrefix(l, "Page ") {
 				lines = append(lines, l)
 			}
 		}
 	}
-	return lines[len(lines)-1], normalise(d.opShape(d.pages(t)[0])), countActions(d)
+	return lines[len(lines)-1], normalise(d.OpShape(d.Pages(t)[0])), countActions(d)
 }
 
 // TestCorpus runs PDF-01 to PDF-14 (testdata/safe-primitives/pdf.jsonl, safe-primitives §12.7, FF-SP10):
@@ -83,14 +84,14 @@ func TestCorpus(t *testing.T) {
 			}
 			cols, rows := oneCol("v")
 			raw, _ := render(t, Options{Title: v.Text()}, cols, rows...)
-			d := parse(t, raw)
-			info := d.objs[3].dict
+			d := pdftest.Parse(t, raw)
+			info := d.Objs[3].Dict
 			const pre, post = "<< /Title <FEFF", "> /Producer (activeDIQ) >>"
 			if !strings.HasPrefix(info, pre) || !strings.HasSuffix(info, post) {
 				return corpus.Result{}, fmt.Errorf("info = %q", info)
 			}
-			title := utf16Text(info[len(pre) : len(info)-len(post)])
-			return corpustest.Value(map[string]any{"title": title, "infoKeys": strings.Join(namesIn(info), ","), "actions": countActions(d)})
+			title := pdftest.UTF16Text(info[len(pre) : len(info)-len(post)])
+			return corpustest.Value(map[string]any{"title": title, "infoKeys": strings.Join(pdftest.NamesIn(info), ","), "actions": countActions(d)})
 		case "CellShape":
 			v, err := r.Arg("value")
 			if err != nil {
