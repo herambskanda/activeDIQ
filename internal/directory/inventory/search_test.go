@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,10 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 )
 
-func (e *env) searcher(t *testing.T) *inventory.Searcher {
+func (e *env) searcher(t *testing.T) *inventory.Searcher { return e.searcherW(t) }
+
+// searcherW builds a Searcher with the given construction-time options (the ceiling is never per request).
+func (e *env) searcherW(t *testing.T, opts ...inventory.SearcherOption) *inventory.Searcher {
 	t.Helper()
 	var s *inventory.Searcher
 	if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
@@ -23,7 +27,7 @@ func (e *env) searcher(t *testing.T) *inventory.Searcher {
 		if err != nil {
 			return err
 		}
-		s, err = inventory.NewSearcher(sc)
+		s, err = inventory.NewSearcher(sc, opts...)
 		return err
 	}); err != nil {
 		t.Fatalf("searcher: %v", err)
@@ -227,7 +231,8 @@ func Test_search_ceiling_withholds_a_class_whole(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
 		e.hStructure(t, e.adA)
-		sr := e.searcher(t)
+		sr := e.searcherW(t, inventory.WithCeiling(100))
+		sr3 := e.searcherW(t, inventory.WithCeiling(3))
 		var obs []inventory.Observation
 		for i := 1; i <= 6; i++ {
 			obs = append(obs, sSrchUser(i, fmt.Sprintf("zed%d", i), fmt.Sprintf("Zed Person %d", i)))
@@ -239,13 +244,13 @@ func Test_search_ceiling_withholds_a_class_whole(t *testing.T) {
 			t.Fatal(err)
 		}
 		// W=100: nothing hits the ceiling and the scoped caller sees exactly its six.
-		w10, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed", Ceiling: 100, GroupLimit: 50})
+		w10, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed", GroupLimit: 50})
 		if w10.Refine || len(w10.Hits) != 6 || w10.Count[reportsql.TypeUser] != 6 {
 			t.Fatalf("below the ceiling: refine=%v hits=%d count=%v", w10.Refine, len(w10.Hits), w10.Count)
 		}
 		// W=3: the prefix class holds more than three key rows for every caller, scoped or not.
 		for name, sc := range map[string]authz.ReadScope{"scoped": e.scopeOU(e.adA), "unscoped": e.scopeNC(e.adA)} {
-			r, err := e.search(t, sr, sc, inventory.SearchRequest{Text: "zed", Ceiling: 3})
+			r, err := e.search(t, sr3, sc, inventory.SearchRequest{Text: "zed"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -254,18 +259,18 @@ func Test_search_ceiling_withholds_a_class_whole(t *testing.T) {
 			}
 		}
 		// The exact class ranked above the ceiling is still answered.
-		r, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed1", Ceiling: 3})
+		r, _ := e.search(t, sr3, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed1"})
 		if len(r.Hits) == 0 || r.Hits[0].Object != hGUID(1, 1) || r.Hits[0].Class != reportsql.ClassExact {
 			t.Errorf("exact survives: %+v", r.Hits)
 		}
 		// More: the group limit.
-		lim, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed", Ceiling: 100, GroupLimit: 2})
+		lim, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed", GroupLimit: 2})
 		if len(lim.Hits) != 2 || !lim.More[reportsql.TypeUser] || lim.Count[reportsql.TypeUser] != 6 {
 			t.Errorf("limit: hits=%d more=%v count=%v", len(lim.Hits), lim.More, lim.Count)
 		}
 		// Keyset: the second page starts after the first.
 		last := lim.Hits[len(lim.Hits)-1].Rank
-		next, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed", Ceiling: 100, GroupLimit: 2, After: &last})
+		next, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "zed", GroupLimit: 2, After: &last})
 		if len(next.Hits) != 2 || next.Hits[0].Object == lim.Hits[0].Object || next.Hits[0].Object == lim.Hits[1].Object {
 			t.Errorf("page 2: %v after %v", searchGUIDs(next), searchGUIDs(lim))
 		}
@@ -399,6 +404,58 @@ func Test_search_backfill_indexes_each_object_once(t *testing.T) {
 		res, err := e.search(t, sr, e.scopeNC(e.adA), inventory.SearchRequest{Text: "User Number 7"})
 		if err != nil || len(res.Hits) == 0 || res.Hits[0].Object != hGUID(1, 7) {
 			t.Fatalf("search after backfill: %v %v", searchGUIDs(res), err)
+		}
+	})
+}
+
+// The ceiling W is a property of the tenant's data, fixed when the Searcher is built. A request cannot carry
+// one, so a scoped caller cannot probe "does the tenant hold more than N matching keys" (T-0995 leak class,
+// security review of T-1095 F1).
+func Test_search_request_cannot_choose_the_ceiling(t *testing.T) {
+	for i := 0; i < reflect.TypeOf(inventory.SearchRequest{}).NumField(); i++ {
+		f := reflect.TypeOf(inventory.SearchRequest{}).Field(i)
+		if strings.Contains(strings.ToLower(f.Name), "ceil") || strings.Contains(strings.ToLower(f.Name), "limit") && f.Name != "GroupLimit" {
+			t.Errorf("SearchRequest.%s: a request must not carry the ceiling", f.Name)
+		}
+	}
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		e.hStructure(t, e.adA)
+		sr := e.searcher(t) // production W
+		hidden := sSrchUser(1, "tsh", "Tier0 Service Hidden")
+		hidden.Parent, hidden.Ancestry = inventory.GUID(hSys), []inventory.GUID{inventory.GUID(hSys), inventory.GUID(hDom)}
+		if _, err := e.populate(t, e.adA, hBase, hidden); err != nil {
+			t.Fatal(err)
+		}
+		// 'ti' matches the hidden object's name, 'tj' matches nothing: a scoped caller must see the same answer.
+		for _, gl := range []int{0, 1, 5, 50} {
+			ti, err1 := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "ti", GroupLimit: gl})
+			tj, err2 := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "tj", GroupLimit: gl})
+			if err1 != nil || err2 != nil {
+				t.Fatalf("%v %v", err1, err2)
+			}
+			if ti.Refine || tj.Refine || !reflect.DeepEqual(ti.Hits, tj.Hits) || !reflect.DeepEqual(ti.Count, tj.Count) || !reflect.DeepEqual(ti.More, tj.More) {
+				t.Errorf("group limit %d: a hidden object changed a scoped response:\n%+v\n%+v", gl, ti, tj)
+			}
+		}
+	})
+}
+
+func Test_search_ceiling_is_validated_at_construction(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		for _, w := range []int{0, -1, reportsql.MaxSearchCeiling + 1} {
+			err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+				sc, err := reportsql.CatalogSchema(ctx, tx)
+				if err != nil {
+					return err
+				}
+				_, err = inventory.NewSearcher(sc, inventory.WithCeiling(w))
+				return err
+			})
+			if err == nil {
+				t.Errorf("ceiling %d accepted", w)
+			}
 		}
 	})
 }

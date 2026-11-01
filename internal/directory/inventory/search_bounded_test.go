@@ -115,7 +115,7 @@ func Test_search_work_is_bounded(t *testing.T) {
 		const w = 100
 		e := setup(t, s)
 		e.hStructure(t, e.adA)
-		sr := e.searcher(t)
+		sr := e.searcherW(t, inventory.WithCeiling(w))
 		var obs []inventory.Observation
 		for i := 1; i <= 5; i++ {
 			obs = append(obs, sInv(1, i, fmt.Sprintf("s%d", i), fmt.Sprintf("Sezo Person %d", i), false))
@@ -170,7 +170,7 @@ func Test_search_work_is_bounded(t *testing.T) {
 		answers := func(sc authz.ReadScope) map[string]inventory.SearchResult {
 			out := map[string]inventory.SearchResult{}
 			for _, text := range texts {
-				r, err := e.search(t, sr, sc, inventory.SearchRequest{Text: text, GroupLimit: 50, Ceiling: w})
+				r, err := e.search(t, sr, sc, inventory.SearchRequest{Text: text, GroupLimit: 50})
 				if err != nil {
 					t.Fatal(err)
 				}

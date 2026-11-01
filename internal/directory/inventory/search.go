@@ -40,25 +40,42 @@ type SearchRequest struct {
 	GroupLimit int
 	// After, when set, is a verified keyset position (the caller checks its MAC).
 	After *reportsql.SearchAfter
-	// Ceiling overrides DefaultSearchCeiling (tests, T-1102).
-	Ceiling int
 }
 
 // SearchResult is reportsql's: trimmed hits, the refine state, and counts only when they are exact.
 type SearchResult = reportsql.SearchResult
 
-// Searcher is the search port's implementation.
-type Searcher struct{ src reportsql.SearchSource }
+// Searcher is the search port's implementation. W (the ceiling) is fixed when it is built and is not a
+// request property: whether a class is withheld must depend only on the tenant's data, never on a value
+// the caller chose (ADR-0011 rules 12-13, T-0995 leak class).
+type Searcher struct {
+	src     reportsql.SearchSource
+	ceiling int
+}
+
+// SearcherOption configures a Searcher at construction.
+type SearcherOption func(*Searcher)
+
+// WithCeiling sets W for every search the Searcher answers (compose config, T-1102). NewSearcher refuses
+// a value outside 1..reportsql.MaxSearchCeiling.
+func WithCeiling(w int) SearcherOption { return func(s *Searcher) { s.ceiling = w } }
 
 // NewSearcher registers the search source against the live schema, as the datasets are.
-func NewSearcher(sch reportsql.Schema) (*Searcher, error) {
+func NewSearcher(sch reportsql.Schema, opts ...SearcherOption) (*Searcher, error) {
 	src, err := reportsql.NewSearchSource(sch, "inventory_search_keys", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
 		Project: idents("object_guid"), Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid",
 		Ancestry: "ancestry", Complete: "ancestry_complete"}, "kind", "state", "enabled", "display_name")
 	if err != nil {
 		return nil, fmt.Errorf("inventory: search source: %w", err)
 	}
-	return &Searcher{src: src}, nil
+	s := &Searcher{src: src, ceiling: DefaultSearchCeiling}
+	for _, o := range opts {
+		o(s)
+	}
+	if s.ceiling < 1 || s.ceiling > reportsql.MaxSearchCeiling {
+		return nil, fmt.Errorf("inventory: search ceiling %d outside 1..%d", s.ceiling, reportsql.MaxSearchCeiling)
+	}
+	return s, nil
 }
 
 // Search answers exact, prefix and fuzzy lookups over the tenant's users, groups, computers and contacts,
@@ -82,12 +99,9 @@ func (s *Searcher) Search(ctx context.Context, tx store.Tx, tid tenant.ID, scope
 	if err != nil {
 		return SearchResult{}, fmt.Errorf("%w: %w", ErrSearchRefused, err)
 	}
-	q := reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, Types: req.Types, GroupLimit: req.GroupLimit, Ceiling: req.Ceiling, After: req.After, Threshold: searchThreshold}
+	q := reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, Types: req.Types, GroupLimit: req.GroupLimit, Ceiling: s.ceiling, After: req.After, Threshold: searchThreshold}
 	if q.GroupLimit == 0 {
 		q.GroupLimit = 5
-	}
-	if q.Ceiling == 0 {
-		q.Ceiling = DefaultSearchCeiling
 	}
 	cq, err := reportsql.CompileSearch(s.src, q, scopes)
 	if err != nil {

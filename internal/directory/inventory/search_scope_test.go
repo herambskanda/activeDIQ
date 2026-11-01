@@ -236,7 +236,7 @@ func sInv(class byte, i int, sam, name string, hidden bool) inventory.Observatio
 func se3Invariance(t *testing.T, s *storetest.Server) {
 	e := setup(t, s)
 	e.hStructure(t, e.adA)
-	sr := e.searcher(t)
+	sr := e.searcherW(t, inventory.WithCeiling(1000))
 	var vis []inventory.Observation
 	for i := 1; i <= 5; i++ {
 		vis = append(vis, sInv(1, i, fmt.Sprintf("invp%d", i), fmt.Sprintf("Inv Person %d", i), false))
@@ -248,7 +248,7 @@ func se3Invariance(t *testing.T, s *storetest.Server) {
 	run := func() map[string]inventory.SearchResult {
 		out := map[string]inventory.SearchResult{}
 		for _, text := range texts {
-			res, err := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: text, GroupLimit: 50, Ceiling: 1000})
+			res, err := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: text, GroupLimit: 50})
 			if err != nil {
 				t.Fatalf("%q: %v", text, err)
 			}
@@ -296,7 +296,7 @@ func se3Invariance(t *testing.T, s *storetest.Server) {
 	check("hidden matches removed")
 	// the hidden objects were really there for an unscoped caller
 	add(1, 40, hBase.Add(4*time.Hour), inventory.ObjLive)
-	all, err := e.search(t, sr, e.scopeNC(e.adA), inventory.SearchRequest{Text: "inv per", GroupLimit: 50, Ceiling: 1000})
+	all, err := e.search(t, sr, e.scopeNC(e.adA), inventory.SearchRequest{Text: "inv per", GroupLimit: 50})
 	if err != nil || len(all.Hits) != 45 {
 		t.Fatalf("an unscoped caller sees the hidden objects: %d hits, %v", len(all.Hits), err)
 	}
@@ -308,7 +308,8 @@ func se3Invariance(t *testing.T, s *storetest.Server) {
 func se3AboveCeiling(t *testing.T, s *storetest.Server) {
 	e := setup(t, s)
 	e.hStructure(t, e.adA)
-	sr := e.searcher(t)
+	sr := e.searcherW(t, inventory.WithCeiling(40))
+	srWide := e.searcherW(t, inventory.WithCeiling(1000))
 	var obs []inventory.Observation
 	for i := 1; i <= 5; i++ {
 		obs = append(obs, sInv(1, i, fmt.Sprintf("invp%d", i), fmt.Sprintf("Inv Person %d", i), false))
@@ -319,10 +320,9 @@ func se3AboveCeiling(t *testing.T, s *storetest.Server) {
 	if _, err := e.populate(t, e.adA, hBase, obs...); err != nil {
 		t.Fatal(err)
 	}
-	const w = 40
 	res := map[string]inventory.SearchResult{}
 	for name, sc := range map[string]authz.ReadScope{"scoped": e.scopeOU(e.adA), "unscoped": e.scopeNC(e.adA)} {
-		r, err := e.search(t, sr, sc, inventory.SearchRequest{Text: "invp3", Ceiling: w, GroupLimit: 50})
+		r, err := e.search(t, sr, sc, inventory.SearchRequest{Text: "invp3", GroupLimit: 50})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -339,13 +339,13 @@ func se3AboveCeiling(t *testing.T, s *storetest.Server) {
 	}
 	// The prefix class alone, withheld for both callers: no hit leaks through a lower class either.
 	for name, sc := range map[string]authz.ReadScope{"scoped": e.scopeOU(e.adA), "unscoped": e.scopeNC(e.adA)} {
-		r, _ := e.search(t, sr, sc, inventory.SearchRequest{Text: "invp", Ceiling: w, GroupLimit: 50})
+		r, _ := e.search(t, sr, sc, inventory.SearchRequest{Text: "invp", GroupLimit: 50})
 		if !r.Refine || len(r.Hits) != 0 || r.Count != nil {
 			t.Errorf("%s: %q is over the ceiling in the prefix class: %+v", name, "invp", r)
 		}
 	}
 	// With the ceiling lifted the scoped caller gets the whole answer and nothing hidden.
-	r, _ := e.search(t, sr, e.scopeOU(e.adA), inventory.SearchRequest{Text: "invp3", Ceiling: 1000, GroupLimit: 50})
+	r, _ := e.search(t, srWide, e.scopeOU(e.adA), inventory.SearchRequest{Text: "invp3", GroupLimit: 50})
 	if r.Refine || len(r.Hits) == 0 || r.Hits[0].Object != hGUID(1, 3) || r.Hits[0].Class != reportsql.ClassExact || r.Count[reportsql.TypeUser] != len(r.Hits) {
 		t.Errorf("below the ceiling: %+v", r)
 	}

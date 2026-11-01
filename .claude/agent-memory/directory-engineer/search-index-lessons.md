@@ -21,3 +21,5 @@ metadata:
 - Plan-shape tests need realistic table sizes: on a ~100-row key table the planner picks Seq/Bitmap scans. Add ~20k filler directory_objects + keys, ANALYZE, then assert (Bitmap child nodes have no Relation Name; count on Index Scan nodes by CTE via "Subplan Name").
 - SE3/SE5 live in search_scope_test.go / search_bounded_test.go (ticket-assigned, not T-1126). Hidden rows of a SHARED name also count in the fuzzy class, so equality-at-W-10 queries must not fuzzy-match the hidden keys more than W.
 - Prefix probes carry ORDER BY k.key LIMIT W+1 so the ordered index range scan is the cheapest plan on any table size.
+- Security F1: W (ceiling) is Searcher-construction config (`inventory.WithCeiling`, validated 1..MaxSearchCeiling), never a SearchRequest field: a per-request W lets a scoped caller spell hidden names via refine on/off. Tests needing small W build a second Searcher (`e.searcherW`).
+- fitness-reports RP7 'lock-entry-removed' goes red when main has moved ahead of the branch (not the diff); judge it against `git diff main...HEAD`.
