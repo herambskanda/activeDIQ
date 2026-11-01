@@ -18,3 +18,10 @@ This script is incomplete: the director adds the other scenes when the milestone
 - **Narration:** Everything is sample data. The point is how few steps a help-desk call takes, and what the tool refuses to do.
 - **CEO decision:** accept the look and flow, or redirect (criterion 4).
 - **QA:** pending.
+
+## Scene 2 — The walking skeleton: type a name in the console, find the real user
+- **Proves:** T-0671 (roadmap demo criterion 2): the real console calls the real API, which reads a real lab DC with a service account that is not a Domain Admin.
+- **Run:** `lab/e2e/run-skeleton-proof.sh samba` (any host with Docker, after `make lab-up`) or `lab/e2e/run-skeleton-proof.sh windows` (VM 119; see runbook `windows-lab.md` §14).
+- **Evidence:** [`factory/demos/evidence/T-0671/`](../evidence/T-0671/): `samba-2-found.png` (the user found), `samba-server.log`, and for Windows `windows-dc1-proof.txt` (service account not a Domain Admin, LDAP policy values). **Windows status: blocked, see the T-0671 ticket notes.**
+- **CEO decision:** accept the skeleton, or redirect (criterion 2).
+- **QA:** pending.

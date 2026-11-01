@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Evidence for the walking-skeleton proof on dc1 (T-0671). READ-ONLY: it changes nothing on the DC.
+
+Prints, for the evidence file:
+  1. the DC's LDAP policy (LDAPServerIntegrity, LdapEnforceChannelBindingTokens) from the registry;
+  2. the product service account svc-activediq: DN, adminCount, direct groups, and the groups in its token
+     (recursive), with an explicit "Domain Admin: NO" / "Tier-0 groups held: none" verdict;
+  3. the user the console must find (lab-user-01): Get-ADUser;
+  4. nltest /dsgetdc;
+  5. a control from this host: an unsigned simple bind over cleartext LDAP (389) is REFUSED by the DC, so the
+     signing requirement of (1) is live and the server's successful bind in the same run was not a cleartext one.
+
+Run under lab/windows/bin/with-dc1-lock. Needs pywinrm + requests-ntlm; credentials come from WIN_LAB_ENV and are
+never printed. Lab only (A-0025).
+"""
+import base64, os, subprocess, sys
+
+try:
+    from winrm.protocol import Protocol
+except ImportError:
+    sys.exit("skeleton-proof-evidence: pip install pywinrm requests-ntlm")
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+path = os.environ.get("WIN_LAB_ENV") or os.path.join(REPO, "lab", "windows", ".win-lab.env")
+if not os.path.exists(path):
+    sys.exit(f"skeleton-proof-evidence: lab env file not found: {path} (set WIN_LAB_ENV)")
+env = {}
+for line in open(path):
+    line = line.strip()
+    if line and not line.startswith("#") and "=" in line:
+        k, v = line.split("=", 1)
+        env[k] = v.strip().strip('"')
+ADDR = os.environ.get("WIN_LAB_DC_ADDR") or env.get("WIN_LAB_DC_ADDR", "192.168.1.9")
+USER = os.environ.get("ADIQ_E2E_USER_SAM", "lab-user-01")
+SVC = "svc-activediq"
+NTDS = r"HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters"
+TIER0 = ["Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators", "Account Operators",
+         "Server Operators", "Backup Operators", "Print Operators", "Group Policy Creator Owners", "DnsAdmins"]
+
+
+def ps(script):
+    p = Protocol(endpoint=f"http://{ADDR}:5985/wsman", transport="ntlm", username="Administrator",
+                 password=env["WIN_LAB_ADMIN_PASSWORD"], read_timeout_sec=300, operation_timeout_sec=250)
+    sh = p.open_shell()
+    enc = base64.b64encode(script.encode("utf-16le")).decode()
+    cid = p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", enc])
+    out, err, rc = p.get_command_output(sh, cid)
+    try:
+        p.cleanup_command(sh, cid)
+        p.close_shell(sh)
+    except Exception:
+        pass
+    text = out.decode(errors="replace")
+    return rc, "\n".join(l for l in text.splitlines() if not l.startswith(("#< CLIXML", "<Objs")))
+
+
+def section(title):
+    print(f"\n=== {title} ===")
+
+
+print(f"skeleton-proof-evidence: dc1 {ADDR}  (read-only)")
+rc, out = ps("(Get-Date).ToUniversalTime().ToString('o'); $env:COMPUTERNAME; (Get-CimInstance Win32_OperatingSystem).Caption")
+section("dc1"); print(out)
+
+section("LDAP policy on dc1 (registry; 2 = required / always)")
+rc, out = ps(f"foreach($k in 'LDAPServerIntegrity','LdapEnforceChannelBindingTokens'){{ $k+' = '+((Get-Item '{NTDS}').GetValue($k)) }}")
+print(out)
+
+section(f"service account {SVC}: not a Domain Admin")
+tier0 = ",".join(f"'{g}'" for g in TIER0)
+rc, out = ps(f"""
+Import-Module ActiveDirectory
+$u = Get-ADUser -Identity '{SVC}' -Properties MemberOf,adminCount,userPrincipalName,Enabled
+'DistinguishedName : ' + $u.DistinguishedName
+'UserPrincipalName : ' + $u.userPrincipalName
+'Enabled           : ' + $u.Enabled
+'adminCount        : ' + $(if($u.adminCount){{$u.adminCount}}else{{'(not set)'}})
+'Direct MemberOf   : ' + $(if($u.MemberOf){{($u.MemberOf -join '; ')}}else{{'(none)'}})
+# tokenGroups is constructed and answers base searches only: read it through ADSI.
+$e = [adsi]('LDAP://' + $u.DistinguishedName); $e.RefreshCache(@('tokenGroups'))
+$names = @($e.Properties['tokenGroups'] | ForEach-Object {{ try {{ (New-Object Security.Principal.SecurityIdentifier ($_,0)).Translate([Security.Principal.NTAccount]).Value }} catch {{ (New-Object Security.Principal.SecurityIdentifier ($_,0)).Value }} }})
+'Token groups      : ' + ($names -join '; ')
+$t0 = @({tier0})
+$held = @($t0 | Where-Object {{ $g=$_; $names | Where-Object {{ $_ -like "*\\$g" }} }})
+'Domain Admin      : ' + $(if($names | Where-Object {{ $_ -like '*\\Domain Admins' }}){{'YES'}}else{{'NO'}})
+'Tier-0 groups held: ' + $(if($held){{$held -join ', '}}else{{'none'}})
+""")
+print(out)
+
+section(f"the user the console must find: {USER}")
+rc, out = ps(f"Get-ADUser -Identity '{USER}' -Properties Enabled,userPrincipalName,objectGUID | Format-List DistinguishedName,SamAccountName,UserPrincipalName,Enabled,ObjectGUID | Out-String -Width 200")
+print(out.strip())
+
+section("nltest /dsgetdc")
+rc, out = ps("nltest /dsgetdc:win.activediq.test")
+print(out.strip())
+
+section("control from this host: unsigned simple bind over cleartext LDAP 389 (dummy password, no secret)")
+r = subprocess.run(["ldapsearch", "-x", "-H", f"ldap://{ADDR}:389", "-D", f"{SVC}@win.activediq.test", "-w", "not-the-password",
+                    "-b", "", "-s", "base", "-o", "nettimeout=10", "namingContexts"], capture_output=True, text=True, timeout=30)
+msg = (r.stderr + r.stdout).strip().splitlines()
+print("\n".join(l for l in msg if l.startswith(("ldap_bind", "ldap_", "result:")) or "ldap_" in l) or "(no output)")
+print(f"exit status {r.returncode}  (expected: ldap_bind: Strong(er) authentication required (8))")
