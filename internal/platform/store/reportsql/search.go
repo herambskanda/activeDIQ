@@ -239,7 +239,7 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 		}
 		wholeLo = append(wholeLo, p.Lo)
 		prefix = append(prefix, "(SELECT "+keyCols+" FROM public."+src.keys+" k WHERE k.tenant_id = "+tenantExpr+" AND k.key_kind = "+strconv.Itoa(int(p.Kind))+
-			" AND "+cond+" LIMIT "+w1()+")")
+			" AND "+cond+" ORDER BY k.key LIMIT "+w1()+")")
 	}
 	if q.Fuzzy != "" {
 		var ks []searchkey.Kind

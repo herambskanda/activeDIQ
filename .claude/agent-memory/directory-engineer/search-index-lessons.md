@@ -17,3 +17,7 @@ metadata:
 - Test helper names taken in package inventory_test: oid, guids, pop, rpID, hGUID, hUser, explain/catalog now mine.
 - Pre-existing red on main at 398b0e6c1 (not T-1095): RP1 vet in datasets_groups.go:146,148 (viaPathSQL/findingSQL); TestOnlyPermittedFilesImportTenantref (modules/reports/handlers.go).
 - Plan-shape tests: the planner's natural pick depends on LIMIT and flat `<%` estimates; prove index *eligibility* in a rolled-back owner txn (drop other indexes + pkey constraint, disable RLS), not by hoping.
+- Names are PREFIX-class keys (with a "whole" rank bonus); only identifiers (sam/upn/guid/…) are EXACT. Write oracle queries accordingly.
+- Plan-shape tests need realistic table sizes: on a ~100-row key table the planner picks Seq/Bitmap scans. Add ~20k filler directory_objects + keys, ANALYZE, then assert (Bitmap child nodes have no Relation Name; count on Index Scan nodes by CTE via "Subplan Name").
+- SE3/SE5 live in search_scope_test.go / search_bounded_test.go (ticket-assigned, not T-1126). Hidden rows of a SHARED name also count in the fuzzy class, so equality-at-W-10 queries must not fuzzy-match the hidden keys more than W.
+- Prefix probes carry ORDER BY k.key LIMIT W+1 so the ordered index range scan is the cheapest plan on any table size.
