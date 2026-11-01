@@ -154,6 +154,15 @@
         "pdf"
       ],
       "package": "internal/platform/export/pdf"
+    },
+    {
+      "name": "go/mail",
+      "language": "go",
+      "tier": "S",
+      "units": [
+        "mail"
+      ],
+      "package": "internal/platform/notify/mail"
     }
   ],
   "fuzz": [
@@ -307,6 +316,14 @@
       "implementation": "go/pdf",
       "unit": "pdf",
       "target": "FuzzAnyTextIsInertString",
+      "properties": [
+        "independentParse"
+      ]
+    },
+    {
+      "implementation": "go/mail",
+      "unit": "mail",
+      "target": "FuzzMessage",
       "properties": [
         "independentParse"
       ]
