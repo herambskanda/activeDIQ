@@ -8,7 +8,9 @@
 // flags control is built from SDPart values that have no SACL member. Certificate validation is
 // always on and there is no plaintext or StartTLS path. The one write is Session.WriteDACL (sdwrite.go):
 // a VerifyBase-gated replace of nTSecurityDescriptor with the DACL-only SD_FLAGS control, on the bound
-// DC. Out of scope here: change feeds, other writes, DC
+// DC. The DirSync primitive (dirsync.go, controls in package scope) is the change feed's connector half:
+// object-security mode, show-deleted, incremental values decoded into set/cleared/added/removed, the
+// mandatory attribute set, SecretAttrs refused when named and stripped when unrequested. Out of scope here: the gRPC feed, cookie pre-checks, other writes, DC
 // discovery (the caller supplies the DC list) and the gRPC servers.
 //
 // Authentication is one of two, never both: SASL GSSAPI (Config.Kerberos, the primary mechanism: a
