@@ -379,7 +379,7 @@ func attachment(r corpus.Record) (corpus.Result, error) {
 // HT-17 of httpx.Attachment. One implementation runs the whole unit (a unit's implementation runs
 // every record), and the manifest names httpx as covered by it.
 func TestCorpus(t *testing.T) {
-	corpustest.Run(t, "go/htmlx", "html", func(r corpus.Record) (corpus.Result, error) {
+	corpustest.Run(t, "go/html", "html", func(r corpus.Record) (corpus.Result, error) {
 		switch r.Call {
 		case "httpx.Attachment":
 			return attachment(r)

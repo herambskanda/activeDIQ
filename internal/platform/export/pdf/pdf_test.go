@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/skenzeriq/activediq/internal/platform/corpus/corpustest"
 	"github.com/skenzeriq/activediq/internal/platform/export"
 )
 
@@ -470,10 +471,12 @@ func TestPdftotext(t *testing.T) {
 // oracle parses, with no action and the same operators, and extracted text equal to the input (after the
 // documented mappings, which a printable-only input avoids).
 func FuzzAnyTextIsInertString(f *testing.F) {
+	corpustest.Seed(f, "pdf")
 	for _, s := range []string{"", "x", ") Tj ET", "\\", "/OpenAction", "漢字", "a\x07b", "\u202e", "\xff", strings.Repeat("a", 5000)} {
-		f.Add(s)
+		f.Add([]byte(s))
 	}
-	f.Fuzz(func(t *testing.T, in string) {
+	f.Fuzz(func(t *testing.T, b []byte) {
+		in := string(b)
 		cols := []export.Column{{Label: in}}
 		raw, _ := render(t, Options{Title: in, About: []export.AboutLine{{Label: in, Value: in}}}, cols, []export.Cell{export.Text(in)})
 		d := parse(t, raw)
