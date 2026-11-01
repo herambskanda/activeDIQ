@@ -43,7 +43,7 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 - **`gen-modules-check`** (T-0997; the table ownership map): a new migration table needs a `-- write-class: <table> config|system` line
   directly above its `CREATE TABLE` (`config`: a principal changes it, so writes are Actions that take a `step.Step`; `system`: bookkeeping its
   owner writes, the closed list in ADR-0005 rule 10; a partition takes its parent's class). The owner key is the migration's file-name
-  segment. Then run `make gen-modules` and commit `owners.gen.go`; never edit it. A `DROP TABLE` or rename needs `tools/gen/modules`
+  segment. Then run `make gen-modules` and commit `owners.gen.tsv`; never edit it. A `DROP TABLE` or rename needs `tools/gen/modules`
   extended first (the generator refuses it rather than guess).
 - **`gen-api-check`** (stale or missing generated file): run `make gen-api` and commit the result; never edit a `*.gen.*` file.
   **`lint-api`**: vacuum findings on the bundled contract. Both: `runbooks/api-contract-workflow.md`.

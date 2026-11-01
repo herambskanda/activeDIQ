@@ -105,7 +105,7 @@ type Dataset struct {
     Rels      []Rel          // every other relation a fragment may read, each through {rel.<id>} (§3.3)
     Columns   []Column
     Freshness FreshnessSource
-    Tables    []string       // every table any anchor or rel names; Boot checks owners.gen.go (ADR-0003 rule 6)
+    Tables    []string       // every table any anchor or rel names; Boot checks owners.gen.tsv (ADR-0003 rule 6)
 }
 
 type Relation struct {
@@ -182,7 +182,7 @@ itself. A column ID from a request or a definition is a **map key into the regis
 in SQL (SQL-04, SQL-05: an unknown, quoted, case-varied or padded key is `ErrUnknownColumn`).
 
 **Registry build refuses** (start-up fails, `compose/server` boot test):
-- a fragment that contains the name of any table in `owners.gen.go` (tables enter only through
+- a fragment that contains the name of any table in `owners.gen.tsv` (tables enter only through
   `{rel.<id>}`, §3.3), or a `{rel.<id>}` the dataset does not declare;
 - an anchor or rel whose `Project` names a column the table does not have (checked against the
   migration schema snapshot), or a `Rel` that projects a text column;
@@ -1555,7 +1555,7 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   - `store/owners.Lookup` is an **empty** map: no generator exists yet, so any dataset fails Boot
     (fail closed, ADR-0003 rule 6). A `tools/gen/modules` ticket fills it; B3 needs it.
 - 2026-10-31 · T-0997 · the ownership map exists: `tools/gen/modules` writes
-  `internal/platform/store/owners/owners.gen.go` (69 tables: owner key from the migration's file name,
+  `internal/platform/store/owners/owners.gen.tsv` (69 tables: owner key from the migration's file name,
   write class from `-- write-class:`). `owners.Lookup` and `owners.ClassOf` now answer, so a dataset over
   a table its module owns passes Boot's `report.CheckTables` (`report_runs`, `report_run_rows` belong to
   `reports`) and one over a foreign or uncreated table still fails. B3 is unblocked. Note the owner key
