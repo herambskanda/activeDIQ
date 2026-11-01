@@ -51,6 +51,10 @@ type SearchResult = reportsql.SearchResult
 type Searcher struct {
 	src     reportsql.SearchSource
 	ceiling int
+	// users is the inventory.users dataset the status chips are derived through (T-1097): the one derivation
+	// of locked-out, password and account-expiry states, never a copy of its rules.
+	users    reportsql.Dataset
+	usersSrc report.Dataset
 }
 
 // SearcherOption configures a Searcher at construction.
@@ -69,6 +73,9 @@ func NewSearcher(sch reportsql.Schema, opts ...SearcherOption) (*Searcher, error
 		return nil, fmt.Errorf("inventory: search source: %w", err)
 	}
 	s := &Searcher{src: src, ceiling: DefaultSearchCeiling}
+	if err := s.registerUsers(sch); err != nil {
+		return nil, err
+	}
 	for _, o := range opts {
 		o(s)
 	}
