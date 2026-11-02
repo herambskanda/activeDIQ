@@ -27,7 +27,12 @@ Design: [ADR-0006](../decisions/0006-dc-agent-runs-as-a-virtual-service-account.
 | 100 | Info | A signed policy was applied (sequence in the text) | none |
 | 101 | Error | Start refused: token holds a privilege outside the pinned list, or the data directory DACL is unsafe | reinstall with the MSI; do not edit the token |
 | 103 | Warning | Installed but not enrolled: the service is running and idling, re-checking every 15 s | run `activediq-agent.exe enroll <server:port> <pin>`; the agent picks the enrolment up within 15 s, no restart needed |
+| 104 | Error | Enrolment state exists but the service refuses it. The text starts `enrolment state cannot be used (<class>)`: `unsafe-permissions` (owner or DACL names someone other than SYSTEM, Administrators and the service; a reparse point), `expired` (the component certificate is past its validity), `corrupt` (incomplete or does not verify). The service keeps running, does not connect, writes this once per class and re-checks every 15 s | `unsafe-permissions`: stop the service, delete `C:\ProgramData\skenzeriq\agent\enrol` and run `activediq-agent.exe enroll` again (state written by a build before T-1249 names the administrator who enrolled and is refused); `expired`/`corrupt`: enrol again with a new token |
 | 102 | Warning | The Security channel cannot be read | a GPO may have reset channel access: re-run `agentsetup grant-channel`; the server shows `channel_unreadable` |
+
+## Enrolment state and who may read it
+
+`activediq-agent.exe enroll` is run by an administrator, but the service runs as `NT SERVICE\activeDIQAgent`. The enrolment directory and its files are therefore written for the service: owner `BUILTIN\Administrators`, protected DACL granting SYSTEM, Administrators and the service SID, never the administrator's own user SID (the service refuses state that names anyone else). `agentsetup repin` does the same. The service tells "no enrolment yet" (event 103) from "state exists but refused" (event 104).
 
 ## Install order
 
