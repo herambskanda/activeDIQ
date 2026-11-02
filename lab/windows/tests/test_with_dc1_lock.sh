@@ -46,7 +46,8 @@ DIQ_DC1_LOCK_WAIT=3 "$LOCKW" -- "$LOCKW" -- true 2>/dev/null; [ "$?" = 0 ] && ok
 DIQ_DC1_LOCK_HELD=999999 DIQ_DC1_LOCK_WAIT=3 "$LOCKW" -- true 2>"$T/e5"; grep -q "holding dc1 lock" "$T/e5" && ok "stale DIQ_DC1_LOCK_HELD ignored" || bad "stale marker trusted"
 
 # 6. a killed holder releases the lock
-setsid "$LOCKW" -- sleep 60 2>/dev/null & hp=$!; sleep 0.5; kill -KILL -- "-$hp" 2>/dev/null; sleep 0.3
+setsid "$LOCKW" -- sleep 60 2>/dev/null & hp=$!; disown "$hp"  # disowned: bash prints no "Killed" job notice (its pid made the CI log differ run to run)
+sleep 0.5; kill -KILL -- "-$hp" 2>/dev/null; sleep 0.3
 DIQ_DC1_LOCK_WAIT=3 "$LOCKW" -- true 2>/dev/null; [ "$?" = 0 ] && ok "lock free after the holder died" || bad "lock stuck after the holder died"
 
 # 7. the real entry points take the lock (waiter times out while a holder runs; both fail fast with no hypervisor, no go, no winrm)
