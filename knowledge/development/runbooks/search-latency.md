@@ -40,6 +40,11 @@ instead of 1,000, and the job fails naming it. Before this, a run in which every
 each) hit the 90-minute `go test` timeout without naming any class (T-1102, runs of 2026-11-02). A passing class
 always runs all 1,000 queries.
 
+**A timeout is a sample, not a crash.** When a query runs into the service's 2 s timeout (ADR-0011 rule 13), the
+handler answers `503 /problems/search-unavailable`. The harness counts that as a sample over budget and notes it on
+the row. In the oracle comparison it is a disagreement. Any other non-200 still stops the run. Before this, one
+timed-out fuzzy query on pg18 aborted the run and lost its table.
+
 **A miss is attributed by the plan, not by the clock.** The plan-probe lines (`removed by filter`, the fuzzy scan
 node) do not depend on host load. If the fuzzy CTE reads the tenant's whole fuzzy-kind key set, the miss is real
 on any host (T-1180), not contention.
