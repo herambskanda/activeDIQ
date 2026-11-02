@@ -166,7 +166,7 @@ func Test_search_work_is_bounded(t *testing.T) {
 			}
 		}
 		analyzeAll := func() {
-			for _, tbl := range []string{"inventory_search_keys", "directory_objects"} {
+			for _, tbl := range []string{"inventory_search_keys", "inventory_search_trigrams", "directory_objects"} {
 				if err := e.d.ExecOwner(context.Background(), `ANALYZE public.`+tbl); err != nil {
 					t.Fatal(err)
 				}
@@ -257,7 +257,10 @@ func Test_search_work_is_bounded(t *testing.T) {
 			})
 		}
 		// SE5, fuzzy class (ADR-0011 rule 5a): the posting index and the per-candidate recheck, run for real
-		// over the table the H loop left behind (20,000 hidden name keys sharing the query's trigrams).
+		// over the table the H loop left behind (20,000 hidden name keys sharing the query's trigrams). The plan
+		// depends on the postings' statistics and visibility map, so they are vacuumed first, as the runner does
+		// after a bulk load: left to autovacuum, the plan would depend on timing.
+		e.vacuumSearch(t)
 		t.Run("fuzzy_plan", func(t *testing.T) {
 			for _, text := range []string{"sezo", "sezo hidden 7"} {
 				assertFuzzyPlan(t, e.analyze(t, scoped, text, w, true))
