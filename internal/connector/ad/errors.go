@@ -21,6 +21,9 @@ const (
 	CodeSecretNotSet        Code = "SECRET_NOT_SET"
 	CodeProtocol            Code = "PROTOCOL_ERROR"
 	CodeCanceled            Code = "CANCELED"
+	// CodeCookieRejected: the DC refused the DirSync cookie it was sent (protocolError or
+	// unsupportedCriticalExtension on a request that carried one). Classified on the result code.
+	CodeCookieRejected Code = "COOKIE_REJECTED"
 )
 
 // Error is the package's error type.
@@ -28,6 +31,7 @@ type Error struct {
 	Code   Code
 	Detail string // fixed text, e.g. a rule id or an LDAP result code number; never a value
 	cause  error
+	result int // LDAP result code of a failed search, 0 when not known (never text)
 }
 
 func (e *Error) Error() string {

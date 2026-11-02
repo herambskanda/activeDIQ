@@ -75,6 +75,11 @@ func DefaultSchema() *ldapfilter.Schema {
 			// dNSHostName: name-only. Its attributeID is also the lazy-commit control OID, which FF-SP2 lets
 			// only scope name; an OID-form descriptor for it stays unknown and fails closed.
 			ldapfilter.AttrInfo{Name: "dNSHostName", Syntax: s},
+			// The change feed (T-1194): the deleted object's last parent (name-only, a DN) and the forest's
+			// deletion lifetimes on CN=Directory Service.
+			ldapfilter.AttrInfo{Name: "lastKnownParent", Syntax: ldapfilter.SynDN},
+			ldapfilter.AttrInfo{Name: "tombstoneLifetime", Syntax: ldapfilter.SynInt32},
+			ldapfilter.AttrInfo{Name: "msDS-DeletedObjectLifetime", Syntax: ldapfilter.SynInt32},
 			ldapfilter.AttrInfo{Name: "servicePrincipalName", OID: "1.2.840.113556.1.4.771", Syntax: s},
 			ldapfilter.AttrInfo{Name: "msDS-AdditionalDnsHostName", OID: "1.2.840.113556.1.4.1717", Syntax: s},
 			ldapfilter.AttrInfo{Name: "lDAPDisplayName", OID: "1.2.840.113556.1.2.460", Syntax: s},

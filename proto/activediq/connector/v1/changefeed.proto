@@ -142,8 +142,9 @@ message ChangeBatch {
   // stream that ends without it, or with an error, was cut off and the caller keeps its last
   // committed cookie.
   bool cycle_complete = 5;
-  // Number of attribute values dropped because they were SecretAttrs. A diagnostic count; names
-  // and values never leave the connector.
+  // Number of attributes dropped because they were SecretAttrs: one per object per attribute,
+  // however many values each held. A diagnostic count; names and values never leave the
+  // connector.
   uint32 secret_attributes_dropped = 6;
 }
 

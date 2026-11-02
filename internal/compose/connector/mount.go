@@ -70,6 +70,10 @@ func (s *tunnelServer) ScopedSearch(req *connectorv1.ScopedSearchRequest, st grp
 	return s.read.ScopedSearch(req, st)
 }
 
+func (s *tunnelServer) ChangeFeed(req *connectorv1.ChangeFeedRequest, st grpc.ServerStreamingServer[connectorv1.ChangeFeedResponse]) error {
+	return s.read.ChangeFeed(req, st)
+}
+
 func (s *tunnelServer) Plan(ctx context.Context, req *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {
 	return s.write.Plan(ctx, req)
 }

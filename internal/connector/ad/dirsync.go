@@ -3,6 +3,7 @@ package ad
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -213,6 +214,9 @@ func (s *Session) dirSyncOnce(ctx context.Context, base string, cookie []byte, a
 	stop()
 	s.mu.Unlock()
 	if err != nil {
+		if len(cookie) > 0 && cookieRejection(err) {
+			return DirSyncPage{}, fail(CodeCookieRejected, "", nil)
+		}
 		return DirSyncPage{}, err
 	}
 	resp, ok := scope.DirSyncResponse(res.Controls)
@@ -229,6 +233,20 @@ func (s *Session) dirSyncOnce(ctx context.Context, base string, cookie []byte, a
 		page.Changes = append(page.Changes, c)
 	}
 	return page, nil
+}
+
+// resultUnavailableCriticalExtension is RFC 4511 unavailableCriticalExtension (12), which go-ldap names no constant for.
+const resultUnavailableCriticalExtension = 12
+
+// cookieRejection reports whether err is the DC refusing the cookie of a DirSync request: LDAP
+// protocolError (Windows answers 0000203D this way) or unsupportedCriticalExtension (Samba, for an
+// unparsable cookie). Only the result code is read, never the DC's text (contract §6.3).
+func cookieRejection(err error) bool {
+	var e *Error
+	if !errors.As(err, &e) || e.Code != CodeProtocol {
+		return false
+	}
+	return e.result == ldap.LDAPResultProtocolError || e.result == resultUnavailableCriticalExtension
 }
 
 // decodeChange turns one DirSync entry into an ObjectChange. SecretAttrs members are dropped and

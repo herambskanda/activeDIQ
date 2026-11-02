@@ -248,7 +248,9 @@ func (s *Session) searchRaw(ctx context.Context, base string, scope int, filter 
 			case ldap.LDAPResultReferral:
 				return nil, fail(CodeUnexpectedReferral, "", nil)
 			}
-			return nil, fail(CodeProtocol, ldapCode(err), nil)
+			f := fail(CodeProtocol, ldapCode(err), nil)
+			f.(*Error).result = int(le.ResultCode)
+			return nil, f
 		}
 		return nil, fail(CodeUnreachable, ldapCode(err), nil)
 	}

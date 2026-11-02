@@ -52,16 +52,24 @@ type Source interface {
 
 // Handler serves Read.
 type Handler struct {
-	src Source
-	now func() time.Time
+	src  Source
+	now  func() time.Time
+	feed feedLimits
 }
 
+// Option configures a Handler.
+type Option func(*Handler)
+
 // New returns the handler for one source.
-func New(src Source) (*Handler, error) {
+func New(src Source, opts ...Option) (*Handler, error) {
 	if src == nil {
 		return nil, errors.New("read: a source is required")
 	}
-	return &Handler{src: src, now: time.Now}, nil
+	h := &Handler{src: src, now: time.Now, feed: feedLimits{maxPages: defaultFeedPages, deadline: defaultFeedDeadline}}
+	for _, o := range opts {
+		o(h)
+	}
+	return h, nil
 }
 
 // Sender is the sending side of the Read stream (grpc.ServerStreamingServer satisfies it).
