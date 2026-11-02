@@ -348,7 +348,7 @@ major upgrade, `agentsetup` refusals, `CheckDataDir`, `EvtLogOldestRecordNumber`
 
 ```bash
 pip install pywinrm requests-ntlm                      # operator tooling; licence register row
-export WIN_LAB_ENV=<path to the main checkout's lab/windows/.win-lab.env>   # gitignored; DC address defaults to 192.168.1.9
+export WIN_LAB_ENV=<path to the main checkout's lab/windows/.win-lab.env>   # gitignored; DC address defaults to 192.168.1.250
 export WIN_LAB_DC_ADDR=<dc ip>                         # optional override
 lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-runs/T-0648-agent-<date>.log
 ```
@@ -426,7 +426,7 @@ instead of 8. Nothing in the proofs noticed.
 
 | Tool | What it does for this policy |
 | --- | --- |
-| `lab/windows/bin/dc1-policy check` | Read-only. Reads both values over WinRM and does a cleartext simple bind to 389 with a dummy password. Exit 0 only when both are 2 **and** the bind answers 8 (strongerAuthRequired); else exit 3 and names each value it read. |
+| `lab/windows/bin/dc1-policy check` | Read-only. Reads both values over WinRM and reads the Default Domain Controllers Policy template, and does a cleartext simple bind to 389 **as `svc-activediq`** (password from `WIN_LAB_SVC_PASSWORD`, never printed). Exit 0 only when both values and the GPO are 2 **and** the bind answers 8 (strongerAuthRequired); else exit 3 and names each value it read. |
 | `lab/windows/bin/dc1-policy restore` | Writes both values to 2 when they are not (the table is `lib/dc1policy.py` `REQUIRED`; nothing else can be written), reboots dc1 (CBT is read at boot) and waits for NTDS, then runs `check`. Does nothing, and does not reboot, when dc1 is already 2/2. |
 | `lab/windows/bin/gssapi-lab run` | Runs `check`-equivalent first and stops **before** any change on dc1 or any `go test`, naming the value read. After the run (in the `finally`) it reads again and fails the run if the policy moved. |
 | `lab/windows/bin/gssapi-lab prepare` | Same check after the reboot; `guest/gssapi-ready.ps1` writes 2/2 first and asserts 2/2 in a `finally`, so a failure half-way (ktpass, gMSA) cannot leave a lower value. |

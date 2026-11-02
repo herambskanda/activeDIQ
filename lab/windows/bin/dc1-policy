@@ -2,10 +2,10 @@
 """Check or restore the LDAP policy the Windows lab proofs depend on, on the lab DC dc1 (T-1265).
 
   dc1-policy check     read LDAPServerIntegrity and LdapEnforceChannelBindingTokens over WinRM and do a cleartext simple bind to
-                       389 with a dummy password. Exit 0 only when both values are 2 and the bind answers 8 (strongerAuthRequired).
+                       389 as the lab service account (a dummy password answers 49 even at 2/2). Exit 0 only when both values are 2 and the bind answers 8 (strongerAuthRequired).
                        Otherwise exit 3 and name each value read. Writes nothing. Proofs call this before testing.
   dc1-policy restore   write both values to 2 when they are not, reboot dc1 (channel binding is read at boot) and wait for NTDS,
-                       then run `check`. Exit 0 only if it passes.
+                       then run `check`. Also fixes the Default Domain Controllers Policy template, which is what reset the registry value (T-1265). Exit 0 only if it passes.
 
 Wrap every call in the shared lock:  lab/windows/bin/with-dc1-lock lab/windows/bin/dc1-policy check
 Lab DC only (A-0025). Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV and are never printed.
@@ -17,15 +17,24 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import dc1policy, dc1winrm
 
 
-def check(ps, addr, say=print):
+SVC_DN = "svc-activediq@win.activediq.test"  # lab service account; its password is WIN_LAB_SVC_PASSWORD in the lab env file
+
+
+def check(ps, addr, say=print, svc_password=None):
     """-> list of problems (empty = enforced). Reads the registry and probes the wire; both must agree."""
     values = dc1policy.parse_policy(ps(dc1policy.READ_PS)[1])
     for k in dc1policy.REQUIRED:
         say(f"{k} = {'(absent)' if values.get(k) is None else values[k]}")
     bad = dc1policy.problems(values)
+    gpo = dc1policy.parse_gpo(ps(dc1policy.GPO_READ_PS)[1])
+    say(f"Default Domain Controllers Policy GptTmpl.inf LDAPServerIntegrity = {'(not defined)' if gpo is None else gpo}")
+    bad += dc1policy.gpo_problems(gpo)
     try:
-        code, name = dc1policy.bind_probe(addr)
-        say(f"cleartext simple bind to {addr}:389 with a dummy password -> resultCode {code} ({name})")
+        kw = {"dn": SVC_DN, "password": svc_password} if svc_password else {}
+        code, name = dc1policy.bind_probe(addr, **kw)
+        say(f"cleartext simple bind to {addr}:389 as {SVC_DN if svc_password else 'a dummy account'} -> resultCode {code} ({name})")
+        if not svc_password:
+            bad.append("no WIN_LAB_SVC_PASSWORD: a dummy-credential bind answers 49 at any setting, so enforcement cannot be judged")
         if code != 8:
             bad.append(f"cleartext simple bind answered {code} ({name}), need 8 (strongerAuthRequired)")
     except (OSError, ValueError) as e:
@@ -45,21 +54,26 @@ def wait_for_dc(ps, tries=90):
     return False
 
 
-def restore(ps, addr, say=print):
+def restore(ps, addr, say=print, svc_password=None):
     say("before:")
     before = dc1policy.parse_policy(ps(dc1policy.READ_PS)[1])
     for k in dc1policy.REQUIRED:
         say(f"  {k} = {'(absent)' if before.get(k) is None else before[k]}")
+    gpo = dc1policy.parse_gpo(ps(dc1policy.GPO_READ_PS)[1])
+    say(f"  GPO GptTmpl.inf LDAPServerIntegrity = {'(not defined)' if gpo is None else gpo}")
+    if dc1policy.gpo_problems(gpo):
+        ps(dc1policy.GPO_FIX_PS)
+        say("set LDAPServerIntegrity=4,2 in the Default Domain Controllers Policy (the source that reset the registry value), bumped its version, gpupdate")
     if dc1policy.problems(before):
         ps(dc1policy.WRITE_PS)
         say("wrote LDAPServerIntegrity=2 and LdapEnforceChannelBindingTokens=2; rebooting dc1 (channel binding is read at boot)")
         ps("Start-Process shutdown -ArgumentList '/r','/t','5','/c','T-1265 restore LDAP signing and channel binding policy'")
         if not wait_for_dc(ps):
             sys.exit("dc1-policy: dc1 did not come back after the reboot")
-    else:
+    elif not dc1policy.gpo_problems(gpo):
         say("already at 2/2; nothing written, no reboot")
     say("after:")
-    return check(ps, addr, lambda m: say("  " + m))
+    return check(ps, addr, lambda m: say("  " + m), svc_password)
 
 
 def main(argv):
@@ -67,11 +81,12 @@ def main(argv):
         sys.exit(__doc__)
     env, _, addr = dc1winrm.load_env("dc1-policy")
     ps = dc1winrm.make_ps(env, addr)
-    bad = check(ps, addr) if argv[1] == "check" else restore(ps, addr)
+    pw = env.get("WIN_LAB_SVC_PASSWORD")
+    bad = check(ps, addr, svc_password=pw) if argv[1] == "check" else restore(ps, addr, svc_password=pw)
     if bad:
         print("dc1-policy: NOT ENFORCED: " + "; ".join(bad), file=sys.stderr)
         sys.exit(3)
-    print("dc1-policy: enforced (LDAPServerIntegrity=2, LdapEnforceChannelBindingTokens=2, cleartext bind refused with 8)")
+    print("dc1-policy: enforced (LDAPServerIntegrity=2, LdapEnforceChannelBindingTokens=2, cleartext bind of a valid account refused with 8)")
 
 
 if __name__ == "__main__":

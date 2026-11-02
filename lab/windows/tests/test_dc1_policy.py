@@ -27,11 +27,13 @@ def load_gssapi_lab(env_dir):
 class FakeDC:
     """Answers the registry read of gssapi-lab.policy() and records every WinRM script it is sent."""
 
-    def __init__(self, integrity=2, cbt=2):
-        self.integrity, self.cbt, self.sent = integrity, cbt, []
+    def __init__(self, integrity=2, cbt=2, gpo=2):
+        self.integrity, self.cbt, self.gpo, self.sent = integrity, cbt, gpo, []
 
     def ps(self, script):
         self.sent.append(script)
+        if "GPO_LDAPServerIntegrity" in script:
+            return 0, f"GPO_LDAPServerIntegrity = 4,{self.gpo}" if self.gpo is not None else "GPO_LDAPServerIntegrity = "
         if "LDAPServerIntegrity" in script and "GetValue" in script:
             return 0, f"LDAPServerIntegrity = {self.integrity}\nLdapEnforceChannelBindingTokens = {self.cbt}"
         if "UtcNow" in script:
@@ -195,7 +197,7 @@ class Cli(unittest.TestCase):
         cli = load_cli()
         port = self.fake_ldap(49)
         orig = dc1policy.bind_probe
-        dc1policy.bind_probe = lambda host, port=port, timeout=10: orig(host, port=port, timeout=timeout)
+        dc1policy.bind_probe = lambda host, port=port, timeout=10, **kw: orig(host, port=port, timeout=timeout, **kw)
         self.addCleanup(setattr, dc1policy, "bind_probe", orig)
         bad = cli.check(FakeDC(integrity=1).ps, "127.0.0.1", lambda m: None)
         self.assertIn("LDAPServerIntegrity is 1, need 2", bad)
@@ -206,36 +208,87 @@ class Cli(unittest.TestCase):
         cli = load_cli()
         port = self.fake_ldap(8)
         orig = dc1policy.bind_probe
-        dc1policy.bind_probe = lambda host, port=port, timeout=10: orig(host, port=port, timeout=timeout)
+        dc1policy.bind_probe = lambda host, port=port, timeout=10, **kw: orig(host, port=port, timeout=timeout, **kw)
         self.addCleanup(setattr, dc1policy, "bind_probe", orig)
-        self.assertEqual(cli.check(FakeDC().ps, "127.0.0.1", lambda m: None), [])
+        self.assertEqual(cli.check(FakeDC().ps, "127.0.0.1", lambda m: None, "pw"), [])
 
     def test_restore_writes_only_2_and_reboots_only_when_it_changed(self):
         import dc1policy
         cli = load_cli()
         port = self.fake_ldap(8)
         orig = dc1policy.bind_probe
-        dc1policy.bind_probe = lambda host, port=port, timeout=10: orig(host, port=port, timeout=timeout)
+        dc1policy.bind_probe = lambda host, port=port, timeout=10, **kw: orig(host, port=port, timeout=timeout, **kw)
         self.addCleanup(setattr, dc1policy, "bind_probe", orig)
         cli.wait_for_dc = lambda ps, tries=90: True
 
         class Dc(FakeDC):
             def ps(self, script):
                 self.sent.append(script)
-                if "Set-ItemProperty" in script:
+                if "Set-ItemProperty" in script and "GptTmpl" not in script:
                     self.integrity = self.cbt = 2
+                    return 0, ""
+                if "GptTmpl" in script and "Set-Content" in script:
+                    self.gpo = 2
                     return 0, ""
                 return super().ps(script)
 
         dc = Dc(integrity=1)
-        self.assertEqual(cli.restore(dc.ps, "127.0.0.1", lambda m: None), [])
-        writes = [s for s in dc.sent if "Set-ItemProperty" in s]
+        self.assertEqual(cli.restore(dc.ps, "127.0.0.1", lambda m: None, "pw"), [])
+        writes = [s for s in dc.sent if "Set-ItemProperty" in s and "GptTmpl" not in s]
         self.assertEqual(len(writes), 1)
         self.assertEqual(sorted(re.findall(r"-Value (\d+)", writes[0])), ["2", "2"])
         self.assertTrue([s for s in dc.sent if "shutdown" in s])
         ok = Dc()
-        self.assertEqual(cli.restore(ok.ps, "127.0.0.1", lambda m: None), [])
-        self.assertFalse([s for s in ok.sent if "Set-ItemProperty" in s or "shutdown" in s], "restore touched a healthy dc1")
+        self.assertEqual(cli.restore(ok.ps, "127.0.0.1", lambda m: None, "pw"), [])
+        self.assertFalse([s for s in ok.sent if "Set-ItemProperty" in s or "Set-Content" in s or "shutdown" in s],
+                         "restore touched a healthy dc1")
+
+    def test_dummy_credentials_cannot_pass_the_check(self):
+        """Measured on dc1 at 2/2: a dummy-credential bind answers 49, so only a valid-account bind can prove enforcement."""
+        import dc1policy
+        cli = load_cli()
+        port = self.fake_ldap(8)
+        orig = dc1policy.bind_probe
+        dc1policy.bind_probe = lambda host, port=port, timeout=10, **kw: orig(host, port=port, timeout=timeout, **kw)
+        self.addCleanup(setattr, dc1policy, "bind_probe", orig)
+        bad = cli.check(FakeDC().ps, "127.0.0.1", lambda m: None)
+        self.assertTrue(any("WIN_LAB_SVC_PASSWORD" in b for b in bad), bad)
+
+    def test_gpo_defining_1_is_a_failure_even_when_the_registry_reads_2(self):
+        """T-1265 root cause: the Default Domain Controllers Policy template says 4,1 and rewrites the registry at boot/refresh."""
+        import dc1policy
+        cli = load_cli()
+        port = self.fake_ldap(8)
+        orig = dc1policy.bind_probe
+        dc1policy.bind_probe = lambda host, port=port, timeout=10, **kw: orig(host, port=port, timeout=timeout, **kw)
+        self.addCleanup(setattr, dc1policy, "bind_probe", orig)
+        bad = cli.check(FakeDC(gpo=1).ps, "127.0.0.1", lambda m: None, "pw")
+        self.assertTrue(any("Default Domain Controllers Policy" in b and "1" in b for b in bad), bad)
+        self.assertTrue(cli.check(FakeDC(gpo=None).ps, "127.0.0.1", lambda m: None, "pw"))
+
+    def test_restore_fixes_the_gpo_template_even_when_the_registry_is_already_2(self):
+        import dc1policy
+        cli = load_cli()
+        port = self.fake_ldap(8)
+        orig = dc1policy.bind_probe
+        dc1policy.bind_probe = lambda host, port=port, timeout=10, **kw: orig(host, port=port, timeout=timeout, **kw)
+        self.addCleanup(setattr, dc1policy, "bind_probe", orig)
+        cli.wait_for_dc = lambda ps, tries=90: True
+
+        class Dc(FakeDC):
+            def ps(self, script):
+                if "GptTmpl" in script and "Set-Content" in script:
+                    self.sent.append(script)
+                    self.gpo = 2
+                    return 0, ""
+                return super().ps(script)
+
+        dc = Dc(gpo=1)
+        self.assertEqual(cli.restore(dc.ps, "127.0.0.1", lambda m: None, "pw"), [])
+        fix = [s for s in dc.sent if "Set-Content" in s]
+        self.assertEqual(len(fix), 1)
+        self.assertIn("LDAPServerIntegrity=4,2", fix[0])
+        self.assertNotIn("LDAPServerIntegrity=4,1", fix[0])
 
 
 if __name__ == "__main__":

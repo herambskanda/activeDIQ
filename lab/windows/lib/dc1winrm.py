@@ -23,7 +23,7 @@ def load_env(tool):
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
             env[k] = v.strip().strip('"')
-    return env, path, os.environ.get("WIN_LAB_DC_ADDR") or env.get("WIN_LAB_DC_ADDR", "192.168.1.9")
+    return env, path, os.environ.get("WIN_LAB_DC_ADDR") or env.get("WIN_LAB_DC_ADDR", "192.168.1.250")
 
 
 def strip(o):  # drop the CLIXML progress noise PowerShell writes on stderr/stdout
