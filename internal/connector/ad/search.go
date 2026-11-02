@@ -266,7 +266,7 @@ func (s *Session) searchRaw(ctx context.Context, base string, scope int, filter 
 }
 
 func toEntry(e *ldap.Entry) *Entry {
-	out := newEntry(e.DN)
+	out := newEntry(plainDN(e.DN))
 	for _, a := range e.Attributes {
 		out.attrs[strings.ToLower(a.Name)] = a.ByteValues
 	}

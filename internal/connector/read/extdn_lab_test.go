@@ -111,3 +111,42 @@ func TestLabMemberEdgesCarryGuidAndSid(t *testing.T) {
 	}
 	check("read", ms[0].GetHeader().GetEntry().GetAttributes())
 }
+
+// A member that is a foreign-domain principal: Samba creates a ForeignSecurityPrincipal. Whatever the
+// DC supplies is passed on and nothing more: the SID is the foreign one, never a guess.
+func TestLabForeignMemberKeepsOnlyWhatTheDCSupplies(t *testing.T) {
+	l := newSearchLab(t)
+	ou := "OU=t1202f" + l.stamp + "," + labDom
+	t.Cleanup(func() { l.delTree(ou) })
+	l.add(t, ou, map[string][]string{"objectClass": {"top", "organizationalUnit"}})
+	grp := "CN=fgrp," + ou
+	const foreignSID = "S-1-5-21-111111111-222222222-333333333-1999"
+	l.add(t, grp, map[string][]string{"objectClass": {"top", "group"}, "sAMAccountName": {"t1202f" + l.stamp}})
+	m := ldap.NewModifyRequest(grp, nil)
+	m.Add("member", []string{"<SID=" + foreignSID + ">"})
+	if err := l.adm.Modify(m); err != nil {
+		t.Skipf("this Samba does not create a foreign security principal from a SID member: %v", err)
+	}
+	ms, err := collect(t, l.client, &connectorv1.ReadRequest{
+		Connection: &connectorv1.ConnectionRef{ConnectionId: "c1", DirectoryIdentity: l.ident},
+		Guid:       l.guid(t, grp), Attributes: []string{"member"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vals := ms[0].GetHeader().GetEntry().GetAttributes()[0].GetValues()
+	if len(vals) != 1 {
+		t.Fatalf("%d members", len(vals))
+	}
+	d := vals[0].GetDn()
+	want, err := sid.Parse(foreignSID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("foreign member: dn=%q guid=%x sid=%x", d.GetDisplayDn(), d.GetGuid().GetValue(), d.GetSid().GetValue())
+	if d.GetSid() != nil && !bytes.Equal(d.GetSid().GetValue(), want.Bytes()) {
+		t.Errorf("sid %x, want %x or unset", d.GetSid().GetValue(), want.Bytes())
+	}
+	if d.GetDisplayDn() == "" || strings.HasPrefix(d.GetDisplayDn(), "<") {
+		t.Errorf("display_dn %q", d.GetDisplayDn())
+	}
+}

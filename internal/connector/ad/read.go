@@ -116,7 +116,7 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 	if len(res.Entries) != 1 {
 		return nil, fail(CodeObjectNotFound, "", nil)
 	}
-	ent := newEntry(res.Entries[0].DN)
+	ent := newEntry(plainDN(res.Entries[0].DN))
 	pending := map[string]int{} // base name -> next range start still to fetch
 	asked := make(map[string]struct{}, len(names))
 	for _, n := range names {
