@@ -46,6 +46,8 @@ type searchRec struct {
 	filter   *connectorv1.Filter
 	nc       string
 	prescan  bool
+	// listing is a reconcile listing: the objectGUID alone.
+	listing bool
 }
 
 // fakeConnector is a ConnectorClient that serves a fake forest through Describe and ScopedSearch and records
@@ -62,6 +64,9 @@ type fakeConnector struct {
 	// Faults, applied to the main pass of the named domain (the one asking for more than two attributes).
 	cutAfter map[string]int // end the stream after n entries with no completion marker
 	errAfter map[string]int // fail the stream after n entries with an error whose message holds a value
+	// The same two faults for the reconcile listing of the named domain.
+	listCut map[string]int
+	listErr map[string]int
 
 	searches []searchRec
 	describe int
@@ -73,7 +78,7 @@ const leakSentinel = "SENTINEL-CN=secret,OU=hidden,DC=leak"
 
 func newFake(doms ...*fdom) *fakeConnector {
 	f := &fakeConnector{doms: map[string]*fdom{}, extraNCs: map[string]connectorv1.NamingContextKind{},
-		cutAfter: map[string]int{}, errAfter: map[string]int{}, maxPage: 1000, dsa: 0xd5a}
+		cutAfter: map[string]int{}, errAfter: map[string]int{}, listCut: map[string]int{}, listErr: map[string]int{}, maxPage: 1000, dsa: 0xd5a}
 	for _, d := range doms {
 		f.doms[gtext(d.nc)] = d
 	}
@@ -117,7 +122,8 @@ func (f *fakeConnector) ScopedSearch(_ context.Context, req *connectorv1.ScopedS
 	if p := req.GetDc().GetPinnedDsaGuid(); p != nil {
 		rec.pin = textOfWire(p)
 	}
-	rec.prescan = len(rec.attrs) <= 2
+	rec.listing = len(rec.attrs) == 1 && strings.EqualFold(rec.attrs[0], "objectGUID")
+	rec.prescan = len(rec.attrs) <= 2 && !rec.listing
 	f.mu.Lock()
 	f.searches = append(f.searches, rec)
 	f.mu.Unlock()
@@ -133,7 +139,15 @@ func (f *fakeConnector) ScopedSearch(_ context.Context, req *connectorv1.ScopedS
 	for _, a := range rec.attrs {
 		s.want[strings.ToLower(a)] = true
 	}
-	if !rec.prescan {
+	if rec.listing {
+		if n, ok := f.listCut[rec.nc]; ok {
+			s.limit, s.mode = n, "cut"
+		}
+		if n, ok := f.listErr[rec.nc]; ok {
+			s.limit, s.mode = n, "err"
+		}
+	}
+	if !rec.prescan && !rec.listing {
 		if n, ok := f.cutAfter[rec.nc]; ok {
 			s.limit, s.mode = n, "cut"
 		}
