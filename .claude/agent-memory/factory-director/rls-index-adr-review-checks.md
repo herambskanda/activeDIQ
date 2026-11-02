@@ -15,5 +15,6 @@ When an ADR specifies DDL (triggers, policies, indexes) under FORCE RLS, have th
 - Migration backfill as the owner under FORCE silently sees 0 rows. The ticket must name the mechanism (the 0021/0047 NO FORCE window, or a per-tenant job) and assert the counts.
 - A candidate bound restating pg_trgm's GIN rule (`ntrue/nkeys >= t`, float4) as `ceil(t*n)` in double tightens it at some thresholds (t=0.56, n=25 → 15 vs 14). Check it with python struct float4.
 - A build ticket that edits a fitness tool must depend on the fitness ticket being *merged*, not just done (T-1126 was done but unmerged).
+- An exact-equality "rows examined" proof over a LIMIT stage is order-sensitive. Hash vs sort aggregates follow table-wide stats, which change with B's load. Use proof queries with matches ≤ W, or pin the order (T-1335 note).
 
 Related: [[search-adr-review-checks]], [[review-check-ceo-answers-vs-draft-time]]
