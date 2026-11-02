@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -35,7 +37,8 @@ func (e *env) seedTenantB(t *testing.T) {
 type work struct {
 	rows   map[string]float64 // Actual Rows x Loops + Rows Removed by Filter x Loops + Rows Removed by Index Recheck x Loops + Heap Fetches
 	blocks map[string]float64 // shared hit + read blocks of the scan nodes
-	loops  map[string]float64 // loops of the scan nodes, which scale the block tolerance
+	loops  map[string]float64 // loops of the index-scan nodes, which scale the block tolerance
+	forms  map[string]string  // the index-scan node types that read each relation, sorted
 }
 
 // relationOf names the table a plan node reads: a Bitmap Index Scan has an index and no relation.
@@ -64,8 +67,16 @@ func describe(plan *planNode) string {
 	return b.String()
 }
 
+// heapFetches is the number of heap fetches of the Index Only Scans of a plan.
+func heapFetches(plan *planNode) float64 {
+	var n float64
+	plan.walk("", func(p *planNode, _ string) { n += p.Heap })
+	return n
+}
+
 func measure(plan *planNode) work {
-	w := work{map[string]float64{}, map[string]float64{}, map[string]float64{}}
+	w := work{map[string]float64{}, map[string]float64{}, map[string]float64{}, map[string]string{}}
+	types := map[string]map[string]bool{}
 	plan.walk("", func(n *planNode, _ string) {
 		rel := relationOf(n)
 		if rel == "" || n.Loops == 0 {
@@ -80,11 +91,28 @@ func measure(plan *planNode) work {
 		if n.Type != "Bitmap Index Scan" {
 			w.rows[rel] += (n.Rows+n.Removed+n.Recheck)*n.Loops + n.Heap
 		}
-		// Blocks are summed over every scan node of the relation, so that the bitmap form (index + heap blocks)
-		// and an Index Only Scan can be compared; the tolerance is 2 per loop of each of those nodes.
-		w.blocks[rel] += n.SharedHit + n.SharedRead
-		w.loops[rel] += n.Loops
+		// Blocks are the shared hit + read of the INDEX-scan nodes only (Index Scan, Index Only Scan, Bitmap Index
+		// Scan): the planner flips the posting read between a Bitmap Heap Scan and an Index Only Scan as the
+		// other tenants' size changes the table statistics, and the heap half of the bitmap form is rows, which
+		// are already compared exactly. The tolerance is 2 per loop of each index-scan node.
+		switch n.Type {
+		case "Index Scan", "Index Only Scan", "Bitmap Index Scan":
+			w.blocks[rel] += n.SharedHit + n.SharedRead
+			w.loops[rel] += n.Loops
+			if types[rel] == nil {
+				types[rel] = map[string]bool{}
+			}
+			types[rel][n.Type] = true
+		}
 	})
+	for rel, set := range types {
+		var names []string
+		for ty := range set {
+			names = append(names, ty)
+		}
+		sort.Strings(names)
+		w.forms[rel] = strings.Join(names, "+")
+	}
 	return w
 }
 
@@ -110,6 +138,13 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 		}
 		e.seedTenantB(t)
 		e.fillRange(t, e.a, 1, n)
+		// A directory_objects table of realistic size, as in SE5: on a table of 2,000 rows a Seq Scan is the natural
+		// plan for the hits join, and AC4 forbids it only where the planner has a reason to choose the index.
+		if err := e.exec(e.a, `INSERT INTO public.directory_objects (tenant_id, connection_id, object_guid, nc_guid, kind, object_class, parent_guid, ancestry, ancestry_complete, display_name, observed_at, state)
+			SELECT o.tenant_id, o.connection_id, gen_random_uuid(), o.nc_guid, 'user', 'user', o.parent_guid, o.ancestry, true, 'Filler ' || g, o.observed_at, 'live'
+			FROM (SELECT * FROM public.directory_objects WHERE kind = 'user' LIMIT 1) o CROSS JOIN generate_series(1, 20000) g`); err != nil {
+			t.Fatal(err)
+		}
 		e.vacuumSearch(t)
 
 		// Proof queries: a name of A with its third letter dropped, kept when it matches between 2 and w/2 keys of A
@@ -140,7 +175,18 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 			var out []work
 			shapes = nil
 			for _, q := range queries {
+				// The first run of a statement in a session reads about 3 blocks more than every later run (the index's
+				// metapage and the catalog entries it needs are not cached yet): the run that is measured is the second.
+				e.analyze(t, e.scopeNC(e.adA), q, w, true)
 				plan := e.analyze(t, e.scopeNC(e.adA), q, w, true)
+				// Heap Fetches count as rows examined. They are 0 once VACUUM has marked the postings all-visible, which
+				// it cannot do while another session (an autovacuum worker, say) holds the xmin horizon back: vacuum
+				// again until the visibility map is current rather than leave the term out.
+				for try := 0; heapFetches(plan) > 0 && try < 10; try++ {
+					time.Sleep(500 * time.Millisecond)
+					e.vacuumSearch(t)
+					plan = e.analyze(t, e.scopeNC(e.adA), q, w, true)
+				}
 				assertFuzzyPlan(t, plan)
 				shapes = append(shapes, q+describe(plan))
 				m := measure(plan)
