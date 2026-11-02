@@ -133,9 +133,18 @@ func Test_migration_0070_builds_the_postings_over_a_populated_database(t *testin
 		if v := one(`SELECT count(*)::text FROM pg_trigger WHERE tgrelid = 'public.inventory_search_keys'::regclass AND NOT tgisinternal`); v != "3" {
 			t.Errorf("%s triggers on the key table, want exactly 3", v)
 		}
-		// VACUUM (ANALYZE) has run: the visibility map covers pages and the planner has the tuple count.
-		if v := one(`SELECT (relallvisible > 0 AND reltuples > 0)::text FROM pg_class WHERE oid = 'public.inventory_search_trigrams'::regclass`); v != "true" {
-			t.Errorf("the postings have not been vacuumed and analysed: %s", v)
+		// VACUUM (ANALYZE) of the postings is the migration's own "-- after:" step (the storetest harness ran it), and the
+		// planner has the tuple count. relallvisible is not asserted: whether VACUUM can mark a page all-visible depends on
+		// sessions this test does not control (an autovacuum worker holds the xmin horizon back under load).
+		var vacuumed bool
+		for _, stmt := range migrations.After(string(src)) {
+			vacuumed = vacuumed || strings.HasPrefix(stmt, "VACUUM (ANALYZE) public.inventory_search_trigrams")
+		}
+		if !vacuumed {
+			t.Errorf("the migration has no -- after: VACUUM (ANALYZE) of the postings: %v", migrations.After(string(src)))
+		}
+		if v := one(`SELECT (reltuples > 0)::text FROM pg_class WHERE oid = 'public.inventory_search_trigrams'::regclass`); v != "true" {
+			t.Errorf("the postings have not been analysed: %s", v)
 		}
 		// Privileges of the runtime role.
 		for _, p := range []struct {
