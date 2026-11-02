@@ -1,6 +1,6 @@
 """T-1326 acceptances 1 and 3: bootstrap and revoke, run for real against a fake ssh + fake pveum/pvesh
 (one JSON state file) and the stub API. The remote commands are the real ones; only Proxmox is simulated."""
-import ast, os, shlex, shutil, stat, subprocess, sys, tempfile, unittest
+import ast, os, re, shlex, shutil, stat, subprocess, sys, tempfile, unittest
 from pathlib import Path
 import stubs
 from stubs import P
@@ -83,7 +83,6 @@ class Bootstrap(Base):
         self.assertNotIn(self.secret(), r.stdout + r.stderr)
         self.assertNotIn(self.secret(), self.logf.read_text())             # not in any remote command line
         self.assertNotIn(self.secret(), " ".join(map(str, self.state()["log"])))
-        self.assertEqual(os.listdir(self.d / "bin" / "pve"), sorted(os.listdir(self.d / "bin" / "pve")) and os.listdir(self.d / "bin" / "pve"))
         self.assertEqual([f for f in os.listdir(self.d) if f.startswith(".")], [], "temp env file left behind")
 
     def test_env_file_and_ignore_rule(self):
@@ -99,7 +98,7 @@ class Bootstrap(Base):
             argv = shlex.split(c)
             self.assertIn(argv[0], {"pveum", "pvesh", "pveversion"}, c)
             self.assertEqual(shlex.join(argv), c)      # quoting round-trips: nothing is left to the remote shell to interpret
-        self.assertFalse([c for c in cmds if re.search(r"\bqm\b|/qemu/\d+/(status|snapshot)", c)] if (re := __import__("re")) else 0)
+        self.assertFalse([c for c in cmds if re.search(r"\bqm\b|/qemu/\d+/(status|snapshot)", c)])
 
     def test_rerun_keeps_the_token_and_rotate_replaces_it(self):
         self.bootstrap(); first = self.secret(); env1 = self.envf.read_text()
@@ -167,16 +166,22 @@ class Bootstrap(Base):
             self.assertNotIn(forbidden, r.stdout)
         print(r.stdout)
 
-    def test_bootstrap_fails_if_verify_scope_fails(self):
-        st = self.state()   # a group ACL the script cannot know about does not affect the token; instead break the pool membership
-        stubs.save(self.statef, st)
-        env = dict(os.environ, PVE_HOST="127.0.0.1", PROXMOX_LAB_SSH=str(self.ssh), PROXMOX_LAB_ENV=str(self.envf), PROXMOX_LAB_POLL="0")
-        self.bootstrap()
-        # now widen the token behind the script's back and re-verify through the make-equivalent entry point
+    def assert_bootstrap_refuses_to_bless(self, r, needle):
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("verify-scope FAIL", r.stderr); self.assertIn(needle, r.stderr)
+        self.assertIn("verify-scope FAILED. The token is NOT safe to use; run `make proxmox-lab-revoke`", r.stderr)
+        self.assertNotIn("== done", r.stdout)
+
+    def test_bootstrap_exits_nonzero_when_the_token_turns_out_too_wide(self):
+        # an ACL on the token that the reconcile step cannot see (hidden from `pvesh get /access/acl`) widens it
         st = self.state(); st["roles"]["Bad"] = ["Sys.Modify"]
-        st["acl"].append({"path": "/", "roleid": "Bad", "type": "token", "ugid": P.TOKEN_ID, "propagate": 1}); stubs.save(self.statef, st)
-        r = subprocess.run([sys.executable, str(BIN / "proxmox-lab"), "verify-scope"], env=env, capture_output=True, text=True)
-        self.assertEqual(r.returncode, 1); self.assertIn("forbidden privilege Sys.Modify", r.stderr)
+        st["acl"].append({"path": "/", "roleid": "Bad", "type": "token", "ugid": P.TOKEN_ID, "propagate": 1, "hidden": True})
+        stubs.save(self.statef, st)
+        self.assert_bootstrap_refuses_to_bless(self.run_b("bootstrap", "--port", str(self.api.port)), "forbidden privilege Sys.Modify")
+
+    def test_bootstrap_exits_nonzero_when_the_token_cannot_be_verified(self):
+        self.api.fail_path = "/access/permissions"      # fails closed: an unreadable scope is not a safe scope
+        self.assert_bootstrap_refuses_to_bless(self.run_b("bootstrap", "--port", str(self.api.port)), "failing closed")
 
 
 class Revoke(Base):

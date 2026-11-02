@@ -9,7 +9,7 @@ command and its revoke). Rules this file enforces for both:
     BEFORE any HTTP byte (and so before the token) is sent; there is no "insecure" mode;
   * the token secret lives only in the 0600 env file; nothing here prints it.
 """
-import hashlib, http.client, json, os, re, shlex, socket, ssl, stat, subprocess, sys, urllib.parse
+import hashlib, http.client, json, os, re, shlex, socket, ssl, stat, subprocess, urllib.parse
 
 POOL = "adiq-lab"
 USER = "adiq-lab@pve"
@@ -21,7 +21,8 @@ DC1_VMID = 119
 ENV_NAME = ".proxmox-lab.env"
 
 # The complete privilege set of the worker role (acceptance 1). verify-scope fails closed on anything
-# outside it. Deliberately absent: Sys.*, Permissions.*, User.*, Pool.Allocate, Realm.*, Group.*,
+# outside it. Deliberately absent: Sys.*, Permissions.*, User.*, Pool.* (membership is read from
+# /cluster/resources, which needs VM.Audit; GET /pools needs Pool.Audit), Realm.*, Group.*,
 # Datastore.Allocate / AllocateTemplate, VM.Monitor, VM.Migrate, VM.Clone, VM.Backup, SDN.Allocate.
 WORKER_PRIVS = (
     "VM.Allocate", "VM.Audit", "VM.Console", "VM.PowerMgmt",

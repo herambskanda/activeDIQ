@@ -20,10 +20,13 @@ from pvelab import LabError
 
 
 def pool_members(api):
-    d = api.call("GET", f"/pools/{P.POOL}")
-    if not isinstance(d, dict) or not isinstance(d.get("members"), list):
-        raise LabError("unexpected pool response; refusing")
-    return [m for m in d["members"] if isinstance(m, dict) and m.get("type") == "qemu" and isinstance(m.get("vmid"), int)]
+    """The pool's VMs, read from /cluster/resources (needs only VM.Audit, which the token has on the pool's VMs).
+    GET /pools/{id} would need Pool.Audit, which the lab role deliberately does not hold (all Pool.* is excluded)."""
+    d = api.call("GET", "/cluster/resources", {"type": "vm"})
+    if not isinstance(d, list):
+        raise LabError("unexpected resources response; refusing")
+    return [m for m in d if isinstance(m, dict) and m.get("type") == "qemu" and m.get("pool") == P.POOL
+            and isinstance(m.get("vmid"), int)]
 
 
 def require_in_pool(api, vmid):
@@ -141,12 +144,13 @@ def scope_problems(api):
                 bad.append(f"token holds forbidden privilege {n} at {path}")
             elif n not in P.ALL_ALLOWED_PRIVS:
                 bad.append(f"token holds {n} at {path}, which is not in the lab role")
-    for r in api.call("GET", "/cluster/resources", {"type": "vm"}):
-        if isinstance(r, dict) and r.get("vmid") not in members:
+    seen = api.call("GET", "/cluster/resources", {"type": "vm"})
+    if not isinstance(seen, list):
+        return ["resources response has an unexpected shape"]
+    for r in seen:
+        if isinstance(r, dict) and not (r.get("pool") == P.POOL and r.get("vmid") in members):
             bad.append(f"token can see VM {r.get('vmid')} which is not in {P.POOL}")
-    for pl in api.call("GET", "/pools"):
-        if isinstance(pl, dict) and pl.get("poolid") != P.POOL:
-            bad.append(f"token can see pool {pl.get('poolid')}")
+    # other pools: any ACL on /pool/<other> is reported above as a path outside the pool (GET /pools needs Pool.Audit)
     if P.DC1_VMID not in members:
         bad.append(f"VM {P.DC1_VMID} (dc1) is not in pool {P.POOL}")
     return bad

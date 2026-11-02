@@ -44,8 +44,12 @@ if '-O' in a: sys.exit(0)                      # connection-sharing control comm
 i = a.index('--'); host, remote = a[i + 1], ' '.join(a[i + 2:])
 opts = a[:i]
 open({str(logf)!r}, 'a').write(repr((host, opts, remote)) + '\\n')
-env = dict(os.environ, PATH={str(bindir / 'pve')!r} + os.pathsep + os.environ['PATH'])
-sys.exit(subprocess.run(['sh', '-c', remote], env=env).returncode)
+import shlex                                  # in-process: spawning sh + python per command made the suite slow
+argv = shlex.split(remote)                     # (test_every_remote_command_is_one_shell_safe_argv checks the round-trip)
+sys.path.insert(0, {str(HERE)!r})
+import fakepve
+if argv[0] not in ('pveum', 'pvesh', 'pveversion'): sys.exit(127)
+sys.exit(fakepve.fake_pve(argv[0], argv[1:], {str(statef)!r}))
 """)
     ssh.chmod(0o755)
     return ssh
@@ -66,6 +70,15 @@ def effective(st, tokid):
         for p in paths:
             perms.setdefault(p, set()).update(privs)
     return perms
+
+
+CONFIG_PRIV = ((r"cores|sockets|vcpus|cpu|cpulimit|cpuunits|numa", "VM.Config.CPU"), (r"memory|balloon|shares", "VM.Config.Memory"),
+               (r"bios|machine|scsihw|vga|rng0|audio0", "VM.Config.HWType"),
+               (r"name|ostype|agent|boot|onboot|description|tags|start", "VM.Config.Options"))
+
+
+def path_of(params):
+    return f"/pool/{params['pool']}" if "pool" in params else f"/vms/{params.get('vmid')}"
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -91,26 +104,68 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if srv.fail_path and srv.fail_path in u.path:
             return self._send(500)
         p = u.path.removeprefix("/api2/json"); eff = effective(st, tokid)
+        pool_of = {v: q for q, pl in st["pools"].items() for v in pl["members"]}
         visible = [v for v in st["vms"] if "VM.Audit" in eff.get(f"/vms/{v['vmid']}", ())]
+        params = {k: x[0] for k, x in parse_qs(body if method != "GET" else u.query).items()}
+
+        def allow(path, *privs):
+            """The real Proxmox rule, per endpoint (see the apidoc.js table): every privilege must be held at the path."""
+            return all(priv in eff.get(path, ()) for priv in privs)
+
+        def deny(path, *privs):
+            return self._send(403, f"Permission check failed ({path}, {'|'.join(privs)})")
+
         if method == "GET" and p == "/access/permissions":
             return self._send(200, {k: {x: 1 for x in sorted(v)} for k, v in eff.items()})
-        if method == "GET" and p == "/cluster/resources":
-            return self._send(200, [dict(v, id=f"qemu/{v['vmid']}") for v in visible])
-        if method == "GET" and p == "/pools":
-            return self._send(200, [{"poolid": q} for q in st["pools"] if "VM.Audit" in eff.get(f"/pool/{q}", ())])
+        if method == "GET" and p == "/cluster/resources":   # filtered by VM.Audit; each VM carries its pool
+            return self._send(200, [dict(v, id=f"qemu/{v['vmid']}", **({"pool": pool_of[v["vmid"]]} if v["vmid"] in pool_of else {}))
+                                    for v in visible])
+        if method == "GET" and p == "/pools":                # a pool is listed only with Pool.Audit on it
+            return self._send(200, [{"poolid": q} for q in st["pools"] if allow(f"/pool/{q}", "Pool.Audit")])
         if method == "GET" and (m := re.fullmatch(r"/pools/([\w-]+)", p)):
-            pool = st["pools"].get(m.group(1))
-            if pool is None or f"/pool/{m.group(1)}" not in eff: return self._send(403)
+            if not allow(f"/pool/{m.group(1)}", "Pool.Audit"): return deny(f"/pool/{m.group(1)}", "Pool.Audit")
+            pool = st["pools"].get(m.group(1)) or {"members": []}
             return self._send(200, {"members": [dict(v, id=f"qemu/{v['vmid']}") for v in st["vms"] if v["vmid"] in pool["members"]]})
         if method == "GET" and p == "/cluster/nextid":
             return self._send(200, "301")
-        if method == "GET" and re.fullmatch(r"/nodes/[\w-]+/tasks/.+/status", p):
+        if method == "GET" and re.fullmatch(r"/nodes/[\w-]+/tasks/.+/status", p):   # the task's owner may always read it
             return self._send(200, {"status": "stopped", "exitstatus": srv.task_exit})
         if method == "GET" and (m := re.fullmatch(r"/nodes/[\w-]+/qemu/(\d+)/snapshot", p)):
+            if not allow(f"/vms/{m.group(1)}", "VM.Audit"): return deny(f"/vms/{m.group(1)}", "VM.Audit")
             return self._send(200, [{"name": s} for s in st["snapshots"].get(m.group(1), [])] + [{"name": "current"}])
-        if method in ("POST", "PUT") and re.fullmatch(r"/nodes/[\w-]+/qemu(/\d+/(status/\w+|snapshot(/[\w.-]+/rollback)?))?", p):
-            return self._send(200, f"UPID:{NODE}:000A1B2C:0123ABCD:65F00000:qmtask:1:{tokid}:")
-        if method == "PUT" and re.fullmatch(r"/nodes/[\w-]+/qemu/\d+/config", p):
+        task = f"UPID:{NODE}:000A1B2C:0123ABCD:65F00000:qmtask:1:{tokid}:"
+        if method == "POST" and re.fullmatch(r"/nodes/[\w-]+/qemu", p):
+            # create: VM.Allocate on the pool, Datastore.AllocateSpace per disk store, SDN.Use per bridge, VM.Config.* per key
+            need = [(f"/pool/{params['pool']}" if "pool" in params else f"/vms/{params.get('vmid')}", "VM.Allocate")]
+            for k, x in params.items():
+                if re.fullmatch(r"(scsi|efidisk|tpmstate)\d*", k) and not x.startswith("none"):
+                    need += [(f"/storage/{x.split(':')[0]}", "Datastore.AllocateSpace"), (path_of(params), "VM.Config.Disk")]
+                if k.startswith("net"):
+                    need += [(f"/sdn/zones/localnetwork/{re.search('bridge=([^,]+)', x).group(1)}", "SDN.Use"),
+                             (path_of(params), "VM.Config.Network")]
+                if k == "ide2":
+                    need += [(path_of(params), "VM.Config.CDROM"), (f"/storage/{x.split(':')[0]}", "Datastore.Audit")]
+                for pat, priv in CONFIG_PRIV:
+                    if re.fullmatch(pat, k): need.append((path_of(params), priv))
+            for path, priv in need:
+                if not allow(path, priv): return deny(path, priv)
+            return self._send(200, task)
+        if method == "POST" and (m := re.fullmatch(r"/nodes/[\w-]+/qemu/(\d+)/status/(start|stop|shutdown)", p)):
+            if not allow(f"/vms/{m.group(1)}", "VM.PowerMgmt"): return deny(f"/vms/{m.group(1)}", "VM.PowerMgmt")
+            return self._send(200, task)
+        if method == "POST" and (m := re.fullmatch(r"/nodes/[\w-]+/qemu/(\d+)/snapshot", p)):
+            if not allow(f"/vms/{m.group(1)}", "VM.Snapshot"): return deny(f"/vms/{m.group(1)}", "VM.Snapshot")
+            return self._send(200, task)
+        if method == "POST" and (m := re.fullmatch(r"/nodes/[\w-]+/qemu/(\d+)/snapshot/[\w.-]+/rollback", p)):
+            if not allow(f"/vms/{m.group(1)}", "VM.Snapshot.Rollback"): return deny(f"/vms/{m.group(1)}", "VM.Snapshot.Rollback")
+            return self._send(200, task)
+        if method == "PUT" and (m := re.fullmatch(r"/nodes/[\w-]+/qemu/(\d+)/config", p)):
+            vm = f"/vms/{m.group(1)}"
+            need = [(vm, "VM.Config.CDROM")] if "ide2" in params else []
+            if "ide2" in params and not params["ide2"].startswith("none"):
+                need.append((f"/storage/{params['ide2'].split(':')[0]}", "Datastore.Audit"))
+            for path, priv in need:
+                if not allow(path, priv): return deny(path, priv)
             return self._send(200, None)
         return self._send(404)
 

@@ -223,7 +223,8 @@ file; if the file is lost the token is replaced.
 **What the token can and cannot do.** Can, on VMs in `adiq-lab` only: create (new VMs are always created in the
 pool), start, stop, snapshot, roll back, attach or eject an ISO, read config and console, allocate disks on the
 lab storage, and use dc1's bridge. Cannot: see or touch any VM outside the pool (workers cannot even list
-them), anything `Sys.*` (no node shell, no network, no certificates), `Permissions.*`, `User.*`, `Pool.*`,
+them; the driver reads pool membership from the VM list, which needs only `VM.Audit`, because reading a
+pool object directly would need `Pool.Audit`), anything `Sys.*` (no node shell, no network, no certificates), `Permissions.*`, `User.*`, `Pool.*`,
 `Realm.*`, `Group.*`, change any ACL, create users or tokens, migrate, clone, back up, delete a datastore
 or reach the QEMU monitor (`VM.Monitor` is not granted). It holds no ACL on `/` or `/vms`. Note the role does
 include `VM.Allocate` (create and destroy VMs) and `Datastore.AllocateSpace` on the lab storage: a worker can

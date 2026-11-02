@@ -40,7 +40,7 @@ def _fake(tool, a, st):
         elif path == "/access/roles": out([{"roleid": r, "privs": " ".join(v)} for r, v in st["roles"].items()])
         elif path == "/access/users": out([{"userid": u} for u in st["users"]])
         elif m := re.fullmatch(r"/access/users/([^/]+)/token", path): out([{"tokenid": t.split("!")[1]} for t in st["tokens"] if t.startswith(m.group(1) + "!")])
-        elif path == "/access/acl": out(st["acl"])
+        elif path == "/access/acl": out([e for e in st["acl"] if not e.get("hidden")])  # hidden: an ACL the script cannot see
         else: print("fake pvesh: no such path", path, file=sys.stderr); return 1
         return 0
     assert tool == "pveum"
