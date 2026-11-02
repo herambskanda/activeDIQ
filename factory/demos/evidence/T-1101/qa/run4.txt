@@ -1,0 +1,7 @@
+360 baseline (no palette) {"sw":456,"cw":360}
+360 palette idle {"sw":456,"cw":360,"pal":{"x":16,"y":64,"width":328,"height":81.6875,"top":64,"right":344,"bottom":145.6875,"left":16}}
+360 wide elements baseline ["BUTTON.diq-shell__search r=456","SPAN.diq-shell__search-placeholder r=384","SPAN.diq-shell__search-kbd r=443","KBD.diq-kbd r=422","KBD.diq-kbd r=443"]
+refusal Try again count 1
+after click body: Recovery password refused | That looks like a recovery password. Search by the 8-character key ID instead. | Try again | ↑ ↓ move | ↵ open | Esc close
+reqs []
+loading html <input class="diq-pal__input" role="combobox" aria-label="Search" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" autocomplete="off" spellcheck="false" placeholder="Search people, groups, computers and pages" data-autofocus="" type="text" value="slow"><div class="diq-pal__body"><div class="diq-skeleton" role="status" aria-label="Searching"><div class="diq-skeleton__row"></div><div class="diq-skeleton__row"></div><div class="diq-skeleton__row"></div><div class="diq-skeleton__row"></div></div></div><div class="diq-pal__foot"><span></span><div class="diq-pal__keys"><span><kbd class="diq-kbd">↑</kbd> <kbd class="diq-kbd">↓</kbd> move</span><span><kbd class="diq-kbd">↵</kbd> open</span><span><kbd class="diq-kbd">Esc</kbd> close</span></div></div><div class="diq-sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
