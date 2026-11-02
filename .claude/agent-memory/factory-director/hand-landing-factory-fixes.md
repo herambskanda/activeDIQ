@@ -12,6 +12,7 @@ When landing done factory/ tickets by hand (T-0975 precedent, T-1312 on 2026-11-
 2. If a full-CI head log already exists, judge it with premerge.mjs's own extractFindings/newFindings against a cached `baseline-<sha>.json` whose main differs only in memory/docs commits. That avoids an 80-minute baseline run.
 3. Commit a known conflict resolution on the ticket's branch (merge main in, then run the suite) before you dry-run it. Never resolve it in main.
 4. A session may not kill the dispatcher. Auto-mode refuses that as workload interference, even when it is SIGKILL-for-adoption. Raise a CEO `action new` with copy-paste commands, and never suggest `factory down`, which stops the workers. T-1336 makes the reload automatic.
+5. A hand-merge leaves the ticket's `links.worktree` set and `links.merged` unset. The queue keeps listing it, it would take a gate slot, and the board's "last merged" stays stale (T-1296/1297/1266, 2026-11-02). T-1353 makes the gate skip and record tickets whose branch is already on main. Until that lands, say so in the landing note.
 
 **Why:** On T-1312 the first run was killed by the 90-minute cap while it was still on the full-CI baseline. The second run landed all three tickets in about 25 minutes, but could not restart the dispatcher.
 
