@@ -1,7 +1,7 @@
 ---
 title: "Runbook: the Windows Server 2025 lab (local KVM, evaluation licence)"
 date: 2026-10-23
-updated: 2026-10-30
+updated: 2026-11-01
 status: draft
 owner: devops-engineer
 ticket: T-0254
@@ -415,3 +415,29 @@ Run log, dc1 before/after state and the broken-run proof: `windows-lab-runs/T-05
 `LdapEnforceChannelBindingTokens` is not re-read at runtime (setting 0 left enforcement on), so the "CBT off accepts a wrong binding"
 proof needs a reboot cycle and was not run. The test accounts stay on dc1 for the T-0846 fix; remove with `Remove-ADUser svc-t0566-gssapi`
 and `Remove-ADServiceAccount gmsa-t0566`.
+
+## 17. Unenrolled-start and start-after-enrol proof for the DC agent (T-0833, for T-0813)
+
+`lab/windows/bin/agent-unenrolled-verify --log knowledge/development/runbooks/windows-lab-runs/T-0833-agent-unenrolled-<date>.log [--trials 3] [--ref factory/T-0813] [--merge-main main]`
+re-runs the whole proof. Run it from a worktree with `WIN_LAB_ENV=<main checkout>/lab/windows/.win-lab.env`; it re-executes itself
+under `with-dc1-lock` (§10), takes 6-8 minutes, and restores dc1 (agent uninstalled, `C:\Program Files\skenzeriq` and
+`C:\ProgramData\skenzeriq` removed; the log records a before and an after snapshot that must match). A killed run still restores
+(SIGTERM handler); if the log has no AFTER block, run it again, its first step is the same restore.
+
+| Check | What it does on dc1 | Failing fixture |
+| --- | --- | --- |
+| AC1 | builds `Agent.wxs` of `--ref` (merged with main, `-X ours`, in a throwaway worktree) with WiX 5.0.2 and greps for `WIX1149` and a non-zero exit | builds `Agent.wxs` from `--old-wxs` (main), which must show `WIX1149` |
+| AC2 | `msiexec /i` while unenrolled with `Start=install`: exit 0, no `1920` in the log, service Running, same PID after 45 s (past the 30 s recovery delay), no SCM 7031/7034/7024/7023/7009/7000, no event 101, `sc qfailure` read back | none needed: each assertion is a different observable (a non-zero exit, a `1920` line, a PID change or an SCM failure event each fail it) |
+| AC3 | event 103 of source `activeDIQ Agent`: `Get-WinEvent` message and the `wevtutil /f:text` rendering that Event Viewer shows must contain the text and not `cannot be found`; registered message file printed | an event written under a source key with no message file renders `Description: N/A`, and the same predicate rejects it |
+| AC4 | `enrol-stub` (this host, `lab/windows/enrol-stub`, throwaway pinned CA and tenant CA, prints PIN/TOKEN, logs `ENROLL ok` and `TUNNEL mTLS client verified` with host-clock timestamps) is the fleet server; `activediq-agent.exe enroll <host:7443> <pin>` runs on dc1 with the token on stdin (uploaded to a file the script deletes at once); pickup is the first verified mTLS connection from the same service PID, latency = stub's TUNNEL minus ENROLL time | no connection within 40 s fails; the stub is single-use and refuses a wrong pin (`go test ./lab/windows/enrol-stub`, part of `make lab-test-windows-unit`) |
+
+If AC1 fails the driver builds a **repaired lab variant** of `Agent.wxs` (failure actions moved to `util:ServiceConfig`, `-sw1149`) so
+AC2-AC4 still run; that variant is never committed. When AC4 fails it runs a labelled DIAG step (swap the enrolling user's ACE for the
+service identity) and does not count it as a pass.
+
+**Result of the first run (2026-11-01, `factory/T-0813` merged with `main`): AC1 FAIL, AC2 PASS, AC3 PASS, AC4 FAIL.** Details and the
+analysis are in the log and in bug T-1249: the committed `Agent.wxs` does not build (WIX0004; the core `ServiceConfig` has no failure-action
+attributes and is itself the source of WIX1149), and an administrator's `enroll` writes a DACL that the service identity refuses, which
+the T-0813 idle loop turns into a silent permanent idle. Needs on the lab host: the Go toolchain, `pip install pywinrm requests-ntlm`, and
+dc1 reaching this host on TCP 7443 (`--port`). No new tool or dependency (WiX 5.0.2 and pywinrm are already in the licence register;
+the stub uses gRPC already in `go.mod`).
