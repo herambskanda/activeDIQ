@@ -27,3 +27,4 @@
 - [sync mapper lessons](sync-mapper-lessons.md) — T-1189: allowlist gap, no DnValue.guid today, Samba UAC 546, capture recipe
 - [sync engine lessons](sync-engine-lessons.md) — T-1191: RLS owner-update trap, lease release in rigs, per-NC lease, CompleteScan no cookie
 - [reconcile lessons](reconcile-lessons.md) — T-1196: no CREATE TEMP for runtime role, fake listing flag, mutation checks, unmerged deps
+- [patch-apply lessons](patch-apply-lessons.md) — T-1197: link edge direction, permutation test cost/shape, mutation recipe
