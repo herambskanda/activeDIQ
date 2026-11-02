@@ -2,7 +2,7 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: gen-modules gen-modules-check fitness-sso fitness-reports fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly search-latency fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check
+.PHONY: gen-modules gen-modules-check fitness-sso fitness-reports fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly search-latency search-latency-pg16 search-latency-pg18 fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check
 
 ci: lint gen-check gen-modules-check gen-api-check lint-api test fitness workflows-check build secrets-scan vuln-scan fuzz-saml lab-test-unit lab-test-windows-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto, table ownership map and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
 	@echo "make ci: passed"
@@ -154,8 +154,14 @@ fitness-nightly: fitness-fuzz-nightly fitness-oracles-lab search-latency ## T-00
 
 SEARCH_LATENCY_OUT ?= $(CURDIR)/factory/demos/evidence/T-1102
 
-search-latency: ## T-1102, ADR-0011 SE6 (nightly, large-dataset switch): universal search p95 <= 200 ms per class over 50,000 objects on PostgreSQL 16 and 18, unscoped and scoped, through the HTTP handler; needs Docker; a miss fails naming the class, caller, version and percentile; tables in $(SEARCH_LATENCY_OUT)
-	ACTIVEDIQ_SEARCH_LARGE_OBJECTS=50000 ACTIVEDIQ_SEARCH_LARGE_OUT=$(SEARCH_LATENCY_OUT) go test -count=1 -timeout 90m -run '^TestSearchLatency50k$$' -v ./internal/modules/search/latency
+SEARCH_LATENCY_LOCK ?= $(CURDIR)/.search-latency.lock
+SEARCH_LATENCY_RUN = ACTIVEDIQ_SEARCH_LARGE_OBJECTS=50000 ACTIVEDIQ_SEARCH_LARGE_OUT=$(SEARCH_LATENCY_OUT) flock -n $(SEARCH_LATENCY_LOCK) go test -count=1 -timeout 90m -v ./internal/modules/search/latency
+
+search-latency: ## T-1102, ADR-0011 SE6 (nightly, large-dataset switch): universal search p95 <= 200 ms per class over 50,000 objects on PostgreSQL 16 and 18, unscoped and scoped, through the HTTP handler; needs Docker; a miss fails naming the class, caller, version and percentile; tables in $(SEARCH_LATENCY_OUT); holds an exclusive lock so two runs never overlap
+	$(SEARCH_LATENCY_RUN) -run '^TestSearchLatency50k$$'
+
+search-latency-pg16 search-latency-pg18: search-latency-pg%: ## T-1102: the same benchmark on one PostgreSQL version (a run is ~25 min; use when the 90 min budget is shared)
+	$(SEARCH_LATENCY_RUN) -run '^TestSearchLatency50k$$/^pg$*$$'
 
 SAML_FUZZ_TIME ?= 60s
 

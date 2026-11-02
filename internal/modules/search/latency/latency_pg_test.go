@@ -204,8 +204,11 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 		}
 	}
 
-	// Timed runs.
+	// Timed runs. The host load is recorded at the start and the end: a miss while the load average was above
+	// the host's CPUs is inconclusive (shared host), not a defect (triage T-1285).
 	var results []outcome
+	load0 := loadAvg()
+	say("host load at start of timed runs: %s (host CPUs %d)", load0, runtime.NumCPU())
 	say("\n%-7s %-10s %6s %8s %8s %8s %8s   (ms; %d queries per row)", "caller", "class", "n", "p50", "p95", "p99", "max", cfg.per)
 	for _, caller := range []string{"admin", "scoped"} {
 		for _, c := range classes {
@@ -228,6 +231,9 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 			say("%-7s %-10s %6d %8s %8s %8s %8s", caller, c.name, st.n, ms(st.p50), ms(st.p95), ms(st.p99), ms(st.max))
 		}
 	}
+
+	load1 := loadAvg()
+	say("host load at end of timed runs: %s (host CPUs %d)", load1, runtime.NumCPU())
 
 	// Oracle comparison on a sample of each class, with full pages so the sets can be compared.
 	say("\nresult equality against the brute-force oracle (%d queries per class and caller, groupLimit 50):", cfg.verify)
@@ -278,7 +284,7 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 		verdict := "ok"
 		if r.st.p95 >= budget {
 			verdict = "OVER BUDGET"
-			msg := fmt.Sprintf("search latency budget missed: %s caller=%s class=%s p95=%sms (budget %dms)", r.pg, r.caller, r.class, ms(r.st.p95), budget.Milliseconds())
+			msg := fmt.Sprintf("search latency budget missed: %s caller=%s class=%s p95=%sms (budget %dms); 1-min load avg %s at start, %s at end, host CPUs %d%s", r.pg, r.caller, r.class, ms(r.st.p95), budget.Milliseconds(), load0, load1, runtime.NumCPU(), contended(load0, load1))
 			if cfg.enforce {
 				t.Error(msg)
 			} else {
@@ -289,6 +295,25 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 			say("%s %-7s %-10s p95 %7sms  %s", r.pg, r.caller, r.class, ms(r.st.p95), verdict)
 		}
 	}
+}
+
+// loadAvg is the 1-minute load average ("n/a" off Linux).
+func loadAvg() string {
+	b, err := os.ReadFile("/proc/loadavg")
+	if f := strings.Fields(string(b)); err == nil && len(f) > 0 {
+		return f[0]
+	}
+	return "n/a"
+}
+
+// contended says when a miss cannot be told from a busy shared host: the load average exceeded the host's CPUs.
+func contended(loads ...string) string {
+	for _, l := range loads {
+		if v, err := strconv.ParseFloat(l, 64); err == nil && v > float64(runtime.NumCPU()) {
+			return " — INCONCLUSIVE: load average above host CPUs; rerun in a quiet window before filing a bug"
+		}
+	}
+	return ""
 }
 
 func countVisible(s *Seed, caller string) (n int) {
