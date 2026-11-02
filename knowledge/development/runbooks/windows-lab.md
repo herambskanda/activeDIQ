@@ -415,3 +415,30 @@ Run log, dc1 before/after state and the broken-run proof: `windows-lab-runs/T-05
 `LdapEnforceChannelBindingTokens` is not re-read at runtime (setting 0 left enforcement on), so the "CBT off accepts a wrong binding"
 proof needs a reboot cycle and was not run. The test accounts stay on dc1 for the T-0846 fix; remove with `Remove-ADUser svc-t0566-gssapi`
 and `Remove-ADServiceAccount gmsa-t0566`.
+
+## 18. dc1 must stay at LDAP signing required + channel binding always (T-1265)
+
+Every Windows-lab proof that claims "signing and channel binding enforced" (the GSSAPI suite of section 15, the walking
+skeleton T-0671, the channel-binding acceptance T-0148) is only true while dc1 reads
+`HKLM\SYSTEM\CurrentControlSet\Services\NTDS\Parameters` **`LDAPServerIntegrity` = 2** and **`LdapEnforceChannelBindingTokens` = 2**.
+On 2026-11-01 dc1 read `LDAPServerIntegrity` = 1 (negotiated) with CBT still 2, and a cleartext simple bind answered 49
+instead of 8. Nothing in the proofs noticed.
+
+| Tool | What it does for this policy |
+| --- | --- |
+| `lab/windows/bin/dc1-policy check` | Read-only. Reads both values over WinRM and does a cleartext simple bind to 389 with a dummy password. Exit 0 only when both are 2 **and** the bind answers 8 (strongerAuthRequired); else exit 3 and names each value it read. |
+| `lab/windows/bin/dc1-policy restore` | Writes both values to 2 when they are not (the table is `lib/dc1policy.py` `REQUIRED`; nothing else can be written), reboots dc1 (CBT is read at boot) and waits for NTDS, then runs `check`. Does nothing, and does not reboot, when dc1 is already 2/2. |
+| `lab/windows/bin/gssapi-lab run` | Runs `check`-equivalent first and stops **before** any change on dc1 or any `go test`, naming the value read. After the run (in the `finally`) it reads again and fails the run if the policy moved. |
+| `lab/windows/bin/gssapi-lab prepare` | Same check after the reboot; `guest/gssapi-ready.ps1` writes 2/2 first and asserts 2/2 in a `finally`, so a failure half-way (ktpass, gMSA) cannot leave a lower value. |
+| any new proof that needs the policy | Call `with-dc1-lock lab/windows/bin/dc1-policy check` as its first step and stop on non-zero (`lab/e2e/run-skeleton-proof.sh windows`: T-0671 adds the call; see the T-1265 advance note). |
+
+Always under the lock: `lab/windows/bin/with-dc1-lock lab/windows/bin/dc1-policy restore` (or `flock -w 3600 /tmp/claude-1000/activediq-dc1.lock …`).
+Needs `pip install pywinrm requests-ntlm` and `WIN_LAB_ENV`; WinRM on dc1 is lab-only (A-0025).
+
+**Rules for lab scripts.** No script may write `LDAPServerIntegrity` or `LdapEnforceChannelBindingTokens` to anything but 2, and none may
+"restore a captured before-value" for them. `lab/windows/tests/test_dc1_policy.py` scans `lab/` for writes and fails on any other value;
+`make lab-test-windows-unit` runs it. A snapshot rollback (`qm rollback`, Proxmox, human only) puts back whatever the snapshot held:
+after any rollback or restore of VM 119 run `dc1-policy restore` before the next proof.
+
+**Offline tests.** `python3 -m unittest lab/windows/tests/test_dc1_policy.py`: a fake DC at 1/2, 2/1, absent and a drifting DC prove `gssapi-lab run`
+refuses or fails; a bad-fixture scan proves a script writing 1 or 0 is caught; a fake LDAP port proves the bind probe tells 8 from 49.
