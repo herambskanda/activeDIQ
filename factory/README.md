@@ -20,6 +20,7 @@ factory/bin/factory up          # start board + dispatcher (detached)  → http:
 factory/bin/factory status      # terminal summary
 factory/bin/factory pause       # stop launching new work (running workers finish)
 factory/bin/factory down        # stop dispatcher + board; running workers asked to hand off
+factory/bin/factory restart     # reload dispatcher + board on the code on disk; workers keep running and are adopted
 factory/bin/factory doctor      # validate config, state, agents, model policy
 ```
 
@@ -63,7 +64,7 @@ Timestamps are ISO-8601 UTC strings.
 state/
   counters.json                      {"T":12,"D":3,"A":1,"F":0,"E":4,"R":57}
   control.json                       {"paused":false,"reason":null,"by":null,"ts":"…"}
-  dispatcher.json                    {"pid":123,"started":"…","heartbeat":"…","active":["R-…"],"last_action":"…","backoff_until":null,"runs_today":{"date":"2026-10-02","count":7}}
+  dispatcher.json                    {"pid":123,"started":"…","heartbeat":"…","code_sha":"<main commit loaded>","active":["R-…"],"last_action":"…","backoff_until":null,"runs_today":{"date":"2026-10-02","count":7}}
   board.json                         {"pid":124,"port":4747,"started":"…"}
   tickets/T-0001.json
   epics/E-001.json
@@ -470,6 +471,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 | `api_unreachable_backoff_minutes` | 5 | dispatch pause once `api_unreachable_threshold` consecutive runs hit connectivity errors |
 | `api_unreachable_threshold` | 3 | consecutive connectivity failures (any tickets) that count as an outage |
 | `blocked_retriage_hours` | 6 | a blocked ticket is offered to triage again after this long |
+| `auto_reload` | true | `false` switches off the automatic reload when factory code lands on `main` (`factory restart` still works) |
 
 ### Fields and files beyond the reference above
 
@@ -489,6 +491,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 - **Rate limits** are detected from an error result or stderr (`rate limit`, `usage limit`, `overloaded`, `429`), or from a `StopFailure` signal for the run's session; the signal also backs the dispatcher off when it comes from the CEO's own session (the limit is account-wide). No attempt is counted.
 - **Connectivity errors** (`EAI_AGAIN`, `ENOTFOUND`, `ECONNRESET`, `ETIMEDOUT`, "Can't reach the API server") in an error result or stderr are an outage on our side: no attempt, no escalation, no stage reassignment; the dispatcher backs off `connectivity_backoff_minutes` and the ticket is retried. The third consecutive one (across tickets) pauses dispatching for `api_unreachable_backoff_minutes` and logs one `api unreachable` event. Any run that ends otherwise resets the streak. A usage limit takes precedence.
 - **Spawn failure** (`claude` missing) backs off `launch_failure_backoff_minutes` and counts no attempt.
+- **Self-reload (T-1336).** A daemon dispatcher remembers the `main` commit whose code it loaded (`code_sha` in `dispatcher.json`). At the start of each tick, if `main` moved and the diff touches `factory/lib`, `factory/bin` or `factory/board`, it reloads — a merge it made itself and a hand merge look the same. Commits that touch only `knowledge/`, `factory/test`, product code etc. move the baseline and reload nothing. The safe point is between ticks with no merge gate in flight (a gate's `make` belongs to this process, so the reload waits for it; an automatic reload never aborts one). The reload: stop stale `make` processes under `worktree_root/.premerge`; start the successor detached (`FACTORY_REPLACES=<pid>`), which loads the new code, announces itself (`successor_ready` in `dispatcher.json`) and waits for the old pid to be gone; restart the board (SIGTERM, then a detached `factory board --port <same port>`), so new state fields such as `merge_queue` show; log one `reload: … main <old12> → <new12> …` event; exit **without signalling workers or running the shutdown** — the successor's first tick adopts every `running` run. A successor that does not come up within 20 s is killed, the old dispatcher keeps running and logs `reload to <sha> failed …` once (it does not retry that commit; fix `main`, then `factory restart`). `factory restart` signals the dispatcher with SIGUSR2 and takes the same path immediately, aborting a gate in flight (its tickets stay `done` and are re-gated). A dispatcher older than this feature has no SIGUSR2 handler and dies from the signal; `restart` then starts a fresh one (workers are unaffected and adopted). A dispatcher also sweeps stale `.premerge` processes at start (Linux, via `/proc`). A foreground `factory run` that reloads leaves the terminal and continues detached; `run --once` never reloads.
 - **`factory run --once`** performs one tick and returns; workers it started keep running and are adopted by the next dispatcher.
 - **`factory feedback triage --done`** closes feedback that needs no ticket.
 - **Repository without commits, or `isolation: "none"`:** one code ticket at a time runs in the main checkout; other tickets run in parallel.

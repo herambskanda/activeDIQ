@@ -222,7 +222,7 @@ function readLog(file) {
 }
 
 function gateDir(ctx) { return path.join(ctx.stateDir, 'premerge'); }
-function scratchRoot(ctx) { return path.resolve(ctx.root, ctx.config.dispatcher.worktree_root, '.premerge'); }
+export function scratchRoot(ctx) { return path.resolve(ctx.root, ctx.config.dispatcher.worktree_root, '.premerge'); }
 
 async function addDetached(ctx, dir, ref) {
   fs.rmSync(dir, { recursive: true, force: true });
