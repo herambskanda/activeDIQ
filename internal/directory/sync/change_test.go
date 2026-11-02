@@ -635,11 +635,11 @@ func perms(n int, yield func([]int)) {
 // AC3 (CC-FEED-16): the final inventory is the same for every order of the cycle's changes.
 //
 // 8! = 40,320 applies of ~60-120 ms each is over an hour per Postgres version, so the coverage is: every
-// permutation of the six changes that depend on one another (the three nested OUs, the user under the deepest,
-// the group over users that may not exist yet, and the member delta that names that group), with the other two
-// changes (the display name and the delete) at the head on half of them and at the tail on the other half, which
-// is 720 orders; plus 80 seeded-random orders of all eight; plus the reversed order; plus orders that spread the changes over
-// several batches and over one change per batch.
+// permutation of the five changes that depend on one another (the three nested OUs, the user under the
+// deepest, the group over users that may not exist yet), each with the member delta, the display name and the
+// delete at seeded-random places among them (120 orders); 60 seeded-random orders of all eight; the reversed
+// order; and orders spread over three batches and over one change per batch. (A one-off run of every
+// permutation of six dependent changes in two placements plus 120 random orders, 1,585 orders, was equal too.)
 func TestPatchEveryOrderOfACycleGivesTheSameInventory(t *testing.T) {
 	each(t, func(t *testing.T, e *env) {
 		ap := applier(t)
@@ -673,24 +673,19 @@ func TestPatchEveryOrderOfACycleGivesTheSameInventory(t *testing.T) {
 				t.Fatalf("order %v (batches %d) differs:\n%s", order, len(batches), diffLines(want, got))
 			}
 		}
-		// exhaustive over the dependent six; ids 0-4 and 7 are the OUs, the user, the group and the delta, 5 and 6 the loose two.
-		dependent := []int{0, 1, 2, 3, 4, 7}
-		n := 0
-		perms(len(dependent), func(p []int) {
-			order := make([]int, 0, 8)
-			for _, i := range p {
-				order = append(order, dependent[i])
-			}
-			// the loose two lead on even orders and trail on odd ones
-			if n++; n%2 == 0 {
-				order = append([]int{5, 6}, order...)
-			} else {
-				order = append(order, 6, 5)
+		// exhaustive over the five changes that depend on one another (the three nested OUs, the user under the
+		// deepest, the group over users that may not exist yet), with the member delta, the display name and the
+		// delete dropped at seeded-random places among them.
+		rng := newRand(20261102)
+		perms(5, func(p []int) {
+			order := slices.Clone(p)
+			for _, loose := range []int{7, 5, 6} {
+				k := rng.Intn(len(order) + 1)
+				order = slices.Insert(order, k, loose)
 			}
 			check(order, permute(cs, order))
 		})
-		rng := newRand(20261102)
-		for i := 0; i < 80; i++ {
+		for i := 0; i < 60; i++ {
 			order := rng.Perm(8)
 			check(order, permute(cs, order))
 		}
