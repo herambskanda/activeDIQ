@@ -316,8 +316,22 @@ claude -p "<rendered templates/worker-prompt.md>" \
   has a finding `main` does not (multiset of check-and-message keys, line numbers removed; a newly
   red make target counts; baseline cached per `main` commit). A refused ticket is reopened for its
   owner with the findings and log paths (`state/premerge/`). A gate that cannot judge (timeout,
-  worktree error) merges nothing and retries after 10 minutes. One ticket at a time goes through the
-  gate, in the background. Before the full run a cheap `pre_merge.numbering` check (the migration-number
+  worktree error) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
+  gate in the background, taken in **queue order** (T-1296, `lib/mergequeue.mjs`): first the done
+  tickets that a `blocked` or `ready` ticket lists in `depends_on`, then by priority (P0 first), then
+  the earliest time the ticket reached `done`, then ticket ID. **Merge train (T-1297):** one gate run
+  judges up to `pre_merge.train_size` (default 4; 1 = one ticket per run) tickets from the front of that
+  queue together: they are merged one after another onto `main` in the scratch worktree and the numbering
+  check and `make -k ci` run once on the combined result. Green merges each in queue order into `main`
+  with its own `git merge --no-ff` commit, with the same events and cleanup as a single merge. Refused
+  (a finding `main` lacks, a numbering clash, a green `main` gone red): the train is split in halves, the
+  first half is gated and merged, then the second is gated on the new `main`, down to a single ticket,
+  so only the ticket that adds the finding is reopened with it and the others merge (about 2·log2(N)
+  extra runs in the worst case). A member that conflicts in text with an earlier member of the train is
+  left out, stays `done` and waits for the next train (it is not reopened; if it then conflicts with
+  `main` itself it is reopened as before). Embargo hold and the could-not-judge retry apply per ticket.
+  The gate judges exactly what it judged before; only how many tickets share a run changed. The dispatcher records the gate in flight in `state/dispatcher.json`
+  (`merge_gate: {ticket, tickets, started_at}`, cleared on finish and on dispatcher start). Before the full run a cheap `pre_merge.numbering` check (the migration-number
   test, T-1067) runs on the same merge result and refuses with the free number to renumber to. `factory premerge ID [-- CMD…]` is the dry run. Details:
   `knowledge/development/standards/ci-gates.md`.
 - When a code-bearing ticket reaches `done` (and passes the gate), the dispatcher merges with
@@ -330,6 +344,15 @@ claude -p "<rendered templates/worker-prompt.md>" \
   hold and cleanup. A conflict reopens the ticket for its owner with a note naming the branch (and,
   for a type that works in the main checkout, how to resolve it in a temporary worktree). A `done`
   ticket with no branch, or a branch with nothing ahead of `main`, is left as it is.
+- **A dependency is met only when its work is on `main` (T-1266).** `done` comes before the merge
+  (the gate takes one ticket at a time, and an embargoed ticket is held), so a ready ticket whose
+  dependency is `done` but whose `factory/<id>` branch has commits not on `main` is not claimed:
+  a dependent started now would merge a `main` without the fix and hit the same wall. The
+  dispatcher asks git (`rev-list main..factory/<dep>`, only for the done dependencies of ready
+  tickets) on every fill and again in `claimTicket`; the board shows the ticket as "waiting on merge
+  of T-…" (`waiting_on_merge` in the ticket summary, a card tag and a drawer section). A `done`
+  dependency with no branch, or a branch with nothing ahead of `main`, is met as before. The
+  pre-merge gate itself is untouched. Test: `factory/test/dep-merge.test.mjs`.
 - If the repository has no commits, or `isolation` is `none`, workers run in the main checkout and
   `max_parallel` is forced to 1 for code-bearing types.
 
@@ -354,12 +377,13 @@ header `X-Factory-Board: 1` (blocks cross-site form posts).
 | POST | `/api/feedback` | `{"target":"…","text":"…","sentiment":"…"}` |
 | POST | `/api/control` | `{"paused":true,"reason":"…"}` |
 
-`/api/state` payload: `{generated, product, control, dispatcher:{alive, heartbeat, active, backoff_until, runs_today}, milestones, epics, tickets:[summaries], decisions, actions, feedback, runs:{active, recent(20)}, sessions:[live], events:[last 150], library:[{path,title,group,updated}], digest:{date, path}}`.
+`/api/state` payload: `{generated, product, control, dispatcher:{alive, heartbeat, active, backoff_until, runs_today}, merge_queue:{waiting:[ids in gate order], in_gate:{id, started_at}|null, last_merged_at}, milestones, epics, tickets:[summaries], decisions, actions, feedback, runs:{active, recent(20)}, sessions:[live], events:[last 150], library:[{path,title,group,updated}], digest:{date, path}}`.
 
 The UI is a single page, vanilla JS, no build step, using `tokens.css` (the skenzeriq design
 system). Tabs: **Overview** (needs you · running now · milestone progress · today's digest ·
 activity), **Board** (kanban by status, filter by epic/owner), **Decisions** (pending, answered,
-factory notices), **Library** (knowledge base reader), **Demos**, and **Agents** (below). It polls `/api/state` every
+factory notices), **Library** (knowledge base reader), **Demos**, and **Agents** (below). The header
+shows the merge queue: "Merge queue: N waiting · in gate T-… · last merge Xh ago". It polls `/api/state` every
 `board.poll_ms` and never clobbers a form the CEO is typing in.
 
 ### Agents tab (`/api/graph`, `lib/graph.mjs`, `public/agents.js`)
@@ -453,7 +477,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 - **Run:** `continuation`, `snapshot` (status, stage role and latest handoff at launch: how "no progress" is judged), `kill_reason` (`timeout` or `shutdown`), `error`; stderr is kept in `state/runs/<id>.err` next to `<id>.log`.
 - **State:** `state/board.json` and `state/dispatcher.json` hold pids; `state/board.log` and `state/dispatcher.log` capture the detached processes; `state/signals/rate-limit.json` is written by the `StopFailure` hook and read by the dispatcher.
 - **Environment:** `FACTORY_HOME`, `FACTORY_CLAUDE_BIN` (the executable to launch, default `claude`), `FACTORY_DEBUG=1` (stack traces).
-- **API:** `/api/state` also carries `company` and `dispatcher.pid`; ticket summaries include `summary`, `created`, `parity_refs`, `effort_override`, `held`, `stage_role` and `last_note`.
+- **API:** `/api/state` also carries `company` and `dispatcher.pid`; ticket summaries include `waiting_on_merge` (ids of done dependencies not yet on main, ready tickets only), `summary`, `created`, `parity_refs`, `effort_override`, `held`, `stage_role` and `last_note`.
 
 ### Where the runtime deliberately differs from, or extends, the reference
 

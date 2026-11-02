@@ -30,6 +30,9 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // once merged, and a red `main` can hide that failure from the ratchet. `null` = off.
   // { dir: 'migrations', argv: ['go', 'test', …], timeout_seconds: 120 }
   numbering: null,
+  // T-1297: how many done tickets one gate run judges together (the merge train). 1 = one ticket
+  // per run, as before the train.
+  train_size: 4,
 });
 
 /**
@@ -40,6 +43,9 @@ export function preMergeSettings(config) {
   const s = { ...PRE_MERGE_DEFAULTS, ...(config.dispatcher?.pre_merge ?? {}) };
   if (!Array.isArray(s.argv) || !s.argv.length || s.argv.some((a) => typeof a !== 'string')) {
     throw new FactoryError('dispatcher.pre_merge.argv must be a non-empty array of strings');
+  }
+  if (!Number.isInteger(s.train_size) || s.train_size < 1) {
+    throw new FactoryError('dispatcher.pre_merge.train_size must be a whole number of at least 1');
   }
   const n = s.numbering;
   if (n !== null && n !== undefined) {
@@ -289,14 +295,14 @@ export function planRenumber(mainNames, addedNames) {
  * Run the numbering check on the merge result in `dir`. Returns a `blocked` verdict when it fails
  * (naming the number to renumber to), or null when it passes. A check that cannot run throws.
  */
-async function checkMigrationNumbering(ctx, settings, dir, mainSha, ticket, { signal }) {
+async function checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { signal }) {
   const cfg = settings.numbering;
-  const log = path.join(gateDir(ctx), `${ticket.id}-${mainSha.slice(0, 12)}-numbering.log`);
+  const log = path.join(gateDir(ctx), `${subject.id}-${mainSha.slice(0, 12)}-numbering.log`);
   const started = Date.now();
   const ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal });
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
-  if (ran.timedOut) throw new FactoryError(`pre-merge: the migration-numbering check on ${ticket.id} timed out after ${cfg.timeout_seconds} s (${log})`);
-  if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${ticket.id} was stopped (${log})`);
+  if (ran.timedOut) throw new FactoryError(`pre-merge: the migration-numbering check on ${subject.label} timed out after ${cfg.timeout_seconds} s (${log})`);
+  if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${subject.label} was stopped (${log})`);
   if (ran.code === 0) { fs.appendFileSync(log, `\n# migration-numbering check passed in ${seconds} s\n`); return { seconds: Number(seconds) }; }
 
   const names = async (ref) => (await git(dir, ['ls-tree', '--name-only', ref, `${cfg.dir}/`])).stdout.split('\n').map((l) => path.basename(l.trim())).filter((n) => n.endsWith('.sql'));
@@ -304,7 +310,7 @@ async function checkMigrationNumbering(ctx, settings, dir, mainSha, ticket, { si
     .split('\n').map((l) => path.basename(l.trim())).filter((n) => n.endsWith('.sql'));
   const plan = planRenumber(await names(mainSha), added);
   const findings = plan.map((r) => `renumber ${cfg.dir}/${r.from} to ${r.to}`);
-  const branch = branchName(ticket.id);
+  const branch = subject.branches;
   return {
     refused: true, status: 'blocked', mode: 'migration-numbering', findings, renumber: plan, log, seconds,
     summary: plan.length
@@ -314,7 +320,7 @@ async function checkMigrationNumbering(ctx, settings, dir, mainSha, ticket, { si
 }
 
 /**
- * Run the gate for a finished ticket.
+ * Run the gate for a finished ticket. A train of one (see `runPreMergeTrain`).
  *
  * Statuses: `pass` (merge may proceed), `blocked` (the branch adds a finding or breaks a green
  * job; `findings` names them), `conflict` (main moved and the branch no longer merges cleanly).
@@ -326,37 +332,72 @@ async function checkMigrationNumbering(ctx, settings, dir, mainSha, ticket, { si
  * @param {{signal?: AbortSignal, argv?: string[]}} [opts] `argv` overrides the configured command (dry runs)
  * @returns {Promise<{status: 'pass'|'blocked'|'conflict', mode?: string, findings: string[], summary: string, log?: string, baseLog?: string}>}
  */
-export async function runPreMergeGate(ctx, ticket, { signal, argv } = {}) {
+export async function runPreMergeGate(ctx, ticket, opts = {}) {
+  return runPreMergeTrain(ctx, [ticket], opts);
+}
+
+/**
+ * Run the gate once on several finished tickets together (the merge train, T-1297). The tickets are
+ * merged one after another, in the order given, onto `main` in a scratch worktree, and the numbering
+ * check and the configured command run once on the combined result.
+ *
+ * A ticket that does not merge cleanly is left out and reported in `conflicts`: one that conflicts
+ * while nothing else has been merged yet conflicts with `main` itself (`withMain`, the caller reopens
+ * it as before); a later one conflicts with an earlier train member (the caller leaves it done for the
+ * next train). The verdict is for the tickets in `members` only. `blocked` does not say which member
+ * is at fault: the caller splits the train (`splitTrain`) and gates the halves.
+ *
+ * Statuses and throwing are as for `runPreMergeGate`; `conflict` means no member merged at all.
+ *
+ * @param {object} ctx
+ * @param {{id: string, title: string}[]} tickets in merge order
+ * @param {{signal?: AbortSignal, argv?: string[]}} [opts]
+ * @returns {Promise<{status: 'pass'|'blocked'|'conflict', mode?: string, findings: string[], summary: string, log?: string, baseLog?: string,
+ *   members: string[], conflicts: {id: string, detail: string, withMain: boolean}[]}>}
+ */
+export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
+  if (!tickets.length) throw new FactoryError('pre-merge: a train needs at least one ticket');
   const settings = preMergeSettings(ctx.config);
   if (argv) settings.argv = argv;
   const main = ctx.config.dispatcher.main_branch;
   const mainSha = (await git(ctx.root, ['rev-parse', '--verify', '-q', `refs/heads/${main}`])).stdout.trim();
   if (!mainSha) throw new FactoryError(`pre-merge: branch "${main}" not found`);
-  const branch = branchName(ticket.id);
-  if ((await git(ctx.root, ['rev-parse', '--verify', '-q', `refs/heads/${branch}`])).code !== 0) {
-    throw new FactoryError(`pre-merge: branch "${branch}" not found`);
+  for (const ticket of tickets) {
+    if ((await git(ctx.root, ['rev-parse', '--verify', '-q', `refs/heads/${branchName(ticket.id)}`])).code !== 0) {
+      throw new FactoryError(`pre-merge: branch "${branchName(ticket.id)}" not found`);
+    }
   }
-  const dir = path.join(scratchRoot(ctx), `cand-${ticket.id}`);
-  const log = path.join(gateDir(ctx), `${ticket.id}-${mainSha.slice(0, 12)}.log`);
+  const ids = tickets.map((t) => t.id);
+  const name = ids.length === 1 ? ids[0] : `train-${ids.join('+')}`;
+  const label = ids.length === 1 ? ids[0] : `the train ${ids.join(', ')}`;
+  const dir = path.join(scratchRoot(ctx), `cand-${name}`);
+  const log = path.join(gateDir(ctx), `${name}-${mainSha.slice(0, 12)}.log`);
   await addDetached(ctx, dir, mainSha);
   try {
-    const merged = await git(dir, ['merge', '--no-ff', '--no-edit', '-m', `Merge ${ticket.id}: ${ticket.title}`, branch]);
-    if (merged.code !== 0) {
+    const members = [];
+    const conflicts = [];
+    for (const ticket of tickets) {
+      const merged = await git(dir, ['merge', '--no-ff', '--no-edit', '-m', `Merge ${ticket.id}: ${ticket.title}`, branchName(ticket.id)]);
+      if (merged.code === 0) { members.push(ticket.id); continue; }
       const detail = (merged.stdout + merged.stderr).trim().split('\n').slice(0, 6).join(' | ');
       await git(dir, ['merge', '--abort']);
-      return { status: 'conflict', findings: [], summary: detail };
+      conflicts.push({ id: ticket.id, detail, withMain: members.length === 0 });
     }
+    const outcome = { members, conflicts };
+    if (!members.length) return { status: 'conflict', findings: [], summary: conflicts[0].detail, ...outcome };
+
+    const subject = { id: name, label, branches: members.map(branchName).join(', ') };
     let numberingSeconds = null;
     if (settings.numbering) {
-      const checked = await checkMigrationNumbering(ctx, settings, dir, mainSha, ticket, { signal });
-      if (checked.refused) { const { refused, ...verdict } = checked; return verdict; }
+      const checked = await checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { signal });
+      if (checked.refused) { const { refused, ...verdict } = checked; return { ...verdict, ...outcome }; }
       numberingSeconds = checked.seconds;
     }
     const withTiming = (text) => (numberingSeconds === null ? text : `${text}; migration numbering checked in ${numberingSeconds} s`);
     const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
-    if (ran.timedOut) throw new FactoryError(`pre-merge: ${settings.argv.join(' ')} on ${ticket.id} timed out after ${settings.timeout_minutes} minutes (${log})`);
-    if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${ticket.id} was stopped (${log})`);
-    if (ran.code === 0) return { status: 'pass', mode: 'green', findings: [], summary: withTiming(`${settings.argv.join(' ')} passed on the merge result`), log };
+    if (ran.timedOut) throw new FactoryError(`pre-merge: ${settings.argv.join(' ')} on ${label} timed out after ${settings.timeout_minutes} minutes (${log})`);
+    if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${label} was stopped (${log})`);
+    if (ran.code === 0) return { status: 'pass', mode: 'green', findings: [], summary: withTiming(`${settings.argv.join(' ')} passed on the merge result`), log, ...outcome };
 
     const head = extractFindings(readLog(log), [fs.realpathSync(dir), dir]);
     const base = await baseline(ctx, settings, mainSha, { signal });
@@ -365,29 +406,42 @@ export async function runPreMergeGate(ctx, ticket, { signal, argv } = {}) {
     const lines = fresh.map((f) => (f.known ? `${f.key}  (${f.extra} more than the ${f.known} on ${main})` : f.extra > 1 ? `${f.key}  (${f.extra} times)` : f.key));
     if (base.code === 0) {
       return {
-        status: 'blocked', mode: 'main-green', findings: lines, log, baseLog: base.log,
+        status: 'blocked', mode: 'main-green', findings: lines, log, baseLog: base.log, ...outcome,
         summary: `${main} is green and ${settings.argv.join(' ')} fails on the merge result${lines.length ? '' : ' with no recognisable finding line; read the log'}`,
       };
     }
     if (!head.size) {
       return {
-        status: 'blocked', mode: 'unrecognised', findings: [], log, baseLog: base.log,
+        status: 'blocked', mode: 'unrecognised', findings: [], log, baseLog: base.log, ...outcome,
         summary: `${settings.argv.join(' ')} fails on the merge result and the log has no recognisable finding line, so it cannot be compared with the red ${main}; read the log`,
       };
     }
     if (fresh.length) {
       return {
-        status: 'blocked', mode: 'new-findings', findings: lines, log, baseLog: base.log,
+        status: 'blocked', mode: 'new-findings', findings: lines, log, baseLog: base.log, ...outcome,
         summary: `${main} is red (${total(base.findings)} known findings) and the merge result adds ${lines.length} that ${main} does not have`,
       };
     }
     return {
-      status: 'pass', mode: 'ratchet', findings: [], log, baseLog: base.log,
+      status: 'pass', mode: 'ratchet', findings: [], log, baseLog: base.log, ...outcome,
       summary: withTiming(`${main} is red (${total(base.findings)} known findings); the merge result adds none (${total(head)} findings, all already on ${main})`),
     };
   } finally {
     await dropWorktree(ctx, dir);
   }
+}
+
+/**
+ * Split a refused train in halves (the first half is the larger when the count is odd). Each half
+ * keeps the queue order, and the first is gated and merged before the second is gated on the new
+ * `main`, so the ticket that adds the findings ends up alone in a train of one.
+ * @template T
+ * @param {T[]} members
+ * @returns {[T[], T[]]}
+ */
+export function splitTrain(members) {
+  const mid = Math.ceil(members.length / 2);
+  return [members.slice(0, mid), members.slice(mid)];
 }
 
 /**
