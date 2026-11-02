@@ -73,7 +73,13 @@ type Descriptor struct {
 	Reversibility Reversibility // worst case
 	AuditKind     audit.Kind    // the step event kind, declared by the same owner
 	StepUp        bool          // submit needs a fresh MFA (TM-D16 §7.4)
-	SecretInput   bool          // the input carries a secret (rule 9)
+	// StepUpWhen makes step-up depend on the Input (TM-D30 SX-1: a report schedule needs it only when
+	// the after-state has an external recipient). It runs over the canonical validated Input, wherever
+	// StepUp is read: submit, the kernel hold, Plan and approval. It must be pure and deterministic. An
+	// error, or an absent Input (a SecretInput Action persists none), counts as "required" (fail
+	// closed). Mutually exclusive with StepUp; the registry refuses both.
+	StepUpWhen  func(Input) (bool, error)
+	SecretInput bool // the input carries a secret (rule 9)
 	// ControlPlane marks an Action whose permission administers RBAC, delegation, scopes, connections or
 	// the tenant: personal to an account, never carried by a group, token, automation policy or hybrid
 	// correlation. It must equal authz.NeverCrosses(Permission); a test in compose/server holds the two.
@@ -82,6 +88,25 @@ type Descriptor struct {
 
 // Input is the validated, canonically encodable input of one invocation.
 type Input []byte
+
+// NeedsStepUp reports whether an invocation with this Input requires a fresh MFA: the static StepUp
+// flag, or StepUpWhen over the Input. It fails closed: a predicate that errors, panics or sees no
+// Input requires step-up. Every place the kernel reads step-up goes through here.
+func (d Descriptor) NeedsStepUp(in Input) (need bool) {
+	if d.StepUpWhen == nil {
+		return d.StepUp
+	}
+	if len(in) == 0 {
+		return true
+	}
+	defer func() {
+		if recover() != nil {
+			need = true
+		}
+	}()
+	need, err := d.StepUpWhen(in)
+	return need || err != nil
+}
 
 // Change is one planned attribute change, before and after. Secret values are never held.
 type Change struct {

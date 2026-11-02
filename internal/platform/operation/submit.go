@@ -124,7 +124,7 @@ func (r *Runner) SubmitDirectory(ctx context.Context, req Request) (Submission, 
 		return Submission{}, fmt.Errorf("%w: secrets supplied do not match the action's SecretInput", ErrInvalid)
 	}
 	u := &run{r: r, req: req, act: act, d: d, eventID: r.cfg.NewID()}
-	if d.StepUp && !req.FreshStepUp && canStepUp(req.Actor) {
+	if !req.FreshStepUp && canStepUp(req.Actor) && d.NeedsStepUp(req.Input) {
 		// An interactive human who has not stepped up is refused; a token or automation is held (rule 8).
 		return Submission{}, u.recordFailure(ctx, u.denied("step_up_required", ErrDenied))
 	}
@@ -562,7 +562,7 @@ func (r *Runner) route(ctx context.Context, t tenant.ID, opID string) (Submissio
 			return sub, fmt.Errorf("%w: reading tenant settings: %w", ErrGate, err)
 		}
 	}
-	hold := kernelHold(holdInput{d: d, req: Request{Actor: op.Chain, Origin: op.Origin, MaxObjects: op.MaxObjects,
+	hold := kernelHold(holdInput{d: d, input: Input(op.Input), req: Request{Actor: op.Chain, Origin: op.Origin, MaxObjects: op.MaxObjects,
 		FreshStepUp: op.StepUpFresh, UndoNeededApproval: op.Hold == HoldUndoNeededAppr}, items: len(rows),
 		worst: worst(steps), irrevSetting: irrev})
 	route, gerr := r.cfg.Gate.Route(ctx, PlanSummary{Action: d, Steps: steps, PlanHash: op.PlanHash,

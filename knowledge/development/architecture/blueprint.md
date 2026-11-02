@@ -688,6 +688,7 @@ type Descriptor struct {
     Reversibility Reversibility     // worst case: Reversible | Lossy | Irreversible
     AuditKind     audit.Kind        // the step event kind (EP-7), declared by the same owner
     StepUp        bool              // submit needs a fresh MFA (TM-D16)
+    StepUpWhen    func(Input) (bool, error) // step-up only when the validated Input says so (TM-D30, T-0980); exclusive with StepUp; error or absent Input = required
     SecretInput   bool              // the input carries a secret.Secret
 }
 ```

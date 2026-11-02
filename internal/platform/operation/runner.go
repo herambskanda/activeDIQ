@@ -246,7 +246,7 @@ func (u *run) failed(reason string, err error) error {
 
 func (u *run) exec(ctx context.Context) (Result, error) {
 	r := u.r
-	if u.d.StepUp && !u.req.FreshStepUp {
+	if !u.req.FreshStepUp && u.d.NeedsStepUp(u.req.Input) {
 		return Result{}, u.denied("step_up_required", ErrDenied)
 	}
 	// Plan: before the transaction that writes. The plan transaction is READ ONLY.
