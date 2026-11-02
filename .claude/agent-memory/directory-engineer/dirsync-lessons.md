@@ -13,3 +13,5 @@ metadata:
 - Lab raw DNs in tests need `\+` and `\,` escaped by hand; prime of the 7k-object lab is ~1.7 s.
 - Capture proxy for wire assertions: tls relay + ber.ReadPacket on client side, parse Children[2] controls (see dirsync_lab_test.go).
 - safeprim scanner full run is red on 3 pre-existing inventory violations (datasets_groups.go) - not ours.
+- Samba (Recycle Bin off) tombstones carry isDeleted=TRUE AND isRecycled=TRUE -> decoder says RECYCLED (isRecycled wins; order-independent). Lab can never produce restorable DELETED; unit fixtures only (T-1270).
+- Never index a string found in strings.ToLower(name): invalid UTF-8 changes byte offsets (T-1264). Use indexRangeOption. Fuzz leaves testdata/fuzz regression entries - keep them.
