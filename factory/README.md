@@ -386,6 +386,11 @@ factory notices), **Library** (knowledge base reader), **Demos**, and **Agents**
 shows the merge queue: "Merge queue: N waiting · in gate T-… · last merge Xh ago". It polls `/api/state` every
 `board.poll_ms` and never clobbers a form the CEO is typing in.
 
+A done ticket whose branch is already an ancestor of main (merged by hand) never takes a gate slot: at the start of each merge
+pass the dispatcher records it as merged (`links.merged`, `links.merge_commit` = the merge commit that brought it in, or the tip if
+fast-forwarded), removes its worktree and branch, logs `… already on main … without a gate run`, and drops it from the queue
+(T-1353). Test: `factory/test/mergetrain.test.mjs`.
+
 ### Agents tab (`/api/graph`, `lib/graph.mjs`, `public/agents.js`)
 
 A live graph of who is working and who talks to whom, laid out left → right: CEO → directors →
