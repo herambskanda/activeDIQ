@@ -317,7 +317,11 @@ claude -p "<rendered templates/worker-prompt.md>" \
   red make target counts; baseline cached per `main` commit). A refused ticket is reopened for its
   owner with the findings and log paths (`state/premerge/`). A gate that cannot judge (timeout,
   worktree error) merges nothing and retries after 10 minutes. One ticket at a time goes through the
-  gate, in the background. Before the full run a cheap `pre_merge.numbering` check (the migration-number
+  gate, in the background, taken in **queue order** (T-1296, `lib/mergequeue.mjs`): first the done
+  tickets that a `blocked` or `ready` ticket lists in `depends_on`, then by priority (P0 first), then
+  the earliest time the ticket reached `done`, then ticket ID. Only the pick order changes; what the
+  gate judges does not. The dispatcher records the gate in flight in `state/dispatcher.json`
+  (`merge_gate: {ticket, started_at}`, cleared on finish and on dispatcher start). Before the full run a cheap `pre_merge.numbering` check (the migration-number
   test, T-1067) runs on the same merge result and refuses with the free number to renumber to. `factory premerge ID [-- CMD…]` is the dry run. Details:
   `knowledge/development/standards/ci-gates.md`.
 - When a code-bearing ticket reaches `done` (and passes the gate), the dispatcher merges with
@@ -354,12 +358,13 @@ header `X-Factory-Board: 1` (blocks cross-site form posts).
 | POST | `/api/feedback` | `{"target":"…","text":"…","sentiment":"…"}` |
 | POST | `/api/control` | `{"paused":true,"reason":"…"}` |
 
-`/api/state` payload: `{generated, product, control, dispatcher:{alive, heartbeat, active, backoff_until, runs_today}, milestones, epics, tickets:[summaries], decisions, actions, feedback, runs:{active, recent(20)}, sessions:[live], events:[last 150], library:[{path,title,group,updated}], digest:{date, path}}`.
+`/api/state` payload: `{generated, product, control, dispatcher:{alive, heartbeat, active, backoff_until, runs_today}, merge_queue:{waiting:[ids in gate order], in_gate:{id, started_at}|null, last_merged_at}, milestones, epics, tickets:[summaries], decisions, actions, feedback, runs:{active, recent(20)}, sessions:[live], events:[last 150], library:[{path,title,group,updated}], digest:{date, path}}`.
 
 The UI is a single page, vanilla JS, no build step, using `tokens.css` (the skenzeriq design
 system). Tabs: **Overview** (needs you · running now · milestone progress · today's digest ·
 activity), **Board** (kanban by status, filter by epic/owner), **Decisions** (pending, answered,
-factory notices), **Library** (knowledge base reader), **Demos**, and **Agents** (below). It polls `/api/state` every
+factory notices), **Library** (knowledge base reader), **Demos**, and **Agents** (below). The header
+shows the merge queue: "Merge queue: N waiting · in gate T-… · last merge Xh ago". It polls `/api/state` every
 `board.poll_ms` and never clobbers a form the CEO is typing in.
 
 ### Agents tab (`/api/graph`, `lib/graph.mjs`, `public/agents.js`)
