@@ -388,7 +388,7 @@ export function Shell({
         placeholder="Search people, groups, computers and pages"
         onSelect={handleSelect}
         onShowAll={handleShowAll}
-        onRetry={handleRetry}
+        {...(isRefusedQuery(query) ? {} : { onRetry: handleRetry })}
         {...(notice ? { notice } : {})}
         {...(footer ? { footer } : {})}
       />

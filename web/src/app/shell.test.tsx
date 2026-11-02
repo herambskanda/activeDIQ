@@ -605,6 +605,11 @@ describe("T-1101 AC 5: Unhappy states (403, 429, 500, empty, recovery password)"
 
     // IA message shown
     expect(document.body.textContent).toContain(RECOVERY_PASSWORD_MESSAGE);
+
+    // Nothing to retry: the fix is to edit the query, so no dead "Try again" control
+    expect(
+      Array.from(document.querySelectorAll("button")).some((b) => b.textContent === "Try again"),
+    ).toBe(false);
   });
 
   describe.each([
