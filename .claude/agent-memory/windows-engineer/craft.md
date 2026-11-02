@@ -23,3 +23,5 @@ metadata:
 - Lift-and-restore of a Tier-0 resource bound (CPU cap) must report and retry a failed restore, and be read back (QueryInformationJobObject, NULL job = own process's job) in a Windows test; keep the refcount logic OS-neutral (cpucap.go) so Linux tests inject failures.
 - Windows tests that need elevation: skip only on `!IsElevated()`, else Fatal; a blanket Skipf on any error makes the test unable to fail.
 - Windows PowerShell 5.1 splits `-test.v` at the dot when calling a native exe: quote every `-test.*` arg. Never `pkill -f <name>` from a command whose own text has <name>: it kills your shell.
+- A lifted Tier-0 bound needs its OWN hard timer (cpucap maxLift 5 s) and a fail-closed exit on a failing restore (30 s, SCM restarts); "closed by caller" is not a bound (a stalled TLS handshake held it 20 s). Inject clock/afterFunc/exit to test.
+- agent-unenrolled-verify wraps itself in with-dc1-lock: do NOT also flock the same file around it (self-deadlock). Never pkill -f from a worker (classifier denies; may kill another session's run).
