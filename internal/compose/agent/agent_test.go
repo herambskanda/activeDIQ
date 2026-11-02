@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/compose/agent"
 	"github.com/skenzeriq/activediq/internal/compose/config"
@@ -60,5 +61,45 @@ func TestParseLocalStrict(t *testing.T) {
 		if _, err := agent.ParseLocal([]byte(doc)); err == nil {
 			t.Errorf("%s accepted", name)
 		}
+	}
+}
+
+func TestRunServingIdlesWhenNotEnrolled(t *testing.T) {
+	d := t.TempDir()
+	cfg := filepath.Join(d, "agent.json")
+	body := `{"data_dir":"` + filepath.ToSlash(filepath.Join(d, "data")) + `","enrollment_dir":"` + filepath.ToSlash(filepath.Join(d, "enrol")) + `"}`
+	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(agent.ConfigEnv, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	waits := 0
+	checks := make(chan struct{}, 8)
+	hk := agent.Hooks{NotEnrolledCheck: func() { checks <- struct{}{} }}
+	done := make(chan error, 1)
+	go func() {
+		done <- agent.RunServing(ctx, config.Config{}, hk, time.Millisecond, func() { waits++ })
+	}()
+	// Wait for the first check and at least one re-check: the service must still be running.
+	<-checks
+	<-checks
+	select {
+	case err := <-done:
+		t.Fatalf("exited while unenrolled: %v", err)
+	default:
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("stop = %v", err)
+	}
+	if waits != 1 {
+		t.Fatalf("waiting announced %d times, want once", waits)
+	}
+}
+
+func TestRunServingStillFailsOnOtherErrors(t *testing.T) {
+	t.Setenv(agent.ConfigEnv, "")
+	if err := agent.RunServing(context.Background(), config.Config{}, agent.Hooks{}, time.Millisecond, nil); !errors.Is(err, agent.ErrNoConfig) {
+		t.Fatalf("got %v", err)
 	}
 }

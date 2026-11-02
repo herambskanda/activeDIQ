@@ -152,9 +152,9 @@ type and the one privilege in a core `ServiceConfig` **nested inside the `Servic
 ```
 
 `RequiredPrivilege` is documented with parent `ServiceConfig` ([WiX schema](https://docs.firegiant.com/wix/schema/wxs/requiredprivilege/));
-`ServiceSid` is a `ServiceConfig` attribute ([WiX ServiceConfig](https://wixtoolset.org/docs/schema/wxs/serviceconfig)). The WiX
-docs call the core `ServiceConfig` element flawed and point to `util:ServiceConfig`, which has no privilege
-attribute `[UNVERIFIED: the full remark was not read]`. So **whether WiX really writes the privilege list is
+`ServiceSid` is a `ServiceConfig` attribute ([WiX ServiceConfig](https://wixtoolset.org/docs/schema/wxs/serviceconfig)). The core `ServiceConfig` also carries the failure-action attributes (T-0813 merged the former `util:ServiceConfig`, deprecated per WIX1149,
+into it; [UNVERIFIED-lab] until T-0648 reads `sc qfailure` back). It has no privilege attribute beyond the `RequiredPrivilege` child.
+So **whether WiX really writes the privilege list is
 `[UNVERIFIED — lab]`**: T-0648 must read it back after install (`sc qprivs activeDIQAgent`, and the token of
 the running service). If WiX cannot write it, the fallback is **not** the registry: file a ruling request
 for a sixth fixed-verb action (`agentsetup pin-service`, typed `ChangeServiceConfig2` call). Defence in

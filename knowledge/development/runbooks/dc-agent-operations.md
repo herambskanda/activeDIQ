@@ -26,7 +26,12 @@ Design: [ADR-0006](../decisions/0006-dc-agent-runs-as-a-virtual-service-account.
 | --- | --- | --- | --- |
 | 100 | Info | A signed policy was applied (sequence in the text) | none |
 | 101 | Error | Start refused: token holds a privilege outside the pinned list, or the data directory DACL is unsafe | reinstall with the MSI; do not edit the token |
+| 103 | Warning | Installed but not enrolled: the service is running and idling, re-checking every 15 s | run `activediq-agent.exe enroll <server:port> <pin>`; the agent picks the enrolment up within 15 s, no restart needed |
 | 102 | Warning | The Security channel cannot be read | a GPO may have reset channel access: re-run `agentsetup grant-channel`; the server shows `channel_unreadable` |
+
+## Install order
+
+The MSI starts the service on install. Install, start (it idles with event 103), then enrol; the agent notices the enrolment within 15 s. Starting before enrolling is expected, not a failure; the SCM recovery action never fires for it.
 
 ## Verified in the lab (T-0648) and still owed
 

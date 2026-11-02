@@ -18,12 +18,11 @@ const targetWxs = `<?xml version="1.0" encoding="utf-8"?>
       <Component Id="AgentExe" Guid="*">
         <File Id="AgentExeFile" Source="a.exe" Name="activediq-agent.exe" KeyPath="yes" />
         <ServiceInstall Id="AgentService" Name="activeDIQAgent" Type="ownProcess" Start="auto" ErrorControl="normal" Account="NT SERVICE\activeDIQAgent">
-          <ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes">
+          <ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1">
             <RequiredPrivilege Name="SeChangeNotifyPrivilege" />
           </ServiceConfig>
         </ServiceInstall>
         <ServiceControl Id="AgentServiceControl" Name="activeDIQAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
-        <util:ServiceConfig ServiceName="activeDIQAgent" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
       </Component>
       <Component Id="SetupExe" Guid="*"><File Id="SetupExeFile" Source="s.exe" Name="agentsetup.exe" KeyPath="yes" /></Component>
     </ComponentGroup>
@@ -68,7 +67,7 @@ func TestT0688ApprovedActionsArePinned(t *testing.T) {
 func TestT0688PrivilegeBesideServiceInstallIsRead(t *testing.T) {
 	root := t.TempDir()
 	x := strings.Replace(targetWxs, "ACTIONS", targetActions, 1)
-	x = strings.Replace(x, `<ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes">
+	x = strings.Replace(x, `<ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1">
             <RequiredPrivilege Name="SeChangeNotifyPrivilege" />
           </ServiceConfig>
         </ServiceInstall>`, `</ServiceInstall>
