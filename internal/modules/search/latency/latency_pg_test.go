@@ -34,6 +34,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/platform/searchkey"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/testlab/harnessdocker"
@@ -299,8 +300,16 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 		t.Errorf("oracle: ... and %d more disagreements", len(disagreements)-20)
 	}
 
+	fuzzySeqScan := false
 	if cfg.plans {
-		w.planReport(t, say, cfg.ceil, classes)
+		fuzzySeqScan = w.planReport(t, say, cfg.ceil, classes)
+	}
+	fuzzyClass := map[string]bool{}
+	for _, c := range classes {
+		if len(c.texts) > 0 {
+			p, err := searchkey.Classify(c.texts[0])
+			fuzzyClass[c.name] = err == nil && p.Fuzzy != ""
+		}
 	}
 	for _, W := range cfg.sweep {
 		w.sweepCeiling(t, say, W, cfg)
@@ -312,7 +321,7 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 		verdict := "ok"
 		if r.st.p95 >= budget {
 			verdict = "OVER BUDGET"
-			msg := fmt.Sprintf("search latency budget missed: %s caller=%s class=%s p95=%sms (budget %dms); 1-min load avg %s at start, %s at end, host CPUs %d%s", r.pg, r.caller, r.class, ms(r.st.p95), budget.Milliseconds(), load0, load1, runtime.NumCPU(), contended(load0, load1))
+			msg := fmt.Sprintf("search latency budget missed: %s caller=%s class=%s p95=%sms (budget %dms); 1-min load avg %s at start, %s at end, host CPUs %d%s", r.pg, r.caller, r.class, ms(r.st.p95), budget.Milliseconds(), load0, load1, runtime.NumCPU(), verdictNote(fuzzySeqScan && fuzzyClass[r.class], load0, load1))
 			if cfg.enforce {
 				t.Error(msg)
 			} else {
@@ -338,6 +347,16 @@ func loadAvg() string {
 		return f[0]
 	}
 	return "n/a"
+}
+
+// verdictNote qualifies a miss. When the plan probe saw the fuzzy CTE scan the tenant's key set sequentially and
+// the class runs that CTE, the miss is proven by the plan whatever the host load (T-1180); otherwise a miss under a
+// load average above the host's CPUs is inconclusive.
+func verdictNote(planProven bool, loads ...string) string {
+	if planProven {
+		return " — PROVEN BY PLAN: the fuzzy CTE is a sequential scan of the tenant's fuzzy-kind keys (see plan probes; T-1180), so host load does not explain it"
+	}
+	return contended(loads...)
 }
 
 // contended says when a miss cannot be told from a busy shared host: the load average exceeded the host's CPUs.
@@ -376,7 +395,9 @@ func (w *world) noHidden(t *testing.T, caller, class, text string, body []byte) 
 }
 
 // planReport proves the bounded-work claims on the full seed and records the fuzzy class's index recheck.
-func (w *world) planReport(t *testing.T, say func(string, ...any), ceil int, classes []class) {
+//
+// It reports whether the fuzzy CTE was a sequential scan of the key table in any probe.
+func (w *world) planReport(t *testing.T, say func(string, ...any), ceil int, classes []class) (fuzzySeqScan bool) {
 	t.Helper()
 	sc := w.scopes()
 	say("\nplan probes (EXPLAIN ANALYZE of the statement the handler runs):")
@@ -418,10 +439,14 @@ func (w *world) planReport(t *testing.T, say func(string, ...any), ceil int, cla
 				if len(f.seqScans) > 0 {
 					t.Errorf("fuzzy %s %q: sequential scans %v", caller, c.texts[i], f.seqScans)
 				}
+				if strings.Contains(f.fuzzyScan, "Seq Scan") {
+					fuzzySeqScan = true
+				}
 			}
 			say("  fuzzy one-typo %-7s mean over %d queries: key rows read %.0f · Rows Removed by Index Recheck %.0f · removed by filter %.0f · statement %.1f ms · %s", caller, k, rows/k, rech/k, filt/k, exec/k, scan)
 		}
 	}
+	return fuzzySeqScan
 }
 
 // sweepCeiling measures a ceiling-sized prefix class at W, for the choice of W (ADR-0011 rule 13: the largest
