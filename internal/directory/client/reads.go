@@ -196,7 +196,7 @@ func notFoundOr(err error) (ObjectRead, error) {
 	if errors.As(FromStatus(err), &re) && re.Err.GetCode() == connectorv1.ErrorCode_ERROR_CODE_OBJECT_NOT_FOUND {
 		return ObjectRead{Exists: false}, nil
 	}
-	return ObjectRead{}, fmt.Errorf("client: connector read: %w", err)
+	return ObjectRead{}, fmt.Errorf("client: connector read: %w", FromStatus(err))
 }
 
 func allZero(b []byte) bool {
