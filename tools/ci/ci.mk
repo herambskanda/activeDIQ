@@ -152,7 +152,7 @@ fitness-fuzz-nightly: ## T-0034: FF-SP5 nightly: every declared fuzz target for 
 
 fitness-nightly: fitness-fuzz-nightly fitness-oracles-lab search-latency ## T-0034, T-1102: the nightly job: FF-SP5 long fuzz, FF-SP6 Samba lab, ADR-0011 SE6 search latency; the Windows rows are fitness-oracles-windows on the Windows lab (runbook safe-primitives-fitness.md)
 
-SEARCH_LATENCY_OUT ?= factory/demos/evidence/T-1102
+SEARCH_LATENCY_OUT ?= $(CURDIR)/factory/demos/evidence/T-1102
 
 search-latency: ## T-1102, ADR-0011 SE6 (nightly, large-dataset switch): universal search p95 <= 200 ms per class over 50,000 objects on PostgreSQL 16 and 18, unscoped and scoped, through the HTTP handler; needs Docker; a miss fails naming the class, caller, version and percentile; tables in $(SEARCH_LATENCY_OUT)
 	ACTIVEDIQ_SEARCH_LARGE_OBJECTS=50000 ACTIVEDIQ_SEARCH_LARGE_OUT=$(SEARCH_LATENCY_OUT) go test -count=1 -timeout 90m -run '^TestSearchLatency50k$$' -v ./internal/modules/search/latency

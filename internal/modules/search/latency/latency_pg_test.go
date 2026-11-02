@@ -132,20 +132,27 @@ type outcome struct {
 
 // runBench is the whole benchmark against one PostgreSQL server.
 func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
-	var out strings.Builder
-	say := func(f string, a ...any) { fmt.Fprintf(&out, f+"\n", a...) }
-	defer func() {
-		t.Log("\n" + out.String())
-		if dir := os.Getenv("ACTIVEDIQ_SEARCH_LARGE_OUT"); dir != "" && cfg.enforce {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				t.Error(err)
-				return
-			}
-			if err := os.WriteFile(filepath.Join(dir, "search-latency-pg"+s.Version+".txt"), []byte(out.String()), 0o644); err != nil {
-				t.Error(err)
-			}
+	// Every line is logged and, in the benchmark run, appended to the evidence file as it is produced, so a
+	// run that is killed or times out still leaves its partial table behind.
+	var outFile *os.File
+	if dir := os.Getenv("ACTIVEDIQ_SEARCH_LARGE_OUT"); dir != "" && cfg.enforce {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
 		}
-	}()
+		f, err := os.Create(filepath.Join(dir, "search-latency-pg"+s.Version+".txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		outFile = f
+		defer f.Close()
+	}
+	say := func(f string, a ...any) {
+		line := fmt.Sprintf(f, a...)
+		t.Log(line)
+		if outFile != nil {
+			fmt.Fprintln(outFile, line)
+		}
+	}
 
 	seed := NewSeed(cfg.n)
 	w := newWorld(t, s, seed)
