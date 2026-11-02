@@ -16,7 +16,10 @@ metadata:
 - Never `git stash` for a quick check; use a tagged WIP commit.
 - WiX 5.0.2 (T-1249): core ServiceConfig has ServiceSid+RequiredPrivilege but NO failure-action attrs (WIX0004) and itself raises WIX1149; util:ServiceConfig has only failure actions. Use both, build with `-wx -sw1149`.
 - Admin-run `enroll` + service-run `Load`: ACL/owner must name the SERVICE SID (owner Administrators), never the invoking admin's user SID; icacls fixes don't change the owner. Map Load errors by class (absent vs unsafe vs expired): never "not enrolled" for everything.
-- dc1 is Proxmox 192.168.1.9 (WinRM 5985); libvirt `windows-lab status` is a different lab. If 5985 times out, nothing a worker can do (no Proxmox access): block with the run command.
+- dc1 address lives in the MAIN checkout's lab/windows/.win-lab.env (WIN_LAB_DC_ADDR; now .250, was .9); WinRM 5985; libvirt `windows-lab status` is a different lab. If 5985 times out, nothing a worker can do (no Proxmox access): block with the run command.
 - agent-fitness (A1) rejects unlisted file types under packaging/windows/agent (even README.md); put docs in the runbook.
 - Job-object HARD CPU cap (5 %) stretches a Go dial+TLS handshake from 1.3 s to 25-34 s on dc1: lift it for connection set-up only (Burst), keep memory/priority. Confine must be idempotent (idle loop re-calls it).
 - A Load that reads "file missing" as "not enrolled" waits a full poll when it lands mid-`enroll`: classify partial dirs (ErrIncomplete) and re-check in 1 s.
+- Lift-and-restore of a Tier-0 resource bound (CPU cap) must report and retry a failed restore, and be read back (QueryInformationJobObject, NULL job = own process's job) in a Windows test; keep the refcount logic OS-neutral (cpucap.go) so Linux tests inject failures.
+- Windows tests that need elevation: skip only on `!IsElevated()`, else Fatal; a blanket Skipf on any error makes the test unable to fail.
+- Windows PowerShell 5.1 splits `-test.v` at the dot when calling a native exe: quote every `-test.*` arg. Never `pkill -f <name>` from a command whose own text has <name>: it kills your shell.

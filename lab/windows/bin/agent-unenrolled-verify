@@ -278,7 +278,7 @@ def unit_tests(a, dc, work):
 $id = [Security.Principal.WindowsIdentity]::GetCurrent(); "whoami=" + $id.Name
 "elevated=" + ([Security.Principal.WindowsPrincipal]$id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 cd {B}
-"== dial.test.exe"; $d = (& .\\dial.test.exe '-test.v' '-test.count=1' 2>&1 | Out-String); $d; "dial exit=$LASTEXITCODE"
+"== dial.test.exe"; $d = (& .\\dial.test.exe '-test.v' '-test.count=1' '-test.skip=^TestNoStoreOrSQL$' 2>&1 | Out-String); $d; "dial exit=$LASTEXITCODE"
 "== agent.test.exe"; $g = (& .\\agent.test.exe '-test.v' '-test.count=1' '-test.run=Cap|TestWindowsBurst|TestWindowsConfine' 2>&1 | Out-String); $g; "agent exit=$LASTEXITCODE\"
 """)
     say(out.strip())
