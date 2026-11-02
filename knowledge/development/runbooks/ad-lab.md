@@ -133,6 +133,13 @@ tier (50k users) and a second DC (`2dc`) are not built yet — see §8.
   The 1600-user test takes ~5 min on a loaded host (`-short` skips it). Samba does not range `member`; the
   first-range `complete=false` it asserts is the handler's 1500 cap. DC-side ranging needs the Windows lab.
 
+- ChangeFeed RPC over a real session (T-1194): `go test -tags lab ./internal/connector/read -run TestLabFeed -v -timeout 10m`
+  (`internal/connector/read/feed_lab_test.go`). Covers prime, resume, the cookie pre-checks (CC-FEED-01/03/07-12), the
+  refusals and the tombstone mandatory set (CC-FEED-17/18), issuer-down is UNREACHABLE never STALE (CC-FEED-13, through a
+  TCP relay) and the stuck-DC bound (a relay that rewrites DirSync results to MoreData). Windows-only (not provable on
+  Samba): result code `0000203D` for a rejected cookie, MoreResults and mid-cycle cookies, non-admin tombstone reads,
+  Recycle Bin DELETED vs RECYCLED.
+
 ## 5. Entra lab (Microsoft 365 Developer sandbox) — T-0183
 
 **Dev-only.** This is the Entra ID P1+P2 sandbox from the Microsoft 365 Developer Program (D-0001): 25
