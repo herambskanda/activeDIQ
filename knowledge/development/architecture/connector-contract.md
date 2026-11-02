@@ -123,6 +123,17 @@ only if `Describe` reports a provider for the connection's kind. It returns:
   not `Describe`: it is slower, it streams findings that are access-restricted (DM-24.I5), and its
   result is the connector's write gate.
 
+**Served so far (T-1258):** `read.Server.Describe` answers the topology half only: `contract`,
+`provider_kind`, `directory_identity`, `described_at`, `naming_contexts[]` and `limits.max_page_size` /
+`max_value_range`. The partitions are read live (no cache) from the `crossRef` objects in
+`CN=Partitions` with the extended-DN control, so a domain this DC does not hold is listed with its GUID
+and SID; the kind is the configuration/schema NC by DN, a domain by `systemFlags & 2`, else
+application; a `crossRef` with `enabled = FALSE` is not listed; `functional_level` is set only for the
+DC's own domain (rootDSE `domainFunctionality`). `max_page_size` is the DC's `lDAPAdminLimits`
+`MaxPageSize` (the NTDS Settings `queryPolicyObject`, else `Default Query Policy`; AD's documented 1000
+when absent) capped at the session's own page ceiling of 1000, never 0. The operations, features, DC
+list, forest settings and health sections are still unset (CC-DESC-01, 03, 05, 06 stay open).
+
 `DescribeSchema` streams the schema the server-side filter builder needs for its allowlist
 (safe-primitives §3.3 rule 1): per attribute its syntax, value kind, single or multi, constructed,
 indexed, in the GC, linked (with link id), `secret`, and the raw `searchFlags` and `systemFlags`.
