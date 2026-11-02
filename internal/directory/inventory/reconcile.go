@@ -16,10 +16,12 @@ import (
 // lists every managed naming context by objectGUID alone and hands the listings here; a live row of those
 // naming contexts that no listing holds is marked deleted, in one transaction with its edges and the closure.
 
-// DefaultMassDeleteShare is the largest share of a connection's live objects one reconcile may mark deleted
-// (20 %). A listing that would remove more is refused as a whole: an empty or truncated listing, a wrong
-// scope or a DC that was reached but not authoritative looks exactly like this, and a customer's inventory
-// must not be emptied by it. Only the operator may decide that a real mass deletion happened.
+// DefaultMassDeleteShare is the largest share of the live objects one reconcile may mark deleted (20 %),
+// judged twice: over the whole forest, and over each naming context on its own (a small domain next to a large
+// one must not be emptied under the forest-wide share). A listing that would remove more is refused as a
+// whole: a truncated listing, a wrong scope, a delegated OU the account cannot list or a DC that was reached
+// but not authoritative looks exactly like this, and a customer's inventory must not be emptied by it. Only
+// the operator may decide that a real mass deletion happened.
 const DefaultMassDeleteShare = 0.20
 
 // reconcileChunk is how many GUIDs one write statement carries.
@@ -30,14 +32,22 @@ var ErrMassDelete = errors.New("inventory: mass delete refused")
 
 // MassDeleteError says how many live objects the reconcile would have removed. Nothing was written.
 type MassDeleteError struct {
-	// Gone is the number of live objects no listing held; Considered the live objects the reconcile looked at;
-	// Share is the limit in force (a fraction of Considered).
+	// NC is the naming context whose own share was exceeded (its GUID, never a DN); empty when the forest-wide
+	// share was.
+	NC GUID
+	// Gone is the number of live objects no listing held; Considered the live objects the reconcile looked at
+	// (of the naming context NC names, or of the whole forest); Share is the limit in force (a fraction of
+	// Considered).
 	Gone, Considered int
 	Share            float64
 }
 
 func (e *MassDeleteError) Error() string {
-	return fmt.Sprintf("inventory: mass delete refused: %d of %d live objects would be removed (limit %.0f %%)", e.Gone, e.Considered, e.Share*100)
+	where := "of the forest"
+	if e.NC != "" {
+		where = "of naming context " + string(e.NC)
+	}
+	return fmt.Sprintf("inventory: mass delete refused: %d of %d live objects %s would be removed (limit %.0f %%)", e.Gone, e.Considered, where, e.Share*100)
 }
 
 // Is makes errors.Is(err, ErrMassDelete) true.
@@ -51,10 +61,22 @@ type GUIDSet map[[16]byte]struct{}
 func (s GUIDSet) Add(g [16]byte) { s[g] = struct{}{} }
 
 // Listing is the complete list of the objects one naming context holds: every object of its subtree, the head
-// included. It must be complete; the caller never builds one from a search that did not finish.
+// included. It must be complete; the caller never builds one from a search that did not finish. A subtree
+// search of a head always returns the head, so a listing without it is empty, wrongly scoped or not served by
+// an authoritative DC, and is refused (ErrInvalid) however the rest looks.
 type Listing struct {
 	NC      GUID
 	Objects GUIDSet
+}
+
+// HoldsHead says the listing holds the object its naming context is named after.
+func (l Listing) HoldsHead() bool {
+	k, ok := guidKey(string(l.NC))
+	if !ok {
+		return false
+	}
+	_, held := l.Objects[k]
+	return held
 }
 
 // Reconciliation is one reconcile of one AD connection.
@@ -137,12 +159,20 @@ func (g Ingester) Reconcile(ctx context.Context, tx store.Tx, in Reconciliation)
 		return out, fmt.Errorf("%w: reconcile as-of is in the future", ErrInvalid)
 	}
 
-	gone, purge, err := in.diff(ctx, tx, &out)
+	perNC := ncCounts{considered: map[GUID]int{}, gone: map[GUID]int{}}
+	gone, purge, err := in.diff(ctx, tx, &out, perNC)
 	if err != nil {
 		return out, err
 	}
 	if float64(len(gone)) > share*float64(out.Considered) {
 		return Reconciled{}, &MassDeleteError{Gone: len(gone), Considered: out.Considered, Share: share}
+	}
+	// Each naming context on its own: a small domain wiped by a bad listing is under the forest-wide share.
+	for _, l := range in.Listings {
+		nc := l.NC
+		if float64(perNC.gone[nc]) > share*float64(perNC.considered[nc]) {
+			return Reconciled{}, &MassDeleteError{NC: nc, Gone: perNC.gone[nc], Considered: perNC.considered[nc], Share: share}
+		}
 	}
 
 	for _, ch := range chunks(gone, reconcileChunk) {
@@ -227,6 +257,10 @@ func (in Reconciliation) validate() (share float64, err error) {
 		if !validGUID(l.NC) || seen[l.NC] || l.Objects == nil {
 			return 0, ErrInvalid
 		}
+		// The ingester is the last gate: a listing that does not hold its own head is not authoritative.
+		if !l.HoldsHead() {
+			return 0, ErrInvalid
+		}
 		seen[l.NC] = true
 	}
 	return share, nil
@@ -236,7 +270,7 @@ func (in Reconciliation) validate() (share float64, err error) {
 // ones no listing holds (gone), the tombstones long unobserved and still absent (purge), and counts the live
 // ones a listing of another naming context holds (Relocated). It reads each row once, in a stream, and
 // keeps only the GUIDs it will write.
-func (in Reconciliation) diff(ctx context.Context, tx store.Tx, out *Reconciled) (gone, purge []string, err error) {
+func (in Reconciliation) diff(ctx context.Context, tx store.Tx, out *Reconciled, perNC ncCounts) (gone, purge []string, err error) {
 	ncs := make([]string, len(in.Listings))
 	for i, l := range in.Listings {
 		ncs[i] = string(l.NC)
@@ -276,9 +310,11 @@ func (in Reconciliation) diff(ctx context.Context, tx store.Tx, out *Reconciled)
 		switch {
 		case state == string(ObjLive):
 			out.Considered++
+			perNC.considered[GUID(nc)]++
 			switch {
 			case held == "":
 				gone = append(gone, obj)
+				perNC.gone[GUID(nc)]++
 			case held != nc:
 				out.Relocated++
 			}
@@ -291,6 +327,9 @@ func (in Reconciliation) diff(ctx context.Context, tx store.Tx, out *Reconciled)
 	}
 	return gone, purge, nil
 }
+
+// ncCounts are the live objects the diff looked at and the ones it found gone, per stored naming context.
+type ncCounts struct{ considered, gone map[GUID]int }
 
 // guidKey is the 16 bytes of a canonical text GUID.
 func guidKey(s string) (k [16]byte, ok bool) {

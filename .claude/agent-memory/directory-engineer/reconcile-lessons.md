@@ -11,3 +11,4 @@ metadata:
 - Mutation checks that proved the tests bite: drop the list-error return, drop the share test, diff per-NC instead of forest-wide — each fails exactly the AC test.
 - Depended-on branches (T-1189/1190/1191) were `done` but not merged to main: merge them into the ticket branch first.
 - Running sync + inventory tests together blows Go's default 10 min timeout; run separately with `-timeout 30m`.
+- Security review (T-1196): a forest-wide share alone lets a complete-but-empty listing wipe a small domain beside a big one — judge the share per stored NC too, and require the listing to hold its own NC head (fake `variant(d, n.n != d.nc)` = "head only"). Fixture: `bigSmall()` 3000+300.

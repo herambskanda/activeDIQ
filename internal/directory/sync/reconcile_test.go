@@ -2,6 +2,7 @@ package sync_test
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -320,9 +321,8 @@ func TestReconcileRefusesAMassDelete(t *testing.T) {
 				t.Fatalf("inventory changed: %v", got)
 			}
 		}
-		empty := func(d *fdom) *fdom {
-			return &fdom{nc: d.nc, count: 0, sid: d.sid, at: func(int) fnode { return fnode{} }}
-		}
+		// A directory that answers with nothing but the heads of its domains: everything else looks gone.
+		empty := func(d *fdom) *fdom { return variant(d, func(n fnode) bool { return n.n != d.nc }) }
 		var quarter []uint64
 		quarter = append(quarter, usersOf(fo, ncA, 0, 300)...) // 300 of 1198 considered: 25.04 %
 
@@ -331,7 +331,7 @@ func TestReconcileRefusesAMassDelete(t *testing.T) {
 			fake *fakeConnector
 			gone int
 		}{
-			{"100 percent: both listings empty", newFake(empty(fo.doms[0]), empty(fo.doms[1])), 1198},
+			{"100 percent: both listings hold only their heads", newFake(empty(fo.doms[0]), empty(fo.doms[1])), 1198},
 			{"25 percent", newFake(variant(fo.doms[0], without(quarter...)), fo.doms[1]), 300},
 		}
 		for _, tc := range cases {
@@ -353,19 +353,141 @@ func TestReconcileRefusesAMassDelete(t *testing.T) {
 		if _, err := r.run(context.Background()); err != nil {
 			t.Fatalf("a full cycle after a refusal: %v", err)
 		}
-		// A larger share is the operator's explicit choice; 300 of 1198 passes at 30 % and not at 25 %.
-		r.serve(cases[1].fake)
-		if _, err := r.reconcile(dsync.ReconcileOptions{MaxDeleteShare: 0.25}); !errors.Is(err, inventory.ErrMassDelete) {
-			t.Fatalf("25 %% limit: %v", err)
+		// A larger share is the operator's explicit choice. 140 of A's 649 (21.6 %, 11.7 % of the forest) is over
+		// the default limit of A alone, and passes at 25 %.
+		r.serve(newFake(variant(fo.doms[0], without(usersOf(fo, ncA, 0, 140)...)), fo.doms[1]))
+		var md *inventory.MassDeleteError
+		if _, err := r.reconcile(dsync.ReconcileOptions{}); !errors.As(err, &md) || md.NC != inventory.GUID(gtext(ncA)) || md.Gone != 140 || md.Considered != 649 {
+			t.Fatalf("default limit on one domain: %v", err)
 		}
-		rep, err := r.reconcile(dsync.ReconcileOptions{MaxDeleteShare: 0.30})
-		if err != nil || rep.Gone != 300 {
-			t.Fatalf("30 %% limit: %+v, %v", rep, err)
+		rep, err := r.reconcile(dsync.ReconcileOptions{MaxDeleteShare: 0.25})
+		if err != nil || rep.Gone != 140 {
+			t.Fatalf("25 %% limit: %+v, %v", rep, err)
 		}
 		if _, err := r.reconcile(dsync.ReconcileOptions{MaxDeleteShare: 1.5}); err == nil {
 			t.Fatal("a share above 1 was accepted")
 		}
 	})
+}
+
+// bigSmall is a forest of a large domain A (3000 objects) beside a small domain B (300): B alone is 9 % of the
+// forest, so the forest-wide share cannot protect it.
+func bigSmall() *forest {
+	f := newForest()
+	f.build(ncA, 1, 3000, 600)
+	f.build(ncB, 2, 300, 40)
+	return f
+}
+
+// TestReconcileProtectsASmallDomain: the mass-delete share is judged per naming context as well as over the
+// forest, and a listing must hold its own domain head. Domain B (300 of 3300 objects) is served as empty, as
+// head-only, without its head, and missing 25 % of itself: every one is refused whole and writes nothing. Losing
+// 15 % of B is accepted.
+func TestReconcileProtectsASmallDomain(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		fo := bigSmall()
+		a, b := fo.doms[0], fo.doms[1]
+		r := e.reconciling(t, newFake(fo.doms...), ncA, ncB)
+		if _, err := r.run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		const live = 3298 // both heads are not counted
+		unchanged := func() {
+			t.Helper()
+			if got := e.states(t); got["live"] != 3300 || len(got) != 1 {
+				t.Fatalf("inventory changed: %v", got)
+			}
+		}
+		edges := e.count(t, `SELECT count(*) FROM public.links WHERE connection_id = $1::uuid AND state = 'active'`, string(e.conn))
+
+		// Not authoritative: no head. Refused when listed, before any write.
+		for name, d := range map[string]*fdom{
+			"empty":        &fdom{nc: b.nc, count: 0, sid: b.sid, at: func(int) fnode { return fnode{} }},
+			"without head": variant(b, func(n fnode) bool { return n.n == b.nc }),
+		} {
+			r.serve(newFake(a, d))
+			rep, err := r.reconcile(dsync.ReconcileOptions{})
+			var de *dsync.DomainError
+			if !errors.Is(err, dsync.ErrIncomplete) || !errors.As(err, &de) || de.Phase != "list" || de.NC != inventory.GUID(gtext(ncB)) || rep.Completed {
+				t.Fatalf("%s: err = %v, report %+v", name, err, rep)
+			}
+			unchanged()
+		}
+
+		// Authoritative-looking but removing too much of B, though far less than 20 % of the forest.
+		for _, tc := range []struct {
+			name string
+			drop []uint64
+			gone int
+		}{
+			{"head only", usersOf(fo, ncB, 0, 293), 299}, // every other object
+			{"a quarter of B", usersOf(fo, ncB, 0, 75), 75},
+		} {
+			dropped := without(tc.drop...)
+			if tc.name == "head only" {
+				dropped = func(n fnode) bool { return n.n != b.nc }
+			}
+			r.serve(newFake(a, variant(b, dropped)))
+			rep, err := r.reconcile(dsync.ReconcileOptions{})
+			var md *inventory.MassDeleteError
+			if !errors.Is(err, inventory.ErrMassDelete) || !errors.As(err, &md) || md.NC != inventory.GUID(gtext(ncB)) || md.Gone != tc.gone || md.Considered != 299 {
+				t.Fatalf("%s: err = %v (%+v)", tc.name, err, md)
+			}
+			if tc.gone*5 > live {
+				t.Fatalf("%s: fixture: %d is over the forest-wide share, so it does not prove the per-domain one", tc.name, tc.gone)
+			}
+			if rep.Completed || rep.Gone != 0 {
+				t.Fatalf("%s: report = %+v", tc.name, rep)
+			}
+			if strings.Contains(err.Error(), "DC=") {
+				t.Fatalf("%s: the refusal names a DN: %v", tc.name, err)
+			}
+			unchanged()
+		}
+		if n := e.count(t, `SELECT count(*) FROM public.links WHERE connection_id = $1::uuid AND state = 'active'`, string(e.conn)); n != edges {
+			t.Fatalf("edges changed: %d != %d", n, edges)
+		}
+
+		// 44 of 299 (14.7 %) is a deletion the operator's directory plausibly made.
+		r.serve(newFake(a, variant(b, without(usersOf(fo, ncB, 100, 44)...))))
+		rep, err := r.reconcile(dsync.ReconcileOptions{})
+		if err != nil || !rep.Completed || rep.Gone != 44 {
+			t.Fatalf("15 %% of B: %+v, %v", rep, err)
+		}
+	})
+}
+
+// TestIngesterRefusesAListingWithoutItsHead: the ingester is the last gate and does not trust its caller.
+func TestIngesterRefusesAListingWithoutItsHead(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		fo := twoDomains()
+		r := e.reconciling(t, newFake(fo.doms...), ncA, ncB)
+		if _, err := r.run(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		set := inventory.GUIDSet{}
+		set.Add(guidKeyOf(gtext(ncA + 100)))
+		err := e.tx(e.a, func(ctx context.Context, tx store.Tx) error {
+			_, err := dsync.NewIngester().Reconcile(ctx, tx, inventory.Reconciliation{Connection: e.conn, AsOf: time.Now().Add(-time.Second), Now: time.Now(),
+				Listings: []inventory.Listing{{NC: inventory.GUID(gtext(ncA)), Objects: set}}})
+			return err
+		})
+		if !errors.Is(err, inventory.ErrInvalid) {
+			t.Fatalf("err = %v, want ErrInvalid", err)
+		}
+		if got := e.states(t); got["live"] != 1200 || len(got) != 1 {
+			t.Fatalf("rows changed: %v", got)
+		}
+	})
+}
+
+func guidKeyOf(s string) (k [16]byte) {
+	b, err := hex.DecodeString(strings.ReplaceAll(s, "-", ""))
+	if err != nil || len(b) != 16 {
+		panic("bad guid " + s)
+	}
+	copy(k[:], b)
+	return k
 }
 
 // groupForest is a small domain with nested groups: G has members u1, u2; H has members G and u3.

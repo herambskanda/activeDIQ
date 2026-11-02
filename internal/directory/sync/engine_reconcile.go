@@ -57,10 +57,13 @@ type ReconcileReport struct {
 //
 //   - A listing that ends without its completion marker, or fails, stops the whole reconcile before any
 //     write: an incomplete listing never deletes, and the pass is not complete (*DomainError, phase "list").
+//   - A listing that does not hold its own naming context head is not authoritative (a subtree search of the
+//     head always returns it): an empty listing is refused the same way, as ErrIncomplete in phase "list".
 //   - A diff that would delete more than the mass-delete share (opts.MaxDeleteShare, default 20 %) of the live
-//     objects, an empty listing included, deletes nothing and returns inventory.ErrMassDelete. The next cycle
-//     is not blocked; it simply meets the same refusal until the directory and inventory agree again or the
-//     operator removes what is really gone.
+//     objects of the forest, or of any one naming context, deletes nothing and returns
+//     inventory.ErrMassDelete (the error names the naming context by GUID). The next cycle is not blocked; it
+//     simply meets the same refusal until the directory and inventory agree again or the operator removes
+//     what is really gone.
 //   - A connection that is not active, a paused partition or a lease behind the stored fencing token stops it
 //     before the connector is called, and again before the write.
 //
@@ -161,7 +164,8 @@ func (e *Engine) reconcileDone(rep ReconcileReport, err error) (ReconcileReport,
 
 // list streams the domain asking for the objectGUID alone and returns the set of GUIDs. A stream that ends
 // without its completion marker is ErrIncomplete, and an entry without a usable GUID is ErrProtocol: either
-// would make a live object look gone, so the listing is refused whole.
+// would make a live object look gone, so the listing is refused whole. So is a listing that does not hold the
+// head of its own naming context: a subtree search of the head always returns it.
 func (r *readJob) list(ctx context.Context) (inventory.GUIDSet, error) {
 	set := inventory.GUIDSet{}
 	_, err := r.stream(ctx, searchSpec{attrs: []string{"objectGUID"}, pageSize: r.pageSize}, func(en *connectorv1.DirectoryEntry) error {
@@ -179,6 +183,9 @@ func (r *readJob) list(ctx context.Context) (inventory.GUIDSet, error) {
 	})
 	if err != nil {
 		return nil, err
+	}
+	if !(inventory.Listing{NC: r.nc, Objects: set}).HoldsHead() {
+		return nil, fmt.Errorf("%w: the listing does not hold its naming context head", ErrIncomplete)
 	}
 	return set, nil
 }
