@@ -18,3 +18,4 @@ metadata:
 - Test dirs: t.TempDir() subdirs are group-writable under umask 002 and fail the parent check; chmod the parent 0700 in the test (tempParent helper).
 - A new package linked into cmd/agent needs a line in tools/fitness/agenthost/closure-allow.txt (A4) with what it can reach.
 - Pre-existing red: fitness-safeprim (3 hits in directory/inventory), compose/server tests time out here. Not ours.
+- Held Windows dir handle: share READ|WRITE, never DELETE (rename-into-dir via MoveFileEx opens the target dir with write access [UNVERIFIED on NTFS]). Re-check GetFinalPathNameByHandle(held)==saved path before/after each op to catch ancestor renames.
