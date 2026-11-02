@@ -68,7 +68,7 @@ test('GET /api/state returns the whole payload in the documented shape', async (
     const s = await res.json();
     assert.deepEqual(Object.keys(s).sort(), [
       'actions', 'company', 'control', 'decisions', 'digest', 'dispatcher', 'epics', 'events', 'feedback', 'generated',
-      'library', 'milestones', 'product', 'runs', 'sessions', 'tickets',
+      'library', 'merge_queue', 'milestones', 'product', 'runs', 'sessions', 'tickets',
     ]);
     assert.equal(s.product, 'activeDIQ');
     assert.deepEqual(s.control, { paused: false, reason: null, by: null, ts: null });

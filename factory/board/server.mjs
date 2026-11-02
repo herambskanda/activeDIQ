@@ -5,7 +5,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import {
-  appendEvent, listEntities, listRecentRuns, pidAlive, readControl, readJson, readRecentEvents, readTail,
+  appendEvent, listEntities, listRecentRuns, pidAlive, readControl, readDispatcherState, readJson, readRecentEvents, readTail,
   reloadConfig, requireEntity, setControl, writeJsonAtomic,
 } from '../lib/store.mjs';
 import { FactoryError, NotFoundError } from '../lib/errors.mjs';
@@ -14,6 +14,7 @@ import { completeAction, createFeedback, sortById } from '../lib/items.mjs';
 import { doneDependencies, indexById, summarizeTicket } from '../lib/tickets.mjs';
 import { unmergedBranches } from '../lib/worktree.mjs';
 import { dispatcherInfo, latestDigest } from '../lib/status.mjs';
+import { buildMergeQueue } from '../lib/mergequeue.mjs';
 import { listHandoffs } from '../lib/handoffs.mjs';
 import { FILE_TYPES, createLibraryLister, resolveLibraryPath } from '../lib/library.mjs';
 import { readableLines } from '../lib/runlog.mjs';
@@ -98,12 +99,14 @@ async function buildState(ctx, listLibrary) {
   const runs = listRecentRuns(ctx, 100);
   const all = sortById(listEntities(ctx, 'tickets'));
   const merging = await waitingOnMerge(ctx, all);
+  const dispatcher = dispatcherInfo(ctx);
   return {
     generated: now.toISOString(),
     product: ctx.config.product,
     company: ctx.config.company,
     control: readControl(ctx),
-    dispatcher: dispatcherInfo(ctx),
+    dispatcher,
+    merge_queue: buildMergeQueue(ctx, readDispatcherState(ctx), dispatcher.alive),
     milestones: sortById(listEntities(ctx, 'milestones')),
     epics: sortById(listEntities(ctx, 'epics')),
     tickets: all.map((t) => summarizeTicket(t, merging.get(t.id) ?? [])),

@@ -688,6 +688,15 @@ function computeStatus() {
 /* ============================================================
    Chrome: pill, updated-ago, pause, tabs, banner, title
    ============================================================ */
+/** "Merge queue: 3 waiting · in gate T-0696 · last merge 2h ago" (T-1296); '' when the server predates it. */
+function mergeQueueText(q) {
+  if (!q) return '';
+  const parts = [`Merge queue: ${q.waiting.length} waiting`];
+  if (q.in_gate) parts.push(`in gate ${(q.in_gate.ids?.length ? q.in_gate.ids : [q.in_gate.id]).join(', ')}`);
+  const last = ts(q.last_merged_at);
+  parts.push(last == null ? 'no merge yet' : `last merge ${fmtRel(last)}`);
+  return parts.join(' · ');
+}
 function updateChrome() {
   const st = computeStatus();
   const pill = $('#pill');
@@ -695,6 +704,10 @@ function updateChrome() {
   setText($('#pill-label'), st.label);
   const upd = S.fetchedAt ? Math.floor((Date.now() - S.fetchedAt) / 1000) : null;
   setText($('#updated'), upd == null ? '' : `updated ${upd < 60 ? `${upd}s` : `${Math.floor(upd / 60)}m`} ago`);
+  const mq = $('#merge-queue');
+  const mqText = S.data ? mergeQueueText(D().merge_queue) : '';
+  mq.hidden = !mqText;
+  setText(mq, mqText);
   const pb = $('#btn-pause');
   const paused = !!D()?.control.paused;
   pb.disabled = !S.data;

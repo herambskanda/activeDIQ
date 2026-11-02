@@ -201,19 +201,17 @@ test('the dispatcher reopens a ticket the gate refuses, leaves main alone, and m
     const mainBefore = git(f.root, 'rev-parse', 'main');
     const d = new Dispatcher(f.ctx);
     d.shared = false;
-    await d.mergePass();
+    await d.mergePass(); // T-1297: both go in one train; the refusal splits it, so only `bad` is reopened
     await d.gateIdle();
-    let out = Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) => [t.id, t]));
+    const out = Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) => [t.id, t]));
     assert.deepEqual([out[bad.id].status, out[bad.id].stage_role], ['in_progress', 'backend-engineer']);
     assert.match(out[bad.id].notes.at(-1).text, /pre-merge gate refused the merge[\s\S]*CloudThing/);
-    assert.equal(git(f.root, 'rev-parse', 'main'), mainBefore, 'nothing merged');
+    assert.equal(out[bad.id].links.merged, undefined, 'the refused ticket did not merge');
     assert.equal(git(f.root, 'status', '--porcelain', '--untracked-files=no'), '');
-    await d.mergePass();
-    await d.gateIdle();
-    out = Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) => [t.id, t]));
     assert.ok(out[ok.id].links.merged, 'the clean ticket merged');
     assert.match(readRecentEvents(f.ctx, 50).map((e) => e.text).join('\n'), /pre-merge gate passed \(ratchet\)/);
     assert.notEqual(git(f.root, 'rev-parse', 'main'), mainBefore);
+    assert.equal(git(f.root, 'log', '--merges', '--format=%s', `${mainBefore}..main`).split('\n').length, 1, 'one merge commit, for the clean ticket only');
   } finally { f.cleanup(); }
 });
 
