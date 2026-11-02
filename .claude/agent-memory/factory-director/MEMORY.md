@@ -25,3 +25,4 @@
 - [Search ADR review checks](search-adr-review-checks.md) — fold step order vs own examples; LIMIT≠bound unless index-ordered (GIN can't); cap before scope leaks
 - [Main-green umbrella is a bad cut](triage-main-green-umbrella.md) — 2nd 'new causes outside scope' block → re-scope ACs to premerge ratchet; cancel dup fixes
 - [Batch CEO hand-steps into one access offer](triage-batch-ceo-hand-steps.md) — ≥3 actions with the same hand-step → one scoped-authorisation decision (D-0022)
+- [RLS index/table ADR checks](rls-index-adr-review-checks.md) — run spec DDL on 16/18; no-read proofs count removed rows; float4 bounds; backfill under FORCE
