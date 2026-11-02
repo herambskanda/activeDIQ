@@ -692,7 +692,7 @@ function computeStatus() {
 function mergeQueueText(q) {
   if (!q) return '';
   const parts = [`Merge queue: ${q.waiting.length} waiting`];
-  if (q.in_gate) parts.push(`in gate ${q.in_gate.id}`);
+  if (q.in_gate) parts.push(`in gate ${(q.in_gate.ids?.length ? q.in_gate.ids : [q.in_gate.id]).join(', ')}`);
   const last = ts(q.last_merged_at);
   parts.push(last == null ? 'no merge yet' : `last merge ${fmtRel(last)}`);
   return parts.join(' · ');

@@ -50,7 +50,7 @@ test('mergePass sends waiting dependencies first, then P0 first, then the earlie
     const picked = [];
     const d = new Dispatcher(f.ctx);
     d.shared = false;
-    d.runGate = async (ctx, ticket) => { picked.push(ticket.id); return { status: 'pass', mode: 'stub', summary: 'stubbed' }; };
+    d.runGate = async (ctx, tickets) => { picked.push(...tickets.map((t) => t.id)); return { status: 'pass', mode: 'stub', summary: 'stubbed' }; };
     for (let i = 0; i < 5; i++) { await d.mergePass(); await d.gateIdle(); }
 
     assert.deepEqual(picked, [awaited.id, p0early.id, p0late.id, p2.id, p3old.id]);
@@ -82,7 +82,7 @@ test('buildMergeQueue lists waiting in gate order, the gate in flight and the la
     setTicketLinks(f.ctx, merged.id, { worktree: null, merged: '2026-11-01T12:00:00.000Z' });
     const state = { merge_gate: { ticket: gated.id, started_at: '2026-11-01T12:30:00.000Z' } };
     assert.deepEqual(buildMergeQueue(f.ctx, state, true), {
-      waiting: [hi.id, lo.id], in_gate: { id: gated.id, started_at: '2026-11-01T12:30:00.000Z' }, last_merged_at: '2026-11-01T12:00:00.000Z',
+      waiting: [hi.id, lo.id], in_gate: { id: gated.id, ids: [gated.id], started_at: '2026-11-01T12:30:00.000Z' }, last_merged_at: '2026-11-01T12:00:00.000Z',
     });
     const dead = buildMergeQueue(f.ctx, state, false);
     assert.equal(dead.in_gate, null, 'a gate record from a dead dispatcher is not shown');
@@ -121,7 +121,7 @@ test('GET /api/state carries merge_queue', async () => {
     f.ctx.now = () => new Date();
     updateDispatcherState(f.ctx, { pid: process.pid, heartbeat: new Date().toISOString(), merge_gate: { ticket: gated.id, started_at: '2026-11-01T12:30:00.000Z' } });
     const s = await (await fetch(`http://127.0.0.1:${port}/api/state`)).json();
-    assert.deepEqual(s.merge_queue, { waiting: [hi.id, lo.id], in_gate: { id: gated.id, started_at: '2026-11-01T12:30:00.000Z' }, last_merged_at: null });
+    assert.deepEqual(s.merge_queue, { waiting: [hi.id, lo.id], in_gate: { id: gated.id, ids: [gated.id], started_at: '2026-11-01T12:30:00.000Z' }, last_merged_at: null });
   } finally {
     server.closeAllConnections();
     await new Promise((r) => server.close(r));
