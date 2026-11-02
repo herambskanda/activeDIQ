@@ -206,7 +206,7 @@ func TestLabDirSyncLifecycle(t *testing.T) {
 	check := func(label string) {
 		dnStr, display, deleted, found := adminState(t, adm, ug)
 		o := inv[ug]
-		if !found || o == nil || !eqDN(o.dn, dnStr) || o.display != display || (o.state == StateDeleted) != deleted {
+		if !found || o == nil || !eqDN(o.dn, dnStr) || o.display != display || (o.state != StateLive) != deleted {
 			t.Errorf("%s: inventory %+v does not match the directory (%q %q deleted=%v found=%v)", label, o, dnStr, display, deleted, found)
 		}
 	}
@@ -234,7 +234,9 @@ func TestLabDirSyncLifecycle(t *testing.T) {
 	if err := adm.Del(ldap.NewDelRequest(u, nil)); err != nil {
 		t.Fatal(err)
 	}
-	c5, del := step("delete", c4, StateDeleted, nil)
+	// Samba (Recycle Bin off) writes isDeleted=TRUE and isRecycled=TRUE on every tombstone, so a delete
+	// arrives as RECYCLED: never restorable. The restorable DELETED branch is covered by unit fixtures.
+	c5, del := step("delete", c4, StateRecycled, nil)
 	if !strings.Contains(del.DN, "CN=Deleted Objects") || !strings.Contains(strings.ToLower(del.DN), strings.ToLower(ug.String())) {
 		t.Errorf("tombstone DN %q lacks the Deleted Objects container or the GUID", del.DN)
 	}
@@ -252,7 +254,7 @@ func TestLabDirSyncLifecycle(t *testing.T) {
 	// All of it in one resume from the prime: the changes collapse to the final state.
 	all, _ := feedCycle(t, s, prime.Cookie, "displayName")
 	collapsed, ok := changeOf(all, ug)
-	if !ok || collapsed.State != StateDeleted || !strings.Contains(collapsed.DN, "CN=Deleted Objects") {
+	if !ok || collapsed.State != StateRecycled || !strings.Contains(collapsed.DN, "CN=Deleted Objects") {
 		t.Errorf("collapsed: %+v ok=%v", collapsed, ok)
 	}
 
@@ -290,7 +292,7 @@ func TestLabDirSyncNonAdminDoesNotSeeTombstones(t *testing.T) {
 	cs, _ = feedCycle(t, s, c1.Cookie)
 	c, ok := changeOf(cs, ug)
 	t.Logf("CC-FEED-20 (Samba): non-administrator sees the tombstone = %v", ok)
-	if ok && c.State != StateDeleted {
+	if ok && c.State == StateLive {
 		t.Errorf("a delete arrived with state %d", c.State)
 	}
 }

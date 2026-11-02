@@ -26,8 +26,9 @@ type ObjectState uint8
 
 const (
 	StateLive     ObjectState = iota + 1 // isDeleted absent or FALSE
-	StateDeleted                         // isDeleted = TRUE: a tombstone or a Recycle Bin object
-	StateRecycled                        // isRecycled = TRUE: past the deleted-object lifetime
+	StateDeleted                         // isDeleted = TRUE, isRecycled not TRUE: restorable only with the Recycle Bin on
+	StateRecycled                        // isRecycled = TRUE (wins over isDeleted): never restorable. Also what a tombstone
+	// looks like when the Recycle Bin is off (Samba sets both flags); the decoder cannot tell the two apart (T-1270).
 )
 
 // ChangeOp is how an attribute changed.
