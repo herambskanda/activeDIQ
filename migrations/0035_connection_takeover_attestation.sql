@@ -47,6 +47,7 @@ CREATE TRIGGER connections_first_attested_guard BEFORE UPDATE ON public.connecti
   FOR EACH ROW EXECUTE FUNCTION public.connections_first_attested_guard();
 ALTER TABLE public.connections ENABLE ALWAYS TRIGGER connections_first_attested_guard;
 
+-- write-class: connection_attestation_attempts system
 CREATE TABLE public.connection_attestation_attempts (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

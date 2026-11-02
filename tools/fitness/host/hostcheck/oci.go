@@ -324,10 +324,15 @@ func readSetupSecret(ctx context.Context, c *container) (*tar.Header, string, er
 	return h, strings.TrimSpace(string(data)), err
 }
 
-// claimSetup posts the secret to the claim route over verified TLS and returns the HTTP status.
+// probeOwner is the first-owner detail block every claim carries. The route validates it before it looks at
+// the secret (a 400 never confirms the secret), so a claim without a valid owner proves nothing (T-1161).
+const probeOwner = `{"displayName":"Host Proof Owner","email":"owner@host-proof.invalid"}`
+
+// claimSetup posts the secret and a valid first owner to the claim route over verified TLS and returns the
+// HTTP status.
 func claimSetup(addr string, roots *x509.CertPool, secret string) (int, error) {
 	cl := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}}
-	body := strings.NewReader(`{"secret":` + strconv.Quote(secret) + `}`)
+	body := strings.NewReader(`{"secret":` + strconv.Quote(secret) + `,"owner":` + probeOwner + `}`)
 	req, _ := http.NewRequest(http.MethodPost, "https://"+addr+"/api/v1/setup/claim", body)
 	req.Header.Set("Content-Type", "application/json")
 	r, err := cl.Do(req)
@@ -356,7 +361,7 @@ func setupProbe(ctx context.Context, c *container, addr string, roots *x509.Cert
 		return nil, err
 	}
 	if first != http.StatusNoContent && first != http.StatusUnauthorized || again != http.StatusNoContent && again != http.StatusUnauthorized {
-		return nil, fmt.Errorf("unexpected claim statuses %d then %d", first, again)
+		return nil, fmt.Errorf("unexpected claim statuses %d then %d\nserver log:\n%s", first, again, combinedLogs(ctx, c))
 	}
 	su.UsedOnce = first == http.StatusNoContent
 	su.AcceptedAgain = again == http.StatusNoContent

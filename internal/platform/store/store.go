@@ -269,6 +269,19 @@ func (d *DB) Transport() TransportStatus {
 	return d.transport
 }
 
+// Ping checks that the database answers on the main pool. It opens no transaction and touches no table, so
+// it needs no tenant and no platform-scope entry; the readiness probe (AN-1) is its caller. The error text
+// is for the log, never for a client.
+func (d *DB) Ping(ctx context.Context) error {
+	if d == nil || d.pool == nil {
+		return ErrClosed
+	}
+	if err := d.pool.Ping(ctx); err != nil {
+		return fmt.Errorf("store: ping: %w", err)
+	}
+	return nil
+}
+
 // Close releases the pool. Entry points called afterwards fail.
 func (d *DB) Close() {
 	if d != nil && d.pool != nil {

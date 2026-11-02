@@ -40,6 +40,11 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
 
 - **`gofmt`**: run `make fmt`.
 - **`go mod tidy -diff`**: run `go mod tidy` and commit `go.mod`/`go.sum`.
+- **`gen-modules-check`** (T-0997; the table ownership map): a new migration table needs a `-- write-class: <table> config|system` line
+  directly above its `CREATE TABLE` (`config`: a principal changes it, so writes are Actions that take a `step.Step`; `system`: bookkeeping its
+  owner writes, the closed list in ADR-0005 rule 10; a partition takes its parent's class). The owner key is the migration's file-name
+  segment. Then run `make gen-modules` and commit `owners.gen.tsv`; never edit it. A `DROP TABLE` or rename needs `tools/gen/modules`
+  extended first (the generator refuses it rather than guess).
 - **`gen-api-check`** (stale or missing generated file): run `make gen-api` and commit the result; never edit a `*.gen.*` file.
   **`lint-api`**: vacuum findings on the bundled contract. Both: `runbooks/api-contract-workflow.md`.
 - **`fuzz-saml`** (T-0490; `tools/ci/fuzz-target.sh`): `FuzzSAMLComplete` found a forged or replayed login. Go writes the crasher to
@@ -153,12 +158,20 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   - U1: remove the module. Ported UEM or PatchIQ code is copied with its source named in the commit
     and placed under `internal/platform/`; it is never imported or `replace`d.
   - U2: the platform root imports nothing from the directory domain, connector, modules or compose.
-  - Activation (`activation table P2: ... not implemented`): a subject has landed (an installer
+  - Activation (`activation table P2-oci: ... not implemented`): a subject has landed (an installer
     directory, the first connector package, the updater, the agent protos) and its check does not
     exist yet. Implement the check and register its `command` in
     `tools/fitness/profiles/manifest.json`; never delete the row. A new subject path is a change to
     the row's `paths` and is reviewed like a rule change.
-  - Lab runs the table cannot do yet (P2 on a `windows-2025` runner, P3 against the Samba lab, P6
+  - Deferral (`activation table P2-oci: deferral ...`, ADR-0002 erratum E-3): a row may carry
+    `"deferral": {"ticket", "expires", "adr"}`, which prints `ACTIVE, DEFERRED (T-NNNN until
+    YYYY-MM-DD)` instead of failing. It is valid only while the row has no `command`, the ticket is
+    `T-` and four or more digits, the expiry (UTC date) is today or later, and the "Activation
+    deferrals" table of the named ADR (in `decisionsDir`, ratified or accepted) lists the same
+    check, ticket and expiry. Editing the date in the manifest extends nothing: extend by an
+    amendment line and a new table row in the ADR. When the check lands, add its `command` **and
+    remove the deferral** in the same change, or the job calls the deferral stale.
+  - Lab runs the table cannot do yet (P2-msi on a `windows-2025` runner, P3 against the Samba lab, P6
     with egress denied) are the registered commands' job; the lab and runner must be documented
     in a runbook by the ticket that registers them.
 - **`fitness-modules`**: the message names the file, line and blueprint rule. Fix the import. Do not
@@ -168,6 +181,15 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
   with `authz.ObjectIDFromOctets` (raw objectGUID bytes) or `authz.ParseObjectID` (text); `guid.GUID`
   is also `[16]byte` but its byte order differs. Type errors in other packages are printed as
   warnings (the build gate owns them). Proof: `go test ./tools/fitness/objectid` (positive and negative fixtures).
+- **`fitness-sso`** (T-0211, console-sso.md §13): FIT-SSO-1 and FIT-SSO-2. Output lines name the file and
+  line (`internal/platform/x/y.go:3: imports github.com/russellhaering/goxmldsig; only
+  internal/platform/authn/sso/saml may`), the go.mod line, or the check number (`saml: SAML-7 is cited by
+  no corpus record`). Fixes: move the parsing into `sso/saml` or `sso/oidc` (never widen the fence, which
+  changes only by amending the spec); raise the module in `go.mod`; add a corpus record that cites the
+  number (records are `sso/testdata/corpus/{saml,oidc}/<id>.json`, spec §10.1) and make sure `TestCorpus`
+  in that package runs it as a subtest named `<id>`. The check numbers are read from the spec's tables, so
+  adding a check to §4 or §5 turns this red until a record cites it. A deleted record, or one whose subtest
+  is missing or skipped, fails the same way for OIDC (T-0911) as for SAML. Proof: `go test ./tools/fitness/sso` and the `fitness-sso` cases of `make ci-proof`.
 - **`fitness-grantbootstrap`** (T-0808): fails on any identifier or string mention of `GrantBootstrap`
   outside `internal/compose/server/localaccount.go`, the method declaration in
   `internal/platform/rbac/grants.go` and `_test.go` files, as `file:line:col`. `GrantBootstrap`
@@ -302,8 +324,10 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
 - **Proof it fails:** `hostcheck_test.go` has one violating fixture per case (and asserts no other case trips);
   `make ci-proof` runs `host evaluate` on a compliant observation and on eight mutated ones.
 - **Setup secret (T-0636):** on linux-oci `HOST-SETUP-SECRET-SINGLE-USE` is active: the harness reads the
-  secret file's tar header (mode/owner), POSTs it twice to `/api/v1/setup/claim` over verified TLS (first 204,
-  second must be 401), and boots a second server with `ACTIVEDIQ_SETUP_TTL=2s` to present an expired secret
+  secret file's tar header (mode/owner), POSTs it twice to `/api/v1/setup/claim` over verified TLS with a valid
+  `owner{displayName,email}` block (the route validates the owner before the secret, so a body without one gets a
+  400 that proves nothing, T-1161; `claim_test.go` judges the body with the server's own validator) (first 204,
+  second must be 401; an unexpected status prints the server log), and boots a second server with `ACTIVEDIQ_SETUP_TTL=2s` to present an expired secret
   (must be 401). The harness also provisions the KEK (`kek init` into a volume) because the server has no
   default custody model; without it no boot gets past start-up. Windows stays INACTIVE for this case until the
   MSI exists (T-0635) and the lab collector grows the same probe.
@@ -334,3 +358,58 @@ A core MSI with no agent in it is still judged by rules 2-4 and the LocalSystem/
 **If it fails.** The line names the rule and the file. A4: the import path is in the message; the agent has no directory or network-identity client, so remove the import, never the ban. P/F1: the test name is printed; fix the verifier or the bound, never the test. A missing test means a rename: P1-P8 are found by the prefixes `TestP1`…`TestP8`, `TestF1`, `FuzzF1`. A `FuzzF1` crasher is written to `internal/platform/agentpolicy/testdata/fuzz/`: commit it as a regression seed. `make fitness-agent-host AGENT_POLICY_FUZZ_TIME=2s` for a quick local run.
 
 **Not covered here (lab or other tickets).** The contract §3 bound "event_ids in the compiled-in catalogue" and the local-ceiling clamp are not enforced by `agentpolicy.Validate` (they need the module catalogue and the host's local config) and so are not in F1: owning ticket T-0555 (agent host and addc module). ADR-0006 A2/A3 (token privilege refusal, channel ACE read, write-denied outside the data directory) run in the Windows lab; F2/F3 (hostile in-bounds policy has no side effect beyond verdicts, applying a policy writes the local entry) need the agent host and rule engine; S1 is T-0556's ingest test.
+
+## The pre-merge gate (T-0941)
+
+**What it is.** The dispatcher builds `main` + `factory/T-NNNN` in a scratch worktree
+(`<worktree_root>/.premerge/`) and runs `dispatcher.pre_merge.argv` (default `make -k ci`) there before
+it merges. Settings: `factory/config.json` `dispatcher.pre_merge` (`enabled`, `argv`,
+`timeout_minutes`, `baseline_reuse_roots`). Logs and the baseline cache: `factory/state/premerge/`.
+
+**The baseline is reused, not re-run per `main` commit (T-1378).** When the merge result is red, the gate
+needs `make -k ci` findings of `main`. It takes them from a cached run (`baseline-*.json`) on the same
+tree, or on a tree that differs only in files under `knowledge/`, `.claude/`, `factory/`, `garage/` that
+no gate file (tracked, outside those directories, not `*.md`) mentions as a path (`readSurface` in
+`factory/lib/premerge.mjs`, computed from the tree each time). So memory, report and digest commits cost
+nothing, while a commit to the ADRs, the licence register, the architecture map or the runbooks the
+fitness tools name does re-run it. The gate summary (event, `factory premerge` output) states which:
+`baseline: reused the cached run …` or `baseline: ran a fresh baseline …`. A passing gate stores its
+merge-result run as the baseline of the tree it will become, so the second half of a split train runs no
+baseline. If a fresh baseline times out, the nearest cached run stands in: the train can pass if all its
+findings are in it, otherwise the gate stops with a message naming the findings. Never raise
+`timeout_minutes` as the fix for that; find what is loading the host (`uptime`) first.
+Rules and the comparison: `standards/ci-gates.md` "The pre-merge gate". It needs what `make ci` needs
+(Docker for the container jobs, Node, network once for toolchains).
+
+**See what it would do:** `factory/bin/factory premerge T-NNNN` (exit 0 pass, 1 refused or conflict).
+`factory/bin/factory premerge T-NNNN -- make fitness-profiles` runs one job instead.
+
+**A ticket was reopened by the gate.** The note lists the new findings. Fix them in code; merge `main`
+into the branch first, because the findings are judged against current `main`. Never edit the
+check, add `continue-on-error` or delete a baseline file to get through.
+
+**Reopened with "Renumber to NNNN" (T-1067).** Another branch landed the same migration number
+first. Merge `main` into the branch, run the `git mv` the note gives, fix references to the old
+number (tests, comments, docs), run `go test ./migrations/ -run TestMigrationNumbersAreUniqueAndContiguous`,
+advance again. Settings: `dispatcher.pre_merge.numbering` (`dir`, `argv`, `timeout_seconds`); remove the key
+to turn the check off (do not, without the director).
+
+**Everything is refused for the same unrelated reason.** `main` is green and a job is red in the
+merge result with no change of ours (an expired token, a tool missing on the dispatcher host): the
+refusal names `FAILED <target>`. Fix the environment; the gate fails closed on purpose. To stop the
+gate temporarily set `dispatcher.pre_merge.enabled` to `false`, say why in an event, and re-enable it
+as soon as the cause is fixed; the director owns that call.
+
+**A red job that is not ratcheted.** Findings are recognised by shape (the table in
+`standards/ci-gates.md`, Pre-merge gate). If a job prints violations in another shape, new ones in
+it pass while it is red on `main`. Print one self-contained line per violation, add a sample of it
+to `JOBS` in `factory/test/premerge.test.mjs` (the test fails for a `make fitness` job without one)
+and, for a new shape, extend `findingKey` in `factory/lib/premerge.mjs`. Check a log by hand:
+`node -e "import('./factory/lib/premerge.mjs').then(m=>console.log(m.extractFindings(require('fs').readFileSync('job.log','utf8'))))"`
+prints the findings it counts; fewer than the job's own violation count means a shape is missed.
+
+**Merges fail with "the main checkout is mid-merge".** A previous merge left `MERGE_HEAD` in the main
+checkout (a failed `merge --abort`, for example "Unable to write index"). `mergeTicket` now reports
+that as an error and retries, instead of calling it the next ticket's conflict and reopening it
+(T-0941 was reopened twice that way). Finish or abort that merge by hand (`git -C <root> merge --abort`
+once its index is writable); every pending merge then proceeds on the next pass.

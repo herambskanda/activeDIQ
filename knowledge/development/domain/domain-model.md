@@ -1,11 +1,11 @@
 ---
 title: "Domain model v0"
 date: 2026-10-02
-updated: 2026-10-27
+updated: 2026-10-31
 status: review
 owner: heramb
 author: solution-architect
-ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168, T-0129, T-0191, T-0078, T-0107)
+ticket: T-0006 (amended by T-0061, T-0145, T-0155, T-0168, T-0129, T-0191, T-0078, T-0107, T-0874, T-1016)
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), ADR-0003 (ratified), blueprint v0 (review), safe-primitives.md (review), threat-model.md v0.2 (review; its TM-D decisions bind, TM §0)
 reviewed_by: ad-expert (AD/Entra semantics, see §12)
 ---
@@ -528,11 +528,15 @@ group, computer, contact, OU, container, gMSA, foreign security principal, or an
 carried as data. **Replaces (ME):** the objects behind every Management tab (ADM-008…062), AD
 Explorer (ADM-004) and the M365 objects (ADM-160…164).
 **Key attributes:** `object_guid` · `connection_id` · `nc_guid` · `object_class` (most specific
-structural class) and `kind` · `parent_guid` · `ancestry` (GUID path to the NC head) · `dn` and
+structural class) and `kind` · `parent_guid` · `ancestry` (GUID path to the NC head, nearest parent first) ·
+`ancestry_complete` (the chain is known to be whole and current; derived by the writer, never taken
+from the producer; false is out of every ancestry scope; an Entra row is always false) · `dn` and
 `rdn` (display snapshot) · `sid` (security principals) · `sam_account_name` · `upn` ·
 `display_name` · `enabled` (from `userAccountControl`) · time-dependent state *inputs*:
-`lockout_time`, `pwd_last_set`, `account_expires`, and the effective password policy (domain
-policy or PSO) · `tier0` (definition: T-0007) · typed values of the synced attribute set ·
+`lockout_time`, `pwd_last_set`, `account_expires`, the decoded `userAccountControl` flags,
+`primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read` and the effective password
+policy (domain policy or PSO), all listed in "Report-engine inputs" below · `tier0` (definition:
+T-0007) · typed values of the synced attribute set ·
 `when_created` · `when_changed` · `observed_at` + `observed_dsa` · `cloud_seen_at` (Entra users
 and groups only, I9) · `state`.
 **Invariants.**
@@ -554,7 +558,18 @@ and groups only, I9) · `state`.
   `locked_out`, `password_expired`, `password_expires_at` and `account_expired` are computed at
   read time from the stored inputs and the effective policy. A decision that acts on them (unlock,
   reset, a leaver policy) re-reads `msDS-User-Account-Control-Computed` and
-  `msDS-UserPasswordExpiryTimeComputed` live at Plan `[LAB: Windows]`.
+  `msDS-UserPasswordExpiryTimeComputed` live at Plan `[LAB: Windows]`. The rules, with the
+  corrections to reports-2a §6.4 (lockout is inclusive, `pwdLastSet = 0` sets the DC's own
+  password-expired bit, only `MinInt64` is documented as "never" for a max age), are R1–R7 of
+  [account-state-lab-rows.md](account-state-lab-rows.md) §1, and each has a lab row.
+- I5b **Report-engine inputs are tri-state.** Each time input and each policy value is *present*,
+  *absent or 0* or *not read*. `inputs_read` (bit 1 `lockoutTime`, 2 `pwdLastSet`, 4 `accountExpires`,
+  8 `lastLogonTimestamp`) records what the connector read. A row whose bit is clear, a PSO set that
+  was never read, or a PSO the user resolves to with no stored row yields **Unknown (input missing)**.
+  The engine never falls back to the domain policy and never answers "not locked" or "not expired"
+  for an input it did not read. An unreadable Password Settings Container returns zero entries and no
+  error over LDAP, so the policy reader must prove it can read the container; it must not infer
+  "no PSOs" from zero rows (LAB-PS-12).
 - I6 AD and Entra objects are never merged. A hybrid user is two rows joined by a Correlation
   (DM-20).
 - I7 Uniqueness (sAMAccountName, UPN, CN in a container) is decided by the DC, not by this table
@@ -567,6 +582,42 @@ and groups only, I9) · `state`.
   takeover turns a cloud-only object into a synced one, so this observation usually predates the
   correlation it later forms; that is why it lives on the object and not on the correlation. It
   feeds DM-20.I4(g).
+- I10 **One writer per connection.** The inventory writer holds a per-(tenant, connection)
+  transaction advisory lock for the whole `Populate` transaction and refuses any isolation level but
+  READ COMMITTED (`ErrIsolation`). `ancestry_complete` is checked against the parent row and the move
+  rewrite sees committed rows only, so without the lock two overlapping passes could store a child
+  under a parent's old chain as complete while a move commits beside it. With it, the later writer
+  reads the earlier one's result and the child ends incomplete (fail closed) until re-observed. Same
+  pattern as DM-10's activation (`AD409`).
+
+**Report-engine inputs (T-1016, reports-2a D7 and D4).** What `inventory.users` and
+`inventory.computers` must carry for the §6.4 derived states, and no more. All are replicated
+attributes read from the domain's writable DC, so the row carries `observed_at` and `observed_dsa`
+(I5). A time value is FILETIME (100 ns since 1601 UTC); the one codec decodes it.
+
+| Input | Attribute | Used for | Absent / special values |
+| --- | --- | --- | --- |
+| `user_account_control` | `userAccountControl`, bits `ACCOUNTDISABLE 0x2`, `NORMAL_ACCOUNT 0x200`, `INTERDOMAIN_TRUST 0x800`, `WORKSTATION_TRUST 0x1000`, `SERVER_TRUST 0x2000`, `DONT_EXPIRE_PASSWORD 0x10000`, `SMARTCARD_REQUIRED 0x40000`, plus for computers `TRUSTED_FOR_DELEGATION 0x80000` and `TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000` | not-applicable, exempt, locked-out and PSO eligibility | Never read from `msDS-User-Account-Control-Computed` (that is the oracle, not an input) |
+| `lockout_time` | `lockoutTime` | locked out | 0 = never locked or unlocked; **not cleared** when a lock lapses (R7) |
+| `pwd_last_set` | `pwdLastSet` | expired, expires at, must change | 0 or absent = must change at next logon; negative = invalid, Unknown |
+| `account_expires` | `accountExpires` | account expired | 0, `0x7FFFFFFFFFFFFFFF` or absent = never; negative = invalid, Unknown. Not in the global catalog: read from the domain's DC |
+| `last_logon_timestamp` | `lastLogonTimestamp` | inactive, computer activity | Absent = none recorded, not "never logged on" (reports-2a §6.4) |
+| `primary_group_id` | `primaryGroupID` | PSO group resolution (edge to the primary group, absent from `member`) | |
+| `when_created` | `whenCreated` | activity fallback, "created within N days" | |
+| `spn_present` | `servicePrincipalName` has a value | probable service account | The value is never stored (a count/boolean only) |
+| identity for policy | `objectClass`, `objectSid` (RID: `krbtgt` = 502; domain), `sAMAccountName` | PSO eligibility, logon name | |
+| `inputs_read` | bitmask, see I5b | Unknown vs absent | |
+| Group edges | `member` links (DM-17, transitive) and the primary-group edge; `groupType` (scope and security bit) | PSO group resolution | Scope filter open: LAB-PS-08 |
+| PSO links | `msDS-PSOAppliesTo` on each PSO (a user or a group) | direct link wins over every group link | |
+| Domain policy (per domain) | `maxPwdAge`, `lockoutDuration`, `msDS-LogonTimeSyncInterval`, `msDS-Behavior-Version` | the policy when no PSO resolves; the lag floor; PSOs have no effect below functional level 2008 | Stored as negative 100 ns deltas: magnitude is used. Only `MinInt64` is documented as "never" for a max age; a stored 0 is Unknown until LAB-PW-11 |
+| PSO values | `msDS-PasswordSettingsPrecedence`, `msDS-MaximumPasswordAge`, `msDS-LockoutDuration`, `objectGUID`, name | the winning PSO's values and name | Equal-precedence tie-break by GUID: LAB-PS-07 |
+| RODC krbtgt marker | `msDS-SecondaryKrbTgtNumber` present | no PSO for the RODC `krbtgt_nnnnn` | **Not yet an input** (LAB-PS-10) |
+
+Not inputs, by design: `lastLogon`, `logonCount`, `badPwdCount` and `badPasswordTime` (per-DC, never stored,
+reports-2a D5); `msDS-ResultantPSO`, `msDS-User-Account-Control-Computed` and
+`msDS-UserPasswordExpiryTimeComputed` (constructed per DC; test oracles only, RP3); `unicodePwd` and
+every other secret (I3). The cases that prove these inputs against a domain controller are the
+LAB-LK, LAB-PS, LAB-PW and LAB-AX rows of [account-state-lab-rows.md](account-state-lab-rows.md).
 
 **Lifecycle (AD).**
 
@@ -1806,11 +1857,20 @@ How it maps onto inventory datasets is `[OPEN → report builder spec]`.
 ### DM-72 ReportRun · T · owner `modules/reports`
 **Definition.** One execution of a definition version with parameters. **Replaces (ME):** report
 generation and export (ADM-100).
-**Key attributes:** `definition_version` · `parameters` · `runner` · `scope_applied` · `as_of`
-(freshness watermark) · `row_count` · `result_blob` · `exports[]` (format, blob, expiry) · `state`.
+**Key attributes:** `definition_version` · `parameters` · `query_hash` · `runner` and the full
+initiator `chain` · `scope_applied` and `scope_fingerprint` · `as_of` (freshness watermark) ·
+`row_count` · `digest` · **result rows** (`report_run_rows`, one per result row, in run order;
+[ADR-0010](../decisions/0010-report-results-stored-as-rows-in-postgres.md)) · `exports[]`
+(`report_exports`: format, blob, expiry) · `state` · `failure_reason`. Tables and types:
+[modules/reports.md §6.2](../architecture/modules/reports.md).
 **Invariants.** I1 Freshness is stated, never "live" when it is not. I2 Exports go through the
-output encoders (T-0029). I3 Blobs are tenant-prefixed and expire.
-**Lifecycle.** `queued → running → succeeded | failed | cancelled`, then `succeeded → expired`.
+output encoders (T-0029) and serialise the stored rows only. Their digest equals the run's. I3 Export
+blobs are tenant-prefixed and expire with the run. I4 Rows are written only while the run is
+`running`, and read only once it has `succeeded`. Pages, sorts, exports and deliveries never
+re-query a dataset (ADR-0010). I5 A run is readable only by its runner, and only while the runner's
+read-scope fingerprint equals `scope_fingerprint`.
+**Lifecycle.** `queued → running | cancelled | failed`; `running → succeeded | failed | cancelled`;
+`succeeded → expired`. Failed and cancelled runs hold no rows.
 
 ### DM-73 ReportSchedule · T · owner `modules/reports`
 **Definition.** A recurring run plus delivery. **Replaces (ME):** scheduled reports (ADM-101) and,
@@ -1867,6 +1927,12 @@ transport, `plaintext_opt_in`; the table CHECK ties plaintext to the opt-in). Ev
 `siem.destination.created`/`.updated` audit event (updates record the previous host, port and transport,
 read FOR UPDATE) in one transaction; a plaintext write also appends `siem.destination.plaintext_opt_in`. Other channel kinds
 and the lifecycle states arrive with their own tickets.
+**Realised so far (T-0950).** The `smtp` channel is the tenant's single row in `notify_settings` (relay host,
+port, `starttls`/`tls`/`none` security, sender, `plaintext_opt_in` tied to `none` by a CHECK), together with the
+tenant's allowed recipient domains (canonical, sorted, exact match, at most 200; an empty list makes every
+address external). It has an optimistic `version` and one writer, the `notify.settings.update` Action (StepUp,
+control plane, TM-D30 SX-7), which audits the before and after values. No SMTP AUTH credential is held yet, so
+I1's sealed credentials are not realised for SMTP; the lifecycle states do not exist for it.
 
 ### DM-83 NotificationTemplate · T (shipped defaults + overrides) · owner `platform/notify`
 **Definition.** The message for a purpose and channel kind. **Replaces (ME):** notification
@@ -1884,6 +1950,16 @@ notification history (ADM-204).
 report run, request, reminder) · `attempts` · `provider_message_id` · `state`.
 **Invariants.** I1 It stores metadata and variable references, not rendered bodies.
 **Lifecycle.** `queued → sent`, or `queued → failed → (retry) → sent | given_up`.
+**Realised so far (T-0950).** `notify_deliveries`, one row per recipient (`recipient_kind` `account` with the
+account id, or `address` with the canonical address), `source_kind` + `source_id` (`Deliveries.ForSource` returns
+the live Deliveries of one source and recipient, and ignores `given_up`), `requested_by`, a `dedup_key` that makes
+`Enqueue` idempotent, `attempts` against `max_attempts` (default 5), `last_error_code`, `next_attempt_at`, and a
+lease so a crashed dispatcher's claim is re-taken. States are `queued`, `sending`, `sent`, `failed` (last attempt
+failed, retry scheduled) and `given_up` (terminal; carries the reason code). Permanent failures (egress denial,
+SMTP 5xx, an external address where an internal one is required, no usable address) give up at once; transient
+ones back off 1 m, 5 m, 30 m, 2 h. The body is never stored: the purpose's renderer re-renders from the
+variables at each attempt (I1). Audit events `notify.delivery.queued|sent|given_up` carry ids, codes and class,
+never a body, subject or address. Rows are never deleted; identity columns are immutable (trigger).
 
 ### DM-85 ItsmConnection · T · owner `modules/itsm`
 **Definition.** A link to a service-desk system. One adapter shape covers every system.
@@ -2208,3 +2284,33 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
     its own run's salt, and Q14 is reworded.
 - 2026-10-02 · T-0168 round 2, from the security-architect review. DM-25.I6: every record that a derived override state reads is pinned while the override is kept: the clearing run (new DM-24.I6 (c)), the superseding override (oldest first) and the connection. A property states that no retention pass or crash changes any derivation (tested by T-0119, listed for T-0050). DM-24.I5: no audit event carries a per-finding identifier. Events carry IDs, verdicts, outcomes, counts and `findings_digest`, salted with the new per-run `digest_salt`, and DM-25.I7 does the same for the override events. DM-24.I6: the `connection_verification` retention floor is the audit retention, and rows named by a retained audit event are pinned. DM-25.I7: `.tier0_override.cleared` is emitted in the clearing run's insert transaction. DM-10.I10: an interrupted run returns to `draft` only from `verifying`. DM-10.I11: the gate is re-checked at every Apply chunk, and a V7 `could_not_verify` or `failed` triggers an automatic re-run with backoff. §11 Q12 and Q13 are closed.
 - 2026-10-22 · T-0129 (ADR-0005 amendment of the same date, TM-D23 rule 11, contract v1.2 §8.1 step 9): DM-42.I5 lists the `verify_failed` reasons (`read_back_mismatch`, `scope_changed`, `dc_unavailable`, `tier0_after_write`); `tier0_after_write`, including an empty-basis report, raises a `critical` alert above `scope_changed`, cancels the operation, and its step's undo is refused by the `tier0` guard. Review round 1: the server's Tier-0 re-read follows the I3 verify window and fallback (only still-`unknown` counts), so `dc_unavailable` stays reachable; Entra window expiry is `read_back_mismatch`; the undo exception is stated in the lifecycle.
+- 2026-10-30 · T-0874 (ADR-0010, proposed; modules/reports.md): DM-72 stores the result as rows (`report_run_rows`) instead of a `result_blob`; exports serialise those rows. Adds `query_hash`, the initiator `chain`, `scope_fingerprint`, `digest` and `failure_reason`, invariants I4 (rows written only while `running`, read only once `succeeded`) and I5 (readable only by the runner under the same scope fingerprint), and the full lifecycle edges.
+- 2026-10-31 · T-1016 (reports-2a D7): DM-16 lists the report-engine inputs (attribute, use, absent and special values) and adds I5b (tri-state inputs, Unknown never inferred, unreadable PSO container); I5a points to the rules and the corrections to reports-2a §6.4. Lab rows for lockout, PSO and expiry are in `account-state-lab-rows.md`.
+
+## Consult 2026-10-31: user-report semantics for USR-01/02/03/05 (reporting-engineer, T-0960)
+
+Verification: documentation only (Microsoft Learn, AskDS). Nothing here was run on Samba or Windows.
+Existing notes cover the lag of `lastLogonTimestamp` and "absent is not never" (reports-2a §6.4); these
+rules are what they leave open.
+
+- **Inactive N days (USR-03).** `enabled AND (last_logon_timestamp < now - N days OR (logon_recorded = none_recorded AND when_created < now - N days))`.
+  An absent value is written at the first logon on a writable DC (no prior value to be "recent" against;
+  [AskDS comments, author's test](https://learn.microsoft.com/en-us/archive/blogs/askds/the-lastlogontimestamp-attribute-what-it-was-designed-for-and-how-it-works)),
+  so absent plus created more than N days ago means no recorded logon in N days; no extra 14-day margin
+  is needed. Created within N days: not inactive (it had no time), it appears in "Never logged on" only.
+  `logon_recorded = unknown`: in neither list. Same rows also appear in "Never logged on" by design.
+  A listed account's real last logon is in `[ts, ts + 14d]`, so it was inactive at least N-14 days.
+- **Recently logged on N.** No false inclusions (`ts >= now - N` implies a logon in N days), but
+  omissions exist at any N: a logon up to 14 days after the last write does not rewrite it, so an account
+  with a real logon 29 days ago and `ts` 40 days ago is missed. The header says "may omit accounts whose
+  last recorded value is older than N days". The floor must be per domain: `max(30, msDS-LogonTimeSyncInterval)`.
+- **`accountExpires` never** ([attribute](https://learn.microsoft.com/en-us/windows/win32/adschema/a-accountexpires)):
+  0 or `0x7FFFFFFFFFFFFFFF` (new accounts hold max; 0 means once configured then cleared). Also treat absent as never.
+  Values above year 9999 (> 2650467743999999999) cannot be shown as a date: "far future", never expired
+  `[UNVERIFIED]`. The attribute is not in the GC, so read it from the domain's DC. ADUC "End of <date>"
+  stores the next day's local midnight `[UNVERIFIED, secondary sources]`: show the instant, never "date minus a day".
+- **Disabled accounts and expiry.** Expiry and `ACCOUNTDISABLE` are independent. Product choice, not an AD fact.
+- **Locked out and disabled.** The MS-ADTS `LO` rule has no `ACCOUNTDISABLE` test
+  ([msDS-User-Account-Control-Computed](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/b80798ae-1f8c-4d30-9d80-a1f3281e96e2)),
+  so a disabled user with a live `lockoutTime` is locked out as the DC computes it. The lock holds while
+  `now <= lockoutTime + duration` (inclusive).

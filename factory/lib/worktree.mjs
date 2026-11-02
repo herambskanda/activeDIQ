@@ -73,6 +73,71 @@ export async function ensureWorktree(ctx, ticketId) {
 }
 
 /**
+ * Ticket branches (`factory/<id>`) that exist and have commits ahead of the main branch, as
+ * `ticketId → commits ahead`. One `for-each-ref` plus one `rev-list` per existing branch, so a
+ * pass over many done tickets costs nothing when no branches are left behind.
+ * @param {object} ctx
+ * @returns {Promise<Map<string, number>>}
+ */
+export async function branchesAheadOfMain(ctx) {
+  const prefix = branchName('');
+  const refs = await git(ctx.root, ['for-each-ref', '--format=%(refname:short)', `refs/heads/${prefix}`]);
+  const ahead = new Map();
+  if (refs.code !== 0) return ahead;
+  const main = ctx.config.dispatcher.main_branch;
+  for (const name of refs.stdout.split('\n').map((l) => l.trim()).filter(Boolean)) {
+    const count = await git(ctx.root, ['rev-list', '--count', `${main}..${name}`]);
+    const n = count.code === 0 ? Number.parseInt(count.stdout, 10) : 0;
+    if (n > 0) ahead.set(name.slice(prefix.length), n);
+  }
+  return ahead;
+}
+
+/**
+ * Which of these tickets are `done` but not yet on the main branch: `factory/<id>` exists with
+ * commits ahead of main (T-1266). A ticket with no branch, or a branch with nothing ahead, is
+ * merged as far as a dependent is concerned. One `rev-list` per id, so callers pass only the
+ * ids they need (the done dependencies of ready tickets).
+ * @param {object} ctx
+ * @param {Iterable<string>} ids
+ * @returns {Promise<Set<string>>}
+ */
+export async function unmergedBranches(ctx, ids) {
+  const main = ctx.config.dispatcher.main_branch;
+  const out = new Set();
+  for (const id of new Set(ids)) {
+    const count = await git(ctx.root, ['rev-list', '--count', `${main}..${branchName(id)}`]);
+    if (count.code === 0 && Number.parseInt(count.stdout, 10) > 0) out.add(id);
+  }
+  return out;
+}
+
+/**
+ * The commit that brought a ticket's branch into the main branch, when `factory/<id>` exists and its
+ * tip is already an ancestor of main (a hand merge, T-1353); null when the branch is missing or has
+ * work main does not. It is the merge commit (the oldest first-parent commit of main that descends from
+ * the tip), or the tip itself when the branch was fast-forwarded onto main.
+ * @param {object} ctx
+ * @param {string} ticketId
+ * @returns {Promise<string|null>}
+ */
+export async function landedCommit(ctx, ticketId) {
+  const main = ctx.config.dispatcher.main_branch;
+  const branch = branchName(ticketId);
+  const tip = await git(ctx.root, ['rev-parse', '-q', '--verify', `refs/heads/${branch}^{commit}`]);
+  if (tip.code !== 0) return null;
+  const ancestor = await git(ctx.root, ['merge-base', '--is-ancestor', branch, main]);
+  if (ancestor.code !== 0) return null;
+  const path = await git(ctx.root, ['rev-list', '--first-parent', '--ancestry-path', `${branch}..${main}`]);
+  const commits = path.code === 0 ? path.stdout.split('\n').map((l) => l.trim()).filter(Boolean) : [];
+  const oldest = commits.at(-1);
+  if (!oldest) return tip.stdout.trim();
+  // Fast-forwarded: the tip is on main's own first-parent line, so the tip is what brought the work in.
+  const first = await git(ctx.root, ['rev-parse', `${oldest}^1`]);
+  return first.code === 0 && first.stdout.trim() === tip.stdout.trim() ? tip.stdout.trim() : oldest;
+}
+
+/**
  * Merge a finished ticket's branch into the main branch of the main checkout with `--no-ff`.
  * A conflict is aborted cleanly and reported as such.
  * @param {object} ctx
@@ -84,6 +149,12 @@ export async function mergeTicket(ctx, ticket) {
   const current = await git(ctx.root, ['symbolic-ref', '--short', '-q', 'HEAD']);
   if (current.stdout.trim() !== main) {
     return { status: 'error', detail: `the main checkout is on "${current.stdout.trim() || 'a detached HEAD'}", not "${main}"` };
+  }
+  // A merge already in progress in the main checkout is not this ticket's conflict: git would refuse with
+  // "You have not concluded your merge", and the MERGE_HEAD check below would blame this ticket and reopen it.
+  const pending = await git(ctx.root, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']);
+  if (pending.code === 0) {
+    return { status: 'error', detail: `the main checkout is mid-merge (MERGE_HEAD ${pending.stdout.trim().slice(0, 8)}); finish or abort that merge first, then ${ticket.id} merges on the next pass` };
   }
   const merged = await git(ctx.root, ['merge', '--no-ff', '--no-edit', '-m', `Merge ${ticket.id}: ${ticket.title}`, branchName(ticket.id)]);
   if (merged.code === 0) {

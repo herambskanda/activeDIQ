@@ -12,6 +12,8 @@ var _ = tablekind.Declare(tablekind.Table{Name: "public.correlations", Entity: "
 
 var _ = tablekind.Declare(tablekind.Table{Name: "public.tier0_designations", Entity: "DM-16", Kind: tablekind.Directory})
 
+var _ = tablekind.Declare(tablekind.Table{Name: "public.nc_sync_passes", Entity: "DM-14", Kind: tablekind.Directory})
+
 var _ = tablekind.Declare(tablekind.Table{Name: "public.links", Entity: "DM-17", Kind: tablekind.Directory})
 
 // Typed errors. None carries a value from the directory or the database.
@@ -30,6 +32,10 @@ var (
 	ErrTooMany = errors.New("inventory: result exceeds the bound")
 	// ErrCorrupt: a stored value is outside the declared domain. Fail closed.
 	ErrCorrupt = errors.New("inventory: stored value outside its domain")
+	// ErrIsolation: Populate needs a READ COMMITTED transaction. Its per-connection lock only helps when
+	// every statement after it takes a fresh snapshot; a snapshot fixed before the lock would let a
+	// concurrent move go unseen and a stale ancestry be stored as complete (DM-16.I10).
+	ErrIsolation = errors.New("inventory: Populate needs a READ COMMITTED transaction")
 )
 
 // ConnectionID is a DM-10 connection's ID, canonical lower-case UUID text.

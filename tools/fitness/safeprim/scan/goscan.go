@@ -427,7 +427,14 @@ var unsafeHomes = []string{"internal/proto"}
 // LazyProc.Call, which takes uintptr(unsafe.Pointer(...)). The agent-host fitness rulings put that
 // reach in the host, never in a module (knowledge/development/decisions/agent-host-fitness-rulings.md,
 // Ruling 1; fitness-agent-host R3 keeps unsafe out of addc and the other modules). T-0800.
-var unsafeWindowsHomes = []string{"internal/platform/agent", "cmd/agentsetup"}
+//
+// internal/platform/ownerfile and internal/platform/fleet/dial (T-0883) write and re-check owner-only
+// state files with a PROTECTED DACL. Their *_windows.go files need unsafe for two things x/sys/windows
+// offers no helper for: unsafe.Sizeof(SecurityAttributes) for the Length field, and reading the SID
+// that trails an ACCESS_ALLOWED_ACE ((*windows.SID)(unsafe.Pointer(&ace.SidStart))). Same ruling as the
+// agent host: Win32 security-descriptor reach, Windows files only. Every other directory, and every
+// non-windows file in these two, stays banned.
+var unsafeWindowsHomes = []string{"internal/platform/agent", "cmd/agentsetup", "internal/platform/ownerfile", "internal/platform/fleet/dial"}
 
 // checkUnsafe bans importing "unsafe" in product code outside generated protobuf packages: linkname
 // needs it, and so does every memory-safety escape. Tests and tier L are exempt.
@@ -635,9 +642,12 @@ var shapes = []shape{
 		Msg: "HTML built from text; use html/template through htmlx (" + refP7 + ".5)"},
 	{Rule: "odata-option-literal", Re: reODataOption, Home: []string{policy.OData}, Always: true,
 		Msg: "a system query option name outside the odata primitive; build the request with odata.Query (safe-primitives-odata §6)"},
-	{Rule: "odata-filter-shape", Re: reODataFilter, Home: []string{policy.OData},
+	// The SQL home (store, with reportsql) builds SQL, whose function calls ("COALESCE(", "= ANY(")
+	// have the shape of an OData function or key; sql-shape judges that text there. OData stays
+	// forbidden everywhere else.
+	{Rule: "odata-filter-shape", Re: reODataFilter, Home: []string{policy.OData, policy.Store},
 		Msg: "an OData filter built from text; build an odata filter AST (safe-primitives-odata §6)"},
-	{Rule: "odata-key-shape", Re: reODataKey, Home: []string{policy.OData},
+	{Rule: "odata-key-shape", Re: reODataKey, Home: []string{policy.OData, policy.Store},
 		Msg: "an OData key segment built from text; use odata.Key, KeyStr or AltKey (safe-primitives-odata §6)"},
 	{Rule: "mail-header-shape", Re: reMailShape, Home: []string{policy.Mail},
 		Msg: "mail headers or CRLF built from text; use notify/mail (" + refP7 + ".6)"},

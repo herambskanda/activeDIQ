@@ -1,0 +1,10 @@
+{
+ "id": "O-D01b",
+ "class": "malformed",
+ "cites": [
+  "OIDC-5"
+ ],
+ "build": "token_response_oversize",
+ "expect": "refuse",
+ "reason": "oidc.token"
+}

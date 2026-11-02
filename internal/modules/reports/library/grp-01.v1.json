@@ -1,0 +1,180 @@
+{
+  "id": "grp-01",
+  "version": 1,
+  "category": "groups",
+  "title": "Groups",
+  "description": "Every live group in the directories you may read, with its type, scope, direct and effective member counts and manager. Member counts include primary-group members; nested groups are counted through the stored closure.",
+  "dataset": "inventory.groups",
+  "columns": [
+    "name",
+    "domain",
+    "dn",
+    "group_type",
+    "group_scope",
+    "direct_members",
+    "effective_members",
+    "managed_by",
+    "when_created"
+  ],
+  "sort": [
+    {
+      "column": "name",
+      "dir": "asc"
+    }
+  ],
+  "params": [
+    {
+      "name": "recent_days",
+      "kind": "days",
+      "default": {
+        "days": 30
+      },
+      "min": 1,
+      "max": 365
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn",
+    "empty_counts_primary_group",
+    "counts_in_scope_only"
+  ],
+  "presets": [
+    {
+      "id": "all",
+      "names": [
+        "All Groups"
+      ]
+    },
+    {
+      "id": "security",
+      "names": [
+        "Security Groups"
+      ],
+      "where": {
+        "cmp": {
+          "col": "group_type",
+          "op": "eq",
+          "value": {
+            "enum": "security"
+          }
+        }
+      }
+    },
+    {
+      "id": "distribution",
+      "names": [
+        "Distribution Groups"
+      ],
+      "where": {
+        "cmp": {
+          "col": "group_type",
+          "op": "eq",
+          "value": {
+            "enum": "distribution"
+          }
+        }
+      }
+    },
+    {
+      "id": "type_scope",
+      "names": [
+        "Group Type and Scope"
+      ],
+      "sort": [
+        {
+          "column": "group_type",
+          "dir": "asc"
+        },
+        {
+          "column": "group_scope",
+          "dir": "asc"
+        },
+        {
+          "column": "name",
+          "dir": "asc"
+        }
+      ]
+    },
+    {
+      "id": "no_members",
+      "names": [
+        "Groups Without Members"
+      ],
+      "where": {
+        "cmp": {
+          "col": "has_members",
+          "op": "eq",
+          "value": {
+            "bool": false
+          }
+        }
+      }
+    },
+    {
+      "id": "managed",
+      "names": [
+        "Managed Groups"
+      ],
+      "where": {
+        "cmp": {
+          "col": "has_manager",
+          "op": "eq",
+          "value": {
+            "bool": true
+          }
+        }
+      }
+    },
+    {
+      "id": "unmanaged",
+      "names": [
+        "Unmanaged Groups"
+      ],
+      "where": {
+        "cmp": {
+          "col": "has_manager",
+          "op": "eq",
+          "value": {
+            "bool": false
+          }
+        }
+      }
+    },
+    {
+      "id": "top",
+      "names": [
+        "Top N Big Groups"
+      ],
+      "sort": [
+        {
+          "column": "effective_members",
+          "dir": "desc"
+        },
+        {
+          "column": "name",
+          "dir": "asc"
+        }
+      ],
+      "top": 25
+    },
+    {
+      "id": "recently_created",
+      "names": [
+        "Recently Created Groups"
+      ],
+      "where": {
+        "cmp": {
+          "col": "when_created",
+          "op": "within_last_days",
+          "param": "recent_days"
+        }
+      },
+      "sort": [
+        {
+          "column": "when_created",
+          "dir": "desc"
+        }
+      ]
+    }
+  ]
+}

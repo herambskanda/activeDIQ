@@ -1,0 +1,28 @@
+uploaded
+=== RUN   TestWindowsEnsureDirAndReadFile
+    ownerfile_windows_test.go:20: icacls state dir
+        C:\lab\t0577\TestWindowsEnsureDirAndReadFile2081502784\001\state WINLAB\Administrator:(OI)(CI)(F)
+                                                                         NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+        
+        Successfully processed 1 files; Failed processing 0 files
+--- PASS: TestWindowsEnsureDirAndReadFile (0.04s)
+=== RUN   TestQAWiderDirRefused
+    qa_extra_windows_test.go:29: before widening
+        C:\lab\t0577\TestQAWiderDirRefused1778306165\001\state WINLAB\Administrator:(OI)(CI)(F)
+                                                               NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+        
+        Successfully processed 1 files; Failed processing 0 files
+    qa_extra_windows_test.go:31: after granting Users RX
+        C:\lab\t0577\TestQAWiderDirRefused1778306165\001\state BUILTIN\Users:(OI)(CI)(RX)
+                                                               WINLAB\Administrator:(OI)(CI)(F)
+                                                               NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+        
+        Successfully processed 1 files; Failed processing 0 files
+    qa_extra_windows_test.go:39: typed error: ownerfile: state directory is not restricted to the service identity: state
+--- PASS: TestQAWiderDirRefused (0.20s)
+=== RUN   TestQAReadFileCases
+    qa_extra_windows_test.go:108: junction refused: Access is denied.
+--- PASS: TestQAReadFileCases (0.09s)
+PASS
+exit=0
+

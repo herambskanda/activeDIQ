@@ -13,6 +13,7 @@
 -- apart (it expects the named key to be the one violated), so the writer resolves both through the
 -- connection registry, which never deletes a row (DM-10 L9). tier0_designations, with one, keeps its key.
 
+-- write-class: correlations config
 CREATE TABLE public.correlations (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -86,6 +87,7 @@ COMMENT ON TABLE public.correlations IS 'DM-20 Correlation (directory table, RLS
 -- DM-16.I8: customer-designated tier0 additions (threat model §6.4, TM-D4). One row per designated
 -- object of a connection; a designated group designates the objects reached through its membership at
 -- read time (connector-contract §8.3 F2), so membership is not stored here.
+-- write-class: tier0_designations config
 CREATE TABLE public.tier0_designations (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   connection_id uuid NOT NULL,

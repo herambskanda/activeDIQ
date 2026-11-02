@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  branchName, cleanupWorktree, ensureWorktree, mergeTicket, repoState, usesSharedCheckout, worktreePath,
+  branchName, branchesAheadOfMain, cleanupWorktree, ensureWorktree, mergeTicket, repoState, usesSharedCheckout, worktreePath,
 } from '../lib/worktree.mjs';
 import { git as gitAsync } from '../lib/git.mjs';
 import { commitAll, git, initRepo, makeFactory } from './helpers.mjs';
@@ -117,6 +117,25 @@ test('mergeTicket refuses when the main checkout is not on the main branch', asy
   } finally { f.cleanup(); }
 });
 
+test('mergeTicket does not blame a ticket for a merge already in progress in the main checkout', async () => {
+  const f = makeFactory();
+  try {
+    initRepo(f.root);
+    const a = await ensureWorktree(f.ctx, 'T-0001');
+    const b = await ensureWorktree(f.ctx, 'T-0002');
+    commitIn(a.path, 'shared.txt', 'from A\n', 'feat: a');
+    commitIn(b.path, 'shared.txt', 'from B\n', 'feat: b');
+    // leave a conflicted merge of T-0002 uncommitted in the main checkout, as a failed abort would
+    commitIn(f.root, 'shared.txt', 'from main\n', 'feat: main');
+    try { git(f.root, 'merge', '--no-ff', '--no-edit', 'factory/T-0002'); } catch { /* conflicts expected */ }
+    assert.ok(fs.existsSync(path.join(f.root, '.git', 'MERGE_HEAD')), 'fixture: merge in progress');
+    const out = await mergeTicket(f.ctx, { id: 'T-0001', title: 'A' });
+    assert.equal(out.status, 'error', 'an error is retried; a conflict would reopen the ticket');
+    assert.match(out.detail, /mid-merge/);
+    assert.ok(fs.existsSync(path.join(f.root, '.git', 'MERGE_HEAD')), 'the other merge is left alone');
+  } finally { f.cleanup(); }
+});
+
 test('git arguments are never interpreted by a shell', async () => {
   const f = makeFactory();
   try {
@@ -128,5 +147,23 @@ test('git arguments are never interpreted by a shell', async () => {
     assert.equal(merged.status, 'merged');
     assert.equal(fs.existsSync(marker), false);
     assert.ok(git(f.root, 'log', '-1', '--format=%s').includes('$(touch'));
+  } finally { f.cleanup(); }
+});
+
+test('branchesAheadOfMain lists only factory/* branches with commits ahead of main', async () => {
+  const f = makeFactory();
+  try {
+    initRepo(f.root);
+    assert.equal((await branchesAheadOfMain(f.ctx)).size, 0, 'no branches');
+    const a = await ensureWorktree(f.ctx, 'T-0001');
+    const b = await ensureWorktree(f.ctx, 'T-0002');
+    commitIn(a.path, 'a.txt', 'a\n', 'feat: a');
+    commitIn(a.path, 'a2.txt', 'a\n', 'feat: a2');
+    git(f.root, 'branch', 'other/not-ours');
+    assert.deepEqual([...await branchesAheadOfMain(f.ctx)], [['T-0001', 2]], 'T-0002 has nothing ahead; other/* is ignored');
+    commitIn(b.path, 'b.txt', 'b\n', 'feat: b');
+    assert.equal((await branchesAheadOfMain(f.ctx)).size, 2);
+    await mergeTicket(f.ctx, { id: 'T-0001', title: 'A' });
+    assert.deepEqual([...await branchesAheadOfMain(f.ctx)].map(([id]) => id), ['T-0002'], 'merged work is no longer ahead');
   } finally { f.cleanup(); }
 });

@@ -1,0 +1,86 @@
+{
+  "id": "grp-04",
+  "version": 1,
+  "category": "groups",
+  "title": "Not in any group",
+  "description": "Users or computers that belong to no group other than their primary group, across every domain inventoried. The primary group is named so a primary group other than Domain Users is visible.",
+  "dataset": "inventory.principals",
+  "columns": [
+    "name",
+    "domain",
+    "dn",
+    "primary_group",
+    "enabled",
+    "when_created",
+    "last_logon_timestamp"
+  ],
+  "sort": [
+    {
+      "column": "name",
+      "dir": "asc"
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn",
+    "covered_domains",
+    "accurate_to_sync_interval"
+  ],
+  "presets": [
+    {
+      "id": "users",
+      "names": [
+        "Users Not in Groups"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "object_kind",
+              "op": "eq",
+              "value": {
+                "enum": "user"
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "in_other_groups",
+              "op": "eq",
+              "value": {
+                "bool": false
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "computers",
+      "names": [
+        "Computers Not in Groups"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "object_kind",
+              "op": "eq",
+              "value": {
+                "enum": "computer"
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "in_other_groups",
+              "op": "eq",
+              "value": {
+                "bool": false
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

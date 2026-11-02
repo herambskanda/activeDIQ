@@ -14,6 +14,7 @@
 -- Host facts, providers, server endpoints and the certificate identity arrive with the Enroll
 -- handler, which is the first writer of them.
 
+-- write-class: components system
 CREATE TABLE public.components (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -31,6 +32,7 @@ CREATE TABLE public.components (
 
 CREATE INDEX components_tenant_state ON public.components (tenant_id, state, created_at, id);
 
+-- write-class: enrollment_tokens config
 CREATE TABLE public.enrollment_tokens (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

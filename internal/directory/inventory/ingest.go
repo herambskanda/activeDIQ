@@ -38,6 +38,10 @@ type Cycle struct {
 	// a bounded number of objects at a time): only the last batch runs the gate, over everything the
 	// cycle stored.
 	MoreBatches bool
+	// PassNCs are the naming contexts whose sync pass completed with this cycle. The last batch records
+	// each as a successful pass as of Observed (D6), whether or not the pass observed anything: a quiet
+	// domain returns no changes and is still fresh. A pass that failed or is incomplete is not listed.
+	PassNCs []GUID
 }
 
 // Ingested is the outcome of Ingest.
@@ -94,6 +98,11 @@ func (g Ingester) Ingest(ctx context.Context, tx store.Tx, c Cycle) (Ingested, e
 	}
 	if c.MoreBatches {
 		return out, nil
+	}
+	for _, nc := range c.PassNCs {
+		if err := (Writer{}).RecordPass(ctx, tx, c.Connection, nc, c.Observed); err != nil {
+			return out, err
+		}
 	}
 	var kind string
 	if err := tx.QueryRow(ctx, `SELECT kind FROM public.connections

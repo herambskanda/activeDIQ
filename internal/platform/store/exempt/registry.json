@@ -64,6 +64,13 @@
       "mintsTenantID": true
     },
     {
+      "package": "internal/compose/server",
+      "function": "reportSchema",
+      "reason": "Start-up compiles the report datasets against the public schema catalogue (pg_class, pg_attribute) before the install tenant exists, so the read runs outside a tenant context under WithPlatform. The catalogue is identical for every tenant and holds names and types only, never a tenant row; the result is the immutable schema the SQL registry checks identifiers against (T-1104).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
       "package": "internal/platform/jobs",
       "function": "Claim",
       "reason": "Claim must see every tenant's runnable jobs, so it runs outside a tenant context under WithPlatform; the caller then runs each body in the job's own tenant (ADR-0002 Jobs row).",
@@ -116,6 +123,13 @@
       "package": "internal/platform/jobs",
       "function": "env.platform",
       "reason": "Test helper: opens a platform-scope transaction so the queue's tests can prove what a no-context transaction may and may not do (cross-tenant enqueue, fenced recording, SKIP LOCKED). It is in a _test.go file and ships in no binary.",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/platform/notify/settings",
+      "function": "noTenantTx",
+      "reason": "Test helper: runs a transaction with no tenant context to prove that Store.Get refuses it with ErrNoTenant (DM-82). It is in a _test.go file and ships in no binary.",
       "withPlatform": true,
       "mintsTenantID": false
     },
@@ -215,6 +229,11 @@
       "reason": "CHECK: authn_saml_replay_life, see created_at; 12 hours after the pinned created_at."
     },
     {
+      "column": "public.inventory_group_members.edge_kind",
+      "value": "direct",
+      "reason": "CHECK: edge_kind is direct, primary_group, nested, cycle or over_budget (and a cycle or over_budget row needs group = member); the probe row is a direct membership, depth 1 from the default int probe value, via '{}'."
+    },
+    {
       "column": "public.directory_objects.kind",
       "value": "other",
       "reason": "CHECK: a kind is one of the DM-16 kinds; the probe row is an object of kind other."
@@ -237,7 +256,7 @@
     {
       "column": "public.authn_authenticator_enrollments.expires_at",
       "value": "2030-01-01T00:00:00Z",
-      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 §5); the probe row is a pending enrolment."
+      "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 \u00a75); the probe row is a pending enrolment."
     },
     {
       "column": "public.correlations.match",
@@ -258,6 +277,16 @@
       "column": "public.correlations.entra_connection_id",
       "value": "00000000-0000-4000-8000-0000000000e1",
       "reason": "CHECK: the AD and Entra connection of a correlation differ (DM-20); every other column of the probe row is the generated value, so this one needs a second value. The foreign-key probe points the sibling key at an alternate parent row."
+    },
+    {
+      "column": "public.authn_local_credentials.password_hash",
+      "value": "$argon2id$probe",
+      "reason": "CHECK: a password hash is an argon2id PHC string (authn_local_credentials, T-0783); the probe row carries a placeholder with the prefix, not a real hash."
+    },
+    {
+      "column": "public.authn_signin_throttle.key_hash",
+      "value": "\\x0000000000000000000000000000000000000000000000000000000000000000",
+      "reason": "CHECK: a throttle key is exactly 32 bytes, the HMAC of the tenant and normalised name (authn_signin_throttle, T-0783); the probe row carries 32 placeholder bytes."
     },
     {
       "column": "public.links.link_attr",
@@ -442,7 +471,7 @@
     {
       "column": "public.connection_attestation_attempts.code_verifier",
       "value": "probe-code-verifier-0123456789-0123456789-0123",
-      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 §4.1)."
+      "reason": "CHECK: a PKCE code_verifier is 43..128 characters (RFC 7636 \u00a74.1)."
     },
     {
       "column": "public.connection_attestation_attempts.state_hash",
@@ -503,6 +532,26 @@
       "column": "public.connector_bindings.target",
       "value": "embedded",
       "reason": "CHECK: target is embedded or component, and a component target needs component_id; the probe row is the embedded binding, which has none (DM-13)."
+    },
+    {
+      "column": "public.notify_deliveries.recipient_kind",
+      "value": "address",
+      "reason": "CHECK: notify_deliveries_recipient_kind needs an account recipient to carry recipient_account and no address, or an address recipient to carry recipient_address and no account; the probe row is the address kind."
+    },
+    {
+      "column": "public.notify_deliveries.recipient_address",
+      "value": "probe@example.invalid",
+      "reason": "CHECK: notify_deliveries_recipient_kind, see recipient_kind; an address recipient carries a 3 to 254 character address, and the probe row's is a reserved .invalid one."
+    },
+    {
+      "column": "public.notify_deliveries.state",
+      "value": "queued",
+      "reason": "CHECK: notify_deliveries_state_shape ties state to next_attempt_at, sent_at and last_error_code; the probe row is queued, which needs only a next attempt."
+    },
+    {
+      "column": "public.notify_deliveries.next_attempt_at",
+      "value": "2030-01-01T00:00:00Z",
+      "reason": "CHECK: notify_deliveries_state_shape; the probe row is queued, and a queued delivery has a next attempt and no sent_at."
     },
     {
       "column": "public.notify_syslog_destinations.transport",
@@ -780,6 +829,86 @@
       "column": "public.authn_authority_approvals.approver_id",
       "value": "00000000-0000-4000-8000-0000000000a9",
       "reason": "CHECK: authn_authority_approvals_not_self requires approver_id <> account_id, but the generator resolves both foreign keys to the same account row; the probe row names a distinct approver (seeded with foreign keys off, as every probe row is) (T-0766)"
+    },
+    {
+      "column": "public.report_runs.columns",
+      "value": "[]",
+      "reason": "CHECK: report_runs_columns_check requires a JSON array (the resolved column IDs); the probe row carries an empty array."
+    },
+    {
+      "column": "public.report_run_rows.cells",
+      "value": "[]",
+      "reason": "CHECK: report_run_rows_cells_check requires a JSON array (one cell per column); the probe row carries an empty array."
+    },
+    {
+      "column": "public.report_runs.definition_id",
+      "value": "usr-01",
+      "reason": "CHECK: a definition ID is lowercase letters, digits and dashes (report_runs_definition_id_check); the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.definition_sha256",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: report_runs_definition_sha256_check requires a 32-byte hash; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.query_hash",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: report_runs_query_hash_check requires a 32-byte hash; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.scope_fingerprint",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: report_runs_scope_fingerprint_check requires a 32-byte hash; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.digest",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: report_runs_digest_check requires a 32-byte digest when set; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.preset",
+      "value": "default",
+      "reason": "CHECK: report_runs_preset_check requires a lowercase identifier; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.params",
+      "value": "{}",
+      "reason": "CHECK: report_runs_params_check requires a JSON object; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.chain",
+      "value": "{}",
+      "reason": "CHECK: report_runs_chain_check requires a JSON object; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_runs.state",
+      "value": "queued",
+      "reason": "CHECK: report_runs_state_check restricts the run states; a queued run has no failure reason, as the failed-iff-reason CHECK needs; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_exports.format",
+      "value": "csv",
+      "reason": "CHECK: report_exports_format_check restricts the export formats; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_exports.state",
+      "value": "queued",
+      "reason": "CHECK: report_exports_state_check restricts the export states; a queued export has no failure reason, as the failed-iff-reason CHECK needs; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_exports.chain",
+      "value": "{}",
+      "reason": "CHECK: report_exports_chain_check requires a JSON object; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.report_run_rows.sort_keys",
+      "value": "{}",
+      "reason": "CHECK: report_run_rows_sort_keys_check requires a JSON object; the probe row carries a valid placeholder."
+    },
+    {
+      "column": "public.nc_sync_passes.state",
+      "value": "paused",
+      "reason": "CHECK: nc_sync_passes_state_check restricts the feed state, and state 'ok' needs last_pass_at; the probe row is a paused feed (T-0949's table, unblocked here by T-0959)."
     }
   ]
 }

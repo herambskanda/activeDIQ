@@ -17,6 +17,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
+	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apitls"
@@ -29,7 +30,9 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/limiter"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
+	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/store/owners"
 )
 
 // ErrNoDatabase is returned by Run when no database DSN is configured. The server has nothing to do
@@ -66,7 +69,8 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	defer db.Close()
 	// Capabilities come from the deployment profile once config selects one; no module requires
 	// one yet. The directory services are built from the store, so boot follows the open.
-	if _, err := boot(ctx, capability.NewSet(), directoryServices(db)); err != nil {
+	contrib, reportHost, err := bootReport(ctx, capability.NewSet(), directoryServices(db), owners.Lookup)
+	if err != nil {
 		return fmt.Errorf("server: boot modules: %w", err)
 	}
 	// The per-principal rate store and the limiter over it, mounted as the API's Limits port. A bad
@@ -88,8 +92,11 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// The connector endpoint source: a connection resolves, under the context's tenant, to its active
 	// component binding's tunnel on the fleet hub (mutual TLS, established by the component). The Tier-0
 	// verdict arrives in the Read header from the connector, so no separate verdict source exists.
+	// The hub is made once: the tunnel dependencies built below attach components to it, and the source
+	// reaches them through it (T-1119).
 	conns := connection.NewRegistry(db)
-	src, err := client.NewTunnelSource(conns, conns, gateway.NewHub())
+	hub := gateway.NewHub()
+	src, err := client.NewTunnelSource(conns, conns, hub)
 	if err != nil {
 		return fmt.Errorf("server: connector source: %w", err)
 	}
@@ -130,9 +137,18 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
+	// What Fleet.Tunnel needs, around the same hub the connector source reads through. The fleet
+	// listener that serves it (T-0716, T-0717) is not composed yet, so until it is no component can
+	// attach and a directory target fails closed at the tunnel (ErrNoEndpoint / UNAVAILABLE), never as
+	// empty facts. Building the deps now means a bad composition stops startup, not the first dial.
+	tunnelDeps, err := buildTunnelDeps(hub, db, ok.Chainer)
+	if err != nil {
+		return err
+	}
+	_ = tunnelDeps // handed to NewFleetService by the fleet listener (T-0717)
 	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
 	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
-	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default())
+	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default(), withPublicURL(cfg.PublicURL))
 	if err != nil {
 		return err
 	}
@@ -156,6 +172,8 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, syslog.Handlers{Store: siem}.Bind())
+	// The anonymous liveness and readiness probes (AN-1). Readiness is the store answering.
+	tags = append(tags, buildHealth(db, slog.Default()))
 	// First-run setup (TM-TB16-T7, AN-4): an unclaimed install holds a one-time secret the installing
 	// administrator reads from the setup directory; the claim route consumes it. Needs the TLS directory.
 	setupTags, err := buildSetup(cfg, time.Now, firstOwner)
@@ -165,13 +183,28 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	tags = append(tags, setupTags...)
 	// directory.users.search: the connection registry for the active connection and its service-account
 	// gate, the connector source for the ScopedSearch RPC (over the tunnel the connector dialled).
-	dirTag, err := buildDirectory(db, conns, csrc)
+	// The read-scope producer search and reports share (T-0916): rbac.ReadScopes over the authorizer and
+	// the EP-6 evaluators the booted modules contributed.
+	readScopes, err := buildReadScopes(authzr, contrib)
+	if err != nil {
+		return err
+	}
+	dirTag, err := buildDirectory(db, conns, csrc, reads, txReadScopes{db: db, rs: readScopes})
 	if err != nil {
 		return err
 	}
 	tags = append(tags, dirTag)
-	// The sign-in plane: AN-8 for a local account, then AN-10 TOTP, which is the only way a console session
-	// is created.
+	// The report run path (T-0959): the run service, its job kinds and its API. The job registry exists
+	// before the API is built so the kinds register with the handlers; the retention cadence is seeded
+	// once the tenant exists.
+	jreg := jobs.NewRegistry()
+	reportRuns, reportTag, err := buildReports(ctx, db, reportHost, jreg, ok.Chainer, inventory.NewReader(db, nil), readScopes, authzr, cfg.BlobDir)
+	if err != nil {
+		return err
+	}
+	tags = append(tags, reportTag)
+	// The sign-in plane: AN-8 for a local account, then AN-10 (TOTP, and WebAuthn when the public URL is
+	// set), which is the only way a console session is created.
 	tags = append(tags, console.Tags())
 	cat := permissionCatalogue()
 	if err := checkCatalogue(cat); err != nil {
@@ -181,8 +214,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	// Modules and platform packages contribute job kinds to this registry; the worker runs it.
-	jreg := jobs.NewRegistry()
+	// Modules and platform packages contribute job kinds to this registry (created above); the worker runs it.
 	connKernel, err := buildConnections(db, ok.Chainer, dirClient, jreg)
 	if err != nil {
 		return err
@@ -194,6 +226,14 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	}
 	firstOwner.SetTenant(tid) // the claim route can now create the first owner
 	console.SetTenant(tid)    // and the sign-in plane knows whose accounts it checks
+	// Dead AN-8 throttle rows are purged on a cadence so one-off submitted names cannot grow the table (T-0868).
+	if err := startThrottlePurge(ctx, db, jreg, console.Local, tid); err != nil {
+		return err
+	}
+	// The report retention cadence is seeded for the install tenant, like the throttle purge.
+	if err := startReportRetention(ctx, db, reportRuns, tid); err != nil {
+		return err
+	}
 	// Lab builds only (T-0684): create and activate the lab connections through the real activation path.
 	if err := labSeed(ctx, conns, connKernel.Service, tid); err != nil {
 		return err
@@ -327,7 +367,28 @@ func directoryServices(db *store.DB) directory.Services {
 	return directory.Services{Connection: connection.NewRegistry(db)}
 }
 
-// boot hands the generated module list to module.Boot, the only caller of it (ADR-0003 rule 5).
-func boot(ctx context.Context, enabled capability.Set, dir directory.Services) (*module.Contributions, error) {
-	return module.Boot(ctx, generatedModules(platform.Deps{}, dir), enabled)
+// inventoryOwner is the owner key of the datasets internal/directory/inventory exports (row B3).
+const inventoryOwner = "inventory"
+
+// bootReport is boot plus the EP-8 report host. The host is created first so every module receives it
+// as Deps.Report, boots the modules (which checks the tables of the datasets they register), adds
+// those datasets under their module's owner key and seals the host. Datasets that directory packages
+// export (inventory.Datasets(), row B3) are added to the host here too, under their package's key,
+// before the modules boot, and are checked by the same function.
+func bootReport(ctx context.Context, enabled capability.Set, dir directory.Services, ownerOf report.TableOwners) (*module.Contributions, *report.Host, error) {
+	host := report.NewHost(ownerOf)
+	if err := host.Add(inventoryOwner, inventory.Datasets()...); err != nil {
+		return nil, nil, fmt.Errorf("server: report datasets: %w", err)
+	}
+	c, err := module.Boot(ctx, generatedModules(platform.Deps{Report: host}, dir), enabled, module.WithTableOwners(ownerOf))
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, s := range c.Datasets() {
+		if err := host.Add(s.Owner, s.Datasets...); err != nil {
+			return nil, nil, fmt.Errorf("server: report datasets: %w", err)
+		}
+	}
+	host.Seal()
+	return c, host, nil
 }

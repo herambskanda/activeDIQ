@@ -1,0 +1,4 @@
+C:\lab\t0577 exists after cleanup: False
+ProgramData\diq-qa-t0577-probe exists: False
+ProgramData child count: 15
+

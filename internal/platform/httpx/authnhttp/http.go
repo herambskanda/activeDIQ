@@ -25,7 +25,7 @@ const (
 	// Secure, with Path=/ and no Domain (threat model §7.3).
 	CookieName = "__Host-adiq_session"
 	// CSRFHeader carries the CSRF value on every cookie-session mutation.
-	CSRFHeader = "X-CSRF-Token"
+	CSRFHeader = authn.CSRFHeader
 )
 
 // SessionCookie is the cookie that hands tok to the browser: __Host- prefix, HttpOnly, Secure,
@@ -120,7 +120,7 @@ func (a *Authenticator) Authenticate(r *http.Request) (apihost.Principal, error)
 	default:
 		return apihost.Principal{}, err // an infrastructure failure: the chain refuses, fail closed
 	}
-	return apihost.Principal{ID: sess.Account, Tenant: sess.Tenant.String(), Kind: apihost.KindSession, SessionID: sess.ID, AuthorityFactor: sess.AuthorityCurrent()}, nil
+	return apihost.Principal{ID: sess.Account, Tenant: sess.Tenant.String(), Kind: apihost.KindSession, SessionID: sess.ID, AuthorityFactor: sess.AuthorityCurrent(), CSRF: CSRFValue(tok)}, nil
 }
 
 // CheckCSRF compares the X-CSRF-Token header with the value derived from the request's own session

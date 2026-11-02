@@ -1,0 +1,10 @@
+{
+ "id": "O-F07",
+ "class": "forged",
+ "cites": [
+  "OIDC-6"
+ ],
+ "build": "jwe",
+ "expect": "refuse",
+ "reason": "oidc.shape"
+}

@@ -348,9 +348,14 @@ func setEdge(ctx context.Context, tx store.Tx, attr string, connection Connectio
 	if err := requireTenant(ctx, tx); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO public.links (tenant_id, connection_id, source_guid, link_attr, target_guid, state, observed_at)
-		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $5, $3::uuid, 'active', $4)
-		ON CONFLICT (tenant_id, connection_id, source_guid, link_attr, target_guid) DO UPDATE SET state = 'active', observed_at = EXCLUDED.observed_at`,
+	// The group is marked dirty in the same statement: its closure rows are stale until RefreshClosure.
+	_, err := tx.Exec(ctx, `WITH edge AS (
+			INSERT INTO public.links (tenant_id, connection_id, source_guid, link_attr, target_guid, state, observed_at)
+			VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $5, $3::uuid, 'active', $4)
+			ON CONFLICT (tenant_id, connection_id, source_guid, link_attr, target_guid) DO UPDATE SET state = 'active', observed_at = EXCLUDED.observed_at
+			RETURNING tenant_id, connection_id, source_guid)
+		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
 		string(connection), string(group), string(member), observed.UTC(), attr)
 	if err != nil {
 		return writeErr("set "+attr, err)
@@ -365,9 +370,13 @@ func removeEdge(ctx context.Context, tx store.Tx, attr string, connection Connec
 	if err := requireTenant(ctx, tx); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `UPDATE public.links SET state = 'removed', observed_at = $4
-		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-		AND source_guid = $2::uuid AND link_attr = $5 AND target_guid = $3::uuid`,
+	_, err := tx.Exec(ctx, `WITH edge AS (
+			UPDATE public.links SET state = 'removed', observed_at = $4
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
+			AND source_guid = $2::uuid AND link_attr = $5 AND target_guid = $3::uuid
+			RETURNING tenant_id, connection_id, source_guid)
+		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
 		string(connection), string(group), string(member), observed.UTC(), attr)
 	if err != nil {
 		return writeErr("remove "+attr, err)

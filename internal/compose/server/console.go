@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
@@ -35,6 +36,9 @@ type consoleStack struct {
 	// tenant through SetTenant, which Run calls once the tenant exists.
 	Local  *authn.LocalCredentials
 	Second *authn.SecondFactor
+	// WebAuthn is AN-10 with a security key. It is nil unless the install has a public URL (the relying
+	// party), and while nil its two routes answer 501.
+	WebAuthn *authn.WebAuthnFactor
 	// Denials, when set, records every refused permission check in the audit trail.
 	Denials *deniedAudit
 	log     *slog.Logger
@@ -44,22 +48,48 @@ type consoleStack struct {
 // SetTenant tells the sign-in plane which tenant the install has; until then AN-8 answers a server fault.
 func (c *consoleStack) SetTenant(t tenant.ID) { c.tenant.Store(&t) }
 
-func (c *consoleStack) installTenant() (tenant.ID, bool) {
+func (c *consoleStack) installTenant() (id tenant.ID, ok bool) {
 	if p := c.tenant.Load(); p != nil {
 		return *p, true
 	}
-	return tenant.ID{}, false
+	return id, false // the zero value, named: compose never composes a tenant.ID (ADR-0002 rule 5)
 }
 
-// Tags is the sign-in plane (/auth/*): AN-8 for a local account and AN-10 with TOTP. WebAuthn, sign-out and
-// the CSRF value answer 501 until their tickets land.
+// Tags is the sign-in plane (/auth/*): AN-8 for a local account and AN-10 with TOTP, and with WebAuthn when
+// the install has a public URL. Without one the WebAuthn routes stay 501 (the field is left a nil interface,
+// not a wrapper around a nil factor). GET /auth/csrf returns the session's CSRF value; sign-out answers 501
+// until its ticket lands.
 func (c *consoleStack) Tags() apihost.TagHandlers {
-	return authn.Handlers{
+	h := authn.Handlers{
 		Password:     authnhttp.PasswordCookies{Factor: c.Local},
 		SecondFactor: authnhttp.TOTPCookies{Factor: c.Second},
 		Log:          c.log,
-	}.Bind()
+	}
+	if c.WebAuthn != nil {
+		h.WebAuthn = authnhttp.WebAuthnCookies{Factor: c.WebAuthn}
+	}
+	return h.Bind()
 }
+
+// webAuthnRelyingParty derives the relying party from the install's public URL through config's one
+// canonicaliser (also used for the attestation redirect URI): the RP ID is the lowercase hostname without
+// port and the one allowed origin is the canonical origin. A value config would refuse is refused here too,
+// because this is the binding that decides which pages may sign a user in.
+func webAuthnRelyingParty(publicURL string) (authn.WebAuthnConfig, error) {
+	po, err := config.ParsePublicURL(publicURL)
+	if err != nil {
+		return authn.WebAuthnConfig{}, fmt.Errorf("server: WebAuthn: %w", err)
+	}
+	return authn.WebAuthnConfig{RPID: po.RPID, RPDisplayName: "activeDIQ", Origins: []string{po.Origin}}, nil
+}
+
+// consoleOption adjusts buildConsole.
+type consoleOption func(*consoleOptions)
+
+type consoleOptions struct{ publicURL string }
+
+// withPublicURL is the install's ACTIVEDIQ_PUBLIC_URL; with it the console offers WebAuthn sign-in.
+func withPublicURL(u string) consoleOption { return func(o *consoleOptions) { o.publicURL = u } }
 
 // deniedAudit is what ports needs to record refusals: the store and the audit sink.
 type deniedAudit struct {
@@ -67,7 +97,11 @@ type deniedAudit struct {
 	Sink audit.Sink
 }
 
-func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.Logger) (*consoleStack, error) {
+func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.Logger, opts ...consoleOption) (*consoleStack, error) {
+	var o consoleOptions
+	for _, f := range opts {
+		f(&o)
+	}
 	sessions, err := authn.New(authn.Config{DB: db, Audit: sink})
 	if err != nil {
 		return nil, fmt.Errorf("server: session store: %w", err)
@@ -88,6 +122,20 @@ func buildConsole(db *store.DB, sink audit.Sink, ks authn.KeySource, log *slog.L
 		Denials: &deniedAudit{DB: db, Sink: sink}}
 	c.Local = &authn.LocalCredentials{DB: db, Sessions: sessions, Pending: pending, Keys: ks, Audit: sink, Tenant: c.installTenant}
 	c.Second = &authn.SecondFactor{DB: db, Pending: pending, Sessions: sessions, TOTP: totp, Audit: sink}
+	if o.publicURL == "" {
+		// One line at start-up, so an operator who expected security-key sign-in is told it is off.
+		if log != nil {
+			log.Info("WebAuthn sign-in is off: ACTIVEDIQ_PUBLIC_URL is not set")
+		}
+		return c, nil
+	}
+	rp, err := webAuthnRelyingParty(o.publicURL)
+	if err != nil {
+		return nil, err
+	}
+	if c.WebAuthn, err = authn.NewWebAuthnFactor(rp, db, pending, sessions, sink); err != nil {
+		return nil, fmt.Errorf("server: WebAuthn factor: %w", err)
+	}
 	return c, nil
 }
 

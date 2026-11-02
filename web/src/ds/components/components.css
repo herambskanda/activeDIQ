@@ -100,6 +100,118 @@
   color: var(--diq-muted);
   background: var(--diq-muted-bg);
 }
+.diq-chip--warn {
+  color: var(--diq-warn);
+  background: var(--diq-warn-bg);
+}
+.diq-chip--crit {
+  color: var(--diq-crit);
+  background: var(--diq-crit-bg);
+}
+.diq-chip__glyph {
+  margin-inline-end: var(--diq-space-1);
+}
+
+/* ---- Banner -------------------------------------------------------------- */
+/* Body text stays --diq-text (tested on each tint); the tone is the border, tint and glyph + words. */
+.diq-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2) var(--diq-space-3);
+  align-items: flex-start;
+  margin-block: var(--diq-space-2);
+  padding: var(--diq-space-3);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-inline-start-width: var(--diq-space-1);
+  border-radius: var(--diq-radius-2);
+}
+.diq-banner--info {
+  background: var(--diq-signal-soft);
+  border-color: var(--diq-signal);
+}
+.diq-banner--warn {
+  background: var(--diq-warn-bg);
+  border-color: var(--diq-warn);
+}
+.diq-banner--crit {
+  background: var(--diq-crit-bg);
+  border-color: var(--diq-crit);
+}
+.diq-banner__glyph {
+  flex: none;
+  font-weight: var(--diq-weight-semibold);
+}
+.diq-banner--info .diq-banner__glyph {
+  color: var(--diq-signal-text);
+}
+.diq-banner--warn .diq-banner__glyph {
+  color: var(--diq-warn);
+}
+.diq-banner--crit .diq-banner__glyph {
+  color: var(--diq-crit);
+}
+.diq-banner__body {
+  flex: 1 1 24ch;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.diq-banner__title,
+.diq-banner__text {
+  margin: 0;
+}
+.diq-banner__title {
+  font-weight: var(--diq-weight-semibold);
+}
+.diq-banner__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2);
+}
+
+/* ---- Progress ------------------------------------------------------------ */
+.diq-progress {
+  position: relative;
+  block-size: var(--diq-space-2);
+  overflow: hidden;
+  background: var(--diq-surface-2);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+}
+.diq-progress__bar {
+  block-size: 100%;
+  background: var(--diq-signal);
+  transition: inline-size var(--diq-dur) var(--diq-ease);
+}
+/* Indeterminate: a segment sweeps along the track; base.css stops it under reduced motion. */
+.diq-progress--indeterminate .diq-progress__bar {
+  inline-size: 40%;
+  animation: diq-sweep 1.2s var(--diq-ease) infinite alternate;
+}
+@keyframes diq-sweep {
+  from {
+    margin-inline-start: 0;
+  }
+  to {
+    margin-inline-start: 60%;
+  }
+}
+
+/* ---- Kbd ----------------------------------------------------------------- */
+.diq-kbd {
+  padding: 0 var(--diq-space-1);
+  color: var(--diq-text-2);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-1);
+  font-family: var(--diq-font-mono);
+  font-size: var(--diq-text-cap);
+}
+
+.diq-btn--primary .diq-kbd {
+  color: inherit;
+  border-color: currentcolor;
+}
 
 /* ---- Table --------------------------------------------------------------- */
 .diq-table-wrap {
@@ -134,10 +246,162 @@
   text-transform: uppercase;
 }
 .diq-table tbody th {
+  color: var(--diq-text);
+  background: transparent;
+  font-size: var(--diq-text-table);
   font-weight: var(--diq-weight-medium);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.diq-table td.diq-table__wrap,
+.diq-table th.diq-table__wrap {
+  max-width: none;
+  padding-block: var(--diq-space-2);
+  overflow-wrap: break-word;
+  white-space: normal;
 }
 .diq-table tbody tr:hover {
   background: var(--diq-surface-2);
+}
+
+/* ---- DataGrid ------------------------------------------------------------ */
+.diq-grid {
+  position: relative;
+  max-height: calc((var(--diq-grid-rows) + 1) * var(--diq-row));
+  overflow: auto;
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line);
+  font-size: var(--diq-text-table);
+}
+/* Busy is not dimmed (dimming text breaks contrast): a signal rule under the header and a progress cursor. */
+.diq-grid[data-busy="true"] {
+  cursor: progress;
+}
+.diq-grid[data-busy="true"] thead th {
+  border-bottom: var(--diq-focus-width) solid var(--diq-signal);
+}
+.diq-grid__ch {
+  position: absolute;
+  width: 1ch;
+  height: 0;
+  visibility: hidden;
+}
+/* Width is the sum of the column widths (inline): extra room stays empty, so a resize moves only that column. */
+.diq-grid__table {
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.diq-grid__col-sel {
+  width: var(--diq-row);
+}
+.diq-grid tr {
+  --diq-grid-bg: var(--diq-surface);
+}
+.diq-grid tbody tr:hover {
+  --diq-grid-bg: var(--diq-surface-2);
+}
+.diq-grid tbody tr.diq-grid__row--selected {
+  --diq-grid-bg: var(--diq-signal-soft);
+}
+.diq-grid th,
+.diq-grid td {
+  height: var(--diq-row);
+  padding: 0 var(--diq-space-3);
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--diq-grid-bg);
+  border-bottom: var(--diq-border) solid var(--diq-line);
+}
+.diq-grid tbody th {
+  color: var(--diq-text);
+  font-size: var(--diq-text-table);
+  font-weight: var(--diq-weight-medium);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.diq-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  color: var(--diq-text-2);
+  background: var(--diq-surface-2);
+  font-size: var(--diq-text-micro);
+  font-weight: var(--diq-weight-semibold);
+  letter-spacing: var(--diq-tracking-label);
+  text-transform: uppercase;
+}
+.diq-grid thead th[data-sortable] {
+  cursor: pointer;
+}
+.diq-grid thead th[data-sortable]:hover {
+  background: var(--diq-line);
+}
+.diq-grid__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diq-grid__mark {
+  margin-inline-start: var(--diq-space-2);
+  color: var(--diq-signal-text);
+}
+.diq-grid th.diq-grid__end,
+.diq-grid td.diq-grid__end {
+  text-align: end;
+}
+/* The row-header column and the selection column stay in view when the grid scrolls sideways. */
+.diq-grid .diq-grid__rh {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+}
+.diq-grid--selectable .diq-grid__rh {
+  inset-inline-start: var(--diq-row);
+}
+.diq-grid thead .diq-grid__rh {
+  z-index: 3;
+}
+.diq-grid .diq-grid__sel {
+  position: sticky;
+  inset-inline-start: 0;
+  z-index: 1;
+  padding: 0;
+  text-align: center;
+}
+.diq-grid thead .diq-grid__sel {
+  z-index: 3;
+}
+.diq-grid .diq-grid__sel input {
+  margin: 0;
+  accent-color: var(--diq-signal);
+  cursor: pointer;
+}
+/* Inset ring: the cell's own outline would be clipped by its neighbours and the scroll box. */
+.diq-grid th:focus-visible,
+.diq-grid td:focus-visible {
+  outline-offset: calc(-1 * var(--diq-focus-width));
+}
+.diq-grid__resize {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: var(--diq-space-2);
+  cursor: col-resize;
+  touch-action: none;
+}
+.diq-grid__resize:hover {
+  background: var(--diq-line-strong);
+}
+.diq-grid__spacer {
+  height: auto;
+  padding: 0;
+  border: 0;
+}
+.diq-grid__empty {
+  padding: var(--diq-space-5);
+  color: var(--diq-text-2);
 }
 
 /* ---- Skeleton ------------------------------------------------------------ */
@@ -210,6 +474,12 @@
   font-size: var(--diq-text-section);
   font-weight: var(--diq-weight-semibold);
 }
+.diq-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2);
+  margin-top: var(--diq-space-3);
+}
 .diq-state--error {
   background: var(--diq-crit-bg);
   border-color: var(--diq-crit);
@@ -217,4 +487,757 @@
 .diq-state--error .diq-state__title,
 .diq-state--error p {
   color: var(--diq-text);
+}
+
+/* ---- Form controls (T-0954) ---------------------------------------------- */
+.diq-field__hint {
+  margin: var(--diq-space-1) 0 0;
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}
+legend.diq-field__label {
+  padding: 0;
+}
+
+/* Select: the platform control, restyled to match the text input; the chevron is a bordered triangle. */
+.diq-select {
+  position: relative;
+}
+.diq-select__control {
+  appearance: none;
+  padding-inline-end: var(--diq-space-6);
+  cursor: pointer;
+}
+.diq-select__control:disabled {
+  cursor: not-allowed;
+}
+.diq-select__control[aria-busy="true"] {
+  cursor: progress;
+}
+.diq-select::after {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: var(--diq-space-3);
+  width: 0;
+  height: 0;
+  content: "";
+  border-block-start: var(--diq-space-1) solid var(--diq-text-2);
+  border-inline: var(--diq-space-1) solid transparent;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+.diq-select__control option {
+  color: var(--diq-text);
+  background: var(--diq-surface);
+}
+
+/* Checkbox */
+.diq-check {
+  display: flex;
+  gap: var(--diq-space-2);
+  align-items: flex-start;
+  min-height: var(--diq-control);
+  padding-block: var(--diq-space-1);
+  cursor: pointer;
+}
+.diq-check__box {
+  flex: none;
+  width: var(--diq-space-4);
+  height: var(--diq-space-4);
+  margin: var(--diq-space-1) 0 0;
+  accent-color: var(--diq-signal);
+  cursor: inherit;
+}
+.diq-check__box[aria-invalid="true"] {
+  outline: var(--diq-border) solid var(--diq-crit);
+}
+.diq-check__box[aria-invalid="true"]:focus-visible {
+  outline: var(--diq-focus-width) solid var(--diq-focus);
+}
+.diq-check__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.diq-check[data-disabled] {
+  color: var(--diq-text-2);
+  cursor: not-allowed;
+}
+
+/* Choice group (RadioCardGroup, SegmentedControl) */
+.diq-choice {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.diq-choice__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2);
+  align-items: stretch;
+}
+.diq-choice__options--chip {
+  align-items: center;
+}
+.diq-choice__options > .diq-btn {
+  align-self: center;
+}
+
+/* RadioCard: the card is the click target; a native radio inside carries the state for assistive tech. */
+.diq-card {
+  display: flex;
+  flex: 1 1 calc(var(--diq-space-9) + var(--diq-space-6));
+  gap: var(--diq-space-2);
+  align-items: flex-start;
+  min-width: 0;
+  padding: var(--diq-space-3);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+  cursor: pointer;
+  transition: background var(--diq-dur-fast) var(--diq-ease);
+}
+.diq-card:hover:not([data-disabled]) {
+  background: var(--diq-surface-2);
+}
+.diq-card[data-checked] {
+  background: var(--diq-signal-soft);
+  border-color: var(--diq-signal);
+  box-shadow: inset 0 0 0 var(--diq-border) var(--diq-signal);
+}
+.diq-card[data-disabled] {
+  color: var(--diq-text-2);
+  cursor: not-allowed;
+}
+.diq-card__radio {
+  flex: none;
+  margin: var(--diq-space-1) 0 0;
+  accent-color: var(--diq-signal);
+  cursor: inherit;
+}
+.diq-card__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.diq-card__title {
+  overflow: hidden;
+  font-weight: var(--diq-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diq-card__desc {
+  overflow: hidden;
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* SegmentedControl: the radio is visually hidden but real; its face carries hover, checked and focus. */
+.diq-seg {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+  cursor: pointer;
+}
+.diq-seg__face {
+  display: inline-flex;
+  gap: var(--diq-space-1);
+  align-items: center;
+  max-width: 100%;
+  min-height: var(--diq-control);
+  padding: 0 var(--diq-space-3);
+  overflow: hidden;
+  color: var(--diq-text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+  transition: background var(--diq-dur-fast) var(--diq-ease);
+}
+.diq-seg:hover:not([data-disabled]) .diq-seg__face {
+  background: var(--diq-surface-2);
+}
+/* Selected is a check, a heavier weight and a ring-weight border, so colour is never the only signal. */
+.diq-seg[data-checked] .diq-seg__face {
+  color: var(--diq-signal-text);
+  font-weight: var(--diq-weight-medium);
+  background: var(--diq-signal-soft);
+  border-color: var(--diq-signal);
+  box-shadow: inset 0 0 0 var(--diq-border) var(--diq-signal);
+}
+.diq-seg[data-checked] .diq-seg__face::before {
+  content: "✓" / "";
+}
+.diq-seg__radio:focus-visible + .diq-seg__face {
+  outline: var(--diq-focus-width) solid var(--diq-focus);
+  outline-offset: var(--diq-focus-offset);
+}
+.diq-seg[data-disabled] {
+  cursor: not-allowed;
+}
+.diq-seg[data-disabled] .diq-seg__face {
+  color: var(--diq-text-2);
+  background: var(--diq-surface-2);
+  opacity: 0.6;
+}
+.diq-choice[aria-invalid="true"] .diq-seg__face,
+.diq-choice[aria-invalid="true"] .diq-card {
+  border-color: var(--diq-crit);
+}
+
+/* TokenInput */
+.diq-token {
+  position: relative;
+}
+.diq-token__field {
+  display: flex;
+  min-height: var(--diq-control);
+  padding: var(--diq-space-1) var(--diq-space-2);
+  cursor: text;
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+}
+.diq-token__field[data-invalid] {
+  border-color: var(--diq-crit);
+}
+.diq-token__field[data-readonly] {
+  background: var(--diq-surface-2);
+}
+.diq-token__field[data-disabled] {
+  background: var(--diq-surface-2);
+  cursor: not-allowed;
+}
+.diq-token__list {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: var(--diq-space-1);
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.diq-token__item {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: var(--diq-space-5);
+  padding-inline-start: var(--diq-space-2);
+  color: var(--diq-muted);
+  background: var(--diq-muted-bg);
+  border-radius: var(--diq-radius-1);
+  font-size: var(--diq-text-cap);
+  font-weight: var(--diq-weight-medium);
+}
+.diq-token__item[data-invalid] {
+  color: var(--diq-crit);
+  background: var(--diq-crit-bg);
+}
+.diq-token__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diq-token__remove {
+  min-width: var(--diq-space-5);
+  height: var(--diq-space-5);
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  background: none;
+  border: 0;
+  border-radius: var(--diq-radius-1);
+  cursor: pointer;
+}
+.diq-token__remove:hover:not(:disabled) {
+  background: var(--diq-line);
+}
+.diq-token__entry {
+  flex: 1 1 calc(var(--diq-space-9));
+  min-width: 0;
+}
+.diq-token__input {
+  width: 100%;
+  min-height: var(--diq-space-5);
+  padding: 0;
+  color: var(--diq-text);
+  background: none;
+  border: 0;
+  font: inherit;
+}
+.diq-token__input:disabled {
+  color: var(--diq-text-2);
+  cursor: not-allowed;
+}
+/* One ring around the whole field instead of a clipped one around the bare input. */
+@supports selector(:has(*)) {
+  .diq-token__input:focus-visible {
+    outline: none;
+  }
+  .diq-token__field:has(.diq-token__input:focus-visible) {
+    outline: var(--diq-focus-width) solid var(--diq-focus);
+    outline-offset: var(--diq-focus-offset);
+  }
+}
+.diq-token__options,
+.diq-token__note {
+  position: absolute;
+  inset-inline: 0;
+  z-index: 10;
+  margin: var(--diq-space-1) 0 0;
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-3);
+}
+.diq-token__options {
+  max-height: calc(var(--diq-row) * 8);
+  padding: var(--diq-space-1);
+  overflow: auto;
+  list-style: none;
+}
+.diq-token__note {
+  padding: var(--diq-space-2) var(--diq-space-3);
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}
+.diq-token__option {
+  display: flex;
+  gap: var(--diq-space-3);
+  align-items: baseline;
+  justify-content: space-between;
+  min-height: var(--diq-row);
+  padding: var(--diq-space-1) var(--diq-space-3);
+  border-radius: var(--diq-radius-2);
+  cursor: pointer;
+}
+.diq-token__option[aria-selected="true"] {
+  background: var(--diq-signal-soft);
+  box-shadow: inset var(--diq-focus-width) 0 0 var(--diq-signal);
+}
+.diq-token__opt-label,
+.diq-token__opt-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diq-token__opt-detail {
+  flex: none;
+  max-width: 50%;
+  color: var(--diq-text-2);
+}
+.diq-token__badge {
+  font-weight: var(--diq-weight-semibold);
+}
+
+/* ---- Popover and PopoverMenu (T-0953) ------------------------------------ */
+.diq-pop {
+  position: relative;
+  display: inline-block;
+}
+.diq-pop__panel {
+  position: absolute;
+  top: calc(100% + var(--diq-space-1));
+  z-index: var(--diq-z-popover);
+  max-width: min(var(--diq-sheet-w), 90vw);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-3);
+  box-shadow: var(--diq-shadow-2);
+}
+.diq-pop__panel--start {
+  inset-inline-start: 0;
+}
+.diq-pop__panel--end {
+  inset-inline-end: 0;
+}
+.diq-pop__panel--menu {
+  min-width: var(--diq-popover-w);
+  padding: var(--diq-space-1);
+}
+.diq-pop__panel--form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--diq-space-2);
+  min-width: calc(var(--diq-popover-w) * 0.75);
+  padding: var(--diq-space-3);
+}
+.diq-menu__note {
+  padding: var(--diq-space-2) var(--diq-space-3);
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+  overflow-wrap: anywhere;
+}
+.diq-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--diq-space-3);
+  width: 100%;
+  min-height: var(--diq-row);
+  padding: var(--diq-space-1) var(--diq-space-3);
+  color: var(--diq-text);
+  background: none;
+  border: 0;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition: background var(--diq-dur-fast) var(--diq-ease);
+}
+.diq-menu__item:hover,
+.diq-menu__item:focus {
+  background: var(--diq-signal-soft);
+}
+.diq-menu__item:focus-visible {
+  outline-offset: calc(var(--diq-focus-width) * -1);
+}
+.diq-menu__item[aria-disabled="true"] {
+  color: var(--diq-text-2);
+  cursor: not-allowed;
+}
+.diq-menu__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.diq-menu__label {
+  font-weight: var(--diq-weight-medium);
+}
+.diq-menu__desc {
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}
+.diq-menu__key {
+  flex: none;
+  padding: 0 var(--diq-space-1);
+  color: var(--diq-text-2);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-1);
+  font-family: var(--diq-font-mono);
+  font-size: var(--diq-text-cap);
+}
+
+/* ---- SideSheet ------------------------------------------------------------ */
+.diq-sheet__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--diq-z-sheet);
+  display: flex;
+  justify-content: flex-end;
+  overscroll-behavior: contain;
+  background: var(--diq-scrim);
+  animation: diq-fade var(--diq-dur) var(--diq-ease);
+}
+.diq-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--diq-space-4);
+  width: min(var(--diq-sheet-w), 100vw);
+  height: 100%;
+  padding: var(--diq-space-5);
+  overflow: auto;
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border-inline-start: var(--diq-border) solid var(--diq-line-strong);
+  animation: diq-slide-in var(--diq-dur) var(--diq-ease);
+}
+.diq-sheet--wide {
+  width: min(var(--diq-sheet-w-wide), 100vw);
+}
+.diq-sheet__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--diq-space-3);
+}
+.diq-sheet__titles {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.diq-sheet__title {
+  margin: 0;
+  font-size: var(--diq-text-section);
+  font-weight: var(--diq-weight-semibold);
+  line-height: var(--diq-leading-tight);
+}
+.diq-sheet__desc {
+  margin: var(--diq-space-1) 0 0;
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}
+.diq-sheet__close {
+  flex: none;
+  min-height: var(--diq-control);
+  padding: 0 var(--diq-space-3);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--diq-dur-fast) var(--diq-ease);
+}
+.diq-sheet__close:hover {
+  background: var(--diq-surface-2);
+}
+.diq-sheet__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--diq-space-4);
+}
+@keyframes diq-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes diq-slide-in {
+  from {
+    transform: translateX(var(--diq-space-5));
+    opacity: 0;
+  }
+}
+.diq-sheet:dir(rtl) {
+  animation-name: diq-slide-in-rtl;
+}
+@keyframes diq-slide-in-rtl {
+  from {
+    transform: translateX(calc(var(--diq-space-5) * -1));
+    opacity: 0;
+  }
+}
+
+/* ---- Toast ---------------------------------------------------------------- */
+.diq-toasts {
+  position: fixed;
+  inset-inline-start: var(--diq-space-4);
+  bottom: var(--diq-space-4);
+  z-index: var(--diq-z-toast);
+  max-width: min(var(--diq-toast-w), calc(100vw - var(--diq-space-6)));
+}
+.diq-toast {
+  display: flex;
+  gap: var(--diq-space-3);
+  align-items: center;
+  padding: var(--diq-space-3) var(--diq-space-4);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-inline-start: calc(var(--diq-border) * 4) solid var(--diq-signal);
+  border-radius: var(--diq-radius-3);
+  animation: diq-fade var(--diq-dur) var(--diq-ease);
+}
+.diq-toast--ok {
+  border-inline-start-color: var(--diq-ok);
+}
+.diq-toast__text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.diq-toast__x {
+  flex: none;
+  min-width: var(--diq-control);
+  min-height: var(--diq-control);
+  padding: 0 var(--diq-space-1);
+  color: inherit;
+  background: none;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.diq-toast__x:hover {
+  background: var(--diq-surface-2);
+}
+
+/* ---- CommandPalette ------------------------------------------------------ */
+.diq-pal__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--diq-z-palette);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--diq-space-8) var(--diq-space-4) var(--diq-space-4);
+  overscroll-behavior: contain;
+  background: var(--diq-scrim);
+  animation: diq-fade var(--diq-dur) var(--diq-ease);
+}
+.diq-pal {
+  display: flex;
+  flex-direction: column;
+  width: min(var(--diq-palette-w), 100%);
+  max-height: 100%;
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-3);
+  box-shadow: var(--diq-shadow-2);
+  animation: diq-pal-in var(--diq-dur) var(--diq-ease);
+}
+@keyframes diq-pal-in {
+  from {
+    transform: translateY(calc(var(--diq-space-2) * -1));
+    opacity: 0;
+  }
+}
+.diq-pal__input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--diq-row-comfortable);
+  padding: var(--diq-space-3) var(--diq-space-4);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: 0;
+  border-bottom: var(--diq-border) solid var(--diq-line);
+  border-radius: var(--diq-radius-3) var(--diq-radius-3) 0 0;
+  font: inherit;
+  font-size: var(--diq-text-body);
+}
+.diq-pal__input::placeholder {
+  color: var(--diq-text-3);
+}
+/* The ring sits inside the dialog edge, so it is never clipped. */
+.diq-pal__input:focus-visible {
+  outline: var(--diq-focus-width) solid var(--diq-focus);
+  outline-offset: calc(var(--diq-focus-width) * -1);
+}
+.diq-pal__input[aria-disabled="true"] {
+  color: var(--diq-text-3);
+}
+.diq-pal__body {
+  min-height: 0;
+}
+.diq-pal__list {
+  max-height: var(--diq-palette-list-h);
+  padding-block: var(--diq-space-1);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.diq-pal__gh {
+  display: flex;
+  gap: var(--diq-space-2);
+  padding: var(--diq-space-2) var(--diq-space-4) var(--diq-space-1);
+  color: var(--diq-text-3);
+  font-size: var(--diq-text-micro);
+  font-weight: var(--diq-weight-semibold);
+  letter-spacing: var(--diq-tracking-label);
+  text-transform: uppercase;
+}
+.diq-pal__count {
+  font-weight: var(--diq-weight-regular);
+}
+.diq-pal__opt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--diq-space-1);
+  padding: var(--diq-space-2) var(--diq-space-4);
+  border-inline-start: var(--diq-focus-width) solid transparent;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.diq-pal__opt:hover {
+  background: var(--diq-surface-2);
+}
+/* The highlighted row: tint plus a bar, so it never rests on colour alone. */
+.diq-pal__opt[data-active] {
+  background: var(--diq-signal-soft);
+  border-inline-start-color: var(--diq-signal);
+}
+.diq-pal__opt[aria-disabled="true"] {
+  cursor: default;
+}
+.diq-pal__opt[aria-disabled="true"] .diq-pal__name {
+  color: var(--diq-text-2);
+}
+.diq-pal__l1 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-1) var(--diq-space-2);
+  align-items: baseline;
+}
+.diq-pal__tag {
+  flex: none;
+  min-width: var(--diq-space-7);
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-micro);
+  font-weight: var(--diq-weight-semibold);
+  letter-spacing: var(--diq-tracking-label);
+  text-transform: uppercase;
+}
+.diq-pal__name {
+  min-width: 0;
+  font-size: var(--diq-text-ui);
+  font-weight: var(--diq-weight-medium);
+  line-height: var(--diq-leading-ui);
+}
+.diq-pal__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-1);
+  max-width: 100%;
+  margin-inline-start: auto;
+}
+/* The match: heavier as well as coloured. */
+.diq-pal__mark {
+  color: var(--diq-signal-text);
+  background: transparent;
+  font-weight: var(--diq-weight-semibold);
+}
+.diq-pal__l2,
+.diq-pal__l3 {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--diq-space-3);
+  padding-inline-start: var(--diq-space-7);
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+  line-height: var(--diq-leading-ui);
+}
+.diq-pal__ident,
+.diq-pal__dn {
+  font-family: var(--diq-font-mono);
+}
+.diq-pal__dn {
+  min-width: 0;
+  color: var(--diq-text-2);
+}
+.diq-pal__domain {
+  margin-inline-start: auto;
+}
+.diq-pal__why {
+  padding-inline-start: var(--diq-space-7);
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}
+.diq-pal__opt--all {
+  color: var(--diq-signal-text);
+  font-size: var(--diq-text-ui);
+}
+.diq-pal .diq-state,
+.diq-pal .diq-skeleton {
+  margin: var(--diq-space-3) var(--diq-space-4);
+}
+.diq-pal__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-2) var(--diq-space-4);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--diq-space-2) var(--diq-space-4);
+  color: var(--diq-text-2);
+  border-top: var(--diq-border) solid var(--diq-line);
+  font-size: var(--diq-text-cap);
+}
+.diq-pal__keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-1) var(--diq-space-3);
+  margin-inline-start: auto;
 }

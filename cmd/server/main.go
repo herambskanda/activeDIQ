@@ -71,6 +71,11 @@ func runSetup(args []string) int {
 // runAccount is `activediq-server account <command>`. Only init-local exists: it creates the first local
 // console account (password on stdin, TOTP enrolled interactively).
 func runAccount(args []string) int {
+	if len(args) > 0 {
+		if code, ok := labAccountCommand(args[0], args[1:]); ok {
+			return code
+		}
+	}
 	if len(args) == 0 || args[0] != "init-local" {
 		fmt.Fprintln(os.Stderr, "usage: activediq-server account init-local --username NAME [--display-name TEXT] [--email ADDR]   (password on the first line of stdin)")
 		return 2

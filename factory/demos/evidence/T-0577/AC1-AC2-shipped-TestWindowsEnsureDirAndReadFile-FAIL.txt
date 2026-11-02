@@ -1,0 +1,12 @@
+=== RUN   TestWindowsEnsureDirAndReadFile
+    ownerfile_windows_test.go:17: ownerfile: state directory is not restricted to the service identity: state
+--- FAIL: TestWindowsEnsureDirAndReadFile (0.00s)
+=== RUN   TestQAWiderDirRefused
+    qa_extra_windows_test.go:25: ownerfile: state directory is not restricted to the service identity: state
+--- FAIL: TestQAWiderDirRefused (0.00s)
+=== RUN   TestQAReadFileCases
+    qa_extra_windows_test.go:60: ownerfile: state directory is not restricted to the service identity: state
+--- FAIL: TestQAReadFileCases (0.00s)
+FAIL
+exit=1
+

@@ -15,6 +15,9 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
+	"github.com/skenzeriq/activediq/internal/platform/authz"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
@@ -40,16 +43,26 @@ type Connections interface {
 	Health(ctx context.Context, tid tenant.ID, id connection.ID, withFindings bool, now time.Time) (connection.Health, error)
 }
 
-// UserSearcher is the connector-backed user search. *client.UserSearch satisfies it.
+// UserSearcher is the connector-backed user search. *client.UserSearch satisfies it. It answers only
+// what scope admits; counts and the limit come after that trimming (LF-39).
 type UserSearcher interface {
-	Users(ctx context.Context, tid tenant.ID, id connection.ID, text string, limit int) (client.UserSearchResult, error)
+	Users(ctx context.Context, tid tenant.ID, id connection.ID, text string, limit int, scope authz.ReadScope) (client.UserSearchResult, error)
+}
+
+// ReadScopes produces the caller's directory read scope for one permission: the one producer search
+// and reports share (m2-plan decision 4). The composition root implements it over rbac.ReadScopes,
+// opening the transaction the producer needs; this package never renders a scope itself.
+type ReadScopes interface {
+	ReadScope(ctx context.Context, tid tenant.ID, chain authority.Chain, perm authz.Permission) (authz.ReadScope, error)
 }
 
 // Handlers implements api.Handlers: searchDirectoryUsers. The tenant comes from the authenticated
-// principal; the text of q reaches the directory only as a value inside a typed filter tree.
+// principal; the text of q reaches the directory only as a value inside a typed filter tree. Results
+// are trimmed to the principal's ReadScope for directory.read; without a producer nothing is answered.
 type Handlers struct {
 	Connections Connections
 	Search      UserSearcher
+	Scopes      ReadScopes
 	Hybrid      Classifier
 	Now         func() time.Time
 	Log         *slog.Logger
@@ -88,11 +101,15 @@ func (h Handlers) SearchDirectoryUsers(ctx context.Context, in api.SearchDirecto
 	if in.Limit != nil {
 		limit = int(*in.Limit)
 	}
+	scope, err := h.readScope(ctx, p, tid)
+	if err != nil {
+		return nil, err
+	}
 	id, err := h.activeConnection(ctx, tid)
 	if err != nil {
 		return nil, err
 	}
-	res, err := h.Search.Users(ctx, tid, id, in.Q, limit)
+	res, err := h.Search.Users(ctx, tid, id, in.Q, limit, scope)
 	if err != nil {
 		return nil, h.searchProblem(err)
 	}
@@ -108,6 +125,26 @@ func (h Handlers) SearchDirectoryUsers(ctx context.Context, in api.SearchDirecto
 			Hybrid: h.Hybrid.Classify(ctx, tid, id, u.ObjectGUID)})
 	}
 	return api.SearchDirectoryUsers200{Body: api.DirectoryUserList{Items: items}}, nil
+}
+
+// readScope returns the principal's read scope for directory.read. Only a console session is a human
+// whose chain can be named here: a token's chain carries the token, which the principal does not, so a
+// token is refused rather than read with the owner's wider scope. No producer, a dead owner, a refused
+// token or an unsupported chain all answer nothing (403); only an infrastructure fault is a 500.
+func (h Handlers) readScope(ctx context.Context, p apihost.Principal, tid tenant.ID) (authz.ReadScope, error) {
+	if h.Scopes == nil || p.Kind != apihost.KindSession {
+		return authz.ReadScope{}, apitypes.Forbidden("")
+	}
+	chain := authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID(p.ID), Kind: authority.Human}}
+	sc, err := h.Scopes.ReadScope(ctx, tid, chain, ReadPermission)
+	switch {
+	case err == nil:
+		return sc, nil
+	case errors.Is(err, authz.ErrOwnerDead), errors.Is(err, authz.ErrTokenRefused), errors.Is(err, rbac.ErrUnsupportedChain), errors.Is(err, rbac.ErrDenied):
+		return authz.ReadScope{}, apitypes.Forbidden("")
+	}
+	h.log().Error("directory search: read scope failed", "error_class", "store")
+	return authz.ReadScope{}, apitypes.Internal("")
 }
 
 // activeConnection returns the tenant's active AD connection, after the service-account gate: a
@@ -160,7 +197,7 @@ func (h Handlers) searchProblem(err error) error {
 	switch {
 	case errors.Is(err, client.ErrSearchTextInvalid):
 		return apitypes.Validation("")
-	case errors.Is(err, client.ErrSearchConnection), errors.Is(err, client.ErrNoEndpoint), errors.Is(err, client.ErrNoConnectorTunnels):
+	case errors.Is(err, client.ErrSearchConnection), errors.Is(err, client.ErrSearchScope), errors.Is(err, client.ErrNoEndpoint), errors.Is(err, client.ErrNoConnectorTunnels):
 		return apitypes.DirectoryUnavailable(reasonUnavailable)
 	case errors.As(err, &rem):
 		h.log().Warn("directory search: connector refused", "connector_code", rem.Err.GetCode().String())
