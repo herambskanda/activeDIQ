@@ -56,7 +56,11 @@ func main() {
 	}
 	if len(r.Violations) == 0 {
 		if *nightly {
-			fmt.Println("fitness-search -nightly: ok (SE6 ran on PostgreSQL 16 and 18 with the large-dataset switch; a pending part is not a pass)")
+			if len(r.Passed) == 0 {
+				fmt.Println("fitness-search -nightly: ok, but nothing ran: SE6 is pending, which is not a pass")
+				return
+			}
+			fmt.Println("fitness-search -nightly: ok (SE6 ran on PostgreSQL 16 and 18 with the large-dataset switch)")
 			return
 		}
 		fmt.Println("fitness-search: ok (every check listed as pass ran and passed; pending parts are not a pass; SE6 runs in the nightly job; ADR-0011 stays ratified while any of SE1-SE5 is pending or SE6 has not passed once)")
