@@ -34,6 +34,10 @@ type ReadOptions struct {
 	// MaxValues caps the values returned per attribute; 0 means DefaultMaxValues. A cut attribute is
 	// named in Entry.Truncated.
 	MaxValues int
+	// ExtendedDN asks for extended DNs (<GUID=…>;<SID=…>;dn) in DN-syntax values, on the first
+	// request and on every range follow-up, so member values beyond the first range carry identity
+	// too. Entry.DN stays plain.
+	ExtendedDN bool
 }
 
 // Read reads one object by DN or GUID (base-scope search) and follows ranged attributes to the
@@ -85,6 +89,10 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 		ctrls = append(ctrls, f.control())
 	}
 
+	if opts.ExtendedDN {
+		ctrls = append(ctrls, extendedDN{})
+	}
+
 	req := make([]string, len(names))
 	for i, n := range names {
 		req[i] = n
@@ -117,6 +125,10 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 	absorb := func(raw *ldap.Entry) { absorbEntry(ent, pending, asked, raw) }
 	absorb(res.Entries[0])
 
+	var followCtrls []ldap.Control
+	if opts.ExtendedDN {
+		followCtrls = []ldap.Control{extendedDN{}}
+	}
 	// Follow ranges to the terminal "*" range, bounded by the value ceiling and a round-trip cap.
 	for round := 0; len(pending) > 0 && round < maxRangeRequests; round++ {
 		var next []string
@@ -132,7 +144,7 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 			break
 		}
 		clear(pending)
-		r, err := s.searchOnceLocked(ctx, base, ldap.ScopeBaseObject, objectClassPresent, next, nil)
+		r, err := s.searchOnceLocked(ctx, base, ldap.ScopeBaseObject, objectClassPresent, next, followCtrls)
 		if err != nil {
 			return nil, err
 		}

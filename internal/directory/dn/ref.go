@@ -190,3 +190,59 @@ func ParseExtendedDN[S ~string](text S) (ExtendedDN, error) {
 	out.DN = d
 	return out, nil
 }
+
+// LinkValue is a DN-syntax attribute value read with the extended-DN control. Unlike ExtendedDN
+// (which describes a DC's answer for an object that must have a GUID), every part but the DN is
+// optional: a dangling or foreign link may arrive with a SID and no GUID, and a DC that ignored
+// the control sends a plain DN. A part the DC did not send stays unset; nothing is derived.
+type LinkValue struct {
+	GUID    guid.GUID
+	HasGUID bool
+	SID     sid.SID
+	HasSID  bool
+	// DN is the display DN exactly as the DC sent it (not re-parsed, not normalised).
+	DN string
+}
+
+// ParseLinkValue splits "<GUID=…>;<SID=…>;dn" (either prefix optional, GUID before SID) from a
+// DN-syntax value. A malformed or repeated prefix is an error: a value is never half-read. A plain
+// DN has no prefix and is returned as is; a plain DN cannot start with '<' (it must be escaped).
+func ParseLinkValue[S ~string](text S) (LinkValue, error) {
+	s := string(text)
+	var out LinkValue
+	if len(s) > MaxDNLen {
+		return out, fail(TooLong, 0)
+	}
+	for len(s) > 0 && s[0] == '<' {
+		end := strings.IndexByte(s, '>')
+		if end < 0 || end+1 >= len(s) || s[end+1] != ';' {
+			return out, fail(InvalidExtendedDN, 0)
+		}
+		k, v, ok := altForm(s[:end+1])
+		if !ok {
+			return out, fail(InvalidExtendedDN, 0)
+		}
+		switch {
+		case k == "GUID" && !out.HasGUID && !out.HasSID:
+			g, err := parseGUID(v)
+			if err != nil {
+				return out, fail(InvalidExtendedDN, 0)
+			}
+			out.GUID, out.HasGUID = g, true
+		case k == "SID" && !out.HasSID:
+			x, err := parseSID(v)
+			if err != nil {
+				return out, fail(InvalidExtendedDN, 0)
+			}
+			out.SID, out.HasSID = x, true
+		default:
+			return out, fail(InvalidExtendedDN, 0)
+		}
+		s = s[end+2:]
+	}
+	if s == "" && (out.HasGUID || out.HasSID) {
+		return out, fail(InvalidExtendedDN, 0)
+	}
+	out.DN = s
+	return out, nil
+}
