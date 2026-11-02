@@ -5,7 +5,7 @@
 - [Domain-model review checks](domain-model-review-checks.md) — ME map vs scope lock; derived states; gPLink; Entra scopes; authz join keys; Graph perms; "only X" vs "X or Y"; backstop predicates
 - [Benchmark review checks](benchmark-review-checks.md) — script step tables vs totals, recompute model times, read screenshot hints for shorter paths, secrets vs TM/SP
 - [AD research review checks](ad-research-review-checks.md) — fetch cited pages for verbatim quotes; trial-vs-paid condition drift; grep stale copies
-- [Blocked on another ticket](triage-blocked-on-another-ticket.md) — don't unblock (skips dep gating); set depends_on; walk the AC's data path for missing writers
+- [Blocked on another ticket](triage-blocked-on-another-ticket.md) — don't unblock (skips dep gating); done≠merged (merge-base check); walk AC data path
 - [Spike review checks](spike-review-checks.md) — gh-api upstream claims; amend disproved ADRs; histogram weighting; recs vs own data; grep ratified ADRs
 - [ADR review: allowlist + ownership](adr-review-allowlist-and-ownership.md) — allowlist matrix must cover every package incl. roots; run every DM owner through table rules
 - [Generator ADR checks](generator-adr-review-checks.md) — read codegen templates per allowed construct; nested strictness; secretjson/FF-SP2; host↔kernel cycles
