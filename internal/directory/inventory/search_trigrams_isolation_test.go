@@ -14,6 +14,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // seedTenantB gives tenant B a naming context and one user, the row that fillObjects copies.
@@ -31,6 +32,14 @@ func (e *env) seedTenantB(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// fillProbe loads the names of probeName for g in [from, to]: two random-looking words per name, so that the
+// proof queries of a 50,000-object world still match a handful of keys (the syllable names of fillRange repeat
+// every few hundred objects, which is right for the small worlds and wrong for this one).
+func (e *env) fillProbe(t *testing.T, tid tenant.ID, from, to int) {
+	t.Helper()
+	e.fillObjects(t, tid, fmt.Sprintf(`SELECT g, %s AS name FROM generate_series(%d, %d) g`, probeName, from, to))
 }
 
 // work is what one statement examined, per relation (ADR-0011 rule 16 as restated in T-1335 AC5).
@@ -137,7 +146,7 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.seedTenantB(t)
-		e.fillRange(t, e.a, 1, n)
+		e.fillProbe(t, e.a, 1, n)
 		// A directory_objects table of realistic size, as in SE5: on a table of 2,000 rows a Seq Scan is the natural
 		// plan for the hits join, and AC4 forbids it only where the planner has a reason to choose the index.
 		if err := e.exec(e.a, `INSERT INTO public.directory_objects (tenant_id, connection_id, object_guid, nc_guid, kind, object_class, parent_guid, ancestry, ancestry_complete, display_name, observed_at, state)
@@ -190,7 +199,9 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 				assertFuzzyPlan(t, plan)
 				shapes = append(shapes, q+describe(plan))
 				m := measure(plan)
-				if m.rows["inventory_search_trigrams"] == 0 || m.rows["inventory_search_keys"] == 0 {
+				// (Before PostgreSQL 18 the JSON Actual Rows of a looped node is a rounded average per loop, so the key
+				// rows of a plan that rechecks few candidates may read 0: the loops are the proof that it ran.)
+				if m.rows["inventory_search_trigrams"] == 0 || m.loops["inventory_search_keys"] < 2 {
 					t.Fatalf("%q: the plan examined no postings or keys: %+v", q, m)
 				}
 				out = append(out, m)
@@ -204,7 +215,7 @@ func Test_search_fuzzy_reads_only_the_tenants_own_postings(t *testing.T) {
 			from, to int
 		}{{"equal to A", 1, n}, {"ten times A", n + 1, 10 * n}}
 		for _, l := range loads {
-			e.fillRange(t, e.b, l.from, l.to)
+			e.fillProbe(t, e.b, l.from, l.to)
 			e.vacuumSearch(t)
 			// ... B's postings are real: its own count matches its keys
 			if missing, extra, want := e.trgDiff(t, e.b); missing != 0 || extra != 0 || want == 0 {

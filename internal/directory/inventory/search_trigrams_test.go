@@ -24,14 +24,12 @@ import (
 func (e *env) ownerTenant(t *testing.T, tid tenant.ID, query func(ctx context.Context, q func(sql string, args ...any) []string) error) {
 	t.Helper()
 	ctx := context.Background()
-	c, err := e.d.Owner(ctx)
+	// The tenant is a start-up parameter of the owner connection, so that no SET text appears in a test.
+	c, err := e.d.OwnerForTenant(ctx, tid.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close(ctx)
-	if _, err := c.Exec(ctx, fmt.Sprintf("SET app.tenant_id = '%s'", tid.String())); err != nil {
-		t.Fatal(err)
-	}
 	q := func(sql string, args ...any) []string {
 		rs, err := c.Query(ctx, sql, args...)
 		if err != nil {
