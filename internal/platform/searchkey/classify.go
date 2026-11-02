@@ -33,14 +33,20 @@ var AllKinds = []Kind{KindName, KindNameWord, KindSAM, KindUPN, KindMail, KindDN
 // Valid reports whether k is a known kind.
 func (k Kind) Valid() bool { return k >= KindName && k <= KindDN }
 
-// FuzzyEligible kinds are in the partial trigram index.
+// FuzzyEligible kinds have trigram postings (ADR-0011 rule 5a): name and sam. A name_word is redundant
+// for word_similarity against the whole name; upn and mail carry a domain suffix that multiplies the
+// postings and adds nothing to name matching. Migration 0070's trigger function names the same list.
 func (k Kind) FuzzyEligible() bool {
 	switch k {
-	case KindName, KindNameWord, KindSAM, KindUPN, KindMail:
+	case KindName, KindSAM:
 		return true
 	}
 	return false
 }
+
+// MaxFuzzyRunes is the longest normalised query that gets a fuzzy class (ADR-0011 rule 8). It bounds the
+// number of trigrams of the query, so the candidate aggregate reads a bounded number of posting lists.
+const MaxFuzzyRunes = 32
 
 // Permission is the permission the kind is read under.
 func (k Kind) Permission() string { return DirectoryRead }
@@ -87,7 +93,8 @@ type Parsed struct {
 	Domain string
 	Exact  []Probe
 	Prefix []Prefix
-	// Fuzzy is the text for the trigram operator; empty when the query is shorter than three characters.
+	// Fuzzy is the text for the trigram operator; empty when the query is shorter than three or longer than
+	// MaxFuzzyRunes characters.
 	Fuzzy string
 }
 
@@ -186,7 +193,7 @@ func Classify(raw string) (Parsed, error) {
 			addPrefix(KindName, sw)
 		}
 	}
-	if p.Runes >= 3 {
+	if p.Runes >= 3 && p.Runes <= MaxFuzzyRunes {
 		p.Fuzzy = p.Name
 	}
 	return p, nil

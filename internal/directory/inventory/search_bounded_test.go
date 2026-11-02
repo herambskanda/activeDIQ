@@ -66,7 +66,7 @@ func explainAnalyze(ctx context.Context, tx store.Tx, sql string, args []any) (*
 
 func (e *env) seSource(t *testing.T) reportsql.SearchSource {
 	t.Helper()
-	src, err := reportsql.NewSearchSource(e.catalog(t), "inventory_search_keys", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
+	src, err := reportsql.NewSearchSource(e.catalog(t), "inventory_search_keys", "inventory_search_trigrams", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
 		Project: []report.Ident{"object_guid"}, Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid",
 		Ancestry: "ancestry", Complete: "ancestry_complete"}, "kind", "state", "enabled", "display_name")
 	if err != nil {

@@ -62,7 +62,7 @@ func WithCeiling(w int) SearcherOption { return func(s *Searcher) { s.ceiling = 
 
 // NewSearcher registers the search source against the live schema, as the datasets are.
 func NewSearcher(sch reportsql.Schema, opts ...SearcherOption) (*Searcher, error) {
-	src, err := reportsql.NewSearchSource(sch, "inventory_search_keys", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
+	src, err := reportsql.NewSearchSource(sch, "inventory_search_keys", "inventory_search_trigrams", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
 		Project: idents("object_guid"), Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid",
 		Ancestry: "ancestry", Complete: "ancestry_complete"}, "kind", "state", "enabled", "display_name")
 	if err != nil {

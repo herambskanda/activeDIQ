@@ -338,6 +338,11 @@ func (d *Database) Apply(ctx context.Context, fsys fs.FS) error {
 		if _, err := c.Exec(ctx, string(b)); err != nil {
 			return fmt.Errorf("migration %s: %w", n, err)
 		}
+		for _, stmt := range migrations.After(string(b)) {
+			if _, err := c.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("migration %s (after): %w", n, err)
+			}
+		}
 	}
 	return nil
 }

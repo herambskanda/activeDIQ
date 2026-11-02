@@ -141,7 +141,7 @@ func Test_search_plan_uses_the_indexes(t *testing.T) {
 		if err := e.d.ExecOwner(context.Background(), `ANALYZE public.inventory_search_keys`); err != nil {
 			t.Fatal(err)
 		}
-		src, err := reportsql.NewSearchSource(e.catalog(t), "inventory_search_keys", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
+		src, err := reportsql.NewSearchSource(e.catalog(t), "inventory_search_keys", "inventory_search_trigrams", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
 			Project: []report.Ident{"object_guid"}, Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid",
 			Ancestry: "ancestry", Complete: "ancestry_complete"}, "kind", "state", "enabled", "display_name")
 		if err != nil {
