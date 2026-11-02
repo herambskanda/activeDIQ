@@ -22,6 +22,11 @@ func hooks(log *kernel.EventLog) agent.Hooks {
 		Version:        version,
 		HeldPrivileges: kernel.HeldPrivileges,
 		Confine:        kernel.Confine,
+		StateUnusable: func(e *agent.StateError) {
+			if log != nil {
+				log.StateUnusable(string(e.Class), e.Detail)
+			}
+		},
 		Applied: func(what string, seq uint64) {
 			if log != nil {
 				log.Applied(what, seq)

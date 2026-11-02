@@ -37,6 +37,19 @@ type Response struct {
 // role package implements it with the generated client; this package never sees the proto.
 type Exchange func(ctx context.Context, creds credentials.TransportCredentials, addr, token string, csrDER []byte) (Response, error)
 
+// Option adjusts Enroll.
+type Option func(*enrollOptions)
+
+type enrollOptions struct{ svc string }
+
+// ForAccount makes Enroll write the state for the named account instead of the caller (Windows only):
+// an administrator enrols on behalf of the service, so the directory and files are owned by
+// Administrators and grant SYSTEM, Administrators and that account, never the administrator's own user
+// SID, which the service would refuse as "someone else" (T-1249). The account must exist when Enroll
+// runs, so a typo or a missing service fails before the single-use token is spent. Other platforms
+// refuse the option.
+func ForAccount(account string) Option { return func(o *enrollOptions) { o.svc = account } }
+
 // Enroll runs the whole client side of enrollment and persists the result in dir only if all of it
 // verified:
 //
@@ -49,7 +62,11 @@ type Exchange func(ctx context.Context, creds credentials.TransportCredentials, 
 //     (never to the pinned server CA, which is the only TLS root) and carry a component identity.
 //
 // Any failure persists nothing. The key and token never appear in an error.
-func Enroll(ctx context.Context, m Material, dir string, ex Exchange) (*State, error) {
+func Enroll(ctx context.Context, m Material, dir string, ex Exchange, opts ...Option) (*State, error) {
+	var o enrollOptions
+	for _, f := range opts {
+		f(&o)
+	}
 	pin, err := ParsePin(m.Pin)
 	if err != nil {
 		return nil, err
@@ -59,7 +76,7 @@ func Enroll(ctx context.Context, m Material, dir string, ex Exchange) (*State, e
 		return nil, errors.New("dial: enrollment material is incomplete")
 	}
 	// Fail before the single-use token is spent if this host cannot store the key safely.
-	if err := ensureDir(dir); err != nil {
+	if err := ensureDir(dir, o.svc); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrState, err)
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -99,10 +116,10 @@ func Enroll(ctx context.Context, m Material, dir string, ex Exchange) (*State, e
 	if err != nil {
 		return nil, fmt.Errorf("dial: encoding key: %w", err)
 	}
-	if err := save(dir, pin, resp.CABundlePEM, resp.LeafDER, keyDER, eps); err != nil {
+	if err := save(dir, o.svc, pin, resp.CABundlePEM, resp.LeafDER, keyDER, eps); err != nil {
 		return nil, fmt.Errorf("dial: persisting enrollment: %w", err)
 	}
-	return Load(dir)
+	return load(dir, o.svc)
 }
 
 // ErrLeaf: the returned leaf is not ours, not from the pinned CA, or carries no component identity.

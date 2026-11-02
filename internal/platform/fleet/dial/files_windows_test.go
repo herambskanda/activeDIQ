@@ -58,10 +58,10 @@ func TestWindowsStateDirIsOwnerOnly(t *testing.T) {
 	if _, err := Enroll(context.Background(), m, dir, iss.exchange); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkDir(dir); err != nil {
+	if err := checkDir(dir, ""); err != nil {
 		t.Fatalf("checkDir: %v", err)
 	}
-	if err := checkFile(filepath.Join(dir, KeyFile), true); err != nil {
+	if err := checkFile(filepath.Join(dir, KeyFile), true, ""); err != nil {
 		t.Fatalf("key.pem: %v", err)
 	}
 	if _, err := Load(dir); err != nil {
@@ -72,7 +72,7 @@ func TestWindowsStateDirIsOwnerOnly(t *testing.T) {
 // ownerOnlyDir creates dir with the production protected DACL (what ensureDir would create).
 func ownerOnlyDir(t *testing.T, dir string) {
 	t.Helper()
-	sd, err := ownerOnlySD()
+	sd, err := ownerOnlySD("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func positiveControl(t *testing.T, m Material, iss *issuer) {
 	t.Helper()
 	good := filepath.Join(t.TempDir(), "control")
 	ownerOnlyDir(t, good)
-	if err := checkDir(good); err != nil {
+	if err := checkDir(good, ""); err != nil {
 		t.Fatalf("positive control: checkDir refused a correct owner-only dir: %v", err)
 	}
 	if _, err := Enroll(context.Background(), m, good, iss.exchange); err != nil {
@@ -105,7 +105,7 @@ func positiveControl(t *testing.T, m Material, iss *issuer) {
 
 func refuseBoth(t *testing.T, m Material, iss *issuer, dir string) {
 	t.Helper()
-	if err := checkDir(dir); err == nil {
+	if err := checkDir(dir, ""); err == nil {
 		t.Fatal("checkDir accepted the directory")
 	}
 	if _, err := Enroll(context.Background(), m, dir, iss.exchange); err == nil {
@@ -122,7 +122,7 @@ func TestWindowsRefusesDirOwnedByAnother(t *testing.T) {
 	iss, m, dir := setup(t)
 	positiveControl(t, m, iss)
 	ownerOnlyDir(t, dir)
-	if err := checkDir(dir); err != nil { // accepted before the owner changes
+	if err := checkDir(dir, ""); err != nil { // accepted before the owner changes
 		t.Fatalf("checkDir refused the unmodified owner-only dir: %v", err)
 	}
 	users, err := windows.CreateWellKnownSid(windows.WinBuiltinUsersSid)
@@ -144,7 +144,7 @@ func TestWindowsRefusesDirWithExtraACE(t *testing.T) {
 	iss, m, dir := setup(t)
 	positiveControl(t, m, iss)
 	ownerOnlyDir(t, dir)
-	if err := checkDir(dir); err != nil { // accepted before the extra ACE
+	if err := checkDir(dir, ""); err != nil { // accepted before the extra ACE
 		t.Fatalf("checkDir refused the unmodified owner-only dir: %v", err)
 	}
 	widenKeepProtected(t, dir)
@@ -158,7 +158,7 @@ func TestWindowsRefusesJunction(t *testing.T) {
 	positiveControl(t, m, iss)
 	target := filepath.Join(t.TempDir(), "target")
 	ownerOnlyDir(t, target)
-	if err := checkDir(target); err != nil { // the target itself is fine; only the junction is refused
+	if err := checkDir(target, ""); err != nil { // the target itself is fine; only the junction is refused
 		t.Fatalf("checkDir refused the owner-only junction target: %v", err)
 	}
 	if out, err := exec.Command("cmd", "/c", "mklink", "/J", dir, target).CombinedOutput(); err != nil {
@@ -170,7 +170,7 @@ func TestWindowsRefusesJunction(t *testing.T) {
 	if isReparse(target) {
 		t.Fatal("isReparse flagged a plain directory")
 	}
-	if err := checkDir(dir); err == nil {
+	if err := checkDir(dir, ""); err == nil {
 		t.Fatal("checkDir accepted a junction")
 	}
 	if _, err := Enroll(context.Background(), m, dir, iss.exchange); err == nil {
@@ -202,7 +202,7 @@ func TestWindowsLoadRefusesWidenedState(t *testing.T) {
 	if err := os.Remove(key); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFile(key, orig); err != nil {
+	if err := writeFile(key, orig, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(dir); err != nil {
@@ -237,4 +237,71 @@ func enablePrivilege(name string) error {
 		return errors.New("privilege not held")
 	}
 	return nil
+}
+
+// T-1249: an administrator enrols FOR the service. The state must name SYSTEM, Administrators and the
+// service account, be owned by Administrators, and must not name the invoking user. NT AUTHORITY\LOCAL
+// SERVICE stands in for NT SERVICE\activeDIQAgent here because it resolves without a service; the real
+// identity is proven on the lab DC (lab/windows/bin/agent-unenrolled-verify). Needs an elevated token
+// (setting the owner to Administrators); the lab and CI run elevated.
+func TestWindowsEnrolForAccountNamesTheAccountNotTheCaller(t *testing.T) {
+	const acct = `NT AUTHORITY\LOCAL SERVICE`
+	iss, m, dir := setup(t)
+	if _, err := Enroll(context.Background(), m, dir, iss.exchange, ForAccount(acct)); err != nil {
+		t.Skipf("cannot enrol for another account in this token (needs elevation): %v", err)
+	}
+	svc, _, _, err := windows.LookupSID("", acct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admins, _ := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	tu, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{dir, filepath.Join(dir, KeyFile), filepath.Join(dir, LeafFile)} {
+		sd, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+		if err != nil {
+			t.Fatal(err)
+		}
+		owner, _, _ := sd.Owner()
+		if !owner.Equals(admins) {
+			t.Errorf("%s owner = %s, want Administrators", filepath.Base(p), owner)
+		}
+		acl, _, err := sd.DACL()
+		if err != nil || acl == nil {
+			t.Fatalf("%s: no DACL: %v", p, err)
+		}
+		sawSvc := false
+		for i := uint32(0); i < uint32(acl.AceCount); i++ {
+			var ace *windows.ACCESS_ALLOWED_ACE
+			if err := windows.GetAce(acl, i, &ace); err != nil {
+				t.Fatal(err)
+			}
+			sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+			sawSvc = sawSvc || sid.Equals(svc)
+			if !tu.User.Sid.Equals(admins) && sid.Equals(tu.User.Sid) {
+				t.Errorf("%s: DACL names the invoking user %s", filepath.Base(p), sid)
+			}
+		}
+		if !sawSvc {
+			t.Errorf("%s: DACL does not name %s", filepath.Base(p), acct)
+		}
+	}
+	// Checked as the account it was written for: accepted. Checked as this (different) caller: refused,
+	// and the refusal is the unsafe class, not "absent".
+	if _, err := load(dir, acct); err != nil {
+		t.Fatalf("load for the account: %v", err)
+	}
+	if _, err := Load(dir); !errors.Is(err, ErrUnsafe) || errors.Is(err, ErrAbsent) {
+		t.Fatalf("Load as the caller = %v, want ErrUnsafe", err)
+	}
+}
+
+func TestWindowsForAccountUnresolvableFailsBeforeAnythingIsWritten(t *testing.T) {
+	iss, m, dir := setup(t)
+	if _, err := Enroll(context.Background(), m, dir, iss.exchange, ForAccount(`NT SERVICE\diqNoSuchService`)); err == nil {
+		t.Fatal("enrolled for an account that does not resolve")
+	}
+	assertNothingPersisted(t, dir)
 }

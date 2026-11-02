@@ -35,7 +35,14 @@ type RepinEvent struct {
 // then the bundle without the old root): a crash leaves a working component, never a half-pinned one.
 // The old root is left in the bundle only as a non-root until the last step removes it. audit is
 // called once with the outcome.
-func Repin(ctx context.Context, dir string, newPin string, audit func(RepinEvent)) error {
+//
+// ForAccount must be passed when the state was written for the service by an administrator (Enroll with
+// ForAccount): the caller is then not the identity the state names.
+func Repin(ctx context.Context, dir string, newPin string, audit func(RepinEvent), opts ...Option) error {
+	var o enrollOptions
+	for _, f := range opts {
+		f(&o)
+	}
 	if audit == nil {
 		return errors.New("dial: repin requires an audit sink")
 	}
@@ -43,17 +50,17 @@ func Repin(ctx context.Context, dir string, newPin string, audit func(RepinEvent
 	if err != nil {
 		return err
 	}
-	st, err := Load(dir)
+	st, err := load(dir, o.svc)
 	if err != nil {
 		return err // not enrolled or unusable: nothing to repin, and no pin to audit against
 	}
 	ev := RepinEvent{OldPin: st.Pin, NewPin: np}
-	ev.Err = repin(ctx, dir, st, np)
+	ev.Err = repin(ctx, dir, o.svc, st, np)
 	audit(ev)
 	return ev.Err
 }
 
-func repin(ctx context.Context, dir string, st *State, np Pin) error {
+func repin(ctx context.Context, dir, svc string, st *State, np Pin) error {
 	if np == st.Pin {
 		return fmt.Errorf("%w: it is already the current pin", ErrRepin)
 	}
@@ -92,11 +99,11 @@ func repin(ctx context.Context, dir string, st *State, np Pin) error {
 		return fmt.Errorf("%w: final bundle would not load: %v", ErrRepin, err)
 	}
 	for _, s := range steps {
-		if err := writeFile(filepath.Join(dir, s.name), s.data); err != nil {
+		if err := writeFile(filepath.Join(dir, s.name), s.data, svc); err != nil {
 			return fmt.Errorf("%w: persisting: %v", ErrRepin, err)
 		}
 	}
-	if _, err := Load(dir); err != nil {
+	if _, err := load(dir, svc); err != nil {
 		return fmt.Errorf("%w: state does not reload: %v", ErrRepin, err)
 	}
 	return nil

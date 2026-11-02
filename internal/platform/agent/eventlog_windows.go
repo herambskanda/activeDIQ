@@ -20,6 +20,7 @@ const (
 	EventStartRefused  = 101 // the agent refused to start (reason class only)
 	EventChannelUnread = 102
 	EventNotEnrolled   = 103 // installed but not enrolled: idling until `agent enroll` runs (warning)
+	EventStateUnusable = 104 // enrolment state exists but cannot be used; the class is in the text (error, T-1249)
 )
 
 var (
@@ -75,4 +76,12 @@ func (l *EventLog) Failed(err error) {
 // warning, not a failure: the service stays running and picks up enrolment on its own.
 func (l *EventLog) NotEnrolled() {
 	l.report(eventLogWarning, EventNotEnrolled, "agent is installed but not enrolled; run `activediq-agent.exe enroll <server:port> <pin>` — waiting")
+}
+
+// StateUnusable records that enrolment state exists but was refused, with the class (unsafe-permissions,
+// expired, corrupt) and the rule that failed. It is an error, distinct from 103 which means "no
+// enrolment yet". The service keeps running and re-checks, so fixing the state needs no restart. The
+// text names a file and a rule, never a SID list, path of secrets or content.
+func (l *EventLog) StateUnusable(class, detail string) {
+	l.report(eventLogError, EventStateUnusable, "enrolment state cannot be used ("+class+"); the agent is not connecting. "+detail)
 }
