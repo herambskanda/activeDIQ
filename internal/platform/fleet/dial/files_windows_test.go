@@ -130,8 +130,11 @@ func TestWindowsRefusesDirOwnedByAnother(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Needs SeRestorePrivilege (elevated lab shell) to assign an owner that is not the caller.
-	if err := enablePrivilege("SeRestorePrivilege"); err != nil {
-		t.Skipf("SeRestorePrivilege unavailable (run elevated): %v", err)
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("not elevated: assigning an owner needs SeRestorePrivilege (the lab run is elevated)")
+	}
+	if err := enablePrivilege("SeRestorePrivilege"); err != nil { // elevated but cannot: a real failure, not a skip
+		t.Fatalf("SeRestorePrivilege unavailable although elevated: %v", err)
 	}
 	if err := windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, users, nil, nil, nil); err != nil {
 		t.Fatalf("set owner: %v", err)
@@ -246,9 +249,14 @@ func enablePrivilege(name string) error {
 // (setting the owner to Administrators); the lab and CI run elevated.
 func TestWindowsEnrolForAccountNamesTheAccountNotTheCaller(t *testing.T) {
 	const acct = `NT AUTHORITY\LOCAL SERVICE`
+	// Skip only when the token is not elevated (the one documented reason it cannot work). When elevated,
+	// any Enroll(ForAccount) error is the regression this test exists to catch and fails it.
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("not elevated: enrolling for another account sets the owner to Administrators (the lab run is elevated)")
+	}
 	iss, m, dir := setup(t)
 	if _, err := Enroll(context.Background(), m, dir, iss.exchange, ForAccount(acct)); err != nil {
-		t.Skipf("cannot enrol for another account in this token (needs elevation): %v", err)
+		t.Fatalf("Enroll(ForAccount(%q)) in an elevated token: %v", acct, err)
 	}
 	svc, _, _, err := windows.LookupSID("", acct)
 	if err != nil {

@@ -40,6 +40,7 @@ func run(cfg config.Config) int {
 	log, _ := kernel.OpenEventLog("activeDIQ Agent") // best effort: a missing source must not stop the agent
 	if log != nil {
 		defer log.Close()
+		kernel.SetCapReporter(log)
 	}
 	isSvc, err := svc.IsWindowsService()
 	if err == nil && isSvc {

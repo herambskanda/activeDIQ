@@ -25,10 +25,27 @@ const (
 )
 
 var (
-	confMu    sync.Mutex
-	confJob   windows.Handle // 0 until Confine succeeded
-	confBurst int            // Burst windows currently open
+	confMu  sync.Mutex
+	confJob windows.Handle // 0 until Confine succeeded
+	// capState drives Burst; its setter reads confJob without confMu because it only runs after Confine
+	// set confJob and called arm() (capState.mu orders the two).
+	capState = newCPUCap(steadyCPURate, burstCPURate, func(rate uint32) error { return setCPURate(confJob, rate) })
 )
+
+// cpuRateOf reads the CPU rate control back from a job (NULL = the calling process's job). Used by the
+// tests to prove the cap is lifted and restored. Contract:
+// https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-queryinformationjobobject
+func cpuRateOf(job windows.Handle) (flags, rate uint32, err error) {
+	var cpu jobCPURate
+	var n uint32
+	if err := windows.QueryInformationJobObject(job, jobObjectCPURateControlInformation, uintptr(unsafe.Pointer(&cpu)), uint32(unsafe.Sizeof(cpu)), &n); err != nil {
+		return 0, 0, err
+	}
+	return cpu.ControlFlags, cpu.CPURate, nil
+}
+
+// SetCapReporter wires the report of a CPU cap that could not be restored (events 105/106).
+func SetCapReporter(r CapReporter) { capState.setReporter(r) }
 
 func setCPURate(job windows.Handle, rate uint32) error {
 	cpu := jobCPURate{ControlFlags: cpuRateEnable | cpuRateHardCap, CPURate: rate}
@@ -70,6 +87,7 @@ func Confine() error {
 		return err
 	}
 	confJob = job
+	capState.arm()
 	return nil
 }
 
@@ -77,29 +95,7 @@ func Confine() error {
 // stay). It exists for connection set-up only: measured on a domain controller (T-1249), dial, TLS
 // handshake and stream open take about 1.3 s uncapped and 25-34 s under the 5 % hard cap, which made
 // a freshly enrolled agent wait half a minute to connect. Windows are reference-counted, short and
-// bounded by the caller; the cap is restored when the last one closes. Before Confine (or if lifting
-// fails) it is a no-op, never an error: the agent then simply connects slowly.
-func Burst() func() {
-	confMu.Lock()
-	defer confMu.Unlock()
-	if confJob == 0 {
-		return func() {}
-	}
-	if confBurst == 0 {
-		if err := setCPURate(confJob, burstCPURate); err != nil {
-			return func() {}
-		}
-	}
-	confBurst++
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			confMu.Lock()
-			defer confMu.Unlock()
-			confBurst--
-			if confBurst == 0 {
-				_ = setCPURate(confJob, steadyCPURate) // if this fails the cap stays lifted until the next Burst window closes and retries
-			}
-		})
-	}
-}
+// bounded by the caller. Putting the cap back is retried at once and then in the background until it
+// succeeds, and a failure is reported to the event log (cpucap.go). Before Confine (or if lifting
+// fails) it is a no-op, never an error: the agent then simply connects slowly, still capped.
+func Burst() func() { return capState.begin() }

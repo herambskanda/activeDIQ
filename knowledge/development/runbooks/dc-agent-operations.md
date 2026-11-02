@@ -29,6 +29,8 @@ Design: [ADR-0006](../decisions/0006-dc-agent-runs-as-a-virtual-service-account.
 | 103 | Warning | Installed but not enrolled: the service is running and idling, re-checking every 5 s | run `activediq-agent.exe enroll <server:port> <pin>`; the agent picks the enrolment up within seconds (re-check every 5 s, every 1 s while the files are being written), no restart needed |
 | 104 | Error | Enrolment state exists but the service refuses it. The text starts `enrolment state cannot be used (<class>)`: `unsafe-permissions` (owner or DACL names someone other than SYSTEM, Administrators and the service; a reparse point), `expired` (the component certificate is past its validity), `corrupt` (incomplete or does not verify). The service keeps running, does not connect, writes this once per class and re-checks every 5 s | `unsafe-permissions`: stop the service, delete `C:\ProgramData\skenzeriq\agent\enrol` and run `activediq-agent.exe enroll` again (state written by a build before T-1249 names the administrator who enrolled and is refused); `expired`/`corrupt`: enrol again with a new token |
 | 102 | Warning | The Security channel cannot be read | a GPO may have reset channel access: re-run `agentsetup grant-channel`; the server shows `channel_unreadable` |
+| 105 | Error | The CPU limit (5 % hard cap) is lifted for the few seconds of a connection set-up and could not be put back. The service retries at once (3 times) and then every 2 s until it succeeds; until then the agent is uncapped. Written once per episode | none needed if 106 follows; if it does not, restart the service (a restart re-applies the cap) and send the support bundle |
+| 106 | Info | The CPU limit was restored by a retry after a 105 | none |
 
 ## Enrolment state and who may read it
 
@@ -44,7 +46,7 @@ WiX 5.0.2. `-wx` turns every warning into an error, so the build fails on any wa
 
 ## Install order
 
-The MSI starts the service on install. Install, start (it idles with event 103), then enrol; the agent notices the enrolment within 15 s. Starting before enrolling is expected, not a failure; the SCM recovery action never fires for it.
+The MSI starts the service on install. Install, start (it idles with event 103), then enrol; the agent notices the enrolment within a few seconds (it polls every 5 s, 1 s while an enrolment is being written). Starting before enrolling is expected, not a failure; the SCM recovery action never fires for it.
 
 ## Verified in the lab (T-0648) and still owed
 

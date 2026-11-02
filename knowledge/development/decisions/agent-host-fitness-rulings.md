@@ -152,8 +152,7 @@ type and the one privilege in a core `ServiceConfig` **nested inside the `Servic
 ```
 
 `RequiredPrivilege` is documented with parent `ServiceConfig` ([WiX schema](https://docs.firegiant.com/wix/schema/wxs/requiredprivilege/));
-`ServiceSid` is a `ServiceConfig` attribute ([WiX ServiceConfig](https://wixtoolset.org/docs/schema/wxs/serviceconfig)). The core `ServiceConfig` also carries the failure-action attributes (T-0813 merged the former `util:ServiceConfig`, deprecated per WIX1149,
-into it; [UNVERIFIED-lab] until T-0648 reads `sc qfailure` back). It has no privilege attribute beyond the `RequiredPrivilege` child.
+`ServiceSid` is a `ServiceConfig` attribute ([WiX ServiceConfig](https://wixtoolset.org/docs/schema/wxs/serviceconfig)). Recovery actions are NOT on the core `ServiceConfig` (it has no failure-action attributes: WIX0004 with WiX 5.0.2); they are on `util:ServiceConfig`, a second element inside the same `ServiceInstall`, which has only those attributes (T-1249; `sc qfailure` read back on dc1 in the T-0833 log). The core element raises WIX1149 itself, so the build suppresses it on purpose (`-sw1149`) and runs with `-wx` so any other warning fails (runbook "Building the MSI"). It has no privilege attribute beyond the `RequiredPrivilege` child.
 So **whether WiX really writes the privilege list is
 `[UNVERIFIED — lab]`**: T-0648 must read it back after install (`sc qprivs activeDIQAgent`, and the token of
 the running service). If WiX cannot write it, the fallback is **not** the registry: file a ruling request
