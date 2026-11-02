@@ -143,6 +143,10 @@ export function Shell({
 
   // Debounced universal directory search
   useEffect(() => {
+    // Every run invalidates whatever request an earlier run left in flight, including runs that
+    // send nothing (palette closed, cleared input, refused recovery password): only the latest
+    // run may write state (AC 2, stale answers ignored).
+    const reqId = ++requestIdRef.current;
     if (!paletteOpen) return;
     const trimmed = query.trim();
     if (trimmed === "") {
@@ -164,7 +168,6 @@ export function Shell({
       return;
     }
 
-    const reqId = ++requestIdRef.current;
     setStatus("loading");
     setNotice(undefined);
 

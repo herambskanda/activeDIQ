@@ -782,6 +782,72 @@ describe("T-1101 AC 2: request count and stale answers", () => {
     expect(document.body.textContent).toContain("Second Person");
     expect(document.body.textContent).not.toContain("Can't reach the server");
   });
+
+  const pending = () => {
+    const r: {
+      resolve?: (x: Response) => void;
+      reject?: (e: unknown) => void;
+    } = {};
+    searchHandler = () =>
+      new Promise<Response>((resolve, reject) => {
+        r.resolve = resolve;
+        r.reject = reject;
+      });
+    return r;
+  };
+
+  it("ignores an answer that arrives after the input was cleared", async () => {
+    vi.useFakeTimers();
+    const r = pending();
+    await mount();
+    await pressCtrlK();
+    await typeQuery("first");
+    expect(searchCalls()).toHaveLength(1);
+    await typeQuery("");
+    await act(async () => r.resolve?.(answer("First Person")));
+    expect(document.body.textContent).not.toContain("First Person");
+    expect(document.body.querySelector('[role="option"]')).toBeNull();
+  });
+
+  it("ignores a late failure after the input was cleared", async () => {
+    vi.useFakeTimers();
+    const r = pending();
+    await mount();
+    await pressCtrlK();
+    await typeQuery("first");
+    await typeQuery("");
+    await act(async () => r.reject?.(new TypeError("Failed to fetch")));
+    expect(document.body.textContent).not.toContain("Can't reach the server");
+  });
+
+  it("keeps the recovery-password refusal when an earlier answer arrives late", async () => {
+    vi.useFakeTimers();
+    const r = pending();
+    await mount();
+    await pressCtrlK();
+    await typeQuery("first");
+    await typeQuery("123456-789012-345678-901234-567890-123456-789012-345678");
+    await act(async () => r.resolve?.(answer("First Person")));
+    expect(document.body.textContent).toContain(RECOVERY_PASSWORD_MESSAGE);
+    expect(document.body.textContent).not.toContain("First Person");
+    expect(searchCalls()).toHaveLength(1);
+  });
+
+  it("ignores an answer that arrives after the palette was closed", async () => {
+    vi.useFakeTimers();
+    const r = pending();
+    await mount();
+    await pressCtrlK();
+    await typeQuery("first");
+    await act(async () => {
+      document
+        .querySelector('[role="dialog"]')
+        ?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => r.resolve?.(answer("First Person")));
+    expect(document.body.textContent).not.toContain("First Person");
+  });
 });
 
 describe("T-1101 AC 4: Show all N", () => {
