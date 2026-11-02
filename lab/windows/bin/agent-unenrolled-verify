@@ -309,7 +309,7 @@ $app | Where-Object Id -eq 104 | Select-Object -First 1 | ForEach-Object {{ "eve
 def trial(a, dc, me, stub_bin, i):
     say(f"\n-- trial {i}/{a.trials}")
     t_trial = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    # back to unenrolled, service freshly started: a different phase of the 15 s re-check each trial
+    # back to unenrolled, service freshly started: a different phase of the 5 s re-check each trial
     rc, out = dc.ps(f"""
 Stop-Service {SVC} -ErrorAction SilentlyContinue
 $cfg = Get-Content 'C:\\Program Files\\skenzeriq\\agent\\agent.json' -Raw | ConvertFrom-Json
@@ -340,7 +340,7 @@ $x = Get-CimInstance Win32_Service -Filter "Name='{SVC}'"; "idle watch end: stat
         pin, tok, addr = info["PIN"], info["TOKEN"], info["ADDR"]
         rc, out = dc.ps(f"(Test-NetConnection {me} -Port {a.port} -WarningAction SilentlyContinue).TcpTestSucceeded")
         check(f"AC4.t{i}.reachable", "True" in out, f"dc1 reaches the lab stub at {me}:{a.port}")
-        time.sleep(random.uniform(3, 14))  # land the enrolment at a random point of the 15 s re-check cycle
+        time.sleep(random.uniform(3, 14))  # land the enrolment at a random point of the 5 s re-check cycle
         dc.put_bytes((tok + "\n").encode(), B + "\\enrol.token")
         rc, out = dc.ps(f"""
 $tok = (Get-Content {B}\\enrol.token -Raw).Trim(); Remove-Item {B}\\enrol.token

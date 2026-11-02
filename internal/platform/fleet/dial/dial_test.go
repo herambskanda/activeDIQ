@@ -486,6 +486,9 @@ func TestLoadClassifiesAbsentApartFromUnusable(t *testing.T) {
 	if _, err := Load(filepath.Join(d, "missing")); !errors.Is(err, ErrAbsent) || !errors.Is(err, ErrState) || errors.Is(err, ErrUnsafe) {
 		t.Fatalf("missing dir = %v, want ErrAbsent (and ErrState), not ErrUnsafe", err)
 	}
+	if _, err := Load(filepath.Join(d, "missing")); errors.Is(err, ErrIncomplete) {
+		t.Fatal("a missing directory is not an enrolment in progress")
+	}
 	// A directory with some files but no leaf is mid-enrolment: still absent.
 	iss, m, dir := setup(t)
 	if _, err := Enroll(context.Background(), m, dir, iss.exchange); err != nil {
@@ -494,8 +497,8 @@ func TestLoadClassifiesAbsentApartFromUnusable(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, LeafFile)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(dir); !errors.Is(err, ErrAbsent) {
-		t.Fatalf("no leaf = %v, want ErrAbsent", err)
+	if _, err := Load(dir); !errors.Is(err, ErrAbsent) || !errors.Is(err, ErrIncomplete) || !errors.Is(err, ErrState) {
+		t.Fatalf("no leaf = %v, want ErrAbsent and ErrIncomplete", err)
 	}
 	// Garbage in a file: unusable, not absent.
 	if err := os.WriteFile(filepath.Join(dir, LeafFile), []byte("not a pem"), 0o600); err != nil {

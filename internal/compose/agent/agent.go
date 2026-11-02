@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"time"
@@ -27,6 +28,8 @@ var (
 	ErrNoConfig    = errors.New("agent: " + ConfigEnv + " is not set")
 	ErrNotEnrolled = errors.New("agent: not enrolled; run `agent enroll`")
 	ErrPrivileges  = kernel.ErrPrivileges
+	// errEnrolling is ErrNotEnrolled seen while the enrolment files are only partly written.
+	errEnrolling = fmt.Errorf("%w: enrolment is being written", ErrNotEnrolled)
 	// ErrStateUnusable: enrolment state exists but cannot be used (unsafe owner or DACL, corrupt,
 	// expired). It is NOT "not enrolled": an operator has to act, and the service says so (T-1249).
 	ErrStateUnusable = errors.New("agent: enrolment state exists but cannot be used")
@@ -60,6 +63,8 @@ func (e *StateError) Is(target error) bool { return target == ErrStateUnusable }
 // StateError. Anything else is never treated as "not enrolled".
 func classify(err error) error {
 	switch {
+	case errors.Is(err, dial.ErrIncomplete):
+		return errEnrolling
 	case errors.Is(err, dial.ErrAbsent):
 		return ErrNotEnrolled
 	case errors.Is(err, dial.ErrUnsafe):
@@ -80,6 +85,9 @@ type Hooks struct {
 	Applied func(what string, seq uint64)
 	// Confine puts the process in its job-object limits; nil off Windows.
 	Confine func() error
+	// Burst lifts the CPU cap for the window between its call and the returned function (connection
+	// set-up only, see tunnelclient.Config.Burst); nil off Windows.
+	Burst   func() func()
 	Version string
 	// NotEnrolledCheck, if set, is called after every RunServing attempt that found the agent not yet
 	// enrolled (tests use it to observe re-checks without sleeping).
@@ -154,7 +162,7 @@ func RunWith(ctx context.Context, cfg config.Config, hk Hooks) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go tunnelLoop(ctx, st, h, id, contract, log)
+	go tunnelLoop(ctx, st, h, id, contract, log, hk.Burst)
 	return h.Run(ctx)
 }
 
@@ -167,7 +175,11 @@ func leafOf(st *dial.State) (*x509.Certificate, error) {
 
 // WaitInterval is how often a service that is installed but not yet enrolled re-checks for the
 // enrolment material.
-const WaitInterval = 15 * time.Second
+const WaitInterval = 5 * time.Second
+
+// EnrollingInterval is the re-check delay while the enrolment files are only partly there: `enroll`
+// is mid-write (or crashed), so the next look is soon, not a whole WaitInterval later.
+const EnrollingInterval = time.Second
 
 // RunServing is RunWith for the Windows service: an agent that is installed but not yet enrolled is
 // an expected state (the MSI starts the service before the operator runs `agent enroll`), not a
@@ -185,8 +197,12 @@ func RunServing(ctx context.Context, cfg config.Config, hk Hooks, interval time.
 	for {
 		err := RunWith(ctx, cfg, hk)
 		var se *StateError
+		wait := interval
 		switch {
 		case errors.Is(err, ErrNotEnrolled):
+			if errors.Is(err, errEnrolling) {
+				wait = min(interval, EnrollingInterval)
+			}
 			reported = ""
 			if hk.NotEnrolledCheck != nil {
 				hk.NotEnrolledCheck()
@@ -213,7 +229,7 @@ func RunServing(ctx context.Context, cfg config.Config, hk Hooks, interval time.
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(interval):
+		case <-time.After(wait):
 		}
 	}
 }

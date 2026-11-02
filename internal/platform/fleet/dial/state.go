@@ -32,6 +32,12 @@ var ErrState = errors.New("dial: enrollment state is not usable")
 // used, which an operator has to hear about (T-1249). An ErrAbsent is also an ErrState.
 var ErrAbsent = errors.New("dial: not enrolled")
 
+// ErrIncomplete: some of the state files exist and others do not, which is what a reader sees while
+// `enroll` is still writing (the leaf is written last) or after a crash midway. It is also an
+// ErrAbsent (not enrolled yet) and an ErrState; a caller that polls can re-check soon instead of
+// waiting a full interval.
+var ErrIncomplete = errors.New("dial: enrollment is incomplete")
+
 // ErrUnsafe: the state exists but its owner, DACL/mode or file type is not one this component accepts
 // (squatted, widened, planted, or written for another identity). An ErrUnsafe is also an ErrState.
 var ErrUnsafe = errors.New("dial: enrollment state has unsafe ownership or permissions")
@@ -95,6 +101,16 @@ func save(dir, svc string, pin Pin, bundlePEM []byte, leafDER []byte, keyDER []b
 	return nil
 }
 
+// anyStateFile reports whether at least one of the enrolment files exists in dir.
+func anyStateFile(dir string) bool {
+	for _, n := range []string{CAFile, PinFile, EndpointsFile, KeyFile, LeafFile} {
+		if _, err := os.Lstat(filepath.Join(dir, n)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // Load reads and re-validates the state in dir: unsafe permissions, a bundle that breaks rule D3 or
 // lacks the recorded pin, or a leaf that does not match the key or verify against the bundle are all
 // ErrState. A missing component is not enrolled.
@@ -109,6 +125,9 @@ func load(dir, svc string) (*State, error) {
 	read := func(name string, secret bool) ([]byte, error) {
 		p := filepath.Join(dir, name)
 		if err := checkFile(p, secret, svc); err != nil {
+			if errors.Is(err, fs.ErrNotExist) && anyStateFile(dir) {
+				return nil, fmt.Errorf("%w (%w): %v", ErrIncomplete, errors.Join(ErrAbsent, ErrState), err)
+			}
 			return nil, stateErr(err)
 		}
 		return os.ReadFile(p)

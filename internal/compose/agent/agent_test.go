@@ -12,6 +12,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/compose/agent"
 	"github.com/skenzeriq/activediq/internal/compose/config"
+	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
 )
 
 func TestRunWithoutConfigRefuses(t *testing.T) {
@@ -174,4 +175,40 @@ func TestRunServingReportsUnusableStateOncePerClassAndKeepsRunning(t *testing.T)
 		t.Fatalf("the 'waiting for enrolment' announcement fired %d times for unusable state", waits)
 	}
 	_ = dir
+}
+
+// T-1249: while `enroll` is still writing (some files there, the leaf not yet), the service looks
+// again after EnrollingInterval, not after the whole interval, so a pickup is not a poll late.
+func TestRunServingRechecksSoonWhileEnrolmentIsBeingWritten(t *testing.T) {
+	d := t.TempDir()
+	enrol := filepath.Join(d, "enrol")
+	if err := os.MkdirAll(enrol, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(enrol, dial.CAFile), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(d, "agent.json")
+	body := `{"data_dir":"` + filepath.ToSlash(filepath.Join(d, "data")) + `","enrollment_dir":"` + filepath.ToSlash(enrol) + `"}`
+	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(agent.ConfigEnv, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	checks := make(chan struct{}, 8)
+	hk := agent.Hooks{NotEnrolledCheck: func() { checks <- struct{}{} }}
+	done := make(chan error, 1)
+	go func() { done <- agent.RunServing(ctx, config.Config{}, hk, time.Hour, nil) }()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-checks:
+		case <-time.After(agent.EnrollingInterval + 5*time.Second):
+			cancel()
+			t.Fatal("no re-check within the enrolling interval: a one-hour interval was used")
+		}
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 }

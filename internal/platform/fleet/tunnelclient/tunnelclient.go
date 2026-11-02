@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -35,6 +36,11 @@ type Config struct {
 	// OnConnect, when set, receives the client side of each established tunnel (calls component → server)
 	// and returns the function to run when that tunnel ends. nil means the component makes no calls.
 	OnConnect func(c grpc.ClientConnInterface) (onClose func())
+	// Burst, when set, is called before each connection attempt; the function it returns is called
+	// when the attempt has failed or opened the tunnel stream. The component's resource limits may be
+	// lifted for exactly that window: dial + TLS handshake + stream open is a short bounded burst that
+	// a steady-state CPU cap stretches from about a second to half a minute (T-1249). nil = no limits.
+	Burst func() (done func())
 }
 
 // Run serves the binding until ctx is done. It returns only then.
@@ -78,13 +84,20 @@ func endpointAddr(e dial.Endpoint) string { return net.JoinHostPort(e.Host, strc
 
 func serveOnce(ctx context.Context, c Config) error {
 	var lastErr error
+	end := func() {}
+	if c.Burst != nil {
+		if done := c.Burst(); done != nil {
+			end = sync.OnceFunc(done)
+		}
+	}
+	defer end()
 	for _, ep := range c.State.Endpoints {
 		conn, err := dial.DialOut(endpointAddr(ep), c.State)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		err = serveConn(ctx, conn, c)
+		err = serveConn(ctx, conn, c, end)
 		_ = conn.Close()
 		return err
 	}
@@ -94,13 +107,15 @@ func serveOnce(ctx context.Context, c Config) error {
 	return lastErr
 }
 
-func serveConn(ctx context.Context, conn *grpc.ClientConn, c Config) error {
+// serveConn opens the stream and serves it; opened is called as soon as the stream open has returned.
+func serveConn(ctx context.Context, conn *grpc.ClientConn, c Config, opened func()) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if c.Open == nil {
 		return errors.New("tunnelclient: no stream opener")
 	}
 	stream, err := c.Open(ctx, conn)
+	opened()
 	if err != nil {
 		return err
 	}
