@@ -24,10 +24,11 @@ import {
   indexHits,
   type DirectorySearchHit,
   formatTime,
-  isRecoveryPassword,
+  isRefusedQuery,
   QUERY_TTL_MS,
   RECOVERY_PASSWORD_MESSAGE,
   SEARCH_DEBOUNCE_MS,
+  showAllHref,
 } from "./palette-wiring";
 
 /** Where the console opens when the address names no screen. */
@@ -156,8 +157,11 @@ export function Shell({
       return;
     }
 
-    // AC 5: 48-digit recovery password is refused in browser with IA message and never sent
-    if (isRecoveryPassword(trimmed)) {
+    // AC 5: a recovery password, or the start of one, is refused in the browser with the IA
+    // message and never sent. This runs before the debounce timer is armed, so no prefix of a
+    // password typed block by block reaches the server. The untrimmed text is checked so a
+    // trailing separator counts.
+    if (isRefusedQuery(query)) {
       lastQueryTimeRef.current = 0; // a refused query is not kept for the next open
       setStatus("error");
       setGroups([]);
@@ -289,12 +293,8 @@ export function Shell({
   const handleShowAll = useCallback(
     (group: PaletteGroup) => {
       closePalette();
-      const trimmed = query.trim();
-      if (group.id === "exact") {
-        navigate(`/search?q=${encodeURIComponent(trimmed)}`);
-      } else {
-        navigate(`/search?q=${encodeURIComponent(trimmed)}&type=${encodeURIComponent(group.id)}`);
-      }
+      const href = showAllHref(query, group.id);
+      if (href) navigate(href);
     },
     [query, closePalette],
   );

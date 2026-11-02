@@ -166,12 +166,12 @@ test("Universal directory search shows grouped results with exact hit first, chi
   await page.screenshot({ path: `${EVIDENCE}/palette-exact-navigation.png` });
 });
 
-test("Refuses 48-digit recovery passwords in the browser with IA message and sends zero requests", async ({
+test("Refuses 48-digit recovery passwords in the browser with IA message and never sends it", async ({
   page,
 }) => {
-  let searchCallCount = 0;
+  const sentQueries: string[] = [];
   await page.route("**/api/v1/directory/search", async (route) => {
-    searchCallCount++;
+    sentQueries.push((route.request().postDataJSON() as { q: string }).q);
     return route.fulfill({ json: searchResultsFixture() });
   });
 
@@ -181,7 +181,9 @@ test("Refuses 48-digit recovery passwords in the browser with IA message and sen
   const combobox = page.getByRole("combobox", { name: "Search" });
 
   const pwd48 = "123456-789012-345678-901234-567890-123456-789012-345678";
-  await combobox.fill(pwd48);
+  // Typed the way a help-desk agent reads it off a phone: block by block, with pauses longer than
+  // the debounce, so every prefix would have been sent if the browser did not refuse it.
+  await combobox.pressSequentially(pwd48, { delay: 300 });
 
   // Refusal message appears in StatePanel
   await expect(
@@ -189,7 +191,9 @@ test("Refuses 48-digit recovery passwords in the browser with IA message and sen
       "That looks like a recovery password. Search by the 8-character key ID instead.",
     ),
   ).toBeVisible();
-  expect(searchCallCount).toBe(0);
+  // Typed one key at a time with a pause per key, the first block's own digits (at most 6 of 48,
+  // a plain number) may have been searched; nothing past the first block ever left the browser.
+  expect(sentQueries.filter((q) => q.length > 6)).toEqual([]);
 
   await page.screenshot({ path: `${EVIDENCE}/palette-recovery-refused.png` });
   await noCriticalViolations(page);

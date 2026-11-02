@@ -607,6 +607,75 @@ describe("T-1101 AC 5: Unhappy states (403, 429, 500, empty, recovery password)"
     expect(document.body.textContent).toContain(RECOVERY_PASSWORD_MESSAGE);
   });
 
+  describe.each([
+    ["dash", "-"],
+    ["space", " "],
+    ["no", ""],
+  ])("typed block by block with %s separators", (_n, sep) => {
+    it("sends nothing after the first block, and refuses from the first block plus separator", async () => {
+      vi.useFakeTimers();
+      await mount();
+      await pressCtrlK();
+      const blocks = [
+        "111111",
+        "222222",
+        "333333",
+        "444444",
+        "555555",
+        "666666",
+        "777777",
+        "888888",
+      ];
+      // The first block alone is a plain 6-digit number (6 of 48 digits): it may be searched.
+      await typeQuery(blocks[0] ?? "");
+      expect(searchCalls().map((c) => JSON.parse(c.body ?? "{}").q)).toEqual(["111111"]);
+      let typed = blocks[0] ?? "";
+      // From the first block plus its separator (or the ninth digit) onward, nothing more is sent.
+      for (const b of blocks.slice(1)) {
+        if (sep !== "") {
+          await typeQuery(typed + sep);
+          expect(document.body.textContent, typed + sep).toContain(RECOVERY_PASSWORD_MESSAGE);
+        }
+        typed += sep + b;
+        await typeQuery(typed);
+        expect(document.body.textContent, typed).toContain(RECOVERY_PASSWORD_MESSAGE);
+        expect(searchCalls(), typed).toHaveLength(1);
+      }
+    });
+  });
+
+  it("full-width digits typed block by block are refused too", async () => {
+    vi.useFakeTimers();
+    await mount();
+    await pressCtrlK();
+    await typeQuery("１１１１１１-");
+    await typeQuery("１１１１１１-２２２２２２");
+    expect(searchCalls()).toHaveLength(0);
+    expect(document.body.textContent).toContain(RECOVERY_PASSWORD_MESSAGE);
+  });
+
+  it("does not retain a refused prefix for the next open", async () => {
+    vi.useFakeTimers();
+    await mount();
+    await pressCtrlK();
+    await typeQuery("111111-222222");
+    await pressCtrlK(); // close
+    await pressCtrlK(); // reopen
+    expect(paletteInput().value).toBe("");
+  });
+
+  it("an 8-digit key ID and a name are still searched", async () => {
+    vi.useFakeTimers();
+    await mount();
+    await pressCtrlK();
+    await typeQuery("12345678");
+    await typeQuery("alovelace");
+    expect(searchCalls().map((c) => JSON.parse(c.body ?? "{}").q)).toEqual([
+      "12345678",
+      "alovelace",
+    ]);
+  });
+
   const problem = (status: number, title: string) =>
     new Response(
       JSON.stringify({ type: "about:blank", title, status, traceId: `trace-${status}-xyz` }),

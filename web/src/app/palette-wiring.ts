@@ -26,6 +26,39 @@ export function isRecoveryPassword(raw: string): boolean {
   return /\p{Nd}{48}/u.test(stripped);
 }
 
+/**
+ * Browser-only guard for a recovery password still being typed. {@link isRecoveryPassword} is the
+ * exact mirror of the server rule and only fires once all 48 digits are present; with a debounced
+ * search every earlier prefix would already have been sent (42 of 48 digits, block by block). So
+ * the browser also refuses the *shape* of a prefix: the text is only decimal digits, whitespace
+ * and dashes (after NFKC) and either has a complete 6-digit block followed by a separator, or
+ * nine or more digits in total. An 8-character, all-digit BitLocker key ID (IA §5.1) stays
+ * searchable: it has eight digits and no separator after a 6-digit run.
+ */
+export function looksLikeRecoveryPasswordPrefix(raw: string): boolean {
+  const norm = raw.normalize("NFKC");
+  if (!/^[\p{Nd}\s\p{Pd}]+$/u.test(norm)) return false;
+  if (/(?<!\p{Nd})\p{Nd}{6}(?=[\s\p{Pd}])/u.test(norm)) return true;
+  return (norm.match(/\p{Nd}/gu) ?? []).length >= 9;
+}
+
+/** True when the browser must refuse the query: a full recovery password or the start of one. */
+export function isRefusedQuery(raw: string): boolean {
+  return isRecoveryPassword(raw) || looksLikeRecoveryPasswordPrefix(raw);
+}
+
+/**
+ * Where "Show all N" opens: universal search for the query, narrowed to the group's type. Never a
+ * URL holding a refused query (ADR-0011 rule 15), so a refused query yields no destination.
+ */
+export function showAllHref(rawQuery: string, groupId: string): string | undefined {
+  if (isRefusedQuery(rawQuery)) return undefined;
+  const q = encodeURIComponent(rawQuery.trim());
+  return groupId === "exact"
+    ? `/search?q=${q}`
+    : `/search?q=${q}&type=${encodeURIComponent(groupId)}`;
+}
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function formatTime(iso: string): string {

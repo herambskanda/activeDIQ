@@ -12,6 +12,9 @@ import {
   indexHits,
   formatTime,
   isRecoveryPassword,
+  isRefusedQuery,
+  looksLikeRecoveryPasswordPrefix,
+  showAllHref,
   mapHitToPaletteItem,
   mapStatusChip,
   matchPages,
@@ -47,6 +50,54 @@ describe("palette-wiring: isRecoveryPassword", () => {
     expect(isRecoveryPassword("alovelace")).toBe(false);
     expect(isRecoveryPassword("Ada Lovelace")).toBe(false);
     expect(isRecoveryPassword("12345678")).toBe(false);
+  });
+});
+
+describe("palette-wiring: recovery password prefixes", () => {
+  const blocks = ["111111", "222222", "333333", "444444", "555555", "666666", "777777", "888888"];
+
+  it.each([
+    ["dash", "-"],
+    ["space", " "],
+    ["no", ""],
+  ])("refuses every prefix typed block by block with %s separators", (_name, sep) => {
+    // From the first complete block plus its separator onward; with no separators, from the ninth digit.
+    let typed = "";
+    for (const [i, b] of blocks.entries()) {
+      typed += (i > 0 ? sep : "") + b;
+      const withSep = typed + sep;
+      if (sep !== "") expect(isRefusedQuery(withSep), withSep).toBe(true);
+      if (sep === "" && typed.length >= 9) expect(isRefusedQuery(typed), typed).toBe(true);
+      if (i > 0) expect(isRefusedQuery(typed), typed).toBe(true);
+    }
+  });
+
+  it("refuses full-width digits the same way", () => {
+    expect(looksLikeRecoveryPasswordPrefix("１１１１１１-２２２２２２")).toBe(true);
+    expect(looksLikeRecoveryPasswordPrefix("１１１１１１ ")).toBe(true);
+    expect(looksLikeRecoveryPasswordPrefix("１２３４５６７８９")).toBe(true);
+  });
+
+  it("still allows an 8-digit key ID, a lone 6-digit number and ordinary names", () => {
+    for (const q of [
+      "12345678",
+      "12345678 ",
+      "111111",
+      "alovelace",
+      "Ada Lovelace",
+      "jsmith2",
+      "A1B2C3D4",
+    ]) {
+      expect(isRefusedQuery(q), q).toBe(false);
+    }
+    expect(isRefusedQuery("room 111111-2")).toBe(false);
+  });
+
+  it("showAllHref gives no destination for a refused query, and builds the URL otherwise", () => {
+    expect(showAllHref("111111-222222", "users")).toBeUndefined();
+    expect(showAllHref("111111-222222", "exact")).toBeUndefined();
+    expect(showAllHref(" ada ", "exact")).toBe("/search?q=ada");
+    expect(showAllHref("ada", "users")).toBe("/search?q=ada&type=users");
   });
 });
 
