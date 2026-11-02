@@ -14,3 +14,7 @@ metadata:
 - WiX: ServiceSid/RequiredPrivilege go in a core ServiceConfig nested in ServiceInstall; WiX actually writing the privilege list is UNVERIFIED (T-0648 reads it back). Mixed-case Id (AgentDir) keeps a directory private; ALLCAPS is a public property.
 - SDDL render uses aliases (ER, BA, SY); assert on those, not on S-1-5-32-xxx, in Windows tests.
 - Never `git stash` for a quick check; use a tagged WIP commit.
+- Held-dir pattern (ownerfile.Dir, T-1315): open the dir once no-follow, verify the parent first, then only handle-relative I/O. Windows dir handle without FILE_SHARE_DELETE blocks rename of the dir; compare GetFinalPathNameByHandle of each file to dir+name.
+- Test dirs: t.TempDir() subdirs are group-writable under umask 002 and fail the parent check; chmod the parent 0700 in the test (tempParent helper).
+- A new package linked into cmd/agent needs a line in tools/fitness/agenthost/closure-allow.txt (A4) with what it can reach.
+- Pre-existing red: fitness-safeprim (3 hits in directory/inventory), compose/server tests time out here. Not ours.
