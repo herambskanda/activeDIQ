@@ -30,3 +30,14 @@ func TestOverToMissDecidesTheP95(t *testing.T) {
 		t.Errorf("overToMiss(1000, 95) = %d, want 51", k)
 	}
 }
+
+// A search that ran into the service timeout is a slow sample; any other non-200 still stops the run.
+func TestTimedOutIsOnlyTheSearchUnavailableProblem(t *testing.T) {
+	unavail := []byte(`{"instance":"/api/v1/directory/search","status":503,"title":"Search is unavailable","type":"/problems/search-unavailable"}`)
+	if !timedOut(503, unavail) {
+		t.Error("the contract's search-unavailable 503 is not recognised")
+	}
+	if timedOut(500, unavail) || timedOut(503, []byte(`{"type":"/problems/internal"}`)) || timedOut(200, nil) {
+		t.Error("a status other than the search-unavailable 503 was taken for a timeout")
+	}
+}

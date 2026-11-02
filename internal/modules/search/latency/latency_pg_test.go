@@ -19,6 +19,7 @@
 package latency_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os/exec"
 
@@ -199,7 +200,7 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 			continue
 		}
 		caller := []string{"admin", "scoped"}[i/len(classes)%2]
-		if code, _, _ := srv.post(caller, c.texts[i%len(c.texts)], 0); code != 200 {
+		if code, body, _ := srv.post(caller, c.texts[i%len(c.texts)], 0); code != 200 && !timedOut(code, body) {
 			t.Fatalf("warm-up %s %q: status %d", caller, c.texts[i%len(c.texts)], code)
 		}
 	}
@@ -216,16 +217,21 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 				continue
 			}
 			ds := make([]time.Duration, 0, cfg.per)
-			over := 0
+			over, unavailable := 0, 0
 			for i := 0; i < cfg.per; i++ {
 				text := c.texts[i%len(c.texts)]
 				code, body, d := srv.post(caller, text, 0)
-				if code != 200 {
+				switch {
+				case timedOut(code, body):
+					// The 2 s safety timeout answered (rule 13): a sample over budget, not a harness error.
+					unavailable++
+				case code != 200:
 					t.Fatalf("%s %s %q: status %d: %s", caller, c.name, text, code, body)
+				default:
+					// Hidden objects are never returned: checked on every timed answer, outside the clock.
+					w.noHidden(t, caller, c.name, text, body)
 				}
 				ds = append(ds, d)
-				// Hidden objects are never returned: checked on every timed answer, outside the clock.
-				w.noHidden(t, caller, c.name, text, body)
 				if d >= budget {
 					over++
 				}
@@ -239,8 +245,11 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 			st := summarize(ds)
 			results = append(results, outcome{"pg" + s.Version, caller, c.name, st})
 			stop := ""
+			if unavailable > 0 {
+				stop = fmt.Sprintf("   %d answered 503 search-unavailable (statement timeout)", unavailable)
+			}
 			if st.n < cfg.per {
-				stop = fmt.Sprintf("   stopped: %d of %d queries over %dms, so the p95 of %d is over budget whatever the rest take", over, st.n, budget.Milliseconds(), cfg.per)
+				stop += fmt.Sprintf("   stopped: %d of %d queries over %dms, so the p95 of %d is over budget whatever the rest take", over, st.n, budget.Milliseconds(), cfg.per)
 			}
 			say("%-7s %-10s %6d %8s %8s %8s %8s%s", caller, c.name, st.n, ms(st.p50), ms(st.p95), ms(st.p99), ms(st.max), stop)
 		}
@@ -266,6 +275,11 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 					cache[text] = m
 				}
 				code, body, _ := srv.post(caller, text, 50)
+				if timedOut(code, body) {
+					disagreements = append(disagreements, fmt.Sprintf("%s %q: search-unavailable (statement timeout), not comparable", caller, text))
+					checked++
+					continue
+				}
 				if code != 200 {
 					t.Fatalf("verify %s %q: status %d: %s", caller, text, code, body)
 				}
@@ -309,6 +323,12 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 			say("%s %-7s %-10s p95 %7sms  %s", r.pg, r.caller, r.class, ms(r.st.p95), verdict)
 		}
 	}
+}
+
+// timedOut says the handler answered the contract's search-unavailable problem: the statement ran into the
+// service's timeout (ADR-0011 rule 13). In a latency run that is a slow sample, not a harness failure.
+func timedOut(code int, body []byte) bool {
+	return code == 503 && bytes.Contains(body, []byte(`"/problems/search-unavailable"`))
 }
 
 // loadAvg is the 1-minute load average ("n/a" off Linux).
@@ -420,8 +440,8 @@ func (w *world) sweepCeiling(t *testing.T, say func(string, ...any), W int, cfg 
 	for _, caller := range []string{"admin", "scoped"} {
 		var ds []time.Duration
 		for i := 0; i < 150; i++ {
-			code, _, d := srv.post(caller, texts[i%len(texts)], 0)
-			if code != 200 {
+			code, body, d := srv.post(caller, texts[i%len(texts)], 0)
+			if code != 200 && !timedOut(code, body) {
 				t.Fatalf("sweep %s: status %d", caller, code)
 			}
 			ds = append(ds, d)
