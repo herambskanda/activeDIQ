@@ -40,10 +40,32 @@ latency miss (T-1102). These are the changes in this revision:
 - **Rules 8 and 9:** the fuzzy-eligible kinds are `name` and `sam`. `name_word`, `upn` and `mail`
   keep exact and prefix matching.
 - **Rules 12 and 13:** the fuzzy stage and its rows-examined bound are restated.
-- **Rule 16:** this revision closes it by construction. T-1136 is superseded by T-1332.
+- **Rule 16:** this revision closes it by construction. T-1136 is superseded by T-1335.
 - **SE1, SE2 and SE5:** they now cover the posting table, its one trigger function and the new plan
   shape.
 - **Consequences, follow-on work and revisit triggers** are updated to match.
+
+**Revision 3, review rework (2026-11-02, T-1314; security-architect AC2 review and director
+review).** The posting-table shape stands. These are the corrections:
+- **M1, rule 5a:** the trigger as first written (`AFTER UPDATE OF key` with transition tables, and
+  one trigger for several events) cannot be created on PostgreSQL 16 or 18. Rule 5a now specifies
+  one function attached by three statement-level triggers, the last being `AFTER UPDATE` with no
+  column list, which also covers a `key_kind` change.
+- **M2, rule 16:** equal `Actual Rows` does not prove that tenant B's entries are unread, because RLS
+  removes B's rows below that count. The proof is now rows examined and blocks read per relation,
+  with B empty, B equal to A and B at 10× A.
+- **Rule 5a's candidate bound** mirrors `pg_trgm`'s `float4` comparison instead of `⌈t · n⌉` in
+  `double`, which was tighter than the GIN at some thresholds (t = 0.56, n = 25 gives 15, where the
+  GIN accepts 14).
+- **Rule 5a's recheck** is a correlated per-candidate lookup (`CROSS JOIN LATERAL`), never a join
+  the planner may turn into a hash join over the key table.
+- **Rules 8 and 13:** the fuzzy class runs only for normalised queries of 3 to 32 runes, which caps
+  the trigrams a request reads. SE5 adds that worst case.
+- **SE1:** the three triggers, and every index on the key and posting tables leads with
+  `tenant_id`. **SE5:** a Bitmap Index Scan on the posting primary key is also accepted.
+- **Option c1** now cites the right ADR-0002 rules.
+- **Build ticket:** T-1335 replaces T-1332, which carried the pre-review shape and whose acceptance
+  criteria could not be edited in place.
 **Kind:** technical. There is no CEO fork: price, packaging, deployment and platform strategy do not
 change. The one customer-visible effect is that a customer-supplied PostgreSQL must have the contrib
 extensions installed, and ADR-0001 already allows that kind of prerequisite.
@@ -204,7 +226,7 @@ LDAP user search is retired.
    - **Indexes.** A B-tree on `(tenant_id, key_kind, key)` serves exact and prefix matches.
      Fuzzy matches are served by rule 5a's posting table. **The table has no trigram index** (rev 3):
      the partial GIN `inventory_search_keys_fuzzy` from 0069 cannot be used under row security
-     (§3a), and T-1332 drops it.
+     (§3a), and T-1335 drops it.
    - **Scope columns are not copied.** The table carries none of the scope anchor columns. The
      search statement joins `directory_objects` and trims there, so OU moves and `ancestry_complete`
      repairs have one place to be right.
@@ -245,21 +267,48 @@ LDAP user search is retired.
 
 5a. **Fuzzy candidates come from a tenant-led B-tree of trigram postings, read under row security,
     and each candidate is rechecked with `<%`.** `internal/directory/inventory` owns the table, and
-    T-1332 builds it.
+    T-1335 builds it.
     - **Table.** `inventory_search_trigrams (tenant_id uuid, trgm text COLLATE "C", key_id bigint)`,
       with `PRIMARY KEY (tenant_id, trgm, key_id)`.
       - It is a tenant table under ADR-0002: RLS `ENABLE` and `FORCE`, the one fail-closed policy,
         registered with `fitness-tenancy`.
       - It carries no key text and no scope columns.
-      - It has no foreign key. Rule 5a's trigger is what keeps it equal to the keys, and T-1332 AC2
+      - `key_id` is a table-wide identity, so its values reveal the database-wide insert rate. It
+        never leaves the statement: no hit, cursor, API field or log carries it (SE3's template
+        test).
+      - It has no foreign key. Rule 5a's triggers are what keep it equal to the keys, and T-1335 AC2
         tests that.
     - **Postings are a function of the keys, maintained by the database.**
-      - One statement-level trigger function, `inventory_search_trigrams_sync`, maintains them. It is
-        `SECURITY INVOKER`, uses transition tables and is attached `AFTER INSERT`, `AFTER DELETE` and
-        `AFTER UPDATE OF key` on `inventory_search_keys`.
+      - One trigger function, `inventory_search_trigrams_sync()`, maintains them. It is
+        `SECURITY INVOKER`, has `SET search_path = pg_catalog, public`, and calls `show_trgm`
+        schema-qualified with the schema rule 4's extension is installed in.
+      - **Three statement-level triggers** on `inventory_search_keys` call it, each with its own
+        transition tables. PostgreSQL refuses transition tables on a trigger with a column list, or
+        on a trigger for more than one event
+        ([CREATE TRIGGER](https://www.postgresql.org/docs/current/sql-createtrigger.html); confirmed
+        on 16 and 18 by the security-architect review):
+        - `AFTER INSERT … REFERENCING NEW TABLE AS new_keys FOR EACH STATEMENT`;
+        - `AFTER DELETE … REFERENCING OLD TABLE AS old_keys FOR EACH STATEMENT`;
+        - `AFTER UPDATE … REFERENCING OLD TABLE AS old_keys NEW TABLE AS new_keys FOR EACH
+          STATEMENT`, with **no column list**. A `key_kind` change is an update too: `name` to
+          another kind must remove the postings, and the reverse must create them. `UPDATE OF key`
+          would have missed both.
+      - The function branches on `TG_OP`. Inserts add postings for `new_keys`, deletes remove them
+        for `old_keys`, and updates remove those for `old_keys` and add those for `new_keys`.
+        `key_id` is `GENERATED ALWAYS` and never changes, so it is the join key. The function may
+        skip rows whose `key` and `key_kind` are unchanged.
       - It writes one row `(tenant_id, t, key_id)` for each `t` in `show_trgm(key)`, and only for the
         fuzzy-eligible kinds `name` (1) and `sam` (3).
-      - It runs as the caller under the same policy (`WITH CHECK`). So the sync writer, the `dn`
+      - **PostgreSQL 18 runs a deferred or cascade-queued `AFTER` trigger as the role that queued it**
+        (the security-architect review saw an FK-cascade delete fire it as the table owner). `FORCE`
+        still binds the owner to the policy, so it sees one tenant. But the function can then run
+        with the owner's privileges, so it must not resolve names through a caller-controlled
+        `search_path`: hence the fixed `search_path` and the schema-qualified `show_trgm`. T-1335
+        AC2 covers that path.
+      - The runtime role holds `SELECT`, `INSERT` and `DELETE` on the postings, and no `UPDATE` or
+        `TRUNCATE`.
+      - It runs as the invoking role (the caller, or on 18 the queuing role) under the same policy
+        (`WITH CHECK`). So the sync writer, the `dn`
         rewrite on an OU move (T-0988), the backfill and deletion all keep the postings right
         without knowing that they exist.
     - **The fuzzy-eligible kinds are `name` and `sam` only** (rule 9).
@@ -272,22 +321,35 @@ LDAP user search is retired.
         12–330 ms. Postings for `name` and `sam` came to 2.0 M (277 MB) and took 7–105 ms.
     - **The probe** (the `m_fuzzy` stage of rule 12, in the `reportsql` search template only):
       1. `Q = show_trgm($q)`, and `n` = the number of trigrams in `Q`. If `n = 0` there is no fuzzy
-         class.
-      2. **Candidates:** the `key_id`s whose postings hold at least `⌈t · n⌉` of `Q`, where `t` is the
-         one bound threshold that the same transaction also sets as
-         `pg_trgm.word_similarity_threshold`. This is an Index Only Scan of the posting primary key
-         with `Index Cond: tenant_id = … AND trgm = ANY (Q)`.
+         class. The class runs only for normalised queries of 3 to 32 runes (rule 8), so `n` is at
+         most 48: one trigram per rune plus one per word.
+      2. **Candidates:** the `key_id`s whose count `c` of postings in `Q` satisfies
+         `c::real / n::real >= t`, where `t` is the one bound threshold (`double precision`) that the
+         same transaction also sets as `pg_trgm.word_similarity_threshold`. This is an Index Only
+         Scan (or a Bitmap Index Scan) of the posting primary key with
+         `Index Cond: tenant_id = … AND trgm = ANY (Q)`, aggregated by `key_id`.
          - The bound is `pg_trgm`'s own GIN consistency rule for `<%`: the share of the query's
-           trigrams present in the key is at least the threshold. So the candidate set is a
-           superset of the matches.
-         - The template may loosen the bound and never tighten it.
-         - That the bound mirrors `pg_trgm` 1.6's source exactly is `[UNVERIFIED]`. T-1332 AC3's
-           property test against an index-free `<%` oracle is the proof. The spike agreed with that
-           oracle on every query it ran.
+           trigrams present in the key is at least the threshold, computed as a `float4` division
+           compared with the `double` threshold. So the candidate set is a superset of the matches.
+         - It is written in that `float4` form, not as `c >= ⌈t · n⌉` in `double`. The `double` form
+           is tighter at some thresholds: at t = 0.56 and n = 25 it asks for 15 trigrams, where the
+           GIN accepts 14 (14/25 in `float4` is 0.5600000024). The template may loosen the bound,
+           for example with an epsilon, and never tighten it.
+         - That the bound mirrors `pg_trgm` 1.6's `gin_trgm_consistent` exactly is `[UNVERIFIED]`.
+           T-1335 AC3's property test against an index-free `<%` oracle is the proof, and its
+           thresholds include values where `float4` rounding decides the count (0.56 with n = 25,
+           0.7 with n = 10, 0.3 with n = 10). The spike agreed with that oracle on every query it
+           ran.
       3. **Recheck:** each candidate is looked up in `inventory_search_keys` by `(tenant_id,
-         key_id)`, filtered by the call's kind list (rule 9 gating), and kept if `$q <% key`. The
-         stage then applies `LIMIT W + 1`. `<%` runs here as an ordinary filter over rows already
-         admitted by the policy, so its leakproofness does not matter.
+         key_id)` through a **correlated per-candidate lookup** (`candidates CROSS JOIN LATERAL
+         (SELECT … FROM inventory_search_keys k WHERE k.key_id = c.key_id … LIMIT 1)`, as in the
+         spike). It is filtered by the call's kind list (rule 9 gating) and kept if `$q <% key`.
+         The stage then applies `LIMIT W + 1`.
+         - The lookup must not be an ordinary join. At other statistics the planner may turn a join
+           into a hash join over a Seq Scan of the key table, and the security-architect review
+           produced exactly that plan, reading both tenants' rows.
+         - `<%` runs here as an ordinary filter over rows already admitted by the policy, so its
+           leakproofness does not matter.
     - **Tenant isolation is kept, and no superuser is needed.**
       - Every read is by the runtime role, on `FORCE`d tables, through the one policy shape.
       - The posting B-tree leads with `tenant_id`, so a tenant's fuzzy scan reads only its own index
@@ -297,14 +359,25 @@ LDAP user search is retired.
       - The migration is plain `CREATE TABLE`, `CREATE FUNCTION` (invoker) and `CREATE TRIGGER` by
         the migration owner. `show_trgm` belongs to the trusted extension that rule 4 already
         installs.
+      - **The backfill of existing keys must not run under `FORCE` with no tenant set.** The
+        migration owner is bound by the policy, sees no rows, and an `INSERT … SELECT` then builds
+        zero postings without an error (seen on 16 and 18). The migration uses the 0021/0047
+        pattern: `NO FORCE` on `inventory_search_keys` and `inventory_search_trigrams` for the one
+        backfill statement, inside the migration's single transaction, with `tenant_id` taken from
+        the same source row, then `FORCE` again. It then runs `VACUUM (ANALYZE)` on the postings
+        outside the transaction, or the T-1335 runner does, so that an Index Only Scan does not
+        fetch heap pages.
     - **No new scope renderer.** The postings and candidates are unscoped stages under rule 12's
       invariant, exactly as `m_fuzzy` was. Trimming still happens only in `hits`, by `scopeSQL`.
     - **The expected plan** (asserted by `Test_search_plan_uses_the_indexes` and SE5, under `FORCE`
       RLS as the runtime role, on PostgreSQL 16 and 18):
-      - an Index Only Scan (or Index Scan) using `inventory_search_trigrams_pkey`, whose
-        `Index Cond` holds `tenant_id` and `trgm`;
+      - an Index Only Scan, an Index Scan, or a Bitmap Index Scan (with its Bitmap Heap Scan) using
+        `inventory_search_trigrams_pkey`, whose `Index Cond` holds `tenant_id` and `trgm`.
+        PostgreSQL 16 chose the bitmap form in the security-architect review, so the test accepts
+        all three;
       - an aggregate by `key_id`;
-      - an Index Scan of `inventory_search_keys` on `(tenant_id, key_id)` for the recheck;
+      - a correlated Index Scan of `inventory_search_keys` on `(tenant_id, key_id)` for the
+        recheck, one loop per candidate;
       - **no Seq Scan** on `inventory_search_keys`, `inventory_search_trigrams` or
         `directory_objects`.
 
@@ -315,11 +388,12 @@ LDAP user search is retired.
       another tenant's (rule 13).
       - Target: the handler statement, fuzzy stage included, takes ≤ 130 ms on the T-1102 seed. That
         is rule 14's statement share.
-      - T-1332 AC6 re-runs T-1102's root-cause probe to show it. T-1102 then measures the p95.
-    - **Levers within this shape,** if T-1332 misses the target. Each keeps the tenant-led B-tree and
-      the `<%` recheck, so it needs no new revision, provided T-1332 AC3 and AC5 still hold:
-      1. **Read only the rarest lists.** A key holding at least `⌈t · n⌉` of `n` trigrams holds at
-         least one of any `n − ⌈t · n⌉ + 1` of them, so the probe can read only the rarest lists. In
+      - T-1335 AC6 re-runs T-1102's root-cause probe to show it. T-1102 then measures the p95.
+    - **Levers within this shape,** if T-1335 misses the target. Each keeps the tenant-led B-tree and
+      the `<%` recheck, so it needs no new revision, provided T-1335 AC3 and AC5 still hold:
+      1. **Read only the rarest lists.** A key holding at least `m` of `n` trigrams (`m` the smallest count that passes the
+         `float4` bound) holds at
+         least one of any `n − m + 1` of them, so the probe can read only the rarest lists. In
          the spike this was exact, but slower for short queries, so it is not the default.
       2. **A per-tenant vocabulary.** The posting unit becomes the distinct normalised fuzzy text,
          which pays when names repeat. It needs orphan collection.
@@ -343,7 +417,7 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
 |---|---|---|---|---|
 | **(a) Tenant-led trigram posting table + `<%` recheck** | Yes | Plain DDL | Yes | **Chosen.** It costs index volume (about 277 MB per 50k objects in the spike) and write amplification on sync, and per query it is 2–8× slower than a GIN with RLS bypassed on the spike's data, with a similar worst case (105 against 120 ms) |
 | (b) `LEAKPROOF` wrappers around `pg_trgm`'s operators | Yes | **Superuser** ("can only be set by the superuser", [CREATE FUNCTION](https://www.postgresql.org/docs/current/sql-createfunction.html)) | No | Rejected. The migration owner must never need superuser (ADR-0002, T-1092). A leakproof promise about third-party C code is not ours to make either |
-| (c1) `SECURITY DEFINER` candidate function as a `BYPASSRLS` role | No: a function that reads every tenant | **Superuser or a `BYPASSRLS` holder** to create the role ([CREATE ROLE](https://www.postgresql.org/docs/current/sql-createrole.html)) | No | Rejected. ADR-0002 T3 forbids `BYPASSRLS` in the runtime path |
+| (c1) `SECURITY DEFINER` candidate function as a `BYPASSRLS` role | No: a function that reads every tenant | **Superuser or a `BYPASSRLS` holder** to create the role ([CREATE ROLE](https://www.postgresql.org/docs/current/sql-createrole.html)) | No | Rejected. An unregistered `SECURITY DEFINER` reader breaks ADR-0002 rule 4 (fitness-tenancy T2), and the 2026-10-29 amendment admits only `NOBYPASSRLS` definer roles. Creating a `BYPASSRLS` role needs superuser in any case |
 | (c2) `SECURITY DEFINER` function owned by the table owner, with `FORCE` removed | No | Plain DDL | No | Rejected. It breaks ADR-0002's "RLS `ENABLE`d and `FORCE`d on every tenant table" (fitness-tenancy) |
 | (c3) `SECURITY DEFINER` function as a `NOLOGIN NOBYPASSRLS` role with a `USING (true)` policy | No: a cross-tenant read policy on a tenant table, and a hand-written `tenant_id` filter inside the function | An installer-created role (`CREATEROLE`) | **No** (the GIN still reads other tenants' posting lists) | Rejected. The spike shows it works: the constant-true policy qual lets the planner use the GIN. But it is a per-keystroke, tenant-scope, cross-tenant read of key text whose only isolation is our `WHERE` clause. ADR-0002 rule 4 admits a `SECURITY DEFINER` reader only when it is column-limited, platform-scope and has one call site, and this is none of those. It is the fastest option, and a bug in it would disclose another tenant's names on SaaS |
 | (d) `btree_gin` multi-column GIN `(tenant_id, key gin_trgm_ops)`, or LIST partitions with one GIN each | Yes | Plain DDL (`btree_gin` also needs a register row) | Partly | Rejected. Neither changes leakproofness, so `<%` is still a filter and the probe is still a scan. Both were rule 16 candidates (T-1136) and are superseded |
@@ -420,7 +494,7 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
    |---|---|---|
    | `exact` | The query parses as an identifier shape (below), and its `NormIdent` form equals a key of that kind | B-tree equality |
    | `prefix` | A name or identifier key starts with the query: `key >= $p AND key < $p_hi` over the `COLLATE "C"` column, where `$p_hi` is the query with its last code point incremented, computed by `searchkey.PrefixUpper`. For a one-word query this also includes per-word name keys (`name_word`), so "pri" finds "Priya Raman" | B-tree range |
-   | `fuzzy` | Only when the normalised query has at least 3 runes: `$q <% key` (`pg_trgm` word similarity) over the fuzzy-eligible kinds `name` and `sam` (rev 3). The threshold is set per transaction through the static statement `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`, and the same bound value sets rule 5a's candidate bound. It is `[PROPOSED]` 0.5 and T-1095/T-1102 tune it against the 'Pryia Ramn' vector | Rule 5a: B-tree on `inventory_search_trigrams (tenant_id, trgm, key_id)` for candidates, then a `(tenant_id, key_id)` lookup and a `<%` recheck |
+   | `fuzzy` | Only when the normalised query has 3 to 32 runes (rev 3; the upper bound caps rule 13's work): `$q <% key` (`pg_trgm` word similarity) over the fuzzy-eligible kinds `name` and `sam` (rev 3). The threshold is set per transaction through the static statement `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`, and the same bound value sets rule 5a's candidate bound. It is `[PROPOSED]` 0.5 and T-1095/T-1102 tune it against the 'Pryia Ramn' vector | Rule 5a: B-tree on `inventory_search_trigrams (tenant_id, trgm, key_id)` for candidates, then a `(tenant_id, key_id)` lookup and a `<%` recheck |
 
    **`PrefixUpper` edges.** The keys are compared under `COLLATE "C"` in a UTF8 database, and there
    byte order is code-point order. `PrefixUpper` increments the last code point:
@@ -517,8 +591,8 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
              read in the index's own order with no ORDER BY:
                exact, prefix: B-tree on (tenant_id, key_kind, key), one equality or range scan per kind;
                fuzzy:         rule 5a: posting B-tree (tenant_id, trgm = ANY(show_trgm($q))),
-                              key_ids holding >= ceil(t*n) of the n query trigrams,
-                              then key lookup by (tenant_id, key_id) and $q <% key;
+                              key_ids whose count c of the n query trigrams has c::real/n::real >= t,
+                              then a correlated LATERAL lookup by (tenant_id, key_id) and $q <% key;
              LIMIT $W + 1
     ceil  := the best class c whose m_c holds W + 1 rows, or none                       -- UNSCOPED; caller-independent
     best  := DISTINCT ON (connection_id, object_guid) over m_c, for the classes ranked above ceil only
@@ -588,13 +662,18 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
       `LIMIT W + 1` stops the recheck, but candidates that fail it are not counted against it.
       - The posting B-tree leads with `tenant_id`, so the bound is **the tenant's own postings**,
         in every deployment profile. No tenant's work depends on another tenant's data.
-      - T-1332 and T-1102 measure it at 50,000 objects.
+      - **The query length caps it.** The fuzzy class runs only for 3 to 32 runes, so a request
+        reads at most 48 posting lists. Without that cap, a 256-rune query of about 250 trigrams
+        could read most of a 50,000-object tenant's 2 M postings until the 2 s timeout, which is
+        shared I/O in a SaaS cell. The 32 is `[PROPOSED]`: T-1335 AC6 measures the worst case, a
+        32-rune query built from the tenant's most frequent trigrams, and T-1102 may lower it.
+      - T-1335 and T-1102 measure it at 50,000 objects.
     - **After the cut.** At most 3(W + 1) rows are joined to `directory_objects` by primary key,
       evaluated against the scope and sorted.
     - **Other existing bounds:**
       - at most 50 per group;
       - at most 512 scope terms (`ErrScopeTooLarge`);
-      - `fuzzy` only from 3 runes;
+      - `fuzzy` only for normalised queries of 3 to 32 runes (rule 8), so at most 48 query trigrams;
       - the statement's plan must use the key B-tree, the posting B-tree and the `(tenant_id,
         key_id)` index, with no sequential scan on the key table, the posting table or
         `directory_objects` (SE5).
@@ -648,7 +727,7 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
     - **Browser.** The console never navigates to a URL holding a query the browser has refused
       (IA §5.2).
 16. **No tenant's fuzzy search reads, or is slowed by, another tenant's index entries.** Rev 3
-    closes this rule by construction through rule 5a, and T-1332 proves it.
+    closes this rule by construction through rule 5a, and T-1335 proves it.
     - **The risk.** Revision 2's GIN index on `key` did not lead with `tenant_id`. In a shared
       database, one tenant's fuzzy scan would have read other tenants' posting lists, so its
       response time would have depended on their data. That is a timing side channel, not only a
@@ -657,13 +736,27 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
     - **What closes it.** Rule 5a's postings are a B-tree that leads with `tenant_id`, and the
       recheck is a lookup by `(tenant_id, key_id)`. Every stage of the statement therefore reads
       only the tenant's own index entries and rows.
-    - **The proof.** T-1332 AC5 holds tenant B at the same 50,000-object key set as tenant A, and
-      asserts that the `Actual Rows` of every scan node in A's fuzzy query are equal with B full
-      and with B empty, on PostgreSQL 16 and 18. That test carries T-1136 AC2 and replaces its
-      p95 comparison.
+    - **The proof** (T-1335 AC5, which carries T-1136 AC2 and replaces its p95 comparison).
+      - `Actual Rows` alone proves nothing. RLS removes B's rows below that count: the
+        security-architect review showed a Seq Scan over both tenants whose `Actual Rows` was the
+        same with B empty and B full, with 39,999 rows removed by filter.
+      - **What is measured.** Tenant A holds the 50,000-object key set. Tenant B is loaded three
+        ways: empty, equal to A, and 10× A. `VACUUM (ANALYZE)` runs after each load. A's fuzzy
+        queries are explained with `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` under `FORCE` RLS as
+        the runtime role, on PostgreSQL 16 and 18.
+      - **Rows examined** of a scan node = `Actual Rows × Actual Loops + Rows Removed by Filter +
+        Rows Removed by Index Recheck`, plus `Heap Fetches` for an Index Only Scan. Summed per
+        relation (`inventory_search_trigrams`, `inventory_search_keys`, `directory_objects`), it
+        must be **exactly equal** in all three loads. Summing per relation keeps the check valid
+        when the planner picks a bitmap form in one load and an Index Only Scan in another.
+      - **Blocks read** (shared hit + read) per relation must be equal within 2 blocks per loop of
+        each index-scan node. That allows one extra B-tree level and a page shared with B at the
+        edge of A's key range, but not any B-proportional read.
+      - Every scan node in all three loads must have SE5's plan shape. A `Seq Scan` fails the test
+        whatever the counts say.
     - **No start-up gate is built** (T-1136 AC3 is dropped). ADR-0002 gives self-hosted profiles
       exactly one tenant row. No SaaS cell or MSP deployment exists, and none may serve fuzzy search
-      before T-1332 lands. T-1136 is superseded by T-1332.
+      before T-1335 lands. T-1136 is superseded by T-1335.
 
 ## Alternatives considered
 
@@ -715,14 +808,15 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
   for one-letter prefix queries. This is the price of a bound that reveals nothing about the scope.
   Exact identifier hits still show.
 - **Fuzzy work is not bounded by W.** It is bounded by the tenant's postings for the query's
-  trigrams and the 2 s timeout (rule 13). T-1332 and T-1102 measure it at 50k objects, and the scale
+  trigrams and the 2 s timeout (rule 13). T-1335 and T-1102 measure it at 50k objects, and the scale
   tier must re-measure it.
 - **We own a small piece of fuzzy-matching machinery** (rev 3): the posting table, its trigger and
   the candidate bound. Trigram extraction and the final `<%` test stay `pg_trgm`'s own. The
-  candidate bound must remain a superset of `<%` across `pg_trgm` upgrades, and T-1332 AC3's oracle
+  candidate bound must remain a superset of `<%` across `pg_trgm` upgrades, and T-1335 AC3's oracle
   test guards that on every supported version.
-- **Fuzzy matching covers `name` and `sam` only** (rev 3). A misspelt UPN or mail address finds its
-  object only through the object's name or sAMAccountName.
+- **Fuzzy matching covers `name` and `sam` only, and queries of 3 to 32 runes only** (rev 3). A
+  misspelt UPN or mail address finds its object only through the object's name or sAMAccountName.
+  A query longer than 32 runes gets exact and prefix matches but no typo tolerance.
 - **Postings are about 15× the size of the GIN index they replace, and every key write fans out.**
   The spike measured 2.0 M rows and 277 MB per 50k objects, against a 39 MB GIN for two such
   tenants. Each `name` or `sam` key write also writes about 10–15 posting rows in the same
@@ -731,7 +825,7 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
   keys matching this text", the same to every caller. Timing can also, with many rate-limited samples,
   confirm that a named object exists (rule 13). T-1137 records both in the threat model.
 - **Index volume.** Roughly 4–8 key rows per object, so about 0.3–0.4 M rows at 50k objects, plus
-  the trigram postings (above). The sizing guide must count both. T-1332 AC6 records the measured
+  the trigram postings (above). The sizing guide must count both. T-1335 AC6 records the measured
   size.
 - **No frozen pages.** "Show all" pages can shift while the inventory changes.
 - `reportsql` grows a non-report entry point. Its owner and its security review (P5 rule 3) now
@@ -746,8 +840,8 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
 - **T-1130** per-account recent objects for ranking and for the empty palette (P3).
 - **T-1131** an Entra ID read-scope root kind for search and reports (spec).
 - **T-1136** a tenant-isolated trigram index, and the rule-16 gate until it lands
-  (directory-engineer). **Superseded by T-1332** (rev 3).
-- **T-1332** (rev 3, from T-1314) the tenant-led trigram posting table, its trigger, the new
+  (directory-engineer). **Superseded by T-1335** (rev 3).
+- **T-1335** (rev 3, from T-1314; replaces T-1332) the tenant-led trigram posting table, its three triggers, the new
   `m_fuzzy` stage, dropping the GIN index, the flipped plan test, the two-tenant test, and the SE1,
   SE2 and SE5 changes, all in one change (directory-engineer; security-sensitive). T-1102 depends on
   it.
@@ -775,7 +869,7 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
 - **PostgreSQL marks `pg_trgm`'s operators leakproof,** or adds a leakproof similarity operator.
   The GIN index would then work under RLS. It is still not tenant-led, so that alone would not meet
   rule 16.
-- **Before any SaaS cell or MSP deployment serves fuzzy search,** T-1332 must have landed with AC5
+- **Before any SaaS cell or MSP deployment serves fuzzy search,** T-1335 must have landed with AC5
   green (rule 16).
 - **Customers need more typo tolerance on identifiers than trigrams give, or cross-script
   matching.** Then consider a `fuzzystrmatch` re-ranker over the rows below the ceiling.
@@ -818,9 +912,14 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
       norm_version)` and never `key`.
     - No Go code writes `inventory_search_trigrams`.
     - No migration may define a view or function over either table. The one listed exception is the
-      trigger function `inventory_search_trigrams_sync` (rule 5a). It must be `SECURITY INVOKER` and
-      attached to `inventory_search_keys`, and it may read only that trigger's transition tables and
-      write only `inventory_search_trigrams` (rev 3).
+      trigger function `inventory_search_trigrams_sync` (rule 5a). It must be `SECURITY INVOKER`
+      with `SET search_path = pg_catalog, public`. It may be attached only to
+      `inventory_search_keys`, by exactly the three statement-level triggers of rule 5a (`AFTER
+      INSERT`, `AFTER DELETE`, and `AFTER UPDATE` with no column list). It may read only those
+      triggers' transition tables and write only `inventory_search_trigrams` (rev 3).
+    - **Every index on `inventory_search_keys` and `inventory_search_trigrams` leads with
+      `tenant_id`**, unique or not. `fitness-tenancy` T2 checks unique indexes only, so a later
+      non-unique index on `trgm` or `key` would quietly reopen rule 16 (rev 3).
   - **When T-1127 lands,** RP2's allow-list in `fitness-reports` is narrowed to match.
 - **SE2, no string-built search SQL and no stray trigram use (static, repo-wide).**
   - **Patterns.** The search template in `reportsql`, and every SQL constant or sqlc query file under
@@ -834,7 +933,7 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
 
     The one exception is `show_trgm(` in the body of `inventory_search_trigrams_sync` (rule 5a,
     rev 3), as well as in the template. T-1095's `gin_trgm_ops` exception covers only the historical
-    migration 0069, whose index T-1332 drops. No later migration may use a trigram operator class.
+    migration 0069, whose index T-1335 drops. No later migration may use a trigram operator class.
     Modulo arithmetic in SQL is written `mod(a, b)`, so a bare `%` is never ambiguous.
   - **Settings.**
     - No `SET` or `SET SESSION` of any `pg_trgm.*` setting.
@@ -865,7 +964,8 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
     400.
   - **Empty scopes.** A scope that renders `FALSE` gives zero hits and its reason.
   - **The template itself.** A `reportsql` unit test asserts that the outer `SELECT`, `ORDER BY`,
-    window and `LIMIT` clauses reference only `hits` and `ceiling_hit`.
+    window and `LIMIT` clauses reference only `hits` and `ceiling_hit`, and that no output column
+    or cursor component is `key_id` (rev 3).
 - **SE4, hostile, normalisation and secrecy vectors (integration).**
   - **Hostile text.** `%`, `_`, `\`, quotes, `$1`, `'; --` and `E'\x00'`-style text match literally
     or not at all.
@@ -889,8 +989,9 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
   - **Plan shape.** The check runs `EXPLAIN (ANALYZE, FORMAT JSON)` of the compiled statement under
     `FORCE` RLS as the runtime role, on PostgreSQL 16 and 18 (rev 3). The plan must:
     - use the key B-tree for exact and prefix;
-    - for fuzzy, use `inventory_search_trigrams_pkey` with `tenant_id` and `trgm` in its
-      `Index Cond`, then the `(tenant_id, key_id)` index for the recheck;
+    - for fuzzy, use `inventory_search_trigrams_pkey` (Index Only Scan, Index Scan, or Bitmap Index
+      Scan) with `tenant_id` and `trgm` in its `Index Cond`, then a correlated loop over the
+      `(tenant_id, key_id)` index for the recheck;
     - have no `Seq Scan` on `inventory_search_keys`, `inventory_search_trigrams` or
       `directory_objects`.
 
@@ -902,6 +1003,9 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
     - fuzzy: the recheck stage returns W + 1 rows or fewer. The posting rows read and the
       candidates rechecked are recorded and reported for SE6, but are not bounded by W (rule 13);
     - the join to `directory_objects` has 3(W + 1) or fewer loops.
+  - **Longest fuzzy query (rev 3).** A 32-rune query built from the tenant's most frequent
+    trigrams has the same plan shape and finishes inside the statement timeout. Its posting rows
+    read are recorded for SE6. A 33-rune query has no fuzzy class at all.
   - **Answers.** With H = W − 10, the technician's response equals the H = 0 response exactly. With
     H = W + 10 and 20,000, the response is the refine state, and it equals an unscoped admin's
     refine state for the same query.
@@ -911,5 +1015,5 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
 
 `fitness-tenancy` (ADR-0002) covers RLS, `FORCE` and the tenant-led primary keys of
 `inventory_search_keys` and `inventory_search_trigrams`. `fitness-stack` F4 covers the absence of
-new Go dependencies. Rule 16 is proved by T-1332 AC5's two-tenant scan-rows test, which joins SE5's
-bindings when it lands.
+new Go dependencies. Rule 16 is proved by T-1335 AC5's two-tenant rows-examined and blocks-read test,
+which joins SE5's bindings when it lands.

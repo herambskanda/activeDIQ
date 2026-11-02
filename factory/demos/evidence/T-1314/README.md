@@ -33,5 +33,5 @@ solution-architect.
    ("skrorsors10", "pryia ramn", "johanson", "mullerberger", "raman"). The oracle is `$q <% key` over
    every key, with no index.
 
-The production proof is T-1332: the AC3 oracle property test, the AC4 plan test, the AC5 two-tenant
+The production proof is T-1335: the AC3 oracle property test, the AC4 plan test, the AC5 two-tenant
 test, and the AC6 budget on the T-1102 seed, on PostgreSQL 16 and 18.
