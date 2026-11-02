@@ -129,6 +129,7 @@ test('a text conflict between two train members: the later one stays done and wa
     const b = await finished(f, 'b', { 'shared.txt': 'from b\n' });
     const c = await finished(f, 'c');
     const d = dispatcher(f);
+    const notesBefore = byId(f)[b.id].notes.length;
     await pass(d);
 
     assert.deepEqual(f.runs(), [`cand-train-${a.id}+${b.id}+${c.id}`]);
@@ -136,7 +137,7 @@ test('a text conflict between two train members: the later one stays done and wa
     let out = byId(f);
     assert.ok(out[a.id].links.merged && out[c.id].links.merged);
     assert.deepEqual([out[b.id].status, out[b.id].links.merged, Boolean(out[b.id].links.worktree)], ['done', undefined, true], 'b is not reopened');
-    assert.equal(out[b.id].notes.length, byId(f)[b.id].notes.length);
+    assert.equal(out[b.id].notes.length, notesBefore, 'b was not annotated');
     assert.match(readRecentEvents(f.ctx, 50).map((e) => e.text).join('\n'), new RegExp(`${b.id} conflicts with an earlier ticket in its merge train .*waits for the next train`));
     assert.deepEqual(mergedOrder(f), [a.id, c.id]);
 
@@ -183,14 +184,23 @@ test('a gate that cannot judge merges nothing, and every member waits ten minute
   try {
     const ts = [await finished(f, 'a'), await finished(f, 'b')];
     const d = dispatcher(f);
-    d.runGate = async () => { throw new Error('gate timed out'); };
+    const start = Date.UTC(2026, 10, 2, 12, 0);
+    let clock = start;
+    f.ctx.now = () => new Date(clock); // frozen: the fixture clock otherwise ticks a minute per read
+    let calls = 0;
+    d.runGate = async () => { calls++; throw new Error('gate timed out'); };
     await pass(d);
+    assert.equal(calls, 1, 'the train was gated once');
     assert.equal(git(f.root, 'log', '--merges', '--format=%s').trim(), '');
-    for (const t of ts) assert.ok(d.gateRetryAt.get(t.id) > Date.now() || d.gateRetryAt.has(t.id), `${t.id} is on hold`);
+    for (const t of ts) assert.equal(d.gateRetryAt.get(t.id), start + 10 * 60_000, `${t.id} is held for ten minutes on the dispatcher clock`);
     assert.equal(byId(f)[ts[0].id].status, 'done');
     // while they wait, nothing is gated again
-    d.runGate = async () => { throw new Error('must not run'); };
     await pass(d);
+    assert.equal(calls, 1, 'no second gate run during the ten-minute hold');
+    // once the hold has passed the train is gated again
+    clock = start + 10 * 60_000 + 1;
+    await pass(d);
+    assert.equal(calls, 2, 'gated again after ten minutes');
   } finally { f.cleanup(); }
 });
 
