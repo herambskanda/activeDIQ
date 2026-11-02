@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/go-ldap/ldap/v3"
 
@@ -43,7 +44,18 @@ func TestDecodeIncrementalName(t *testing.T) {
 		{"member;range=1500-*", "", 0, true}, // the ranged loop is never applied to feed output
 		{"member;range=2-2", "", 0, true},
 		{"member;binary", "", 0, true},
+		{"", "", 0, true},
+		{"\x86", "", 0, true}, // non-UTF-8 plain name (fuzz regression)
 		{"member;range=x-y", "", 0, true},
+		{";range=1-1", "", 0, true},         // empty base
+		{"member;range=+1-1", "", 0, true},  // sign
+		{"member;range=01-1", "", 0, true},  // leading zero
+		{"member;range=1-01", "", 0, true},  // leading zero
+		{"member;range=1-1x", "", 0, true},  // trailing junk
+		{"a;b;range=1-1", "", 0, true},      // second option in the base
+		{"\x86;rAnge=", "", 0, true},        // T-1264: invalid UTF-8 shifts ToLower offsets
+		{"\xff\xff;range=1-1", "", 0, true}, // T-1264
+		{"mem\xffber;range=1-1", "", 0, true},
 	}
 	for _, c := range cases {
 		base, op, err := decodeIncrementalName(c.in)
@@ -60,7 +72,7 @@ func TestDecodeIncrementalName(t *testing.T) {
 }
 
 func FuzzDecodeIncrementalName(f *testing.F) {
-	for _, s := range []string{"member", "member;range=1-1", "a;range=0-0", ";range=", "x;range=1-*", "x;;range=1-1"} {
+	for _, s := range []string{"member", "member;range=1-1", "a;range=0-0", ";range=", "x;range=1-*", "x;;range=1-1", "\x86;rAnge=", "\xff\xff;range=1-1", ";range=1-1", "x;range=+1-1", "x;range=01-1", "x;range=1-01"} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, name string) {
@@ -70,6 +82,9 @@ func FuzzDecodeIncrementalName(f *testing.F) {
 		}
 		if base == "" && name != "" {
 			t.Fatalf("%q decoded to an empty base", name)
+		}
+		if !utf8.ValidString(base) {
+			t.Fatalf("%q decoded to a non-UTF-8 base", name)
 		}
 		if op != 0 && op != OpValuesAdded && op != OpValuesRemoved {
 			t.Fatalf("%q: op %v", name, op)
@@ -176,10 +191,13 @@ func TestDecodeChangeStates(t *testing.T) {
 	live := ldapEntry("CN=a", rawAttr("objectGUID", g.Bytes()))
 	del := ldapEntry("CN=a\\0ADEL:x,CN=Deleted Objects", rawAttr("objectGUID", g.Bytes()), attr("isDeleted", "TRUE"), attr("lastKnownParent", "OU=Old,DC=lab"))
 	rec := ldapEntry("CN=a", rawAttr("objectGUID", g.Bytes()), attr("isDeleted", "TRUE"), attr("isRecycled", "TRUE"))
+	recFirst := ldapEntry("CN=a", rawAttr("objectGUID", g.Bytes()), attr("isRecycled", "TRUE"), attr("isDeleted", "TRUE"))
+	delFirst := ldapEntry("CN=a", attr("isDeleted", "TRUE"), rawAttr("objectGUID", g.Bytes()))
+	notDeleted := ldapEntry("CN=a", rawAttr("objectGUID", g.Bytes()), attr("isDeleted", "FALSE"), attr("isRecycled", "FALSE"))
 	for _, c := range []struct {
 		e    *ldap.Entry
 		want ObjectState
-	}{{live, StateLive}, {del, StateDeleted}, {rec, StateRecycled}} {
+	}{{live, StateLive}, {del, StateDeleted}, {rec, StateRecycled}, {recFirst, StateRecycled}, {delFirst, StateDeleted}, {notDeleted, StateLive}} {
 		oc, _, err := s.decodeChange(c.e, wantSet())
 		if err != nil || oc.State != c.want || oc.HasParent {
 			t.Errorf("%s: %+v %v", c.e.DN, oc, err)

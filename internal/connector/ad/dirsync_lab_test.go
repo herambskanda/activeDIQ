@@ -365,10 +365,8 @@ func TestLabDirSyncPasswordResetAndNamedSecrets(t *testing.T) {
 	ug := adminGUID(t, adm, u)
 	modifyReplace(t, adm, u, "unicodePwd", string(encodeUnicodePwd("Zq9!x7Lm#2vPw")))
 	_, prime := feedCycle(t, s, nil, "pwdLastSet", "displayName")
-	before := px.searchCount()
 
 	// Reset after the prime.
-	time.Sleep(1100 * time.Millisecond) // pwdLastSet is a FILETIME; make the change observable
 	modifyReplace(t, adm, u, "unicodePwd", string(encodeUnicodePwd("Hh4#kP8wQ!zr1")))
 	cs, _ := feedCycle(t, s, prime.Cookie, "pwdLastSet", "displayName")
 	c, ok := changeOf(cs, ug)
@@ -406,7 +404,6 @@ func TestLabDirSyncPasswordResetAndNamedSecrets(t *testing.T) {
 	if _, err := s.DirSync(context.Background(), DirSyncRequest{NC: labNC(t), Cookie: prime.Cookie, Attributes: []string{"displayName"}}); err != nil {
 		t.Errorf("clean request: %v", err)
 	}
-	_ = before
 }
 
 // CC-FEED-14 (cut-off stream) as a property over random operation sequences: the union of an

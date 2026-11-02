@@ -5,6 +5,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-ldap/ldap/v3"
 
@@ -233,10 +234,12 @@ func (s *Session) dirSyncOnce(ctx context.Context, base string, cookie []byte, a
 // counted before anything else is looked at; attributes that were not requested are ignored.
 func (s *Session) decodeChange(e *ldap.Entry, want map[string]struct{}) (ObjectChange, int, error) {
 	var (
-		oc      = ObjectChange{DN: e.DN, State: StateLive}
-		dropped int
-		sawGUID bool
-		byKey   = map[string]*AttributeChange{}
+		oc       = ObjectChange{DN: e.DN, State: StateLive}
+		dropped  int
+		sawGUID  bool
+		deleted  bool
+		recycled bool
+		byKey    = map[string]*AttributeChange{}
 	)
 	for _, a := range e.Attributes {
 		base, op, err := decodeIncrementalName(a.Name)
@@ -256,13 +259,9 @@ func (s *Session) decodeChange(e *ldap.Entry, want map[string]struct{}) (ObjectC
 			}
 			oc.GUID, sawGUID = g, true
 		case "isdeleted":
-			if boolTrue(a.ByteValues) {
-				oc.State = StateDeleted
-			}
+			deleted = deleted || boolTrue(a.ByteValues)
 		case "isrecycled":
-			if boolTrue(a.ByteValues) {
-				oc.State = StateRecycled
-			}
+			recycled = recycled || boolTrue(a.ByteValues)
 		case "parentguid":
 			if g, err := guid.FromBytes(firstValue(a.ByteValues)); err == nil {
 				oc.Parent, oc.HasParent = g, true
@@ -288,6 +287,14 @@ func (s *Session) decodeChange(e *ldap.Entry, want map[string]struct{}) (ObjectC
 		}
 		ch.Values = append(ch.Values, a.ByteValues...)
 	}
+	// The state is decided after the loop: LDAP does not fix attribute order, and a recycled object
+	// (isRecycled, usually with isDeleted) must never be reported as the restorable DELETED.
+	switch {
+	case recycled:
+		oc.State = StateRecycled
+	case deleted:
+		oc.State = StateDeleted
+	}
 	if !sawGUID {
 		return ObjectChange{}, 0, fail(CodeProtocol, "objectGUID missing from dirsync entry", nil)
 	}
@@ -310,19 +317,25 @@ func (s *Session) decodeChange(e *ldap.Entry, want map[string]struct{}) (ObjectC
 // value removed (Samba's form; Windows' form is [UNVERIFIED Windows], CC-FEED-04). A name without a
 // range option returns op 0. Any other range form is refused: guessing would corrupt membership.
 func decodeIncrementalName(name string) (base string, op ChangeOp, err error) {
-	b, lo, hi, star, ok := splitRange(name)
-	if !ok {
+	if name == "" || !utf8.ValidString(name) {
+		return "", 0, fail(CodeProtocol, "malformed attribute name in dirsync", nil)
+	}
+	i := indexRangeOption(name)
+	if i < 0 {
 		if strings.Contains(name, ";") {
 			return "", 0, fail(CodeProtocol, "unexpected attribute option", nil)
 		}
 		return name, 0, nil
 	}
-	switch {
-	case star:
-	case lo == 1 && hi == 1:
-		return b, OpValuesAdded, nil
-	case lo == 0 && hi == 0:
-		return b, OpValuesRemoved, nil
+	base, spec := name[:i], name[i+len(";range="):]
+	if base == "" || strings.Contains(base, ";") {
+		return "", 0, fail(CodeProtocol, "unexpected attribute name in dirsync", nil)
+	}
+	switch spec { // exact forms only: no sign, no leading zeros, no ranges
+	case "1-1":
+		return base, OpValuesAdded, nil
+	case "0-0":
+		return base, OpValuesRemoved, nil
 	}
 	return "", 0, fail(CodeProtocol, "unexpected range form in dirsync", nil)
 }
