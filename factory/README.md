@@ -316,12 +316,22 @@ claude -p "<rendered templates/worker-prompt.md>" \
   has a finding `main` does not (multiset of check-and-message keys, line numbers removed; a newly
   red make target counts; baseline cached per `main` commit). A refused ticket is reopened for its
   owner with the findings and log paths (`state/premerge/`). A gate that cannot judge (timeout,
-  worktree error) merges nothing and retries after 10 minutes. One ticket at a time goes through the
-  gate, in the background, taken in **queue order** (T-1296, `lib/mergequeue.mjs`): first the done
+  worktree error) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
+  gate in the background, taken in **queue order** (T-1296, `lib/mergequeue.mjs`): first the done
   tickets that a `blocked` or `ready` ticket lists in `depends_on`, then by priority (P0 first), then
-  the earliest time the ticket reached `done`, then ticket ID. Only the pick order changes; what the
-  gate judges does not. The dispatcher records the gate in flight in `state/dispatcher.json`
-  (`merge_gate: {ticket, started_at}`, cleared on finish and on dispatcher start). Before the full run a cheap `pre_merge.numbering` check (the migration-number
+  the earliest time the ticket reached `done`, then ticket ID. **Merge train (T-1297):** one gate run
+  judges up to `pre_merge.train_size` (default 4; 1 = one ticket per run) tickets from the front of that
+  queue together: they are merged one after another onto `main` in the scratch worktree and the numbering
+  check and `make -k ci` run once on the combined result. Green merges each in queue order into `main`
+  with its own `git merge --no-ff` commit, with the same events and cleanup as a single merge. Refused
+  (a finding `main` lacks, a numbering clash, a green `main` gone red): the train is split in halves, the
+  first half is gated and merged, then the second is gated on the new `main`, down to a single ticket,
+  so only the ticket that adds the finding is reopened with it and the others merge (about 2·log2(N)
+  extra runs in the worst case). A member that conflicts in text with an earlier member of the train is
+  left out, stays `done` and waits for the next train (it is not reopened; if it then conflicts with
+  `main` itself it is reopened as before). Embargo hold and the could-not-judge retry apply per ticket.
+  The gate judges exactly what it judged before; only how many tickets share a run changed. The dispatcher records the gate in flight in `state/dispatcher.json`
+  (`merge_gate: {ticket, tickets, started_at}`, cleared on finish and on dispatcher start). Before the full run a cheap `pre_merge.numbering` check (the migration-number
   test, T-1067) runs on the same merge result and refuses with the free number to renumber to. `factory premerge ID [-- CMD…]` is the dry run. Details:
   `knowledge/development/standards/ci-gates.md`.
 - When a code-bearing ticket reaches `done` (and passes the gate), the dispatcher merges with
