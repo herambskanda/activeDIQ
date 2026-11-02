@@ -14,3 +14,7 @@ metadata:
 - WiX: ServiceSid/RequiredPrivilege go in a core ServiceConfig nested in ServiceInstall; WiX actually writing the privilege list is UNVERIFIED (T-0648 reads it back). Mixed-case Id (AgentDir) keeps a directory private; ALLCAPS is a public property.
 - SDDL render uses aliases (ER, BA, SY); assert on those, not on S-1-5-32-xxx, in Windows tests.
 - Never `git stash` for a quick check; use a tagged WIP commit.
+- WiX 5.0.2 (T-1249): core ServiceConfig has ServiceSid+RequiredPrivilege but NO failure-action attrs (WIX0004) and itself raises WIX1149; util:ServiceConfig has only failure actions. Use both, build with `-wx -sw1149`.
+- Admin-run `enroll` + service-run `Load`: ACL/owner must name the SERVICE SID (owner Administrators), never the invoking admin's user SID; icacls fixes don't change the owner. Map Load errors by class (absent vs unsafe vs expired): never "not enrolled" for everything.
+- dc1 is Proxmox 192.168.1.9 (WinRM 5985); libvirt `windows-lab status` is a different lab. If 5985 times out, nothing a worker can do (no Proxmox access): block with the run command.
+- agent-fitness (A1) rejects unlisted file types under packaging/windows/agent (even README.md); put docs in the runbook.
