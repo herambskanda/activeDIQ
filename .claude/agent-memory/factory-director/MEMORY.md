@@ -15,7 +15,7 @@
 - [Env blockers: measure first](triage-env-blockers.md) — df/docker before deciding; name the worker's own leftovers; outage-window failures still need a root cause
 - [No claude.ai Artifacts for activeDIQ](no-claude-artifacts-for-activediq.md) — visuals go to the factory Library in board theme, never published to the Claude site
 - [Apply done CEO actions in triage](triage-apply-done-actions.md) — sweep done-notes vs blocked tickets; deferrals move milestones; serialise shared-lab runs
-- [Windows lab gate](windows-lab-gate.md) — dc1 VM 119 @ .250 + WinRM (A-0025, lab only); what still needs a human (fs1, Win11, child DC, ADMP)
+- [Windows lab gate](windows-lab-gate.md) — dc1 VM 119 @ .250 + WinRM; D-0022 pool token → workers build fs1/Win11/dc2 (T-1326..T-1329); ADMP human
 - [CEO action handover](ceo-action-handover.md) — build one-command bootstrap tooling before re-queuing; done-without-note ≠ evidence
 - [Conflicting CEO holds](conflicting-ceo-holds.md) — newer hold wins, scoped to goal tickets; notice not question; dated hold → ask once on its date
 - [Stored-result contract checks](stored-result-contract-review-checks.md) — who reads stored runs; token AND layer; stored vs live ancestry; fragment scoping; state Go types
