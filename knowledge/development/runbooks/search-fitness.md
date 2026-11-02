@@ -56,7 +56,7 @@ violation (`stale-exception`): whoever removes the cause deletes the entry in th
 In `tools/fitness/search/bindings.go` set `Landed: true` (and `Pkg` if elsewhere). Do it in the same change as
 the test: a test that is declared while its binding is not `Landed` fails the job (`binding-not-landed`), and
 a landed one that is renamed, missing, failed, skipped, or lacks a `pg16`/`pg18` subtest fails. Pending rows
-today: T-1096's three tests (`./internal/compose/server`), T-1323's two (reportsql template, console route
+today: T-1096's three tests (`./internal/modules/search`), T-1323's two (reportsql template, console route
 log), SE6 from T-1102. When T-1096 merges after this ticket (or the reverse), the first to land flips the
 bindings; a `binding-not-landed` failure on main means that was missed.
 
