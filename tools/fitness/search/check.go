@@ -122,8 +122,9 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	return res, nil
 }
 
-// passed keeps each check that ran ("SEn …") with no pending part and no violation. SE1 and SE2 are
-// listed per check, so a pending or failing part of one withdraws the whole line.
+// passed keeps each part that ran with nothing pending or failing against it. SE1 and SE2 are listed per
+// check, so a pending or failing part of one withdraws the whole line. A bound test ("SEn TestName (pkg)")
+// stands alone: it is a pass when it ran and no violation names it, whatever else of its check is pending.
 func passed(ran, pending []string, vs []Violation) []string {
 	bad := map[string]bool{}
 	for _, p := range pending {
@@ -134,11 +135,33 @@ func passed(ran, pending []string, vs []Violation) []string {
 	}
 	var out []string
 	for _, r := range ran {
+		if name := testOf(r); name != "" {
+			failed := false
+			for _, v := range vs {
+				if v.Check == checkOf(r) && strings.Contains(v.Where, name) {
+					failed = true
+				}
+			}
+			if !failed {
+				out = append(out, r)
+			}
+			continue
+		}
 		if !bad[checkOf(r)] {
 			out = append(out, r)
 		}
 	}
 	return out
+}
+
+// testOf is the test name of a bound-test entry ("SE3 Test_x (./pkg)"), or "" for a static line.
+func testOf(s string) string {
+	_, rest, _ := strings.Cut(s, " ")
+	name, _, _ := strings.Cut(rest, " ")
+	if strings.HasPrefix(name, "Test") {
+		return name
+	}
+	return ""
 }
 
 func checkOf(s string) string { c, _, _ := strings.Cut(s, " "); return c }

@@ -646,3 +646,15 @@ func TestNightlyRunsOnlySE6(t *testing.T) {
 		t.Fatalf("pending: %v", r.Pending)
 	}
 }
+
+// A landed bound test that ran and passed is listed as a pass even while another test of its check is
+// pending; one that failed is not.
+func TestPassedListsBoundTestsOneByOne(t *testing.T) {
+	ran := []string{"SE1 static", "SE3 Test_a (./p)", "SE3 Test_b (./p)"}
+	pending := []string{"SE3 Test_c (T-1 has not landed it)", "SE1 rbac-table-sql in x"}
+	vs := []Violation{{"SE3", "test-failed", "./p Test_b", "red"}}
+	got := passed(ran, pending, vs)
+	if len(got) != 1 || got[0] != "SE3 Test_a (./p)" {
+		t.Fatalf("passed = %q, want only SE3 Test_a", got)
+	}
+}
