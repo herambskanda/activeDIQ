@@ -322,8 +322,10 @@ claude -p "<rendered templates/worker-prompt.md>" \
   a gate that passes caches its merge-result run as the baseline of the next `main`; a fresh baseline that
   times out falls back to the nearest cached run, which may clear a merge result but never refuse one
   (otherwise the gate cannot judge and retries). A refused ticket is reopened for its
-  owner with the findings and log paths (`state/premerge/`). A gate that cannot judge (timeout,
-  worktree error) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
+  owner with the findings and log paths (`state/premerge/`). Every run gets its own scratch tree and
+  log, named with a per-run tag, so a dry run never touches the dispatcher's run. A run whose tree
+  was removed or replaced while it ran is not a verdict and is not cached (T-0696). A gate that cannot judge (timeout,
+  worktree error, vanished tree) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
   gate in the background, taken in **queue order** (T-1296, `lib/mergequeue.mjs`): first the done
   tickets that a `blocked` or `ready` ticket lists in `depends_on`, then by priority (P0 first), then
   the earliest time the ticket reached `done`, then ticket ID. **Merge train (T-1297):** one gate run

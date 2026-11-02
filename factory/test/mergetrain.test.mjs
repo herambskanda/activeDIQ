@@ -38,7 +38,8 @@ function setup({ trainSize, main = {} } = {}) {
   for (const [file, text] of Object.entries(main)) fs.writeFileSync(path.join(f.root, file), text);
   commitAll(f.root, 'ci fixture');
   const lines = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
-  const runs = () => lines().map((l) => l.split('|')[0]);
+  // A scratch tree's name ends in a per-invocation tag (`-<pid>-<hex>`, T-0696); the tests name runs without it.
+  const runs = () => lines().map((l) => l.split('|')[0].replace(/-\d+-[0-9a-f]{8}$/, ''));
   /** What each run's tree held: the work-<ticket>.txt files of the tickets merged into it. */
   const trees = () => lines().map((l) => l.split('|')[1].split(',').filter(Boolean).map((n) => /^work-(T-\d+)\.txt$/.exec(n)[1]));
   return { ...f, runs, trees, cleanup: () => { f.cleanup(); fs.rmSync(path.dirname(log), { recursive: true, force: true }); } };
