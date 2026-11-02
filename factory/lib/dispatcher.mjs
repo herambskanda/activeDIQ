@@ -12,14 +12,14 @@ import { loadAgents } from './agents.mjs';
 import { checkLaunchPolicy } from './policy.mjs';
 import { isCodeType } from './flows.mjs';
 import { LogScanner, detectConnectivityError, detectRateLimit, resultKeyword } from './runlog.mjs';
-import { claimTicket, createTicket, blockTicket, reopenTicket, setTicketLinks } from './tickets.mjs';
+import { claimTicket, createTicket, doneDependencies, indexById, blockTicket, reopenTicket, setTicketLinks } from './tickets.mjs';
 import { applyAdvisoryDefaults } from './decisions.mjs';
 import { pollAdvisories } from './advisories.mjs';
 import { applyNoProgress } from './escalation.mjs';
 import { buildPrompt } from './prompt.mjs';
 import { buildWorkerArgs, launchWorker, runFiles, signalPid } from './launcher.mjs';
 import {
-  branchName, branchesAheadOfMain, cleanupWorktree, ensureWorktree, mergeTicket, repoState, usesSharedCheckout,
+  branchName, branchesAheadOfMain, cleanupWorktree, ensureWorktree, mergeTicket, repoState, unmergedBranches, usesSharedCheckout,
 } from './worktree.mjs';
 import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
@@ -60,6 +60,18 @@ export function loadState(ctx) {
     control: readControl(ctx),
     dispatcher: readDispatcherState(ctx),
   };
+}
+
+/**
+ * `loadState` plus the one thing only git knows: which done dependencies of ready tickets have a
+ * branch not yet on main (T-1266). Asks git only about those dependencies.
+ * @param {object} ctx
+ */
+export async function loadStateWithMerges(ctx) {
+  const state = loadState(ctx);
+  const ready = state.tickets.filter((t) => t.status === 'ready');
+  state.unmerged = await unmergedBranches(ctx, doneDependencies(ready, indexById(state.tickets)));
+  return state;
 }
 
 function madeProgress(snapshot, ticket) {
@@ -523,7 +535,7 @@ export class Dispatcher {
     const { ctx } = this;
     const skip = new Set();
     for (let round = 0; round < 10 && !this.stopping; round++) {
-      const state = { ...loadState(ctx), sharedCheckout: this.shared, skip, disk_free_bytes: diskFreeBytes(ctx.root) };
+      const state = { ...(await loadStateWithMerges(ctx)), sharedCheckout: this.shared, skip, disk_free_bytes: diskFreeBytes(ctx.root) };
       const now = ctx.now();
       const gate = launchGate(state, now, ctx.config);
       if (gate) return this.#lastAction(`idle: ${gate}`);
@@ -580,7 +592,7 @@ export class Dispatcher {
     }
 
     let ticket = candidate.create ? this.materialize(candidate.create) : candidate.ticket;
-    if (ticket.status === 'ready') ticket = claimTicket(ctx, ticket.id);
+    if (ticket.status === 'ready') ticket = claimTicket(ctx, ticket.id, 'dispatcher', await unmergedBranches(ctx, ticket.depends_on ?? []));
 
     const isolated = isCodeType(config, ticket.type) && !this.shared;
     let cwd = ctx.root;
@@ -725,7 +737,7 @@ export class Dispatcher {
 export async function planDryRun(ctx) {
   const repo = await repoState(ctx);
   const shared = usesSharedCheckout(ctx, repo);
-  const state = { ...loadState(ctx), sharedCheckout: shared, disk_free_bytes: diskFreeBytes(ctx.root) };
+  const state = { ...(await loadStateWithMerges(ctx)), sharedCheckout: shared, disk_free_bytes: diskFreeBytes(ctx.root) };
   const now = ctx.now();
   const gate = launchGate(state, now, ctx.config);
   const agents = loadAgents(ctx);

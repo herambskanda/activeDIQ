@@ -11,7 +11,8 @@ import {
 import { FactoryError, NotFoundError } from '../lib/errors.mjs';
 import { acknowledgeNotice, answerDecision, vetoNotice } from '../lib/decisions.mjs';
 import { completeAction, createFeedback, sortById } from '../lib/items.mjs';
-import { summarizeTicket } from '../lib/tickets.mjs';
+import { doneDependencies, indexById, summarizeTicket } from '../lib/tickets.mjs';
+import { unmergedBranches } from '../lib/worktree.mjs';
 import { dispatcherInfo, latestDigest } from '../lib/status.mjs';
 import { buildMergeQueue } from '../lib/mergequeue.mjs';
 import { listHandoffs } from '../lib/handoffs.mjs';
@@ -81,9 +82,23 @@ function liveSessions(ctx, now) {
   return out;
 }
 
-function buildState(ctx, listLibrary) {
+/** Ready tickets mapped to the done dependencies whose branch is not on main yet (T-1266). */
+async function waitingOnMerge(ctx, tickets) {
+  const ready = tickets.filter((t) => t.status === 'ready');
+  const unmerged = await unmergedBranches(ctx, doneDependencies(ready, indexById(tickets)));
+  const out = new Map();
+  for (const t of ready) {
+    const ids = (t.depends_on ?? []).filter((id) => unmerged.has(id));
+    if (ids.length) out.set(t.id, ids);
+  }
+  return out;
+}
+
+async function buildState(ctx, listLibrary) {
   const now = ctx.now();
   const runs = listRecentRuns(ctx, 100);
+  const all = sortById(listEntities(ctx, 'tickets'));
+  const merging = await waitingOnMerge(ctx, all);
   const dispatcher = dispatcherInfo(ctx);
   return {
     generated: now.toISOString(),
@@ -94,7 +109,7 @@ function buildState(ctx, listLibrary) {
     merge_queue: buildMergeQueue(ctx, readDispatcherState(ctx), dispatcher.alive),
     milestones: sortById(listEntities(ctx, 'milestones')),
     epics: sortById(listEntities(ctx, 'epics')),
-    tickets: sortById(listEntities(ctx, 'tickets')).map(summarizeTicket),
+    tickets: all.map((t) => summarizeTicket(t, merging.get(t.id) ?? [])),
     decisions: sortById(listEntities(ctx, 'decisions')),
     actions: sortById(listEntities(ctx, 'actions')),
     feedback: sortById(listEntities(ctx, 'feedback')),
@@ -238,7 +253,7 @@ export function createBoardServer(ctx) {
       if (req.method !== 'GET') throw new FactoryError('method not allowed', 405);
 
       let m;
-      if (pathname === '/api/state') return sendJson(res, 200, buildState(ctx, listLibrary));
+      if (pathname === '/api/state') return sendJson(res, 200, await buildState(ctx, listLibrary));
       if (pathname === '/api/graph') return sendJson(res, 200, graphPayload(ctx, url.searchParams.get('window')));
       if ((m = /^\/api\/ticket\/([^/]+)$/.exec(pathname))) return sendJson(res, 200, ticketDetail(ctx, decode(m[1])));
       if ((m = /^\/api\/run\/([^/]+)\/tail$/.exec(pathname))) return sendJson(res, 200, runTail(ctx, decode(m[1]), url.searchParams.get('lines')));

@@ -344,6 +344,15 @@ claude -p "<rendered templates/worker-prompt.md>" \
   hold and cleanup. A conflict reopens the ticket for its owner with a note naming the branch (and,
   for a type that works in the main checkout, how to resolve it in a temporary worktree). A `done`
   ticket with no branch, or a branch with nothing ahead of `main`, is left as it is.
+- **A dependency is met only when its work is on `main` (T-1266).** `done` comes before the merge
+  (the gate takes one ticket at a time, and an embargoed ticket is held), so a ready ticket whose
+  dependency is `done` but whose `factory/<id>` branch has commits not on `main` is not claimed:
+  a dependent started now would merge a `main` without the fix and hit the same wall. The
+  dispatcher asks git (`rev-list main..factory/<dep>`, only for the done dependencies of ready
+  tickets) on every fill and again in `claimTicket`; the board shows the ticket as "waiting on merge
+  of T-…" (`waiting_on_merge` in the ticket summary, a card tag and a drawer section). A `done`
+  dependency with no branch, or a branch with nothing ahead of `main`, is met as before. The
+  pre-merge gate itself is untouched. Test: `factory/test/dep-merge.test.mjs`.
 - If the repository has no commits, or `isolation` is `none`, workers run in the main checkout and
   `max_parallel` is forced to 1 for code-bearing types.
 
@@ -468,7 +477,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 - **Run:** `continuation`, `snapshot` (status, stage role and latest handoff at launch: how "no progress" is judged), `kill_reason` (`timeout` or `shutdown`), `error`; stderr is kept in `state/runs/<id>.err` next to `<id>.log`.
 - **State:** `state/board.json` and `state/dispatcher.json` hold pids; `state/board.log` and `state/dispatcher.log` capture the detached processes; `state/signals/rate-limit.json` is written by the `StopFailure` hook and read by the dispatcher.
 - **Environment:** `FACTORY_HOME`, `FACTORY_CLAUDE_BIN` (the executable to launch, default `claude`), `FACTORY_DEBUG=1` (stack traces).
-- **API:** `/api/state` also carries `company` and `dispatcher.pid`; ticket summaries include `summary`, `created`, `parity_refs`, `effort_override`, `held`, `stage_role` and `last_note`.
+- **API:** `/api/state` also carries `company` and `dispatcher.pid`; ticket summaries include `waiting_on_merge` (ids of done dependencies not yet on main, ready tickets only), `summary`, `created`, `parity_refs`, `effort_override`, `held`, `stage_role` and `last_note`.
 
 ### Where the runtime deliberately differs from, or extends, the reference
 
