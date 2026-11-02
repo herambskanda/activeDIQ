@@ -82,7 +82,7 @@ What the dispatcher does now for a finished code ticket (`factory/lib/premerge.m
    `-k` keeps going after a failure so every red job is seen.
 2. Green: merge. A merge conflict: reopen the ticket as before.
 3. Red and `main` green: refuse. Everything the run reports is new.
-4. Red and `main` red: run the same command on `main` (cached per `main` commit), compare **findings**
+4. Red and `main` red: take the findings of the same command on `main` (a cached run, see **The baseline** below; a fresh run only when none stands for the current tree), compare **findings**
    as a multiset and refuse only if the merge result has one `main` does not. A finding is the check
    and message with the line and column, durations and the worktree path removed, so an old finding
    that moves does not count, a second copy of an old one does, and a job that turns red counts as the
@@ -90,6 +90,20 @@ What the dispatcher does now for a finished code ticket (`factory/lib/premerge.m
 5. A refused ticket returns to `in_progress` for its owner with the findings and the log paths in the
    note. If the gate cannot judge (timeout, worktree failure) nothing merges and it is retried after
    10 minutes.
+
+**The baseline (T-1378).** On 2026-11-02 the baseline was cached per full `main` sha, so every memory or docs commit on
+`main` (several an hour) forced a fresh two-hour `make -k ci` on a loaded host, the baseline timed out three times and the
+M1 queue stood still. The gate now (`baseline()` in `factory/lib/premerge.mjs`): (1) reuses a cached run on the same tree;
+(2) reuses the newest cached run whose tree differs from `main`'s only in files under `knowledge/`, `.claude/`,
+`factory/`, `garage/` that no gate file mentions as a path (`readSurface`: path literals and joined literals such as
+`filepath.Join(root, "knowledge", "development", "decisions")` in every tracked non-prose file outside those
+directories, computed from the tree on each gate, not listed by hand); (3) stores the merge-result run of a passing gate
+as the baseline of the tree it becomes, so the second half of a split train needs none; (4) when a fresh baseline times
+out, lets the nearest cached run clear the merge result (all findings known) but never refuse it, and otherwise stops
+naming the findings. The reuse is safe because the head run always executes on the real current `main` plus the branch:
+a stale reference can only make an unrelated finding look new (a refusal that names it), not hide one. The gate summary
+states `baseline: reused the cached run …` or `baseline: ran a fresh baseline …`.
+Fitness: `factory/test/premerge.test.mjs` (reuse, no reuse for each read path class, the read surface, seeding, timeout fallback).
 
 **Merge train (T-1297).** One gate run takes 40-75 minutes, so judging one ticket per run merged about one ticket
 an hour while about five an hour reached `done` (26 → 41 done-unmerged on 2026-11-02). The gate now judges a
