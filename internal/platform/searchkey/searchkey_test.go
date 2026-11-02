@@ -244,3 +244,32 @@ func Fuzz_NormName_idempotent_and_total(f *testing.F) {
 		}
 	})
 }
+
+// ADR-0011 rule 8: a query of 3 to MaxFuzzyRunes runes gets a fuzzy class, a longer one does not.
+func Test_Classify_fuzzy_class_is_bounded_to_32_runes(t *testing.T) {
+	for _, c := range []struct {
+		runes int
+		want  bool
+	}{{2, false}, {3, true}, {searchkey.MaxFuzzyRunes, true}, {searchkey.MaxFuzzyRunes + 1, false}} {
+		p, err := searchkey.Classify(strings.Repeat("é", c.runes))
+		if err != nil {
+			t.Fatalf("%d runes: %v", c.runes, err)
+		}
+		if got := p.Fuzzy != ""; got != c.want {
+			t.Fatalf("%d runes: fuzzy class %v, want %v", c.runes, got, c.want)
+		}
+	}
+	if searchkey.MaxFuzzyRunes != 32 {
+		t.Fatalf("MaxFuzzyRunes %d: the ADR proposes 32", searchkey.MaxFuzzyRunes)
+	}
+}
+
+// The kinds with trigram postings are exactly name and sam (migration 0070 names the same two).
+func Test_FuzzyEligible_is_name_and_sam(t *testing.T) {
+	for _, k := range searchkey.AllKinds {
+		want := k == searchkey.KindName || k == searchkey.KindSAM
+		if k.FuzzyEligible() != want {
+			t.Fatalf("kind %v: FuzzyEligible %v, want %v", k, k.FuzzyEligible(), want)
+		}
+	}
+}

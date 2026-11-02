@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
@@ -254,5 +256,29 @@ func Test_search_work_is_bounded(t *testing.T) {
 				}
 			})
 		}
+		// SE5, fuzzy class (ADR-0011 rule 5a): the posting index and the per-candidate recheck, run for real
+		// over the table the H loop left behind (20,000 hidden name keys sharing the query's trigrams).
+		t.Run("fuzzy_plan", func(t *testing.T) {
+			for _, text := range []string{"sezo", "sezo hidden 7"} {
+				assertFuzzyPlan(t, e.analyze(t, scoped, text, w, true))
+			}
+		})
+		// The longest fuzzy query (32 runes, the most trigrams) must finish and keep the plan shape.
+		t.Run("fuzzy_longest", func(t *testing.T) {
+			const longest = "sezo hidden person filler number"
+			if n := utf8.RuneCountInString(longest); n != searchkey.MaxFuzzyRunes {
+				t.Fatalf("the longest query is %d runes, want %d", n, searchkey.MaxFuzzyRunes)
+			}
+			start := time.Now()
+			plan := e.analyze(t, scoped, longest, w, true)
+			assertFuzzyPlan(t, plan)
+			var read float64
+			plan.walk("", func(n *planNode, cte string) {
+				if n.Index == "inventory_search_trigrams_pkey" {
+					read += n.Rows * n.Loops
+				}
+			})
+			t.Logf("longest fuzzy query: %v wall, %v posting rows read", time.Since(start).Round(time.Millisecond), read)
+		})
 	})
 }
