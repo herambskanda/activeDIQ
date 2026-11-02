@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
+	"github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest"
 )
 
 type sessionView struct {
@@ -208,4 +209,51 @@ func TestPoolDestroysConnectionWithForgedStatementCacheName(t *testing.T) {
 			})
 		})
 	}
+}
+
+// T-1313 security review: RESET ALL does not undo SET ROLE (role and session_authorization are excluded from
+// it), so a maintenance body's SET ROLE would reach the next borrower. The owner role is a member of
+// activediq_catrust (migration 0055), which makes that switch possible today.
+func TestPoolResetUndoesSetRole(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		d := s.NewDatabase(t)
+		d.Migrate(t)
+		ctx := context.Background()
+		a := tenanttest.Seed(t, d.ExecOwner, "A")
+		db, err := OpenMaintenance(ctx, Config{DSN: d.OwnerDSN(), MaxConns: 1})
+		if err != nil {
+			t.Fatalf("OpenMaintenance: %v", err)
+		}
+		t.Cleanup(db.Close)
+		type roles struct {
+			pid              int
+			session, current string
+		}
+		read := func(ctx context.Context, tx Tx) (r roles, err error) {
+			err = tx.QueryRow(ctx, `SELECT pg_backend_pid(), session_user::text, current_user::text`).Scan(&r.pid, &r.session, &r.current)
+			return r, err
+		}
+		var base, got roles
+		if err := db.WithTenant(ctx, a, func(ctx context.Context, tx Tx) (err error) { base, err = read(ctx, tx); return }); err != nil {
+			t.Fatal(err)
+		}
+		if base.session != base.current {
+			t.Fatalf("baseline session_user %q != current_user %q", base.session, base.current)
+		}
+		if err := db.WithTenant(ctx, a, func(ctx context.Context, tx Tx) error {
+			_, err := tx.Exec(ctx, `SET ROLE `+storetest.CatrustRole)
+			return err
+		}); err != nil {
+			t.Fatalf("body SET ROLE: %v", err)
+		}
+		if err := db.WithTenant(ctx, a, func(ctx context.Context, tx Tx) (err error) { got, err = read(ctx, tx); return }); err != nil {
+			t.Fatal(err)
+		}
+		if got.current != got.session {
+			t.Errorf("next borrower runs as %q, logged in as %q: SET ROLE survived the reset", got.current, got.session)
+		}
+		if got.pid != base.pid {
+			t.Errorf("backend changed %d -> %d: a SET ROLE is undone by the reset, the connection need not be destroyed", base.pid, got.pid)
+		}
+	})
 }

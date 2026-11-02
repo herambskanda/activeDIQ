@@ -42,23 +42,31 @@ import (
 const foreignPreparedPredicate = `(name !~ '^stmtcache_[0-9a-f]{48}$'
 	OR name <> 'stmtcache_' || encode(substring(sha256(convert_to(statement, 'UTF8')) from 1 for 24), 'hex'))`
 
-// resetSQL returns the connection to its start-up state. RESET ALL covers every session-level SET,
-// set_config(..., false), SET ROLE and SET SESSION AUTHORIZATION (client_encoding returns to the start-up
-// value pgx sent, UTF8). The final SELECT counts prepared statements pgx did not create (a body's own
-// PREPARE): those cannot be cleared selectively without touching the statement cache, so such a connection
-// is destroyed.
-const resetSQL = `RESET ALL;
+// resetSQL returns the connection to its start-up state, in DISCARD ALL's order. RESET ALL covers every
+// session-level SET and set_config(..., false) (client_encoding returns to the start-up value pgx sent,
+// UTF8) but NOT SET ROLE or SET SESSION AUTHORIZATION: role and session_authorization are excluded from
+// RESET ALL, which is why DISCARD ALL runs SET SESSION AUTHORIZATION DEFAULT separately
+// (https://www.postgresql.org/docs/current/sql-discard.html). It comes first, so a body's SET ROLE (the
+// maintenance owner is a member of activediq_catrust) cannot reach the next borrower. The final SELECT counts
+// prepared statements pgx did not create (a body's own PREPARE): those cannot be cleared selectively without
+// touching the statement cache, so such a connection is destroyed. It also reports whether current_user is
+// still session_user, so a role switch the batch did not undo destroys the connection.
+const resetSQL = `CLOSE ALL;
+SET SESSION AUTHORIZATION DEFAULT;
+RESET ALL;
 DISCARD TEMP;
 DISCARD SEQUENCES;
-CLOSE ALL;
 UNLISTEN *;
 SELECT pg_advisory_unlock_all();
-SELECT count(*) FROM pg_prepared_statements WHERE ` + foreignPreparedPredicate
+SELECT (SELECT count(*) FROM pg_prepared_statements WHERE ` + foreignPreparedPredicate + `),
+	current_user = session_user`
 
 // resetTimeout bounds the reset round trip; a connection that cannot answer in time is destroyed.
 const resetTimeout = 5 * time.Second
 
-// errDirtyConn is why a connection was destroyed instead of lent; it never carries a value from the session.
+// errDirtyConn is why a connection was destroyed instead of lent. Its text is fixed except for the
+// client_encoding and standard_conforming_strings values checkLexing formats in, which the server
+// canonicalises (a short, closed set of names), so logging them is harmless; no other session value appears.
 var errDirtyConn = errors.New("store: connection state could not be proven clean")
 
 // resetConn restores the start-up session state of c and verifies it. A non-nil error means the
@@ -68,10 +76,16 @@ func resetConn(ctx context.Context, c *pgx.Conn) error {
 	if err != nil {
 		return fmt.Errorf("store: reset connection: %w", err)
 	}
-	// The last result is the foreign-prepared-statement count.
+	// The last result is (foreign-prepared-statement count, current_user = session_user).
 	last := results[len(results)-1]
-	if len(last.Rows) != 1 || len(last.Rows[0]) != 1 || string(last.Rows[0][0]) != "0" {
+	if len(last.Rows) != 1 || len(last.Rows[0]) != 2 {
+		return fmt.Errorf("%w: unexpected reset result", errDirtyConn)
+	}
+	if string(last.Rows[0][0]) != "0" {
 		return fmt.Errorf("%w: a statement outside pgx's cache is prepared on it", errDirtyConn)
+	}
+	if string(last.Rows[0][1]) != "t" {
+		return fmt.Errorf("%w: the session role differs from its login role", errDirtyConn)
 	}
 	return checkLexing(c)
 }
