@@ -17,6 +17,12 @@ import (
 // PROTECTED DACL of the service identity, SYSTEM and Administrators only (what the installer does).
 func trustedParent(t *testing.T) string {
 	t.Helper()
+	return trustedDirAt(t, filepath.Join(t.TempDir(), "parent"))
+}
+
+// trustedDirAt creates path with the trusted-parent descriptor.
+func trustedDirAt(t *testing.T, path string) string {
+	t.Helper()
 	user, system, err := desiredSIDs()
 	if err != nil {
 		t.Fatal(err)
@@ -47,7 +53,7 @@ func trustedParent(t *testing.T) string {
 	if err := sd.SetControl(windows.SE_DACL_PROTECTED, windows.SE_DACL_PROTECTED); err != nil {
 		t.Fatal(err)
 	}
-	p, err := windows.UTF16PtrFromString(filepath.Join(t.TempDir(), "parent"))
+	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,5 +236,47 @@ func TestWindowsCheckParentACL(t *testing.T) {
 		if (err == nil) != c.ok {
 			t.Errorf("%s: err = %v, want ok=%v", c.name, err, c.ok)
 		}
+	}
+}
+
+// T-1315 review finding 2: a rename of an ANCESTOR of the state directory after OpenDir (the parent
+// check covers one level only). The held handle's final path changes, so ReadFile and WriteFile are
+// refused, and nothing is written under the path that is rebuilt. If the file system refuses the
+// rename of an ancestor that holds an open handle, the test only runs the positive control.
+func TestWindowsDirAncestorRenameNeverRedirectsIO(t *testing.T) {
+	grand := trustedParent(t)
+	mid := trustedDirAt(t, filepath.Join(grand, "mid"))
+	dir := filepath.Join(mid, "state")
+	d, err := CreateDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := d.WriteFile("pin", []byte("REAL")); err != nil { // positive control
+		t.Fatalf("control write: %v", err)
+	}
+	if b, err := d.ReadFile("pin"); err != nil || string(b) != "REAL" {
+		t.Fatalf("control read: %q %v", b, err)
+	}
+
+	if err := os.Rename(mid, mid+".away"); err != nil {
+		t.Logf("rename of an ancestor of the held directory refused by the file system: %v", err)
+		return
+	}
+	// Rebuild the path the attacker wants the component to use.
+	trustedDirAt(t, mid)
+	rebuilt, err := CreateDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt.Close()
+	if _, err := d.ReadFile("pin"); err == nil {
+		t.Fatal("ReadFile succeeded after an ancestor was renamed")
+	}
+	if err := d.WriteFile("key.pem", []byte("secret")); err == nil {
+		t.Fatal("WriteFile succeeded after an ancestor was renamed")
+	}
+	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+		t.Fatalf("something was written under the rebuilt path: %v", ents)
 	}
 }

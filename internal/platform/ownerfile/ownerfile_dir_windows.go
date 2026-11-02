@@ -84,7 +84,12 @@ func openDir(path string, create bool) (*dirImpl, error) {
 			return nil, err
 		}
 	}
-	h, err := openNoFollow(abs, windows.FILE_LIST_DIRECTORY, true)
+	// The held handle shares READ and WRITE but never DELETE. Renaming a file into the directory
+	// (MoveFileEx) opens the target directory with write access, and the file system checks that open
+	// against every handle already held on it (T-1315 review finding 1), so a handle without
+	// FILE_SHARE_WRITE would make every Enroll/Repin save fail. Rename or replace of the directory
+	// itself needs DELETE sharing, which is what stays refused.
+	h, err := openNoFollowShare(abs, windows.FILE_LIST_DIRECTORY, true, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +206,26 @@ func checkParentACL(acl *windows.ACL, trusted []*windows.SID, bad error) error {
 // through a link that could have been placed since.
 func (d *dirImpl) childPath(name string) string { return d.final + `\` + name }
 
+// stillHere re-verifies, before and after each operation, that the path this directory was opened by
+// still names the directory actually held: GetFinalPathNameByHandle(held handle) follows the object, so
+// a rename of the state directory or of any ancestor above it (the checks cover one level) changes it.
+// Every operation is refused when it differs, so nothing is read from or written into a tree rebuilt
+// under the old path. https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew
+func (d *dirImpl) stillHere() error {
+	fp, err := finalPath(d.h)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(fp, d.final) {
+		return fmt.Errorf("%w: moved since opened", ErrDirUnsafe)
+	}
+	return nil
+}
+
 func (d *dirImpl) readFile(name string) ([]byte, error) {
+	if err := d.stillHere(); err != nil {
+		return nil, err
+	}
 	path := d.childPath(name)
 	h, err := openNoFollow(path, windows.GENERIC_READ, false)
 	if err != nil {
@@ -217,6 +241,9 @@ func (d *dirImpl) readFile(name string) ([]byte, error) {
 	if fp, err := finalPath(h); err != nil || !strings.EqualFold(fp, path) {
 		return nil, refuse(name, ErrNotRegular)
 	}
+	if err := d.stillHere(); err != nil { // the ancestors did not move while the file was opened
+		return nil, err
+	}
 	b, err := io.ReadAll(io.LimitReader(f, MaxReadSize+1))
 	if err != nil {
 		return nil, err
@@ -228,6 +255,9 @@ func (d *dirImpl) readFile(name string) ([]byte, error) {
 }
 
 func (d *dirImpl) writeFile(name string, data []byte) (err error) {
+	if err = d.stillHere(); err != nil {
+		return err
+	}
 	// createTemp gives the file an explicit protected descriptor in the CreateFile call itself.
 	f, err := createTemp(d.final, ".tmp-*")
 	if err != nil {
@@ -239,6 +269,16 @@ func (d *dirImpl) writeFile(name string, data []byte) (err error) {
 			_ = os.Remove(tmp)
 		}
 	}()
+	// The temp file must really be in the held directory before any byte of the secret is written.
+	if fp, ferr := finalPath(windows.Handle(f.Fd())); ferr != nil || !strings.EqualFold(fp, d.childPath(filepath.Base(tmp))) {
+		f.Close()
+		err = fmt.Errorf("%w: temp file outside the held directory", ErrDirUnsafe)
+		return err
+	}
+	if err = d.stillHere(); err != nil {
+		f.Close()
+		return err
+	}
 	if _, err = f.Write(data); err != nil {
 		f.Close()
 		return err
@@ -250,7 +290,21 @@ func (d *dirImpl) writeFile(name string, data []byte) (err error) {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, d.childPath(name)) // MoveFileEx with MOVEFILE_REPLACE_EXISTING
+	if err = d.stillHere(); err != nil {
+		return err
+	}
+	dst := d.childPath(name)
+	if err = os.Rename(tmp, dst); err != nil { // MoveFileEx with MOVEFILE_REPLACE_EXISTING
+		return err
+	}
+	// Re-check after the rename: if an ancestor moved in the window, the file went into a tree the
+	// held handle no longer names. It is owner-only (explicit descriptor at creation), so it is not
+	// readable by whoever owns that tree; remove it best-effort and fail.
+	if err = d.stillHere(); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
+	return nil
 }
 
 func (d *dirImpl) close() error { return windows.CloseHandle(d.h) }

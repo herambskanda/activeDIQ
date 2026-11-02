@@ -238,14 +238,17 @@ Threat-model links: TM-A11 (key never leaves the sealed column; unreachable here
   any failure. All of it goes through `internal/platform/ownerfile` (`Dir`, T-1315); `fleet/dial` has no owner-only code of its own.
   - **One principal set** (decided T-1315): the **service identity** (the process token user) and **SYSTEM**, `FILE_ALL_ACCESS`,
     in a PROTECTED DACL; the directory is owned by the service identity. Administrators are *not* granted: an administrator who
-    needs the state takes ownership deliberately (that is audited) rather than reading `key.pem` by membership. On Unix: mode 0700
+    needs the state takes ownership deliberately (this leaves an audit trail only where the audit policy captures it, e.g. privilege use and object access, events 4674 and 4670) rather than reading `key.pem` by membership. On Unix: mode 0700
     / 0600, owned by the euid. Typed ACL API, never SDDL.
   - **Handle-based, no check-by-path-then-use-by-path.** `Load`, `Enroll` and `Repin` call `ownerfile.OpenDir` / `CreateDir` once and then
     only `Dir.ReadFile` / `Dir.WriteFile` on that handle. Unix: the parent is opened `O_DIRECTORY|O_NOFOLLOW`, the directory is opened
     relative to it, and files are `openat`'d with `O_NOFOLLOW`; owner and mode are read with `fstat` on the open descriptor. Windows:
-    `FILE_FLAG_OPEN_REPARSE_POINT` opens, `GetSecurityInfo` on the handle, the handle has no `FILE_SHARE_DELETE` (the directory cannot
-    be renamed or replaced while held), and each file's `GetFinalPathNameByHandle` must equal the directory's final path plus its
-    name. A directory swapped for a junction or symlink after the open cannot redirect a read or a write; a fresh open of the
+    `FILE_FLAG_OPEN_REPARSE_POINT` opens, `GetSecurityInfo` on the handle, the held handle shares read and write but never `FILE_SHARE_DELETE` (the directory cannot
+    be renamed or replaced while held; write sharing is needed so the temp-file rename into the directory is not a sharing violation),
+    each file's `GetFinalPathNameByHandle` must equal the directory's final path plus its name, and every read and write re-checks
+    before and after that the held handle's final path is still the path it was opened by, so a rename of an ancestor above the
+    parent after open is refused (`ErrDirUnsafe`) instead of redirecting I/O into a rebuilt tree. A rename that lands inside the
+    window of a single write can place only the owner-only temp file in that tree; it is removed and the write fails. A directory swapped for a junction or symlink after the open cannot redirect a read or a write; a fresh open of the
     swapped path is refused (`ErrDirUnsafe`).
   - **Parent trust.** The parent of the state directory must be a real directory (not a link or reparse point) that nobody but the
     service identity, SYSTEM and (Windows) Administrators owns, can create in, can delete children of, can rename in or can change the
