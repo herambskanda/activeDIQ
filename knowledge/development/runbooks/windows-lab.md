@@ -156,6 +156,14 @@ it and raise a decision; this authorisation does not stretch.
 (§13). The password comes from the gitignored lab env file (`WIN_LAB_ENV`; from a worktree it lives in the
 main checkout's `lab/windows/`). Read it from the file in code; never print it, put it in argv, a log or a note.
 
+**The DC address has no default (T-1279).** `agent-verify`, `agent-unenrolled-verify` and `gssapi-lab` need
+`WIN_LAB_DC_ADDR` (dc1's current IP or host name) in the environment or in the lab env file, and exit non-zero
+naming the key — before the lock, a build or any connection — when it is missing, empty or not a plain
+IP/host name (`lab/windows/lib/labaddr.py`). dc1 has changed address before (A-0032), and a baked-in fallback
+would aim these drivers, which reboot the DC and clear its logs, at whichever LAN device holds the old address.
+Before a run, confirm the address is dc1: `ip neigh show <ip>` should show the VM's MAC (prefix `bc:24:11`).
+`lab/windows/tests/test_dc_addr_required.py` fails if a driver regains a default or the old address returns.
+
 **The lock rule: wrap every dc1 session in `with-dc1-lock`.** About seven tickets share dc1, and some
 of them reboot it, change LDAP signing or channel-binding policy, install and remove the agent or clear the
 Security log. Two sessions at once corrupt each other's result. So every worker session that talks to dc1
@@ -348,8 +356,8 @@ major upgrade, `agentsetup` refusals, `CheckDataDir`, `EvtLogOldestRecordNumber`
 
 ```bash
 pip install pywinrm requests-ntlm                      # operator tooling; licence register row
-export WIN_LAB_ENV=<path to the main checkout's lab/windows/.win-lab.env>   # gitignored; DC address defaults to 192.168.1.9
-export WIN_LAB_DC_ADDR=<dc ip>                         # optional override
+export WIN_LAB_ENV=<path to the main checkout's lab/windows/.win-lab.env>   # gitignored
+export WIN_LAB_DC_ADDR=<dc ip>                         # REQUIRED unless it is set in that env file; no default
 lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-runs/T-0648-agent-<date>.log
 ```
 

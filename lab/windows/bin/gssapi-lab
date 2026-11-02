@@ -15,12 +15,17 @@ Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (nev
 """
 import base64, datetime as dt, os, re, subprocess, sys, time
 
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, os.path.join(REPO, "lab", "windows", "lib"))
+from labaddr import require_dc_addr  # noqa: E402
+
+# No default DC address (T-1279): fail before anything else touches the network.
+ADDR = require_dc_addr("gssapi-lab", REPO)
+
 try:
     from winrm.protocol import Protocol
 except ImportError:
     sys.exit("gssapi-lab: pip install pywinrm requests-ntlm")
-
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 NTDS = r"HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters"
 DIAG = r"HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics"
 env = {}
@@ -32,7 +37,6 @@ for line in open(path):
     if line and not line.startswith("#") and "=" in line:
         k, v = line.split("=", 1)
         env[k] = v.strip().strip('"')
-ADDR = os.environ.get("WIN_LAB_DC_ADDR") or env.get("WIN_LAB_DC_ADDR", "192.168.1.9")
 OUT = os.path.dirname(path)  # artifacts sit beside the lab env file (main checkout lab/windows/)
 
 

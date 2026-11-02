@@ -12,6 +12,11 @@ Runbook: knowledge/development/runbooks/windows-lab.md sections 10 and 13.
 import argparse, base64, hashlib, os, subprocess, sys, tempfile, time
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, os.path.join(REPO, "lab", "windows", "lib"))
+from labaddr import require_dc_addr  # noqa: E402
+
+# No default DC address (T-1279): fail before the dc1 lock, the build and any connection.
+DC_ADDR = require_dc_addr("agent-verify", REPO)
 
 # dc1 is shared by many tickets and this run reboots/installs/clears logs on it: hold the dc1 lock for the
 # whole run (T-0839, runbook section 10). Re-exec under the wrapper; the nested copy sees DIQ_DC1_LOCK_HELD.
@@ -82,7 +87,7 @@ def main():
     ap.add_argument("--version", default="0.0.1")
     a = ap.parse_args()
     env = load_env()
-    dc = DC(env.get("WIN_LAB_DC_ADDR", "192.168.1.9"), env["WIN_LAB_ADMIN_PASSWORD"])
+    dc = DC(DC_ADDR, env["WIN_LAB_ADMIN_PASSWORD"])
     work = tempfile.mkdtemp(prefix="agent-verify-")
     genv = dict(os.environ, GOOS="windows", GOARCH="amd64", CGO_ENABLED="0")
     for name, pkg in (("activediq-agent.exe", "./cmd/agent"), ("agentsetup.exe", "./cmd/agentsetup")):
