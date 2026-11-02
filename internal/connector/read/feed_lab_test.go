@@ -283,14 +283,14 @@ func TestLabFeedRefusalsAndTheMandatorySet(t *testing.T) {
 		t.Cleanup(func() { _ = l.adm.Del(ldap.NewDelRequest(d, nil)) })
 		return d
 	}
-	prime := f.prime(t, "cn")
+	prime := f.prime(t, "cn", "sAMAccountName")
 	live := mk(fmt.Sprintf("Müller, F%d", stamp), fmt.Sprintf("t1194a%d", stamp))
 	gone := mk(fmt.Sprintf("Gone, F%d", stamp), fmt.Sprintf("t1194b%d", stamp))
 	liveG, goneG := l.guidOf(t, live), l.guidOf(t, gone)
 	if err := l.adm.Del(ldap.NewDelRequest(gone, nil)); err != nil {
 		t.Fatal(err)
 	}
-	bs, err := f.resume(prime.GetCookieAfter(), "cn")
+	bs, err := f.resume(prime.GetCookieAfter(), "cn", "sAMAccountName")
 	if err != nil || len(bs) == 0 || !bs[len(bs)-1].GetCycleComplete() {
 		t.Fatalf("resume: %v", err)
 	}
@@ -307,7 +307,10 @@ func TestLabFeedRefusalsAndTheMandatorySet(t *testing.T) {
 		for _, a := range oc.GetAttributes() {
 			have[a.GetName()] = true
 		}
-		for _, m := range []string{"objectclass", "name", "cn"} {
+		// Samba's DirSync never sends cn (the RDN arrives as name); a requested ordinary attribute does
+		// arrive. Whether Windows sends cn is for the Windows lab (T-1282); consumers key on name.
+		t.Logf("%s change attributes: %v (cn sent: %v)", c.name, have, have["cn"])
+		for _, m := range []string{"objectclass", "name", "samaccountname"} {
 			if !have[m] {
 				t.Errorf("CC-FEED-18 %s change lacks %s (has %v)", c.name, m, have)
 			}
