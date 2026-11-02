@@ -87,6 +87,26 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "allowedAttributesEffective", OID: "1.2.840.113556.1.4.914", Syntax: s, Constructed: c},
 			ldapfilter.AttrInfo{Name: "allowedChildClassesEffective", OID: "1.2.840.113556.1.4.912", Syntax: s, Constructed: c},
 			ldapfilter.AttrInfo{Name: "sDRightsEffective", OID: "1.2.840.113556.1.4.1304", Syntax: ldapfilter.SynInt32, Constructed: c},
+			// The directory sync's closed attribute list (directory/sync.Attributes(), T-1189) beyond what
+			// is named above. Name-only like dNSHostName: an OID-form descriptor stays unknown and fails
+			// closed until the per-forest schema supplies verified OIDs. Test_DefaultSchema_covers_sync_list
+			// fails if a name is added to that list without an entry here.
+			ldapfilter.AttrInfo{Name: "mail", Syntax: s},
+			ldapfilter.AttrInfo{Name: "company", Syntax: s},
+			ldapfilter.AttrInfo{Name: "operatingSystem", Syntax: s},
+			ldapfilter.AttrInfo{Name: "managedBy", Syntax: ldapfilter.SynDN},
+			ldapfilter.AttrInfo{Name: "mS-DS-ConsistencyGuid", Syntax: ldapfilter.SynOctet},
+			// Integer8 (FILETIME): 0 and 0x7FFFFFFFFFFFFFFF are both "never" for accountExpires; pwdLastSet 0
+			// means must-change; lockoutTime 0 means not locked. Decoded by directory/attr/filetime.
+			ldapfilter.AttrInfo{Name: "lockoutTime", Syntax: ldapfilter.SynInt64},
+			ldapfilter.AttrInfo{Name: "pwdLastSet", Syntax: ldapfilter.SynInt64},
+			ldapfilter.AttrInfo{Name: "accountExpires", Syntax: ldapfilter.SynInt64},
+			ldapfilter.AttrInfo{Name: "lastLogonTimestamp", Syntax: ldapfilter.SynInt64},
+			// Deleted-object attributes: meaningful only on a search with the show-deleted control (the
+			// deleted-objects search is a separate ticket); on a live object isDeleted/isRecycled are absent.
+			ldapfilter.AttrInfo{Name: "isDeleted", Syntax: ldapfilter.SynBool},
+			ldapfilter.AttrInfo{Name: "isRecycled", Syntax: ldapfilter.SynBool},
+			ldapfilter.AttrInfo{Name: "lastKnownParent", Syntax: ldapfilter.SynDN},
 		)
 	})
 	return defaultSchema
