@@ -12,7 +12,7 @@
   No reboot is requested.
   Flow: install starts the service UNENROLLED; it idles (event 103, warning) and picks up `agent enroll`
   within 15 s (T-0813).
-  Build: `wix build -wx -sw1149 ...` (see packaging/windows/agent/README.md). WIX1149 is raised by the CORE
+  Build: `wix build -wx -sw1149 ...` (see knowledge/development/runbooks/dc-agent-operations.md, "Building the MSI"). WIX1149 is raised by the CORE
   ServiceConfig itself, which is the only element that can set ServiceSid and RequiredPrivilege (T-1249);
   every other warning is an error.
 -->

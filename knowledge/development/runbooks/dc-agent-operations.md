@@ -34,6 +34,14 @@ Design: [ADR-0006](../decisions/0006-dc-agent-runs-as-a-virtual-service-account.
 
 `activediq-agent.exe enroll` is run by an administrator, but the service runs as `NT SERVICE\activeDIQAgent`. The enrolment directory and its files are therefore written for the service: owner `BUILTIN\Administrators`, protected DACL granting SYSTEM, Administrators and the service SID, never the administrator's own user SID (the service refuses state that names anyone else). `agentsetup repin` does the same. The service tells "no enrolment yet" (event 103) from "state exists but refused" (event 104).
 
+## Building the MSI
+
+```
+wix build Agent.wxs -ext WixToolset.Util.wixext -arch x64 -wx -sw1149 -d Version=<x.y.z> -d AgentExe=<path>\activediq-agent.exe -d SetupExe=<path>\agentsetup.exe -o activediq-agent-<x.y.z>.msi
+```
+
+WiX 5.0.2. `-wx` turns every warning into an error, so the build fails on any warning not suppressed on purpose. The one suppression is `-sw1149`: WIX1149 is raised by the **core** `ServiceConfig` itself, the only element that can set `ServiceSid="restricted"` and `RequiredPrivilege` (`util:ServiceConfig` has neither; ADR-0006 A2 needs both; T-0648 read back on a DC that it applies them). The recovery actions (restart x3, 30 s, reset 1 day) are on `util:ServiceConfig`, the only element that has them (the core one has no failure-action attributes: WIX0004); `sc qfailure activeDIQAgent` reads them back (T-0833). The release pipeline (devops-engineer) must use the same flags; `agent-unenrolled-verify` checks both fixtures.
+
 ## Install order
 
 The MSI starts the service on install. Install, start (it idles with event 103), then enrol; the agent notices the enrolment within 15 s. Starting before enrolling is expected, not a failure; the SCM recovery action never fires for it.
