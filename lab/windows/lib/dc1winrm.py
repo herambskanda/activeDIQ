@@ -3,7 +3,7 @@ lab network only (A-0025). Credentials come from the gitignored lab env file and
 Callers must already hold the dc1 lock (lab/windows/bin/with-dc1-lock). Needs: pip install pywinrm requests-ntlm.
 Introduced by T-0833; agent-verify and gssapi-lab carry older copies of the same code (follow-up chore).
 """
-import base64, hashlib, os, sys
+import base64, hashlib, os, sys, time
 
 try:
     from winrm.protocol import Protocol
@@ -29,9 +29,20 @@ class DC:
         self.p = Protocol(endpoint=f"http://{addr}:5985/wsman", transport="ntlm", username="Administrator",
                           password=password, read_timeout_sec=900, operation_timeout_sec=800)
 
+    def _open_shell(self):
+        """open_shell with a retry: right after another shell closes, WinRM can answer 500 ERROR_KEY_DELETED
+        (0x800703FA, the Administrator profile hive is still unloading). Nothing has run yet, so retrying is safe."""
+        for attempt in range(5):
+            try:
+                return self.p.open_shell()
+            except Exception as e:  # noqa: BLE001 - winrm raises several types for the same transient fault
+                if attempt == 4 or "marked for deletion" not in str(e):
+                    raise
+                time.sleep(3)
+
     def ps(self, script):
         """Run PowerShell on dc1; returns (exit code, stdout text)."""
-        sh = self.p.open_shell()
+        sh = self._open_shell()
         enc = base64.b64encode(script.encode("utf-16le")).decode()
         cid = self.p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", enc])
         out, _err, rc = self.p.get_command_output(sh, cid)
@@ -42,7 +53,7 @@ class DC:
         return rc, text
 
     def put_bytes(self, data, dst):
-        sh = self.p.open_shell()
+        sh = self._open_shell()
         ps = (f"$o=[IO.File]::Create('{dst}');$i=[Console]::OpenStandardInput();$b=New-Object byte[] 65536;"
               "while(($n=$i.Read($b,0,$b.Length)) -gt 0){$o.Write($b,0,$n)};$o.Close()")
         cid = self.p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand",
