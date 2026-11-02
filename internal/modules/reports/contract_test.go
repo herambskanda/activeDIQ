@@ -569,18 +569,29 @@ func TestScheduleOwnerOnlyExportRecordBoundResumeConfirmedAndStepUpDeclared(t *t
 		r, _ := m["$ref"].(string)
 		return r
 	}
-	// R1, R2 (acceptance 1): owner-only, 404 / 403 not_owner, on the write and on its preview twin.
+	// R1, R2 (acceptance 1): owner-only, on the write and on its preview twin. The write answers 404 / 403 not_owner;
+	// the twin answers 404 and, for a manage_all holder, a 200 refused with blocked[].code not_owner (ADR-0004 rule 14).
+	for _, id := range []string{"updateReportSchedule", "deleteReportSchedule", "resumeReportSchedule"} {
+		s := desc(id)
+		for _, want := range []string{"Owner-only", "404", "403", "not_owner"} {
+			if !strings.Contains(s, want) {
+				t.Errorf("%s does not say %q", id, want)
+			}
+		}
+	}
+	for _, id := range []string{"previewUpdateReportSchedule", "previewDeleteReportSchedule", "previewResumeReportSchedule"} {
+		s := desc(id)
+		for _, want := range []string{"owner-only", "404", "200 with outcome refused", "blocked[].code not_owner"} {
+			if !strings.Contains(s, want) {
+				t.Errorf("%s does not say %q", id, want)
+			}
+		}
+		if strings.Contains(s, "errors[].code not_owner") {
+			t.Errorf("%s must not answer a manage_all holder with a 403 problem", id)
+		}
+	}
 	for _, id := range []string{"updateReportSchedule", "deleteReportSchedule", "previewUpdateReportSchedule", "previewDeleteReportSchedule"} {
 		s := desc(id)
-		if id == "updateReportSchedule" || id == "deleteReportSchedule" {
-			for _, want := range []string{"Owner-only", "404", "403", "not_owner"} {
-				if !strings.Contains(s, want) {
-					t.Errorf("%s does not say %q", id, want)
-				}
-			}
-		} else if !strings.Contains(s, "owner-only") || !strings.Contains(s, "not_owner") {
-			t.Errorf("%s must say the owner-only answers, 404 and 403 not_owner", id)
-		}
 		for _, banned := range []string{"additionally needs reports.schedule.manage_all", "same visibility", "Same visibility"} {
 			if strings.Contains(s, banned) {
 				t.Errorf("%s still says %q, which grants manage_all an edit or a delete", id, banned)
@@ -594,6 +605,16 @@ func TestScheduleOwnerOnlyExportRecordBoundResumeConfirmedAndStepUpDeclared(t *t
 				t.Errorf("%s declares no %s", id, c)
 			}
 		}
+	}
+	// One code for one refusal: owner_only appears nowhere under /reports/.
+	for id := range ops {
+		if strings.Contains(desc(id), "owner_only") {
+			t.Errorf("%s still says owner_only; the code is not_owner", id)
+		}
+	}
+	// Run now answers 404 to every non-owner; it is not in the 403 not_owner family.
+	if s := desc("runReportScheduleNow"); !strings.Contains(s, "a manage_all holder included, gets 404") || strings.Contains(s, "not_owner") {
+		t.Errorf("runReportScheduleNow must answer 404 to any non-owner and not mention not_owner")
 	}
 	// R3 (acceptance 2): the export record is bound like the download.
 	ge := desc("getReportExport")
@@ -640,6 +661,12 @@ func TestScheduleOwnerOnlyExportRecordBoundResumeConfirmedAndStepUpDeclared(t *t
 	for _, id := range []string{"createReportSchedule", "updateReportSchedule", "resumeReportSchedule", "undoReportScheduleOperation"} {
 		if got := ref(ops[id]["responses"].(map[string]any)["401"]); got != "#/components/responses/StepUpRequired" {
 			t.Errorf("%s 401 is %q, want StepUpRequired", id, got)
+		}
+	}
+	// SX-2 / ADR-0004 rule 14: an Action that never steps up declares 401 Unauthenticated, not StepUpRequired.
+	for _, id := range []string{"pauseReportSchedule", "deleteReportSchedule", "reassignReportSchedule", "runReportScheduleNow"} {
+		if got := ref(ops[id]["responses"].(map[string]any)["401"]); got != "#/components/responses/Unauthenticated" {
+			t.Errorf("%s 401 is %q, want Unauthenticated (it never steps up)", id, got)
 		}
 	}
 }

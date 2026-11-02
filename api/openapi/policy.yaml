@@ -30,7 +30,8 @@
 #                    operation (modules/reports.md 6.6), one x-permission only. reports.schedule: own schedules (list, get, create,
 #                    update, pause, resume, delete, run now). reports.schedule.manage_all: reassignReportSchedule only; it is also checked
 #                    inside schedule operations for owner=any, get, and pause of another owner's schedule (spec 8.5: see, pause, reassign).
-#                    Update, delete, resume and run now are owner-only; manage_all grants none of them (T-0893 R1, R2). reports.deliver.external
+#                    Update, delete, resume and run now are owner-only; manage_all grants none of them (T-0893 R1, R2):
+#                    update, delete and resume answer a non-owner 404, or a manage_all holder 403 not_owner; run now answers any non-owner 404. reports.deliver.external
 #                    is bound to NO operation: it guards only the external-recipient case of a schedule write (create, update, resume).
 #                    TM 7.4 has no reports row. Step-up is conditional and in-operation (TM-D30, kernel predicate): no stepUp row.
 #   stepUp           one row per permission of the TM §7.4 table (TM-D16), named when its operation lands.
