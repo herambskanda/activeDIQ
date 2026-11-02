@@ -360,7 +360,7 @@ export interface paths {
         };
         /**
          * Get an export's record
-         * @description Answers the export job: state, format, row count, size, file name, digest and expiry. Poll while the state is queued or running.
+         * @description Answers the export job: state, format, row count, size, file name, digest and expiry. Poll while the state is queued or running. Bound as downloadReportExport is (T-0893 R3; modules/reports.md 7.1, 7.2), because the record leaks the size of a result and the report's name in the file name. Two paths: the creator, with the run-read gate passing for its run (runner is the caller, current read scope equals the stored one), or the recipient of a delivery record (DM-84 Delivery) whose source is this export and whose recipient is the caller's account. Anyone else, with or without reports.export, gets 404 (401 when signed out). The row exists only to those two.
          */
         get: operations["getReportExport"];
         put?: never;
@@ -534,7 +534,7 @@ export interface paths {
         put?: never;
         /**
          * Create a schedule
-         * @description Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal ("Data leaves your organisation"), or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only. Scheduled data is what the owner can see, not what a recipient can see. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner, so a retried create is a 400 with code name_taken and changes nothing. Preview it first with previewCreateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
+         * @description Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal ("Data leaves your organisation"), or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only, and is checked against the caller, who is the owner, at write time and against the owner again at every fire (spec 8.4 check 3). Scheduled data is what the owner can see, not what a recipient can see. A write whose after-state has an external recipient steps up (TM-D30 SX-1): 401 StepUpRequired when the session has no fresh multi-factor check. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner, so a retried create is a 400 with code name_taken and changes nothing. Preview it first with previewCreateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         post: operations["createReportSchedule"];
         delete?: never;
@@ -557,13 +557,13 @@ export interface paths {
         get: operations["getReportSchedule"];
         /**
          * Replace a schedule's settings
-         * @description Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version. Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external address that is new or changed. Changing another owner's schedule additionally needs reports.schedule.manage_all. The scope refusals of create apply. Preview it first with previewUpdateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
+         * @description Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version. Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external address that is new or changed. reports.deliver.external is checked against the caller, who is the owner, at write time, and against the owner again at every fire; never against a stored field that differs from the caller. Owner-only (T-0893 R1): only the schedule's owner may update it, because the next fire runs under the owner's scope. A caller who is not the owner and lacks reports.schedule.manage_all gets 404; a reports.schedule.manage_all holder, who can see the schedule, gets 403 with errors[].code not_owner and the stored version is unchanged. manage_all grants no edit; to stop another owner's schedule it can pause it, or reassign it so that the new owner decides. The scope refusals of create apply. A write whose after-state has an external recipient steps up (TM-D30 SX-1): 401 StepUpRequired when the session has no fresh multi-factor check. Preview it first with previewUpdateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         put: operations["updateReportSchedule"];
         post?: never;
         /**
          * Delete a schedule
-         * @description Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire. Preview it first with previewDeleteReportSchedule (same parameters, including If-Match; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
+         * @description Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire. Owner-only (T-0893 R2): only the schedule's owner may delete it. A caller who is not the owner and lacks reports.schedule.manage_all gets 404; a reports.schedule.manage_all holder gets 403 with errors[].code not_owner and nothing changes. manage_all grants no delete; it can pause the schedule instead. Preview it first with previewDeleteReportSchedule (same parameters, including If-Match; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         delete: operations["deleteReportSchedule"];
         options?: never;
@@ -622,7 +622,7 @@ export interface paths {
         put?: never;
         /**
          * Preview deleting a schedule
-         * @description The dry run of deleteReportSchedule as the Action reports.schedule.delete (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. This Action has no plan refusal of its own; a gate denial is a 200 with outcome refused, never a problem. Same x-permission and parameters (including If-Match) as deleteReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         * @description The dry run of deleteReportSchedule as the Action reports.schedule.delete (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. This Action has no plan refusal of its own; a gate denial is a 200 with outcome refused, never a problem. Same x-permission and parameters (including If-Match) as deleteReportSchedule; it has no body. Same owner-only answers: 404 for a non-owner without reports.schedule.manage_all, 403 with errors[].code not_owner for a manage_all holder.
          */
         post: operations["previewDeleteReportSchedule"];
         delete?: never;
@@ -682,7 +682,7 @@ export interface paths {
         put?: never;
         /**
          * Preview resuming a schedule
-         * @description The dry run of resumeReportSchedule as the Action reports.schedule.resume (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code owner_only, report_scope_empty or report_scope_unsupported, never a problem; so is a gate denial. Resuming an active schedule is outcome no_change. Same x-permission and parameters as resumeReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         * @description The dry run of resumeReportSchedule as the Action reports.schedule.resume (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code owner_only, external_not_permitted, report_scope_empty or report_scope_unsupported, never a problem; so is a gate denial. Resuming an active schedule is outcome no_change. Same x-permission, parameters and body as resumeReportSchedule. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
          */
         post: operations["previewResumeReportSchedule"];
         delete?: never;
@@ -702,7 +702,7 @@ export interface paths {
         put?: never;
         /**
          * Preview replacing a schedule's settings
-         * @description The dry run of updateReportSchedule as the Action reports.schedule.update (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code report_scope_empty, report_scope_unsupported, external_not_permitted or name_taken, never a problem; so is a gate denial. Same x-permission, parameters (including If-Match) and body as updateReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         * @description The dry run of updateReportSchedule as the Action reports.schedule.update (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code report_scope_empty, report_scope_unsupported, external_not_permitted or name_taken, never a problem; so is a gate denial. Same x-permission, parameters (including If-Match) and body as updateReportSchedule, and the same owner-only answers: 404 for a non-owner without reports.schedule.manage_all, 403 with errors[].code not_owner for a manage_all holder.
          */
         post: operations["previewUpdateReportSchedule"];
         delete?: never;
@@ -722,7 +722,7 @@ export interface paths {
         put?: never;
         /**
          * Resume a schedule
-         * @description Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this. Preview it first with previewResumeReportSchedule (same parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
+         * @description Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this. Takes a body (T-0893 R5): confirmedExternal must equal every external recipient of the schedule, classified now against the current allowed recipient domains, so the new owner has seen the list that their wider scope will flow to; an empty array when there is none. A missing or different set is 400 with errors[].code external_not_confirmed. Delivering to an external recipient needs reports.deliver.external held by the caller, otherwise 403 with errors[].code external_not_permitted, as on create. Resuming a schedule with an external recipient steps up (TM-D30 SX-1): 401 StepUpRequired. Preview it first with previewResumeReportSchedule (same parameters and body; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         post: operations["resumeReportSchedule"];
         delete?: never;
@@ -1997,6 +1997,10 @@ export interface components {
         ReportScheduleReassign: {
             /** Format: uuid */
             ownerAccountId: string;
+        };
+        /** @description The confirmation that resumes a schedule. confirmedExternal lists every external recipient of the schedule, classified now against the current allowed recipient domains (Data leaves your organisation); it must equal that set, and is an empty array when the schedule has none. It is how the owner, a new owner after a reassignment included, shows they saw who receives the data (T-0893 R5). */
+        ReportScheduleResume: {
+            confirmedExternal: string[];
         };
         /**
          * @description active fires on its recurrence; paused does not.
@@ -3756,7 +3760,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["Validation"];
-            401: components["responses"]["Unauthenticated"];
+            401: components["responses"]["StepUpRequired"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["ReportScopeUnsupported"];
@@ -3839,7 +3843,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["Validation"];
-            401: components["responses"]["Unauthenticated"];
+            401: components["responses"]["StepUpRequired"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["ReportScopeUnsupported"];
@@ -3887,7 +3891,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            401: components["responses"]["Unauthenticated"];
+            401: components["responses"]["StepUpRequired"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             412: components["responses"]["PreconditionFailed"];
@@ -4103,7 +4107,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleResume"];
+            };
+        };
         responses: {
             /** @description The preview */
             200: {
@@ -4114,9 +4122,12 @@ export interface operations {
                     "application/json": components["schemas"]["OperationPreview"];
                 };
             };
+            400: components["responses"]["Validation"];
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };
@@ -4171,7 +4182,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleResume"];
+            };
+        };
         responses: {
             /** @description The schedule, active */
             200: {
@@ -4196,10 +4211,13 @@ export interface operations {
                     "application/json": components["schemas"]["OperationRef"];
                 };
             };
-            401: components["responses"]["Unauthenticated"];
+            400: components["responses"]["Validation"];
+            401: components["responses"]["StepUpRequired"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["ReportScopeUnsupported"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ReportScopeEmpty"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
