@@ -792,3 +792,53 @@ func TestRunRefusesUnflaggedSecretAttribute(t *testing.T) {
 		}
 	}
 }
+
+// An alias of a secret attribute must not slip past the name list: the directory accepts the OID, an
+// ";option" suffix and padded names for the same attribute, so every non-plain name is refused, flagged
+// Secret or not, and the error never carries a value (T-1287, security review).
+func TestCheckPlanRefusesNonPlainAttributeNames(t *testing.T) {
+	u := &run{d: Descriptor{ID: "x.user.set", Reversibility: Reversible}}
+	for _, name := range []string{
+		"1.2.840.113556.1.4.90", "unicodePwd;binary", " unicodePwd", "unicodePwd ",
+		"OID.1.2.840.113556.1.4.90", "unicodePwd\x00", "", "9mail", "a.b",
+	} {
+		for _, flagged := range []bool{false, true} {
+			steps := []StepPlan{{Kind: "k", Reversibility: Reversible,
+				Diff: []Change{{Attribute: name, Secret: flagged, Before: []string{"old-value"}, After: []string{"P@ssw0rd!"}}}}}
+			err := u.checkPlan(steps)
+			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), fmt.Sprintf("%q", name)) {
+				t.Errorf("%q (Secret=%v): err = %v, want ErrInvalid naming the attribute", name, flagged, err)
+			} else if strings.Contains(err.Error(), "P@ssw0rd!") || strings.Contains(err.Error(), "old-value") {
+				t.Errorf("%q: the error carries a value: %v", name, err)
+			}
+		}
+	}
+	for _, name := range []string{"mail", "msDS-ManagedPassword", "outcome_reason", "unicodePwd"} {
+		steps := []StepPlan{{Kind: "k", Reversibility: Reversible, Diff: []Change{{Attribute: name, Secret: true}}}}
+		if err := u.checkPlan(steps); err != nil {
+			t.Errorf("plain name %q refused: %v", name, err)
+		}
+	}
+}
+
+// End to end, the OID spelling of unicodePwd: the run fails before anything is persisted or written.
+func TestRunRefusesSecretAttributeByOID(t *testing.T) {
+	bad := func() []TypedStep[payload] {
+		return []TypedStep[payload]{{
+			Plan: StepPlan{Target: authority.TargetRef{GUID: "row-1", Class: "thing"}, Kind: "set", Reversibility: Reversible,
+				Diff: []Change{{Attribute: "1.2.840.113556.1.4.90", Before: []string{"old"}, After: []string{"P@ssw0rd!"}}}},
+			Payload: payload{Row: "row-1"},
+		}}
+	}
+	r, db := newRunner(t, behaviour{verifyOK: true, plan: bad}, nil, factsFake{}, sink{})
+	_, err := r.RunStore(context.Background(), req())
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "1.2.840.113556.1.4.90") {
+		t.Fatalf("err = %v, want ErrInvalid naming the attribute", err)
+	}
+	if len(db.writes) != 0 {
+		t.Fatalf("writes = %v", db.writes)
+	}
+	if s := fmt.Sprintf("%+v %+v", db.committed, db.writes); strings.Contains(s, "P@ssw0rd!") {
+		t.Fatalf("a persisted record or event carries the value: %s", s)
+	}
+}
