@@ -3,6 +3,7 @@ package operationtest
 import (
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"reflect"
 	"slices"
 	"sort"
@@ -231,6 +232,9 @@ func (h *harness) successEventViolations(out runOut) []Violation {
 			key: a.key, component: component, diff: a.sp.Diff, checkDiff: true}) {
 			vs = append(vs, Violation{ClauseAuditSuccess, fmt.Sprintf("step %d: %s", a.key.Item, p)})
 		}
+		for _, attr := range unflaggedSecrets(a.sp.Diff) {
+			vs = append(vs, Violation{ClauseAuditSuccess, fmt.Sprintf("step %d: change to %q is a secret attribute but the plan does not flag it Secret, so its values reach the event (AG-9)", a.key.Item, attr)})
+		}
 		if a.key.Operation != op {
 			vs = append(vs, Violation{ClauseAuditSuccess, fmt.Sprintf("step %d ran under operation %q, the request's is %q", a.key.Item, a.key.Operation, op)})
 		}
@@ -276,6 +280,11 @@ func (h *harness) failureViolations(out runOut) []Violation {
 
 // denialViolations checks the denial path's event.
 func (h *harness) denialViolations(out runOut) []Violation {
+	vs := h.violations() // an Apply that ran after the refusal
+	return append(vs, h.denialEventViolations(out)...)
+}
+
+func (h *harness) denialEventViolations(out runOut) []Violation {
 	tgt, denied := h.deny.deniedTarget()
 	if !denied {
 		return nil // Plan returned no step, so there was no Apply-time re-check to refuse
@@ -303,4 +312,21 @@ func (h *harness) denialViolations(out runOut) []Violation {
 		vs = append(vs, Violation{ClauseAuditDenial, p})
 	}
 	return vs
+}
+
+// unflaggedSecrets returns the attributes of diff that are on the static secret list (safe-primitives
+// §3.7) and are not marked Secret. The runner redacts only what the plan flags, so an Action that forgets
+// the flag would write a password into the append-only trail (AG-9). AD attribute names are
+// case-insensitive.
+func unflaggedSecrets(diff []operation.Change) []string {
+	var out []string
+	for _, c := range diff {
+		if c.Secret {
+			continue
+		}
+		if slices.ContainsFunc(secretattr.Static(), func(n string) bool { return strings.EqualFold(n, c.Attribute) }) {
+			out = append(out, c.Attribute)
+		}
+	}
+	return out
 }

@@ -29,7 +29,7 @@
 // declares, an event ID and time, the initiator chain (requester and on-behalf-of principals), the
 // planned step's target, the operation/step key (the operation ID), the source component, the
 // outcome and a machine reason, the plan hash, and for a success the plan's before/after with every
-// secret change redacted (AG-9). The verification factor, client IP and the target's DN at the time
+// secret change redacted (AG-9); a plan change to a statically secret attribute (secretattr) that is not flagged Secret fails audit-success. The verification factor, client IP and the target's DN at the time
 // are not fields of audit.Event yet, so Contract cannot hold an Action to them (T-1280 adds them and
 // extends this check). A failure or denial before any step is chosen (a Plan that fails, a
 // denial at Plan) carries no operation key today (T-1281), so those paths are not driven.
@@ -431,7 +431,10 @@ func (p *probe) Apply(ctx context.Context, s step.Step, sp operation.StepPlan) (
 	case modeFailure:
 		return h.applyFailing(ctx, s, sp)
 	case modeDenial:
-		return h.inner.Apply(ctx, s, sp) // not reached: the re-check refused first
+		// Not reached: the re-check refused first. If the runner got here the write would land while the
+		// trail says "denied", so the Action is not called and the clause fails.
+		h.fail(ClauseAuditDenial, "Apply ran after the Apply-time re-check refused the step: the write was not withheld")
+		return operation.Outcome{}, errContractDenied
 	}
 	dir := h.fx.Directory
 	if dir != nil {

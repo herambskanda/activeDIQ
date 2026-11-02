@@ -838,6 +838,37 @@ func TestSecretChangeCarriesNoValueInTheEvent(t *testing.T) {
 	}
 }
 
+func TestUnflaggedSecretAttributeFailsAG9(t *testing.T) {
+	for _, attr := range []string{"unicodePwd", "UnicodePWD", "ms-Mcs-AdmPwd", "msLAPS-Password"} {
+		a, fx := newFixture("test.thing.modify")
+		unflagged := &mutPlan{Action: a, mut: func(sp *operation.StepPlan) {
+			sp.Diff = append(sp.Diff, operation.Change{Attribute: attr, Before: []string{"old"}, After: []string{"P@ssw0rd!"}})
+		}}
+		vs := Check(unflagged, fx)
+		if !hasClause(vs, ClauseAuditSuccess) || !strings.Contains(detailOf(vs, ClauseAuditSuccess), "AG-9") || !strings.Contains(detailOf(vs, ClauseAuditSuccess), attr) {
+			t.Errorf("%s planned with Secret=false passed or did not name AG-9: %v", attr, vs)
+		}
+	}
+}
+
+func TestApplyAfterTheRecheckRefusedFailsTheDenialClause(t *testing.T) {
+	a, fx := newFixture("test.thing.modify")
+	hd := &harness{inner: a, fx: fx, d: a.Describe(), actor: authority.Chain{Requester: authority.Principal{ID: "h", Kind: authority.Human}},
+		mode: modeDenial, deny: &denyAfterPlan{}}
+	// A runner regression that reaches Apply anyway: authorisation allows the re-check.
+	out, err := hd.run(&probe{h: hd}, allowAll{}, fx.Input, "denial")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vs := hd.denialViolations(out)
+	if !hasClause(vs, ClauseAuditDenial) || !strings.Contains(detailOf(vs, ClauseAuditDenial), "Apply ran") {
+		t.Fatalf("an Apply after the refused re-check passed: %v", vs)
+	}
+	if fx.Directory.Changes() != 0 {
+		t.Fatalf("the Action's Apply was called in the denial path: %d change(s)", fx.Directory.Changes())
+	}
+}
+
 func TestApplyThatSwallowsTheDirectoryErrorFails(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
 	a.swallowsFail = true
