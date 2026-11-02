@@ -162,5 +162,81 @@ class NoScriptCanLeaveWeakSigning(unittest.TestCase):
         self.assertRegex(tail, r"throw")
 
 
+
+def load_cli():
+    loader = importlib.machinery.SourceFileLoader("dc1_policy_cli", str(LAB / "bin" / "dc1-policy"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+class Cli(unittest.TestCase):
+    """dc1-policy check/restore against a fake DC and a fake LDAP port."""
+
+    def fake_ldap(self, code):
+        import socket, threading
+        srv = socket.socket(); srv.bind(("127.0.0.1", 0)); srv.listen(5)
+        resp = bytes([0x30, 0x0c, 0x02, 0x01, 0x01, 0x61, 0x07, 0x0a, 0x01, code, 0x04, 0x00, 0x04, 0x00])
+
+        def serve():
+            while True:
+                try:
+                    c, _ = srv.accept()
+                except OSError:
+                    return
+                c.recv(4096); c.sendall(resp); c.close()
+        threading.Thread(target=serve, daemon=True).start()
+        self.addCleanup(srv.close)
+        return srv.getsockname()[1]
+
+    def test_check_names_both_registry_and_wire_failures(self):
+        import dc1policy
+        cli = load_cli()
+        port = self.fake_ldap(49)
+        orig = dc1policy.bind_probe
+        dc1policy.bind_probe = lambda host, port=port, timeout=10: orig(host, port=port, timeout=timeout)
+        self.addCleanup(setattr, dc1policy, "bind_probe", orig)
+        bad = cli.check(FakeDC(integrity=1).ps, "127.0.0.1", lambda m: None)
+        self.assertIn("LDAPServerIntegrity is 1, need 2", bad)
+        self.assertTrue(any("answered 49" in b for b in bad), bad)
+
+    def test_check_passes_only_when_2_2_and_bind_8(self):
+        import dc1policy
+        cli = load_cli()
+        port = self.fake_ldap(8)
+        orig = dc1policy.bind_probe
+        dc1policy.bind_probe = lambda host, port=port, timeout=10: orig(host, port=port, timeout=timeout)
+        self.addCleanup(setattr, dc1policy, "bind_probe", orig)
+        self.assertEqual(cli.check(FakeDC().ps, "127.0.0.1", lambda m: None), [])
+
+    def test_restore_writes_only_2_and_reboots_only_when_it_changed(self):
+        import dc1policy
+        cli = load_cli()
+        port = self.fake_ldap(8)
+        orig = dc1policy.bind_probe
+        dc1policy.bind_probe = lambda host, port=port, timeout=10: orig(host, port=port, timeout=timeout)
+        self.addCleanup(setattr, dc1policy, "bind_probe", orig)
+        cli.wait_for_dc = lambda ps, tries=90: True
+
+        class Dc(FakeDC):
+            def ps(self, script):
+                self.sent.append(script)
+                if "Set-ItemProperty" in script:
+                    self.integrity = self.cbt = 2
+                    return 0, ""
+                return super().ps(script)
+
+        dc = Dc(integrity=1)
+        self.assertEqual(cli.restore(dc.ps, "127.0.0.1", lambda m: None), [])
+        writes = [s for s in dc.sent if "Set-ItemProperty" in s]
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(sorted(re.findall(r"-Value (\d+)", writes[0])), ["2", "2"])
+        self.assertTrue([s for s in dc.sent if "shutdown" in s])
+        ok = Dc()
+        self.assertEqual(cli.restore(ok.ps, "127.0.0.1", lambda m: None), [])
+        self.assertFalse([s for s in ok.sent if "Set-ItemProperty" in s or "shutdown" in s], "restore touched a healthy dc1")
+
+
 if __name__ == "__main__":
     unittest.main()
