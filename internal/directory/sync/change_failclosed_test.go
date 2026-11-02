@@ -194,6 +194,35 @@ func TestPatchMemberChangeOfNonGroupIsReadNotLost(t *testing.T) {
 	})
 }
 
+// F2 (patch.go, stored group): the change turns the stored group into a non-group and also carries a member
+// removal. The writer refuses it, and because the row it holds is a group its edges end until the read.
+func TestPatchMemberChangeOfStoredGroupBecomingNonGroupFailsClosed(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		ap := applier(t)
+		e.seedExtra(t, ap)
+		rep := e.apply(t, ap, t1, live(grpExtr, "", 0, classes("top", "person", "organizationalPerson", "user"), cdel("member", member(40))))
+		if rep.Refused != 1 || rep.Updated != 0 {
+			t.Fatalf("report: %+v", rep)
+		}
+		e.wantNeedsRead(t, rep, grpExtr)
+		if got := e.edges(t, grpExtr, "member"); len(got) != 0 {
+			t.Fatalf("edges still active: %v", got)
+		}
+		for _, u := range []uint64{40, 41, 42} {
+			if e.grants(t, u, grpExtr) {
+				t.Errorf("user %d still reaches the group", u)
+			}
+		}
+		e.apply(t, ap, t2, live(grpExtr, "", 0, cset("member", member(41), member(42))))
+		if got := e.edges(t, grpExtr, "member"); !slices.Equal(got, texts_(41, 42)) {
+			t.Fatalf("after the read: %v", got)
+		}
+		if e.grants(t, 40, grpExtr) || !e.grants(t, 41, grpExtr) || !e.grants(t, 42, grpExtr) {
+			t.Errorf("after the read: 40=%v 41=%v 42=%v", e.grants(t, 40, grpExtr), e.grants(t, 41, grpExtr), e.grants(t, 42, grpExtr))
+		}
+	})
+}
+
 // A refused change older than the stored row is superseded by it: no read and no loss of edges.
 func TestPatchRefusedChangeOlderThanRowIsStale(t *testing.T) {
 	each(t, func(t *testing.T, e *env) {

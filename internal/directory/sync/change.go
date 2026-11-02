@@ -42,8 +42,9 @@ type Planned struct {
 
 // Plan maps one change. A malformed change is an *Error (errors.Is(err, ErrMalformed)); the caller goes on with the
 // batch and, when the returned Planned names an object (Patch.Object, set as soon as the GUID parsed), has that
-// object read, because the change is consumed with its cookie and what it carried would otherwise be lost. Patch.Create is set only when the change carries everything a stored row needs:
-// otherwise the inventory reports the object as needing a read and stores nothing.
+// object read, because the change is consumed with its cookie and what it carried would otherwise be lost.
+// Patch.Create is set only when the change carries everything a stored row needs: otherwise the inventory reports
+// the object as needing a read and stores nothing.
 func (cm *ChangeMapper) Plan(ch *connectorv1.ObjectChange) (Planned, error) {
 	var out Planned
 	if ch == nil {
