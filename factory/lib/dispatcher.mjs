@@ -23,6 +23,7 @@ import {
 } from './worktree.mjs';
 import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
+import { EMBARGO_TAG, orderDoneQueue } from './mergequeue.mjs';
 import { blockedNote, preMergeSettings, runPreMergeGate } from './premerge.mjs';
 
 export { selectCandidates, launchGate } from './candidates.mjs';
@@ -70,7 +71,6 @@ function madeProgress(snapshot, ticket) {
 const kTokens = (n) => `${Math.round((n ?? 0) / 1000)}k`;
 
 /** The dispatcher. Create one per process; call {@link Dispatcher#run}. */
-const EMBARGO_TAG = 'embargoed';
 const EMBARGO_REASON = 'tagged embargoed — held until fix day; remove the tag to merge (security-disclosure runbook §6)';
 
 export class Dispatcher {
@@ -99,6 +99,7 @@ export class Dispatcher {
     this.gateRun = null; // the pre-merge gate + merge in flight (one at a time)
     this.gateAbort = null;
     this.gateRetryAt = new Map(); // ticket id → ms before which a gate that could not judge is not retried
+    this.runGate = runPreMergeGate; // replaceable in tests
   }
 
   // ---- bookkeeping ------------------------------------------------------------------------
@@ -188,6 +189,7 @@ export class Dispatcher {
   /** Take over runs a previous dispatcher left running. */
   adopt() {
     this.adopted = true;
+    updateDispatcherState(this.ctx, { merge_gate: null }); // a gate a previous dispatcher left in flight is gone
     for (const run of listRecentRuns(this.ctx, 200)) {
       if (run.status === 'running' && !this.active.has(run.id)) this.active.set(run.id, run);
     }
@@ -380,6 +382,9 @@ export class Dispatcher {
   // ---- merging ----------------------------------------------------------------------------
 
   /**
+   * Finished tickets are taken in queue order (`orderDoneQueue`, T-1296): those a blocked or ready
+   * ticket waits on, then by priority, then the earliest done time.
+   *
    * Merge every finished ticket that has work on its branch: code tickets that still have a
    * worktree, and any other type whose `factory/<id>` branch has commits ahead of main (a spec
    * or docs ticket must never reach done with its commits stranded on a branch — T-0986).
@@ -395,7 +400,7 @@ export class Dispatcher {
     const done = listEntities(this.ctx, 'tickets').filter((t) => t.status === 'done');
     const code = (t) => isCodeType(this.ctx.config, t.type);
     const stranded = done.some((t) => !code(t)) ? await branchesAheadOfMain(this.ctx) : new Map();
-    const finished = done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id)));
+    const finished = orderDoneQueue(done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id))), listEntities(this.ctx, 'tickets'));
     for (const ticket of finished) {
       if (this.stopping) return;
       if (this.holdEmbargoed(ticket)) continue;
@@ -405,8 +410,13 @@ export class Dispatcher {
       }
       if ((this.gateRetryAt.get(ticket.id) ?? 0) > this.#nowMs()) continue;
       this.gateAbort = new AbortController();
+      updateDispatcherState(this.ctx, { merge_gate: { ticket: ticket.id, started_at: nowIso(this.ctx) } });
       this.gateRun = this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket, { gate: true }))
-        .finally(() => { this.gateRun = null; this.gateAbort = null; this.requestTick = true; this.wake?.(); });
+        .finally(() => {
+          this.gateRun = null; this.gateAbort = null; this.requestTick = true;
+          updateDispatcherState(this.ctx, { merge_gate: null });
+          this.wake?.();
+        });
       return;
     }
   }
@@ -440,7 +450,7 @@ export class Dispatcher {
     if (gate) {
       let verdict;
       try {
-        verdict = await runPreMergeGate(ctx, ticket, { signal: this.gateAbort?.signal });
+        verdict = await this.runGate(ctx, ticket, { signal: this.gateAbort?.signal });
       } catch (err) {
         // The gate could not judge (timeout, stop, worktree failure): never merge on that. Retry later.
         this.gateRetryAt.set(ticket.id, this.#nowMs() + 10 * 60_000);
