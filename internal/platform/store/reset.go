@@ -28,6 +28,20 @@ import (
 // "prepared statement does not exist" or re-prepares every statement on every borrow. The batch below is
 // DISCARD ALL minus DEALLOCATE ALL, in one simple-protocol round trip with no parameters (constant text).
 
+// foreignPreparedPredicate selects the rows of pg_prepared_statements that pgx did not create (a body's own
+// PREPARE). The name alone cannot be trusted: pgx names its cached statements deterministically,
+// 'stmtcache_' || hex(sha256(sql)[0:24]) (pgx v5 internal/stmtcache), so a body could PREPARE a statement under
+// a forged 'stmtcache_...' name, or DEALLOCATE a real cached name and re-PREPARE it with different SQL, and the
+// victim's cache would then execute the planted statement. A statement is therefore pgx's own only if its name
+// equals the hash of its own text; for a SQL-level PREPARE the statement column holds the PREPARE text, which
+// cannot hash to the name it declares. A constant string: no value from the session is interpolated.
+//
+// Known gap, out of scope here: a body that DEALLOCATEs one of pgx's cached statements without replacing it
+// leaves that connection's local cache stale, and the next query on it fails with "prepared statement does not
+// exist" (an error, not a leak). Not detectable without a round trip per cached name.
+const foreignPreparedPredicate = `(name !~ '^stmtcache_[0-9a-f]{48}$'
+	OR name <> 'stmtcache_' || encode(substring(sha256(convert_to(statement, 'UTF8')) from 1 for 24), 'hex'))`
+
 // resetSQL returns the connection to its start-up state. RESET ALL covers every session-level SET,
 // set_config(..., false), SET ROLE and SET SESSION AUTHORIZATION (client_encoding returns to the start-up
 // value pgx sent, UTF8). The final SELECT counts prepared statements pgx did not create (a body's own
@@ -39,7 +53,7 @@ DISCARD SEQUENCES;
 CLOSE ALL;
 UNLISTEN *;
 SELECT pg_advisory_unlock_all();
-SELECT count(*) FROM pg_prepared_statements WHERE name NOT LIKE 'stmtcache\_%'`
+SELECT count(*) FROM pg_prepared_statements WHERE ` + foreignPreparedPredicate
 
 // resetTimeout bounds the reset round trip; a connection that cannot answer in time is destroyed.
 const resetTimeout = 5 * time.Second
