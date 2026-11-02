@@ -99,9 +99,13 @@ func (e *env) fillRange(t *testing.T, tid tenant.ID, from, to int) {
 // after migration 0070 and an operator does after a bulk load.
 func (e *env) vacuumSearch(t *testing.T) {
 	t.Helper()
-	for _, tbl := range []string{"inventory_search_trigrams", "inventory_search_keys", "directory_objects"} {
-		if err := e.d.ExecOwner(context.Background(), `VACUUM (ANALYZE) public.`+tbl); err != nil {
-			t.Fatal(err)
+	// Twice: the first pass cannot mark a page all-visible past a row whose inserting transaction is still
+	// inside the oldest snapshot, so an Index Only Scan would fetch heap pages for those rows.
+	for pass := 0; pass < 2; pass++ {
+		for _, tbl := range []string{"inventory_search_trigrams", "inventory_search_keys", "directory_objects"} {
+			if err := e.d.ExecOwner(context.Background(), `VACUUM (ANALYZE) public.`+tbl); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 }
