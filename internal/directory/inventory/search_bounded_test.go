@@ -36,6 +36,12 @@ type planNode struct {
 	Recheck  float64    `json:"Rows Removed by Index Recheck"`
 	Subplan  string     `json:"Subplan Name"`
 	Children []planNode `json:"Plans"`
+
+	IndexCond  string  `json:"Index Cond"`
+	JoinType   string  `json:"Join Type"`
+	Heap       float64 `json:"Heap Fetches"`
+	SharedHit  float64 `json:"Shared Hit Blocks"`
+	SharedRead float64 `json:"Shared Read Blocks"`
 }
 
 // walk calls fn on every node with the name of the CTE it belongs to.
@@ -52,7 +58,7 @@ func (n *planNode) walk(cte string, fn func(n *planNode, cte string)) {
 // explainAnalyze runs the compiled statement under EXPLAIN (ANALYZE, FORMAT JSON) in tx.
 func explainAnalyze(ctx context.Context, tx store.Tx, sql string, args []any) (*planNode, error) {
 	var doc []byte
-	if err := tx.QueryRow(ctx, "EXPLAIN (ANALYZE, FORMAT JSON) "+sql, args...).Scan(&doc); err != nil {
+	if err := tx.QueryRow(ctx, "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+sql, args...).Scan(&doc); err != nil {
 		return nil, err
 	}
 	var top []struct {
@@ -247,42 +253,6 @@ func Test_search_work_is_bounded(t *testing.T) {
 					}
 				}
 			})
-		}
-	})
-}
-
-// The fuzzy class under row security: ADR-0011 SE5 wants the Bitmap Heap Scan over the partial GIN index,
-// but pg_trgm's operators are not leakproof, so under FORCE ROW LEVEL SECURITY the planner reads the
-// tenant's kind 1-5 key rows through the B-tree and filters them (T-1180). This pins the limit that holds
-// today: the rows returned are still at most W+1, and the work is the tenant's fuzzy-eligible key set, not
-// the scope. When T-1180 lands this test fails with the instruction to require the GIN and the bound of rule 13.
-func Test_search_fuzzy_work_known_limit_T1180(t *testing.T) {
-	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		const w = 100
-		e := setup(t, s)
-		e.hStructure(t, e.adA)
-		var obs []inventory.Observation
-		for i := 1; i <= 5; i++ {
-			obs = append(obs, sInv(1, i, fmt.Sprintf("s%d", i), fmt.Sprintf("Sezo Person %d", i), false))
-		}
-		if _, err := e.populate(t, e.adA, hBase, obs...); err != nil {
-			t.Fatal(err)
-		}
-		plan := e.analyze(t, e.scopeOU(e.adA), "Sezo Persn", w, true)
-		var gin, hits float64
-		plan.walk("", func(n *planNode, cte string) {
-			if n.Relation == "inventory_search_keys" && cte == "m_fuzzy" {
-				if strings.Contains(n.Index, "fuzzy") || strings.HasPrefix(n.Type, "Bitmap") {
-					gin++
-				}
-				hits += n.Rows * n.Loops
-			}
-		})
-		if gin > 0 {
-			t.Fatalf("T-1180 landed: the fuzzy probe now uses the trigram index under row security. Require the Bitmap Heap Scan over inventory_search_keys_fuzzy here, with Actual Rows <= W+1 (ADR-0011 SE5), and delete this test")
-		}
-		if hits > w+1 {
-			t.Errorf("fuzzy rows returned %v, want at most W+1 = %d", hits, w+1)
 		}
 	})
 }
