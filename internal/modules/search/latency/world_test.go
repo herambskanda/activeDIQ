@@ -462,13 +462,17 @@ type stats struct {
 	p50, p95, p99, max time.Duration
 }
 
+// rank is the 0-based nearest-rank index of percentile p among n sorted samples.
+func rank(n int, p float64) int { return max(0, min(int(float64(n)*p/100+0.999999999)-1, n-1)) }
+
+// overToMiss is how many of n samples at or over budget make the p-th percentile of all n over budget: the
+// samples above the nearest rank, plus the one at it.
+func overToMiss(n int, p float64) int { return n - rank(n, p) }
+
 func summarize(ds []time.Duration) stats {
 	s := slices.Clone(ds)
 	slices.Sort(s)
-	at := func(p float64) time.Duration { // nearest rank
-		i := int(float64(len(s))*p/100+0.999999999) - 1
-		return s[max(0, min(i, len(s)-1))]
-	}
+	at := func(p float64) time.Duration { return s[rank(len(s), p)] }
 	return stats{n: len(s), p50: at(50), p95: at(95), p99: at(99), max: s[len(s)-1]}
 }
 

@@ -2,7 +2,7 @@
 title: Universal search latency benchmark
 status: draft
 owner: test-engineer
-updated: 2026-11-01
+updated: 2026-11-02
 ---
 
 # Universal search latency benchmark (T-1102, ADR-0011 rule 14, fitness SE6)
@@ -14,8 +14,11 @@ process.
 ## Run it
 
 ```
-make search-latency          # the nightly job; needs Docker; ~10 min per PostgreSQL version
+make search-latency          # the nightly job; needs Docker; both versions, one locked run
+make search-latency-pg16     # one version per invocation (fits a 90 min worker session)
 ```
+
+A passing version takes about 25 minutes on a loaded host, 5.5 of them for the seed.
 
 Output tables land in `factory/demos/evidence/T-1102/search-latency-pg16.txt` and `-pg18.txt`
 (`SEARCH_LATENCY_OUT` overrides the directory). Under the hood:
@@ -29,6 +32,17 @@ the nightly target yet (see `standards/ci-gates.md`); until one does, run it by 
 
 `make ci` runs `TestSearchHarnessSmoke`: the same harness on a 1,200-object seed with W=240, every answer
 checked against the oracle, no time budget. It keeps the seed, the oracle and the HTTP path from rotting.
+
+**Early stop on a decided miss.** With nearest-rank percentiles, the p95 of 1,000 queries is over budget as soon
+as 51 of them are (`overToMiss`, proven in `TestOverToMissDecidesTheP95`). The timed loop stops a class at that
+point and prints the row with its real `n` and `stopped: …`. A missing class therefore costs about 51 slow queries
+instead of 1,000, and the job fails naming it. Before this, a run in which every query was slow (about 0.5 s
+each) hit the 90-minute `go test` timeout without naming any class (T-1102, runs of 2026-11-02). A passing class
+always runs all 1,000 queries.
+
+**A miss is attributed by the plan, not by the clock.** The plan-probe lines (`removed by filter`, the fuzzy scan
+node) do not depend on host load. If the fuzzy CTE reads the tenant's whole fuzzy-kind key set, the miss is real
+on any host (T-1180), not contention.
 
 ## What is measured
 

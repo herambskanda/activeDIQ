@@ -216,6 +216,7 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 				continue
 			}
 			ds := make([]time.Duration, 0, cfg.per)
+			over := 0
 			for i := 0; i < cfg.per; i++ {
 				text := c.texts[i%len(c.texts)]
 				code, body, d := srv.post(caller, text, 0)
@@ -225,10 +226,23 @@ func runBench(t *testing.T, s *storetest.Server, cfg benchCfg) {
 				ds = append(ds, d)
 				// Hidden objects are never returned: checked on every timed answer, outside the clock.
 				w.noHidden(t, caller, c.name, text, body)
+				if d >= budget {
+					over++
+				}
+				// Stop as soon as the verdict is decided: whatever the remaining queries take, the p95 of
+				// cfg.per queries is now over budget. Without this a missing class runs cfg.per slow queries
+				// and the whole run hits the go test timeout without naming the class (AC4).
+				if cfg.enforce && over >= overToMiss(cfg.per, 95) {
+					break
+				}
 			}
 			st := summarize(ds)
 			results = append(results, outcome{"pg" + s.Version, caller, c.name, st})
-			say("%-7s %-10s %6d %8s %8s %8s %8s", caller, c.name, st.n, ms(st.p50), ms(st.p95), ms(st.p99), ms(st.max))
+			stop := ""
+			if st.n < cfg.per {
+				stop = fmt.Sprintf("   stopped: %d of %d queries over %dms, so the p95 of %d is over budget whatever the rest take", over, st.n, budget.Milliseconds(), cfg.per)
+			}
+			say("%-7s %-10s %6d %8s %8s %8s %8s%s", caller, c.name, st.n, ms(st.p50), ms(st.p95), ms(st.p99), ms(st.max), stop)
 		}
 	}
 
