@@ -94,6 +94,25 @@ export async function branchesAheadOfMain(ctx) {
 }
 
 /**
+ * Which of these tickets are `done` but not yet on the main branch: `factory/<id>` exists with
+ * commits ahead of main (T-1266). A ticket with no branch, or a branch with nothing ahead, is
+ * merged as far as a dependent is concerned. One `rev-list` per id, so callers pass only the
+ * ids they need (the done dependencies of ready tickets).
+ * @param {object} ctx
+ * @param {Iterable<string>} ids
+ * @returns {Promise<Set<string>>}
+ */
+export async function unmergedBranches(ctx, ids) {
+  const main = ctx.config.dispatcher.main_branch;
+  const out = new Set();
+  for (const id of new Set(ids)) {
+    const count = await git(ctx.root, ['rev-list', '--count', `${main}..${branchName(id)}`]);
+    if (count.code === 0 && Number.parseInt(count.stdout, 10) > 0) out.add(id);
+  }
+  return out;
+}
+
+/**
  * Merge a finished ticket's branch into the main branch of the main checkout with `--no-ff`.
  * A conflict is aborted cleanly and reported as such.
  * @param {object} ctx
