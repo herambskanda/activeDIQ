@@ -3,6 +3,7 @@ package operation
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -730,5 +732,63 @@ func TestCheckPlanEnforcesTargetClass(t *testing.T) {
 	}
 	if err := u.checkPlan(step("group")); err != nil {
 		t.Fatalf("group step: %v", err)
+	}
+}
+
+// A known secret attribute planned without Secret is refused, not silently redacted (AG-9, DM-80.I4):
+// the Action author must find out, and no value may reach the plan hash, a diff or an event (T-1287).
+func TestCheckPlanRefusesStaticSecretAttributeWithoutSecretFlag(t *testing.T) {
+	u := &run{d: Descriptor{ID: "x.user.set", Reversibility: Reversible}}
+	plan := func(attr string, flagged bool) []StepPlan {
+		return []StepPlan{{Kind: "k", Reversibility: Reversible,
+			Diff: []Change{{Attribute: attr, Secret: flagged, Before: []string{"old-value"}, After: []string{"P@ssw0rd!"}}}}}
+	}
+	for _, name := range secret.StaticAttrs() {
+		for _, spelled := range []string{name, strings.ToLower(name), strings.ToUpper(name)} {
+			err := u.checkPlan(plan(spelled, false))
+			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), spelled) {
+				t.Errorf("%s without Secret: err = %v, want ErrInvalid naming the attribute", spelled, err)
+			} else if strings.Contains(err.Error(), "P@ssw0rd!") || strings.Contains(err.Error(), "old-value") {
+				t.Errorf("%s: the error carries a value: %v", spelled, err)
+			}
+			steps := plan(spelled, true)
+			if err := u.checkPlan(steps); err != nil {
+				t.Errorf("%s with Secret: %v", spelled, err)
+			} else if c := steps[0].Diff[0]; c.Before != nil || c.After != nil {
+				t.Errorf("%s with Secret kept its values in the plan: %+v", spelled, c)
+			}
+		}
+	}
+	if err := u.checkPlan(plan("mail", false)); err != nil {
+		t.Errorf("an ordinary attribute was refused: %v", err)
+	}
+}
+
+// End to end: the run fails, nothing is written and no event carries the value.
+func TestRunRefusesUnflaggedSecretAttribute(t *testing.T) {
+	bad := func() []TypedStep[payload] {
+		return []TypedStep[payload]{{
+			Plan: StepPlan{Target: authority.TargetRef{GUID: "row-1", Class: "thing"}, Kind: "set", Reversibility: Reversible,
+				Diff: []Change{{Attribute: "UnicodePwd", Before: []string{"old"}, After: []string{"P@ssw0rd!"}}}},
+			Payload: payload{Row: "row-1"},
+		}}
+	}
+	r, db := newRunner(t, behaviour{verifyOK: true, plan: bad}, nil, factsFake{}, sink{})
+	_, err := r.RunStore(context.Background(), req())
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "UnicodePwd") {
+		t.Fatalf("err = %v, want ErrInvalid naming UnicodePwd", err)
+	}
+	if len(db.writes) != 0 {
+		t.Fatalf("writes = %v", db.writes)
+	}
+	for _, ev := range db.committed {
+		for _, c := range ev.Changes {
+			if len(c.Before) != 0 || len(c.After) != 0 {
+				t.Fatalf("event carries values: %+v", c)
+			}
+		}
+		if strings.Contains(fmt.Sprintf("%+v", ev), "P@ssw0rd!") {
+			t.Fatalf("event carries the value: %+v", ev)
+		}
 	}
 }

@@ -426,6 +426,11 @@ func (u *run) checkPlan(steps []StepPlan) error {
 			return fmt.Errorf("%w: step %d of %q targets class %q, the descriptor declares %q", ErrInvalid, i, u.d.ID, sp.Target.Class, u.d.TargetClass)
 		}
 		for j := range sp.Diff {
+			// Fail closed: a known secret attribute must be declared Secret by the Action author. Redacting
+			// it silently here would hide the mistake and leave the next code path to leak the value.
+			if !sp.Diff[j].Secret && secret.IsStaticAttr(sp.Diff[j].Attribute) {
+				return fmt.Errorf("%w: step %d of %q plans a change to secret attribute %q without Secret set", ErrInvalid, i, u.d.ID, sp.Diff[j].Attribute)
+			}
 			if sp.Diff[j].Secret { // a secret value is never held in a plan, diff or event
 				sp.Diff[j].Before, sp.Diff[j].After = nil, nil
 			}
