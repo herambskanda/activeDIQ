@@ -3,6 +3,7 @@ package inventory_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
 	"strings"
@@ -271,34 +272,56 @@ func Test_search_fuzzy_candidates_lose_nothing(t *testing.T) {
 		}
 		e.fillKeys(t, e.a, 1500)
 		rng := rand.New(rand.NewSource(1335))
-		// Sensitive worlds: a query word of 24 letters (n = 25) and one of 9 (n = 10), and keys that share
-		// 1..all of its trigrams by mutation.
+		// Sensitive worlds: a query word of 24 letters (n = 25) and two of 9 (n = 10), and keys that share
+		// exactly c of its trigrams. The first L letters of the word share L trigrams with it (the two
+		// leading padded trigrams and the L-2 interior ones), so every c from 3 to the whole word is built,
+		// which covers the float4 boundary and one either side of it. At 0.56 with n = 25 the float4 rule
+		// admits c = 14 where ceil(t*n) in double needs 15: the key of 14 letters is the one a tightened
+		// bound drops.
+		type probe struct {
+			text string
+			th   float32
+			must string // the boundary key, where ceil(t*n) in double is tighter than the float4 rule: the statement has to return it
+		}
 		sens := []struct {
 			word string
 			n    int
 			th   float32
-		}{{"qwvxjzkhgfdsapoiuytrewqm", 25, 0.56}, {"qwvxjzkhg", 10, 0.7}, {"mnbvcxzlk", 10, 0.3}}
-		var queries []struct {
-			text string
-			th   float32
-		}
+		}{{"qwvxjzkhgfdsapoiuytrewqm", 25, 0.56}, {"zxcvbnmkj", 10, 0.7}, {"mnbvcxzlk", 10, 0.3}}
+		var queries []probe
 		for _, c := range sens {
-			var names []string
-			for k := 0; k <= len(c.word); k++ {
-				b := []byte(c.word)
-				for j := 0; j < k; j++ {
-					b[(j*5+1)%len(b)] = "aeiou"[j%5]
-				}
-				names = append(names, string(b))
-			}
-			e.fillObjects(t, e.a, "SELECT 0 AS g, n AS name FROM unnest(ARRAY['"+strings.Join(names, "','")+"']) n")
 			if got := e.ownerRun(t, e.a, `SELECT cardinality(public.show_trgm($1))::text`, c.word); len(got) != 1 || got[0] != fmt.Sprint(c.n) {
 				t.Fatalf("the sensitive query %q has n = %v, want %d", c.word, got, c.n)
 			}
-			queries = append(queries, struct {
-				text string
-				th   float32
-			}{c.word, c.th})
+			// The smallest c the float4 rule admits, and the one ceil(t*n) in double would need.
+			bnd := 1
+			for float32(bnd)/float32(c.n) < c.th {
+				bnd++
+			}
+			dbl := int(math.Ceil(float64(c.th) * float64(c.n)))
+			if bnd >= dbl && c.n == 25 {
+				t.Fatalf("the world is degenerate: float4 boundary %d, double boundary %d (the double form must be tighter at n = 25, t = %v)", bnd, dbl, c.th)
+			}
+			var names []string
+			for l := 3; l <= len(c.word); l++ {
+				names = append(names, c.word[:l])
+			}
+			e.fillObjects(t, e.a, "SELECT 0 AS g, n AS name FROM unnest(ARRAY['"+strings.Join(names, "','")+"']) n")
+			// The keys really share the intended number of trigrams with the query.
+			for _, l := range []int{bnd - 1, bnd, bnd + 1} {
+				got := e.ownerRun(t, e.a, `SELECT cardinality(ARRAY(SELECT unnest(public.show_trgm($1)) INTERSECT SELECT unnest(public.show_trgm($2))))::text`, c.word, c.word[:l])
+				if len(got) != 1 || got[0] != fmt.Sprint(l) {
+					t.Fatalf("%q: the key %q shares %v trigrams with the query, want %d", c.word, c.word[:l], got, l)
+				}
+			}
+			pr := probe{text: c.word, th: c.th}
+			if dbl > bnd {
+				// pg_trgm's operator decides the other boundaries (at 0.7 with n = 10 it refuses the key whose
+				// word_similarity prints as 0.7): there the oracle comparison alone applies. Where the double form
+				// is tighter, the boundary key is required, so the test fails if that form comes back.
+				pr.must = c.word[:bnd]
+			}
+			queries = append(queries, pr)
 		}
 		// Random queries: a mutated name, or two names run together, 3-32 runes, any threshold.
 		stored := e.ownerRun(t, e.a, `SELECT key FROM public.inventory_search_keys WHERE key_kind = 1 ORDER BY key LIMIT 400`)
@@ -323,12 +346,9 @@ func Test_search_fuzzy_candidates_lose_nothing(t *testing.T) {
 			if len(q) > searchkey.MaxFuzzyRunes {
 				q = q[:searchkey.MaxFuzzyRunes]
 			}
-			queries = append(queries, struct {
-				text string
-				th   float32
-			}{string(q), ths[rng.Intn(len(ths))]})
+			queries = append(queries, probe{text: string(q), th: ths[rng.Intn(len(ths))]})
 		}
-		var compared, withMatches int
+		var compared, withMatches, sensitive int
 		for _, qq := range queries {
 			p, err := searchkey.Classify(qq.text)
 			if err != nil || p.Fuzzy == "" {
@@ -390,10 +410,24 @@ func Test_search_fuzzy_candidates_lose_nothing(t *testing.T) {
 					t.Errorf("%q at threshold %v: %s is a fuzzy hit and does not satisfy <%%", qq.text, qq.th, g)
 				}
 			}
+			if qq.must != "" {
+				// The boundary key: the oracle matches it (the float4 rule) and the statement returns it.
+				g := e.ownerRun(t, e.a, `SELECT object_guid::text FROM public.inventory_search_keys WHERE key_kind = 1 AND key = $1`, qq.must)
+				if len(g) != 1 || !or[g[0]] {
+					t.Fatalf("%q at %v: the oracle does not match the boundary key %q (%v): the world is wrong", qq.text, qq.th, qq.must, g)
+				}
+				if !all[g[0]] || !fz[g[0]] {
+					t.Errorf("%q at %v: the boundary key %q (the float4 rule admits it) is not a fuzzy hit: the candidate bound is tighter than pg_trgm's", qq.text, qq.th, qq.must)
+				}
+				sensitive++
+			}
 			compared++
 			if len(oracle) > 0 {
 				withMatches++
 			}
+		}
+		if sensitive == 0 {
+			t.Fatal("no float4-sensitive query was compared with its boundary key")
 		}
 		t.Logf("%d queries compared with the index-free oracle, %d of them with matches", compared, withMatches)
 		if compared < 60 || withMatches < 20 {
