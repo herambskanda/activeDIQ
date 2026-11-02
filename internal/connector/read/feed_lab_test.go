@@ -214,7 +214,10 @@ func TestLabFeedPrimeAndTheCookiePreChecks(t *testing.T) {
 		{"CC-FEED-07", "invocation_id", edit(func(c *connectorv1.FeedCookie) {
 			c.Issuer.InvocationId = write.GUIDToWire(guid.GUID{9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6})
 		}), connectorv1.ResyncReason_RESYNC_REASON_INVOCATION_ID_CHANGED},
-		{"CC-FEED-08", "usn", edit(func(c *connectorv1.FeedCookie) { u := ck.GetHighestCommittedUsnBefore() + 1_000_000; c.HighestCommittedUsnBefore = &u }),
+		{"CC-FEED-08", "usn", edit(func(c *connectorv1.FeedCookie) {
+			u := ck.GetHighestCommittedUsnBefore() + 1_000_000
+			c.HighestCommittedUsnBefore = &u
+		}),
 			connectorv1.ResyncReason_RESYNC_REASON_USN_ROLLBACK},
 		{"CC-FEED-09", "dsa_guid", edit(func(c *connectorv1.FeedCookie) {
 			c.Issuer.DsaGuid = write.GUIDToWire(guid.GUID{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1})
