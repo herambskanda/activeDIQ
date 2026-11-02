@@ -1,6 +1,6 @@
 ---
 title: Lessons learned
-updated: 2026-10-30
+updated: 2026-11-02
 budget: 120 lines
 ---
 
@@ -9,6 +9,7 @@ budget: 120 lines
 Gotchas that cost time. Newest first. `date · lesson · source`.
 
 ## Tooling and Claude Code (verified on 2.1.287)
+- 2026-11-02 · T-1265 blocked with "dc1 unreachable, no Proxmox access", but ARP showed 192.168.1.9 held by another device (70:08:94:95:cc:ed). The A-0022 DHCP reservation was closed as done without ever taking effect → when a lab host is unreachable, compare `ip neigh show <ip>` with the VM MAC (Proxmox prefix bc:24:11) before calling it an outage. Recovery: A-0032; preflight: T-1275. (T-1274)
 - 2026-10-30 · T-0866 (spec) wrote reports.yaml and generated code on branch factory/T-0866 and went to done, but the dispatcher merges only build/bug/test/chore/ops, so the contract never reached main. T-0892 blocked and T-0959 was ready against a file main lacked → when a spec/contract ticket produces files, check `git log main..factory/<id>` before calling it done; any commits there need a merge ticket. Dispatcher fix: T-0986; manual merge: T-0975. (T-0892)
 - 2026-10-30 · A ~50 min API DNS outage (EAI_AGAIN, runs end after 1 turn at $0) was counted as "no progress", so the dispatcher escalated T-0865 and T-0876 to principal-engineer and blocked both. → In triage, read the run's `result` line first: a connectivity error means unblock and keep the original owner, with no escalation. Dispatcher fix: T-0878. Run 1 of T-0865 also left an untracked ADR draft in the main checkout, outside its worktree → tell the resuming worker the absolute path. (T-0876)
 - 2026-10-30 · A CEO action answered with a sanctioned path (A-0025, WinRM on dc1) went unapplied for 24 h. Ten tickets noted "re-ready when A-0025 is answered" stayed blocked, because later triages handled only the newly blocked tickets and nothing flags an answered action the way it flags an answered decision. A re-filed action (A-0030) also contradicted the CEO's deferral in A-0026's done note. → In every triage, check recently done actions against blocked tickets' notes and apply their done notes like decision answers. Read the previous action's done note before re-filing. (T-0838)
