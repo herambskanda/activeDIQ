@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Dispatcher } from '../lib/dispatcher.mjs';
-import { blockedNote, extractFindings, findingKey, newFindings, runPreMergeGate } from '../lib/premerge.mjs';
+import { blockedNote, classifyChanges, extractFindings, findingKey, newFindings, readSurface, runPreMergeGate } from '../lib/premerge.mjs';
 import { advanceTicket, claimTicket, createTicket, setTicketLinks } from '../lib/tickets.mjs';
 import { ensureWorktree } from '../lib/worktree.mjs';
 import { listEntities, readRecentEvents } from '../lib/store.mjs';
@@ -23,6 +23,7 @@ for (const l of read('violations.txt')) {
   console.error(\`\${file}:\${line}: P1 (ADR-0002 fitness function): \${msg}\`);
   bad++;
 }
+if (process.env.SLOW_BASELINE && process.cwd().includes('.premerge/base-')) await new Promise((r) => setTimeout(r, 60000));
 for (const l of read('raw.txt')) { console.error(l); bad++; }
 for (const t of read('targets.txt')) { console.error(\`make: *** [tools/ci/ci.mk:7: \${t}] Error 1\`); bad++; }
 console.log('ok  \\tsome/package\\t0.123s');
@@ -198,6 +199,117 @@ test('a run whose scratch tree is removed while it runs is not a verdict', async
   } finally { f.cleanup(); }
 });
 
+// ---- reusing a baseline (T-1378) ---------------------------------------------------------------
+
+const baselineRuns = (f) => fs.readdirSync(path.join(f.ctx.stateDir, 'premerge')).filter((n) => /^baseline-[0-9a-f]{12}-.*\.log$/.test(n));
+
+/** Commit `files` on main (the primary checkout). */
+function advanceMain(f, files, message = 'main moves') {
+  for (const [file, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(f.root, file)), { recursive: true });
+    fs.writeFileSync(path.join(f.root, file), text);
+  }
+  commitAll(f.root, message);
+}
+
+const READER = '#!/bin/sh\n# a gate job that reads the ADRs\ngrep -r status knowledge/development/decisions\n';
+
+test('main advanced by commits no gate job reads: the cached baseline is reused, no new baseline runs, and the summary says so', async () => {
+  const f = setup({ main: [OLD1] });
+  try {
+    advanceMain(f, { 'tools/ci/adr-reader.sh': READER });
+    const first = await runPreMergeGate(f.ctx, await branchWith(f, 'T-0001', [OLD1, NEW1]));
+    assert.equal(first.status, "blocked");
+    assert.equal(baselineRuns(f).length, 1);
+    advanceMain(f, {
+      'knowledge/memory/state-of-the-product.md': 'memory\n',
+      '.claude/agent-memory/director/x.md': 'memory\n',
+      'factory/reports/digest.md': 'digest\n',
+      'knowledge/development/standards/other.md': 'standards\n',
+    });
+    const v = await runPreMergeGate(f.ctx, await branchWith(f, 'T-0002', [OLD1, NEW1]));
+    assert.deepEqual([v.status, v.mode], ['blocked', 'new-findings']);
+    assert.match(v.summary, /baseline: reused the cached run [0-9a-f]{12}-[0-9a-f]{10}: 4 path\(s\) changed since, none read by a gate job/);
+    assert.equal(baselineRuns(f).length, 1, 'no new baseline run');
+    assert.match(v.findings.join('\n'), /CloudThing/);
+  } finally { f.cleanup(); }
+});
+
+test('a commit between the cached baseline and main that touches a path a gate job reads: the baseline is not reused', async () => {
+  const cases = {
+    'code under internal/': { 'internal/c/z.go': 'package c\n' },
+    'a CI tool under tools/ci/': { 'tools/ci/other.sh': '#!/bin/sh\n' },
+    'a migration': { 'migrations/0002_x.sql': 'select 1;\n' },
+    'a knowledge file a gate job names (the ADR directory)': { 'knowledge/development/decisions/0011-x.md': 'status: ratified\n' },
+    'a root file': { 'README.md': 'hi\n' },
+  };
+  for (const [what, files] of Object.entries(cases)) {
+    const f = setup({ main: [OLD1] });
+    try {
+      advanceMain(f, { 'tools/ci/adr-reader.sh': READER });
+      await runPreMergeGate(f.ctx, await branchWith(f, 'T-0001', [OLD1, NEW1]));
+      assert.equal(baselineRuns(f).length, 1);
+      advanceMain(f, { 'knowledge/memory/x.md': 'memory\n', ...files });
+      const v = await runPreMergeGate(f.ctx, await branchWith(f, 'T-0002', [OLD1, NEW1]));
+      assert.equal(baselineRuns(f).length, 2, `${what}: a fresh baseline ran`);
+      assert.match(v.summary, /ran a fresh baseline/, what);
+    } finally { f.cleanup(); }
+  }
+});
+
+test('the read surface is computed from the gate files: path literals and joined literals count, a bare root name and prose do not', async () => {
+  const f = setup();
+  try {
+    advanceMain(f, {
+      'tools/ci/a.sh': 'cat knowledge/business/licensing/register.md\nls .claude/agent-memory-local/\n',
+      'tools/fitness/x/main.go': 'p := filepath.Join(root, "knowledge", "development", "architecture", "threat-model.md")\nskip := map[string]bool{"factory": true, "knowledge": true}\nglob := "garage/spike/*.go"\n',
+      'lab/t.py': 'd = repo / "knowledge" / "business" / "partnerships"\n',
+      'README.md': 'see knowledge/memory/lessons.md and factory/reports/x.md\n',
+      '.gitignore': 'factory/state/\n',
+      'knowledge/memory/lessons.md': 'knowledge/product/prd\n', // inside a root: not a gate file
+    });
+    const surface = await readSurface(f.root, 'main', ['knowledge', '.claude', 'factory', 'garage']);
+    assert.deepEqual(surface, [
+      '.claude/agent-memory-local', 'garage/spike', 'knowledge/business/licensing/register.md', 'knowledge/business/partnerships',
+      'knowledge/development/architecture/threat-model.md',
+    ]);
+    const roots = ['knowledge', '.claude', 'factory', 'garage'];
+    assert.equal(classifyChanges(['knowledge/memory/lessons.md', 'factory/reports/d.md', 'knowledge/business/licensing/other.md'], roots, surface).reusable, true);
+    assert.deepEqual(classifyChanges(['knowledge/business/partnerships/acme.md'], roots, surface), { reusable: false, read: ['knowledge/business/partnerships/acme.md'] });
+    assert.equal(classifyChanges(['knowledge/business/licensing/register.md'], roots, surface).reusable, false);
+    assert.equal(classifyChanges(['tools/ci/ci.mk'], roots, surface).reusable, false, 'outside the roots is always read');
+  } finally { f.cleanup(); }
+});
+
+test('a passing gate records the merge result as the baseline of the next main: the second half of a split train runs no baseline', async () => {
+  const f = setup({ main: [OLD1] });
+  try {
+    const one = await branchWith(f, 'T-0001', [OLD1, NEW1.replace('CloudThing', 'Other')].slice(0, 1));
+    const verdict = await runPreMergeGate(f.ctx, one);
+    assert.deepEqual([verdict.status, verdict.mode], ['pass', 'ratchet']);
+    assert.equal(baselineRuns(f).length, 1);
+    git(f.root, 'merge', '--no-ff', '--no-edit', 'factory/T-0001');
+    const next = await runPreMergeGate(f.ctx, await branchWith(f, 'T-0002', [OLD1, NEW1]));
+    assert.equal(next.status, 'blocked');
+    assert.match(next.summary, /reused the cached run on the same tree/);
+    assert.equal(baselineRuns(f).length, 1, 'the merged tree needed no baseline run');
+  } finally { f.cleanup(); }
+});
+
+test('a baseline that cannot finish falls back to the nearest cached run: it may clear a branch, never refuse one', async () => {
+  const f = setup({ main: [OLD1], gate: { timeout_minutes: 0.1 } });
+  try {
+    await runPreMergeGate(f.ctx, await branchWith(f, 'T-0001', [OLD1, NEW1]));
+    advanceMain(f, { 'internal/c/z.go': 'package c\n' });
+    process.env.SLOW_BASELINE = '1';
+    const clear = await runPreMergeGate(f.ctx, await branchWith(f, 'T-0002', [OLD1]));
+    assert.deepEqual([clear.status, clear.mode], ['pass', 'ratchet']);
+    assert.match(clear.summary, /timed out after 0\.1 minutes.*stands in, so the merge result can pass but not be refused/);
+    await assert.rejects(runPreMergeGate(f.ctx, await branchWith(f, 'T-0003', [OLD1, NEW1])), /cannot tell whether main or the branch adds them[\s\S]*CloudThing/);
+    assert.equal(git(f.root, 'worktree', 'list').split('\n').filter((l) => l.includes('.premerge')).length, 0, 'scratch worktrees removed');
+  } finally { delete process.env.SLOW_BASELINE; f.cleanup(); }
+});
+
 test('a timeout throws: the gate never passes a branch it could not judge', async () => {
   const f = setup({ gate: { argv: ['node', '-e', 'setTimeout(() => {}, 60000)'], timeout_minutes: 0.005 } });
   try {
@@ -239,19 +351,17 @@ test('the dispatcher reopens a ticket the gate refuses, leaves main alone, and m
     const mainBefore = git(f.root, 'rev-parse', 'main');
     const d = new Dispatcher(f.ctx);
     d.shared = false;
-    await d.mergePass();
+    await d.mergePass(); // T-1297: both go in one train; the refusal splits it, so only `bad` is reopened
     await d.gateIdle();
-    let out = Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) => [t.id, t]));
+    const out = Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) => [t.id, t]));
     assert.deepEqual([out[bad.id].status, out[bad.id].stage_role], ['in_progress', 'backend-engineer']);
     assert.match(out[bad.id].notes.at(-1).text, /pre-merge gate refused the merge[\s\S]*CloudThing/);
-    assert.equal(git(f.root, 'rev-parse', 'main'), mainBefore, 'nothing merged');
+    assert.equal(out[bad.id].links.merged, undefined, 'the refused ticket did not merge');
     assert.equal(git(f.root, 'status', '--porcelain', '--untracked-files=no'), '');
-    await d.mergePass();
-    await d.gateIdle();
-    out = Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) => [t.id, t]));
     assert.ok(out[ok.id].links.merged, 'the clean ticket merged');
     assert.match(readRecentEvents(f.ctx, 50).map((e) => e.text).join('\n'), /pre-merge gate passed \(ratchet\)/);
     assert.notEqual(git(f.root, 'rev-parse', 'main'), mainBefore);
+    assert.equal(git(f.root, 'log', '--merges', '--format=%s', `${mainBefore}..main`).split('\n').length, 1, 'one merge commit, for the clean ticket only');
   } finally { f.cleanup(); }
 });
 

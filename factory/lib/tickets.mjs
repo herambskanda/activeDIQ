@@ -49,15 +49,34 @@ export function readinessProblems(ticket) {
 }
 
 /**
- * What still stands between a ticket and being claimed.
+ * The done dependencies of these tickets that are worth asking git about: the ids a caller passes
+ * to `unmergedBranches` (T-1266).
+ * @param {Iterable<object>} list tickets whose dependencies matter (e.g. the ready ones)
+ * @param {Map<string, object>} tickets by id
+ * @returns {Set<string>}
+ */
+export function doneDependencies(list, tickets) {
+  const out = new Set();
+  for (const t of list) for (const id of t.depends_on ?? []) if (tickets.get(id)?.status === 'done') out.add(id);
+  return out;
+}
+
+/**
+ * What still stands between a ticket and being claimed. A dependency is met only when it is
+ * `done` and its work is on main: `done` with a branch that has commits not on main is reported
+ * in `unmerged` (T-1266), because a dependent that starts now merges a main without the fix.
  * @param {object} ticket
  * @param {Map<string, object>} tickets by id
  * @param {Map<string, object>} decisions by id
- * @returns {{deps: string[], decisions: string[]}} unmet dependencies and unresolved decisions
+ * @param {Set<string>} [unmerged] ids of done tickets whose branch is ahead of main
+ * @returns {{deps: string[], unmerged: string[], decisions: string[]}} unfinished dependencies,
+ *   done-but-unmerged dependencies, and unresolved decisions
  */
-export function claimBlockers(ticket, tickets, decisions) {
+export function claimBlockers(ticket, tickets, decisions, unmerged = new Set()) {
+  const deps = ticket.depends_on ?? [];
   return {
-    deps: (ticket.depends_on ?? []).filter((id) => tickets.get(id)?.status !== 'done'),
+    deps: deps.filter((id) => tickets.get(id)?.status !== 'done'),
+    unmerged: deps.filter((id) => tickets.get(id)?.status === 'done' && unmerged.has(id)),
     decisions: (ticket.decisions ?? []).filter((id) => !decisions.has(id) || decisions.get(id).status === 'pending'),
   };
 }
@@ -279,16 +298,19 @@ export function reopenTicket(ctx, id, by, note) {
 
 /**
  * The dispatcher's claim: `ready → in_progress` with the owner as stage role, refused while
- * dependencies are unfinished or a listed decision is unanswered.
+ * dependencies are unfinished or done but not merged, or a listed decision is unanswered.
  * @param {object} ctx
  * @param {string} id
  * @param {string} [by]
+ * @param {Set<string>} [unmerged] ids of done tickets whose branch is ahead of main (the dispatcher
+ *   computes it from git; the CLI path has none)
  */
-export function claimTicket(ctx, id, by = 'dispatcher') {
+export function claimTicket(ctx, id, by = 'dispatcher', unmerged = new Set()) {
   return updateEntity(ctx, 'tickets', id, (t) => {
     if (t.status !== 'ready') throw new FactoryError(`${id} is "${t.status}", not ready`);
-    const blockers = claimBlockers(t, loadMany(ctx, 'tickets', t.depends_on ?? []), loadMany(ctx, 'decisions', t.decisions ?? []));
+    const blockers = claimBlockers(t, loadMany(ctx, 'tickets', t.depends_on ?? []), loadMany(ctx, 'decisions', t.decisions ?? []), unmerged);
     if (blockers.deps.length) throw new FactoryError(`${id} waits for ${blockers.deps.join(', ')}`);
+    if (blockers.unmerged.length) throw new FactoryError(`${id} waits for the merge of ${blockers.unmerged.join(', ')}`);
     if (blockers.decisions.length) throw new FactoryError(`${id} waits for decision ${blockers.decisions.join(', ')}`);
     t.status = 'in_progress';
     t.stage_role = t.owner;
@@ -381,13 +403,13 @@ export function setTicketLinks(ctx, id, links) {
  * The compact ticket shape the board lists.
  * @param {object} t
  */
-export function summarizeTicket(t) {
+export function summarizeTicket(t, waitingOnMerge = []) {
   const last = t.notes?.at(-1);
   return {
     id: t.id, title: t.title, type: t.type, status: t.status, priority: t.priority, owner: t.owner,
     stage_role: t.stage_role ?? null, epic: t.epic ?? null, milestone: t.milestone ?? null,
     tags: t.tags ?? [], parity_refs: t.parity_refs ?? [], decisions: t.decisions ?? [], depends_on: t.depends_on ?? [],
-    held: t.links?.held ?? null,
+    held: t.links?.held ?? null, waiting_on_merge: waitingOnMerge,
     summary: t.summary ?? '', effort_override: t.effort_override ?? null,
     attempts: t.attempts ?? 0, handoff: t.handoff ?? { pending: false, latest: null },
     created: t.created, updated: t.updated, last_note: last ? String(last.text).slice(0, 280) : null,

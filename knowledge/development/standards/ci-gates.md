@@ -82,7 +82,7 @@ What the dispatcher does now for a finished code ticket (`factory/lib/premerge.m
    `-k` keeps going after a failure so every red job is seen.
 2. Green: merge. A merge conflict: reopen the ticket as before.
 3. Red and `main` green: refuse. Everything the run reports is new.
-4. Red and `main` red: run the same command on `main` (cached per `main` commit), compare **findings**
+4. Red and `main` red: take the findings of the same command on `main` (a cached run, see **The baseline** below; a fresh run only when none stands for the current tree), compare **findings**
    as a multiset and refuse only if the merge result has one `main` does not. A finding is the check
    and message with the line and column, durations and the worktree path removed, so an old finding
    that moves does not count, a second copy of an old one does, and a job that turns red counts as the
@@ -93,6 +93,39 @@ What the dispatcher does now for a finished code ticket (`factory/lib/premerge.m
 6. Every run, dry or real, has its own scratch tree and log (a per-run tag in the name), so runs that
    overlap cannot delete each other's tree. A truncated run is never judged or cached as `main`'s
    baseline (T-0696).
+
+**The baseline (T-1378).** On 2026-11-02 the baseline was cached per full `main` sha, so every memory or docs commit on
+`main` (several an hour) forced a fresh two-hour `make -k ci` on a loaded host, the baseline timed out three times and the
+M1 queue stood still. The gate now (`baseline()` in `factory/lib/premerge.mjs`): (1) reuses a cached run on the same tree;
+(2) reuses the newest cached run whose tree differs from `main`'s only in files under `knowledge/`, `.claude/`,
+`factory/`, `garage/` that no gate file mentions as a path (`readSurface`: path literals and joined literals such as
+`filepath.Join(root, "knowledge", "development", "decisions")` in every tracked non-prose file outside those
+directories, computed from the tree on each gate, not listed by hand); (3) stores the merge-result run of a passing gate
+as the baseline of the tree it becomes, so the second half of a split train needs none; (4) when a fresh baseline times
+out, lets the nearest cached run clear the merge result (all findings known) but never refuse it, and otherwise stops
+naming the findings. The reuse is safe because the head run always executes on the real current `main` plus the branch:
+a stale reference can only make an unrelated finding look new (a refusal that names it), not hide one. The gate summary
+states `baseline: reused the cached run …` or `baseline: ran a fresh baseline …`.
+Fitness: `factory/test/premerge.test.mjs` (reuse, no reuse for each read path class, the read surface, seeding, timeout fallback).
+
+**Merge train (T-1297).** One gate run takes 40-75 minutes, so judging one ticket per run merged about one ticket
+an hour while about five an hour reached `done` (26 → 41 done-unmerged on 2026-11-02). The gate now judges a
+*train*: up to `dispatcher.pre_merge.train_size` (default 4) tickets from the front of the queue (T-1296 order),
+merged one after another onto `main` in the scratch worktree (`runPreMergeTrain`), then the numbering check and
+`make -k ci` once on the combined result. The rules in steps 1-5 above apply to the combined result unchanged.
+
+- Green or ratchet-pass: each member merges into `main` in queue order, one `--no-ff` merge commit each.
+- Refused: the gate cannot say which member is at fault, so the train is split in halves (`splitTrain`); the first half
+  is gated and merged, then the second is gated on the new `main`, recursively. A ticket that is alone in its train
+  and refused is reopened with the findings and logs exactly as before; the others merge. Worst case about
+  2·log2(N) extra runs for one bad ticket, against N runs for one-at-a-time.
+- A member that conflicts in text with an earlier member is left out and stays `done` for the next train; one that
+  conflicts with `main` itself is reopened as before.
+- Could not judge (timeout, worktree failure): nothing merges and all members retry after 10 minutes.
+- Logs: `state/premerge/train-T-a+T-b+….log` for a train of several, `T-….log` for one.
+
+Fitness: `factory/test/mergetrain.test.mjs` (runtime tests against a real temp git repository; the bisection tests fail
+if the split is removed).
 
 **Migration numbering (T-1067).** Before the full command the gate runs a cheap check on the same merge
 result (`dispatcher.pre_merge.numbering`: `go test ./migrations/ -run ^TestMigrationNumbersAreUniqueAndContiguous$`,
