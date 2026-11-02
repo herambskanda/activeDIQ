@@ -145,49 +145,22 @@ type ExtendedDN struct {
 	DN     DN
 }
 
-// ParseExtendedDN reads a DC's extended DN. The DN part is parsed Strict.
+// ParseExtendedDN reads a DC's extended DN: the prefix is read by ParseLinkValue (the one prefix
+// parser), a GUID is required, and the DN part is parsed Strict.
 func ParseExtendedDN[S ~string](text S) (ExtendedDN, error) {
-	s := string(text)
 	var out ExtendedDN
-	if len(s) > MaxDNLen {
-		return out, fail(TooLong, 0)
-	}
-	var haveGUID bool
-	for len(s) > 0 && s[0] == '<' {
-		end := strings.IndexByte(s, '>')
-		if end < 0 || end+1 >= len(s) || s[end+1] != ';' {
-			return out, fail(InvalidExtendedDN, 0)
-		}
-		k, v, ok := altForm(s[:end+1])
-		if !ok {
-			return out, fail(InvalidExtendedDN, 0)
-		}
-		switch {
-		case k == "GUID" && !haveGUID && !out.HasSID:
-			g, err := parseGUID(v)
-			if err != nil {
-				return out, fail(InvalidExtendedDN, 0)
-			}
-			out.GUID, haveGUID = g, true
-		case k == "SID" && haveGUID && !out.HasSID:
-			x, err := parseSID(v)
-			if err != nil {
-				return out, fail(InvalidExtendedDN, 0)
-			}
-			out.SID, out.HasSID = x, true
-		default:
-			return out, fail(InvalidExtendedDN, 0)
-		}
-		s = s[end+2:]
-	}
-	if !haveGUID {
-		return out, fail(InvalidExtendedDN, 0)
-	}
-	d, err := parse(s, Strict)
+	lv, err := ParseLinkValue(text)
 	if err != nil {
 		return out, err
 	}
-	out.DN = d
+	if !lv.HasGUID {
+		return out, fail(InvalidExtendedDN, 0)
+	}
+	d, err := parse(lv.DN, Strict)
+	if err != nil {
+		return out, err
+	}
+	out.GUID, out.SID, out.HasSID, out.DN = lv.GUID, lv.SID, lv.HasSID, d
 	return out, nil
 }
 
