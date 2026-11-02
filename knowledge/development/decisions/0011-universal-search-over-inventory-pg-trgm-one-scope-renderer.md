@@ -5,7 +5,7 @@ updated: 2026-11-02
 status: ratified
 ratified_on: 2026-10-31
 ratified_by: factory-director
-decision: D-0014
+decision: D-0014, D-0025
 owner: heramb
 author: solution-architect
 kind: technical
@@ -16,7 +16,8 @@ fitness: fitness-search SE1–SE5 (in make ci) and SE6 (nightly); T-1126 builds 
 # ADR-0011: Universal search runs over the inventory with pg_trgm, and is trimmed in the same SQL statement by the one ReadScope renderer in `store/reportsql`
 
 **Status:** ratified 2026-10-31 by factory-director (notice D-0014, T-1093 review). security-architect
-confirmed rules 12, 13 and 16 in the re-review. `accepted` when `fitness-search` SE1–SE5 run green
+confirmed rules 12, 13 and 16 in the re-review. Revision 3 ratified 2026-11-02 by factory-director
+(notice D-0025, T-1314 review), after security-architect's AC2 review and one rework. `accepted` when `fitness-search` SE1–SE5 run green
 in `make ci` and SE6 has passed once in the nightly job (T-1126).
 
 **Revision 2 (2026-10-31, after the T-1093 review).** These are the changes in this revision:
