@@ -266,9 +266,12 @@ func Test_search_work_is_bounded(t *testing.T) {
 				assertFuzzyPlan(t, e.analyze(t, scoped, text, w, true))
 			}
 		})
-		// The longest fuzzy query (32 runes, the most trigrams) must finish and keep the plan shape.
+		// The longest fuzzy query (32 runes, the most trigrams) must finish and keep the plan shape. Its words are
+		// rare in this world, as a real query's trigrams are: a query whose every trigram sits in all 20,000
+		// hidden keys would rightly be a Seq Scan of the postings (reading them all is cheaper), and says nothing
+		// about the shape. The frequent-trigram worst case is measured at 50,000 objects by the AC6 probe.
 		t.Run("fuzzy_longest", func(t *testing.T) {
-			const longest = "sezo hidden person filler number"
+			const longest = "quixotic zephyr jumbled waxy fox"
 			if n := utf8.RuneCountInString(longest); n != searchkey.MaxFuzzyRunes {
 				t.Fatalf("the longest query is %d runes, want %d", n, searchkey.MaxFuzzyRunes)
 			}
