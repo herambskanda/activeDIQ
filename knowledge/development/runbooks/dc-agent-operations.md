@@ -27,6 +27,16 @@ Design: [ADR-0006](../decisions/0006-dc-agent-runs-as-a-virtual-service-account.
 | 100 | Info | A signed policy was applied (sequence in the text) | none |
 | 101 | Error | Start refused: token holds a privilege outside the pinned list, or the data directory DACL is unsafe | reinstall with the MSI; do not edit the token |
 | 102 | Warning | The Security channel cannot be read | a GPO may have reset channel access: re-run `agentsetup grant-channel`; the server shows `channel_unreadable` |
+| 110 | Warning | The tunnel to the server ended: **server unreachable** (refused, timed out, network or firewall) | check the route and firewall to the enrolment endpoint; the agent keeps retrying with backoff |
+| 111 | Warning | The server's host name **does not resolve** | check DNS on the DC for the enrolment endpoint's name |
+| 112 | Warning | The server's certificate **was not accepted** (not the pinned CA, wrong name, expired) | a changed server certificate or a name mismatch: re-run `agent enroll` with the current pin |
+| 113 | Warning | **TLS failed** for another reason, including the server refusing the agent's certificate | check the agent's certificate has not been revoked/expired on the server; re-enrol if so |
+| 114 | Warning | The server **rejected the agent's identity** | the agent was removed or revoked in the console; re-enrol |
+| 115 | Warning | The server broke the tunnel protocol | version skew or a proxy in the path that rewrites TLS; collect support data |
+| 116 | Warning | The tunnel ended for another transport reason | persistent: collect support data |
+| 118 / 119 | Warning / Error | Any other warning / error the agent logged (a fixed message, no data) | the message names the condition (for example `installed policy could not be activated`) |
+
+Events 110–119 carry a fixed text (the class and, for 118/119, a code-literal message) and never an address, error string, token or key. Each class writes **at most one event per 15 minutes**; the next one says "(N more since the last report)". A tunnel that comes back and later fails again therefore stays quiet until the interval has passed. Detail (addresses, error text) is on stderr only, which the SCM discards; run `agent.exe` in the foreground to see it.
 
 ## Verified in the lab (T-0648) and still owed
 

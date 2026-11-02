@@ -12,9 +12,12 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
@@ -63,6 +66,11 @@ func Run(ctx context.Context, c Config) {
 	}
 }
 
+// errKind reduces a tunnel error to a fixed token. It is the only thing about the error that is
+// logged (and, in the agent, written to the event log): the error text can carry addresses and
+// certificate details and is never emitted. gRPC flattens the transport's typed errors into a status
+// message, so the TLS and name-resolution classes are told apart by the standard library's and
+// gRPC's stable message prefixes; an unrecognised message falls into "unreachable"/"transport".
 func errKind(err error) string {
 	var pe *fleet.ProtocolError
 	switch {
@@ -70,6 +78,25 @@ func errKind(err error) string {
 		return "closed"
 	case errors.As(err, &pe):
 		return "protocol"
+	}
+	st, ok := status.FromError(err)
+	if !ok {
+		return "transport"
+	}
+	switch st.Code() {
+	case codes.Unauthenticated, codes.PermissionDenied:
+		return "rejected"
+	case codes.Unavailable, codes.DeadlineExceeded:
+		m := st.Message()
+		switch {
+		case strings.Contains(m, "x509:"):
+			return "tls_trust"
+		case strings.Contains(m, "tls:") || strings.Contains(m, "authentication handshake failed"):
+			return "tls_handshake"
+		case strings.Contains(m, "no such host") || strings.Contains(m, "server misbehaving"):
+			return "resolve"
+		}
+		return "unreachable"
 	}
 	return "transport"
 }

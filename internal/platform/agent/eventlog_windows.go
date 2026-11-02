@@ -4,6 +4,8 @@ package agent
 
 import (
 	"fmt"
+	"log/slog"
+	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -25,11 +27,18 @@ var (
 	procReportEvent     = advapi.NewProc("ReportEventW")
 	eventLogInformation = 4
 	eventLogError       = 1
+	eventLogWarning     = 2
 )
 
 // EventLog writes to the Application log. Contract:
 // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-reporteventw
-type EventLog struct{ h uintptr }
+//
+// The handle is guarded: the tunnel goroutine can still log while the service shuts down, and a
+// report on a deregistered handle must be a no-op, not a use-after-free.
+type EventLog struct {
+	mu sync.RWMutex
+	h  uintptr
+}
 
 // OpenEventLog registers the source handle. The source itself is created by the MSI.
 func OpenEventLog(source string) (*EventLog, error) {
@@ -45,11 +54,32 @@ func OpenEventLog(source string) (*EventLog, error) {
 }
 
 // Close releases the handle.
-func (l *EventLog) Close() { _, _, _ = procDeregisterSrc.Call(l.h) }
+func (l *EventLog) Close() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.h != 0 {
+		_, _, _ = procDeregisterSrc.Call(l.h)
+		l.h = 0
+	}
+}
+
+// Report implements EventReporter for the service log handler (svclog.go).
+func (l *EventLog) Report(level slog.Level, id uint32, msg string) {
+	kind := eventLogWarning
+	if level >= slog.LevelError {
+		kind = eventLogError
+	}
+	l.report(kind, id, msg)
+}
 
 func (l *EventLog) report(kind int, id uint32, msg string) {
 	s, err := windows.UTF16PtrFromString(msg)
 	if err != nil {
+		return
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.h == 0 {
 		return
 	}
 	_, _, _ = procReportEvent.Call(l.h, uintptr(kind), 0, uintptr(id), 0, 1, 0, uintptr(unsafe.Pointer(&s)), 0)

@@ -37,7 +37,10 @@ type Hooks struct {
 	Applied func(what string, seq uint64)
 	// Confine puts the process in its job-object limits; nil off Windows.
 	Confine func() error
-	Version string
+	// Reporter receives the agent's Warn and Error log records as bounded, classed events (Windows
+	// Application log). nil means stderr only, which is what the foreground and Linux CI use.
+	Reporter kernel.EventReporter
+	Version  string
 }
 
 // Run runs the agent role until ctx is done.
@@ -54,7 +57,7 @@ func RunWith(ctx context.Context, cfg config.Config, hk Hooks) error {
 	if err != nil {
 		return err
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	log := newLogger(cfg.LogLevel, hk.Reporter)
 	checked := false
 	if hk.HeldPrivileges != nil {
 		held, err := hk.HeldPrivileges()
@@ -105,6 +108,12 @@ func RunWith(ctx context.Context, cfg config.Config, hk Hooks) error {
 	defer cancel()
 	go tunnelLoop(ctx, st, h, id, contract, log)
 	return h.Run(ctx)
+}
+
+// newLogger is the agent's structured logger. The SCM discards stderr, so under a service the Warn
+// and Error records also go to the event log, classed and rate limited (T-1277, svclog.go).
+func newLogger(level slog.Leveler, r kernel.EventReporter) *slog.Logger {
+	return slog.New(kernel.NewServiceLog(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}), r))
 }
 
 func leafOf(st *dial.State) (*x509.Certificate, error) {
