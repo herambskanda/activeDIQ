@@ -5,6 +5,7 @@
 package operation
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"time"
@@ -75,9 +76,10 @@ type Descriptor struct {
 	StepUp        bool          // submit needs a fresh MFA (TM-D16 §7.4)
 	// StepUpWhen makes step-up depend on the Input (TM-D30 SX-1: a report schedule needs it only when
 	// the after-state has an external recipient). It runs over the canonical validated Input, wherever
-	// StepUp is read: submit, the kernel hold, Plan and approval. It must be pure and deterministic. An
-	// error, or an absent Input (a SecretInput Action persists none), counts as "required" (fail
-	// closed). Mutually exclusive with StepUp; the registry refuses both.
+	// StepUp is read: submit, the kernel hold, Plan and approval. It must be pure and deterministic, and
+	// it receives a copy of the Input (the kernel clones it), so writing to it cannot change what Plan
+	// plans or what is persisted. An error, or an absent Input (a SecretInput Action persists none),
+	// counts as "required" (fail closed). Mutually exclusive with StepUp; the registry refuses both.
 	StepUpWhen  func(Input) (bool, error)
 	SecretInput bool // the input carries a secret (rule 9)
 	// ControlPlane marks an Action whose permission administers RBAC, delegation, scopes, connections or
@@ -104,7 +106,7 @@ func (d Descriptor) NeedsStepUp(in Input) (need bool) {
 			need = true
 		}
 	}()
-	need, err := d.StepUpWhen(in)
+	need, err := d.StepUpWhen(bytes.Clone(in)) // a copy: the predicate cannot change what Plan plans
 	return need || err != nil
 }
 

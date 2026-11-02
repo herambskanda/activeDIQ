@@ -496,6 +496,23 @@ func TestNeedsStepUp(t *testing.T) {
 	}
 }
 
+// A predicate gets a copy of the Input: one that writes to its argument must not change the bytes
+// Plan plans and the kernel persists (TM-D30 SX-3).
+func TestNeedsStepUpPredicateCannotMutateInput(t *testing.T) {
+	d := Descriptor{StepUpWhen: func(in Input) (bool, error) {
+		for i := range in {
+			in[i] = 'x'
+		}
+		return false, nil
+	}}
+	in := Input(`{"to":"x@evil.example"}`)
+	want := string(in)
+	d.NeedsStepUp(in)
+	if string(in) != want {
+		t.Fatalf("predicate changed the caller's Input: %s", in)
+	}
+}
+
 func TestKernelHoldStepUpWhen(t *testing.T) {
 	token := authority.Chain{Requester: authority.Principal{ID: "t", Kind: authority.APIToken}}
 	d := Descriptor{StepUpWhen: func(i Input) (bool, error) { return string(i) == "yes", nil }}
