@@ -10,7 +10,7 @@ from pathlib import Path
 LAB = Path(__file__).resolve().parent.parent
 REPO = LAB.parent.parent
 OLD = "192.168.1." + "9"  # assembled so this file does not match its own scan
-DRIVERS = ["agent-verify", "agent-unenrolled-verify", "gssapi-lab", "dc1-clock"]
+DRIVERS = ["agent-verify", "agent-unenrolled-verify", "gssapi-lab", "dc1-clock", "dc1-policy"]
 HOOK = """import socket
 def _no(*a, **k):
     open(%r, "a").write("connect\\n"); raise OSError("network blocked by test")
