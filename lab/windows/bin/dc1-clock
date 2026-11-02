@@ -34,7 +34,9 @@ path = os.environ.get("WIN_LAB_ENV") or os.path.join(REPO, "lab", "windows", ".w
 if not os.path.exists(path):
     sys.exit(f"dc1-clock: lab env file not found: {path} (set WIN_LAB_ENV)")
 env = {}
-for line in open(path):
+with open(path) as _f:
+    _lines = _f.read().splitlines()
+for line in _lines:
     line = line.strip()
     if line and not line.startswith("#") and "=" in line:
         k, v = line.split("=", 1)

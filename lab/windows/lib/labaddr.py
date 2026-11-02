@@ -12,7 +12,9 @@ _PLAIN = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.:-]*[A-Za-z0-9])?$")  # same rule 
 
 def read_env_file(path):
     env = {}
-    for line in open(path):
+    with open(path) as f:
+        lines = f.read().splitlines()
+    for line in lines:
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)

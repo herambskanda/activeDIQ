@@ -20,7 +20,9 @@ def load_env(tool):
     if not os.path.exists(path):
         sys.exit(f"{tool}: lab env file not found: {path} (set WIN_LAB_ENV)")
     env = {}
-    for line in open(path):
+    with open(path) as f:
+        lines = f.read().splitlines()
+    for line in lines:
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
@@ -55,7 +57,8 @@ def make_ps(env, addr):
 
 def make_put(env, addr):
     def put(src, dst):
-        data = open(src, "rb").read()
+        with open(src, "rb") as f:
+            data = f.read()
         p = _protocol(env, addr)
         sh = p.open_shell()
         s = (f"$o=[IO.File]::Create('{dst}');$i=[Console]::OpenStandardInput();$b=New-Object byte[] 65536;"
