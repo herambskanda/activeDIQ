@@ -21,7 +21,7 @@ import { applyNoProgress } from './escalation.mjs';
 import { buildPrompt } from './prompt.mjs';
 import { buildWorkerArgs, launchWorker, runFiles, signalPid } from './launcher.mjs';
 import {
-  branchName, branchesAheadOfMain, cleanupWorktree, ensureWorktree, mergeTicket, repoState, unmergedBranches, usesSharedCheckout,
+  branchName, branchesAheadOfMain, cleanupWorktree, ensureWorktree, landedCommit, mergeTicket, repoState, unmergedBranches, usesSharedCheckout,
 } from './worktree.mjs';
 import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
@@ -427,7 +427,8 @@ export class Dispatcher {
     const done = listEntities(this.ctx, 'tickets').filter((t) => t.status === 'done');
     const code = (t) => isCodeType(this.ctx.config, t.type);
     const stranded = done.some((t) => !code(t)) ? await branchesAheadOfMain(this.ctx) : new Map();
-    const finished = orderDoneQueue(done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id))), listEntities(this.ctx, 'tickets'));
+    const pending = done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id)));
+    const finished = orderDoneQueue(await this.settleLanded(pending), listEntities(this.ctx, 'tickets'));
     const train = [];
     for (const ticket of finished) {
       if (this.stopping) return;
@@ -524,6 +525,25 @@ export class Dispatcher {
       }
       await this.mergeOne(ticket);
     }
+  }
+
+  /**
+   * A done ticket whose branch is already an ancestor of main was merged by hand (T-1353): it must not
+   * take a slot in a gate train or merge again. Records it as merged at the commit that brought it in,
+   * removes its worktree and branch as a normal merge does, and returns the tickets still to merge.
+   */
+  async settleLanded(tickets) {
+    const { ctx } = this;
+    const main = ctx.config.dispatcher.main_branch;
+    const rest = [];
+    for (const ticket of tickets) {
+      const commit = this.stopping ? null : await landedCommit(ctx, ticket.id);
+      if (!commit) { rest.push(ticket); continue; }
+      const problems = await cleanupWorktree(ctx, ticket.id);
+      setTicketLinks(ctx, ticket.id, { worktree: null, held: null, merged: nowIso(ctx), merge_commit: commit });
+      appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} already on ${main} (${commit.slice(0, 8)}); recorded as merged without a gate run${problems.length ? `; cleanup: ${problems.join('; ')}` : ''}` });
+    }
+    return rest;
   }
 
   /** Merge one ticket's branch into main and clean up (the gate, if any, has already judged it). */
