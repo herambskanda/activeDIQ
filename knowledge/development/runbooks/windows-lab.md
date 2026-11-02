@@ -442,3 +442,9 @@ after any rollback or restore of VM 119 run `dc1-policy restore` before the next
 
 **Offline tests.** `python3 -m unittest lab/windows/tests/test_dc1_policy.py`: a fake DC at 1/2, 2/1, absent and a drifting DC prove `gssapi-lab run`
 refuses or fails; a bad-fixture scan proves a script writing 1 or 0 is caught; a fake LDAP port proves the bind probe tells 8 from 49.
+
+**Why registry-only restores do not last (T-1265 root cause).** The Default Domain Controllers Policy template (`GptTmpl.inf` in
+SYSVOL, GUID `{6AC1786C-016F-11D2-945F-00C04fB984F9}`) defined `LDAPServerIntegrity=4,1`; the Security Settings engine re-applies it at boot and
+refresh and overwrote the registry value. `dc1-policy restore` sets the template to `4,2` and `check` fails while the GPO says anything else.
+The bind probe must use valid credentials (`svc-activediq`): a dummy password answers 49 at 2/2 too. Run log:
+`windows-lab-runs/T-1265-dc1-signing-20261102.md`. After restoring VM 119 from any snapshot taken before 2026-11-02, run `dc1-policy restore`.
