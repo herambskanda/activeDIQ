@@ -314,7 +314,13 @@ claude -p "<rendered templates/worker-prompt.md>" \
   `main` + the branch in a scratch worktree and runs `pre_merge.argv` (`make -k ci`). Green merges.
   Red while `main` is green is refused. Red while `main` is also red is refused only if the result
   has a finding `main` does not (multiset of check-and-message keys, line numbers removed; a newly
-  red make target counts; baseline cached per `main` commit). A refused ticket is reopened for its
+  red make target counts). **The baseline (T-1378)** is not run per `main` commit: the gate reuses a
+  cached run on the same tree, or on a tree that differs only in files under `pre_merge.baseline_reuse_roots`
+  (default `knowledge`, `.claude`, `factory`, `garage`) that no gate file mentions as a path (computed from the
+  tree by `readSurface`, never listed by hand; the gate summary says `baseline: reused the cached run …`);
+  a gate that passes caches its merge-result run as the baseline of the next `main`; a fresh baseline that
+  times out falls back to the nearest cached run, which may clear a merge result but never refuse one
+  (otherwise the gate cannot judge and retries). A refused ticket is reopened for its
   owner with the findings and log paths (`state/premerge/`). A gate that cannot judge (timeout,
   worktree error) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
   gate in the background, taken in **queue order** (T-1296, `lib/mergequeue.mjs`): first the done
