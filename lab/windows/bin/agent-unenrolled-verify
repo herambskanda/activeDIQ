@@ -284,7 +284,7 @@ cd {B}
     say(out.strip())
     for t in ("TestWindowsEnrolForAccountNamesTheAccountNotTheCaller", "TestWindowsRefusesDirOwnedByAnother"):
         check(f"AC6.{t}", f"--- PASS: {t}" in out, f"{t} PASSED elevated (not skipped)")
-    for t in ("TestWindowsBurstLiftsAndRestoresRealJob", "TestWindowsBurstRestoreFailureIsRepairedOnRealJob", "TestWindowsConfineAndBurstInChild"):
+    for t in ("TestWindowsBurstLiftsAndRestoresRealJob", "TestWindowsBurstRestoreFailureIsRepairedOnRealJob", "TestWindowsBurstMaxLiftRestoresRealJobWhileWindowOpen", "TestWindowsConfineAndBurstInChild"):
         check(f"AC6.{t}", f"--- PASS: {t}" in out, f"{t} PASSED (cap read back with QueryInformationJobObject)")
     check("AC6.dial-exit", "dial exit=0" in out, "dial.test.exe exit 0")
     check("AC6.agent-exit", "agent exit=0" in out, "agent.test.exe exit 0")

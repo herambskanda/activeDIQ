@@ -94,6 +94,12 @@ func (l *EventLog) CapNotRestored(detail string) {
 	l.report(eventLogError, EventCapNotRestored, "agent CPU limit not restored: "+detail)
 }
 
+// CapFailClosed records, as event 105, that the CPU limit stayed off past the fail-closed deadline and
+// the agent is exiting so the SCM recovery action restarts it with the cap re-applied.
+func (l *EventLog) CapFailClosed(detail string) {
+	l.report(eventLogError, EventCapNotRestored, "agent CPU limit not restored, exiting: "+detail)
+}
+
 // CapRestored records that a retry put the CPU limit back.
 func (l *EventLog) CapRestored() {
 	l.report(eventLogInformation, EventCapRestored, "agent CPU limit restored")

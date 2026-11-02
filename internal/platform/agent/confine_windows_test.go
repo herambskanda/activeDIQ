@@ -45,6 +45,29 @@ type winReporter struct{ bad, ok atomic.Int32 }
 
 func (r *winReporter) CapNotRestored(string) { r.bad.Add(1) }
 func (r *winReporter) CapRestored()          { r.ok.Add(1) }
+func (r *winReporter) CapFailClosed(string)  {}
+
+// The maximum lift time puts the cap back on the real job while a window is still open; closing the
+// window later does not lift or restore again.
+func TestWindowsBurstMaxLiftRestoresRealJobWhileWindowOpen(t *testing.T) {
+	job := newRealJob(t)
+	c := newCPUCap(steadyCPURate, burstCPURate, func(r uint32) error { return setCPURate(job, r) })
+	c.maxLift = 150 * time.Millisecond
+	c.arm()
+	done := c.begin()
+	mustRate(t, job, burstCPURate, "inside a window")
+	time.Sleep(c.maxLift + 400*time.Millisecond)
+	mustRate(t, job, steadyCPURate, "after the maximum lift time, window still open")
+	overlap := c.begin() // overlaps the expired window: must not lift again
+	mustRate(t, job, steadyCPURate, "a window overlapping an expired one")
+	done()
+	overlap()
+	mustRate(t, job, steadyCPURate, "after both windows closed")
+	again := c.begin() // a fresh window lifts again, once
+	mustRate(t, job, burstCPURate, "a fresh window")
+	again()
+	mustRate(t, job, steadyCPURate, "fresh window closed")
+}
 
 func TestWindowsBurstLiftsAndRestoresRealJob(t *testing.T) {
 	job := newRealJob(t)
@@ -125,5 +148,12 @@ func childConfine(t *testing.T) {
 	two()
 	two()
 	mustRate(t, 0, steadyCPURate, "after Burst closed")
+	// The real timer (maxLiftTime): a window held open past it is capped again.
+	held := Burst()
+	mustRate(t, 0, burstCPURate, "inside a held window")
+	time.Sleep(maxLiftTime + time.Second)
+	mustRate(t, 0, steadyCPURate, "held window past the maximum lift time")
+	held()
+	mustRate(t, 0, steadyCPURate, "held window closed late")
 	t.Log("CHILD-OK")
 }

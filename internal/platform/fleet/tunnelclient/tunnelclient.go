@@ -41,7 +41,17 @@ type Config struct {
 	// lifted for exactly that window: dial + TLS handshake + stream open is a short bounded burst that
 	// a steady-state CPU cap stretches from about a second to half a minute (T-1249). nil = no limits.
 	Burst func() (done func())
+	// SetupTimeout bounds one connection set-up: the TLS handshake and the stream open. It is ours, not
+	// gRPC's default connect timeout, so the Burst window cannot depend on a peer that accepts TCP and
+	// then stalls (T-1249 security review). Zero means DefaultSetupTimeout.
+	SetupTimeout time.Duration
 }
+
+// DefaultSetupTimeout is how long one connection set-up may take before it is abandoned and retried
+// with backoff. An uncapped set-up measured 1.3 s on a lab DC.
+const DefaultSetupTimeout = 15 * time.Second
+
+var errSetupTimeout = errors.New("tunnelclient: connection set-up timed out")
 
 // Run serves the binding until ctx is done. It returns only then.
 func Run(ctx context.Context, c Config) {
@@ -114,8 +124,19 @@ func serveConn(ctx context.Context, conn *grpc.ClientConn, c Config, opened func
 	if c.Open == nil {
 		return errors.New("tunnelclient: no stream opener")
 	}
+	setup := c.SetupTimeout
+	if setup <= 0 {
+		setup = DefaultSetupTimeout
+	}
+	// The stream context lives as long as the tunnel, so the set-up deadline is a timer that cancels it
+	// only until the open has returned.
+	timer := time.AfterFunc(setup, cancel)
 	stream, err := c.Open(ctx, conn)
+	inTime := timer.Stop()
 	opened()
+	if !inTime {
+		return errSetupTimeout
+	}
 	if err != nil {
 		return err
 	}

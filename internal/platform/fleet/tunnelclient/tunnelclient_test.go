@@ -2,8 +2,13 @@ package tunnelclient
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
+	"google.golang.org/grpc"
+
+	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
 )
 
@@ -33,5 +38,33 @@ func TestBurstClosedOnceWhenDialFails(t *testing.T) {
 	}
 	if opened != 1 || closed != 1 {
 		t.Fatalf("burst opened %d closed %d, want 1 and 1", opened, closed)
+	}
+}
+
+// T-1249 security review: a peer that accepts the connection and then stalls (a tarpit, a dropped
+// handshake) must not hold the set-up, and with it the Burst window, open past our own deadline.
+func TestSetupTimeoutEndsAStalledStreamOpen(t *testing.T) {
+	opened := 0
+	stall := func(ctx context.Context, _ grpc.ClientConnInterface) (fleet.Transport, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	c := Config{Open: stall, SetupTimeout: 50 * time.Millisecond}
+	start := time.Now()
+	err := serveConn(context.Background(), nil, c, func() { opened++ })
+	if !errors.Is(err, errSetupTimeout) {
+		t.Fatalf("stalled open returned %v, want the set-up timeout", err)
+	}
+	if opened != 1 {
+		t.Fatalf("the Burst window end ran %d times, want 1", opened)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("set-up deadline took %s", d)
+	}
+}
+
+func TestSetupTimeoutDefaultIsBounded(t *testing.T) {
+	if DefaultSetupTimeout <= 0 || DefaultSetupTimeout > 30*time.Second {
+		t.Fatalf("DefaultSetupTimeout %s is not a short bounded value", DefaultSetupTimeout)
 	}
 }

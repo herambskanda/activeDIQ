@@ -94,8 +94,9 @@ func Confine() error {
 // Burst lifts the CPU cap until the returned function is called (the memory ceiling and the priority
 // stay). It exists for connection set-up only: measured on a domain controller (T-1249), dial, TLS
 // handshake and stream open take about 1.3 s uncapped and 25-34 s under the 5 % hard cap, which made
-// a freshly enrolled agent wait half a minute to connect. Windows are reference-counted, short and
-// bounded by the caller. Putting the cap back is retried at once and then in the background until it
-// succeeds, and a failure is reported to the event log (cpucap.go). Before Confine (or if lifting
+// a freshly enrolled agent wait half a minute to connect. Windows are reference-counted and
+// hard-limited to maxLiftTime by a timer inside cpucap.go, whether or not the caller closes them. A
+// failed restore is retried, reported to the event log and, past failClosedTime, ends the process so
+// the SCM recovery action restarts it capped (cpucap.go). Before Confine (or if lifting
 // fails) it is a no-op, never an error: the agent then simply connects slowly, still capped.
 func Burst() func() { return capState.begin() }
