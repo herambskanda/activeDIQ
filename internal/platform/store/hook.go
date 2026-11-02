@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
@@ -29,6 +30,10 @@ var (
 	// ErrTxControl is returned for COMMIT, ROLLBACK, SAVEPOINT and friends inside a transaction body,
 	// which could commit around the hook.
 	ErrTxControl = errors.New("store: transaction-control SQL is not allowed inside a store transaction")
+	// ErrClientEncoding is returned (wrapping ErrTxControl) for any statement sent while the session's
+	// client_encoding is not UTF8: the guard's scanner reads UTF-8 text and cannot tell where a quote
+	// ends once a multibyte client encoding (SJIS, BIG5, GBK, ...) is in force.
+	ErrClientEncoding = fmt.Errorf("%w: the session client_encoding is not UTF8", ErrTxControl)
 )
 
 // BeforeCommitFunc runs after the body of a transaction and before COMMIT, in the same transaction,

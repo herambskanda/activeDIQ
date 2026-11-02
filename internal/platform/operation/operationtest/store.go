@@ -62,6 +62,8 @@ func (t *recordingTx) counts() (writes, roAttempts int) {
 // split with store.Lexings (store.Statements), the scanner the transaction-control guard uses, so a comment, a quoted
 // identifier or a second statement cannot hide a write. Residuals only the PostgreSQL run catches: a
 // writing function called from a SELECT, and other side-effecting built-ins not named below.
+// The scanner reads UTF-8 text: a SET [LOCAL] client_encoding or SET NAMES is reported as a finding here
+// (changesReadOnly), and the store guard refuses every statement once the session is not UTF8.
 func (t *recordingTx) observe(sql string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -123,15 +125,20 @@ func sqlWords(stmt string) []string {
 
 // changesReadOnly reports a statement that changes the transaction's read-only mode: SET [LOCAL |
 // SESSION] [default_]transaction_read_only, SET SESSION CHARACTERISTICS … READ WRITE, SET TRANSACTION
-// READ WRITE, or any set_config call (its setting name is a literal the scanner blanks, so every call
+// READ WRITE, SET [LOCAL] client_encoding / SET NAMES (the scanner reads UTF-8), or any set_config call (its setting name is a literal the scanner blanks, so every call
 // is treated as one: a read-only Plan has no reason to make it).
 func changesReadOnly(words []string) bool {
 	for _, w := range words {
-		if w == "SET_CONFIG" || w == "TRANSACTION_READ_ONLY" || w == "DEFAULT_TRANSACTION_READ_ONLY" {
+		if w == "SET_CONFIG" || w == "TRANSACTION_READ_ONLY" || w == "DEFAULT_TRANSACTION_READ_ONLY" || w == "CLIENT_ENCODING" {
 			return true
 		}
 	}
 	if words[0] == "SET" {
+		for _, w := range words[1:] {
+			if w == "NAMES" { // SET NAMES switches client_encoding
+				return true
+			}
+		}
 		for i := 1; i+1 < len(words); i++ {
 			if words[i] == "READ" && words[i+1] == "WRITE" {
 				return true

@@ -420,6 +420,8 @@ func TestPlanStatementsThatMustFailTheClause(t *testing.T) {
 		"SET LOCAL default_transaction_read_only TO 'off'":      true,
 		"SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE": true,
 		"SET TRANSACTION READ WRITE":                            true,
+		"SET LOCAL client_encoding = 'SJIS'":                    true,
+		"SET NAMES 'BIG5'":                                      true,
 		"SELECT set_config('transaction_read_only','off',true)": true,
 		"COMMIT":                  true,
 		"SELECT 1; ROLLBACK":      true,

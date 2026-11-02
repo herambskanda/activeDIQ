@@ -15,6 +15,13 @@ import "strings"
 // This is the lexing for standard_conforming_strings = on, where a plain '…' literal has no backslash
 // escape. A session can switch that off (SET, set_config, a role or database default) and the scanner
 // cannot know, so a guard must look at Lexings, which fails closed by also lexing the other way.
+//
+// The scanner reads UTF-8 bytes. PostgreSQL converts the text from client_encoding first, and in SJIS,
+// BIG5, GBK, UHC and GB18030 a 0x5C byte can be a multibyte trail byte, so the lexing here would
+// differ. The scanner cannot see a mid-transaction SET of the encoding; the production guard
+// (tx.refused in store.go) therefore refuses every guarded statement while the session's
+// client_encoding is not UTF8 (ErrClientEncoding).
+//
 // Statements and Lexings are the one scanner the transaction-control guard and the operationtest
 // Contract share, so a hiding place found in one is closed in both.
 func Statements(sql string) []string { return scan(sql, false) }

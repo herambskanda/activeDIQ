@@ -451,23 +451,44 @@ type tx struct {
 	guard bool
 }
 
+// refused is the guard's whole decision for one statement text: ErrTxControl for transaction-control SQL,
+// ErrClientEncoding when the session is not UTF8. The scanner reads raw bytes and cannot know the
+// session's client_encoding; in SJIS, BIG5, GBK, UHC and GB18030 a 0x5C byte can be the trail byte of a
+// multibyte character, so PostgreSQL would read a quote or backslash differently. A body can switch the
+// encoding with a separate statement (SET LOCAL, SET NAMES, set_config), so every guarded statement
+// checks it: PostgreSQL reports the change (GUC_REPORT) before ReadyForQuery, and converts a whole
+// message on receipt, so a SET and its payload in one Query cannot race this check. pgx relies on the
+// same UTF8 invariant.
+func (x tx) refused(sql string) error {
+	if !x.guard {
+		return nil
+	}
+	if enc := x.t.Conn().PgConn().ParameterStatus("client_encoding"); enc != "UTF8" {
+		return ErrClientEncoding
+	}
+	if IsTxControl(sql) {
+		return ErrTxControl
+	}
+	return nil
+}
+
 func (x tx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-	if x.guard && IsTxControl(sql) {
-		return pgconn.CommandTag{}, ErrTxControl
+	if err := x.refused(sql); err != nil {
+		return pgconn.CommandTag{}, err
 	}
 	return x.t.Exec(ctx, sql, args...)
 }
 
 func (x tx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	if x.guard && IsTxControl(sql) {
-		return nil, ErrTxControl
+	if err := x.refused(sql); err != nil {
+		return nil, err
 	}
 	return x.t.Query(ctx, sql, args...)
 }
 
 func (x tx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	if x.guard && IsTxControl(sql) {
-		return errRow{ErrTxControl}
+	if err := x.refused(sql); err != nil {
+		return errRow{err}
 	}
 	return x.t.QueryRow(ctx, sql, args...)
 }

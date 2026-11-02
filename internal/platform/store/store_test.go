@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -571,6 +572,109 @@ func TestIsTxControlMatchesPostgres(t *testing.T) {
 		}
 		if ended == 0 {
 			t.Fatal("no corpus string ended the transaction on PostgreSQL: the probe is not working")
+		}
+	})
+}
+
+// TestGuardRefusesNonUTF8ClientEncoding: the scanner reads UTF-8, so a body that switches the session to
+// a client-only multibyte encoding (where 0x5C can be a trail byte) must have every later statement
+// refused, or `SELECT E'<lead>\\' ; COMMIT; --'` would close the literal early in PostgreSQL's eyes and
+// commit around the audit hook. The row inserted before the switch must not survive.
+func TestGuardRefusesNonUTF8ClientEncoding(t *testing.T) {
+	cases := []struct{ name, set, payload string }{
+		{"SJIS SET LOCAL", `SET LOCAL client_encoding = 'SJIS'`, "SELECT E'\x95\\' ; COMMIT; --'"},
+		{"BIG5 set_config", `SELECT set_config('client_encoding', 'BIG5', true)`, "SELECT E'\xa4\\' ; COMMIT; --'"},
+	}
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s, Config{})
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				ctx := context.Background()
+				id := "00000000-0000-0000-0000-" + fmt.Sprintf("%012d", len(c.name))
+				var got error
+				err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx Tx) error {
+					if _, err := tx.Exec(ctx, `INSERT INTO public.items (tenant_id, id, label) VALUES ($1, $2, 'x')`, e.a.String(), id); err != nil {
+						return err
+					}
+					if _, err := tx.Exec(ctx, c.set); err != nil {
+						return err
+					}
+					for _, call := range []func() error{
+						func() error { _, err := tx.Exec(ctx, c.payload); return err },
+						func() error {
+							rows, err := tx.Query(ctx, c.payload)
+							if err == nil {
+								rows.Close()
+							}
+							return err
+						},
+						func() error { var x int; return tx.QueryRow(ctx, c.payload).Scan(&x) },
+					} {
+						if err := call(); !errors.Is(err, ErrClientEncoding) || !errors.Is(err, ErrTxControl) {
+							return fmt.Errorf("payload under a non-UTF8 encoding = %v; want ErrClientEncoding", err)
+						}
+					}
+					got = ErrClientEncoding
+					return errors.New("body done")
+				})
+				if err == nil || got == nil {
+					t.Fatalf("body did not reach the payload checks: %v", err)
+				}
+				if err.Error() != "body done" {
+					t.Fatal(err)
+				}
+				var n int
+				if err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx Tx) error {
+					return tx.QueryRow(ctx, `SELECT count(*) FROM public.items WHERE id = $1`, id).Scan(&n)
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if n != 0 {
+					t.Fatalf("%d rows survived a body that ended in error: the payload committed", n)
+				}
+			})
+		}
+	})
+}
+
+// TestGuardDecisionMatchesPostgres asserts the full guard decision (encoding check plus IsTxControl)
+// through a real tenant transaction for every corpus string: under UTF8 the statement is refused with
+// ErrTxControl exactly when IsTxControl says so, and under SJIS every one is refused with ErrClientEncoding.
+func TestGuardDecisionMatchesPostgres(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s, Config{})
+		ctx := context.Background()
+		for sql := range txControlCases {
+			for _, enc := range []string{"UTF8", "SJIS"} {
+				stop := errors.New("stop")
+				var got error
+				err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx Tx) error {
+					if enc != "UTF8" {
+						if _, err := tx.Exec(ctx, "SET LOCAL client_encoding = '"+enc+"'"); err != nil {
+							return err
+						}
+					}
+					_, got = tx.Exec(ctx, sql)
+					return stop
+				})
+				if !errors.Is(err, stop) {
+					t.Fatalf("%s %q: body = %v", enc, sql, err)
+				}
+				switch {
+				case enc != "UTF8":
+					if !errors.Is(got, ErrClientEncoding) {
+						t.Errorf("%s %q: err = %v; want ErrClientEncoding", enc, sql, got)
+					}
+				case IsTxControl(sql):
+					if !errors.Is(got, ErrTxControl) || errors.Is(got, ErrClientEncoding) {
+						t.Errorf("%s %q: err = %v; want ErrTxControl", enc, sql, got)
+					}
+				default:
+					if errors.Is(got, ErrTxControl) {
+						t.Errorf("%s %q: refused although IsTxControl is false", enc, sql)
+					}
+				}
+			}
 		}
 	})
 }
