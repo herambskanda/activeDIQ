@@ -487,3 +487,27 @@ SYSVOL, GUID `{6AC1786C-016F-11D2-945F-00C04fB984F9}`) defined `LDAPServerIntegr
 refresh and overwrote the registry value. `dc1-policy restore` sets the template to `4,2` and `check` fails while the GPO says anything else.
 The bind probe must use valid credentials (`svc-activediq`): a dummy password answers 49 at 2/2 too. Run log:
 `windows-lab-runs/T-1265-dc1-signing-20261102.md`. After restoring VM 119 from any snapshot taken before 2026-11-02, run `dc1-policy restore`.
+
+## 19. Channel-binding acceptance: binds succeed at signing required + CBT Always, and dc1 logs no 2887/3039/3074/3075 (T-0148)
+
+`lab/windows/bin/gssapi-lab accept` is the TM-TB3-T3 acceptance. Run it like every dc1 proof, under the lock, with
+`WIN_LAB_ENV`, `WIN_LAB_CA` and `WIN_LAB_DC_ADDR` set (sections 10, 15, 18):
+
+```
+lab/windows/bin/with-dc1-lock -- bash -c 'lab/windows/bin/dc1-policy check && lab/windows/bin/gssapi-lab accept && lab/windows/bin/dc1-policy check'
+```
+
+| Step | What it does | Fails when |
+| --- | --- | --- |
+| policy | `require_policy` (section 18): both registry values 2 | either value is not 2; nothing else is touched |
+| clock | dc1 minus host | over 60 s (Kerberos); never steps the clock (section 16) |
+| A. correct binds | the four correct-binding tests of section 15 (keytab + gMSA, test handshake and `ad.Open`), window taken from **dc1's** clock | any of them is not `--- PASS` (a skip or a missing test is a fail), or the Directory Service log holds 2887, 3039, 3074 or 3075 in the window (+-1 s) |
+| B. control | the wrong-binding test (refused with ldap 49); then polls (90 s max) until event 3039 is readable | the test fails, or 3039 never appears: an empty window would prove nothing |
+| after | restores `16 LDAP Interface Events`, re-checks 2/2 | the policy moved during the run |
+
+Exit 0 and the line `ACCEPTANCE PASSED` only if every step holds. It also prints the context ids it queried (2886, 2888, 2889, 3040, 3041) so a
+reader can see what else the DC said. The judge, query builder and parser are pure functions in `lab/windows/lib/cbtevents.py`; the offline proof
+is `lab/windows/tests/test_cbt_acceptance.py` (`make lab-test-windows-unit`, no Windows needed): each named event in the window fails the run,
+events outside the window do not, a control without 3039 fails, a skipped bind is not a pass, drift of the policy fails.
+2887 is a daily DC summary, so a 2-second window cannot prove it absent by itself; the run log also lists everything the queried ids logged in the
+preceding 26 h. Run log and broken-run proof: `windows-lab-runs/T-0148-cbt-acceptance-20261102.md`. Needs the keytab and gMSA files from `gssapi-lab prepare`.
