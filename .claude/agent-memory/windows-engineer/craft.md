@@ -18,3 +18,5 @@ metadata:
 - Admin-run `enroll` + service-run `Load`: ACL/owner must name the SERVICE SID (owner Administrators), never the invoking admin's user SID; icacls fixes don't change the owner. Map Load errors by class (absent vs unsafe vs expired): never "not enrolled" for everything.
 - dc1 is Proxmox 192.168.1.9 (WinRM 5985); libvirt `windows-lab status` is a different lab. If 5985 times out, nothing a worker can do (no Proxmox access): block with the run command.
 - agent-fitness (A1) rejects unlisted file types under packaging/windows/agent (even README.md); put docs in the runbook.
+- Job-object HARD CPU cap (5 %) stretches a Go dial+TLS handshake from 1.3 s to 25-34 s on dc1: lift it for connection set-up only (Burst), keep memory/priority. Confine must be idempotent (idle loop re-calls it).
+- A Load that reads "file missing" as "not enrolled" waits a full poll when it lands mid-`enroll`: classify partial dirs (ErrIncomplete) and re-check in 1 s.
