@@ -750,15 +750,22 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 
 // removeUnseen marks the active attr edges of group that this cycle did not refresh (observed_at older
 // than the cycle) removed: the cycle read the whole membership.
-func (Writer) removeUnseen(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group GUID, observed time.Time) error {
+func (w Writer) removeUnseen(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group GUID, observed time.Time) error {
+	return w.endActiveEdges(ctx, tx, attr, connection, group, observed, false)
+}
+
+// endActiveEdges marks the active attr edges of group removed: those this cycle did not refresh (all false), or
+// every one of them (all true: a patch could not say which members the group has, so none is trusted until a
+// full read names them again; setEdge makes an edge active again).
+func (Writer) endActiveEdges(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group GUID, observed time.Time, all bool) error {
 	_, err := tx.Exec(ctx, `WITH edge AS (
 			UPDATE public.links SET state = 'removed', observed_at = $3
 			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-			AND source_guid = $2::uuid AND link_attr = $4 AND state = 'active' AND observed_at < $3
+			AND source_guid = $2::uuid AND link_attr = $4 AND state = 'active' AND ($5::boolean OR observed_at < $3)
 			RETURNING tenant_id, connection_id, source_guid)
 		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
 		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
-		string(connection), string(group), observed.UTC(), attr)
+		string(connection), string(group), observed.UTC(), attr, all)
 	if err != nil {
 		return writeErr("remove unseen "+attr, err)
 	}

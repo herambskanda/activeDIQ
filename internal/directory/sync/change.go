@@ -34,13 +34,15 @@ func NewChangeMapper(c Config) (*ChangeMapper, error) {
 // Planned is the outcome of mapping one change.
 type Planned struct {
 	Patch inventory.Patch
-	// MembersUnresolved counts member values the change named without a GUID. A removal that could not be named
-	// is not applied; the reconcile and the next full read repair it.
+	// MembersUnresolved counts member values the change named without a GUID. An add that could not be named is
+	// not applied (it under-grants). A removal, or a whole set, that could not be named sets Patch.Reread: the
+	// group's edges are ended until the object is read, never left active.
 	MembersUnresolved int
 }
 
-// Plan maps one change. A malformed change is an *Error (errors.Is(err, ErrMalformed)); the caller counts it and
-// goes on with the batch. Patch.Create is set only when the change carries everything a stored row needs:
+// Plan maps one change. A malformed change is an *Error (errors.Is(err, ErrMalformed)); the caller goes on with the
+// batch and, when the returned Planned names an object (Patch.Object, set as soon as the GUID parsed), has that
+// object read, because the change is consumed with its cookie and what it carried would otherwise be lost. Patch.Create is set only when the change carries everything a stored row needs:
 // otherwise the inventory reports the object as needing a read and stores nothing.
 func (cm *ChangeMapper) Plan(ch *connectorv1.ObjectChange) (Planned, error) {
 	var out Planned
@@ -51,6 +53,9 @@ func (cm *ChangeMapper) Plan(ch *connectorv1.ObjectChange) (Planned, error) {
 	if err != nil {
 		return out, err
 	}
+	// The identity is set before anything can be refused, so a refused change still says which object it was about:
+	// the caller reads that object instead of losing what the change carried.
+	out.Patch.Object, out.Patch.NC = object, cm.nc
 	var state inventory.ObjectState
 	switch ch.GetState() {
 	case connectorv1.ObjectState_OBJECT_STATE_LIVE:
@@ -72,7 +77,6 @@ func (cm *ChangeMapper) Plan(ch *connectorv1.ObjectChange) (Planned, error) {
 	}
 
 	pt := &out.Patch
-	pt.Object, pt.NC = object, cm.nc
 	pt.State = inventory.Some(state)
 	if err := cm.position(pt, ch, state); err != nil {
 		return out, err
@@ -336,6 +340,8 @@ type memberOps struct {
 	whole          bool // a SET or CLEARED: added is the whole set
 	touched        bool
 	unresolved     int
+	// reread: a removal or a whole set had a value naming no GUID, so which edges must go is unknown.
+	reread bool
 }
 
 // into puts the member edges into the patch. A SET or CLEARED is the whole set and mixing it with incremental
@@ -369,6 +375,7 @@ func (ops *memberOps) into(pt *inventory.Patch, object inventory.GUID, unresolve
 	// A set is complete only when every value of it was named: an edge the change could not name must not let the
 	// others' absence remove anything.
 	pt.MembersComplete = ops.whole && ops.unresolved == 0
+	pt.Reread = ops.reread
 	return nil
 }
 
@@ -406,6 +413,7 @@ func (cm *ChangeMapper) entryOf(ch *connectorv1.ObjectChange, object inventory.G
 					return nil, nil, err
 				}
 				ops.added, ops.unresolved = append(ops.added, g...), ops.unresolved+n
+				ops.reread = ops.reread || n > 0
 			case connectorv1.ChangeOp_CHANGE_OP_VALUES_ADDED:
 				g, n, err := memberGUIDs(vals)
 				if err != nil {
@@ -418,6 +426,7 @@ func (cm *ChangeMapper) entryOf(ch *connectorv1.ObjectChange, object inventory.G
 					return nil, nil, err
 				}
 				ops.removed, ops.unresolved = append(ops.removed, g...), ops.unresolved+n
+				ops.reread = ops.reread || n > 0
 			}
 			if ops.whole && len(ops.removed) > 0 {
 				return nil, nil, refuse("member", CodeDuplicate)

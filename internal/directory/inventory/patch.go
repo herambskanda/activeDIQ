@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -77,6 +78,17 @@ type Patch struct {
 	// Members is the whole current set (a SET of member, or CLEARED with none): edges not named are removed.
 	Members, RemovedMembers []GUID
 	MembersComplete         bool
+
+	// Reread says the change touched the group's membership in a way the patch cannot carry: a removal (or a
+	// whole set) with a value that names no GUID. The patch is applied as far as it goes, then the group's active
+	// member edges are ended and the object is reported in Patched.NeedsRead. An edge that should have been
+	// removed must never stay active (the edges are an authorization input), so the group grants nothing until a
+	// full read names its members again; an unresolved add needs no such care (it under-grants).
+	Reread bool
+	// Refused says the mapper could not map the change at all. The patch then names only Object and NC, nothing
+	// is written to the row, and the object is reported in NeedsRead with the effect of Reread: the change is
+	// consumed with its cookie, so what it carried (a removal, a disable) is lost unless the object is read.
+	Refused bool
 }
 
 // PatchCycle is one batch of patches of one AD connection, as of one instant.
@@ -98,8 +110,10 @@ type Patched struct {
 	Stale int
 	// Refused counts patches skipped because they carry group fields for an object that is not a group.
 	Refused int
-	// NeedsRead lists objects the inventory has never seen whose change did not carry enough to build a row. The
-	// caller reads them (a ScopedSearch of the GUID) and ingests the result.
+	// NeedsRead lists the objects the caller must read by GUID (a ScopedSearch) and ingest in full: those the
+	// inventory has never seen whose change did not carry enough to build a row, and those whose change was
+	// refused or whose membership change could not be applied in full (Patch.Reread, Patch.Refused). A stored
+	// group in the second kind has its member edges ended until that read lands. Sorted, without duplicates.
 	NeedsRead []GUID
 	// EdgesRemoved counts member and primary-group edges removed because an end of them is no longer live.
 	EdgesRemoved int
@@ -192,11 +206,25 @@ func (p Populator) applyPatches(ctx context.Context, tx store.Tx, c PatchCycle) 
 
 	var creates []Observation
 	var updates []*Patch
-	var touched []GUID // objects whose row this call wrote
+	var touched []GUID  // objects whose row this call wrote
+	var distrust []GUID // stored groups whose member edges are ended: their membership cannot be trusted
 	for i := range c.Patches {
 		pt := &c.Patches[i]
 		row, ok := held[pt.Object]
 		switch {
+		case pt.Refused:
+			// Nothing of the change is applied. A row newer than the as-of already reflects whatever it said.
+			switch {
+			case ok && row.observed.After(c.Observed):
+				out.Stale++
+			default:
+				out.Refused++
+				out.NeedsRead = append(out.NeedsRead, pt.Object)
+				if ok && row.kind == KindGroup {
+					distrust = append(distrust, pt.Object)
+				}
+			}
+			continue
 		case !ok && pt.Create != nil:
 			o := *pt.Create
 			o.ObservedDSA = c.ObservedDSA
@@ -211,14 +239,24 @@ func (p Populator) applyPatches(ctx context.Context, tx store.Tx, c PatchCycle) 
 				kind = pt.Class.Value.Kind
 			}
 			if kind != KindGroup && (pt.GroupType.Set || len(pt.Members) > 0 || len(pt.RemovedMembers) > 0 || pt.MembersComplete) {
-				// A directory that sends member or groupType for a non-group is odd, not fatal to the batch.
+				// A directory that sends member or groupType for a non-group is odd, not fatal to the batch. The
+				// change is consumed all the same, so the object is read rather than trusted.
 				out.Refused++
+				out.NeedsRead = append(out.NeedsRead, pt.Object)
+				if row.kind == KindGroup {
+					distrust = append(distrust, pt.Object)
+				}
 				continue
+			}
+			if pt.Reread {
+				out.NeedsRead = append(out.NeedsRead, pt.Object)
+				distrust = append(distrust, pt.Object)
 			}
 			updates = append(updates, pt)
 		}
 	}
 	sort.Slice(out.NeedsRead, func(i, j int) bool { return out.NeedsRead[i] < out.NeedsRead[j] })
+	out.NeedsRead = slices.Compact(out.NeedsRead)
 
 	// New rows first, through Populate: it stores the row, its member edges and its search keys.
 	if len(creates) > 0 {
@@ -274,6 +312,13 @@ func (p Populator) applyPatches(ctx context.Context, tx store.Tx, c PatchCycle) 
 			if err := p.removeUnseen(ctx, tx, "member", c.Connection, pt.Object, c.Observed); err != nil {
 				return out, err
 			}
+		}
+	}
+	// A group whose change could not be applied in full grants nothing until it is read (Patch.Reread): its
+	// edges go last, so the adds of the same patch are ended too and come back with the read.
+	for _, g := range distrust {
+		if err := p.endActiveEdges(ctx, tx, "member", c.Connection, g, c.Observed, true); err != nil {
+			return out, err
 		}
 	}
 	for _, o := range creates {

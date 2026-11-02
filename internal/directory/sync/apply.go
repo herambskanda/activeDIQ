@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
@@ -37,11 +38,14 @@ type ApplyOptions struct {
 // ApplyReport is what applying one batch did. It carries counts and GUIDs, never a value from the directory.
 type ApplyReport struct {
 	Changes int
-	// Refused counts changes that could not be mapped (a malformed value); the rest of the batch is applied.
+	// Refused counts changes that could not be mapped (a malformed value) or applied; the rest of the batch is
+	// applied. A refused change that named an object is not lost: the object is in NeedsRead.
 	Refused                 int
 	Updated, Created, Stale int
-	// NeedsRead lists the objects the inventory has never seen whose change did not carry enough to build a
-	// row. Nothing was stored for them: the engine reads each by GUID (a ScopedSearch) and ingests the result.
+	// NeedsRead lists the objects the engine must read by GUID (a ScopedSearch) and ingest in full: those the
+	// inventory has never seen whose change did not carry enough to build a row (nothing was stored for them), and
+	// those whose change was refused or whose membership change named a member without a GUID. A stored group
+	// among the latter has its member edges ended until that read lands, so it grants nothing in the meantime.
 	NeedsRead []inventory.GUID
 	// MembersUnresolved counts member values named without a GUID.
 	MembersUnresolved int
@@ -71,10 +75,16 @@ func (a *Applier) Apply(ctx context.Context, tx store.Tx, b *connectorv1.ChangeB
 			if !errors.Is(err, ErrMalformed) {
 				return rep, err
 			}
-			rep.Refused++
-			continue
+			if p.Patch.Object == "" {
+				rep.Refused++ // no GUID to read by: a bare count
+				continue
+			}
+			// The change is consumed with the cookie. The object it named is read, and a stored group stops
+			// granting until then, so a removal it carried cannot be lost.
+			p.Patch = inventory.Patch{Object: p.Patch.Object, NC: p.Patch.NC, Refused: true}
+		} else {
+			rep.MembersUnresolved += p.MembersUnresolved
 		}
-		rep.MembersUnresolved += p.MembersUnresolved
 		n := occurrence[p.Patch.Object]
 		occurrence[p.Patch.Object] = n + 1
 		if n == len(rounds) {
@@ -114,5 +124,7 @@ func (a *Applier) Apply(ctx context.Context, tx store.Tx, b *connectorv1.ChangeB
 			}
 		}
 	}
+	slices.Sort(rep.NeedsRead) // an object named in two rounds is listed once
+	rep.NeedsRead = slices.Compact(rep.NeedsRead)
 	return rep, nil
 }
