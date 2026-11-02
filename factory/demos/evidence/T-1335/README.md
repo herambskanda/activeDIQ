@@ -49,3 +49,11 @@ HTTP, no 4-CPU/8 GB container limit, not the T-1102 digest), so the numbers are 
 
 About 15.9 postings per key, 32 per object: roughly 4.2 KB of postings table and index per object, so a
 500,000-object tenant needs about 2 GB (linear extrapolation, not measured).
+
+## AC5 at the declared scale (PostgreSQL 16)
+
+`ac5-50k-pg16.txt`: tenant A holds 50,000 objects; tenant B loaded empty, equal to A and 10x A (500,000 objects),
+VACUUM (ANALYZE) after each load. Posting rows examined by A's four proof queries: 29,322 in all three loads
+(keys 30, directory_objects 6); with B 10x the posting index has one more level, covered by the documented
+tolerance (one block per probed trigram per extra level). Run with `ACTIVEDIQ_SEARCH_LARGE_OBJECTS=50000`, 1,582 s.
+PostgreSQL 18 ran at the CI scale only (N=2,000, B up to 20,000): `Test_search_fuzzy_reads_only_the_tenants_own_postings` green on pg16 and pg18.
