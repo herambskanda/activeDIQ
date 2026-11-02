@@ -25,6 +25,11 @@ except ImportError:
     sys.exit("dc1-clock: pip install pywinrm requests-ntlm")
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, os.path.join(REPO, "lab", "windows", "lib"))
+from labaddr import require_dc_addr  # noqa: E402
+
+# No default DC address (T-1279): fail before anything else touches the network.
+ADDR = require_dc_addr("dc1-clock", REPO)
 path = os.environ.get("WIN_LAB_ENV") or os.path.join(REPO, "lab", "windows", ".win-lab.env")
 if not os.path.exists(path):
     sys.exit(f"dc1-clock: lab env file not found: {path} (set WIN_LAB_ENV)")
@@ -34,7 +39,6 @@ for line in open(path):
     if line and not line.startswith("#") and "=" in line:
         k, v = line.split("=", 1)
         env[k] = v.strip().strip('"')
-ADDR = os.environ.get("WIN_LAB_DC_ADDR") or env.get("WIN_LAB_DC_ADDR", "192.168.1.9")
 PEERS = os.environ.get("DIQ_DC1_NTP_PEER", "162.159.200.1 162.159.200.123").split()
 if not PEERS or not all(re.fullmatch(r"[A-Za-z0-9.-]+", x) for x in PEERS):
     sys.exit("dc1-clock: DIQ_DC1_NTP_PEER must be space-separated host names or IP addresses")

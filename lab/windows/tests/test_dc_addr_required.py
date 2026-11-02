@@ -10,7 +10,7 @@ from pathlib import Path
 LAB = Path(__file__).resolve().parent.parent
 REPO = LAB.parent.parent
 OLD = "192.168.1." + "9"  # assembled so this file does not match its own scan
-DRIVERS = ["agent-verify", "agent-unenrolled-verify", "gssapi-lab"]
+DRIVERS = ["agent-verify", "agent-unenrolled-verify", "gssapi-lab", "dc1-clock"]
 HOOK = """import socket
 def _no(*a, **k):
     open(%r, "a").write("connect\\n"); raise OSError("network blocked by test")
@@ -68,7 +68,7 @@ class DcAddrRequired(unittest.TestCase):
 
     def test_every_driver_is_covered(self):
         # any driver under bin/ that talks WinRM must use the gate, so a new driver cannot reintroduce a default
-        for p in sorted((LAB / "bin").iterdir()):
+        for p in sorted(q for q in (LAB / "bin").iterdir() if q.is_file()):
             t = p.read_text(errors="replace")
             if "winrm" in t or "dc1winrm" in t:
                 self.assertIn("require_dc_addr", t, f"{p.name} reaches the DC without the required-address gate")

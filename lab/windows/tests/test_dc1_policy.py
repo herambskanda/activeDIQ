@@ -3,7 +3,7 @@ lab tool that needs it stops before testing when it is not. No Windows and no Wi
 
 Each check has a failing counterpart (the first test of each group drives the broken shape) so the guard is shown to bite.
 """
-import importlib.machinery, importlib.util, os, re, subprocess, sys, tempfile, unittest
+import datetime, importlib.machinery, importlib.util, os, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 LAB = Path(__file__).resolve().parent.parent
@@ -37,7 +37,7 @@ class FakeDC:
         if "LDAPServerIntegrity" in script and "GetValue" in script:
             return 0, f"LDAPServerIntegrity = {self.integrity}\nLdapEnforceChannelBindingTokens = {self.cbt}"
         if "UtcNow" in script:
-            return 0, "2026-11-02T06:00:00.0000000Z"
+            return 0, datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.0000000Z")  # dc1 in step with this host (T-0850)
         return 0, ""
 
 
@@ -84,7 +84,7 @@ class RunStopsBeforeTesting(unittest.TestCase):
         class Drifting(FakeDC):
             def ps(self, script):
                 r = super().ps(script)
-                if "Set-Date" in script:
+                if "Set-ItemProperty" in script:  # the diagnostics switch is the first change gssapi-lab makes
                     self.integrity = 1  # something resets it during the run
                 return r
         code, ran = self.run_with(Drifting())
