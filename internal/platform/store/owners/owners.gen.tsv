@@ -70,6 +70,7 @@ platform_rate_buckets	limiter	system
 report_exports	reports	system
 report_run_rows	reports	system
 report_runs	reports	system
+sync_cursors	sync	system
 tenant_keys	keys	system
 tenants	tenant	system
 tier0_designations	inventory	config

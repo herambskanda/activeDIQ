@@ -20,6 +20,7 @@ factory/bin/factory up          # start board + dispatcher (detached)  → http:
 factory/bin/factory status      # terminal summary
 factory/bin/factory pause       # stop launching new work (running workers finish)
 factory/bin/factory down        # stop dispatcher + board; running workers asked to hand off
+factory/bin/factory restart     # reload dispatcher + board on the code on disk; workers keep running and are adopted
 factory/bin/factory doctor      # validate config, state, agents, model policy
 ```
 
@@ -63,7 +64,7 @@ Timestamps are ISO-8601 UTC strings.
 state/
   counters.json                      {"T":12,"D":3,"A":1,"F":0,"E":4,"R":57}
   control.json                       {"paused":false,"reason":null,"by":null,"ts":"…"}
-  dispatcher.json                    {"pid":123,"started":"…","heartbeat":"…","active":["R-…"],"last_action":"…","backoff_until":null,"runs_today":{"date":"2026-10-02","count":7}}
+  dispatcher.json                    {"pid":123,"started":"…","heartbeat":"…","code_sha":"<main commit loaded>","active":["R-…"],"last_action":"…","backoff_until":null,"runs_today":{"date":"2026-10-02","count":7}}
   board.json                         {"pid":124,"port":4747,"started":"…"}
   tickets/T-0001.json
   epics/E-001.json
@@ -213,7 +214,7 @@ ticket ready ID                      backlog → ready (checks Definition of Rea
 ticket note ID --by ROLE "text"
 ticket advance ID --by ROLE --note "what was done"
 ticket reject ID --by ROLE --note "what must change"
-ticket block ID --by ROLE --note "why"     |  ticket unblock ID --by ROLE --note "…"
+ticket block ID --by ROLE --note "why"     |  ticket unblock ID --by ROLE --note "…" [--to-ready]
 ticket cancel ID --by ROLE --note "why"
 ticket set ID field=value …          priority, owner, epic, milestone, effort_override, tags, depends_on
 
@@ -240,6 +241,7 @@ digest                               print today's machine summary (for project-
 
 Rules the CLI enforces:
 - Only legal transitions per the flow; `advance` on the last stage sets `done`.
+- `ticket unblock --to-ready` (T-1400) puts a blocked ticket in `ready` with no stage role and a fresh retry budget, for a block whose only cause is a dependency that is `done` but not on main; the claim check (T-1266) holds it until the merge. Plain `unblock` restores `blocked_from`.
 - `ticket ready` refuses unless title, owner, acceptance (≥1) and summary are present.
 - A ticket listing an unanswered decision cannot be claimed.
 - `epic set` validates every assignment (parity refs look like `ADM-045`; milestones exist; `-=` only
@@ -314,9 +316,17 @@ claude -p "<rendered templates/worker-prompt.md>" \
   `main` + the branch in a scratch worktree and runs `pre_merge.argv` (`make -k ci`). Green merges.
   Red while `main` is green is refused. Red while `main` is also red is refused only if the result
   has a finding `main` does not (multiset of check-and-message keys, line numbers removed; a newly
-  red make target counts; baseline cached per `main` commit). A refused ticket is reopened for its
-  owner with the findings and log paths (`state/premerge/`). A gate that cannot judge (timeout,
-  worktree error) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
+  red make target counts). **The baseline (T-1378)** is not run per `main` commit: the gate reuses a
+  cached run on the same tree, or on a tree that differs only in files under `pre_merge.baseline_reuse_roots`
+  (default `knowledge`, `.claude`, `factory`, `garage`) that no gate file mentions as a path (computed from the
+  tree by `readSurface`, never listed by hand; the gate summary says `baseline: reused the cached run …`);
+  a gate that passes caches its merge-result run as the baseline of the next `main`; a fresh baseline that
+  times out falls back to the nearest cached run, which may clear a merge result but never refuse one
+  (otherwise the gate cannot judge and retries). A refused ticket is reopened for its
+  owner with the findings and log paths (`state/premerge/`). Every run gets its own scratch tree and
+  log, named with a per-run tag, so a dry run never touches the dispatcher's run. A run whose tree
+  was removed or replaced while it ran is not a verdict and is not cached (T-0696). A gate that cannot judge (timeout,
+  worktree error, vanished tree) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
   gate in the background, taken in **queue order** (T-1296, `lib/mergequeue.mjs`): first the done
   tickets that a `blocked` or `ready` ticket lists in `depends_on`, then by priority (P0 first), then
   the earliest time the ticket reached `done`, then ticket ID. **Merge train (T-1297):** one gate run
@@ -385,6 +395,11 @@ activity), **Board** (kanban by status, filter by epic/owner), **Decisions** (pe
 factory notices), **Library** (knowledge base reader), **Demos**, and **Agents** (below). The header
 shows the merge queue: "Merge queue: N waiting · in gate T-… · last merge Xh ago". It polls `/api/state` every
 `board.poll_ms` and never clobbers a form the CEO is typing in.
+
+A done ticket whose branch is already an ancestor of main (merged by hand) never takes a gate slot: at the start of each merge
+pass the dispatcher records it as merged (`links.merged`, `links.merge_commit` = the merge commit that brought it in, or the tip if
+fast-forwarded), removes its worktree and branch, logs `… already on main … without a gate run`, and drops it from the queue
+(T-1353). Test: `factory/test/mergetrain.test.mjs`.
 
 ### Agents tab (`/api/graph`, `lib/graph.mjs`, `public/agents.js`)
 
@@ -470,10 +485,11 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 | `api_unreachable_backoff_minutes` | 5 | dispatch pause once `api_unreachable_threshold` consecutive runs hit connectivity errors |
 | `api_unreachable_threshold` | 3 | consecutive connectivity failures (any tickets) that count as an outage |
 | `blocked_retriage_hours` | 6 | a blocked ticket is offered to triage again after this long |
+| `auto_reload` | true | `false` switches off the automatic reload when factory code lands on `main` (`factory restart` still works) |
 
 ### Fields and files beyond the reference above
 
-- **Ticket:** `escalations` (0–2), `reassigned_from` (the role displaced by an escalation, so `advance` continues the original reviewer sequence), `blocked_from` (where `unblock` returns to), `triaged_at`, `meta` (the auto-created triage/grooming/digest payload), `links.merged` and `links.merge_commit`.
+- **Ticket:** `escalations` (0–2), `reassigned_from` (the role displaced by an escalation, so `advance` continues the original reviewer sequence), `blocked_from` (where `unblock` returns to; `unblock --to-ready` ignores it), `triaged_at`, `meta` (the auto-created triage/grooming/digest payload), `links.merged` and `links.merge_commit`.
 - **Run:** `continuation`, `snapshot` (status, stage role and latest handoff at launch: how "no progress" is judged), `kill_reason` (`timeout` or `shutdown`), `error`; stderr is kept in `state/runs/<id>.err` next to `<id>.log`.
 - **State:** `state/board.json` and `state/dispatcher.json` hold pids; `state/board.log` and `state/dispatcher.log` capture the detached processes; `state/signals/rate-limit.json` is written by the `StopFailure` hook and read by the dispatcher.
 - **Environment:** `FACTORY_HOME`, `FACTORY_CLAUDE_BIN` (the executable to launch, default `claude`), `FACTORY_DEBUG=1` (stack traces).
@@ -489,6 +505,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 - **Rate limits** are detected from an error result or stderr (`rate limit`, `usage limit`, `overloaded`, `429`), or from a `StopFailure` signal for the run's session; the signal also backs the dispatcher off when it comes from the CEO's own session (the limit is account-wide). No attempt is counted.
 - **Connectivity errors** (`EAI_AGAIN`, `ENOTFOUND`, `ECONNRESET`, `ETIMEDOUT`, "Can't reach the API server") in an error result or stderr are an outage on our side: no attempt, no escalation, no stage reassignment; the dispatcher backs off `connectivity_backoff_minutes` and the ticket is retried. The third consecutive one (across tickets) pauses dispatching for `api_unreachable_backoff_minutes` and logs one `api unreachable` event. Any run that ends otherwise resets the streak. A usage limit takes precedence.
 - **Spawn failure** (`claude` missing) backs off `launch_failure_backoff_minutes` and counts no attempt.
+- **Self-reload (T-1336).** A daemon dispatcher remembers the `main` commit whose code it loaded (`code_sha` in `dispatcher.json`). At the start of each tick, if `main` moved and the diff touches `factory/lib`, `factory/bin` or `factory/board`, it reloads — a merge it made itself and a hand merge look the same. Commits that touch only `knowledge/`, `factory/test`, product code etc. move the baseline and reload nothing. The safe point is between ticks with no merge gate in flight (a gate's `make` belongs to this process, so the reload waits for it; an automatic reload never aborts one). The reload: stop stale `make` processes under `worktree_root/.premerge`; start the successor detached (`FACTORY_REPLACES=<pid>`), which loads the new code, announces itself (`successor_ready` in `dispatcher.json`) and waits for the old pid to be gone; restart the board (SIGTERM, then a detached `factory board --port <same port>`), so new state fields such as `merge_queue` show; log one `reload: … main <old12> → <new12> …` event; exit **without signalling workers or running the shutdown** — the successor's first tick adopts every `running` run. A successor that does not come up within 20 s is killed, the old dispatcher keeps running and logs `reload to <sha> failed …` once (it does not retry that commit; fix `main`, then `factory restart`). `factory restart` signals the dispatcher with SIGUSR2 and takes the same path immediately, aborting a gate in flight (its tickets stay `done` and are re-gated). A dispatcher older than this feature has no SIGUSR2 handler and dies from the signal; `restart` then starts a fresh one (workers are unaffected and adopted). A dispatcher also sweeps stale `.premerge` processes at start (Linux, via `/proc`). A foreground `factory run` that reloads leaves the terminal and continues detached; `run --once` never reloads.
 - **`factory run --once`** performs one tick and returns; workers it started keep running and are adopted by the next dispatcher.
 - **`factory feedback triage --done`** closes feedback that needs no ticket.
 - **Repository without commits, or `isolation: "none"`:** one code ticket at a time runs in the main checkout; other tickets run in parallel.

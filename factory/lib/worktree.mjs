@@ -113,6 +113,31 @@ export async function unmergedBranches(ctx, ids) {
 }
 
 /**
+ * The commit that brought a ticket's branch into the main branch, when `factory/<id>` exists and its
+ * tip is already an ancestor of main (a hand merge, T-1353); null when the branch is missing or has
+ * work main does not. It is the merge commit (the oldest first-parent commit of main that descends from
+ * the tip), or the tip itself when the branch was fast-forwarded onto main.
+ * @param {object} ctx
+ * @param {string} ticketId
+ * @returns {Promise<string|null>}
+ */
+export async function landedCommit(ctx, ticketId) {
+  const main = ctx.config.dispatcher.main_branch;
+  const branch = branchName(ticketId);
+  const tip = await git(ctx.root, ['rev-parse', '-q', '--verify', `refs/heads/${branch}^{commit}`]);
+  if (tip.code !== 0) return null;
+  const ancestor = await git(ctx.root, ['merge-base', '--is-ancestor', branch, main]);
+  if (ancestor.code !== 0) return null;
+  const path = await git(ctx.root, ['rev-list', '--first-parent', '--ancestry-path', `${branch}..${main}`]);
+  const commits = path.code === 0 ? path.stdout.split('\n').map((l) => l.trim()).filter(Boolean) : [];
+  const oldest = commits.at(-1);
+  if (!oldest) return tip.stdout.trim();
+  // Fast-forwarded: the tip is on main's own first-parent line, so the tip is what brought the work in.
+  const first = await git(ctx.root, ['rev-parse', `${oldest}^1`]);
+  return first.code === 0 && first.stdout.trim() === tip.stdout.trim() ? tip.stdout.trim() : oldest;
+}
+
+/**
  * Merge a finished ticket's branch into the main branch of the main checkout with `--no-ff`.
  * A conflict is aborted cleanly and reported as such.
  * @param {object} ctx

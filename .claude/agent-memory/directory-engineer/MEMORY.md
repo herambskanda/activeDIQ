@@ -24,3 +24,4 @@
 - [closure decision lessons](closure-decision-lessons.md) — T-0961: decide the budget from the whole graph each refresh, oracle test after every refresh
 - [search index lessons](search-index-lessons.md) — T-1095: pg_trgm GIN unusable under RLS (T-1180), threshold 0.3, bind-typing and FORCE-RLS fixture traps
 - [search trigram lessons](search-trigrams-lessons.md) — T-1335: rows/blocks proof traps (cold run, plan flip, heap fetches), fixtures, fitness rules
+- [sync cursor lessons](sync-cursor-lessons.md) — T-1190: fitness traps (tenant_id guard, SQL const, platform_leases), fencing limits
