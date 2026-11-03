@@ -14,7 +14,9 @@
 --                               is evaluated, so a captured assertion can be submitted once and never again.
 --                               The challenge is public to the client by design; it carries no secret.
 
--- write-class: authn_webauthn_credentials system
+-- Class config (ADR-0005 rule 10, T-1221): registering a credential after sign-in is a widening
+-- decision (an Action, T-1230); a sign-in's sign-count update is item 1.
+-- write-class: authn_webauthn_credentials config
 CREATE TABLE public.authn_webauthn_credentials (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

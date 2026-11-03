@@ -20,7 +20,27 @@ if not os.environ.get("DIQ_DC1_LOCK_HELD"):
     os.execv(os.path.join(REPO, "lab", "windows", "bin", "with-dc1-lock"),
              ["with-dc1-lock", "--", sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
 sys.path.insert(0, os.path.join(REPO, "lab", "windows", "lib"))
-from dc1winrm import DC, load_env  # noqa: E402
+import dc1winrm  # noqa: E402
+
+
+class DC:
+    """Thin adapter over the shared dc1winrm helper (make_ps / make_put): adds in-memory uploads with a sha256 check."""
+    def __init__(self, env, addr):
+        self.ps = dc1winrm.make_ps(env, addr)
+        self._put = dc1winrm.make_put(env, addr)
+
+    def put(self, src, dst):
+        self._put(src, dst)
+        _rc, out = self.ps(f"(Get-FileHash '{dst}').Hash")
+        if hashlib.sha256(open(src, "rb").read()).hexdigest().upper() not in out:
+            sys.exit(f"upload to {dst} corrupted (sha256 mismatch)")
+
+    def put_bytes(self, data, dst):
+        with tempfile.TemporaryDirectory() as d:
+            f = os.path.join(d, "upload.bin")
+            with open(f, "wb") as fh:
+                fh.write(data)
+            self.put(f, dst)
 
 WIX = "5.0.2"
 B = "C:\\lab\\build"
@@ -89,9 +109,8 @@ def main():
     ap.add_argument("--old-wxs", default="main", help="git ref holding the Agent.wxs that must still show WIX1149")
     ap.add_argument("--port", type=int, default=7443)
     a = ap.parse_args()
-    env = load_env(REPO)
-    addr = env.get("WIN_LAB_DC_ADDR", "192.168.1.9")
-    dc = DC(addr, env["WIN_LAB_ADMIN_PASSWORD"])
+    env, _path, addr = dc1winrm.load_env("agent-unenrolled-verify")
+    dc = DC(env, addr)
     me = host_ip(addr)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
     say(f"T-0833 agent-unenrolled-verify  commit {commit}  host {me}  dc1 {addr}")

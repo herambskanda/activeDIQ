@@ -10,8 +10,8 @@ audit_event	audit	system
 audit_forward_cursor	audit	system
 audit_head	audit	system
 authn_accounts	authn	config
-authn_authenticator_enrollments	authn	system
-authn_authority_approvals	authn	system
+authn_authenticator_enrollments	authn	config
+authn_authority_approvals	authn	config
 authn_authority_challenges	authn	system
 authn_authority_notices	authn	system
 authn_local_credentials	authn	config
@@ -23,7 +23,7 @@ authn_signin_throttle	authn	system
 authn_sso_transactions	authn	system
 authn_totp_failures	authn	system
 authn_webauthn_challenges	authn	system
-authn_webauthn_credentials	authn	system
+authn_webauthn_credentials	authn	config
 authz_assignment_roots	authz	config
 authz_assignments	authz	config
 authz_role_permissions	authz	config
@@ -37,9 +37,9 @@ connection_verifications	connection	system
 connections	connection	config
 connector_bindings	connection	config
 correlation_evaluations	inventory	system
-correlations	inventory	system
+correlations	inventory	config
 directory_objects	inventory	system
-enrollment_tokens	fleet	system
+enrollment_tokens	fleet	config
 fleet_ca	fleet	system
 hybrid_links	connection	config
 installation_keys	keys	system
@@ -61,7 +61,7 @@ operation_items	operation	system
 operation_secrets	operation	system
 operation_steps	operation	system
 operations	operation	system
-personal_hold	personal	system
+personal_hold	personal	config
 personal_subject	personal	system
 personal_value	personal	system
 platform_leases	jobs	system
@@ -69,6 +69,7 @@ platform_rate_buckets	limiter	system
 report_exports	reports	system
 report_run_rows	reports	system
 report_runs	reports	system
+sync_cursors	sync	system
 tenant_keys	keys	system
 tenants	tenant	system
 tier0_designations	inventory	config
