@@ -23,3 +23,8 @@ func Seed(t testing.TB, exec Exec, name string) tenant.ID {
 	}
 	return id
 }
+
+// NewID returns a fresh random tenant ID without touching a database. It is how test-support code
+// outside this package (the operationtest harness) names a tenant for an in-memory run, so it does
+// not mint IDs itself (ADR-0002 rule 5).
+func NewID() tenant.ID { return tenant.New() }

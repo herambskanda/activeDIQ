@@ -123,22 +123,14 @@ func sqlWords(stmt string) []string {
 	return strings.FieldsFunc(strings.ToUpper(stmt), func(r rune) bool { return !unicode.IsLetter(r) && r != '_' })
 }
 
-// changesReadOnly reports a statement that changes the transaction's read-only mode: SET [LOCAL |
-// SESSION] [default_]transaction_read_only, SET SESSION CHARACTERISTICS … READ WRITE, SET TRANSACTION
-// READ WRITE, SET [LOCAL] client_encoding / SET NAMES (the scanner reads UTF-8), or any set_config call (its setting name is a literal the scanner blanks, so every call
-// is treated as one: a read-only Plan has no reason to make it).
+// changesReadOnly reports a statement that changes the transaction's read-only mode or the client
+// encoding the scanner relies on: store.ChangesSessionSetting (set_config, transaction_read_only,
+// client_encoding, SET NAMES) or SET TRANSACTION / SET SESSION CHARACTERISTICS … READ WRITE.
 func changesReadOnly(words []string) bool {
-	for _, w := range words {
-		if w == "SET_CONFIG" || w == "TRANSACTION_READ_ONLY" || w == "DEFAULT_TRANSACTION_READ_ONLY" || w == "CLIENT_ENCODING" {
-			return true
-		}
+	if store.ChangesSessionSetting(words) {
+		return true
 	}
 	if words[0] == "SET" {
-		for _, w := range words[1:] {
-			if w == "NAMES" { // SET NAMES switches client_encoding
-				return true
-			}
-		}
 		for i := 1; i+1 < len(words); i++ {
 			if words[i] == "READ" && words[i+1] == "WRITE" {
 				return true

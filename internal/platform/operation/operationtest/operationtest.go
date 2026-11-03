@@ -53,7 +53,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
-	"github.com/skenzeriq/activediq/internal/platform/tenant"
+	"github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest"
 )
 
 // Clause names, as they appear in a Violation and in the coverage record.
@@ -144,7 +144,7 @@ func check(action operation.Action, fx Fixture) (Record, []Violation) {
 		actor = authority.Chain{Requester: authority.Principal{ID: "contract-human", Kind: authority.Human}}
 	}
 	res, runErr := r.RunStore(context.Background(), operation.Request{
-		Tenant: tenant.New(), Actor: actor, Action: d.ID, Input: fx.Input, Pins: fx.Pins,
+		Tenant: tenanttest.NewID(), Actor: actor, Action: d.ID, Input: fx.Input, Pins: fx.Pins,
 		Operation: step.OperationID("contract-" + string(d.ID)),
 	})
 	rec.Steps = len(res.Steps)
