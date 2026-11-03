@@ -269,7 +269,7 @@ export function unblockTicket(ctx, id, by, note, { toReady = false, waitingOn = 
     t.attempts = 0;
     t.escalations = 0;
     t.effort_override = null;
-    t.handoff = { ...t.handoff, pending: false };
+    if (toReady) t.handoff = { ...t.handoff, pending: false };
   });
 }
 

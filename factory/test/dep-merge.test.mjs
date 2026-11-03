@@ -179,11 +179,13 @@ test('unblock without --to-ready still restores blocked_from, merged dependency 
     branchAhead(f.root, b);
     claimTicket(f.ctx, a, 'dispatcher', new Set());
     blockTicket(f.ctx, a, 'docs-writer', 'x');
+    updateEntity(f.ctx, 'tickets', a, (t) => { t.handoff = { ...t.handoff, pending: true }; });
     const r = await cli(f, ['ticket', 'unblock', a, '--by', 'factory-director', '--note', 'go']);
     assert.equal(r.code, 0, r.err);
     const t = getEntity(f.ctx, 'tickets', a);
     assert.deepEqual([t.status, t.stage_role], ['in_progress', 'docs-writer']);
     assert.match(t.history.at(-1).note, /^unblocked: go$/);
+    assert.equal(t.handoff.pending, true, 'plain unblock leaves a pending handoff alone, as on main');
     assert.equal((await cli(f, ['ticket', 'unblock', a, '--to-ready', '--by', 'x', '--note', 'n'])).code, 1, 'not blocked any more');
   } finally { f.cleanup(); }
 });
