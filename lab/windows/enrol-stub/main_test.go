@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -50,7 +51,12 @@ func TestStubIssuesWhatTheRealClientAccepts(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port)))
-	dir := filepath.Join(t.TempDir(), "enrol")
+	// The state directory's parent must pass the ownerfile parent check whatever the umask of the run.
+	parent := t.TempDir()
+	if err := os.Chmod(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(parent, "enrol")
 	st, err := dial.Enroll(ctx, dial.Material{Address: addr, Token: s.token, Pin: pin}, dir, ex)
 	if err != nil {
 		t.Fatalf("real client refused the stub's enrolment: %v", err)
@@ -63,11 +69,11 @@ func TestStubIssuesWhatTheRealClientAccepts(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Failing fixture: the token is single-use, and a wrong pin is refused before the token is sent.
-	if _, err := dial.Enroll(ctx, dial.Material{Address: addr, Token: s.token, Pin: pin}, filepath.Join(t.TempDir(), "e2"), ex); err == nil {
+	if _, err := dial.Enroll(ctx, dial.Material{Address: addr, Token: s.token, Pin: pin}, filepath.Join(parent, "e2"), ex); err == nil {
 		t.Fatal("stub accepted a used token")
 	}
 	badPin := "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-	if _, err := dial.Enroll(ctx, dial.Material{Address: addr, Token: "x", Pin: badPin}, filepath.Join(t.TempDir(), "e3"), ex); err == nil {
+	if _, err := dial.Enroll(ctx, dial.Material{Address: addr, Token: "x", Pin: badPin}, filepath.Join(parent, "e3"), ex); err == nil {
 		t.Fatal("enrolled against a wrong pin")
 	}
 }

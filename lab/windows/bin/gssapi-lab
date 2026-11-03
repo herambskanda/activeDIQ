@@ -5,13 +5,14 @@
                        gMSA export), fetch the two artifacts into lab/windows/ of the MAIN checkout (gitignored,
                        0600), delete them on the VM, reboot dc1 and wait for it.
   gssapi-lab run ARGS  first check dc1 is at LDAPServerIntegrity=2 / LdapEnforceChannelBindingTokens=2 and stop, naming the
-                       value read, if not (T-1265); then put dc1's clock in step with this host for the duration (the lab DC's clock is hours off and
-                       Kerberos allows 5 minutes), turn on LDAP interface diagnostics, run
+                       value read, if not (T-1265); then refuse to run if dc1's clock differs from this host by more than
+                       60 s (Kerberos allows 5 minutes; dc1 syncs from NTP since T-0850, so a larger skew means w32time is
+                       broken: fix that, do not step the clock here), turn on LDAP interface diagnostics, run
                        `go test -tags 'lab windowslab' -v ARGS`, print the DC's channel-binding events, then restore the
-                       clock offset and the diagnostics value in a finally block. Default ARGS: the whole T-0566 suite.
+                       diagnostics value in a finally block. Default ARGS: the whole T-0566 suite.
 
 Wrap every call in the shared lock:  flock -w 3600 /tmp/claude-1000/activediq-dc1.lock lab/windows/bin/gssapi-lab run
-Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (never printed). Runbook section 15.
+Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (never printed). Runbook section 15 (clock: section 16).
 """
 import base64, datetime as dt, os, re, subprocess, sys, time
 
@@ -42,11 +43,6 @@ def require_policy(when):
 def dc_utc():
     m = re.search(r"\d{4}-\d\d-\d\dT[\d:.]+", ps('[DateTime]::UtcNow.ToString("o")')[1])
     return dt.datetime.fromisoformat(m.group(0)[:26]).replace(tzinfo=dt.timezone.utc)
-
-
-def set_dc_clock(when):
-    ps('Set-Date ([DateTime]::SpecifyKind([DateTime]::Parse("%s"),"Utc").ToLocalTime()) | Out-Null' % when.strftime("%Y-%m-%dT%H:%M:%S"))
-    time.sleep(3)
 
 
 def prepare():
@@ -82,14 +78,15 @@ def prepare():
 def run(args):
     args = args or ["-run", "WindowsLabKerberos", "./internal/connector/ad/"]
     require_policy("before the run")  # nothing is changed on dc1 and no test starts when it is not 2/2
-    offset = dc_utc() - dt.datetime.now(dt.timezone.utc)
-    print("CLOCK before: dc minus host =", offset)
+    skew = dc_utc() - dt.datetime.now(dt.timezone.utc)
+    print("CLOCK: dc minus host = %.3f s" % skew.total_seconds())
+    if abs(skew) > dt.timedelta(seconds=60):
+        sys.exit("gssapi-lab: dc1's clock is %.0f s off this host; Kerberos would fail with KRB_AP_ERR_SKEW. Check w32time on dc1 "
+                 "(runbook windows-lab.md section 16, T-0850); not stepping the clock from here." % skew.total_seconds())
     prior = ps(f"(Get-ItemProperty '{DIAG}' -Name '16 LDAP Interface Events').'16 LDAP Interface Events'")[1].strip() or "0"
     print("DIAG prior 16 LDAP Interface Events =", prior)
     rc = 1
     try:
-        set_dc_clock(dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1))
-        print("CLOCK during run: dc minus host =", dc_utc() - dt.datetime.now(dt.timezone.utc))
         ps(f"Set-ItemProperty '{DIAG}' -Name '16 LDAP Interface Events' -Type DWord -Value 2")
         genv = dict(os.environ, WIN_LAB_MODE="external", WIN_LAB_DC_ADDR=ADDR, WIN_LAB_ENV=path,
                     WIN_LAB_TLS_NAME=env.get("WIN_LAB_TLS_NAME", "dc1.win.activediq.test"),
@@ -102,8 +99,7 @@ def run(args):
         print(ps(r'''Get-WinEvent -FilterHashtable @{LogName='Directory Service'; StartTime=(Get-Date).AddMinutes(-5)} -EA SilentlyContinue | ? { $_.Id -in 3039,3040,3041,3074,3075 } | % { "$($_.TimeCreated.ToString("o")) id=$($_.Id) $($_.Message -replace '\s+',' ')".Substring(0,260) }''')[1])
     finally:
         ps(f"Set-ItemProperty '{DIAG}' -Name '16 LDAP Interface Events' -Type DWord -Value {prior}")
-        set_dc_clock(dt.datetime.now(dt.timezone.utc) + offset + dt.timedelta(seconds=1))
-        print("DIAG restored; CLOCK restored: dc minus host =", dc_utc() - dt.datetime.now(dt.timezone.utc))
+        print("DIAG restored")
         print("POLICY after:\n" + policy())
     require_policy("after the run")  # a run that leaves signing weaker than it found it is a failed run
     sys.exit(rc)
