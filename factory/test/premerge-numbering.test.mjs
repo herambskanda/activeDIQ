@@ -122,10 +122,10 @@ test('with no numbering configured the gate does not look at migrations', async 
     const b = await finishedWith(f, 'b', ['0004_b.sql']);
     const d = new Dispatcher(f.ctx);
     d.shared = false;
-    await d.mergePass(); await d.gateIdle();
-    assert.ok(listEntities(f.ctx, 'tickets').find((t) => t.id === a.id).links.merged);
-    const v = await runPreMergeGate(f.ctx, listEntities(f.ctx, 'tickets').find((t) => t.id === b.id));
-    assert.equal(v.status, 'pass', 'the duplicate gets through when the check is off (this is what the setting prevents)');
+    await d.mergePass(); await d.gateIdle(); // one train: both merge, the duplicate number included
+    const out = Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) => [t.id, t]));
+    assert.ok(out[a.id].links.merged && out[b.id].links.merged, 'the duplicate gets through when the check is off (this is what the setting prevents)');
+    assert.deepEqual(fs.readdirSync(path.join(f.root, 'migrations')).filter((n) => n.startsWith('0004')).sort(), ['0004_a.sql', '0004_b.sql']);
   } finally { f.cleanup(); }
 });
 
