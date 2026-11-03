@@ -78,11 +78,12 @@ const (
              WHERE v.name = $1), false) AS creatable,
   COALESCE((SELECT rolsuper FROM pg_roles WHERE rolname = current_user), false) AS is_super`
 
-	// datlocprovider exists from PostgreSQL 15; datlocale (the built-in provider's locale) from 17.
-	databaseSQL = `SELECT pg_encoding_to_char(encoding), datlocprovider::text, datctype, ''::text
-  FROM pg_database WHERE datname = current_database()`
-	databaseSQL17 = `SELECT pg_encoding_to_char(encoding), datlocprovider::text, datctype, COALESCE(datlocale, '')
-  FROM pg_database WHERE datname = current_database()`
+	// datlocprovider exists from PostgreSQL 15; datlocale (the built-in provider's locale) from 17. Reading
+	// the row as JSON keeps one constant statement valid on every supported version: a column the server
+	// does not have is simply absent.
+	databaseSQL = `SELECT pg_encoding_to_char(d.encoding),
+  COALESCE(to_jsonb(d)->>'datlocprovider', ''), d.datctype, COALESCE(to_jsonb(d)->>'datlocale', '')
+  FROM pg_database d WHERE d.datname = current_database()`
 )
 
 // Provider codes of pg_database.datlocprovider.
@@ -115,8 +116,8 @@ func Check(ctx context.Context, q Querier) (Report, error) {
 			Detail: "the PostgreSQL extension pg_trgm is not available on this server " +
 				"(it is not listed in pg_available_extensions).",
 			Fix: "Install the PostgreSQL \"contrib\" package that matches this server's major version " +
-				"(on Red Hat family systems that is postgresql<N>-contrib; on Debian and Ubuntu pg_trgm ships in the " +
-				"postgresql-<N> server package [UNVERIFIED per distribution]) and restart PostgreSQL if the packager asks for it. " +
+				"(on Red Hat family systems that is postgresql<N>-contrib; other distributions name it postgresql-contrib " +
+				"or include it in the server package) and restart PostgreSQL if the packager asks for it. " +
 				"On a managed PostgreSQL service, allow-list pg_trgm in the service's extension settings. " +
 				"Nothing has been changed; start activeDIQ again afterwards.",
 		})
@@ -130,12 +131,8 @@ func Check(ctx context.Context, q Querier) (Report, error) {
 		})
 	}
 
-	dbSQL := databaseSQL
-	if rep.ServerVersionNum >= 170000 {
-		dbSQL = databaseSQL17
-	}
 	var provider, ctype, locale string
-	if err := q.QueryRow(ctx, dbSQL).Scan(&rep.Encoding, &provider, &ctype, &locale); err != nil {
+	if err := q.QueryRow(ctx, databaseSQL).Scan(&rep.Encoding, &provider, &ctype, &locale); err != nil {
 		return rep, errors.Join(append(refusals, fmt.Errorf("preflight: read the database encoding: %w", err))...)
 	}
 	if rep.Encoding != "UTF8" {
