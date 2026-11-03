@@ -79,7 +79,7 @@ func CheckTyped(root string) ([]Violation, error) {
 				return nil, fmt.Errorf("typed O1/O2: %s on %s: %w", act.Analyzer.Name, act.Package.PkgPath, act.Err)
 			}
 			for _, d := range act.Diagnostics {
-				pos := act.Package.Fset.Position(d.Pos)
+				pos := act.Package.Fset.PositionFor(d.Pos, false) // real file, never a //line-adjusted one
 				rel, err := filepath.Rel(absRoot, pos.Filename)
 				if err != nil {
 					rel = pos.Filename

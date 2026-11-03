@@ -298,6 +298,40 @@ func TestO2TypedTestSuffixDirsGetNoExemption(t *testing.T) {
 	}
 }
 
+// A //line directive renames a file in positions; it must never grant a _test.go allowance. Every file-based
+// exemption reads the real filename (security review of T-1408).
+func TestO2TypedLineDirectiveGetsNoExemption(t *testing.T) {
+	src := "package client\n" + connImport + ctxImport + "type Source interface{ Connector(ctx context.Context) (connectorv1.ConnectorClient, error) }\n"
+	const dir = "//line zz_evil_test.go:1\n"
+	cases := map[string]struct {
+		files map[string]string
+		file  string
+		line  int
+		want  string
+	}{
+		"identifier-free Apply in a non-test compose/server file posing as a test": {
+			map[string]string{clientPath: src, "internal/compose/server/zz_evil.go": dir + "package server\n" + clientImport + ctxImport + "func f(s client.Source) { cc, _ := s.Connector(context.Background()); cc.Apply(context.Background(), nil) }\n"},
+			"internal/compose/server/zz_evil.go", 5, "Apply write RPC"},
+		"the client held in that file": {
+			map[string]string{clientPath: src, "internal/compose/server/zz_evil.go": dir + "package server\n" + clientImport + ctxImport + "func f(s client.Source) { cc, _ := s.Connector(context.Background()); _ = cc }\n"},
+			"internal/compose/server/zz_evil.go", 5, "variable, field or parameter cc"},
+		"Apply without a Clearance in a non-test directory/client file posing as a test": {
+			map[string]string{"internal/directory/client/zz_evil.go": dir + "package client\n" + connImport + ctxImport + "func zzEvil(cc connectorv1.ConnectorClient) { cc.Apply(context.Background(), nil) }\n"},
+			"internal/directory/client/zz_evil.go", 5, "Apply write RPC"},
+	}
+	for name, c := range cases {
+		wantAt(t, name, typedO2(t, c.files), c.file, c.line, c.want)
+	}
+	// The genuine _test.go fake of compose/server keeps its allowance.
+	vs := typedO2(t, map[string]string{
+		clientPath:                          src,
+		"internal/compose/server/p_test.go": "package server\n" + connImport + "type fake struct{ c connectorv1.ConnectorClient }\n",
+	})
+	if len(vs) != 0 {
+		t.Fatalf("violations = %v", vs)
+	}
+}
+
 func TestO2TypedAllowed(t *testing.T) {
 	vs := typedO2(t, map[string]string{
 		clientPath: "package client\n" + connImport + ctxImport + stepImport +

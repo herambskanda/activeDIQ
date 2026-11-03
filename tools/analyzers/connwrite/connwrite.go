@@ -171,7 +171,7 @@ func place(pass *analysis.Pass, mod string) string {
 	}
 	dir := ""
 	for _, f := range pass.Files {
-		name := pass.Fset.Position(f.Pos()).Filename
+		name := pass.Fset.PositionFor(f.Pos(), false).Filename
 		if !isTestFile(name) {
 			return r
 		}
@@ -209,7 +209,7 @@ func run(pass *analysis.Pass) (any, error) {
 
 	// exempt: test files of the roots that drive a fake connector, as the syntactic half does.
 	exemptFile := func(pos token.Pos) bool {
-		name := pass.Fset.Position(pos).Filename
+		name := pass.Fset.PositionFor(pos, false).Filename
 		return isTestFile(name) && (under(r, connectorDir) || under(r, composeConn) || under(r, composeSrv))
 	}
 	report := func(pos token.Pos, msg string) {
@@ -276,7 +276,7 @@ func run(pass *analysis.Pass) (any, error) {
 
 	// Every use of the generated Plan or Apply, however the client is named.
 	for _, f := range pass.Files {
-		fname := pass.Fset.Position(f.Pos()).Filename
+		fname := pass.Fset.PositionFor(f.Pos(), false).Filename
 		for _, d := range f.Decls {
 			ast.Inspect(d, func(n ast.Node) bool {
 				se, ok := n.(*ast.SelectorExpr)
