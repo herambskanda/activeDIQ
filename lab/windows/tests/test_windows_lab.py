@@ -32,6 +32,7 @@ class WindowsLab(unittest.TestCase):
         self.env = dict(os.environ, PATH=f"{b}:{os.environ['PATH']}", STUB_LOG=str(self.log), WIN_LAB_STATE=str(self.d / "st"),
                         WIN_LAB_ENV=str(self.d / "w.env"), WIN_LAB_CA=str(self.d / "ca.pem"), WIN_LAB_LOGDIR=str(self.d / "logs"),
                         WIN_LAB_WAIT_SECS="1", WIN_LAB_DRYRUN="", WIN_LAB_MODE="local",
+                        WIN_LAB_MIN_FREE_GB="0",  # the host disk must not decide a stubbed unit test
                         DIQ_DC1_LOCK=str(self.d / "dc1.lock"), DIQ_DC1_LOCK_WAIT="5")  # never the real dc1 lock (T-0839)
         (self.d / "st").mkdir()
         (self.d / "st/ws2025-eval.iso").write_text("iso")  # pretend the ISO is already downloaded
@@ -87,6 +88,12 @@ class WindowsLab(unittest.TestCase):
         self.stubbed_up()
         self.assertEqual(self.ctl("destroy").returncode, 0)
         self.assertFalse((self.d / "w.env").exists()); self.assertTrue((self.d / "st/ws2025-eval.iso").exists())
+
+    def test_up_refuses_when_the_state_dir_has_too_little_free_disk(self):
+        r = self.ctl("up", WIN_LAB_MIN_FREE_GB="999999999")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("GB free", r.stderr)
+        self.assertEqual(self.log.read_text().count("virt-install"), 0)
 
     def test_iso_checksum_mismatch_fails(self):
         (self.d / "st/ws2025-eval.iso").unlink()
