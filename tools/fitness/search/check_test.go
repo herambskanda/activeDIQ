@@ -26,7 +26,7 @@ func write(t *testing.T, root string, files map[string]string) {
 	}
 }
 
-// goodTrigrams is the shape of migration 0070 that every SE1/SE2 rule accepts.
+// goodTrigrams is the shape of migration 0072 that every SE1/SE2 rule accepts.
 const goodTrigrams = `ALTER TABLE public.inventory_search_keys ADD COLUMN key_id bigint GENERATED ALWAYS AS IDENTITY;
 ALTER TABLE public.inventory_search_keys ADD CONSTRAINT inventory_search_keys_tenant_key_id_key UNIQUE (tenant_id, key_id);
 CREATE TABLE public.inventory_search_trigrams (

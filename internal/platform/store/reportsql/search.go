@@ -149,7 +149,7 @@ type SearchQuery struct {
 type SearchScopes map[authz.Permission]authz.ReadScope
 
 // fuzzyKindList is the call's kinds that have trigram postings (searchkey.Kind.FuzzyEligible). Migration
-// 0070's trigger function builds postings for the same list.
+// 0072's trigger function builds postings for the same list.
 func fuzzyKindList(kinds []searchkey.Kind) string {
 	var parts []string
 	for _, k := range kinds {

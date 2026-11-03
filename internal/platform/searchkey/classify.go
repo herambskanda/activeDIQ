@@ -35,7 +35,7 @@ func (k Kind) Valid() bool { return k >= KindName && k <= KindDN }
 
 // FuzzyEligible kinds have trigram postings (ADR-0011 rule 5a): name and sam. A name_word is redundant
 // for word_similarity against the whole name; upn and mail carry a domain suffix that multiplies the
-// postings and adds nothing to name matching. Migration 0070's trigger function names the same list.
+// postings and adds nothing to name matching. Migration 0072's trigger function names the same list.
 func (k Kind) FuzzyEligible() bool {
 	switch k {
 	case KindName, KindSAM:

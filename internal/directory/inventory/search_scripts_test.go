@@ -22,12 +22,12 @@ func (e *env) catalog(t *testing.T) reportsql.Schema {
 	return sc
 }
 
-// Migration 0070's trigger function builds postings for the kinds in its literal list; the statement's fuzzy
+// Migration 0072's trigger function builds postings for the kinds in its literal list; the statement's fuzzy
 // branch draws its kind list from searchkey.Kind.FuzzyEligible. The kind enum, the template and the trigger
 // must agree on {name, sam} (ADR-0011 rule 9).
 func Test_search_fuzzy_kind_list_matches_the_trigger(t *testing.T) {
 	if got := reportsql.FuzzyKindPredicate(); got != "1, 3" {
-		t.Fatalf("FuzzyKindPredicate = %q, migration 0070 says 1, 3", got)
+		t.Fatalf("FuzzyKindPredicate = %q, migration 0072 says 1, 3", got)
 	}
 	var fuzzy []searchkey.Kind
 	for _, k := range searchkey.AllKinds {
