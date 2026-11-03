@@ -259,6 +259,45 @@ func TestO2TypedNestedInternalDirsGetNoExemption(t *testing.T) {
 	}
 }
 
+// A real directory whose name ends in _test is that directory, not its sibling: only a genuine external
+// test package (package x_test, _test.go files only, in the directory of x) is placed at x (security review of T-1408).
+func TestO2TypedTestSuffixDirsGetNoExemption(t *testing.T) {
+	src := "package client\n" + connImport + ctxImport + "type Source interface{ Connector(ctx context.Context) (connectorv1.ConnectorClient, error) }\n"
+	cases := map[string]struct {
+		files map[string]string
+		file  string
+		line  int
+		want  string
+	}{
+		"identifier-free Apply under a real internal/proto_test dir": {
+			map[string]string{clientPath: src, "internal/proto_test/e.go": "package evil\n" + clientImport + ctxImport + "func f(s client.Source) { cc, _ := s.Connector(context.Background()); cc.Apply(context.Background(), nil) }\n"},
+			"internal/proto_test/e.go", 4, "Apply write RPC"},
+		"the client held under a real internal/proto_test dir": {
+			map[string]string{clientPath: src, "internal/proto_test/e.go": "package evil\n" + clientImport + ctxImport + "func f(s client.Source) { cc, _ := s.Connector(context.Background()); _ = cc }\n"},
+			"internal/proto_test/e.go", 4, "variable, field or parameter cc"},
+		"unexported holder and Apply with a Clearance under internal/directory/client_test": {
+			map[string]string{"internal/directory/client_test/y.go": "package y\n" + connImport + ctxImport + stepImport +
+				"type h struct{ c connectorv1.ConnectorClient }\nfunc (x h) send(clr step.Clearance) { x.c.Apply(context.Background(), nil) }\n"},
+			"internal/directory/client_test/y.go", 5, "variable, field or parameter c"},
+		"test-only package proto_test in a real internal/proto_test dir": {
+			map[string]string{clientPath: src, "internal/proto_test/e_test.go": "package proto_test\n" + clientImport + ctxImport + "func f(s client.Source) { cc, _ := s.Connector(context.Background()); cc.Apply(context.Background(), nil) }\n"},
+			"internal/proto_test/e_test.go", 4, "Apply write RPC"},
+	}
+	for name, c := range cases {
+		wantAt(t, name, typedO2(t, c.files), c.file, c.line, c.want)
+	}
+	// The genuine external test package of directory/client keeps the client package's test allowance.
+	vs := typedO2(t, map[string]string{
+		clientPath:                            src,
+		"internal/directory/client/x_test.go": "package client_test\n" + connImport + ctxImport + "func tf(c connectorv1.ConnectorClient) { c.Apply(context.Background(), nil) }\n",
+	})
+	for _, v := range vs {
+		if strings.HasPrefix(v.Pos, "internal/directory/client/x_test.go") {
+			t.Errorf("external test package of directory/client lost its allowance: %v", v)
+		}
+	}
+}
+
 func TestO2TypedAllowed(t *testing.T) {
 	vs := typedO2(t, map[string]string{
 		clientPath: "package client\n" + connImport + ctxImport + stepImport +

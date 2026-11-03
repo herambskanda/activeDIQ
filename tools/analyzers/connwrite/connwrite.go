@@ -24,6 +24,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -51,7 +52,6 @@ var Analyzer = &analysis.Analyzer{
 // computed against the module path, never by searching for "/internal/": a nested internal directory
 // (cmd/server/internal/proto/...) is idiomatic Go and must not be mistaken for the top-level one.
 func rel(mod, path string) string {
-	path = strings.TrimSuffix(path, "_test")
 	if mod == "" || !strings.HasPrefix(path, mod+"/") {
 		return ""
 	}
@@ -160,6 +160,36 @@ func (e *exposer) hasWriteMethods(t types.Type) bool {
 	return false
 }
 
+// place returns the package's directory below the module root. The import path is used as is: a real
+// directory called "proto_test" or "client_test" is that directory, not its sibling. Only a genuine
+// external test package (name ends in _test, every file a _test.go, and its files live in the directory
+// of the package under test rather than in a directory of that name) is placed at the package under test.
+func place(pass *analysis.Pass, mod string) string {
+	r := rel(mod, pass.Pkg.Path())
+	if r == "" || !strings.HasSuffix(pass.Pkg.Name(), "_test") || !strings.HasSuffix(r, "_test") || len(pass.Files) == 0 {
+		return r
+	}
+	dir := ""
+	for _, f := range pass.Files {
+		name := pass.Fset.Position(f.Pos()).Filename
+		if !isTestFile(name) {
+			return r
+		}
+		d := filepath.ToSlash(filepath.Dir(name))
+		if dir != "" && d != dir {
+			return r
+		}
+		dir = d
+	}
+	if strings.HasSuffix(dir, "/"+r) {
+		return r // the directory really is called ..._test
+	}
+	if base := strings.TrimSuffix(r, "_test"); strings.HasSuffix(dir, "/"+base) {
+		return base
+	}
+	return r
+}
+
 func isTestFile(name string) bool { return strings.HasSuffix(name, "_test.go") }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -169,7 +199,7 @@ func run(pass *analysis.Pass) (any, error) {
 		return nil, fmt.Errorf("connwrite: no module path for package %s; cannot place it in the tree", pass.Pkg.Path())
 	}
 	mod := pass.Module.Path
-	r := rel(mod, pass.Pkg.Path())
+	r := place(pass, mod)
 	if under(r, protoDir) {
 		return nil, nil
 	}
