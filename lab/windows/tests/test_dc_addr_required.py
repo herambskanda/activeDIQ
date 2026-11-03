@@ -71,7 +71,9 @@ class DcAddrRequired(unittest.TestCase):
         for p in sorted(q for q in (LAB / "bin").iterdir() if q.is_file()):
             t = p.read_text(errors="replace")
             if "winrm" in t or "dc1winrm" in t:
-                self.assertIn("require_dc_addr", t, f"{p.name} reaches the DC without the required-address gate")
+                # dc1winrm.load_env returns require_dc_addr(...), so a driver that loads its env through it is gated
+                self.assertTrue("require_dc_addr" in t or "dc1winrm.load_env" in t,
+                                f"{p.name} reaches the DC without the required-address gate")
                 self.assertIn(p.name, DRIVERS, f"add {p.name} to DRIVERS")
 
     def test_old_address_is_gone_from_lab_and_runbooks(self):
