@@ -688,6 +688,15 @@ function computeStatus() {
 /* ============================================================
    Chrome: pill, updated-ago, pause, tabs, banner, title
    ============================================================ */
+/** "Merge queue: 3 waiting · in gate T-0696 · last merge 2h ago" (T-1296); '' when the server predates it. */
+function mergeQueueText(q) {
+  if (!q) return '';
+  const parts = [`Merge queue: ${q.waiting.length} waiting`];
+  if (q.in_gate) parts.push(`in gate ${(q.in_gate.ids?.length ? q.in_gate.ids : [q.in_gate.id]).join(', ')}`);
+  const last = ts(q.last_merged_at);
+  parts.push(last == null ? 'no merge yet' : `last merge ${fmtRel(last)}`);
+  return parts.join(' · ');
+}
 function updateChrome() {
   const st = computeStatus();
   const pill = $('#pill');
@@ -695,6 +704,10 @@ function updateChrome() {
   setText($('#pill-label'), st.label);
   const upd = S.fetchedAt ? Math.floor((Date.now() - S.fetchedAt) / 1000) : null;
   setText($('#updated'), upd == null ? '' : `updated ${upd < 60 ? `${upd}s` : `${Math.floor(upd / 60)}m`} ago`);
+  const mq = $('#merge-queue');
+  const mqText = S.data ? mergeQueueText(D().merge_queue) : '';
+  mq.hidden = !mqText;
+  setText(mq, mqText);
   const pb = $('#btn-pause');
   const paused = !!D()?.control.paused;
   pb.disabled = !S.data;
@@ -1167,11 +1180,13 @@ function waitingOn(t) {
   return (t.decisions || []).filter((id) => decisionById(id)?.status === 'pending');
 }
 function ticketCard(t, live, waiting) {
+  const merging = t.waiting_on_merge || [];
   const tags = t.tags || [];
   return `<li><a class="tcard${live ? ' is-live' : ''}" href="${tkHref(t.id)}" data-fk="tc:${esc(t.id)}">
     <span class="tc-top"><span class="id mono">${esc(t.id)}</span>${waiting.length ? `<span class="lock" title="Waiting on your decision: ${esc(waiting.join(', '))}" role="img" aria-label="Waiting on your decision">${ic('lock')}</span>` : ''}${live ? '<span class="live-dot" title="A worker is running this now" role="img" aria-label="Worker running"></span>' : ''}<span class="pri mono ${esc((t.priority || '').toLowerCase())}">${esc(t.priority || '')}</span></span>
     <span class="tc-title">${esc(t.title)}</span>
     <span class="tc-meta">${ownerChip(t.owner)}${t.type ? `<span class="chip">${esc(t.type)}</span>` : ''}</span>
+    ${merging.length ? `<span class="tc-tags"><span class="tag" title="${esc(merging.join(', '))} is done but its branch is not on main yet; this ticket starts when it merges">${ic('lock')}waiting on merge of ${esc(merging.join(', '))}</span></span>` : ''}
     ${t.held ? `<span class="tc-tags"><span class="tag sec" title="${esc(t.held)}">${ic('lock')}merge held: embargoed</span></span>` : ''}
     ${tags.length ? `<span class="tc-tags">${tags.map((g) => (g === 'security-sensitive' ? `<span class="tag sec">${ic('shield')}security-sensitive</span>` : `<span class="tag">${esc(g)}</span>`)).join('')}</span>` : ''}
   </a></li>`;
@@ -1607,6 +1622,7 @@ function drawerBody(t, dr) {
     tags,
     heldChip,
     drawerSection('Summary', t.summary ? `<div class="md">${md(t.summary, { h: 4 })}</div>` : ''),
+    drawerSection('Waiting on merge', (t.waiting_on_merge || []).length ? `<div class="chips">${t.waiting_on_merge.map((id) => `<a class="chip warn tlink" href="#" data-ticket-nav="${esc(id)}" title="Done, but factory/${esc(id)} has commits that are not on main yet. ${esc(t.id)} is claimed when it merges.">${ic('lock')}${esc(id)} · done, not merged</a>`).join('')}</div>` : ''),
     drawerSection('Waiting on you', waiting.length ? `<div class="chips">${waiting.join('')}</div>` : ''),
     drawerSection('Acceptance criteria', (t.acceptance || []).length ? `<ol class="ac-list">${t.acceptance.map((a) => `<li><span>${mdi(a)}</span></li>`).join('')}</ol>` : ''),
     drawerSection('Details', t.body ? `<div class="md">${md(t.body, { h: 4 })}</div>` : ''),

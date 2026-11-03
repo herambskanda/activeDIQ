@@ -364,7 +364,20 @@ A core MSI with no agent in it is still judged by rules 2-4 and the LocalSystem/
 **What it is.** The dispatcher builds `main` + `factory/T-NNNN` in a scratch worktree
 (`<worktree_root>/.premerge/`) and runs `dispatcher.pre_merge.argv` (default `make -k ci`) there before
 it merges. Settings: `factory/config.json` `dispatcher.pre_merge` (`enabled`, `argv`,
-`timeout_minutes`). Logs and the per-`main`-commit baseline cache: `factory/state/premerge/`.
+`timeout_minutes`, `baseline_reuse_roots`). Logs and the baseline cache: `factory/state/premerge/`.
+
+**The baseline is reused, not re-run per `main` commit (T-1378).** When the merge result is red, the gate
+needs `make -k ci` findings of `main`. It takes them from a cached run (`baseline-*.json`) on the same
+tree, or on a tree that differs only in files under `knowledge/`, `.claude/`, `factory/`, `garage/` that
+no gate file (tracked, outside those directories, not `*.md`) mentions as a path (`readSurface` in
+`factory/lib/premerge.mjs`, computed from the tree each time). So memory, report and digest commits cost
+nothing, while a commit to the ADRs, the licence register, the architecture map or the runbooks the
+fitness tools name does re-run it. The gate summary (event, `factory premerge` output) states which:
+`baseline: reused the cached run …` or `baseline: ran a fresh baseline …`. A passing gate stores its
+merge-result run as the baseline of the tree it will become, so the second half of a split train runs no
+baseline. If a fresh baseline times out, the nearest cached run stands in: the train can pass if all its
+findings are in it, otherwise the gate stops with a message naming the findings. Never raise
+`timeout_minutes` as the fix for that; find what is loading the host (`uptime`) first.
 Rules and the comparison: `standards/ci-gates.md` "The pre-merge gate". It needs what `make ci` needs
 (Docker for the container jobs, Node, network once for toolchains).
 
