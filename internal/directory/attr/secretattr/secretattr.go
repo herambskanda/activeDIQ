@@ -6,17 +6,8 @@
 // the fitness-domain-keys check (no column named for one outside the sealed allow-list) among them.
 package secretattr
 
-import "slices"
+import "github.com/skenzeriq/activediq/internal/platform/secret"
 
-// static is §3.7's static list, as the schema's ldapDisplayName spells each attribute.
-var static = []string{
-	"unicodePwd", "dBCSPwd", "ntPwdHistory", "lmPwdHistory", "supplementalCredentials",
-	"userPassword", "unixUserPassword", "msDS-ManagedPassword",
-	"ms-Mcs-AdmPwd", "msLAPS-Password", "msLAPS-EncryptedPassword", "msLAPS-EncryptedPasswordHistory",
-	"msLAPS-EncryptedDSRMPassword", "msLAPS-EncryptedDSRMPasswordHistory",
-	"msFVE-RecoveryPassword", "msFVE-KeyPackage", "msTPM-OwnerInformation",
-	"msPKIAccountCredentials", "msPKIDPAPIMasterKeys",
-}
-
-// Static returns a copy of the static list.
-func Static() []string { return slices.Clone(static) }
+// Static returns a copy of the static list. The list itself lives in internal/platform/secret, where
+// the operation runner (which may not import this package) reads it: there is one copy.
+func Static() []string { return secret.StaticAttrs() }
