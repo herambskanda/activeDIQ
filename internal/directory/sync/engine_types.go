@@ -28,9 +28,11 @@ type (
 	Connections interface {
 		Get(ctx context.Context, tid tenant.ID, id connection.ID) (connection.Connection, error)
 	}
-	// ConnectorSource resolves a connection to its connector (client.TunnelSource).
+	// ConnectorSource resolves a connection to its read-only connector port (client.NewReaderSource over
+	// client.TunnelSource). The engine reads; it is never handed the generated client, so Plan and Apply are
+	// out of its reach.
 	ConnectorSource interface {
-		Connector(ctx context.Context, connectionID string) (client.Connector, error)
+		Reader(ctx context.Context, connectionID string) (client.Reader, error)
 	}
 	// Ingest is the inventory ingester's write side (inventory.Ingester).
 	Ingest interface {

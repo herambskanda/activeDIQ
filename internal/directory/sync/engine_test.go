@@ -189,11 +189,11 @@ func domainsOf(ncs ...uint64) []dsync.Domain {
 }
 
 type connSource struct {
-	cc    client.Connector
+	cc    client.Reader
 	calls int
 }
 
-func (s *connSource) Connector(context.Context, string) (client.Connector, error) {
+func (s *connSource) Reader(context.Context, string) (client.Reader, error) {
 	s.calls++
 	return s.cc, nil
 }

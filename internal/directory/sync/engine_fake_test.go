@@ -12,7 +12,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/skenzeriq/activediq/internal/directory/client"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -53,7 +52,6 @@ type searchRec struct {
 // every call. It is the only part of the engine's world that is not real; directory behaviour is proved
 // against Samba in the lab tests.
 type fakeConnector struct {
-	client.Connector
 	mu       gosync.Mutex
 	doms     map[string]*fdom
 	extraNCs map[string]connectorv1.NamingContextKind // configuration/schema NCs Describe also reports
