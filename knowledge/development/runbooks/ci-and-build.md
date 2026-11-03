@@ -366,6 +366,8 @@ A core MSI with no agent in it is still judged by rules 2-4 and the LocalSystem/
 it merges. Settings: `factory/config.json` `dispatcher.pre_merge` (`enabled`, `argv`,
 `timeout_minutes`, `baseline_reuse_roots`). Logs and the baseline cache: `factory/state/premerge/`.
 
+**Findings from repo refs (T-1422).** P7 lists the branches of the checkout, and the scratch worktree shares the main repo's refs, so a branch another session creates after the baseline was cached would read as a finding the merge result "adds". `excuseRefFindings` drops `branch X: P7 …` findings (and the `FAILED fitness-profiles` line, when no other profiles finding remains) from the comparison; the summary says `not counted, they come from the repository's refs`. The candidate's own `factory/<id>` branch is never excused, and P7 itself still fails in CI on `main`.
+
 **The baseline is reused, not re-run per `main` commit (T-1378).** When the merge result is red, the gate
 needs `make -k ci` findings of `main`. It takes them from a cached run (`baseline-*.json`) on the same
 tree, or on a tree that differs only in files under `knowledge/`, `.claude/`, `factory/`, `garage/` that

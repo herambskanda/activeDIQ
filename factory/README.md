@@ -323,7 +323,8 @@ claude -p "<rendered templates/worker-prompt.md>" \
   a gate that passes caches its merge-result run as the baseline of the next `main`; a fresh baseline that
   times out falls back to the nearest cached run, which may clear a merge result but never refuse one
   (otherwise the gate cannot judge and retries). A refused ticket is reopened for its
-  owner with the findings and log paths (`state/premerge/`). Every run gets its own scratch tree and
+  owner with the findings and log paths (`state/premerge/`). P7 branch-name findings come from the repo's refs, not the
+  candidate, so they never count as new unless the branch is the candidate's own (T-1422). Every run gets its own scratch tree and
   log, named with a per-run tag, so a dry run never touches the dispatcher's run. A run whose tree
   was removed or replaced while it ran is not a verdict and is not cached (T-0696). A gate that cannot judge (timeout,
   worktree error, vanished tree) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
