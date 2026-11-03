@@ -15,7 +15,7 @@ function metaInstructions(ticket) {
         'Stage: triage. Process exactly these items, then advance this ticket:',
         `- Decisions answered or defaulted but not yet applied: ${list(meta.decisions)}. For each: read it (\`factory/bin/factory decision show <id>\`), propagate the answer (CEO preferences and decisions log in knowledge/memory, affected tickets, specs), then run \`factory/bin/factory decision applied <id> --by ${ticket.owner}\`.`,
         `- New CEO feedback: ${list(meta.feedback)}. For each: decide what it means, create tickets or memory entries as needed, then run \`factory/bin/factory feedback triage <id> --note "…" [--tickets T-…]\`.`,
-        `- Blocked tickets: ${list(meta.blocked)}. For each: read the block note and decide to unblock (\`ticket unblock\`), re-scope, escalate to the CEO through the ceo-decisions skill, or cancel.`,
+        `- Blocked tickets: ${list(meta.blocked)}. For each: read the block note and decide to unblock (\`ticket unblock\`; when the only blocker is a dependency that is done but not on main, \`ticket unblock --to-ready\` so the claim gate holds it until the merge, never a plain unblock), re-scope, escalate to the CEO through the ceo-decisions skill, or cancel.`,
         'Never ask the CEO about implementation details; decide them and record the decision.',
       ].join('\n');
     case 'grooming':
