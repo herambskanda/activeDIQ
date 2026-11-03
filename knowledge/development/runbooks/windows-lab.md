@@ -21,6 +21,8 @@ Host needs: Linux x86-64 with `/dev/kvm`, ~45 GB free (thin-provisioned qcow2, �
 plus the 5 GB ISO), 8 GB spare RAM, and
 `sudo apt install qemu-kvm libvirt-daemon-system libvirt-clients virtinst ovmf xorriso netcat-openbsd`
 (your user in groups `libvirt` and `kvm`). Apple Silicon cannot run this lab.
+`preflight` refuses below that floor; `WIN_LAB_MIN_FREE_GB` (default 45) overrides it and exists only so the offline unit
+tests (`lab/windows/tests/`) do not depend on the CI host's free disk — never lower it for a real `up`.
 
 ```bash
 make windows-lab-preflight        # tooling, KVM, disk space — no changes
