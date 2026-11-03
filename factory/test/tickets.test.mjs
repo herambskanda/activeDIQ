@@ -68,8 +68,8 @@ test('claimBlockers: unfinished dependencies and unresolved decisions', () => {
   const tickets = indexById([{ id: 'T-1', status: 'done' }, { id: 'T-2', status: 'review' }]);
   const decisions = indexById([{ id: 'D-1', status: 'answered' }, { id: 'D-2', status: 'pending' }, { id: 'D-3', status: 'defaulted' }]);
   assert.deepEqual(claimBlockers({ depends_on: ['T-1', 'T-2', 'T-3'], decisions: ['D-1', 'D-2', 'D-3', 'D-9'] }, tickets, decisions),
-    { deps: ['T-2', 'T-3'], decisions: ['D-2', 'D-9'] });
-  assert.deepEqual(claimBlockers({}, tickets, decisions), { deps: [], decisions: [] });
+    { deps: ['T-2', 'T-3'], unmerged: [], decisions: ['D-2', 'D-9'] });
+  assert.deepEqual(claimBlockers({}, tickets, decisions), { deps: [], unmerged: [], decisions: [] });
 });
 
 test('claim moves ready → in_progress with the owner, and refuses while blocked', () => {
