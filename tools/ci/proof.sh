@@ -251,6 +251,14 @@ printf 'package client\n\nimport connectorv1 "op.test/internal/proto/activediq/c
 printf 'package a\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(c client.Connector) { _, _ = c.Apply(context.Background(), nil) }\n' >"$opt/internal/modules/a/a.go"
 must_fail_with "fitness-operation O2 on an exported alias of the generated client in directory/client" 'internal/directory/client/c.go:5: O2 \[rule 2\] exported type Connector is, aliases or embeds the generated connector-contract client' "$opbin" -root "$opt"
 must_fail_with "fitness-operation O2 on Apply called through the alias from another package" 'internal/modules/a/a.go:9: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+# A nested internal/ dir (idiomatic under cmd/) is not the top-level one: a package's place is its path below the
+# module root (security review of T-1408). The caller names no ConnectorClient identifier, only holds what a source returns.
+printf 'package client\n\nimport (\n\t"context"\n\n\tconnectorv1 "op.test/internal/proto/activediq/connector/v1"\n)\n\ntype Source interface {\n\tConnector(ctx context.Context) (connectorv1.ConnectorClient, error)\n}\n' >"$opt/internal/directory/client/c.go"
+rm -f "$opt/internal/modules/a/a.go"
+mkdir -p "$opt/cmd/server/internal/proto/evil"
+printf 'package evil\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(s client.Source) {\n\tcc, _ := s.Connector(context.Background())\n\t_, _ = cc.Apply(context.Background(), nil)\n}\n' >"$opt/cmd/server/internal/proto/evil/e.go"
+must_fail_with "fitness-operation O2 on Apply under a nested cmd/*/internal/proto directory" 'cmd/server/internal/proto/evil/e.go:11: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+rm -rf "$opt/cmd"
 rm -rf "$opt/internal/directory"
 rm -rf "$opt/internal/modules"
 must_pass "fitness-operation O9 on the repository itself" "$opbin" -root "$root"

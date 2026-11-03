@@ -20,6 +20,7 @@
 package connwrite
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
@@ -46,26 +47,26 @@ var Analyzer = &analysis.Analyzer{
 	Run:  run,
 }
 
-// rel maps a package path to its path below the module's internal root ("" when it has none).
-func rel(path string) string {
+// rel maps a package path to its path below the module root ("" when it is outside the module). It is
+// computed against the module path, never by searching for "/internal/": a nested internal directory
+// (cmd/server/internal/proto/...) is idiomatic Go and must not be mistaken for the top-level one.
+func rel(mod, path string) string {
 	path = strings.TrimSuffix(path, "_test")
-	if strings.HasPrefix(path, "internal/") {
-		return path
+	if mod == "" || !strings.HasPrefix(path, mod+"/") {
+		return ""
 	}
-	if i := strings.Index(path, "/internal/"); i >= 0 {
-		return path[i+1:]
-	}
-	return ""
+	return strings.TrimPrefix(path, mod+"/")
 }
 
 func under(r, dir string) bool { return r == dir || strings.HasPrefix(r, dir+"/") }
 
-func pathIs(p *types.Package, suffix string) bool {
-	return p != nil && (p.Path() == suffix || strings.HasSuffix(p.Path(), "/"+suffix))
+// pathIs reports whether p is the package at the module-root-relative path want.
+func pathIs(mod string, p *types.Package, want string) bool {
+	return p != nil && rel(mod, p.Path()) == want
 }
 
 // isGenWrite reports the signature of the generated client's Plan or Apply.
-func isGenWrite(name string, sig *types.Signature) bool {
+func isGenWrite(mod, name string, sig *types.Signature) bool {
 	want := map[string]string{"Plan": "PlanRequest", "Apply": "ApplyRequest"}[name]
 	if want == "" || !sig.Variadic() || sig.Params().Len() != 3 {
 		return false
@@ -75,10 +76,13 @@ func isGenWrite(name string, sig *types.Signature) bool {
 		return false
 	}
 	n, ok := types.Unalias(p.Elem()).(*types.Named)
-	return ok && n.Obj().Name() == want && pathIs(n.Obj().Pkg(), connectorPkg)
+	return ok && n.Obj().Name() == want && pathIs(mod, n.Obj().Pkg(), connectorPkg)
 }
 
-type exposer struct{ memo map[types.Type]bool }
+type exposer struct {
+	mod  string
+	memo map[types.Type]bool
+}
 
 // exposes reports whether t carries the generated client's write RPCs.
 func (e *exposer) exposes(t types.Type) bool {
@@ -98,7 +102,7 @@ func (e *exposer) exposes(t types.Type) bool {
 func (e *exposer) compute(t types.Type) bool {
 	switch x := t.(type) {
 	case *types.Pointer:
-		return e.exposes(x.Elem()) || hasWriteMethods(t)
+		return e.exposes(x.Elem()) || e.hasWriteMethods(t)
 	case *types.Slice:
 		return e.exposes(x.Elem())
 	case *types.Array:
@@ -112,7 +116,7 @@ func (e *exposer) compute(t types.Type) bool {
 	case *types.TypeParam:
 		return e.exposes(x.Constraint())
 	case *types.Named, *types.Interface, *types.Struct:
-		if hasWriteMethods(t) || hasWriteMethods(types.NewPointer(t)) {
+		if e.hasWriteMethods(t) || e.hasWriteMethods(types.NewPointer(t)) {
 			return true
 		}
 		if n, ok := t.(*types.Named); ok {
@@ -135,7 +139,7 @@ func (e *exposer) tuple(t *types.Tuple) bool {
 	return false
 }
 
-func hasWriteMethods(t types.Type) bool {
+func (e *exposer) hasWriteMethods(t types.Type) bool {
 	if _, isIface := t.Underlying().(*types.Interface); !isIface {
 		if _, isPtr := t.(*types.Pointer); isPtr {
 			if _, ptrToIface := t.(*types.Pointer).Elem().Underlying().(*types.Interface); ptrToIface {
@@ -149,7 +153,7 @@ func hasWriteMethods(t types.Type) bool {
 		if !ok {
 			continue
 		}
-		if sig, ok := fn.Type().(*types.Signature); ok && isGenWrite(fn.Name(), sig) {
+		if sig, ok := fn.Type().(*types.Signature); ok && isGenWrite(e.mod, fn.Name(), sig) {
 			return true
 		}
 	}
@@ -159,12 +163,18 @@ func hasWriteMethods(t types.Type) bool {
 func isTestFile(name string) bool { return strings.HasSuffix(name, "_test.go") }
 
 func run(pass *analysis.Pass) (any, error) {
-	r := rel(pass.Pkg.Path())
+	// Fail closed: without the module path nothing can be placed, and every exemption would be lost
+	// or, worse, mis-granted.
+	if pass.Module == nil || pass.Module.Path == "" {
+		return nil, fmt.Errorf("connwrite: no module path for package %s; cannot place it in the tree", pass.Pkg.Path())
+	}
+	mod := pass.Module.Path
+	r := rel(mod, pass.Pkg.Path())
 	if under(r, protoDir) {
 		return nil, nil
 	}
 	inClient := under(r, clientDir)
-	e := &exposer{memo: map[types.Type]bool{}}
+	e := &exposer{mod: mod, memo: map[types.Type]bool{}}
 	info := pass.TypesInfo
 
 	// exempt: test files of the roots that drive a fake connector, as the syntactic half does.
@@ -251,10 +261,10 @@ func run(pass *analysis.Pass) (any, error) {
 				if !ok {
 					return true
 				}
-				if sig, ok := fn.Type().(*types.Signature); !ok || !isGenWrite(fn.Name(), sig) {
+				if sig, ok := fn.Type().(*types.Signature); !ok || !isGenWrite(mod, fn.Name(), sig) {
 					return true
 				}
-				if inClient && (isTestFile(fname) || hasClearance(info, d)) {
+				if inClient && (isTestFile(fname) || hasClearance(mod, info, d)) {
 					return true
 				}
 				report(se.Sel.Pos(), "the generated connector-contract client's "+fn.Name()+" write RPC is used outside a function of internal/directory/client that takes a step.Clearance; write RPCs go through client.Write")
@@ -276,7 +286,7 @@ func unnamedExposes(e *exposer, t *types.Tuple) bool {
 
 // hasClearance reports whether d is a function declaration with a step.Clearance parameter, judged by
 // the parameter's resolved type, not by how it is spelled.
-func hasClearance(info *types.Info, d ast.Decl) bool {
+func hasClearance(mod string, info *types.Info, d ast.Decl) bool {
 	fd, ok := d.(*ast.FuncDecl)
 	if !ok || fd.Type.Params == nil {
 		return false
@@ -289,7 +299,7 @@ func hasClearance(info *types.Info, d ast.Decl) bool {
 		if ptr, ok := types.Unalias(t).(*types.Pointer); ok {
 			t = ptr.Elem()
 		}
-		if n, ok := types.Unalias(t).(*types.Named); ok && n.Obj().Name() == "Clearance" && pathIs(n.Obj().Pkg(), stepPkg) {
+		if n, ok := types.Unalias(t).(*types.Named); ok && n.Obj().Name() == "Clearance" && pathIs(mod, n.Obj().Pkg(), stepPkg) {
 			return true
 		}
 	}

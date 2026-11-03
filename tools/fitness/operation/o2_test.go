@@ -224,6 +224,41 @@ func TestO2TypedViolations(t *testing.T) {
 	}
 }
 
+// A nested internal directory (idiomatic under cmd/) is not the top-level one: the package's place is
+// its path below the module root, never what follows the first "/internal/" (security review of T-1408).
+func TestO2TypedNestedInternalDirsGetNoExemption(t *testing.T) {
+	src := "package client\n" + connImport + ctxImport + "type Source interface{ Connector(ctx context.Context) (connectorv1.ConnectorClient, error) }\n"
+	cases := map[string]struct {
+		files map[string]string
+		file  string
+		line  int
+		want  string
+	}{
+		"Apply on an inferred variable under cmd/x/internal/proto": {
+			map[string]string{clientPath: src, "cmd/x/internal/proto/evil/e.go": "package evil\n" + clientImport + ctxImport + "func f(s client.Source) { cc, _ := s.Connector(context.Background()); cc.Apply(context.Background(), nil) }\n"},
+			"cmd/x/internal/proto/evil/e.go", 4, "Apply write RPC"},
+		"the client held under cmd/x/internal/proto": {
+			map[string]string{clientPath: src, "cmd/x/internal/proto/evil/e.go": "package evil\n" + clientImport + ctxImport + "func f(s client.Source) { cc, _ := s.Connector(context.Background()); _ = cc }\n"},
+			"cmd/x/internal/proto/evil/e.go", 4, "variable, field or parameter cc"},
+		"unexported holder and Apply with a Clearance under cmd/x/internal/directory/client": {
+			map[string]string{"cmd/x/internal/directory/client/y/y.go": "package y\n" + connImport + ctxImport + stepImport +
+				"type h struct{ c connectorv1.ConnectorClient }\nfunc (x h) send(clr step.Clearance) { x.c.Apply(context.Background(), nil) }\n"},
+			"cmd/x/internal/directory/client/y/y.go", 5, "variable, field or parameter c"},
+		"Apply with a Clearance under cmd/x/internal/directory/client": {
+			map[string]string{"cmd/x/internal/directory/client/y/y.go": "package y\n" + connImport + ctxImport + stepImport +
+				"func send(c interface{ Apply(context.Context, *connectorv1.ApplyRequest, ...connectorv1.CallOption) (*connectorv1.ApplyResponse, error) }, clr step.Clearance) { c.Apply(context.Background(), nil) }\n"},
+			"cmd/x/internal/directory/client/y/y.go", 5, "Apply write RPC"},
+		"Clearance of a look-alike step package elsewhere does not open the send path": {
+			map[string]string{
+				"internal/modules/fakestep/step/s.go": "package step\ntype Clearance struct{}\n",
+				clientPath: "package client\n" + connImport + ctxImport + "import step \"" + mod + "/internal/modules/fakestep/step\"\ntype t struct{ c connectorv1.ConnectorClient }\nfunc (x t) send(clr step.Clearance) { x.c.Apply(context.Background(), nil) }\n"},
+			clientPath, 6, "Apply write RPC"},
+	}
+	for name, c := range cases {
+		wantAt(t, name, typedO2(t, c.files), c.file, c.line, c.want)
+	}
+}
+
 func TestO2TypedAllowed(t *testing.T) {
 	vs := typedO2(t, map[string]string{
 		clientPath: "package client\n" + connImport + ctxImport + stepImport +
