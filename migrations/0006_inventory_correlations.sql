@@ -13,7 +13,7 @@
 -- apart (it expects the named key to be the one violated), so the writer resolves both through the
 -- connection registry, which never deletes a row (DM-10 L9). tier0_designations, with one, keeps its key.
 
--- write-class: correlations system
+-- write-class: correlations config
 CREATE TABLE public.correlations (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

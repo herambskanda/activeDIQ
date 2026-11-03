@@ -62,6 +62,7 @@ lab-shell: ## Shell inside the DC container (samba-tool, ldapsearch…)
 lab-test-unit: ## Seed-generator unit tests (no Docker needed)
 	python3 -m unittest discover -s $(LAB_DIR)/tests -p 'test_*.py' -v
 	$(LAB_DIR)/tests/test_schema_seed.sh && $(LAB_DIR)/tests/test_schema_seed.sh --selftest
+	python3 -I -m unittest discover -s $(LAB_DIR)/proxmox/tests -p 'test_*.py'
 
 lab-test-live: ## Verify the running lab, then prove lab-reset returns it to the seeded state
 	$(LAB_DIR)/tests/verify.sh
