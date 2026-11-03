@@ -20,6 +20,7 @@ factory/bin/factory up          # start board + dispatcher (detached)  → http:
 factory/bin/factory status      # terminal summary
 factory/bin/factory pause       # stop launching new work (running workers finish)
 factory/bin/factory down        # stop dispatcher + board; running workers asked to hand off
+factory/bin/factory restart     # reload dispatcher + board on the code on disk; workers keep running and are adopted
 factory/bin/factory doctor      # validate config, state, agents, model policy
 ```
 
@@ -63,7 +64,7 @@ Timestamps are ISO-8601 UTC strings.
 state/
   counters.json                      {"T":12,"D":3,"A":1,"F":0,"E":4,"R":57}
   control.json                       {"paused":false,"reason":null,"by":null,"ts":"…"}
-  dispatcher.json                    {"pid":123,"started":"…","heartbeat":"…","active":["R-…"],"last_action":"…","backoff_until":null,"runs_today":{"date":"2026-10-02","count":7}}
+  dispatcher.json                    {"pid":123,"started":"…","heartbeat":"…","code_sha":"<main commit loaded>","active":["R-…"],"last_action":"…","backoff_until":null,"runs_today":{"date":"2026-10-02","count":7}}
   board.json                         {"pid":124,"port":4747,"started":"…"}
   tickets/T-0001.json
   epics/E-001.json
@@ -314,10 +315,32 @@ claude -p "<rendered templates/worker-prompt.md>" \
   `main` + the branch in a scratch worktree and runs `pre_merge.argv` (`make -k ci`). Green merges.
   Red while `main` is green is refused. Red while `main` is also red is refused only if the result
   has a finding `main` does not (multiset of check-and-message keys, line numbers removed; a newly
-  red make target counts; baseline cached per `main` commit). A refused ticket is reopened for its
-  owner with the findings and log paths (`state/premerge/`). A gate that cannot judge (timeout,
-  worktree error) merges nothing and retries after 10 minutes. One ticket at a time goes through the
-  gate, in the background. Before the full run a cheap `pre_merge.numbering` check (the migration-number
+  red make target counts). **The baseline (T-1378)** is not run per `main` commit: the gate reuses a
+  cached run on the same tree, or on a tree that differs only in files under `pre_merge.baseline_reuse_roots`
+  (default `knowledge`, `.claude`, `factory`, `garage`) that no gate file mentions as a path (computed from the
+  tree by `readSurface`, never listed by hand; the gate summary says `baseline: reused the cached run …`);
+  a gate that passes caches its merge-result run as the baseline of the next `main`; a fresh baseline that
+  times out falls back to the nearest cached run, which may clear a merge result but never refuse one
+  (otherwise the gate cannot judge and retries). A refused ticket is reopened for its
+  owner with the findings and log paths (`state/premerge/`). Every run gets its own scratch tree and
+  log, named with a per-run tag, so a dry run never touches the dispatcher's run. A run whose tree
+  was removed or replaced while it ran is not a verdict and is not cached (T-0696). A gate that cannot judge (timeout,
+  worktree error, vanished tree) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
+  gate in the background, taken in **queue order** (T-1296, `lib/mergequeue.mjs`): first the done
+  tickets that a `blocked` or `ready` ticket lists in `depends_on`, then by priority (P0 first), then
+  the earliest time the ticket reached `done`, then ticket ID. **Merge train (T-1297):** one gate run
+  judges up to `pre_merge.train_size` (default 4; 1 = one ticket per run) tickets from the front of that
+  queue together: they are merged one after another onto `main` in the scratch worktree and the numbering
+  check and `make -k ci` run once on the combined result. Green merges each in queue order into `main`
+  with its own `git merge --no-ff` commit, with the same events and cleanup as a single merge. Refused
+  (a finding `main` lacks, a numbering clash, a green `main` gone red): the train is split in halves, the
+  first half is gated and merged, then the second is gated on the new `main`, down to a single ticket,
+  so only the ticket that adds the finding is reopened with it and the others merge (about 2·log2(N)
+  extra runs in the worst case). A member that conflicts in text with an earlier member of the train is
+  left out, stays `done` and waits for the next train (it is not reopened; if it then conflicts with
+  `main` itself it is reopened as before). Embargo hold and the could-not-judge retry apply per ticket.
+  The gate judges exactly what it judged before; only how many tickets share a run changed. The dispatcher records the gate in flight in `state/dispatcher.json`
+  (`merge_gate: {ticket, tickets, started_at}`, cleared on finish and on dispatcher start). Before the full run a cheap `pre_merge.numbering` check (the migration-number
   test, T-1067) runs on the same merge result and refuses with the free number to renumber to. `factory premerge ID [-- CMD…]` is the dry run. Details:
   `knowledge/development/standards/ci-gates.md`.
 - When a code-bearing ticket reaches `done` (and passes the gate), the dispatcher merges with
@@ -330,6 +353,15 @@ claude -p "<rendered templates/worker-prompt.md>" \
   hold and cleanup. A conflict reopens the ticket for its owner with a note naming the branch (and,
   for a type that works in the main checkout, how to resolve it in a temporary worktree). A `done`
   ticket with no branch, or a branch with nothing ahead of `main`, is left as it is.
+- **A dependency is met only when its work is on `main` (T-1266).** `done` comes before the merge
+  (the gate takes one ticket at a time, and an embargoed ticket is held), so a ready ticket whose
+  dependency is `done` but whose `factory/<id>` branch has commits not on `main` is not claimed:
+  a dependent started now would merge a `main` without the fix and hit the same wall. The
+  dispatcher asks git (`rev-list main..factory/<dep>`, only for the done dependencies of ready
+  tickets) on every fill and again in `claimTicket`; the board shows the ticket as "waiting on merge
+  of T-…" (`waiting_on_merge` in the ticket summary, a card tag and a drawer section). A `done`
+  dependency with no branch, or a branch with nothing ahead of `main`, is met as before. The
+  pre-merge gate itself is untouched. Test: `factory/test/dep-merge.test.mjs`.
 - If the repository has no commits, or `isolation` is `none`, workers run in the main checkout and
   `max_parallel` is forced to 1 for code-bearing types.
 
@@ -354,13 +386,19 @@ header `X-Factory-Board: 1` (blocks cross-site form posts).
 | POST | `/api/feedback` | `{"target":"…","text":"…","sentiment":"…"}` |
 | POST | `/api/control` | `{"paused":true,"reason":"…"}` |
 
-`/api/state` payload: `{generated, product, control, dispatcher:{alive, heartbeat, active, backoff_until, runs_today}, milestones, epics, tickets:[summaries], decisions, actions, feedback, runs:{active, recent(20)}, sessions:[live], events:[last 150], library:[{path,title,group,updated}], digest:{date, path}}`.
+`/api/state` payload: `{generated, product, control, dispatcher:{alive, heartbeat, active, backoff_until, runs_today}, merge_queue:{waiting:[ids in gate order], in_gate:{id, started_at}|null, last_merged_at}, milestones, epics, tickets:[summaries], decisions, actions, feedback, runs:{active, recent(20)}, sessions:[live], events:[last 150], library:[{path,title,group,updated}], digest:{date, path}}`.
 
 The UI is a single page, vanilla JS, no build step, using `tokens.css` (the skenzeriq design
 system). Tabs: **Overview** (needs you · running now · milestone progress · today's digest ·
 activity), **Board** (kanban by status, filter by epic/owner), **Decisions** (pending, answered,
-factory notices), **Library** (knowledge base reader), **Demos**, and **Agents** (below). It polls `/api/state` every
+factory notices), **Library** (knowledge base reader), **Demos**, and **Agents** (below). The header
+shows the merge queue: "Merge queue: N waiting · in gate T-… · last merge Xh ago". It polls `/api/state` every
 `board.poll_ms` and never clobbers a form the CEO is typing in.
+
+A done ticket whose branch is already an ancestor of main (merged by hand) never takes a gate slot: at the start of each merge
+pass the dispatcher records it as merged (`links.merged`, `links.merge_commit` = the merge commit that brought it in, or the tip if
+fast-forwarded), removes its worktree and branch, logs `… already on main … without a gate run`, and drops it from the queue
+(T-1353). Test: `factory/test/mergetrain.test.mjs`.
 
 ### Agents tab (`/api/graph`, `lib/graph.mjs`, `public/agents.js`)
 
@@ -446,6 +484,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 | `api_unreachable_backoff_minutes` | 5 | dispatch pause once `api_unreachable_threshold` consecutive runs hit connectivity errors |
 | `api_unreachable_threshold` | 3 | consecutive connectivity failures (any tickets) that count as an outage |
 | `blocked_retriage_hours` | 6 | a blocked ticket is offered to triage again after this long |
+| `auto_reload` | true | `false` switches off the automatic reload when factory code lands on `main` (`factory restart` still works) |
 
 ### Fields and files beyond the reference above
 
@@ -453,7 +492,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 - **Run:** `continuation`, `snapshot` (status, stage role and latest handoff at launch: how "no progress" is judged), `kill_reason` (`timeout` or `shutdown`), `error`; stderr is kept in `state/runs/<id>.err` next to `<id>.log`.
 - **State:** `state/board.json` and `state/dispatcher.json` hold pids; `state/board.log` and `state/dispatcher.log` capture the detached processes; `state/signals/rate-limit.json` is written by the `StopFailure` hook and read by the dispatcher.
 - **Environment:** `FACTORY_HOME`, `FACTORY_CLAUDE_BIN` (the executable to launch, default `claude`), `FACTORY_DEBUG=1` (stack traces).
-- **API:** `/api/state` also carries `company` and `dispatcher.pid`; ticket summaries include `summary`, `created`, `parity_refs`, `effort_override`, `held`, `stage_role` and `last_note`.
+- **API:** `/api/state` also carries `company` and `dispatcher.pid`; ticket summaries include `waiting_on_merge` (ids of done dependencies not yet on main, ready tickets only), `summary`, `created`, `parity_refs`, `effort_override`, `held`, `stage_role` and `last_note`.
 
 ### Where the runtime deliberately differs from, or extends, the reference
 
@@ -465,6 +504,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 - **Rate limits** are detected from an error result or stderr (`rate limit`, `usage limit`, `overloaded`, `429`), or from a `StopFailure` signal for the run's session; the signal also backs the dispatcher off when it comes from the CEO's own session (the limit is account-wide). No attempt is counted.
 - **Connectivity errors** (`EAI_AGAIN`, `ENOTFOUND`, `ECONNRESET`, `ETIMEDOUT`, "Can't reach the API server") in an error result or stderr are an outage on our side: no attempt, no escalation, no stage reassignment; the dispatcher backs off `connectivity_backoff_minutes` and the ticket is retried. The third consecutive one (across tickets) pauses dispatching for `api_unreachable_backoff_minutes` and logs one `api unreachable` event. Any run that ends otherwise resets the streak. A usage limit takes precedence.
 - **Spawn failure** (`claude` missing) backs off `launch_failure_backoff_minutes` and counts no attempt.
+- **Self-reload (T-1336).** A daemon dispatcher remembers the `main` commit whose code it loaded (`code_sha` in `dispatcher.json`). At the start of each tick, if `main` moved and the diff touches `factory/lib`, `factory/bin` or `factory/board`, it reloads — a merge it made itself and a hand merge look the same. Commits that touch only `knowledge/`, `factory/test`, product code etc. move the baseline and reload nothing. The safe point is between ticks with no merge gate in flight (a gate's `make` belongs to this process, so the reload waits for it; an automatic reload never aborts one). The reload: stop stale `make` processes under `worktree_root/.premerge`; start the successor detached (`FACTORY_REPLACES=<pid>`), which loads the new code, announces itself (`successor_ready` in `dispatcher.json`) and waits for the old pid to be gone; restart the board (SIGTERM, then a detached `factory board --port <same port>`), so new state fields such as `merge_queue` show; log one `reload: … main <old12> → <new12> …` event; exit **without signalling workers or running the shutdown** — the successor's first tick adopts every `running` run. A successor that does not come up within 20 s is killed, the old dispatcher keeps running and logs `reload to <sha> failed …` once (it does not retry that commit; fix `main`, then `factory restart`). `factory restart` signals the dispatcher with SIGUSR2 and takes the same path immediately, aborting a gate in flight (its tickets stay `done` and are re-gated). A dispatcher older than this feature has no SIGUSR2 handler and dies from the signal; `restart` then starts a fresh one (workers are unaffected and adopted). A dispatcher also sweeps stale `.premerge` processes at start (Linux, via `/proc`). A foreground `factory run` that reloads leaves the terminal and continues detached; `run --once` never reloads.
 - **`factory run --once`** performs one tick and returns; workers it started keep running and are adopted by the next dispatcher.
 - **`factory feedback triage --done`** closes feedback that needs no ticket.
 - **Repository without commits, or `isolation: "none"`:** one code ticket at a time runs in the main checkout; other tickets run in parallel.
