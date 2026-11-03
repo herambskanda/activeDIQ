@@ -24,6 +24,11 @@ github.com/skenzeriq/activediq/internal/platform/agent
 github.com/skenzeriq/activediq/internal/platform/agentpolicy
 github.com/skenzeriq/activediq/internal/platform/fleet
 github.com/skenzeriq/activediq/internal/platform/fleet/dial
+# ownerfile (T-1315): fleet/dial's state directory now goes through ownerfile.Dir instead of its own copy
+# of the owner-only code. Reaches only files under the directory it is handed (open, read, create, sync,
+# rename, unlink; owner and DACL checks through x/sys/windows and x/sys/unix, both already allowed); no
+# socket, no listener, no child process, no network, no plugin, no new transitive package.
+github.com/skenzeriq/activediq/internal/platform/ownerfile
 # tunnelclient (T-0665): the dial-out client extracted from compose/agent. Imports only fleet, fleet/dial, the fleet proto and grpc (all already allowed); outbound mTLS dial only, no listener, no process, no file access.
 github.com/skenzeriq/activediq/internal/platform/fleet/tunnelclient
 github.com/skenzeriq/activediq/internal/platform/tenant
