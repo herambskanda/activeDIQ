@@ -97,7 +97,7 @@ func (v Violation) String() string { return v.Clause + ": " + v.Detail }
 // It then appends the run to the coverage file; failing to do so also fails t.
 func Contract(t testing.TB, action operation.Action, fx Fixture) {
 	t.Helper()
-	rec, vs := check(action, fx)
+	rec, vs := check(t, action, fx)
 	rec.Test = t.Name()
 	for _, v := range vs {
 		t.Errorf("operationtest.Contract %q: clause %s (ADR-0005 O7)", rec.Action, v)
@@ -113,12 +113,13 @@ func Contract(t testing.TB, action operation.Action, fx Fixture) {
 
 // Check runs the clauses and returns the violations without failing a test, so a test of the
 // harness itself can assert that a broken Action is caught.
-func Check(action operation.Action, fx Fixture) []Violation {
-	_, vs := check(action, fx)
+func Check(t testing.TB, action operation.Action, fx Fixture) []Violation {
+	t.Helper()
+	_, vs := check(t, action, fx)
 	return vs
 }
 
-func check(action operation.Action, fx Fixture) (Record, []Violation) {
+func check(t testing.TB, action operation.Action, fx Fixture) (Record, []Violation) {
 	rec := Record{At: time.Now().UTC()}
 	if action == nil {
 		return rec, []Violation{{ClauseDescriptor, "nil action"}}
@@ -144,7 +145,7 @@ func check(action operation.Action, fx Fixture) (Record, []Violation) {
 		actor = authority.Chain{Requester: authority.Principal{ID: "contract-human", Kind: authority.Human}}
 	}
 	res, runErr := r.RunStore(context.Background(), operation.Request{
-		Tenant: tenanttest.NewID(), Actor: actor, Action: d.ID, Input: fx.Input, Pins: fx.Pins,
+		Tenant: tenanttest.NewID(t), Actor: actor, Action: d.ID, Input: fx.Input, Pins: fx.Pins,
 		Operation: step.OperationID("contract-" + string(d.ID)),
 	})
 	rec.Steps = len(res.Steps)

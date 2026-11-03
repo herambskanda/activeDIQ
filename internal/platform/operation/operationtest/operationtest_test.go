@@ -110,7 +110,7 @@ func clauses(vs []Violation) []string {
 
 func TestContractPassesACorrectAction(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
-	vs := Check(a, fx)
+	vs := Check(t, a, fx)
 	if len(vs) != 0 {
 		t.Fatalf("a correct Action was refused: %v", vs)
 	}
@@ -132,7 +132,7 @@ func TestPlanRunsReadOnlyWithZeroWrites(t *testing.T) {
 		_, err := pc.Tx.Exec(context.Background(), "INSERT INTO t VALUES (1)")
 		sawReadOnly = err != nil && strings.Contains(err.Error(), "read-only transaction")
 	}}
-	_ = Check(plan, fx)
+	_ = Check(t, plan, fx)
 	if !sawReadOnly {
 		t.Fatal("a write in Plan's transaction was not refused as read-only")
 	}
@@ -153,7 +153,7 @@ func TestWritingPlanFailsNamingTheClause(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a, fx := newFixture("test.thing.modify")
 			a.planWritesSQL, a.planSwallows = true, swallow
-			vs := Check(a, fx)
+			vs := Check(t, a, fx)
 			if !slices.Contains(clauses(vs), ClausePlanReadOnly) {
 				t.Fatalf("a writing Plan passed Contract: %v", vs)
 			}
@@ -171,7 +171,7 @@ func TestPlanWritingToTheFakeDirectoryFails(t *testing.T) {
 		var none step.Step
 		_ = a.dir.Write(none, Mutation{GUID: guid, Attribute: "description", Op: Replace, Values: []string{"x"}})
 	}
-	vs := Check(a, fx)
+	vs := Check(t, a, fx)
 	if !slices.Contains(clauses(vs), ClausePlanReadOnly) {
 		t.Fatalf("a Plan that wrote to the directory passed: %v", vs)
 	}
@@ -182,7 +182,7 @@ func TestPlanWritingToTheFakeDirectoryFails(t *testing.T) {
 
 func TestApplyTwiceWithOneKeyChangesStateOnce(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
-	if vs := Check(a, fx); len(vs) != 0 {
+	if vs := Check(t, a, fx); len(vs) != 0 {
 		t.Fatal(vs)
 	}
 	if fx.Directory.Writes() != 2 || fx.Directory.Changes() != 1 {
@@ -193,7 +193,7 @@ func TestApplyTwiceWithOneKeyChangesStateOnce(t *testing.T) {
 func TestNonIdempotentActionFails(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
 	a.nonIdempotent = true
-	vs := Check(a, fx)
+	vs := Check(t, a, fx)
 	if !slices.Contains(clauses(vs), ClauseApplyIdempotent) {
 		t.Fatalf("a non-idempotent Action passed: %v", vs)
 	}
@@ -207,7 +207,7 @@ func TestStoreWriteOnSecondApplyNeedsState(t *testing.T) {
 		return err
 	}
 	act := &sqlAction{apply: apply}
-	if vs := Check(act, Fixture{Input: operation.Input(`{}`)}); !slices.Contains(clauses(vs), ClauseApplyIdempotent) {
+	if vs := Check(t, act, Fixture{Input: operation.Input(`{}`)}); !slices.Contains(clauses(vs), ClauseApplyIdempotent) {
 		t.Fatalf("a repeated store write with no State passed: %v", vs)
 	}
 	state = 0
@@ -219,7 +219,7 @@ func TestStoreWriteOnSecondApplyNeedsState(t *testing.T) {
 		}
 		return err
 	}}
-	if vs := Check(idem, Fixture{Input: operation.Input(`{}`), State: func() any { return state }}); len(vs) != 0 {
+	if vs := Check(t, idem, Fixture{Input: operation.Input(`{}`), State: func() any { return state }}); len(vs) != 0 {
 		t.Fatalf("an idempotent store Action with State was refused: %v", vs)
 	}
 }
@@ -249,7 +249,7 @@ func (*sqlAction) Inverse(operation.StepPlan, operation.Outcome) (operation.Inpu
 func TestVerifyMustFailWhenTheWriteIsDropped(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
 	a.verifyBlind = true
-	vs := Check(a, fx)
+	vs := Check(t, a, fx)
 	if !slices.Contains(clauses(vs), ClauseVerifyAfterDrop) {
 		t.Fatalf("a Verify that passes after the write was dropped passed Contract: %v", vs)
 	}
@@ -261,7 +261,7 @@ func TestVerifyMustFailWhenTheWriteIsDropped(t *testing.T) {
 
 func TestVerifyThatReadsTheDirectoryPasses(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
-	rec, vs := check(a, fx)
+	rec, vs := check(t, a, fx)
 	if len(vs) != 0 {
 		t.Fatal(vs)
 	}
@@ -275,7 +275,7 @@ func TestFailedVerifyOfACorrectWriteIsReported(t *testing.T) {
 	a.nonIdempotent = false
 	fx.Directory.Seed(guid, "description", "old")
 	bad := &spyVerify{Action: a}
-	vs := Check(bad, fx)
+	vs := Check(t, bad, fx)
 	if !slices.Contains(clauses(vs), ClauseRun) {
 		t.Fatalf("a Verify failing a correct write was not reported: %v", vs)
 	}
@@ -294,7 +294,7 @@ func TestModuletestActionRunsGreen(t *testing.T) {
 func TestInvalidDescriptorIsAViolation(t *testing.T) {
 	bad := &sqlAction{}
 	bad2 := &badDescriptor{sqlAction: bad}
-	vs := Check(bad2, Fixture{})
+	vs := Check(t, bad2, Fixture{})
 	if !slices.Contains(clauses(vs), ClauseDescriptor) {
 		t.Fatalf("an Action with no valid Descriptor passed: %v", vs)
 	}
@@ -339,7 +339,7 @@ func TestFailingRunIsRecordedAsFailed(t *testing.T) {
 	t.Setenv(CoverageEnv, path)
 	a, fx := newFixture("test.thing.modify")
 	a.nonIdempotent = true
-	rec, vs := check(a, fx)
+	rec, vs := check(t, a, fx)
 	if err := appendRecord(path, rec); err != nil || len(vs) == 0 {
 		t.Fatalf("err=%v violations=%v", err, vs)
 	}
@@ -441,7 +441,7 @@ func TestPlanStatementsThatMustFailTheClause(t *testing.T) {
 	} {
 		a, fx := newFixture("test.thing.modify")
 		a.planWritesSQL, a.planSwallows, a.planSQL = true, true, sql
-		got := slices.Contains(clauses(Check(a, fx)), ClausePlanReadOnly)
+		got := slices.Contains(clauses(Check(t, a, fx)), ClausePlanReadOnly)
 		if got != wantViolation {
 			t.Errorf("Plan sending %q: plan-read-only violation = %v, want %v", sql, got, wantViolation)
 		}

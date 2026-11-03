@@ -171,6 +171,7 @@ func IsTest(file string) bool { return strings.HasSuffix(file, "_test.go") }
 var TestSupport = []string{
 	"internal/platform/store/storetest",
 	"internal/platform/operation/operationtest", // the Contract kit: fake store, fake directory and an allow-all authoriser; tests only (T-1222)
+	"internal/platform/tenant/tenanttest",       // creates tenants and mints tenant IDs for tests; a product import would bypass ADR-0002 rule 5 (T-1222)
 	"internal/platform/jobs/jobstest",           // fleet-wide claim lapse: a product import could double-run jobs
 	"internal/testlab",                          // lab environment discovery (.lab.env, LDAPS dial to the lab DC); imported by *_test.go and storetest only (T-0800)
 	"internal/testlab/harnessdocker",            // docker run/rm/reap of harness Postgres containers, fixed argv (T-0377, T-0800)
