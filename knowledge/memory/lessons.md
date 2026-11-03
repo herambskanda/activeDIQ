@@ -1,6 +1,6 @@
 ---
 title: Lessons learned
-updated: 2026-11-02
+updated: 2026-11-03
 budget: 120 lines
 ---
 
@@ -9,6 +9,7 @@ budget: 120 lines
 Gotchas that cost time. Newest first. `date · lesson · source`.
 
 ## Tooling and Claude Code (verified on 2.1.287)
+- 2026-11-03 · The merge gate's P7 lists every local branch (`git for-each-ref refs/heads`), but its baseline is cached per tree. A branch created after the baseline therefore looks like a finding every candidate 'adds'. Two names refused T-0765 and would have refused the whole queue. One of them, `T-1416-fix-boot-test`, also left T-1416's fix at done but never merged, because the dispatcher merges only `factory/<id>`. → Any session that commits work: branch only as `factory/T-NNNN`. In triage, run `git branch --list | grep -v factory/T-` against the gate's 'new' P7 keys. Factory sessions may not rename shared branches (classifier), so this is a CEO action (A-0039). Gate fix: T-1422. (T-1420)
 - 2026-11-02 · After 18:00 local, `node --test factory/test/*.test.mjs` fails 14-17 dispatcher/cli tests on a clean main: live-clock test factories reach `digest_hour_local` and an auto-created digest meta launches first. A scoped dry run then refuses factory code for an unrelated reason → pin `TZ=Etc/GMT+8` (local hour < 18) for the node suite and say so; fix T-1387. (T-1385)
 - 2026-11-02 · The merge gate caches the main baseline per full main sha and runs it after the head run, so every memory/docs-only commit to main forces a fresh `make -k ci` baseline (>120 min at load 19-28). The M1-critical train T-0850/T-0846/T-1245/T-1265 was refused on that timeout, not a finding. Fix T-1378; until then batch memory commits to main (T-1377).
 - 2026-11-02 · The pre-merge gate judges one ticket per `make -k ci` (40-75 min) in ticket-ID order, so it merges ~1 ticket/h while ~5/h reach done: no merge to main for 26 h and 41 done-unmerged, P0s queued behind P3s, dependents blocked on 'done but not on main'. → When a block says 'done but not merged', check the queue itself: `git log main --merges -3` and count done branches ahead of main. Fixes: T-1296 (order), T-1297 (merge train); notice D-0021. (T-1295)

@@ -9398,6 +9398,71 @@ func (v *ReportScheduleReassign) Validate(at jsontext.Pointer, errs *apitypes.Er
 	}
 }
 
+// ReportScheduleResume: The confirmation that resumes a schedule. confirmedExternal lists every external recipient of the schedule, classified now against the current allowed recipient domains (Data leaves your organisation); it must equal that set, and is an empty array when the schedule has none. It is how the owner, a new owner after a reassignment included, shows they saw who receives the data (T-0893 R5).
+type ReportScheduleResume struct {
+	ConfirmedExternal []string `json:"confirmedExternal"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportScheduleResume) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportScheduleResume{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "confirmedExternal":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.ConfirmedExternal); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportScheduleResume) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// confirmedExternal
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "confirmedExternal")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "confirmedExternal")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("confirmedExternal"), len(v.ConfirmedExternal), 0, 50, apitypes.CodeMaxItems)
+		for i := range v.ConfirmedExternal {
+			apitypes.CheckLen(errs, apitypes.InBody, apitypes.Index(at.AppendToken("confirmedExternal"), i), string(v.ConfirmedExternal[i]), 0, 254)
+			if !apitypes.CheckEmail(string(v.ConfirmedExternal[i])) {
+				errs.Add(apitypes.InBody, apitypes.Index(at.AppendToken("confirmedExternal"), i), apitypes.CodeFormat, "expected an e-mail address")
+			}
+		}
+	}
+}
+
 // ReportScheduleState: active fires on its recurrence; paused does not.
 type ReportScheduleState string
 
