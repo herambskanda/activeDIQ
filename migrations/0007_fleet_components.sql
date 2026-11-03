@@ -32,7 +32,7 @@ CREATE TABLE public.components (
 
 CREATE INDEX components_tenant_state ON public.components (tenant_id, state, created_at, id);
 
--- write-class: enrollment_tokens system
+-- write-class: enrollment_tokens config
 CREATE TABLE public.enrollment_tokens (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

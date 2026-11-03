@@ -62,7 +62,7 @@ CREATE TABLE public.authn_authority_challenges (
   CONSTRAINT authn_authority_challenges_proof CHECK ((kind = 'register') = (proof IS NOT NULL))
 );
 
--- write-class: authn_authority_approvals system
+-- write-class: authn_authority_approvals config
 CREATE TABLE public.authn_authority_approvals (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),
