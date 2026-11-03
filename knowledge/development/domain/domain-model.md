@@ -715,6 +715,18 @@ contract (show-deleted control `1.2.840.113556.1.4.417` with DirSync, an `object
 rather than `objectCategory`, and `isDeleted` requested) belongs to T-0018.
 **Lifecycle.** `initial_sync → incremental ⇄ resync_required`. It is `paused` while the connection
 is suspended.
+**Realised so far (T-1190).** `sync_cursors` (migration 0070, `-- write-class system`, forced RLS, no DELETE for the
+runtime role) is keyed `(tenant_id, connection_id, partition)`; `partition` is the NC's lower-case objectGUID or a Graph
+resource token such as `users`. `internal/directory/sync.Store` is its only writer and takes the caller's `store.Tx`, so
+the cursor commits with the inventory rows it covers (I1). The lease is `jobs.Lease` named `sync.cursor.<connection>.<partition>`
+(`sync.LeaseName`). `Claim` right after `jobs.AcquireLease` raises the stored `lease_fencing_token`; every other write
+(`Advance`, `CompleteFull`, `RequireResync`, `Position`) is a compare-and-set that refuses a lower token with `ErrFenced`
+(I2). The store cannot look at `platform_leases` (only `jobs` may name it), so a holder that has not yet been fenced
+by a `Claim` is stopped by its own `jobs.RenewLease` failing: renew before the commit that matters. The lifecycle is
+a Go matrix (`sync.CanTransition`) and the same matrix in a trigger; `paused` is entered by `PauseConnection`, and
+`ResumeConnection` always sets `resync_required` and drops the cookie. The cookie is `sync.Cookie`, which prints as a
+placeholder under every fmt verb, slog and JSON; the `Cursor` view returned by `Get`/`List` has no cookie field. The DirSync
+cookie itself is first used by the DirSync ticket; slice 2 of T-1188 uses `state` and `last_full_sync_at`.
 
 ### DM-20 Correlation · D · owner `directory/inventory`
 **Definition.** It asserts that an AD object and an Entra object are the same identity. Only a

@@ -22,7 +22,7 @@ import { blockedNote, runPreMergeGate } from './premerge.mjs';
 import { pollAdvisories } from './advisories.mjs';
 import { runDoctor } from './doctor.mjs';
 import { buildDigest, buildStatus } from './status.mjs';
-import { down, up } from './lifecycle.mjs';
+import { down, restart, up } from './lifecycle.mjs';
 import {
   formatDecision, formatDecisionList, formatDigest, formatDoctor, formatDryRun, formatStatus, formatTicket, formatTicketList, table,
 } from './format.mjs';
@@ -34,6 +34,7 @@ const BIN_PATH = path.join(FALLBACK_HOME, 'bin', 'factory');
 const USAGE = `usage: factory <command>
 
   up | down | status [--json] | pause [--reason R] | resume | doctor
+  restart                           reload the dispatcher and board on the code now on disk; running workers are kept and adopted
   board [--port N]                  run the board in the foreground
   run [--once] [--dry-run]          run the dispatcher in the foreground
   premerge ID [-- CMD ARGS…]        dry-run the pre-merge gate for a ticket's branch (changes nothing); CMD overrides dispatcher.pre_merge.argv
@@ -104,6 +105,13 @@ const COMMANDS = {
     c.out(`board       ${stopped.board ? `stopping (pid ${stopped.board})` : 'was not running'}`);
     c.out(`dispatcher  ${stopped.dispatcher ? `stopping (pid ${stopped.dispatcher}); running workers get up to 2 minutes to finish` : 'was not running'}`);
   } },
+  restart: { options: {}, run: async (c) => {
+    const r = await restart(c.ctx, BIN_PATH);
+    c.out(r.dispatcher
+      ? `dispatcher  restarted${r.legacy ? ' (the old one predates self-reload and was stopped by the signal)' : ''}: pid ${r.dispatcher.old} → ${r.dispatcher.pid}; running workers kept`
+      : 'dispatcher  was not running (factory up starts it)');
+    c.out(r.board ? `board       pid ${r.board.pid}  http://${c.ctx.config.board.host}:${r.board.port}` : 'board       was not running');
+  } },
   status: { options: {}, run: (c) => {
     const status = buildStatus(c.ctx);
     c.print(status, () => formatStatus(status, c.ctx.now().getTime()));
@@ -132,7 +140,9 @@ const COMMANDS = {
       const plan = await planDryRun(c.ctx);
       return c.print(plan, () => formatDryRun(plan));
     }
-    await new Dispatcher(c.ctx).run({ once: c.values.once });
+    const dispatcher = new Dispatcher(c.ctx);
+    await dispatcher.run({ once: c.values.once });
+    if (dispatcher.reloaded) setTimeout(() => process.exit(0), 10_000).unref(); // handed over: never linger on a stray handle
     return undefined;
   } },
 
