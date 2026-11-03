@@ -17,7 +17,7 @@ and re-checks.
 Wrap every call in the shared lock:  lab/windows/bin/with-dc1-lock -- lab/windows/bin/dc1-clock check
 Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (never printed). Runbook section 16.
 """
-import datetime as dt, os, re, sys
+import datetime as dt, os, re, sys, time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 import dc1winrm

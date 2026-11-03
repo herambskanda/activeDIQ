@@ -532,6 +532,8 @@ Time zone is unchanged (Pacific Standard Time); only UTC matters to Kerberos, TL
 limit (default 1 s). `dc1-clock fix` re-applies the config above (idempotent; the clock step drops the WinRM session, so it
 waits and re-checks). Peer override: `DIQ_DC1_NTP_PEER`. Wrap in `with-dc1-lock` like every dc1 session (section 10).
 Proof the check can fail: `dc1-clock check --max-skew 0.0001` exits 1 against a correct clock.
+Offline tests (fake DC, no WinRM): `python3 lab/windows/tests/test_dc1_clock.py` runs `check` (in step, 12h30m skew, strict limit)
+and `fix` (to the `after:` line, session cut, clock stuck); it fails if `dc1-clock` loses an import.
 
 **Needs.** dc1 reaches the NTP peer on UDP 123 (the lab network has outbound internet). If that ever stops, `check` fails and
 Kerberos tests fail again; use a lab-local NTP server (`DIQ_DC1_NTP_PEER`) rather than stepping the clock by hand.
