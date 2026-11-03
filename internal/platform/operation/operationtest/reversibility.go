@@ -3,7 +3,6 @@ package operationtest
 import (
 	"errors"
 	"fmt"
-	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"reflect"
 	"slices"
 	"sort"
@@ -12,6 +11,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 )
 
 // reversibilityViolations runs the inverse of every step the success run applied and checks the
@@ -324,7 +324,7 @@ func unflaggedSecrets(diff []operation.Change) []string {
 		if c.Secret {
 			continue
 		}
-		if slices.ContainsFunc(secretattr.Static(), func(n string) bool { return strings.EqualFold(n, c.Attribute) }) {
+		if secret.IsStaticAttr(c.Attribute) {
 			out = append(out, c.Attribute)
 		}
 	}

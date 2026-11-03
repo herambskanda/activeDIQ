@@ -125,11 +125,12 @@ func sqlWords(stmt string) []string {
 
 // changesReadOnly reports a statement that changes the transaction's read-only mode: SET [LOCAL |
 // SESSION] [default_]transaction_read_only, SET SESSION CHARACTERISTICS … READ WRITE, SET TRANSACTION
-// READ WRITE, SET [LOCAL] client_encoding / SET NAMES (the scanner reads UTF-8), or any set_config call (its setting name is a literal the scanner blanks, so every call
-// is treated as one: a read-only Plan has no reason to make it).
+// READ WRITE, SET [LOCAL] client_encoding / SET NAMES (the scanner reads UTF-8), or any call of a SET_-prefixed function (set_config and its kin: the setting name is a
+// literal the scanner blanks, so every such call is treated as a mode change: a read-only Plan has no
+// reason to make one).
 func changesReadOnly(words []string) bool {
 	for _, w := range words {
-		if w == "SET_CONFIG" || w == "TRANSACTION_READ_ONLY" || w == "DEFAULT_TRANSACTION_READ_ONLY" || w == "CLIENT_ENCODING" {
+		if strings.HasPrefix(w, "SET_") || w == "TRANSACTION_READ_ONLY" || w == "DEFAULT_TRANSACTION_READ_ONLY" || w == "CLIENT_ENCODING" {
 			return true
 		}
 	}

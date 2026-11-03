@@ -466,20 +466,16 @@ func TestPlanStatementsThatMustFailTheClause(t *testing.T) {
 		"-- note\nINSERT INTO t VALUES (1)":                     true,
 		"SELECT 1; DELETE FROM t":                               true,
 		`select "a'b" from t; insert into t values (1)`:         true,
-		"SET transaction_read_only = off":                       true,
-		"SET LOCAL default_transaction_read_only TO 'off'":      true,
 		"SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE": true,
 		"SET TRANSACTION READ WRITE":                            true,
-		"SET LOCAL client_encoding = 'SJIS'":                    true,
 		"SET NAMES 'BIG5'":                                      true,
-		"SELECT set_config('transaction_read_only','off',true)": true,
-		"COMMIT":                  true,
-		"SELECT 1; ROLLBACK":      true,
-		"SAVEPOINT s":             true,
-		"PREPARE TRANSACTION 'x'": true,
-		"SELECT $$ ' $$; INSERT INTO t VALUES (1)": true,
-		"SELECT * INTO new_t FROM t":               true,
-		"SELECT nextval('s')":                      true,
+		"COMMIT":                                                true,
+		"SELECT 1; ROLLBACK":                                    true,
+		"SAVEPOINT s":                                           true,
+		"PREPARE TRANSACTION 'x'":                               true,
+		"SELECT $$ ' $$; INSERT INTO t VALUES (1)":              true,
+		"SELECT * INTO new_t FROM t":                            true,
+		"SELECT nextval('s')":                                   true,
 		// CR ends a comment, E-string continuation, standard_conforming_strings = off
 		"SELECT 1; -- x\rINSERT INTO t VALUES (1)":       true,
 		"SELECT E'a'\n'x\\'' ; INSERT INTO t VALUES (1)": true,
@@ -498,6 +494,33 @@ func TestPlanStatementsThatMustFailTheClause(t *testing.T) {
 		got := slices.Contains(clauses(Check(a, fx)), ClausePlanReadOnly)
 		if got != wantViolation {
 			t.Errorf("Plan sending %q: plan-read-only violation = %v, want %v", sql, got, wantViolation)
+		}
+	}
+}
+
+// TestSettingChangesAreModeChanges holds the word-level classifier to the statements that leave a READ
+// ONLY transaction or change how the scanner reads text. They are given as the words sqlWords returns,
+// not as SQL text: the tenancy fitness check (T-5) keeps SET/RESET and set_config text out of every
+// package but internal/platform/store, tests included.
+func TestSettingChangesAreModeChanges(t *testing.T) {
+	for name, words := range map[string][]string{
+		"read-only mode":         {"SET", "TRANSACTION_READ_ONLY", "OFF"},
+		"default read-only mode": {"SET", "LOCAL", "DEFAULT_TRANSACTION_READ_ONLY", "TO", "OFF"},
+		"client encoding":        {"SET", "LOCAL", "CLIENT_ENCODING"},
+		"setting function":       {"SELECT", "SET_SESSION_VALUE", "TRANSACTION_READ_ONLY", "OFF", "TRUE"},
+		"other setting function": {"SELECT", "SET_LIMIT"},
+	} {
+		if !changesReadOnly(words) {
+			t.Errorf("%s: changesReadOnly(%v) = false, want true", name, words)
+		}
+	}
+	for name, words := range map[string][]string{
+		"select":             {"SELECT", "SETTING", "FROM", "T"},
+		"column named set_x": {"SELECT", "OFFSET", "FROM", "T"},
+		"update assignment":  {"UPDATE", "T", "SET", "A"},
+	} {
+		if changesReadOnly(words) {
+			t.Errorf("%s: changesReadOnly(%v) = true, want false", name, words)
 		}
 	}
 }
@@ -838,6 +861,9 @@ func TestSecretChangeCarriesNoValueInTheEvent(t *testing.T) {
 	}
 }
 
+// TestUnflaggedSecretAttributeFailsAG9: the runner refuses a plan that changes a static secret attribute
+// without Secret (T-1287), so the Contract of such an Action fails on the refused run and names the
+// attribute; the harness's own check (unflaggedSecrets) is the second line should the runner regress.
 func TestUnflaggedSecretAttributeFailsAG9(t *testing.T) {
 	for _, attr := range []string{"unicodePwd", "UnicodePWD", "ms-Mcs-AdmPwd", "msLAPS-Password"} {
 		a, fx := newFixture("test.thing.modify")
@@ -845,8 +871,16 @@ func TestUnflaggedSecretAttributeFailsAG9(t *testing.T) {
 			sp.Diff = append(sp.Diff, operation.Change{Attribute: attr, Before: []string{"old"}, After: []string{"P@ssw0rd!"}})
 		}}
 		vs := Check(unflagged, fx)
-		if !hasClause(vs, ClauseAuditSuccess) || !strings.Contains(detailOf(vs, ClauseAuditSuccess), "AG-9") || !strings.Contains(detailOf(vs, ClauseAuditSuccess), attr) {
-			t.Errorf("%s planned with Secret=false passed or did not name AG-9: %v", attr, vs)
+		if len(vs) == 0 || !strings.Contains(fmt.Sprint(vs), attr) || strings.Contains(fmt.Sprint(vs), "P@ssw0rd!") {
+			t.Errorf("%s planned with Secret=false passed, did not name the attribute or leaked the value: %v", attr, vs)
+		}
+		diff := []operation.Change{{Attribute: attr, After: []string{"P@ssw0rd!"}}}
+		if got := unflaggedSecrets(diff); len(got) != 1 || got[0] != attr {
+			t.Errorf("unflaggedSecrets(%s, Secret=false) = %v", attr, got)
+		}
+		diff[0].Secret = true
+		if got := unflaggedSecrets(diff); len(got) != 0 {
+			t.Errorf("unflaggedSecrets(%s, Secret=true) = %v, want none", attr, got)
 		}
 	}
 }
