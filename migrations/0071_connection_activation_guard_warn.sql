@@ -1,4 +1,4 @@
--- 0070_connection_activation_guard_warn: V7/EV3 `warn` is not a fail (T-1245). Owner: internal/directory/connection.
+-- 0071_connection_activation_guard_warn: V7/EV3 `warn` is not a fail (T-1245). Owner: internal/directory/connection.
 --
 -- Replaces connections_guard_activation() from 0028. The rule of DM-10.I9 (a) and DM-25.I4 is now:
 -- a pass verdict opens the gate when its over-privilege check (V7 AD, EV3 Entra) is `pass` or `warn`.

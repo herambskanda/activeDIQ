@@ -2328,4 +2328,4 @@ rules are what they leave open.
   ([msDS-User-Account-Control-Computed](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/b80798ae-1f8c-4d30-9d80-a1f3281e96e2)),
   so a disabled user with a live `lockoutTime` is locked out as the DC computes it. The lock holds while
   `now <= lockoutTime + duration` (inclusive).
-- 2026-11-01 · T-1245: V7 or EV3 `warn` is not a `fail`. DM-10.I9 (a) and I11 read the over-privilege outcome `pass` or `warn` as clear, DM-25 clearance accepts `warn`, and the activation guard trigger (migration 0070) agrees. `warn` is never acknowledged; the override still covers `fail` alone. Before this, a stock AD CS forest (Certificate-Enrollment for a broad principal, T-0237) could not activate.
+- 2026-11-01 · T-1245: V7 or EV3 `warn` is not a `fail`. DM-10.I9 (a) and I11 read the over-privilege outcome `pass` or `warn` as clear, DM-25 clearance accepts `warn`, and the activation guard trigger (migration 0071) agrees. `warn` is never acknowledged; the override still covers `fail` alone. Before this, a stock AD CS forest (Certificate-Enrollment for a broad principal, T-0237) could not activate.
