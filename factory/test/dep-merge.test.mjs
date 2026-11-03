@@ -6,9 +6,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Dispatcher, loadStateWithMerges, planDryRun } from '../lib/dispatcher.mjs';
 import { selectCandidates } from '../lib/candidates.mjs';
-import { claimBlockers, claimTicket, createTicket, indexById, doneDependencies } from '../lib/tickets.mjs';
+import { blockTicket, claimBlockers, claimTicket, createTicket, indexById, doneDependencies } from '../lib/tickets.mjs';
 import { unmergedBranches, mergeTicket } from '../lib/worktree.mjs';
 import { getEntity, listEntities, updateEntity } from '../lib/store.mjs';
+import { runCli } from '../lib/cli.mjs';
 import { startBoard } from '../board/server.mjs';
 import { commitAll, git, initRepo, makeFactory, makeLiveFactory, ticketInput, useFakeClaude } from './helpers.mjs';
 
@@ -129,4 +130,74 @@ test('the board shows A as waiting on the merge of B', async () => {
     await new Promise((r) => server.close(r));
     f.cleanup();
   }
+});
+
+// T-1400: a ticket blocked only because its dependency is done-but-unmerged goes to ready, not back
+// to the stage that blocked it, so the T-1266 claim check holds it.
+async function cli(f, args) {
+  const out = []; const err = [];
+  const code = await runCli(args, { out: (x) => out.push(x), err: (x) => err.push(x), env: { FACTORY_HOME: f.home }, cwd: f.root });
+  return { code, out: out.join('\n'), err: err.join('\n') };
+}
+
+test('unblock --to-ready parks a ticket in ready, the claim check holds it, and the merge releases it', async () => {
+  const f = makeLiveFactory({ config: (c) => { c.dispatcher.persist_seconds = 0; } });
+  const restore = useFakeClaude({});
+  try {
+    const { a, b } = scenario(f);
+    branchAhead(f.root, b);
+    claimTicket(f.ctx, a, 'dispatcher', new Set()); // a was running when the owner blocked it
+    blockTicket(f.ctx, a, 'docs-writer', `waiting for ${b} to merge`);
+
+    const r = await cli(f, ['ticket', 'unblock', a, '--to-ready', '--by', 'factory-director', '--note', 'dependency done, not merged']);
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, new RegExp(`unblocked to ready, waiting on ${b}`));
+    const t = getEntity(f.ctx, 'tickets', a);
+    assert.deepEqual([t.status, t.stage_role, t.attempts, t.blocked_from], ['ready', null, 0, null]);
+    assert.match(t.history.at(-1).note, new RegExp(`^unblocked to ready: .*\\(waiting on ${b} to merge\\)`));
+    assert.ok(!(await picked(f)).includes(a), 'the claim gate holds it while the dependency is off main');
+
+    const d = new Dispatcher(f.ctx);
+    await d.fill();
+    assert.equal(getEntity(f.ctx, 'tickets', a).status, 'ready', 'still held after a dispatcher tick');
+
+    await mergeTicket(f.ctx, { id: b, title: 'B' });
+    await d.fill();
+    assert.notEqual(getEntity(f.ctx, 'tickets', a).status, 'ready', 'claimed into its first stage once the dependency is on main');
+    assert.equal(getEntity(f.ctx, 'tickets', a).stage_role, 'docs-writer');
+  } finally {
+    restore();
+    for (const r of listEntities(f.ctx, 'runs')) if (r.pid) try { process.kill(r.pid, 'SIGKILL'); } catch { /* gone */ }
+    f.cleanup();
+  }
+});
+
+test('unblock without --to-ready still restores blocked_from, merged dependency or not', async () => {
+  const f = makeLiveFactory();
+  try {
+    const { a, b } = scenario(f);
+    branchAhead(f.root, b);
+    claimTicket(f.ctx, a, 'dispatcher', new Set());
+    blockTicket(f.ctx, a, 'docs-writer', 'x');
+    const r = await cli(f, ['ticket', 'unblock', a, '--by', 'factory-director', '--note', 'go']);
+    assert.equal(r.code, 0, r.err);
+    const t = getEntity(f.ctx, 'tickets', a);
+    assert.deepEqual([t.status, t.stage_role], ['in_progress', 'docs-writer']);
+    assert.match(t.history.at(-1).note, /^unblocked: go$/);
+    assert.equal((await cli(f, ['ticket', 'unblock', a, '--to-ready', '--by', 'x', '--note', 'n'])).code, 1, 'not blocked any more');
+  } finally { f.cleanup(); }
+});
+
+test('unblock --to-ready with nothing to wait on is plain ready, and needs a note', async () => {
+  const f = makeLiveFactory();
+  try {
+    initRepo(f.root);
+    const t = ready(f);
+    claimTicket(f.ctx, t.id, 'dispatcher', new Set());
+    blockTicket(f.ctx, t.id, 'docs-writer', 'x');
+    assert.equal((await cli(f, ['ticket', 'unblock', t.id, '--to-ready', '--by', 'd'])).code, 2, '--note is required');
+    const r = await cli(f, ['ticket', 'unblock', t.id, '--to-ready', '--by', 'd', '--note', 'ok']);
+    assert.equal(r.code, 0, r.err);
+    assert.doesNotMatch(getEntity(f.ctx, 'tickets', t.id).history.at(-1).note, /waiting on/);
+  } finally { f.cleanup(); }
 });
