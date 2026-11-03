@@ -243,21 +243,33 @@ export function blockTicket(ctx, id, by, note) {
 }
 
 /**
- * Restore a blocked ticket to the stage it was blocked in, with a fresh retry budget.
+ * Restore a blocked ticket to the stage it was blocked in, with a fresh retry budget. With
+ * `toReady` the ticket goes to `ready` with no stage role instead (T-1400): for a block whose only
+ * cause is a dependency that is done but not on main, so the dispatcher's claim check (T-1266)
+ * holds it until the dependency merges, rather than relaunching the owner straight into the same wall.
  * @param {object} ctx
  * @param {string} id
  * @param {string} by
  * @param {string} note
+ * @param {{toReady?: boolean, waitingOn?: string[]}} [opts] `waitingOn` names the dependencies the
+ *   ticket waits on (recorded in the note); the claim check, not this list, enforces the wait
  */
-export function unblockTicket(ctx, id, by, note) {
-  return transition(ctx, id, by, note, 'unblocked', (t) => {
+export function unblockTicket(ctx, id, by, note, { toReady = false, waitingOn = [] } = {}) {
+  const verb = toReady ? 'unblocked to ready' : 'unblocked';
+  const detail = toReady && waitingOn.length ? ` (waiting on ${waitingOn.join(', ')} to merge)` : '';
+  return transition(ctx, id, by, `${note}${detail}`, verb, (t) => {
     if (t.status !== 'blocked') throw new FactoryError(`${id} is "${t.status}", not blocked`);
-    t.status = t.blocked_from?.status ?? 'ready';
-    t.stage_role = t.blocked_from?.stage_role ?? null;
+    if (toReady) {
+      const problems = readinessProblems(t);
+      if (problems.length) throw new FactoryError(`${id} cannot go to ready: missing ${problems.join(', ')}`);
+    }
+    t.status = toReady ? 'ready' : (t.blocked_from?.status ?? 'ready');
+    t.stage_role = toReady ? null : (t.blocked_from?.stage_role ?? null);
     t.blocked_from = null;
     t.attempts = 0;
     t.escalations = 0;
     t.effort_override = null;
+    if (toReady) t.handoff = { ...t.handoff, pending: false };
   });
 }
 

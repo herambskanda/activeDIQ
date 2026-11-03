@@ -5,7 +5,9 @@ metadata:
   type: feedback
 ---
 
-When a blocked ticket only waits for another ticket to finish (for example T-0031 waiting on T-0127 in 2026-10), do not `ticket unblock` it yet.
+**Done-not-merged blocker: `ticket unblock T-… --to-ready --by factory-director --note "…"` (T-1400).** It parks the ticket in `ready` with no stage role; the claim gate (T-1266) holds it until `factory/<blocker>` is on main, then the dispatcher claims it. Never leave such a ticket blocked or plain-unblock it.
+
+When a blocked ticket waits for another ticket that is not yet done (for example T-0031 waiting on T-0127 in 2026-10), do not `ticket unblock` it yet.
 
 **Why:** `unblockTicket` puts the ticket back in its `blocked_from` stage, usually in_progress. `claimBlockers` only gates the ready → in_progress claim, so the dispatcher would relaunch the owner straight away, they would hit the same wall and block again.
 
