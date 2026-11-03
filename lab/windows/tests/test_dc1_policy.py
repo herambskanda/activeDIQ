@@ -3,7 +3,7 @@ lab tool that needs it stops before testing when it is not. No Windows and no Wi
 
 Each check has a failing counterpart (the first test of each group drives the broken shape) so the guard is shown to bite.
 """
-import importlib.machinery, importlib.util, os, re, subprocess, sys, tempfile, unittest
+import datetime, importlib.machinery, importlib.util, os, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 LAB = Path(__file__).resolve().parent.parent
@@ -37,7 +37,7 @@ class FakeDC:
         if "LDAPServerIntegrity" in script and "GetValue" in script:
             return 0, f"LDAPServerIntegrity = {self.integrity}\nLdapEnforceChannelBindingTokens = {self.cbt}"
         if "UtcNow" in script:
-            return 0, "2026-11-02T06:00:00.0000000Z"
+            return 0, datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "0Z"  # dc1 in step (NTP, T-0850)
         return 0, ""
 
 
@@ -80,11 +80,25 @@ class RunStopsBeforeTesting(unittest.TestCase):
         code, ran = self.run_with(FakeDC())
         self.assertEqual(len(ran), 1, "go test should start when dc1 is at 2/2")
 
+    def test_run_refuses_when_dc1_clock_is_far_off_and_never_steps_it(self):  # T-0850
+        class Skewed(FakeDC):
+            def ps(self, script):
+                r = super().ps(script)
+                if "UtcNow" in script:
+                    t = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=12, minutes=30)
+                    return 0, t.strftime("%Y-%m-%dT%H:%M:%S.%f") + "0Z"
+                return r
+        dc = Skewed()
+        code, ran = self.run_with(dc)
+        self.assertEqual(ran, [], "go test must not start with dc1's clock 12h30m off")
+        self.assertIn("KRB_AP_ERR_SKEW", str(code))
+        self.assertFalse([x for x in dc.sent if "Set-Date" in x], "gssapi-lab must not step dc1's clock")
+
     def test_run_that_leaves_policy_changed_fails(self):
         class Drifting(FakeDC):
             def ps(self, script):
                 r = super().ps(script)
-                if "Set-Date" in script:
+                if "Set-ItemProperty" in script and "Diagnostics" in script and "Value 2" in script:
                     self.integrity = 1  # something resets it during the run
                 return r
         code, ran = self.run_with(Drifting())
