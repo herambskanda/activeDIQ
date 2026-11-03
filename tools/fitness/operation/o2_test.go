@@ -251,7 +251,7 @@ func TestO2TypedNestedInternalDirsGetNoExemption(t *testing.T) {
 		"Clearance of a look-alike step package elsewhere does not open the send path": {
 			map[string]string{
 				"internal/modules/fakestep/step/s.go": "package step\ntype Clearance struct{}\n",
-				clientPath: "package client\n" + connImport + ctxImport + "import step \"" + mod + "/internal/modules/fakestep/step\"\ntype t struct{ c connectorv1.ConnectorClient }\nfunc (x t) send(clr step.Clearance) { x.c.Apply(context.Background(), nil) }\n"},
+				clientPath:                            "package client\n" + connImport + ctxImport + "import step \"" + mod + "/internal/modules/fakestep/step\"\ntype t struct{ c connectorv1.ConnectorClient }\nfunc (x t) send(clr step.Clearance) { x.c.Apply(context.Background(), nil) }\n"},
 			clientPath, 6, "Apply write RPC"},
 	}
 	for name, c := range cases {
