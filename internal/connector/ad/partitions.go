@@ -168,7 +168,11 @@ func namingContextOf(e *Entry, cfg, schema, local dn.DN, hasLocal bool, rd *Root
 	if err != nil || !ok {
 		return NamingContext{}, false, fail(CodeProtocol, "crossRef systemFlags unreadable", err)
 	}
-	nc := NamingContext{GUID: x.GUID, Head: x.DN.String(), DNSName: first(e.Strings("dnsRoot")), NetBIOSName: first(e.Strings("nETBIOSName"))}
+	head, err := dn.DNRef(x.DN).ForRequest()
+	if err != nil {
+		return NamingContext{}, false, fail(CodeProtocol, "crossRef nCName is not a requestable DN", err)
+	}
+	nc := NamingContext{GUID: x.GUID, Head: head, DNSName: first(e.Strings("dnsRoot")), NetBIOSName: first(e.Strings("nETBIOSName"))}
 	switch {
 	case x.DN.Equal(cfg):
 		nc.Kind = NCConfiguration

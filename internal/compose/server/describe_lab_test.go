@@ -4,12 +4,10 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"testing"
 	"time"
 
-	"github.com/go-ldap/ldap/v3"
-
+	"github.com/skenzeriq/activediq/internal/connector/labadmin"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -35,38 +33,15 @@ func TestLabDescribeNamingContextsEqualDirectRead(t *testing.T) {
 	t.Cleanup(closeLab)
 
 	// The identity the connector serves is the forest root's GUID; Describe must be asked with it.
-	adm, err := ldap.DialURL("ldaps://localhost:"+le.Port, ldap.DialWithTLSConfig(&tls.Config{RootCAs: le.Pool, ServerName: "localhost", MinVersion: tls.VersionTLS12}))
-	if err != nil {
-		t.Fatalf("admin dial: %v", err)
-	}
-	t.Cleanup(func() { adm.Close() })
-	if err := adm.Bind("Administrator@lab.activediq.test", le.Values["LAB_ADMIN_PASSWORD"]); err != nil {
-		t.Fatalf("admin bind: %v", err)
-	}
-	one := func(base string, scope int, filter string, attrs ...string) []*ldap.Entry {
-		t.Helper()
-		res, err := adm.Search(ldap.NewSearchRequest(base, scope, ldap.NeverDerefAliases, 0, 0, false, filter, attrs, nil))
-		if err != nil {
-			t.Fatalf("direct read %s: %v", base, err)
-		}
-		return res.Entries
-	}
-	root := one("", ldap.ScopeBaseObject, "(objectClass=*)", "defaultNamingContext", "configurationNamingContext", "schemaNamingContext", "rootDomainNamingContext")[0]
+	adm := labadmin.Dial(t, le.Port, le.Pool, "Administrator@lab.activediq.test", le.Values["LAB_ADMIN_PASSWORD"])
+	parts := adm.ReadPartitions()
 	wireOf := func(dnStr string) string {
 		t.Helper()
-		e := one(dnStr, ldap.ScopeBaseObject, "(objectClass=*)", "objectGUID")
-		if len(e) != 1 {
-			t.Fatalf("head %s: %d entries", dnStr, len(e))
-		}
-		g, err := guid.FromBytes(e[0].GetRawAttributeValue("objectGUID"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(write.GUIDToWire(g).GetValue())
+		return string(write.GUIDToWire(mustGUID(t, adm.ObjectGUID(dnStr))).GetValue())
 	}
-	domainDN, cfgDN, schemaDN := root.GetAttributeValue("defaultNamingContext"), root.GetAttributeValue("configurationNamingContext"), root.GetAttributeValue("schemaNamingContext")
+	domainDN, cfgDN, schemaDN := parts.DomainDN, parts.ConfigDN, parts.SchemaDN
 	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
-		ForestRootNcGuid: write.GUIDToWire(mustGUID(t, one(root.GetAttributeValue("rootDomainNamingContext"), ldap.ScopeBaseObject, "(objectClass=*)", "objectGUID")[0].GetRawAttributeValue("objectGUID")))}}}
+		ForestRootNcGuid: write.GUIDToWire(mustGUID(t, parts.RootDomainGUID))}}}
 
 	resp, err := lab.Describe(ctx, &connectorv1.DescribeRequest{Connection: &connectorv1.ConnectionRef{ConnectionId: "lab", DirectoryIdentity: ident}})
 	if err != nil {
@@ -74,7 +49,7 @@ func TestLabDescribeNamingContextsEqualDirectRead(t *testing.T) {
 	}
 
 	// Direct read of the partitions: every enabled crossRef in CN=Partitions is one naming context.
-	xrefs := one("CN=Partitions,"+cfgDN, ldap.ScopeSingleLevel, "(&(objectClass=crossRef)(!(enabled=FALSE)))", "nCName")
+	xrefs := parts.Heads
 	if len(resp.GetNamingContexts()) != len(xrefs) {
 		t.Fatalf("Describe lists %d naming contexts, the directory has %d crossRefs", len(resp.GetNamingContexts()), len(xrefs))
 	}
@@ -90,8 +65,8 @@ func TestLabDescribeNamingContextsEqualDirectRead(t *testing.T) {
 	}
 	for _, x := range xrefs {
 		// nCName is the head's DN; its objectGUID is read from the head itself.
-		if k, ok := got[wireOf(x.GetAttributeValue("nCName"))]; !ok || k == connectorv1.NamingContextKind_NAMING_CONTEXT_KIND_UNSPECIFIED {
-			t.Errorf("crossRef %s: head GUID missing from Describe or kind unset", x.GetAttributeValue("nCName"))
+		if k, ok := got[wireOf(x)]; !ok || k == connectorv1.NamingContextKind_NAMING_CONTEXT_KIND_UNSPECIFIED {
+			t.Errorf("crossRef %s: head GUID missing from Describe or kind unset", x)
 		}
 	}
 	for name, c := range map[string]struct {
