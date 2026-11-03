@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""Worker driver for the Proxmox lab pool (T-1326, D-0022). Runbook: windows-lab.md, "Proxmox lab pool".
+
+  proxmox-lab list
+  proxmox-lab create --name N [--vmid V] [--memory-mb 8192] [--cores 4] [--disk-gb 60] [--iso VOLID] [--uefi-tpm]
+  proxmox-lab start|stop|snapshots VMID          (stop --graceful sends an ACPI shutdown)
+  proxmox-lab snapshot VMID NAME [--description TEXT] [--vmstate]
+  proxmox-lab rollback VMID NAME
+  proxmox-lab attach-iso VMID VOLID              (VOLID like local:iso/win11.iso; ejects with --eject)
+  proxmox-lab verify-scope                       (exit 1 unless the token is exactly the lab pool token)
+
+Scope rule: every subcommand that names a VMID first reads pool adiq-lab and refuses a VMID that is not
+a member, before any call addresses that VM. Credentials come from lab/.proxmox-lab.env (0600) and are
+never printed. The API certificate is pinned by fingerprint; a mismatch sends nothing.
+"""
+import argparse, os, sys, time
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import pvelab as P
+from pvelab import LabError
+
+
+def pool_members(api):
+    """The pool's VMs, read from /cluster/resources (needs only VM.Audit, which the token has on the pool's VMs).
+    GET /pools/{id} would need Pool.Audit, which the lab role deliberately does not hold (all Pool.* is excluded)."""
+    d = api.call("GET", "/cluster/resources", {"type": "vm"})
+    if not isinstance(d, list):
+        raise LabError("unexpected resources response; refusing")
+    return [m for m in d if isinstance(m, dict) and m.get("type") == "qemu" and m.get("pool") == P.POOL
+            and isinstance(m.get("vmid"), int)]
+
+
+def require_in_pool(api, vmid):
+    """The scope guard: runs before any call that addresses the VMID."""
+    for m in pool_members(api):
+        if m["vmid"] == vmid:
+            return m.get("node") or api.env["PVE_NODE"]
+    raise LabError(f"refusing VMID {vmid}: it is not a member of pool {P.POOL}")
+
+
+def wait_task(api, node, upid, timeout=900):
+    P.check(P.NAME_RE, node, "node")
+    if not isinstance(upid, str) or not P.UPID_RE.fullmatch(upid):
+        raise LabError("unexpected task id from the API")
+    end = time.time() + timeout
+    while time.time() < end:
+        st = api.call("GET", f"/nodes/{node}/tasks/{upid}/status")
+        if st.get("status") == "stopped":
+            if st.get("exitstatus") != "OK":
+                raise LabError(f"task failed: {str(st.get('exitstatus'))[:200]}")
+            return
+        time.sleep(float(os.environ.get("PROXMOX_LAB_POLL", "2")))
+    raise LabError("task still running after %ds" % timeout)
+
+
+def cmd_list(api, a):
+    for m in sorted(pool_members(api), key=lambda m: m["vmid"]):
+        print(f"{m['vmid']}\t{m.get('name', '-')}\t{m.get('status', '-')}")
+
+
+def cmd_create(api, a):
+    env = api.env
+    if a.vmid is None:
+        vmid = int(api.call("GET", "/cluster/nextid"))
+    else:
+        vmid = P.vmid_of(a.vmid)
+    if any(m["vmid"] == vmid for m in pool_members(api)):
+        raise LabError(f"VMID {vmid} already exists in {P.POOL}")
+    P.check(P.NAME_RE, a.name, "VM name")
+    if not (512 <= a.memory_mb <= 65536 and 1 <= a.cores <= 16 and 8 <= a.disk_gb <= 500):
+        raise LabError("memory 512-65536 MB, cores 1-16, disk 8-500 GB")
+    st = env["PVE_STORAGE"]
+    p = {"vmid": vmid, "name": a.name, "pool": P.POOL, "memory": a.memory_mb, "cores": a.cores, "cpu": "host",
+         "ostype": "win11", "scsihw": "virtio-scsi-single", "scsi0": f"{st}:{a.disk_gb}",
+         "net0": f"virtio,bridge={env['PVE_BRIDGE']}", "agent": "1", "start": 0}
+    if a.uefi_tpm:
+        p.update({"bios": "ovmf", "machine": "pc-q35-9.0", "efidisk0": f"{st}:1,efitype=4m,pre-enrolled-keys=1",
+                  "tpmstate0": f"{st}:1,version=v2.0"})
+    if a.iso:
+        p["ide2"] = f"{P.check(P.VOLID_RE, a.iso, 'ISO volume id')},media=cdrom"
+    wait_task(api, env["PVE_NODE"], api.call("POST", f"/nodes/{env['PVE_NODE']}/qemu", p))
+    print(f"created VM {vmid} ({a.name}) in pool {P.POOL}")
+
+
+def cmd_power(api, a):
+    vmid = P.vmid_of(a.vmid); node = require_in_pool(api, vmid)
+    P.check(P.NAME_RE, node, "node")
+    if a.cmd == "start":
+        action, params = "start", None
+    else:
+        action, params = ("shutdown", {"timeout": 120}) if a.graceful else ("stop", None)
+    wait_task(api, node, api.call("POST", f"/nodes/{node}/qemu/{vmid}/status/{action}", params))
+    print(f"VM {vmid}: {action} done")
+
+
+def cmd_snapshots(api, a):
+    vmid = P.vmid_of(a.vmid); node = require_in_pool(api, vmid)
+    for s in api.call("GET", f"/nodes/{P.check(P.NAME_RE, node, 'node')}/qemu/{vmid}/snapshot"):
+        print(f"{s.get('name')}\t{s.get('description', '')}")
+
+
+def cmd_snapshot(api, a):
+    vmid = P.vmid_of(a.vmid); node = require_in_pool(api, vmid)
+    P.check(P.NAME_RE, a.name, "snapshot name")
+    p = {"snapname": a.name, "vmstate": bool(a.vmstate)}
+    if a.description:
+        p["description"] = a.description[:200]
+    wait_task(api, node, api.call("POST", f"/nodes/{node}/qemu/{vmid}/snapshot", p))
+    print(f"VM {vmid}: snapshot {a.name} taken")
+
+
+def cmd_rollback(api, a):
+    vmid = P.vmid_of(a.vmid); node = require_in_pool(api, vmid)
+    P.check(P.NAME_RE, a.name, "snapshot name")
+    wait_task(api, node, api.call("POST", f"/nodes/{node}/qemu/{vmid}/snapshot/{a.name}/rollback"))
+    print(f"VM {vmid}: rolled back to {a.name}")
+
+
+def cmd_attach_iso(api, a):
+    vmid = P.vmid_of(a.vmid); node = require_in_pool(api, vmid)
+    value = "none,media=cdrom" if a.eject else f"{P.check(P.VOLID_RE, a.volid, 'ISO volume id')},media=cdrom"
+    api.call("PUT", f"/nodes/{node}/qemu/{vmid}/config", {"ide2": value})
+    print(f"VM {vmid}: ide2 = {value}")
+
+
+def scope_problems(api):
+    """Everything wrong with the token's reach; empty list means it is exactly the lab pool token."""
+    env, bad = api.env, []
+    members = {m["vmid"] for m in pool_members(api)}
+    perms = api.call("GET", "/access/permissions")
+    if not isinstance(perms, dict):
+        return ["permissions response has an unexpected shape"]
+    ok_paths = {f"/pool/{P.POOL}", f"/storage/{env['PVE_STORAGE']}", f"/storage/{env['PVE_ISO_STORAGE']}",
+                f"/sdn/zones/localnetwork/{env['PVE_BRIDGE']}"} | {f"/vms/{v}" for v in members}
+    for path, privs in sorted(perms.items()):
+        names = sorted(k for k, v in (privs or {}).items() if v) if isinstance(privs, dict) else None
+        if names is None:
+            bad.append(f"unreadable privileges at {path}"); continue
+        if not names:
+            continue
+        if path not in ok_paths:
+            bad.append(f"token holds privileges on {path}, outside the pool, the lab storage and the bridge")
+        for n in names:
+            if n.startswith(P.FORBIDDEN_PREFIXES):
+                bad.append(f"token holds forbidden privilege {n} at {path}")
+            elif n not in P.ALL_ALLOWED_PRIVS:
+                bad.append(f"token holds {n} at {path}, which is not in the lab role")
+    seen = api.call("GET", "/cluster/resources", {"type": "vm"})
+    if not isinstance(seen, list):
+        return ["resources response has an unexpected shape"]
+    for r in seen:
+        if isinstance(r, dict) and not (r.get("pool") == P.POOL and r.get("vmid") in members):
+            bad.append(f"token can see VM {r.get('vmid')} which is not in {P.POOL}")
+    # other pools: any ACL on /pool/<other> is reported above as a path outside the pool (GET /pools needs Pool.Audit)
+    if P.DC1_VMID not in members:
+        bad.append(f"VM {P.DC1_VMID} (dc1) is not in pool {P.POOL}")
+    return bad
+
+
+def cmd_verify_scope(api, a):
+    try:
+        bad = scope_problems(api)
+    except (LabError, KeyError, TypeError, AttributeError) as e:
+        bad = [f"could not verify ({e}); failing closed"]
+    if bad:
+        for b in bad:
+            print("verify-scope FAIL:", b, file=sys.stderr)
+        sys.exit(1)
+    print("verify-scope OK: the token sees only pool adiq-lab and holds only the lab role", file=sys.stderr)
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="proxmox-lab", description=__doc__.split("\n\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("list").set_defaults(fn=cmd_list)
+    c = sub.add_parser("create"); c.set_defaults(fn=cmd_create)
+    c.add_argument("--name", required=True); c.add_argument("--vmid")
+    c.add_argument("--memory-mb", type=int, default=8192); c.add_argument("--cores", type=int, default=4)
+    c.add_argument("--disk-gb", type=int, default=60); c.add_argument("--iso"); c.add_argument("--uefi-tpm", action="store_true")
+    for n in ("start", "stop"):
+        s = sub.add_parser(n); s.set_defaults(fn=cmd_power); s.add_argument("vmid")
+        if n == "stop":
+            s.add_argument("--graceful", action="store_true")
+    s = sub.add_parser("snapshots"); s.set_defaults(fn=cmd_snapshots); s.add_argument("vmid")
+    s = sub.add_parser("snapshot"); s.set_defaults(fn=cmd_snapshot)
+    s.add_argument("vmid"); s.add_argument("name"); s.add_argument("--description"); s.add_argument("--vmstate", action="store_true")
+    s = sub.add_parser("rollback"); s.set_defaults(fn=cmd_rollback); s.add_argument("vmid"); s.add_argument("name")
+    s = sub.add_parser("attach-iso"); s.set_defaults(fn=cmd_attach_iso)
+    s.add_argument("vmid"); s.add_argument("volid", nargs="?"); s.add_argument("--eject", action="store_true")
+    sub.add_parser("verify-scope").set_defaults(fn=cmd_verify_scope)
+    a = ap.parse_args(argv)
+    try:
+        if a.cmd == "attach-iso" and not a.eject and not a.volid:
+            raise LabError("attach-iso needs a VOLID or --eject")
+        a.fn(P.Api(P.load_env()), a)
+    except LabError as e:
+        print(f"proxmox-lab: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

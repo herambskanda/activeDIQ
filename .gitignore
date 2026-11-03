@@ -32,6 +32,8 @@ coverage/
 # AD lab (T-0012): generated credentials, exported CA, local snapshots — never committed
 lab/.lab.env
 lab/.lab-ca.pem
+# Proxmox lab pool token (T-1326): host, token secret, pinned cert fingerprint — mode 0600, never committed
+lab/.proxmox-lab.env
 lab/.snapshots/
 __pycache__/
 
