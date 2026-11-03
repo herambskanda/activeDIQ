@@ -214,7 +214,7 @@ ticket ready ID                      backlog → ready (checks Definition of Rea
 ticket note ID --by ROLE "text"
 ticket advance ID --by ROLE --note "what was done"
 ticket reject ID --by ROLE --note "what must change"
-ticket block ID --by ROLE --note "why"     |  ticket unblock ID --by ROLE --note "…"
+ticket block ID --by ROLE --note "why"     |  ticket unblock ID --by ROLE --note "…" [--to-ready]
 ticket cancel ID --by ROLE --note "why"
 ticket set ID field=value …          priority, owner, epic, milestone, effort_override, tags, depends_on
 
@@ -241,6 +241,7 @@ digest                               print today's machine summary (for project-
 
 Rules the CLI enforces:
 - Only legal transitions per the flow; `advance` on the last stage sets `done`.
+- `ticket unblock --to-ready` (T-1400) puts a blocked ticket in `ready` with no stage role and a fresh retry budget, for a block whose only cause is a dependency that is `done` but not on main; the claim check (T-1266) holds it until the merge. Plain `unblock` restores `blocked_from`.
 - `ticket ready` refuses unless title, owner, acceptance (≥1) and summary are present.
 - A ticket listing an unanswered decision cannot be claimed.
 - `epic set` validates every assignment (parity refs look like `ADM-045`; milestones exist; `-=` only
@@ -488,7 +489,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 
 ### Fields and files beyond the reference above
 
-- **Ticket:** `escalations` (0–2), `reassigned_from` (the role displaced by an escalation, so `advance` continues the original reviewer sequence), `blocked_from` (where `unblock` returns to), `triaged_at`, `meta` (the auto-created triage/grooming/digest payload), `links.merged` and `links.merge_commit`.
+- **Ticket:** `escalations` (0–2), `reassigned_from` (the role displaced by an escalation, so `advance` continues the original reviewer sequence), `blocked_from` (where `unblock` returns to; `unblock --to-ready` ignores it), `triaged_at`, `meta` (the auto-created triage/grooming/digest payload), `links.merged` and `links.merge_commit`.
 - **Run:** `continuation`, `snapshot` (status, stage role and latest handoff at launch: how "no progress" is judged), `kill_reason` (`timeout` or `shutdown`), `error`; stderr is kept in `state/runs/<id>.err` next to `<id>.log`.
 - **State:** `state/board.json` and `state/dispatcher.json` hold pids; `state/board.log` and `state/dispatcher.log` capture the detached processes; `state/signals/rate-limit.json` is written by the `StopFailure` hook and read by the dispatcher.
 - **Environment:** `FACTORY_HOME`, `FACTORY_CLAUDE_BIN` (the executable to launch, default `claude`), `FACTORY_DEBUG=1` (stack traces).

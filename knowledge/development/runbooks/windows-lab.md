@@ -13,7 +13,7 @@ The lab for everything Samba cannot prove (Windows event logs, GPO/audit policy,
 LDAPS/WS2025 hardening behaviour, ADWS, native components — see `ad-lab.md` §6). Chosen in D-0003
 (option a): **local evaluation VMs on KVM, free**. In the local-KVM mode, a DC (`dc1`) and a member/file server
 (`fs1`) in a throwaway forest; the live lab (§10) is `dc1` on Proxmox VM 119 plus, once a human has built it,
-a child-domain DC `dc2` (§16). Code: `lab/windows/`. Samba stays the default lab (`ad-lab.md`); use this one only
+a child-domain DC `dc2` (§19). Code: `lab/windows/`. Samba stays the default lab (`ad-lab.md`); use this one only
 for tests tagged `windowslab`.
 
 ## 1. Quick start
@@ -182,7 +182,7 @@ raise an `action new` for a rollback. Everything that runs *inside* dc1 is done 
 
 **dc2 (child domain) is human-only.** A-0025 covers `dc1` only: no worker may open WinRM, PowerShell remoting or
 any other session to `dc2` (VM, address or name), and the `with-dc1-lock` wrapper is not a licence to. In short,
-every step inside dc2 is done by a human (§16); workers verify the child domain only through dc1 (T-1234). Extending the
+every step inside dc2 is done by a human (§19); workers verify the child domain only through dc1 (T-1234). Extending the
 authorisation to dc2 is a CEO decision, not a ticket step.
 
 **fs1 does not exist.** There is no member server in this lab: only dc1 (VM 119). The `fs1` rows in §1–§2
@@ -350,7 +350,7 @@ attribute on a DC and `gPLink` of the Domain Controllers OU are changed and rest
 C8 (KDS container + a child, CN=System, RID Manager$, Directory Service; the Password Settings Container is unreadable to the
 service account and fails closed), C9 (GPO linked at the DC OU is tier0, an unlinked one is not), C11 (Get-Changes +
 Get-Changes-All ⇒ tier0; Get-Changes alone ⇒ not), C12 (RBCD trustee on a DC). Not coverable on this lab (a single DC in the parent domain,
-no RODC; the child domain exists only after §16 is done): RODC corroboration, cross-domain GPO links, gPLink option/order edge cases, >1500-member ranged groups
+no RODC; the child domain exists only after §19 is done): RODC corroboration, cross-domain GPO links, gPLink option/order edge cases, >1500-member ranged groups
 (Samba covers ranged retrieval); the ad-expert review of `c8Domain`/`c8SystemClasses` is separate (T-0620).
 From a git worktree the credentials live in the main checkout: set `WIN_LAB_ENV` and `WIN_LAB_CA` to its `lab/windows/` files.
 
@@ -498,10 +498,9 @@ session (VM 119 unreachable).
    `svc-t0566-gssapi` with an AES256 `ktpass` keytab, AES-only gMSA `gmsa-t0566$` readable by Administrator and the DC), copies
    `svc.keytab` and `gmsa.json` to `.win-lab-gssapi.keytab` and `.win-lab-gmsa.json` beside the env file (gitignored, 0600;
    override with `WIN_LAB_GSSAPI_KEYTAB`, `WIN_LAB_GMSA`), deletes them on the VM and reboots dc1.
-2. `gssapi-lab run [go test args]` (default: the whole suite). It puts dc1's clock in step with the host for the run
-   (**dc1 is +12h30m, bug T-0850; Kerberos allows 5 min**), turns on `16 LDAP Interface Events`=2 so the DC logs event 3039, runs
-   `go test`, prints the DC's channel-binding events and restores the clock offset and the diagnostics value in a `finally`.
-   Do not run the Go tests against dc1 without it: they fail with KRB_AP_ERR_SKEW.
+2. `gssapi-lab run [go test args]` (default: the whole suite). It reads dc1's clock and refuses to run if it is more than 60 s
+   from this host (the clock is fixed, section 16; the script never steps it), turns on `16 LDAP Interface Events`=2 so the DC logs
+   event 3039, runs `go test`, prints the DC's channel-binding events and restores the diagnostics value in a `finally`.
 
 | Test | Pins |
 | --- | --- |
@@ -518,7 +517,74 @@ Run log, dc1 before/after state and the broken-run proof: `windows-lab-runs/T-05
 proof needs a reboot cycle and was not run. The test accounts stay on dc1 for the T-0846 fix; remove with `Remove-ADUser svc-t0566-gssapi`
 and `Remove-ADServiceAccount gmsa-t0566`.
 
-## 16. Child domain (dc2) (T-1233, for T-0786 / T-1234)
+## 16. dc1 clock and time source (T-0850)
+
+**What was wrong.** dc1 (the PDC emulator) ran on `Local CMOS Clock` (`Type: NT5DS`, no peer) and its clock sat about 12h30m
+ahead of real time (13h30m after the 2026-11-01 DST change: the offset followed the local time zone, Pacific, so it is a
+wall-clock/RTC mismatch in the VM, not a drift). The KDC refused every AS-REQ from this host with `KRB_AP_ERR_SKEW` (37);
+Kerberos allows 5 minutes. T-0566 worked round it by stepping the clock for each run; that is gone.
+
+**Fix (done 2026-11-01, over WinRM, no Proxmox access needed).** dc1 syncs from external NTP peers (Cloudflare's time service, 162.159.200.1 and .123, <https://www.cloudflare.com/time/>), by IP address because dc1 is its own DNS and a name does not resolve at boot (w32time then waits 15 minutes and doubling before it retries; seen in the first reboot test), so the clock is right
+after every boot whatever the VM's RTC says:
+
+```powershell
+w32tm /config /syncfromflags:manual /manualpeerlist:"162.159.200.1,0x8 162.159.200.123,0x8" /reliable:yes /update
+Restart-Service w32time; w32tm /resync /rediscover
+```
+
+Time zone is unchanged (Pacific Standard Time); only UTC matters to Kerberos, TLS and the tests.
+
+**Operate it.** `lab/windows/bin/dc1-clock check [--max-skew S]` prints dc1 minus host and the w32time source and exits 1 over the
+limit (default 1 s). `dc1-clock fix` re-applies the config above (idempotent; the clock step drops the WinRM session, so it
+waits and re-checks). Peer override: `DIQ_DC1_NTP_PEER`. Wrap in `with-dc1-lock` like every dc1 session (section 10).
+Proof the check can fail: `dc1-clock check --max-skew 0.0001` exits 1 against a correct clock.
+Offline tests (fake DC, no WinRM): `python3 lab/windows/tests/test_dc1_clock.py` runs `check` (in step, 12h30m skew, strict limit)
+and `fix` (to the `after:` line, session cut, clock stuck); it fails if `dc1-clock` loses an import.
+
+**Needs.** dc1 reaches the NTP peer on UDP 123 (the lab network has outbound internet). If that ever stops, `check` fails and
+Kerberos tests fail again; use a lab-local NTP server (`DIQ_DC1_NTP_PEER`) rather than stepping the clock by hand.
+
+**Side effects of the one-time step back (13h30m).** Objects and events written while the clock was ahead carry timestamps in
+the future (for example the domain object's `whenChanged` 2026-11-02, Security/System events of 2026-10-27..11-02 dc-time). They
+are not rewritten. Tests that order or window by event time on dc1 must use events created after 2026-11-01T15:11Z, or filter by
+content. The lab CA and DC certificates (`NotBefore` 2026-10-27T12:1xZ) are before real time, so TLS validity is unaffected.
+If a Proxmox owner wants the root cause too: check VM 119's `localtime`/`startdate` options (`qm config 119`); Windows expects a
+local-time RTC unless `RealTimeIsUniversal=1`. Not needed while NTP sync is on.
+
+## 18. dc1 must stay at LDAP signing required + channel binding always (T-1265)
+
+Every Windows-lab proof that claims "signing and channel binding enforced" (the GSSAPI suite of section 15, the walking
+skeleton T-0671, the channel-binding acceptance T-0148) is only true while dc1 reads
+`HKLM\SYSTEM\CurrentControlSet\Services\NTDS\Parameters` **`LDAPServerIntegrity` = 2** and **`LdapEnforceChannelBindingTokens` = 2**.
+On 2026-11-01 dc1 read `LDAPServerIntegrity` = 1 (negotiated) with CBT still 2, and a cleartext simple bind answered 49
+instead of 8. Nothing in the proofs noticed.
+
+| Tool | What it does for this policy |
+| --- | --- |
+| `lab/windows/bin/dc1-policy check` | Read-only. Reads both values over WinRM and reads the Default Domain Controllers Policy template, and does a cleartext simple bind to 389 **as `svc-activediq`** (password from `WIN_LAB_SVC_PASSWORD`, never printed). Exit 0 only when both values and the GPO are 2 **and** the bind answers 8 (strongerAuthRequired); else exit 3 and names each value it read. |
+| `lab/windows/bin/dc1-policy restore` | Writes both values to 2 when they are not (the table is `lib/dc1policy.py` `REQUIRED`; nothing else can be written), reboots dc1 (CBT is read at boot) and waits for NTDS, then runs `check`. Does nothing, and does not reboot, when dc1 is already 2/2. |
+| `lab/windows/bin/gssapi-lab run` | Runs `check`-equivalent first and stops **before** any change on dc1 or any `go test`, naming the value read. After the run (in the `finally`) it reads again and fails the run if the policy moved. |
+| `lab/windows/bin/gssapi-lab prepare` | Same check after the reboot; `guest/gssapi-ready.ps1` writes 2/2 first and asserts 2/2 in a `finally`, so a failure half-way (ktpass, gMSA) cannot leave a lower value. |
+| any new proof that needs the policy | Call `with-dc1-lock lab/windows/bin/dc1-policy check` as its first step and stop on non-zero (`lab/e2e/run-skeleton-proof.sh windows`: T-0671 adds the call; see the T-1265 advance note). |
+
+Always under the lock: `lab/windows/bin/with-dc1-lock lab/windows/bin/dc1-policy restore` (or `flock -w 3600 /tmp/claude-1000/activediq-dc1.lock …`).
+Needs `pip install pywinrm requests-ntlm` and `WIN_LAB_ENV`; WinRM on dc1 is lab-only (A-0025).
+
+**Rules for lab scripts.** No script may write `LDAPServerIntegrity` or `LdapEnforceChannelBindingTokens` to anything but 2, and none may
+"restore a captured before-value" for them. `lab/windows/tests/test_dc1_policy.py` scans `lab/` for writes and fails on any other value;
+`make lab-test-windows-unit` runs it. A snapshot rollback (`qm rollback`, Proxmox, human only) puts back whatever the snapshot held:
+after any rollback or restore of VM 119 run `dc1-policy restore` before the next proof.
+
+**Offline tests.** `python3 -m unittest lab/windows/tests/test_dc1_policy.py`: a fake DC at 1/2, 2/1, absent and a drifting DC prove `gssapi-lab run`
+refuses or fails; a bad-fixture scan proves a script writing 1 or 0 is caught; a fake LDAP port proves the bind probe tells 8 from 49.
+
+**Why registry-only restores do not last (T-1265 root cause).** The Default Domain Controllers Policy template (`GptTmpl.inf` in
+SYSVOL, GUID `{6AC1786C-016F-11D2-945F-00C04fB984F9}`) defined `LDAPServerIntegrity=4,1`; the Security Settings engine re-applies it at boot and
+refresh and overwrote the registry value. `dc1-policy restore` sets the template to `4,2` and `check` fails while the GPO says anything else.
+The bind probe must use valid credentials (`svc-activediq`): a dummy password answers 49 at 2/2 too. Run log:
+`windows-lab-runs/T-1265-dc1-signing-20261102.md`. After restoring VM 119 from any snapshot taken before 2026-11-02, run `dc1-policy restore`.
+
+## 19. Child domain (dc2) (T-1233, for T-0786 / T-1234)
 
 Why: T-0786 (GC-routed sIDHistory) needs the global catalog to hold more than one domain's SIDs, so the forest
 needs a child domain. This section is the **human** procedure: a second DC is a second Proxmox VM and A-0025 covers
@@ -568,36 +634,3 @@ needs a child domain. This section is the **human** procedure: a second DC is a 
 human; workers do not do that over WinRM.
 
 **Then:** the worker ticket T-1234 verifies through dc1 only (`DomainSIDs` >= 2, the child's partial NC on dc1) and then T-0786 runs.
-
-## 18. dc1 must stay at LDAP signing required + channel binding always (T-1265)
-
-Every Windows-lab proof that claims "signing and channel binding enforced" (the GSSAPI suite of section 15, the walking
-skeleton T-0671, the channel-binding acceptance T-0148) is only true while dc1 reads
-`HKLM\SYSTEM\CurrentControlSet\Services\NTDS\Parameters` **`LDAPServerIntegrity` = 2** and **`LdapEnforceChannelBindingTokens` = 2**.
-On 2026-11-01 dc1 read `LDAPServerIntegrity` = 1 (negotiated) with CBT still 2, and a cleartext simple bind answered 49
-instead of 8. Nothing in the proofs noticed.
-
-| Tool | What it does for this policy |
-| --- | --- |
-| `lab/windows/bin/dc1-policy check` | Read-only. Reads both values over WinRM and reads the Default Domain Controllers Policy template, and does a cleartext simple bind to 389 **as `svc-activediq`** (password from `WIN_LAB_SVC_PASSWORD`, never printed). Exit 0 only when both values and the GPO are 2 **and** the bind answers 8 (strongerAuthRequired); else exit 3 and names each value it read. |
-| `lab/windows/bin/dc1-policy restore` | Writes both values to 2 when they are not (the table is `lib/dc1policy.py` `REQUIRED`; nothing else can be written), reboots dc1 (CBT is read at boot) and waits for NTDS, then runs `check`. Does nothing, and does not reboot, when dc1 is already 2/2. |
-| `lab/windows/bin/gssapi-lab run` | Runs `check`-equivalent first and stops **before** any change on dc1 or any `go test`, naming the value read. After the run (in the `finally`) it reads again and fails the run if the policy moved. |
-| `lab/windows/bin/gssapi-lab prepare` | Same check after the reboot; `guest/gssapi-ready.ps1` writes 2/2 first and asserts 2/2 in a `finally`, so a failure half-way (ktpass, gMSA) cannot leave a lower value. |
-| any new proof that needs the policy | Call `with-dc1-lock lab/windows/bin/dc1-policy check` as its first step and stop on non-zero (`lab/e2e/run-skeleton-proof.sh windows`: T-0671 adds the call; see the T-1265 advance note). |
-
-Always under the lock: `lab/windows/bin/with-dc1-lock lab/windows/bin/dc1-policy restore` (or `flock -w 3600 /tmp/claude-1000/activediq-dc1.lock …`).
-Needs `pip install pywinrm requests-ntlm` and `WIN_LAB_ENV`; WinRM on dc1 is lab-only (A-0025).
-
-**Rules for lab scripts.** No script may write `LDAPServerIntegrity` or `LdapEnforceChannelBindingTokens` to anything but 2, and none may
-"restore a captured before-value" for them. `lab/windows/tests/test_dc1_policy.py` scans `lab/` for writes and fails on any other value;
-`make lab-test-windows-unit` runs it. A snapshot rollback (`qm rollback`, Proxmox, human only) puts back whatever the snapshot held:
-after any rollback or restore of VM 119 run `dc1-policy restore` before the next proof.
-
-**Offline tests.** `python3 -m unittest lab/windows/tests/test_dc1_policy.py`: a fake DC at 1/2, 2/1, absent and a drifting DC prove `gssapi-lab run`
-refuses or fails; a bad-fixture scan proves a script writing 1 or 0 is caught; a fake LDAP port proves the bind probe tells 8 from 49.
-
-**Why registry-only restores do not last (T-1265 root cause).** The Default Domain Controllers Policy template (`GptTmpl.inf` in
-SYSVOL, GUID `{6AC1786C-016F-11D2-945F-00C04fB984F9}`) defined `LDAPServerIntegrity=4,1`; the Security Settings engine re-applies it at boot and
-refresh and overwrote the registry value. `dc1-policy restore` sets the template to `4,2` and `check` fails while the GPO says anything else.
-The bind probe must use valid credentials (`svc-activediq`): a dummy password answers 49 at 2/2 too. Run log:
-`windows-lab-runs/T-1265-dc1-signing-20261102.md`. After restoring VM 119 from any snapshot taken before 2026-11-02, run `dc1-policy restore`.
