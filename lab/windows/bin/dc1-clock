@@ -17,43 +17,21 @@ and re-checks.
 Wrap every call in the shared lock:  lab/windows/bin/with-dc1-lock -- lab/windows/bin/dc1-clock check
 Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (never printed). Runbook section 16.
 """
-import base64, datetime as dt, os, re, sys, time
+import datetime as dt, os, re, sys
 
-try:
-    from winrm.protocol import Protocol
-except ImportError:
-    sys.exit("dc1-clock: pip install pywinrm requests-ntlm")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import dc1winrm
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-path = os.environ.get("WIN_LAB_ENV") or os.path.join(REPO, "lab", "windows", ".win-lab.env")
-if not os.path.exists(path):
-    sys.exit(f"dc1-clock: lab env file not found: {path} (set WIN_LAB_ENV)")
-env = {}
-for line in open(path):
-    line = line.strip()
-    if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1)
-        env[k] = v.strip().strip('"')
-ADDR = os.environ.get("WIN_LAB_DC_ADDR") or env.get("WIN_LAB_DC_ADDR", "192.168.1.9")
+env, path, ADDR = dc1winrm.load_env("dc1-clock")
 PEERS = os.environ.get("DIQ_DC1_NTP_PEER", "162.159.200.1 162.159.200.123").split()
 if not PEERS or not all(re.fullmatch(r"[A-Za-z0-9.-]+", x) for x in PEERS):
     sys.exit("dc1-clock: DIQ_DC1_NTP_PEER must be space-separated host names or IP addresses")
 PEERLIST = " ".join(x + ",0x8" for x in PEERS)
+_ps = dc1winrm.make_ps(env, ADDR)
 
 
 def ps(script):
-    p = Protocol(endpoint=f"http://{ADDR}:5985/wsman", transport="ntlm", username="Administrator",
-                 password=env["WIN_LAB_ADMIN_PASSWORD"], read_timeout_sec=120, operation_timeout_sec=100)
-    sh = p.open_shell()
-    enc = base64.b64encode(script.encode("utf-16le")).decode()
-    cid = p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", enc])
-    out, _, _ = p.get_command_output(sh, cid)
-    try:  # teardown is best effort; the command already ran
-        p.cleanup_command(sh, cid)
-        p.close_shell(sh)
-    except Exception:
-        pass
-    return "\n".join(l for l in out.decode(errors="replace").splitlines() if not l.startswith(("#< CLIXML", "<Objs")))
+    return _ps(script)[1]
 
 
 def skew():

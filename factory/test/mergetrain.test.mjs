@@ -12,7 +12,8 @@ import path from 'node:path';
 import { Dispatcher } from '../lib/dispatcher.mjs';
 import { preMergeSettings, splitTrain } from '../lib/premerge.mjs';
 import { advanceTicket, claimTicket, createTicket, setTicketLinks } from '../lib/tickets.mjs';
-import { ensureWorktree } from '../lib/worktree.mjs';
+import { ensureWorktree, landedCommit } from '../lib/worktree.mjs';
+import { buildMergeQueue } from '../lib/mergequeue.mjs';
 import { listEntities, readRecentEvents } from '../lib/store.mjs';
 import { commitAll, git, initRepo, makeFactory, ticketInput } from './helpers.mjs';
 
@@ -38,7 +39,8 @@ function setup({ trainSize, main = {} } = {}) {
   for (const [file, text] of Object.entries(main)) fs.writeFileSync(path.join(f.root, file), text);
   commitAll(f.root, 'ci fixture');
   const lines = () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
-  const runs = () => lines().map((l) => l.split('|')[0]);
+  // A scratch tree's name ends in a per-invocation tag (`-<pid>-<hex>`, T-0696); the tests name runs without it.
+  const runs = () => lines().map((l) => l.split('|')[0].replace(/-\d+-[0-9a-f]{8}$/, ''));
   /** What each run's tree held: the work-<ticket>.txt files of the tickets merged into it. */
   const trees = () => lines().map((l) => l.split('|')[1].split(',').filter(Boolean).map((n) => /^work-(T-\d+)\.txt$/.exec(n)[1]));
   return { ...f, runs, trees, cleanup: () => { f.cleanup(); fs.rmSync(path.dirname(log), { recursive: true, force: true }); } };
@@ -59,6 +61,7 @@ async function finished(f, title, files = {}, extra = {}) {
   return t;
 }
 
+const buildMergeQueueIds = (f) => buildMergeQueue(f.ctx, {}, false).waiting;
 const byId = (f) => Object.fromEntries(listEntities(f.ctx, 'tickets').map((t) => [t.id, t]));
 const dispatcher = (f) => { const d = new Dispatcher(f.ctx); d.shared = false; return d; };
 const pass = async (d) => { await d.mergePass(); await d.gateIdle(); };
@@ -236,4 +239,50 @@ test('train_size is validated and splitTrain halves in order', () => {
   assert.deepEqual(splitTrain([1, 2, 3, 4]), [[1, 2], [3, 4]]);
   assert.deepEqual(splitTrain([1, 2, 3]), [[1, 2], [3]]);
   assert.deepEqual(splitTrain([1, 2]), [[1], [2]]);
+});
+
+test('T-1353: a done ticket whose branch is already on main is recorded as merged without a gate run, and the rest still go', async () => {
+  const f = setup();
+  try {
+    const hand = await finished(f, 'hand merged');
+    const ff = await finished(f, 'fast forwarded');
+    const normal = await finished(f, 'normal');
+    // `hand` merged by hand with --no-ff, then `ff` fast-forwarded onto the new main.
+    git(f.root, 'merge', '--no-ff', '--no-edit', '-m', `Merge ${hand.id}: by hand`, `factory/${hand.id}`);
+    const wtPath = Object.fromEntries([hand, ff].map((t) => [t.id, byId(f)[t.id].links.worktree]));
+    const handMerge = git(f.root, 'rev-parse', 'HEAD');
+    git(byId(f)[ff.id].links.worktree, 'rebase', 'main');
+    git(f.root, 'merge', '--ff-only', `factory/${ff.id}`);
+    const ffTip = git(f.root, 'rev-parse', 'HEAD');
+    // a later commit on main so the ff ticket's landing commit is not main's tip
+    fs.writeFileSync(path.join(f.root, 'later.txt'), 'x\n');
+    commitAll(f.root, 'later work');
+
+    const d = dispatcher(f);
+    await pass(d);
+
+    const out = byId(f);
+    assert.equal(out[hand.id].links.merge_commit, handMerge, 'the merge commit that brought the branch in');
+    assert.equal(out[ff.id].links.merge_commit, ffTip, 'a fast-forwarded branch lands at its own tip');
+    for (const t of [hand, ff]) {
+      assert.equal(fs.existsSync(wtPath[t.id]), false, 'worktree directory removed');
+      assert.ok(out[t.id].links.merged, `${t.id} has links.merged`);
+      assert.equal(out[t.id].links.worktree, null, 'worktree link cleared');
+      assert.equal(git(f.root, 'branch', '--list', `factory/${t.id}`), '', 'branch deleted');
+    }
+    assert.deepEqual(f.runs(), [`cand-${normal.id}`], 'only the ticket not on main goes through the gate');
+    assert.deepEqual(mergedOrder(f), [hand.id, normal.id], 'the normal ticket merges with --no-ff as before; the hand-merged ones are not merged again');
+    const events = readRecentEvents(f.ctx, 100).map((e) => e.text);
+    assert.ok(events.some((t) => t.startsWith(`${hand.id} already on`) && t.includes('without a gate run')));
+    assert.ok(buildMergeQueueIds(f).every((id) => id !== hand.id && id !== ff.id));
+  } finally { f.cleanup(); }
+});
+
+test('T-1353: landedCommit is null for a branch with work main lacks and for a missing branch', async () => {
+  const f = setup();
+  try {
+    const t = await finished(f, 'ahead');
+    assert.equal(await landedCommit(f.ctx, t.id), null);
+    assert.equal(await landedCommit(f.ctx, 'T-9999'), null);
+  } finally { f.cleanup(); }
 });
