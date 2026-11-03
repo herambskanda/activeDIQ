@@ -53,7 +53,8 @@ preflight() {
   mkdir -p "$STATE" "$LOGDIR"
   # thin-provisioned qcow2: ~15 GB real use per VM after install; require headroom for 2 VMs + ISO + snapshots
   local free; free=$(df -Pk "$STATE" | awk 'NR==2{print int($4/1048576)}')
-  [ "$free" -ge 45 ] || [ "$DRY" = 1 ] || die "need >= 45 GB free in $STATE (have ${free} GB)"
+  local need="${WIN_LAB_MIN_FREE_GB:-45}"  # the offline test sets 0: it must not depend on the host's disk
+  [ "$free" -ge "$need" ] || [ "$DRY" = 1 ] || die "need >= ${need} GB free in $STATE (have ${free} GB)"
 }
 
 # Random per-lab credentials; never printed, never committed.

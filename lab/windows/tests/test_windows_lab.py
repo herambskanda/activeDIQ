@@ -31,7 +31,7 @@ class WindowsLab(unittest.TestCase):
         self.log = self.d / "stub.log"; self.log.write_text("")
         self.env = dict(os.environ, PATH=f"{b}:{os.environ['PATH']}", STUB_LOG=str(self.log), WIN_LAB_STATE=str(self.d / "st"),
                         WIN_LAB_ENV=str(self.d / "w.env"), WIN_LAB_CA=str(self.d / "ca.pem"), WIN_LAB_LOGDIR=str(self.d / "logs"),
-                        WIN_LAB_WAIT_SECS="1", WIN_LAB_DRYRUN="", WIN_LAB_MODE="local",
+                        WIN_LAB_WAIT_SECS="1", WIN_LAB_MIN_FREE_GB="0", WIN_LAB_DRYRUN="", WIN_LAB_MODE="local",
                         DIQ_DC1_LOCK=str(self.d / "dc1.lock"), DIQ_DC1_LOCK_WAIT="5")  # never the real dc1 lock (T-0839)
         (self.d / "st").mkdir()
         (self.d / "st/ws2025-eval.iso").write_text("iso")  # pretend the ISO is already downloaded
