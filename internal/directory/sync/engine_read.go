@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
@@ -21,7 +22,7 @@ type readJob struct {
 	tid      tenant.ID
 	conn     connection.ID
 	ref      *connectorv1.ConnectionRef
-	cc       connectorv1.ConnectorClient
+	cc       client.Connector
 	key      Key
 	lease    jobs.Lease
 	nc       inventory.GUID

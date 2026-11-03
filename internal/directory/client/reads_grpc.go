@@ -7,6 +7,11 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
+// Connector is the generated connector client of one connection. Packages outside this one that only
+// read through it (the sync engine's full read) name it by this alias, so the generated client is
+// referenced in one place (ADR-0005 rule 2, fitness O2).
+type Connector = connectorv1.ConnectorClient
+
 // ConnectorSource yields the generated connector client that serves one connection. The component
 // that owns connector endpoints and their mutual-TLS dialling implements it; this package neither
 // dials nor caches.

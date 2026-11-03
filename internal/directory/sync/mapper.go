@@ -1,7 +1,7 @@
 package sync
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"slices"
 	"strings"
@@ -569,7 +569,7 @@ func (m *Mapper) bag(o *inventory.Observation, set attrSet) error {
 	if len(bag) == 0 {
 		return nil
 	}
-	if b, err := json.Marshal(bag); err != nil || len(b) > maxBag {
+	if b, err := json.Marshal(bag, json.Deterministic(true)); err != nil || len(b) > maxBag {
 		return refuse("attributes", CodeAttributesSize)
 	}
 	o.Attributes = bag
