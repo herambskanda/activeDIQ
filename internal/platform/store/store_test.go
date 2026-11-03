@@ -678,3 +678,42 @@ func TestGuardDecisionMatchesPostgres(t *testing.T) {
 		}
 	})
 }
+
+// A backend that has not yet run a pg_trgm operator does not know pg_trgm.word_similarity_threshold.
+// SetTrigramThreshold must still work on it (T-1096 QA: every search 500ed on a fresh pool) and must
+// put the value back afterwards. MaxConns 1 makes the pool hand out one brand-new backend.
+func TestSetTrigramThresholdOnColdConnection(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s, Config{MaxConns: 1})
+		ctx := context.Background()
+		// A separate pool opened after setup: no backend in it has used pg_trgm.
+		cfg := Config{DSN: e.d.AppDSN(), MaxConns: 1}
+		cold, err := Open(ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(cold.Close)
+		var during, after string
+		var similar bool
+		err = cold.WithTenant(ctx, e.a, func(ctx context.Context, tx Tx) error {
+			restore, err := SetTrigramThreshold(ctx, tx, 0.3)
+			if err != nil {
+				return err
+			}
+			if err := tx.QueryRow(ctx, `SELECT current_setting('pg_trgm.word_similarity_threshold'), 'pryia' <% 'priya ramn'`).Scan(&during, &similar); err != nil {
+				return err
+			}
+			restore()
+			return tx.QueryRow(ctx, `SELECT current_setting('pg_trgm.word_similarity_threshold')`).Scan(&after)
+		})
+		if err != nil {
+			t.Fatalf("SetTrigramThreshold on a cold connection: %v", err)
+		}
+		if during != "0.3" || !similar {
+			t.Fatalf("during = %q, similar = %v; want 0.3, true", during, similar)
+		}
+		if after != "0.6" {
+			t.Fatalf("after restore = %q; want pg_trgm's default 0.6", after)
+		}
+	})
+}

@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/credentials"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
+	"github.com/skenzeriq/activediq/internal/platform/ownerfile"
 )
 
 // Material is what the administrator hands the host: the server address, the single-use token and the
@@ -59,9 +60,11 @@ func Enroll(ctx context.Context, m Material, dir string, ex Exchange) (*State, e
 		return nil, errors.New("dial: enrollment material is incomplete")
 	}
 	// Fail before the single-use token is spent if this host cannot store the key safely.
-	if err := ensureDir(dir); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrState, err)
+	pre, err := ownerfile.CreateDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrState, err)
 	}
+	pre.Close() // save reopens and re-verifies it; nothing is held across the network exchange
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("dial: generating key: %w", err)

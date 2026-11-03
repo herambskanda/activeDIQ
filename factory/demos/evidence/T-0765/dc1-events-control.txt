@@ -1,0 +1,10 @@
+# Control: the same query over a window that includes pre-enforcement history (shows the check sees real events and fails on them)
+with-dc1-lock: holding dc1 lock /tmp/claude-1000/activediq-dc1.lock (pid 3403699, waited 0s)
+dc1-evidence: FAIL: Directory Service event 3039 logged 8x during the run
+event 2887: 0
+event 3039: 8
+event 3074: 0
+event 2889: 1  (recorded, not judged)
+event 3040: 0  (recorded, not judged)
+event 3041: 0  (recorded, not judged)
+event 3075: 0  (recorded, not judged)
