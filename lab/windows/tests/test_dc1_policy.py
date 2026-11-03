@@ -98,7 +98,7 @@ class RunStopsBeforeTesting(unittest.TestCase):
         class Drifting(FakeDC):
             def ps(self, script):
                 r = super().ps(script)
-                if "Set-Date" in script:
+                if "Set-ItemProperty" in script and "Diagnostics" in script and "Value 2" in script:
                     self.integrity = 1  # something resets it during the run
                 return r
         code, ran = self.run_with(Drifting())
