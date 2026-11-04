@@ -300,7 +300,7 @@ DC's own password-expired bit, which is set for `pwdLastSet = 0`: the counts rec
 
 **Evaluated in the query, not after it.** `locked_out`, `password_state`, `password_expires_at` and
 `account_expired` are **dataset columns of `inventory.users`, evaluated inside the compiled query**,
-with `now` and the resolved policy values bound as arguments. They are never a post-filter or a
+with only `now` and the run's filters bound as arguments. The effective policy is resolved in the same query from the D4 tables (below), not bound, because a per-user policy cannot be an argument once PSOs apply (modules/reports.md §14 item 3). They are never a post-filter or a
 loop in application code. This is what makes filter, sort, total count and paging (FR-12) and the
 post-trim counts (LF-39) correct: a "Locked-out Users: 37" count is the count of rows the
 predicate selects. The registered-column contract is `solution-architect`'s, specified in [modules/reports.md §3.3](../../development/architecture/modules/reports.md) and built in B3 (RP8),
@@ -310,7 +310,26 @@ and the build tickets cite it.
 state is **Unknown (input missing)** with the reason on hover. A report never infers "not locked" or
 "not expired", and never silently falls back to the domain policy when the PSO is unresolvable.
 
-**Policy source** shows "Domain policy" or the PSO's name. A PSO can change without any write to
+**PSO resolution** (the rules FR-09 and AC-49a test; contract in modules/reports.md §14 item 3):
+1. Only normal user accounts resolve a PSO. Computer, trust and `krbtgt` accounts resolve none.
+2. Candidates are the PSOs linked to the user directly (`msDS-PSOAppliesTo` on the PSO naming the user)
+   and those linked to a group the user belongs to. Membership comes from the group closure
+   (`inventory_group_members`, nested groups and the primary group included). Only **global security
+   groups** count as link targets; whether a PSO linked to another group type applies is confirmed on
+   the Windows lab (AC-49a) and, until then, recorded as a lab finding, not assumed.
+3. A **direct** link beats every group-linked PSO.
+4. Within the same tier, the lowest `msDS-PasswordSettingsPrecedence` wins.
+5. Equal precedence is broken by the **lowest PSO `objectGUID`, compared as its 16 raw wire bytes**
+   (not the text form), so the choice is deterministic and testable.
+6. No candidate means the domain policy of the user's naming context. A candidate with no readable
+   PSO row or no precedence, or a domain whose PSO set was never read, leaves the policy unresolved:
+   the states are Unknown (input missing) and never fall back to the domain policy.
+
+**Policy source** shows "Domain policy" or the PSO's name. When the resolved PSO is **outside the
+runner's read scope**, it shows **"(policy outside your scope)"** instead of the name, and the PSO's
+name appears nowhere else in rows, counts or exports (modules/reports.md §3.3 and §14 item 4). The
+values still apply while the name is masked: the state is computed from the PSO's real settings,
+because reading an in-scope user's expiry is the read being granted, not the PSO's identity. A PSO can change without any write to
 the user (a group membership change or a PSO edit), so the effective policy is **resolved at run
 time from the synced policy objects**, and no per-user cached PSO decides a report (§7 requirement
 D4).
@@ -799,7 +818,7 @@ Each FR names a parity ID or `enhancement`. Others cite them as `reports-2a#FR-n
 | FR-06 | The run MUST support scope by domain (multi-select, default all permitted), OU include/exclude, period presets and custom range, typed per-column filters and adding or removing registered columns | ADM-099 |
 | FR-07 | Every run MUST apply the runner's scope inside the query. Counts and pages MUST be computed after trimming. A scope kind the 2a evaluator does not support MUST grant nothing | ADM-099, DM-71.I1 |
 | FR-08 | Every run MUST store and show `as_of` and a freshness label per §8.2, and MUST NOT say "live" except for per-DC reads | enhancement (E1), DM-72.I1 |
-| FR-09 | Locked-out, password-expired, password-expires-at and account-expired states MUST be computed at run time by the rules of §6.4, **as columns evaluated inside the compiled query, never a post-filter in application code** (modules/reports.md §3.3, B3). `now` is bound once per run as an argument. The **effective password and lockout policy is resolved inside the same query** from the synced policy tables (D4: domain policy per NC, PSOs, PSO links), in the same snapshot as the user row, because a per-user policy cannot be bound as an argument once PSOs apply (modules/reports.md §14 item 3). Resolution follows the PSO rules of §6.4: a direct PSO link wins over a group-linked one, then lowest precedence, then a fixed tie-break; computer, trust and krbtgt accounts never resolve a PSO. A PSO that cannot be resolved makes the dependent states Unknown and is never replaced by the domain policy, and MUST show "Unknown (input missing)" rather than infer | ADM-084, ADM-085 |
+| FR-09 | Locked-out, password-expired, password-expires-at and account-expired states MUST be computed at run time by the rules of §6.4, **as columns evaluated inside the compiled query, never a post-filter in application code** (modules/reports.md §3.3, B3). `now` is bound once per run as an argument. The **effective password and lockout policy is resolved inside the same query** from the synced policy tables (D4: domain policy per NC, PSOs, PSO links), in the same snapshot as the user row, because a per-user policy cannot be bound as an argument once PSOs apply (modules/reports.md §14 item 3). Resolution follows the PSO rules of §6.4: a direct PSO link wins over a group-linked one, then lowest precedence, then lowest `objectGUID` by raw wire bytes; computer, trust and krbtgt accounts never resolve a PSO. A PSO that cannot be resolved makes the dependent states Unknown and is never replaced by the domain policy, and MUST show "Unknown (input missing)" rather than infer | ADM-084, ADM-085 |
 | FR-10 | USR-04 and PWD-03 MUST follow §6.5: per-DC coverage shown, partial coverage labelled a lower bound with no "never", a read cap that refuses before reading | ADM-084, ADM-085 |
 | FR-11 | A run MUST be a job with the states of §8.1, visible progress and cancel, a typed failure reason and retry. A change of preset, filter, period, scope or columns MUST create a new run. Paging and sorting MUST read the same run | DM-72 |
 | FR-12 | Paging, sorting and filtering MUST be server-side and total counts MUST not load every row | ADM-099 |
@@ -1248,11 +1267,11 @@ Evidence: API test; compiled-SQL assertion via `reportsql.Query.Statement()`; ta
 
 AC-49a (FR-09, modules/reports.md §3.3 and §14 item 3)
 Given users resolving a PSO in each case: a direct PSO link over a group-linked PSO, two group-linked
-  PSOs with different precedence, equal precedence (fixed tie-break), a user with no PSO, a
+  PSOs with different precedence, equal precedence (lowest `objectGUID` by raw wire bytes wins), a PSO linked to a group the user reaches only through nesting or as primary group, a user with no PSO, a
   computer and krbtgt account, and a stored PSO that has no readable row or precedence, or a domain
   whose PSO set was never read
 When Locked-out Users and Password status run
-Then each user's lockout and password state use the PSO the rules choose; the no-PSO user uses the
+Then each user's lockout and password state use the PSO the §6.4 rules choose, and in the equal-precedence case the PSO with the lowest raw-byte `objectGUID` (not the lowest GUID text) is the one used; the no-PSO user uses the
   domain policy; computer and krbtgt use none; and each unresolvable case shows "Unknown (input
   missing)" with its reason and is never shown with the domain policy
 Evidence: table-driven test against the independent reference; fault-injection test; [LAB: Windows]
@@ -1261,8 +1280,8 @@ Evidence: table-driven test against the independent reference; fault-injection t
 AC-49b (FR-09, §6.4, modules/reports.md §3.3)
 Given a PSO that is outside the runner's read scope but applies to an in-scope user
 When Password status runs as that runner
-Then the user's state uses the PSO's values, "Policy source" reads "(policy outside your scope)",
-  and the PSO's name appears nowhere in the rows, counts or export
+Then the user's state uses the PSO's real values (same state an unscoped runner sees), "Policy source"
+  reads "(policy outside your scope)" as defined in §6.4, and the PSO's name appears nowhere in the rows, counts or export
 Evidence: API test with a scoped runner; RP11 scope-leak check
 
 AC-50 (§8.3 canonical form)
@@ -1322,5 +1341,5 @@ cited in §6.4–§6.6 and §10. Items the consult could not source carry `[UNVE
 - 2026-10-02 · revised after the solution-architect review: schedule writes are `reports.schedule.*` Actions (ADR-0005 rule 10, §8.4, FR-29, Q5 dropped); run-time checks of every permission and external recipient (FR-25); one delivery-link rule (FR-24); run and snapshot semantics (§8.1, FR-11, FR-17); derived states evaluated in the query (§6.4, FR-09); canonical digest form (§8.3); per-DC wording mechanism-neutral (§6.5, Q2). Added AC-45 to AC-50
 - 2026-10-30 · T-0914 · traceability only, no scope, FR or AC change: placeholder tickets replaced by the modules/reports.md §12 rows; D9 names `authz.ReadScope` and `rbac.ReadScopes`; Q2 and Q3 marked decided (modules/reports.md §14 items 1 and 2); §14 table equals the contract's FR/AC column
 - 2026-10-31 · T-1016 · domain corrections only, no scope, FR or AC change: §6.4 lockout is inclusive, a stored 0 max age is Unknown, the DC's expired bit includes must-change; D7 points to DM-16 and the lab rows
-- 2026-11-04 · T-1023 · FR-09 and AC-49 revised to match modules/reports.md §14 item 3 (policy resolved in the query from the D4 tables; only `now` is bound); added AC-49a (PSO precedence and unresolvable cases) and AC-49b (PSO outside read scope). No scope change
+- 2026-11-04 · T-1023 · FR-09 and AC-49 revised to match modules/reports.md §14 item 3 (policy resolved in the query from the D4 tables; only `now` is bound); added AC-49a (PSO precedence and unresolvable cases) and AC-49b (PSO outside read scope). Review fixes: §6.4 no longer says policy is bound; PSO resolution rules and tie-break named; out-of-scope label defined. No scope change
 - 2026-11-04 · T-0981 · aligned with DECISION TM-D30 ([review](../../development/architecture/reports-schedules-security-review.md) §2): external-delivery step-up (SX-1, SX-2, SX-4), account-address classification (SX-5), confirmed-external at fire (SX-6, narrows §8.4 check 3), `manage_all` is see/pause/reassign only (R1, R2), resume confirms every external recipient (R5), SX-8 audit fields, empty allowed-domains state; added FR-26a–FR-26d and AC-51–AC-57
