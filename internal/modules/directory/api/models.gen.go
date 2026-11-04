@@ -515,7 +515,7 @@ type DirectorySearchHit struct {
 	Disambiguator     *DirectorySearchDisambiguator `json:"disambiguator,omitzero"`
 	DisplayName       string                        `json:"displayName"`
 	DistinguishedName string                        `json:"distinguishedName"`
-	// The DNS name of the object's domain. The client shows it when the answer spans more than one.
+	// The DNS name of the object's domain, present only when the permitted hits of this answer span more than one domain; empty otherwise (and for an object whose DN holds no domain components). The client shows it when it is not empty.
 	Domain     string                     `json:"domain"`
 	Highlights []DirectorySearchHighlight `json:"highlights"`
 	Mail       *string                    `json:"mail,omitzero"`

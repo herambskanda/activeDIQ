@@ -19,6 +19,7 @@ var (
 	ErrNoSubjects       = errors.New("reportsql: the dataset has no subject anchor")
 	ErrPerDCInSQL       = errors.New("reportsql: a per-DC column cannot be filtered or sorted in SQL")
 	ErrQueryTimeout     = errors.New("reportsql: query timed out")
+	ErrTooManyRows      = errors.New("reportsql: the query returned more rows than the caller accepts")
 	ErrBadEnumValue     = errors.New("reportsql: the dataset produced an undeclared enum value")
 
 	// ErrNulInText and ErrInvalidUTF8 are the store's (safe-primitives rule 7): SQL-10 and SQL-11.

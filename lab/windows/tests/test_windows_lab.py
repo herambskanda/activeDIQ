@@ -31,7 +31,8 @@ class WindowsLab(unittest.TestCase):
         self.log = self.d / "stub.log"; self.log.write_text("")
         self.env = dict(os.environ, PATH=f"{b}:{os.environ['PATH']}", STUB_LOG=str(self.log), WIN_LAB_STATE=str(self.d / "st"),
                         WIN_LAB_ENV=str(self.d / "w.env"), WIN_LAB_CA=str(self.d / "ca.pem"), WIN_LAB_LOGDIR=str(self.d / "logs"),
-                        WIN_LAB_WAIT_SECS="1", WIN_LAB_MIN_FREE_GB="0", WIN_LAB_DRYRUN="", WIN_LAB_MODE="local",
+                        WIN_LAB_WAIT_SECS="1", WIN_LAB_DRYRUN="", WIN_LAB_MODE="local",
+                        WIN_LAB_MIN_FREE_GB="0",  # unit tests must not depend on host free disk (T-1449)
                         DIQ_DC1_LOCK=str(self.d / "dc1.lock"), DIQ_DC1_LOCK_WAIT="5")  # never the real dc1 lock (T-0839)
         (self.d / "st").mkdir()
         (self.d / "st/ws2025-eval.iso").write_text("iso")  # pretend the ISO is already downloaded
@@ -45,6 +46,26 @@ class WindowsLab(unittest.TestCase):
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(self.d / "k"), "-out", str(self.d / "ca.pem"),
                         "-subj", "/CN=stub", "-days", "1"], capture_output=True, check=True)
         return self.ctl("up", WIN_LAB_SKIP_CA="1")
+
+    def _df_stub(self, gb):
+        (self.d / "bin/df").write_text(f"#!/bin/sh\necho 'Filesystem 1024-blocks Used Available Capacity Mounted'\n"
+                                       f"echo 'stub 99999999 1 {gb * 1048576} 1% /'\n")
+        (self.d / "bin/df").chmod(0o755)
+
+    def test_preflight_default_floor_still_refuses_below_45_gb(self):
+        self._df_stub(38)
+        env = {k: v for k, v in self.env.items() if k != "WIN_LAB_MIN_FREE_GB"}  # override unset: default floor applies
+        r = subprocess.run([str(CTL), "preflight"], env=env, capture_output=True, text=True, timeout=60)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("need >= 45 GB free", r.stderr)
+        self.assertIn("have 38 GB", r.stderr)
+
+    def test_preflight_passes_at_floor_and_override_lowers_it(self):
+        self._df_stub(45)
+        env = {k: v for k, v in self.env.items() if k != "WIN_LAB_MIN_FREE_GB"}
+        self.assertEqual(subprocess.run([str(CTL), "preflight"], env=env, capture_output=True, text=True, timeout=60).returncode, 0)
+        self._df_stub(38)
+        self.assertEqual(self.ctl("preflight", WIN_LAB_MIN_FREE_GB="30").returncode, 0)
 
     def test_up_builds_both_vms_snapshots_and_keeps_secrets_out_of_argv(self):
         r = self.stubbed_up()
