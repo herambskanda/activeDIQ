@@ -226,9 +226,10 @@ func (w PolicyWriter) applies(ctx context.Context, tx store.Tx, connection Conne
 }
 
 // SetPSOAppliesRead tells the writer how many msDS-PSOAppliesTo values the directory holds for pso right now.
-// The over-budget marker is set from that number alone (more than the per-PSO cap), so it clears when the
-// directory is brought back under the cap and does not depend on what earlier cycles stored. A PSO that is
-// not stored is ignored (its values are Unknown already).
+// The marker is set when that number is over the per-PSO cap, or when it differs from the edges stored (an
+// edge refused by either cap is never sent again by a delta read, so the store stays short). It clears only
+// when the directory count is under the cap and equals what is stored, so the stored set is complete. A PSO
+// that is not stored is ignored (its values are Unknown already).
 func (w PolicyWriter) SetPSOAppliesRead(ctx context.Context, tx store.Tx, connection ConnectionID, pso GUID, values int) error {
 	if err := w.check(ctx, tx, connection, pso); err != nil {
 		return err
@@ -236,7 +237,12 @@ func (w PolicyWriter) SetPSOAppliesRead(ctx context.Context, tx store.Tx, connec
 	if values < 0 {
 		return ErrInvalid
 	}
-	return markAppliesOver(ctx, tx, connection, pso, values > psoApplies.perPSO)
+	if _, err := tx.Exec(ctx, `UPDATE public.inventory_psos SET applies_over_budget = ($3::int > $4::int OR $3::int <> applies_count)
+		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND pso_guid = $2::uuid
+		AND applies_over_budget <> ($3::int > $4::int OR $3::int <> applies_count)`, string(connection), string(pso), values, psoApplies.perPSO); err != nil {
+		return writeErr("mark pso applies over budget", err)
+	}
+	return nil
 }
 
 func markAppliesOver(ctx context.Context, tx store.Tx, connection ConnectionID, pso GUID, over bool) error {

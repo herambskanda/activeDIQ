@@ -190,6 +190,32 @@ func Test_pso_applies_over_budget_is_a_marker_and_unknown(t *testing.T) {
 		if n := active(other); n != 3 || !over(other) {
 			t.Errorf("connection cap: other holds %d rows, over=%v; want 3 and true", n, over(other))
 		}
+		// A read under the per-PSO cap must not clear the marker while stored edges are short of the directory:
+		// (a) an edge refused by the connection cap is never sent again; (b) a value refused earlier by the
+		// per-PSO cap stays missing after the directory drops back under it.
+		third := hGUID(5, 3)
+		e.policyTx(t, func(ctx context.Context, tx store.Tx, w inventory.PolicyWriter) error {
+			p3 := int64(3)
+			if err := w.SetPSO(ctx, tx, c, inventory.GUID(third), inventory.GUID(hDom), inventory.PSO{Precedence: &p3, MaxPwdAge: days(1), LockoutDuration: mins(5)}, hBase); err != nil {
+				return err
+			}
+			if err := w.SetPSOApplies(ctx, tx, c, inventory.GUID(third), inventory.GUID(targets[0]), hBase.Add(4*time.Minute)); err != nil {
+				return err
+			}
+			return w.SetPSOAppliesRead(ctx, tx, c, inventory.GUID(third), 1)
+		})
+		if !over(third) || active(third) != 0 {
+			t.Errorf("connection-cap refusal then a read under the cap: over=%v active=%d, want true and 0", over(third), active(third))
+		}
+		e.policyTx(t, func(ctx context.Context, tx store.Tx, w inventory.PolicyWriter) error {
+			return w.SetPSOAppliesRead(ctx, tx, c, inventory.GUID(pso), 3) // 2 stored, directory says 3
+		})
+		if !over(pso) {
+			t.Errorf("directory count 3 with 2 stored edges: over=false, want true")
+		}
+		if reason := state()["password_state_reason"]; !strings.Contains(reason, "pso_applies_over_budget") {
+			t.Errorf("reason = %s, want pso_applies_over_budget", reason)
+		}
 		// An edge past the budget for a PSO with no stored values cannot carry a marker: a typed error.
 		ghost := hGUID(5, 9)
 		e.policyTx(t, func(ctx context.Context, tx store.Tx, w inventory.PolicyWriter) error {
