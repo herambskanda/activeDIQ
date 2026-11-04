@@ -84,6 +84,38 @@ func (o GetCSRFToken200) ResponseBody() any                { return o.Body }
 func (GetCSRFToken200) ResponseHeaders() map[string]string { return nil }
 func (GetCSRFToken200) isGetCSRFTokenOutput()              {}
 
+// GetSessionInput is the decoded input of getSession: path, query and header parameters, then the body.
+type GetSessionInput struct {
+}
+
+func (in *GetSessionInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+}
+
+func (in *GetSessionInput) BodyTarget() any { return nil }
+
+func (in *GetSessionInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+}
+
+func (in *GetSessionInput) DestroySecrets() {}
+
+// GetSessionOutput is one of the responses getSession declares. Errors are returned as the error value.
+type GetSessionOutput interface {
+	apihost.Response
+	isGetSessionOutput()
+}
+
+// GetSession200 is the 200 response.
+type GetSession200 struct {
+	Body SessionInfo
+}
+
+func (GetSession200) StatusCode() int                    { return 200 }
+func (o GetSession200) ResponseBody() any                { return o.Body }
+func (GetSession200) ResponseHeaders() map[string]string { return nil }
+func (GetSession200) isGetSessionOutput()                {}
+
 // SignInBreakGlassPasswordInput is the decoded input of signInBreakGlassPassword: path, query and header parameters, then the body.
 type SignInBreakGlassPasswordInput struct {
 	PeerIP string // the client address: the TCP peer, or the right-most untrusted X-Forwarded-For hop when the peer is a configured trusted proxy (ACTIVEDIQ_TRUSTED_PROXIES)
@@ -275,6 +307,7 @@ func (VerifyWebAuthnSignIn204) isVerifyWebAuthnSignInOutput() {}
 type Handlers interface {
 	CreateWebAuthnSignInChallenge(ctx context.Context, in CreateWebAuthnSignInChallengeInput) (CreateWebAuthnSignInChallengeOutput, error)
 	GetCSRFToken(ctx context.Context, in GetCSRFTokenInput) (GetCSRFTokenOutput, error)
+	GetSession(ctx context.Context, in GetSessionInput) (GetSessionOutput, error)
 	SignInBreakGlassPassword(ctx context.Context, in SignInBreakGlassPasswordInput) (SignInBreakGlassPasswordOutput, error)
 	SignOut(ctx context.Context, in SignOutInput) (SignOutOutput, error)
 	VerifyTOTPSignIn(ctx context.Context, in VerifyTOTPSignInInput) (VerifyTOTPSignInOutput, error)
@@ -315,6 +348,22 @@ func Bind(h Handlers) apihost.TagHandlers {
 				}
 				if out == nil {
 					return nil, fmt.Errorf("GetCSRFToken returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "getSession", Tag: "platform.authn", Method: "GET", Path: "/auth/session",
+			Permission: "authenticated", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(GetSessionInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.GetSession(ctx, *in.(*GetSessionInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("GetSession returned no output and no error")
 				}
 				return out, nil
 			}),

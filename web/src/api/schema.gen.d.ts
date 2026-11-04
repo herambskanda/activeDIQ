@@ -121,6 +121,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The permission names the calling session holds
+         * @description Answers the names of the catalogue permissions the calling console session holds at tenant scope, sorted, so the console can hide navigation the session could not use (for example Reports without reports.run). Names only: no scope, role or grant detail. It is display only; every operation still authorises the request itself and stays the authority. Needs a cookie session and no permission beyond it. The answer is never cached. Additive to the preview auth plane.
+         */
+        get: operations["getSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connectionId}/takeover-attestation": {
         parameters: {
             query?: never;
@@ -2124,6 +2144,11 @@ export interface components {
         };
         /** @description A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request. */
         SecretInput: string;
+        /** @description What the calling session may do, as permission names only. */
+        SessionInfo: {
+            /** @description The catalogue permission names the session holds at tenant scope, sorted. Display only. */
+            permissions: string[];
+        };
         /** @description The one-time setup secret and the details of the first tenant owner. */
         SetupClaimRequest: {
             owner: components["schemas"]["SetupOwner"];
@@ -2979,6 +3004,30 @@ export interface operations {
             401: components["responses"]["SignInFailed"];
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            501: components["responses"]["NotImplemented"];
+        };
+    };
+    getSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The permission names this session holds. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionInfo"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
             501: components["responses"]["NotImplemented"];

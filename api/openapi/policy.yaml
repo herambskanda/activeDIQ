@@ -117,6 +117,9 @@ authenticated:
   - operation: getCsrfToken
     reason: Gives the caller's own session its CSRF value; touches no other principal.
     ref: TM-F-SESSION
+  - operation: getSession
+    reason: Names the permissions the caller's own session holds, for display only; touches no other principal and every operation still authorises itself.
+    ref: TM-F-SESSION
 nonApiRoutes:
   - method: GET
     path: /healthz

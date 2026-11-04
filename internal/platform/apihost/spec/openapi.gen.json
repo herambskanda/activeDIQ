@@ -5071,6 +5071,25 @@
         "writeOnly": true,
         "x-activediq-secret": true
       },
+      "SessionInfo": {
+        "description": "What the calling session may do, as permission names only.",
+        "properties": {
+          "permissions": {
+            "description": "The catalogue permission names the session holds at tenant scope, sorted. Display only.",
+            "items": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "maxItems": 1024,
+            "type": "array"
+          }
+        },
+        "required": [
+          "permissions"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.authn"
+      },
       "SetupClaimRequest": {
         "additionalProperties": false,
         "description": "The one-time setup secret and the details of the first tenant owner.",
@@ -5860,6 +5879,50 @@
         "x-activediq-scope": "platform",
         "x-activediq-stability": "preview",
         "x-permission": "anonymous"
+      }
+    },
+    "/auth/session": {
+      "get": {
+        "description": "Answers the names of the catalogue permissions the calling console session holds at tenant scope, sorted, so the console can hide navigation the session could not use (for example Reports without reports.run). Names only: no scope, role or grant detail. It is display only; every operation still authorises the request itself and stays the authority. Needs a cookie session and no permission beyond it. The answer is never cached. Additive to the preview auth plane.",
+        "operationId": "getSession",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            },
+            "description": "The permission names this session holds."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "The permission names the calling session holds",
+        "tags": [
+          "platform.authn"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "authenticated"
       }
     },
     "/connections/takeover-attestation/callback": {
