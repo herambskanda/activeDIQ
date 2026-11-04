@@ -804,25 +804,39 @@ func nearWord(p, n *token) string {
 }
 
 // checkSubscript judges the "[" at toks[i]. After ARRAY it opens an array constructor. Anywhere else it
-// is a subscript, and jsonb subscripts read keys (`attributes['unicodePwd']`), so the index must be an
-// integer or a string literal run through SecretKey, then "]".
+// is a subscript, and a jsonb subscript reads a key (`attributes['unicodePwd']`). An index holding no
+// string literal is an array index computed from columns and numbers (`{t}.via[hop.i]`), which cannot
+// spell a key. One holding a string literal must be that single literal, run through SecretKey.
 func checkSubscript(toks []token, i int, env *fragEnv) error {
 	if isWord(toks, i-1, "array") {
 		return nil
 	}
-	if i+2 < len(toks) && toks[i+1].kind == tokNumber && isPunct(toks, i+2, "]") {
+	depth, lits, end := 0, 0, -1
+	for k := i; k < len(toks) && end < 0; k++ {
+		switch {
+		case isPunct(toks, k, "["):
+			depth++
+		case isPunct(toks, k, "]"):
+			if depth--; depth == 0 {
+				end = k
+			}
+		case toks[k].kind == tokLiteral:
+			lits++
+		}
+	}
+	if end < 0 || lits == 0 {
 		return nil
 	}
-	if i+2 < len(toks) && toks[i+1].kind == tokLiteral && isPunct(toks, i+2, "]") {
-		if env.secretKey == nil {
-			return fmt.Errorf("a subscript is refused: no SecretKey predicate is configured")
-		}
-		if env.secretKey(toks[i+1].lit) {
-			return fmt.Errorf("the JSON key %q is a secret attribute and may not be read", toks[i+1].lit)
-		}
-		return nil
+	if lits > 1 || end != i+2 || toks[i+1].kind != tokLiteral {
+		return fmt.Errorf("a subscript holding a string must hold one literal alone, so the key can be checked")
 	}
-	return fmt.Errorf("a subscript must hold one integer or string literal, so the key can be checked")
+	if env.secretKey == nil {
+		return fmt.Errorf("a subscript is refused: no SecretKey predicate is configured")
+	}
+	if env.secretKey(toks[i+1].lit) {
+		return fmt.Errorf("the JSON key %q is a secret attribute and may not be read", toks[i+1].lit)
+	}
+	return nil
 }
 
 // checkCast judges the cast "::typ" whose first colon is at toks[i]. A string cast to timestamptz or
