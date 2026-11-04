@@ -320,7 +320,7 @@ func bootCase(ctx context.Context, p ociProfile, arch, pgv, tag string, pg *pgha
 		return step(StepTenants, fmt.Errorf("the install holds %d tenants, want exactly %d", n, p.Tenants))
 	}
 	if p.Provisioning {
-		okf(StepTenants, "%d tenant, created by the platform provisioning path (capability %s is enabled in the composed manifest)", n, capability.TenantProvisioning)
+		okf(StepTenants, "%d tenant, created by FirstRun: the image boots as linux-oci does, so this does not yet prove the %s path (T-1490)", n, capability.TenantProvisioning)
 	} else {
 		okf(StepTenants, "exactly %d tenant", n)
 	}
