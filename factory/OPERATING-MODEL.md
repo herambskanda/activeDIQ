@@ -280,7 +280,9 @@ back a conclusion with file references.
   git worktree for code tickets. They receive the ticket, the latest handoff if any, and the
   factory protocol. They end with a `RESULT:` line; the ticket state is the source of truth.
 - **Signals** — `pause` and `resume` from the board or CLI; `factory down` stops everything
-  gracefully (running workers are asked to hand off).
+  gracefully (running workers are asked to hand off); `factory restart` reloads the dispatcher and
+  board on new code without touching workers. The dispatcher does the same by itself when
+  `factory/lib`, `bin` or `board` code lands on `main`.
 - **Merging** — after QA passes, the dispatcher merges the ticket branch into `main`. Conflicts
   become a `chore` ticket for the original owner.
 - **Interactive sessions** — the CEO's `claude` session runs as `factory-director`. It can do

@@ -299,6 +299,15 @@ A call streams `ChangeBatch` messages and ends with the one that has `cycle_comp
 with zero changes, so the cookie's `issued_at` advances. A stream that ends without it, or with an
 error, was cut off: the caller keeps its last committed cookie (CC-FEED-14).
 
+Server side: `client.ChangeFeedReader.Read` (T-1195) opens the call, hands each `ChangeBatch` to the
+caller's callback in order (the place to commit rows with `cookie_after`, DM-19.I1), and returns
+success only after a `cycle_complete` batch; a cut-off is `ErrFeedIncomplete`, a sequence gap, a batch
+after the last or a batch without a cookie is `ErrFeedProtocol`. `STALE_COOKIE` (with its
+`ResyncReason`), `UNREACHABLE_DC`, `THROTTLED` (`retry_after`, capped at one hour) and
+`SECRET_ATTRIBUTE` map to typed errors with no DC name, attribute or message; `ResyncRequired(err)` is
+true for the stale one only. A non-ACTIVE or non-AD connection, or a partition outside the managed set
+(`ManagedPartitions`, DM-14), is refused before any connector call.
+
 ### 6.2 DirSync is object-security mode only (TM §6.3 R2)
 
 The AD feed sends the DirSync control with `LDAP_DIRSYNC_OBJECT_SECURITY` (0x1) and
@@ -636,7 +645,7 @@ re-runs one automatically. The gate is **open** only when all of these hold. Eac
 | No shrink record, shrink baseline or ratchet append has failed to become durable since the last run that completed with every local record durable (§8.3a) | `LOCAL_RECORD_FAILED` (v1.2) |
 | V8 (AD) or EV4 (Entra) is not `FAIL`. Under-privilege is never overridable (FR-12) | `INSUFFICIENT` |
 | The run's verdict is not `FAILED`, and V7 or EV3 is neither `COULD_NOT_VERIFY` nor `NOT_RUN` | `COULD_NOT_VERIFY` |
-| V7 or EV3 is `PASS`, or it is `FAIL` and every blocking V7 or EV3 fingerprint is in the request's `WriteGateOverride.acknowledged_fingerprints` | `OVERPRIVILEGED` (with the count of unacknowledged findings) |
+| V7 or EV3 is `PASS` or `WARN` (a warn is never acknowledged; the server's gates read it the same way, T-1245), or it is `FAIL` and every blocking V7 or EV3 fingerprint is in the request's `WriteGateOverride.acknowledged_fingerprints` | `OVERPRIVILEGED` (with the count of unacknowledged findings) |
 
 **The limits are build-time constants (v1.2).** The maximum verification age (26 hours), the
 maximum statement age (15 minutes, §8.3 F3) and the future-skew allowance (5 minutes, F3) are
@@ -895,6 +904,7 @@ has the same DM-24 shape and fingerprint. **The "refused flag"** is `verdict = R
 | TM §6.5 | 1 Group membership: `tokenGroups` ∩ C1, C13 and designated groups | V7, `TIER0_GROUP_MEMBERSHIP`, block | the Tier-0 group | unset | `membership`: hops from the identity to the group, `primary_group_edge`, SID-only hops for foreign security principals | `object_tier0_basis` C1, C13 or `CUSTOMER_DESIGNATED` |
 | TM §6.5 | 2 Constructed effective rights on each `tier0` object | V7, `EXCESSIVE_RIGHT`, block | the `tier0` object | `ad`: `WRITE_PROPERTY` + attribute `schemaIDGUID` (`allowedAttributesEffective`); `CREATE_CHILD` + class (`allowedChildClassesEffective`); `WRITE_OWNER`, `WRITE_DAC`, `WRITE_SACL` (`sDRightsEffective`) | `effective_attribute` (which of the three) | `object_tier0_basis` |
 | TM §6.5 | 3 DACL evaluation: extended rights, confidential read, validated writes | V7, `EXCESSIVE_RIGHT`, block | the `tier0` object | `ad`: `CONTROL_ACCESS`, `VALIDATED_WRITE` or `READ_PROPERTY` (confidential), with `rightsGuid` or `schemaIDGUID` in `object_type` and the raw `access_mask` | `ace`: `on_object`, `inherited`, `inherited_from`, `trustee` SID, `trustee_group` | `object_tier0_basis` |
+| TM §6.5 / T-0237 | 3 DACL evaluation, broad principal: a dangerous right on a `tier0` object held by Everyone, Authenticated Users, Domain Users or another broad principal (the customer's own ACL, not the identity's right). Code `exposure.tier0_broad_principal` | V7, `EXCESSIVE_RIGHT`, **warn** | the `tier0` object | `ad`: the right found | `ace`: the broad trustee | the V7 outcome is `WARN` and the verdict stays `PASS`; the server activates and opens the write gate on it, and Health shows the count (T-1245) |
 | TM §6.5 | 4 Excess in managed OUs | V9, `EXCESSIVE_RIGHT`, warn | the managed OU | `ad`: `GENERIC_ALL`, `GENERIC_WRITE`, `WRITE_DAC`, `WRITE_OWNER`, `DELETE_TREE`, or `WRITE_PROPERTY` on the R3/R7 never-delegate list | `ace` | `family` the mask is measured against |
 | TM §6.5 | 5 Delegation configured on the identity | V7, `DELEGATION_CONFIGURED`, block | the identity, or the DC whose RBCD attribute lists it | `delegation`: `UNCONSTRAINED`, `CONSTRAINED`, `PROTOCOL_TRANSITION`, `RESOURCE_BASED` | `identity_attribute`, an `IdentityAttribute` enum: `USER_ACCOUNT_CONTROL`, `MS_DS_ALLOWED_TO_DELEGATE_TO`, `MS_DS_ALLOWED_TO_ACT_ON_BEHALF_OF_OTHER_IDENTITY` | |
 | TM-D1 / §6.3 | Missing rights: R1 and R2 on each managed domain NC (V8, block); missing rights of enabled write families (V9, warn) | V8 or V9, `MISSING_RIGHT` | the domain NC head or managed OU | `ad` with the expected right | `expected_by` the family | `family` |

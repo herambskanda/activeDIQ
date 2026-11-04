@@ -1,7 +1,0 @@
-Proposed edit for packaging/windows/msi/Server.wxs on factory/T-0635 (T-0702 could not commit there:
-the auto-mode classifier denied writes to the T-0635 worktree). Replace the "NOT YET COMPILED ..." paragraph
-(up to the line "Authoring: WiX v4 schema.") with:
-
-  Compiled by T-0702 with the pinned WiX 5.0.2 (MS-RL, no fee; tools/wix/build-msi.sh, which runs WiX
-  under Wine in a container): the schema compiled unchanged. ICE validation needs Windows and is not run
-  there. The first run on dc1 and fs1 is logged in knowledge/development/runbooks/windows-lab-runs/.

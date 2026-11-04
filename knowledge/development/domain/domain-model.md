@@ -297,7 +297,7 @@ DC choices of a `draft` clears both, because the earlier run no longer describes
 credential edit binds a new DM-11 row and replaces the old one, as a swap does (DM-11.I5).
 
 I9 **Activation gate.** `draft → active` needs a `last_verification_id` row completed no more than
-15 minutes earlier (spec FR-17), whose result **qualifies**: either (a) its verdict is `pass`, or
+15 minutes earlier (spec FR-17), whose result **qualifies**: either (a) its verdict is `pass` (its V7 outcome is `pass` or `warn`: a `warn` is not a fail, T-1245), or
 (b) its verdict is `refused`, V7 (over-privilege) is the only check with outcome `fail`, no check is
 `could_not_verify`, and every V7 finding fingerprint is in the acknowledged set of the Tier0Override
 in force for the current credential (DM-25). An override never covers a V8 failure, `could_not_verify`
@@ -328,10 +328,12 @@ A restart during a scheduled run therefore never demotes an `active` connection 
 
 I11 **Write gate** (TM-D1, spec FR-35, H10). For an Entra connection read EV3 for V7 and EV4 for
 V8 throughout (DM-24 "Checks"). The gate is **open** only when the
-`last_verification_id` row has V7 outcome `pass`, or V7 outcome `fail` with every V7 fingerprint
-acknowledged by the Tier0Override in force (I9 (b)). A V7 outcome of `could_not_verify` or
+`last_verification_id` row has V7 outcome `pass` or `warn`, or V7 outcome `fail` with every V7
+fingerprint acknowledged by the Tier0Override in force (I9 (b)). A V7 outcome of `could_not_verify` or
 `not_run` closes the gate, because an unanswered rights question fails closed, as it does at
-onboarding (spec §7 ◆). There is no grace period. The security-architect review of T-0168
+onboarding (spec §7 ◆). There is no grace period. A `warn` (broad-principal exposure on a `tier0`
+object, the customer's own ACL, T-0237) reads as `pass` here and at I9: it needs no acknowledgement,
+it is never put in an override's set, and Health shows it as needs-attention with the count (T-1245). The security-architect review of T-0168
 confirmed this (§11 Q13, closed).
 
   **The connector's gate is stricter, on purpose** (connector contract §8.2, TM-D1 inside the
@@ -371,7 +373,7 @@ uses only the edges of ADR-0005 rule 3:
   Evaluating the gate reads the connection row, the `last_verification_id` row with its V7
   outcome and V7 fingerprints, and the newest Tier0Override of the connection and current
   credential (DM-25.I3). It also makes one indexed lookup for a run of that credential with V7
-  `pass` completed after the override's `acknowledged_at`, the clearance of DM-25. All four are
+  `pass` or `warn` completed after the override's `acknowledged_at`, the clearance of DM-25. All four are
   indexed point or range reads, bounded by the per-run V7 finding count, and need no directory
   access.
 
@@ -1030,7 +1032,7 @@ type (connector contract §8.4, `VerificationCheck`):
 | AD | Entra | Meaning | Role in the gates |
 | --- | --- | --- | --- |
 | V1–V6 | EV1, EV2 | V1 locate, V2 clock, V3 transport, V4 authenticate, V5 identity, V6 topology. EV1 token (the certificate obtains an app-only token), EV2 tenant identity (the token's tenant is the connection's `directory_identity`) | A fail makes the verdict `failed` |
-| V7 | EV3 | Over-privilege. V7: Tier-0 group membership, constructed rights and DACL on `tier0` objects, delegation. EV3: a deny-list permission, any directory role (active or eligible), an **unexpired** password credential | The check the gates read. `fail` is overridable by a DM-25 acknowledgement (DM-10.I9 (b), I11) |
+| V7 | EV3 | Over-privilege. V7: Tier-0 group membership, constructed rights and DACL on `tier0` objects, delegation. EV3: a deny-list permission, any directory role (active or eligible), an **unexpired** password credential | The check the gates read. `fail` is overridable by a DM-25 acknowledgement (DM-10.I9 (b), I11). `warn` (V7: a broad principal's right on a `tier0` object, the customer's own ACL, `exposure.tier0_broad_principal`) is not a fail: the gates read it as `pass`, nothing is acknowledged, and Health shows the count (T-1245) |
 | V8 | EV4 | Read sufficiency. V8: R1 and R2 on every managed domain NC. EV4: a permission an enabled row needs and the app lacks (block for the read rows, warn for write rows) | `fail` is never overridable (FR-12) |
 | V9 | EV5 | Excess in managed scope. V9: rights beyond the enabled families in a managed OU. EV5: a permission beyond the enabled rows, an extra key credential, an expired password credential, an owner | `warn` only; never changes the verdict |
 
@@ -1235,7 +1237,7 @@ Each is reported only when it is the event that ended the override (I3).
     derivation's predicate: the insert emits `.cleared` for override O if, and only if, after the
     insert O's derived `cleared_by_verification_id` is this run (I3). That requires all of these:
     - the run's `connection_id` and `credential_id` equal O's;
-    - V7 is `pass`;
+    - V7 is `pass` or `warn`;
     - `completed_at` is after O's `acknowledged_at`;
     - no earlier run qualified;
     - neither `superseded_at` nor `ended_at` of O is earlier.
@@ -2327,3 +2329,4 @@ rules are what they leave open.
   ([msDS-User-Account-Control-Computed](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/b80798ae-1f8c-4d30-9d80-a1f3281e96e2)),
   so a disabled user with a live `lockoutTime` is locked out as the DC computes it. The lock holds while
   `now <= lockoutTime + duration` (inclusive).
+- 2026-11-01 · T-1245: V7 or EV3 `warn` is not a `fail`. DM-10.I9 (a) and I11 read the over-privilege outcome `pass` or `warn` as clear, DM-25 clearance accepts `warn`, and the activation guard trigger (migration 0071) agrees. `warn` is never acknowledged; the override still covers `fail` alone. Before this, a stock AD CS forest (Certificate-Enrollment for a broad principal, T-0237) could not activate.
