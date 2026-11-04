@@ -186,9 +186,9 @@ func int32Of(set attrSet, name string) (val int32, present, hasValue bool, err e
 	return n.Int32Value, true, true, nil
 }
 
-// guidText is a connector Guid (16 bytes, RFC 4122 order: the order of the canonical text) as the
+// connectorGUIDText is a connector Guid (16 bytes, RFC 4122 order: the order of the canonical text) as the
 // inventory's canonical text.
-func guidText(g *connectorv1.Guid, name string) (inventory.GUID, error) {
+func connectorGUIDText(g *connectorv1.Guid, name string) (inventory.GUID, error) {
 	b := g.GetValue()
 	if len(b) != guid.Size {
 		return "", refuse(name, CodeBadGUID)
