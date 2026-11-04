@@ -5,7 +5,7 @@ updated: 2026-11-04
 status: review
 owner: heramb
 author: security-architect
-ticket: T-1137, T-1125, T-0893, T-0212, T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395, T-0178, T-0623, T-0633, T-0631, T-0738
+ticket: T-1142, T-1137, T-1125, T-0893, T-0212, T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395, T-0178, T-0623, T-0633, T-0631, T-0738
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -252,6 +252,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB1-T8c | I | X4 repeats rate-limited **exact-identifier** queries and compares timings to confirm that a named hidden object exists → A6 | An exact match on a hidden object adds 1-3 key rows to `m_exact`, one primary-key join to `directory_objects` and one scope check that then rejects it, against a query with no match. The difference is microseconds, far below network and scheduler noise. Controls: the 429 rate limit (T-1094 AC4); only same-tenant `directory.read` holders can probe at all; the response body is identical (zero hits, no count); search text never reaches logs (rule 15), so an operator cannot be used as an oracle. Not mitigated by padding: a constant-time search is not built | SE3 proves the body is identical. The timing difference itself is **not yet measured**: T-1102 measures per-sample cost and noise. Proof owner: SE5/T-1102 | In principle a per-identifier existence oracle. Samples needed per decision: `[UNVERIFIED]` until T-1102 measures it. **Accepted** (T-1137 AC2) on these grounds: the attacker must already be an authenticated same-tenant reader, must already know the identifier (the oracle confirms, it does not enumerate), and is rate-limited. If T-1102 finds a distinguishable signal at the 429 limit, reopen with a ticket against ADR-0011 rule 13 |
 | TM-TB1-T8d | I | X4 learns something from the **Postgres-shared** state that their own tenant's search touches (multi-tenant database: SaaS cell or MSP) → another tenant's data | Rule 16 / rev 3: the posting B-tree and the `(tenant_id, key_id)` index lead with `tenant_id`, so every stage reads only the tenant's own entries (the cross-tenant GIN-timing residual of rev 2 is **closed by construction**, see TM-TB17-T9). Four residuals remain and are listed in TM-TB17-T9 because they exist only in a multi-tenant database | Rule 16 proof, T-1335 AC5. Proof owner: T-1335 | Self-hosted profiles hold exactly one tenant row (ADR-0002), so this row has no residual there |
 | TM-TB1-T9 | D | X3 locks AD users out through AD-identity sign-in or the enrolment page | Our per-account failure counter stops below the domain lockout threshold; per-IP limits; generic errors (SB §6) | TM-F-ABUSE | Domain threshold 0 or very low: we refuse AD sign-in rather than risk lockouts |
+| TM-F-AMPLIFY | A derived table built from directory links, parentage or policy-apply values has no row in the TM-D32 table (§5.4a), or lacks a row fan-out test or a decision-cost test; stored rows exceed the declared budget; the decision step on the hub-fan, big-group-in-containers or deep-chain/cycle shape exceeds its time or memory ceiling; an oversize input fails or rolls back a sync cycle instead of producing a marker and an Unknown value; a privileged group (RID 512, 516, 518, 519, 521, 526, 527, BUILTIN 544, 548-551) is displaced by attacker-filled budget; tenant B's cycle time changes with tenant A's oversize input | Go + PostgreSQL integration (closure tests of T-0961 as the template); `EXPLAIN` plan checks | T-0961 (closure, built); T-1528 (gaps: dirty set, 16k-write decision shape, PSO applies, ancestry rewrite, CTE depth/cycle); T-1073 (policy CTE) | TB3-T13, TB4-T11 |
 | TM-TB1-T10 | D | X4 exhausts the server with huge bodies or bulk jobs | Body-size caps, per-principal rate limits, job quotas, per-DC concurrency | `fitness-api` A12 (T-0017; limits declared per operation); default numbers TM-D22 (§7.8) | — |
 | TM-TB1-T11 | E | X4 grants themself a stronger role (the CVE-2024-24409 class, ME-SEC §4.1; DM-36.I1) → A1 | No-escalation rule: a grantor must hold every privilege of the role over the whole scope; role and scope changes need step-up and are audited | TM-F-AUTHZ | — |
 | TM-TB1-T12 | E | X4 acts on an object just outside their OU, or moves it between check and write → A1 | Authorisation on the **target**, server-side, per bulk item; Plan re-reads the live parent chain (BP §11, DM-35.I2) | TM-F-AUTHZ | — |
@@ -288,6 +289,7 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB3-T10 | E | X5 or a compromised server asks the connector to write a `tier0` object → forest | Tier-0 guard twice: Action Plan against a live re-read, **and** inside the connector, which computes `tier0` for its own forest and refuses `Apply` (TM-D2) | TM-F-T0GUARD | — |
 | TM-TB3-T11 | E | The customer delegates too much (Domain Admin, GenericAll on the domain) → activeDIQ becomes Tier 0 | Onboarding refuses to activate; explicit, audited override with a permanent banner; health check reports excessive and missing rights (TM-D1, §6.5) | TM-F-RIGHTS | Customer overrides; then O1 no longer holds and the product says so |
 | TM-TB3-T12 | T | Home-folder creation (ADM-023) writes a bad ACL or dials an attacker host | File server must be an `InventoryHost`; ACLs via the typed security-descriptor primitive (T-0149); Kerberos-only SMB | T-0149 golden tests, FF-SP4 (PROC-14) | — |
+| TM-TB3-T13 | D | **Directory input that amplifies** (T-1142, TM-D32): X3 with `member`-write on groups they own or can create, a `managedBy` owner with "can update membership", or an OU/group-create delegate writes values the connector reads faithfully, and the connector's output grows the closure, ancestry and policy-input tables multiplicatively. Found in T-0961 review: 50 one-value writes made 306,050 closure rows and 13-15 s per batch; about 16,000 writes made the budget *decision* cost 18.6 s and 9.3 GB | The connector stays faithful (it does not drop or rewrite what the directory says; that would be a silent wrong answer). The bound is applied where the amplification happens, on the derived tables: TM-D32 and TM-TB4-T11 | TM-F-AMPLIFY | TM-R27 |
 
 ### 5.4 TB4 — Server ↔ PostgreSQL and blob store
 
@@ -303,6 +305,89 @@ proof is direction, not a control; the proof table says which ticket builds each
 | TM-TB4-T8 | I | Blob objects read across tenants | Keys prefixed by tenant through `platform/blob` only | T4 blob isolation probe (`tools/fitness/tenancy/blobprobe.go`, T-0134) | — |
 | TM-TB4-T9 | D | Database unavailable mid-operation | Writes fail closed: no directory write without its audit row in the same transaction (§11); leases expire | O8 pipeline behaviour, T-0393 | Availability |
 | TM-TB4-T10 | E | The runtime role owns objects or has `BYPASSRLS` | Separate owner role for migrations | T3, FF-SP7 | — |
+| TM-TB4-T11 | D | **Directory-data amplification** (T-1142, TM-D32). X3 or X5 writes one cheap directory value (a `member` value, a `msDS-PSOAppliesTo` value, a group or OU created or moved under a delegation) and the sync expands it into O(groups x members) derived rows inside the sync transaction, or makes the *decision* about what to expand expensive → the connection's sync cycles take tens of seconds or never finish, disk grows without bound, other tenants' latency suffers (shared PostgreSQL) → A5, A6 availability | The bound rule of TM-D32: every derived table has a declared budget in rows **and** in decision work, set by us, never by fan-out the directory chooses; exceeding it produces a finding (an `over_budget` marker, an Unknown value, a health event), never a failed sync and never unbounded growth | TM-F-AMPLIFY (a row fan-out test and a decision-cost test per derived table, §5.4a) | TM-R27 (legitimate big groups can read Unknown; budget fill-up displaces non-privileged groups) |
+
+### 5.4a Directory-data amplification into derived tables — DECISION TM-D32 (T-1142)
+
+**Threat.** Active Directory lets a low-privilege principal write one value that means "a whole
+group" (`member` = a group with 6,000 members, nested K deep). A cheap write by TM-X3 (a group
+delegate, a `managedBy` owner, anyone who can create a group) or TM-X5 becomes, in activeDIQ,
+O(groups x members) rows of derived data written **inside the sync transaction** (`Populate` under
+the connection advisory lock, DM-16.I10), plus the work done to decide what to write. The attacker
+spends one LDAP write per group; we spend rows, time, memory and the lock. Measured on T-0961
+(`factory/demos/evidence/T-0961/secreview/` and `secreview3/` on the T-0961 worktree; the figures
+are also recorded in [`modules/reports.md`](modules/reports.md) §12, "Closure row budget"):
+
+| Attack | Attacker cost | Our cost before the bound |
+| --- | --- | --- |
+| Big group N = 6,000 added to 50 groups | 50 one-value writes | 306,050 closure rows; 13-15 s per batch |
+| Hub fan: K = W = 4,000 groups nesting 4,000 groups (about 16,000 writes) | about 16,000 writes | the budget *decision* alone: 18.6 s and 9.3 GB per refresh (per-group reach sets) |
+| Chain of 129 nested groups | 129 group creates | every sync cycle of the connection rolled back (first design failed the refresh) |
+
+The same shape needs no attacker at all: BUILTIN\Users contains Domain Users in a default domain.
+The control is therefore not "detect the attacker"; it is a bound.
+
+**TM-D32 — the bound rule.** Binding on every table or query derived from directory links,
+membership, parentage or policy-apply values (`links`, `parent_guid`, `ancestry`, `msDS-PSOAppliesTo`).
+
+1. **Declared budget, two numbers.** Each derived table declares, in code and in its module spec, (a) a
+   **row budget** (per group or object, per connection, per tenant where tenants share a table) and
+   (b) a **decision-work budget**: the work to *decide* what to write must be O(input size: objects +
+   edges), never O(sum of per-object reach sets), and may not allocate more than a stated multiple of
+   the input. A budget is a constant or a tenant setting with a hard ceiling; it is never computed from
+   the directory's own content.
+2. **Never the attacker's fan-out.** Neither number may depend on a value the directory lets a delegate
+   choose (member count, nesting width, number of OUs moved). Depth has its own fixed cap (128 for the
+   closure).
+3. **Exceeding a budget is a finding, not a failure.** The sync transaction commits; the oversize
+   object gets a marker (`over_budget`, `cut`) and the dataset shows **Unknown**, never a wrong
+   number and never a failed or rolled-back sync cycle. A health event names the connection and the
+   object so the customer can see it. (A sync that rolls back on oversize lets the attacker freeze the
+   whole connection; unbounded growth lets the attacker fill the database.)
+4. **No displacement of privileged data.** Which objects are expanded is a function of the current
+   directory state alone (not of what earlier refreshes stored), and well-known privileged groups
+   are decided first. An attacker may push an ordinary big group out of the budget (TM-R27); they may
+   not blank Domain Admins, Enterprise Admins or other `tier0` membership.
+5. **Reads are covered too.** A query that expands links per row at read time (recursive CTE) is a
+   derived computation: it needs a depth cap, a cycle guard (`UNION`, not `UNION ALL`, or an explicit
+   visited set), and an `EXPLAIN`-based or timed budget test at 200,000 users, or it reads a budgeted
+   table instead.
+6. **Tenants stay isolated.** Budgets are per (tenant, connection); the advisory lock and a statement
+   timeout (the store's 30 s) mean one tenant's oversize input cannot hold another tenant's work.
+7. **A new derived table is a review trigger (§14).** The ticket adds its row to the table below in
+   the same change; a reviewer rejects one with no budget or no fan-out test.
+
+**Derived tables and their budgets.** (Every row of this table needs both tests of TM-F-AMPLIFY:
+row fan-out and decision cost.)
+
+| Derived table / computation | Built from | Row budget | Decision-work budget | Fan-out test | Decision-cost test | State |
+| --- | --- | --- | --- | --- | --- | --- |
+| `inventory_group_members` (closure, T-0961, migration 0068) | `links` `member`, primary group, group parentage | 250,000 per group, 500,000 per connection, plus one marker per group; depth 128 | O(live groups + nesting edges): Tarjan over strongly connected components, estimate once per group; 4,000 + 4,000 hub fan under 1 s and 64 MB | `Test_group_closure_fanout_is_bounded`, `Test_group_closure_hub_fan_is_bounded`, `Test_group_closure_no_displacement`, `Test_closure_budget_is_the_declared_one`, RP11 `rpOverBudget` | `Test_splitByBudget_work_is_linear_in_the_graph` (hub fan), `Test_estimates_are_an_upper_bound_of_the_reach_set` | Built and tested. Gap: the decision-cost test caps at 4,000 + 4,000; the 16,000-write shape of the review is not a test (T-1528) |
+| `inventory_group_closure_dirty` | every changed edge or observed group | at most one row per live group of the connection (a set, not a log) | O(changed edges) per cycle | none named: add a test that 10,000 edge changes to one group leave one dirty row and a repeated refresh clears it | n/a (written by the edge statements) | Gap: T-1528 |
+| Users policy resolution `resInner` CTE (T-1042, T-1073) | `links` recursive walk per user and per derived column | no table; the read is bounded by the closure budget once it reads `inventory_group_members` | O(users x group depth) today and unmeasured at 200,000 users; target: one indexed lookup per user into the closure, no recursion | T-1073 acceptance 1 (200,000 users, `password_state` uses `inventory_group_members`); **add**: 50,000-member group nested 128 deep, and a cyclic nesting, must finish inside the report timeout | `EXPLAIN` plan asserts no `WorkTable`/recursive node on the users policy path (T-1073); the budget test of T-1042 (200k users / 50k-member groups) | Open: T-1073 (T-1042 is a duplicate, cancel pending). Until it lands the CTE runs against attacker-shaped nesting unbounded by budget: depth cap and cycle guard must be verified now (T-1528) |
+| `inventory_pso_applies` (T-0958, migration 0061) | `msDS-PSOAppliesTo` values on PSOs | no declared budget; one row per applies-to value | O(PSO values) | none | none | Gap: PSOs are normally admin-written, but a delegate with write on a PSO object chooses the value count. Declare a cap (per PSO, per connection) and test it (T-1528) |
+| `directory_objects.ancestry` rewrite on move (T-0948 `rewriteDescendants`, `repairCompleteness`) | `parent_guid` of every descendant | rewrites every descendant of a moved container, each row up to depth entries of `uuid[]` | O(descendants x depth), inside the sync transaction | none | none | Gap: an OU-move delegate can move a large OU back and forth every cycle. Declare a bound (batch cap, or mark `ancestry_complete = false` over the cap, which already fails closed to out-of-scope) and test it (T-1528) |
+
+**Proof — TM-F-AMPLIFY (new, §15).** For each row above a test builds the attacker-shaped input with
+the cheapest directory writes and asserts all of:
+
+- *Row fan-out:* stored rows after the refresh are at most the declared budget plus markers, and
+  a second refresh after a one-value change leaves the stored decision equal to a from-scratch one.
+- *Decision cost:* wall time and allocated memory of the **decision step alone** (before any row is
+  written) are linear in objects + edges on three shapes: (1) hub fan K = W = 4,000 (the review's
+  18.6 s / 9.3 GB case; the ceiling is 1 s and 64 MB), (2) one big group in K containers, (3) a deep
+  chain and a cycle. Shape (1) must also run at 16,000 writes, the size reviewed.
+- *Finding, not failure:* the cycle commits, the oversize object carries the marker, the dataset
+  reads Unknown, a health event exists; the sync cycle count of the connection does not drop.
+- *No displacement:* Domain Admins (RID 512) and the other privileged RIDs stay expanded while an
+  attacker fills the rest of the budget.
+- *Tenant isolation:* an oversize input in tenant A leaves tenant B's cycle time unchanged (within the
+  store's timeout) in the shared-PostgreSQL fixture.
+
+A pull request that adds a derived table without the table row above and both tests is a security
+review reject (§14).
+
+**Residual (TM-R27).** See §16.1.
 
 ### 5.5 TB5 — Server ↔ key provider
 
@@ -475,6 +560,7 @@ both kinds of agent, so both command sets are closed (TM-D13).
 | TM-TB15-T7 | I | The SIEM stream travels in clear | TLS syslog (verified, port 6514) by default; UDP is not offered; plaintext TCP only with an explicit, audited operator opt-in shown in the API/UI with a warning | TM-F-EGRESS | Customer opts in |
 | TM-TB15-T8 | D | Huge exports exhaust the server | Streaming encoders, row caps, asynchronous jobs | T-0150 | — |
 | TM-TB15-T9 | I/E | **A standing exfiltration channel.** X4 with a hijacked session creates or edits a report schedule that mails owner-scope directory data (privileged membership, stale passwords, service accounts) to an outside address; it keeps firing after the session is revoked | DECISION TM-D30 ([reports-schedules-security-review.md](reports-schedules-security-review.md) §2): a schedule write whose after-state has an external recipient needs a fresh MFA, enforced by the operation kernel for every origin (token writes are held for a step-up approval); `reports.deliver.external` at write time and at every fire; the confirmed addresses are in the Action audit event; an address that became external later is not delivered until re-confirmed (SX-6) | T-0980 kernel tests; T-0965 `Test_schedule_external_needs_step_up` | TM-R26 |
+| TM-R27 | **Budget fill-up and diamond over-count, accepted (T-1142, TM-D32).** An attacker with group-create and `member`-write can fill the 500,000-row connection budget with many small groups and push an ordinary *legitimate* big group out of the closure, so its counts read Unknown; a diamond-shaped nesting is counted once per path, so a big group can read Unknown while its exact count would have fitted. Privileged groups cannot be displaced and a group out of budget shows Unknown, never a wrong number | Any bound that holds against hostile input has to refuse something; showing Unknown plus a health event is the safe refusal. A per-tenant raised ceiling is a later setting | security-architect | A customer reports a legitimate group Unknown (raise the per-tenant ceiling), or a new derived table is added |
 | TM-TB15-T10 | E | Widening the allowed recipient domains (or re-pointing the SMTP relay) turns external addresses internal and bypasses `reports.deliver.external` and TM-D30; a lax address parser classifies `"a@ok.example"@evil.example` as internal | `notify.settings.update` carries step-up (§7.4); exact domain match after IDNA, no implicit subdomains; one strict addr-spec parser whose canonical string is both classified and used as `RCPT TO` (TM-D30 SX-7); an account recipient's mail address is classified too (SX-5) | T-0950 parser corpus and catalogue row | — |
 | TM-TB15-T11 | E | **Confused deputy through a schedule.** A non-owner (e.g. a `reports.schedule.manage_all` holder with a narrow scope) edits another owner's schedule, adding recipients or changing the report, and receives what the owner's wider scope sees at the next fire | Schedule update and delete are owner-only; `manage_all` sees, pauses and reassigns only (spec §8.5); a reassigned schedule stays paused until the new owner resumes it with the external recipients confirmed and step-up (TM-D30, R1/R2/R5) | T-0979 contract test; T-0965 build tests | — |
 
@@ -3313,6 +3399,7 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-11-04 · T-1142. §5.4a and DECISION TM-D32 (directory-data amplification into derived tables): rows TM-TB3-T13 and TM-TB4-T11, the bound rule (declared row and decision-work budgets, finding-not-failure, no displacement of privileged groups, read-time CTE covered), a per-table budget and test table (closure, dirty set, policy CTE T-1073, PSO applies, ancestry rewrite), proof TM-F-AMPLIFY (§15), residual TM-R27. Gaps ticketed as T-1528.
 - 2026-10-30 · T-0938 (MFA-2b security review). §7.2a adds MFA-2b, which refuses single-factor Microsoft, AD FS, SAML 1.x (`am:` and `urn:ietf:rfc:`) and REFEDS SFA values and OASIS case/whitespace variants as SAML evidence; it is built and tested. It also adds MFA-2c: the SAML evidence attribute is an allow-list, because a constant claim such as Entra `tenantid` bypassed MFA-2a/2b in a probe. Bug T-0974 filed.
 - 2026-10-30 · T-0893 (reports schedule security review). New DECISION TM-D30 in [reports-schedules-security-review.md](reports-schedules-security-review.md): conditional, kernel-enforced step-up for schedule writes whose after-state has an external recipient (no `policy.yaml` row: the condition is in the input), step-up for allowed-recipient-domain and SMTP relay changes, account-address classification and confirmed-external at fire. §5.15 rows TM-TB15-T9 to T11; two §7.4 rows; TM-R26. Contract defects R1-R6 in `reports.yaml` filed as T-0979; kernel predicate T-0980; spec alignment T-0981.
 - 2026-10-30 · T-0212 (ADM-143 spec review). Every `[OPEN → ADM-143 spec]` marker now points at `console-sso.md`: §7.2 MFA-asserting (SSO-D4), TM-TB8-T7 (SSO-D5), TM-D19 rule 3 and AN-9 (SPNEGO offered in v1, SSO-D7); TM-F-SSO cites the console-sso.md §10 corpus, fuzz oracle and FIT-SSO-1/2. TM-Q3 closed. New §7.2a: SSO-D4, MFA-5, SSO-D5 and SSO-D7 accepted with amendments MFA-1a (OIDC `amr` evidence is an allow-list), MFA-2a (no OASIS `ac:classes` value is SAML MFA evidence), MAP-2a (a role that gains `control_plane` revokes its claim sessions; evaluator filter) and NEG-4a (Kerberos authority counts from session creation); NEG-7 residual recorded. Bug T-0912 filed for MFA-1a/2a in the built config checks; MAP-2a and NEG-4a noted on T-0570 and T-0493.
