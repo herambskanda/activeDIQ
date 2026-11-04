@@ -193,7 +193,7 @@ func Test_missing_inputs_are_unknown(t *testing.T) {
 
 		// the domain's PSO set was never read
 		e.policyTx(t, func(ctx context.Context, tx store.Tx, pw inventory.PolicyWriter) error {
-			return pw.SetDomainPolicy(ctx, tx, c, inventory.GUID(hDom), inventory.DomainPolicy{MaxPwdAge: days(42), LockoutDuration: mins(30)}, at.Add(4*time.Minute))
+			return pw.SetDomainPolicy(ctx, tx, c, inventory.GUID(hDom), inventory.DomainPolicy{MaxPwdAge: days(42), LockoutDuration: mins(30), FunctionalLevel: lvl(7)}, at.Add(4*time.Minute))
 		})
 		want("psos never read", e.stateOf(t, reg, c, user, now, cols...), with(why("pso_set_not_read", "pso_set_not_read"), map[report.ColumnID]string{
 			"locked_out": unkState, "password_state": unkState, "policy_source": "s:Unknown (policy not resolved)"}))

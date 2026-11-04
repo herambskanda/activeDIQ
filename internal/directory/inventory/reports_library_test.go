@@ -202,7 +202,7 @@ func libSetup(t *testing.T, s *storetest.Server, syncDays int) (*env, *library.L
 	}
 	e.policyTx(t, func(ctx context.Context, tx store.Tx, w inventory.PolicyWriter) error {
 		return w.SetDomainPolicy(ctx, tx, e.adA, inventory.GUID(hDom),
-			inventory.DomainPolicy{MaxPwdAge: days(42), LockoutDuration: mins(30), LogonSyncIntervalDays: &syncDays, PSOsReadAt: hBase}, hBase)
+			inventory.DomainPolicy{MaxPwdAge: days(42), LockoutDuration: mins(30), LogonSyncIntervalDays: &syncDays, PSOsReadAt: hBase, FunctionalLevel: lvl(7)}, hBase)
 	})
 	return e, l, now
 }

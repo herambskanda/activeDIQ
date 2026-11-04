@@ -208,7 +208,7 @@ func rpUsers(t *testing.T, e *env, reg *reportsql.Registry, c inventory.Connecti
 	}
 	e.policyTx(t, func(ctx context.Context, tx store.Tx, pw inventory.PolicyWriter) error {
 		step := at.Add(time.Second)
-		if err := pw.SetDomainPolicy(ctx, tx, c, inventory.GUID(hDom), inventory.DomainPolicy{MaxPwdAge: days(42), LockoutDuration: mins(30), PSOsReadAt: at}, step); err != nil {
+		if err := pw.SetDomainPolicy(ctx, tx, c, inventory.GUID(hDom), inventory.DomainPolicy{MaxPwdAge: days(42), LockoutDuration: mins(30), PSOsReadAt: at, FunctionalLevel: lvl(7)}, step); err != nil {
 			return err
 		}
 		for _, p := range []struct {

@@ -30,6 +30,20 @@ func sec(n int64) secs { return &n }
 type domPol struct {
 	max, lock secs
 	psosRead  bool
+	// dflLow: msDS-Behavior-Version 2 (below 2008, PSOs have no effect); dflUnread: not read. Neither:
+	// level 7.
+	dflLow, dflUnread bool
+}
+
+// level is the FunctionalLevel the domain row is written with.
+func (d domPol) level() *int {
+	switch {
+	case d.dflUnread:
+		return nil
+	case d.dflLow:
+		return lvl(2)
+	}
+	return lvl(7)
 }
 
 type psoM struct {
@@ -79,13 +93,19 @@ type derived struct {
 // policy is unresolved, the cause (otherwise "").
 func (w world8) resolve(u hUser) (maxAge, lock secs, source, why string) {
 	const unresolved = "Unknown (policy not resolved)"
+	if w.dom.dflUnread {
+		return nil, nil, unresolved, "domain_level_not_read"
+	}
+	if w.dom.dflLow {
+		return w.dom.max, w.dom.lock, "Domain policy", ""
+	}
 	if !w.dom.psosRead {
 		return nil, nil, unresolved, "pso_set_not_read"
 	}
 	if u.uac == nil {
 		return nil, nil, unresolved, "account_inputs_not_read"
 	}
-	eligible := *u.uac&512 == 512 && u.rid != 502 && !strings.HasPrefix(strings.ToLower(u.sam), "krbtgt_")
+	eligible := *u.uac&512 == 512 && u.rid != 502 && !strings.HasPrefix(strings.ToLower(u.sam), "krbtgt_") && !u.rodc
 	if !eligible {
 		return w.dom.max, w.dom.lock, "Domain policy", ""
 	}
@@ -288,7 +308,7 @@ func (e *env) seed8(t *testing.T, c inventory.ConnectionID, w world8, at time.Ti
 		t.Fatalf("seed: %v", err)
 	}
 	e.policyTx(t, func(ctx context.Context, tx store.Tx, pw inventory.PolicyWriter) error {
-		dp := inventory.DomainPolicy{MaxPwdAge: ivl(w.dom.max), LockoutDuration: ivl(w.dom.lock)}
+		dp := inventory.DomainPolicy{MaxPwdAge: ivl(w.dom.max), LockoutDuration: ivl(w.dom.lock), FunctionalLevel: w.dom.level()}
 		if w.dom.psosRead {
 			dp.PSOsReadAt = at
 		}
@@ -357,7 +377,7 @@ func (e *env) compare8(t *testing.T, reg *reportsql.Registry, c inventory.Connec
 func (e *env) setDom8(t *testing.T, c inventory.ConnectionID, d domPol, at time.Time) {
 	t.Helper()
 	e.policyTx(t, func(ctx context.Context, tx store.Tx, pw inventory.PolicyWriter) error {
-		dp := inventory.DomainPolicy{MaxPwdAge: ivl(d.max), LockoutDuration: ivl(d.lock)}
+		dp := inventory.DomainPolicy{MaxPwdAge: ivl(d.max), LockoutDuration: ivl(d.lock), FunctionalLevel: d.level()}
 		if d.psosRead {
 			dp.PSOsReadAt = at
 		}
@@ -420,6 +440,8 @@ func worldA(now time.Time) world8 {
 		u(29, "edge-removed", uacNormal, func(h *hUser) { h.pwdLastSet = now.Add(-20 * 24 * time.Hour) }),
 		u(30, "pso-forever", uacNormal, func(h *hUser) { h.pwdLastSet = now.Add(-400 * 24 * time.Hour); h.lockout = now.Add(-24 * time.Hour) }),
 		u(31, "krbtgt-rodc", uacNormal, func(h *hUser) { h.sam = "krbtgt_1234"; h.pwdLastSet = now.Add(-20 * 24 * time.Hour) }),
+		// LAB-PS-10: the marker alone (a name that is not krbtgt_*, RID not 502) keeps the PSO away
+		u(32, "rodc-marker", uacNormal, func(h *hUser) { h.rodc = true; h.pwdLastSet = now.Add(-20 * 24 * time.Hour) }),
 	}
 	w.groups = []grpM{
 		{guid: g(1), name: "GroupPSO", rid: 2001, members: []string{n(21)}},
@@ -437,7 +459,7 @@ func worldA(now time.Time) world8 {
 		{guid: p(4), name: "PSO-low-prec", prec: i64(1), max: sec(90 * 86400), lock: sec(60), stored: true, applies: []string{g(5)}},
 		{guid: p(5), name: "PSO-outer", prec: i64(2), max: sec(10 * 86400), lock: sec(60), stored: true, applies: []string{g(3)}},
 		{guid: p(6), name: "PSO-primary", prec: i64(2), max: sec(10 * 86400), lock: sec(60), stored: true, applies: []string{g(4)}},
-		{guid: p(7), name: "PSO-krbtgt", prec: i64(1), max: sec(1 * 86400), lock: sec(60), stored: true, applies: []string{n(26), n(31)}},
+		{guid: p(7), name: "PSO-krbtgt", prec: i64(1), max: sec(1 * 86400), lock: sec(60), stored: true, applies: []string{n(26), n(31), n(32)}},
 		{guid: p(8), name: "PSO-no-prec", prec: nil, max: sec(1 * 86400), lock: sec(60), stored: true, applies: []string{n(27)}},
 		{guid: p(9), name: "PSO-unread", prec: i64(1), stored: false, applies: []string{n(28)}},
 		{guid: p(10), name: "PSO-removed", prec: i64(1), max: sec(5 * 86400), lock: sec(60), stored: true, removed: []string{n(29)}},
@@ -499,6 +521,7 @@ func Test_derived_columns_match_reference(t *testing.T) {
 			{user: "primary", locked: "not_locked", pwd: "expired", acct: "never", src: "PSO-primary", pwdAt: f(-10 * day), days: "-10"},
 			{user: "krbtgt", locked: "not_locked", pwd: "expires", acct: "never", src: "Domain policy", pwdAt: f(22 * day), days: "22"},
 			{user: "krbtgt_1234", locked: "not_locked", pwd: "expires", acct: "never", src: "Domain policy", pwdAt: f(22 * day), days: "22"},
+			{user: "rodc-marker", locked: "not_locked", pwd: "expires", acct: "never", src: "Domain policy", pwdAt: f(22 * day), days: "22"},
 			{user: "no-precedence", why: [3]string{1: "pso_precedence_not_read"}, locked: "not_locked", pwd: unk, acct: "never", src: "Unknown (policy not resolved)"},
 			{user: "pso-unread", why: [3]string{1: "pso_not_read"}, locked: "not_locked", pwd: unk, acct: "never", src: "Unknown (policy not resolved)"},
 			{user: "edge-removed", locked: "not_locked", pwd: "expires", acct: "never", src: "Domain policy", pwdAt: f(22 * day), days: "22"},
@@ -576,11 +599,36 @@ func Test_derived_columns_match_reference(t *testing.T) {
 			{"unset", domPol{psosRead: true}},
 			{"psos-unread", domPol{max: sec(42 * 86400), lock: sec(1800)}},
 			{"short", domPol{max: sec(86400), lock: sec(1), psosRead: true}},
+			// LAB-PS-13: below 2008 no PSO resolves, even one that applies; an unread level resolves nothing
+			{"dfl-2003", domPol{max: sec(42 * 86400), lock: sec(1800), psosRead: true, dflLow: true}},
+			{"dfl-2003-psos-unread", domPol{max: sec(42 * 86400), lock: sec(1800), dflLow: true}},
+			{"dfl-unread", domPol{max: sec(42 * 86400), lock: sec(1800), psosRead: true, dflUnread: true}},
 		} {
 			step = step.Add(time.Minute)
 			e.setDom8(t, e.adA, v.d, step)
 			w.dom = v.d
 			e.compare8(t, reg, e.adA, w, now, "domain-"+v.name)
+			// stated outright, so the reference cannot agree with the SQL about a wrong rule
+			if v.d.dflLow || v.d.dflUnread {
+				res := e.run(t, reg, hQuery{dataset: inventory.DatasetUsers, cols: []report.ColumnID{"sam_account_name", "policy_source", "password_state_reason"}, scope: e.scopeNC(e.adA), now: now})
+				wantSrc, wantWhy := "Domain policy", "none"
+				if v.d.dflUnread {
+					wantSrc, wantWhy = "Unknown (policy not resolved)", "domain_level_not_read"
+				} else if !v.d.psosRead {
+					wantWhy = "none"
+				}
+				for _, r := range res.rows {
+					if string(r["sam_account_name"].DigestValue()) != "pso-short" {
+						continue
+					}
+					if got := cellKey(r["policy_source"]); got != cellKey(report.TextCell(wantSrc)) {
+						t.Errorf("%s: pso-short policy_source = %s, want %s", v.name, got, wantSrc)
+					}
+					if got := cellKey(r["password_state_reason"]); got != cellKey(report.EnumCell(wantWhy)) {
+						t.Errorf("%s: pso-short reason = %s, want %s", v.name, got, wantWhy)
+					}
+				}
+			}
 		}
 	})
 }

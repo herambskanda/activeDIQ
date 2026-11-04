@@ -611,9 +611,10 @@ attributes read from the domain's writable DC, so the row carries `observed_at` 
 | `inputs_read` | bitmask, see I5b | Unknown vs absent | |
 | Group edges | `member` links (DM-17, transitive) and the primary-group edge; `groupType` (scope and security bit) | PSO group resolution | Scope filter open: LAB-PS-08 |
 | PSO links | `msDS-PSOAppliesTo` on each PSO (a user or a group) | direct link wins over every group link | |
-| Domain policy (per domain) | `maxPwdAge`, `lockoutDuration`, `msDS-LogonTimeSyncInterval`, `msDS-Behavior-Version` | the policy when no PSO resolves; the lag floor; PSOs have no effect below functional level 2008 | Stored as negative 100 ns deltas: magnitude is used. Only `MinInt64` is documented as "never" for a max age; a stored 0 is Unknown until LAB-PW-11 |
+| Domain policy (per domain) | `maxPwdAge`, `lockoutDuration`, `msDS-LogonTimeSyncInterval`, `msDS-Behavior-Version` | the policy when no PSO resolves; the lag floor; PSOs have no effect below functional level 2008 (`functional_level` < 3 gives the domain policy; unread gives Unknown, reason `domain_level_not_read`; T-1134) | Stored as negative 100 ns deltas: magnitude is used. Only `MinInt64` is documented as "never" for a max age; a stored 0 is Unknown until LAB-PW-11 |
 | PSO values | `msDS-PasswordSettingsPrecedence`, `msDS-MaximumPasswordAge`, `msDS-LockoutDuration`, `objectGUID`, name | the winning PSO's values and name | Equal-precedence tie-break by GUID: LAB-PS-07 |
-| RODC krbtgt marker | `msDS-SecondaryKrbTgtNumber` present | no PSO for the RODC `krbtgt_nnnnn` | **Not yet an input** (LAB-PS-10) |
+| RODC krbtgt marker | `msDS-SecondaryKrbTgtNumber` present (`rodc_krbtgt`; nil = not read, not a marker) | no PSO for the RODC `krbtgt_nnnnn` | Input since T-1134 (LAB-PS-10; lab-proof on Windows only) |
+| PSO set readability | the Password Settings Container read result | `psos_read_at` is set only when a PSO came back or list rights were proven; **zero rows from an unreadable container is not a read** (LAB-PS-12) | `inventory.PSOSetRead.ReadAt`; the DACL evaluation that sets `ListProven` is not built (T-1134 follow-up) |
 
 Not inputs, by design: `lastLogon`, `logonCount`, `badPwdCount` and `badPasswordTime` (per-DC, never stored,
 reports-2a D5); `msDS-ResultantPSO`, `msDS-User-Account-Control-Computed` and

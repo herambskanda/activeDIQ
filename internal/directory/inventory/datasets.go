@@ -63,7 +63,7 @@ var enumLabels = map[string]string{
 	"uac_not_read": "userAccountControl not read", "lockout_time_not_read": "lockoutTime not read", "pwd_last_set_not_read": "pwdLastSet not read",
 	"account_expires_not_read": "accountExpires not read", "last_logon_not_read": "lastLogonTimestamp not read",
 	"activity_inputs_not_read": "pwdLastSet and lastLogonTimestamp not read", "domain_policy_not_read": "Domain password policy not read",
-	"pso_set_not_read": "Password settings objects not read for this domain", "pso_not_read": "A password settings object that applies was not read",
+	"domain_level_not_read": "Domain functional level not read", "pso_set_not_read": "Password settings objects not read for this domain", "pso_not_read": "A password settings object that applies was not read",
 	"pso_precedence_not_read": "A password settings object has no precedence", "pso_interval_not_read": "The password settings object's interval was not read",
 	"account_inputs_not_read": "Account attributes that select the policy (userAccountControl, SID, logon name) not read",
 	"workstation":             "Workstation", "server": "Server", "domain_controller": "Domain controller", "read_only_dc": "Read-only domain controller",
@@ -161,7 +161,7 @@ func usersDataset() report.Dataset {
 			{ID: "psoval", Kind: report.RelInput, Table: "inventory_psos",
 				Project: idents("connection_id", "nc_guid", "pso_guid", "precedence", "max_pwd_age_secs", "lockout_duration_secs")},
 			{ID: "dom", Kind: report.RelInput, Table: "inventory_domain_policies",
-				Project: idents("connection_id", "nc_guid", "max_pwd_age_secs", "lockout_duration_secs", "logon_sync_interval_days", "psos_read_at")},
+				Project: idents("connection_id", "nc_guid", "max_pwd_age_secs", "lockout_duration_secs", "logon_sync_interval_days", "psos_read_at", "functional_level")},
 		},
 		Columns:   cols,
 		Freshness: report.FreshNCWatermark,
@@ -171,7 +171,7 @@ func usersDataset() report.Dataset {
 
 // reasonValues are the causes of an unknown policy-dependent state, led by the account's own input.
 func reasonValues(own string) []string {
-	return []string{"none", "uac_not_read", own, "domain_policy_not_read", "pso_set_not_read", "pso_not_read",
+	return []string{"none", "uac_not_read", own, "domain_policy_not_read", "domain_level_not_read", "pso_set_not_read", "pso_not_read",
 		"pso_precedence_not_read", "pso_interval_not_read", "account_inputs_not_read"}
 }
 

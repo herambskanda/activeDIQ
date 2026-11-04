@@ -33,6 +33,30 @@ type DomainPolicy struct {
 	// PSOsReadAt is when the domain's PSO set was last read in full (zero: never). Without it no
 	// user of the domain can be said to have no PSO.
 	PSOsReadAt time.Time
+	// FunctionalLevel is msDS-Behavior-Version of the domain head (nil: not read, which leaves the
+	// policy-dependent states Unknown). Below 3 (Windows Server 2008) PSOs have no effect (LAB-PS-13).
+	FunctionalLevel *int
+}
+
+// PSOSetRead is the evidence the PSO reader has for the Password Settings Container of a domain. An
+// LDAP search the caller may not read returns zero entries and no error (LAB-PS-12), so an empty result
+// alone cannot say "no PSOs": the set counts as read only when at least one PSO came back, or the
+// reader separately proved the caller may list the container (ListProven, from the container's
+// security descriptor). ReadAt is the one place PSOsReadAt is decided.
+type PSOSetRead struct {
+	// Returned is the number of PSO entries the paged search delivered.
+	Returned int
+	// ListProven is set only when the container's DACL was evaluated for the bind identity and grants
+	// list-children and read on the PSOs.
+	ListProven bool
+}
+
+// ReadAt returns observed when the set is proven read, else the zero time (never read).
+func (r PSOSetRead) ReadAt(observed time.Time) time.Time {
+	if r.Returned > 0 || r.ListProven {
+		return observed
+	}
+	return time.Time{}
 }
 
 // PSO is one Password Settings Object's values.
@@ -76,6 +100,9 @@ func (w PolicyWriter) SetDomainPolicy(ctx context.Context, tx store.Tx, connecti
 	if err := w.check(ctx, tx, connection, nc); err != nil {
 		return err
 	}
+	if p.FunctionalLevel != nil && (*p.FunctionalLevel < 0 || *p.FunctionalLevel > 10) {
+		return ErrInvalid
+	}
 	if observed.IsZero() || (p.LogonSyncIntervalDays != nil && (*p.LogonSyncIntervalDays < 0 || *p.LogonSyncIntervalDays > 3650)) {
 		return ErrInvalid
 	}
@@ -88,13 +115,14 @@ func (w PolicyWriter) SetDomainPolicy(ctx context.Context, tx store.Tx, connecti
 		return err
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO public.inventory_domain_policies AS d (tenant_id, connection_id, nc_guid, max_pwd_age_secs, lockout_duration_secs,
-			logon_sync_interval_days, psos_read_at, observed_at)
-		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::int, $6::timestamptz, $7)
+			logon_sync_interval_days, psos_read_at, observed_at, functional_level)
+		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::bigint, $4::bigint, $5::int, $6::timestamptz, $7, $8::smallint)
 		ON CONFLICT (tenant_id, connection_id, nc_guid) DO UPDATE SET max_pwd_age_secs = EXCLUDED.max_pwd_age_secs,
 			lockout_duration_secs = EXCLUDED.lockout_duration_secs, logon_sync_interval_days = EXCLUDED.logon_sync_interval_days,
-			psos_read_at = EXCLUDED.psos_read_at, observed_at = EXCLUDED.observed_at
+			psos_read_at = EXCLUDED.psos_read_at, observed_at = EXCLUDED.observed_at,
+			functional_level = EXCLUDED.functional_level
 		WHERE d.observed_at <= EXCLUDED.observed_at`,
-		string(connection), string(nc), age, dur, p.LogonSyncIntervalDays, nullTime(p.PSOsReadAt), observed.UTC())
+		string(connection), string(nc), age, dur, p.LogonSyncIntervalDays, nullTime(p.PSOsReadAt), observed.UTC(), p.FunctionalLevel)
 	if err != nil {
 		return writeErr("set domain policy", err)
 	}
