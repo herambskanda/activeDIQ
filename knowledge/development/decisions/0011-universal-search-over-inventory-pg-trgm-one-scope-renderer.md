@@ -28,7 +28,7 @@ once, and the planner may flip scan form, so 2 per loop does not cover one extra
 was false as a factual claim about what 2 per loop allows. Rule 16 now states the formula and the
 accepted height leak. The rows-examined requirement (exactly equal) and SE5's plan-shape check are
 unchanged, so no fitness check weakens. The T-1335 test already implements this formula.
-factory-director ratifies and files the notice.
+Ratified by factory-director 2026-11-04 (notice D-0028).
 
 **Revision 2 (2026-10-31, after the T-1093 review).** These are the changes in this revision:
 - **M1:** rule 7 now case-folds before the fold table.
