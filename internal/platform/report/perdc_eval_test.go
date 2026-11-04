@@ -95,7 +95,9 @@ func Test_perdc_count_is_at_the_winning_dc_and_never_summed(t *testing.T) {
 	}
 }
 
-func cmp(col string, op report.Op, v report.Value) report.Cmp { return report.Cmp{Column: report.ColumnID(col), Op: op, Value: v} }
+func cmp(col string, op report.Op, v report.Value) report.Cmp {
+	return report.Cmp{Column: report.ColumnID(col), Op: op, Value: v}
+}
 
 func Test_EvalPerDC(t *testing.T) {
 	var zero time.Time

@@ -1355,6 +1355,32 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - a sink that fails on the append leaves an error-level log record and the caller still gets the refusal
   (`Test_read_denied_append_failure_is_logged`).
 
+#### As built (T-0971, row B8)
+
+- **Files.** `platform/report/perdc_eval.go` (fold, cells, `EvalPerDC`, tally, `DCCounter`, `DefaultPerDCReadCap` 250 000, `PerDCBatchSize` 200),
+  `modules/reports/run/perdc.go` (stages 2 to 4), `job.go` (`execute` routes a definition with `PerDC` and stops stage 1 after storing the
+  candidates), `record.go` (`Run.PerDC`, `ColumnLabel`).
+- **Stages.** 1 candidates (T2, run left `running`; `connection_id` and `domain` ride along as unstored helper columns; SQL sort keys and
+  `PerDCWhere` on per-DC columns are taken out of the compiled query). 2 cap: `DCCounter.DCsInScope` per (connection, NC), candidates × DCs
+  against `Service.PerDCReadCap`; over it the run fails `per_dc_read_cap_exceeded` with `candidates`, `dcs`, `reads`, `cap` in the detail,
+  rows deleted, **zero reads made** (AC-41). 3 reads: one `PerDCReader.Read` in flight at a time, at most 200 objects per call, outside any
+  transaction; after each batch a short transaction locks the run, checks it is still this attempt's, writes the per-DC cells and sort keys,
+  deletes rows `PerDCWhere` rejects and updates `report_runs.per_dc` progress. Cancel stops the next read (the batch transaction finds the run
+  no longer running). 4 finalise: order by stored sort keys (a cell with no key sorts last), renumber ordinals, digest in that order, succeed.
+- **Cells.** `PerDCFold` takes the maximum (or minimum) over the DCs that answered, never a sum; a count column shows the count at the DC of the
+  latest failed logon (`PartAtWinner`). Row coverage reads "2 of 3 DCs". With a DC silent, a time with no value reads "Not confirmed" (text cell,
+  Unknown to filters, never "never"); with every DC answering, unset is `Never`.
+- **Run record.** `report_runs.per_dc` (progress while running; `complete`, `dcs_in_scope`, `dcs_answered`, `unreachable[{dc,error}]`, `read_at` when
+  done). `Run.ColumnLabel` appends " (at least)" to value columns of a partial run; the API `coverage` has `label` and `unreachable`; the export
+  header uses the same label and the About block gains a "DC coverage" line.
+- **Migration 0072** lets `report_run_rows` rows be deleted while the run is `running` (per-DC filtering removes rows).
+- **Not wired yet.** `Service.PerDC` and `Service.PerDCDCs` are nil in `compose/server`; until the follow-ups land a per-DC run fails
+  `connection_unavailable`. Needed: a `DCsInScope` on `client.ConnectorPerDC` and the wiring (directory-engineer), calibration of the cap and a
+  500k-candidate timing (B13), the coverage label and "(at least)" header on screen (B12).
+- **Tests.** `run/perdc_pg_test.go`: `TestPerDCRunTakesTheMaximumOverDCsAndNamesTheDC` (AC-39), `TestPerDCRunWithADCDownIsLabelledPartial` (AC-40),
+  `TestPerDCRunOverTheReadCapIsRefusedBeforeAnyRead` (AC-41), `TestPerDCRunReadsInBoundedBatchesAndShowsProgress`, `TestPerDCRunCancelStopsReading`,
+  `TestPerDCRunFiltersAndSortsOnPerDCColumns`, `TestPerDCRunWithoutAReaderFailsConnectionUnavailable`; unit tests in `platform/report/perdc_eval_test.go`.
+
 ## 7. Export (spec §8.3, FR-16 to FR-22)
 
 ### 7.1 Creating and downloading an export
@@ -1655,7 +1681,7 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | **B5** (built, T-0960; §3.6 "As built") | Library batch 1: loader, `LOCK`, crosswalk search index, USR-01, USR-02, USR-03, USR-05 with presets and hidden groups, sync-interval-0 narrowing | reporting-engineer | B3, B4 | FR-01, FR-02, FR-03, FR-04, FR-06, FR-09, FR-14; AC-01–AC-04, AC-12, AC-16, AC-17, AC-18, AC-49 |
 | **B6** (built, T-0961; §3.3 "As built (T-0961)") | inventory: `inventory.groups`, `.group_members` (`grp` and `mbr` row anchors, primary-group edges, effective closure, cycle findings, FSP rows, `Via` hop as `MaskAnchor`), `.ous` (in-scope subtree counts over a `FilterAnchor`), `.contacts`, **RP11** for its datasets | directory-engineer | B1, B2, P2 | FR-15, FR-06; AC-19, AC-20, AC-21 |
 | **B7** (built, T-0962) | Library batch 2: PWD-01, PWD-02, GRP-01–GRP-04, CMP-01, CMP-02, OU-01, CTC-01 | reporting-engineer | B5, B6 | FR-01, FR-02, FR-09, FR-14, FR-15; AC-13, AC-19, AC-20, AC-22, AC-23 |
-| **B8** | Per-DC runs: the §6.5 stages, read cap, coverage labels, `EvalPerDC`; USR-04, PWD-03 | reporting-engineer | B4, B5, P5 | FR-10; AC-39, AC-40, AC-41 |
+| **B8** (built, T-0971; §6.5 "As built") | Per-DC runs: the §6.5 stages, read cap, coverage labels, `EvalPerDC`; USR-04, PWD-03 | reporting-engineer | B4, B5, P5 | FR-10; AC-39, AC-40, AC-41 |
 | **B9** | Export: `export.Digest` (canonical form and vectors, `u` tag included), `export.Unknown()`, `run.StoredSource`, About block, CSV and XLSX export jobs, `report_exports`, creator download through `run.ReadAccess` (§7.1), 410, delete, caps, export audit kinds, **RP5** | reporting-engineer | B4 | FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22 (export), FR-31; AC-24–AC-28, AC-50 |
 | **B10** | PDF and HTML encoders and export formats (before M2 exit). **Built (T-0964), §7.1b** | reporting-engineer | B9 | FR-16, FR-19 |
 | **B11** | Schedules: DM-73 tables, `reports.schedule.*` Actions, fire job, owner-authority checks, delivery links authorised by the Delivery row (§7.2), ZIP, notify-only-if-data, `manage_all` metadata view, delivery audit kinds, **RP10** | reporting-engineer (backend-engineer reviews) | B4, B9, P3, P4 | FR-22 (delivery), FR-23–FR-29, FR-31; AC-30–AC-38, AC-45, AC-46, AC-47 |
@@ -1795,3 +1821,4 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 - 2026-11-01 · T-0964 · row B10 built: `platform/export/pdf` (+ `pdftest`), `platform/htmlx`, PDF and HTML formats with
   caps of 5,000 and 20,000 rows, per-format `HardCap`, `FormatsFor`, `exportFormats` served by the API. As built:
   §7.1b. Follow-ups: the owner's time zone on a run; an embedded font for CJK in the PDF.
+- 2026-11-04 · T-0971 · row B8 built: per-DC run stages, read cap, coverage labels, `EvalPerDC`, USR-04 and PWD-03 (§6.5 "As built"); `DCCounter` port; migration 0072.
