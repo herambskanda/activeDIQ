@@ -267,3 +267,28 @@ func (u *unresolvedSrc) ScopedSearch(_ context.Context, _ ad.ScopedRequest, fn f
 	}
 	return ad.ScopedResult{}, nil
 }
+
+func TestScopedSearchEmitsEmptyAttributeForAbsentReadableOnly(t *testing.T) {
+	r := sreq()
+	r.Attributes = []string{"cn", "lockoutTime", "member", "unicodePwd"}
+	s := &ssrc{src: &src{dsa: dsaA}, entries: []*ad.Entry{mk(1)}}
+	ms, err := searchAll(start(t, s), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]*connectorv1.Attribute{}
+	for _, a := range ms[0].GetBatch().GetEntries()[0].GetAttributes() {
+		got[a.GetName()] = a
+	}
+	for _, n := range []string{"lockouttime", "member"} {
+		if a := got[n]; a == nil || !a.GetComplete() || len(a.GetValues()) != 0 {
+			t.Fatalf("%s: want read-and-empty, got %v", n, a)
+		}
+	}
+	if got["unicodepwd"] != nil {
+		t.Fatal("an attribute outside the read-empty allow-list must stay not-read")
+	}
+	if a := got["cn"]; a == nil || len(a.GetValues()) != 1 {
+		t.Fatalf("present attribute altered: %v", a)
+	}
+}

@@ -153,7 +153,7 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 		return pinRefusal()
 	}
 
-	entry, tails, err := h.build(e, id, parent, attrs)
+	entry, tails, err := h.build(e, id, parent, attrs, false)
 	if err != nil {
 		return refuse(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "attribute could not be decoded")
 	}
@@ -217,7 +217,7 @@ func truncated(e *ad.Entry) []string {
 // build turns the entry into the header entry plus the chunks that follow it. An attribute with
 // more than rangeWindow values carries its first range in the header (complete = false) and the
 // rest as in-order chunks, the last marked terminal.
-func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, asked []string) (*connectorv1.DirectoryEntry, []*connectorv1.ValueChunk, error) {
+func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, asked []string, fillAbsent bool) (*connectorv1.DirectoryEntry, []*connectorv1.ValueChunk, error) {
 	out := &connectorv1.DirectoryEntry{ObjectGuid: write.GUIDToWire(id), ParentGuid: parent,
 		Dn: &connectorv1.DnValue{DisplayDn: e.DN}}
 	var tails []*connectorv1.ValueChunk
@@ -251,6 +251,18 @@ func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, ask
 			at.Values = vals
 		}
 		out.Attributes = append(out.Attributes, at)
+	}
+	if fillAbsent {
+		// Read-and-empty: the DC omits an attribute with no value, but it omits a denied one just as
+		// silently. Only attributes in readEmptyOK (ordinarily readable, never confidential) are
+		// claimed empty; every other omission stays "not read".
+		for _, a := range asked {
+			n := strings.ToLower(a)
+			if n == "objectguid" || e.Has(n) || !readEmptyOK[n] {
+				continue
+			}
+			out.Attributes = append(out.Attributes, &connectorv1.Attribute{Name: n, Complete: true})
+		}
 	}
 	return out, tails, nil
 }
