@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Check or repair the clock of the lab DC dc1 (Proxmox VM 119) over WinRM (HTTP 5985, NTLM, lab only) (T-0850).
+
+  dc1-clock check [--max-skew SECONDS]   compare dc1's UTC with this host's (default limit 1 s, the T-0850 acceptance);
+                                         print both and w32time's source; exit 1 if over the limit, 0 if within it.
+  dc1-clock fix                          make dc1 (the PDC emulator) sync from external NTP peers by IP address (default
+                                         Cloudflare 162.159.200.1 and 162.159.200.123, https://www.cloudflare.com/time/;
+                                         override with DIQ_DC1_NTP_PEER, space separated) and step the clock. Idempotent.
+                                         By IP because dc1 is its own DNS and a name does not resolve at boot, which
+                                         makes w32time wait 15 minutes before it tries again.
+
+Why: dc1 used to run on its own CMOS clock, +12h30m off real time, and the KDC refused every AS-REQ from the lab host
+(KRB_AP_ERR_SKEW). Since T-0850 w32time syncs from NTP, so the clock is right after every boot with no hand work.
+`fix` restarts w32time and steps the clock, which drops the WinRM session mid-call; that is expected and `fix` waits
+and re-checks.
+
+Wrap every call in the shared lock:  lab/windows/bin/with-dc1-lock -- lab/windows/bin/dc1-clock check
+Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (never printed). Runbook section 16.
+"""
+import datetime as dt, os, re, sys, time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import dc1winrm
+
+env, path, ADDR = dc1winrm.load_env("dc1-clock")
+PEERS = os.environ.get("DIQ_DC1_NTP_PEER", "162.159.200.1 162.159.200.123").split()
+if not PEERS or not all(re.fullmatch(r"[A-Za-z0-9.-]+", x) for x in PEERS):
+    sys.exit("dc1-clock: DIQ_DC1_NTP_PEER must be space-separated host names or IP addresses")
+PEERLIST = " ".join(x + ",0x8" for x in PEERS)
+_ps = dc1winrm.make_ps(env, ADDR)
+
+
+def ps(script):
+    return _ps(script)[1]
+
+
+def skew():
+    """dc1 UTC minus this host's UTC, midpoint-corrected for the WinRM round trip."""
+    t0 = dt.datetime.now(dt.timezone.utc)
+    out = ps('[DateTime]::UtcNow.ToString("o")')
+    t1 = dt.datetime.now(dt.timezone.utc)
+    m = re.search(r"\d{4}-\d\d-\d\dT[\d:.]+", out)
+    if not m:
+        sys.exit("dc1-clock: could not read dc1's time: " + out[:200])
+    dc = dt.datetime.fromisoformat(m.group(0)[:26]).replace(tzinfo=dt.timezone.utc)
+    return dc - (t0 + (t1 - t0) / 2)
+
+
+def check(limit):
+    d = skew()
+    print("host UTC", dt.datetime.now(dt.timezone.utc).isoformat())
+    print("dc1 minus host = %.3f s (limit %s s)" % (d.total_seconds(), limit))
+    print(ps("w32tm /query /status | Select-String 'Source|Stratum|Last Successful'"))
+    if abs(d.total_seconds()) > limit:
+        print("dc1-clock: FAIL: dc1 is outside the limit; run `dc1-clock fix`", file=sys.stderr)
+        return 1
+    print("dc1-clock: OK")
+    return 0
+
+
+def fix():
+    print("before: dc1 minus host = %.3f s" % skew().total_seconds())
+    try:
+        ps(f'w32tm /config /syncfromflags:manual /manualpeerlist:"{PEERLIST}" /reliable:yes /update | Out-Null; '
+           "Restart-Service w32time; Start-Sleep 5; w32tm /resync /rediscover | Out-Null")
+    except Exception as e:  # the clock step can cut the session
+        print("session dropped while stepping the clock (expected):", type(e).__name__)
+    for _ in range(12):
+        time.sleep(5)
+        try:
+            d = skew()
+            break
+        except Exception:
+            continue
+    else:
+        sys.exit("dc1-clock: dc1 not reachable after the change")
+    print("after: dc1 minus host = %.3f s" % d.total_seconds())
+    return 0 if abs(d.total_seconds()) <= 5 else 1
+
+
+if __name__ == "__main__":
+    a = sys.argv[1:]
+    if a[:1] == ["check"]:
+        lim = 1.0
+        if a[1:2] == ["--max-skew"] and len(a) == 3:
+            lim = float(a[2])
+        elif len(a) != 1:
+            sys.exit(__doc__)
+        sys.exit(check(lim))
+    if a == ["fix"]:
+        sys.exit(fix())
+    sys.exit(__doc__)

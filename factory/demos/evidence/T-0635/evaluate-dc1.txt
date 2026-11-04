@@ -1,0 +1,9 @@
+ok     HOST-DC-REFUSED               
+INACTIVE HOST-SERVICE-NOT-PRIVILEGED  no service identity observed
+INACTIVE HOST-FILE-PERMISSIONS        no config, keytab, keystore or TLS files observed
+INACTIVE HOST-NO-DEFAULT-CREDENTIAL   no booted first-run state observed
+INACTIVE HOST-NO-PLAINTEXT-LISTENER   no booted first-run state observed
+INACTIVE HOST-SETUP-SECRET-SINGLE-USE the product has no one-time setup secret yet
+INACTIVE HOST-NO-DUMPS                no dump posture observed
+INACTIVE HOST-REMOTE-DSN-FULL-TLS     no DSN probes
+fitness-host: ok
