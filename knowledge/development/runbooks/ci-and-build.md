@@ -316,8 +316,14 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
   `require`, `verify-ca` without a root) that must each be refused before any dial.
 - **windows (lab):** on a lab host run `packaging/windows/Get-HostObservation.ps1 -ServiceName … -InstallDir …
   -ConfigPaths … -InstallerResult refused|installed > obs.json`, then `go run ./tools/fitness/host evaluate obs.json`.
-  Run it on dc1 with the MSI once it exists (T-0635) to prove the DC refusal. The script has not yet been run on a
-  Windows host (no MSI to observe); first run must be logged in `windows-lab-runs/`.
+  For the DC refusal run the driver instead: `packaging/windows/Test-MsiRefusesDc.ps1 -MsiPath … -LogPath … > obs.json`
+  on dc1 (expects msiexec exit 1603 and the sentence "cannot be installed on a domain controller" in the log) and on
+  fs1 as the control (must install). It runs msiexec, then `Get-HostObservation.ps1` observes the leftovers itself
+  (install directory, service), so `installed` is measured, not taken from the driver. The MSI source is
+  `packaging/windows/msi/Server.wxs` (a LaunchCondition on `MsiNTProductType`, which runs before any change).
+  `make fitness-packaging` parses `Server.wxs` as XML and asserts structure (exactly one `Launch` with the DC condition directly under `Package`; no sequence tables, custom actions, `SetProperty`, preprocessor instructions or authored `MsiNTProductType`/`Installed`, whatever the quoting or comments); with `ADIQ_SERVER_MSI=<built msi>` and `msitools` it also checks the built `LaunchCondition` and `InstallExecuteSequence` tables. The lab driver quotes and validates its msiexec paths because `Start-Process -ArgumentList` does no quoting. The driver ran on dc1 on 2026-10-30 (Windows Server 2025): the MSI exited 1603 with the DC message, left nothing, and HOST-DC-REFUSED is ok there ([run log](windows-lab-runs/T-0635-msi-refuses-dc-20261030.md)). The fs1 control install has not run on Windows yet (T-0849). The setup secret is issued server-side
+  (T-0636: the server generates it and stores only its SHA-256); the MSI does not write one. The Windows probe for
+  HOST-SETUP-SECRET-SINGLE-USE is T-0706.
 - **Results:** `ok`, `FAIL` (build fails), `INACTIVE` (the collector could not observe it: the subject does not exist
   yet), `GAP` (fails today, tolerated until the named ticket lands). `tools/fitness/host/known-gaps.json` is a
   ratchet: a gap that passes fails the build until its entry is deleted. Never add a gap without a ticket.
@@ -364,7 +370,20 @@ A core MSI with no agent in it is still judged by rules 2-4 and the LocalSystem/
 **What it is.** The dispatcher builds `main` + `factory/T-NNNN` in a scratch worktree
 (`<worktree_root>/.premerge/`) and runs `dispatcher.pre_merge.argv` (default `make -k ci`) there before
 it merges. Settings: `factory/config.json` `dispatcher.pre_merge` (`enabled`, `argv`,
-`timeout_minutes`). Logs and the per-`main`-commit baseline cache: `factory/state/premerge/`.
+`timeout_minutes`, `baseline_reuse_roots`). Logs and the baseline cache: `factory/state/premerge/`.
+
+**The baseline is reused, not re-run per `main` commit (T-1378).** When the merge result is red, the gate
+needs `make -k ci` findings of `main`. It takes them from a cached run (`baseline-*.json`) on the same
+tree, or on a tree that differs only in files under `knowledge/`, `.claude/`, `factory/`, `garage/` that
+no gate file (tracked, outside those directories, not `*.md`) mentions as a path (`readSurface` in
+`factory/lib/premerge.mjs`, computed from the tree each time). So memory, report and digest commits cost
+nothing, while a commit to the ADRs, the licence register, the architecture map or the runbooks the
+fitness tools name does re-run it. The gate summary (event, `factory premerge` output) states which:
+`baseline: reused the cached run …` or `baseline: ran a fresh baseline …`. A passing gate stores its
+merge-result run as the baseline of the tree it will become, so the second half of a split train runs no
+baseline. If a fresh baseline times out, the nearest cached run stands in: the train can pass if all its
+findings are in it, otherwise the gate stops with a message naming the findings. Never raise
+`timeout_minutes` as the fix for that; find what is loading the host (`uptime`) first.
 Rules and the comparison: `standards/ci-gates.md` "The pre-merge gate". It needs what `make ci` needs
 (Docker for the container jobs, Node, network once for toolchains).
 

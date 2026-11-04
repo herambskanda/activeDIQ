@@ -273,7 +273,7 @@ names, used verbatim by builders and tests:
 `authenticator.reset.done` (with technician and verification factor),
 `authenticator.notice.sent`, `authenticator.notice.failed`, `authenticator.notice.abandoned`,
 `authenticator.notice.resent` (tenant-owner "resend notice", 6.5),
-`callerverification.issued` / `.verified` / `.failed` / `.expired` / `.cancelled`. The reset audit
+`callerverification.issued`, `callerverification.verified`, `callerverification.failed`, `callerverification.expired`, `callerverification.cancelled`. The reset audit
 event carries the verification factor, the factor's age and the challenge ID (DM-38.I4).
 
 ## 7. Platform matrix

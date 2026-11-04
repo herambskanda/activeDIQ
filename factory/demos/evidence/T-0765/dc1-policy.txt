@@ -1,0 +1,5 @@
+LDAPServerIntegrity = 2
+LdapEnforceChannelBindingTokens = 2
+Default Domain Controllers Policy GptTmpl.inf LDAPServerIntegrity = 2
+cleartext simple bind to 192.168.1.250:389 as svc-activediq@win.activediq.test -> resultCode 8 (strongerAuthRequired)
+dc1-policy: enforced (LDAPServerIntegrity=2, LdapEnforceChannelBindingTokens=2, cleartext bind of a valid account refused with 8)
