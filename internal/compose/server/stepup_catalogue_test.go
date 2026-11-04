@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory"
@@ -12,6 +13,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/modules/inventory"
 	"github.com/skenzeriq/activediq/internal/modules/notify"
 	"github.com/skenzeriq/activediq/internal/platform"
+	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/module/moduletest"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
@@ -177,5 +179,46 @@ func Test_every_action_plan_refuses_unknown_input_member(t *testing.T) {
 		if !errors.Is(err, operation.ErrInvalid) {
 			t.Errorf("%s: Plan with an unknown input member returned %v, want ErrInvalid", id, err)
 		}
+	}
+}
+
+// stepUpPolicyGaps lists the StepUp Actions whose permission is bound to an HTTP operation of the
+// contract (routed) but has no stepUp row. An Action whose permission no operation declares yet cannot
+// have a row (fitness-api A13 fails a row naming nothing); its row enters with its route.
+func stepUpPolicyGaps(cat []operation.Descriptor, rows, routed []string) []string {
+	var bad []string
+	for _, d := range cat {
+		p := string(d.Permission)
+		if d.StepUp && slices.Contains(routed, p) && !slices.Contains(rows, p) {
+			bad = append(bad, string(d.ID))
+		}
+	}
+	return bad
+}
+
+// A permission of a StepUp Action that has an HTTP route must be a stepUp row of policy.yaml: apihost
+// asks that list, and a route whose permission is missing from it would run on a stale session
+// (T-0199 carried requirement; test step_up_permissions_all_in_policy).
+func Test_step_up_permissions_all_in_policy(t *testing.T) {
+	pol, err := apihost.LoadPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bad := stepUpPolicyGaps(catalogue(t), pol.StepUp, moduleOperationPermissions); len(bad) > 0 {
+		t.Errorf("StepUp Actions with a routed permission and no stepUp row in api/openapi/policy.yaml: %v", bad)
+	}
+}
+
+// The check bites: a routed StepUp permission without a row is reported; an unrouted one is not.
+func Test_step_up_policy_gap_check_bites(t *testing.T) {
+	cat := []operation.Descriptor{
+		{ID: "a.routed", Permission: "a.do", StepUp: true},
+		{ID: "b.unrouted", Permission: "b.do", StepUp: true},
+		{ID: "c.rowed", Permission: "c.do", StepUp: true},
+		{ID: "d.plain", Permission: "d.do"},
+	}
+	got := stepUpPolicyGaps(cat, []string{"c.do"}, []string{"a.do", "c.do", "d.do"})
+	if len(got) != 1 || got[0] != "a.routed" {
+		t.Fatalf("got %v", got)
 	}
 }
