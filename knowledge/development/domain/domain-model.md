@@ -1538,7 +1538,9 @@ revoked. Group delegation (ADM-128) is unaffected for every other role.
 **Key attributes:** `subject` (account, or directory user as connection+GUID) · `method` (totp,
 webauthn, email_otp, sms_otp) · `sealed_secret` or `public_credential` · `authority_anchor`
 (`ad_plane` or `owner_approval`, with the proof's audit reference; I3) · `label` · `last_used` ·
-`state` · `expires_at` (pending only) · `confirm_attempts` · `paused_until`. Attempts are rows of
+`state` · `expires_at` (pending only, 10 min) · `confirm_attempts` (pending only, max 5) · `paused_until` ·
+`cooling_off_until` · `notice_state` (`pending`, `sent`, `failed` while retrying, `abandoned`; ENH-09 §6.5) ·
+`last_used_step` · `failed_attempts` · `replaces` (previous enrollment ID, nullable). Attempts are rows of
 the companion table `authn_totp_failures` (enrollment, time, `succeeded`).
 **Invariants.** I1 Seeds are sealed and never returned after enrollment. I2 Zero-touch factors
 (email or mobile already in AD or HR) are read live and are not enrollments. I3 **Authority
@@ -1572,22 +1574,30 @@ per-account advisory lock, and only under READ COMMITTED (the count is re-read a
 REPEATABLE READ or SERIALIZABLE the activation is refused with `AD409`: a transaction-level snapshot
 would hide a concurrent commit, and SSI does not catch a race with a READ COMMITTED writer. Revoking one
 frees a slot. End-user (directory-keyed) enrolments are not counted.
+I8 **One active end-user TOTP** (ENH-09 §9). A directory-user subject (connection+GUID) has at most one `active` TOTP; confirming a new one revokes the old and sets `replaces`.
+I9 **End-user enrolment** (the end-user analogue of I3, so the two are not confused). An end-user TOTP is created only after the subject's own AD authentication in the same ceremony: `authority_anchor` = `ad_plane`, never `owner_approval`. Replacing it needs the existing factor (ENH-09 §6.3a); otherwise a technician-verified reset (an Action, `authenticator.reset`). I3 stays as written for `webauthn` console accounts.
+I10 **Cooling-off.** A TOTP enrollment cannot satisfy DM-38 before `cooling_off_until` (I7 above is the active cap; this is a separate rule).
+I11 **Notice.** Every enrol, replace and reset writes the audit events of the event catalogue under DM-80 and queues a notice. An `active` enrollment whose `notice_state` is not `sent` cannot satisfy DM-38; `abandoned` (all retries over 24 h failed) never becomes usable until a later notice is delivered.
 **Lifecycle.** `pending → active → revoked`; `pending → expired | revoked`. `expired` and `revoked` are
 terminal.
+**Principal kind (ENH-09 §6.1a).** The audit actor of end-user self-service enrolment is a **directory-user principal** (`connection_id` + objectGUID), not a console account. It exists only for the one ceremony, is minted after `VerifyUser`/SPNEGO succeeds, carries no role and no permission, and cannot call any Action. ADR-0005 rule 10 item 10 lists this write as bookkeeping.
 
 ### DM-38 CallerVerification · T · owner `modules/helpdesk` (ENH-09)
 **Definition.** One challenge a technician issues to prove a caller is the target user before a
 reset or unlock. **Replaces (ME):** none. It extends the reset console (ADM-136); caller
 verification is ENH-09 (scope lock §3.5).
 **Key attributes:** `technician_account_id` · `target` (connection+GUID) · `factor` ·
-`destination_masked` · `code_mac` · `expires_at` · `attempts` · `operation_id` · `state`.
+`destination_masked` · `code_mac` · `expires_at` · `attempts` · `operation_id` · `state` ·
+`delivered_at` · `verified_at` · `authorised_until` (`verified_at` + 5 min) · `factor_enrolled_at` (TOTP only, for the age badge).
+`factor` is `email_otp` | `sms_otp` | `totp` (names match DM-37 `method`); there is no `channel` attribute. Code length (6) and max attempts (3) are constants of the rule set (ENH-09 §4), not stored per row.
 **Invariants.** I1 The destination comes only from data held before the call (AD or HR), never
 from what the technician types. I2 The code is never stored in clear or logged. `code_mac` is a
 keyed MAC under a key derived from the tenant data key (DM-02), never a plain hash, because a
 plain hash of a six-digit code is enumerated in milliseconds. I3 A verified
 challenge authorises Actions only on its target, once, within its window. I4 The factor is
 recorded in the same audit event as the reset.
-**Lifecycle.** `issued → verified | failed | expired | cancelled`.
+I5 At most one open challenge per target; a new issue cancels the old. I6 Issue and attempt rate limits (ENH-09 §4.3, §4.6, §4.7) are enforced in the database, not in memory. I7 Technician ≠ target. I8 The destination was not changed in the last 24 h (or the tenant fallback applies when replication metadata is missing). I9 `factor = totp` is refused during the enrollment's cooling-off (DM-37.I10) or when its `notice_state` is not `sent` (DM-37.I11).
+**Lifecycle.** `issued → verified | failed | expired | cancelled`; `verified → consumed` when the Action runs, or `verified → expired` when `authorised_until` passes.
 
 ### DM-39 IdentityProvider · T · owner `platform/authn`
 **Definition.** A customer IdP the console trusts for sign-in (ADM-143), with the rules that turn
@@ -1915,6 +1925,13 @@ change emits an event. I4 Details never carry a `Secret`. Targets keep a display
 DN and name as they were at the time, because DNs change. That snapshot is personal data and is
 erasable under X11, subject to §11 Q9.
 **Lifecycle.** `appended → checkpointed → archived → purged`, all derived (X5), never a column.
+
+**Event catalogue: ENH-09 (full names, verbatim for builders and tests; spec §6.6).** Each records the actor, target GUID, connection, method and source address, never a code or seed.
+- `authenticator.enrol.started`, `authenticator.enrol.confirmed`, `authenticator.enrol.failed` (reason), `authenticator.enrol.refused` (reason), `authenticator.enrol.replaced`
+- `authenticator.reset.done` (technician, verification factor, the factor's age, challenge ID; DM-38.I4)
+- `authenticator.notice.sent`, `authenticator.notice.failed`, `authenticator.notice.abandoned`, `authenticator.notice.resent` (tenant-owner "resend notice")
+- `callerverification.issued`, `callerverification.verified`, `callerverification.failed`, `callerverification.expired`, `callerverification.cancelled`
+Console-side events (`authn.*`) are listed with their owning package in the blueprint.
 `checkpointed` means `seq` ≤ the `seq` of the tenant's latest ChainCheckpoint (DM-81).
 `archived` means the event's partition has been exported, and it stays verifiable from the export
 and the checkpoints. `purged` means the retention role dropped the partition, which it may do
@@ -2261,6 +2278,7 @@ AC2 was re-checked by script: every ADM ID in scope lock §3.3 (123 IDs) appears
 
 ## Changelog
 
+- 2026-11-04 · T-0224. ENH-09 §9 applied: DM-37 gains `cooling_off_until`, `notice_state` (incl. `abandoned`), `last_used_step`, `failed_attempts`, `replaces`, I8-I11 and the directory-user principal kind; DM-38 factor enum `email_otp|sms_otp|totp`, new attributes, I5-I9, `consumed`; the ENH-09 audit event names are listed in full under DM-80.
 - 2026-10-27 · T-0388. DM-30.I7 lists the guarded classes of threat model §6.9 rule 5 (TM-D28) instead of the five original changes, and names the fitness function that forces Actions to declare the permission.
 - 2026-10-28 · T-0283. DM-37 authority factor (TM-D19 rules 1-2): `authn_webauthn_credentials.purpose` (`second_factor` for AN-10, `authority`; at most one active authority credential per account; AN-10 never reads `authority`). Anchor is recorded as the audit reason of `authn.authority.enrolled` (`ad_proof` or `owner_approval`, approval id on `authn.authority.approved`) rather than a column. New tenant tables `authn_authority_challenges`, `authn_authority_approvals` (15 min, single-use, approver is never the account) and `authn_authority_notices` (outbox: the account and every tenant-owner, per enrolment/reset/removal). DM-31.I3 is derived: a session's factor counts only while `authority_factor_at >= mfa_at` (`Session.AuthorityCurrent`), so a TOTP step-up ends it until the credential is used again; reset/remove clear it in every session of the account. Carried to authz as `Principal.AuthorityFactor` (deny by default; `authority_factor_missing` refusal in the hybrid gate).
 - 2026-10-28 · T-0207. DM-37 `webauthn` slice: public credentials live in `authn_webauthn_credentials` (credential ID, COSE key, user handle, BE flag, `sign_count` that never decreases, state `active → revoked`) and the AN-10 challenge in `authn_webauthn_challenges` (one per pending sign-in, consumed by the first assertion, in its own committed transaction before evaluation). Registration is not yet built.
