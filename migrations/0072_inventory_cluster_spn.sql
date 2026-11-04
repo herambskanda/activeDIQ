@@ -9,7 +9,7 @@ ALTER TABLE public.directory_objects ADD COLUMN cluster_spn boolean;
 -- MaskAnchor may project only non-text columns; a fragment may not call md5). manager_key is NULL when the
 -- row has no manager. Used by inventory.users manager_guid.
 ALTER TABLE public.directory_objects
-  ADD COLUMN dn_key uuid GENERATED ALWAYS AS (md5(lower(dn))::uuid) STORED,
+  ADD COLUMN dn_key uuid GENERATED ALWAYS AS (CASE WHEN dn <> '' THEN md5(lower(dn))::uuid END) STORED,
   ADD COLUMN manager_key uuid GENERATED ALWAYS AS (
     CASE WHEN jsonb_typeof(attributes -> 'manager') = 'string' THEN md5(lower(attributes ->> 'manager'))::uuid END) STORED;
-CREATE INDEX directory_objects_by_dn_key ON public.directory_objects (tenant_id, connection_id, dn_key);
+CREATE INDEX directory_objects_by_dn_key ON public.directory_objects (tenant_id, connection_id, dn_key) WHERE dn_key IS NOT NULL;
