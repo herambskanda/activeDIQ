@@ -1,7 +1,7 @@
 # T-0148: channel-binding acceptance on dc1 (2026-11-02)
 
 Acceptance (T-0148, TM-TB3-T3): with LDAP signing required and channel binding Always, the connector's SASL binds over TLS succeed and
-the DC logs none of 2887, 3039, 3074, 3075. Driver: `lab/windows/bin/gssapi-lab accept` (runbook windows-lab.md section 19), under
+the DC logs none of 2887, 3039, 3074, 3075. Driver: `lab/windows/bin/gssapi-lab accept` (runbook windows-lab.md section 20), under
 `lab/windows/bin/with-dc1-lock`, dc1 = Proxmox VM 119 at 192.168.1.250 (A-0032), WinRM 5985 NTLM (A-0025). No secret appears here.
 
 ## dc1 state
