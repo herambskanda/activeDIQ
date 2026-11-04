@@ -225,11 +225,15 @@ func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, ask
 	for _, a := range asked {
 		want[strings.ToLower(a)] = true
 	}
-	for _, name := range e.Names() {
+	for _, key := range e.Names() {
+		name, lo, hi, star, ranged := key, 0, 0, false, false
+		if b, l, h, st, ok := ad.SplitRange(key); ok {
+			name, lo, hi, star, ranged = strings.ToLower(b), l, h, st, true
+		}
 		if name == "objectguid" || !want[name] {
 			continue
 		}
-		raw := e.Raw(name)
+		raw := e.Raw(key)
 		vals := make([]*connectorv1.AttributeValue, 0, len(raw))
 		for _, r := range raw {
 			v, err := h.value(name, r)
@@ -239,7 +243,19 @@ func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, ask
 			vals = append(vals, v)
 		}
 		at := &connectorv1.Attribute{Name: name, Complete: true}
-		if len(vals) > rangeWindow {
+		if ranged {
+			// The DC answered with a slice of the attribute: never complete unless it is the whole
+			// run from value 0 to the end.
+			at.Values = vals
+			if !(star && lo == 0) {
+				end := hi
+				if star {
+					end = lo + len(vals) - 1
+				}
+				at.Complete = false
+				at.Range = &connectorv1.ValueRange{Start: uint32(lo), End: uint32(max(end, lo))}
+			}
+		} else if len(vals) > rangeWindow {
 			at.Values, at.Complete = vals[:rangeWindow], false
 			at.Range = &connectorv1.ValueRange{Start: 0, End: rangeWindow - 1}
 			for start := rangeWindow; start < len(vals); start += rangeWindow {
@@ -258,7 +274,7 @@ func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, ask
 		// claimed empty; every other omission stays "not read".
 		for _, a := range asked {
 			n := strings.ToLower(a)
-			if n == "objectguid" || e.Has(n) || !readEmptyOK[n] {
+			if n == "objectguid" || e.Has(n) || !readEmptyOK[n] || e.HasRanged(n) {
 				continue
 			}
 			out.Attributes = append(out.Attributes, &connectorv1.Attribute{Name: n, Complete: true})

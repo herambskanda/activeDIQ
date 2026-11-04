@@ -169,7 +169,7 @@ func sdHasSACL(sd []byte) bool {
 // (or proxy) that returns "foo;range=0-1" for something we never requested cannot make us loop.
 func absorbEntry(ent *Entry, pending map[string]int, asked map[string]struct{}, raw *ldap.Entry) {
 	for _, a := range raw.Attributes {
-		name, _, hi, star, isRange := splitRange(a.Name)
+		name, _, hi, star, isRange := SplitRange(a.Name)
 		key := strings.ToLower(name)
 		if _, ok := asked[key]; !ok {
 			continue

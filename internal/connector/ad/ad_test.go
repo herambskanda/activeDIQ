@@ -156,9 +156,9 @@ func TestSplitRange(t *testing.T) {
 		{"member;range=9-3", "member;range=9-3", 0, 0, false, false},
 	}
 	for _, c := range cases {
-		b, lo, hi, star, ok := splitRange(c.in)
+		b, lo, hi, star, ok := SplitRange(c.in)
 		if b != c.base || lo != c.lo || hi != c.hi || star != c.star || ok != c.isOK {
-			t.Errorf("splitRange(%q) = %q %d %d %v %v", c.in, b, lo, hi, star, ok)
+			t.Errorf("SplitRange(%q) = %q %d %d %v %v", c.in, b, lo, hi, star, ok)
 		}
 	}
 }
