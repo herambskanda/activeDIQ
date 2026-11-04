@@ -35,13 +35,98 @@ func desiredSIDs() (user, system *windows.SID, err error) {
 	return tu.User.Sid, system, nil
 }
 
+// principals is the set of identities a state directory may name. Default: the token user and SYSTEM.
+// With Administrators trusted (admins != nil) BUILTIN\Administrators is a third. When the state is
+// written for another account (asService, T-1249) user is that account and the owner is Administrators.
+type principals struct {
+	user, system, admins *windows.SID
+	asService            bool
+}
+
+func defaultPrincipals() (principals, error) { return resolvePrincipals(dirOptions{}) }
+
+// resolvePrincipals resolves the trust set for o. An account name is resolved with LookupAccountName,
+// so it fails unless the account (for example the installed service) exists.
+// https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-lookupaccountnamew
+func resolvePrincipals(o dirOptions) (p principals, err error) {
+	if p.system, err = windows.CreateWellKnownSid(windows.WinLocalSystemSid); err != nil {
+		return p, fmt.Errorf("ownerfile: system sid: %w", err)
+	}
+	if o.admins {
+		if p.admins, err = windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid); err != nil {
+			return p, fmt.Errorf("ownerfile: administrators sid: %w", err)
+		}
+	}
+	if o.account != "" {
+		p.asService = true
+		if p.user, _, _, err = windows.LookupSID("", o.account); err != nil {
+			return p, fmt.Errorf("ownerfile: account %q does not resolve (is the service installed?): %w", o.account, err)
+		}
+		return p, nil
+	}
+	tu, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return p, fmt.Errorf("ownerfile: token user: %w", err)
+	}
+	p.user = tu.User.Sid
+	return p, nil
+}
+
+// owner is who owns what is created: Administrators when writing for another account (the caller's
+// default owner may be the administrator's own user SID, which the service would refuse), else the user.
+func (p principals) owner() *windows.SID {
+	if p.asService {
+		return p.admins
+	}
+	return p.user
+}
+
+// has reports whether s is one of the principals an ACE may name.
+func (p principals) has(s *windows.SID) bool {
+	return s != nil && (s.Equals(p.user) || s.Equals(p.system) || (p.admins != nil && s.Equals(p.admins)))
+}
+
+// sids lists the principals once each.
+func (p principals) sids() []*windows.SID {
+	out := []*windows.SID{p.user}
+	for _, s := range []*windows.SID{p.system, p.admins} {
+		if s == nil {
+			continue
+		}
+		dup := false
+		for _, o := range out {
+			dup = dup || o.Equals(s)
+		}
+		if !dup {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// trustedOwner: a file owner we accept is a principal of the set or BUILTIN\Administrators.
+func (p principals) trustedOwner(owner *windows.SID) (bool, error) {
+	if owner == nil {
+		return false, nil
+	}
+	admins, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	if err != nil {
+		return false, fmt.Errorf("ownerfile: administrators sid: %w", err)
+	}
+	return owner.Equals(p.user) || owner.Equals(p.system) || owner.Equals(admins), nil
+}
+
 // desiredACL builds the DACL: FILE_ALL_ACCESS for the process user and for SYSTEM. Microsoft Learn:
 // https://learn.microsoft.com/windows/win32/api/aclapi/nf-aclapi-setentriesinacla
 func desiredACL() (*windows.ACL, error) {
-	user, system, err := desiredSIDs()
+	p, err := defaultPrincipals()
 	if err != nil {
 		return nil, err
 	}
+	return aclFor(p)
+}
+
+func aclFor(p principals) (*windows.ACL, error) {
 	entry := func(s *windows.SID) windows.EXPLICIT_ACCESS {
 		return windows.EXPLICIT_ACCESS{
 			AccessPermissions: fileAllAccess,
@@ -54,9 +139,9 @@ func desiredACL() (*windows.ACL, error) {
 			},
 		}
 	}
-	entries := []windows.EXPLICIT_ACCESS{entry(user)}
-	if !user.Equals(system) {
-		entries = append(entries, entry(system))
+	var entries []windows.EXPLICIT_ACCESS
+	for _, s := range p.sids() {
+		entries = append(entries, entry(s))
 	}
 	return windows.ACLFromEntries(entries, nil)
 }
@@ -64,18 +149,11 @@ func desiredACL() (*windows.ACL, error) {
 // trustedOwner reports whether owner is the token user, SYSTEM or BUILTIN\Administrators. The
 // owner holds implicit READ_CONTROL and WRITE_DAC, so only these may own a file we trust.
 func trustedOwner(owner *windows.SID) (bool, error) {
-	if owner == nil {
-		return false, nil
-	}
-	user, system, err := desiredSIDs()
+	p, err := defaultPrincipals()
 	if err != nil {
 		return false, err
 	}
-	admins, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
-	if err != nil {
-		return false, fmt.Errorf("ownerfile: administrators sid: %w", err)
-	}
-	return owner.Equals(user) || owner.Equals(system) || owner.Equals(admins), nil
+	return p.trustedOwner(owner)
 }
 
 func ensure(path string) (bool, error) {
@@ -93,10 +171,15 @@ func ensure(path string) (bool, error) {
 	return apply(path, acl)
 }
 
-func securityAttributes(acl *windows.ACL) (*windows.SecurityAttributes, error) {
+func securityAttributes(acl *windows.ACL, owner *windows.SID) (*windows.SecurityAttributes, error) {
 	sd, err := windows.NewSecurityDescriptor()
 	if err != nil {
 		return nil, err
+	}
+	if owner != nil {
+		if err := sd.SetOwner(owner, false); err != nil {
+			return nil, err
+		}
 	}
 	if err := sd.SetDACL(acl, true, false); err != nil {
 		return nil, err
@@ -113,7 +196,7 @@ func securityAttributes(acl *windows.ACL) (*windows.SecurityAttributes, error) {
 // createNewAt creates the file with the protected DACL atomically (no window where the inherited ACL
 // applies). It reports false when the file already exists.
 func createNewAt(path string, acl *windows.ACL) (bool, error) {
-	h, err := createHandle(path, acl)
+	h, err := createHandle(path, acl, nil)
 	if err != nil {
 		if errors.Is(err, windows.ERROR_FILE_EXISTS) {
 			return false, nil
@@ -123,8 +206,8 @@ func createNewAt(path string, acl *windows.ACL) (bool, error) {
 	return true, windows.CloseHandle(h)
 }
 
-func createHandle(path string, acl *windows.ACL) (windows.Handle, error) {
-	sa, err := securityAttributes(acl)
+func createHandle(path string, acl *windows.ACL, owner *windows.SID) (windows.Handle, error) {
+	sa, err := securityAttributes(acl, owner)
 	if err != nil {
 		return 0, err
 	}
@@ -137,9 +220,22 @@ func createHandle(path string, acl *windows.ACL) (windows.Handle, error) {
 }
 
 func createTemp(dir, pattern string) (*os.File, error) {
-	acl, err := desiredACL()
+	p, err := defaultPrincipals()
 	if err != nil {
 		return nil, err
+	}
+	return createTempFor(dir, pattern, p)
+}
+
+// createTempFor creates the temp file with the DACL and owner p names, in the CreateFile call itself.
+func createTempFor(dir, pattern string, p principals) (*os.File, error) {
+	acl, err := aclFor(p)
+	if err != nil {
+		return nil, err
+	}
+	var owner *windows.SID
+	if p.asService {
+		owner = p.owner()
 	}
 	prefix, suffix := pattern, ""
 	if i := strings.LastIndex(pattern, "*"); i >= 0 {
@@ -151,7 +247,7 @@ func createTemp(dir, pattern string) (*os.File, error) {
 			return nil, err
 		}
 		name := filepath.Join(dir, prefix+hex.EncodeToString(r[:])+suffix)
-		h, err := createHandle(name, acl)
+		h, err := createHandle(name, acl, owner)
 		if errors.Is(err, windows.ERROR_FILE_EXISTS) {
 			continue
 		}

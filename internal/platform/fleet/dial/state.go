@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/skenzeriq/activediq/internal/platform/ownerfile"
 )
 
 // Files of the component's enrollment state directory.
@@ -42,7 +42,7 @@ var ErrIncomplete = errors.New("dial: enrollment is incomplete")
 // (squatted, widened, planted, or written for another identity). An ErrUnsafe is also an ErrState.
 var ErrUnsafe = errors.New("dial: enrollment state has unsafe ownership or permissions")
 
-// stateErr classifies a failure of the platform checks: a missing path is ErrAbsent, anything else is
+// stateErr classifies a failure of the ownerfile checks: a missing path is ErrAbsent, anything else is
 // ErrUnsafe. Both also match ErrState. The underlying text names a path component, never content.
 func stateErr(err error) error {
 	if errors.Is(err, fs.ErrNotExist) {
@@ -72,13 +72,17 @@ type State struct {
 	Endpoints []Endpoint
 }
 
-// Save persists a verified enrollment into dir (created 0700), each file by write-to-temp then rename.
-// The key is written first-class with mode 0600; the leaf is written last, so a crash midway leaves a
-// directory Load refuses rather than a half-enrolled component.
-func save(dir, svc string, pin Pin, bundlePEM []byte, leafDER []byte, keyDER []byte, eps []Endpoint) error {
-	if err := ensureDir(dir, svc); err != nil {
+// save persists a verified enrollment into dir, each file by write-to-temp then rename through the
+// held directory handle (ownerfile.Dir.WriteFile): the temp file is created owner-only, never with an
+// inherited ACL, so the key is never in a file anyone else can read. The directory's parent is
+// verified before anything is written. The leaf is written last, so a crash midway leaves a directory
+// Load refuses rather than a half-enrolled component.
+func save(dir string, pin Pin, bundlePEM []byte, leafDER []byte, keyDER []byte, eps []Endpoint, opts ...ownerfile.DirOption) error {
+	d, err := ownerfile.CreateDir(dir, opts...)
+	if err != nil {
 		return err
 	}
+	defer d.Close()
 	var epText strings.Builder
 	for _, e := range eps {
 		epText.WriteString(net.JoinHostPort(e.Host, strconv.Itoa(int(e.Port))) + "\n")
@@ -94,45 +98,57 @@ func save(dir, svc string, pin Pin, bundlePEM []byte, leafDER []byte, keyDER []b
 		{LeafFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})},
 	}
 	for _, s := range steps {
-		if err := writeFile(filepath.Join(dir, s.name), s.data, svc); err != nil {
+		if err := d.WriteFile(s.name, s.data); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// anyStateFile reports whether at least one of the enrolment files exists in dir.
-func anyStateFile(dir string) bool {
-	for _, n := range []string{CAFile, PinFile, EndpointsFile, KeyFile, LeafFile} {
-		if _, err := os.Lstat(filepath.Join(dir, n)); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
 // Load reads and re-validates the state in dir: unsafe permissions, a bundle that breaks rule D3 or
 // lacks the recorded pin, or a leaf that does not match the key or verify against the bundle are all
 // ErrState. A missing component is not enrolled.
-func Load(dir string) (*State, error) { return load(dir, "") }
-
-// load is Load with the account the state was written for when it is not the caller (svc, Windows
-// only; "" = the caller). Enroll uses it to verify what it just wrote.
-func load(dir, svc string) (*State, error) {
-	if err := checkDir(dir, svc); err != nil {
+//
+// The directory is opened once, with its parent verified (ownerfile.OpenDir), and every file is read
+// through that handle (T-1315): nothing is checked by path and then used by path, so a directory
+// swapped for a junction or symlink after the check cannot supply the pin, bundle, key or leaf.
+//
+// Failures are classified (T-1249): ErrAbsent (nothing there; ErrIncomplete if enrolment is partly
+// written), ErrUnsafe (present but owned or permissioned wrongly, for example written for another
+// identity), ErrExpired, and plain ErrState (present but unparsable or inconsistent). Only ErrAbsent
+// means "not enrolled". State an administrator wrote for the service (ForAccount) is accepted: the
+// directory may be owned by BUILTIN\Administrators and name them.
+func Load(dir string) (*State, error) {
+	d, err := ownerfile.OpenDir(dir, ownerfile.TrustAdministrators())
+	if err != nil {
 		return nil, stateErr(err)
 	}
-	read := func(name string, secret bool) ([]byte, error) {
-		p := filepath.Join(dir, name)
-		if err := checkFile(p, secret, svc); err != nil {
-			if errors.Is(err, fs.ErrNotExist) && anyStateFile(dir) {
-				return nil, fmt.Errorf("%w (%w): %v", ErrIncomplete, errors.Join(ErrAbsent, ErrState), err)
-			}
-			return nil, stateErr(err)
+	defer d.Close()
+	return load(d)
+}
+
+var stateFiles = []string{CAFile, PinFile, EndpointsFile, KeyFile, LeafFile}
+
+func load(d *ownerfile.Dir) (*State, error) {
+	read := func(name string) ([]byte, error) {
+		b, err := d.ReadFile(name)
+		if err == nil {
+			return b, nil
 		}
-		return os.ReadFile(p)
+		if errors.Is(err, fs.ErrNotExist) {
+			// A missing file while others exist is `enroll` mid-write (or a crash): say so.
+			for _, other := range stateFiles {
+				if other == name {
+					continue
+				}
+				if _, oerr := d.ReadFile(other); oerr == nil || !errors.Is(oerr, fs.ErrNotExist) {
+					return nil, fmt.Errorf("%w (%w): %v", ErrIncomplete, errors.Join(ErrAbsent, ErrState), err)
+				}
+			}
+		}
+		return nil, stateErr(err)
 	}
-	pinB, err := read(PinFile, false)
+	pinB, err := read(PinFile)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +156,7 @@ func load(dir, svc string) (*State, error) {
 	if err != nil {
 		return nil, ErrState
 	}
-	bundle, err := read(CAFile, false)
+	bundle, err := read(CAFile)
 	if err != nil {
 		return nil, err
 	}
@@ -148,11 +164,11 @@ func load(dir, svc string) (*State, error) {
 	if err != nil {
 		return nil, ErrState
 	}
-	keyPEM, err := read(KeyFile, true)
+	keyPEM, err := read(KeyFile)
 	if err != nil {
 		return nil, err
 	}
-	leafPEM, err := read(LeafFile, false)
+	leafPEM, err := read(LeafFile)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +187,7 @@ func load(dir, svc string) (*State, error) {
 		}
 		return nil, ErrState
 	}
-	epB, err := read(EndpointsFile, false)
+	epB, err := read(EndpointsFile)
 	if err != nil {
 		return nil, err
 	}

@@ -60,7 +60,7 @@ func TestTenantSignedServerRefused(t *testing.T) {
 	// The attacker's chain: leaf by the tenant CA, the tenant CA, and even the real server CA.
 	addr := serveChain(t, tenantCA, tenantCA.der, srv.der)
 	iss := &issuer{ca: tenantCA, srv: srv, tid: tenant.New()}
-	dir := filepath.Join(t.TempDir(), "state")
+	dir := filepath.Join(tempParent(t), "state")
 	_, err := Enroll(context.Background(), Material{Address: addr, Token: "secret-token", Pin: srv.pin().String()}, dir, iss.exchange)
 	if err == nil {
 		t.Fatal("tenant-signed server accepted by Enroll")
@@ -158,9 +158,7 @@ func repinSetup(t *testing.T) (*issuer, string, string) {
 		t.Fatal(err)
 	}
 	// Point the state at the live test server so a refusal is about the pin, not the network.
-	if err := writeFile(filepath.Join(dir, EndpointsFile), []byte(m.Address+"\n"), ""); err != nil {
-		t.Fatal(err)
-	}
+	put(t, dir, EndpointsFile, []byte(m.Address+"\n"))
 	return iss, m.Address, dir
 }
 
@@ -178,7 +176,7 @@ func TestRepinKeepsIdentityAndAudits(t *testing.T) {
 	addr := serveChain(t, newSrv, newSrv.der)
 	host, port, _ := net.SplitHostPort(addr)
 	eps := []Endpoint{{Host: host, Port: mustPort(t, port)}}
-	if err := save(dir, "", before.Pin, append(iss.srv.pem(), iss.ca.pem()...), derOf(leafBefore), mustKeyDER(t, keyBefore), eps); err != nil {
+	if err := save(dir, before.Pin, append(iss.srv.pem(), iss.ca.pem()...), derOf(leafBefore), mustKeyDER(t, keyBefore), eps); err != nil {
 		t.Fatal(err)
 	}
 
@@ -305,7 +303,7 @@ func TestRepinOversizedTransitionBundleRefusedBeforeAnyWrite(t *testing.T) {
 	keyB, _ := os.ReadFile(filepath.Join(dir, KeyFile))
 	leafB, _ := os.ReadFile(filepath.Join(dir, LeafFile))
 	eps := []Endpoint{{Host: host, Port: mustPort(t, port)}}
-	if err := save(dir, "", before.Pin, append(iss.srv.pem(), iss.ca.pem()...), derOf(leafB), mustKeyDER(t, keyB), eps); err != nil {
+	if err := save(dir, before.Pin, append(iss.srv.pem(), iss.ca.pem()...), derOf(leafB), mustKeyDER(t, keyB), eps); err != nil {
 		t.Fatal(err)
 	}
 	snap := snapshotDir(t, dir)

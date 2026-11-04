@@ -9,8 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"path/filepath"
 	"strconv"
+
+	"github.com/skenzeriq/activediq/internal/platform/ownerfile"
 )
 
 // ErrRepin: the new pin could not be adopted. Nothing the component trusts has changed unless the
@@ -50,17 +51,24 @@ func Repin(ctx context.Context, dir string, newPin string, audit func(RepinEvent
 	if err != nil {
 		return err
 	}
-	st, err := load(dir, o.svc)
+	// One verified, held handle for the whole operation: the state read here is the state rewritten
+	// below, and the directory cannot be swapped between the two (T-1315).
+	d, err := ownerfile.OpenDir(dir, o.dirOpts()...)
+	if err != nil {
+		return stateErr(err)
+	}
+	defer d.Close()
+	st, err := load(d)
 	if err != nil {
 		return err // not enrolled or unusable: nothing to repin, and no pin to audit against
 	}
 	ev := RepinEvent{OldPin: st.Pin, NewPin: np}
-	ev.Err = repin(ctx, dir, o.svc, st, np)
+	ev.Err = repin(ctx, d, st, np)
 	audit(ev)
 	return ev.Err
 }
 
-func repin(ctx context.Context, dir, svc string, st *State, np Pin) error {
+func repin(ctx context.Context, d *ownerfile.Dir, st *State, np Pin) error {
 	if np == st.Pin {
 		return fmt.Errorf("%w: it is already the current pin", ErrRepin)
 	}
@@ -99,11 +107,11 @@ func repin(ctx context.Context, dir, svc string, st *State, np Pin) error {
 		return fmt.Errorf("%w: final bundle would not load: %v", ErrRepin, err)
 	}
 	for _, s := range steps {
-		if err := writeFile(filepath.Join(dir, s.name), s.data, svc); err != nil {
+		if err := d.WriteFile(s.name, s.data); err != nil {
 			return fmt.Errorf("%w: persisting: %v", ErrRepin, err)
 		}
 	}
-	if _, err := load(dir, svc); err != nil {
+	if _, err := load(d); err != nil {
 		return fmt.Errorf("%w: state does not reload: %v", ErrRepin, err)
 	}
 	return nil

@@ -25,3 +25,9 @@ metadata:
 - Windows PowerShell 5.1 splits `-test.v` at the dot when calling a native exe: quote every `-test.*` arg. Never `pkill -f <name>` from a command whose own text has <name>: it kills your shell.
 - A lifted Tier-0 bound needs its OWN hard timer (cpucap maxLift 5 s) and a fail-closed exit on a failing restore (30 s, SCM restarts); "closed by caller" is not a bound (a stalled TLS handshake held it 20 s). Inject clock/afterFunc/exit to test.
 - agent-unenrolled-verify wraps itself in with-dc1-lock: do NOT also flock the same file around it (self-deadlock). Never pkill -f from a worker (classifier denies; may kill another session's run).
+- Held-dir pattern (ownerfile.Dir, T-1315): open the dir once no-follow, verify the parent first, then only handle-relative I/O. Windows dir handle without FILE_SHARE_DELETE blocks rename of the dir; compare GetFinalPathNameByHandle of each file to dir+name.
+- Test dirs: t.TempDir() subdirs are group-writable under umask 002 and fail the parent check; chmod the parent 0700 in the test (tempParent helper).
+- A new package linked into cmd/agent needs a line in tools/fitness/agenthost/closure-allow.txt (A4) with what it can reach.
+- Pre-existing red: fitness-safeprim (3 hits in directory/inventory), compose/server tests time out here. Not ours.
+- Held Windows dir handle: share READ|WRITE, never DELETE (rename-into-dir via MoveFileEx opens the target dir with write access [UNVERIFIED on NTFS]). Re-check GetFinalPathNameByHandle(held)==saved path before/after each op to catch ancestor renames.
+- State dirs are ownerfile.Dir (T-1315, handle-held). Admin-run enroll for a service: ownerfile.ForAccount(acct) (owner Administrators, ACL SYSTEM+Admins+acct); service-side reads need TrustAdministrators. Do not re-add path-based dial/files_*.go.

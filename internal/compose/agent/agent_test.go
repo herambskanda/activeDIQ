@@ -23,7 +23,7 @@ func TestRunWithoutConfigRefuses(t *testing.T) {
 }
 
 func TestRunNotEnrolledIsDistinct(t *testing.T) {
-	d := t.TempDir()
+	d := privateTemp(t)
 	cfg := filepath.Join(d, "agent.json")
 	enr := filepath.Join(d, "enrol")
 	body := `{"data_dir":"` + filepath.ToSlash(filepath.Join(d, "data")) + `","enrollment_dir":"` + filepath.ToSlash(enr) + `"}`
@@ -37,7 +37,7 @@ func TestRunNotEnrolledIsDistinct(t *testing.T) {
 }
 
 func TestPrivilegeCheckRunsBeforeAnythingElse(t *testing.T) {
-	d := t.TempDir()
+	d := privateTemp(t)
 	cfg := filepath.Join(d, "agent.json")
 	_ = os.WriteFile(cfg, []byte(`{"data_dir":"`+filepath.ToSlash(d)+`","enrollment_dir":"`+filepath.ToSlash(d)+`"}`), 0o600)
 	t.Setenv(agent.ConfigEnv, cfg)
@@ -67,7 +67,7 @@ func TestParseLocalStrict(t *testing.T) {
 }
 
 func TestRunServingIdlesWhenNotEnrolled(t *testing.T) {
-	d := t.TempDir()
+	d := privateTemp(t)
 	cfg := filepath.Join(d, "agent.json")
 	body := `{"data_dir":"` + filepath.ToSlash(filepath.Join(d, "data")) + `","enrollment_dir":"` + filepath.ToSlash(filepath.Join(d, "enrol")) + `"}`
 	if err := os.WriteFile(cfg, []byte(body), 0o600); err != nil {
@@ -109,7 +109,7 @@ func TestRunServingStillFailsOnOtherErrors(t *testing.T) {
 // T-1249: enrolment state that exists but cannot be used is not "not enrolled".
 func unusableCfg(t *testing.T) (enrolDir string) {
 	t.Helper()
-	d := t.TempDir()
+	d := privateTemp(t)
 	enrolDir = filepath.Join(d, "enrol")
 	if err := os.MkdirAll(enrolDir, 0o777); err != nil { // wider than the component accepts
 		t.Fatal(err)
@@ -180,7 +180,7 @@ func TestRunServingReportsUnusableStateOncePerClassAndKeepsRunning(t *testing.T)
 // T-1249: while `enroll` is still writing (some files there, the leaf not yet), the service looks
 // again after EnrollingInterval, not after the whole interval, so a pickup is not a poll late.
 func TestRunServingRechecksSoonWhileEnrolmentIsBeingWritten(t *testing.T) {
-	d := t.TempDir()
+	d := privateTemp(t)
 	enrol := filepath.Join(d, "enrol")
 	if err := os.MkdirAll(enrol, 0o700); err != nil {
 		t.Fatal(err)
@@ -211,4 +211,15 @@ func TestRunServingRechecksSoonWhileEnrolmentIsBeingWritten(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
+}
+
+// privateTemp is t.TempDir() made 0700: the enrolment directory's parent must not be writable by
+// group or others (T-1315), and a 002 umask would make it so.
+func privateTemp(t *testing.T) string {
+	t.Helper()
+	d := t.TempDir()
+	if err := os.Chmod(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return d
 }
