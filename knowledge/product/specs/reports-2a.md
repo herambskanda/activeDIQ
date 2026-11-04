@@ -1,7 +1,7 @@
 ---
 title: "Spec: Canned reports at checkpoint 2a: library slice, run, scope, export, schedule"
 date: 2026-10-02
-updated: 2026-10-30
+updated: 2026-11-04
 status: draft
 owner: heramb
 author: product-manager
@@ -127,6 +127,13 @@ budget for T-0867 and the `ux-review` targets.
 - know which report is the nested one, or that "Real Last Logon" and "Inactive Users" differ;
 - tick service accounts off one by one;
 - pick a domain before seeing anything (all permitted domains are the default).
+
+**Schedule sheet, empty allowed-domains state (TM-D30).** When the allowed recipient domains list
+is empty, the sheet says, beside the recipient field, that every address counts as outside the
+organisation, so saving a schedule with an e-mail recipient asks for MFA and a confirmation until an
+admin adds the company's domains, and it links to that setting. The MFA prompt appears only when an
+external recipient is present. This is the one place the T20 budget (≤ 7 interactions) is measured
+with domains configured; the empty-list path adds the MFA step and is not the budget case.
 
 **Performance, `[PROPOSED]` defaults for `reporting-engineer` to confirm on the scale tier, B13:**
 inventory-backed reports show the first 50 rows within 2 s at p95 and the full count within 5 s on
@@ -547,7 +554,10 @@ A schedule is a recurring run plus delivery (DM-73). It uses the shared Schedule
   the tenant's **allowed recipient domains** list is *external* (the list is empty at install, so
   every address is external until an admin adds domains, a secure default). External delivery needs
   the `reports.deliver.external` permission (DM-73.I2) and a visible confirmation "Data leaves your
-  organisation: <address>". The scheduled report's data is what the **owner** could see, which the
+  organisation: <address>". Because the empty list makes every address external, **every e-mail
+  schedule asks for a fresh MFA until domains are added** (TM-D30); the secure default nudges the
+  admin to configure domains, and the schedule sheet's empty state says so (§5). The scheduled
+  report's data is what the **owner** could see, which the
   sheet states beside the recipient list (TM-TB15-T2, TM-TB18-T9).
 - **Owner authority at run time (DM-73.I1).** DM-73.I1 covers every permission, not only
   `reports.run`. At every fire the report compiles with the owner's scope and permissions **as they
@@ -557,17 +567,55 @@ A schedule is a recurring run plus delivery (DM-73). It uses the shared Schedule
      owners are notified, and nothing is sent.
   2. *Scope.* If the owner's scope shrank, the run uses the smaller scope and its record shows the
      scope applied. No run uses a cached scope.
-  3. *Each recipient.* Whether an address is external is **re-evaluated against the current allowed
-     recipient domains list**, not the list as saved. For each address that is external now, the
-     owner must hold `reports.deliver.external` now. Where the owner does not, **that recipient's
-     delivery fails with the reason** "owner lacks external delivery permission" (or "address is no
-     longer in an allowed domain"), is shown on the schedule and notifies the owner. **The schedule
-     does not pause** and every other recipient is delivered. An address that became internal needs
-     no check and is delivered. An account recipient is checked for holding `reports.export` when a
-     link is used.
+  3. *Each recipient* (TM-D30 SX-5, SX-6). Whether an address is external is **re-evaluated against
+     the current allowed recipient domains list**, not the list as saved. For each address that is
+     external now:
+     - *Confirmed means confirmed (SX-6).* It must be in the schedule's stored **confirmed-external
+       set**. If it is not, that recipient's delivery fails with the reason "address became
+       external; confirm it on the schedule", **even when the owner holds
+       `reports.deliver.external`**. This happens, for example, after an admin removes its domain
+       from the allowed list. The owner re-confirms it through `update`, which needs a fresh MFA
+       (§8.4 step-up).
+     - *Owner permission.* The owner must hold `reports.deliver.external` now. Where the owner does
+       not, that recipient's delivery fails with the reason "owner lacks external delivery
+       permission".
+     - *Account recipients (SX-5).* An account recipient with **attachment** delivery is classified
+       by the **account's mail address**, at write time and again at every fire, with the same rule
+       as an e-mail recipient. If that address is external, the delivery fails alone with the
+       reason "account address is outside the allowed domains; use a link". A link carries no data
+       (link rule above), so choosing an account never bypasses `reports.deliver.external`.
+
+     Each failure is shown on the schedule and notifies the owner. **The schedule does not pause**
+     and every other recipient is delivered. An address that became internal needs no check and is
+     delivered. An account recipient is checked for holding `reports.export` when a link is used.
+     Each failure records its reason code in the audit trail (§8.6).
+- **Step-up for external delivery (TM-D30 SX-1 to SX-4).** A write whose **after-state** has at
+  least one external recipient needs a **fresh MFA** within the tenant's step-up window:
+  `reports.schedule.create`, `update`, `resume`, and the **undo** of any of them. The test reads the
+  after-state, so an edit to the recurrence alone of a schedule that has an external recipient also
+  needs it, and removing the last external recipient does not. External is classified at Plan time
+  against the allowed list as it is then; an account recipient's own mail address counts under
+  SX-5. **No MFA** for internal-only writes, `pause`, `delete`, `reassign` (the schedule stays
+  paused; the new owner's `resume` needs MFA when external recipients remain) and **run now**
+  (bookkeeping, not an Action; it sends only to recipients already confirmed). An interactive admin
+  without a fresh MFA is refused (`step-up-required`) and nothing changes. An API token or
+  automation cannot complete MFA, so the write is **held for an approval that carries step-up**; it
+  is not refused and never passes silently. The rule is enforced by the operation kernel, so it
+  holds for the console, the API, undo and any later automation. Changing the allowed recipient
+  domains also needs step-up (SX-7, a `notify` settings requirement, T-0950).
+- **Who may change a schedule (TM-D30 R1, R2).** Only the **owner** may `update` or `delete` a
+  schedule, and only the owner may `resume` it or run it now. A non-owner who cannot see the
+  schedule gets 404; a `manage_all` holder, who can see it, gets 403 `not_owner` (run now answers
+  404 to every non-owner, a `manage_all` holder included). A `manage_all` holder stops a schedule
+  with `pause`. Permission `reports.deliver.external` is checked against the caller, who is the
+  owner, at write time, and against the owner again at every fire (R4).
 - **Reassigning the owner** needs `reports.schedule.manage_all`. The schedule pauses until the new
   owner resumes it after seeing the recipient list, so a reassignment cannot widen what recipients
-  receive without the new owner's act.
+  receive without the new owner's act. **Resume confirms every external recipient (R5):** the
+  resume request must carry the confirmation of **every** external recipient as classified now
+  (`confirmedExternal` must equal that set), so the new owner provably saw them; a missing or
+  partial confirmation is refused (`external_not_confirmed`), and a missing permission is refused
+  (`external_not_permitted`). Resume then needs a fresh MFA under the step-up rule above.
 - **Delivery tracking (E4).** Each recipient has its own state (DM-84): queued, sent, failed with
   retries, given up. The schedule page shows the last runs and per-recipient state. A failed
   delivery notifies the owner after retries are exhausted.
@@ -593,7 +641,7 @@ belong to the delegation spec; 2a requires only that the permissions exist and a
 | `reports.run` | See the library and run reports within the runner's scope |
 | `reports.export` | Export a run and download its files |
 | `reports.schedule` | Create and manage the account's own schedules |
-| `reports.schedule.manage_all` | See, pause and reassign any schedule |
+| `reports.schedule.manage_all` | See, pause and reassign any schedule. **Never** update, delete, resume or run another owner's schedule, and it never opens a run's rows or files (TM-D30 R1, R2) |
 | `reports.deliver.external` | Deliver to an address outside the allowed domains |
 
 Report-category restriction per role (ADM-102) is not in 2a. At 2a a role either has `reports.run`
@@ -608,6 +656,12 @@ paused, resumed, reassigned, deleted (written by the `reports.schedule.*` Action
 confirmed external addresses); a system pause with its reason; run of a schedule (with owner scope
 applied); delivery sent or failed, per recipient, including the run-time external-permission
 failure.
+
+TM-D30 SX-8 adds to the schedule events: a write that needed step-up records `step_up: fresh` and
+the **factor kind**; a write held for a token or automation records the **approver**; a delivery
+that fails under SX-5 or SX-6 records its **reason code** (`account_address_external`,
+`address_became_external`; the code names are the contract's to fix, the reasons are the ones
+quoted in §8.4). Values are still never recorded.
 
 ## 9. Security and audit considerations
 
@@ -771,8 +825,12 @@ Each FR names a parity ID or `enhancement`. Others cite them as `reports-2a#FR-n
 | --- | --- | --- |
 | FR-23 | A schedule MUST be creatable from the open report with presets, a recurrence per §8.4 (1-hour floor), an IANA time zone and DST rules | ADM-101 |
 | FR-24 | Delivery MUST support attachment, ZIP and (for accounts) link, formats per recipient, and notify-only-if-data. A link MUST be downloadable only by the named recipient account holding `reports.export`, MUST serve the owner-scope artefact exactly as an attachment would, and every download MUST be audited | ADM-101 |
-| FR-25 | Each run MUST use the owner's scope and permissions at that moment. A disabled or deleted owner, or one who lost `reports.run`, `reports.export` or `reports.schedule`, MUST pause the schedule with the reason. At each fire every external recipient MUST be re-evaluated against the current allowed domains and the owner's current `reports.deliver.external`, and a failing recipient MUST fail alone with the reason | DM-73.I1 |
-| FR-26 | An external recipient MUST need `reports.deliver.external` and a confirmation that is part of the Action preview. The sheet MUST state that recipients receive what the owner can see | DM-73.I2, TM-TB15-T2 |
+| FR-25 | Each run MUST use the owner's scope and permissions at that moment. A disabled or deleted owner, or one who lost `reports.run`, `reports.export` or `reports.schedule`, MUST pause the schedule with the reason. At each fire every external recipient MUST be re-evaluated against the current allowed domains and the owner's current `reports.deliver.external`, and a failing recipient MUST fail alone with the reason; an address external now and not in the stored confirmed-external set MUST fail alone (FR-26b) | DM-73.I1, TM-D30 |
+| FR-26 | An external recipient MUST need `reports.deliver.external` and a confirmation that is part of the Action preview. The sheet MUST state that recipients receive what the owner can see. Its empty allowed-domains state MUST say that every address is external and every e-mail schedule asks for MFA until domains are added | DM-73.I2, TM-TB15-T2, TM-D30 |
+| FR-26a | A `reports.schedule` create, update, resume or undo whose after-state has an external recipient MUST need a fresh MFA (SX-1); pause, delete, reassign and run now MUST NOT (SX-2). A token or automation MUST be held for an approval with step-up (SX-4) | TM-D30 |
+| FR-26b | An account recipient with attachment delivery MUST be classified by the account's mail address at write time and at every fire; external MUST fail that delivery alone with "use a link" (SX-5). At fire, an address external now and not in the stored confirmed-external set MUST fail alone with "address became external; confirm it on the schedule", even if the owner holds `reports.deliver.external` (SX-6) | TM-D30 |
+| FR-26c | `manage_all` MUST allow see, pause and reassign only. Update, delete, resume and run now MUST be owner-only (R1, R2). Resume MUST carry the confirmation of every external recipient (R5) | TM-D30 |
+| FR-26d | Schedule audit events MUST record `step_up: fresh` with the factor kind, the approver of a held write, and the reason code of an SX-5 or SX-6 failure (SX-8) | TM-D30 |
 | FR-27 | Each recipient MUST have its own delivery state shown on the schedule, and failures MUST notify the owner after retries | enhancement (E4) |
 | FR-28 | Per-DC reports MUST NOT run more often than daily. Missed runs after downtime MUST run once | DM-44.I2 |
 | FR-29 | Schedule create, update, pause, resume, reassign and delete MUST be EP-3 Actions `reports.schedule.*` with preview diff, gate, step-up, audit and undo that restores the previous version (ADR-0005 rule 10). Reassignment MUST pause the schedule. Runs and deliveries MUST NOT be Actions | DM-73, ADR-0005 rule 10 |
@@ -1087,6 +1145,61 @@ Then at the next fire the first case fails that recipient alone with the reason 
   delivered with no external check. Separately, an owner who loses reports.export pauses the schedule
 Evidence: mail-catcher test with permission and allowed-domain changes between fires
 
+AC-51 (TM-D30 SX-1, SX-2, SX-4)
+Given an interactive owner without a fresh MFA, and separately an API token
+When they create, update, resume or undo a schedule whose after-state has an external recipient
+Then the human is refused `step-up-required` and the stored version is unchanged; the token write is
+  held for an approval with step-up; with a fresh MFA the write succeeds. The same writes with
+  internal recipients only, and pause, delete, reassign and run now with external recipients, need no MFA.
+  Editing only the recurrence of a schedule with an external recipient needs MFA; removing the last
+  external recipient does not
+Evidence: API test per verb and per caller kind, B11
+
+AC-52 (TM-D30 SX-5)
+Given an account recipient with attachment delivery whose mail address is outside the allowed domains
+When the schedule fires
+Then that delivery fails alone with "account address is outside the allowed domains; use a link", the
+  other recipients are delivered, the audit event carries the reason code, and the same account with
+  link delivery is not failed
+Evidence: mail-catcher test
+
+AC-53 (TM-D30 SX-6)
+Given a schedule with a recipient address that was internal when saved (so it is not in the
+  confirmed-external set), an owner who holds reports.deliver.external, and an admin who then removes
+  that address's domain from the allowed list
+When the schedule fires
+Then that recipient alone fails with "address became external; confirm it on the schedule", the others
+  are delivered, the schedule stays active, and after the owner re-confirms through update with a fresh
+  MFA the next fire delivers it
+Evidence: mail-catcher test with allowed-domain changes between fires
+
+AC-54 (TM-D30 R1, R2; modules/reports.md not_owner)
+Given a schedule owned by another account and a caller holding reports.schedule.manage_all
+When the caller sends update, delete, resume or run now, and separately pause or reassign
+Then update, delete and resume answer 403 `not_owner` with the stored version unchanged, run now answers
+  404, pause and reassign succeed; a caller without manage_all gets 404 on all of them
+Evidence: API test, B11
+
+AC-55 (TM-D30 R5)
+Given a schedule reassigned to a new owner while it has external recipients
+When the new owner resumes without confirming every external recipient, then with the full set and a fresh MFA
+Then the first is refused `external_not_confirmed` and the schedule stays paused; the second resumes it
+Evidence: API test
+
+AC-56 (TM-D30 SX-8)
+Given the writes of AC-51 and the failures of AC-52 and AC-53
+When the audit trail is read
+Then the schedule events show `step_up: fresh` with the factor kind, the approver of a held write, and
+  the reason code of each SX-5 or SX-6 failure, with no recipient values beyond the confirmed addresses
+Evidence: audit-trail test
+
+AC-57 (TM-D30 empty state)
+Given a tenant whose allowed recipient domains list is empty
+When an admin opens the schedule sheet and adds an e-mail recipient
+Then the sheet states that every address is external and that MFA is asked until domains are added, with
+  a link to that setting
+Evidence: UI test, T-0967
+
 AC-47 (TM-TB15-T2 residual)
 Given a schedule owned by an account scoped to two OUs, a link recipient account scoped to one OU
   holding reports.export, a second account without reports.export, and a third account that is not
@@ -1147,7 +1260,7 @@ Evidence: platform/export canonical-form test vectors (B9)
 | B8 | FR-10; AC-39, AC-40, AC-41 |
 | B9 | FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22 (export), FR-31; AC-24–AC-28, AC-50 |
 | B10 | FR-16, FR-19 |
-| B11 | FR-22 (delivery), FR-23–FR-29, FR-31; AC-30–AC-38, AC-45, AC-46, AC-47 |
+| B11 | FR-22 (delivery), FR-23–FR-29, FR-26a–FR-26d, FR-31; AC-30–AC-38, AC-45, AC-46, AC-47, AC-51–AC-57 |
 | B12 | FR-01, FR-02, FR-04, FR-13, FR-32; AC-44 |
 | B13 | FR-12, FR-18; AC-21, AC-22, AC-23, AC-39 |
 | B14 | none (ADR ladder) |
@@ -1170,3 +1283,4 @@ cited in §6.4–§6.6 and §10. Items the consult could not source carry `[UNVE
 - 2026-10-02 · revised after the solution-architect review: schedule writes are `reports.schedule.*` Actions (ADR-0005 rule 10, §8.4, FR-29, Q5 dropped); run-time checks of every permission and external recipient (FR-25); one delivery-link rule (FR-24); run and snapshot semantics (§8.1, FR-11, FR-17); derived states evaluated in the query (§6.4, FR-09); canonical digest form (§8.3); per-DC wording mechanism-neutral (§6.5, Q2). Added AC-45 to AC-50
 - 2026-10-30 · T-0914 · traceability only, no scope, FR or AC change: placeholder tickets replaced by the modules/reports.md §12 rows; D9 names `authz.ReadScope` and `rbac.ReadScopes`; Q2 and Q3 marked decided (modules/reports.md §14 items 1 and 2); §14 table equals the contract's FR/AC column
 - 2026-10-31 · T-1016 · domain corrections only, no scope, FR or AC change: §6.4 lockout is inclusive, a stored 0 max age is Unknown, the DC's expired bit includes must-change; D7 points to DM-16 and the lab rows
+- 2026-11-04 · T-0981 · aligned with DECISION TM-D30 ([review](../../development/architecture/reports-schedules-security-review.md) §2): external-delivery step-up (SX-1, SX-2, SX-4), account-address classification (SX-5), confirmed-external at fire (SX-6, narrows §8.4 check 3), `manage_all` is see/pause/reassign only (R1, R2), resume confirms every external recipient (R5), SX-8 audit fields, empty allowed-domains state; added FR-26a–FR-26d and AC-51–AC-57

@@ -1,7 +1,7 @@
 ---
 title: "Module: reports — contract for the definition AST, dataset registry, compiler and run record"
 date: 2026-10-30
-updated: 2026-11-01
+updated: 2026-11-04
 status: draft
 owner: heramb
 author: solution-architect
@@ -1532,15 +1532,18 @@ Consequences:
 
     | Undo of | Restores | Class | Checks for the undoing principal (blocked code) |
     | --- | --- | --- | --- |
-    | `create` | archives the schedule ("Schedule removed. Nothing was sent." when it has not fired) | `Reversible` | owner, or `manage_all` |
+    | `create` | archives the schedule ("Schedule removed. Nothing was sent." when it has not fired) | `Reversible` | the owner only (`not_owner`): archiving is a delete, which `manage_all` never does (R2) |
     | `update` | the previous version | `Reversible` | the checks of `update` for the restored content: `reports.deliver.external` and the confirmation for every external recipient it restores (`external_not_permitted`), and the scope refusals when the result is active (`report_scope_empty`, `report_scope_unsupported`) |
-    | `delete` | the schedule as it was, active or paused | `Reversible` | as for `update`, over the whole restored version |
-    | `pause` | active | `Reversible` | only the owner, as for `resume` (`owner_only`), plus the scope refusals |
-    | `resume` | paused | `Reversible` | owner, or `manage_all` |
+    | `delete` | the schedule as it was, active or paused | `Reversible` | as for `update`, over the whole restored version, and the owner only (`not_owner`) |
+    | `pause` | active | `Reversible` | only the owner, as for `resume` (`not_owner`), plus the scope refusals |
+    | `resume` | paused | `Reversible` | owner, or `manage_all` (the undo of a `resume` is a pause, which `manage_all` may do) |
     | `reassign` | the previous owner, **still paused** | `Lossy`: the earlier active state is not restored, and the previous owner resumes it | `reports.schedule.manage_all` (`manage_all_required`) |
 
   - An undo never sends anything. A fire that ran between the change and its undo stays sent and is not recalled.
-  - **Held and step-up answers** (TM-D30 SX-1, SX-2, SX-4). A held write or undo answers `202 OperationRef` with `holdReason`. `create`, `update`, `resume` and the undo of any of them step up when the after-state has an external recipient. An interactive caller without a fresh MFA gets `401 step-up-required`; a token or automation is held `step_up`. `pause`, `delete` and `reassign` never step up. The undo route declares `401 StepUpRequired` (T-0892). The three writes get theirs from T-0979 (R6).
+  - **Who may write (TM-D30 R1, R2; one code, `not_owner`).** `update`, `delete`, `resume` and the restore of an `update`, `delete` or `create` are **owner-only**. A non-owner who cannot see the schedule gets `404`. A `manage_all` holder, who can see it, gets `403` with `errors[].code not_owner`; the preview twins answer `200 outcome: refused` with `blocked[].code not_owner`. `manage_all` is see, pause and reassign, never update or delete. `runReportScheduleNow` is owner-only and answers `404` to **every** non-owner, a `manage_all` holder included. `reports.deliver.external` is checked against the caller, who is the owner, at write time (`external_not_permitted`, R4), and against the owner again at every fire.
+  - **Resume confirms (R5).** `resumeReportSchedule` takes a body with `confirmedExternal`, which must equal every external recipient classified now. A missing or partial set is `400 external_not_confirmed`; a caller without `reports.deliver.external` is `403 external_not_permitted`. The step-up predicate below applies when that set is non-empty.
+  - **Held and step-up answers** (TM-D30 SX-1, SX-2, SX-4). A held write or undo answers `202 OperationRef` with `holdReason`. `create`, `update`, `resume` and the undo of any of them step up when the after-state has an external recipient. An interactive caller without a fresh MFA gets `401 step-up-required`; a token or automation is held `step_up`. `pause`, `delete`, `reassign` and run now never step up. The kernel evaluates the predicate over the canonical `Input` (SX-3, T-0980), so a recurrence-only edit of a schedule with an external recipient steps up and removing the last external recipient does not. An account recipient's mail address counts as external under SX-5. The undo route declares `401 StepUpRequired` (T-0892). The three writes get theirs from T-0979 (R6).
+- **Audit fields (TM-D30 SX-8).** A `reports.schedule.*` event whose write needed step-up records `step_up: fresh` and the factor kind. A held write records the approver. A delivery failed under SX-5 or SX-6 records its reason code (spec §8.6, AC-56).
 - **Fire.** A DM-44 tick enqueues `reports.schedule.fire`, which runs the owner-authority checks
   of spec §8.4 in order:
   1. Owner state and permissions. A failure gives a system pause plus `reports.schedule.paused`
@@ -1550,6 +1553,16 @@ Consequences:
   3. Export each format the recipients need.
   4. Re-evaluate every recipient against the current allowed domains and the owner's current
      `reports.deliver.external`. A failing recipient fails alone, with its reason (AC-33, AC-46).
+     Per recipient (TM-D30, spec §8.4 check 3):
+     - *SX-5.* An account recipient with attachment delivery is classified by the **account's mail
+       address**; if external it fails with "account address is outside the allowed domains; use a
+       link". A link delivery is not failed.
+     - *SX-6.* An address external now and **not in the schedule's stored confirmed-external set**
+       fails with "address became external; confirm it on the schedule", even when the owner holds
+       `reports.deliver.external`. The owner re-confirms through `update` (step-up) (AC-53).
+     - Otherwise an external address needs the owner's `reports.deliver.external` now.
+     - An address that became internal needs no check.
+     Each failure writes its reason code to the delivery audit event (SX-8).
   5. Hand one DM-84 Delivery per recipient to `notify`. For a link, the Delivery row carries the
      export ID as `source_ref` and the recipient account (§7.2).
 - **Delivery.**
@@ -1658,7 +1671,7 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | **B8** | Per-DC runs: the §6.5 stages, read cap, coverage labels, `EvalPerDC`; USR-04, PWD-03 | reporting-engineer | B4, B5, P5 | FR-10; AC-39, AC-40, AC-41 |
 | **B9** | Export: `export.Digest` (canonical form and vectors, `u` tag included), `export.Unknown()`, `run.StoredSource`, About block, CSV and XLSX export jobs, `report_exports`, creator download through `run.ReadAccess` (§7.1), 410, delete, caps, export audit kinds, **RP5** | reporting-engineer | B4 | FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22 (export), FR-31; AC-24–AC-28, AC-50 |
 | **B10** | PDF and HTML encoders and export formats (before M2 exit). **Built (T-0964), §7.1b** | reporting-engineer | B9 | FR-16, FR-19 |
-| **B11** | Schedules: DM-73 tables, `reports.schedule.*` Actions, fire job, owner-authority checks, delivery links authorised by the Delivery row (§7.2), ZIP, notify-only-if-data, `manage_all` metadata view, delivery audit kinds, **RP10** | reporting-engineer (backend-engineer reviews) | B4, B9, P3, P4 | FR-22 (delivery), FR-23–FR-29, FR-31; AC-30–AC-38, AC-45, AC-46, AC-47 |
+| **B11** | Schedules: DM-73 tables, `reports.schedule.*` Actions, fire job, owner-authority checks, delivery links authorised by the Delivery row (§7.2), ZIP, notify-only-if-data, `manage_all` metadata view, delivery audit kinds, **RP10** | reporting-engineer (backend-engineer reviews) | B4, B9, P3, P4 | FR-22 (delivery), FR-23–FR-29, FR-26a–FR-26d, FR-31; AC-30–AC-38, AC-45, AC-46, AC-47, AC-51–AC-57 |
 | **B12** | Screens: library and `/` search, run and results grid (sort, column filters, column chooser, row count, freshness, coverage, hidden-group banner), export dialog, schedule sheet; empty, error, stale and loading states | frontend-engineer | T-0866, T-0867, B4 (then B9, B11 per screen) | FR-01, FR-02, FR-04, FR-13, FR-32; AC-44 |
 | **B13** | Scale-tier calibration: row caps, sort p95 on 1M rows (ADR-0010 budget), per-DC read cap, report accuracy | test-engineer | B7, B8, B9 | FR-12, FR-18; AC-21, AC-22, AC-23, AC-39 |
 | **B14** (done, T-0968; accepted 2026-11-01) | ADR-0010 to `accepted`: confirm RP3–RP5 are green in CI and update the ADR status | solution-architect | T-0873, B4, B9 | none (ADR ladder) |
@@ -1705,6 +1718,8 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
    one stored shape, one digest tag and one API kind say "input missing" (§3.3).
 
 ## Changelog
+
+- 2026-11-04 · T-0981 · §8 aligned with TM-D30 and spec reports-2a §8.4–§8.6: owner-only update, delete and resume with `not_owner` (was `owner_only`), run now 404 to every non-owner, resume `confirmedExternal` (R5), SX-1/SX-2 step-up, SX-5 and SX-6 in the fire checks, SX-8 audit fields. Proof: spec AC-51–AC-57 (B11).
 
 - 2026-10-30 · T-0865 · created as the build contract ahead of the module.
 - 2026-10-30 · T-0865 rework (review M1–M9): run-read gate and RP9 (§6.6); token layer in
