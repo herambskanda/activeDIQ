@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 
 import "./reports.css";
+import { Link } from "../../ds/components";
 import type { ApiClient } from "./api";
-import { Link } from "./link";
+
 import { ReportSearch } from "./search";
 
 /** The reports screens' page: the title, the way back to the library and the `/` search. */

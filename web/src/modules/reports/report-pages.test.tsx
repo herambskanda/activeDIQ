@@ -451,14 +451,62 @@ describe("states", () => {
     expect(button("Retry")).toBeTruthy();
   });
 
-  it("does not run a report that needs a group, and says so", async () => {
+  it("does not run a report that needs a group until one is chosen", async () => {
     respond = ({ url }) =>
       url.pathname.endsWith("/usr-03")
         ? json(200, { ...definition, subjectKind: "group" })
         : undefined;
     await mount("/reports/usr-03", "report");
-    expect(text()).toContain("about a specific group or user");
+    expect(text()).toContain("Choose the group this report covers");
+    expect(container.querySelector('input[role="combobox"]')).toBeTruthy();
     expect(calls.some((c) => c.method === "POST")).toBe(false);
+  });
+
+  it("searches groups on the server, picks one and runs the report for it", async () => {
+    const guid = "22222222-2222-4222-8222-222222222222";
+    respond = ({ url, body }) => {
+      if (url.pathname.endsWith("/usr-03"))
+        return json(200, { ...definition, subjectKind: "group" });
+      if (url.pathname.endsWith("/directory/search")) {
+        expect(body).toMatchObject({ q: "fin", type: "groups" });
+        return json(200, {
+          asOf: null,
+          refine: false,
+          groups: [
+            {
+              type: "groups",
+              items: [
+                {
+                  type: "groups",
+                  objectId: guid,
+                  displayName: "Finance",
+                  distinguishedName: "CN=Finance,OU=Groups,DC=lab,DC=test",
+                  domain: "",
+                  matchClass: "prefix",
+                  highlights: [],
+                  status: [],
+                },
+              ],
+            },
+          ],
+        });
+      }
+      return undefined;
+    };
+    await mount("/reports/usr-03", "report");
+    await setValue(container.querySelector<HTMLInputElement>('input[role="combobox"]')!, "fin");
+    await settle(300);
+    const option = container.querySelector<HTMLElement>('[role="option"]')!;
+    expect(option.textContent).toContain("CN=Finance,OU=Groups,DC=lab,DC=test");
+    await click(option);
+    await click(button("Run for 1 group"));
+    expect(window.location.search).toBe(`?s=${guid}`);
+    const posts = calls.filter((c) => c.method === "POST" && c.url.pathname.endsWith("/runs"));
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(posts[0]!.body)).toMatchObject({
+      definitionId: "usr-03",
+      parameters: { subjects: [{ guid }] },
+    });
   });
 });
 
