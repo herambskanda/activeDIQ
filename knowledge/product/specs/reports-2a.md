@@ -212,7 +212,7 @@ time zone with the zone label. Names in the "ME names" column are exact as liste
 | --- | --- | --- | --- | --- | --- |
 | PWD-01 | Password status | Password Expired Users · Soon-to-expire User Passwords · Users with Password Never Expires · Users with Change Password at Next Logon | `inventory.users` | Name, Logon name, Domain, OU path, Password last set, Password expires, Password state, Policy source, Status, Probable service account | Default preset: expired. Soon: expires in the next 14 days. Never expires: state is either "never (account flag)" or "never (policy)". Must change: state is "must change at next logon". Probable service accounts hidden on expired and soon |
 | PWD-02 | Password age | Password Changed Users · Password Unchanged Users | `inventory.users` | Name, Logon name, Domain, OU path, Password last set, Days since, Status | Changed: last 30 days. Unchanged: not changed in 90 days. Enabled accounts only on Unchanged |
-| PWD-03 | Recent logon failures | Recent Logon Failures. ME's list also has "Recently bad logged users", whose equivalence is `[UNVERIFIED]` (research ticket, §12) | `inventory.users` + per-DC read | Name, Logon name, Domain, OU path, Last failed logon, From DC, Failures on that DC, DC coverage | Failed in the last 7 days. The count is per DC because `badPwdCount` is per DC (connector-contract §5.5). It is never summed |
+| PWD-03 | Recent logon failures | **Recently Bad Logged on Users** (ME's help-page name; the public list also shows "Recent Logon Failures", so we answer both names with this one preset; that they are one ME report is `[UNVERIFIED]`, [ME research §K.1](../../business/market-research/manageengine-admanager-plus.md) row 6) | `inventory.users` + per-DC read | Name, Logon name, Domain, OU path, Last failed logon, From DC, Failures on that DC, DC coverage | ME's test is `badPasswordTime` >= the chosen time, with an admin-chosen window (today, yesterday, last N days, this week, custom). Ours: a period parameter, default last 7 days. The per-DC reading, the count per DC and "never summed" are **activeDIQ design, not documented ME behaviour** (ME does not say which DC supplies the value or how it merges them `[UNVERIFIED]`). The count is per DC because `badPwdCount` is per DC (connector-contract §5.5). It is never summed |
 
 **Groups (ADM-086)**
 
@@ -221,13 +221,13 @@ time zone with the zone label. Names in the "ME names" column are exact as liste
 | GRP-01 | Groups | All Groups · Security Groups · Distribution Groups · Group Type and Scope · Groups Without Members · Managed Groups · Unmanaged Groups · Top N Big Groups · Recently Created Groups | `inventory.groups` | Name, Domain, OU path, Type, Scope, Direct members, Effective members, Managed by, Created | None. Presets: type; no members, counting primary-group members (§6.6); managed-by set / not set; Top N = sort by effective members descending, N = 25; created in the last 30 days |
 | GRP-02 | Group members | Group Members · Detailed Group Members · Users in Groups | `inventory.group_members` | Group, Member, Member type, Domain, OU path, Status, Membership kind, Via | **Requires one or more groups.** Group Members: direct members. Detailed Group Members: effective members with the Via path. Users in Groups: effective, users only. A switch "Exclude nested groups" is ME's wording and equals direct |
 | GRP-03 | Groups for users | Groups for Users | `inventory.group_members` | User, Group, Group type, Group scope, Membership kind, Via | **Requires one or more users.** Effective, including the primary group |
-| GRP-04 | Not in any group | Users Not in Groups · Computers Not in Groups | `inventory.principals` (users and computers; one dataset because a preset cannot switch dataset, T-0962) | Name, Domain, OU path, Primary group, Status, Created, Last logon (replicated) | Preset chooses users or computers. Definition and domain coverage in §6.6 |
+| GRP-04 | Not in selected groups (ME) and Not in any group (ours) | **ME names:** Users Not in Groups · Computers Not in Groups. **activeDIQ presets (ours, not ME's):** Users in No Group · Computers in No Group | `inventory.principals` (users and computers; one dataset because a preset cannot switch dataset, T-0962) | Name, Domain, OU path, Primary group, Status, Created, Last logon (replicated) | **ME-named presets require a group picker** (one or more groups, any domain inventoried) and list users (or computers) that are **not** members of the selected groups. ME tests `memberOf` against the selected groups ([group help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-group-reports.html)); whether several groups mean "none of them" or "not all of them" is `[UNVERIFIED]` (T-1117). **Decision:** "not a member of any selected group" (none of them), shown in the header; direct membership as ME's `memberOf`, with a switch "Include nested groups" that is ours. The primary group counts as membership of that group when it is selected. The "in no group" presets need no picker and use the definition in §6.6; they are labelled "activeDIQ" in the library and are not claimed as ME names |
 
 **Computers (ADM-087)**
 
 | ID | Report | ME names (presets) | Dataset | Default columns | Default filters |
 | --- | --- | --- | --- | --- | --- |
-| CMP-01 | Computers | All computers · Enabled Computers · Disabled Computers · Workstation Computers · Domain Controllers · Computers Trusted for Delegation · OS based computers · Recently Created Computers | `inventory.computers` | Name, DNS name, Domain, OU path, Type, Operating system, OS version, Status, Delegation, Created | None. Presets: status; type = workstation (OS name has no "Server" and not a DC; `[UNVERIFIED]` that ME means this); type = domain controller (`SERVER_TRUST_ACCOUNT`, read-only DCs labelled); delegation is not "none"; OS filter by name (shipped as "has an operating system": there is no text parameter kind yet); created in the last 30 days |
+| CMP-01 | Computers | All computers · Enabled Computers · Disabled Computers · Workstation Computers · Domain Controllers · Computers Trusted for Delegation · OS based computers · Recently Created Computers. **activeDIQ presets (ours, not ME's):** Workstations Excluding Servers · Any Delegation | `inventory.computers` | Name, DNS name, Domain, OU path, Type, Operating system, OS version, Status, Delegation, Created | None. Presets: status; **Workstation Computers (ME)** = `userAccountControl` has `WORKSTATION_TRUST_ACCOUNT` (0x1000) set, which **includes member servers**, as ME's report list says ("all computers including member servers") ([ME research §K.1](../../business/market-research/manageengine-admanager-plus.md) row 1). Domain controllers are excluded, per ME's "all computers except domain controllers". How ME treats read-only DCs, whose accounts may carry the workstation flag, is `[UNVERIFIED]` (T-1117); ours excludes any DC, read-only included, and `ad-expert` confirms. **Workstations Excluding Servers (ours)** = the ME test and the operating system name has no "Server"; labelled "activeDIQ"; type = domain controller (`SERVER_TRUST_ACCOUNT`, read-only DCs labelled); **Computers Trusted for Delegation (ME)** = `TRUSTED_FOR_DELEGATION` (0x80000) set, the unconstrained flag only; constrained delegation (`msDS-AllowedToDelegateTo`) and protocol transition (0x1000000) are not tested ([ME research §K.1](../../business/market-research/manageengine-admanager-plus.md) row 2). Domain controllers carry this flag by default; whether ME lists them is `[UNVERIFIED]`; ours lists them, with the Type column showing "Domain controller" so the admin can filter. **Any Delegation (ours)** = unconstrained, constrained or protocol-transition, labelled "activeDIQ" (the Delegation column shows which kind); OS filter by name (shipped as "has an operating system": there is no text parameter kind yet); created in the last 30 days |
 | CMP-02 | Computer activity | Inactive computers · Active Computers | `inventory.computers` | Name, DNS name, Domain, OU path, Operating system, Last activity, Activity source, Days since, Status, Created | Default preset: Inactive 90 days, enabled only. gMSA and cluster objects are excluded and counted in the header (§6.4). Active: activity in the last 30 days |
 
 **Contacts and OUs (ADM-089)**
@@ -235,7 +235,7 @@ time zone with the zone label. Names in the "ME names" column are exact as liste
 | ID | Report | ME names (presets) | Dataset | Default columns | Default filters |
 | --- | --- | --- | --- | --- | --- |
 | OU-01 | Organizational units | All OUs · Empty OUs · Users-Only OUs · Computers-Only OUs · Recently Created OUs | `inventory.ous` | Name, Domain, Path, Users, Computers, Groups, Other objects, Objects in subtree, Created | Empty: no objects other than OUs in the subtree. Users-only: the subtree holds at least one user and nothing else but OUs. Computers-only: likewise. Recently created: last 30 days |
-| CTC-01 | Contacts | All Contacts · Mail Enabled Contacts · Recently Created Contacts | `inventory.contacts` | Name, E-mail, Domain, OU path, Created | None. Mail enabled = the `mail` attribute has a value (`[UNVERIFIED]` against ME's meaning) |
+| CTC-01 | Contacts | All Contacts · Mail Enabled Contacts · Recently Created Contacts. **activeDIQ preset (ours):** Contacts With an E-mail Address | `inventory.contacts` | Name, E-mail, Domain, OU path, Created | None. **Mail Enabled Contacts (ME)** = `objectClass=contact` with both `mailNickname` **and** `targetAddress` set ([contact help](https://www.manageengine.com/products/ad-manager/help/reports/how-to-get-active-directory-contact-and-ou-report.html), [ME research §K.1](../../business/market-research/manageengine-admanager-plus.md) row 5). A contact with only `mail` is not listed. **Contacts With an E-mail Address (ours)** = `mail` has a value, labelled "activeDIQ". The dataset therefore carries `mailNickname` and `targetAddress` presence (D-row for contacts) |
 
 The 16 reports above answer **54** ME names: USR 14, PWD 7, GRP 15, CMP 10, OU 5, CTC 3.
 
@@ -391,7 +391,7 @@ walk:
   covered domains";
 - **Groups Without Members** counts members through `member` and through `primaryGroupID`, so a
   group whose only members are primary-group users is not reported as empty;
-- **Not in any group** means: the object is a member of no group other than its primary group,
+- **Not in any group** (the activeDIQ presets "Users in No Group" and "Computers in No Group"; ME's "Users Not in Groups" is the picker-based report of GRP-04) means: the object is a member of no group other than its primary group,
   across every domain inventoried. A user whose primary group is not "Domain Users" shows that
   group in the Primary group column. The header lists the domains covered, because a per-domain
   `memberOf` can miss a cross-domain universal group
@@ -420,7 +420,7 @@ row marked **new** is not yet in their scope and is sent to them as a note.
 | --- | --- | --- | --- | --- | --- |
 | D1 | `inventory.users` | user and inetOrgPerson objects, state `live` | GUID, connection, domain, `dn` snapshot, OU path, `sAMAccountName`, UPN, display name, `userAccountControl` flags decoded, manager (GUID + display), `whenCreated`, `lockoutTime`, `pwdLastSet`, `accountExpires`, `lastLogonTimestamp`, `servicePrincipalName` present, `primaryGroupID`, effective-policy inputs (D4), `observed_at` | `ancestry` | NC sync watermark |
 | D2 | `inventory.computers` | computer objects (gMSA identified by class) | GUID, domain, name, DNS hostname, OS name, OS version, `userAccountControl` flags, delegation inputs (unconstrained flag, `msDS-AllowedToDelegateTo` present), `lastLogonTimestamp`, `pwdLastSet`, `whenCreated`, `primaryGroupID`, `observed_at` | `ancestry` | NC sync watermark |
-| D3 | `inventory.groups`, `inventory.group_members`, `inventory.ous`, `inventory.contacts` | groups, edges derived from DM-17 plus primary-group edges, OUs with per-kind child counts, contacts | Group type and scope from `groupType`, `managedBy`, direct and effective counts, edge kind and path, OU subtree counts per class, contact `mail` | `ancestry` of the owner object | NC sync watermark |
+| D3 | `inventory.groups`, `inventory.group_members`, `inventory.ous`, `inventory.contacts` | groups, edges derived from DM-17 plus primary-group edges, OUs with per-kind child counts, contacts | Group type and scope from `groupType`, `managedBy`, direct and effective counts, edge kind and path, OU subtree counts per class, contact `mail`, `mailNickname` and `targetAddress` (presence) | `ancestry` of the owner object | NC sync watermark |
 | D4 | Policy inputs (**new**) | domain password and lockout policy, PSOs, PSO links | `maxPwdAge`, `lockoutDuration`, `msDS-LogonTimeSyncInterval` per domain; PSO values and `msDS-PSOAppliesTo`; precedence rules. Resolved at run time, so a PSO edit or a group change is reflected without any write to the user | n/a | Policy read time |
 | D5 | Per-DC read (**not a stored dataset**) | `ReadPerDC` result for a GUID set | per DC: `lastLogon`, `badPwdCount`, `badPasswordTime`, `Observation` | n/a | Read time, per DC |
 
@@ -764,7 +764,7 @@ agents are `n/a` for every FR: reports have no behaviour on them at 2a.
 No question here is directional: nothing needs the CEO.
 
 Follow-ups filed from this spec (`backlog`, not scope creep): T-1014 (research), T-1015 (second slice), T-1016 (DM-16), T-1017 (ADM-100/101 remainders), T-1018 (Entra reports). The security-descriptor read path the second slice needs is T-1019. The FR-09 wording revision is T-1023.
-1. research · `market-analyst` — confirm ME semantics for Workstation Computers, Computers Trusted for
+1. research · `market-analyst` — *done in T-1014; specs corrected in T-1132* — confirm ME semantics for Workstation Computers, Computers Trusted for
    Delegation, Managed/Unmanaged Computers and Groups, Users Not in Groups, Mail Enabled Contacts,
    Recent Logon Failures versus "Recently bad logged users", and ME's export password protection.
 2. spec · `product-manager` — second slice of the AD report library (§6.3), including ADM-092.
@@ -968,9 +968,27 @@ Evidence: UI test
 
 AC-19
 Given a lab with a user whose primary group is not Domain Users and a group whose only members are primary-group users
-When Users Not in Groups and Groups Without Members run
+When Users in No Group and Groups Without Members run
 Then the first user appears with its primary group named, and the group is not reported as empty
 Evidence: lab test against LDAP ground truth
+
+AC-19a (T-1132, ME-named presets)
+Given a lab with a member server, a workstation, a DC, a read-only DC, a computer with only constrained delegation, a computer with unconstrained delegation, a contact with only `mail` and a contact with `mailNickname` and `targetAddress`
+When Workstation Computers, Computers Trusted for Delegation and Mail Enabled Contacts run
+Then Workstation Computers lists the member server and the workstation and no DC; Trusted for Delegation lists the unconstrained computer and not the constrained-only one; Mail Enabled Contacts lists only the two-attribute contact. Given the activeDIQ presets Workstations Excluding Servers, Any Delegation and Contacts With an E-mail Address, Then each shows the broader or narrower set and is labelled "activeDIQ" in the library
+Evidence: lab test against the LDAP filters in ME research §K.1
+
+AC-19b (T-1132, picker)
+Given users in groups A, B and neither
+When Users Not in Groups runs with no group selected
+Then the run is refused with "Choose at least one group". Given A and B selected, Then only users in neither are listed, the header names the groups and says "direct members", and Computers Not in Groups behaves the same for computers
+Evidence: UI test; lab test against LDAP ground truth
+
+AC-19c (T-1132, PWD-03)
+Given a user with failed logons on two DCs, 3 days ago
+When Recently Bad Logged on Users runs for "last 7 days", and the library is searched for "Recent Logon Failures"
+Then the user is listed with per-DC counts not summed, and the search resolves to the same preset
+Evidence: lab test; library test
 
 AC-20 (E3)
 Given a group nested three levels deep with a cycle, a foreign security principal and a disabled member

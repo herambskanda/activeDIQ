@@ -1,7 +1,7 @@
 ---
 title: "Spec: AD report library, second slice (reports-2a §6.3 'Not at 2a', including ADM-092)"
 date: 2026-10-31
-updated: 2026-10-31
+updated: 2026-11-04
 status: draft
 owner: heramb
 author: product-manager
@@ -87,7 +87,7 @@ this slice with a reason and an unblocker. Every ME name below comes from ME's h
 | Users in More than One Group | **Specced** | §6.2, batch 7 |
 | Users Only Members of Domain Users Group | **Specced** | §6.3, batch 7 |
 | Computers with Duplicate Attributes | **Specced** | §6.4, batch 7 |
-| Managed Computers, Unmanaged Computers | **Specced, gated.** ME's page defines them (`managedBy` set or not) `[ME-HELP]`, but the research does not carry it. Built only if T-1014 confirms; otherwise out and the count drops by 2 | §6.5, batch 9 |
+| Managed Computers, Unmanaged Computers | **Specced, firm.** Gate cleared by T-1014 and T-1132: ME's tests are `managedBy` set / not set (research §K.1 row 3) | §6.5, batch 9 |
 | GPO Linked OUs, GPO Blocked Inheritance OUs (ME titles it "GPO Inheritance Blocked OU") | **Out.** Needs the GPO link model (DM-23, E-008), not report work. Unblocker: the E-008 spec | §8 |
 | Password Policy, Account Lockout Policy (ADM-092) | **Specced** | §7.1, batch 8 |
 | Printer Reports (ADM-092) | **Specced** as "Published printers" | §7.2, batch 10 |
@@ -95,9 +95,8 @@ this slice with a reason and an unblocker. Every ME name below comes from ME's h
 | Lingering Objects (ADM-092) | **Out.** LDAP cannot prove a lingering object; authoritative detection is a DRSUAPI call (`DsReplicaVerifyObjects`, advisory mode) on Windows, and ME's version can delete (a Tier-0 write). The slice ships only a clearly named *risk indicator* inside SYS-03 and no detection claim. Unblocker: follow-up spec (§10 F2) | §7.3, §8 |
 | Exchange, GPO, NTFS/Permissions, M365, Google Workspace families (ADM-088, 090, 091, 094, 095) | **Out.** Matrix priorities P4, P2, P2, P4, P4 ([matrix](../../business/competitive-analysis/feature-parity-matrix.md)) | their milestones |
 
-**Counts.** This slice adds **18 reports** (17 firm, CMP-05 gated) answering **32 ME names** (30
-firm). With the 16 reports and 54 names of reports-2a the library reaches 34 reports (33 firm)
-and 86 names (84 firm). Names kept out: Terminal Services 2, Lingering Objects 1, BitLocker 3, GPO
+**Counts.** This slice adds **18 reports** (all 18 firm; CMP-05 ungated by T-1014/T-1132) answering **32 ME names** (all firm). With the 16 reports and 54 names of reports-2a the library reaches 34 reports (all firm)
+and 86 names (all firm). Names kept out: Terminal Services 2, Lingering Objects 1, BitLocker 3, GPO
 OUs 2. How the PRD's "60+ reports" is counted (definitions, or definitions plus presets) is the
 `project-manager`'s reading; both counts are given so it can be stated honestly.
 
@@ -108,7 +107,7 @@ OUs 2. How the PRD's "60+ reports" is counted (definitions, or definitions plus 
 | ADM-084 | User reports (35) (Std+Pro) | USR-06…USR-09, USR-11…USR-13: 16 ME names (USR-10 is reserved, unassigned: Terminal Services is out) | [user reports help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-user-reports.html) |
 | ADM-085 | Password reports (8) (Std+Pro) | PWD-04: 1 name | [password reports help](https://www.manageengine.com/products/ad-manager/help/reports/active-directory-password-reports.html) |
 | ADM-086 | Group reports (16) (Std+Pro) | GRP-05, GRP-06: 3 names | [group reports help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-group-reports.html) |
-| ADM-087 | Computer reports (18) (Std+Pro) | CMP-03…CMP-05: 5 names (2 gated) | [computer reports help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-computer-reports.html) |
+| ADM-087 | Computer reports (18) (Std+Pro) | CMP-03…CMP-05: 5 names | [computer reports help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-computer-reports.html) |
 | ADM-089 | Contact and OU reports (13) (Std+Pro) | CTC-02, OU-02: 3 names | [contact and OU help](https://www.manageengine.com/products/ad-manager/help/reports/how-to-get-active-directory-contact-and-ou-report.html) |
 | ADM-092 | Other reports (5) (Std+Pro) | SYS-01, SYS-02, SYS-03: 4 of 5 names; Lingering Objects out | [other reports help](https://www.manageengine.com/products/ad-manager/help/reports/active-directory-other-reports.html), matrix row ADM-092 (P1, parity) |
 
@@ -126,7 +125,7 @@ re-cuts if the plan differs):
 | 6 | USR-07, USR-08, USR-09, USR-11 | 11 | T-1112 |
 | 7 | USR-12, USR-13, GRP-06, CMP-04 | 5 | T-1113 |
 | 8 | SYS-01 | 2 | T-1114 |
-| 9 | CMP-05 (gated on T-1014) | 2 | T-1115 |
+| 9 | CMP-05 | 2 | T-1115 |
 | 10 | SYS-02, SYS-03 | 2 | to be filed by T-1118 |
 
 ## 4. Reports that depend on new data: change history and security descriptors
@@ -403,14 +402,12 @@ operating system is **not** offered (duplicates are meaningless). Same scope-onl
 §5.5. Default: DNS host name. Columns: Name, DNS name, Domain, OU path, the chosen value, Duplicate
 count, Status, Created.
 
-### 6.5 CMP-05 Managed and Unmanaged Computers (gated on T-1014)
+### 6.5 CMP-05 Managed and Unmanaged Computers
 
-ME names: Managed Computers · Unmanaged Computers. ME's page: computers that have / have no "an
-assigned manager" `[ME-HELP]`, i.e. `managedBy` set / not set (the same meaning as ME's Managed
+ME names: Managed Computers · Unmanaged Computers. ME's tests ([ME research §K.1](../../business/market-research/manageengine-admanager-plus.md) row 3, [computer help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-computer-reports.html)): Managed `(&(objectcategory=computer)(managedBy=*))`, Unmanaged `(&(objectcategory=computer)(!managedBy=*))`, i.e. `managedBy` set / not set (the same meaning as ME's Managed
 Groups, which 2a ships as GRP-01). Columns: Name, DNS name, Domain, OU path, Managed by, Status,
-Created. Needs `managedBy` on `inventory.computers` (D2 does not carry it; D11). **Gate:** this
-report is built only after T-1014 puts the definition in the research. If T-1014 leaves it
-`[UNVERIFIED]`, this row is out and the name counts drop by 2.
+Created. Needs `managedBy` on `inventory.computers` (D2 does not carry it; D11). **Gate cleared (T-1014,
+T-1132):** the definition is sourced, so CMP-05 is firm and the name counts no longer drop by 2.
 
 ## 7. ADM-092: policy, printers, replication (batches 8 and 10)
 
@@ -645,7 +642,7 @@ truth; they do not prove the Windows-only behaviour listed, which waits for `[LA
 
 | ID | Requirement | Parity |
 | --- | --- | --- |
-| FR-S01 | The library MUST add the reports of §4 to §7 (17 firm, plus CMP-05 only when T-1014 confirms) in the category and with the ME names, presets, columns and filters stated there, and each ME name MUST resolve to its report and preset (FR-02) | ADM-084…089, ADM-092 |
+| FR-S01 | The library MUST add the reports of §4 to §7 (all 18, CMP-05 included) in the category and with the ME names, presets, columns and filters stated there, and each ME name MUST resolve to its report and preset (FR-02) | ADM-084…089, ADM-092 |
 | FR-S02 | A change report MUST show "changed at" with its basis, hide the noise set with a count and a switch, show attribute names only, show no actor, state where history starts, and apply the day-one fallback of §4.1.5 | ADM-084, 086, 087, 089 |
 | FR-S03 | Recently Deleted MUST list objects observed leaving the directory within scope, taking Name, Logon name and OU path from the last inventory observation, MUST show Deleted at as the observed time ("on or before") and State "Removed (restore status unknown)" with Restorable until "Unknown" under default rights, MUST NOT request a right on `CN=Deleted Objects`, MUST show the tombstone-derived columns only when the T-1125 ruling allows (§4.1.7b), and MUST NOT list an object whose ancestry is unknown | same |
 | FR-S11 | A change report MUST treat password changes and `nTSecurityDescriptor` changes as their own opt-in kinds ("credential event", "permissions changed"), each with a header count and a switch, MUST NOT call a permissions change automatic, and MUST show group membership changes as "Members added n / removed m" with the Basis per value | ADM-084, 086, 087, 089 |
@@ -792,10 +789,10 @@ When Computers with Duplicate Attributes runs on each
 Then both groups are listed with Duplicate count, within the runner's scope
 Evidence: lab test
 
-AC-S17 (FR-S01, gate)
-Given T-1014 has not confirmed ME's meaning of Managed Computers
-When the library is listed
-Then CMP-05 is absent. Given it has confirmed, Then CMP-05 lists computers with managedBy set or not set
+AC-S17 (FR-S01)
+Given computers with and without managedBy
+When Managed Computers and Unmanaged Computers run
+Then the first lists exactly those with managedBy set and the second those without
 Evidence: library test; lab test versus (&(objectClass=computer)(managedBy=*))
 
 AC-S18 (FR-S08)
@@ -927,7 +924,7 @@ Evidence: UI recording; API response schema check
 | S2 | Location and right for the replication-neighbour attributes; Samba coverage | ad-expert, `[LAB: Windows]` | D14 build; SYS-03 right (security-architect) |
 | S3 | ME's meanings marked `[UNVERIFIED]` here (Dial-in absent, Smart Card, multi-group count, Domain-Users-only, printers, modified) | test-engineer, F1 | Nothing; no match claimed |
 | S4 | Replication status thresholds (1 h, 24 h) | ad-expert, reporting-engineer | Defaults apply |
-| S5 | T-1014 confirmation of Managed/Unmanaged | market-analyst | CMP-05 only |
+| S5 | *Closed:* T-1014 confirmed Managed/Unmanaged (§K.1 row 3); CMP-05 ungated in T-1132 | market-analyst | None |
 | S6 | Whether the least-privilege account's DirSync returns deletes, and whether an optional `CN=Deleted Objects` read may exist | security-architect (T-1125), `[LAB: Windows]` | The tombstone columns of §4.1.7b only; rule 7 ships regardless |
 | S7 | Whether SDProp or inheritance bumps `nTSecurityDescriptor` metadata and at what volume | test-engineer, F1 (T-1120), `[LAB: Windows]` | Nothing; the kind is opt-in |
 
