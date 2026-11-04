@@ -1,6 +1,13 @@
 package read_test
 
-import "github.com/skenzeriq/activediq/internal/connector/ad"
+import (
+	"errors"
+
+	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/write"
+)
 
 // notFound is the error ad.Session.Read gives for a missing object.
 func notFound() error { return ad.NewError(ad.CodeObjectNotFound) }
+
+func asRefusal(err error, r **write.Refusal) bool { return errors.As(err, r) }

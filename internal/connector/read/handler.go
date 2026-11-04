@@ -54,6 +54,8 @@ type Source interface {
 type Handler struct {
 	src Source
 	now func() time.Time
+	// perDC and perDomain are the ReadPerDC caps, shared by every call of the handler.
+	perDC, perDomain *limiter
 }
 
 // New returns the handler for one source.
@@ -61,7 +63,8 @@ func New(src Source) (*Handler, error) {
 	if src == nil {
 		return nil, errors.New("read: a source is required")
 	}
-	return &Handler{src: src, now: time.Now}, nil
+	return &Handler{src: src, now: time.Now,
+		perDC: &limiter{size: DefaultPerDCOps}, perDomain: &limiter{size: DefaultPerDomainOps}}, nil
 }
 
 // Sender is the sending side of the Read stream (grpc.ServerStreamingServer satisfies it).

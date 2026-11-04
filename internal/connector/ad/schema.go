@@ -82,6 +82,15 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "attributeSecurityGUID", OID: "1.2.840.113556.1.4.149", Syntax: ldapfilter.SynOctet},
 			ldapfilter.AttrInfo{Name: "rightsGuid", OID: "1.2.840.113556.1.4.340", Syntax: s},
 			ldapfilter.AttrInfo{Name: "searchFlags", OID: "1.2.840.113556.1.2.334", Syntax: ldapfilter.SynInt32},
+			// ReadPerDC (T-1143): the per-DC attribute set of the read group and the NTDS Settings attributes
+			// that say which DCs serve a domain.
+			ldapfilter.AttrInfo{Name: "lastLogon", OID: "1.2.840.113556.1.4.52", Syntax: ldapfilter.SynInt64},
+			ldapfilter.AttrInfo{Name: "logonCount", OID: "1.2.840.113556.1.4.169", Syntax: ldapfilter.SynInt32},
+			ldapfilter.AttrInfo{Name: "badPwdCount", OID: "1.2.840.113556.1.4.12", Syntax: ldapfilter.SynInt32},
+			ldapfilter.AttrInfo{Name: "badPasswordTime", OID: "1.2.840.113556.1.4.49", Syntax: ldapfilter.SynInt64},
+			ldapfilter.AttrInfo{Name: "lockoutTime", OID: "1.2.840.113556.1.4.662", Syntax: ldapfilter.SynInt64},
+			ldapfilter.AttrInfo{Name: "msDS-HasDomainNCs", OID: "1.2.840.113556.1.4.1820", Syntax: ldapfilter.SynDN},
+			ldapfilter.AttrInfo{Name: "msDS-isRODC", OID: "1.2.840.113556.1.4.1960", Syntax: ldapfilter.SynBool},
 			ldapfilter.AttrInfo{Name: "nTSecurityDescriptor", OID: "1.2.840.113556.1.2.281", Syntax: ldapfilter.SynOctet, Constructed: c},
 			ldapfilter.AttrInfo{Name: "tokenGroups", OID: "1.2.840.113556.1.4.1301", Syntax: ldapfilter.SynSID, Constructed: c},
 			ldapfilter.AttrInfo{Name: "allowedAttributesEffective", OID: "1.2.840.113556.1.4.914", Syntax: s, Constructed: c},

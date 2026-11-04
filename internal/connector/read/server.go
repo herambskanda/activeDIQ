@@ -6,7 +6,7 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
-// Server is the remote transport of the read group: a connectorv1.ConnectorServer whose Read and ScopedSearch are the
+// Server is the remote transport of the read group: a connectorv1.ConnectorServer whose Read, ScopedSearch and ReadPerDC are the
 // Handler's. The other RPCs stay Unimplemented; a connector binary combines the groups by routing
 // each RPC to its handler (embedding two such servers would be ambiguous).
 type Server struct {
@@ -25,6 +25,11 @@ func (s *Server) Read(req *connectorv1.ReadRequest, st grpc.ServerStreamingServe
 // ScopedSearch implements connectorv1.ConnectorServer.
 func (s *Server) ScopedSearch(req *connectorv1.ScopedSearchRequest, st grpc.ServerStreamingServer[connectorv1.ScopedSearchResponse]) error {
 	return s.h.ScopedSearch(st.Context(), req, st)
+}
+
+// ReadPerDC implements connectorv1.ConnectorServer.
+func (s *Server) ReadPerDC(req *connectorv1.ReadPerDCRequest, st grpc.ServerStreamingServer[connectorv1.ReadPerDCResponse]) error {
+	return s.h.ReadPerDC(st.Context(), req, st)
 }
 
 // Register mounts the read group on a gRPC server.

@@ -276,6 +276,13 @@ error, with `Observation`), then a `PerDcSummary{dcs_in_scope, dcs_answered, cov
   it served and is not a feed source.
 - Reads run concurrently under the connector's per-DC and per-domain caps (TM-TB3-T8). `lastLogon`
   is not in the GC partial attribute set, so no GC shortcut exists `[UNVERIFIED]`.
+- **Implementation (T-1143, `internal/connector/read/perdc.go`).** The DC list is the nTDSDSA objects under
+  `CN=Sites` whose `msDS-HasDomainNCs` names the domain NC (`nc_guid` must be a domain NC head, else
+  `OBJECT_NOT_FOUND`); `msDS-isRODC` absent = unknown, in scope for both scopes. One short-lived session per DC
+  read, opened by the connection's opener (the Session never holds the credential); the answering DC's DSA GUID must
+  equal the listed one or the result is `UNREACHABLE_DC`. Caps live on the handler and are shared by all calls:
+  1 read per DC, 8 per domain, `max_concurrency` only lowers; more than 100 DCs is `LIMIT_EXCEEDED`. An absent
+  `lastLogon`/count is `ZERO`/0 (never logged on). A cancelled call ends without a summary.
 
 ### 5.6 `ReadReplicationStatus` (v1.3, T-1124; spec reports-2-second-slice §7.3, D14)
 

@@ -112,3 +112,68 @@ func (a *ADSource) ScopedSearch(ctx context.Context, req ad.ScopedRequest, fn fu
 	}
 	return a.sess.ScopedSearch(ctx, req, fn)
 }
+
+// OpenFunc opens a session bound to one named DC with the connection's credential. The credential
+// stays with the caller: the Session never holds it, so the per-DC source cannot open a session by
+// itself. It must dial that host only and never fall back to another server.
+type OpenFunc func(ctx context.Context, host string) (*ad.Session, error)
+
+// ADPerDCSource is an ADSource that can also read per DC: it lists the DCs from the configuration
+// NC through the reading session and opens one short-lived session per DC read.
+type ADPerDCSource struct {
+	*ADSource
+	open OpenFunc
+}
+
+var _ PerDCSource = (*ADPerDCSource)(nil)
+
+// NewADPerDCSource adds per-DC reads to src. open is required.
+func NewADPerDCSource(src *ADSource, open OpenFunc) (*ADPerDCSource, error) {
+	if src == nil || !src.ok() || open == nil {
+		return nil, errors.New("read: a source and an opener are required")
+	}
+	return &ADPerDCSource{ADSource: src, open: open}, nil
+}
+
+func (a *ADPerDCSource) DomainDCs(ctx context.Context, nc guid.GUID) ([]DC, error) {
+	head, err := a.sess.Read(ctx, dn.GUIDRef(nc), []string{"distinguishedName", "instanceType"}, ad.ReadOptions{})
+	if err != nil {
+		return nil, err
+	}
+	d, err := dn.Parse(head.DN, dn.Strict)
+	if err != nil {
+		return nil, err
+	}
+	// Only a domain naming-context head names a domain: instanceType has the head bit (IT_NC_HEAD, 0x1).
+	if it, ok, err := head.Int32("instanceType"); err != nil || !ok || it&1 == 0 {
+		return nil, &ad.Error{Code: ad.CodeObjectNotFound}
+	}
+	list, err := a.sess.DomainControllers(ctx, d)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DC, len(list))
+	for i, c := range list {
+		out[i] = DC{Host: c.Host, Site: c.Site, DSAGUID: c.DSAGUID, RODC: c.RODC, RODCKnown: c.RODCKnown}
+	}
+	return out, nil
+}
+
+func (a *ADPerDCSource) ReadOnDC(ctx context.Context, dc DC, id guid.GUID, attrs []string) (*ad.Entry, *connectorv1.DcIdentity, error) {
+	s, err := a.open(ctx, dc.Host)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer s.Close()
+	ident, err := s.DCIdentity(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	who := &connectorv1.DcIdentity{DsaGuid: write.GUIDToWire(ident.DSAGUID), InvocationId: write.GUIDToWire(ident.InvocationID),
+		DnsHostname: ident.DNSHostName, Site: ident.Site}
+	if ident.DSAGUID != dc.DSAGUID {
+		return nil, who, &ad.Error{Code: ad.CodeUnreachable} // another DC answered at this host
+	}
+	e, err := s.Read(ctx, dn.GUIDRef(id), attrs, ad.ReadOptions{})
+	return e, who, err
+}
