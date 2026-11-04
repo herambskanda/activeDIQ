@@ -1268,7 +1268,7 @@ review (spec OQ-2) and recorded by T-0168. **Replaces (ME):** none documented.
 **Key attributes:** `connection_id` · `partition` (as DM-19) · `kind` (`initial`, `incremental`,
 `full`) · `started_at` · `completed_at` · `data_as_of` · `last_change_at` · `objects_read` ·
 `objects_changed` · `dc_dsa_guid` (AD: the DC used) · `result` (`complete`, `partial` with the
-domain that failed, or `failed`) · `cause` (a registered code, spec §8.3 H1–H14). Sub-entity
+domain that failed, or `failed`) · `cause` (a registered code, spec §8.3 H1–H15; H15 is the generic "read failed, cause not identified" code, and a store error has no code because the row cannot be written, T-1305). Sub-entity
 **DcObservation**, written once per cycle and keyed by `(connection_id, dsa_guid, observed_at)`:
 `reachable` · `clock_skew_ms` · `invocation_id_changed` · `error_code`. An Entra connection has no
 DcObservation.
