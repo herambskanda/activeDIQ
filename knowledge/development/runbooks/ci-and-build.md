@@ -358,7 +358,7 @@ because `make fitness-profiles` already runs it). For each OCI manifest from `in
    `docker run --privileged --rm tonistiigi/binfmt --install arm64`);
 4. for PostgreSQL **16 and 18** (the pinned images of `pgharness`): applies every `migrations/*.sql` under the owner role
    (**migrations**), provisions the KEK, boots the image with TLS on loopback (**boot**), requires
-   `GET /health/ready` to answer `200 {"status":"ok"}` (**health**) and counts `public.tenants` (**tenants**): exactly one for
+   `GET /api/v1/health/ready` to answer `200 {"status":"ok"}` (**health**) and counts `public.tenants` (**tenants**): exactly one for
    `linux-oci`; exactly one for `saas`, created by the platform provisioning path (`provision.FirstRun`).
 
 A failure prints `P2-oci FAIL profile=<p> arch=<a> postgres=<v> step=<s>: ...` and the run exits 1 after trying every other leg.

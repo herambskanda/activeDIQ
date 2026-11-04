@@ -24,6 +24,9 @@ import (
 // ready and the right tenant count. It reuses this package's build, KEK, boot and TLS helpers: one
 // harness serves TM-F-HOST and P2-oci.
 
+// healthReadyPath is where the server mounts the anonymous readiness probe (AN-1, internal/compose/server/health.go).
+const healthReadyPath = "/api/v1/health/ready"
+
 // Step names, in the order a case runs them. A failure names one of them.
 const (
 	StepManifest   = "manifest"
@@ -307,7 +310,7 @@ func bootCase(ctx context.Context, p ociProfile, arch, pgv, tag string, pg *pgha
 	if err := waitReady(roots, addr, 30*time.Second); err != nil {
 		return step(StepHealth, fmt.Errorf("%v\nserver log:\n%s", err, combinedLogs(ctx, c)))
 	}
-	okf(StepHealth, "/health/ready answers 200 {\"status\":\"ok\"}")
+	okf(StepHealth, "GET %s answers 200 {\"status\":\"ok\"}", healthReadyPath)
 
 	n, err := TenantCount(ctx, db)
 	if err != nil {
@@ -356,7 +359,7 @@ func waitReady(roots *x509.CertPool, addr string, d time.Duration) error {
 	deadline := time.Now().Add(d)
 	var last error
 	for time.Now().Before(deadline) {
-		if last = CheckReady(cl, "https://"+addr+"/health/ready"); last == nil {
+		if last = CheckReady(cl, "https://"+addr+healthReadyPath); last == nil {
 			return nil
 		}
 		time.Sleep(500 * time.Millisecond)
