@@ -21,8 +21,6 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/compose/connector"
-	"github.com/skenzeriq/activediq/internal/connector/rights"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/tunnelclient"
@@ -35,13 +33,7 @@ const goodLocal = `{"connection_id":"conn-1","enrollment_dir":"/var/lib/diq/enro
 
 func boundBackend(t *testing.T, connID string, closed *bool) *connector.Backend {
 	t.Helper()
-	gate, _ := write.NewGateBook(nopBase{}, nil)
-	vh, err := rights.NewVerifyHandler(rights.VerifyConfig{Dir: stubDir{}, Epoch: rights.NewEpochState(nil, nil, nil),
-		Directory: dirIdent, Gate: gate, OnLocalRecordFailed: gate.CloseLocalRecordFailed, ConnectionID: connID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return connector.NewBackend(vh, readHandler(t), writeHandler(t), func() { *closed = true })
+	return connector.NewBackend(svc(t, connID), func() { *closed = true })
 }
 
 // leafState fabricates an enrolled state: a self-signed leaf carrying a component identity.

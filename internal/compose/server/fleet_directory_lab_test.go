@@ -11,6 +11,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"math/big"
 	"net"
 	"strings"
@@ -27,7 +28,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/compose/tunnelbind"
 	"github.com/skenzeriq/activediq/internal/connector/labadmin"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
@@ -59,13 +59,13 @@ import (
 // countedConnector counts the Read RPCs that reach the connector, so a refusal can be proved to have
 // read nothing.
 type countedConnector struct {
-	*labServer
+	connectorv1.ConnectorServer
 	reads atomic.Int32
 }
 
 func (c *countedConnector) Read(req *connectorv1.ReadRequest, st grpc.ServerStreamingServer[connectorv1.ReadResponse]) error {
 	c.reads.Add(1)
-	return c.labServer.Read(req, st)
+	return c.ConnectorServer.Read(req, st)
 }
 
 // tunnelPKI is a minimal fleet PKI: a tenant client CA and an installation server CA.
@@ -156,7 +156,7 @@ func TestLabDirectoryReadsOverTheSharedFleetHub(t *testing.T) {
 			t.Fatalf("open lab connector: %v", err)
 		}
 		t.Cleanup(closeLab)
-		conn := &countedConnector{labServer: lab}
+		conn := &countedConnector{ConnectorServer: lab}
 
 		// The tenant of the install (audit genesis and data key) and a second tenant.
 		kek, err := keys.NewLocalProvider("test-kek", secret.FromBytes(bytes.Repeat([]byte{7}, 32)))
@@ -246,7 +246,7 @@ func TestLabDirectoryReadsOverTheSharedFleetHub(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		userGUID := uuidText(write.GUIDToWire(ug).GetValue())
+		userGUID := uuidText(provider.GUIDToWire(ug).GetValue())
 		ctxA := authority.WithTenant(ctx, tidA.String())
 
 		t.Run("AC1 facts come from the connector, not ErrNoReads", func(t *testing.T) {

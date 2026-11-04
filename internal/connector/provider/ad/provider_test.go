@@ -1,4 +1,4 @@
-package write
+package ad
 
 import (
 	"context"
@@ -6,10 +6,9 @@ import (
 	"slices"
 	"sync"
 	"testing"
-	"time"
 
-	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/graph"
+	adconn "github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
@@ -17,10 +16,25 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
+func mk(n byte) guid.GUID {
+	b := make([]byte, 16)
+	b[0], b[15] = n, 1
+	g, err := guid.FromBytes(b)
+	if err != nil {
+		panic(err)
+	}
+	return g
+}
+
+func adIdentity() *connectorv1.DirectoryIdentity {
+	return &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
+		ForestRootNcGuid: provider.GUIDToWire(mk(200))}}}
+}
+
 // CC-WRITE-20 g: a GPO whose cn is not a GUID is tier0; ordinary objects are not touched by the rule.
 func TestGPOCNMustBeAGUID(t *testing.T) {
-	gpo := func(cn string) *ad.Entry {
-		return ad.NewEntry("CN="+cn+",CN=Policies,CN=System,DC=lab,DC=test", map[string][][]byte{
+	gpo := func(cn string) *adconn.Entry {
+		return adconn.NewEntry("CN="+cn+",CN=Policies,CN=System,DC=lab,DC=test", map[string][][]byte{
 			"objectClass": {[]byte("top"), []byte("container"), []byte("groupPolicyContainer")}, "cn": {[]byte(cn)}})
 	}
 	for cn, want := range map[string]bool{
@@ -31,7 +45,7 @@ func TestGPOCNMustBeAGUID(t *testing.T) {
 			t.Errorf("cn %q: %v want %v", cn, got, want)
 		}
 	}
-	user := ad.NewEntry("CN=x,DC=lab,DC=test", map[string][][]byte{"objectClass": {[]byte("user")}, "cn": {[]byte("x")}})
+	user := adconn.NewEntry("CN=x,DC=lab,DC=test", map[string][][]byte{"objectClass": {[]byte("user")}, "cn": {[]byte("x")}})
 	if gpoCNInvalid(user) {
 		t.Error("a user is not subject to the GPO cn rule")
 	}
@@ -41,11 +55,11 @@ func TestGPOCNMustBeAGUID(t *testing.T) {
 // substituted, so Naming and Find are never reached.
 type designatedDir struct {
 	tier0.ADDirectory
-	objs map[guid.GUID]*ad.Entry
+	objs map[guid.GUID]*adconn.Entry
 	errs map[guid.GUID]error
 }
 
-func (d *designatedDir) Get(_ context.Context, ref dn.ObjectRef, _ []string) (*ad.Entry, error) {
+func (d *designatedDir) Get(_ context.Context, ref dn.ObjectRef, _ []string) (*adconn.Entry, error) {
 	id, ok := ref.GUID()
 	if !ok {
 		return nil, errors.New("test: GUID refs only")
@@ -56,7 +70,7 @@ func (d *designatedDir) Get(_ context.Context, ref dn.ObjectRef, _ []string) (*a
 	if o := d.objs[id]; o != nil {
 		return o, nil
 	}
-	return nil, &ad.Error{Code: ad.CodeObjectNotFound}
+	return nil, &adconn.Error{Code: adconn.CodeObjectNotFound}
 }
 
 func sidBytes(t *testing.T, s string) []byte {
@@ -71,10 +85,10 @@ func sidBytes(t *testing.T, s string) []byte {
 func adRig(t *testing.T) (*ADProvider, *designatedDir, guid.GUID, guid.GUID) {
 	t.Helper()
 	user, grp := mk(70), mk(71)
-	d := &designatedDir{objs: map[guid.GUID]*ad.Entry{
-		user: ad.NewEntry("CN=u,DC=lab", map[string][][]byte{"objectClass": {[]byte("user")}, "cn": {[]byte("u")},
+	d := &designatedDir{objs: map[guid.GUID]*adconn.Entry{
+		user: adconn.NewEntry("CN=u,DC=lab", map[string][][]byte{"objectClass": {[]byte("user")}, "cn": {[]byte("u")},
 			"tokenGroups": {sidBytes(t, "S-1-5-21-1-2-3-1100"), sidBytes(t, "S-1-5-21-1-2-3-513")}}),
-		grp: ad.NewEntry("CN=g,DC=lab", map[string][][]byte{"objectSid": {sidBytes(t, "S-1-5-21-1-2-3-1100")}}),
+		grp: adconn.NewEntry("CN=g,DC=lab", map[string][][]byte{"objectSid": {sidBytes(t, "S-1-5-21-1-2-3-1100")}}),
 	}, errs: map[guid.GUID]error{}}
 	p := &ADProvider{Dir: d, Pins: &memPins{}}
 	p.classify = func(_ context.Context, id guid.GUID, _ tier0.ADInput) (tier0.ADResult, error) {
@@ -101,17 +115,17 @@ func TestADProviderDesignated(t *testing.T) {
 		t.Fatalf("missing designated group: %+v %v", v, err)
 	}
 	// Not a member.
-	d.objs[grp] = ad.NewEntry("CN=g,DC=lab", map[string][][]byte{"objectSid": {sidBytes(t, "S-1-5-21-1-2-3-1200")}})
+	d.objs[grp] = adconn.NewEntry("CN=g,DC=lab", map[string][][]byte{"objectSid": {sidBytes(t, "S-1-5-21-1-2-3-1200")}})
 	if v, err := p.Classify(ctx, user, []guid.GUID{grp}); err != nil || v.Tier0 {
 		t.Fatalf("non-member: %+v %v", v, err)
 	}
 	// Any other read error is refused (Tier0 true with an error).
-	d.errs[grp] = &ad.Error{Code: ad.CodeProtocol}
+	d.errs[grp] = &adconn.Error{Code: adconn.CodeProtocol}
 	if v, err := p.Classify(ctx, user, []guid.GUID{grp}); err == nil || !v.Tier0 {
 		t.Fatalf("read error must fail closed: %+v %v", v, err)
 	}
 	delete(d.errs, grp)
-	d.errs[user] = &ad.Error{Code: ad.CodeProtocol}
+	d.errs[user] = &adconn.Error{Code: adconn.CodeProtocol}
 	if v, err := p.Classify(ctx, user, []guid.GUID{grp}); err == nil || !v.Tier0 {
 		t.Fatalf("token read error must fail closed: %+v %v", v, err)
 	}
@@ -138,59 +152,6 @@ func TestADProviderClassifierAnswersFailClosed(t *testing.T) {
 	if v, err := p.Classify(ctx, user, nil); err == nil || !v.Tier0 {
 		t.Fatalf("classifier error: %+v %v", v, err)
 	}
-}
-
-// groupReader answers GroupMembers from a table; the classifier methods are never reached because
-// the base classifier is not part of this test (Classify is exercised through membersOf).
-type groupReader struct {
-	tier0.Reader
-	members map[guid.GUID][]graph.DirectoryObject
-	err     map[guid.GUID]error
-}
-
-func (g groupReader) GroupMembers(_ context.Context, id guid.GUID) ([]graph.DirectoryObject, error) {
-	if e := g.err[id]; e != nil {
-		return nil, e
-	}
-	m, ok := g.members[id]
-	if !ok {
-		return nil, &graph.Error{Code: graph.CodeNotFound}
-	}
-	return m, nil
-}
-
-// An Entra direct member of a designated group is tier0; missing group skipped; other errors refuse.
-func TestEntraDesignatedMembership(t *testing.T) {
-	ctx := context.Background()
-	user, grp := entraID(ePlain), mk(82)
-	h, _, _ := entraRig(t)
-	p := h.prov.(*EntraProvider)
-	p.Reader = withMembers{p.Reader, groupReader{
-		members: map[guid.GUID][]graph.DirectoryObject{entraID(eGroup): {}, grp: {{ID: user.String(), ODataType: "#microsoft.graph.user"}}},
-		err:     map[guid.GUID]error{mk(80): errors.New("graph 500")}}}
-	v, err := p.Classify(ctx, user, []guid.GUID{grp})
-	if err != nil || !v.Tier0 || v.Bases[len(v.Bases)-1] != tier0.Designated {
-		t.Fatalf("direct member: %+v %v", v, err)
-	}
-	if v, err := p.Classify(ctx, user, []guid.GUID{mk(81)}); err != nil || v.Tier0 {
-		t.Fatalf("missing designated group: %+v %v", v, err)
-	}
-	if v, err := p.Classify(ctx, user, []guid.GUID{mk(80)}); err == nil || !v.Tier0 {
-		t.Fatalf("read error must fail closed: %+v %v", v, err)
-	}
-	if v, err := p.Classify(ctx, entraID("77777777-7777-7777-7777-0000000000aa"), []guid.GUID{grp}); err != nil || v.Tier0 {
-		t.Fatalf("non-member: %+v %v", v, err)
-	}
-}
-
-// withMembers sends GroupMembers to the table and everything else to the live (fake Graph) reader.
-type withMembers struct {
-	tier0.Reader
-	g groupReader
-}
-
-func (w withMembers) GroupMembers(ctx context.Context, id guid.GUID) ([]graph.DirectoryObject, error) {
-	return w.g.GroupMembers(ctx, id)
 }
 
 // memPins is an in-memory PinStore with failure injection.
@@ -257,32 +218,24 @@ func TestADProviderPlumbsPinnedC13(t *testing.T) {
 	}
 }
 
-// The default classifier path hands the pins to the real classifier: a renamed pinned group is
-// refused at the handler (TM-D26 rule 10), here with a minimal forest.
-func TestHandlerRefusesRenamedPinnedGroup(t *testing.T) {
-	run := passRun(nil)
-	r := newRig(t, &run)
+// The default classifier path hands the pins to the classifier: a pinned group that was renamed is
+// still tier0 with basis C13 (TM-D26 rule 10), here with a minimal forest. That the guard refuses a
+// tier0 verdict at the live re-read is the write handler's test (fakeProv).
+func TestADProviderRenamedPinnedGroupIsTier0(t *testing.T) {
 	g := mk(90)
 	pins := &memPins{pins: []guid.GUID{g}}
-	p := &ADProvider{Pins: pins, ID: adIdentity(), Bound: newFake()}
+	p := &ADProvider{Pins: pins, ID: adIdentity()}
 	p.classify = func(_ context.Context, id guid.GUID, in tier0.ADInput) (tier0.ADResult, error) {
 		if slices.Contains(in.PinnedC13, id) { // what the classifier does with a pinned GUID whatever its name
-			return tier0.ADResult{GUID: id, Tier0: true, Bases: []Basis{tier0.C13}}, nil
+			return tier0.ADResult{GUID: id, Tier0: true, Bases: []provider.Basis{tier0.C13}}, nil
 		}
 		return tier0.ADResult{GUID: id}, nil
 	}
-	p.Dir = &designatedDir{objs: map[guid.GUID]*ad.Entry{g: ad.NewEntry("CN=NetOps,DC=lab",
+	p.Dir = &designatedDir{objs: map[guid.GUID]*adconn.Entry{g: adconn.NewEntry("CN=NetOps,DC=lab",
 		map[string][][]byte{"objectClass": {[]byte("group")}, "cn": {[]byte("NetOps")}})}, errs: map[guid.GUID]error{}}
-	h, err := New(p, r.gate, WithRecorder(r.rec), WithClock(func() time.Time { return r.now }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for tname, tr := range transports(t, h) {
-		_, err := tr.Plan(context.Background(), planReq(g, ctxFor(g)))
-		d := wantTier0(t, err, connectorv1.Tier0RefusalStage_TIER0_REFUSAL_STAGE_LIVE_REREAD)
-		if len(d.GetBasis()) != 1 || d.GetBasis()[0] != tier0.C13 {
-			t.Errorf("%s: basis %v", tname, d.GetBasis())
-		}
+	v, err := p.Classify(context.Background(), g, nil)
+	if err != nil || !v.Tier0 || len(v.Bases) != 1 || v.Bases[0] != tier0.C13 {
+		t.Fatalf("%+v %v", v, err)
 	}
 }
 
@@ -308,5 +261,78 @@ func TestADProviderClassifierInputCarriesPinsAndDesignations(t *testing.T) {
 	}
 	if g, ok := got.Designated[0].GUID(); !ok || g != grp {
 		t.Errorf("designated ref = %v", got.Designated[0])
+	}
+}
+
+// T-0401 AC2: the production constructor builds Dir, Bound and the facets over the one session, and a
+// provider whose binder sits on another session refuses to name a DC and fails every facet closed.
+func TestADProviderShareOneSession(t *testing.T) {
+	s1, s2 := &adconn.Session{}, &adconn.Session{}
+	p := NewADProvider(s1, nil, adIdentity(), &memPins{})
+	if p.Dir.(tier0.SessionDirectory).S != s1 || p.Bound.(SessionDC).S != s1 || p.sess != s1 {
+		t.Fatal("constructor did not share the session")
+	}
+	if !p.sameSession() || !p.OverSession(s1) || !p.sessionOK() {
+		t.Fatal("constructed provider reports a session mismatch")
+	}
+	p.Bound = SessionDC{S: s2}
+	if p.sameSession() || p.OverSession(s1) || p.sessionOK() {
+		t.Fatal("mismatch undetected")
+	}
+	if _, err := p.BoundDC(context.Background()); !errors.Is(err, provider.ErrNoBoundDC) {
+		t.Fatalf("mismatched binder answered: %v", err)
+	}
+	// Every facet fails closed on the mismatched provider (the Read pin).
+	ctx := context.Background()
+	if _, err := p.Read(ctx, mk(1), []string{"cn"}, 0); !errors.Is(err, provider.ErrNoBoundDC) {
+		t.Errorf("Read: %v", err)
+	}
+	if _, _, err := p.Parent(ctx, nil); !errors.Is(err, provider.ErrNoBoundDC) {
+		t.Errorf("Parent: %v", err)
+	}
+	if _, err := p.CanonicalAttr("cn"); !errors.Is(err, provider.ErrNoBoundDC) {
+		t.Errorf("CanonicalAttr: %v", err)
+	}
+	if _, ok := p.Syntax("cn"); ok {
+		t.Error("Syntax answered")
+	}
+	if _, err := p.ParseFilter(nil); !errors.Is(err, provider.ErrNoBoundDC) {
+		t.Errorf("ParseFilter: %v", err)
+	}
+	if _, err := p.ScopedSearch(ctx, adconn.ScopedRequest{}, nil); !errors.Is(err, provider.ErrNoBoundDC) {
+		t.Errorf("ScopedSearch: %v", err)
+	}
+	if p.RightsDirectory() != nil {
+		t.Error("rights directory served by a mismatched provider")
+	}
+}
+
+// A struct-literal provider has no session, hence no facets: the zero value fails every Read.
+func TestADProviderLiteralHasNoFacets(t *testing.T) {
+	p := &ADProvider{ID: adIdentity(), Pins: &memPins{}}
+	if p.sessionOK() || p.RightsDirectory() != nil {
+		t.Fatal("literal provider has facets")
+	}
+	if _, err := p.Read(context.Background(), mk(1), []string{"cn"}, 0); !errors.Is(err, provider.ErrNoBoundDC) {
+		t.Fatalf("Read: %v", err)
+	}
+}
+
+// The Describe rows follow the facets (AC4).
+func TestSupportsFollowsFacets(t *testing.T) {
+	p := NewADProvider(&adconn.Session{}, nil, adIdentity(), &memPins{})
+	want := map[connectorv1.Operation]connectorv1.SupportState{
+		connectorv1.Operation_OPERATION_VERIFY_CONNECTION: connectorv1.SupportState_SUPPORT_STATE_SUPPORTED,
+		connectorv1.Operation_OPERATION_READ:              connectorv1.SupportState_SUPPORT_STATE_SUPPORTED,
+		connectorv1.Operation_OPERATION_SCOPED_SEARCH:     connectorv1.SupportState_SUPPORT_STATE_SUPPORTED,
+	}
+	got := provider.Supports(p)
+	if len(got) != len(want) {
+		t.Fatalf("%v", got)
+	}
+	for _, r := range got {
+		if want[r.GetOperation()] != r.GetState() {
+			t.Errorf("%s = %s", r.GetOperation(), r.GetState())
+		}
 	}
 }

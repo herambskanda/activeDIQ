@@ -12,7 +12,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 )
 
-// filePins is the connector host's durable write.PinStore: the C13 group pins only ever grow, and a
+// filePins is the connector host's durable provider.PinStore: the C13 group pins only ever grow, and a
 // pin held only in memory would re-open the rename hole on restart. One JSON file, replaced atomically
 // (write, sync, rename, sync the directory) before PinC13 returns.
 type filePins struct {

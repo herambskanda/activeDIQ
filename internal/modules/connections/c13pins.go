@@ -10,7 +10,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
-// C13Pins is the durable write.PinStore of one connection (TM-D26 rule 10): the pins live in the
+// C13Pins is the durable provider.PinStore of one connection (TM-D26 rule 10): the pins live in the
 // platform database, not in the connector, so a connector restart or a redeploy cannot drop them.
 type C13Pins struct {
 	DB         *store.DB

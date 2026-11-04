@@ -9,7 +9,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	"github.com/skenzeriq/activediq/internal/connector/refusal"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -28,7 +29,7 @@ type SearchSender interface {
 }
 
 func invalidSearch(field string) error {
-	r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
+	r := refusal.New(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "", "invalid request")
 	r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: "InvalidScopedSearchRequest", Field: field}}
 	return r
 }
@@ -39,14 +40,14 @@ func invalidSearch(field string) error {
 // connector resolves parents after each page, outside the session lock, with one read per distinct
 // parent DN, and the value equals Read's. A naming-context head has none.
 func (h *Handler) ScopedSearch(ctx context.Context, req *connectorv1.ScopedSearchRequest, out SearchSender) error {
-	srch, ok := h.src.(Searcher)
-	if !ok {
+	srch, ok := h.prov.(provider.Searcher)
+	if !ok || !h.supported() {
 		return refuse(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "search not supported")
 	}
 	if req.GetConnection().GetConnectionId() == "" || req.GetConnection().GetDirectoryIdentity() == nil {
 		return invalidSearch("connection")
 	}
-	if !proto.Equal(req.GetConnection().GetDirectoryIdentity(), h.src.Identity()) {
+	if !proto.Equal(req.GetConnection().GetDirectoryIdentity(), h.prov.Identity()) {
 		return refuse(connectorv1.ErrorCode_ERROR_CODE_DIRECTORY_IDENTITY_MISMATCH, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "directory identity mismatch")
 	}
 	if n := len(req.GetRoots()); n == 0 || n > maxRoots {
@@ -54,7 +55,7 @@ func (h *Handler) ScopedSearch(ctx context.Context, req *connectorv1.ScopedSearc
 	}
 	roots := make([]dn.ObjectRef, 0, len(req.GetRoots()))
 	for _, r := range req.GetRoots() {
-		g, err := write.GUIDFromWire(r.GetGuid())
+		g, err := provider.GUIDFromWire(r.GetGuid())
 		if err != nil {
 			return invalidSearch("roots.guid")
 		}
@@ -78,7 +79,7 @@ func (h *Handler) ScopedSearch(ctx context.Context, req *connectorv1.ScopedSearc
 	}
 	canon := make([]string, 0, len(attrs))
 	for _, a := range attrs {
-		c, err := h.src.CanonicalAttr(a)
+		c, err := h.rd.CanonicalAttr(a)
 		if err != nil {
 			return mapAD(err, nil)
 		}
@@ -90,13 +91,13 @@ func (h *Handler) ScopedSearch(ctx context.Context, req *connectorv1.ScopedSearc
 	var pin *connectorv1.Guid
 	if sel := req.GetDc(); sel != nil && sel.PinnedDsaGuid != nil {
 		pin = sel.PinnedDsaGuid
-		if _, err := write.GUIDFromWire(pin); err != nil {
+		if _, err := provider.GUIDFromWire(pin); err != nil {
 			return invalidSearch("dc.pinned_dsa_guid")
 		}
 	}
 	flt, err := srch.ParseFilter(req.GetFilter())
 	if err != nil {
-		r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_FILTER_REJECTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "filter rejected")
+		r := refusal.New(connectorv1.ErrorCode_ERROR_CODE_FILTER_REJECTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "", "filter rejected")
 		r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: ldapfilter.Code(err), Field: "filter"}}
 		return r
 	}
@@ -132,7 +133,7 @@ func (h *Handler) ScopedSearch(ctx context.Context, req *connectorv1.ScopedSearc
 		}
 		var parent *connectorv1.Guid
 		if has {
-			parent = write.GUIDToWire(pg)
+			parent = provider.GUIDToWire(pg)
 		}
 		entry, _, err := h.build(e, id, parent, canon)
 		if err != nil {

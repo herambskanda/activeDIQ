@@ -3,6 +3,8 @@ package rights
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	"github.com/skenzeriq/activediq/internal/connector/refusal"
 	"log/slog"
 	"time"
 
@@ -22,7 +24,7 @@ import (
 // text (a directory diagnostic can carry a DN, DM-24.I3). Build it with NewVerifyHandler; the zero
 // value refuses every call.
 type VerifyHandler struct {
-	dir       ADDirectory
+	dir       provider.RightsDirectory
 	epoch     *EpochState
 	identity  dn.ObjectRef
 	directory *v1.DirectoryIdentity
@@ -35,12 +37,9 @@ type VerifyHandler struct {
 
 // VerifyConfig is what NewVerifyHandler needs.
 type VerifyConfig struct {
-	Dir      ADDirectory
 	Epoch    *EpochState
 	Identity dn.ObjectRef
-	// Directory is the forest the connector is bound to; streamed in `completed` (contract v1.3).
-	Directory *v1.DirectoryIdentity
-	Now       func() time.Time
+	Now      func() time.Time
 	// Gate receives GateBook.Complete for every stream that ends with `completed` (contract §8.2).
 	Gate *write.GateBook
 	// OnLocalRecordFailed is mandatory: it closes the prior epoch's write gate when the stream ends
@@ -58,26 +57,36 @@ type VerifyConfig struct {
 
 // ErrVerifyConfig is returned by NewVerifyHandler for an incomplete configuration; it carries no
 // directory text.
-var ErrVerifyConfig = errors.New("rights: verify handler needs a directory, gate, epoch and local-record-failed hook")
+var ErrVerifyConfig = errors.New("rights: verify handler needs a provider, gate, epoch and local-record-failed hook")
 
-// NewVerifyHandler fails closed: a nil OnLocalRecordFailed, Gate, Dir, Epoch or Directory refuses
-// construction, so no GateBook.Complete feed exists without the hook.
-func NewVerifyHandler(c VerifyConfig) (*VerifyHandler, error) {
-	if c.OnLocalRecordFailed == nil || c.Gate == nil || c.Dir == nil || c.Epoch == nil || c.Directory == nil {
+// NewVerifyHandler fails closed: a nil provider (or one with no identity), OnLocalRecordFailed, Gate
+// or Epoch refuses construction, so no GateBook.Complete feed exists without the hook. It reads
+// through the provider's RightsSource facet, asserted here: a provider without it (or whose facet
+// has no directory) builds a handler whose VerifyConnection answers CAPABILITY_UNSUPPORTED, never a
+// nil dereference. The directory identity streamed in `completed` (contract v1.3) is the provider's.
+func NewVerifyHandler(p provider.Provider, c VerifyConfig) (*VerifyHandler, error) {
+	if p == nil || p.Identity() == nil || c.OnLocalRecordFailed == nil || c.Gate == nil || c.Epoch == nil {
 		return nil, ErrVerifyConfig
 	}
-	return &VerifyHandler{dir: c.Dir, epoch: c.Epoch, identity: c.Identity, directory: c.Directory,
+	var dir provider.RightsDirectory
+	if rs, ok := p.(provider.RightsSource); ok {
+		dir = rs.RightsDirectory()
+	}
+	return &VerifyHandler{dir: dir, epoch: c.Epoch, identity: c.Identity, directory: p.Identity(),
 		now: c.Now, gate: c.Gate, onLRF: c.OnLocalRecordFailed, log: c.Log, boundConn: c.ConnectionID}, nil
 }
 
 // VerifyConnection runs the verification and streams its events.
 func (h *VerifyHandler) VerifyConnection(ctx context.Context, req *v1.VerifyConnectionRequest, st grpc.ServerStreamingServer[v1.VerifyConnectionResponse]) error {
+	if h != nil && h.dir == nil && h.gate != nil {
+		return refusal.New(v1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, v1.RetryAdvice_RETRY_ADVICE_NEVER, "", "operation not supported")
+	}
 	if h == nil || h.gate == nil || h.onLRF == nil || h.dir == nil {
-		return write.NewRefusal(v1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, v1.RetryAdvice_RETRY_ADVICE_NEVER, "verify handler not configured")
+		return refusal.New(v1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, v1.RetryAdvice_RETRY_ADVICE_NEVER, "", "verify handler not configured")
 	}
 	connID := req.GetConnection().GetConnectionId()
 	if connID == "" || (h.boundConn != "" && connID != h.boundConn) {
-		return write.NewRefusal(v1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, v1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
+		return refusal.New(v1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, v1.RetryAdvice_RETRY_ADVICE_NEVER, "", "invalid request")
 	}
 	sendFailed := false
 	feed := newRunFeed(req)
@@ -170,19 +179,19 @@ func (f *runFeed) observe(r *v1.VerifyConnectionResponse) (write.Run, bool) {
 func verifyStatusError(ctx context.Context, err error, sendFailed bool) error {
 	switch {
 	case IsInvalidArgument(err):
-		return write.NewRefusal(v1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, v1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
+		return refusal.New(v1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, v1.RetryAdvice_RETRY_ADVICE_NEVER, "", "invalid request")
 	case errors.Is(err, ErrLocalRecordFailed):
-		return write.NewRefusal(v1.ErrorCode_ERROR_CODE_LOCAL_RECORD_FAILED, v1.RetryAdvice_RETRY_ADVICE_NEVER, "a local record could not be made durable")
+		return refusal.New(v1.ErrorCode_ERROR_CODE_LOCAL_RECORD_FAILED, v1.RetryAdvice_RETRY_ADVICE_NEVER, "", "a local record could not be made durable")
 	case sendFailed:
 		return status.Error(grpccodes.Unavailable, "stream closed")
 	}
 	if ce, ok := adConnectorError(err); ok {
-		return write.NewRefusal(ce.Code, ce.Retry, ce.Message)
+		return refusal.New(ce.Code, ce.Retry, "", ce.Message)
 	}
 	if ctx.Err() != nil {
 		return status.FromContextError(ctx.Err()).Err()
 	}
-	return write.NewRefusal(v1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, v1.RetryAdvice_RETRY_ADVICE_NEVER, "directory verification failed")
+	return refusal.New(v1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, v1.RetryAdvice_RETRY_ADVICE_NEVER, "", "directory verification failed")
 }
 
 // Server is the remote transport of the verify group; the other RPCs stay Unimplemented.

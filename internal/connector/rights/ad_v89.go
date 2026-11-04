@@ -2,6 +2,7 @@ package rights
 
 import (
 	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"sort"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
@@ -76,7 +77,7 @@ func (c *adCheck) v9() {
 			never[o.ID] = o.Name
 		}
 	}
-	var dsa *SchemaObject
+	var dsa *provider.SchemaObject
 	if o, err := c.classByName(dsaClass); err != nil {
 		c.cannot(v9, nil, err)
 		return
@@ -152,7 +153,7 @@ type ouKind struct {
 // WRITE_OWNER, Delete-Tree, write of every property or a never-delegate one, create of every child
 // class or of a dMSA, every extended right or Get-Changes(-All), and the never-delegate validated
 // writes.
-func (c *adCheck) ouExcess(g grant, never map[adguid.GUID]string, dsa *SchemaObject) []ouKind {
+func (c *adCheck) ouExcess(g grant, never map[adguid.GUID]string, dsa *provider.SchemaObject) []ouKind {
 	a := g.ace
 	var typ *adguid.GUID
 	if a.hasType {
@@ -234,7 +235,7 @@ func (c *adCheck) missing(obj adguid.GUID, d *descriptor, domain bool) {
 			case e.ext != nil:
 				typ = *e.ext
 			case e.attr != "" || e.class != "":
-				var o *SchemaObject
+				var o *provider.SchemaObject
 				var err error
 				if e.attr != "" {
 					o, err = c.attrByName(e.attr)

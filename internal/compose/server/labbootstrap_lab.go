@@ -15,11 +15,11 @@ import (
 	"strings"
 	"sync"
 
-	"google.golang.org/grpc"
-
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/read"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"github.com/skenzeriq/activediq/internal/connector/rights"
+	"github.com/skenzeriq/activediq/internal/connector/service"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
@@ -101,7 +101,7 @@ func labSpecs(getenv func(string) string) ([]labSpec, error) {
 	return out, nil
 }
 
-// labPinStore is the in-memory write.PinStore of a lab connector.
+// labPinStore is the in-memory provider.PinStore of a lab connector.
 type labPinStore struct {
 	mu sync.Mutex
 	g  []guid.GUID
@@ -187,9 +187,9 @@ func openLab(ctx context.Context, sp labSpec) (client.LabConnector, func(), erro
 	return cl, func() { stop(); closeSrv() }, nil
 }
 
-// openLabServer opens the lab session and builds the connector's served side over it: the real rights
-// check and the real read handler. openLab dials it in process; the tunnel e2e serves it over a fleet tunnel.
-func openLabServer(ctx context.Context, sp labSpec) (*labServer, func(), error) {
+// openLabServer opens the lab session and builds the connector's served side over it: the connector service
+// (verification, reads, plan and apply) over it. openLab dials it in process; the tunnel e2e serves it over a fleet tunnel.
+func openLabServer(ctx context.Context, sp labSpec) (connectorv1.ConnectorServer, func(), error) {
 	pem, err := os.ReadFile(sp.CAPath)
 	if err != nil {
 		return nil, nil, errors.New("CA file unreadable")
@@ -226,20 +226,11 @@ func openLabServer(ctx context.Context, sp labSpec) (*labServer, func(), error) 
 	if err != nil {
 		return nil, nil, errors.New("forest root has no objectGUID")
 	}
-	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{ForestRootNcGuid: write.GUIDToWire(g)}}}
+	ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{ForestRootNcGuid: provider.GUIDToWire(g)}}}
 
 	self, err := selfRef(ctx, sess, ref, sp.BindName)
 	if err != nil {
 		return nil, nil, err
-	}
-	prov := write.NewADProvider(sess, nil, ident, &labPinStore{})
-	src, err := read.NewADSource(sess, prov)
-	if err != nil {
-		return nil, nil, errors.New("read source")
-	}
-	h, err := read.New(src)
-	if err != nil {
-		return nil, nil, errors.New("read handler")
 	}
 	// The verification handler: the real rights check over this session. Its epoch baseline and records
 	// live in a private directory that goes with the process (a lab connector has no host to keep them).
@@ -254,14 +245,13 @@ func openLabServer(ctx context.Context, sp labSpec) (*labServer, func(), error) 
 	}
 	epoch := rights.NewEpochState(rights.FileBaselineStore{Path: filepath.Join(dir, "baseline.json")},
 		rights.FileRecordSink{Path: filepath.Join(dir, "records.log")}, nil)
-	vh, err := rights.NewVerifyHandler(rights.VerifyConfig{Dir: rights.NewSessionDirectory(sess), Epoch: epoch, Identity: self,
-		Directory: ident, Gate: gate, OnLocalRecordFailed: gate.CloseLocalRecordFailed})
+	svc, err := service.New(adprov.NewADProvider(sess, nil, ident, &labPinStore{}), service.Deps{Gate: gate, Epoch: epoch, Self: self})
 	if err != nil {
 		_ = os.RemoveAll(dir)
-		return nil, nil, errors.New("verify handler")
+		return nil, nil, errors.New("connector service")
 	}
 	ok = true
-	return &labServer{verify: rights.NewServer(vh), read: read.NewServer(h)}, func() { sess.Close(); _ = os.RemoveAll(dir) }, nil
+	return svc.Server(), func() { sess.Close(); _ = os.RemoveAll(dir) }, nil
 }
 
 // labBaseline is the in-memory write.Baseline of a lab connector: the ratchet needs no durability
@@ -362,23 +352,4 @@ func newUUID() (string, error) {
 	b[6] = b[6]&0x0f | 0x40
 	b[8] = b[8]&0x3f | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]), nil
-}
-
-// labServer routes each served RPC to its group's server, as the tunnel binding does.
-type labServer struct {
-	connectorv1.UnimplementedConnectorServer
-	verify *rights.Server
-	read   *read.Server
-}
-
-func (s *labServer) VerifyConnection(req *connectorv1.VerifyConnectionRequest, st grpc.ServerStreamingServer[connectorv1.VerifyConnectionResponse]) error {
-	return s.verify.VerifyConnection(req, st)
-}
-
-func (s *labServer) Read(req *connectorv1.ReadRequest, st grpc.ServerStreamingServer[connectorv1.ReadResponse]) error {
-	return s.read.Read(req, st)
-}
-
-func (s *labServer) ScopedSearch(req *connectorv1.ScopedSearchRequest, st grpc.ServerStreamingServer[connectorv1.ScopedSearchResponse]) error {
-	return s.read.ScopedSearch(req, st)
 }

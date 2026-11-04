@@ -4,18 +4,18 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/refusal"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 // Every error text is fixed: no GUID, DN, attribute value or connector message goes into it.
 
 func refuse(code connectorv1.ErrorCode, retry connectorv1.RetryAdvice, msg string) error {
-	return write.NewRefusal(code, retry, msg)
+	return refusal.New(code, retry, "", msg)
 }
 
 func invalid(field string) error {
-	r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
+	r := refusal.New(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "", "invalid request")
 	r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: "InvalidReadRequest", Field: field}}
 	return r
 }
@@ -47,7 +47,7 @@ func mapAD(err error, dc *connectorv1.DcIdentity) error {
 	case ad.CodeUnexpectedReferral:
 		code, msg = connectorv1.ErrorCode_ERROR_CODE_UNEXPECTED_REFERRAL, "unexpected referral"
 	}
-	r := write.NewRefusal(code, retry, msg)
+	r := refusal.New(code, retry, "", msg)
 	r.Err.Dc = proto.Clone(dc).(*connectorv1.DcIdentity)
 	return r
 }

@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,7 +108,7 @@ func TestLabAddedToDomainAdminsAfterLastSyncIsRefused(t *testing.T) {
 	run.CompletedAt = now
 	book, _ := NewGateBook(&memBaseline{}, time.Now)
 	book.Complete(connID, run)
-	prov := NewADProvider(sess, nil, adIdentity(), &memPins{})
+	prov := adprov.NewADProvider(sess, nil, adIdentity(), &memPins{})
 	dc, err := prov.BoundDC(ctx) // rule 5: the requests pin the DC the session is bound to
 	if err != nil {
 		t.Fatal(err)
@@ -226,7 +227,7 @@ func TestLabSessionDCIdentityMatchesNTDSSettings(t *testing.T) {
 	wire := func(b []byte) []byte { // RFC 4122 order bytes
 		return []byte{b[3], b[2], b[1], b[0], b[5], b[4], b[7], b[6], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]}
 	}
-	bound, err := SessionDC{S: sess}.BoundDC(ctx)
+	bound, err := adprov.SessionDC{S: sess}.BoundDC(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

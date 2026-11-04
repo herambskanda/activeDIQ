@@ -20,8 +20,9 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/compose/connector"
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/read"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/connector/rights"
+	"github.com/skenzeriq/activediq/internal/connector/service"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
@@ -34,7 +35,7 @@ type nopBase struct{}
 
 func (nopBase) Append(string, []write.Mark) error { return nil }
 
-type stubDir struct{ rights.ADDirectory }
+type stubDir struct{ provider.RightsDirectory }
 
 type wire struct {
 	in   <-chan fleet.Frame
@@ -70,17 +71,6 @@ type rep struct{}
 
 func (rep) ProtocolError(context.Context, fleet.Identity, fleet.Violation) error { return nil }
 
-func handler(t *testing.T) *rights.VerifyHandler {
-	t.Helper()
-	gate, _ := write.NewGateBook(nopBase{}, nil)
-	h, err := rights.NewVerifyHandler(rights.VerifyConfig{Dir: stubDir{}, Epoch: rights.NewEpochState(nil, nil, nil),
-		Directory: &v1.DirectoryIdentity{}, Gate: gate, OnLocalRecordFailed: gate.CloseLocalRecordFailed})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return h
-}
-
 var (
 	dirIdent = &v1.DirectoryIdentity{Identity: &v1.DirectoryIdentity_AdForest{AdForest: &v1.AdForestIdentity{
 		ForestRootNcGuid: &v1.Guid{Value: []byte("0123456789abcdef")}}}}
@@ -95,7 +85,7 @@ type fakeSrc struct{}
 
 func (fakeSrc) Identity() *v1.DirectoryIdentity { return dirIdent }
 func (fakeSrc) BoundDC(context.Context) (*v1.DcIdentity, error) {
-	return &v1.DcIdentity{DsaGuid: write.GUIDToWire(dsa), DnsHostname: "dc1"}, nil
+	return &v1.DcIdentity{DsaGuid: provider.GUIDToWire(dsa), DnsHostname: "dc1"}, nil
 }
 func (fakeSrc) entry() *ad.Entry {
 	return ad.NewEntry("CN=Smith\\, Ann,OU=Ü,DC=lab,DC=test", map[string][][]byte{
@@ -114,9 +104,17 @@ func (fakeSrc) Syntax(n string) (ldapfilter.Syntax, bool) {
 	return ldapfilter.SynString, true
 }
 func (fakeSrc) CanonicalAttr(n string) (string, error) { return n, nil }
-func (fakeSrc) Classify(context.Context, guid.GUID) (write.Verdict, error) {
-	return write.Verdict{}, nil
+func (fakeSrc) Kind() v1.ProviderKind                  { return v1.ProviderKind_PROVIDER_KIND_AD }
+func (fakeSrc) Classify(context.Context, guid.GUID, []guid.GUID) (provider.Verdict, error) {
+	return provider.Verdict{}, nil
 }
+func (fakeSrc) Anchors(context.Context, guid.GUID) (provider.Anchors, error) {
+	return provider.Anchors{}, nil
+}
+func (fakeSrc) PropertyGuard(context.Context) (provider.PropertyGuard, error) {
+	return nil, errors.New("none") // the tunnel tests never reach a write
+}
+func (fakeSrc) RightsDirectory() provider.RightsDirectory { return stubDir{} }
 func (fakeSrc) ParseFilter(f *v1.Filter) (ldapfilter.Filter, error) {
 	return ldapfilter.ParseFilterAST(f, ldapfilter.NewSchema(ldapfilter.AttrInfo{Name: "cn", Syntax: ldapfilter.SynString}), nil, ldapfilter.Limits{})
 }
@@ -124,38 +122,16 @@ func (f fakeSrc) ScopedSearch(_ context.Context, _ ad.ScopedRequest, fn func(*ad
 	return ad.ScopedResult{Returned: 1}, fn(f.entry().WithParent(rootGUID, true)) // ResolveParents: the real source resolves the parent (T-0694)
 }
 
-func readHandler(t *testing.T) *read.Handler {
-	t.Helper()
-	h, err := read.New(fakeSrc{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return h
-}
-
-// fakeProv is the write handler's provider; the tunnel tests never reach a write.
-type fakeProv struct{}
-
-func (fakeProv) Kind() v1.ProviderKind           { return v1.ProviderKind_PROVIDER_KIND_AD }
-func (fakeProv) Identity() *v1.DirectoryIdentity { return dirIdent }
-func (fakeProv) Classify(context.Context, guid.GUID, []guid.GUID) (write.Verdict, error) {
-	return write.Verdict{}, nil
-}
-func (fakeProv) Anchors(context.Context, guid.GUID) (write.Anchors, error) {
-	return write.Anchors{}, nil
-}
-func (fakeProv) PropertyGuard(context.Context) (write.PropertyGuard, error) {
-	return nil, errors.New("none")
-}
-
-func writeHandler(t *testing.T) *write.Handler {
+// svc is the connector service over fakeSrc: the production assembly (service.New), with a directory
+// that stands for the directory only. connID binds the verify handler to a connection ("" = any).
+func svc(t *testing.T, connID string) *service.Service {
 	t.Helper()
 	gate, _ := write.NewGateBook(nopBase{}, nil)
-	h, err := write.New(fakeProv{}, gate)
+	s, err := service.New(fakeSrc{}, service.Deps{Gate: gate, Epoch: rights.NewEpochState(nil, nil, nil), ConnectionID: connID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return h
+	return s
 }
 
 type tunnel struct {
@@ -166,7 +142,7 @@ type tunnel struct {
 // newTunnel runs a RoleServer mux against a RoleComponent mux that carries the connector's binding.
 func newTunnel(t *testing.T) (tunnel, context.Context) {
 	t.Helper()
-	bd, err := connector.TunnelBinding(handler(t), readHandler(t), writeHandler(t))
+	bd, err := connector.TunnelBinding(svc(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,14 +176,8 @@ func tunnelFor(t *testing.T, bd fleet.Binding, timeout time.Duration) (tunnel, c
 // The server (RoleServer) opens VerifyConnection over a tunnel whose component side is the
 // connector's TunnelBinding; a method outside the contract is refused at registration.
 func TestTunnelBindingServesVerifyOverTunnel(t *testing.T) {
-	if _, err := connector.TunnelBinding(nil, readHandler(t), writeHandler(t)); err == nil {
-		t.Fatal("nil verify handler accepted")
-	}
-	if _, err := connector.TunnelBinding(handler(t), nil, writeHandler(t)); err == nil {
-		t.Fatal("nil read handler accepted")
-	}
-	if _, err := connector.TunnelBinding(handler(t), readHandler(t), nil); err == nil {
-		t.Fatal("nil write handler accepted")
+	if _, err := connector.TunnelBinding(nil); err == nil {
+		t.Fatal("nil service accepted")
 	}
 	tn, ctx := newTunnel(t)
 	st, err := v1.NewConnectorClient(tn.srv.Conn()).VerifyConnection(ctx, &v1.VerifyConnectionRequest{})
@@ -238,7 +208,7 @@ func TestPlanOverTunnelReachesTheWriteGuard(t *testing.T) {
 func scopedReq() *v1.ScopedSearchRequest {
 	return &v1.ScopedSearchRequest{
 		Connection: &v1.ConnectionRef{ConnectionId: "c1", DirectoryIdentity: dirIdent},
-		Roots:      []*v1.SearchRoot{{Guid: write.GUIDToWire(rootGUID)}},
+		Roots:      []*v1.SearchRoot{{Guid: provider.GUIDToWire(rootGUID)}},
 		Depth:      v1.SearchDepth_SEARCH_DEPTH_SUBTREE,
 		Filter: &v1.Filter{Node: &v1.Filter_Equal{Equal: &v1.Comparison{Attribute: "cn",
 			Value: &v1.FilterValue{Value: &v1.FilterValue_Text{Text: "Smith, Ann"}}}}},
@@ -248,7 +218,7 @@ func scopedReq() *v1.ScopedSearchRequest {
 
 func readReq() *v1.ReadRequest {
 	return &v1.ReadRequest{Connection: &v1.ConnectionRef{ConnectionId: "c1", DirectoryIdentity: dirIdent},
-		Guid: write.GUIDToWire(objGUID), Attributes: []string{"cn"}}
+		Guid: provider.GUIDToWire(objGUID), Attributes: []string{"cn"}}
 }
 
 // recvAll drains a server stream, returning the messages and the terminal error (nil on EOF).
@@ -289,7 +259,7 @@ func TestScopedSearchOverTunnelReturnsEntries(t *testing.T) {
 func TestReadOverTunnelMatchesInProcessHandler(t *testing.T) {
 	tn, ctx := newTunnel(t)
 	r := readReq()
-	r.Dc = &v1.DcSelection{PinnedDsaGuid: write.GUIDToWire(dsa)}
+	r.Dc = &v1.DcSelection{PinnedDsaGuid: provider.GUIDToWire(dsa)}
 	st, err := v1.NewConnectorClient(tn.srv.Conn()).Read(ctx, r)
 	if err != nil {
 		t.Fatal(err)
@@ -299,7 +269,7 @@ func TestReadOverTunnelMatchesInProcessHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	var local []*v1.ReadResponse
-	if err := readHandler(t).Read(ctx, r, sink{&local}); err != nil {
+	if err := svc(t, "").Read().Read(ctx, r, sink{&local}); err != nil {
 		t.Fatal(err)
 	}
 	if len(over) != len(local) || len(over) < 2 {
@@ -361,7 +331,7 @@ func (r *regCount) RegisterService(*grpc.ServiceDesc, any) { r.n++ }
 
 // AC3: a tunnel whose identity is not a tenant's connector gets no handlers at all.
 func TestBindingServesNothingForAnIdentityThatIsNotATenantConnector(t *testing.T) {
-	bd, err := connector.TunnelBinding(handler(t), readHandler(t), writeHandler(t))
+	bd, err := connector.TunnelBinding(svc(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

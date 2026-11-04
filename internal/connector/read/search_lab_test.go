@@ -7,6 +7,8 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,8 +19,6 @@ import (
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -72,12 +72,8 @@ func newSearchLab(t *testing.T) *searchLab {
 	l := &searchLab{adm: adm, stamp: fmt.Sprint(time.Now().UnixNano() % 100_000_000)}
 	l.ident = &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
 		ForestRootNcGuid: l.guid(t, labDom)}}}
-	prov := write.NewADProvider(sess, nil, l.ident, &memPins{})
-	src, err := read.NewADSource(sess, prov)
-	if err != nil {
-		t.Fatal(err)
-	}
-	l.client = start(t, src)
+	prov := adprov.NewADProvider(sess, nil, l.ident, &memPins{})
+	l.client = start(t, prov)
 	return l
 }
 
@@ -91,7 +87,7 @@ func (l *searchLab) guid(t *testing.T, dn string) *connectorv1.Guid {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return write.GUIDToWire(g)
+	return provider.GUIDToWire(g)
 }
 
 func (l *searchLab) add(t *testing.T, dn string, attrs map[string][]string) {
@@ -168,7 +164,7 @@ func (l *searchLab) adminGUIDs(t *testing.T, base string, scope int, class strin
 		if err != nil {
 			t.Fatal(err)
 		}
-		out[string(write.GUIDToWire(g).GetValue())] = e.DN
+		out[string(provider.GUIDToWire(g).GetValue())] = e.DN
 	}
 	return out
 }

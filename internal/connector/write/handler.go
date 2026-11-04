@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"strconv"
 	"time"
 
@@ -32,7 +33,10 @@ const (
 // Handler is the connector's Plan and Apply (contract §8.1). It implements the write half of
 // connectorv1.ConnectorServer and directory/client.Transport.
 type Handler struct {
-	prov  Provider
+	prov provider.Provider
+	// dc is the DCBound facet, nil when the provider has no DCs: a provider with DCs pins, one without
+	// does not (ADR-0005 rule 5). It also selects the AD plane of the Tier-0 rules.
+	dc    provider.DCBound
 	gates *GateBook
 	rec   Recorder
 	now   func() time.Time
@@ -50,11 +54,12 @@ func WithClock(now func() time.Time) Option { return func(h *Handler) { h.now = 
 
 // New builds the handler for one provider. The gate book must be the one the connector's
 // VerifyConnection feeds.
-func New(p Provider, g *GateBook, opts ...Option) (*Handler, error) {
+func New(p provider.Provider, g *GateBook, opts ...Option) (*Handler, error) {
 	if p == nil || g == nil {
 		return nil, errors.New("write: provider and gate book are required")
 	}
 	h := &Handler{prov: p, gates: g, rec: SlogRecorder{}, now: time.Now, ops: operations}
+	h.dc, _ = p.(provider.DCBound)
 	for _, o := range opts {
 		o(h)
 	}
@@ -192,7 +197,7 @@ func (h *Handler) finish(ev *Event, err error) error {
 		if errors.As(err, &r) {
 			ev.Outcome, ev.Code = "refused", r.Code().String()
 			if ev.Stage == "" {
-				ev.Stage = r.stage
+				ev.Stage = r.Stage
 			}
 			if d := r.Err.GetTier0Refused(); d != nil {
 				ev.Object = guidText(d.GetObject())
@@ -225,7 +230,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 		return nil, invalid("1", "PreconditionRequired", "precondition")
 	}
 
-	isAD := h.prov.Kind() == connectorv1.ProviderKind_PROVIDER_KIND_AD
+	isAD := h.dc != nil
 	// ADR-0005 rule 5: an AD Plan names the DC it must run on; nil or unset is refused before any
 	// directory call. An AD Apply is held to the DC the precondition names.
 	var want *connectorv1.Guid
@@ -256,11 +261,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	// never a silent switch (read-your-writes, DM-15.I3).
 	var bound *connectorv1.DcIdentity
 	if isAD {
-		b, ok := h.prov.(DCBinder)
-		if !ok {
-			return nil, pinRefusal("2")
-		}
-		id, err := b.BoundDC(ctx)
+		id, err := h.dc.BoundDC(ctx)
 		if err != nil || id == nil || !proto.Equal(id.GetDsaGuid(), want) {
 			return nil, pinRefusal("2")
 		}
@@ -354,7 +355,7 @@ const (
 func (h *Handler) propertyGuard(ctx context.Context, w WriteOp, c *call, target guid.GUID, ev *Event) *Refusal {
 	pw, err := w.PropertyWrite(c.change)
 	plane := tier0.PlaneEntra
-	if h.prov.Kind() == connectorv1.ProviderKind_PROVIDER_KIND_AD {
+	if h.dc != nil {
 		plane = tier0.PlaneAD
 	}
 	if err != nil || pw.Plane != plane { // a declaration for the other plane is a bug in the kind
@@ -558,7 +559,7 @@ func (h *Handler) live(ctx context.Context, idx map[string]*stmt, id guid.GUID, 
 				return tier0Refusal(toWire(id), nil, stLive, "7")
 			}
 			for _, ev := range evidence {
-				if !a.matches(ev) {
+				if !a.Matches(ev) {
 					return tier0Refusal(toWire(id), nil, stContradicted, "7")
 				}
 			}

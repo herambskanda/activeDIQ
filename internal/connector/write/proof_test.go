@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/connector/provider/entra"
 	"log/slog"
 	"strings"
 	"testing"
@@ -89,7 +90,7 @@ func TestProofEntraE1ToE5(t *testing.T) {
 		Checks: map[connectorv1.VerificationCheck]connectorv1.CheckOutcome{
 			connectorv1.VerificationCheck_VERIFICATION_CHECK_EV3_OVER_PRIVILEGE: connectorv1.CheckOutcome_CHECK_OUTCOME_PASS,
 			connectorv1.VerificationCheck_VERIFICATION_CHECK_EV4_SUFFICIENCY:    connectorv1.CheckOutcome_CHECK_OUTCOME_PASS}})
-	h, err := New(&EntraProvider{Reader: c, TenantID: eTenant}, r.gate, WithRecorder(r.rec), WithClock(func() time.Time { return r.now }))
+	h, err := New(&entra.EntraProvider{Reader: c, TenantID: eTenant}, r.gate, WithRecorder(r.rec), WithClock(func() time.Time { return r.now }))
 	if err != nil {
 		t.Fatal(err)
 	}

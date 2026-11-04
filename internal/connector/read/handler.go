@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"github.com/skenzeriq/activediq/internal/directory/attr/codec"
 	"github.com/skenzeriq/activediq/internal/directory/attr/filetime"
 	"github.com/skenzeriq/activediq/internal/directory/attr/gentime"
@@ -28,40 +28,35 @@ const (
 	maxAttributes = 64
 )
 
-// Source is what the handler needs from one AD directory binding. Every method works on the one
-// session, hence one DC.
-type Source interface {
-	Identity() *connectorv1.DirectoryIdentity
-	// BoundDC reads the identity of the DC the session is bound to, live.
-	BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error)
-	// Read reads the object with every range followed (ad.Session.Read semantics).
-	Read(ctx context.Context, id guid.GUID, attrs []string, maxValues int) (*ad.Entry, error)
-	// Parent returns the objectGUID of the entry's parent; ok is false only for a naming-context head.
-	// A parent that cannot be read or decoded is an error: "no parent" is an authoritative claim.
-	// The entry carries instanceType (the handler asks for it).
-	Parent(ctx context.Context, e *ad.Entry) (g guid.GUID, ok bool, err error)
-	// Syntax is the value syntax of an attribute.
-	Syntax(name string) (ldapfilter.Syntax, bool)
-	// CanonicalAttr resolves a requested name (ldapDisplayName in any case, or the schema's numeric
-	// OID). An OID returns the ldapDisplayName; a descr returns in the case typed, so compare
-	// case-insensitively. An attribute outside the schema is an error.
-	CanonicalAttr(name string) (string, error)
-	// Classify is the connector classifier's verdict on the same session.
-	Classify(ctx context.Context, id guid.GUID) (write.Verdict, error)
-}
-
-// Handler serves Read.
+// Handler serves Read. It asserts the facets it needs at construction: a provider that is not an
+// ObjectReader and DCBound (the Read header is pinned to the serving DC) leaves the group answering
+// CAPABILITY_UNSUPPORTED, never a nil dereference.
 type Handler struct {
-	src Source
-	now func() time.Time
+	prov provider.Provider
+	rd   provider.ObjectReader
+	dc   provider.DCBound
+	now  func() time.Time
 }
 
-// New returns the handler for one source.
-func New(src Source) (*Handler, error) {
-	if src == nil {
-		return nil, errors.New("read: a source is required")
+// New returns the handler for one provider.
+func New(p provider.Provider) (*Handler, error) {
+	if p == nil {
+		return nil, errors.New("read: a provider is required")
 	}
-	return &Handler{src: src, now: time.Now}, nil
+	h := &Handler{prov: p, now: time.Now}
+	rd, okR := p.(provider.ObjectReader)
+	dc, okD := p.(provider.DCBound)
+	if okR && okD {
+		h.rd, h.dc = rd, dc
+	}
+	return h, nil
+}
+
+// supported is true when the provider has the facets Read needs.
+func (h *Handler) supported() bool { return h != nil && h.rd != nil && h.dc != nil }
+
+func unsupportedGroup() error {
+	return refuse(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "operation not supported")
 }
 
 // Sender is the sending side of the Read stream (grpc.ServerStreamingServer satisfies it).
@@ -73,13 +68,16 @@ type Sender interface {
 // verdict have succeeded on the pinned DC, so a failed call never leaves a partial stream that
 // looks like an object.
 func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Sender) error {
+	if !h.supported() {
+		return unsupportedGroup()
+	}
 	if req.GetConnection().GetConnectionId() == "" || req.GetConnection().GetDirectoryIdentity() == nil {
 		return invalid("connection")
 	}
-	if !proto.Equal(req.GetConnection().GetDirectoryIdentity(), h.src.Identity()) {
+	if !proto.Equal(req.GetConnection().GetDirectoryIdentity(), h.prov.Identity()) {
 		return refuse(connectorv1.ErrorCode_ERROR_CODE_DIRECTORY_IDENTITY_MISMATCH, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "directory identity mismatch")
 	}
-	id, err := write.GUIDFromWire(req.GetGuid())
+	id, err := provider.GUIDFromWire(req.GetGuid())
 	if err != nil {
 		return invalid("guid")
 	}
@@ -91,7 +89,7 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	// names, so an OID spelling can neither pass the hold nor be dropped from the answer.
 	canon := make([]string, 0, len(attrs))
 	for _, a := range attrs {
-		c, err := h.src.CanonicalAttr(a)
+		c, err := h.rd.CanonicalAttr(a)
 		if err != nil {
 			return mapAD(err, nil)
 		}
@@ -106,7 +104,7 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	var pin *connectorv1.Guid
 	if sel := req.GetDc(); sel != nil && sel.PinnedDsaGuid != nil {
 		pin = sel.PinnedDsaGuid
-		if _, err := write.GUIDFromWire(pin); err != nil {
+		if _, err := provider.GUIDFromWire(pin); err != nil {
 			return invalid("dc.pinned_dsa_guid")
 		}
 	}
@@ -115,7 +113,7 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	if err != nil {
 		return err
 	}
-	e, err := h.src.Read(ctx, id, withInstanceType(attrs), int(req.GetMaxValuesPerAttribute()))
+	e, err := h.rd.Read(ctx, id, withInstanceType(attrs), int(req.GetMaxValuesPerAttribute()))
 	if err != nil {
 		return mapAD(err, before)
 	}
@@ -124,17 +122,17 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 		return refuse(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "directory returned another object")
 	}
 	var parent *connectorv1.Guid
-	if pg, ok, err := h.src.Parent(ctx, e); err != nil {
+	if pg, ok, err := h.rd.Parent(ctx, e); err != nil {
 		if ad.CodeOf(err) == ad.CodeObjectNotFound {
 			err = errors.New("parent not found") // not OBJECT_NOT_FOUND: the requested object exists
 		}
 		return mapAD(err, before)
 	} else if ok {
-		parent = write.GUIDToWire(pg)
+		parent = provider.GUIDToWire(pg)
 	}
 	var verdict *connectorv1.Tier0Verdict
 	if req.GetIncludeTier0() {
-		v, err := h.src.Classify(ctx, id)
+		v, err := h.prov.Classify(ctx, id, nil)
 		if err != nil {
 			// An undecidable classification is an error, never tier0 = false.
 			return refuse(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_REPLAN, "tier0 classification failed")
@@ -173,7 +171,7 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 
 // bound returns the bound DC and, when a pin is given, fails unless it is that DC.
 func (h *Handler) bound(ctx context.Context, pin *connectorv1.Guid) (*connectorv1.DcIdentity, error) {
-	dc, err := h.src.BoundDC(ctx)
+	dc, err := h.dc.BoundDC(ctx)
 	if err != nil || dc == nil {
 		return nil, refuse(connectorv1.ErrorCode_ERROR_CODE_UNREACHABLE_DC, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_REPLAN, "domain controller identity unavailable")
 	}
@@ -218,7 +216,7 @@ func truncated(e *ad.Entry) []string {
 // more than rangeWindow values carries its first range in the header (complete = false) and the
 // rest as in-order chunks, the last marked terminal.
 func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, asked []string) (*connectorv1.DirectoryEntry, []*connectorv1.ValueChunk, error) {
-	out := &connectorv1.DirectoryEntry{ObjectGuid: write.GUIDToWire(id), ParentGuid: parent,
+	out := &connectorv1.DirectoryEntry{ObjectGuid: provider.GUIDToWire(id), ParentGuid: parent,
 		Dn: &connectorv1.DnValue{DisplayDn: e.DN}}
 	var tails []*connectorv1.ValueChunk
 	want := map[string]bool{}
@@ -257,7 +255,7 @@ func (h *Handler) build(e *ad.Entry, id guid.GUID, parent *connectorv1.Guid, ask
 
 // value decodes one raw value by the attribute's schema syntax. An unknown syntax stays octets.
 func (h *Handler) value(name string, raw []byte) (*connectorv1.AttributeValue, error) {
-	syn, _ := h.src.Syntax(name)
+	syn, _ := h.rd.Syntax(name)
 	switch syn {
 	case ldapfilter.SynString:
 		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Text{Text: string(raw)}}, nil
@@ -297,7 +295,7 @@ func (h *Handler) value(name string, raw []byte) (*connectorv1.AttributeValue, e
 		if err != nil {
 			return nil, err
 		}
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Guid{Guid: write.GUIDToWire(g)}}, nil
+		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Guid{Guid: provider.GUIDToWire(g)}}, nil
 	}
 	return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Octets{Octets: append([]byte(nil), raw...)}}, nil
 }

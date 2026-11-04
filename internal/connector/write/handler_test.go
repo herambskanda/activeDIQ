@@ -2,6 +2,7 @@ package write
 
 import (
 	"context"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"os"
 	"runtime"
 	"strings"
@@ -234,19 +235,19 @@ func TestEvidenceBoundToObject(t *testing.T) {
 		return &connectorv1.Tier0Context{Statements: []*connectorv1.CorrelationStatement{peersStmt(id, t0time, goodPeer(false))}}
 	}
 	r := newRig(t, &run)
-	r.prov.anchors[id] = Anchors{Source: [][]byte{[]byte("someone else")}}
+	r.prov.anchors[id] = provider.Anchors{Source: [][]byte{[]byte("someone else")}}
 	_, err := r.h.Plan(context.Background(), planReq(id, mkCtx()))
 	wantTier0(t, err, connectorv1.Tier0RefusalStage_TIER0_REFUSAL_STAGE_CONTEXT_CONTRADICTED)
 
 	r = newRig(t, &run)
-	r.prov.anchors[id] = Anchors{Source: [][]byte{[]byte("anchor")}}
+	r.prov.anchors[id] = provider.Anchors{Source: [][]byte{[]byte("anchor")}}
 	_, err = r.h.Plan(context.Background(), planReq(id, mkCtx()))
 	if connErr(t, err).GetCode() != connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED {
 		t.Fatalf("matching evidence: %v", err)
 	}
 
 	r = newRig(t, &run)
-	r.prov.anchErr = ErrNoAnchors
+	r.prov.anchErr = provider.ErrNoAnchors
 	_, err = r.h.Plan(context.Background(), planReq(id, mkCtx()))
 	wantTier0(t, err, connectorv1.Tier0RefusalStage_TIER0_REFUSAL_STAGE_LIVE_REREAD)
 }

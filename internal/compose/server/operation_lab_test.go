@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
 	"strings"
 	"sync"
 	"testing"
@@ -14,7 +16,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/labadmin"
 	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
@@ -196,7 +197,7 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 			if err != nil {
 				t.Fatal(err)
 			}
-			return uuidText(write.GUIDToWire(g).GetValue())
+			return uuidText(provider.GUIDToWire(g).GetValue())
 		}
 		seq := time.Now().UnixNano() % 1_000_000
 		mkOU := admin.CreateOU
@@ -212,12 +213,8 @@ func newLabRig(t *testing.T, s *storetest.Server) *labRig {
 		// the connection record carries.
 		ident := &connectorv1.DirectoryIdentity{Identity: &connectorv1.DirectoryIdentity_AdForest{AdForest: &connectorv1.AdForestIdentity{
 			ForestRootNcGuid: &connectorv1.Guid{Value: mustUUID(t, nc)}}}}
-		prov := write.NewADProvider(sess, nil, ident, &labPins{})
-		src, err := read.NewADSource(sess, prov)
-		if err != nil {
-			t.Fatal(err)
-		}
-		h, err := read.New(src)
+		prov := adprov.NewADProvider(sess, nil, ident, &labPins{})
+		h, err := read.New(prov)
 		if err != nil {
 			t.Fatal(err)
 		}

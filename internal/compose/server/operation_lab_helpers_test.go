@@ -52,7 +52,7 @@ func mustUUID(t *testing.T, s string) []byte {
 	return b
 }
 
-// labPins is an in-memory write.PinStore for the connector's classifier.
+// labPins is an in-memory provider.PinStore for the connector's classifier.
 type labPins struct {
 	mu sync.Mutex
 	g  []guid.GUID

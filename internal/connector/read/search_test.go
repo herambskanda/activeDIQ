@@ -3,14 +3,13 @@ package read_test
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"io"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -52,7 +51,7 @@ func (s *ssrc) ScopedSearch(_ context.Context, r ad.ScopedRequest, fn func(*ad.E
 func sreq() *connectorv1.ScopedSearchRequest {
 	return &connectorv1.ScopedSearchRequest{
 		Connection: &connectorv1.ConnectionRef{ConnectionId: "c1", DirectoryIdentity: ident},
-		Roots:      []*connectorv1.SearchRoot{{Guid: write.GUIDToWire(g(parGUID))}},
+		Roots:      []*connectorv1.SearchRoot{{Guid: provider.GUIDToWire(g(parGUID))}},
 		Depth:      connectorv1.SearchDepth_SEARCH_DEPTH_SUBTREE,
 		Filter: &connectorv1.Filter{Node: &connectorv1.Filter_Equal{Equal: &connectorv1.Comparison{Attribute: "cn",
 			Value: &connectorv1.FilterValue{Value: &connectorv1.FilterValue_Text{Text: "a*)(b"}}}}},
@@ -158,7 +157,7 @@ func TestScopedSearchRefusals(t *testing.T) {
 		"no attributes": {bad(func(r *connectorv1.ScopedSearchRequest) { r.Attributes = nil }), connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT},
 		"sd attribute":  {bad(func(r *connectorv1.ScopedSearchRequest) { r.Attributes = []string{"nTSecurityDescriptor"} }), connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED},
 		"pinned elsewhere": {bad(func(r *connectorv1.ScopedSearchRequest) {
-			r.Dc = &connectorv1.DcSelection{PinnedDsaGuid: write.GUIDToWire(g(dsaB))}
+			r.Dc = &connectorv1.DcSelection{PinnedDsaGuid: provider.GUIDToWire(g(dsaB))}
 		}), connectorv1.ErrorCode_ERROR_CODE_UNREACHABLE_DC},
 	} {
 		s := &ssrc{src: &src{dsa: dsaA}, entries: []*ad.Entry{mk(1)}}
@@ -225,7 +224,7 @@ func TestScopedSearchWithoutSearcherIsUnsupported(t *testing.T) {
 }
 
 var _ = guid.GUID{}
-var _ read.Searcher = (*ssrc)(nil)
+var _ provider.Searcher = (*ssrc)(nil)
 
 // T-0694: parent_guid is set on every entry that has a parent, and absent on a naming-context head;
 // the connector asks the search layer to resolve parents.
@@ -243,7 +242,7 @@ func TestScopedSearchSetsParentGUIDExceptNCHead(t *testing.T) {
 	if len(es) != 2 || es[0].GetParentGuid() != nil {
 		t.Fatalf("NC head must carry no parent_guid: %v", es)
 	}
-	want := write.GUIDToWire(g(parGUID))
+	want := provider.GUIDToWire(g(parGUID))
 	if es[1].GetParentGuid().String() != want.String() {
 		t.Fatalf("parent_guid = %v, want %v", es[1].GetParentGuid(), want)
 	}

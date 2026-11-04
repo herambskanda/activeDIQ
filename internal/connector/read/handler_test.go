@@ -3,6 +3,7 @@ package read_test
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"io"
 	"net"
 	"strconv"
@@ -15,7 +16,6 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
@@ -44,7 +44,7 @@ type src struct {
 	dsa      string
 	entry    *ad.Entry
 	readErr  error
-	classify write.Verdict
+	classify provider.Verdict
 	clsErr   error
 	calls    []string
 	parErr   error
@@ -54,13 +54,20 @@ type src struct {
 }
 
 func (s *src) Identity() *connectorv1.DirectoryIdentity { return ident }
+func (s *src) Kind() connectorv1.ProviderKind           { return connectorv1.ProviderKind_PROVIDER_KIND_AD }
+func (s *src) Anchors(context.Context, guid.GUID) (provider.Anchors, error) {
+	return provider.Anchors{}, nil
+}
+func (s *src) PropertyGuard(context.Context) (provider.PropertyGuard, error) {
+	return provider.GuardOrRefuse(nil), nil
+}
 func (s *src) BoundDC(context.Context) (*connectorv1.DcIdentity, error) {
 	s.boundN++
 	d := s.dsa
 	if s.boundN > 1 && s.dcAfter != "" {
 		d = s.dcAfter
 	}
-	return &connectorv1.DcIdentity{DsaGuid: write.GUIDToWire(g(d)), DnsHostname: "dc1"}, nil
+	return &connectorv1.DcIdentity{DsaGuid: provider.GUIDToWire(g(d)), DnsHostname: "dc1"}, nil
 }
 func (s *src) Read(context.Context, guid.GUID, []string, int) (*ad.Entry, error) {
 	s.calls = append(s.calls, "read")
@@ -96,7 +103,7 @@ func (s *src) CanonicalAttr(n string) (string, error) {
 	}
 	return a.String(), nil
 }
-func (s *src) Classify(context.Context, guid.GUID) (write.Verdict, error) {
+func (s *src) Classify(context.Context, guid.GUID, []guid.GUID) (provider.Verdict, error) {
 	s.calls = append(s.calls, "classify")
 	return s.classify, s.clsErr
 }
@@ -106,7 +113,7 @@ func entry(attrs map[string][][]byte) *ad.Entry {
 	return ad.NewEntry("CN=Smith\\, Ann,OU=Ü,DC=lab,DC=test", attrs)
 }
 
-func start(t *testing.T, s read.Source) connectorv1.ConnectorClient {
+func start(t *testing.T, s provider.Provider) connectorv1.ConnectorClient {
 	t.Helper()
 	h, err := read.New(s)
 	if err != nil {
@@ -128,9 +135,9 @@ func start(t *testing.T, s read.Source) connectorv1.ConnectorClient {
 
 func req(pin string, tier0 bool) *connectorv1.ReadRequest {
 	r := &connectorv1.ReadRequest{Connection: &connectorv1.ConnectionRef{ConnectionId: "c1", DirectoryIdentity: ident},
-		Guid: write.GUIDToWire(g(objGUID)), Attributes: []string{"cn"}, IncludeTier0: tier0}
+		Guid: provider.GUIDToWire(g(objGUID)), Attributes: []string{"cn"}, IncludeTier0: tier0}
 	if pin != "" {
-		r.Dc = &connectorv1.DcSelection{PinnedDsaGuid: write.GUIDToWire(g(pin))}
+		r.Dc = &connectorv1.DcSelection{PinnedDsaGuid: provider.GUIDToWire(g(pin))}
 	}
 	return r
 }
@@ -164,7 +171,7 @@ func code(err error) connectorv1.ErrorCode {
 
 func TestPinnedReadIsServedByThePinnedDCWithVerdict(t *testing.T) {
 	s := &src{dsa: dsaA, entry: entry(map[string][][]byte{"cn": {[]byte("Smith, Ann")}}),
-		classify: write.Verdict{Tier0: true, Bases: []write.Basis{connectorv1.Tier0Basis_TIER0_BASIS_C2_PROTECTED_GROUP_MEMBER, connectorv1.Tier0Basis_TIER0_BASIS_C2_PROTECTED_GROUP_MEMBER}}}
+		classify: provider.Verdict{Tier0: true, Bases: []provider.Basis{connectorv1.Tier0Basis_TIER0_BASIS_C2_PROTECTED_GROUP_MEMBER, connectorv1.Tier0Basis_TIER0_BASIS_C2_PROTECTED_GROUP_MEMBER}}}
 	ms, err := collect(t, start(t, s), req(dsaA, true))
 	if err != nil || len(ms) != 2 {
 		t.Fatalf("%v %d", err, len(ms))
@@ -173,10 +180,10 @@ func TestPinnedReadIsServedByThePinnedDCWithVerdict(t *testing.T) {
 	if !h.GetTier0().GetTier0() || len(h.GetTier0().GetBasis()) != 1 {
 		t.Fatalf("verdict %v", h.GetTier0())
 	}
-	if !proto3Eq(h.GetObserved().GetDc().GetDsaGuid(), write.GUIDToWire(g(dsaA))) {
+	if !proto3Eq(h.GetObserved().GetDc().GetDsaGuid(), provider.GUIDToWire(g(dsaA))) {
 		t.Fatal("observation does not name the pinned DC")
 	}
-	if string(h.GetEntry().GetParentGuid().GetValue()) != string(write.GUIDToWire(g(parGUID)).GetValue()) {
+	if string(h.GetEntry().GetParentGuid().GetValue()) != string(provider.GUIDToWire(g(parGUID)).GetValue()) {
 		t.Fatal("parent")
 	}
 	if ms[1].GetCompleted() == nil {
@@ -392,23 +399,72 @@ func TestAttributeRequestedByOIDIsReturned(t *testing.T) {
 	}
 }
 
-func TestADSourceRefusesAProviderOverAnotherSession(t *testing.T) {
-	a, b := &ad.Session{}, &ad.Session{}
-	if _, err := read.NewADSource(a, write.NewADProvider(b, nil, ident, nil)); err == nil {
-		t.Fatal("split sessions accepted")
+// A provider without the facets Read needs builds a handler whose groups answer
+// CAPABILITY_UNSUPPORTED: never a nil dereference, never a stream.
+func TestHandlerWithoutFacetsIsUnsupported(t *testing.T) {
+	for name, p := range map[string]provider.Provider{
+		"core only":    coreOnly{},
+		"reader no DC": noDC{&src{dsa: dsaA}},
+	} {
+		h, err := read.New(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = h.Read(context.Background(), req(dsaA, true), nopSender{})
+		if code(err) != connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED {
+			t.Errorf("%s read: code=%v", name, code(err))
+		}
+		err = h.ScopedSearch(context.Background(), sreq(), nopSearchSender{})
+		if code(err) != connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED {
+			t.Errorf("%s search: code=%v", name, code(err))
+		}
 	}
-	if _, err := read.NewADSource(a, &write.ADProvider{}); err == nil {
-		t.Fatal("provider with test doubles accepted")
-	}
-	if _, err := read.NewADSource(a, write.NewADProvider(a, nil, ident, nil)); err != nil {
-		t.Fatal(err)
-	}
-	// The zero value cannot serve a pinned Read: no bound DC, nothing streamed.
-	h, _ := read.New(&read.ADSource{})
-	if err := h.Read(context.Background(), req(dsaA, true), nopSender{}); err == nil {
-		t.Fatalf("zero source: %v", err)
+	if _, err := read.New(nil); err == nil {
+		t.Error("nil provider accepted")
 	}
 }
+
+// coreOnly is a provider with the core and no facet.
+type coreOnly struct{}
+
+func (coreOnly) Kind() connectorv1.ProviderKind           { return connectorv1.ProviderKind_PROVIDER_KIND_AD }
+func (coreOnly) Identity() *connectorv1.DirectoryIdentity { return ident }
+func (coreOnly) Classify(context.Context, guid.GUID, []guid.GUID) (provider.Verdict, error) {
+	return provider.Verdict{}, nil
+}
+func (coreOnly) Anchors(context.Context, guid.GUID) (provider.Anchors, error) {
+	return provider.Anchors{}, nil
+}
+func (coreOnly) PropertyGuard(context.Context) (provider.PropertyGuard, error) {
+	return provider.GuardOrRefuse(nil), nil
+}
+
+// noDC hides the DCBound facet of a source.
+type noDC struct{ s *src }
+
+func (n noDC) Kind() connectorv1.ProviderKind           { return n.s.Kind() }
+func (n noDC) Identity() *connectorv1.DirectoryIdentity { return n.s.Identity() }
+func (n noDC) Classify(c context.Context, g guid.GUID, d []guid.GUID) (provider.Verdict, error) {
+	return n.s.Classify(c, g, d)
+}
+func (n noDC) Anchors(c context.Context, g guid.GUID) (provider.Anchors, error) {
+	return n.s.Anchors(c, g)
+}
+func (n noDC) PropertyGuard(c context.Context) (provider.PropertyGuard, error) {
+	return n.s.PropertyGuard(c)
+}
+func (n noDC) Read(c context.Context, g guid.GUID, a []string, m int) (*ad.Entry, error) {
+	return n.s.Read(c, g, a, m)
+}
+func (n noDC) Parent(c context.Context, e *ad.Entry) (guid.GUID, bool, error) {
+	return n.s.Parent(c, e)
+}
+func (n noDC) Syntax(a string) (ldapfilter.Syntax, bool) { return n.s.Syntax(a) }
+func (n noDC) CanonicalAttr(a string) (string, error)    { return n.s.CanonicalAttr(a) }
+
+type nopSearchSender struct{}
+
+func (nopSearchSender) Send(*connectorv1.ScopedSearchResponse) error { return errors.New("streamed") }
 
 type nopSender struct{}
 

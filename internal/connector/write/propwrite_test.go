@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	adprov "github.com/skenzeriq/activediq/internal/connector/provider/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider/entra"
 	"strings"
 	"testing"
 
@@ -65,7 +68,7 @@ func TestAC1RegistrationWithoutPropertyWriteFailsTheBuildCheck(t *testing.T) {
 	}
 }
 
-func armed(t *testing.T, guard PropertyGuard, pw func(*connectorv1.WriteChange) (tier0.PropertyWrite, error), run Run) (*rig, *recordedOp) {
+func armed(t *testing.T, guard provider.PropertyGuard, pw func(*connectorv1.WriteChange) (tier0.PropertyWrite, error), run Run) (*rig, *recordedOp) {
 	t.Helper()
 	r := newRig(t, &run)
 	rec := withTestOp(r)
@@ -176,7 +179,7 @@ func TestPropertyGuardFailsClosedOnBadDeclarationOrNoSnapshot(t *testing.T) {
 }
 
 func TestProvidersNeverReturnANilGuard(t *testing.T) {
-	for _, p := range []Provider{&ADProvider{}, &EntraProvider{}} {
+	for _, p := range []provider.Provider{&adprov.ADProvider{}, &entra.EntraProvider{}} {
 		g, err := p.PropertyGuard(context.Background())
 		if err != nil || g == nil {
 			t.Fatalf("%T: %v %v", p, g, err)

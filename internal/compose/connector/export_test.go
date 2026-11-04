@@ -5,9 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
-	"github.com/skenzeriq/activediq/internal/connector/read"
-	"github.com/skenzeriq/activediq/internal/connector/rights"
-	"github.com/skenzeriq/activediq/internal/connector/write"
+	"github.com/skenzeriq/activediq/internal/connector/service"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/dial"
 	"github.com/skenzeriq/activediq/internal/platform/fleet/tunnelclient"
 )
@@ -15,8 +13,8 @@ import (
 // Test seams for the external tests: the real Run with substituted dial-out and AD session.
 type Backend = backend
 
-func NewBackend(v *rights.VerifyHandler, r *read.Handler, w *write.Handler, closeFn func()) *Backend {
-	return &backend{verify: v, read: r, write: w, close: closeFn}
+func NewBackend(svc *service.Service, closeFn func()) *Backend {
+	return &backend{svc: svc, close: closeFn}
 }
 
 func RunWith(ctx context.Context, cfg config.Config,
@@ -31,9 +29,7 @@ func OpenBackend(ctx context.Context, loc Local, log *slog.Logger) (*Backend, er
 	return openBackend(ctx, loc, log)
 }
 
-// Handlers exposes the bound handlers of a backend to external tests.
-func (b *Backend) Handlers() (*rights.VerifyHandler, *read.Handler, *write.Handler) {
-	return b.verify, b.read, b.write
-}
+// Service exposes the bound service of a backend to external tests.
+func (b *Backend) Service() *service.Service { return b.svc }
 
 func (b *Backend) Close() { b.close() }

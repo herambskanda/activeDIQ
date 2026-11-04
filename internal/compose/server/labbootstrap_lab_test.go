@@ -5,6 +5,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"log/slog"
 	"strings"
 	"sync"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/connector/labadmin"
-	"github.com/skenzeriq/activediq/internal/connector/write"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
@@ -154,7 +154,7 @@ func TestLabBootstrapSeedsActiveConnectionAndServesReads(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		head := uuidText(write.GUIDToWire(g).GetValue())
+		head := uuidText(provider.GUIDToWire(g).GetValue())
 		if string(conn.DirectoryIdentity) != head {
 			t.Fatalf("connection identity %s != domain head %s", conn.DirectoryIdentity, head)
 		}
