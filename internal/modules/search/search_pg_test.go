@@ -209,7 +209,7 @@ func Test_scoped_technician_never_learns_of_an_object_in_another_OU(t *testing.T
 			}
 		}
 		// The technician still finds what is in A.
-		if g := group(w.ask(t, tech, "Priya Raman"), reportsql.TypeUser); len(g.Items) != 1 || g.Items[0].Class != reportsql.ClassPrefix || g.Items[0].DN == "" || g.Items[0].Domain != "corp.example.test" {
+		if g := group(w.ask(t, tech, "Priya Raman"), reportsql.TypeUser); len(g.Items) != 1 || g.Items[0].Class != reportsql.ClassPrefix || g.Items[0].DN == "" || g.Items[0].Domain != "" {
 			t.Errorf("visible user: %+v", g)
 		}
 	})
@@ -296,7 +296,7 @@ func Test_ranking_table(t *testing.T) {
 		if !slices.Equal(order, []string{guid(1, 10), guid(1, 11), guid(1, 12)}) {
 			t.Errorf("taylor ames order %v", order)
 		}
-		if st := g.Items[1]; !st.Disabled || g.Items[2].Disabled != false || !g.Items[2].Deleted {
+		if !hasChip(g.Items[1], search.ChipDisabled) || hasChip(g.Items[2], search.ChipDisabled) || !hasChip(g.Items[2], search.ChipDeleted) {
 			t.Errorf("chips: %+v / %+v", g.Items[1], g.Items[2])
 		}
 		// A highlight is where the typed text sits, in code points.
@@ -419,4 +419,13 @@ func Test_counts_limits_and_pages_come_after_trimming(t *testing.T) {
 			}
 		}
 	})
+}
+
+func hasChip(h search.Hit, k search.ChipKind) bool {
+	for _, c := range h.Status {
+		if c.Kind == k {
+			return true
+		}
+	}
+	return false
 }

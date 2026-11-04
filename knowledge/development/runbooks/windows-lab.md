@@ -13,7 +13,7 @@ The lab for everything Samba cannot prove (Windows event logs, GPO/audit policy,
 LDAPS/WS2025 hardening behaviour, ADWS, native components — see `ad-lab.md` §6). Chosen in D-0003
 (option a): **local evaluation VMs on KVM, free**. In the local-KVM mode, a DC (`dc1`) and a member/file server
 (`fs1`) in a throwaway forest; the live lab (§10) is `dc1` on Proxmox VM 119 plus, once a human has built it,
-a child-domain DC `dc2` (§19). Code: `lab/windows/`. Samba stays the default lab (`ad-lab.md`); use this one only
+a child-domain DC `dc2` (§20). Code: `lab/windows/`. Samba stays the default lab (`ad-lab.md`); use this one only
 for tests tagged `windowslab`.
 
 ## 1. Quick start
@@ -22,6 +22,8 @@ Host needs: Linux x86-64 with `/dev/kvm`, ~45 GB free (thin-provisioned qcow2, �
 plus the 5 GB ISO), 8 GB spare RAM, and
 `sudo apt install qemu-kvm libvirt-daemon-system libvirt-clients virtinst ovmf xorriso netcat-openbsd`
 (your user in groups `libvirt` and `kvm`). Apple Silicon cannot run this lab.
+`preflight` refuses below that floor; `WIN_LAB_MIN_FREE_GB` (default 45) overrides it and exists only so the offline unit
+tests (`lab/windows/tests/`) do not depend on the CI host's free disk — never lower it for a real `up`.
 
 ```bash
 make windows-lab-preflight        # tooling, KVM, disk space — no changes
@@ -182,7 +184,7 @@ raise an `action new` for a rollback. Everything that runs *inside* dc1 is done 
 
 **dc2 (child domain) is human-only.** A-0025 covers `dc1` only: no worker may open WinRM, PowerShell remoting or
 any other session to `dc2` (VM, address or name), and the `with-dc1-lock` wrapper is not a licence to. In short,
-every step inside dc2 is done by a human (§19); workers verify the child domain only through dc1 (T-1234). Extending the
+every step inside dc2 is done by a human (§20); workers verify the child domain only through dc1 (T-1234). Extending the
 authorisation to dc2 is a CEO decision, not a ticket step.
 
 **fs1 does not exist.** There is no member server in this lab: only dc1 (VM 119). The `fs1` rows in §1–§2
@@ -350,7 +352,7 @@ attribute on a DC and `gPLink` of the Domain Controllers OU are changed and rest
 C8 (KDS container + a child, CN=System, RID Manager$, Directory Service; the Password Settings Container is unreadable to the
 service account and fails closed), C9 (GPO linked at the DC OU is tier0, an unlinked one is not), C11 (Get-Changes +
 Get-Changes-All ⇒ tier0; Get-Changes alone ⇒ not), C12 (RBCD trustee on a DC). Not coverable on this lab (a single DC in the parent domain,
-no RODC; the child domain exists only after §19 is done): RODC corroboration, cross-domain GPO links, gPLink option/order edge cases, >1500-member ranged groups
+no RODC; the child domain exists only after §20 is done): RODC corroboration, cross-domain GPO links, gPLink option/order edge cases, >1500-member ranged groups
 (Samba covers ranged retrieval); the ad-expert review of `c8Domain`/`c8SystemClasses` is separate (T-0620).
 From a git worktree the credentials live in the main checkout: set `WIN_LAB_ENV` and `WIN_LAB_CA` to its `lab/windows/` files.
 
@@ -414,8 +416,9 @@ go run ./tools/fitness/host evaluate obs-fs1.json
 
 Then add `windows-lab-runs/T-0635-msi-refuses-dc-<date>.md` with both sha256s, both `obs.json`, the
 `msi.log` line holding the DC message, and the evaluate output. `tools/fitness/host` is on `factory/T-0635`
-until that branch merges. Status: **the MSI has never been run on a Windows host.** Workers can now run the dc1 half over WinRM
-(A-0025, under the dc1 lock); the fs1 half waits for fs1 (A-0028).
+until that branch merges. Status: run on dc1 on 2026-10-30 (T-0635): exit 1603, DC message, nothing installed, HOST-DC-REFUSED ok; see
+`windows-lab-runs/T-0635-msi-refuses-dc-20261030.md`. fs1 (the install control) has not been run, so the MSI has
+never installed on a host. Workers reach dc1 over WinRM (A-0025, section 10) under `lab/windows/bin/with-dc1-lock`; fs1 (A-0028) is still to come.
 
 ## 12. Agent identity harness (T-0613, for T-0557)
 
@@ -584,7 +587,7 @@ refresh and overwrote the registry value. `dc1-policy restore` sets the template
 The bind probe must use valid credentials (`svc-activediq`): a dummy password answers 49 at 2/2 too. Run log:
 `windows-lab-runs/T-1265-dc1-signing-20261102.md`. After restoring VM 119 from any snapshot taken before 2026-11-02, run `dc1-policy restore`.
 
-## 19. Child domain (dc2) (T-1233, for T-0786 / T-1234)
+## 20. Child domain (dc2) (T-1233, for T-0786 / T-1234)
 
 Why: T-0786 (GC-routed sIDHistory) needs the global catalog to hold more than one domain's SIDs, so the forest
 needs a child domain. This section is the **human** procedure: a second DC is a second Proxmox VM and A-0025 covers
@@ -633,4 +636,15 @@ needs a child domain. This section is the **human** procedure: a second DC is a 
 (step 1), and tidy dc1 afterwards (`ntdsutil` metadata cleanup of the stale child domain and the DNS delegation) as a
 human; workers do not do that over WinRM.
 
-**Then:** the worker ticket T-1234 verifies through dc1 only (`DomainSIDs` >= 2, the child's partial NC on dc1) and then T-0786 runs.
+
+## 19. Live user-search run and its DC evidence (T-0765)
+
+`lab/windows/bin/with-dc1-lock lab/e2e/live-user-search.sh EVIDENCE_DIR` boots a lab-built server against dc1, mints a console session through the real
+sign-in API, runs `web/e2e/live-user-search.spec.ts` and records dc1's side with `lab/windows/bin/dc1-evidence` (read-only WinRM):
+
+- `dc1-evidence now` prints dc1's own UTC clock (dc1's clock differs from the host's; take windows from it);
+- `dc1-evidence events SINCE` counts Directory Service events 2887, 3039, 3074 since that instant (any is a failure, exit 3; 2889/3040/3041/3075 are recorded only);
+- `dc1-evidence svc` shows svc-activediq's groups and whether it is, through nesting, in Domain Admins, Enterprise Admins, Schema Admins or Administrators (found by SID; exit 3 if so).
+
+Needs `WIN_LAB_ENV` and `WIN_LAB_CA` as absolute paths (the env and CA files are gitignored and live in the main checkout), docker, go, node with the
+Playwright browser, and `pip install pywinrm requests-ntlm`. The script refuses to run outside `with-dc1-lock`. First record: `windows-lab-runs/T-0765-live-boot-20261101.md`.
