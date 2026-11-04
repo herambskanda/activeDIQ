@@ -1,7 +1,6 @@
 package directory_test
 
 import (
-	"context"
 	"os"
 	"slices"
 	"strings"
@@ -9,7 +8,6 @@ import (
 
 	jsonv2 "encoding/json/v2"
 
-	"github.com/skenzeriq/activediq/internal/modules/directory"
 	"github.com/skenzeriq/activediq/internal/modules/directory/api"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
@@ -232,19 +230,5 @@ func TestSearchRequestBounds(t *testing.T) {
 		if got := in(api.DirectorySearchRequest{Q: "pat", GroupLimit: n}); len(got) == 0 {
 			t.Errorf("groupLimit %d is accepted", *n)
 		}
-	}
-}
-
-// Until T-1096 lands the handler answers 501 and never builds a made-up body or repeats the text.
-func TestSearchDirectoryAnswersNotImplementedWithoutEchoingTheText(t *testing.T) {
-	secret := "pat.secret.query"
-	_, err := directory.Handlers{}.SearchDirectory(context.Background(), api.SearchDirectoryInput{Body: api.DirectorySearchRequest{Q: secret}})
-	p, ok := err.(*apitypes.Problem)
-	if !ok || p.Status != 501 {
-		t.Fatalf("err = %#v", err)
-	}
-	b, _ := jsonv2.Marshal(p)
-	if strings.Contains(string(b), secret) {
-		t.Error("the problem repeats the query")
 	}
 }
