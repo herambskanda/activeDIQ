@@ -21,6 +21,8 @@ Host needs: Linux x86-64 with `/dev/kvm`, ~45 GB free (thin-provisioned qcow2, �
 plus the 5 GB ISO), 8 GB spare RAM, and
 `sudo apt install qemu-kvm libvirt-daemon-system libvirt-clients virtinst ovmf xorriso netcat-openbsd`
 (your user in groups `libvirt` and `kvm`). Apple Silicon cannot run this lab.
+`preflight` refuses below that floor; `WIN_LAB_MIN_FREE_GB` (default 45) overrides it and exists only so the offline unit
+tests (`lab/windows/tests/`) do not depend on the CI host's free disk — never lower it for a real `up`.
 
 ```bash
 make windows-lab-preflight        # tooling, KVM, disk space — no changes
@@ -603,3 +605,15 @@ SYSVOL, GUID `{6AC1786C-016F-11D2-945F-00C04fB984F9}`) defined `LDAPServerIntegr
 refresh and overwrote the registry value. `dc1-policy restore` sets the template to `4,2` and `check` fails while the GPO says anything else.
 The bind probe must use valid credentials (`svc-activediq`): a dummy password answers 49 at 2/2 too. Run log:
 `windows-lab-runs/T-1265-dc1-signing-20261102.md`. After restoring VM 119 from any snapshot taken before 2026-11-02, run `dc1-policy restore`.
+
+## 19. Live user-search run and its DC evidence (T-0765)
+
+`lab/windows/bin/with-dc1-lock lab/e2e/live-user-search.sh EVIDENCE_DIR` boots a lab-built server against dc1, mints a console session through the real
+sign-in API, runs `web/e2e/live-user-search.spec.ts` and records dc1's side with `lab/windows/bin/dc1-evidence` (read-only WinRM):
+
+- `dc1-evidence now` prints dc1's own UTC clock (dc1's clock differs from the host's; take windows from it);
+- `dc1-evidence events SINCE` counts Directory Service events 2887, 3039, 3074 since that instant (any is a failure, exit 3; 2889/3040/3041/3075 are recorded only);
+- `dc1-evidence svc` shows svc-activediq's groups and whether it is, through nesting, in Domain Admins, Enterprise Admins, Schema Admins or Administrators (found by SID; exit 3 if so).
+
+Needs `WIN_LAB_ENV` and `WIN_LAB_CA` as absolute paths (the env and CA files are gitignored and live in the main checkout), docker, go, node with the
+Playwright browser, and `pip install pywinrm requests-ntlm`. The script refuses to run outside `with-dc1-lock`. First record: `windows-lab-runs/T-0765-live-boot-20261101.md`.
