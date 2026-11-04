@@ -538,6 +538,187 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   The `tokenGroups` oracle, real LDAP ground truth and Windows behaviour (FSP, primary group via `tokenGroups`) need the lab:
   a lab ticket is filed.
 
+### 3.3a Second-slice fragments (T-1124, spec reports-2-second-slice)
+
+**Result: every report of the second slice is expressible in the AST of §3.2. No node, operator, value
+constructor or `Query` field is added.** What the slice needs is built from three things that already
+exist: derived columns whose fragments aggregate over a compiler-scoped anchor (`COUNT`, `MIN`, `MAX`
+are on the allowlist, and a correlated `SELECT … FROM {rel.x} WHERE …` is the GRP-01 and OU-01
+pattern), `Preset.Where` over a derived column, and `Preset.Hidden`. "No aggregate node" holds
+because the aggregates live inside constant fragments, never in the AST. Three small, named changes
+to the **fragment** layer (not the AST) are needed and are the only ones:
+
+| # | Change | Where | Why |
+| --- | --- | --- | --- |
+| F-1 | New slot `{arg.<id>}`: a value the run resolved from a declared `ParamSpec`, rendered as a bound `$n` with its declared type. Never text in SQL; `NewRegistry` refuses an `{arg.x}` the dataset's definitions do not declare, a slot inside a string literal, and an arg of a kind not in `Days`, `HourMask` | `fragcheck.go`, `reportsql` | logon-hours window and the change period are run inputs that a constant fragment cannot hold otherwise |
+| F-2 | Allowlist additions, each with a test in `fragcheck_test.go`: cast type `bit` (`bit(168)` only), operators `&`, `&&`, `<@` and `@>`, the cast type `text[]`/`smallint[]`. Still refused: `unnest`, `generate_series`, `string_agg`, `get_byte` (T-1033) | `fragcheck.go` | bit and array tests without a set-returning function |
+| F-3 | `ParamSpec.Kind` gains `HourMask` (§3.5) | `report`, `Resolve` | the weekly hour set is built in Go from zone, days and hours, validated, then bound |
+
+Each is in review under §3.3's own rule ("a dataset that needs another function amends the lists in
+`fragcheck.go` with a test"). RP12 and RP13 (below) cover them.
+
+**(a) Scope-only duplicate counts: USR-11 (Users With Duplicate Attributes) and CMP-04.**
+
+- The dataset declares one `FilterAnchor` `peers` over `directory_objects` with the **same kind
+  predicate as the base** and a `Project` of the normalised duplicate columns. The compiler renders
+  `scope(peers)` (§4.3), so an out-of-scope twin does not exist for the fragment. The count is
+  therefore "duplicates the runner may read", which is what spec §5.5 and LF-39 require; the header
+  says "Duplicates are counted within your scope".
+- **The attribute is chosen by preset, not by a parameter.** The closed list is the list of the spec
+  (users: mail, employeeID, department, title, company, telephoneNumber, mobile, description,
+  displayName; computers: dNSHostName, servicePrincipalName). Each has one derived column
+  `dup_<attr>` (an int) and one preset `dup-<attr>` whose `Where` is `dup_<attr> OpGe 2` and whose
+  `Columns` show the value and the count. Presets[0] is `dup-mail` (spec default). The picker the
+  admin sees is the preset list; the attribute name is never typed and never reaches SQL. The library
+  JSON is generated from the closed list once and committed (FR-03).
+- **Fragment shape** (one constant per attribute, in the dataset owner's package; the slot syntax is
+  the one GRP-01 already uses):
+  `CASE WHEN {t}.<attr>_norm IS NULL THEN NULL ELSE (SELECT COUNT(*) FROM {rel.peers} WHERE {rel.peers}.<attr>_norm = {t}.<attr>_norm) END`.
+  The count includes the row itself, so a unique value is 1, which is why the preset says `>= 2`.
+  An absent or empty value is NULL (never a duplicate of every other absent value).
+- **Normalisation is stored, not computed in the fragment:** `<attr>_norm` is a stored generated column
+  on `directory_objects` (`lower(btrim(attributes ->> 'mail'))`, the migration-0068 `sid_text`
+  precedent), indexed `(tenant_id, connection_id, <attr>_norm)` where not null. T-1111 (D11) adds
+  them. A generated column follows the source attribute, so erasure under X11 clears it with no extra
+  step. `Project` is a column list, so a JSON key cannot be used directly.
+- **SPN (CMP-04 second preset).** `servicePrincipalName_norm` is a `text[]` generated column and the
+  fragment tests overlap: `… WHERE {rel.peers}.spn_norm && {t}.spn_norm AND {rel.peers}.object_guid <> {t}.object_guid`
+  (needs F-2). The count is "other in-scope computers sharing at least one SPN". The column the spec
+  calls "the chosen value" is shown as the computer's own SPN list; **which** SPN collides cannot be
+  produced without `unnest`, which T-1033 bans. This is a stated parity gap for the product-manager
+  (ticket filed). Option rejected: a per-SPN edge dataset (one row per computer and SPN), which gives the
+  value but costs a new table with scope columns; revisit if ADMP shows it matters.
+- **Cost.** A correlated count is O(n) per row against an indexed column; RP12 measures the 200,000-user
+  case and fails above the calibrated bound (`[PROPOSED]` 5 s for the first page, row B13).
+
+**(b) Direct-report count and manager filter: USR-12.**
+
+- `direct_report_count` (int, `Count: true`) on `inventory.users`: the GRP-01 pattern.
+  `(SELECT COUNT(*) FROM {rel.mgr_edge} JOIN {rel.reporter} ON {rel.reporter}.object_guid = {rel.mgr_edge}.source_guid WHERE {rel.mgr_edge}.target_guid = {t}.object_guid)`,
+  where `mgr_edge` is a `RelEdge` over `links` with kind `manager` and `reporter` a `FilterAnchor` over
+  users. It counts in-scope reporters only. `UnknownWhen` names `manager_state`
+  (`known`, `unknown_input_missing`), which is Unknown until T-1041 has synced `manager` for the
+  connection (an inputs_read bit), so "All Managers" never shows an empty list that means "not read".
+- **`manager` is a link edge keyed by GUID, not a DN string on the row** (domain keys: never a DN).
+  `directReports` is not synced; the back-link is derived from the forward edge.
+- `manager_guid` (GUID, filterable `OpEq`/`OpIn`) is the `Requires` column of "Manager Based Users"
+  (like GRP-02). It is derived through `mgr_edge` joined to a `FilterAnchor` `mgr` and returns
+  `{rel.mgr}.object_guid`, so a manager outside scope yields NULL and can never be matched or named;
+  `Resolve` already refuses a chosen subject that is out of scope.
+- Presets: "All Managers" is `Where direct_report_count OpGe 1`. RP11 covers both columns (a reporter
+  or manager outside scope changes neither the count nor any cell).
+
+**(c) Logon hours in a zone: USR-07 "Logon Hour Based Report".**
+
+- Storage (T-1111): `logon_hours bit(168) NULL`, bit 0 = Sunday 00:00 UTC, one bit per hour, with a
+  `logon_hours_state` enum (`unrestricted` = attribute absent, `restricted`, `unknown_input_missing`
+  = not read) from an `inputs_read` bit. Bit order inside the 21 bytes is the codec's and is pinned by a
+  Windows-lab case (`[UNVERIFIED]` until then, [attribute](https://learn.microsoft.com/en-us/windows/win32/adschema/a-logonhours)).
+- Input: `RunParams.logon_window = {zone (IANA id, from the embedded tz list), days (subset of 7), start_hour, end_hour}`.
+  `Resolve` calls the pure function `report.HourMask(zone, days, start, end, now) (Mask168, ValidationError)`:
+  it converts each local hour of the window, **for the week containing `now`**, to a UTC hour index, and
+  handles a window that wraps midnight. A zone whose offset at that time is not a whole hour is refused
+  (`zone_not_hour_aligned`) because one local hour then overlaps two stored hours; the picker disables
+  such zones with the reason. The chosen zone, its offset at the run time and the week are written into the
+  header; the mask, not the zone, is what the query binds (so the run hash and reuse are exact).
+- Derived columns (constants; `{arg.hours}` is the bound mask, F-1/F-3):
+  - `permitted_all_in_window` (bool): `CASE WHEN {t}.logon_hours_state = 'unknown_input_missing' THEN NULL WHEN {t}.logon_hours IS NULL THEN true ELSE ({t}.logon_hours & {arg.hours}) = {arg.hours} END`
+  - `permitted_any_in_window` (bool): the same with `<> CAST(0 AS bit(168))` for the restricted branch.
+  - `logon_hours` (168 bits, an `Attr` column) feeds the "Permitted hours" summary; the console composes "Mon–Fri 08:00–18:00" in the viewer's zone from the typed bits, so no text is built in SQL.
+  Both bools have `UnknownWhen: logon_hours_state`.
+- Presets: "Permitted" is `permitted_all_in_window OpEq true`; "Restricted" is `permitted_all_in_window OpEq false`
+  (a user with any denied hour in the window). Default (no parameters, spec §5.1): `logon_hours_state OpEq restricted`.
+  "Any" versus "all" hours is `[UNVERIFIED]` in ME; ship "all" and expose `permitted_any_in_window` for the later toggle.
+- RP13 compares the mask and both columns with an independent Go reference over UTC, a DST zone,
+  a southern-hemisphere zone and a midnight wrap, and pins `zone_not_hour_aligned` for Asia/Kolkata.
+- `security-sensitive` (spec §5.4): trimming is the 2a scope unchanged; no new disclosure beyond the
+  object's own attribute.
+
+**(d) Noise-filtered change aggregation: USR-06, GRP-05, CMP-03, CTC-02, OU-02 over `inventory.object_changes` (D10).**
+
+- **Grain: one row per object**, not per change. Base is `directory_objects` with the fixed predicate
+  `kind IN (…) AND state IN ('live','deleted','purged')`; this dataset and the Deleted presets are the
+  only place lifecycle states `deleted` and `purged` are listed (spec A1; the 2a rule stands everywhere
+  else; RP11 lists the dataset set and fails if another dataset's predicate admits those states). `t` is the
+  `RowAnchor`; a deleted object's scope is its stored last-known ancestry (spec §4.1.8, fail closed).
+- The history table `inventory_object_changes` (T-1109) carries the six scope columns as of the change
+  (ancestry as at that change, last-known ancestry after deletion) so it can be a `FilterAnchor`
+  `chg`. A change is visible to a runner only when **its own recorded ancestry** is in scope; an object
+  that was moved into scope shows only changes recorded in scope. That is fail-closed and the header says
+  "history is shown for the places you can read" (decision logged in §14).
+- Row fields projected: `object_guid`, `class` (enum: `created`, `edited`, `moved`, `renamed`,
+  `membership`, `credential`, `permissions`, `deleted`), `attr_ids smallint[]`, `attr_names text[]`,
+  `origin_at`, `observed_at`, `origin_known bool`, `members_added int`, `members_removed int`.
+  `attr_names` may be text because it is a `FilterAnchor` column (scoped), and it names attributes,
+  never objects or values (spec rule 3).
+- **The noise set is data, versioned with the definition.** `RelInput` `noise_v1` over
+  `inventory_change_noise (attr_id smallint, set_version smallint)` with fixed `Where set_version = 1`.
+  A new set is a new `Rel` `noise_v2` and new columns suffixed `_v2`; the old definition and its
+  columns stay (FR-03, X7). A change is noise iff **every** attribute it touched is in the set:
+  `{rel.chg}.class = 'edited' AND {rel.chg}.attr_ids <@ ARRAY(SELECT attr_id FROM {rel.noise_v1})` (F-2).
+- Derived columns (all constants; `{arg.days}` is the period, F-1; `P` = `{now} - ({arg.days} * CAST('1 day' AS interval))`):
+  `last_change_at_v1` = `MAX(COALESCE(origin_at, observed_at))` over visible non-noise `edited`/`created`/`moved`/`renamed`/`membership`
+  changes since `P`, `last_change_basis` (enum `origin` or `observed`, from `origin_known` of that same
+  row via the `ORDER BY … LIMIT 1` form), `attrs_changed` (the names of the latest such change, `text[]`),
+  `edit_changes_in_period`, `noise_changes_in_period`, `credential_changes_in_period`,
+  `permission_changes_in_period` (ints, `Count: true`), `members_added`, `members_removed` (ints, from
+  `chg` rows of class `membership`). `deleted_observed_at` is `MIN(observed_at)` of the `deleted` row.
+- **Kind switches are `Preset.Where` and `Hidden`, not new machinery.** Modified preset: `Where
+  edit_changes_in_period OpGe 1`. Hidden groups, each `Locked: false` and counted in the header:
+  `noise` (`edit_changes_in_period = 0 AND noise_changes_in_period >= 1`), `credential`
+  (`credential_changes_in_period >= 1 AND edit_changes_in_period = 0`), `permissions` likewise. "Show"
+  starts a new run with the group's ID (existing §14 item 5). **Spec consequence, ticket filed:** a
+  `HiddenGroup` counts rows, so the header reads "n objects with only automatic updates hidden", not
+  "3,412 automatic updates" (a change count). The product-manager picks the wording.
+- The Deleted presets filter `state OpIn (deleted, purged)` and show `deleted_observed_at` as "on or
+  before" (spec §4.1.7). Mode 7b (tombstone read) adds columns, not nodes, if T-1125 permits it.
+- Unknown: `history_start_at` per connection is a `FilterAnchor`-free `RelInput` value; rows before it
+  show the `when_changed` fallback with Basis "whenChanged read from <DC>" (spec §4.1.5) through a
+  separate derived `fallback_changed_at`, so the two bases are never mixed in a cell.
+- RP11 world gains an out-of-scope object with changes, a moved object and a deleted object whose last-known OU
+  is out of scope; RP14 pins the grain, the noise rule (every attribute) and the version isolation.
+
+**(e) Policy rows: SYS-01 over `inventory.policies` (D12).**
+
+- **Grain: one row per policy**: the domain policy of each NC, each `msDS-PasswordSettings`, and, when
+  PSOs could not be read, one row of `kind = pso_unreadable` with a `reason` enum
+  (`permission_denied`, `container_absent`, `not_read`). That row is a real stored fact; the console
+  renders it as the banner of spec §7.1.3 and the report never shows "no fine-grained policies" for an
+  unreadable container. No synthetic row exists for a readable, empty container.
+- Base table `inventory_policy_rows` (T-1114, D12; written by the policy sync, one row per policy with
+  numeric columns only: min length, history, max age, min age, properties, lockout threshold, duration,
+  window, precedence, `nc_guid`, `policy_guid`). Name is projected through the `dom` row anchor.
+- **Scope decision (security-architect to confirm in the T-1114 review).** A policy row exists for a
+  runner only when the **domain head object of its NC is in scope** (`RowJoin` `dom` ON
+  `dom.object_guid = t.nc_head_guid`, a `RowAnchor`). An OU-scoped administrator therefore sees no
+  policy rows, because a domain-wide setting is not owned by an OU. The "Applies to" targets are a
+  `FilterAnchor` over users and groups through the `RelEdge` `pso_applies`: count and list name in-scope
+  targets only, and the column is labelled "in your scope".
+- Deltas (spec E-S2): derived enums `min_length_vs_domain`, `history_vs_domain`, `max_age_vs_domain`,
+  `min_age_vs_domain`, `complexity_vs_domain`, `reversible_vs_domain`, `threshold_vs_domain`,
+  `duration_vs_domain`, `window_vs_domain`, each `stricter`, `same`, `weaker` or `unknown_input_missing`,
+  from a `RelInput` `domrow` (the domain row of the same NC) that supplies the comparison value, with the
+  direction of "stricter" per field written once in the fragment (ad-expert confirms the direction
+  table). A value that was not read, or a `0` that means "never" (max age) or "until unlocked"
+  (duration) is handled through the 2a codec states, never as a number.
+- A PSO row's own name is its own identity (row anchor `dom` makes the row visible); a PSO is **not** a
+  `MaskAnchor` identity here because the row is the PSO. The `policy_source` masking of `inventory.users`
+  (§3.3) is unchanged.
+
+**Fitness for these fragments** (added to §9; job `fitness-reports`, owner reporting-engineer in the
+build ticket, `devops-engineer` wires it):
+
+| ID | Kind | Fails when | Enforces |
+| --- | --- | --- | --- |
+| RP12 | test | `Test_scope_only_duplicates`: for every duplicate column an out-of-scope twin is neither counted nor shown (RP11 world), a unique value is 1, an absent value is NULL, case differences collapse, and the 200,000-row timing bound holds | §3.3a (a); LF-39 |
+| RP13 | test | `Test_hour_mask_and_logon_columns`: `HourMask` equals the independent reference for UTC, a DST zone, a southern zone, a midnight wrap and refuses a half-hour zone; the compiled `permitted_*` columns equal the reference over random `logon_hours`; `unknown_input_missing` yields `u`, never true or false | §3.3a (c); FR-09 |
+| RP14 | test | `Test_object_changes_grain_noise_and_versions`: one row per object; a change touching one non-noise attribute is an edit; adding `noise_v2` leaves every `_v1` column unchanged; deleted and purged objects appear in this dataset only; a change recorded out of scope is not counted | §3.3a (d) |
+| RP15 | test | `Test_policy_rows_scope_and_unreadable`: OU-scoped runner sees no policy rows; targets and counts are in-scope only; an unreadable container yields the `pso_unreadable` row and never a clean empty list; deltas equal the Go reference | §3.3a (e) |
+| RP16 | static | `fragcheck` accepts F-1/F-2 words only as listed (table-driven accept/refuse cases incl. `unnest`, `{arg.x}` undeclared, `{arg}` in a literal); `Query` and `Expr` types in `report` gain no new exported kind (a test pins the sealed-interface implementers and the `Op` list of §3.2) | F-1 to F-3; the "no AST node" result |
+
+RP11 runs for the three affected datasets with the worlds named above. RP16 is what makes "no AST
+node outside §3.2" a check and not a sentence.
+
 ### 3.4 Definitions, presets and the AST a run executes
 
 ```go
@@ -616,7 +797,7 @@ func (q Query) Hash() [32]byte  // canonical JSON → SHA-256; run reuse (§6.1)
 
 ### 3.5 Parameters
 
-`ParamSpec{Name, Kind (Days | GUIDList | Enum), Default, Min, Max, Required}`. The 30-day floor on
+`ParamSpec{Name, Kind (Days | GUIDList | Enum | HourMask), Default, Min, Max, Required}`. `HourMask` (T-1124, §3.3a c) is built only by `report.HourMask` from `RunParams.logon_window` and is bound as a `bit(168)`; the zone and window are validated, never text in SQL. The 30-day floor on
 replicated-logon thresholds (spec §6.4) is `Min: 30` on USR-03's `days` parameter. A domain whose
 `msDS-LogonTimeSyncInterval` is 0 is narrowed out of USR-03 by the run path and named in the header
 (row B5, AC-16).
@@ -1595,6 +1776,7 @@ Every check has a failing fixture.
 | RP9 | test (B4) | `Test_run_read_bound_to_runner_and_scope` (§6.6) | §6.6; FR-07, FR-30 |
 | RP10 | test (B11) | `Test_delivery_link_authorised_by_delivery_row` (§7.2) | FR-24, AC-47 |
 | RP11 | test (B3, B6) | `Test_dataset_reveals_nothing_outside_scope`, run for every registered dataset (§3.3) | LF-39, FR-07 |
+| RP12 to RP16 | test, static (second slice) | defined in §3.3a: scope-only duplicates, hour mask and logon columns, object-change grain and noise versions, policy rows, fragment allowlist and no new AST node | T-1124 |
 
 FF-SP4 (report-AST vectors) and FF-SP10 (output structure) already exist in safe-primitives §8, and
 `fitness-tenancy` covers RLS on the new tables.
@@ -1717,8 +1899,15 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
    `unknown_input_missing` for filtering, and dependent columns name their state in `UnknownWhen`, so
    one stored shape, one digest tag and one API kind say "input missing" (§3.3).
 
+12. **Second-slice fragments need no AST node** (T-1124, §3.3a): aggregation stays inside constant
+   fragments over compiler-scoped anchors; the closed attribute list is a preset list; run inputs reach a
+   fragment only through the new `{arg.<id>}` slot, typed and bound. RP16 pins it.
+13. **Change history is shown for the places the runner can read** (the change row's recorded ancestry is
+   scoped, §3.3a d), and policy rows exist only for a runner who can read the domain head (§3.3a e).
+
 ## Changelog
 
+- 2026-11-04 · T-1124 · §3.3a second-slice fragments (duplicates, direct reports, logon hours in a zone, noise-filtered change aggregation, policy rows), slot `{arg}`, `HourMask`, RP12 to RP16, decisions 12 and 13. No AST change.
 - 2026-11-04 · T-0981 · §8 aligned with TM-D30 and spec reports-2a §8.4–§8.6: owner-only update, delete and resume with `not_owner` (was `owner_only`), run now 404 to every non-owner, resume `confirmedExternal` (R5), SX-1/SX-2 step-up, SX-5 and SX-6 in the fire checks, SX-8 audit fields. Proof: spec AC-51–AC-57 (B11).
 
 - 2026-10-30 · T-0865 · created as the build contract ahead of the module.
