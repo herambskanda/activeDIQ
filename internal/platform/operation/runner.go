@@ -199,6 +199,8 @@ type Result struct {
 	State OperationState
 	Hold  HoldReason
 	Held  bool
+	// Action is the Action that ran (UndoStore: the family's restore Action).
+	Action ActionID
 	// Undoes is the operation an UndoStore run undid.
 	Undoes string
 }
@@ -266,7 +268,7 @@ func (u *run) failed(reason string, err error) error {
 func (u *run) exec(ctx context.Context) (Result, error) {
 	r := u.r
 	if u.d.StepUp && !u.req.FreshStepUp && (!u.persist || canStepUp(u.req.Actor)) {
-		return Result{}, u.denied("step_up_required", ErrDenied)
+		return Result{}, u.denied("step_up_required", ErrStepUpRequired)
 	}
 	steps, err := u.planSteps(ctx)
 	if err != nil {

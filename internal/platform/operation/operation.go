@@ -158,6 +158,8 @@ var (
 	ErrInvalid      = errors.New("operation: invalid action or plan")
 	ErrVerify       = errors.New("operation: verification failed")
 	ErrHeld         = errors.New("operation: held for approval")
+	// ErrConfirmation is wrapped by the refusal of a submit whose confirmations differ from its plan's.
+	ErrConfirmation = errors.New("operation: confirmations differ from the plan")
 	ErrTarget       = errors.New("operation: target kind not supported by this runner")
 	ErrRecord       = errors.New("operation: outcome could not be recorded")
 	// ErrStaleState is what an Action's Apply returns, wrapped, when the target no longer shows the

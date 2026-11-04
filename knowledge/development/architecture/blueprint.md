@@ -722,6 +722,20 @@ type Descriptor struct {
   sealed in `operation_secret` (TM-D7 seal, associated data includes the step key), with its own
   TTL of at most 72 hours, deleted in the step's recording transaction and at every terminal state.
   It never appears in a plan, diff, event, export, inverse input or log.
+- **Store Actions: preview, submit, undo (T-0977, ADR-0004 rule 14, ADR-0005 rule 10).**
+  `Runner.PreviewStore` plans, authorises and routes in a READ ONLY transaction and writes
+  nothing, not even an audit event; a refusal is an answer (`Preview.Blocked`), not an error. A
+  `Plan` refuses by returning `*PlanRefusal{Code}`. `Runner.SubmitStore` is `RunStore` that records
+  the operation (operation, item, step with its outcome) in the apply transaction and persists a
+  kernel or gate hold as `awaiting_approval` (`Result.Held`) instead of failing `ErrHeld`.
+  `Runner.UndoStore` and `PreviewUndo` run the family's `<owner>.<noun>.restore` Action, planned
+  for the principal undoing, and refuse `irreversible`, `already_undone`, `superseded` and
+  `not_finished` (`NotUndoableError`) before anything runs. The undo's operation has `undo_of`
+  set and the original's items go to `undone` in the same transaction. The restore Action owns
+  the version check and the transition checks; the kernel also refuses a later forward operation
+  on the same target. `operation/opapi.Family{Prefix, Base, Runner, Caller}` is the one HTTP
+  helper a module mounts for its undo pair, and `opapi.PreviewOf` maps any preview to the shared
+  `OperationPreview`. Approving and running a persisted held Store operation is not built yet.
 - **Registration.** Modules call `Registrar.Action(a)` (§4.1). Kernel Actions live in
   `internal/platform/<pkg>/actions` and directory Actions in their package's export, handed to the
   operation host by `compose/server` (§2.3). `operation.Catalogue()` is the read-only list of

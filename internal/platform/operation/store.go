@@ -200,9 +200,9 @@ func (u *run) checkConfirmations(steps []StepPlan) error {
 		return nil
 	}
 	if len(need) == 0 {
-		return u.denied("confirmation_unexpected", ErrDenied)
+		return u.denied("confirmation_unexpected", ErrConfirmation)
 	}
-	return u.denied("confirmation_required", ErrDenied)
+	return u.denied("confirmation_required", ErrConfirmation)
 }
 
 // ---- submit ----
@@ -231,7 +231,7 @@ func (r *Runner) SubmitStore(ctx context.Context, req Request) (Result, error) {
 func (r *Runner) finish(ctx context.Context, u *run) (Result, error) {
 	res, err := u.exec(ctx)
 	if err == nil {
-		res.Undoes = u.req.UndoOf
+		res.Undoes, res.Action = u.req.UndoOf, u.d.ID
 		return res, nil
 	}
 	return Result{}, u.recordFailure(ctx, err)
