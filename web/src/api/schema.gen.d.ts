@@ -1892,6 +1892,8 @@ export interface components {
             definitionVersion?: number;
             parameters?: components["schemas"]["ReportRunParameters"];
             presetId?: string;
+            /** @description The runner's IANA time zone, such as Europe/Berlin. PDF and HTML exports of the run show Time cells in it, with the zone abbreviation. Absent means UTC. It does not change the run's rows or digest. */
+            timeZone?: string;
         };
         /** @description A page of the caller's runs, newest first. */
         ReportRunList: {

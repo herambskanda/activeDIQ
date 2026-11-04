@@ -33,7 +33,7 @@ const ddl = `
 CREATE TABLE public.rpt_objects (
   tenant_id uuid NOT NULL, connection_id uuid NOT NULL, object_guid uuid NOT NULL, nc_guid uuid, parent_guid uuid,
   ancestry uuid[] NOT NULL DEFAULT '{}', ancestry_complete boolean NOT NULL DEFAULT true,
-  sam text NOT NULL, enabled boolean, display text NOT NULL DEFAULT '',
+  sam text NOT NULL, enabled boolean, display text NOT NULL DEFAULT '', seen timestamptz NOT NULL DEFAULT '2026-07-01T23:30:00Z',
   PRIMARY KEY (tenant_id, connection_id, object_guid));
 GRANT SELECT ON public.rpt_objects TO activediq_app;
 ALTER TABLE public.rpt_objects ENABLE ROW LEVEL SECURITY;
@@ -176,6 +176,7 @@ func dataset() report.Dataset {
 			{ID: "sam", Label: "Account", Type: report.TypeText, Source: report.Attr{Col: "sam"}, Sortable: true, Default: true},
 			{ID: "enabled", Label: "Enabled", Type: report.TypeBool, Source: report.Attr{Col: "enabled"}, Default: true},
 			{ID: "display", Label: "Display", Type: report.TypeText, Source: report.Attr{Col: "display"}, Default: true},
+			{ID: "seen", Label: "Last seen", Type: report.TypeTime, Source: report.Attr{Col: "seen"}},
 		},
 		Freshness: report.FreshNCWatermark, Tables: []string{"rpt_objects"},
 	}
