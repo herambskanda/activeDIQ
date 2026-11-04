@@ -35,6 +35,9 @@ const (
 	eligible = "((" + uac + " & 512) = 512 AND substring({t}.sid from length({t}.sid) - 3) <> decode('f6010000', 'hex')" +
 		" AND left(lower({t}.sam_account_name), 7) <> 'krbtgt_')"
 
+	// psoOver: a PSO of the account's naming context named more targets than the applies budget (TM-D32), so
+	// the stored edges are not the whole set and no account of the domain can be said to have no PSO.
+	psoOver = "EXISTS (SELECT 1 FROM {rel.psoval} WHERE psoval.connection_id = {t}.connection_id AND psoval.nc_guid = {t}.nc_guid AND psoval.applies_over_budget)"
 	// resInner is one row: status (0 domain policy, 1 PSO, 2 unresolved), the PSO, the effective max
 	// password age and lockout duration in seconds (NULL: not read; 0: forever), and why, the cause
 	// when the status is 2 (NULL otherwise).
@@ -56,9 +59,10 @@ const (
 		") SELECT s.status, s.why, s.pso, CASE s.status WHEN 0 THEN s.dmax WHEN 1 THEN s.pmax END AS maxage," +
 		" CASE s.status WHEN 0 THEN s.dlock WHEN 1 THEN s.plock END AS lockdur FROM (" +
 		"SELECT CASE WHEN dom.psos_read_at IS NULL THEN 2 WHEN " + eligible + " IS NULL THEN 2 WHEN NOT " + eligible + " THEN 0" +
-		" WHEN EXISTS (SELECT 1 FROM best) THEN (CASE WHEN (SELECT precedence FROM best) IS NULL THEN 2 ELSE 1 END) ELSE 0 END AS status," +
+		" WHEN " + psoOver + " THEN 2 WHEN EXISTS (SELECT 1 FROM best) THEN (CASE WHEN (SELECT precedence FROM best) IS NULL THEN 2 ELSE 1 END) ELSE 0 END AS status," +
 		" CASE WHEN dom.nc_guid IS NULL THEN 'domain_policy_not_read' WHEN dom.psos_read_at IS NULL THEN 'pso_set_not_read'" +
 		" WHEN " + eligible + " IS NULL THEN 'account_inputs_not_read'" +
+		" WHEN " + eligible + " AND " + psoOver + " THEN 'pso_applies_over_budget'" +
 		" WHEN " + eligible + " AND EXISTS (SELECT 1 FROM best) AND (SELECT precedence FROM best) IS NULL THEN" +
 		" (CASE WHEN (SELECT stored FROM best) THEN 'pso_precedence_not_read' ELSE 'pso_not_read' END) END AS why," +
 		" (SELECT pso_guid FROM best) AS pso, dom.max_pwd_age_secs AS dmax, dom.lockout_duration_secs AS dlock," +
