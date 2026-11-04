@@ -7,6 +7,7 @@
 # local libvirt. Needs WIN_LAB_DC_ADDR (IP/host), WIN_LAB_TLS_NAME (name in the DC cert), WIN_LAB_CA (root CA PEM),
 # WIN_LAB_ENV (credentials file, mode 0600). Only preflight|status|info|test-connector work; nothing calls virsh.
 # test-connector runs under bin/with-dc1-lock (one dc1 session at a time, T-0839).
+# WIN_LAB_MIN_FREE_GB (default 45) is the free-disk floor preflight enforces in WIN_LAB_STATE; the offline test sets 0.
 # WIN_LAB_DRYRUN=1 prints every external command instead of running it (used by the offline test).
 set -euo pipefail
 
@@ -24,8 +25,8 @@ DISK_GB="${WIN_LAB_DISK_GB:-48}"; RAM_MB="${WIN_LAB_RAM_MB:-4096}"; CPUS="${WIN_
 ISO_URL="${WIN_LAB_ISO_URL:-https://go.microsoft.com/fwlink/?linkid=2293312&clcid=0x409&culture=en-us&country=us}"
 ISO="${WIN_LAB_ISO:-$STATE/ws2025-eval.iso}"
 WAIT="${WIN_LAB_WAIT_SECS:-5400}"
-MIN_FREE_GB="${WIN_LAB_MIN_FREE_GB:-45}"  # the stubbed unit tests pin this so they do not depend on the host disk
 DRY="${WIN_LAB_DRYRUN:-}"
+MIN_FREE_GB="${WIN_LAB_MIN_FREE_GB:-45}"   # real-lab headroom; only the offline unit tests lower it (T-1449)
 MODE="${WIN_LAB_MODE:-local}"
 GO="${WIN_LAB_GO:-go}"
 
@@ -54,7 +55,7 @@ preflight() {
   mkdir -p "$STATE" "$LOGDIR"
   # thin-provisioned qcow2: ~15 GB real use per VM after install; require headroom for 2 VMs + ISO + snapshots
   local free; free=$(df -Pk "$STATE" | awk 'NR==2{print int($4/1048576)}')
-  [ "$free" -ge "$MIN_FREE_GB" ] || [ "$DRY" = 1 ] || die "need >= ${MIN_FREE_GB} GB free in $STATE (have ${free} GB)"
+  [ "$free" -ge "$MIN_FREE_GB" ] || [ "$DRY" = 1 ] || die "need >= $MIN_FREE_GB GB free in $STATE (have ${free} GB)"
 }
 
 # Random per-lab credentials; never printed, never committed.
