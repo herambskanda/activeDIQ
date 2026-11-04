@@ -81,7 +81,7 @@ this slice with a reason and an unblocker. Every ME name below comes from ME's h
 | Users with Cannot Change Password | **Specced** with the security-descriptor truth, not ME's flag | §4.2, batch 4 |
 | Bitlocker Recovery Keys; Bitlocker Enabled / Disabled Computers | **Out.** Recovery values are secrets and never stored (X4, TM-TB15-T3). Enabled/Disabled in ME is derived from keys held in AD ("computers that do not have BitLocker keys" `[ME-HELP]`), which says escrowed, not enabled, and needs the `msFVE` child objects, not in the synced set. Unblocker: 2b decision on `ReadSecret` and an escrow-only sync | §8 |
 | Photo Based, Dial-in Allow/Deny, Users with/without Logon Script, Skype/Lync Enabled/Disabled, Smart Card Enabled, Logon Hour Based | **Specced** | §5.1 to §5.4, batch 6 |
-| Terminal Services (2) | **Out.** The data is the legacy `userParameters` blob; decoding a shared binary blob in a product that sits in a domain needs a hardened, fuzzed decoder and its own spec. The `msTS*` attributes are rarely populated `[UNVERIFIED]`. Unblocker: follow-up spec (§10 F3) | §8 |
+| Terminal Services (2) | **Out.** The data is the legacy `userParameters` blob; decoding a shared binary blob in a product that sits in a domain needs a hardened, fuzzed decoder and its own spec. The `msTS*` attributes are rarely populated `[UNVERIFIED]`. Unblocker: follow-up spec (§10 F3), now written: [reports-terminal-services.md](reports-terminal-services.md) (decodes `userParameters`; `msTS*` rejected) | §8 |
 | Users with Empty / Duplicate Attributes | **Specced**, over registered columns only | §5.5, batch 6 |
 | All Managers, Manager Based Users | **Specced** | §6.1, batch 7 |
 | Users in More than One Group | **Specced** | §6.2, batch 7 |
