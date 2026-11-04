@@ -1,6 +1,7 @@
 package write
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -30,16 +31,34 @@ func TestNewRefusesKindFacetMismatch(t *testing.T) {
 	}
 }
 
-// An op registered for the Entra provider kind is not dispatchable from an AD provider.
+// An op registered only for the Entra provider kind is not dispatchable from an AD provider, with a
+// run that passes every check. The control proves the same request does reach an AD-keyed row.
 func TestOpTableKeyedByProviderKind(t *testing.T) {
-	rr := newRig(t, nil)
+	run := passRun(nil)
+	rr := newRig(t, &run)
 	rec := withTestOp(rr)
+	id := mk(10)
+	plan := func() error {
+		q := planReq(id, ctxFor(id))
+		q.Kind = 1
+		_, err := rr.h.Plan(context.Background(), q)
+		return err
+	}
+	if err := plan(); err != nil || rec.plan != 1 {
+		t.Fatalf("control: AD-keyed row did not run: err=%v plans=%d", err, rec.plan)
+	}
+
 	op := rr.h.ops[adKey(1)]
 	rr.h.ops = map[opKey]WriteOp{{connectorv1.ProviderKind_PROVIDER_KIND_ENTRA, 1}: op}
-	if _, ok := rr.h.ops[opKey{rr.prov.Kind(), 1}]; ok {
-		t.Fatal("Entra row reachable from an AD provider")
+	if err := plan(); connErr(t, err).GetCode() != connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED {
+		t.Fatalf("Plan reached an Entra row from an AD provider: %v", err)
 	}
-	if rec.plan != 0 || rec.apply != 0 {
-		t.Fatal("op ran")
+	a := applyReq(id, ctxFor(id))
+	a.Kind = 1
+	if _, err := rr.h.Apply(context.Background(), a); connErr(t, err).GetCode() != connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED {
+		t.Fatalf("Apply reached an Entra row from an AD provider: %v", err)
+	}
+	if rec.plan != 1 || rec.apply != 0 {
+		t.Fatalf("op ran: plan=%d apply=%d", rec.plan, rec.apply)
 	}
 }
