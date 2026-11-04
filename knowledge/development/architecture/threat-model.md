@@ -2325,6 +2325,10 @@ operation of the document (`x-permission: anonymous`, ADR-0004 rule 5) or a non-
    consecutive failures per authenticator
    ([SP 800-63B-4 §3.2.2](https://pages.nist.gov/800-63-4/sp800-63b.html)). Every successful use
    alerts every `tenant-owner` (§7.2), and the session is marked `break-glass` in audit.
+   **Alert channel (RULING AN8-A1, T-1475):** the alert is an `authn_authority_notices` outbox row in
+   the sign-in's own transaction, drained to `platform/notify`; a down channel never blocks break-glass,
+   the alert is retried and a give-up is audited and shown to owners
+   ([ruling](../decisions/an8-owner-alert-channel-ruling.md)).
 4. **Break-glass reach.** AN-8 is refused on any hostname bound to AN-5 or AN-7 (end-user
    hostnames). It honours the console source-CIDR allow-list (§8.1, ADM-145). A tenant may switch
    AN-8 off entirely while SSO is healthy; switching it back on is a step-up action (§7.4
@@ -3398,6 +3402,8 @@ External, in order of first use:
 94. https://thehacker.recipes/ad/movement/kerberos/asreproast (T-0388; not re-read, `[UNVERIFIED]`)
 
 ## Changelog
+
+- 2026-11-04 · T-1475: §7.6 rule 3 cites RULING AN8-A1 (owner alert rides the `authn_authority_notices` outbox, drained to notify; break-glass succeeds when the channel is down, alert retried, failure audited); new residual R-AN8-3 in the ruling; T-0801 split into four chained builds.
 
 - 2026-11-04 · T-1142. §5.4a and DECISION TM-D32 (directory-data amplification into derived tables): rows TM-TB3-T13 and TM-TB4-T11, the bound rule (declared row and decision-work budgets, finding-not-failure, no displacement of privileged groups, read-time CTE covered), a per-table budget and test table (closure, dirty set, policy CTE T-1073, PSO applies, ancestry rewrite), proof TM-F-AMPLIFY (§15), residual TM-R27. Gaps ticketed as T-1528.
 - 2026-10-30 · T-0938 (MFA-2b security review). §7.2a adds MFA-2b, which refuses single-factor Microsoft, AD FS, SAML 1.x (`am:` and `urn:ietf:rfc:`) and REFEDS SFA values and OASIS case/whitespace variants as SAML evidence; it is built and tested. It also adds MFA-2c: the SAML evidence attribute is an allow-list, because a constant claim such as Entra `tenantid` bypassed MFA-2a/2b in a probe. Bug T-0974 filed.
