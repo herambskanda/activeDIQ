@@ -7,6 +7,7 @@ package operation
 import (
 	"context"
 	"errors"
+	"regexp"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -104,6 +105,10 @@ type StepPlan struct {
 	// Credential marks a step that sets a credential. Reconciliation never re-applies it (rule 6):
 	// a repeat would be refused by password history and record a false failure.
 	Credential bool
+	// Confirmations are what the caller must confirm before this step is submitted, such as external
+	// recipients (ADR-0004 rule 14). They are recomputed by every Plan, so they are not part of the plan
+	// hash or of the persisted plan.
+	Confirmations []Confirmation `json:"-"`
 }
 
 // Outcome is what Apply did, as the Action read it back.
@@ -122,6 +127,28 @@ type Verdict struct {
 	// Tier0 lists the objects an Action's own Verify found tier0, when Reason is tier0_after_write.
 	Tier0 []step.Tier0Finding
 }
+
+// Confirmation is one thing a caller confirms after reading a preview. Kind is a closed vocabulary shared
+// with the API ("external_recipients"); Items are the subjects, such as the external addresses.
+type Confirmation struct {
+	Kind  string
+	Items []string
+}
+
+// PlanRefusal is what an Action's Plan returns when the change is refused by a rule of its own, such as
+// "owner_only" or "external_not_permitted". The code is machine-readable and shown to the admin: in a
+// preview as a blocked entry, and on a submit as the denied attempt's audited reason. Target is the
+// object the rule refused, when there is one.
+type PlanRefusal struct {
+	Code   string
+	Target authority.TargetRef
+}
+
+func (e *PlanRefusal) Error() string { return "operation: plan refused: " + e.Code }
+
+var refusalCode = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+
+func (e *PlanRefusal) valid() bool { return e != nil && refusalCode.MatchString(e.Code) }
 
 // Errors of the pipeline. None carries a secret or a directory response.
 var (

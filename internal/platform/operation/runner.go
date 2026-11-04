@@ -173,6 +173,13 @@ type Request struct {
 	Secrets map[int]secret.Secret
 	// SecretTTL bounds the secrets' life; zero means 24 hours, and the cap is 72 hours.
 	SecretTTL time.Duration
+
+	// Confirmed is what the caller confirmed after reading the preview (SubmitStore, RunStore). A
+	// submit whose confirmations differ from what its own plan needs is refused, so a person never
+	// consents to a different set than the one applied.
+	Confirmed []Confirmation
+	// UndoOf is the operation this one undoes; set only by UndoStore.
+	UndoOf string
 }
 
 // StepResult is the recorded result of one step.
@@ -187,6 +194,13 @@ type Result struct {
 	PlanHash  string
 	NoChange  bool
 	Steps     []StepResult
+	// State and Hold are set by SubmitStore and UndoStore: the persisted operation's state, and why
+	// it waits when Held (awaiting_approval). A held operation has run nothing.
+	State OperationState
+	Hold  HoldReason
+	Held  bool
+	// Undoes is the operation an UndoStore run undid.
+	Undoes string
 }
 
 // Record attempts when the outcome of a failed or denied run is recorded (rule 6).
@@ -232,6 +246,11 @@ type run struct {
 	changes  []audit.Change
 	reason   string
 	outcome  audit.Outcome
+	// persist: SubmitStore. The run writes the operation, its items and steps (rule 3), holds instead of
+	// failing ErrHeld, and holds a non-interactive caller's step-up instead of denying it.
+	persist bool
+	// beforeCommit runs in the apply transaction after the last step (UndoStore marks the original undone).
+	beforeCommit func(ctx context.Context, tx store.Tx) error
 }
 
 func (u *run) denied(reason string, err error) error {
@@ -246,28 +265,22 @@ func (u *run) failed(reason string, err error) error {
 
 func (u *run) exec(ctx context.Context) (Result, error) {
 	r := u.r
-	if u.d.StepUp && !u.req.FreshStepUp {
+	if u.d.StepUp && !u.req.FreshStepUp && (!u.persist || canStepUp(u.req.Actor)) {
 		return Result{}, u.denied("step_up_required", ErrDenied)
 	}
-	// Plan: before the transaction that writes. The plan transaction is READ ONLY.
-	var steps []StepPlan
-	err := r.cfg.DB.WithTenant(ctx, u.req.Tenant, func(ctx context.Context, tx store.Tx) error {
-		if _, err := tx.Exec(ctx, "SET TRANSACTION READ ONLY"); err != nil {
-			return fmt.Errorf("plan transaction: %w", err)
-		}
-		var perr error
-		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: u.pinnedFacts(), Pins: maps.Clone(u.req.Pins)}, u.req.Input)
-		return perr
-	})
+	steps, err := u.planSteps(ctx)
 	if err != nil {
-		return Result{}, u.failed("plan_failed", err)
-	}
-	if err := u.checkPlan(steps); err != nil {
-		return Result{}, u.failed("plan_invalid", err)
+		return Result{}, err
 	}
 	res := Result{Operation: u.req.Operation, PlanHash: u.planHash}
 	if len(steps) == 0 {
 		res.NoChange = true
+		if u.persist {
+			if err := u.persistNoChange(ctx); err != nil {
+				return Result{}, err
+			}
+			res.State = OpNoChange
+		}
 		return res, nil
 	}
 	// Authorise every target at Plan on live facts. A refusal fails the whole run.
@@ -277,20 +290,32 @@ func (u *run) exec(ctx context.Context) (Result, error) {
 			return Result{}, err
 		}
 	}
+	if err := u.checkConfirmations(steps); err != nil {
+		return Result{}, err
+	}
 	// Gate: fails closed.
-	route, err := r.cfg.Gate.Route(ctx, PlanSummary{Action: u.d, Steps: steps, PlanHash: u.planHash, Irreversible: worst(steps) == Irreversible})
+	hold, route, err := u.routeOf(ctx, steps)
 	if err != nil {
 		return Result{}, u.failed("gate_error", errors.Join(errGate, err))
 	}
-	switch route.Kind {
-	case RouteAllow:
-	case RouteHold:
-		// A held operation needs its persisted plan and the approval flow (rule 8); nothing runs.
-		return Result{}, u.failed("held", ErrHeld)
-	case RouteDeny:
+	switch {
+	case route.Kind == RouteDeny:
 		return Result{}, u.denied("gate_denied", ErrDenied)
-	default:
+	case route.Kind != RouteAllow && route.Kind != RouteHold:
 		return Result{}, u.failed("gate_error", errGate)
+	case hold != HoldNone || route.Kind == RouteHold:
+		if !u.persist {
+			// Without a persisted plan there is nothing for an approval to release (rule 8).
+			return Result{}, u.failed("held", ErrHeld)
+		}
+		if hold == HoldNone {
+			hold = HoldGate
+		}
+		if err := u.persistHeld(ctx, steps, hold, route.Ref); err != nil {
+			return Result{}, err
+		}
+		res.State, res.Hold, res.Held = OpAwaitingApproval, hold, true
+		return res, nil
 	}
 	// Apply: one transaction for every step, so the state change and the success events commit together.
 	err = r.cfg.DB.WithTenant(ctx, u.req.Tenant, func(ctx context.Context, tx store.Tx) error {
@@ -303,12 +328,70 @@ func (u *run) exec(ctx context.Context) (Result, error) {
 			}
 			res.Steps = append(res.Steps, sr)
 		}
+		if u.beforeCommit != nil {
+			if err := u.beforeCommit(ctx, tx); err != nil {
+				return err
+			}
+		}
+		if u.persist {
+			return u.persistSucceeded(ctx, tx, steps, res.Steps)
+		}
 		return nil
 	})
 	if err != nil {
 		return Result{}, err
 	}
+	if u.persist {
+		res.State = OpSucceeded
+	}
 	return res, nil
+}
+
+// planSteps is Plan in a READ ONLY transaction plus the contract check. A typed refusal (PlanRefusal)
+// is a denied attempt carrying the Action's code; any other Plan error is a failed plan.
+func (u *run) planSteps(ctx context.Context) ([]StepPlan, error) {
+	var steps []StepPlan
+	err := u.r.cfg.DB.WithTenant(ctx, u.req.Tenant, func(ctx context.Context, tx store.Tx) error {
+		if _, err := tx.Exec(ctx, "SET TRANSACTION READ ONLY"); err != nil {
+			return fmt.Errorf("plan transaction: %w", err)
+		}
+		var perr error
+		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: u.pinnedFacts(), Pins: maps.Clone(u.req.Pins)}, u.req.Input)
+		return perr
+	})
+	if err != nil {
+		var pr *PlanRefusal
+		if errors.As(err, &pr) && pr.valid() {
+			u.failTgt = pr.Target
+			return nil, u.denied(pr.Code, err)
+		}
+		return nil, u.failed("plan_failed", err)
+	}
+	if err := u.checkPlan(steps); err != nil {
+		return nil, u.failed("plan_invalid", err)
+	}
+	return steps, nil
+}
+
+// routeOf applies the kernel holds (persisted path only) and the gate to a checked plan.
+func (u *run) routeOf(ctx context.Context, steps []StepPlan) (HoldReason, Route, error) {
+	hold := HoldNone
+	if u.persist {
+		irrev := false
+		if u.r.cfg.Settings != nil {
+			var err error
+			if irrev, err = u.r.cfg.Settings.ApprovalForIrreversible(ctx); err != nil {
+				return HoldNone, Route{}, err
+			}
+		}
+		hold = kernelHold(holdInput{d: u.d, req: u.req, items: len(steps), worst: worst(steps), irrevSetting: irrev})
+	}
+	route, err := u.r.cfg.Gate.Route(ctx, PlanSummary{Action: u.d, Steps: steps, PlanHash: u.planHash,
+		Irreversible: worst(steps) == Irreversible, HoldReason: hold, Origin: u.req.Origin, Requester: u.req.Actor.Requester})
+	if err != nil {
+		return HoldNone, Route{}, err
+	}
+	return hold, route, nil
 }
 
 func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (StepResult, error) {
@@ -348,6 +431,9 @@ func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (
 	}
 	ev := u.event(audit.Success, "applied", key, sp.Target)
 	ev.Changes = changesOf(sp.Target, sp.Diff)
+	if u.req.UndoOf != "" {
+		ev.Details = detail("undoes", u.req.UndoOf)
+	}
 	if idx > 0 {
 		ev.ID = u.eventID + fmt.Sprintf("-%d", idx)
 	}
