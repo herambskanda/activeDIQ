@@ -1194,6 +1194,16 @@ host_case "setup secret reusable" HOST-SETUP-SECRET-SINGLE-USE 's/"accepted_agai
 host_case "WER LocalDumps configured" HOST-NO-DUMPS 's/"wer_local_dumps": false/"wer_local_dumps": true/'
 host_case "remote DSN without TLS accepted" HOST-REMOTE-DSN-FULL-TLS 's/"mode": "disable", "remote": true, "accepted": false/"mode": "disable", "remote": true, "accepted": true/'
 
+# --- fitness-host p2-oci (T-1462, ADR-0002 P2 OCI half) -------------------------------------------
+# A deliberately broken migration must fail the run at step=migrations and name the profile. Needs Docker;
+# the build of the linux/amd64 image runs first, so this also proves the build step is reached.
+if docker info >/dev/null 2>&1; then
+  must_fail_with "fitness-host p2-oci on a broken migration" 'profile=linux-oci arch=amd64 postgres=16 step=migrations' \
+    go run ./tools/fitness/host p2-oci -repo "$root" -migrations "$root/tools/fitness/host/testdata/p2oci-broken-migrations" -profile linux-oci -arch amd64 -pg 16
+else
+  echo "SKIP: fitness-host p2-oci proof needs Docker (the gate itself, make fitness-profiles, fails without it)"
+fi
+
 # --- release tooling and workflows (T-0261) -----------------------------------------------------
 rt="$tmp/release"; mkdir -p "$rt"
 printf 'Contact: https://example.test/r\nExpires: 2020-01-01T00:00:00Z\n' >"$rt/security.txt"
