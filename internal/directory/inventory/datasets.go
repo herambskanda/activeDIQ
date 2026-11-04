@@ -65,8 +65,9 @@ var enumLabels = map[string]string{
 	"activity_inputs_not_read": "pwdLastSet and lastLogonTimestamp not read", "domain_policy_not_read": "Domain password policy not read",
 	"pso_set_not_read": "Password settings objects not read for this domain", "pso_not_read": "A password settings object that applies was not read",
 	"pso_precedence_not_read": "A password settings object has no precedence", "pso_interval_not_read": "The password settings object's interval was not read",
-	"account_inputs_not_read": "Account attributes that select the policy (userAccountControl, SID, logon name) not read",
-	"workstation":             "Workstation", "server": "Server", "domain_controller": "Domain controller", "read_only_dc": "Read-only domain controller",
+	"account_inputs_not_read":  "Account attributes that select the policy (userAccountControl, SID, logon name) not read",
+	"group_closure_incomplete": "Group membership closure not current or over budget, so a group-linked policy could not be ruled out",
+	"workstation":              "Workstation", "server": "Server", "domain_controller": "Domain controller", "read_only_dc": "Read-only domain controller",
 	"managed_account": "Group managed service account", "unconstrained": "Unconstrained", "constrained": "Constrained",
 	"protocol_transition": "Constrained with protocol transition",
 	"logon":               "Replicated logon", "password_set": "Password last set", "created": "Created",
@@ -156,6 +157,8 @@ func usersDataset() report.Dataset {
 		Rels: []report.Rel{
 			{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid", "link_attr"),
 				Where: report.SQL("state = 'active'")},
+			{ID: "clo", Kind: report.RelEdge, Table: "inventory_group_members", Project: idents("connection_id", "group_guid", "member_guid", "edge_kind")},
+			{ID: "dirty", Kind: report.RelEdge, Table: "inventory_group_closure_dirty", Project: idents("connection_id")},
 			{ID: "applies", Kind: report.RelEdge, Table: "inventory_pso_applies", Project: idents("connection_id", "pso_guid", "target_guid"),
 				Where: report.SQL("state = 'active'")},
 			{ID: "psoval", Kind: report.RelInput, Table: "inventory_psos",
@@ -165,14 +168,14 @@ func usersDataset() report.Dataset {
 		},
 		Columns:   cols,
 		Freshness: report.FreshNCWatermark,
-		Tables:    []string{"directory_objects", "links", "inventory_pso_applies", "inventory_psos", "inventory_domain_policies"},
+		Tables:    []string{"directory_objects", "links", "inventory_group_members", "inventory_group_closure_dirty", "inventory_pso_applies", "inventory_psos", "inventory_domain_policies"},
 	}
 }
 
 // reasonValues are the causes of an unknown policy-dependent state, led by the account's own input.
 func reasonValues(own string) []string {
 	return []string{"none", "uac_not_read", own, "domain_policy_not_read", "pso_set_not_read", "pso_not_read",
-		"pso_precedence_not_read", "pso_interval_not_read", "account_inputs_not_read"}
+		"pso_precedence_not_read", "pso_interval_not_read", "account_inputs_not_read", "group_closure_incomplete"}
 }
 
 func withUnknown(c report.Column, state report.ColumnID) report.Column {

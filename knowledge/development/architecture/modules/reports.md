@@ -401,8 +401,11 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   refuses a time that is set without its bit. The D4 tables hold whole seconds: NULL is "not read", 0 is
   forever (the lockout "until an admin unlocks", max age "never"). `PolicyWriter` (policy.go) takes
   `*filetime.Interval` from the one codec and ignores an observation older than the stored one.
-- **Policy resolution is in SQL**, as a per-row recursive CTE (`resInner`): direct `msDS-PSOAppliesTo` edges
-  win over every group-linked PSO (transitive `member` links plus the primary-group edge); the lowest
+- **Policy resolution is in SQL**, per row (`resInner`, no recursion): direct `msDS-PSOAppliesTo` edges
+  win over every group-linked PSO, whose groups are read from the materialised closure
+  `inventory_group_members` (one indexed lookup by member; direct, primary-group and nested edges). If the
+  closure is behind the links (a row in `inventory_group_closure_dirty`) or a PSO-linked group is
+  `over_budget`, and no direct PSO exists, the policy is unresolved with reason `group_closure_incomplete`; the lowest
   precedence wins, then the lowest GUID compared as the 16 raw wire bytes (not the text); only
   NORMAL_ACCOUNT users that are not krbtgt resolve a PSO. A candidate with no stored PSO row or no
   precedence, or a domain whose PSO set was never read (`psos_read_at` NULL) leaves the policy

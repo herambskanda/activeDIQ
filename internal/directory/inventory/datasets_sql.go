@@ -15,6 +15,10 @@ package inventory
 //   - A candidate PSO that is not stored, has no precedence, or a domain whose PSO set was never read
 //     leaves the policy unresolved: the states that need it are unknown_input_missing, never the
 //     domain policy.
+//   - Group-linked PSOs are read from the materialised closure (inventory_group_members), not walked per
+//     row. If the closure is behind the links (a dirty group) or a PSO-linked group is over budget, and no
+//     direct PSO exists, the policy is unresolved (group_closure_incomplete), never the domain policy.
+//     A nesting cut at 128 levels is not detected here (it is a finding on the groups dataset).
 //   - Locked: lockoutTime non-zero and (duration indefinite, or now <= lockoutTime + duration).
 //     Expired: pwdLastSet + max age < now, strictly. Both ages are whole seconds; 0 is "forever".
 const (
@@ -38,16 +42,21 @@ const (
 	// resInner is one row: status (0 domain policy, 1 PSO, 2 unresolved), the PSO, the effective max
 	// password age and lockout duration in seconds (NULL: not read; 0: forever), and why, the cause
 	// when the status is 2 (NULL otherwise).
-	resInner = "WITH RECURSIVE g(guid) AS (" +
-		"SELECT memb.source_guid FROM {rel.memb} WHERE memb.connection_id = {t}.connection_id AND memb.target_guid = {t}.object_guid" +
-		" UNION " +
-		"SELECT memb.source_guid FROM g JOIN {rel.memb} ON memb.target_guid = g.guid AND memb.connection_id = {t}.connection_id AND memb.link_attr = 'member'" +
+	resInner = "WITH g(guid) AS (" +
+		"SELECT clo.group_guid FROM {rel.clo} WHERE clo.connection_id = {t}.connection_id AND clo.member_guid = {t}.object_guid" +
+		" AND clo.edge_kind IN ('direct', 'primary_group', 'nested')" +
 		"), cand AS (" +
 		"SELECT applies.pso_guid, uuid_send(applies.pso_guid) AS b, 1 AS tier FROM {rel.applies}" +
 		" WHERE applies.connection_id = {t}.connection_id AND applies.target_guid = {t}.object_guid" +
 		" UNION ALL " +
 		"SELECT applies.pso_guid, uuid_send(applies.pso_guid), 2 FROM {rel.applies}" +
 		" WHERE applies.connection_id = {t}.connection_id AND applies.target_guid IN (SELECT guid FROM g)" +
+		"), shaky AS (" +
+		// Uncorrelated, so the planner evaluates the connection set once (a hashed subplan), not once per user.
+		"SELECT {t}.connection_id IN (SELECT dirty.connection_id FROM {rel.dirty}" +
+		" UNION ALL SELECT applies.connection_id FROM {rel.applies} JOIN {rel.clo} ON clo.connection_id = applies.connection_id" +
+		" AND clo.group_guid = applies.target_guid AND clo.member_guid = applies.target_guid AND clo.edge_kind = 'over_budget')" +
+		" AS unsure" +
 		"), best AS (" +
 		"SELECT cand.pso_guid, psoval.precedence, psoval.pso_guid IS NOT NULL AS stored, psoval.max_pwd_age_secs AS maxage, psoval.lockout_duration_secs AS lockdur" +
 		" FROM cand LEFT JOIN {rel.psoval} ON psoval.connection_id = {t}.connection_id AND psoval.pso_guid = cand.pso_guid" +
@@ -56,9 +65,11 @@ const (
 		") SELECT s.status, s.why, s.pso, CASE s.status WHEN 0 THEN s.dmax WHEN 1 THEN s.pmax END AS maxage," +
 		" CASE s.status WHEN 0 THEN s.dlock WHEN 1 THEN s.plock END AS lockdur FROM (" +
 		"SELECT CASE WHEN dom.psos_read_at IS NULL THEN 2 WHEN " + eligible + " IS NULL THEN 2 WHEN NOT " + eligible + " THEN 0" +
+		" WHEN (SELECT unsure FROM shaky) AND NOT EXISTS (SELECT 1 FROM cand WHERE tier = 1) THEN 2" +
 		" WHEN EXISTS (SELECT 1 FROM best) THEN (CASE WHEN (SELECT precedence FROM best) IS NULL THEN 2 ELSE 1 END) ELSE 0 END AS status," +
 		" CASE WHEN dom.nc_guid IS NULL THEN 'domain_policy_not_read' WHEN dom.psos_read_at IS NULL THEN 'pso_set_not_read'" +
 		" WHEN " + eligible + " IS NULL THEN 'account_inputs_not_read'" +
+		" WHEN " + eligible + " AND (SELECT unsure FROM shaky) AND NOT EXISTS (SELECT 1 FROM cand WHERE tier = 1) THEN 'group_closure_incomplete'" +
 		" WHEN " + eligible + " AND EXISTS (SELECT 1 FROM best) AND (SELECT precedence FROM best) IS NULL THEN" +
 		" (CASE WHEN (SELECT stored FROM best) THEN 'pso_precedence_not_read' ELSE 'pso_not_read' END) END AS why," +
 		" (SELECT pso_guid FROM best) AS pso, dom.max_pwd_age_secs AS dmax, dom.lockout_duration_secs AS dlock," +
