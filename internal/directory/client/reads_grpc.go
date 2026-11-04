@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	"google.golang.org/grpc"
+
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -81,7 +83,30 @@ func (t GRPCPerDCTransport) ReadPerDC(ctx context.Context, req *connectorv1.Read
 	return cc.ReadPerDC(ctx, req)
 }
 
-// ConnectorClient is the generated connector client as seen by read-side consumers (sync). Naming it
-// here keeps the generated type confined to this package (ADR-0005 rule 2, O2): writes still go
-// only through Write, which needs a step.Step and a step.Clearance.
-type ConnectorClient = connectorv1.ConnectorClient
+// ReadClient is the two read RPCs of the generated connector client that sync uses. It is a narrow
+// interface, not an alias: a holder cannot reach Plan or Apply, so connector writes stay reachable only
+// through Write, which needs a step.Step and a step.Clearance (ADR-0005 rule 2, O2).
+type ReadClient interface {
+	Describe(ctx context.Context, in *connectorv1.DescribeRequest, opts ...grpc.CallOption) (*connectorv1.DescribeResponse, error)
+	ScopedSearch(ctx context.Context, in *connectorv1.ScopedSearchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ScopedSearchResponse], error)
+}
+
+// ReadSource resolves a connection to its read-only connector handle.
+type ReadSource struct{ src ConnectorSource }
+
+// NewReadSource narrows src to the read RPCs of ReadClient.
+func NewReadSource(src ConnectorSource) (ReadSource, error) {
+	if src == nil {
+		return ReadSource{}, errors.New("client: read source needs a connector source")
+	}
+	return ReadSource{src: src}, nil
+}
+
+// Connector returns the read-only handle of the connection's connector.
+func (r ReadSource) Connector(ctx context.Context, connectionID string) (ReadClient, error) {
+	cc, err := r.src.Connector(ctx, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	return cc, nil
+}

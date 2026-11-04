@@ -22,7 +22,7 @@ type readJob struct {
 	tid      tenant.ID
 	conn     connection.ID
 	ref      *connectorv1.ConnectionRef
-	cc       client.ConnectorClient
+	cc       client.ReadClient
 	key      Key
 	lease    jobs.Lease
 	nc       inventory.GUID
