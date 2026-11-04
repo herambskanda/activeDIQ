@@ -111,6 +111,7 @@ func baseColumns() []report.Column {
 		attr("primary_group_id", "Primary group ID", report.TypeInt, "primary_group_id", opsInt, false),
 		attr("user_account_control", "userAccountControl", report.TypeInt, "user_account_control", opsInt, false),
 		attr("observed_at", "Observed at", report.TypeTime, "observed_at", opsTime, false),
+		derived("ou_path", "OU path", report.TypeText, report.SQL(ouPathSQL), opsText),
 		derived("primary_group", "Primary group", report.TypeText, report.SQL(primaryGroupSQL), opsText),
 		derived("in_other_groups", "Member of a group other than its primary group", report.TypeBool, report.SQL(inOtherGroupsSQL), opsBool),
 		uacFlag("password_never_expires", "Password never expires (flag)", report.SQL("("+uac+" & 65536) <> 0")),
@@ -142,6 +143,9 @@ func usersDataset() report.Dataset {
 		withUnknown(derived("days_since_logon", "Days since last logon (replicated)", report.TypeInt, report.SQL(daysSinceLogonSQL), opsInt), "logon_recorded"),
 		withUnknown(derived("days_to_account_expiry", "Days to account expiry (negative: since)", report.TypeInt, report.SQL(daysToExpirySQL), opsInt), "account_expired"),
 		derived("logon_sync_interval_days", "Domain logon time sync interval (days)", report.TypeInt, report.SQL(logonSyncSQL), opsInt),
+		derived("manager_guid", "Manager (object GUID)", report.TypeGUID, report.SQL(managerGUIDSQL), opsGUID),
+		derived("manager", "Manager", report.TypeText, report.SQL(managerNameSQL), opsText),
+		derived("has_manager", "Manager is set", report.TypeBool, report.SQL(hasManagerUserSQL), opsBool),
 		derived("policy_source", "Policy source", report.TypeText, report.SQL(policySourceSQL), opsText),
 		derived("probable_service_account", "Probable service account", report.TypeBool, report.SQL(probableSvcSQL), opsBool),
 		state("probable_service_account_reason", "Service account reason", report.SQL(probableReasonSQL), "spn_set", "none"),
@@ -152,7 +156,11 @@ func usersDataset() report.Dataset {
 		RowKey: report.SQL("{t}.object_guid"),
 		Anchors: []report.Anchor{rowAnchorT(), {ID: "pso", Table: "directory_objects", Mode: report.MaskAnchor,
 			Project: idents("object_guid", "connection_id"), Identity: idents("rdn"),
-			Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}, pgroupAnchor()},
+			Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}, pgroupAnchor(), ancAnchor(),
+			// The manager: the GUID is read whatever the scope, the name is masked outside it (T-1477).
+			{ID: "mgr", Table: "directory_objects", Mode: report.MaskAnchor, Project: idents("connection_id", "object_guid", "dn_key", "state"),
+				Identity:   idents("display_name", "rdn"),
+				Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}},
 		Rels: []report.Rel{
 			{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid", "link_attr"),
 				Where: report.SQL("state = 'active'")},
@@ -187,6 +195,7 @@ func computersDataset() report.Dataset {
 		state("computer_type", "Type", report.SQL(computerType), "workstation", "server", "domain_controller", "read_only_dc", "managed_account", report.UnknownInputMissing),
 		state("delegation", "Delegation", report.SQL(delegationSQL), "none", "unconstrained", "constrained", "protocol_transition", report.UnknownInputMissing),
 		withUnknown(derived("days_since_activity", "Days since last activity", report.TypeInt, report.SQL(daysSinceActivitySQL), opsInt), "activity_source"),
+		attr("cluster_object", "Failover cluster object (by servicePrincipalName)", report.TypeBool, "cluster_spn", opsBool, false),
 		jsonText("dns_host_name", "DNS host name", "dNSHostName"),
 		jsonText("operating_system", "Operating system", "operatingSystem"),
 		jsonText("operating_system_version", "Operating system version", "operatingSystemVersion"),
@@ -203,13 +212,19 @@ func computersDataset() report.Dataset {
 		ID:      DatasetComputers,
 		Base:    report.Relation{Table: "directory_objects", Where: report.SQL("{t}.kind IN ('computer', 'gmsa') AND {t}.state = 'live'")},
 		RowKey:  report.SQL("{t}.object_guid"),
-		Anchors: []report.Anchor{rowAnchorT(), pgroupAnchor()},
+		Anchors: []report.Anchor{rowAnchorT(), pgroupAnchor(), ancAnchor()},
 		Rels: []report.Rel{{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid", "link_attr"),
 			Where: report.SQL("state = 'active'")}},
 		Columns:   cols,
 		Freshness: report.FreshNCWatermark,
 		Tables:    []string{"directory_objects", "links"},
 	}
+}
+
+// ancAnchor reads the names of the OUs and containers above a row for ou_path, masked outside the scope.
+func ancAnchor() report.Anchor {
+	return report.Anchor{ID: "anc", Table: "directory_objects", Mode: report.MaskAnchor, Project: idents("connection_id", "object_guid", "parent_guid", "kind"), Identity: idents("rdn"),
+		Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid", Ancestry: "ancestry", Complete: "ancestry_complete"}
 }
 
 // pgroupAnchor reads the primary group's name, masked when the group is outside the scope.
@@ -231,7 +246,7 @@ func principalsDataset() report.Dataset {
 		ID:      DatasetPrincipals,
 		Base:    report.Relation{Table: "directory_objects", Where: report.SQL("{t}.kind IN ('user', 'inetorgperson', 'computer', 'gmsa') AND {t}.state = 'live'")},
 		RowKey:  report.SQL("{t}.object_guid"),
-		Anchors: []report.Anchor{rowAnchorT(), pgroupAnchor()},
+		Anchors: []report.Anchor{rowAnchorT(), pgroupAnchor(), ancAnchor()},
 		Rels: []report.Rel{{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid", "link_attr"),
 			Where: report.SQL("state = 'active'")}},
 		Columns:   cols,
