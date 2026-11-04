@@ -110,8 +110,7 @@ func TestStaleFreshnessNamesCauseAndConnections(t *testing.T) {
 }
 
 // T-1074 AC-1: a run that hid probable service accounts returns their count; a group the report cannot
-// show is marked locked; a run that hid nothing returns an empty list. (Showing a group needs showHidden
-// in the request schema, which the contract does not carry yet.)
+// show is marked locked; a run that hid nothing returns an empty list. (Showing a group is TestShowHiddenIncludesGroup.)
 func TestRunReturnsHiddenGroupCounts(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := apiSetup(t, s)

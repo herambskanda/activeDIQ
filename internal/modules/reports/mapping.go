@@ -55,6 +55,7 @@ func (Codec) Decode(raw jsontext.Value, def report.Definition) (report.RunParams
 	for _, c := range p.Columns {
 		out.Columns = append(out.Columns, report.ColumnID(c))
 	}
+	out.ShowHidden = append(out.ShowHidden, p.ShowHidden...)
 	for i, f := range p.Filters {
 		e, err := expr(f, fmt.Sprintf("filters[%d]", i), 0)
 		if err != nil {
