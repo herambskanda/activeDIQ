@@ -496,6 +496,53 @@ import "github.com/skenzeriq/activediq/internal/connector/ad"
 var _ = ad.MintSecretReadGrant
 GO
 must_pass "fitness-safeprim: authz may mint a SecretReadGrant" safeprim -no-analyzers
+# P3 static half (ADR-0002 P3 bullets 2 and 3, T-1464): the same fixtures fail through `-p3` outside
+# internal/connector and pass inside it.
+p3lib() { # <rule> <import path>
+  fresh_sp_tree; sp_put internal/modules/users/u.go <<GO
+package users
+
+import _ "$2"
+GO
+  must_fail_with "P3 static: $2 imported outside the connector" "internal/modules/users/u.go:3: FF-SP1 \\[$1\\]" safeprim -p3
+  fresh_sp_tree; sp_put internal/connector/ad/a.go <<GO
+package ad
+
+import _ "$2"
+GO
+  must_pass "P3 static: $2 inside the connector" safeprim -p3
+}
+p3lib ldap-library github.com/go-ldap/ldap/v3
+p3lib kerberos-library github.com/go-krb5/krb5/client
+p3lib kerberos-library github.com/jcmturner/gokrb5/v8/client
+p3lib graph-library github.com/microsoftgraph/msgraph-sdk-go
+p3lib graph-library github.com/Azure/azure-sdk-for-go/sdk/azidentity
+p3cred() { # <dir of the offending file> <body>
+  fresh_sp_tree
+  sp_put internal/connector/credential/credential.go <<'GO'
+package credential
+
+type Keytab struct{ b []byte }
+
+type Source interface{ Describe() string }
+GO
+  sp_put "$1/c.go" <<GO
+package c
+
+import "github.com/skenzeriq/activediq/internal/connector/credential"
+
+$2
+GO
+}
+p3cred internal/modules/users 'type S struct{ k credential.Keytab }'
+must_fail_with "P3 static: a directory-credential type held as a field outside the connector" 'internal/modules/users/c.go:[0-9]+: FF-SP2 \[directory-credential-type\]' safeprim -p3
+p3cred internal/compose/server 'func f(s credential.Source) { s.Unseal() }'
+must_fail_with "P3 static: an unseal call in the server composition root" 'internal/compose/server/c.go:[0-9]+: FF-SP2 \[directory-credential-unseal\]' safeprim -p3
+p3cred internal/connector/ad 'type S struct{ k credential.Keytab }
+func f(s credential.Source) { s.Unseal() }'
+must_pass "P3 static: the same credential use inside the connector" safeprim -p3
+p3cred internal/compose/server 'func f(s credential.Source) credential.Source { return s }'
+must_pass "P3 static: the server root handing the source over as a value" safeprim -p3
 fresh_sp_tree
 sp_put internal/connector/ldap/c.go <<'GO'
 package ldap

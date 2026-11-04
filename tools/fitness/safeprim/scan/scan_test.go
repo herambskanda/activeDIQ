@@ -963,3 +963,121 @@ func TestLabBuildsDeclaredInManifest(t *testing.T) {
 		}
 	}
 }
+
+// T-1464, ADR-0002 P3 (static half): the directory, Kerberos and Graph libraries and the directory
+// credentials stay under internal/connector. Each fixture fails outside it and passes inside it.
+func TestP3StaticHalf(t *testing.T) {
+	libs := []struct{ name, rule, imp string }{
+		{"go-ldap", "ldap-library", "github.com/go-ldap/ldap/v3"},
+		{"BER codec", "ldap-library", "github.com/go-asn1-ber/asn1-ber"},
+		{"go-krb5", "kerberos-library", "github.com/go-krb5/krb5/client"},
+		{"gokrb5", "kerberos-library", "github.com/jcmturner/gokrb5/v8/client"},
+		{"GSSAPI binding", "kerberos-library", "github.com/openshift/gssapi"},
+		{"NTLM", "kerberos-library", "github.com/Azure/go-ntlmssp"},
+		{"Graph SDK", "graph-library", "github.com/microsoftgraph/msgraph-sdk-go"},
+		{"Kiota", "graph-library", "github.com/microsoft/kiota-abstractions-go"},
+		{"MSAL", "graph-library", "github.com/AzureAD/microsoft-authentication-library-for-go/apps/confidential"},
+		{"azidentity", "graph-library", "github.com/Azure/azure-sdk-for-go/sdk/azidentity"},
+		{"oauth2 Microsoft endpoint", "graph-library", "golang.org/x/oauth2/microsoft"},
+	}
+	for _, l := range libs {
+		src := gofile("\t_ \""+l.imp+"\"\n", "")
+		want(t, l.name+" outside the connector", map[string]string{"internal/modules/users/u.go": src}, "FF-SP1", l.rule, "internal/modules/users/u.go")
+		want(t, l.name+" in a test outside the connector", map[string]string{"internal/modules/users/u_test.go": src}, "FF-SP1", l.rule, "internal/modules/users/u_test.go")
+		want(t, l.name+" in the server composition root", map[string]string{"internal/compose/server/s.go": src}, "FF-SP1", l.rule, "internal/compose/server/s.go")
+		want(t, l.name+" inside the connector", map[string]string{"internal/connector/ad/a.go": src, "internal/connector/graph/g.go": src}, "", "", "")
+	}
+	// generic oauth2 (OIDC sign-in) is not a directory client
+	want(t, "generic oauth2 outside the connector", map[string]string{"internal/platform/authn/sso/oidc/o.go": gofile("\t_ \"golang.org/x/oauth2\"\n", "")}, "", "", "")
+
+	// The library lists are declared once, in policy, and the rules read them.
+	for _, r := range importRules {
+		switch r.Rule {
+		case "ldap-library":
+			mustEqual(t, r.Prefixes, policy.LDAPLibraries)
+		case "kerberos-library":
+			mustEqual(t, r.Prefixes, policy.KerberosLibraries)
+		case "graph-library":
+			mustEqual(t, r.Prefixes, policy.GraphLibraries)
+		}
+	}
+
+	// Credential packages: a feature package, a lib and the credential types.
+	const cred = "github.com/skenzeriq/activediq/internal/connector/credential"
+	const sealed = cred + "/sealed"
+	const local = cred + "/local"
+	port := map[string]string{
+		"internal/connector/credential/credential.go": "package credential\n\ntype Keytab struct{ b []byte }\n\ntype EntraCertificate struct{ k []byte }\n\ntype Source interface{ Describe() string }\n\nfunc unexported() {}\n",
+		"internal/connector/credential/sealed/s.go":   "package sealed\n\ntype Store struct{}\n\nfunc New() *Store { return &Store{} }\n\nfunc (*Store) Describe() string { return \"\" }\n",
+	}
+	with := func(extra map[string]string) map[string]string {
+		m := map[string]string{}
+		for k, v := range port {
+			m[k] = v
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	typeFx := map[string]string{
+		"holds as a field":     "type S struct{ k credential.Keytab }",
+		"holds as a parameter": "func f(k credential.EntraCertificate) {}",
+		"composite literal":    "var _ = credential.Keytab{}",
+		"pointer in a map":     "var m map[string]*credential.Keytab",
+		"type alias":           "type K = credential.Keytab",
+	}
+	for name, body := range typeFx {
+		src := gofile("\t\""+cred+"\"\n", body)
+		want(t, "credential type "+name, with(map[string]string{"internal/modules/users/u.go": src}), "FF-SP2", "directory-credential-type", "internal/modules/users/u.go")
+		want(t, "credential type "+name+" in a test", with(map[string]string{"internal/platform/api/a_test.go": src}), "FF-SP2", "directory-credential-type", "internal/platform/api/a_test.go")
+		want(t, "credential type "+name+" in the server composition root", with(map[string]string{"internal/compose/server/s.go": src}), "FF-SP2", "directory-credential-type", "internal/compose/server/s.go")
+		want(t, "credential type "+name+" inside the connector", with(map[string]string{"internal/connector/ad/a.go": src}), "", "", "")
+	}
+	want(t, "credential type through an alias", with(map[string]string{"internal/modules/users/u.go": gofile("\tcr \""+cred+"\"\n", "var _ cr.Keytab")}), "FF-SP2", "directory-credential-type", "internal/modules/users/u.go")
+	want(t, "the passable Source interface outside the connector", with(map[string]string{"internal/compose/server/s.go": gofile("\t\""+cred+"\"\n", "var _ credential.Source")}), "", "", "")
+	want(t, "an unexported name is not a credential type", with(map[string]string{"internal/modules/users/u.go": gofile("\t\""+cred+"\"\n", "type Keytab struct{}\nvar _ Keytab")}), "", "", "")
+
+	unseal := map[string]string{
+		"method":        "func f(s credential.Source) { s.Unseal() }",
+		"named variant": "func f(s credential.Source) { s.UnsealCredential(1) }",
+		"lower case":    "func f(s credential.Source) { s.unsealKey() }",
+		"package func":  "func f() { credential.Unseal() }",
+	}
+	for name, body := range unseal {
+		src := gofile("\t\""+cred+"\"\n", body)
+		want(t, "unseal "+name+" outside the connector", with(map[string]string{"internal/modules/users/u.go": src}), "FF-SP2", "directory-credential-unseal", "internal/modules/users/u.go")
+		want(t, "unseal "+name+" in the server composition root", with(map[string]string{"internal/compose/server/s.go": src}), "FF-SP2", "directory-credential-unseal", "internal/compose/server/s.go")
+		want(t, "unseal "+name+" inside the connector", with(map[string]string{"internal/connector/ad/a.go": src}), "", "", "")
+	}
+	want(t, "an Unseal name in a file that imports no credential package", map[string]string{"internal/platform/keys/k.go": gofile("", "type K struct{}\nfunc (K) Unseal() {}\nfunc f(k K) { k.Unseal() }")}, "", "", "")
+
+	// compose/server hands the sealed source over as a value: it builds and passes it, never unseals it.
+	handOver := gofile("\t\""+sealed+"\"\n\t\""+cred+"\"\n", "func wire() credential.Source { return sealed.New() }")
+	want(t, "server root builds and hands over the sealed source", with(map[string]string{"internal/compose/server/c.go": handOver}), "", "", "")
+	want(t, "sealed source imported by a feature module", with(map[string]string{"internal/modules/users/u.go": gofile("\t_ \""+sealed+"\"\n", "")}), "FF-SP1", "credential-sealed-import", "internal/modules/users/u.go")
+	want(t, "sealed source imported by the remote connector root", with(map[string]string{"internal/compose/connector/c.go": gofile("\t_ \""+sealed+"\"\n", "")}), "FF-SP1", "credential-sealed-import", "internal/compose/connector/c.go")
+	want(t, "local source imported by the remote connector root", with(map[string]string{"internal/compose/connector/c.go": gofile("\t_ \""+local+"\"\n", "")}), "", "", "")
+	want(t, "local source imported by a feature module", with(map[string]string{"internal/modules/users/u.go": gofile("\t_ \""+local+"\"\n", "")}), "FF-SP1", "credential-local-import", "internal/modules/users/u.go")
+
+	// tier L (tools, lab) does not ship and is exempt, as for every other FF-SP rule
+	want(t, "credential use in tier L", with(map[string]string{"lab/seed/s.go": gofile("\t\""+cred+"\"\n", "var _ credential.Keytab")}), "", "", "")
+
+	// -p3 keeps exactly the rules above and drops the rest of FF-SP1 and FF-SP2.
+	got := P3Rules()
+	for _, r := range []string{"ldap-library", "kerberos-library", "graph-library", "credential-sealed-import", "credential-local-import", "directory-credential-type", "directory-credential-unseal"} {
+		if !contains(got, r) {
+			t.Errorf("P3Rules misses %s: %v", r, got)
+		}
+	}
+	if contains(got, "sql-driver") {
+		t.Errorf("P3Rules carries a non-P3 rule: %v", got)
+	}
+}
+
+func mustEqual(t *testing.T, a, b []string) {
+	t.Helper()
+	if !reflect.DeepEqual(a, b) {
+		t.Errorf("the rule does not read the policy list:\n rule   %v\n policy %v", a, b)
+	}
+}

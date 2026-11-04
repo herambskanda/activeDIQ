@@ -75,6 +75,11 @@ type Activation struct {
 	Subject string   `json:"subject"` // what the check guards, for the printed table
 	Paths   []string `json:"paths"`   // any existing path (a glob; "dir/*" matches a sub-directory) activates the check
 	Command []string `json:"command"` // the implemented check, run from the repository root; empty = not implemented
+	// Static is the half of the check that has landed while Command (the whole check) has not. It runs
+	// from the repository root as soon as the row's subject exists, must pass, and does not end a
+	// deferral: only Command does. P3 uses it for the import and unseal fences (ADR-0002 P3 bullets 2
+	// and 3) while the transport conformance suite (bullet 1) is deferred.
+	Static []string `json:"static,omitempty"`
 	// Deferral is a time-boxed, ADR-approved gap between the subject landing and its check (ADR-0002
 	// erratum E-3). It is valid only while the row has no command, the ticket is well formed, the
 	// expiry has not passed and the ADR's "Activation deferrals" table lists the same check, ticket

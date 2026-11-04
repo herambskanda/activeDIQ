@@ -174,7 +174,40 @@ var TestSupport = []string{
 	"internal/testlab",                // lab environment discovery (.lab.env, LDAPS dial to the lab DC); imported by *_test.go and storetest only (T-0800)
 	"internal/testlab/harnessdocker",  // docker run/rm/reap of harness Postgres containers, fixed argv (T-0377, T-0800)
 	"internal/connector/labadmin",     // lab-only LDAP admin that builds hostile DNs by hand in lab tests (T-0800)
+	"internal/connector/ad/adtest",    // keytab preparation for lab tests outside the connector, which may not import the Kerberos library (T-1464)
 }
+
+// Directory client libraries (ADR-0002 P3, blueprint §2.2 rule 3). This is the one list of import-path
+// prefixes that only internal/connector may import: FF-SP1 turns each group into a rule, and the P3
+// activation row runs those same rules (safeprim -p3). A new directory, Kerberos or Entra library is
+// added here and nowhere else.
+var (
+	// LDAPLibraries are the LDAP client and its BER codec.
+	LDAPLibraries = []string{"github.com/go-ldap/", "github.com/go-asn1-ber/"}
+	// KerberosLibraries are the Kerberos, GSSAPI, SSPI and NTLM client libraries: gokrb5 and its fork
+	// go-krb5, and the GSSAPI bindings a bind to a domain controller could use instead.
+	KerberosLibraries = []string{"github.com/go-krb5/", "github.com/jcmturner/", "github.com/openshift/gssapi", "github.com/golang-auth/go-gssapi", "github.com/alexbrainman/sspi", "github.com/Azure/go-ntlmssp"}
+	// GraphLibraries are the Microsoft Graph and Entra client libraries: the Graph SDKs and Kiota, MSAL,
+	// azidentity and the oauth2 Microsoft endpoint. golang.org/x/oauth2 itself is generic (OIDC sign-in
+	// uses it) and is not listed.
+	GraphLibraries = []string{"github.com/microsoftgraph/", "github.com/microsoft/kiota", "github.com/AzureAD/microsoft-authentication-library-for-go", "github.com/Azure/azure-sdk-for-go/sdk/azidentity", "golang.org/x/oauth2/microsoft"}
+)
+
+// Directory credentials (ADR-0002 P3, blueprint §7.3). The credential port lives in
+// internal/connector/credential. Only code under Connector may name the credential types it declares
+// or unseal them.
+const (
+	CredentialPkg    = "internal/connector/credential"        // declares the credential types and the Source interface
+	CredentialSealed = "internal/connector/credential/sealed" // unseals DM-11 rows; the embedded connector only
+	CredentialLocal  = "internal/connector/credential/local"  // gMSA, keytab file, OS-protected certificate; both roles
+	ComposeServer    = "internal/compose/server"              // wires credential/sealed into the embedded connector as a value
+)
+
+// CredentialPassable are the credential-package types that may be named outside Connector: the interface
+// the composition roots hand around as a value. Every other exported type the credential packages
+// declare is a credential type, and naming one outside Connector fails. A new entry is a reviewed
+// change to this list.
+var CredentialPassable = []string{"Source"}
 
 // SQLForwarder names one access wrapper whose Exec/Query/QueryRow pass their own SQL parameter to the
 // same-named method of the type they hide (FF-SP2 sqlconst). Pkg is the exact package directory, Recv
