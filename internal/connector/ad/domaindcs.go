@@ -2,6 +2,7 @@ package ad
 
 import (
 	"context"
+	"net"
 	"sort"
 	"strings"
 
@@ -92,7 +93,7 @@ func (s *Session) DomainControllers(ctx context.Context, domainNC dn.DN) ([]Doma
 			}
 			return nil, err
 		}
-		if h := e.Strings("dNSHostName"); len(h) == 1 {
+		if h := e.Strings("dNSHostName"); len(h) == 1 && ValidDCHostname(h[0]) {
 			out[i].Host = h[0]
 		}
 	}
@@ -103,4 +104,23 @@ func (s *Session) DomainControllers(ctx context.Context, domainNC dn.DN) ([]Doma
 		return out[i].DSAGUID.String() < out[j].DSAGUID.String()
 	})
 	return out, nil
+}
+
+// ValidDCHostname reports whether h is a bare DNS host name safe to dial: no port, brackets, IP
+// literal, or other punctuation. A directory-controlled value that fails is treated as no name.
+func ValidDCHostname(h string) bool {
+	if h == "" || len(h) > 253 || net.ParseIP(h) != nil {
+		return false
+	}
+	for _, l := range strings.Split(strings.TrimSuffix(h, "."), ".") {
+		if l == "" || len(l) > 63 || l[0] == '-' || l[len(l)-1] == '-' {
+			return false
+		}
+		for _, c := range l {
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+				return false
+			}
+		}
+	}
+	return true
 }

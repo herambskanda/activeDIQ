@@ -249,8 +249,8 @@ func (h *Handler) ReadPerDC(ctx context.Context, req *connectorv1.ReadPerDCReque
 func (h *Handler) readDC(ctx context.Context, psrc PerDCSource, dom sem, dc DC, id guid.GUID, attrs []connectorv1.PerDcAttribute) *connectorv1.PerDcResult {
 	listed := &connectorv1.DcIdentity{DsaGuid: write.GUIDToWire(dc.DSAGUID), DnsHostname: dc.Host, Site: dc.Site}
 	fail := func(err error, who *connectorv1.DcIdentity) *connectorv1.PerDcResult {
-		if who == nil {
-			who = listed
+		if who == nil || !proto.Equal(who.GetDsaGuid(), listed.GetDsaGuid()) {
+			who = listed // an error result always names the DC that was listed, never an impostor
 		}
 		var ref *write.Refusal
 		if !errors.As(mapAD(err, who), &ref) {

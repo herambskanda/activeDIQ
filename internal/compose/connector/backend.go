@@ -127,9 +127,7 @@ func openBackend(ctx context.Context, loc Local, log *slog.Logger) (*backend, er
 	// Per-DC reads open one short-lived session per named DC with the same keytab identity; the opener
 	// dials that host only (Servers is exactly [host]), so it never falls back to another DC.
 	psrc, err := read.NewADPerDCSource(src, func(ctx context.Context, host string) (*ad.Session, error) {
-		c := cfg
-		c.Servers = []string{host}
-		return ad.Open(ctx, c)
+		return ad.Open(ctx, perDCConfig(cfg, host))
 	})
 	if err != nil {
 		return nil, errors.New("connector: per-dc read source")
@@ -155,6 +153,14 @@ func openBackend(ctx context.Context, loc Local, log *slog.Logger) (*backend, er
 	}
 	ok = true
 	return &backend{verify: vh, read: rh, write: wh, close: func() { _ = sess.Close() }}, nil
+}
+
+// perDCConfig is the session config for one named DC: it dials that host only, and the TLS name and
+// the Kerberos SPN are that host's own name (ServerName cleared), never the configured DC's.
+func perDCConfig(cfg ad.Config, host string) ad.Config {
+	cfg.Servers = []string{host}
+	cfg.ServerName = ""
+	return cfg
 }
 
 // newGate builds the write gate over the ratchet baseline file. The baseline reports an access

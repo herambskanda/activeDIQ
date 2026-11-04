@@ -65,12 +65,11 @@ func (p *pdSrc) ReadOnDC(ctx context.Context, dc read.DC, id guid.GUID, attrs []
 	answers := dc.DSAGUID
 	if o, ok := p.other[dc.DSAGUID]; ok {
 		answers = o
+		// mirrors ADPerDCSource: an impostor's identity comes back together with UNREACHABLE
+		return nil, &connectorv1.DcIdentity{DsaGuid: write.GUIDToWire(o), DnsHostname: dc.Host}, &ad.Error{Code: ad.CodeUnreachable}
 	}
 	who := &connectorv1.DcIdentity{DsaGuid: write.GUIDToWire(answers), DnsHostname: dc.Host}
 	if err := p.errs[dc.DSAGUID]; err != nil {
-		if ad.CodeOf(err) == ad.CodeUnreachable {
-			return nil, nil, err
-		}
 		return nil, who, err
 	}
 	a := map[string][][]byte{"objectGUID": {id.Bytes()}, "logonCount": {[]byte("7")}, "badPwdCount": {[]byte("2")}}
