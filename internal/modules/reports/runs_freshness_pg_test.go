@@ -142,3 +142,62 @@ func TestRunReturnsHiddenGroupCounts(t *testing.T) {
 		}
 	})
 }
+
+// T-1481: a run request names a hidden group in showHidden. The rows include it, the header no longer
+// counts it as hidden and the stored parameters carry the key; an undeclared or locked key is refused
+// with the contract problem type and creates no run.
+func showHiddenEnv(t *testing.T, s *storetest.Server) *apiEnv {
+	e := apiSetup(t, s)
+	lib := e.svc.Catalog.(library)
+	lib.d.Def.Presets = append(lib.d.Def.Presets, report.Preset{ID: "hides", Hidden: []report.HiddenGroup{
+		{ID: "service_accounts", Label: "Probable service accounts", Where: report.Cmp{Column: "name", Op: report.OpContains, Value: report.TextV("a")}},
+		{ID: "tier0", Label: "Tier 0 accounts", Locked: true, Where: report.Cmp{Column: "name", Op: report.OpEq, Value: report.TextV("bob")}},
+	}})
+	e.svc.Catalog = lib
+	return e
+}
+
+func TestShowHiddenIncludesGroup(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := showHiddenEnv(t, s)
+		got := e.runAndGet(`{"definitionId":"tst-01","presetId":"hides","parameters":{"columns":["name"],"showHidden":["service_accounts"]}}`)
+		hg, _ := got["hiddenGroups"].([]any)
+		if len(hg) != 1 || hg[0].(map[string]any)["id"] != "tier0" {
+			t.Errorf("hiddenGroups = %v, want only tier0", got["hiddenGroups"])
+		}
+		// ann and cat now stored; bob stays hidden
+		if got["rowCount"] != float64(2) || got["objectsChecked"] != float64(3) {
+			t.Errorf("rowCount %v objectsChecked %v, want 2 and 3", got["rowCount"], got["objectsChecked"])
+		}
+		if sh := got["parameters"].(map[string]any)["showHidden"]; !reflect.DeepEqual(sh, []any{"service_accounts"}) {
+			t.Errorf("stored parameters showHidden = %v", sh)
+		}
+		_, again := e.do(alice, "GET", "/api/v1/reports/runs/"+got["id"].(string), "")
+		if sh := again["parameters"].(map[string]any)["showHidden"]; !reflect.DeepEqual(sh, []any{"service_accounts"}) {
+			t.Errorf("re-read showHidden = %v", sh)
+		}
+		// without showHidden the group stays hidden and counted
+		def := e.runAndGet(`{"definitionId":"tst-01","presetId":"hides","parameters":{"columns":["name"]}}`)
+		if def["rowCount"] != float64(0) || len(def["hiddenGroups"].([]any)) != 2 ||
+			!reflect.DeepEqual(def["parameters"].(map[string]any)["showHidden"], []any{}) {
+			t.Errorf("default run: %v", def)
+		}
+	})
+}
+
+func TestShowHiddenUnknownKeyRefused(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := showHiddenEnv(t, s)
+		for _, key := range []string{"nope", "tier0"} { // undeclared, and declared but locked
+			code, bad := e.do(alice, "POST", "/api/v1/reports/runs",
+				`{"definitionId":"tst-01","presetId":"hides","parameters":{"columns":["name"],"showHidden":["`+key+`"]}}`)
+			if code != 400 || errCode(bad) != "unknown_parameter" {
+				t.Errorf("%s: %d %v, want 400 unknown_parameter", key, code, bad)
+			}
+		}
+		_, list := e.do(alice, "GET", "/api/v1/reports/runs", "")
+		if items, _ := list["items"].([]any); len(items) != 0 {
+			t.Errorf("a refused request created runs: %v", items)
+		}
+	})
+}

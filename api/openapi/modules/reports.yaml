@@ -2088,6 +2088,14 @@ components:
         includeReadOnlyDcs:
           type: boolean
           description: Per-DC reports only (USR-04, PWD-03). Absent includes read-only DCs.
+        showHidden:
+          type: array
+          maxItems: 16
+          description: Keys of the definition's hidden groups to include in the rows instead of only counting them in the header (for example probable service accounts). A key the definition does not declare is refused; a locked group cannot be shown. Absent keeps every hidden group hidden. Stored with the run parameters.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
     ReportRunCreate:
       description: >-
         Starts a run. definitionVersion absent means the current version, which the run record then pins.
@@ -2612,7 +2620,7 @@ components:
       description: >-
         What a run or schedule is over, as stored. Period, OU and subject references and values are the request shapes; columns and filters are shown as IDs.
       type: object
-      required: [connectionIds, ouInclude, ouExclude, filters, columns, subjects, includeReadOnlyDcs]
+      required: [connectionIds, ouInclude, ouExclude, filters, columns, subjects, includeReadOnlyDcs, showHidden]
       properties:
         connectionIds:
           type: array
@@ -2650,6 +2658,13 @@ components:
             $ref: modules/reports.yaml#/components/schemas/ReportSubjectRef
         includeReadOnlyDcs:
           type: boolean
+        showHidden:
+          type: array
+          maxItems: 16
+          description: Keys of the hidden groups the run included in its rows.
+          items:
+            type: string
+            maxLength: 64
     ReportFreshness:
       description: >-
         The freshness label of spec 8.2. label is the text to show, such as Synced 09:41. When state is stale, stale names every naming context that makes it stale, oldest first: the connection

@@ -3438,6 +3438,15 @@
           "period": {
             "$ref": "#/components/schemas/ReportPeriod"
           },
+          "showHidden": {
+            "description": "Keys of the hidden groups the run included in its rows.",
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
           "subjects": {
             "items": {
               "$ref": "#/components/schemas/ReportSubjectRef"
@@ -3453,7 +3462,8 @@
           "filters",
           "columns",
           "subjects",
-          "includeReadOnlyDcs"
+          "includeReadOnlyDcs",
+          "showHidden"
         ],
         "type": "object",
         "x-activediq-tag": "reports"
@@ -4363,6 +4373,16 @@
           },
           "period": {
             "$ref": "#/components/schemas/ReportPeriod"
+          },
+          "showHidden": {
+            "description": "Keys of the definition's hidden groups to include in the rows instead of only counting them in the header (for example probable service accounts). A key the definition does not declare is refused; a locked group cannot be shown. Absent keeps every hidden group hidden. Stored with the run parameters.",
+            "items": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "type": "array"
           },
           "subjects": {
             "items": {

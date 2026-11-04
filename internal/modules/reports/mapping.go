@@ -448,7 +448,7 @@ func summaryView(it run.Item, now time.Time) api.ReportRunSummary {
 // decodes shows as empty rather than failing the read; the columns are the resolved ones.
 func paramsView(r run.Run) api.ReportParametersView {
 	v := api.ReportParametersView{Columns: append([]string{}, r.Columns...), ConnectionIds: []apitypes.UUID{}, Filters: []api.ReportFilterView{},
-		OUExclude: []api.ReportOuRef{}, OUInclude: []api.ReportOuRef{}, Subjects: []api.ReportSubjectRef{}}
+		OUExclude: []api.ReportOuRef{}, OUInclude: []api.ReportOuRef{}, Subjects: []api.ReportSubjectRef{}, ShowHidden: []string{}}
 	var p api.ReportRunParameters
 	if len(r.Params) == 0 || jsonv2.Unmarshal(r.Params, &p) != nil {
 		return v
@@ -457,6 +457,7 @@ func paramsView(r run.Run) api.ReportParametersView {
 	v.OUInclude = append(v.OUInclude, p.OUInclude...)
 	v.OUExclude = append(v.OUExclude, p.OUExclude...)
 	v.Subjects = append(v.Subjects, p.Subjects...)
+	v.ShowHidden = append(v.ShowHidden, p.ShowHidden...)
 	v.Period = p.Period
 	if p.IncludeReadOnlyDcs != nil {
 		v.IncludeReadOnlyDcs = *p.IncludeReadOnlyDcs

@@ -1642,6 +1642,8 @@ export interface components {
             ouExclude: components["schemas"]["ReportOuRef"][];
             ouInclude: components["schemas"]["ReportOuRef"][];
             period?: components["schemas"]["ReportPeriod"];
+            /** @description Keys of the hidden groups the run included in its rows. */
+            showHidden: string[];
             subjects: components["schemas"]["ReportSubjectRef"][];
         };
         /**
@@ -1910,6 +1912,8 @@ export interface components {
             ouExclude?: components["schemas"]["ReportOuRef"][];
             ouInclude?: components["schemas"]["ReportOuRef"][];
             period?: components["schemas"]["ReportPeriod"];
+            /** @description Keys of the definition's hidden groups to include in the rows instead of only counting them in the header (for example probable service accounts). A key the definition does not declare is refused; a locked group cannot be shown. Absent keeps every hidden group hidden. Stored with the run parameters. */
+            showHidden?: string[];
             subjects?: components["schemas"]["ReportSubjectRef"][];
         };
         /** @description Visible progress (FR-11). */

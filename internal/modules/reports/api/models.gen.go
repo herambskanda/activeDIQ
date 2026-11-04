@@ -4534,7 +4534,9 @@ type ReportParametersView struct {
 	OUExclude          []ReportOuRef      `json:"ouExclude"`
 	OUInclude          []ReportOuRef      `json:"ouInclude"`
 	Period             *ReportPeriod      `json:"period,omitzero"`
-	Subjects           []ReportSubjectRef `json:"subjects"`
+	// Keys of the hidden groups the run included in its rows.
+	ShowHidden []string           `json:"showHidden"`
+	Subjects   []ReportSubjectRef `json:"subjects"`
 
 	p apitypes.Presence
 }
@@ -4640,12 +4642,24 @@ func (v *ReportParametersView) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.Period); err != nil {
 				return err
 			}
-		case "subjects":
+		case "showHidden":
 			null, err := apitypes.TakeNull(d)
 			if err != nil {
 				return err
 			}
 			v.p.Mark(7, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.ShowHidden); err != nil {
+				return err
+			}
+		case "subjects":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(8, null)
 			if null {
 				continue
 			}
@@ -4749,16 +4763,31 @@ func (v *ReportParametersView) Validate(at jsontext.Pointer, errs *apitypes.Erro
 	if v.Period != nil {
 		(*v.Period).Validate(at.AppendToken("period"), errs)
 	}
-	// subjects
+	// showHidden
 	if v.p.Decoded() {
 		if !v.p.Has(7) {
-			errs.Required(at, "subjects")
+			errs.Required(at, "showHidden")
 		}
 		if v.p.IsNull(7) {
-			errs.NullNotAllowed(at, "subjects")
+			errs.NullNotAllowed(at, "showHidden")
 		}
 	}
 	if !v.p.Decoded() || (v.p.Has(7) && !v.p.IsNull(7)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("showHidden"), len(v.ShowHidden), 0, 16, apitypes.CodeMaxItems)
+		for i := range v.ShowHidden {
+			apitypes.CheckLen(errs, apitypes.InBody, apitypes.Index(at.AppendToken("showHidden"), i), string(v.ShowHidden[i]), 0, 64)
+		}
+	}
+	// subjects
+	if v.p.Decoded() {
+		if !v.p.Has(8) {
+			errs.Required(at, "subjects")
+		}
+		if v.p.IsNull(8) {
+			errs.NullNotAllowed(at, "subjects")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(8) && !v.p.IsNull(8)) {
 		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("subjects"), len(v.Subjects), 0, 100, apitypes.CodeMaxItems)
 		for i := range v.Subjects {
 			v.Subjects[i].Validate(apitypes.Index(at.AppendToken("subjects"), i), errs)
@@ -8154,11 +8183,13 @@ type ReportRunParameters struct {
 	// Combined with AND. Replaces the preset's filters when present.
 	Filters []ReportFilter `json:"filters,omitzero"`
 	// Per-DC reports only (USR-04, PWD-03). Absent includes read-only DCs.
-	IncludeReadOnlyDcs *bool              `json:"includeReadOnlyDcs,omitzero"`
-	OUExclude          []ReportOuRef      `json:"ouExclude,omitzero"`
-	OUInclude          []ReportOuRef      `json:"ouInclude,omitzero"`
-	Period             *ReportPeriod      `json:"period,omitzero"`
-	Subjects           []ReportSubjectRef `json:"subjects,omitzero"`
+	IncludeReadOnlyDcs *bool         `json:"includeReadOnlyDcs,omitzero"`
+	OUExclude          []ReportOuRef `json:"ouExclude,omitzero"`
+	OUInclude          []ReportOuRef `json:"ouInclude,omitzero"`
+	Period             *ReportPeriod `json:"period,omitzero"`
+	// Keys of the definition's hidden groups to include in the rows instead of only counting them in the header (for example probable service accounts). A key the definition does not declare is refused; a locked group cannot be shown. Absent keeps every hidden group hidden. Stored with the run parameters.
+	ShowHidden []string           `json:"showHidden,omitzero"`
+	Subjects   []ReportSubjectRef `json:"subjects,omitzero"`
 
 	p apitypes.Presence
 }
@@ -8264,12 +8295,24 @@ func (v *ReportRunParameters) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.Period); err != nil {
 				return err
 			}
-		case "subjects":
+		case "showHidden":
 			null, err := apitypes.TakeNull(d)
 			if err != nil {
 				return err
 			}
 			v.p.Mark(7, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.ShowHidden); err != nil {
+				return err
+			}
+		case "subjects":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(8, null)
 			if null {
 				continue
 			}
@@ -8345,8 +8388,18 @@ func (v *ReportRunParameters) Validate(at jsontext.Pointer, errs *apitypes.Error
 	if v.Period != nil {
 		(*v.Period).Validate(at.AppendToken("period"), errs)
 	}
-	// subjects
+	// showHidden
 	if v.p.Decoded() && v.p.IsNull(7) {
+		errs.NullNotAllowed(at, "showHidden")
+	}
+	if v.ShowHidden != nil {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("showHidden"), len(v.ShowHidden), 0, 16, apitypes.CodeMaxItems)
+		for i := range v.ShowHidden {
+			apitypes.CheckLen(errs, apitypes.InBody, apitypes.Index(at.AppendToken("showHidden"), i), string(v.ShowHidden[i]), 1, 64)
+		}
+	}
+	// subjects
+	if v.p.Decoded() && v.p.IsNull(8) {
 		errs.NullNotAllowed(at, "subjects")
 	}
 	if v.Subjects != nil {
