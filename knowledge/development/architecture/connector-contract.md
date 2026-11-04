@@ -1,23 +1,23 @@
 ---
-title: "Connector contract v1.2: the read side (Describe, search, read, per-DC read, change feed), the write group (Plan, Apply) and VerifyConnection"
+title: "Connector contract v1.3: the read side (Describe, search, read, per-DC read, change feed), the write group (Plan, Apply) and VerifyConnection"
 date: 2026-10-02
-updated: 2026-10-24
+updated: 2026-11-04
 status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys)
+amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a)
 binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
-# Connector contract v1.2: the read side, the write group and the rights check
+# Connector contract v1.3: the read side, the write group and the rights check
 
 The source is `proto/activediq/connector/v1/`. This document is its long form: why each shape is as
 it is, what every operation promises, how failures look, and which cases a provider must pass
 (§9). If the two disagree the proto wins and this file is the bug. `make fitness-proto` compiles
 the proto and enforces rules P1 to P8 (§2) on every merge.
 
-**In scope:** `Describe`, `DescribeSchema`, `ScopedSearch`, `Read`, `ReadPerDC`, `ChangeFeed`, the
+**In scope:** `Describe`, `DescribeSchema`, `ScopedSearch`, `Read`, `ReadPerDC`, `ReadReplicationStatus` (v1.3), `ChangeFeed`, the
 error and capability model, the provider conformance suite. **v1.1 (T-0091) adds** `VerifyConnection`,
 `Plan` and `Apply`, the errors `TIER0_REFUSED`, `ACTIVATION_REFUSED_OVERPRIVILEGED` and
 `TARGET_CHANGED`, and the fail-closed rule for cross-directory Tier-0 context (§8). **v1.2 (T-0122)
@@ -277,6 +277,137 @@ error, with `Observation`), then a `PerDcSummary{dcs_in_scope, dcs_answered, cov
 - Reads run concurrently under the connector's per-DC and per-domain caps (TM-TB3-T8). `lastLogon`
   is not in the GC partial attribute set, so no GC shortcut exists `[UNVERIFIED]`.
 
+### 5.6 `ReadReplicationStatus` (v1.3, T-1124; spec reports-2-second-slice §7.3, D14)
+
+`ReadPerDC` is per **object** (one object, a closed set of per-DC attributes, every DC of its domain).
+Replication health is per **DC** (each DC reports its own inbound view of every partition it holds),
+so it gets its own call rather than a bent `ReadPerDC`. Source:
+[MS-ADTS 3.1.1.3.2.28](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/b4a0b2bf-95f9-40b4-9301-834ccadea40c):
+`msDS-ReplAllInboundNeighbors`, `msDS-ReplPendingOps`, `msDS-ReplConnectionFailures` and
+`msDS-ReplLinkFailures` are read-only, operational (returned only when asked for) **rootDSE** constructed
+attributes of the DC answering, and are returned as **XML** unless the `;binary` qualifier is added.
+
+```proto
+rpc ReadReplicationStatus(ReadReplicationStatusRequest) returns (stream ReadReplicationStatusResponse);
+// Operation: OPERATION_READ_REPLICATION_STATUS = 9   (7 and 8 are PLAN and VERIFY_CONNECTION; 100+ reserved)
+
+message ReadReplicationStatusRequest {
+  ConnectionRef connection = 1;
+  PerDcScope scope = 2;                       // reused: WRITABLE or ALL (RODCs are included with ALL)
+  repeated ReplicationAttribute attributes = 3;   // closed enum, below; empty = all four
+  repeated Guid partitions = 4;               // optional NC GUIDs to restrict to; never a DN (rule 1)
+  uint32 max_concurrency = 5;                 // lowered, never raised, by the connector's per-DC cap
+}
+enum ReplicationAttribute {
+  REPLICATION_ATTRIBUTE_UNSPECIFIED = 0;
+  REPLICATION_ATTRIBUTE_INBOUND_NEIGHBORS = 1;    // msDS-ReplAllInboundNeighbors
+  REPLICATION_ATTRIBUTE_PENDING_OPS = 2;          // msDS-ReplPendingOps
+  REPLICATION_ATTRIBUTE_CONNECTION_FAILURES = 3;  // msDS-ReplConnectionFailures
+  REPLICATION_ATTRIBUTE_LINK_FAILURES = 4;        // msDS-ReplLinkFailures
+  // Outbound neighbours and queue statistics exist on the DC and are NOT in the enum: nothing
+  // in the product reads them. A new value is a contract_minor bump and a spec (rule 12).
+}
+message ReplicationDcResult {                  // one per DC in scope, streamed as it completes
+  DcIdentity dc = 1;
+  Observation observed = 2;
+  oneof outcome { ReplicationState state = 3; ConnectorError error = 4; }   // error: the DC was not read
+}
+message ReplicationState {
+  repeated AttributeOutcome attributes = 1;    // one per requested attribute, always present
+  repeated InboundNeighbor neighbors = 2;
+  repeated PendingOp pending_ops = 3;
+  repeated ReplFailure connection_failures = 4;
+  repeated ReplFailure link_failures = 5;
+}
+enum OutcomeKind { OUTCOME_KIND_UNSPECIFIED = 0; RETURNED = 1; NOT_RETURNED = 2; PERMISSION_DENIED = 3; DECODE_FAILED = 4; }
+message AttributeOutcome { ReplicationAttribute attribute = 1; OutcomeKind kind = 2; string detail_code = 3; } // fixed codes, no DC text
+message InboundNeighbor {
+  Guid partition = 1;                          // NC GUID; partition_display_dn is display only
+  string partition_display_dn = 2;
+  Guid source_dsa = 3;                         // unset if the DC omitted it; never zero-filled (rule 10)
+  string source_dns_host = 4;                  // display only, bounded (§5.7)
+  optional TimeValue last_attempt = 5;         // ZERO = "never attempted", unset = "not reported"
+  optional TimeValue last_success = 6;
+  optional uint32 consecutive_failures = 7;
+  optional uint32 last_result_win32 = 8;       // the number is the fact; text below is the DC's words
+  string last_result_text = 9;                 // untrusted display string, <= 512 bytes, encoded on output (FF-SP4)
+  uint32 flags = 10;                           // DS_REPL_NBR_* bits, decoded by the report not here
+}
+// PendingOp and ReplFailure carry the same kind of fields (DSA GUID, DNS host, times, count, win32 result).
+message ReplicationSummary { uint32 dcs_in_scope = 1; uint32 dcs_answered = 2; Coverage coverage = 3; }
+message ReadReplicationStatusResponse { oneof event { ReplicationDcResult result = 1; ReplicationSummary summary = 2; } }
+```
+
+Rules:
+1. **Coverage is explicit, exactly as `ReadPerDC` (§5.5).** `COMPLETE` only if every DC in scope
+   answered. A DC that did not answer is a `ReplicationDcResult` with an error, never dropped; the stream
+   ends with the summary (rule 11). The caller (reports §6.5) shows "Read from n of m DCs" and never "no
+   problems" from `PARTIAL`.
+2. **A fact the DC does not return is unset or `NOT_RETURNED`, never `0`, never "healthy" (rule 10).**
+   `AttributeOutcome` is per attribute per DC, so "this DC returned neighbours but not pending ops" is
+   representable. A DC with all four `NOT_RETURNED` is a result, not an error.
+3. **No `repsFrom` fallback, no binary qualifier.** The connector requests the XML form only and never sends
+   `;binary` (the binary blobs are the same class of work as the Terminal Services blob the spec keeps
+   out). A request for the binary form is not representable in the request.
+4. **Decoding is §5.7 and nothing else.** The XML is parsed only by the safe decoder. A value it refuses is
+   `DECODE_FAILED` for that attribute on that DC with a fixed `detail_code`; the raw text is never copied
+   into the response or the logs.
+5. **Bounds.** One read in flight per DC (`max_concurrent_ops_per_dc`); at most **100 DCs** per call
+   (`[PROPOSED]`, spec §7.3.6): more is `LIMIT_EXCEEDED` before any read, never a silent truncation.
+   Reads are per DC and per attribute, a handful of requests per DC. Multi-valued results use ranged
+   retrieval (§5.3); a range that never completes is `DECODE_FAILED`/`RANGE_INCOMPLETE`, not a short list.
+6. **Right.** What the connection account must hold ("Monitor Active Directory Replication" / the DRS
+   `GetReplInfo` extended right) is the T-1125 ruling `[UNVERIFIED]` `[LAB: Windows]`. A refusal is
+   `PERMISSION_DENIED` per DC, so a partly-delegated forest yields a partial, honest result. The call
+   adds **no write, no LDAP control and no privilege**; it is a read of four operational attributes.
+7. **Capability.** `OPERATION_READ_REPLICATION_STATUS` is `SUPPORTED` for AD when `Describe` lists at least
+   one reachable DC; `UNSUPPORTED` for Entra (no replication). Callers check it before planning
+   (`CAPABILITY_UNSUPPORTED`, §4). Samba: `UNVERIFIED` with a reason; its answers are expected to be
+   partial (spec §7.3.1 `[UNVERIFIED]`), which rule 2 already handles.
+8. **Tombstone lifetime is not in this call.** The risk indicator (spec §7.3.4) takes it from `Describe`
+   `forest_settings` (§4), read and never assumed.
+9. **Evolution.** Additive (rule 12). `contract_minor` goes to 3. `reserved_test.go` pins the RPC count
+   (ten) and the number 9.
+
+### 5.7 The replication-metadata decoder (v1.3, T-1124)
+
+Some attributes the product reads are **XML text constructed by the DC**: the four of §5.6, and the
+per-object `msDS-ReplAttributeMetaData` and `msDS-ReplValueMetaData` (inventory D10: when and where each
+attribute or link value last changed; names and times only, never the value). They are not attacker
+controlled in the strict sense, but a compromised or malfunctioning DC, a man in the middle of a
+misconfigured LDAP channel, or a Samba or third-party server can send anything, and the connector runs
+inside a domain. So one decoder, one package, one set of limits.
+
+**Package:** `internal/connector/ad/replxml`. Public surface: `DecodeNeighbors`, `DecodePendingOps`,
+`DecodeFailures`, `DecodeAttrMetaData`, `DecodeValueMetaData`. Each takes `[]byte` and returns typed
+structs or a `*DecodeError{Code}` whose code is fixed text. Nobody else in the module parses XML.
+
+| # | Rule |
+| --- | --- |
+| X1 | **Standard library only** (`encoding/xml`; no new dependency, nothing to add to the licence register). Go's decoder does not resolve DTD-declared entities `[UNVERIFIED]`; the decoder does not rely on that: it drives `xml.Decoder.Token()` itself and **refuses** any `xml.Directive` token (`<!DOCTYPE`, `<!ENTITY`), any processing instruction other than the leading `<?xml … ?>` declaration, and any declared encoding other than UTF-8 (`CharsetReader` is nil). `Strict` stays true and `Entity` nil, so an undeclared entity such as `&xxe;` is an error. Comments are skipped. CDATA is accepted as text |
+| X2 | **Bounded input.** At most 64 KiB per value and 8 MiB per DC per call; a value over it is `too_large` before parsing. Reading is `io.LimitReader`-capped, not trusted from a length field |
+| X3 | **Bounded structure.** Depth <= 8; <= 20,000 elements per value; attributes per element <= 16; text node <= 1,024 bytes except `last_result_text` (<= 512 after truncation on a rune boundary). NUL, invalid UTF-8 and C0 controls except TAB/LF/CR are `bad_text` |
+| X4 | **Closed element names.** The document root and the field names are an allowlist per structure (the `DS_REPL_*` names of [MS-DRSR](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-drsr/0597aff6-0177-4d52-99f2-14a5441bc3c1)). An unknown element is skipped with its subtree **under the same depth and count limits** and counted; it is not an error, so a newer Windows build does not break the report (the report shows nothing for a field it does not know, rule 10). The exact names and value formats are `[UNVERIFIED]` `[LAB: Windows]` until the fixtures of CC-REPLXML-01 are captured |
+| X5 | **Typed fields, parsed once.** Counts are `uint32`, times are `TimeValue` (the XML time format is parsed strictly; anything else is `bad_time`, never "now" and never zero), GUIDs are `Guid` (RFC 4122 order, rule 9), Win32 results are `uint32`. A missing field is unset. Only `source_dns_host`, `partition_display_dn`, `last_result_text` and attribute names remain text; they are bounded (X3), valid UTF-8, and go out as display strings that every output encoder escapes (FF-SP4) |
+| X6 | **Pure.** The package imports nothing that can do I/O: no `net`, `os`, `net/http`, `io/ioutil`, `os/exec`, `plugin`, `unsafe`, `reflect`. It allocates at most 8 x input size. It logs nothing derived from the input |
+| X7 | **Names, never values.** For metadata the output is attribute name, version, originating time, originating DSA GUID, originating and local USN. A value that appears in the XML (some structures carry an object DN or the linked value) is dropped, not copied, except the linked value's target **GUID** where present |
+| X8 | **Fuzzed.** Go native fuzz targets `FuzzDecodeNeighbors`, `FuzzDecodeAttrMetaData`, `FuzzDecodeValueMetaData`, `FuzzDecodeFailures` and `FuzzDecodePendingOps`. Invariants: no panic, returns within 100 ms for any input of at most 64 KiB, allocation within X6, output obeys X3 and X5. Seed corpus is committed: valid captures, a billion-laughs document, an external-entity document (file and URL), a parameter-entity document, a 10,000-deep nest, a 1 MiB text node, a 20,001-element document, invalid UTF-8, NUL, a UTF-16 BOM, a truncated document, duplicate and unknown elements |
+
+**Why a dedicated decoder and not "parse where needed".** Three call sites would each need X1 to X8.
+One owner means one review and one fuzz run. This is the same reasoning as the LDAP filter builder.
+
+### 5.8 Metadata on `Read` and `ChangeFeed` (v1.3)
+
+`msDS-ReplAttributeMetaData` and `msDS-ReplValueMetaData` are constructed per object and are not
+delivered by DirSync (spec §10 D10). They are read with `Read` from the same DC that produced the
+change, for flagged objects only. `AttributeValue` gains the typed value `ReplMetaValue` (repeated
+`{attribute_name, version, origin_time, originating_dsa, originating_usn, local_usn}`), produced by §5.7
+and by nothing else; the `octets` form of these attributes is refused (the codec registry marks them
+`xml-repl`, so an unknown-syntax fall-through to `octets` cannot happen). `DescribeSchema` marks both as
+`constructed`; they are on the read allowlist, not the secret list: **names and times of
+`unicodePwd`, `pwdLastSet` and `ntPwdHistory` changes are the credential-event signal (spec §4.1.2) and
+no value is involved.**
+
 ## 6. `ChangeFeed`
 
 ### 6.1 Shape
@@ -298,6 +429,15 @@ A call streams `ChangeBatch` messages and ends with the one that has `cycle_comp
 (DirSync `MoreResults = 0`, Graph deltaLink reached). Every successful call ends with one, even
 with zero changes, so the cookie's `issued_at` advances. A stream that ends without it, or with an
 error, was cut off: the caller keeps its last committed cookie (CC-FEED-14).
+
+Server side: `client.ChangeFeedReader.Read` (T-1195) opens the call, hands each `ChangeBatch` to the
+caller's callback in order (the place to commit rows with `cookie_after`, DM-19.I1), and returns
+success only after a `cycle_complete` batch; a cut-off is `ErrFeedIncomplete`, a sequence gap, a batch
+after the last or a batch without a cookie is `ErrFeedProtocol`. `STALE_COOKIE` (with its
+`ResyncReason`), `UNREACHABLE_DC`, `THROTTLED` (`retry_after`, capped at one hour) and
+`SECRET_ATTRIBUTE` map to typed errors with no DC name, attribute or message; `ResyncRequired(err)` is
+true for the stale one only. A non-ACTIVE or non-AD connection, or a partition outside the managed set
+(`ManagedPartitions`, DM-14), is refused before any connector call.
 
 ### 6.2 DirSync is object-security mode only (TM §6.3 R2)
 
@@ -1120,6 +1260,27 @@ disabled, expired and locked accounts.
 | CC-PDC-06 | RODC | included with `ALL`, excluded with `WRITABLE`; its `lastLogon` is its own | W |
 | CC-PDC-07 | Concurrency cap | with 20 DCs in scope the connector never runs more than `max_concurrent_ops_per_dc` against one DC and the requested `max_concurrency` is lowered | 2dc, scale |
 
+### 9.4a ReadReplicationStatus and the decoder (v1.3)
+
+| ID | Case | Expectation | Lab |
+| --- | --- | --- | --- |
+| CC-REPL-01 | Single-DC lab | one `ReplicationDcResult`; summary `1/1 COMPLETE`; every requested attribute has an `AttributeOutcome` | S |
+| CC-REPL-02 | Samba omits what Windows returns | an attribute the DC does not return is `NOT_RETURNED` with unset fields, never `0` and never `RETURNED` with an empty list that reads as healthy | S |
+| CC-REPL-03 | Two-DC lab, one stopped | `PARTIAL`, the stopped DC has an error result and is counted in `dcs_in_scope`, the other is read | 2dc |
+| CC-REPL-04 | Neighbour values | on Windows, partition GUID, source DSA GUID, last attempt, last success, failure count and Win32 result equal `repadmin /showrepl /csv` for the same DC | W |
+| CC-REPL-05 | Failure injected | stop replication to one partner: `consecutive_failures` > 0 and `last_result_win32` equal the DC's own; `last_success` unchanged | W |
+| CC-REPL-06 | Right withheld | an account without the replication-monitoring right: `PERMISSION_DENIED` per attribute, summary still `COMPLETE` for DCs read, no write attempted | W |
+| CC-REPL-07 | More than 100 DCs | `LIMIT_EXCEEDED` before any directory call | S (fake `Describe`) |
+| CC-REPL-08 | Concurrency | never more than `max_concurrent_ops_per_dc` against one DC | 2dc, scale |
+| CC-REPL-09 | Binary form | no request reaches the DC with `;binary` (FI proxy asserts the attribute list on the wire) | FI |
+| CC-REPL-10 | Entra | `CAPABILITY_UNSUPPORTED` | E |
+| CC-REPL-11 | Wrong attribute | an unspecified or unknown `ReplicationAttribute` value is `INVALID_ARGUMENT`; a DN-shaped partition is unrepresentable | S |
+| CC-REPLXML-01 | Captured fixtures | each `Decode*` returns the expected typed values from XML captured on Windows Server 2016, 2022 and 2025 (fixtures committed under `testdata/`, capture runbook in T-1519) | W |
+| CC-REPLXML-02 | Hostile DC | FI proxy returns a billion-laughs, an external-entity and a 64 KiB+1 value for `msDS-ReplAllInboundNeighbors`: the result is `DECODE_FAILED`, the process memory stays under the X6 bound, no outbound connection is made (network namespace check) | FI |
+| CC-REPLXML-03 | Unknown field | a document with an added element decodes; the element is counted, not exposed | S |
+| CC-REPLXML-04 | Time and GUID formats | malformed time is `bad_time`, never zero or now; GUID byte order matches rule 9 | S |
+| CC-REPLXML-05 | Metadata without values | `DecodeAttrMetaData` on an object with a changed `unicodePwd` returns name, version, time, DSA, USN and no value bytes | W |
+
 ### 9.5 ChangeFeed
 
 | ID | Case | Expectation | Lab |
@@ -1247,6 +1408,7 @@ Decisions made in this spec, flagged for the reviewers:
 - **D6. GUID byte order and time sentinels** (§2 rule 9, §5.4).
 - **D7. Cookie age margin** (§6.3) is provisional `[OPEN → T-0065]`.
 - **D8. `ReadPerDC` attributes are a closed enum.**
+- **D10. (v1.3) `ReadReplicationStatus` is its own read RPC, not a `ReadPerDC` mode** (per DC, not per object; different result shape and bounds, §5.6). The XML the DCs construct is parsed by one decoder (§5.7), enforced by fitness RX1 to RX6 (section "Fitness functions added in v1.3" below).
 - **D9. Entra `ScopedSearch` is `UNSUPPORTED` in v1.** Entra reads are `Read` by object id and the feed. The
   Entra provider's spec may add it.
 
@@ -1362,6 +1524,20 @@ live re-read, `correlated_tier0` sent with every run, `tier0_after_write` mapped
 severity), T-0093 (the `gPLink` codec shared with step 7), T-0066 (CC-VER-13, -15, -16 and
 CC-WRITE-16 to -22 in TM-F-T0GUARD and TM-F-RIGHTS).
 
+## Fitness functions added in v1.3 (T-1124)
+
+Job `fitness-connector-repl` (owner `devops-engineer`, follow-up ticket below). Every check has a failing fixture.
+
+| ID | Kind | Fails when | Enforces |
+| --- | --- | --- | --- |
+| RX1 | static (import graph) | any package under `internal/connector/**` or `internal/**` other than `internal/connector/ad/replxml` imports `encoding/xml` and reads a DC-supplied value with it; the one allowed list is in `tools/fitness/connectorrepl/xmlusers.txt` and a new entry needs this page amended | §5.7: one decoder |
+| RX2 | static | `replxml` imports a package from the X6 deny list (`net`, `os`, `net/http`, `io/ioutil`, `os/exec`, `plugin`, `unsafe`, `reflect`), calls `xml.NewDecoder` without setting `Strict` true, sets `CharsetReader` or `Entity`, or does not return on an `xml.Directive` token | X1, X6 |
+| RX3 | test | `Test_replxml_hostile_corpus`: every file in the committed corpus decodes within X2 to X6 or fails with a `DecodeError`; a `testing.AllocsPerRun`-style byte bound and a 100 ms deadline hold | X2, X3, X8 |
+| RX4 | CI + nightly | the five fuzz targets are missing, skipped, or the 60-second per-target PR run finds a failure; nightly runs 10 minutes per target; a crash input is committed to the corpus before the fix merges | X8 |
+| RX5 | proto (`fitness-proto` P9) | `ReadReplicationStatusRequest` has a `string`, `bytes` or `Dn` field, an `Any`, a `bool` named like a binary or raw switch, or `ReplicationAttribute` loses a value or reuses a number; the RPC is not server-streaming; `OPERATION_READ_REPLICATION_STATUS` is not 9; `reserved_test.go` RPC count is not ten | §5.6 rules 3, 9; contract rules 1, 2, 4, 5 |
+| RX6 | test | `TestReadReplicationStatus_no_repsFrom`: the attribute names the LDAP layer may request for this call are exactly the four in `ReplicationAttribute`; `repsFrom` and `repsTo` appear in no non-test file of `internal/connector/**` | §5.6 rule 3 |
+
+
 ## Sources
 
 - DirSync: [Polling for changes using the DirSync control](https://learn.microsoft.com/en-us/windows/win32/ad/polling-for-changes-using-the-dirsync-control) · [MS-ADTS DirSync](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/2213a7f2-0a36-483c-b2a4-8574d53aa1e3) · [MS-DRSR ProcessDirSyncSearchRequest](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-drsr/0e61ce24-eac7-40d1-a014-37854e932b43) · [MS-DRSR cycle start](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-drsr/eb6876c5-6997-4541-8165-3844e46b464d) · [MS-ADTS LDAP extended controls](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/3c5e87db-4728-4f29-b164-01dd7d7391ea)
@@ -1371,6 +1547,7 @@ CC-WRITE-16 to -22 in TM-F-T0GUARD and TM-F-RIGHTS).
 - Entra: [delta query](https://learn.microsoft.com/en-us/graph/delta-query-overview) · [throttling](https://learn.microsoft.com/en-us/graph/throttling)
 - v1.1, write group and rights check: [allowedAttributesEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-allowedattributeseffective) · [sDRightsEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-sdrightseffective) · [Entra Connect source anchor design](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/plan-connect-design-concepts) · [Graph user resource (onPremisesImmutableId, onPremisesSecurityIdentifier, onPremisesSyncEnabled)](https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0) · [application addKey](https://learn.microsoft.com/en-us/graph/api/application-addkey?view=graph-rest-1.0) · [passwordCredential resource (hint, secretText, keyId)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0) · [servicePrincipal resource (keyCredentials, passwordCredentials)](https://learn.microsoft.com/en-us/graph/api/resources/serviceprincipal?view=graph-rest-1.0) · [tokenGroups](https://learn.microsoft.com/en-us/windows/win32/adschema/a-tokengroups) · [memberOf is a back-link](https://learn.microsoft.com/en-us/windows/win32/adschema/a-memberof) · [RFC 4511 §4.6 Modify](https://www.rfc-editor.org/rfc/rfc4511#section-4.6). Internal: threat-model §6.2 to §6.6 and §6.8, domain-model DM-10.I8 to I11, DM-20, DM-24, DM-25, ADR-0005 rules 2, 4, 5 and 7, forest-connection spec §7 (V1 to V9, FR-10 to FR-13, FR-35).
 - v1.2 (T-0122): [Binding to well-known objects using WKGUID (wellKnownObjects, Domain Controllers)](https://learn.microsoft.com/en-us/windows/win32/ad/binding-to-well-known-objects-using-wkguid) · [gPLink](https://learn.microsoft.com/en-us/windows/win32/adschema/a-gplink) · [MS-GPOL Domain SOM Search (gPLink format and options)](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/08090b22-bc16-49f4-8e10-f27a8fb16d18) · [passwordCredential (endDateTime, startDateTime)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0). Internal: threat-model §6.2 TM-D23 rules 7 to 11 and the `ENTRA_PASSWORD_CREDENTIAL` severity, §6.4, §16.1 TM-R14 to TM-R17; domain-model DM-23.I1, DM-26; forest-connection spec FR-25.
+- v1.3 (T-1124): [MS-ADTS 3.1.1.3.2.28 msDS-ReplAllInboundNeighbors, msDS-ReplConnectionFailures, msDS-ReplLinkFailures, msDS-ReplPendingOps](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/b4a0b2bf-95f9-40b4-9301-834ccadea40c) · [MS-ADTS rootDSE attributes](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/96f7b086-1ca3-4764-9a08-33f8f7a543db) · [MS-DRSR IDL_DRSGetReplInfo structures](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-drsr/0597aff6-0177-4d52-99f2-14a5441bc3c1). Internal: spec reports-2-second-slice §7.3, §10 D10/D14.
 - Internal: `knowledge/development/domain/ad-change-notifications.md` (T-0018), `knowledge/development/runbooks/ad-lab.md` §6, and the ad-expert consult recorded in the T-0064 notes. The Samba statements in the consult (no `MoreResults`, `;range=0-0`, skipped removed links) come from a reading of the source, not a run, and are `[UNVERIFIED lab]` until CC-FEED-04 and CC-FEED-21 run.
 
 ## DACL write path (T-0743, T-0726)

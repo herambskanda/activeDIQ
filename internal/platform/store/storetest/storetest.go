@@ -40,6 +40,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/skenzeriq/activediq/internal/platform/store/preflight"
 	"github.com/skenzeriq/activediq/internal/testlab/harnessdocker"
 	"github.com/skenzeriq/activediq/migrations"
 )
@@ -256,6 +257,17 @@ type Database struct {
 // NewDatabase creates a database for one test and drops it when the test ends.
 func (s *Server) NewDatabase(t testing.TB) *Database {
 	t.Helper()
+	return s.newDatabase(t, "")
+}
+
+// NewLatin1Database is NewDatabase with encoding LATIN1, which the install preflight must refuse.
+func (s *Server) NewLatin1Database(t testing.TB) *Database {
+	t.Helper()
+	return s.newDatabase(t, "LATIN1")
+}
+
+func (s *Server) newDatabase(t testing.TB, encoding string) *Database {
+	t.Helper()
 	ctx := context.Background()
 	name := "t_" + randHex(6)
 	a, err := s.connect(ctx, "postgres", s.adminPass, "postgres")
@@ -264,8 +276,16 @@ func (s *Server) NewDatabase(t testing.TB) *Database {
 	}
 	defer a.Close(ctx)
 	var stmt string
-	if err := a.QueryRow(ctx, `SELECT format('CREATE DATABASE %I OWNER %I', $1::text, $2::text)`, name, OwnerRole).Scan(&stmt); err != nil {
-		t.Fatal(err)
+	if encoding == "" {
+		if err := a.QueryRow(ctx, `SELECT format('CREATE DATABASE %I OWNER %I', $1::text, $2::text)`, name, OwnerRole).Scan(&stmt); err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		// A non-default encoding needs template0 and a locale that suits it: C works for every encoding.
+		if err := a.QueryRow(ctx, `SELECT format('CREATE DATABASE %I OWNER %I TEMPLATE template0 ENCODING %L LOCALE_PROVIDER libc LC_COLLATE %L LC_CTYPE %L', $1::text, $2::text, $3::text, 'C', 'C')`,
+			name, OwnerRole, encoding).Scan(&stmt); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := a.Exec(ctx, stmt); err != nil {
 		t.Fatalf("storetest: create database: %v", err)
@@ -327,7 +347,8 @@ func (d *Database) Migrate(t testing.TB) {
 	}
 }
 
-// Apply runs every *.sql file of fsys, in name order, as the owner role.
+// Apply runs every *.sql file of fsys, in name order, as the owner role. Like the server, it first runs
+// the preflight (T-1128) and applies nothing when that refuses.
 func (d *Database) Apply(ctx context.Context, fsys fs.FS) error {
 	names, err := fs.Glob(fsys, "*.sql")
 	if err != nil {
@@ -339,6 +360,9 @@ func (d *Database) Apply(ctx context.Context, fsys fs.FS) error {
 		return err
 	}
 	defer c.Close(ctx)
+	if _, err := preflight.Check(ctx, c); err != nil {
+		return err
+	}
 	for _, n := range names {
 		b, err := fs.ReadFile(fsys, n)
 		if err != nil {

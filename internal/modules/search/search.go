@@ -67,7 +67,7 @@ type ReadScopes interface {
 // Index is the inventory search port (ADR-0011 rule 11). *inventory.Searcher implements it.
 type Index interface {
 	Search(ctx context.Context, tx store.Tx, tid tenant.ID, scopes reportsql.SearchScopes, req inventory.SearchRequest) (inventory.SearchResult, error)
-	SearchMetadata(ctx context.Context, tx store.Tx, tid tenant.ID, hits []reportsql.SearchHit) (map[inventory.SearchRef]inventory.SearchMeta, error)
+	SearchMetadata(ctx context.Context, tx store.Tx, tid tenant.ID, scope authz.ReadScope, now time.Time, hits []reportsql.SearchHit) (map[inventory.SearchRef]inventory.SearchMeta, error)
 }
 
 // Tenants opens the tenant transaction the index reads in. *store.DB implements it.
@@ -117,7 +117,10 @@ type Hit struct {
 	Highlights                              []Highlight
 	SAMAccountName, UserPrincipalName, Mail string
 	DN, Domain                              string
-	Disabled, Deleted                       bool
+	// Disambiguator is title, office and department as stored; a member that was never read is "".
+	Title, Office, Department string
+	// Status are the chips, most urgent first. A chip exists only for a stored fact; unknown inputs add none.
+	Status []Chip
 }
 
 // Group is the permitted hits of one type. Count is nil when it is not exact (under 3 characters, refine,
@@ -269,7 +272,7 @@ func (s *Service) Search(ctx context.Context, c Call) (Result, error) {
 		if err != nil {
 			return err
 		}
-		meta, err = s.Index.SearchMetadata(ctx, tx, c.Tenant, res.Hits)
+		meta, err = s.Index.SearchMetadata(ctx, tx, c.Tenant, scopes[ReadPermission], s.now(), res.Hits)
 		return err
 	})
 	if err != nil {
@@ -293,7 +296,7 @@ func (s *Service) Search(ctx context.Context, c Call) (Result, error) {
 	byType := map[reportsql.SearchType][]Hit{}
 	last := map[reportsql.SearchType]reportsql.SearchAfter{}
 	for _, h := range res.Hits {
-		byType[h.Group] = append(byType[h.Group], present(h, meta[inventory.SearchRef{Connection: h.Connection, Object: h.Object}], prepared))
+		byType[h.Group] = append(byType[h.Group], present(h, meta[inventory.SearchRef{Connection: h.Connection, Object: h.Object}], prepared, s.now()))
 		last[h.Group] = h.Rank
 	}
 	for _, t := range types {
@@ -323,6 +326,7 @@ func (s *Service) Search(ctx context.Context, c Call) (Result, error) {
 		}
 		out.Groups = append(out.Groups, g)
 	}
+	hideSingleDomain(out.Groups)
 	return out, nil
 }
 
@@ -385,20 +389,5 @@ func dedupe(in []authz.ObjectID) []authz.ObjectID {
 			out = append(out, c)
 		}
 	}
-	return out
-}
-
-// present builds the row of a permitted hit. Status chips carry only what the stored row states: a row's
-// own disabled flag and deleted state. The other chips of the contract need derivations T-1097 owns; until
-// they land the chip is absent, never a guess.
-func present(h reportsql.SearchHit, m inventory.SearchMeta, text string) Hit {
-	out := Hit{Type: h.Group, Object: h.Object, DisplayName: h.DisplayName, Class: h.Class,
-		SAMAccountName: m.SAMAccountName, UserPrincipalName: m.UserPrincipalName, Mail: m.Mail, DN: m.DN, Domain: domainOf(m.DN)}
-	out.Disabled = h.Enabled != nil && !*h.Enabled
-	switch h.State {
-	case "deleted", "recycled", "purged", "soft_deleted":
-		out.Deleted = true
-	}
-	out.Highlights = highlights(text, [][2]string{{FieldDisplayName, h.DisplayName}, {FieldSAM, m.SAMAccountName}, {FieldUPN, m.UserPrincipalName}, {FieldMail, m.Mail}})
 	return out
 }

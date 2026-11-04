@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/modules/search"
@@ -53,7 +54,7 @@ func (f *fakeIndex) Search(_ context.Context, _ store.Tx, _ tenant.ID, s reports
 	return f.res, nil
 }
 
-func (f *fakeIndex) SearchMetadata(context.Context, store.Tx, tenant.ID, []reportsql.SearchHit) (map[inventory.SearchRef]inventory.SearchMeta, error) {
+func (f *fakeIndex) SearchMetadata(context.Context, store.Tx, tenant.ID, authz.ReadScope, time.Time, []reportsql.SearchHit) (map[inventory.SearchRef]inventory.SearchMeta, error) {
 	return nil, nil
 }
 

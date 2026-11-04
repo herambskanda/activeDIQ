@@ -1,7 +1,7 @@
 ---
 title: "ADR-0011: Universal search runs over the inventory with pg_trgm, and is trimmed in the same SQL statement by the one ReadScope renderer in store/reportsql"
 date: 2026-10-31
-updated: 2026-11-02
+updated: 2026-11-04
 status: ratified
 ratified_on: 2026-10-31
 ratified_by: factory-director
@@ -19,6 +19,16 @@ fitness: fitness-search SE1–SE5 (in make ci) and SE6 (nightly); T-1126 builds 
 confirmed rules 12, 13 and 16 in the re-review. Revision 3 ratified 2026-11-02 by factory-director
 (notice D-0025, T-1314 review), after security-architect's AC2 review and one rework. `accepted` when `fitness-search` SE1–SE5 run green
 in `make ci` and SE6 has passed once in the nightly job (T-1126).
+
+**Amendments:** E1 (2026-11-04, T-1483, from the T-1335 review). Rule 16 said blocks read must be
+"equal within 2 blocks per loop of each index-scan node. That allows one extra B-tree level and a page
+shared with B at the edge of A's key range, but not any B-proportional read." Measured at 50,000
+objects with B at 10×, the shared tenant-led B-tree gains a level, every probed trigram descends it
+once, and the planner may flip scan form, so 2 per loop does not cover one extra level. The sentence
+was false as a factual claim about what 2 per loop allows. Rule 16 now states the formula and the
+accepted height leak. The rows-examined requirement (exactly equal) and SE5's plan-shape check are
+unchanged, so no fitness check weakens. The T-1335 test already implements this formula.
+Ratified by factory-director 2026-11-04 (notice D-0028).
 
 **Revision 2 (2026-10-31, after the T-1093 review).** These are the changes in this revision:
 - **M1:** rule 7 now case-folds before the fold table.
@@ -750,9 +760,22 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
         relation (`inventory_search_trigrams`, `inventory_search_keys`, `directory_objects`), it
         must be **exactly equal** in all three loads. Summing per relation keeps the check valid
         when the planner picks a bitmap form in one load and an Index Only Scan in another.
-      - **Blocks read** (shared hit + read) per relation must be equal within 2 blocks per loop of
-        each index-scan node. That allows one extra B-tree level and a page shared with B at the
-        edge of A's key range, but not any B-proportional read.
+      - **Blocks read** (shared hit + read) per relation, A with B loaded against A with B empty,
+        must differ by at most `tol = 2 × max(loops_empty, loops_loaded) + 3 × F + Δh × n × [r = postings]`
+        (erratum E1). `loops` are the loops of the relation's index-scan nodes. `F` is 1 if the
+        planner chose a different scan form for that relation (Bitmap Index Scan against Index
+        Only Scan, about 3 blocks apart), else 0. `Δh` is the height of the
+        `inventory_search_trigrams` primary-key B-tree with B loaded minus its height with B empty
+        (read with `bt_metap`/`pageinspect`, or equivalent, by the test). `n` is
+        `cardinality(show_trgm(q))`, at most 48, because each of the query's trigrams descends the
+        tree once. Only the postings relation gets the `Δh × n` term. The 2 per loop covers a page
+        shared with B at the edge of A's key range.
+      - **The leak that is accepted:** the shared tree's height, which depends on the whole table
+        and so on B's size, moves A's block count by `Δh × n`. Height reveals only a coarse
+        order of magnitude of the database's posting volume (a level is a factor of hundreds), never
+        B's keys, trigrams, rows or counts. It is the residual (3) of TM-TB17-T9. Any difference
+        beyond this formula, and every difference in rows examined (which stay **exactly** equal),
+        fails the test as a B-proportional read.
       - Every scan node in all three loads must have SE5's plan shape. A `Seq Scan` fails the test
         whatever the counts say.
     - **No start-up gate is built** (T-1136 AC3 is dropped). ADR-0002 gives self-hosted profiles
