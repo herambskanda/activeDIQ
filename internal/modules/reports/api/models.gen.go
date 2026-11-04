@@ -1276,6 +1276,10 @@ type ReportDcCoverage struct {
 	Complete    bool  `json:"complete"`
 	DcsAnswered int64 `json:"dcsAnswered"`
 	DcsInScope  int64 `json:"dcsInScope"`
+	// The header text, "Read from 2 of 3 DCs · 1 unreachable: dc2.example.test: timeout".
+	Label *string `json:"label,omitzero"`
+	// The DCs that did not answer, each with the fixed code it gave (never driver text). Empty when coverage is complete.
+	Unreachable []ReportUnreachableDc `json:"unreachable,omitzero"`
 
 	p apitypes.Presence
 }
@@ -1333,6 +1337,30 @@ func (v *ReportDcCoverage) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.DcsInScope); err != nil {
 				return err
 			}
+		case "label":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Label); err != nil {
+				return err
+			}
+		case "unreachable":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Unreachable); err != nil {
+				return err
+			}
 		default:
 			return apitypes.UnknownMember(d)
 		}
@@ -1374,6 +1402,23 @@ func (v *ReportDcCoverage) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 	}
 	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
 		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("dcsInScope"), int64(v.DcsInScope), 0, 100000)
+	}
+	// label
+	if v.p.Decoded() && v.p.IsNull(3) {
+		errs.NullNotAllowed(at, "label")
+	}
+	if v.Label != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("label"), string((*v.Label)), 0, 1024)
+	}
+	// unreachable
+	if v.p.Decoded() && v.p.IsNull(4) {
+		errs.NullNotAllowed(at, "unreachable")
+	}
+	if v.Unreachable != nil {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("unreachable"), len(v.Unreachable), 0, 50, apitypes.CodeMaxItems)
+		for i := range v.Unreachable {
+			v.Unreachable[i].Validate(apitypes.Index(at.AppendToken("unreachable"), i), errs)
+		}
 	}
 }
 
@@ -10149,6 +10194,90 @@ func (v *ReportSubjectRef) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 		if v.p.IsNull(1) {
 			errs.NullNotAllowed(at, "guid")
 		}
+	}
+}
+
+// ReportUnreachableDc: A DC that did not answer a per-DC read.
+type ReportUnreachableDc struct {
+	Dc    string `json:"dc"`
+	Error string `json:"error"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportUnreachableDc) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportUnreachableDc{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "dc":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Dc); err != nil {
+				return err
+			}
+		case "error":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Error); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportUnreachableDc) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// dc
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "dc")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "dc")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("dc"), string(v.Dc), 0, 255)
+	}
+	// error
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "error")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "error")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("error"), string(v.Error), 0, 64)
 	}
 }
 

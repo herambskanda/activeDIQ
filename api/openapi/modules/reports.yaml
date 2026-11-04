@@ -2733,6 +2733,30 @@ components:
           maximum: 100000
         complete:
           type: boolean
+        label:
+          type: string
+          maxLength: 1024
+          description: >-
+            The header text, "Read from 2 of 3 DCs · 1 unreachable: dc2.example.test: timeout".
+        unreachable:
+          type: array
+          maxItems: 50
+          description: >-
+            The DCs that did not answer, each with the fixed code it gave (never driver text). Empty when coverage is complete.
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportUnreachableDc
+    ReportUnreachableDc:
+      description: >-
+        A DC that did not answer a per-DC read.
+      type: object
+      required: [dc, error]
+      properties:
+        dc:
+          type: string
+          maxLength: 255
+        error:
+          type: string
+          maxLength: 64
     ReportSkippedConnection:
       description: >-
         A connection the run skipped.

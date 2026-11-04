@@ -1387,6 +1387,10 @@ export interface components {
             complete: boolean;
             dcsAnswered: number;
             dcsInScope: number;
+            /** @description The header text, "Read from 2 of 3 DCs · 1 unreachable: dc2.example.test: timeout". */
+            label?: string;
+            /** @description The DCs that did not answer, each with the fixed code it gave (never driver text). Empty when coverage is complete. */
+            unreachable?: components["schemas"]["ReportUnreachableDc"][];
         };
         /** @description A report definition: an immutable AST over one registered dataset (FR-03, FR-05), shown as its presets, crosswalk and columns. exportFormats are the formats this installation can produce, and the console offers no others. subjectKind says whether the report requires groups or users (GRP-02, GRP-03). minScheduleIntervalHours is 24 for per-DC reports. */
         ReportDefinition: {
@@ -2060,6 +2064,11 @@ export interface components {
             connectionId: string;
             /** Format: uuid */
             guid: string;
+        };
+        /** @description A DC that did not answer a per-DC read. */
+        ReportUnreachableDc: {
+            dc: string;
+            error: string;
         };
         /** @description A typed filter value. Never an expression. */
         ReportValue: components["schemas"]["ReportValueText"] | components["schemas"]["ReportValueInteger"] | components["schemas"]["ReportValueBoolean"] | components["schemas"]["ReportValueTime"] | components["schemas"]["ReportValueEnum"];
