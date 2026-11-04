@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"log/slog"
 	"sort"
 	"strings"
@@ -188,11 +189,11 @@ func domainsOf(ncs ...uint64) []dsync.Domain {
 }
 
 type connSource struct {
-	cc    connectorv1.ConnectorClient
+	cc    client.ConnectorClient
 	calls int
 }
 
-func (s *connSource) Connector(context.Context, string) (connectorv1.ConnectorClient, error) {
+func (s *connSource) Connector(context.Context, string) (client.ConnectorClient, error) {
 	s.calls++
 	return s.cc, nil
 }

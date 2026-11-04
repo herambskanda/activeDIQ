@@ -80,3 +80,8 @@ func (t GRPCPerDCTransport) ReadPerDC(ctx context.Context, req *connectorv1.Read
 	}
 	return cc.ReadPerDC(ctx, req)
 }
+
+// ConnectorClient is the generated connector client as seen by read-side consumers (sync). Naming it
+// here keeps the generated type confined to this package (ADR-0005 rule 2, O2): writes still go
+// only through Write, which needs a step.Step and a step.Clearance.
+type ConnectorClient = connectorv1.ConnectorClient

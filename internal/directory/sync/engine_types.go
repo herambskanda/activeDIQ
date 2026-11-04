@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"log/slog"
 	"time"
 
@@ -14,7 +15,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
-	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 // Ports of the Engine. Each is satisfied structurally by the production type named with it, so the engine
@@ -30,7 +30,7 @@ type (
 	}
 	// ConnectorSource resolves a connection to its connector (client.TunnelSource).
 	ConnectorSource interface {
-		Connector(ctx context.Context, connectionID string) (connectorv1.ConnectorClient, error)
+		Connector(ctx context.Context, connectionID string) (client.ConnectorClient, error)
 	}
 	// Ingest is the inventory ingester's write side (inventory.Ingester).
 	Ingest interface {

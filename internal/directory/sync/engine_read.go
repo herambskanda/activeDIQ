@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ type readJob struct {
 	tid      tenant.ID
 	conn     connection.ID
 	ref      *connectorv1.ConnectionRef
-	cc       connectorv1.ConnectorClient
+	cc       client.ConnectorClient
 	key      Key
 	lease    jobs.Lease
 	nc       inventory.GUID
