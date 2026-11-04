@@ -25,3 +25,4 @@
 - [search index lessons](search-index-lessons.md) — T-1095: pg_trgm GIN unusable under RLS (T-1180), threshold 0.3, bind-typing and FORCE-RLS fixture traps
 - [search meta lessons](search-meta-lessons.md) — T-1097: chips via users dataset + ExecAll, derivation fixture traps, Entra cloud-only rule
 - [sync cursor lessons](sync-cursor-lessons.md) — T-1190: fitness traps (tenant_id guard, SQL const, platform_leases), fencing limits
+- [EP-11 provider lessons](ep11-provider-lessons.md) — T-1005: facets, loaded-host lab run traps, refusal pkg
