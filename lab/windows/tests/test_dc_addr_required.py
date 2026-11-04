@@ -10,7 +10,7 @@ from pathlib import Path
 LAB = Path(__file__).resolve().parent.parent
 REPO = LAB.parent.parent
 OLD = "192.168.1." + "9"  # assembled so this file does not match its own scan
-DRIVERS = ["agent-verify", "agent-unenrolled-verify", "gssapi-lab", "dc1-clock", "dc1-policy"]
+DRIVERS = ["agent-verify", "agent-unenrolled-verify", "gssapi-lab", "dc1-clock", "dc1-policy", "dc1-evidence"]
 HOOK = """import socket
 def _no(*a, **k):
     open(%r, "a").write("connect\\n"); raise OSError("network blocked by test")
@@ -30,7 +30,8 @@ class DcAddrRequired(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k != "WIN_LAB_DC_ADDR"}
         env.update(WIN_LAB_ENV=str(envf), PYTHONPATH=str(d), DIQ_DC1_LOCK_DIR=str(d / "lock"))
         env.update(extra_env or {})
-        r = subprocess.run([sys.executable, str(LAB / "bin" / name), "--log", str(d / "x.log"), "prepare"],
+        args = ["now"] if name == "dc1-evidence" else ["--log", str(d / "x.log"), "prepare"]
+        r = subprocess.run([sys.executable, str(LAB / "bin" / name), *args],
                            env=env, capture_output=True, text=True, timeout=60)
         return r, marker, d
 

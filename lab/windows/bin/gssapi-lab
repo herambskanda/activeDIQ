@@ -15,7 +15,7 @@
                        over TLS (the correct-binding tests of the T-0566 suite, ad.Open included) pass, and dc1's Directory Service log
                        holds none of 2887, 3039, 3074, 3075 in the window of those binds (window taken from dc1's own clock). Then the
                        control: the wrong-binding test must pass and make 3039 appear, so an empty log above is not a blind query.
-                       Exit 0 only when all of that holds; prints the evidence. Runbook section 19.
+                       Exit 0 only when all of that holds; prints the evidence. Runbook section 20.
 
 Wrap every call in the shared lock:  flock -w 3600 /tmp/claude-1000/activediq-dc1.lock lab/windows/bin/gssapi-lab run
 Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (never printed). Runbook section 15 (clock: section 16).
