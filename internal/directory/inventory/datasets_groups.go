@@ -75,7 +75,7 @@ const (
 	// limit. A name outside the caller's scope is masked; an incomplete ancestry is unknown, never a short
 	// path. A domain-root object has an empty path. The names are joined with '/' as they are: the exact chain
 	// is the dn column.
-	ouName = "CASE WHEN {in_scope.anc} THEN substring(anc.rdn from position('=' in anc.rdn) + 1) ELSE '(outside your scope)' END"
+	ouName    = "CASE WHEN {in_scope.anc} THEN substring(anc.rdn from position('=' in anc.rdn) + 1) ELSE '(outside your scope)' END"
 	ouPathSQL = "CASE WHEN NOT {t}.ancestry_complete THEN NULL ELSE COALESCE((WITH RECURSIVE p(up, path, depth) AS (" +
 		"SELECT anc.parent_guid, " + ouName + ", 1 FROM {rel.anc} WHERE anc.connection_id = {t}.connection_id AND anc.object_guid = {t}.parent_guid" +
 		" AND anc.kind IN ('ou', 'container')" +

@@ -173,7 +173,7 @@ type Observation struct {
 	LastLogonTimestamp time.Time
 	// HasSPN says whether servicePrincipalName has a value (nil: not read). The values themselves are
 	// not stored.
-	HasSPN     *bool
+	HasSPN *bool
 	// ClusterSPN says a servicePrincipalName value has a failover-cluster class (nil: not read); set it
 	// with IsClusterSPN. It feeds the CMP-02 exclusion of cluster objects (T-1477).
 	ClusterSPN *bool
