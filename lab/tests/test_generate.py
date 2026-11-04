@@ -137,6 +137,37 @@ class PasswordAges(unittest.TestCase):
         self.assertTrue(epochs and all(e < NOW for e in epochs))
 
 
+class GroupOracle(unittest.TestCase):
+    """T-1070: the groups inventory.groups / group_members are compared against."""
+
+    def test_standard_tier_has_1501_and_6000_member_groups(self):
+        files, m = gen("standard")
+        o = m["oracle"]
+        self.assertEqual((o["n1501"], o["n6000"]), (1501, 6000))
+        blob = files["31-members.ldif"]
+        for key, n in (("g1501", 1501), ("g6000", 6000)):
+            body = blob.split("dn: " + o[key] + "\n", 1)[1].split("\n\n", 1)[0]
+            self.assertEqual(body.count("\nmember: ") + body.count("\nmember:: "), n, key)
+
+    def test_nesting_has_three_levels_and_a_cycle(self):
+        files, m = gen("small")
+        o, blob = m["oracle"], files["31-members.ldif"]
+        for parent, child in ((o["top"], o["mid"]), (o["mid"], o["low"]), (o["low"], o["top"])):
+            self.assertIn("dn: %s\nchangetype: modify\nadd: member\nmember: %s\n" % (parent, child), blob)
+
+    def test_disabled_members_and_primary_group_plan(self):
+        _, m = gen("small")
+        o = m["oracle"]
+        self.assertEqual(len(o["disabled_members"]), 2)
+        self.assertEqual(len({p["user"] for p in o["primary"]}), 3)
+        self.assertEqual(sorted(p["group"] for p in o["primary"]).count(o["primary"][2]["group"]), 1)   # a group with ONE primary-only member
+        self.assertGreaterEqual(len({p["group"] for p in o["primary"]}), 2)
+
+    def test_oracle_ou_is_created(self):
+        a, _ = gen("small")
+        self.assertIn("OU=GroupOracle", a["01-objects.ldif"])
+
+
 class Escaping(unittest.TestCase):
     def test_esc_dn(self):
         self.assertEqual(generate.esc_dn("a,b"), "a\\,b")
