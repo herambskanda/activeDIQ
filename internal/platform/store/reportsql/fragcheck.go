@@ -82,6 +82,7 @@ const (
 type token struct {
 	kind tokKind
 	text string // lower-cased word, the character, or the number; "" for a literal
+	lit  string // a string literal's content, quotes removed and '' unescaped
 	raw  string // a word as written, for messages
 	slot report.SlotKind
 	id   report.AnchorID // the <id> of a {rel.<id>} slot
@@ -92,6 +93,7 @@ type token struct {
 func tokenize(parts []report.Part) ([]token, error) {
 	var out []token
 	inLit := false
+	var lit strings.Builder
 	for _, p := range parts {
 		if p.Kind != report.SlotLiteral {
 			if inLit {
@@ -107,11 +109,15 @@ func tokenize(parts []report.Part) ([]token, error) {
 			case inLit:
 				if c == '\'' {
 					if i+1 < len(s) && s[i+1] == '\'' {
+						lit.WriteByte('\'')
 						i += 2
 						continue
 					}
 					inLit = false
-					out = append(out, token{kind: tokLiteral})
+					out = append(out, token{kind: tokLiteral, lit: lit.String()})
+					lit.Reset()
+				} else {
+					lit.WriteByte(c)
 				}
 				i++
 			case c == '\'':
@@ -162,6 +168,7 @@ type fragEnv struct {
 	rowAnchors map[report.AnchorID]bool // joined RowAnchors: their slot is a bare alias
 	ids        map[string]bool          // lower-cased anchor and relation IDs, and "t": the aliases a fragment writes as text
 	isColumn   func(name string) bool   // is name a column of a table the dataset uses
+	secretKey  func(key string) bool    // is a JSON attribute key a secret; nil refuses every JSON key operator
 }
 
 // reserved says whether w has a role of its own and so cannot be a name a fragment declares.
@@ -512,7 +519,23 @@ func checkFragment(parts []report.Part, env *fragEnv) error {
 			n = &toks[i+1]
 		}
 		switch t.kind {
+		case tokSlot:
+			// {t} or a RowAnchor's {rel.x} on its own is the whole row (`{t}::text` prints every column,
+			// attributes included); only a column read, {t}.col, is allowed.
+			whole := t.slot == report.SlotBase || t.slot == report.SlotRel && env.rowAnchors[t.id]
+			if whole && !isPunct(toks, i+1, ".") && !isWord(toks, i-1, "from") && !isWord(toks, i-1, "join") {
+				return fmt.Errorf("a slot stands for a whole row here; read a column as {t}.col or {rel.<id>}.col")
+			}
+		case tokLiteral:
+			if specialInput(t.lit) != "" {
+				return fmt.Errorf("the literal %q names the clock or a special date; the clock comes only through {now}", t.lit)
+			}
 		case tokPunct:
+			if t.text == ">" {
+				if err := checkJSONOp(toks, i, env); err != nil {
+					return err
+				}
+			}
 			switch t.text {
 			case "(", "[":
 				depth++
@@ -647,7 +670,10 @@ func checkFragment(parts []report.Part, env *fragEnv) error {
 // first FROM directly inside EXTRACT( or SUBSTRING( is exempt, unless a SELECT stands at that level.
 func checkFrom(toks []token, i int, kw string, s *special, env *fragEnv, d *decls) (bool, error) {
 	if kw == "from" {
-		if isWord(toks, i-1, "distinct") && (isWord(toks, i-2, "is") || isWord(toks, i-2, "not") && isWord(toks, i-3, "is")) {
+		// A word after "." is a column, never a keyword: `{t}.is distinct FROM …` is a select list ending
+		// in the column label "distinct", followed by a real FROM.
+		kwIs := func(k int) bool { return isWord(toks, k, "is") && !isPunct(toks, k-1, ".") }
+		if isWord(toks, i-1, "distinct") && (kwIs(i-2) || isWord(toks, i-2, "not") && kwIs(i-3)) {
 			return false, nil
 		}
 		if s != nil && !s.fromUsed && !s.sawSelect {
@@ -687,6 +713,54 @@ func checkFrom(toks []token, i int, kw string, s *special, env *fragEnv, d *decl
 		return false, fmt.Errorf("a fragment names no table: %q follows %s, which must be followed by a {rel.<id>} slot, a CTE the fragment declares, or a subselect", n.raw, kw)
 	}
 	return false, fmt.Errorf(`%q must be followed by a {rel.<id>} slot, a CTE the fragment declares, or a subselect; a fragment names no table`, kw)
+}
+
+// specialInput returns the word of a literal that PostgreSQL parses as the clock or a special
+// date or time (now, today, tomorrow, yesterday, epoch, infinity, allballs), or "".
+func specialInput(lit string) string {
+	for _, w := range strings.FieldsFunc(strings.ToLower(lit), func(r rune) bool { return r < 'a' || r > 'z' }) {
+		switch w {
+		case "now", "today", "tomorrow", "yesterday", "epoch", "infinity", "allballs":
+			return w
+		}
+	}
+	return ""
+}
+
+// checkJSONOp judges the JSON operator whose last ">" is at toks[i]: ->, ->>, #> or #>>. Its right
+// operand must be a string literal (or, for -> and ->>, an integer), and a literal key is run
+// through the SecretKey predicate, so a derived fragment cannot read a key a JSONAttr column
+// refuses. Anything else (a parenthesis, a concatenation) could build the key, so it is refused.
+func checkJSONOp(toks []token, i int, env *fragEnv) error {
+	if i == 0 || toks[i-1].kind != tokPunct || (toks[i-1].text != "-" && toks[i-1].text != "#") {
+		return nil
+	}
+	path := toks[i-1].text == "#"
+	j := i + 1
+	if isPunct(toks, j, ">") {
+		j++
+	}
+	if j < len(toks) && toks[j].kind == tokNumber && !path {
+		return nil
+	}
+	if j >= len(toks) || toks[j].kind != tokLiteral {
+		return fmt.Errorf("a JSON key operator must be followed by a string literal, so the key can be checked")
+	}
+	if env.secretKey == nil {
+		return fmt.Errorf("a JSON key operator is refused: no SecretKey predicate is configured")
+	}
+	keys := []string{toks[j].lit}
+	if path {
+		for _, k := range strings.FieldsFunc(toks[j].lit, func(r rune) bool { return strings.ContainsRune("{}, \"", r) }) {
+			keys = append(keys, k)
+		}
+	}
+	for _, k := range keys {
+		if env.secretKey(k) {
+			return fmt.Errorf("the JSON key %q is a secret attribute and may not be read", k)
+		}
+	}
+	return nil
 }
 
 func nearWord(p, n *token) string {
