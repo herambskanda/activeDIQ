@@ -518,6 +518,23 @@ func checkFragment(parts []report.Part, env *fragEnv) error {
 		if i+1 < len(toks) {
 			n = &toks[i+1]
 		}
+		if t.kind == tokWord && t.text == "as" && n != nil && n.kind == tokWord && (n.text == "timestamptz" || n.text == "date") {
+			for k, depth := i-1, 0; k >= 0; k-- {
+				if isPunct(toks, k, ")") {
+					depth++
+				} else if isPunct(toks, k, "(") {
+					if depth == 0 {
+						if isWord(toks, k-1, "cast") {
+							if err := checkTemporalOperand(toks[k+1:i], n.text); err != nil {
+								return err
+							}
+						}
+						break
+					}
+					depth--
+				}
+			}
+		}
 		switch t.kind {
 		case tokSlot:
 			// {t} or a RowAnchor's {rel.x} on its own is the whole row (`{t}::text` prints every column,
@@ -533,6 +550,16 @@ func checkFragment(parts []report.Part, env *fragEnv) error {
 		case tokPunct:
 			if t.text == ">" {
 				if err := checkJSONOp(toks, i, env); err != nil {
+					return err
+				}
+			}
+			if t.text == "[" {
+				if err := checkSubscript(toks, i, env); err != nil {
+					return err
+				}
+			}
+			if t.text == ":" && isPunct(toks, i+1, ":") && i+2 < len(toks) && toks[i+2].kind == tokWord {
+				if err := checkCast(toks, i, toks[i+2].text, env); err != nil {
 					return err
 				}
 			}
@@ -560,6 +587,9 @@ func checkFragment(parts []report.Part, env *fragEnv) error {
 				}
 				if !qualified || pp != nil && pp.kind == tokPunct && pp.text == "." {
 					return fmt.Errorf("a schema-qualified or dotted name is not allowed%s; reach a column as {t}.col, {rel.<id>}.col or alias.col of a name the fragment declares", nearWord(p, n))
+				}
+				if n != nil && n.kind == tokPunct && n.text == "*" && p.kind == tokSlot && (p.slot == report.SlotBase || env.rowAnchors[p.id]) {
+					return fmt.Errorf("a slot stands for a whole row here ({t}.* expands to every column, attributes included); read named columns")
 				}
 				if n == nil || n.kind != tokWord && !(n.kind == tokPunct && n.text == "*") {
 					return fmt.Errorf("a %q must be followed by a column name", ".")
@@ -771,4 +801,74 @@ func nearWord(p, n *token) string {
 		return fmt.Sprintf(" (found %q.…)", p.raw)
 	}
 	return ""
+}
+
+// checkSubscript judges the "[" at toks[i]. After ARRAY it opens an array constructor. Anywhere else it
+// is a subscript, and jsonb subscripts read keys (`attributes['unicodePwd']`), so the index must be an
+// integer or a string literal run through SecretKey, then "]".
+func checkSubscript(toks []token, i int, env *fragEnv) error {
+	if isWord(toks, i-1, "array") {
+		return nil
+	}
+	if i+2 < len(toks) && toks[i+1].kind == tokNumber && isPunct(toks, i+2, "]") {
+		return nil
+	}
+	if i+2 < len(toks) && toks[i+1].kind == tokLiteral && isPunct(toks, i+2, "]") {
+		if env.secretKey == nil {
+			return fmt.Errorf("a subscript is refused: no SecretKey predicate is configured")
+		}
+		if env.secretKey(toks[i+1].lit) {
+			return fmt.Errorf("the JSON key %q is a secret attribute and may not be read", toks[i+1].lit)
+		}
+		return nil
+	}
+	return fmt.Errorf("a subscript must hold one integer or string literal, so the key can be checked")
+}
+
+// checkCast judges the cast "::typ" whose first colon is at toks[i]. A string cast to timestamptz or
+// date can name the clock ('now'), and a built string ('n' || 'ow') hides it from the literal check, so
+// the operand must not contain a string literal unless it is the single literal, which the literal
+// check has already vetted. Casting the whole attributes column to text is refused too: it prints
+// every key.
+func checkCast(toks []token, i int, typ string, env *fragEnv) error {
+	if typ == "text" && isWord(toks, i-1, "attributes") {
+		return fmt.Errorf("the attributes column may not be cast to text: it would print every key, secrets included")
+	}
+	if typ != "timestamptz" && typ != "date" {
+		return nil
+	}
+	if i == 0 {
+		return nil
+	}
+	if !isPunct(toks, i-1, ")") {
+		if toks[i-1].kind == tokPunct && toks[i-1].text == "]" {
+			return fmt.Errorf("a cast to %s of a subscript is refused", typ)
+		}
+		return nil
+	}
+	depth := 0
+	for k := i - 1; k >= 0; k-- {
+		switch {
+		case isPunct(toks, k, ")"):
+			depth++
+		case isPunct(toks, k, "("):
+			depth--
+			if depth == 0 {
+				return checkTemporalOperand(toks[k+1:i-1], typ)
+			}
+		}
+	}
+	return nil
+}
+
+func checkTemporalOperand(inner []token, typ string) error {
+	if len(inner) == 1 && inner[0].kind == tokLiteral {
+		return nil
+	}
+	for _, t := range inner {
+		if t.kind == tokLiteral {
+			return fmt.Errorf("a string expression is cast to %s: a built string could name the clock; cast a single literal or a column", typ)
+		}
+	}
+	return nil
 }
