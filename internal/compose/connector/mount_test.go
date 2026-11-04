@@ -126,7 +126,7 @@ func (f fakeSrc) ScopedSearch(_ context.Context, _ ad.ScopedRequest, fn func(*ad
 
 func readHandler(t *testing.T) *read.Handler {
 	t.Helper()
-	h, err := read.New(fakeSrc{})
+	h, err := read.New(pdFake{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +386,7 @@ func TestBindingServesNothingForAnIdentityThatIsNotATenantConnector(t *testing.T
 // AC4: the golden list of Connector RPCs the tunnel serves. Adding a group to the mount means
 // adding it here; every other method stays Unimplemented over the tunnel.
 func TestTunnelServedRPCsAreTheGoldenList(t *testing.T) {
-	golden := map[string]bool{"VerifyConnection": true, "Read": true, "ScopedSearch": true, "Plan": true, "Apply": true}
+	golden := map[string]bool{"VerifyConnection": true, "Read": true, "ScopedSearch": true, "ReadPerDC": true, "Plan": true, "Apply": true}
 	tn, ctx := newTunnel(t)
 	svc := v1.File_activediq_connector_v1_connector_proto.Services().ByName("Connector")
 	for i := 0; i < svc.Methods().Len(); i++ {
@@ -414,7 +414,7 @@ func TestTunnelServedRPCsAreTheGoldenList(t *testing.T) {
 			t.Errorf("%s: served=%v (err %v), golden=%v", name, served, err, golden[name])
 		}
 	}
-	if len(golden) != 5 {
+	if len(golden) != 6 {
 		t.Fatal("golden list changed without this test")
 	}
 }
@@ -440,5 +440,41 @@ func TestNoListenerInConnectorComposition(t *testing.T) {
 				t.Errorf("%s uses %s: the connector dials out only", f, b)
 			}
 		}
+	}
+}
+
+// pdFake adds the per-DC half to the fake source: one DC that answers with a logon count.
+type pdFake struct{ fakeSrc }
+
+func (pdFake) DomainDCs(context.Context, guid.GUID) ([]read.DC, error) {
+	return []read.DC{{Host: "dc1.example.test", DSAGUID: dsa}}, nil
+}
+
+func (pdFake) ReadOnDC(_ context.Context, dc read.DC, id guid.GUID, _ []string) (*ad.Entry, *v1.DcIdentity, error) {
+	return ad.NewEntry("CN=u", map[string][][]byte{"objectGUID": {id.Bytes()}, "logonCount": {[]byte("7")}}),
+		&v1.DcIdentity{DsaGuid: write.GUIDToWire(dc.DSAGUID), DnsHostname: dc.Host}, nil
+}
+
+// ReadPerDC is routed by the tunnel server to the read handler: one result per DC, then a summary
+// (the RPC is served, not Unimplemented).
+func TestReadPerDCOverTunnelIsServed(t *testing.T) {
+	bd, err := connector.TunnelBinding(handler(t), readHandler(t), writeHandler(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tn, ctx := tunnelFor(t, bd, 20*time.Second)
+	st, err := v1.NewConnectorClient(tn.srv.Conn()).ReadPerDC(ctx, &v1.ReadPerDCRequest{
+		Connection: &v1.ConnectionRef{ConnectionId: "c1", DirectoryIdentity: dirIdent},
+		Guid:       write.GUIDToWire(objGUID), NcGuid: write.GUIDToWire(objGUID),
+		Attributes: []v1.PerDcAttribute{v1.PerDcAttribute_PER_DC_ATTRIBUTE_LOGON_COUNT},
+		Scope:      v1.PerDcScope_PER_DC_SCOPE_ALL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms, err := recvAll(st)
+	if err != nil || len(ms) != 2 || ms[0].GetResult() == nil || ms[1].GetSummary() == nil ||
+		ms[1].GetSummary().GetCoverage() != v1.Coverage_COVERAGE_COMPLETE {
+		t.Fatalf("ReadPerDC over the tunnel: msgs=%v err=%v", ms, err)
 	}
 }
