@@ -141,11 +141,11 @@ func TestPlanPreconditionDCEqualsThePin(t *testing.T) {
 		t.Fatalf("plans %d precondition.dc = %v, pin %v", rec.plan, resp.GetPrecondition().GetDc(), q.GetDc())
 	}
 	// A kind that answers with another DC is refused, not corrected silently.
-	op := r.h.ops[1]
+	op := r.h.ops[adKey(1)]
 	op.Plan = func(context.Context, Authorised, *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {
 		return &connectorv1.PlanResponse{Precondition: &connectorv1.TargetPrecondition{Dc: &connectorv1.DcIdentity{DsaGuid: toWire(mk(98))}}}, nil
 	}
-	r.h.ops[1] = op
+	r.h.ops[adKey(1)] = op
 	_, err = r.h.Plan(context.Background(), q)
 	if c := connErr(t, err).GetCode(); c != connectorv1.ErrorCode_ERROR_CODE_UNREACHABLE_DC {
 		t.Fatalf("op answered another DC: %v", c)

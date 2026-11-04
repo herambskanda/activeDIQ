@@ -69,3 +69,15 @@ func TestCoreOnlyProviderService(t *testing.T) {
 		}
 	}
 }
+
+// kindAD claims the AD kind but exposes no DCBound facet.
+type kindAD struct{ provider.Provider }
+
+func (kindAD) Kind() connectorv1.ProviderKind { return connectorv1.ProviderKind_PROVIDER_KIND_AD }
+
+// An AD-kind provider that hides DCBound is refused at construction, not planned on the Entra plane.
+func TestNewRefusesADKindWithoutDCBound(t *testing.T) {
+	if _, err := service.New(kindAD{&entra.EntraProvider{TenantID: "t"}}, deps(t)); err == nil {
+		t.Fatal("service built over an AD-kind provider without DCBound")
+	}
+}

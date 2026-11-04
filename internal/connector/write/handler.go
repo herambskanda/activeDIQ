@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"strconv"
 	"time"
@@ -37,10 +38,11 @@ type Handler struct {
 	// dc is the DCBound facet, nil when the provider has no DCs: a provider with DCs pins, one without
 	// does not (ADR-0005 rule 5). It also selects the AD plane of the Tier-0 rules.
 	dc    provider.DCBound
+	plane tier0.Plane // from provider.Plane, validated at New; never inferred from dc alone
 	gates *GateBook
 	rec   Recorder
 	now   func() time.Time
-	ops   map[connectorv1.WriteKind]WriteOp
+	ops   map[opKey]WriteOp
 }
 
 // Option configures New.
@@ -58,7 +60,11 @@ func New(p provider.Provider, g *GateBook, opts ...Option) (*Handler, error) {
 	if p == nil || g == nil {
 		return nil, errors.New("write: provider and gate book are required")
 	}
-	h := &Handler{prov: p, gates: g, rec: SlogRecorder{}, now: time.Now, ops: operations}
+	plane, err := provider.Plane(p)
+	if err != nil {
+		return nil, fmt.Errorf("write: %w", err)
+	}
+	h := &Handler{prov: p, gates: g, rec: SlogRecorder{}, now: time.Now, ops: operations, plane: plane}
 	h.dc, _ = p.(provider.DCBound)
 	for _, o := range opts {
 		o(h)
@@ -230,7 +236,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 		return nil, invalid("1", "PreconditionRequired", "precondition")
 	}
 
-	isAD := h.dc != nil
+	isAD := h.plane == tier0.PlaneAD
 	// ADR-0005 rule 5: an AD Plan names the DC it must run on; nil or unset is refused before any
 	// directory call. An AD Apply is held to the DC the precondition names.
 	var want *connectorv1.Guid
@@ -290,7 +296,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	// PropertyWrite and writes nothing.
 	var op *WriteOp
 	var declared []string
-	if w, ok := h.ops[c.kind]; ok && c.kind != connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
+	if w, ok := h.ops[opKey{h.prov.Kind(), c.kind}]; ok && c.kind != connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
 		op = &w
 		if r := h.propertyGuard(ctx, w, c, target, ev); r != nil {
 			return nil, r
@@ -354,11 +360,7 @@ const (
 // audit-ready refusal record); attribute values and guard error text never are.
 func (h *Handler) propertyGuard(ctx context.Context, w WriteOp, c *call, target guid.GUID, ev *Event) *Refusal {
 	pw, err := w.PropertyWrite(c.change)
-	plane := tier0.PlaneEntra
-	if h.dc != nil {
-		plane = tier0.PlaneAD
-	}
-	if err != nil || pw.Plane != plane { // a declaration for the other plane is a bug in the kind
+	if err != nil || pw.Plane != h.plane { // a declaration for the other plane is a bug in the kind
 		ev.Reason = reasonBadDeclaration
 		if err == nil {
 			ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)

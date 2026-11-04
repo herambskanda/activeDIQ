@@ -318,3 +318,8 @@ func (m *memPins) PinC13(_ context.Context, g []guid.GUID) error {
 	m.pins = append(m.pins, g...)
 	return nil
 }
+
+// adKey is the op-table key of write kind k on the AD provider.
+func adKey(k connectorv1.WriteKind) opKey {
+	return opKey{connectorv1.ProviderKind_PROVIDER_KIND_AD, k}
+}

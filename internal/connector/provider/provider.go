@@ -90,3 +90,30 @@ var (
 	// refuses (fail closed).
 	ErrNoAnchors = errors.New("provider: sync anchors cannot be read")
 )
+
+// ErrKindFacets is returned by Plane for a provider whose kind and facets disagree.
+var ErrKindFacets = errors.New("provider: kind and facets disagree")
+
+// Plane is the single answer to "which Tier-0 plane does this provider write on". The pairing is a
+// construction-time invariant: PROVIDER_KIND_AD must implement DCBound (a provider with DCs pins,
+// ADR-0005 rule 5); any other known kind must not; UNSPECIFIED and unknown kinds are refused. A
+// wrapper that hides the facet therefore fails here rather than silently dropping the DC pin.
+func Plane(p Provider) (tier0.Plane, error) {
+	if p == nil {
+		return 0, errors.New("provider: nil provider")
+	}
+	_, hasDC := p.(DCBound)
+	switch p.Kind() {
+	case connectorv1.ProviderKind_PROVIDER_KIND_AD:
+		if !hasDC {
+			return 0, ErrKindFacets
+		}
+		return tier0.PlaneAD, nil
+	case connectorv1.ProviderKind_PROVIDER_KIND_ENTRA:
+		if hasDC {
+			return 0, ErrKindFacets
+		}
+		return tier0.PlaneEntra, nil
+	}
+	return 0, ErrKindFacets
+}

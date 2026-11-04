@@ -78,18 +78,27 @@ type WriteOp struct {
 // passes the guard ends in CAPABILITY_UNSUPPORTED and no write path exists. The only place a
 // directory or Graph write may be called from is a WriteOp body reachable from this table; the
 // fitness test in fitness_test.go enforces that.
-var operations = map[connectorv1.WriteKind]WriteOp{}
+var operations = map[opKey]WriteOp{}
+
+// opKey keys the operation table: a write kind is dispatchable only on the provider kind it was
+// registered for, so an Entra kind is unreachable from an AD provider and vice versa.
+type opKey struct {
+	Provider connectorv1.ProviderKind
+	Kind     connectorv1.WriteKind
+}
 
 // validateOps is the build-time check of contract §8.9 / CC-WRITE-22: every registered write kind
 // declares its PropertyWrite and its other mandatory functions. It runs in New, so a handler cannot
 // be built over a table with a gap, and in the unit tests over the real table on every merge.
-func validateOps(ops map[connectorv1.WriteKind]WriteOp) error {
+func validateOps(ops map[opKey]WriteOp) error {
 	for k, op := range ops {
 		switch {
+		case k.Provider != connectorv1.ProviderKind_PROVIDER_KIND_AD && k.Provider != connectorv1.ProviderKind_PROVIDER_KIND_ENTRA:
+			return fmt.Errorf("write: kind %s is registered for no provider kind", k.Kind)
 		case op.PropertyWrite == nil:
-			return fmt.Errorf("write: kind %s is registered without a PropertyWrite (contract §8.9)", k)
+			return fmt.Errorf("write: kind %s is registered without a PropertyWrite (contract §8.9)", k.Kind)
 		case op.Touched == nil || op.Digest == nil || op.Plan == nil || op.Apply == nil:
-			return fmt.Errorf("write: kind %s is registered with a missing function", k)
+			return fmt.Errorf("write: kind %s is registered with a missing function", k.Kind)
 		}
 	}
 	return nil

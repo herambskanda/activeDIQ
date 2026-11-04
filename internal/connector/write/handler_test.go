@@ -442,7 +442,7 @@ func withTestOp(r *rig, touched ...byte) *recordedOp {
 	rec := &recordedOp{}
 	k := connectorv1.WriteKind(1)
 	r.prov.guard = &stubGuard{} // allows; the guard's own tests are in propwrite_test.go
-	r.h.ops = map[connectorv1.WriteKind]WriteOp{k: {
+	r.h.ops = map[opKey]WriteOp{adKey(k): {
 		PropertyWrite: declare(adUpdateTitle, nil),
 		Touched: func(target guidT, _ *connectorv1.WriteChange) ([]guidT, error) {
 			out := []guidT{target}
@@ -526,8 +526,8 @@ func TestStep9ReportsBasis(t *testing.T) {
 	q := applyReq(tgt, ctxFor(tgt))
 	q.Kind = 1
 	// Replace the fake's behaviour after the write: tier0 with C2, no error.
-	r.h.ops[1] = func() WriteOp {
-		w := r.h.ops[1]
+	r.h.ops[adKey(1)] = func() WriteOp {
+		w := r.h.ops[adKey(1)]
 		inner := w.Apply
 		w.Apply = func(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
 			r.prov.tier0[tgt] = []Basis{tier0.C2}
@@ -610,13 +610,13 @@ func TestStep9UsesDesignatedSet(t *testing.T) {
 	withTestOp(r)
 	q := applyReq(tgt, ctxFor(tgt))
 	q.Kind = 1
-	w := r.h.ops[1]
+	w := r.h.ops[adKey(1)]
 	inner := w.Apply
 	w.Apply = func(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
 		r.prov.members = map[guid.GUID][]guid.GUID{grp: {tgt}} // joins during the write window
 		return inner(ctx, a, req)
 	}
-	r.h.ops[1] = w
+	r.h.ops[adKey(1)] = w
 	resp, err := r.h.Apply(context.Background(), q)
 	if err != nil {
 		t.Fatal(err)

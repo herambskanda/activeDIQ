@@ -245,13 +245,13 @@ func TestApplyDACLTokenBindsDeclaredProperty(t *testing.T) {
 			r := newRig(t, &run)
 			withTestOp(r)
 			var tok Authorised
-			op := r.h.ops[connectorv1.WriteKind(1)]
+			op := r.h.ops[adKey(1)]
 			op.PropertyWrite = declare(c.pw, nil)
 			op.Apply = func(_ context.Context, a Authorised, _ *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
 				tok = a
 				return &connectorv1.ApplyResponse{Outcome: connectorv1.ApplyOutcome_APPLY_OUTCOME_APPLIED}, nil
 			}
-			r.h.ops[connectorv1.WriteKind(1)] = op
+			r.h.ops[adKey(1)] = op
 			tgt := mk(40)
 			q := applyReq(tgt, ctxFor(tgt))
 			q.Kind = 1
