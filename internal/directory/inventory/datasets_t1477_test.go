@@ -71,50 +71,33 @@ func Test_users_manager_and_ou_path(t *testing.T) {
 			t.Fatal(err)
 		}
 		cols := []report.ColumnID{"sam_account_name", "manager_guid", "manager", "has_manager", "ou_path"}
-		run := func(sc report.DatasetID) hResult { return hResult{} }
-		_ = run
-		for _, tc := range []struct {
-			name string
-			res  hResult
-			chk  func(rows map[string]map[report.ColumnID]report.Cell)
-		}{
-			{"ou scope", e.run(t, reg, hQuery{dataset: inventory.DatasetUsers, cols: cols, scope: e.scopeOU(e.adA), now: hBase}), func(r map[string]map[report.ColumnID]report.Cell) {
-				if _, ok := r[strings.ToLower(hGUID(1, 5))]; ok {
-					t.Error("root user is outside the OU scope")
-				}
-				w := r[strings.ToLower(hGUID(1, 1))]
-				if got := cellStr(w, "manager"); got != "boss" && !strings.Contains(got, "boss") {
-					t.Errorf("in-scope manager name = %q", got)
-				}
-				if got := cellStr(w, "manager_guid"); !strings.EqualFold(got, mIn) {
-					t.Errorf("manager_guid = %q, want %q", got, mIn)
-				}
-				if got := cellStr(w, "ou_path"); got != "People/Sales EMEA/Berlin" {
-					t.Errorf("ou_path = %q", got)
-				}
-				o := r[strings.ToLower(hGUID(1, 3))]
-				if got := cellStr(o, "manager"); got != "(manager outside your scope)" {
-					t.Errorf("out-of-scope manager name = %q", got)
-				}
-				if got := cellStr(o, "manager_guid"); !strings.EqualFold(got, mOut) {
-					t.Errorf("out-of-scope manager_guid = %q, want %q", got, mOut)
-				}
-				if got := cellStr(r[strings.ToLower(hGUID(1, 2))], "has_manager"); got != "false" {
-					t.Errorf("has_manager = %q", got)
-				}
-				if got := cellStr(r[strings.ToLower(hGUID(1, 4))], "manager"); got != "(manager not in inventory)" {
-					t.Errorf("ghost manager = %q", got)
-				}
-			}},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				for k, r := range tc.res.rows {
-					for _, c := range cols {
-						t.Logf("%s %s = %s", k, c, cellKey(r[c]))
-					}
-				}
-				tc.chk(tc.res.rows)
-			})
+		scoped := e.run(t, reg, hQuery{dataset: inventory.DatasetUsers, cols: cols, scope: e.scopeOU(e.adA), now: hBase})
+		r := scoped.rows
+		if _, ok := r[strings.ToLower(hGUID(1, 5))]; ok {
+			t.Error("root user is outside the OU scope")
+		}
+		w := r[strings.ToLower(hGUID(1, 1))]
+		if got := cellStr(w, "manager"); got != "boss" {
+			t.Errorf("in-scope manager name = %q, want boss", got)
+		}
+		if got := cellStr(w, "manager_guid"); !strings.EqualFold(got, mIn) {
+			t.Errorf("manager_guid = %q, want %q", got, mIn)
+		}
+		if got := cellStr(w, "ou_path"); got != "People/Sales EMEA/Berlin" {
+			t.Errorf("ou_path = %q", got)
+		}
+		o := r[strings.ToLower(hGUID(1, 3))]
+		if got := cellStr(o, "manager"); got != "(manager outside your scope)" {
+			t.Errorf("out-of-scope manager name = %q", got)
+		}
+		if got := cellStr(o, "manager_guid"); !strings.EqualFold(got, mOut) {
+			t.Errorf("out-of-scope manager_guid = %q, want %q", got, mOut)
+		}
+		if got := cellStr(r[strings.ToLower(hGUID(1, 2))], "has_manager"); got != "false" {
+			t.Errorf("has_manager = %q", got)
+		}
+		if got := cellStr(r[strings.ToLower(hGUID(1, 4))], "manager"); got != "(manager not in inventory)" {
+			t.Errorf("ghost manager = %q", got)
 		}
 		// whole-NC scope: the root user has an empty chain
 		all := e.run(t, reg, hQuery{dataset: inventory.DatasetUsers, cols: cols, scope: e.scopeNC(e.adA), now: hBase})

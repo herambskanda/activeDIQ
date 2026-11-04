@@ -111,7 +111,7 @@ func baseColumns() []report.Column {
 		attr("primary_group_id", "Primary group ID", report.TypeInt, "primary_group_id", opsInt, false),
 		attr("user_account_control", "userAccountControl", report.TypeInt, "user_account_control", opsInt, false),
 		attr("observed_at", "Observed at", report.TypeTime, "observed_at", opsTime, false),
-		derived("ou_path", "OU path", report.TypeText, report.SQL(ouPathSQL), opsText),
+		derived("ou_path", "OU path (names joined with /; an OU name containing / is ambiguous, use dn for the exact chain)", report.TypeText, report.SQL(ouPathSQL), opsText),
 		derived("primary_group", "Primary group", report.TypeText, report.SQL(primaryGroupSQL), opsText),
 		derived("in_other_groups", "Member of a group other than its primary group", report.TypeBool, report.SQL(inOtherGroupsSQL), opsBool),
 		uacFlag("password_never_expires", "Password never expires (flag)", report.SQL("("+uac+" & 65536) <> 0")),

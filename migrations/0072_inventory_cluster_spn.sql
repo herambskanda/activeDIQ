@@ -8,6 +8,7 @@ ALTER TABLE public.directory_objects ADD COLUMN cluster_spn boolean;
 -- user's manager DN to the manager row without exposing the manager's DN outside the caller's scope (a
 -- MaskAnchor may project only non-text columns; a fragment may not call md5). manager_key is NULL when the
 -- row has no manager. Used by inventory.users manager_guid.
+-- manager_key reflects the manager DN as last synced; it goes stale until the manager object is resynced after a DN change.
 ALTER TABLE public.directory_objects
   ADD COLUMN dn_key uuid GENERATED ALWAYS AS (CASE WHEN dn <> '' THEN md5(lower(dn))::uuid END) STORED,
   ADD COLUMN manager_key uuid GENERATED ALWAYS AS (
