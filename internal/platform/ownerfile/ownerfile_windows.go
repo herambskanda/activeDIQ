@@ -86,11 +86,13 @@ func (p principals) has(s *windows.SID) bool {
 	return s != nil && (s.Equals(p.user) || s.Equals(p.system) || (p.admins != nil && s.Equals(p.admins)))
 }
 
-// sids lists the principals once each.
+// sids lists the principals a descriptor WRITTEN with p names, once each. Administrators appear only
+// when writing for another account (asService): TrustAdministrators widens verification (has), never
+// what is written, so a plain write produces the token-user + SYSTEM descriptor the default OpenDir accepts.
 func (p principals) sids() []*windows.SID {
 	out := []*windows.SID{p.user}
 	for _, s := range []*windows.SID{p.system, p.admins} {
-		if s == nil {
+		if s == nil || (s == p.admins && !p.asService) {
 			continue
 		}
 		dup := false

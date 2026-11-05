@@ -354,3 +354,44 @@ func TestWindowsForAccountUnknownAccountFailsBeforeWriting(t *testing.T) {
 		t.Fatal("the directory was created for an account that does not resolve")
 	}
 }
+
+// T-1249 review: TrustAdministrators widens verification only. A plain write with it must produce the
+// token-user + SYSTEM descriptor (no Administrators ACE) that the default OpenDir accepts.
+func TestWindowsTrustAdministratorsDoesNotWidenWrites(t *testing.T) {
+	dir := filepath.Join(trustedParent(t), "state")
+	d, err := CreateDir(dir, TrustAdministrators())
+	if err != nil {
+		t.Fatalf("CreateDir: %v", err)
+	}
+	if err := d.WriteFile("a", []byte("x")); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	d.Close()
+	admins, _ := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	user, _, _ := desiredSIDs()
+	for _, p := range []string{dir, filepath.Join(dir, "a")} {
+		sd, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o, _, _ := sd.Owner(); o == nil || (!o.Equals(user) && !o.Equals(admins)) {
+			t.Fatalf("%s owner = %v", filepath.Base(p), o)
+		}
+		acl, _, _ := sd.DACL()
+		for i := uint32(0); i < uint32(acl.AceCount); i++ {
+			var ace *windows.ACCESS_ALLOWED_ACE
+			if err := windows.GetAce(acl, i, &ace); err != nil {
+				t.Fatal(err)
+			}
+			sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+			if sid.Equals(admins) && !user.Equals(admins) {
+				t.Fatalf("%s has an Administrators ACE from a plain write", filepath.Base(p))
+			}
+		}
+	}
+	o, err := OpenDir(dir)
+	if err != nil {
+		t.Fatalf("default OpenDir refused what TrustAdministrators wrote: %v", err)
+	}
+	o.Close()
+}

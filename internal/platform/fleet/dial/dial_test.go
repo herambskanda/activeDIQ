@@ -526,9 +526,9 @@ func TestLoadClassifiesAbsentApartFromUnusable(t *testing.T) {
 		t.Fatalf("no leaf = %v, want ErrAbsent and ErrIncomplete", err)
 	}
 	// Garbage in a file: unusable, not absent.
-	if err := os.WriteFile(filepath.Join(dir, LeafFile), []byte("not a pem"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	// Written through ownerfile so the file has the right owner/DACL on Windows too: the test must
+	// reach the parse failure, not an ACL refusal.
+	put(t, dir, LeafFile, []byte("not a pem"))
 	if _, err := Load(dir); !errors.Is(err, ErrState) || errors.Is(err, ErrAbsent) || errors.Is(err, ErrUnsafe) {
 		t.Fatalf("corrupt leaf = %v, want ErrState only", err)
 	}
