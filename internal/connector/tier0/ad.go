@@ -1959,12 +1959,15 @@ func (b *builder) resolveHistory(s sid.SID) (e *ad.Entry, found, foreign bool, e
 	return e, found, true, err
 }
 
+// errNoForestSeam: the directory cannot list the forest's domains at all.
+var errNoForestSeam = errors.New("directory cannot resolve a SID of another domain")
+
 // inForest reports whether dom is the SID of a domain of this forest. A directory that cannot list
 // the forest's domains is an error (callers fail closed).
 func (b *builder) inForest(dom sid.SID) (bool, error) {
 	fd, ok := b.d.(ForestDirectory)
 	if !ok {
-		return false, errors.New("directory cannot resolve a SID of another domain")
+		return false, errNoForestSeam
 	}
 	if b.forest == nil {
 		ds, err := fd.ForestDomains(b.ctx)
@@ -1993,6 +1996,11 @@ func (b *builder) forestGrant(s sid.SID) (members []*ad.Entry, dead, ok bool, er
 		return nil, false, false, nil
 	}
 	in, err := b.inForest(dom)
+	if errors.Is(err, ErrNoGC) || errors.Is(err, errNoForestSeam) {
+		// No GC configured: the forest is unknown, so the SID is not provably a forest domain's. Keep the
+		// pre-T-0834 handling (ignorable own-forest prefix, T-0819 trust seam, fail closed otherwise).
+		return nil, false, false, nil
+	}
 	if err != nil {
 		return nil, false, false, fmt.Errorf("tier0: grant to %s, an account of another domain; forest lookup failed: %w", s, err)
 	}
@@ -2006,8 +2014,17 @@ func (b *builder) forestGrant(s sid.SID) (members []*ad.Entry, dead, ok bool, er
 	if !found {
 		return nil, true, true, nil
 	}
+	// A protected account or group (C1/C13 RID) of a forest domain is Tier 0 in that domain's own
+	// snapshot, and so are its members that live there: members elsewhere are not this snapshot's to mark.
+	rid, _ := s.RID()
+	protectedRID := privilegedDomainRIDs[rid]
 	if !hasClass(e, "group") {
-		return nil, false, true, nil // a user or computer: one principal, in a domain we do not snapshot
+		if protectedRID {
+			return nil, false, true, nil
+		}
+		// A live user or computer of another domain controls this object; no snapshot but this one reads
+		// this domain's DACLs, so it must not pass silently.
+		return nil, false, true, fmt.Errorf("tier0: grant to %s, a live principal of another domain of the forest, controls a Tier-0 object and cannot be classified here", s)
 	}
 	if slices.ContainsFunc(e.Names(), func(n string) bool { return strings.HasPrefix(strings.ToLower(n), "member;range=") }) {
 		return nil, false, true, fmt.Errorf("tier0: grant to %s, a group of another domain with a ranged member list the GC could not complete", s)
@@ -2018,6 +2035,9 @@ func (b *builder) forestGrant(s sid.SID) (members []*ad.Entry, dead, ok bool, er
 			return nil, false, true, fmt.Errorf("tier0: grant to %s: member %q: %w", s, v, err)
 		}
 		if !d.IsDescendantOf(b.nm.Domain) {
+			if protectedRID {
+				continue
+			}
 			return nil, false, true, fmt.Errorf("tier0: grant to %s, a group of another domain, has a member in a third domain the classifier cannot read", s)
 		}
 		m, found, err := b.get(dn.DNRef(d), walkAttrs)
