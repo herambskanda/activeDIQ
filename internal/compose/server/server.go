@@ -145,7 +145,6 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	_ = tunnelDeps // handed to NewFleetService by the fleet listener (T-0717)
 	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
 	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
 	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default(), withPublicURL(cfg.PublicURL))
@@ -224,6 +223,26 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
+	// The fleet Enroller (T-0716): the console's key source, the alert queue and the install's tenant.
+	// A key source that cannot serve the tenant stops startup here.
+	alerter, err := newQueueAlerter(db, ok.Chainer, slog.Default())
+	if err != nil {
+		return err
+	}
+	apiPorts := console.ports(lim, authzr, cat)
+	enroller, err := buildEnroller(ctx, fleetEnrollerDeps{DB: db, Audit: ok.Chainer, Keys: keys.NewStore(kekp).KeySource(),
+		Authz: apiPorts.Authz, StepUp: apiPorts.StepUp, Alerts: alerter}, tid)
+	if err != nil {
+		return err
+	}
+	fleetSvc, err := NewFleetService(enroller, tunnelDeps)
+	if err != nil {
+		return err
+	}
+	_ = fleetSvc // registered by the fleet listener (T-0717), which also sets the enrolment endpoints
+	actx, acancel := context.WithCancel(ctx)
+	defer func() { acancel(); alerter.Wait() }()
+	go alerter.Run(actx)
 	firstOwner.SetTenant(tid) // the claim route can now create the first owner
 	console.SetTenant(tid)    // and the sign-in plane knows whose accounts it checks
 	// Dead AN-8 throttle rows are purged on a cadence so one-off submitted names cannot grow the table (T-0868).
