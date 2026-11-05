@@ -313,7 +313,9 @@ func TestSignServerLeafRefusals(t *testing.T) {
 		e.enr.Endpoints = append(e.enr.Endpoints,
 			fleetsql.Endpoint{Host: "127.0.0.1", Port: 1}, fleetsql.Endpoint{Host: "169.254.1.1", Port: 1},
 			fleetsql.Endpoint{Host: "0.0.0.0", Port: 1}, fleetsql.Endpoint{Host: "*.example.test", Port: 1},
-			fleetsql.Endpoint{Host: "fleet.example.test.", Port: 1}, fleetsql.Endpoint{Host: "::1", Port: 1})
+			fleetsql.Endpoint{Host: "fleet.example.test.", Port: 1}, fleetsql.Endpoint{Host: "::1", Port: 1},
+			fleetsql.Endpoint{Host: "127.1", Port: 1}, fleetsql.Endpoint{Host: "0x7f.0.0.1", Port: 1}, fleetsql.Endpoint{Host: "2130706433", Port: 1},
+			fleetsql.Endpoint{Host: "1.2.3", Port: 1}, fleetsql.Endpoint{Host: "255.255.255.255", Port: 1})
 		long := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 63) + ".test"
 		e.enr.Endpoints = append(e.enr.Endpoints, fleetsql.Endpoint{Host: long, Port: 1})
 		names := map[string][]string{
@@ -328,6 +330,11 @@ func TestSignServerLeafRefusals(t *testing.T) {
 			"loopback v6":             {"::1"},
 			"link-local":              {"169.254.1.1"},
 			"unspecified":             {"0.0.0.0"},
+			"short ipv4 127.1":        {"127.1"},
+			"hex ipv4":                {"0x7f.0.0.1"},
+			"decimal ipv4":            {"2130706433"},
+			"three-part ipv4":         {"1.2.3"},
+			"limited broadcast":       {"255.255.255.255"},
 			"too long":                {long},
 			"one bad among good":      {"fleet.example.test", "evil.example.test"},
 			"space":                   {" fleet.example.test"},

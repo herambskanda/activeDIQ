@@ -115,6 +115,9 @@ func validServerCACert(c *x509.Certificate) bool {
 	if len(c.ExtKeyUsage) != 1 || c.ExtKeyUsage[0] != x509.ExtKeyUsageServerAuth || len(c.UnknownExtKeyUsage) != 0 {
 		return false
 	}
+	if len(c.SubjectKeyId) == 0 {
+		return false
+	}
 	k, ok := c.PublicKey.(*ecdsa.PublicKey)
 	return ok && k.Curve == elliptic.P384()
 }
@@ -349,7 +352,7 @@ func normaliseServerName(s string) (string, error) {
 		return "", ErrServerNames
 	}
 	if a, err := netip.ParseAddr(s); err == nil {
-		if a.Zone() != "" || a.IsLoopback() || a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsUnspecified() || a.IsMulticast() {
+		if a.Zone() != "" || a.IsLoopback() || a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsUnspecified() || a.IsMulticast() || a.Unmap() == netip.AddrFrom4([4]byte{255, 255, 255, 255}) {
 			return "", ErrServerNames
 		}
 		return a.Unmap().String(), nil
@@ -361,7 +364,13 @@ func normaliseServerName(s string) (string, error) {
 	if err != nil || n == "" || len(n) > maxDNSNameBytes {
 		return "", ErrServerNames
 	}
-	for _, l := range strings.Split(n, ".") {
+	labels := strings.Split(n, ".")
+	// A TLD is never all-numeric (RFC 3696 s2); this refuses inet_aton short forms such as 127.1 or
+	// 2130706433 that a resolver would read as a loopback address. A 0x prefix is the hex form.
+	if last := labels[len(labels)-1]; strings.Trim(last, "0123456789") == "" || strings.HasPrefix(n, "0x") {
+		return "", ErrServerNames
+	}
+	for _, l := range labels {
 		if l == "" || len(l) > 63 || l[0] == '-' || l[len(l)-1] == '-' {
 			return "", ErrServerNames
 		}
