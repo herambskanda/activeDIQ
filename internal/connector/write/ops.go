@@ -70,6 +70,10 @@ type WriteOp struct {
 	// registered without it fails validateOps (the CC-WRITE-22 build-time check) and New. The guard
 	// calls it at step 4, before every other step that depends on the kind.
 	PropertyWrite func(change *connectorv1.WriteChange) (tier0.PropertyWrite, error)
+	// AlsoDeclares lists further declarations for the same change, each checked by the same guard
+	// and each of which must pass (a directory attribute that feeds rule properties of two object
+	// classes). Optional.
+	AlsoDeclares func(change *connectorv1.WriteChange) ([]tier0.PropertyWrite, error)
 	// Digest recomputes the plan digest from the typed fields with the operation/step function.
 	Digest func(req *connectorv1.ApplyRequest) ([]byte, error)
 	// Arm reports whether the change is the arm of this kind; nil means no check. A mismatch is

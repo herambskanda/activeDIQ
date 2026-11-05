@@ -196,6 +196,10 @@ func (s *Session) mapModifyErr(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return fail(CodeCanceled, "", ctx.Err())
 	}
+	var ae *Error
+	if errors.As(err, &ae) {
+		return err // a sender's own classified refusal (e.g. the secure proof went stale)
+	}
 	var le *ldap.Error
 	if errors.As(err, &le) {
 		// The DC's diagnostic is classified and dropped; it is never kept (it can name a DN).

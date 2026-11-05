@@ -315,3 +315,49 @@ func TestAccountKindsUnsupportedWithoutSession(t *testing.T) {
 		}
 	}
 }
+
+// deviceRuleGuard models a designated dynamic device group whose rule references
+// device.accountEnabled: it refuses any declaration of userAccountControl as a device write.
+type deviceRuleGuard struct{ seen []tier0.PropertyWrite }
+
+func (g *deviceRuleGuard) CheckPropertyWrite(_ context.Context, w tier0.PropertyWrite) (tier0.DynamicRuleRefusal, error) {
+	g.seen = append(g.seen, w)
+	if w.Kind == tier0.WriteDevice {
+		for _, k := range w.Keys {
+			if k == "userAccountControl" {
+				return tier0.DynamicRuleRefusal{Refused: true, Reason: tier0.ReasonDesignatedDynamicRule,
+					Stage: tier0.StageConnectorSet, Op: w.Op, Keys: w.Keys}, nil
+			}
+		}
+	}
+	return tier0.DynamicRuleRefusal{}, nil
+}
+
+// Security review T-1583 finding 1: userAccountControl feeds device.accountEnabled too, so enabling or
+// disabling a computer that a designated dynamic device group's rule depends on must be refused by the
+// property guard before any directory call. Both the user and the device declarations are checked.
+func TestAccountEnableDisableComputerRefusedByDeviceRule(t *testing.T) {
+	id := mk(36)
+	for _, key := range []string{accountkind.KeyEnable, accountkind.KeyDisable} {
+		sp, _ := accountkind.ByKey(key)
+		r, fs := acctRig(t, nil, userState(id, 4096, 0))
+		g := &deviceRuleGuard{}
+		r.prov.guard = g
+		p, a := kindReqs(sp, id, false)
+		_, err := r.h.Plan(context.Background(), p)
+		wantTier0(t, err, connectorv1.Tier0RefusalStage_TIER0_REFUSAL_STAGE_CONNECTOR_SET)
+		_, err = r.h.Apply(context.Background(), a)
+		wantTier0(t, err, connectorv1.Tier0RefusalStage_TIER0_REFUSAL_STAGE_CONNECTOR_SET)
+		if fs.calls != 0 || len(fs.sent) != 0 {
+			t.Fatalf("%s: session touched %d times, %d modifies sent", key, fs.calls, len(fs.sent))
+		}
+		var user, device bool
+		for _, w := range g.seen {
+			user = user || w.Kind == tier0.WriteUser
+			device = device || w.Kind == tier0.WriteDevice
+		}
+		if !user || !device {
+			t.Fatalf("%s: guard saw user=%v device=%v declarations", key, user, device)
+		}
+	}
+}

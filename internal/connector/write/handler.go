@@ -360,15 +360,35 @@ const (
 // audit-ready refusal record); attribute values and guard error text never are.
 func (h *Handler) propertyGuard(ctx context.Context, w WriteOp, c *call, target guid.GUID, ev *Event) *Refusal {
 	pw, err := w.PropertyWrite(c.change)
+	var extra []tier0.PropertyWrite
+	if err == nil && w.AlsoDeclares != nil {
+		// A kind whose attribute feeds rule properties of more than one object class (userAccountControl
+		// feeds user.accountEnabled and device.accountEnabled) declares each; every declaration must pass.
+		extra, err = w.AlsoDeclares(c.change)
+	}
+	if err != nil {
+		ev.Reason = reasonBadDeclaration
+		return invalid("4", "PropertyWrite", "change")
+	}
+	if r := h.propertyGuardOne(ctx, pw, target, ev); r != nil {
+		return r
+	}
+	for _, x := range extra {
+		if r := h.propertyGuardOne(ctx, x, target, ev); r != nil {
+			return r
+		}
+	}
+	return nil
+}
+
+func (h *Handler) propertyGuardOne(ctx context.Context, pw tier0.PropertyWrite, target guid.GUID, ev *Event) *Refusal {
 	plane := tier0.PlaneEntra
 	if h.prov.Kind() == connectorv1.ProviderKind_PROVIDER_KIND_AD {
 		plane = tier0.PlaneAD
 	}
-	if err != nil || pw.Plane != plane { // a declaration for the other plane is a bug in the kind
+	if pw.Plane != plane { // a declaration for the other plane is a bug in the kind
 		ev.Reason = reasonBadDeclaration
-		if err == nil {
-			ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)
-		}
+		ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)
 		return invalid("4", "PropertyWrite", "change")
 	}
 	ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)

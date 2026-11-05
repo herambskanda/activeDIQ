@@ -40,13 +40,16 @@ func ReplaceUAC(oldV, newV int32) ad.AccountSender {
 // Go cannot zero (the limit safe-primitives §5.6 names).
 func ResetPassword(pw secret.Secret, mustChange bool) ad.AccountSender {
 	return func(m ad.Modifier, dn string, sc unicodepwd.SecureConn) error {
+		if err := sc.Verify(); err != nil { // PW-17: zero, plain or stale proof sends nothing
+			return ad.NewError(ad.CodeInsecure)
+		}
 		mod, err := unicodepwd.Replace(pw, sc)
 		if err != nil {
 			return errors.New("password not encodable")
 		}
 		defer mod.Destroy()
 		if err := mod.Verify(); err != nil { // PW-17: the connection is still the verified one
-			return errors.New("connection no longer secure")
+			return ad.NewError(ad.CodeInsecure)
 		}
 		req := ldap.NewModifyRequest(dn, []ldap.Control{ad.PolicyHintsControl()})
 		for _, c := range mod.Mods {

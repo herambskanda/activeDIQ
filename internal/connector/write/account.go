@@ -57,6 +57,16 @@ func init() {
 	}
 }
 
+func accountDecl(sp accountkind.Spec, k tier0.WriteKind) tier0.PropertyWrite {
+	keys := map[string][]string{
+		accountkind.KeyResetPassword: {"unicodePwd", "pwdLastSet"},
+		accountkind.KeyUnlock:        {"lockoutTime"},
+		accountkind.KeyEnable:        {"userAccountControl"},
+		accountkind.KeyDisable:       {"userAccountControl"},
+	}[sp.Key]
+	return tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: k, Op: tier0.OpUpdate, Keys: keys}
+}
+
 func accountOp(sp accountkind.Spec) WriteOp {
 	return WriteOp{
 		WantsSecret: sp.Key == accountkind.KeyResetPassword,
@@ -68,14 +78,12 @@ func accountOp(sp accountkind.Spec) WriteOp {
 			return []guid.GUID{target}, nil
 		},
 		PropertyWrite: func(c *connectorv1.WriteChange) (tier0.PropertyWrite, error) {
-			keys := map[string][]string{
-				accountkind.KeyResetPassword: {"unicodePwd", "pwdLastSet"},
-				accountkind.KeyUnlock:        {"lockoutTime"},
-				accountkind.KeyEnable:        {"userAccountControl"},
-				accountkind.KeyDisable:       {"userAccountControl"},
-			}[sp.Key]
-			// The class is read live later; the guard's user declaration covers computers' keys too.
-			return tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteUser, Op: tier0.OpUpdate, Keys: keys}, nil
+			return accountDecl(sp, tier0.WriteUser), nil
+		},
+		// The object's class is read live later and userAccountControl feeds device.accountEnabled
+		// as well as user.accountEnabled, so the device declaration must pass too.
+		AlsoDeclares: func(c *connectorv1.WriteChange) ([]tier0.PropertyWrite, error) {
+			return []tier0.PropertyWrite{accountDecl(sp, tier0.WriteDevice)}, nil
 		},
 		Digest: func(req *connectorv1.ApplyRequest) ([]byte, error) { return accountDigest(sp, req) },
 		Plan: func(ctx context.Context, a Authorised, req *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {
@@ -357,6 +365,7 @@ func applyAccount(ctx context.Context, sp accountkind.Spec, a Authorised, req *c
 		var pw secret.Secret
 		if m := req.GetSecretInput().GetMaterial(); len(m) > 0 {
 			pw = secret.FromBytes(m)
+			clear(m) // the request's own buffer; the Secret holds the only copy now
 			defer pw.Destroy()
 		}
 		send = ops.ResetPassword(pw, req.GetChange().GetUserPasswordReset().GetMustChangeAtNextLogon())
