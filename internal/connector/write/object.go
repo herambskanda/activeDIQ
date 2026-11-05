@@ -589,8 +589,12 @@ func equalBytes(a, b []byte) bool {
 // cannot read or decide is tier0.
 //
 //   - C1: a RID below 1000 (a built-in or well-known account);
-//   - C5: any sIDHistory value (history is a privilege path), checked here as tier0 without further
-//     analysis, as is any primary group other than Domain Users, Domain Guests and Domain Computers;
+//   - Designated: the target itself is customer-designated;
+//   - C18: any sIDHistory value (history is a privilege path);
+//   - C3: adminCount nonzero (the deleted object was a protected-group member);
+//   - C5/C12: userAccountControl marks a DC/RODC or unconstrained delegation; primaryGroupID 516/521 is C5,
+//     any primary group other than Domain Users, Guests and Computers is C2; a user or computer whose
+//     userAccountControl or primaryGroupID cannot be read is unknown;
 //   - C2: any retained memberOf group the live classifier calls tier0, or that is designated, or
 //     that cannot be read;
 //   - C3/C6: the last known parent, when it still exists, classifies as tier0.
@@ -607,18 +611,37 @@ func (p *ADProvider) ClassifyDeleted(ctx context.Context, id guid.GUID, designat
 	if !st.Deleted {
 		return p.Classify(ctx, id, designated) // restored meanwhile: the ordinary live classification
 	}
-	return p.classifyDeletedEntry(ctx, st.Entry, designated)
+	return p.classifyDeletedEntry(ctx, id, st.Entry, designated)
 }
 
 // classifyDeletedEntry is the fixed-read-set decision over the deleted object's retained
 // attributes; split out so the fail-closed branches are testable without a Recycle Bin.
-func (p *ADProvider) classifyDeletedEntry(ctx context.Context, e *ad.Entry, designated []guid.GUID) (Verdict, error) {
+func (p *ADProvider) classifyDeletedEntry(ctx context.Context, id guid.GUID, e *ad.Entry, designated []guid.GUID) (Verdict, error) {
 	unknown := Verdict{Tier0: true}
+	for _, g := range designated {
+		if g == id { // a customer-designated object stays Tier-0 once deleted
+			return Verdict{Tier0: true, Bases: []Basis{designatedBasis}}, nil
+		}
+	}
+	classes := map[string]bool{}
+	for _, c := range e.Strings("objectClass") {
+		classes[strings.ToLower(c)] = true
+	}
+	principal := classes["user"] || classes["computer"] || classes["group"]
+	// Only an OU or a contact has no objectSid; an unknown class is treated as a security principal.
+	needSID := principal || !(classes["organizationalunit"] || classes["contact"])
+	if len(e.Truncated) > 0 {
+		for _, n := range e.Truncated {
+			if strings.EqualFold(n, "memberOf") {
+				return unknown, errors.New("write: deleted object memberOf cut at the value ceiling")
+			}
+		}
+	}
 	sids, err := e.SIDs("objectSid")
 	if err != nil {
 		return unknown, err
 	}
-	if len(sids) == 0 { // a SID that cannot be read is unknown, never "not tier0"
+	if needSID && len(sids) == 0 { // a SID that cannot be read is unknown, never "not tier0"
 		return unknown, errors.New("write: deleted object has no readable objectSid")
 	}
 	for _, s := range sids {
@@ -627,10 +650,39 @@ func (p *ADProvider) classifyDeletedEntry(ctx context.Context, e *ad.Entry, desi
 		}
 	}
 	if len(e.Raw("sIDHistory")) > 0 {
-		return Verdict{Tier0: true, Bases: []Basis{tier0.C5}}, nil
+		return Verdict{Tier0: true, Bases: []Basis{tier0.C18}}, nil
 	}
-	if v := e.Strings("primaryGroupID"); len(v) == 1 && v[0] != "513" && v[0] != "514" && v[0] != "515" {
-		return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
+	// adminCount is set by SDProp on protected-group members and survives the delete (defence in depth).
+	if n, has, err := e.Int32("adminCount"); err != nil {
+		return unknown, err
+	} else if has && n != 0 {
+		return Verdict{Tier0: true, Bases: []Basis{tier0.C3}}, nil
+	}
+	if classes["user"] || classes["computer"] { // userAccountControl and primaryGroupID must be readable
+		uac, has, err := e.Int32("userAccountControl")
+		if err != nil {
+			return unknown, err
+		}
+		if !has {
+			return unknown, errors.New("write: deleted object has no readable userAccountControl")
+		}
+		if uac&(0x2000|0x4000000) != 0 { // DC or RODC computer
+			return Verdict{Tier0: true, Bases: []Basis{tier0.C5}}, nil
+		}
+		if uac&0x80000 != 0 { // unconstrained delegation
+			return Verdict{Tier0: true, Bases: []Basis{tier0.C12}}, nil
+		}
+		v := e.Strings("primaryGroupID")
+		if len(v) != 1 {
+			return unknown, errors.New("write: deleted object has no readable primaryGroupID")
+		}
+		switch v[0] {
+		case "513", "514", "515":
+		case "516", "521":
+			return Verdict{Tier0: true, Bases: []Basis{tier0.C5}}, nil
+		default:
+			return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
+		}
 	}
 	des := map[guid.GUID]bool{}
 	for _, g := range designated {

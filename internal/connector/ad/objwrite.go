@@ -15,6 +15,21 @@ import (
 // (MS-ADTS 3.1.1.3.4.1.14).
 const oidShowDeleted = "1.2.840.113556.1.4.417"
 
+// oidShowDeactivatedLink is LDAP_SERVER_SHOW_DEACTIVATED_LINK_OID: without it, link values (memberOf)
+// stored on a deleted object are not returned (MS-ADTS 3.1.1.3.4.1.25), so a deleted Domain Admin
+// would read as a member of nothing.
+const oidShowDeactivatedLink = "1.2.840.113556.1.4.2065"
+
+type showDeactivatedLink struct{}
+
+func (showDeactivatedLink) GetControlType() string { return oidShowDeactivatedLink }
+func (showDeactivatedLink) Encode() *berPacket     { return encodeValuelessControl(oidShowDeactivatedLink) }
+func (showDeactivatedLink) String() string         { return "Show deactivated link control" }
+
+// deletedControls are the controls of a read of a deleted object: show-deleted and, with it,
+// show-deactivated-link.
+func deletedControls() []ldap.Control { return []ldap.Control{showDeleted{}, showDeactivatedLink{}} }
+
 type showDeleted struct{}
 
 func (showDeleted) GetControlType() string { return oidShowDeleted }
@@ -71,7 +86,7 @@ type ObjectState struct {
 var stateAttrs = []string{"objectGUID", "objectClass", "distinguishedName", "isDeleted", "instanceType", "uSNChanged"}
 
 // DeletedAttrs are read for a deleted object (the fixed read set of contract §8.10.3 kind 6).
-var DeletedAttrs = []string{"objectSid", "sIDHistory", "userAccountControl", "primaryGroupID", "memberOf", "lastKnownParent"}
+var DeletedAttrs = []string{"objectSid", "sIDHistory", "userAccountControl", "primaryGroupID", "memberOf", "lastKnownParent", "adminCount"}
 
 // ObjectState reads one object by GUID. With deleted set the show-deleted control is sent and the
 // deleted read set is added; the object may still come back live (Deleted false). It reads through the session, so it must not be called from inside a

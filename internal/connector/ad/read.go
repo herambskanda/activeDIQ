@@ -88,7 +88,7 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 	}
 
 	if opts.ShowDeleted {
-		ctrls = append(ctrls, showDeleted{})
+		ctrls = append(ctrls, deletedControls()...)
 	}
 
 	req := make([]string, len(names))

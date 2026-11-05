@@ -41,6 +41,8 @@ func (d *refDir) Get(_ context.Context, ref dn.ObjectRef, _ []string) (*ad.Entry
 	return nil, &ad.Error{Code: ad.CodeObjectNotFound}
 }
 
+var delID = mk(79)
+
 const (
 	grpDN    = "CN=Staff,OU=G,DC=lab"
 	parentDN = "OU=Old,DC=lab"
@@ -81,10 +83,12 @@ func (r *delRig) setTier0(ids ...guid.GUID) {
 func (r *delRig) entry(t *testing.T, mod func(map[string][][]byte)) *ad.Entry {
 	t.Helper()
 	a := map[string][][]byte{
-		"objectSid":       {sidBytes(t, "S-1-5-21-1-2-3-1500")},
-		"primaryGroupID":  {[]byte("513")},
-		"memberOf":        {[]byte(grpDN)},
-		"lastKnownParent": {[]byte(parentDN)},
+		"objectClass":        {[]byte("top"), []byte("person"), []byte("user")},
+		"userAccountControl": {[]byte("512")},
+		"objectSid":          {sidBytes(t, "S-1-5-21-1-2-3-1500")},
+		"primaryGroupID":     {[]byte("513")},
+		"memberOf":           {[]byte(grpDN)},
+		"lastKnownParent":    {[]byte(parentDN)},
 	}
 	if mod != nil {
 		mod(a)
@@ -96,11 +100,11 @@ func (r *delRig) entry(t *testing.T, mod func(map[string][][]byte)) *ad.Entry {
 func TestClassifyDeletedEntry(t *testing.T) {
 	ctx := context.Background()
 	r := newDelRig(t)
-	if v, err := r.p.classifyDeletedEntry(ctx, r.entry(t, nil), nil); err != nil || v.Tier0 {
+	if v, err := r.p.classifyDeletedEntry(ctx, delID, r.entry(t, nil), nil); err != nil || v.Tier0 {
 		t.Fatalf("clean user: %+v %v", v, err)
 	}
 	gone := func(a map[string][][]byte) { a["lastKnownParent"] = [][]byte{[]byte("OU=Gone,DC=lab")} }
-	if v, err := r.p.classifyDeletedEntry(ctx, r.entry(t, gone), nil); err != nil || v.Tier0 {
+	if v, err := r.p.classifyDeletedEntry(ctx, delID, r.entry(t, gone), nil); err != nil || v.Tier0 {
 		t.Fatalf("gone parent: %+v %v", v, err)
 	}
 
@@ -111,8 +115,14 @@ func TestClassifyDeletedEntry(t *testing.T) {
 		want  Basis
 	}{
 		{"C1 rid<1000", func(a map[string][][]byte) { a["objectSid"] = [][]byte{sidBytes(t, "S-1-5-21-1-2-3-500")} }, nil, tier0.C1},
-		{"C5 sIDHistory", func(a map[string][][]byte) { a["sIDHistory"] = [][]byte{sidBytes(t, "S-1-5-21-9-9-9-1100")} }, nil, tier0.C5},
+		{"C5 sIDHistory", func(a map[string][][]byte) { a["sIDHistory"] = [][]byte{sidBytes(t, "S-1-5-21-9-9-9-1100")} }, nil, tier0.C18},
 		{"primary group", func(a map[string][][]byte) { a["primaryGroupID"] = [][]byte{[]byte("512")} }, nil, tier0.C2},
+		{"adminCount", func(a map[string][][]byte) { a["adminCount"] = [][]byte{[]byte("1")} }, nil, tier0.C3},
+		{"DC uac", func(a map[string][][]byte) { a["userAccountControl"] = [][]byte{[]byte("532480")} }, nil, tier0.C5},
+		{"RODC uac", func(a map[string][][]byte) { a["userAccountControl"] = [][]byte{[]byte("67109376")} }, nil, tier0.C5},
+		{"delegation uac", func(a map[string][][]byte) { a["userAccountControl"] = [][]byte{[]byte("524800")} }, nil, tier0.C12},
+		{"pgid 516", func(a map[string][][]byte) { a["primaryGroupID"] = [][]byte{[]byte("516")} }, nil, tier0.C5},
+		{"designated target", nil, func(r *delRig) []guid.GUID { return []guid.GUID{delID} }, designatedBasis},
 		{"tier0 group", nil, func(r *delRig) []guid.GUID { r.setTier0(r.grp); return nil }, tier0.C2},
 		{"designated group", nil, func(r *delRig) []guid.GUID { return []guid.GUID{r.grp} }, tier0.C2},
 		{"group unreadable", nil, func(r *delRig) []guid.GUID { r.d.errDN[grpDN] = errors.New("boom"); return nil }, tier0.C2},
@@ -124,13 +134,17 @@ func TestClassifyDeletedEntry(t *testing.T) {
 		if c.setup != nil {
 			des = c.setup(rg)
 		}
-		v, err := rg.p.classifyDeletedEntry(ctx, rg.entry(t, c.mod), des)
+		v, err := rg.p.classifyDeletedEntry(ctx, delID, rg.entry(t, c.mod), des)
 		if err != nil || !v.Tier0 || len(v.Bases) != 1 || v.Bases[0] != c.want {
 			t.Errorf("%s: %+v %v", c.name, v, err)
 		}
 	}
 
 	fail := map[string]func(map[string][][]byte){
+		"no uac":              func(a map[string][][]byte) { delete(a, "userAccountControl") },
+		"no primaryGroupID":   func(a map[string][][]byte) { delete(a, "primaryGroupID") },
+		"bad adminCount":      func(a map[string][][]byte) { a["adminCount"] = [][]byte{[]byte("x")} },
+		"unknown class sid":   func(a map[string][][]byte) { a["objectClass"] = [][]byte{[]byte("container")}; delete(a, "objectSid") },
 		"no objectSid":        func(a map[string][][]byte) { delete(a, "objectSid") },
 		"bad objectSid":       func(a map[string][][]byte) { a["objectSid"] = [][]byte{{1, 2}} },
 		"bad memberOf":        func(a map[string][][]byte) { a["memberOf"] = [][]byte{[]byte("not a dn")} },
@@ -138,13 +152,13 @@ func TestClassifyDeletedEntry(t *testing.T) {
 	}
 	for name, mod := range fail {
 		rg := newDelRig(t)
-		if v, err := rg.p.classifyDeletedEntry(ctx, rg.entry(t, mod), nil); err == nil || !v.Tier0 {
+		if v, err := rg.p.classifyDeletedEntry(ctx, delID, rg.entry(t, mod), nil); err == nil || !v.Tier0 {
 			t.Errorf("%s: %+v %v", name, v, err)
 		}
 	}
 	rg := newDelRig(t)
 	rg.d.errDN[parentDN] = errors.New("boom")
-	if v, err := rg.p.classifyDeletedEntry(ctx, rg.entry(t, nil), nil); err == nil || !v.Tier0 {
+	if v, err := rg.p.classifyDeletedEntry(ctx, delID, rg.entry(t, nil), nil); err == nil || !v.Tier0 {
 		t.Errorf("parent read error: %+v %v", v, err)
 	}
 }
@@ -220,5 +234,37 @@ func TestMoveTouchedLive(t *testing.T) {
 	r.dir.deleted[oT] = true
 	if _, err := op.TouchedLive(ctx, r.dir, oT, moveChangeTo(oP2, oNC)); err == nil {
 		t.Fatal("deleted target accepted")
+	}
+}
+
+// An OU or a contact has no objectSid and no account flags: it is classified on the remaining bases.
+func TestClassifyDeletedEntryNoSIDClasses(t *testing.T) {
+	ctx := context.Background()
+	for _, class := range []string{"organizationalUnit", "contact"} {
+		mod := func(a map[string][][]byte) {
+			a["objectClass"] = [][]byte{[]byte("top"), []byte(class)}
+			delete(a, "objectSid")
+			delete(a, "userAccountControl")
+			delete(a, "primaryGroupID")
+		}
+		r := newDelRig(t)
+		if v, err := r.p.classifyDeletedEntry(ctx, delID, r.entry(t, mod), nil); err != nil || v.Tier0 {
+			t.Errorf("%s: %+v %v", class, v, err)
+		}
+		r = newDelRig(t)
+		r.setTier0(r.parent)
+		if v, err := r.p.classifyDeletedEntry(ctx, delID, r.entry(t, mod), nil); err != nil || !v.Tier0 || v.Bases[0] != tier0.C3 {
+			t.Errorf("%s tier0 parent: %+v %v", class, v, err)
+		}
+	}
+}
+
+// A memberOf cut at the value ceiling is unknown, never a partial all-clear.
+func TestClassifyDeletedEntryTruncatedMemberOf(t *testing.T) {
+	r := newDelRig(t)
+	e := r.entry(t, nil)
+	e.Truncated = []string{"memberOf"}
+	if v, err := r.p.classifyDeletedEntry(context.Background(), delID, e, nil); err == nil || !v.Tier0 {
+		t.Fatalf("%+v %v", v, err)
 	}
 }
