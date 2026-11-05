@@ -30,12 +30,12 @@ const (
 	ncGUID  = "6f1c2a40-0000-4000-8000-0000000000cc"
 
 	otherNC  = authority.NamingContextID("6f1c2a40-0000-4000-8000-0000000000dd")
-	testKind = connectorv1.WriteKind(7)
+	testKind = connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE
 )
 
 var (
-	testTarget = authority.TargetRef{Connection: "c1", GUID: objGUID, Class: "user", NC: ncGUID}
-	testAttrs  = []step.Attr{{Name: "description", Values: []string{"new"}}}
+	testTarget = authority.TargetRef{Connection: "c1", GUID: objGUID, NC: ncGUID}
+	testAttrs  = []step.Attr{{Name: "set:description", Values: []string{"s:new"}}}
 )
 
 type fakeDB struct{}
@@ -98,8 +98,8 @@ func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, 
 		Descriptor: operation.Descriptor{ID: "settings.thing.set", Version: 1, Permission: "settings.thing.set",
 			Input: "#/components/schemas/Thing", Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: "settings.thing.changed"},
 		Plan: func(context.Context, operation.PlanContext, none) ([]operation.TypedStep[none], error) {
-			return []operation.TypedStep[none]{{Plan: operation.StepPlan{Target: target, Kind: "user.set", Reversibility: operation.Reversible,
-				Diff: []operation.Change{{Attribute: "description", Before: []string{"old"}, After: []string{"new"}}}}}}, nil
+			return []operation.TypedStep[none]{{Plan: operation.StepPlan{Target: target, Kind: "ad.object.update", Reversibility: operation.Reversible,
+				Diff: []operation.Change{{Attribute: "set:description", Before: []string{"old"}, After: []string{"s:new"}}}}}}, nil
 		},
 		Apply: func(ctx context.Context, s step.Step, _ operation.TypedStep[none]) (none, error) {
 			fn(ctx, s)
@@ -129,10 +129,8 @@ func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, 
 	}
 }
 
-func init() { kindTable["user.set"] = testKind }
-
 func goodOp() WriteOp {
-	return WriteOp{DigestKind: "user.set", Target: testTarget, Attrs: testAttrs}
+	return WriteOp{DigestKind: "ad.object.update", Target: testTarget, Attrs: testAttrs}
 }
 
 type builder struct {
@@ -237,7 +235,7 @@ func TestDigestMismatchRefused(t *testing.T) {
 	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
 	withStep(t, func(ctx context.Context, s step.Step) {
 		op := goodOp()
-		op.Attrs = []step.Attr{{Name: "description", Values: []string{"other"}}}
+		op.Attrs = []step.Attr{{Name: "set:description", Values: []string{"s:other"}}}
 		if _, err := c.Write(ctx, s, op); !errors.Is(err, ErrDigest) {
 			t.Errorf("got %v, want ErrDigest", err)
 		}
@@ -306,7 +304,7 @@ func TestWireFieldsDerivedFromTheDigestedTarget(t *testing.T) {
 		}
 	})
 	r := tr.planReq
-	if r.GetConnection().GetConnectionId() != "c1" || r.GetKind() != testKind || r.GetChange() != nil || r.GetTier0Override() != nil {
+	if r.GetConnection().GetConnectionId() != "c1" || r.GetKind() != testKind || r.GetChange().GetObjectUpdate() == nil || r.GetTier0Override() != nil {
 		t.Errorf("plan request %+v", r)
 	}
 	want, _ := parseUUID(objGUID)
@@ -323,6 +321,10 @@ func TestMismatchedOpRefusedBeforeTransport(t *testing.T) {
 		"other connection": {func(o *WriteOp) { o.Target.Connection = "other" }, ErrDigest},
 		"other object":     {func(o *WriteOp) { o.Target.GUID = ncGUID }, ErrDigest},
 		"unknown kind":     {func(o *WriteOp) { o.DigestKind = "user.unknown" }, ErrUnknownKind},
+		"wrong case":       {func(o *WriteOp) { o.DigestKind = "AD.object.update" }, ErrUnknownKind},
+		"spelled like":     {func(o *WriteOp) { o.DigestKind = "ad.object.createUser" }, ErrUnknownKind},
+		"empty kind":       {func(o *WriteOp) { o.DigestKind = "" }, ErrInvalidOp},
+		"listed, unwired":  {func(o *WriteOp) { o.DigestKind = "ad.object.move" }, ErrUnknownKind},
 		"no connection":    {func(o *WriteOp) { o.Target.Connection = "" }, ErrInvalidOp},
 		"other nc":         {func(o *WriteOp) { o.Target.NC = otherNC }, ErrDigest},
 		"empty nc":         {func(o *WriteOp) { o.Target.NC = "" }, ErrDigest},
@@ -558,5 +560,21 @@ func TestDSAPinMutatedAfterMintDoesNotRepointStep(t *testing.T) {
 	want, _ := parseUUID(dsaGUID)
 	if got := tr.planReq.GetDc().GetPinnedDsaGuid().GetValue(); string(got) != string(want) {
 		t.Errorf("wire DSA GUID %x, want original %x", got, want)
+	}
+}
+
+func TestKindTableClosed(t *testing.T) {
+	allowed := map[string]bool{"ad.object.create": true, "ad.object.update": true, "ad.object.delete": true, "ad.object.move": true,
+		"ad.object.rename": true, "ad.object.restore": true, "ad.user.resetPassword": true, "ad.user.unlock": true,
+		"ad.account.enable": true, "ad.account.disable": true}
+	seen := map[connectorv1.WriteKind]string{}
+	for k, row := range kindTable {
+		if !allowed[k] || row.Class == "" || row.Kind == connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
+			t.Errorf("kindTable row %q is outside the list, has no class or is UNSPECIFIED", k)
+		}
+		if prev, dup := seen[row.Kind]; dup {
+			t.Errorf("kindTable keys %q and %q share a WriteKind", prev, k)
+		}
+		seen[row.Kind] = k
 	}
 }
