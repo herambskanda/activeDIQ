@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
+	"google.golang.org/grpc/status"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
@@ -68,6 +69,7 @@ func newLabObj(t *testing.T) *labObj {
 	run.CompletedAt = time.Now()
 	book.Complete(connID, run)
 	prov := NewADProvider(sess, nil, adIdentity(), &memPins{})
+	prov.Dynamic = &stubGuard{} // no Entra snapshot in the lab: the dynamic-rule guard allows (its own tests: propwrite_test.go)
 	dc, err := prov.BoundDC(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +169,7 @@ func TestLabObjectMove(t *testing.T) {
 
 	p, err := l.plan(kind, u, ch, u, ouA, ouB)
 	if err != nil || p.GetNoOp() {
-		t.Fatalf("plan: %v %v", p, err)
+		t.Fatalf("plan: %v %v %v", p, err, labDetail(err))
 	}
 	if _, err := l.apply(kind, client.DigestObjectMove, attrs, u, ch, p.Precondition, u, ouA, ouB); err != nil {
 		t.Fatal(err)
@@ -281,4 +283,18 @@ func TestLabObjectRestoreSamba(t *testing.T) {
 	if c := connErr(t, err).GetCode(); c != connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED {
 		t.Fatalf("got %s, want CAPABILITY_UNSUPPORTED without the Recycle Bin", c)
 	}
+}
+
+func labDetail(err error) string {
+	if err == nil {
+		return ""
+	}
+	if st, ok := status.FromError(err); ok {
+		for _, d := range st.Details() {
+			if ce, ok := d.(*connectorv1.ConnectorError); ok {
+				return ce.String()
+			}
+		}
+	}
+	return ""
 }

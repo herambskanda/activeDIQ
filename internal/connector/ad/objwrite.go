@@ -37,7 +37,7 @@ type ObjectConn interface {
 
 // DNChange is one ModifyDN, every part rendered from dn types.
 type DNChange struct {
-	Entry        string // the target as a GUID reference, addressed by the GUID that was just checked
+	Entry        string // the target DN read under the same lock hold (Samba rejects a <GUID=> entry in ModifyDN)
 	NewRDN       string // one RDN, escaped
 	NewSuperior  string // empty: the parent does not change
 	DeleteOldRDN bool
@@ -150,7 +150,7 @@ func (s *Session) MoveObject(ctx context.Context, r MoveRequest, send ModifyDNFu
 		if err != nil {
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
-		return mapWriteErr(ctx, send(conn, DNChange{Entry: r.Object.ObjectRef(), NewRDN: leaf.String(), NewSuperior: np.dn.String()}))
+		return mapWriteErr(ctx, send(conn, DNChange{Entry: cur.dn.String(), NewRDN: leaf.String(), NewSuperior: np.dn.String()}))
 	})
 }
 
@@ -173,7 +173,7 @@ func (s *Session) RenameObject(ctx context.Context, r RenameRequest, send Modify
 		if err != nil {
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
-		return mapWriteErr(ctx, send(conn, DNChange{Entry: r.Object.ObjectRef(), NewRDN: leaf.String(), DeleteOldRDN: true}))
+		return mapWriteErr(ctx, send(conn, DNChange{Entry: cur.dn.String(), NewRDN: leaf.String(), DeleteOldRDN: true}))
 	})
 }
 
