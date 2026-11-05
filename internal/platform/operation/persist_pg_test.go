@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -212,6 +213,15 @@ func cmpPinner(p Pinner) Pinner {
 	return p
 }
 
+// credFake names a fixed DM-11 credential for every connection.
+type credFake struct{}
+
+const fakeCredentialID = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+
+func (credFake) CredentialOf(context.Context, tenant.ID, string) (string, error) {
+	return fakeCredentialID, nil
+}
+
 type badPin DCPin
 
 func (b badPin) Pin(context.Context, string, authority.NamingContextID, string) (DCPin, error) {
@@ -323,7 +333,7 @@ func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
 		t.Fatal(err)
 	}
 	cfg := Config{DB: db, Audit: ch, Authz: &authzFake{}, Registry: reg, Facts: factsFake{}, Gate: o.gate, Jobs: jobs.NewRegistry(),
-		Keys: keySrc{}, Pinner: cmpPinner(o.pinner), Settings: settingsFake{irreversible: o.irrev}, Provenance: p.prov, Alerts: p.alerts,
+		Keys: keySrc{}, Pinner: cmpPinner(o.pinner), Credentials: credFake{}, Settings: settingsFake{irreversible: o.irrev}, Provenance: p.prov, Alerts: p.alerts,
 		Attempts: o.attempts, Slots: o.slots, Backoff: time.Millisecond, Lease: time.Minute}
 	if p.r, err = NewRunner(cfg); err != nil {
 		t.Fatal(err)
@@ -467,6 +477,44 @@ func TestSubmitAndApplyEndToEnd(t *testing.T) {
 		again, err := p.r.SubmitDirectory(context.Background(), func() Request { r := p.req(itemIn{GUID: "g9", Want: "z"}); r.IdempotencyKey = "k"; return r }())
 		if err != nil || !again.Duplicate || again.Operation != dup.Operation {
 			t.Fatalf("idempotent resubmit = %+v %v", again, err)
+		}
+	})
+}
+
+// T-1629: a directory-write step event carries dc and credential_id, in increasing key order, and never
+// the bind account name or SID. The join to a DC log line needs nothing outside the exported chain.
+func TestStepEventCarriesDCAndCredentialID(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.set("g1", "old")
+		sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g1", Want: "new"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.runChunks(sub.Operation)
+		rows := p.owner(`SELECT encode(envelope, 'hex') FROM public.audit_event WHERE kind = 'directory.user.changed' AND event_id LIKE $1`, "op-"+string(sub.Operation)+"-%")
+		if len(rows) != 1 {
+			t.Fatalf("step events = %d, want 1", len(rows))
+		}
+		raw, _ := hex.DecodeString(rows[0])
+		env, err := audit.ParseEnvelope(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var keys []string
+		got := map[string]string{}
+		for _, d := range env.Details {
+			keys = append(keys, d.Key)
+			got[d.Key] = d.Value
+			if strings.Contains(d.Value, "svc-") || strings.Contains(d.Value, "S-1-5-") {
+				t.Fatalf("detail %s leaks a bind identity: %s", d.Key, d.Value)
+			}
+		}
+		if got["dc"] != "dc1.example.test" || got["credential_id"] != fakeCredentialID || !sort.StringsAreSorted(keys) {
+			t.Fatalf("details = %v", env.Details)
+		}
+		if keys[0] != "credential_id" || keys[1] != "dc" {
+			t.Fatalf("keys = %v", keys)
 		}
 	})
 }

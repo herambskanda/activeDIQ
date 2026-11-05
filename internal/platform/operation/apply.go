@@ -5,7 +5,10 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand/v2"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -46,16 +49,39 @@ type claimed struct {
 	plan      StepPlan
 	conn, dc  string
 	cred      bool
+	// credentialID is the DM-11 row of the connection's bound credential, resolved before the step is
+	// recorded. It is stamped on the audit event of a directory-write step (T-1629), never the bind name.
+	credentialID string
 }
 
 func (c *claimed) event(r *Runner, o audit.Outcome, reason string, recovered bool) audit.Event {
 	ev := audit.Event{ID: fmt.Sprintf("op-%s-i%d-s%d", c.key.Operation, c.key.Item, c.key.Step), Kind: c.d.AuditKind,
 		Actor: c.op.Chain, Target: c.plan.Target, Key: c.key, Outcome: o, Reason: reason, PlanHash: c.op.PlanHash,
 		Changes: changesOf(c.plan.Target, c.plan.Diff)}
+	// A step that writes to a directory (it has a pinned DC) names the DC and the credential it was
+	// transported by, so an auditor can join a DC log line to this event from the exported chain alone.
+	// Never the bind account name or SID: DM-11 metadata is their single source (T-1601 section 5).
+	if c.dc != "" {
+		ev.Details = detail("credential_id", c.credentialID, "dc", c.dc)
+	}
 	if recovered {
-		ev.Details = detail("recovered", true)
+		ev.Details = mergeDetails(ev.Details, detail("recovered", true))
 	}
 	return ev
+}
+
+// mergeDetails returns a and b as one slice in strictly increasing key order; on a duplicate key b wins.
+func mergeDetails(a, b []audit.Detail) []audit.Detail {
+	m := make(map[string]audit.Detail, len(a)+len(b))
+	for _, d := range a {
+		m[d.Key] = d
+	}
+	for _, d := range b {
+		m[d.Key] = d
+	}
+	out := slices.Collect(maps.Values(m))
+	slices.SortFunc(out, func(x, y audit.Detail) int { return strings.Compare(x.Key, y.Key) })
+	return out
 }
 
 // claimNext claims the next planned step of one chunk of one phase, or returns nil when none is left.
@@ -343,6 +369,18 @@ type recordSpec struct {
 // fenced by the attempt. A superseded attempt records nothing.
 func (r *Runner) record(ctx context.Context, t tenant.ID, tx txFunc, c *claimed, s recordSpec) error {
 	rctx := context.WithoutCancel(ctx) // a recorded outcome is never lost to a shutdown
+	if c.dc != "" && c.credentialID == "" {
+		// Fail closed: no directory-write event is appended without its credential_id. The step stays
+		// claimed; its lease lapses and the reconciler decides.
+		id, err := r.cfg.Credentials.CredentialOf(rctx, t, c.conn)
+		if err == nil && id == "" {
+			err = errors.New("connection has no credential")
+		}
+		if err != nil {
+			return fmt.Errorf("operation: resolving the connection's credential for the step event: %w", err)
+		}
+		c.credentialID = id
+	}
 	err := tx(rctx, func(ctx context.Context, q store.Tx) error {
 		return r.recordIn(ctx, q, t, c, s)
 	})
@@ -408,7 +446,7 @@ func (r *Runner) recordIn(ctx context.Context, q store.Tx, t tenant.ID, c *claim
 				return err
 			}
 			item, ev = ItemFailed, c.event(r, audit.Failure, s.verifyFailed, s.recovered)
-			ev.Details = append(ev.Details, s.t0.details(c)...)
+			ev.Details = mergeDetails(ev.Details, s.t0.details(c))
 		default: // deferred: the write is done; the read-back is driven later
 			ev = c.event(r, audit.Success, "applied_verification_pending", s.recovered)
 			ev.ID += "-pending"

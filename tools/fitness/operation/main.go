@@ -50,6 +50,12 @@ func main() {
 		os.Exit(2)
 	}
 	rep.Violations = append(rep.Violations, o4...)
+	i2, err := CheckI2(*root)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fitness-operation:", err)
+		os.Exit(2)
+	}
+	rep.Violations = append(rep.Violations, i2...)
 	o8, o8rep, err := CheckO8(ctx, *root, *o8Lab, GoTestRunner)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fitness-operation:", err)
@@ -79,7 +85,7 @@ func main() {
 		fmt.Printf("  pending   %-6s %s (owner %s; not yet checked, not a pass)\n", p.id, p.what, p.ticket)
 	}
 	if len(rep.Violations) == 0 {
-		fmt.Println("fitness-operation: ok (O1, O2, O4 SQL half, O8, O9; pending checks listed above)")
+		fmt.Println("fitness-operation: ok (O1, O2, I2, O4 SQL half, O8, O9; pending checks listed above)")
 		return
 	}
 	for _, v := range rep.Violations {
