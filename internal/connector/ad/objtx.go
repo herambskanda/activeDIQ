@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/skenzeriq/activediq/internal/directory/dn"
+	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 )
 
 // WriteConn is the connection a write sender may use for the duration of one Tx.Send call. Like
@@ -172,4 +174,58 @@ func (t *Tx) mapWriteErr(err error) error {
 		return fail(CodeConstraint, ldapCode(err), nil)
 	}
 	return fail(CodeProtocol, ldapCode(err), nil)
+}
+
+// Secure reports whether the session's connection is TLS (always true for a Session built by Open;
+// a password value is sent only when it is, contract §8.10.5).
+func (t *Tx) Secure() bool {
+	st, ok := t.s.conn.TLSConnectionState()
+	return ok && st.HandshakeComplete
+}
+
+// DCTime is the bound DC's own clock (rootDSE currentTime), read on the session's connection.
+func (t *Tx) DCTime() (time.Time, error) {
+	res, err := t.s.searchOnceLocked(t.ctx, "", ldap.ScopeBaseObject, objectClassPresent, []string{"currentTime"}, nil)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if len(res.Entries) != 1 {
+		return time.Time{}, fail(CodeProtocol, "rootDSE not returned", nil)
+	}
+	return ParseGeneralizedTime(res.Entries[0].GetAttributeValue("currentTime"))
+}
+
+// ParseGeneralizedTime parses an LDAP GeneralizedTime in UTC ("20060102150405.0Z").
+func ParseGeneralizedTime(s string) (time.Time, error) {
+	for _, layout := range []string{"20060102150405.0Z", "20060102150405Z"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC(), nil
+		}
+	}
+	return time.Time{}, fail(CodeProtocol, "generalized time malformed", nil)
+}
+
+// FormatGeneralizedTime is the inverse for a write value.
+func FormatGeneralizedTime(t time.Time) string { return t.UTC().Format("20060102150405.0Z") }
+
+// EditableAttr resolves a requested attribute name (descr in any case, or numeric OID) to its
+// schema ldapDisplayName and value syntax for a write. An unknown attribute, one with options, a
+// secret one and a constructed one are refused: a write is never blind about what it edits.
+func (s *Session) EditableAttr(name string) (string, ldapfilter.Syntax, error) {
+	a, err := ldapfilter.ParseAttrName(name, s.schema)
+	if err != nil {
+		return "", 0, fail(CodeAttributeNotAllowed, "attribute: "+ldapfilter.Code(err), err)
+	}
+	switch _, rerr := ldapfilter.Render(ldapfilter.Present(a), s.schema); ldapfilter.Code(rerr) {
+	case "":
+	case ldapfilter.SecretAttribute:
+		return "", 0, fail(CodeSecretAttribute, "", rerr)
+	default:
+		return "", 0, fail(CodeAttributeNotAllowed, "attribute: "+ldapfilter.Code(rerr), rerr)
+	}
+	syn, ok := s.schema.Syntax(a.String())
+	if !ok {
+		return "", 0, fail(CodeAttributeNotAllowed, "", nil)
+	}
+	return a.String(), syn, nil
 }
