@@ -15,13 +15,11 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/connector/write/ops"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
-	"github.com/skenzeriq/activediq/internal/directory/attr/unicodepwd"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
-	"github.com/skenzeriq/activediq/internal/platform/secret"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -766,6 +764,3 @@ func applyDelete(ctx context.Context, a Authorised, req *connectorv1.ApplyReques
 	})
 	return resp, err
 }
-
-var _ = secret.FromBytes
-var _ = unicodepwd.Encode
