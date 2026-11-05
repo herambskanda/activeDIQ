@@ -71,7 +71,7 @@ func openDir(path string, create bool, o dirOptions) (*dirImpl, error) {
 		return nil, err
 	}
 	defer windows.CloseHandle(ph)
-	if err := verifyParentHandle(ph); err != nil {
+	if err := verifyParentHandle(ph, pr); err != nil {
 		return nil, err
 	}
 	// 2. Create (only after the parent is trusted) with the protected descriptor, or open what is there.
@@ -136,7 +136,7 @@ func finalPath(h windows.Handle) (string, error) {
 // verifyParentHandle accepts a real directory (not a reparse point) owned by the service identity,
 // SYSTEM or BUILTIN\Administrators whose DACL is present and gives no write, delete-child, create,
 // delete or change-permissions right to anyone else.
-func verifyParentHandle(h windows.Handle) error {
+func verifyParentHandle(h windows.Handle, pr principals) error {
 	bad := ErrParentUnsafe
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
@@ -165,15 +165,15 @@ func verifyParentHandle(h windows.Handle) error {
 	if err != nil || acl == nil { // a NULL DACL grants everyone everything
 		return bad
 	}
-	user, system, err := desiredSIDs()
-	if err != nil {
-		return err
-	}
+	// The principal set is the resolved one (T-1249): for state written for a service account that is
+	// the service SID, which the MSI's PrepareDataDir legitimately grants full control on the data
+	// directory (the parent of the enrolment directory); the invoking administrator's own SID is not
+	// needed, Administrators is trusted anyway. Everyone else with a write right still refuses.
 	admins, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
 	if err != nil {
 		return err
 	}
-	return checkParentACL(acl, []*windows.SID{user, system, admins}, bad)
+	return checkParentACL(acl, []*windows.SID{pr.user, pr.system, admins}, bad)
 }
 
 // checkParentACL walks the DACL. Deny ACEs only narrow access and are skipped; an allow ACE of a kind

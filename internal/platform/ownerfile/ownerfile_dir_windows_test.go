@@ -395,3 +395,33 @@ func TestWindowsTrustAdministratorsDoesNotWidenWrites(t *testing.T) {
 	}
 	o.Close()
 }
+
+// The installed layout (T-1249 QA round 3): the MSI's PrepareDataDir grants the service SID full control
+// on the data directory, which is the PARENT of the enrolment directory. Writing state for that account
+// must accept such a parent; a default (token user) open must still refuse it, and a different account
+// with the same right stays refused. BUILTIN\Users stands for NT SERVICE\activeDIQAgent.
+func TestWindowsForAccountTrustsItsOwnParentGrant(t *testing.T) {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("not elevated: owning a directory as Administrators needs the enabled group (the lab run is elevated)")
+	}
+	const account = `BUILTIN\Users`
+	parent := trustedParent(t)
+	widenACL(t, parent, "S-1-5-32-545", "(OI)(CI)(F)")
+	d, err := CreateDir(filepath.Join(parent, "state"), ForAccount(account))
+	if err != nil {
+		t.Fatalf("ForAccount refused its own account's grant on the parent: %v", err)
+	}
+	d.Close()
+	if d, err := CreateDir(filepath.Join(parent, "other")); err == nil {
+		d.Close()
+		t.Fatal("default CreateDir accepted a parent with a write grant for another principal")
+	} else if !errors.Is(err, ErrParentUnsafe) {
+		t.Fatalf("want ErrParentUnsafe, got %v", err)
+	}
+	if d, err := CreateDir(filepath.Join(parent, "third"), ForAccount(`BUILTIN\Guests`)); err == nil {
+		d.Close()
+		t.Fatal("ForAccount(Guests) accepted a parent that grants Users")
+	} else if !errors.Is(err, ErrParentUnsafe) {
+		t.Fatalf("want ErrParentUnsafe, got %v", err)
+	}
+}

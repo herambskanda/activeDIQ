@@ -124,7 +124,7 @@ def main():
     genv = dict(os.environ, GOOS="windows", GOARCH="amd64", CGO_ENABLED="0")
     for name, pkg in (("activediq-agent.exe", "./cmd/agent"), ("agentsetup.exe", "./cmd/agentsetup")):
         subprocess.check_call(["go", "build", "-trimpath", "-buildvcs=false", "-o", os.path.join(work, name), pkg], cwd=src, env=genv)
-    for name, pkg in (("dial.test.exe", "./internal/platform/fleet/dial"), ("agent.test.exe", "./internal/platform/agent")):
+    for name, pkg in (("dial.test.exe", "./internal/platform/fleet/dial"), ("agent.test.exe", "./internal/platform/agent"), ("ownerfile.test.exe", "./internal/platform/ownerfile")):
         subprocess.check_call(["go", "test", "-c", "-trimpath", "-buildvcs=false", "-o", os.path.join(work, name), pkg], cwd=src, env=genv)
     stub_bin = os.path.join(work, "enrol-stub")
     sh("go", "build", "-trimpath", "-buildvcs=false", "-o", stub_bin, "./lab/windows/enrol-stub")
@@ -273,19 +273,22 @@ def unit_tests(a, dc, work):
     say("\n== AC6: Windows unit tests, elevated, on dc1 ==")
     dc.put(os.path.join(work, "dial.test.exe"), B + "\\dial.test.exe")
     dc.put(os.path.join(work, "agent.test.exe"), B + "\\agent.test.exe")
+    dc.put(os.path.join(work, "ownerfile.test.exe"), B + "\\ownerfile.test.exe")
     rc, out = dc.ps(f"""
 $id = [Security.Principal.WindowsIdentity]::GetCurrent(); "whoami=" + $id.Name
 "elevated=" + ([Security.Principal.WindowsPrincipal]$id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 cd {B}
 "== dial.test.exe"; $d = (& .\\dial.test.exe '-test.v' '-test.count=1' '-test.skip=^TestNoStoreOrSQL$' 2>&1 | Out-String); $d; "dial exit=$LASTEXITCODE"
-"== agent.test.exe"; $g = (& .\\agent.test.exe '-test.v' '-test.count=1' '-test.run=Cap|TestWindowsBurst|TestWindowsConfine' 2>&1 | Out-String); $g; "agent exit=$LASTEXITCODE\"
+"== agent.test.exe"; $g = (& .\\agent.test.exe '-test.v' '-test.count=1' '-test.run=Cap|TestWindowsBurst|TestWindowsConfine' 2>&1 | Out-String); $g; "agent exit=$LASTEXITCODE"
+"== ownerfile.test.exe"; $o = (& .\\ownerfile.test.exe '-test.v' '-test.count=1' 2>&1 | Out-String); $o; "ownerfile exit=$LASTEXITCODE"
 """)
     say(out.strip())
-    for t in ("TestWindowsEnrolForAccountNamesTheAccountNotTheCaller", "TestWindowsRefusesDirOwnedByAnother"):
+    for t in ("TestWindowsForAccountNamesAccountNotCaller", "TestWindowsForAccountUnknownAccountFailsBeforeWriting", "TestWindowsTrustAdministratorsDoesNotWidenWrites", "TestWindowsForAccountTrustsItsOwnParentGrant", "TestWindowsLoadRefusesWidenedState"):
         check(f"AC6.{t}", f"--- PASS: {t}" in out, f"{t} PASSED elevated (not skipped)")
     for t in ("TestWindowsBurstLiftsAndRestoresRealJob", "TestWindowsBurstRestoreFailureIsRepairedOnRealJob", "TestWindowsBurstMaxLiftRestoresRealJobWhileWindowOpen", "TestWindowsConfineAndBurstInChild"):
         check(f"AC6.{t}", f"--- PASS: {t}" in out, f"{t} PASSED (cap read back with QueryInformationJobObject)")
     check("AC6.dial-exit", "dial exit=0" in out, "dial.test.exe exit 0")
+    check("AC6.ownerfile-exit", "ownerfile exit=0" in out, "ownerfile.test.exe exit 0")
     check("AC6.agent-exit", "agent exit=0" in out, "agent.test.exe exit 0")
     check("AC6.no-fail", "--- FAIL" not in out, "no failing test")
 
