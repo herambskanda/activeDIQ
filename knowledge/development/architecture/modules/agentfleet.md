@@ -38,7 +38,14 @@ listener, outside an Operation, so the tables belong to the platform packages th
 
 | Kind (Registrar method) | ID | Notes |
 | --- | --- | --- |
-| — | — | Nothing yet. Policy edit and emergency key rotation are Operations that need new permissions in the role catalogue and its database guard: T-0599. |
+| Action | `agentfleet.policy.edit` | Signs the next addc policy (`signer.SignPolicy`). Permission `agentfleet.policy.edit`; step-up; human-only; control-plane (never crosses a correlation). Diff shows each rule before/after, banned terms by count |
+| Action | `agentfleet.keyset.rotate` | Rotates the policy key now (`signer.Rotate`; ADR-0007 decision 6). Permission `agentfleet.keyset.rotate`; step-up; human-only; control-plane. Reason is a closed set (`suspected_exposure`, `backup_restored_to_new_host`, `early_scheduled`). Not the stolen-key anchor reset (decision 7, runbook follow-up) |
+
+Both permissions are in the built-in tenant-owner role and in the owner-role guard's allow-list
+(`migrations/0072_authz_tenant_owner_agentfleet.sql`, pinned equal to `rbac.BuiltInRoles` by a test), and
+the `agentfleet.` prefix is in `authz`'s never-crosses families. The signer arrives through
+`platform.Deps.AgentPolicy`; nil until T-0598 wires the DEK source, and the Actions then refuse every run
+(`signer.ErrNotConfigured`).
 
 ## Platform packages it is made of
 
@@ -67,10 +74,9 @@ listener, outside an Operation, so the tables belong to the platform packages th
 
 P1-P7 as unit tests on the `Verifier` (`agentpolicy/verifier_test.go`) and end to end through the
 signer (`signer/signer_test.go`, Postgres 16 and 18); P8 `signer/p8_test.go`; S1
-`agentingest/ingest_test.go`; rotation and chain-following `rotation/rotation_test.go`.
+`agentingest/ingest_test.go`; rotation and chain-following `rotation/rotation_test.go`; the Actions (`agentfleet/actions_test.go`, Postgres 16 and 18): rotation publishes a chain a `Verifier` accepts, policy signed with the new key follows, and step-up / automation / no-permission / bad-input refusals change nothing.
 
 ## Not built (tickets)
 
 Composition in `compose/server` waits for the production tenant DEK source (T-0598; the fleet CA has
-the same gap). The `activediq.addc.v1` handlers wait for the proto (T-0600). Operator Actions: T-0599.
-The dc_guid cross-check has an optional port, `agentingest.DCClaims`, and no implementation (T-0601).
+the same gap). The `activediq.addc.v1` handlers wait for the proto (T-0600). The dc_guid cross-check has an optional port, `agentingest.DCClaims`, and no implementation (T-0601).
