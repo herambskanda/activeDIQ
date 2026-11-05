@@ -134,7 +134,7 @@ func TestPlanPreconditionDCEqualsThePin(t *testing.T) {
 	rec := withTestOp(r)
 	id := mk(10)
 	q := planReq(id, ctxFor(id))
-	q.Kind = 1
+	q.Kind, q.Change = 1, testChange()
 	resp, err := r.h.Plan(context.Background(), q)
 	if err != nil {
 		t.Fatal(err)
