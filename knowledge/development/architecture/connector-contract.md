@@ -1179,9 +1179,11 @@ live rule edit. The Samba lab covers LDAP semantics; Entra Connect flows are `[U
 
 This section is the concrete `WriteKind` list for the M2b write-parity slice (ADM-008, ADM-033,
 ADM-038) and the amendment of §8.1's "envelope only" rule. The proto is the source
-(`write.proto`); if the two disagree the proto wins and this section is the bug. **Nothing here
-wires a kind.** `Describe` keeps `PLAN` and `APPLY` `UNSUPPORTED` and `kindTable` stays empty until
-a build ticket registers a kind with its operation-table row (`internal/connector/write.operations`)
+(`write.proto`); if the two disagree the proto wins and this section is the bug. **T-1581 wired
+no kind; T-1583 wired the first four** (`USER_PASSWORD_RESET`, `USER_UNLOCK`, `ACCOUNT_ENABLE`,
+`ACCOUNT_DISABLE`, see "Wired kinds" below), so `Describe` reports `PLAN` and `APPLY` `SUPPORTED`
+while the operation table is non-empty. Every other kind stays unwired until a build ticket
+registers it with its operation-table row (`internal/connector/write.operations`)
 and its `kindTable` row together. Every kind goes through §8.1 steps 1 to 9 unchanged: the Tier-0
 guard, the write gate and the property guard (§8.9) run before the kind's own code.
 
@@ -1221,7 +1223,7 @@ container) answers `ClassNotAllowed`: "not in this slice" is a refusal, not a be
 
 #### 8.10.2 `kindTable`: digest keys map one to one (acceptance 3)
 
-`internal/directory/client.kindTable` (today `map[string]connectorv1.WriteKind{}`) is the only map
+`internal/directory/client.kindTable` (filled for the four account kinds from `internal/directory/accountkind.Specs()`, with a `kindClass` row each) is the only map
 from a plan-digest kind to a `WriteKind`. The rules:
 
 1. **Exactly the ten keys of §8.10.1**, each to its own `WriteKind`. The map is injective (no two
@@ -1494,6 +1496,24 @@ here and in `Describe`, not hidden. A provider reports `PLAN` and `APPLY` `SUPPO
 one kind of the table is wired; per-kind support is reported through a closed `Describe`
 reason string until a per-kind capability is added by the first ticket that needs one (follow-up C, T-1623).
 
+#### 8.10.9 Wired kinds (T-1583)
+
+`internal/directory/accountkind` is the one definition of the four account kinds: digest keys
+(`ad.user.resetPassword`, `ad.user.unlock`, `ad.account.enable`, `ad.account.disable`), the typed
+change derived from the digested attributes (server, `ChangeFromAttrs`) and the attributes recomputed
+from the typed change (connector, `AttrsOf`). The connector recomputes the plan digest with the leaf
+package `internal/platform/operation/digest` (the connector binary must not link `store`) and
+refuses a mismatch before any directory call, so an unlock digest replayed against a disable payload
+fails in `client.Write` (`ErrDigest`) and, if it reached the connector, in the guard. The only LDAP
+request builders are `internal/connector/write/ops/account.go`; they run through
+`ad.Session.ModifyAccount` (fresh read on the bound DC, precondition check, modify by objectGUID).
+Unlock replaces `lockoutTime` with 0; enable/disable delete the old and add the new
+`userAccountControl` (compare-and-set); reset sets `unicodePwd` over a verified TLS session only,
+plus `pwdLastSet` 0 when must-change is set, with the non-critical policy-hints control. Entra is not
+an `AccountProvider`, so these kinds are `CAPABILITY_UNSUPPORTED` there. Samba cannot prove the
+policy-hints control, the `lockoutTime` and `userAccountControl` modify forms or Windows reset
+semantics; those are `[UNVERIFIED]` until the Windows-lab ticket for CC-WK-19, 21, 24 and 26 runs.
+
 #### 8.10.8 Follow-ups this section creates
 
 Registered as tickets: (A, T-1621) security-architect: §7.4 amendment, `SecretValue` review,
@@ -1524,7 +1544,7 @@ disabled, expired and locked accounts.
 
 | ID | Case | Expectation | Lab |
 | --- | --- | --- | --- |
-| CC-DESC-01 | `Describe` on the lab | `provider_kind = AD`, contract `activediq.connector.v1`, `contract_minor` ≥ 1, directory identity equals the lab forest root GUID and SID; the six read operations `SUPPORTED`; `READ_SECRET` `VERIFY_USER` `RESERVED`; `VERIFY_CONNECTION` `SUPPORTED` once T-0096 lands; `PLAN` and `APPLY` `UNSUPPORTED` until the first `WriteKind` is wired (T-1581 defines the kinds, §8.10; a build ticket wires them) | S |
+| CC-DESC-01 | `Describe` on the lab | `provider_kind = AD`, contract `activediq.connector.v1`, `contract_minor` ≥ 1, directory identity equals the lab forest root GUID and SID; the six read operations `SUPPORTED`; `READ_SECRET` `VERIFY_USER` `RESERVED`; `VERIFY_CONNECTION` `SUPPORTED` once T-0096 lands; `PLAN` and `APPLY` `SUPPORTED` (the four account kinds wired by T-1583, §8.10.9) | S |
 | CC-DESC-02 | Topology | domain, configuration and schema NCs with GUIDs and the domain SID; `forest_settings` reflects what is read, with an absent `tombstoneLifetime` left **unset** (no default applied) | S |
 | CC-DESC-03 | DC facts | the lab DC has `dsa_guid`, `invocation_id` equal to its NTDS Settings object, site, `is_pdc_emulator = TRUE` after the `validFSMOs` cross-check; every fact Samba does not expose is `UNKNOWN`, never `FALSE` or `0` | S |
 | CC-DESC-04 | Wrong directory identity | `DIRECTORY_IDENTITY_MISMATCH`; no read was issued | S |

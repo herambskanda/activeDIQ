@@ -30,7 +30,7 @@ const (
 	ncGUID  = "6f1c2a40-0000-4000-8000-0000000000cc"
 
 	otherNC  = authority.NamingContextID("6f1c2a40-0000-4000-8000-0000000000dd")
-	testKind = connectorv1.WriteKind(7)
+	testKind = connectorv1.WriteKind(6) // not a registered account kind (7-10)
 )
 
 var (
