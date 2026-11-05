@@ -23,3 +23,12 @@ func Seed(t testing.TB, exec Exec, name string) tenant.ID {
 	}
 	return id
 }
+
+// NewID returns a fresh random tenant ID without touching a database. It is how test-support code
+// outside this package (the operationtest harness) names a tenant for an in-memory run, so it does
+// not mint IDs itself (ADR-0002 rule 5). It takes a testing.TB, like Seed, so a call cannot
+// type-check outside a test, and the package is on policy.TestSupport, so product code may not import it.
+func NewID(t testing.TB) tenant.ID {
+	t.Helper()
+	return tenant.New()
+}
