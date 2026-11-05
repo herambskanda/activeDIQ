@@ -1527,6 +1527,12 @@ keys, attribute names `set:`, `add:`, `del:`, `clr:` and the typed value prefixe
   write) skips it; step 7 has a `TargetGone` exemption: a delete retried after success finds the object
   deleted by the show-deleted read and answers `ALREADY_APPLIED` instead of a live-classification
   failure. Delete addresses the live DN read in the same transaction; update addresses `<GUID=...>`.
+- **Delete retry needs Deleted Objects rights.** The `ALREADY_APPLIED` answer of a retried delete rests
+  on a show-deleted read by GUID, which the DC allows only to accounts that can read
+  `CN=Deleted Objects`. Without that right the retry is refused fail-closed (`TIER0_REFUSED`, step 7;
+  never a second delete, never a false success) and Verify settles the step. Samba proves both sides
+  (`TestWKDelete`, `TestWKDeleteRetryWithoutDeletedObjectsRights`); the rights grant to the connector's
+  account is a deployment item for the setup runbook. `isDeleted` joined the read-only default schema.
 - **Manager edits.** `manager` declares `SET_MANAGER` or `CLEAR_MANAGER` at step 4; the other edits (and
   the computer case) are re-checked in the body against the live class (`editsRecheck`). The live class
   is the last `objectClass` value, so gMSA and MSA objects are `ClassNotAllowed`.

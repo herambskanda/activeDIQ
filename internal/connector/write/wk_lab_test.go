@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -31,20 +32,26 @@ import (
 // CC-WK-11 (Plan class with the Recycle Bin) and the Windows halves are the Windows-lab ticket.
 
 type wkRig struct {
-	t     *testing.T
-	h     *Handler
-	sess  *ad.Session
-	admin *ldap.Conn
-	dc    *connectorv1.DcIdentity
-	env   map[string]string
-	pool  *x509.CertPool
-	port  string
-	ou    string // DN of this test's scratch OU
-	ouID  guid.GUID
-	now   time.Time
+	t      *testing.T
+	h      *Handler
+	sess   *ad.Session
+	admin  *ldap.Conn
+	dc     *connectorv1.DcIdentity
+	env    map[string]string
+	pool   *x509.CertPool
+	port   string
+	ou     string // DN of this test's scratch OU
+	ouID   guid.GUID
+	now    time.Time
+	svcSID string
+	schema *ldapfilter.Schema
+	guard  PropertyGuard
 }
 
-func newWKRig(t *testing.T) *wkRig {
+func newWKRig(t *testing.T) *wkRig { return newWKRigRule(t, false) }
+
+// newWKRigRule: withRule designates a dynamic group with a rule on `title` (CC-WRITE-25/27).
+func newWKRigRule(t *testing.T, withRule bool) *wkRig {
 	t.Helper()
 	env := labEnv(t)
 	pem, err := os.ReadFile(filepath.Join("..", "..", "..", "lab", ".lab-ca.pem"))
@@ -86,14 +93,19 @@ func newWKRig(t *testing.T) *wkRig {
 
 	// A dynamic group designated in the Entra snapshot with a rule on `title` (CC-WK-08, CC-WRITE-27).
 	const gA, gD = "77777777-7777-7777-7777-000000000100", "77777777-7777-7777-7777-000000000150"
+	groups := []graph.Group{{ID: gA}}
+	members := map[string][]graph.DirectoryObject{}
+	if withRule {
+		groups = append(groups, graph.Group{ID: gD, GroupTypes: []string{"DynamicMembership"}, MembershipRule: `user.jobTitle -eq "X"`})
+		members[gA] = []graph.DirectoryObject{{ID: gD, ODataType: "#microsoft.graph.group"}}
+	}
 	cred := graphtest.NewCredential(t)
 	srv := graphtest.New(t, &graphtest.Tenant{
 		TenantID: "11111111-1111-1111-1111-111111111111", ClientID: "22222222-2222-2222-2222-222222222222",
 		SPID: "33333333-3333-3333-3333-333333333333", AppObjectID: "44444444-4444-4444-4444-444444444444",
 		ServicePrincipals: map[string]graph.ServicePrincipal{"33333333-3333-3333-3333-333333333333": {ID: "33333333-3333-3333-3333-333333333333", AppID: "22222222-2222-2222-2222-222222222222"},
 			"55555555-5555-5555-5555-555555555555": {ID: "55555555-5555-5555-5555-555555555555", AppID: "00000003-0000-0000-c000-000000000000"}},
-		Groups:  []graph.Group{{ID: gA}, {ID: gD, GroupTypes: []string{"DynamicMembership"}, MembershipRule: `user.jobTitle -eq "X"`}},
-		Members: map[string][]graph.DirectoryObject{gA: {{ID: gD, ODataType: "#microsoft.graph.group"}}},
+		Groups: groups, Members: members,
 	}, cred)
 	gc, err := graph.New(srv.Config(cred))
 	if err != nil {
@@ -119,12 +131,51 @@ func newWKRig(t *testing.T) *wkRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &wkRig{t: t, h: h, sess: sess, admin: admin, dc: dc, env: env, pool: pool, port: port, now: now}
+	r := &wkRig{schema: schema, guard: set, t: t, h: h, sess: sess, admin: admin, dc: dc, env: env, pool: pool, port: port, now: now}
 	r.ou = fmt.Sprintf("OU=wk%d,%s", time.Now().UnixNano()%1_000_000_000, labDom)
 	r.adminAdd(r.ou, "organizationalUnit", nil)
 	r.ouID = r.guidOf(r.ou)
+	// The connector's account needs rights on the scratch OU (the lab DACL grants it none there).
+	sid := strings.TrimSpace(r.lab("samba-tool", "user", "show", "svc-activediq", "--attributes=objectSid"))
+	if i := strings.Index(sid, "S-1-5"); i >= 0 {
+		sid = strings.Fields(sid[i:])[0]
+	}
+	r.svcSID = sid
+	r.lab("samba-tool", "dsacl", "set", "--objectdn="+r.ou, "--sddl=(A;CIOI;GA;;;"+sid+")")
 	t.Cleanup(func() { r.deleteTree(r.ou) })
 	return r
+}
+
+// rebind replaces the connector's session and handler with one bound as another account.
+func (r *wkRig) rebind(user, pw string) {
+	r.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	sess, err := ad.Open(ctx, ad.Config{Servers: []string{"localhost:" + r.port}, RootCAs: r.pool, PageSize: 500, Schema: r.schema,
+		Credential: ad.Credential{BindName: user + "@lab.activediq.test", Password: secret.FromBytes([]byte(pw))}})
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	r.t.Cleanup(func() { sess.Close() })
+	run := passRun(nil)
+	run.CompletedAt = time.Now()
+	book, _ := NewGateBook(&memBaseline{}, time.Now)
+	book.Complete(connID, run)
+	prov := NewADProvider(sess, nil, adIdentity(), &memPins{})
+	prov.Dynamic = r.guard
+	r.sess = sess
+	if r.h, err = New(prov, book, WithRecorder(&memRecorder{})); err != nil {
+		r.t.Fatal(err)
+	}
+}
+
+func (r *wkRig) lab(args ...string) string {
+	r.t.Helper()
+	out, err := exec.Command("docker", append([]string{"exec", r.env["LAB_CONTAINER"]}, args...)...).CombinedOutput()
+	if err != nil {
+		r.t.Fatalf("%s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
 }
 
 func (r *wkRig) adminAdd(dnText, class string, attrs map[string][]string) {
@@ -503,8 +554,11 @@ func TestWKUpdate(t *testing.T) {
 	id := r.guidOf("CN=wkupd," + r.ou)
 	upd := connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE
 	// SET (single), ADD/REMOVE_VALUE (multi), CLEAR
-	if _, err := r.planApply(upd, id, updateChange(ed(opSet, "description", "new"), ed(opAdd, "otherTelephone", "3"), ed(opRemove, "otherTelephone", "1"))); err != nil {
-		t.Fatalf("set/add/remove: %v", err)
+	if _, err := r.planApply(upd, id, updateChange(ed(opSet, "description", "new"), ed(opAdd, "otherTelephone", "3"))); err != nil {
+		t.Fatalf("set/add: %v", err)
+	}
+	if _, err := r.planApply(upd, id, updateChange(ed(opRemove, "otherTelephone", "1"))); err != nil {
+		t.Fatalf("set/add/remove: %v %v", err, connErr(t, err))
 	}
 	e := r.entry("CN=wkupd,"+r.ou, "description", "otherTelephone")
 	if e.GetAttributeValue("description") != "new" || len(e.GetAttributeValues("otherTelephone")) != 2 {
@@ -560,8 +614,15 @@ func TestWKUpdate(t *testing.T) {
 	wantCode(t, "65 edits", err, connectorv1.ErrorCode_ERROR_CODE_LIMIT_EXCEEDED)
 	_, err = r.plan(r.planReq(upd, id, updateChange(ed(opSet, "otherTelephone", make([]string, 1001)...))))
 	wantCode(t, "1001 values", err, connectorv1.ErrorCode_ERROR_CODE_LIMIT_EXCEEDED)
-	// CC-WRITE-27: `title` is a key in a designated dynamic rule; the twin telephoneNumber is not.
-	_, err = r.plan(r.planReq(upd, id, updateChange(ed(opSet, "title", "x"))))
+}
+
+// CC-WK-08 / CC-WRITE-27: `title` is a key in a designated dynamic rule; the twin telephoneNumber is not.
+func TestWKUpdateRuleKey(t *testing.T) {
+	r := newWKRigRule(t, true)
+	r.adminAdd("CN=wkrule,"+r.ou, "user", map[string][]string{"sAMAccountName": {"wkrule"}})
+	id := r.guidOf("CN=wkrule," + r.ou)
+	upd := connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE
+	_, err := r.plan(r.planReq(upd, id, updateChange(ed(opSet, "title", "x"))))
 	wantCode(t, "title rule key", err, connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED)
 	if _, err := r.planApply(upd, id, updateChange(ed(opSet, "telephoneNumber", "555"))); err != nil {
 		t.Fatalf("twin: %v", err)
@@ -593,6 +654,10 @@ func TestWKUpdateManager(t *testing.T) {
 // CC-WK-09 / 10: delete.
 func TestWKDelete(t *testing.T) {
 	r := newWKRig(t)
+	// Finding a deleted object by GUID (the retry check) needs read access to CN=Deleted Objects, which
+	// samba-tool cannot grant; this test binds the connector as Administrator. The svc account's
+	// behaviour is TestWKDeleteRetryWithoutDeletedObjectsRights.
+	r.rebind("Administrator", r.env["LAB_ADMIN_PASSWORD"])
 	del := connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE
 	r.adminAdd("CN=wkleaf,"+r.ou, "user", map[string][]string{"sAMAccountName": {"wkleaf"}})
 	id := r.guidOf("CN=wkleaf," + r.ou)
@@ -612,7 +677,7 @@ func TestWKDelete(t *testing.T) {
 	// CC-WK-10: retried after success
 	again, err := r.apply(a)
 	if err != nil || again.GetOutcome() != connectorv1.ApplyOutcome_APPLY_OUTCOME_ALREADY_APPLIED {
-		t.Fatalf("retry: %v %v", again.GetOutcome(), err)
+		t.Fatalf("retry: %v %v %v", again.GetOutcome(), err, connErr(t, err))
 	}
 	// non-leaf OU
 	r.adminAdd("OU=wkparent,"+r.ou, "organizationalUnit", nil)
@@ -664,4 +729,24 @@ func TestWKArmAndSecretMismatch(t *testing.T) {
 	a := r.applyFrom(p, &connectorv1.PlanResponse{}, []byte("secret"))
 	_, err := r.apply(a)
 	wantRule(t, "secret on update", err, "SecretInputMismatch")
+}
+
+// CC-WK-10 on Samba for the connector's own account: it cannot read CN=Deleted Objects, so the retry of
+// a delete cannot be recognised and is refused fail-closed (never a second delete, never a false success).
+func TestWKDeleteRetryWithoutDeletedObjectsRights(t *testing.T) {
+	r := newWKRig(t)
+	del := connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE
+	r.adminAdd("CN=wkleaf2,"+r.ou, "user", map[string][]string{"sAMAccountName": {"wkleaf2"}})
+	id := r.guidOf("CN=wkleaf2," + r.ou)
+	p := r.planReq(del, id, deleteChange())
+	pr, err := r.plan(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := r.applyFrom(p, pr, nil)
+	if _, err := r.apply(a); err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.apply(a)
+	wantCode(t, "retry without Deleted Objects rights", err, connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED)
 }
