@@ -41,6 +41,7 @@ correlations	inventory	config
 directory_objects	inventory	system
 enrollment_tokens	fleet	config
 fleet_ca	fleet	system
+fleet_server_ca	fleet	system
 hybrid_links	connection	config
 installation_keys	keys	system
 inventory_domain_policies	inventory	system
