@@ -98,8 +98,12 @@ func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, 
 		Descriptor: operation.Descriptor{ID: "settings.thing.set", Version: 1, Permission: "settings.thing.set",
 			Input: "#/components/schemas/Thing", Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: "settings.thing.changed"},
 		Plan: func(context.Context, operation.PlanContext, none) ([]operation.TypedStep[none], error) {
-			return []operation.TypedStep[none]{{Plan: operation.StepPlan{Target: target, Kind: "user.set", Reversibility: operation.Reversible,
-				Diff: []operation.Change{{Attribute: "description", Before: []string{"old"}, After: []string{"new"}}}}}}, nil
+			diff := []operation.Change{{Attribute: "description", Before: []string{"old"}, After: []string{"new"}}}
+			if stepDiff != nil {
+				diff = *stepDiff
+			}
+			return []operation.TypedStep[none]{{Plan: operation.StepPlan{Target: target, Kind: stepKind, Reversibility: operation.Reversible,
+				Diff: diff}}}, nil
 		},
 		Apply: func(ctx context.Context, s step.Step, _ operation.TypedStep[none]) (none, error) {
 			fn(ctx, s)
@@ -130,6 +134,12 @@ func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, 
 }
 
 func init() { kindTable["user.set"] = testKind }
+
+// stepKind and stepDiff let a test mint a Step for another digest kind (the account kinds).
+var (
+	stepKind = "user.set"
+	stepDiff *[]operation.Change
+)
 
 func goodOp() WriteOp {
 	return WriteOp{DigestKind: "user.set", Target: testTarget, Attrs: testAttrs}
