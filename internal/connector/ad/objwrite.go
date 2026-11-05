@@ -116,7 +116,7 @@ func (s *Session) stateOf(ctx context.Context, id guid.GUID, e *Entry, deleted b
 	return st, nil
 }
 
-// MoveRequest moves Object under NewParent (same RDN, deleteoldrdn false).
+// MoveRequest moves Object under NewParent (same RDN, deleteoldrdn true: Samba refuses false for an unchanged RDN).
 type MoveRequest struct {
 	Object, ExpectParent, NewParent guid.GUID
 }
@@ -150,7 +150,7 @@ func (s *Session) MoveObject(ctx context.Context, r MoveRequest, send ModifyDNFu
 		if err != nil {
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
-		return mapWriteErr(ctx, send(conn, DNChange{Entry: cur.dn.String(), NewRDN: leaf.String(), NewSuperior: np.dn.String()}))
+		return mapWriteErr(ctx, send(conn, DNChange{Entry: cur.dn.String(), NewRDN: leaf.String(), DeleteOldRDN: true, NewSuperior: np.dn.String()}))
 	})
 }
 
