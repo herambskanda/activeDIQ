@@ -225,8 +225,8 @@ file; if the file is lost the token is replaced.
 **What the token can and cannot do.** Can, on VMs in `adiq-lab` only: create (new VMs are always created in the
 pool), start, stop, snapshot, roll back, attach or eject an ISO, read config and console, allocate disks on the
 lab storage, and use dc1's bridge. Cannot: see or touch any VM outside the pool (workers cannot even list
-them; the driver reads pool membership from the VM list, which needs only `VM.Audit`, because reading a
-pool object directly would need `Pool.Audit`), anything `Sys.*` (no node shell, no network, no certificates), `Permissions.*`, `User.*`, `Pool.*`,
+them; the driver reads pool membership from `GET /pools?poolid=adiq-lab`, which needs only `VM.Audit` on the members, because
+`GET /pools/adiq-lab` would need `Pool.Audit`), anything `Sys.*` (no node shell, no network, no certificates), `Permissions.*`, `User.*`, `Pool.*`,
 `Realm.*`, `Group.*`, change any ACL, create users or tokens, migrate, clone, back up, delete a datastore
 or reach the QEMU monitor (`VM.Monitor` is not granted). It holds no ACL on `/` or `/vms`. Note the role does
 include `VM.Allocate` (create and destroy VMs) and `Datastore.AllocateSpace` on the lab storage: a worker can
@@ -268,17 +268,19 @@ delete it in the Proxmox UI if you wish. Revoke also when a worker machine is lo
 then bootstrap again for a new token.
 
 **Recovery = snapshot rollback.** A worker that breaks dc1 (or any pool VM) runs `proxmox-lab rollback <vmid>
-<snapshot>`. If dc1 has no clean snapshot, the first worker session takes one (`proxmox-lab snapshot 119 clean`)
-before changing anything. `VM.Snapshot` also lets the token delete snapshots, so keep a second snapshot
-name before rolling back over the only one. If the token
-itself is suspect, the CEO revokes (above); VMs are unaffected.
+<snapshot>` under `with-dc1-lock`. **dc1's rollback target is `clean-signing-2026-11-02`** (taken 2026-11-04 with dc1 at
+`LDAPServerIntegrity`=2 and `LdapEnforceChannelBindingTokens`=2, T-1327). The older snapshot `clean` (2026-10-28, LDAP signing
+negotiated) is **superseded**: kept, not deleted, never the rollback target. Disk-only snapshots roll back to a stopped VM:
+`proxmox-lab start 119`, wait for NTDS, then run `dc1-policy check` (and `restore` if it fails). `VM.Snapshot` also lets the token
+delete snapshots, so keep a second snapshot name before rolling back over the only one. For another pool VM with no clean snapshot, the
+first worker session takes one before changing anything. If the token itself is suspect, the CEO revokes (above); VMs are unaffected.
 
 **Proof.** `make proxmox-lab-test` (offline, in `make ci` through `lab-test-unit`) runs the real scripts against
 a fake `ssh`/`pveum`/`pvesh` and a stub HTTPS API: scope refusals, `verify-scope` failures (outside VM, `Sys.`,
 `Permissions.`, `User.`, ACL on `/` and `/vms`, extra privilege, other pool, API error), TLS fingerprint mismatch
 sending no request, the secret absent from stdout, stderr, argv and logs, env file mode 0600, and revoke leaving
-every VM untouched. It has not been run against a real Proxmox host: the first real bootstrap is the live
-test; read the `ARGS=--dry-run` output first.
+every VM untouched. It was first run against the real host in T-1327 (`windows-lab-runs/T-1327-proxmox-pool-scope-20261104.md`), which found
+that the real API sends no `pool` field in `/cluster/resources` for the token; membership is now read from `GET /pools?poolid=adiq-lab`.
 
 ### History: preparing the VM (T-0428)
 
@@ -325,7 +327,7 @@ make lab-test-connector-windows   # go test -tags 'lab windowslab' against <DC_I
 ```
 
 In external mode `up`, `reset`, `down` and `destroy` refuse (they manage libvirt VMs); nothing calls `virsh`.
-Reset = `qm rollback <vmid> clean` on the Proxmox host (VM 119 for the first build; no worker has access, see the rule above). Certificate verification is never disabled: the Go tests dial
+Reset = `qm rollback <vmid> clean` on the Proxmox host (VM 119 for the first build; for dc1 workers now use `proxmox-lab rollback 119 clean-signing-2026-11-02`, see Recovery above). Certificate verification is never disabled: the Go tests dial
 `<DC_IP>:636` with `ServerName=$WIN_LAB_TLS_NAME` and the CA pool from `$WIN_LAB_CA`; a wrong CA fails
 (`TestWindowsLab…` untrusted-CA test). `make lab-test-windows-unit` proves the mode offline (stub `go`/`virsh`,
 checks refusals, misconfiguration errors and that the password never appears in argv, logs or stdout).
@@ -399,7 +401,7 @@ cd C:\lab
 - fs1: expect exit 0, the install folder exists, `obs.json` says `installed`. Then clean up:
   `msiexec /x C:\lab\ActiveDIQ-Server.msi /qn`.
 - If dc1 shows leftovers, remove them over WinRM (`msiexec /x`, delete `C:\Program Files\activeDIQ`);
-  a rollback (`qm rollback 119 clean`) needs the Proxmox host, so raise an `action new` only if scripts cannot fix it.
+  a rollback is `proxmox-lab rollback 119 clean-signing-2026-11-02` (under the lock, then `dc1-policy check`); raise an `action new` only if the token is revoked.
 
 **Judge it on the repo host** (copy `obs.json` back, one per host: `obs-dc1.json`, `obs-fs1.json`):
 
@@ -595,7 +597,7 @@ Needs `pip install pywinrm requests-ntlm` and `WIN_LAB_ENV`; WinRM on dc1 is lab
 
 **Rules for lab scripts.** No script may write `LDAPServerIntegrity` or `LdapEnforceChannelBindingTokens` to anything but 2, and none may
 "restore a captured before-value" for them. `lab/windows/tests/test_dc1_policy.py` scans `lab/` for writes and fails on any other value;
-`make lab-test-windows-unit` runs it. A snapshot rollback (`qm rollback`, Proxmox, human only) puts back whatever the snapshot held:
+`make lab-test-windows-unit` runs it. A snapshot rollback (`proxmox-lab rollback`; before A-0038 a human `qm rollback`) puts back whatever the snapshot held:
 after any rollback or restore of VM 119 run `dc1-policy restore` before the next proof.
 
 **Offline tests.** `python3 -m unittest lab/windows/tests/test_dc1_policy.py`: a fake DC at 1/2, 2/1, absent and a drifting DC prove `gssapi-lab run`
