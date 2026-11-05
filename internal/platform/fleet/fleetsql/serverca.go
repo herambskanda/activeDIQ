@@ -365,9 +365,9 @@ func normaliseServerName(s string) (string, error) {
 		return "", ErrServerNames
 	}
 	labels := strings.Split(n, ".")
-	// A TLD is never all-numeric (RFC 3696 s2); this refuses inet_aton short forms such as 127.1 or
-	// 2130706433 that a resolver would read as a loopback address. A 0x prefix is the hex form.
-	if last := labels[len(labels)-1]; strings.Trim(last, "0123456789") == "" || strings.HasPrefix(n, "0x") {
+	// Every real TLD is alphabetic or an xn-- A-label, so requiring a letter first refuses every inet_aton
+	// short form a resolver would read as an address (127.1, 2130706433, 1.2.3, 127.0x1, 10.0.0.0xa).
+	if last := labels[len(labels)-1]; last == "" || last[0] < 'a' || last[0] > 'z' {
 		return "", ErrServerNames
 	}
 	for _, l := range labels {

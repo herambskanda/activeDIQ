@@ -315,7 +315,9 @@ func TestSignServerLeafRefusals(t *testing.T) {
 			fleetsql.Endpoint{Host: "0.0.0.0", Port: 1}, fleetsql.Endpoint{Host: "*.example.test", Port: 1},
 			fleetsql.Endpoint{Host: "fleet.example.test.", Port: 1}, fleetsql.Endpoint{Host: "::1", Port: 1},
 			fleetsql.Endpoint{Host: "127.1", Port: 1}, fleetsql.Endpoint{Host: "0x7f.0.0.1", Port: 1}, fleetsql.Endpoint{Host: "2130706433", Port: 1},
-			fleetsql.Endpoint{Host: "1.2.3", Port: 1}, fleetsql.Endpoint{Host: "255.255.255.255", Port: 1})
+			fleetsql.Endpoint{Host: "1.2.3", Port: 1}, fleetsql.Endpoint{Host: "255.255.255.255", Port: 1},
+			fleetsql.Endpoint{Host: "127.0.0.0x1", Port: 1}, fleetsql.Endpoint{Host: "127.0x1", Port: 1}, fleetsql.Endpoint{Host: "10.0.0.0xa", Port: 1},
+			fleetsql.Endpoint{Host: "0xfleet.example.test", Port: 1})
 		long := strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 63) + ".test"
 		e.enr.Endpoints = append(e.enr.Endpoints, fleetsql.Endpoint{Host: long, Port: 1})
 		names := map[string][]string{
@@ -335,6 +337,9 @@ func TestSignServerLeafRefusals(t *testing.T) {
 			"decimal ipv4":            {"2130706433"},
 			"three-part ipv4":         {"1.2.3"},
 			"limited broadcast":       {"255.255.255.255"},
+			"hex last part":           {"127.0.0.0x1"},
+			"hex second part":         {"127.0x1"},
+			"hex ten net":             {"10.0.0.0xa"},
 			"too long":                {long},
 			"one bad among good":      {"fleet.example.test", "evil.example.test"},
 			"space":                   {" fleet.example.test"},
@@ -349,6 +354,10 @@ func TestSignServerLeafRefusals(t *testing.T) {
 		}
 		if len(e.ca.evs) != 0 {
 			t.Fatal("a refused request was audited as issued")
+		}
+		// A host that merely starts with 0x is a legitimate DNS name and is issued.
+		if _, err := e.enr.SignServerLeaf(ctx, []string{"0xfleet.example.test"}); err != nil {
+			t.Fatalf("0xfleet.example.test refused: %v", err)
 		}
 	})
 }
