@@ -21,6 +21,10 @@ const (
 	CodeSecretNotSet        Code = "SECRET_NOT_SET"
 	CodeProtocol            Code = "PROTOCOL_ERROR"
 	CodeCanceled            Code = "CANCELED"
+	CodeEntryExists         Code = "ENTRY_EXISTS"   // an object already has that name (entryAlreadyExists)
+	CodeNotLeaf             Code = "NOT_LEAF"       // notAllowedOnNonLeaf
+	CodeConflict            Code = "WRITE_CONFLICT" // noSuchAttribute / attributeOrValueExists: a compare-and-set lost
+	CodeConstraint          Code = "CONSTRAINT"     // constraint, schema or policy violation the DC refused
 )
 
 // Error is the package's error type.
