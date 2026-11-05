@@ -1,0 +1,13 @@
+go run ./tools/fitness/reports -lock-base main
+  pending   RP10 Test_delivery_link_authorised_by_delivery_row (row B11 has not landed it) (not yet checked, not a pass)
+  pass      RP2 ReadScope.Terms/.Token and NewReadScope callers
+  pass      RP3 reportsql.Compile/CompileCount/Exec callers under internal/modules/reports
+  pass      RP7 library/LOCK hashes and append-only history
+  pass      RP4 Test_expired_run_is_not_served (./internal/modules/reports/run)
+  pass      RP5 Test_export_digest_equals_run_digest (./internal/modules/reports/export)
+  pass      RP6 Test_compiled_scope_matches_read_oracle (./internal/directory/inventory)
+  pass      RP8 Test_derived_columns_match_reference (./internal/directory/inventory)
+  pass      RP9 Test_run_read_bound_to_runner_and_scope (./internal/modules/reports/run)
+  pass      RP11 Test_dataset_reveals_nothing_outside_scope (7 dataset subtests)
+  note      RP7 lock history: compared with main
+fitness-reports: ok (every check listed as pass ran and passed; pending parts are not a pass; RP1 runs in fitness-safeprim; ADR-0010 is bound to RP3, RP4 and RP5)

@@ -7,11 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/skenzeriq/activediq/internal/platform/ownerfile"
 )
 
 // Files of the component's enrollment state directory.
@@ -47,13 +47,17 @@ type State struct {
 	Endpoints []Endpoint
 }
 
-// Save persists a verified enrollment into dir (created 0700), each file by write-to-temp then rename.
-// The key is written first-class with mode 0600; the leaf is written last, so a crash midway leaves a
-// directory Load refuses rather than a half-enrolled component.
+// save persists a verified enrollment into dir, each file by write-to-temp then rename through the
+// held directory handle (ownerfile.Dir.WriteFile): the temp file is created owner-only, never with an
+// inherited ACL, so the key is never in a file anyone else can read. The directory's parent is
+// verified before anything is written. The leaf is written last, so a crash midway leaves a directory
+// Load refuses rather than a half-enrolled component.
 func save(dir string, pin Pin, bundlePEM []byte, leafDER []byte, keyDER []byte, eps []Endpoint) error {
-	if err := ensureDir(dir); err != nil {
+	d, err := ownerfile.CreateDir(dir)
+	if err != nil {
 		return err
 	}
+	defer d.Close()
 	var epText strings.Builder
 	for _, e := range eps {
 		epText.WriteString(net.JoinHostPort(e.Host, strconv.Itoa(int(e.Port))) + "\n")
@@ -69,7 +73,7 @@ func save(dir string, pin Pin, bundlePEM []byte, leafDER []byte, keyDER []byte, 
 		{LeafFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})},
 	}
 	for _, s := range steps {
-		if err := writeFile(filepath.Join(dir, s.name), s.data); err != nil {
+		if err := d.WriteFile(s.name, s.data); err != nil {
 			return err
 		}
 	}
@@ -79,18 +83,28 @@ func save(dir string, pin Pin, bundlePEM []byte, leafDER []byte, keyDER []byte, 
 // Load reads and re-validates the state in dir: unsafe permissions, a bundle that breaks rule D3 or
 // lacks the recorded pin, or a leaf that does not match the key or verify against the bundle are all
 // ErrState. A missing component is not enrolled.
+//
+// The directory is opened once, with its parent verified (ownerfile.OpenDir), and every file is read
+// through that handle (T-1315): nothing is checked by path and then used by path, so a directory
+// swapped for a junction or symlink after the check cannot supply the pin, bundle, key or leaf.
 func Load(dir string) (*State, error) {
-	if err := checkDir(dir); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrState, err)
+	d, err := ownerfile.OpenDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrState, err)
 	}
-	read := func(name string, secret bool) ([]byte, error) {
-		p := filepath.Join(dir, name)
-		if err := checkFile(p, secret); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrState, err)
+	defer d.Close()
+	return load(d)
+}
+
+func load(d *ownerfile.Dir) (*State, error) {
+	read := func(name string) ([]byte, error) {
+		b, err := d.ReadFile(name)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrState, err)
 		}
-		return os.ReadFile(p)
+		return b, nil
 	}
-	pinB, err := read(PinFile, false)
+	pinB, err := read(PinFile)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +112,7 @@ func Load(dir string) (*State, error) {
 	if err != nil {
 		return nil, ErrState
 	}
-	bundle, err := read(CAFile, false)
+	bundle, err := read(CAFile)
 	if err != nil {
 		return nil, err
 	}
@@ -106,11 +120,11 @@ func Load(dir string) (*State, error) {
 	if err != nil {
 		return nil, ErrState
 	}
-	keyPEM, err := read(KeyFile, true)
+	keyPEM, err := read(KeyFile)
 	if err != nil {
 		return nil, err
 	}
-	leafPEM, err := read(LeafFile, false)
+	leafPEM, err := read(LeafFile)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +143,7 @@ func Load(dir string) (*State, error) {
 		}
 		return nil, ErrState
 	}
-	epB, err := read(EndpointsFile, false)
+	epB, err := read(EndpointsFile)
 	if err != nil {
 		return nil, err
 	}

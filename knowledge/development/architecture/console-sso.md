@@ -358,7 +358,7 @@ ADManager Plus calls it "Force SAML login". activeDIQ has a tenant setting `sign
 | --- | --- |
 | FSSO-1 | `choice` (default): the sign-in page lists the enabled IdPs and, if offered, "Sign in with Windows" (AN-9). The break-glass form (AN-8) is behind a "Break-glass sign-in" link |
 | FSSO-2 | `forced`: the sign-in page immediately starts the one designated method, an IdP or AN-9. No list is shown |
-| FSSO-3 | Forced SSO **never disables AN-8**. Break-glass stays reachable at `/signin/break-glass` (not linked from the page), with all of TM §7.6 rules 2–4. Switching AN-8 off is the separate rule-4 switch |
+| FSSO-3 | Forced SSO **never disables AN-8**. Break-glass stays reachable at `/signin/break-glass` (not linked from the page), with all of TM §7.6 rules 2–4. Switching AN-8 off is the separate rule-4 switch. Owner alerts on break-glass use ride the outbox, not an inline send: [RULING AN8-A1](../decisions/an8-owner-alert-channel-ruling.md) |
 | FSSO-4 | Turning `forced` on is refused unless the acting `tenant-owner` signed in through the designated method within the current session. That proves it works before everyone is sent to it |
 | FSSO-5 | Changing `signin.mode` or the designated method is step-up, audited, and alerts every `tenant-owner` |
 | FSSO-6 | When the designated IdP is disabled or its configuration fails validation, the page falls back to `choice` and shows a banner to signed-in owners; it never shows a dead button |
