@@ -779,6 +779,120 @@ must_fail_with "fitness-reports RP7 on a definition and its LOCK entry edited to
 # a bound test that is declared but whose binding is not landed, and one that is absent when landed, are
 # the tool's own tests (TestBoundTest*, TestDeclaredButNotLandedFails, TestRP11* in tools/fitness/reports/check_test.go).
 
+# --- fitness-search (ADR-0011 Fitness function SE1, SE2 and the bound tests SE3-SE6, T-1126), the real CLI ----
+# (-static-only: the bound tests run on PostgreSQL 16 and 18 in make fitness-search; the failing fixture of
+# every rule, including the bound-test refusals, is go test ./tools/fitness/search)
+srbin="$tmp/fitness-search"; go build -o "$srbin" ./tools/fitness/search
+sr="$tmp/sr"
+sr_put() { mkdir -p "$sr/$(dirname "$1")"; cat >"$sr/$1"; }
+fresh_sr() {
+  rm -rf "$sr"; mkdir -p "$sr"; printf 'module sr.test\n\ngo 1.22\n' >"$sr/go.mod"
+  sr_put internal/platform/authz/a.go <<'GO'
+package authz
+
+type ReadScope struct{ n int }
+
+func (s ReadScope) Terms() []int            { return nil }
+func (s ReadScope) Token() (int, bool)      { return 0, false }
+func (s ReadScope) Connections() []int      { return nil }
+func (s ReadScope) Admits(v int) bool       { return v > s.n }
+func (s ReadScope) SearchRoots(c int) []int { return nil }
+GO
+  sr_put internal/platform/store/like.go <<'GO'
+package store
+
+type LikePattern struct{ p string }
+GO
+  sr_put internal/platform/store/reportsql/scope.go <<'GO'
+package reportsql
+
+import "sr.test/internal/platform/authz"
+
+func scope(s authz.ReadScope) int { return len(s.Terms()) }
+GO
+  sr_put internal/platform/store/reportsql/search.go <<'GO'
+package reportsql
+
+type Search struct{}
+
+func (Search) CompileSearch() string {
+	return "SELECT k.object_guid FROM inventory_search_keys k WHERE k.key_kind = 1 AND " + "$1 <% k.key ORDER BY k.key <-> $1 LIMIT 10"
+}
+GO
+  sr_put internal/directory/inventory/inventory.go <<'GO'
+package inventory
+
+import "sr.test/internal/platform/store/reportsql"
+
+func Compile(s reportsql.Search) string { return s.CompileSearch() }
+GO
+  # the four listed exceptions (the real files exist on main); a stale one fails the job
+  sr_put internal/directory/client/usersearch.go <<'GO'
+package client
+
+import "sr.test/internal/platform/authz"
+
+func Live(s authz.ReadScope) bool { return s.Admits(1) }
+GO
+  sr_put internal/compose/server/localaccount.go <<'GO'
+package server
+
+const countRoles = "SELECT count(*) FROM public.authz_roles"
+GO
+  sr_put internal/directory/inventory/closure.go <<'GO'
+package inventory
+
+const privileged = "SELECT g.guid FROM groups g WHERE g.sid ~ '^S-1-5-21-.*-512$'"
+GO
+  sr_put tools/fitness/tenancy/probes.go <<'GO'
+package main
+
+const leak = "SELECT set_config('app.tenant_id', $1, $2)"
+GO
+  sr_put migrations/0001_base.sql <<'SQL'
+CREATE TABLE public.authz_roles (id int);
+CREATE TABLE public.inventory_search_keys (key text, key_kind int);
+CREATE INDEX k_trgm ON public.inventory_search_keys USING gin (key gin_trgm_ops);
+DO $$ BEGIN RAISE EXCEPTION 'bad id % in authz_roles', 1; END $$;
+SQL
+}
+fresh_sr
+must_pass "fitness-search (clean tree, listed exceptions pending, the rest passing)" "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put internal/modules/reports/export/e.go <<'GO'
+package export
+
+import "sr.test/internal/platform/authz"
+
+func Leak(s authz.ReadScope) []int { return s.Terms() }
+GO
+must_fail_with "fitness-search SE1 on ReadScope.Terms outside authz and reportsql" 'internal/modules/reports/export/e.go:5 SE1 \[scope-renderer\]' "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put internal/modules/users/u.go <<'GO'
+package users
+
+import "sr.test/internal/platform/authz"
+
+func Mine(s authz.ReadScope) bool { return s.Admits(7) }
+GO
+must_fail_with "fitness-search SE1 on ReadScope.Admits outside authz (the second renderer)" 'internal/modules/users/u.go:5 SE1 \[scope-members\]' "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put internal/modules/search/s.go <<'GO'
+package search
+
+const q = "SELECT guid FROM inventory_objects WHERE sam ILIKE $1"
+GO
+must_fail_with "fitness-search SE2 on an ILIKE pattern in search SQL" 'internal/modules/search/s.go:3 SE2 \[pattern' "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put migrations/0002_trgm.sql <<'SQL'
+CREATE VIEW public.near AS SELECT a.key FROM public.inventory_search_keys a WHERE a.key % 'abc';
+SQL
+must_fail_with "fitness-search SE2 on a trigram operator in a migration (string literals and RAISE placeholders are not flagged)" 'migrations/0002_trgm.sql:1 SE2 \[trigram-operator\]' "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put internal/modules/x/x.go <<'GO'
+package x
+
+const q = "SELECT set_config('pg_trgm.word_similarity_threshold', $1, false)"
+GO
+must_fail_with "fitness-search SE2 on a persistent set_config" 'internal/modules/x/x.go:3 SE2 \[set-config-persistent\]' "$srbin" -root "$sr" -static-only
+fresh_sr; rm "$sr/internal/directory/client/usersearch.go"
+must_fail_with "fitness-search on a listed exception that no longer matches anything (the list cannot rot)" 'usersearch.go:1 SE1 \[stale-exception\]' "$srbin" -root "$sr" -static-only
+
 fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
 package users
 
