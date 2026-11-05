@@ -1,16 +1,16 @@
 ---
-title: "Connector contract v1.3: the read side (Describe, search, read, per-DC read, change feed), the write group (Plan, Apply) and VerifyConnection"
+title: "Connector contract v1.4: the read side (Describe, search, read, per-DC read, change feed), the write group (Plan, Apply) and VerifyConnection"
 date: 2026-10-02
-updated: 2026-11-04
+updated: 2026-11-05
 status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a)
+amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31)
 binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
-# Connector contract v1.3: the read side, the write group and the rights check
+# Connector contract v1.4: the read side, the write group and the rights check
 
 The source is `proto/activediq/connector/v1/`. This document is its long form: why each shape is as
 it is, what every operation promises, how failures look, and which cases a provider must pass
@@ -85,7 +85,7 @@ package stops compiling if either generated interface gains one of those methods
 `Operation` enum loses one of those values. The same test pins the RPC list (nine in v1.1), the
 numbers of `PLAN`, `VERIFY_CONNECTION`, `APPLY`, `READ_SECRET` and `VERIFY_USER`, that a provider
 with no write path answers `Plan`, `Apply` and `VerifyConnection` only with `UNIMPLEMENTED`, and that
-`WriteKind` has no kind yet.
+`WriteKind` has ten kinds since v1.4 (§8.10); none is wired until its build ticket lands.
 
 ## 4. Describe and the capability model
 
@@ -631,7 +631,8 @@ for remote and SaaS connectors (TB6, TB17):
 
 ### 8.1 `Plan` and `Apply`
 
-**Envelope only.** `WriteKind` has no kind in v1.1 and `WriteChange` has no arm. Each concrete kind
+**Kinds (v1.4).** `WriteKind` had no kind in v1.1; v1.4 (T-1581) defines the first ten in §8.10. The
+rule below still governs every kind after them. Each concrete kind
 (create user, set attribute, add member, move, …) comes with its own spec ticket, which adds the
 kind, its `WriteChange` arm, its **touched-set rule** (every object the change writes or whose
 protection it changes; for example adding a member touches the group, and a move touches the old
@@ -640,8 +641,8 @@ touched set from the typed change and never from a list the server sends. `reser
 when the first kind is added, so the kind arrives with its test changes.
 
 **No credential material.** No field of `Plan` or `Apply` carries a password, key or token (P7 by
-name, review by intent). A kind that sets a secret (password reset, ADM-136) needs a sealed-secret
-shape and a security-architect review in its own ticket.
+name, review by intent). The one exception is `ApplyRequest.secret_input` for the two kinds that set a password
+(§8.10.5, fitness P9); `PlanRequest` never carries one.
 
 **What `Apply` carries for ADR-0005.** The step key `(operation, item, step)` and the fenced
 claim's `attempt` (rule 6), the `acting_principal` and the `plan_digest` (rule 2), the DC pin as
@@ -1174,6 +1175,334 @@ group, **plus `GROUP_MEMBERSHIP` into a licensed group under an `assignedPlans`,
 uncorrelated synced user or device; CC-WRITE-28 container keys, unknown property and unlexable rule, **and non-canonical keys (options, OIDs, whitespace, empty; T0-DYN-KEY)**; CC-WRITE-29
 live rule edit. The Samba lab covers LDAP semantics; Entra Connect flows are `[UNVERIFIED — lab]`.
 
+### 8.10 The first write kinds (v1.4, T-1581)
+
+This section is the concrete `WriteKind` list for the M2b write-parity slice (ADM-008, ADM-033,
+ADM-038) and the amendment of §8.1's "envelope only" rule. The proto is the source
+(`write.proto`); if the two disagree the proto wins and this section is the bug. **Nothing here
+wires a kind.** `Describe` keeps `PLAN` and `APPLY` `UNSUPPORTED` and `kindTable` stays empty until
+a build ticket registers a kind with its operation-table row (`internal/connector/write.operations`)
+and its `kindTable` row together. Every kind goes through §8.1 steps 1 to 9 unchanged: the Tier-0
+guard, the write gate and the property guard (§8.9) run before the kind's own code.
+
+**Parameterise, don't clone.** Ten kinds, not one per class and verb. The object kinds take a
+`DirectoryObjectClass`; attribute changes are one typed `AttributeEdit`. A new class (for example
+`inetOrgPerson` as its own class, or a `msDS-GroupManagedServiceAccount`) is a new enum value and a
+row in the class matrix below, not a new kind.
+
+#### 8.10.1 The list
+
+| # | `WriteKind` / `WriteChange` arm | Digest key | Classes | LDAP operation shape | Touched set | Reversibility (Descriptor worst case; Plan class) | TM-D28 class | Conformance |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `OBJECT_CREATE` / `object_create` | `ad.object.create` | user, group, computer, contact, OU | `AddRequest` at parent DN + RDN; entry-exists is the conditional | the parent (`target`) | Reversible (inverse: `OBJECT_DELETE` of the created GUID) | `none` (USER through `guarded.NewUser`) | CC-WK-01..04 |
+| 2 | `OBJECT_UPDATE` / `object_update` | `ad.object.update` | user, group, computer, contact, OU | one `ModifyRequest`, delete-old + add-new per edit | the target | Reversible; Lossy when an edited attribute's before-value is unreadable | derived from the attributes (`rename_logon`, `set_spn` and the others are denied or classed, §8.10.4) | CC-WK-05..08 |
+| 3 | `OBJECT_DELETE` / `object_delete` | `ad.object.delete` | user, group, computer, contact, OU (leaf only) | `DelRequest`; read-compare immediately before | the target | **Irreversible**; Plan: Lossy when the AD Recycle Bin is enabled, else Irreversible | `none` | CC-WK-09..11 |
+| 4 | `OBJECT_MOVE` / `object_move` | `ad.object.move` | user, group, computer, contact, OU | `ModifyDNRequest` (same RDN, `newSuperior`, `deleteoldrdn` false) within one domain NC | the target, its old parent, the new parent | Reversible (inverse: move back) | `move` | CC-WK-12..13 |
+| 5 | `OBJECT_RENAME` / `object_rename` | `ad.object.rename` | user, group, computer, contact, OU | `ModifyDNRequest` (new RDN, no `newSuperior`, `deleteoldrdn` true) | the target | Reversible | `move` | CC-WK-14..15 |
+| 6 | `OBJECT_RESTORE` / `object_restore` | `ad.object.restore` | user, group, computer, contact, OU | one `ModifyRequest` on the deleted object with the show-deleted control: delete `isDeleted`, replace `distinguishedName` | the deleted target, the new parent | Reversible (inverse: `OBJECT_DELETE`); the restore itself is never Lossy | `move` | CC-WK-16..18 |
+| 7 | `USER_PASSWORD_RESET` / `user_password_reset` | `ad.user.resetPassword` | user | one `ModifyRequest`: replace `unicodePwd` (+ `pwdLastSet` = 0), policy-hints control, LDAPS only | the target | **Irreversible** (Plan: Irreversible) | `reset_password` | CC-WK-19..23 |
+| 8 | `USER_UNLOCK` / `user_unlock` | `ad.user.unlock` | user | read-compare, then `ModifyRequest` replace `lockoutTime` = 0 | the target | **Irreversible** (no inverse: the DC owns the lockout state) | `unlock` | CC-WK-24..25 |
+| 9 | `ACCOUNT_ENABLE` / `account_enable` | `ad.account.enable` | user, computer | one `ModifyRequest`: delete old `userAccountControl`, add old with `ACCOUNTDISABLE` cleared | the target | Reversible (inverse: `ACCOUNT_DISABLE`) | `enable` | CC-WK-26 |
+| 10 | `ACCOUNT_DISABLE` / `account_disable` | `ad.account.disable` | user, computer | the same with `ACCOUNTDISABLE` set | the target | Reversible (inverse: `ACCOUNT_ENABLE`) | `none` (tightening) | CC-WK-27 |
+
+Reversibility is ADR-0005 rule 1's: the Descriptor of an Action using a kind states the worst case
+across everything the Action can plan; Plan states the class per step, and an Action whose
+Descriptor says `Reversible` and whose Plan returns `Irreversible` fails its contract test.
+A row's reversibility is the kind's worst case **for the Action that uses it alone**; an Action
+that combines kinds (create then reset then enable) takes the worst of its steps, so an Action that creates a user
+and then resets its password is `Irreversible` at the Action level while its create step is
+`Reversible`. The Descriptor bits for a kind (`StepUp`, `SecretInput`) are in §8.10.5.
+
+**Class matrix.** `ClassNotAllowed` (`INVALID_ARGUMENT`, rule id) is returned when the target's live
+class, or `ObjectCreate.object_class`, is not one of the kind's classes. The class is always read
+live from `objectClass`; it is never taken from the request for an existing target. `inetOrgPerson`
+counts as user. Everything else (a `msDS-ManagedServiceAccount`, a `foreignSecurityPrincipal`, a
+container) answers `ClassNotAllowed`: "not in this slice" is a refusal, not a best effort.
+
+#### 8.10.2 `kindTable`: digest keys map one to one (acceptance 3)
+
+`internal/directory/client.kindTable` (today `map[string]connectorv1.WriteKind{}`) is the only map
+from a plan-digest kind to a `WriteKind`. The rules:
+
+1. **Exactly the ten keys of §8.10.1**, each to its own `WriteKind`. The map is injective (no two
+   keys share a value) and total on the kinds that are wired: the value set is a subset of the ten.
+   `WRITE_KIND_UNSPECIFIED` is never a value (today's check in `derive`).
+2. **A row is `struct{Kind; Class}`**, not a bare kind: the TM-D28 class column above is part of the
+   row, as `fitness-backing` B7 and TM §6.9 rule 4 already require ("every `kindTable` row carries an
+   explicit class or `none`; an unclassified kind is refused at init"). The `none` of the USER
+   create row means `guarded.NewUser` only.
+3. **A digest naming any other kind is refused.** `client.Write` continues to return
+   `ErrUnknownKind` before any transport call for every key not in the table, including a key
+   that is spelled like a listed one (`"AD.object.create"`, `"ad.object.createUser"`), and a key that
+   is in §8.10.1 but whose row has not been registered yet. Adding a kind is therefore a deliberate,
+   multi-file change: a new `WriteKind` value and `WriteChange` arm, a new §8.10.1 row, a new
+   `kindTable` row, an operation-table row, and CC-WK cases. `TestWriteKindList` (proto) pins the
+   enum and arm numbers; `TestKindTableClosed` (client, new) fails when the table holds a key
+   outside the list, two keys with one value, or a row without a class; the connector's
+   `validateOps` already fails an operation row without `PropertyWrite`.
+4. **The digest key is a compile-time constant** (fitness-backing B2). The object class of an
+   `ad.object.*` kind, where it is not read live from the target, is part of the digest because the
+   `ObjectCreate` fields are in the `Attrs` the constructor emits.
+5. **`WriteOp` gains no wire field.** The `WriteChange` is derived from `Attrs` by one constructor per
+   kind (as `write.go` already requires), never filled in by the caller; the constructors for kinds
+   1 to 10 live with the kind's build ticket.
+
+#### 8.10.3 Per-kind rules
+
+Common to all kinds. Every `Apply` repeats `Plan`'s reads; the compare-and-set below is built from the
+live re-read of step 7, after `state_digest` and `usn_changed` are compared to the `precondition`
+(`TARGET_CHANGED` otherwise). A `Modify` is one `ModifyRequest`, atomic per
+[RFC 4511 §4.6](https://www.rfc-editor.org/rfc/rfc4511#section-4.6): the planned old value is deleted and the new value added in
+one request, so a concurrent change fails it (`noSuchAttribute` or `attributeOrValueExists`, mapped
+to `TARGET_CHANGED`). `ModifyDN` ([§4.9](https://www.rfc-editor.org/rfc/rfc4511#section-4.9)) and `Delete` have no value to compare: the connector reads and compares
+`uSNChanged` and the parent GUID immediately before sending, on the pinned DC, which is ADR-0005
+rule 4's second bullet and a declared residual (the window between that read and the write). DNs
+are built only by the DN type from a live parent DN and a value (safe-primitives §4); no request
+field is a DN.
+
+**1 `OBJECT_CREATE`.**
+- `AddRequest` with: `objectClass` from the class (`user`, `group`, `computer`, `contact`,
+  `organizationalUnit`); the RDN attribute (`cn`, or `ou`); `sAMAccountName` from `initial` (required
+  for user, group and computer; computers must end in `$`); `userAccountControl` derived from
+  `account_enabled` (user 512 or 514, computer 4096 or 4098; no other bit is ever set, and the
+  sign-in flags are `signin_flags`-guarded, §8.10.4); `groupType` derived from `group_scope` and
+  `group_is_security` (never an edit); and the other `initial` edits (`EDIT_OP_SET` only).
+- A USER created with `account_enabled` carries the password in `ApplyRequest.secret_input` and sets
+  `unicodePwd` in the same `AddRequest`, over LDAPS only (§8.10.5). `has_secret_input` must equal
+  the presence of `secret_input` (`INVALID_ARGUMENT` `SecretInputMismatch`). An enabled USER without a
+  password is refused at Plan (`INVALID_ARGUMENT` `EnabledNeedsPassword`); AD would refuse it anyway.
+- Plan finds the parent live, evaluates the parent as the touched object, checks that no object has
+  the planned RDN under it (`entryAlreadyExists` is then only a race), and records
+  `plan_observed_at`.
+- `ALREADY_APPLIED` ([ADR-0005](../decisions/0005-operation-pipeline-and-audit-trail.md) rule 4, "repeat after success"): an object exists at parent + RDN, its class matches, every
+  planned `initial` value matches, and its `whenCreated` is at or after `plan_observed_at`. Anything
+  else found at that name is `INVALID_ARGUMENT` `NameInUse`, not adoption.
+- Reversibility: Reversible; the inverse deletes the created GUID. §8.9 `CREATE` is declared (a
+  new object "matches by absence" of a dynamic rule).
+
+**2 `OBJECT_UPDATE`.**
+- Per edit, one change inside the single `ModifyRequest`: `SET` is delete(live old values) +
+  add(new values), `CLEAR` is delete(live old values), `ADD_VALUE` is add, `REMOVE_VALUE` is delete of
+  exactly those values. No `replace` change is ever sent for an attribute that has a readable
+  old value (a `replace` is not a compare-and-set). An attribute the identity cannot read gives
+  `ATTRIBUTE_NOT_ALLOWED`; there is no blind write. `ADD_VALUE` and `REMOVE_VALUE` on a single-valued
+  attribute are `INVALID_ARGUMENT` `NotMultiValued`.
+- Limits (constants, not settings): 64 edits per change, 1000 values per edit, `text` 32 KiB, and
+  the attribute's schema range. Over a limit: `LIMIT_EXCEEDED`.
+- `ALREADY_APPLIED` when every edit's after-state is already in place.
+- A `manager` edit declares §8.9 `SET_MANAGER` or `CLEAR_MANAGER`, other edits `UPDATE`, with the
+  canonical keys of the edits. The `objectRef` target of a `manager` edit is not written (the back-link
+  `directReports` is the DC's), so it is not touched; it is read for existence.
+- Reversibility: Reversible (the before-state is in `PlanResponse.before`). Lossy when an edited
+  attribute's before-value could not be read, which Plan reports before anything runs.
+
+**3 `OBJECT_DELETE`.**
+- `DelRequest` on the live DN. No `Tree Delete` control in this slice: a non-leaf object is
+  `INVALID_ARGUMENT` `NotLeaf` (LDAP `notAllowedOnNonLeaf`, [RFC 4511 §4.8](https://www.rfc-editor.org/rfc/rfc4511#section-4.8)). A subtree delete is a later kind with its
+  own touched-set rule (every descendant), not a flag here.
+- The connector never alters the DACL to make a delete succeed. An object protected from accidental
+  deletion (deny Delete for Everyone) fails with `INSUFFICIENT_RIGHTS`.
+- `ALREADY_APPLIED` when the object by GUID is found as a deleted object (`isDeleted` TRUE, read with
+  the show-deleted control `1.2.840.113556.1.4.417`, control OID from memory `[UNVERIFIED]`: confirm in the MS-ADTS controls list in the ad-expert follow-up).
+- Reversibility: the Descriptor says `Irreversible`. Plan reads whether the AD Recycle Bin is enabled
+  for the forest (`msDS-EnabledFeature` on the `Recycle Bin Feature`, [AD Recycle Bin](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/adac/introduction-to-active-directory-administrative-center-enhancements--level-100-))
+  and returns `Lossy` when it is (the object can be restored with `OBJECT_RESTORE` until
+  `msDS-deletedObjectLifetime` ends, the loss being the non-replicated attributes and the window itself),
+  `Irreversible` when it is not (a tombstone keeps few attributes; reanimation is not offered). The
+  preview, the gate and the API show the class before anything runs (ADR-0005 rule 1).
+- §8.9: `UPDATE` with no keys (deleting a user can only remove it from a rule's scope).
+  `[security-architect to confirm in review, TM-D25 rule 7]`.
+
+**4 `OBJECT_MOVE`.**
+- `ModifyDNRequest(entry = live DN of the target, newrdn = its current RDN, deleteoldrdn = false,
+  newSuperior = live DN of new_parent)`. `new_parent.nc_guid` must equal `target.nc_guid`;
+  otherwise `INVALID_ARGUMENT` `CrossDomainMoveUnsupported` (a cross-domain move is a `crossDomainMove`
+  rootDSE operation, a later kind).
+- Three touched objects: the target, its **old parent** (read live), and the new parent. Each
+  other than the target needs its own `CorrelationStatement` (step 6, F1/F3). A move into or out
+  of a Tier-0 container is therefore refused (C3, C6, C7), whatever the identity may do.
+- `ALREADY_APPLIED` when the target's parent GUID already equals `new_parent`.
+- §8.9 `MOVE_OR_RENAME`. TM-D28 class `move`. Moving changes inherited ACEs and GPO scope; Plan
+  shows the new parent's DN and warns when the new parent's `gPLink` or inheritance blocking differs
+  from the old (display only; the decision is the technician's).
+
+**5 `OBJECT_RENAME`.**
+- `ModifyDNRequest(entry, newrdn = <rdn attribute>=new_rdn_value built by the DN type,
+  deleteoldrdn = true)`, no `newSuperior`. `sAMAccountName` and `userPrincipalName` are **not** changed
+  (they are `OBJECT_UPDATE` edits with the `rename_logon` class). A name already taken under the parent is
+  `INVALID_ARGUMENT` `NameInUse` (`entryAlreadyExists`). `ALREADY_APPLIED` when the RDN already
+  equals the value. §8.9 `MOVE_OR_RENAME`, class `move`.
+
+**6 `OBJECT_RESTORE`.**
+- Target is the deleted object's GUID, read with the show-deleted control. One `ModifyRequest`: delete
+  `isDeleted`, replace `distinguishedName` with the DN built from `new_parent`'s live DN and
+  `rdn_value`. An absent AD Recycle Bin is `CAPABILITY_UNSUPPORTED` (reanimating a tombstone loses
+  most attributes; not offered). A restore after `msDS-deletedObjectLifetime` is `OBJECT_NOT_FOUND`.
+- Step 7 for the **deleted** target is replaced by a fixed read set (a deleted object has no
+  `tokenGroups`): `objectSid`, every `sIDHistory` value, `userAccountControl`, `primaryGroupID`, the
+  retained `memberOf` (link values are kept by the Recycle Bin, [source](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/adac/introduction-to-active-directory-administrative-center-enhancements--level-100-))
+  and `lastKnownParent`. The connector classifies on those: C1 by RID, C2 by the retained memberships
+  against the connector's set, C5, C18, and C3/C6 by the original parent chain when the parent still
+  exists. An unreadable value is `tier0` as at step 7. The new parent is a touched object, live.
+  Step 9 then runs the ordinary live classification on the restored object.
+- §8.9 `CREATE` (a restored object matches a dynamic rule by absence). `ALREADY_APPLIED` when the
+  object by GUID is live (`isDeleted` absent) at the planned parent and RDN. Class `move`.
+- Reversibility: Reversible (inverse: `OBJECT_DELETE`). `[UNVERIFIED]` on a real forest: the exact
+  control set and the attribute loss on Windows and on Samba (CC-WK-16..18).
+
+**7 `USER_PASSWORD_RESET`.** See §8.10.5 for the secret. LDAP shape: one `ModifyRequest` with
+`replace unicodePwd` (the quoted password as UTF-16LE, the administrative "set" form that needs the
+Reset-Password control access right, [unicodePwd](https://learn.microsoft.com/en-us/windows/win32/adschema/a-unicodepwd)), plus `replace pwdLastSet 0` when
+`must_change_at_next_logon`; the connector never writes `pwdLastSet = -1` (TM-D28; it keeps a
+password the actor knows usable). The request carries `LDAP_SERVER_POLICY_HINTS_OID`
+(`1.2.840.113556.1.4.2239`, flag `0x1`) so password history and minimum age apply (TM §6.3 R5,
+confirmed on Windows Server 2025, [T-0076 lab log](../runbooks/windows-lab-runs/T-0076-ad-lab-confirmation-20261028.md)). It is refused over any
+channel that is not TLS (`TRANSPORT_SECURITY`).
+- **No compare-and-set exists for `unicodePwd`** (write-only). The precondition is the `state_digest`
+  of `{uSNChanged, pwdLastSet, userAccountControl, lockoutTime, objectSid}`, read and compared on the
+  pinned DC immediately before the write: ADR-0005 rule 4's second bullet, declared.
+- **No `ALREADY_APPLIED`.** A retried `Apply` after a lost reply finds `uSNChanged` moved and answers
+  `TARGET_CHANGED`; the pipeline records `stale_state` and the step's Verify reads `pwdLastSet` to tell
+  the technician whether the reset landed. A secret is never regenerated or re-sent for a retry
+  (ADR-0005 rule 9): a new password is a new operation.
+- Allowed class: user only. A computer's machine password and a `krbtgt` are not in the slice (`krbtgt`
+  is C1 and `tier0`, so refused first). A password-policy rejection (`constraintViolation`,
+  `unwillingToPerform`) is `INVALID_ARGUMENT` `PasswordPolicy` with fixed text.
+- §8.9 `UPDATE`, keys `unicodePwd`, `pwdLastSet`. TM-D28 class `reset_password`, permission
+  `objects.user.reset_password`, also C16: a user with any DM-20 correlation to an Entra `tier0` principal is
+  refused from the statement (TM-R14 residual stays).
+
+**8 `USER_UNLOCK`.** Plan reads `lockoutTime`; `ALREADY_APPLIED` at Apply when it is absent or 0.
+Otherwise the connector compares `uSNChanged` and `lockoutTime` on the pinned DC and sends
+`replace lockoutTime 0`, the documented way to unlock ([KB 305144](https://support.microsoft.com/kb/305144), TM-D28). Whether the DC also accepts
+the delete-old + add-0 compare-and-set form is `[UNVERIFIED]` and is decided by CC-WK-24 on the
+Windows lab (the conservative form above is the contract until it is). The UAC `LOCKOUT` bit is
+computed and read-only on AD; the connector never writes it. Class `unlock`.
+- Reversibility `Irreversible` because no inverse exists: lockout is set by the DC on bad passwords and a
+  write of a non-zero `lockoutTime` is not an offered inverse. The consequence is mild (an unlock
+  needs no undo), so the preview shows the class with the reason "the directory controls this
+  state", not a destructive-action warning. `[product-manager and security-architect to confirm the
+  wording in review]`.
+
+**9 and 10 `ACCOUNT_ENABLE`, `ACCOUNT_DISABLE`.** One `ModifyRequest`: delete the live
+`userAccountControl`, add the same value with `ACCOUNTDISABLE` (`0x0002`) cleared or set, computed by
+the UAC codec (safe-primitives P3), so no other bit changes and a concurrent change to any bit fails the
+compare. Allowed classes: user and computer. A group, contact or OU is `ClassNotAllowed` (they have no
+`userAccountControl`). `ALREADY_APPLIED` when the bit is already in the requested state. Enable is class
+`enable` (it re-opens an account); disable is a tightening and has no class. Both are Reversible, the
+inverse being the other. UAC semantics: [KB 305144](https://support.microsoft.com/kb/305144).
+
+#### 8.10.4 The attribute deny-list for `OBJECT_UPDATE` and `OBJECT_CREATE.initial`
+
+An attribute that has its own kind, its own guard or a security meaning the kinds above do not carry is
+`ATTRIBUTE_NOT_ALLOWED`, checked first, by canonical name case-insensitively, and by OID. Nothing is
+decided by what the server's form allowed. Denied in v1.4:
+
+`unicodePwd`, `userPassword`, `dBCSPwd`, `ntPwdHistory`, `lmPwdHistory`, `supplementalCredentials`,
+`pwdLastSet`, `lockoutTime`, `userAccountControl`, `nTSecurityDescriptor`, `objectClass`,
+`objectCategory`, `objectGUID`, `objectSid`, `sIDHistory`, `distinguishedName`, `name`, `cn`, `ou`
+(rename), `isDeleted`, `isCriticalSystemObject`, `groupType` (create only), `sAMAccountType`,
+`primaryGroupID`, `member`, `memberOf` (membership kinds, a later spec), `msDS-KeyCredentialLink`,
+`altSecurityIdentities`, `servicePrincipalName`, `msDS-AllowedToDelegateTo`,
+`msDS-AllowedToActOnBehalfOfOtherIdentity`, `msDS-SupportedEncryptionTypes`, `accountExpires`,
+`logonHours`, `userWorkstations`, `gPLink`, `gPOptions`, and every constructed or system-only
+attribute in the schema snapshot. These are the TM-D28 `map_credential`, `set_spn`, `signin_flags`
+and `signin_limits` classes plus the identity attributes; each returns through its own kind when its
+spec exists. `userPrincipalName`, `sAMAccountName` and (computers) `dNSHostName` **are** allowed:
+they are class `rename_logon`, which the server's guard requires the Action to declare
+(`objects.user.rename_logon`) and which, on a correlated object, needs the DM-36.I1 no-escalation
+test. The deny-list is code in one place (`internal/connector/write`), shared by kinds 1 and 2, and
+the connector's own list may only grow without a contract change.
+
+**StepUp by attribute.** No attribute edit needs step-up on its own: TM-D16 §7.4 lists operations, and
+the guarded attributes are gated by an object permission (TM-D28), not by a fresh MFA. Step-up
+applies to the password reset kind (§8.10.5) only.
+
+#### 8.10.5 Secret input and the Descriptor bits (acceptance 2)
+
+**The shape.** `ApplyRequest.secret_input` (`SecretValue`, one `bytes material`) is the only place a
+credential travels in this contract, and the only place `SecretValue` may appear (fitness P9, below).
+It is set only for `USER_PASSWORD_RESET` and for `OBJECT_CREATE` of a USER with `has_secret_input`;
+present on any other call, or absent on those, is `INVALID_ARGUMENT` before any directory call.
+`PlanRequest` has no such field, so `Plan` can never carry a password (ADR-0005 rule 9:
+the plan hash covers "a flag for each secret input", never the value; the connector recomputes the
+digest from `has_secret_input` / the presence of `secret_input`).
+
+How it gets there is ADR-0005 rule 9 unchanged: the console or API holds a `secret.Secret`
+(safe-primitives §5.6); it is stored sealed in `operation_secret` with the 72-hour cap; the server
+unseals it in `client.Write` and sends it inside `Apply` over the mTLS tunnel; the connector builds
+the quoted UTF-16LE value, sends the `Modify`/`Add` over LDAPS, zeroes its own buffers, and persists,
+logs and echoes nothing. The secret is not in `PlanResponse`, `ApplyResponse.read_back` (the
+attribute is never read), the audit event, the error text or the `Tier0Context`. The "what zeroised
+can mean" limits of safe-primitives §5.6 apply to the connector's copies as to the server's.
+
+**The Descriptor bits, from this contract's side.**
+
+| Kind | `StepUp` | `SecretInput` | Worst-case `Reversibility` | Why |
+| --- | --- | --- | --- | --- |
+| `USER_PASSWORD_RESET` | **true** | **true** | **Irreversible** | A reset gives the actor (or whoever they hand it to) a known credential for a sign-in account; safe-primitives §5.6 and ADR-0005 rule 1 name "setting a password" as the Irreversible example. `StepUp`: see below |
+| `OBJECT_CREATE` (USER) | false | true when `has_secret_input` | Reversible (the inverse deletes the new account) | A new account backs no one yet (TM-D28 rule 3: create is outside the classes) |
+| all others | false | false | per §8.10.1 | |
+
+**StepUp and TM-D16.** [Threat model §7.4](threat-model.md) (TM-D16 part 1) is a closed list of operations
+that need a fresh MFA, and it **does not today list a directory password reset**; it lists LAPS and
+BitLocker reveal, whose risk (a credential disclosure that outlives the session) is the same class
+as a reset's. This spec therefore requires `StepUp = true` on every Action that uses
+`USER_PASSWORD_RESET` and **amends §7.4 with the row**:
+
+| Operation | Why |
+| --- | --- |
+| Directory password reset (`objects.user.reset_password`, TM-D28 `reset_password`; ADM-136, ADM-162) | Sets a credential the actor knows for a sign-in account; on a hybrid-synced account it reaches Entra through hash sync (C16, TM-R14); Irreversible (ADR-0005 rule 1) |
+
+The §7.4 edit is not made here; it is the first item of the security-architect follow-up (below)
+because §7.4 and TM-D16 are theirs, and this ticket's `StepUp` bit is the requirement that edit
+satisfies. Until it lands, `fitness-operation` O-rules cannot check the bit against §7.4, so the
+Descriptor conformance is checked by `TestDescriptorStepUpMatrix` against this section's table.
+Help-desk resets (ENH-09 caller verification) are the same kind under the `helpdesk.*` Actions and
+carry the same Descriptor bits; the technician's step-up is in addition to the caller's verification.
+
+**Fitness P9 (new, in `fitness-proto`).** `SecretValue` is referenced by exactly one field in the
+whole package: `ApplyRequest.secret_input`; its only field is `material`; no request message other than
+`ApplyRequest` reaches it (so `PlanRequest` cannot); no response message reaches it; and P7's
+name list keeps failing every other field named `password`, `unicode_pwd`, `credential` or
+`secret`. The rule is added by the devops follow-up before any password kind is wired; until
+then the build tickets for kinds 1 (USER) and 7 stay blocked.
+
+#### 8.10.6 Errors the kinds add (no new code)
+
+`INVALID_ARGUMENT` carries a fixed `rule_id` for: `ClassNotAllowed`, `NameInUse`, `NotLeaf`,
+`NotMultiValued`, `CrossDomainMoveUnsupported`, `SecretInputMismatch`, `EnabledNeedsPassword`,
+`PasswordPolicy`, `WriteChangeArmMismatch` (arm differs from `kind`). `ATTRIBUTE_NOT_ALLOWED` for the
+deny-list and unreadable attributes; `LIMIT_EXCEEDED` for §8.10.3 limits; `TRANSPORT_SECURITY` for a
+password over a non-TLS channel; `INSUFFICIENT_RIGHTS` for a DC `insufficientAccessRights` (including
+protected-from-deletion); `OBJECT_NOT_FOUND`; `TARGET_CHANGED`; `CAPABILITY_UNSUPPORTED` for restore without
+the Recycle Bin and for any class or Entra target outside the slice. Error text is fixed per rule id and
+contains no value, DN or directory response (CC-WRITE-13).
+
+#### 8.10.7 Platform matrix
+
+| Kind | Windows DC | Samba AD | Entra |
+| --- | --- | --- | --- |
+| 1 create, 2 update, 3 delete, 4 move, 5 rename | Supported (W) | Supported (S) | `CAPABILITY_UNSUPPORTED`; Entra provisioning is its own kinds (M2b Entra slice) |
+| 6 restore | Supported with the Recycle Bin (W) | `[UNVERIFIED]` Recycle Bin and the show-deleted control on Samba; CC-WK-16..18 decide; until then `CAPABILITY_UNSUPPORTED` on Samba | `CAPABILITY_UNSUPPORTED` |
+| 7 reset | Supported (W); policy hints confirmed on Windows Server 2025 (T-0076) | `[UNVERIFIED]` the policy-hints control on Samba; without it the reset still works but history and minimum age follow the DC's own rule | `CAPABILITY_UNSUPPORTED` (Graph `passwordProfile` is a separate kind, TM-Q14) |
+| 8 unlock | Supported (W) | `[UNVERIFIED]` Samba `lockoutTime` handling; S case CC-WK-24 | `CAPABILITY_UNSUPPORTED` |
+| 9, 10 enable, disable | Supported (W, S) | Supported (S) | `CAPABILITY_UNSUPPORTED` (Graph `accountEnabled` is a separate kind) |
+
+Asymmetry is a decision: Samba is a CI lab, not a customer target of v1, so a Samba gap is recorded
+here and in `Describe`, not hidden. A provider reports `PLAN` and `APPLY` `SUPPORTED` once at least
+one kind of the table is wired; per-kind support is reported through a closed `Describe`
+reason string until a per-kind capability is added by the first ticket that needs one (follow-up C, T-1623).
+
+#### 8.10.8 Follow-ups this section creates
+
+Registered as tickets: (A, T-1621) security-architect: §7.4 amendment, `SecretValue` review,
+§8.9 op for delete, restore classification and the unlock wording; (B, T-1622) devops-engineer: fitness P9 and
+`TestKindTableClosed`; (C, T-1623 to T-1626) directory-engineer, one build ticket per group, each wiring its operation-table
+row and `kindTable` row together: object create/update/delete, move/rename/restore, account
+enable/disable/unlock, password reset; (D, T-1627) test-engineer: the CC-WK cases of §9.8; (E, T-1628) ad-expert: clear
+the `[UNVERIFIED]` items (unlock compare-and-set form, restore controls, Samba behaviour).
+
 ## 9. Provider conformance suite
 
 **Where it lives:** `internal/connector/conformance` (a Go package, `conformance.Run(t, Target)`),
@@ -1195,7 +1524,7 @@ disabled, expired and locked accounts.
 
 | ID | Case | Expectation | Lab |
 | --- | --- | --- | --- |
-| CC-DESC-01 | `Describe` on the lab | `provider_kind = AD`, contract `activediq.connector.v1`, `contract_minor` ≥ 1, directory identity equals the lab forest root GUID and SID; the six read operations `SUPPORTED`; `READ_SECRET` `VERIFY_USER` `RESERVED`; `VERIFY_CONNECTION` `SUPPORTED` once T-0096 lands; `PLAN` and `APPLY` `UNSUPPORTED` until the first `WriteKind` lands | S |
+| CC-DESC-01 | `Describe` on the lab | `provider_kind = AD`, contract `activediq.connector.v1`, `contract_minor` ≥ 1, directory identity equals the lab forest root GUID and SID; the six read operations `SUPPORTED`; `READ_SECRET` `VERIFY_USER` `RESERVED`; `VERIFY_CONNECTION` `SUPPORTED` once T-0096 lands; `PLAN` and `APPLY` `UNSUPPORTED` until the first `WriteKind` is wired (T-1581 defines the kinds, §8.10; a build ticket wires them) | S |
 | CC-DESC-02 | Topology | domain, configuration and schema NCs with GUIDs and the domain SID; `forest_settings` reflects what is read, with an absent `tombstoneLifetime` left **unset** (no default applied) | S |
 | CC-DESC-03 | DC facts | the lab DC has `dsa_guid`, `invocation_id` equal to its NTDS Settings object, site, `is_pdc_emulator = TRUE` after the `validFSMOs` cross-check; every fact Samba does not expose is `UNKNOWN`, never `FALSE` or `0` | S |
 | CC-DESC-04 | Wrong directory identity | `DIRECTORY_IDENTITY_MISMATCH`; no read was issued | S |
@@ -1388,6 +1717,45 @@ connector process inside the test.
 | CC-WRITE-20 | Rule 10, direct C9 links live: after the last `VerifyConnection`, a new GPO linked (a) to the Domain Controllers OU; (b) there with the link disabled (`0x1`); (c) to the domain head; (d) to a C15 site; (e) to the Domain Controllers OU after that OU was renamed; (f) the fault proxy returns a malformed `gPLink` on the Domain Controllers OU; (g) the fault proxy returns the target GPO with a `cn` that does not parse as a GUID | each write on the GPO is `TIER0_REFUSED` `LIVE_REREAD`, basis C9, before the next verification; (e) is found through `wellKnownObjects`; (f) and (g) count as `tier0` ((g) with no `gPLink` read). The proxy log shows `gPLink` read with base scope on exactly the SOMs of §8.1. Codec unit tests cover GUID case, `LDAP://` prefix case, two links to one GPO and a `cn` that is not a GUID | S, FI, K1 (the first kind that can target a GPO) |
 | CC-WRITE-21 | Rule 11, `tier0` after the write: the fault-injection proxy holds the modify on user X after step 7; during the hold X is added to Domain Admins; then the modify is released | `Apply` returns `APPLIED` with `tier0_after_write` = X, basis C2; the connector's local log has the entry; the pipeline's Verify records the step `verify_failed` with reason `tier0_after_write` and raises the security alert above the `scope_changed` alert; with step 9 disabled in a test build, the server's own Verify still records it (T-0129). **Sub-case, step-9 read fails:** the same hold, with no membership change, and the fault proxy drops (then, separately, errors) every read after the released modify: `Apply` returns `APPLIED` with `tier0_after_write` = X with an **empty basis**; the local log (and the Windows event log on W) has the entry; the pipeline records `verify_failed` `tier0_after_write` and raises the same alert | S, FI, K1; W for the event log |
 | CC-WRITE-22 | The limits are build-time constants (§8.2): (a) the harness enumerates the connector's configuration schema, flags, environment variables read and (on Windows) registry values, and the request and `Describe` messages; (b) it starts the connector with every candidate name for the three limits set to large values (`max_statement_age`, `max_verification_age`, `clock_skew` and their spellings) and sends a statement 16 minutes old and runs a gate check on a 27-hour-old run; (c) a source check finds the three values defined once as constants and referenced by the gate and F3 only | (a) no setting, field or flag names any of the three limits; (b) the statement is `CONTEXT_STALE` and the gate `STALE` whatever is set; (c) passes. (c) runs in the connector's unit tests on every merge (T-0098) | S, K0 |
+
+**Write kinds (v1.4, T-1581).** Every case below needs its kind wired, so all are **K1**. Each
+kind of §8.10.1 has at least one case; the `Lab` column says where it runs. **FI** is the
+fault-injection proxy. Every case also runs the §8.1 guard first: a `tier0` target of each kind
+is `TIER0_REFUSED` before the kind's code (CC-WK-28).
+
+| ID | Kind | Case | Expectation | Lab |
+| --- | --- | --- | --- | --- |
+| CC-WK-01 | create | user, group (each scope, security and distribution), computer, contact and OU under a non-Tier-0 OU | each object exists with the derived `objectClass`, `groupType`, `userAccountControl` (user 512 or 514, computer 4096 or 4098) and only the planned attributes; `read_back` equals the plan | S, W |
+| CC-WK-02 | create | the same step retried after success; a pre-existing identical object created before `plan_observed_at`; a different object at the name | `ALREADY_APPLIED` with `read_back`; `INVALID_ARGUMENT` `NameInUse` (not adopted); `NameInUse` | S |
+| CC-WK-03 | create | enabled user with `secret_input`; enabled user without; disabled user without; `has_secret_input` true with no value | the first logs on in the lab and the password never appears in any log, span, error or response (canary, CC-WRITE-13); `EnabledNeedsPassword`; created disabled; `SecretInputMismatch`. Over a non-TLS channel: `TRANSPORT_SECURITY`, nothing written | S, W |
+| CC-WK-04 | create | the parent is a Tier-0 container (the Domain Controllers OU, AdminSDHolder's container), is designated, or its statement is missing | `TIER0_REFUSED` (step 6 for the touched parent) before any directory call | S |
+| CC-WK-05 | update | `SET`, `CLEAR`, `ADD_VALUE`, `REMOVE_VALUE` on single- and multi-valued attributes | the proxy log shows one `ModifyRequest` with delete-old + add-new and no `replace`; the after-state is read back | S, FI |
+| CC-WK-06 | update | the value changes between Plan and Apply (a second writer) | `TARGET_CHANGED`, nothing written; the second writer's value survives | S, FI |
+| CC-WK-07 | update | every deny-listed attribute, by name, other case, OID and `;binary` option; an unreadable attribute; an unknown attribute | `ATTRIBUTE_NOT_ALLOWED` for each, no directory write; a limit overrun (65 edits, 1001 values) is `LIMIT_EXCEEDED` | S |
+| CC-WK-08 | update | retried after success; `manager` set and cleared; an edit that changes a key in a designated dynamic-rule scope | `ALREADY_APPLIED`; `directReports` appears on the manager; the §8.9 refusal (CC-WRITE-27) holds | S |
+| CC-WK-09 | delete | a leaf object; a non-leaf OU; an object protected from accidental deletion | deleted; `NotLeaf`, nothing deleted; `INSUFFICIENT_RIGHTS`, the DACL unchanged | S, W |
+| CC-WK-10 | delete | retried after success | `ALREADY_APPLIED` (found deleted by GUID) | S, W |
+| CC-WK-11 | delete | Plan with the Recycle Bin on and off | class `Lossy` and `Irreversible` respectively, with the reason; the Descriptor worst case is `Irreversible` | W |
+| CC-WK-12 | move | within one domain between two non-Tier-0 OUs | parent GUID changes, RDN unchanged; the old parent, new parent and target all had statements checked | S, W |
+| CC-WK-13 | move | into the Domain Controllers OU; out of a Tier-0 OU; to another domain's OU; retried after success | `TIER0_REFUSED` (new parent, then old parent); `CrossDomainMoveUnsupported`; `ALREADY_APPLIED` | S |
+| CC-WK-14 | rename | a user, group, computer and OU; a name taken under the parent | RDN changes, `sAMAccountName` and `userPrincipalName` do not; `NameInUse` | S, W |
+| CC-WK-15 | rename | a name with `,` `+` `"` `\` `<` `>` `;` `=` and a leading `#` or space; retried after success | built by the DN type and stored as the literal value; `ALREADY_APPLIED` | S |
+| CC-WK-16 | restore | an object deleted with the Recycle Bin on, restored to its old and to a new parent | restored with its attributes and links; the restored object is live | W |
+| CC-WK-17 | restore | the Recycle Bin off; past `msDS-deletedObjectLifetime`; a deleted object that was a member of Domain Admins; a new parent that is Tier-0 | `CAPABILITY_UNSUPPORTED`; `OBJECT_NOT_FOUND`; `TIER0_REFUSED` (retained `memberOf`, C2); `TIER0_REFUSED` | W, S for the refusals |
+| CC-WK-18 | restore | retried after success; Samba | `ALREADY_APPLIED`; the supported or `CAPABILITY_UNSUPPORTED` outcome is recorded in §8.10.7 | W, S |
+| CC-WK-19 | reset | a user with and without `must_change_at_next_logon`; the policy-hints control sent | the new password works; `pwdLastSet` 0 or the current time (never -1); history and minimum age enforced (`PasswordPolicy`) | W; S for the write |
+| CC-WK-20 | reset | the call over a non-TLS channel; `secret_input` absent; `secret_input` on a `PlanRequest` fixture | `TRANSPORT_SECURITY`; `SecretInputMismatch`; the proto has no such field (P9) | S |
+| CC-WK-21 | reset | a retried `Apply` after the first wrote and its reply was lost | `TARGET_CHANGED`, no second write, Verify reads `pwdLastSet` | S, FI |
+| CC-WK-22 | reset | a computer, a group, `krbtgt`, a Domain Admins member, a user correlated to an Entra role holder (C16) | `ClassNotAllowed`; `ClassNotAllowed`; `TIER0_REFUSED`; `TIER0_REFUSED`; `TIER0_REFUSED` `REQUEST_CONTEXT` | S |
+| CC-WK-23 | reset | canary scan of the connector's log, spans, errors, persisted files and a process dump taken after the call | the password and its UTF-16LE form appear nowhere the connector writes; the server-side checks are in the `operation_secret` tests | S |
+| CC-WK-24 | unlock | a locked-out user after bad passwords; already unlocked; delete-old + add-0 compare-and-set accepted or not | `lockoutTime` 0; `ALREADY_APPLIED`; the outcome fixes §8.10.3 kind 8 | W, S |
+| CC-WK-25 | unlock | a computer, a Tier-0 user | `ClassNotAllowed`; `TIER0_REFUSED` | S |
+| CC-WK-26 | enable | a disabled user and computer; other `userAccountControl` bits changed by a second writer between Plan and Apply; a group | `ACCOUNTDISABLE` cleared and no other bit changed; `TARGET_CHANGED`; `ClassNotAllowed` | S, W |
+| CC-WK-27 | disable | an enabled user and computer; retried after success; the connector's own identity | disabled; `ALREADY_APPLIED`; `TIER0_REFUSED` if the identity is Tier-0 | S |
+| CC-WK-28 | all | for each of the ten kinds, a Tier-0 target (Domain Admins member, DC computer object) with the server guard off | `TIER0_REFUSED` stage `CONNECTOR_SET`, the proxy shows no write | S |
+| CC-WK-29 | all | `kind` and `change` arm disagree; a second arm set; no arm; `secret_input` on every kind but the two | `INVALID_ARGUMENT` `WriteChangeArmMismatch` or `SecretInputMismatch` before any directory call | S |
+| CC-WK-30 | all | `Describe` before any kind is wired and after the first | `PLAN`/`APPLY` `UNSUPPORTED`, then `SUPPORTED` (CC-DESC-10 holds); the kinds not wired answer `CAPABILITY_UNSUPPORTED` | S |
+| CC-WK-31 | `kindTable` | a digest naming `"ad.object.createUser"`, `"AD.object.create"`, a listed key not yet registered, and an empty key | `client.Write` returns `ErrUnknownKind` before any transport call; the empty table of T-0098 behaves the same | unit, every merge |
 
 ## 10. Decisions for review and follow-ups
 
