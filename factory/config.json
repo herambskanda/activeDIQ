@@ -21,6 +21,7 @@
       "enabled": true,
       "argv": ["make", "-k", "ci"],
       "timeout_minutes": 120,
+      "reserved_slots": 2,
       "train_size": 4,
       "numbering": {
         "dir": "migrations",

@@ -259,3 +259,22 @@ test('real work is not starved by auto-created grooming and digest', () => {
   const wide = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 3 } };
   assert.deepEqual(ids(pick(state({ tickets: t }), EVENING, wide)), ['T-0001', 'meta:digest', 'meta:grooming']);
 });
+
+test('T-1617: a gate run in flight holds reserved_slots back from max_parallel', () => {
+  const c = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 4, pre_merge: { ...config.dispatcher.pre_merge, reserved_slots: 2 } } };
+  const t = ['T-7001', 'T-7002', 'T-7003', 'T-7004'].map((id) => ticket({ id }));
+  const dispatcher = (gate) => ({ backoff_until: null, runs_today: { date: null, count: 0 }, merge_gate: gate });
+  const gate = { ticket: 'T-1', tickets: ['T-1'], started_at: NOW.toISOString() };
+  const open = pick(state({ tickets: t, dispatcher: dispatcher(null) }), NOW, c);
+  assert.equal(open.length, 4, 'no gate: every slot is free');
+  const gated = pick(state({ tickets: t, dispatcher: dispatcher(gate) }), NOW, c);
+  assert.equal(gated.length, 2, 'gate in flight: max_parallel - reserved_slots');
+  const busy = pick(state({ tickets: t, runs: [run('T-8001'), run('T-8002')], dispatcher: dispatcher(gate) }), NOW, c);
+  assert.deepEqual(busy, [], 'two workers already running fill the capped slots; none are stopped, none start');
+  c.dispatcher.max_parallel = 12; // raising max_parallel keeps the reservation
+  const many = Array.from({ length: 12 }, (_, i) => ticket({ id: `T-71${String(i).padStart(2, '0')}` }));
+  assert.equal(pick(state({ tickets: many, runs: Array.from({ length: 10 }, (_, i) => run(`T-82${i}`)), dispatcher: dispatcher(gate) }), NOW, c).length, 0);
+  assert.ok(pick(state({ tickets: many, runs: Array.from({ length: 10 }, (_, i) => run(`T-82${i}`)), dispatcher: dispatcher(null) }), NOW, c).length > 0, 'without the gate the same state launches');
+  c.dispatcher.pre_merge.reserved_slots = 99;
+  assert.equal(pick(state({ tickets: t, dispatcher: dispatcher(gate) }), NOW, { ...c, dispatcher: { ...c.dispatcher, max_parallel: 4 } }).length, 1, 'always leaves one slot');
+});
