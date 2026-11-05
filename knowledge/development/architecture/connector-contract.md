@@ -6,7 +6,7 @@ status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31)
+amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect)
 binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
@@ -1119,7 +1119,7 @@ must have it before the first write kind exists. T-0225 built the Entra half ove
 
 **Input: a typed `PropertyWrite`, not a key list.** `{plane: ENTRA | AD, kind: USER | DEVICE | GROUP,
 op, keys[]}`. `op` is one of `UPDATE`, `CREATE`, `INVITE`, `ASSIGN_LICENSE`, `SET_MANAGER`,
-`CLEAR_MANAGER`, `MOVE_OR_RENAME` (AD `ModifyDN`), `GROUP_MEMBERSHIP`. Each write kind declares its
+`CLEAR_MANAGER`, `MOVE_OR_RENAME` (AD `ModifyDN`), `GROUP_MEMBERSHIP`, `DELETE` (T-1621). Each write kind declares its
 `PropertyWrite` in its registration (a kind with none fails the build-time check in CC-WRITE-22's
 harness), so a new kind cannot forget it. `keys` are Graph PATCH keys on the Entra plane and LDAP
 attribute names on the AD plane, never rule-side names. **Keys must be canonical (T-0240)**; any
@@ -1152,6 +1152,7 @@ each per `Plan` and `Apply` (live, step 7); a changed `rule_hash` re-lexes. A re
 | `ASSIGN_LICENSE` | the scope holds `assignedPlans`, `mail` or `proxyAddresses`, or `RefuseAll`. Group-targeted calls too (7e) |
 | `SET_MANAGER`, `CLEAR_MANAGER` | the scope holds `user.manager` (`Direct Reports for`, 7c), or `RefuseAll` |
 | `MOVE_OR_RENAME` (AD) | the scope holds `onPremisesDistinguishedName`, or `RefuseAll` |
+| `DELETE` (AD, T-1621) | `kind` is GROUP and the scope holds `memberOf`, or `RefuseAll`. Any other kind: never refused (a deleted object only leaves a rule's scope; no other object's properties change). `keys` is empty and ignored |
 | `GROUP_MEMBERSHIP` | the scope holds `memberOf`, `assignedPlans`, `mail` or `proxyAddresses`, or `RefuseAll` **for any cause** (7b, 7e; group-based licensing, T-0240). Any target group, either plane |
 
 `RefuseAll` is set by an untokenisable rule, a rule property absent from `ruleprops v1`, an empty
@@ -1310,8 +1311,8 @@ field is a DN.
   `msDS-deletedObjectLifetime` ends, the loss being the non-replicated attributes and the window itself),
   `Irreversible` when it is not (a tombstone keeps few attributes; reanimation is not offered). The
   preview, the gate and the API show the class before anything runs (ADR-0005 rule 1).
-- §8.9: `UPDATE` with no keys (deleting a user can only remove it from a rule's scope).
-  `[security-architect to confirm in review, TM-D25 rule 7]`.
+- §8.9: `DELETE` (T-1621; `UPDATE` with no keys was **not** confirmed, §8.10.9 R1). A group delete under a
+  `memberOf` rule can make its members match a negated rule by absence.
 
 **4 `OBJECT_MOVE`.**
 - `ModifyDNRequest(entry = live DN of the target, newrdn = its current RDN, deleteoldrdn = false,
@@ -1345,7 +1346,7 @@ field is a DN.
   against the connector's set, C5, C18, and C3/C6 by the original parent chain when the parent still
   exists. An unreadable value is `tier0` as at step 7. The new parent is a touched object, live.
   Step 9 then runs the ordinary live classification on the restored object.
-- §8.9 `CREATE` (a restored object matches a dynamic rule by absence). `ALREADY_APPLIED` when the
+- Step 7 read set amended by T-1621 (§8.10.9 R2). §8.9 `CREATE` (a restored object matches a dynamic rule by absence). `ALREADY_APPLIED` when the
   object by GUID is live (`isDeleted` absent) at the planned parent and RDN. Class `move`.
 - Reversibility: Reversible (inverse: `OBJECT_DELETE`). `[UNVERIFIED]` on a real forest: the exact
   control set and the attribute loss on Windows and on Samba (CC-WK-16..18).
@@ -1381,8 +1382,8 @@ computed and read-only on AD; the connector never writes it. Class `unlock`.
 - Reversibility `Irreversible` because no inverse exists: lockout is set by the DC on bad passwords and a
   write of a non-zero `lockoutTime` is not an offered inverse. The consequence is mild (an unlock
   needs no undo), so the preview shows the class with the reason "the directory controls this
-  state", not a destructive-action warning. `[product-manager and security-architect to confirm the
-  wording in review]`.
+  state", not a destructive-action warning. Wording confirmed by security-architect with a required
+  second line (§8.10.9 R3); `[product-manager to confirm the final copy]`.
 
 **9 and 10 `ACCOUNT_ENABLE`, `ACCOUNT_DISABLE`.** One `ModifyRequest`: delete the live
 `userAccountControl`, add the same value with `ACCOUNTDISABLE` (`0x0002`) cleared or set, computed by
@@ -1454,10 +1455,9 @@ as a reset's. This spec therefore requires `StepUp = true` on every Action that 
 | --- | --- |
 | Directory password reset (`objects.user.reset_password`, TM-D28 `reset_password`; ADM-136, ADM-162) | Sets a credential the actor knows for a sign-in account; on a hybrid-synced account it reaches Entra through hash sync (C16, TM-R14); Irreversible (ADR-0005 rule 1) |
 
-The §7.4 edit is not made here; it is the first item of the security-architect follow-up (below)
-because §7.4 and TM-D16 are theirs, and this ticket's `StepUp` bit is the requirement that edit
-satisfies. Until it lands, `fitness-operation` O-rules cannot check the bit against §7.4, so the
-Descriptor conformance is checked by `TestDescriptorStepUpMatrix` against this section's table.
+The §7.4 row **was added by T-1621** (threat-model §7.4, TM-D16 part 1, 2026-11-05), so
+`fitness-operation` O-rules can check the bit against §7.4. `TestDescriptorStepUpMatrix` stays as the
+second check against this section's table.
 Help-desk resets (ENH-09 caller verification) are the same kind under the `helpdesk.*` Actions and
 carry the same Descriptor bits; the technician's step-up is in addition to the caller's verification.
 
@@ -1494,10 +1494,78 @@ here and in `Describe`, not hidden. A provider reports `PLAN` and `APPLY` `SUPPO
 one kind of the table is wired; per-kind support is reported through a closed `Describe`
 reason string until a per-kind capability is added by the first ticket that needs one (follow-up C, T-1623).
 
+#### 8.10.9 Security review of T-1581 (T-1621, security-architect, 2026-11-05)
+
+**Verdict: approved with the amendments below.** `SecretValue` (one `bytes material`, one use site,
+`optional` on `ApplyRequest` field 12) and the `StepUp`/`SecretInput` Descriptor bits are approved.
+P9 is approved as the **proto-shape** half only; the amendments S1 to S5 are binding on the P9 and
+build tickets. Sources for the facts used: [unicodePwd](https://learn.microsoft.com/en-us/windows/win32/adschema/a-unicodepwd),
+[RFC 4511 §4.6](https://www.rfc-editor.org/rfc/rfc4511#section-4.6), [AD Recycle Bin](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/adac/introduction-to-active-directory-administrative-center-enhancements--level-100-),
+[T-0076 lab log](../runbooks/windows-lab-runs/T-0076-ad-lab-confirmation-20261028.md).
+
+**S. `SecretValue` and fitness P9**
+
+| # | Amendment | Why |
+| --- | --- | --- |
+| S1 | P9 also requires: `ApplyRequest` is not a field of any other message (no envelope, queue record, audit record or fleet frame embeds it), `SecretValue` is never inside a `repeated`, `map`, `oneof` or `Any` (P3 already bans `Any`), and `ApplyRequest.secret_input` stays the only field with that type after codegen of `PlanRequest`'s and every response's closure | A containing message would reach the secret transitively while the "referenced by exactly one field" test still passes |
+| S2 | New **P9b**, a Go analyser in `fitness-proto` scope: `ApplyRequest`, `SecretValue` and `secret_input` may not be an argument to `fmt`, `log`, `log/slog`, the project logger, `protojson`, `prototext`, `proto.Clone` into a log field, an error wrap, or a span attribute; gRPC payload-logging interceptors and OpenTelemetry payload capture are denied on the connector and fleet services. Failing fixtures for each | Generated `String()` prints `bytes` fields. P9 on the `.proto` cannot see a `%v`. CC-WK-26 is a runtime test; P9b is the static one |
+| S3 | `material` is validated **first** in `Apply`, before any directory call: non-empty, valid UTF-8, no NUL, at most 256 Unicode code points ([unicodePwd](https://learn.microsoft.com/en-us/windows/win32/adschema/a-unicodepwd) allows up to 256 characters), at most 1,024 bytes on the wire. Otherwise `INVALID_ARGUMENT` `SecretInvalid` with fixed text, never the length or position of the offending byte | Bounds the buffer, and a malformed value must not reach the encoder. The wire cap is checked by a per-message limit on this RPC so a large frame never lands in a log buffer |
+| S4 | The connector decodes `ApplyRequest` without aliasing the transport buffer, converts straight to the UTF-16LE form in a `secret.Secret`-style buffer, and clears both the decoded `material` and the encoded buffer in a `defer` that runs on every path. The gRPC and protobuf buffers are outside its control: this is the §5.6 limit, declared as **residual TM-R-SV1** (a memory dump of the connector or server process during an in-flight reset can hold the password; lifetime is one RPC on the connector and at most 72 hours sealed on the server). Crash dumps of the connector must not include heap contents; the windows-engineer sets the dump type `[UNVERIFIED: setting to be confirmed on the Windows lab]` | Honest residual, not a claim of zeroisation |
+| S5 | `ApplyResponse` and every error carry no echo of the request. The `PasswordPolicy` text is fixed. A TLS-less LDAP channel returns `TRANSPORT_SECURITY` **before** the value is encoded | Already specified; made a test: CC-WK-23 asserts the secret never appears in the response, the audit event or the connector's log with a canary value |
+
+**What stays as specified:** no `PlanRequest` field; the plan hash covers the flag only; no
+`ALREADY_APPLIED` and no retry that re-sends a secret; LDAPS only (stricter than LDAP with sealing, kept);
+`USER_PASSWORD_RESET` `StepUp = true`, `SecretInput = true`, `Irreversible`; `OBJECT_CREATE` of a USER
+with a password `StepUp = false` (TM-D28 rule 3). That create exception depends on the tenant's
+hard/soft-match blocking being attested (TM-TB7-T9 (f)); a create Action must be refused while it is not,
+for any Entra-correlated forest.
+
+**R1. Kind 3 `OBJECT_DELETE` §8.9 op: not `UPDATE` with no keys; `DELETE` is added (table above).**
+Exploit sketch: a group delete removes the group from every member's `memberOf`; an Entra dynamic
+rule of the form `NOT memberOf …` (a `memberOf` rule is already `RefuseAll`) then matches those members
+by absence, adding them to a Conditional Access exclusion group. `UPDATE` with empty `keys` is never
+refused, so the guard would wave it through. A delete of a user, computer, contact or OU only removes the
+object from scopes; the `Direct Reports for` whole-rule form can only shrink. Required: the T-0239
+`PropertyWrite` registration for kind 3 returns `DELETE`, with `kind` from the live class; a conformance
+case CC-WRITE-30 (group delete under a `memberOf`/RefuseAll closure rule refused; user delete allowed).
+The Tier-0 guard, which refuses a `tier0` target and any C16-correlated object, runs before this and is
+unchanged. Kind 3's other rules (`NotLeaf`, no DACL change, Recycle Bin Lossy/Irreversible) are approved.
+The show-deleted control OID `1.2.840.113556.1.4.417` stays `[UNVERIFIED]` with the ad-expert follow-up (E).
+
+**R2. Kind 6 `OBJECT_RESTORE` step-7 read set: not sufficient; amended.** A restore re-creates the
+object's retained attributes **and its group links**, so it re-grants every retained membership.
+Add to the fixed read set: `msDS-AllowedToDelegateTo` and `msDS-AllowedToActOnBehalfOfOtherIdentity`
+(C12), `msDS-SecondaryKrbTgtNumber` and `msDS-LastKnownRDN` (C4, and C14 by the pre-deletion name, since a
+deleted object's `name` is mangled), `adminCount`, the `isCriticalSystemObject` flag, and the retained
+`nTSecurityDescriptor` (the owner and the callback ACEs of C17/C18 on the object itself, read as
+a typed descriptor, never SDDL). C5 is judged on `userAccountControl` alone when `nTDSDSA` is unreadable
+(`SERVER_TRUST_ACCOUNT` or `PARTIAL_SECRETS_ACCOUNT` is `tier0` without corroboration). Any item
+unreadable is `tier0` (fail closed, as step 7). Plan lists the retained memberships the restore will re-grant,
+by group, so the technician sees them; a retained group that is `tier0` refuses (C2). Re-granting a
+non-`tier0` membership the object held before deletion is accepted as **residual TM-R-RS1**: the actor
+needs Reanimate-Tombstones (R9, JIT only), which is not an entitlement to add members.
+**Open conflict, not decided here:** T-0076 shows a Reanimate-only principal cannot read the deleted
+target beforehand (`noSuchObject`), and TM §6.2 R15 forbids requesting List/Read on `CN=Deleted Objects`.
+Step 7 would then fail closed for every restore. The restore build ticket (T-1624) must not ship a
+workaround that classifies on server-supplied attributes. The first option to test on the Windows lab is
+a read by the connector's separate classification identity of only the object by `<GUID=…>`
+with the show-deleted control and a per-object read grant, not a container grant. If it needs a
+container grant, the kind is refused and this comes back to security-architect as a decision.
+Ticketed as T-1633 (ad-expert); the DELETE op build is T-1632. Step 9 stays, but it is detection after the fact, not a gate.
+
+**R3. Kind 8 `USER_UNLOCK` wording: approved with a second line.** `Irreversible` with the reason "the
+directory controls this state" is correct and is not a destructive-action warning. The preview must also
+say: "Clears the lockout only. The password is not changed. If this account is under attack, the
+directory can lock it again." (An unlock during a password-spray is the case a technician needs to
+know about; the text must not suggest the account is now safe.) The replace-`lockoutTime`-0 form with a
+`uSNChanged`/`lockoutTime` compare on the pinned DC is accepted as the contract; the
+delete-old + add-0 form is not an alternative until CC-WK-24 passes on the Windows lab. A `tier0` or
+`adminCount = 1` target is refused by the guard before the kind runs, so a help-desk role cannot unlock
+a protected account. `[product-manager to confirm the final copy; the second line is required]`.
+
 #### 8.10.8 Follow-ups this section creates
 
-Registered as tickets: (A, T-1621) security-architect: §7.4 amendment, `SecretValue` review,
-§8.9 op for delete, restore classification and the unlock wording; (B, T-1622) devops-engineer: fitness P9 and
+Registered as tickets: (A, T-1621) security-architect: **done** (§7.4 row, `SecretValue` review, §8.9 `DELETE` op, restore read set, unlock wording; §8.10.9); (B, T-1622) devops-engineer: fitness P9 and
 `TestKindTableClosed`; (C, T-1623 to T-1626) directory-engineer, one build ticket per group, each wiring its operation-table
 row and `kindTable` row together: object create/update/delete, move/rename/restore, account
 enable/disable/unlock, password reset; (D, T-1627) test-engineer: the CC-WK cases of §9.8; (E, T-1628) ad-expert: clear
