@@ -519,6 +519,53 @@ func TestStepEventCarriesDCAndCredentialID(t *testing.T) {
 	})
 }
 
+// T-1629 review: the deferred read-back's verified_later event names dc and credential_id too.
+func TestVerifiedLaterEventCarriesDCAndCredentialID(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{})
+		p.dir.mode["a"] = "defer"
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+		p.runChunks(sub.Operation)
+		p.dir.mode["verified"] = "yes"
+		if err := p.r.Verify(context.Background(), p.tn, p.r.txFor(p.tn), string(sub.Operation)); err != nil {
+			t.Fatal(err)
+		}
+		rows := p.owner(`SELECT encode(envelope, 'hex') FROM public.audit_event WHERE kind = 'directory.user.changed' AND event_id LIKE $1 ORDER BY seq DESC LIMIT 1`, "op-"+string(sub.Operation)+"-%")
+		if len(rows) != 1 {
+			t.Fatalf("events = %d", len(rows))
+		}
+		raw, _ := hex.DecodeString(rows[0])
+		env, err := audit.ParseEnvelope(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if env.Reason != "verified_later" {
+			t.Fatalf("last step event reason = %q", env.Reason)
+		}
+		var keys []string
+		got := map[string]string{}
+		for _, d := range env.Details {
+			keys = append(keys, d.Key)
+			got[d.Key] = d.Value
+		}
+		if got["dc"] != "dc1.example.test" || got["credential_id"] != fakeCredentialID || !sort.StringsAreSorted(keys) {
+			t.Fatalf("details = %v", env.Details)
+		}
+	})
+}
+
+func TestEmptyCredentialIDCannotBeEmitted(t *testing.T) {
+	if err := requireCredentialDetail(detail("credential_id", "", "dc", "dc1.example.test")); err == nil {
+		t.Fatal("an empty credential_id was accepted")
+	}
+	if err := requireCredentialDetail(detail("credential_id", fakeCredentialID, "dc", "dc1.example.test")); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireCredentialDetail(nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBadDSAPinFailsPlanAndIsNotPersisted(t *testing.T) {
 	for name, pin := range map[string]DCPin{
 		"empty":  {Host: "dc1.example.test"},

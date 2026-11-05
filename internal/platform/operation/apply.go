@@ -365,21 +365,30 @@ type recordSpec struct {
 	t0           *tier0Report // set with verifyFailed == ReasonTier0AfterWrite
 }
 
+// resolveCredential names the DM-11 credential of a directory-write step's connection, once per claim.
+// Fail closed: no directory-write event is appended without its credential_id, so a connection with no
+// credential (or a lookup error) leaves the step claimed, its lease lapses and the reconciler decides.
+func (r *Runner) resolveCredential(ctx context.Context, t tenant.ID, c *claimed) error {
+	if c.dc == "" || c.credentialID != "" {
+		return nil
+	}
+	id, err := r.cfg.Credentials.CredentialOf(ctx, t, c.conn)
+	if err == nil && id == "" {
+		err = errors.New("connection has no credential")
+	}
+	if err != nil {
+		return fmt.Errorf("operation: resolving the connection's credential for the step event: %w", err)
+	}
+	c.credentialID = id
+	return nil
+}
+
 // record is the second short transaction: state, item, event and secret deletion commit together,
 // fenced by the attempt. A superseded attempt records nothing.
 func (r *Runner) record(ctx context.Context, t tenant.ID, tx txFunc, c *claimed, s recordSpec) error {
 	rctx := context.WithoutCancel(ctx) // a recorded outcome is never lost to a shutdown
-	if c.dc != "" && c.credentialID == "" {
-		// Fail closed: no directory-write event is appended without its credential_id. The step stays
-		// claimed; its lease lapses and the reconciler decides.
-		id, err := r.cfg.Credentials.CredentialOf(rctx, t, c.conn)
-		if err == nil && id == "" {
-			err = errors.New("connection has no credential")
-		}
-		if err != nil {
-			return fmt.Errorf("operation: resolving the connection's credential for the step event: %w", err)
-		}
-		c.credentialID = id
+	if err := r.resolveCredential(rctx, t, c); err != nil {
+		return err
 	}
 	err := tx(rctx, func(ctx context.Context, q store.Tx) error {
 		return r.recordIn(ctx, q, t, c, s)

@@ -154,6 +154,9 @@ FROM public.operation_steps WHERE tenant_id = $1::uuid AND operation_id = $2::uu
 }
 
 func (r *Runner) verifyApplied(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
+	if err := r.resolveCredential(context.WithoutCancel(ctx), t, c); err != nil {
+		return err
+	}
 	stp, revoke, err := r.mintFor(c, c.attempt, secret.Secret{})
 	if err != nil {
 		return err
