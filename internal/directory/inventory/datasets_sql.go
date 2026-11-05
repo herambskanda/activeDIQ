@@ -18,7 +18,8 @@ package inventory
 //   - Group-linked PSOs are read from the materialised closure (inventory_group_members), not walked per
 //     row. If the closure is behind the links (a dirty group) or a PSO-linked group is over budget, and no
 //     direct PSO exists, the policy is unresolved (group_closure_incomplete), never the domain policy.
-//     A nesting cut at 128 levels is not detected here (it is a finding on the groups dataset).
+//     So does a nesting cut at 128 levels anywhere in the connection (a closure row flagged cut: members
+//     below the cap are hidden, so a PSO on a group beyond it could be missed).
 //   - Locked: lockoutTime non-zero and (duration indefinite, or now <= lockoutTime + duration).
 //     Expired: pwdLastSet + max age < now, strictly. Both ages are whole seconds; 0 is "forever".
 const (
@@ -55,7 +56,8 @@ const (
 		// Uncorrelated, so the planner evaluates the connection set once (a hashed subplan), not once per user.
 		"SELECT {t}.connection_id IN (SELECT dirty.connection_id FROM {rel.dirty}" +
 		" UNION ALL SELECT applies.connection_id FROM {rel.applies} JOIN {rel.clo} ON clo.connection_id = applies.connection_id" +
-		" AND clo.group_guid = applies.target_guid AND clo.member_guid = applies.target_guid AND clo.edge_kind = 'over_budget')" +
+		" AND clo.group_guid = applies.target_guid AND clo.member_guid = applies.target_guid AND clo.edge_kind = 'over_budget'" +
+		" UNION ALL SELECT clo.connection_id FROM {rel.clo} WHERE clo.cut)" +
 		" AS unsure" +
 		"), best AS (" +
 		"SELECT cand.pso_guid, psoval.precedence, psoval.pso_guid IS NOT NULL AS stored, psoval.max_pwd_age_secs AS maxage, psoval.lockout_duration_secs AS lockdur" +

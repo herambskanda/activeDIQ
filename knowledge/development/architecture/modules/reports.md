@@ -405,7 +405,7 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   win over every group-linked PSO, whose groups are read from the materialised closure
   `inventory_group_members` (one indexed lookup by member; direct, primary-group and nested edges). If the
   closure is behind the links (a row in `inventory_group_closure_dirty`) or a PSO-linked group is
-  `over_budget`, and no direct PSO exists, the policy is unresolved with reason `group_closure_incomplete`; the lowest
+  `over_budget`, or any closure row of the connection is flagged `cut` (nesting beyond 128 levels hides members), and no direct PSO exists, the policy is unresolved with reason `group_closure_incomplete`; the lowest
   precedence wins, then the lowest GUID compared as the 16 raw wire bytes (not the text); only
   NORMAL_ACCOUNT users that are not krbtgt resolve a PSO. A candidate with no stored PSO row or no
   precedence, or a domain whose PSO set was never read (`psos_read_at` NULL) leaves the policy

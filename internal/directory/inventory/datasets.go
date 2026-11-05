@@ -157,7 +157,7 @@ func usersDataset() report.Dataset {
 		Rels: []report.Rel{
 			{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid", "link_attr"),
 				Where: report.SQL("state = 'active'")},
-			{ID: "clo", Kind: report.RelEdge, Table: "inventory_group_members", Project: idents("connection_id", "group_guid", "member_guid", "edge_kind")},
+			{ID: "clo", Kind: report.RelEdge, Table: "inventory_group_members", Project: idents("connection_id", "group_guid", "member_guid", "edge_kind", "cut")},
 			{ID: "dirty", Kind: report.RelEdge, Table: "inventory_group_closure_dirty", Project: idents("connection_id")},
 			{ID: "applies", Kind: report.RelEdge, Table: "inventory_pso_applies", Project: idents("connection_id", "pso_guid", "target_guid"),
 				Where: report.SQL("state = 'active'")},

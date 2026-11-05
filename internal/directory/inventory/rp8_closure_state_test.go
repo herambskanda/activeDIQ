@@ -2,6 +2,7 @@ package inventory_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -98,5 +99,43 @@ func Test_users_policy_fails_closed_on_untrusted_closure(t *testing.T) {
 		check("over budget", by, "via-group", unres, "group_closure_incomplete")
 		check("over budget", by, "plain", unres, "group_closure_incomplete")
 		check("over budget", by, "direct", "PSO-direct", "none")
+
+		// 3. a nesting cut: a chain deeper than 128 levels hides members, so a PSO on a group beyond the
+		// cap could be missed; users without a direct PSO are unresolved, never the domain policy.
+		inventory.SetClosureBudget(250000, 500000)
+		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) error {
+			_, err := tx.Exec(ctx, `INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
+				VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid)`, string(e.adA), g(1))
+			if err != nil {
+				return err
+			}
+			_, err = inventory.Writer{}.RefreshClosure(ctx, tx, e.adA)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		check("trusted again", row("trusted again"), "via-group", "PSO-group", "none")
+		e.cutChain(t, e.adA, now)
+		by = row("cut")
+		check("cut", by, "via-group", unres, "group_closure_incomplete")
+		check("cut", by, "plain", unres, "group_closure_incomplete")
+		check("cut", by, "direct", "PSO-direct", "none")
 	})
+}
+
+// cutChain adds a 130-level group chain so the closure walk stops at the 128 cap with members hidden.
+func (e *env) cutChain(t *testing.T, c inventory.ConnectionID, at time.Time) {
+	t.Helper()
+	const n = 130
+	var chain []inventory.Observation
+	for i := 1; i <= n; i++ {
+		var members []string
+		if i < n {
+			members = []string{hGUID(4, i+1)}
+		}
+		chain = append(chain, hGroup(hGUID(4, i), fmt.Sprintf("C%d", i), uint32(4000+i), members...))
+	}
+	if _, err := e.populate(t, c, at, chain...); err != nil {
+		t.Fatal(err)
+	}
 }
