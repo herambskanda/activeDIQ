@@ -29,21 +29,30 @@ func Test_password_state_reads_closure_at_scale(t *testing.T) {
 		e.hStructure(t, e.adA)
 		now := hBase.Add(100 * 24 * time.Hour)
 		var batch []inventory.Observation
+		batchMax := 5000 // Populate's cap (maxObjects)
 		flush := func() {
 			if len(batch) > 0 {
+				t0 := time.Now()
 				if _, err := e.populate(t, e.adA, now.Add(-time.Hour), batch...); err != nil {
 					t.Fatal(err)
 				}
+				t.Logf("seed batch of %d: %s", len(batch), time.Since(t0))
 				batch = batch[:0]
 			}
 		}
 		add := func(o inventory.Observation) {
 			batch = append(batch, o)
-			if len(batch) == 1000 {
+			if len(batch) >= batchMax {
 				flush()
 			}
 		}
-		// Groups first, so one closure refresh covers them; users then only add objects. About 1.1 groups per
+		// Users go in before the groups: a batch that touches members re-derives the closure of every group it
+		// joins (about 65 s at 200 groups x 1,100 links), so the groups, which carry the links, come last.
+		for i := 0; i < users; i++ {
+			add(hUser{guid: hGUID(1, i+1), sam: fmt.Sprintf("u%06d", i), rid: uint32(10000 + i), uac: i64(uacNormal), read: 15,
+				pwdLastSet: now.Add(-day(i % 80))}.obs())
+		}
+		// About 1.1 groups per
 		// user and nesting two deep for half the groups keeps the closure near 1.6 rows per user, inside the
 		// declared budget (an over-budget closure would make every user unresolved, which is the other test).
 		members := make([][]string, groups)
@@ -60,12 +69,11 @@ func Test_password_state_reads_closure_at_scale(t *testing.T) {
 				m = append(m, hGUID(2, i+2))
 			}
 			add(hGroup(hGUID(2, i+1), fmt.Sprintf("G%04d", i), uint32(2000+i), m...))
+			if i%10 == 9 { // a refresh over all 220,000 links in one batch exceeds the 30 s statement timeout
+				flush()
+			}
 		}
 		flush()
-		for i := 0; i < users; i++ {
-			add(hUser{guid: hGUID(1, i+1), sam: fmt.Sprintf("u%06d", i), rid: uint32(10000 + i), uac: i64(uacNormal), read: 15,
-				pwdLastSet: now.Add(-day(i % 80))}.obs())
-		}
 		for i := 0; i < psos; i++ {
 			add(hPSOObj(hGUID(3, i+1), fmt.Sprintf("PSO%02d", i)))
 		}
