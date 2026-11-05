@@ -607,10 +607,19 @@ func (p *ADProvider) ClassifyDeleted(ctx context.Context, id guid.GUID, designat
 	if !st.Deleted {
 		return p.Classify(ctx, id, designated) // restored meanwhile: the ordinary live classification
 	}
-	e := st.Entry
+	return p.classifyDeletedEntry(ctx, st.Entry, designated)
+}
+
+// classifyDeletedEntry is the fixed-read-set decision over the deleted object's retained
+// attributes; split out so the fail-closed branches are testable without a Recycle Bin.
+func (p *ADProvider) classifyDeletedEntry(ctx context.Context, e *ad.Entry, designated []guid.GUID) (Verdict, error) {
+	unknown := Verdict{Tier0: true}
 	sids, err := e.SIDs("objectSid")
 	if err != nil {
 		return unknown, err
+	}
+	if len(sids) == 0 { // a SID that cannot be read is unknown, never "not tier0"
+		return unknown, errors.New("write: deleted object has no readable objectSid")
 	}
 	for _, s := range sids {
 		if rid, ok := s.RID(); !ok || rid < 1000 {

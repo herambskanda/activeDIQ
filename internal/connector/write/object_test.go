@@ -1,7 +1,6 @@
 package write
 
 import (
-	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -74,10 +73,22 @@ func (f *fakeObjects) Restore(_ context.Context, r ad.RestoreRequest) error {
 type objProv struct {
 	*fakeProv
 	dir ObjectDirectory
+	cd  func() (Verdict, error) // ClassifyDeleted's answer; nil is a clean verdict
 }
+
+// objProvPlain has an object directory but no DeletedClassifier.
+type objProvPlain struct {
+	*fakeProv
+	dir ObjectDirectory
+}
+
+func (p objProvPlain) Objects() ObjectDirectory { return p.dir }
 
 func (p objProv) Objects() ObjectDirectory { return p.dir }
 func (p objProv) ClassifyDeleted(context.Context, guidT, []guidT) (Verdict, error) {
+	if p.cd != nil {
+		return p.cd()
+	}
 	return Verdict{}, nil
 }
 
@@ -97,7 +108,7 @@ func newObjRig(t *testing.T) *objRig {
 	r := newRig(t, &run)
 	r.prov.guard = &stubGuard{}
 	d := &fakeObjects{parent: map[guidT]guidT{oT: oP1}, rdn: map[guidT]string{oT: "Jo, Smith", oP1: "A", oP2: "B"}, deleted: map[guidT]bool{}}
-	h, err := New(objProv{r.prov, d}, r.gate, WithRecorder(r.rec), WithClock(func() time.Time { return r.now }))
+	h, err := New(objProv{fakeProv: r.prov, dir: d}, r.gate, WithRecorder(r.rec), WithClock(func() time.Time { return r.now }))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,8 +297,5 @@ func TestObjectDigestMismatchRefused(t *testing.T) {
 	_, err := r.apply(kind, ch, p.Precondition, moveAttrs(mk(70)), client.DigestObjectMove, oT, oP1, oP2)
 	if connErr(t, err).GetRejectedInput().GetRuleId() != "PlanDigestMismatch" || r.dir.writes != 0 {
 		t.Fatalf("got %v", err)
-	}
-	if !bytes.Equal(nil, nil) {
-		t.Fatal()
 	}
 }
