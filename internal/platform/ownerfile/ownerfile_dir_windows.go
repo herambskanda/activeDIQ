@@ -173,7 +173,13 @@ func verifyParentHandle(h windows.Handle, pr principals) error {
 	if err != nil {
 		return err
 	}
-	return checkParentACL(acl, []*windows.SID{pr.user, pr.system, admins}, bad)
+	// The caller's own token user stays trusted too (it was before): a parent the caller owns is the
+	// caller's to grant on.
+	user, _, err := desiredSIDs()
+	if err != nil {
+		return err
+	}
+	return checkParentACL(acl, []*windows.SID{user, pr.user, pr.system, admins}, bad)
 }
 
 // checkParentACL walks the DACL. Deny ACEs only narrow access and are skipped; an allow ACE of a kind
