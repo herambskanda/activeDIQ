@@ -1503,6 +1503,46 @@ row and `kindTable` row together: object create/update/delete, move/rename/resto
 enable/disable/unlock, password reset; (D, T-1627) test-engineer: the CC-WK cases of §9.8; (E, T-1628) ad-expert: clear
 the `[UNVERIFIED]` items (unlock compare-and-set form, restore controls, Samba behaviour).
 
+#### 8.10.9 As built for kinds 1 to 3 (T-1623)
+
+Amendments the implementation fixed; the connector (`internal/connector/write/kinds_object.go`,
+`kinds_create.go`, `denylist.go`) and the client (`internal/directory/client/write.go`) agree on them
+through `internal/directory/writechange`, which owns the digest codec (`ad.object.create|update|delete`
+keys, attribute names `set:`, `add:`, `del:`, `clr:` and the typed value prefixes).
+
+- **Class is not in the digest for kinds 2 and 3.** The target class is read live; `WriteOp.Target.Class`
+  must be empty for them (the client refuses otherwise). Kind 1 digests class, parent (lower-case
+  target GUID), RDN and NC.
+- **Step 1 shape checks.** `WriteChangeArmMismatch` (kind and arm disagree, or an arm with a
+  non-matching kind) and `SecretInputMismatch` (a secret iff `create` of a USER with `has_secret_input`,
+  or kind 7) run first, before any directory call (CC-WK-29). A second arm is not expressible (`oneof`).
+- **Vet runs before the property guard.** Deny-list, limits and shape of the edits are checked from the
+  typed change alone (`WriteOp.Vet`), so a denied attribute is `ATTRIBUTE_NOT_ALLOWED` and never a
+  Tier-0 or rule refusal that would disclose designation state. Attribute names must be
+  ldapDisplayNames of the schema snapshot: a numeric OID or an option (`;binary`) is
+  `ATTRIBUTE_NOT_ALLOWED`.
+- **No `isSingleValued` in the schema snapshot,** so `NotMultiValued` is the DC's refusal and surfaces
+  as `INVALID_ARGUMENT` `DirectoryRefused`, not as a connector pre-check.
+- **Kind 3 and the guard.** The target is removed by the write, so step 9 (re-evaluation after the
+  write) skips it; step 7 has a `TargetGone` exemption: a delete retried after success finds the object
+  deleted by the show-deleted read and answers `ALREADY_APPLIED` instead of a live-classification
+  failure. Delete addresses the live DN read in the same transaction; update addresses `<GUID=...>`.
+- **Manager edits.** `manager` declares `SET_MANAGER` or `CLEAR_MANAGER` at step 4; the other edits (and
+  the computer case) are re-checked in the body against the live class (`editsRecheck`). The live class
+  is the last `objectClass` value, so gMSA and MSA objects are `ClassNotAllowed`.
+- **Create secret.** The password is encoded as `unicodePwd` (UTF-16LE of the quoted value) in the same
+  `AddRequest`; a non-sealed channel is `TRANSPORT_SECURITY`. Strings handed to the LDAP library cannot
+  be zeroed; the connector clears its own copies and records this as a residual.
+- **Rule ids added** (all `INVALID_ARGUMENT`): `DuplicateAttribute`, `EditShape`, `ValueSyntax`,
+  `RdnRequired`, `RdnInvalid`, `CreateFields`, `TargetRequired`.
+- **Not carried yet:** `PlanResponse` has no reversibility or class field, so the Lossy or Irreversible
+  class of kind 3 (CC-WK-11, Recycle Bin on or off) is not reported by Plan. Follow-up ticket filed
+  below (G).
+
+Follow-ups: (F, T-1641) Windows-lab run of the W cases (CC-WK-01, 03, 05, 09, 10 on a Windows DC);
+(G, T-1642) proto minor revision for the Plan class of kind 3 plus the Recycle Bin read
+(`msDS-EnabledFeatureBL` on `CN=Recycle Bin Feature,CN=Optional Features,CN=Directory Service,CN=Windows NT,CN=Services,<configNC>`).
+
 ## 9. Provider conformance suite
 
 **Where it lives:** `internal/connector/conformance` (a Go package, `conformance.Run(t, Target)`),
