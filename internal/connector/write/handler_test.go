@@ -87,13 +87,22 @@ func TestNonTier0IsUnsupported(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("%v", got)
 	}
+	// T-1624 wired kinds 4 to 6, so Describe reports PLAN and APPLY SUPPORTED (CC-WK-30); the
+	// unspecified kind used above is still not in the table.
 	for _, c := range got {
-		if c.GetState() != connectorv1.SupportState_SUPPORT_STATE_UNSUPPORTED {
+		if c.GetState() != connectorv1.SupportState_SUPPORT_STATE_SUPPORTED {
 			t.Errorf("%s reported %s", c.GetOperation(), c.GetState())
 		}
 	}
-	if len(operations) != 0 {
-		t.Fatal("the operation table must be empty until a kind ticket adds a row")
+	want := map[connectorv1.WriteKind]bool{connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE: true,
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME: true, connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE: true}
+	if len(operations) != len(want) {
+		t.Fatalf("operation table holds %d kinds, want the three of T-1624", len(operations))
+	}
+	for k := range operations {
+		if !want[k] {
+			t.Errorf("unexpected kind %s in the operation table", k)
+		}
 	}
 }
 

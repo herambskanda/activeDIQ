@@ -34,6 +34,8 @@ type ReadOptions struct {
 	// MaxValues caps the values returned per attribute; 0 means DefaultMaxValues. A cut attribute is
 	// named in Entry.Truncated.
 	MaxValues int
+	// ShowDeleted sends the show-deleted control, so a deleted object can be read by GUID.
+	ShowDeleted bool
 }
 
 // Read reads one object by DN or GUID (base-scope search) and follows ranged attributes to the
@@ -83,6 +85,10 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 			f = DefaultSDFlags()
 		}
 		ctrls = append(ctrls, f.control())
+	}
+
+	if opts.ShowDeleted {
+		ctrls = append(ctrls, showDeleted{})
 	}
 
 	req := make([]string, len(names))

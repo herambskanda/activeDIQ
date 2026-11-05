@@ -21,6 +21,8 @@ type pass struct {
 	// props are the attribute keys the kind's PropertyWrite declared at step 4 (the ones the §8.9 guard
 	// and the step-7 Tier-0 checks were run for). Only the DACL kind declares nTSecurityDescriptor.
 	props []string
+	// dir is the directory the object kinds act on; nil when the provider has none.
+	dir ObjectDirectory
 }
 
 // DeclaresProperty reports whether the write kind this token was issued for declared the attribute in
@@ -68,17 +70,28 @@ type WriteOp struct {
 	// registered without it fails validateOps (the CC-WRITE-22 build-time check) and New. The guard
 	// calls it at step 4, before every other step that depends on the kind.
 	PropertyWrite func(change *connectorv1.WriteChange) (tier0.PropertyWrite, error)
+	// TouchedLive adds the objects only a live read can name (the old parent of a move). It runs at
+	// step 5, after Touched, against the provider's directory; an error refuses as TouchedSet.
+	TouchedLive func(ctx context.Context, d ObjectDirectory, target guid.GUID, change *connectorv1.WriteChange) ([]guid.GUID, error)
+	// DeletedTarget marks a kind whose target is a deleted object: step 7 classifies it with the
+	// provider's DeletedClassifier instead of the live classifier.
+	DeletedTarget bool
 	// Digest recomputes the plan digest from the typed fields with the operation/step function.
 	Digest func(req *connectorv1.ApplyRequest) ([]byte, error)
 	Plan   func(ctx context.Context, a Authorised, req *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error)
 	Apply  func(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error)
 }
 
-// operations is the operation table. It is empty in v1.1: WriteKind has no kind, so every call that
-// passes the guard ends in CAPABILITY_UNSUPPORTED and no write path exists. The only place a
-// directory or Graph write may be called from is a WriteOp body reachable from this table; the
-// fitness test in fitness_test.go enforces that.
-var operations = map[connectorv1.WriteKind]WriteOp{}
+// operations is the operation table. The only place a directory or Graph write may be called from
+// is a WriteOp body reachable from this table; the fitness test in fitness_test.go enforces that.
+// Kinds 4 to 6 (object move, rename, restore) are wired (T-1624); the others answer
+// CAPABILITY_UNSUPPORTED until their build tickets land.
+var operations = objectOps()
+
+// DeletedClassifier is a Provider that can classify a deleted object (OBJECT_RESTORE's target).
+type DeletedClassifier interface {
+	ClassifyDeleted(ctx context.Context, id guid.GUID, designated []guid.GUID) (Verdict, error)
+}
 
 // validateOps is the build-time check of contract §8.9 / CC-WRITE-22: every registered write kind
 // declares its PropertyWrite and its other mandatory functions. It runs in New, so a handler cannot

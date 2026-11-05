@@ -305,6 +305,17 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 		if err != nil {
 			return nil, invalid("5", "TouchedSet", "change")
 		}
+		if w.TouchedLive != nil {
+			op2, ok := h.prov.(ObjectProvider)
+			if !ok || op2.Objects() == nil {
+				return nil, unsupported()
+			}
+			more, err := w.TouchedLive(ctx, op2.Objects(), target, c.change)
+			if err != nil {
+				return nil, invalid("5", "TouchedSet", "change")
+			}
+			ts = append(ts, more...)
+		}
 		touched = dedupe(target, ts)
 	}
 
@@ -329,7 +340,13 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 
 	// Step 7: live re-read and classification of every touched object. An error is tier0.
 	designated := unionGUIDs(parseGUIDs(c.t0.GetDesignated()), h.gates.Designated(c.conn.GetConnectionId()))
-	for _, id := range touched {
+	for i, id := range touched {
+		if i == 0 && op != nil && op.DeletedTarget {
+			if r := h.liveDeleted(ctx, id, designated); r != nil {
+				return nil, r
+			}
+			continue
+		}
 		if r := h.live(ctx, idx, id, designated); r != nil {
 			return nil, r
 		}
@@ -338,7 +355,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	if bound != nil {
 		boundDSA, _ = fromWire(bound.GetDsaGuid()) // verified equal to the pin at step 2b
 	}
-	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared}}}, nil
+	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: h.objects()}}}, nil
 }
 
 // Refusal reasons recorded for a property-write refusal that is not a rule verdict.
@@ -541,6 +558,28 @@ func (h *Handler) checkRequest(c *call, idx map[string]*stmt, id guid.GUID, isAD
 	}
 	if b := h.gates.Lookup(c.conn.GetConnectionId(), id); len(b) > 0 {
 		return tier0Refusal(toWire(id), b, stConnectorSet, step)
+	}
+	return nil
+}
+
+// objects is the provider's object directory, nil when it has none.
+func (h *Handler) objects() ObjectDirectory {
+	if p, ok := h.prov.(ObjectProvider); ok {
+		return p.Objects()
+	}
+	return nil
+}
+
+// liveDeleted is step 7 for the deleted target of a restore: the fixed-read-set classification. A
+// provider that cannot do it refuses (fail closed).
+func (h *Handler) liveDeleted(ctx context.Context, id guid.GUID, designated []guid.GUID) *Refusal {
+	dc, ok := h.prov.(DeletedClassifier)
+	if !ok {
+		return tier0Refusal(toWire(id), nil, stLive, "7")
+	}
+	v, err := dc.ClassifyDeleted(ctx, id, designated)
+	if err != nil || v.Tier0 {
+		return tier0Refusal(toWire(id), v.Bases, stLive, "7")
 	}
 	return nil
 }

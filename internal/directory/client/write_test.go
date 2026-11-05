@@ -129,7 +129,7 @@ func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, 
 	}
 }
 
-func init() { kindTable["user.set"] = testKind }
+func init() { kindTable["user.set"] = kindRow{testKind, "none"} }
 
 func goodOp() WriteOp {
 	return WriteOp{DigestKind: "user.set", Target: testTarget, Attrs: testAttrs}

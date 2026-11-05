@@ -34,8 +34,8 @@ var (
 // Attrs and refuses a mismatch. Everything that goes on the wire is derived from these fields: the
 // connection from Target.Connection, the object from Target.GUID (the planned parent for a create),
 // the naming context from the Step (Target.NC, digest-covered), the
-// WriteKind from DigestKind through kindTable. No wire field is caller-supplied, so none can differ from what the digest covers. WriteChange has no arm until a
-// kind ticket adds one with a constructor deriving it from Attrs; until then Change is never sent.
+// WriteKind from DigestKind through kindTable. No wire field is caller-supplied, so none can differ from what the digest covers. The WriteChange is derived from Attrs by one constructor per
+// kind (objectchange.go), never filled in by the caller.
 type WriteOp struct {
 	// DigestKind names the operation in the plan digest ("user.setAttribute").
 	DigestKind string
@@ -43,15 +43,48 @@ type WriteOp struct {
 	Attrs      []step.Attr
 }
 
-// kindTable maps a plan-digest kind to the connector's WriteKind. Each kind ticket adds its row;
-// until one does, every write is refused as an unknown kind.
-var kindTable = map[string]connectorv1.WriteKind{}
+// The plan-digest keys of the wired kinds (contract §8.10.1). Compile-time constants; the connector
+// holds the same strings (write.DigestObject*) and a test pins the two.
+const (
+	DigestObjectMove    = "ad.object.move"
+	DigestObjectRename  = "ad.object.rename"
+	DigestObjectRestore = "ad.object.restore"
+)
+
+// The attribute names the object kinds' digests cover (contract §8.10.2 rule 5).
+const (
+	AttrNewParent   = "newParent"
+	AttrNewParentNC = "newParentNC"
+	AttrNewRDN      = "newRDN"
+	AttrRDN         = "rdn"
+)
+
+// ClassMove is the TM-D28 class of the object move, rename and restore kinds.
+const ClassMove = "move"
+
+// kindRow is one kindTable row: the connector's WriteKind and the kind's TM-D28 class ("none" for a
+// kind that needs none). An unclassified row is refused (TestKindTableClosed).
+type kindRow struct {
+	Kind  connectorv1.WriteKind
+	Class string
+}
+
+// kindTable maps a plan-digest kind to its row. Each kind ticket adds its row together with its
+// operation-table row and WriteChange constructor; a key not in the table is refused as an unknown
+// kind before any transport call.
+var kindTable = map[string]kindRow{
+	DigestObjectMove:    {connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE, ClassMove},
+	DigestObjectRename:  {connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME, ClassMove},
+	DigestObjectRestore: {connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE, ClassMove},
+}
 
 // wire is the request material derived from a validated WriteOp.
 type wire struct {
 	conn   *connectorv1.ConnectionRef
 	target *connectorv1.WriteTarget
 	kind   connectorv1.WriteKind
+	// change is derived from Attrs by the kind's constructor; nil for a kind with no WriteChange arm.
+	change *connectorv1.WriteChange
 }
 
 // Result is what a completed Write returns.
@@ -200,7 +233,7 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 		return Result{}, err
 	}
 	plan, err := c.sendPlan(ctx, clr, s, &connectorv1.PlanRequest{
-		Connection: w.conn, Step: key, Target: w.target, Kind: w.kind,
+		Connection: w.conn, Step: key, Target: w.target, Kind: w.kind, Change: w.change,
 		Tier0: t0.Context, Tier0Override: t0.Override, ActingPrincipal: acting,
 		Dc: &connectorv1.DcSelection{PinnedDsaGuid: &connectorv1.Guid{Value: dsaID}},
 	})
@@ -224,7 +257,7 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	d := s.Digest()
 	resp, err := c.sendApply(ctx, clr, s, &connectorv1.ApplyRequest{
 		Connection: w.conn, Step: key, Attempt: uint32(s.Attempt()), Target: w.target,
-		Kind: w.kind, Tier0: t0.Context, Precondition: plan.GetPrecondition(),
+		Kind: w.kind, Change: w.change, Tier0: t0.Context, Precondition: plan.GetPrecondition(),
 		Tier0Override: t0.Override, ActingPrincipal: acting, PlanDigest: d[:],
 	})
 	if err != nil {
@@ -237,9 +270,14 @@ func (op WriteOp) derive() (wire, error) {
 	if op.DigestKind == "" || op.Target.Connection == "" {
 		return wire{}, ErrInvalidOp
 	}
-	kind, ok := kindTable[op.DigestKind]
+	row, ok := kindTable[op.DigestKind]
+	kind := row.Kind
 	if !ok || kind == connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
 		return wire{}, ErrUnknownKind
+	}
+	change, err := op.change(kind)
+	if err != nil {
+		return wire{}, err
 	}
 	obj := op.Target.GUID
 	if obj == "" {
@@ -250,7 +288,7 @@ func (op WriteOp) derive() (wire, error) {
 		return wire{}, fmt.Errorf("%w: target object", ErrInvalidOp)
 	}
 	wt := &connectorv1.WriteTarget{Object: &connectorv1.Guid{Value: id}}
-	return wire{conn: &connectorv1.ConnectionRef{ConnectionId: op.Target.Connection}, target: wt, kind: kind}, nil
+	return wire{conn: &connectorv1.ConnectionRef{ConnectionId: op.Target.Connection}, target: wt, kind: kind, change: change}, nil
 }
 
 func (c *Client) buildTier0(ctx context.Context, st Stage, op WriteOp) (Tier0, error) {
