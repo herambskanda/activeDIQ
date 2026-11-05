@@ -646,3 +646,66 @@ func TestForeignCustomRIDHolderNoFSPResolvesThroughTrust(t *testing.T) {
 		wantBasisTrust(t, f, "CN=carol,OU=Staff,"+dom, C19, true)
 	})
 }
+
+// T-0834: a grant to a SID of another domain of the forest is answered by the GC, never by the
+// ignorable-prefix rule or the trust seam.
+func TestForestForeignGrantResolvedThroughGC(t *testing.T) {
+	src := foreignID + "-1300"
+	setup := func(withHolder bool) (*fakeDir, string) {
+		f := forest()
+		f.forestDoms = []string{foreignID}
+		holder := u(f, "carol", 4201)
+		if withHolder {
+			f.find(holder).history(src)
+		}
+		f.find(daDN).raw["nTSecurityDescriptor"] = sdBytes(aceSpec{sid: src, mask: wProp, objType: &memberID})
+		return f, holder
+	}
+	grp := func(members ...string) *fobj {
+		return &fobj{dn: "CN=rootgrp,DC=other", sid: src, cls: group, guid: guid.GUID{7, 7},
+			attrs: map[string][]string{"member": members}}
+	}
+	t.Run("live group marks local members", func(t *testing.T) {
+		f, _ := setup(false)
+		m := u(f, "member", 4202)
+		f.gc = []*fobj{grp(m)}
+		wantBasisTrust(t, f, m, C19, true)
+		if f.gcCalls == 0 {
+			t.Error("GC not consulted")
+		}
+	})
+	t.Run("live group, nested local group walked", func(t *testing.T) {
+		f, _ := setup(false)
+		inner := "CN=inner,OU=Staff," + dom
+		f.add(inner, dsid+"-4300", group, "member", u(f, "deep", 4203))
+		f.gc = []*fobj{grp(inner)}
+		wantBasisTrust(t, f, "CN=deep,OU=Staff,"+dom, C19, true)
+	})
+	t.Run("gc down fails closed", func(t *testing.T) {
+		f, _ := setup(false)
+		f.gcErr = errors.New("gc down")
+		r, err := classifyTrust(t, f, daDN)
+		if err == nil || !r.Tier0 || !r.Unknown {
+			t.Errorf("%+v %v", r, err)
+		}
+	})
+	t.Run("member of a third domain fails closed", func(t *testing.T) {
+		f, _ := setup(false)
+		f.gc = []*fobj{grp("CN=x,DC=third,DC=example")}
+		if _, err := classifyTrust(t, f, daDN); err == nil {
+			t.Error("want error")
+		}
+	})
+	t.Run("absent from GC with holder: holder only, trust seam not called", func(t *testing.T) {
+		f, holder := setup(true)
+		f.trustErr = errors.New("trust must not be called")
+		wantBasisTrust(t, f, holder, C19, true)
+	})
+	t.Run("absent from GC without holder: dead grant", func(t *testing.T) {
+		f, _ := setup(false)
+		f.trustErr = errors.New("trust must not be called")
+		if _, err := classifyTrust(t, f, daDN); err != nil {
+			t.Error(err)
+		}
+	})
+}

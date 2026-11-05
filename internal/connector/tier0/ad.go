@@ -1369,6 +1369,28 @@ func (b *builder) markPrincipalsSkip(sids []sid.SID, basis Basis, skip func(*ad.
 				}
 			}
 		}
+		// T-0834: a SID of another domain of the forest (root or sibling) is answered by the GC, not by
+		// the bound DC and not by the trust seam (which is for external trusts). Live group: its members
+		// in this domain are marked and walked; absent from the GC: a dead grant, only holders are marked.
+		if !found {
+			ms, _, ok, err := b.forestGrant(s)
+			if err != nil {
+				return err
+			}
+			if ok {
+				for _, m := range ms {
+					if err := take(m); err != nil {
+						return err
+					}
+				}
+				for _, h := range holders {
+					if err := take(h); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+		}
 		// T-0819: after an ADMT group migration the source group often still exists in the trusted domain
 		// and its members carry its SID across the trust, so a holder alone under-reports who holds the
 		// right. A foreign custom-RID SID with no FSP but a holder is resolved through the trust exactly
@@ -1926,25 +1948,88 @@ func (b *builder) resolveHistory(s sid.SID) (e *ad.Entry, found, foreign bool, e
 		e, found, err = b.get(dn.SIDRef(s), idAttrs)
 		return e, found, false, err
 	}
+	in, err := b.inForest(dom)
+	if err != nil {
+		return nil, false, false, err
+	}
+	if !in {
+		return nil, false, false, nil
+	}
+	e, found, err = b.d.(ForestDirectory).GCLookup(b.ctx, s, idAttrs)
+	return e, found, true, err
+}
+
+// inForest reports whether dom is the SID of a domain of this forest. A directory that cannot list
+// the forest's domains is an error (callers fail closed).
+func (b *builder) inForest(dom sid.SID) (bool, error) {
 	fd, ok := b.d.(ForestDirectory)
 	if !ok {
-		return nil, false, false, errors.New("directory cannot resolve a SID of another domain")
+		return false, errors.New("directory cannot resolve a SID of another domain")
 	}
 	if b.forest == nil {
 		ds, err := fd.ForestDomains(b.ctx)
 		if err != nil {
-			return nil, false, false, err
+			return false, err
 		}
-		b.forest = map[sid.SID]bool{}
+		m := map[sid.SID]bool{}
 		for _, d := range ds {
-			b.forest[d] = true
+			m[d] = true
 		}
+		b.forest = m
 	}
-	if !b.forest[dom] {
+	return b.forest[dom], nil
+}
+
+// forestGrant resolves a granted domain account SID whose prefix is another domain of the forest
+// (root or sibling) through the GC (T-0834). The bound DC cannot see that domain, so a local miss says
+// nothing about it. ok is false when the SID is not one to resolve here. dead is true when the GC holds
+// no such object: the grant names no principal. Otherwise the returned objects are the principals this
+// domain's snapshot can mark: the members of a group that live in this domain (and the group walk
+// follows nested groups from there). A GC failure, a member the DC cannot read, or a member of a third
+// domain (no DN-keyed GC read) fails the snapshot: the grant may reach principals we cannot see.
+func (b *builder) forestGrant(s sid.SID) (members []*ad.Entry, dead, ok bool, err error) {
+	dom, has := s.DomainSID()
+	if !has || !isDomainAccountSID(s) || dom == b.domSID {
 		return nil, false, false, nil
 	}
-	e, found, err = fd.GCLookup(b.ctx, s, idAttrs)
-	return e, found, true, err
+	in, err := b.inForest(dom)
+	if err != nil {
+		return nil, false, false, fmt.Errorf("tier0: grant to %s, an account of another domain; forest lookup failed: %w", s, err)
+	}
+	if !in {
+		return nil, false, false, nil
+	}
+	e, found, err := b.d.(ForestDirectory).GCLookup(b.ctx, s, append([]string{"member"}, idAttrs...))
+	if err != nil {
+		return nil, false, true, fmt.Errorf("tier0: grant to %s, an account of another domain of the forest; GC lookup failed: %w", s, err)
+	}
+	if !found {
+		return nil, true, true, nil
+	}
+	if !hasClass(e, "group") {
+		return nil, false, true, nil // a user or computer: one principal, in a domain we do not snapshot
+	}
+	if slices.ContainsFunc(e.Names(), func(n string) bool { return strings.HasPrefix(strings.ToLower(n), "member;range=") }) {
+		return nil, false, true, fmt.Errorf("tier0: grant to %s, a group of another domain with a ranged member list the GC could not complete", s)
+	}
+	for _, v := range e.Strings("member") {
+		d, err := dn.Parse(v, dn.Strict)
+		if err != nil {
+			return nil, false, true, fmt.Errorf("tier0: grant to %s: member %q: %w", s, v, err)
+		}
+		if !d.IsDescendantOf(b.nm.Domain) {
+			return nil, false, true, fmt.Errorf("tier0: grant to %s, a group of another domain, has a member in a third domain the classifier cannot read", s)
+		}
+		m, found, err := b.get(dn.DNRef(d), walkAttrs)
+		if err != nil {
+			return nil, false, true, err
+		}
+		if !found {
+			return nil, false, true, fmt.Errorf("tier0: grant to %s, a group of another domain, has a member the connector cannot read", s)
+		}
+		members = append(members, m)
+	}
+	return members, false, true, nil
 }
 
 // spnHost is the host part of the "host[:port][/name]" remainder of an SPN.
