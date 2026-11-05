@@ -376,7 +376,8 @@ func checkWeb(root string) ([]Violation, error) {
 					target = path.Clean(path.Join(path.Dir(rel), spec))
 				}
 				toModules := under(target, "web/src/modules") || strings.HasPrefix(target, "src/modules") || strings.HasPrefix(target, "@/modules")
-				if toModules && !(layer == "app" && path.Base(target) == "modules.gen") {
+				generatedList := rel == "web/src/app/modules.gen.ts"
+				if toModules && !generatedList && !(layer == "app" && path.Base(target) == "modules.gen") {
 					vs = append(vs, Violation{Rule: "2.8", Pos: fmt.Sprintf("%s:%d", rel, n+1), Msg: fmt.Sprintf("web/src/%s imports %q; app and ds never import web/src/modules (only app may import the generated modules.gen)", layer, spec)})
 				}
 			}
