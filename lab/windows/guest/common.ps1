@@ -22,3 +22,7 @@ function Remove-LabSecrets {  # after the last stage the secrets file and answer
   Remove-Item "$script:LabDir\lab.json", "$script:LabDir\autounattend.xml" -Force -ErrorAction SilentlyContinue
 }
 function ConvertTo-Secure([string]$p) { ConvertTo-SecureString $p -AsPlainText -Force }
+# Random per-run lab password (Wl-<28 hex>-aA1!). Shared by external-init.ps1 and child-dc.ps1 (T-1233).
+function New-LabPassword { $b = New-Object byte[] 14; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); 'Wl-' + (($b | ForEach-Object { $_.ToString('x2') }) -join '') + '-aA1!' }
+# Restrict a file to SYSTEM + Administrators (no inherited ACEs). Call it BEFORE a secret is written to the file.
+function Protect-LabFile([string]$path) { icacls $path /inheritance:r /grant:r 'SYSTEM:(F)' 'BUILTIN\Administrators:(F)' | Out-Null }

@@ -243,6 +243,32 @@ mkdir -p "$opt/internal/directory/client"
 printf 'package client\n\ntype C struct{}\n\nfunc (c *C) Send() { c.sendApply() }\nfunc (c *C) sendApply() {}\n' >"$opt/internal/directory/client/c.go"
 rm -f "$opt/internal/modules/a/a.go"
 must_fail_with "fitness-operation O2 on an exported client method issuing a write RPC without a step.Step" 'O2 \[rule 2\] exported Send issues a connector-contract write RPC but has no step.Step parameter' "$opbin" -root "$opt"
+# O2 type-aware half (tools/analyzers/connwrite, T-1408): an exported alias of the generated client in
+# directory/client and a call of its Apply from another package, with no identifier of the client in the caller.
+mkdir -p "$opt/internal/proto/activediq/connector/v1" "$opt/internal/modules/a"
+printf 'package connectorv1\n\nimport "context"\n\ntype CallOption interface{}\ntype ApplyRequest struct{}\ntype ApplyResponse struct{}\ntype ConnectorClient interface {\n\tApply(ctx context.Context, in *ApplyRequest, opts ...CallOption) (*ApplyResponse, error)\n}\n' >"$opt/internal/proto/activediq/connector/v1/v1.go"
+printf 'package client\n\nimport connectorv1 "op.test/internal/proto/activediq/connector/v1"\n\ntype Connector = connectorv1.ConnectorClient\n' >"$opt/internal/directory/client/c.go"
+printf 'package a\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(c client.Connector) { _, _ = c.Apply(context.Background(), nil) }\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O2 on an exported alias of the generated client in directory/client" 'internal/directory/client/c.go:5: O2 \[rule 2\] exported type Connector is, aliases or embeds the generated connector-contract client' "$opbin" -root "$opt"
+must_fail_with "fitness-operation O2 on Apply called through the alias from another package" 'internal/modules/a/a.go:9: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+# A nested internal/ dir (idiomatic under cmd/) is not the top-level one: a package's place is its path below the
+# module root (security review of T-1408). The caller names no ConnectorClient identifier, only holds what a source returns.
+printf 'package client\n\nimport (\n\t"context"\n\n\tconnectorv1 "op.test/internal/proto/activediq/connector/v1"\n)\n\ntype Source interface {\n\tConnector(ctx context.Context) (connectorv1.ConnectorClient, error)\n}\n' >"$opt/internal/directory/client/c.go"
+rm -f "$opt/internal/modules/a/a.go"
+mkdir -p "$opt/cmd/server/internal/proto/evil"
+printf 'package evil\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(s client.Source) {\n\tcc, _ := s.Connector(context.Background())\n\t_, _ = cc.Apply(context.Background(), nil)\n}\n' >"$opt/cmd/server/internal/proto/evil/e.go"
+must_fail_with "fitness-operation O2 on Apply under a nested cmd/*/internal/proto directory" 'cmd/server/internal/proto/evil/e.go:11: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+rm -rf "$opt/cmd"
+# A real directory called proto_test is not internal/proto (only a genuine external test package loses its _test suffix).
+mkdir -p "$opt/internal/proto_test"
+printf 'package evil\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(s client.Source) {\n\tcc, _ := s.Connector(context.Background())\n\t_, _ = cc.Apply(context.Background(), nil)\n}\n' >"$opt/internal/proto_test/e.go"
+must_fail_with "fitness-operation O2 on Apply under a real internal/proto_test directory" 'internal/proto_test/e.go:11: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+rm -rf "$opt/internal/proto_test"
+# A //line directive must not make a non-test file pass for a _test.go (the real filename decides every allowance).
+mkdir -p "$opt/internal/compose/server"
+printf '//line zz_evil_test.go:1\npackage server\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(s client.Source) {\n\tcc, _ := s.Connector(context.Background())\n\t_, _ = cc.Apply(context.Background(), nil)\n}\n' >"$opt/internal/compose/server/zz_evil.go"
+must_fail_with "fitness-operation O2 on Apply in a non-test file carrying a //line zz_test.go directive" 'internal/compose/server/zz_evil.go:12: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+rm -rf "$opt/internal/compose"
 rm -rf "$opt/internal/directory"
 rm -rf "$opt/internal/modules"
 must_pass "fitness-operation O9 on the repository itself" "$opbin" -root "$root"

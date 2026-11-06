@@ -129,6 +129,11 @@ func (s *Session) SearchPages(ctx context.Context, req SearchRequest, page func(
 
 // pages runs the paged loop. The lock is held only for each round trip, never across deliver.
 func (s *Session) pages(ctx context.Context, base string, scope int, flt string, attrs []string, ps uint32, deliver func([]*Entry) error) error {
+	return s.pagesWith(ctx, base, scope, flt, attrs, ps, nil, deliver)
+}
+
+// pagesWith is pages with extra controls the named operation owns (never a caller's).
+func (s *Session) pagesWith(ctx context.Context, base string, scope int, flt string, attrs []string, ps uint32, extra []ldap.Control, deliver func([]*Entry) error) error {
 	// one round trip under the lock
 	trip := func(c []byte, size uint32) (*ldap.SearchResult, error) {
 		s.mu.Lock()
@@ -140,7 +145,7 @@ func (s *Session) pages(ctx context.Context, base string, scope int, flt string,
 		defer stop()
 		p := ldap.NewControlPaging(size)
 		p.SetCookie(c)
-		return s.searchOnceLocked(ctx, base, scope, flt, attrs, []ldap.Control{p})
+		return s.searchOnceLocked(ctx, base, scope, flt, attrs, append([]ldap.Control{p}, extra...))
 	}
 	// abandon tells the DC to drop a paging cursor: the same request with page size 0 and the cookie.
 	abandon := func(c []byte) {
