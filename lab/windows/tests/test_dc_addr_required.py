@@ -30,7 +30,12 @@ class DcAddrRequired(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k != "WIN_LAB_DC_ADDR"}
         env.update(WIN_LAB_ENV=str(envf), PYTHONPATH=str(d), DIQ_DC1_LOCK_DIR=str(d / "lock"))
         env.update(extra_env or {})
-        args = ["now"] if name == "dc1-evidence" else ["--log", str(d / "x.log"), "prepare"]
+        if name == "dc1-evidence":
+            args = ["now"]
+        elif name == "agent-unenrolled-verify":
+            args = ["--log", str(d / "x.log")]  # no subcommand; the address gate runs right after parse_args
+        else:
+            args = ["--log", str(d / "x.log"), "prepare"]
         r = subprocess.run([sys.executable, str(LAB / "bin" / name), *args],
                            env=env, capture_output=True, text=True, timeout=60)
         return r, marker, d
