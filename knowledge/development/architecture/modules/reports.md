@@ -1103,7 +1103,7 @@ in memory** rather than filter through inventory.
   index. Purged objects have no keys; deleted and out-of-scope objects keep theirs and rank after live ones.
   Table `inventory_search_keys` (migration 0069): B-tree `(tenant_id, key_kind, key)`, RLS + FORCE; migration 0072
   (T-1335) adds `key_id` (identity, `UNIQUE (tenant_id, key_id)`, never leaves a statement) and drops the GIN.
-  Table `inventory_search_trigrams` (migration 0072, `-- write-class: system`): `(tenant_id, trgm, key_id)`,
+  Table `inventory_search_trigrams` (migration 0073, `-- write-class: system`): `(tenant_id, trgm, key_id)`,
   primary key in that order, RLS + FORCE, no UPDATE or TRUNCATE for the runtime role. It holds the `show_trgm`
   postings of the name (1) and sam (3) keys only (`searchkey.Kind.FuzzyEligible`), kept equal to the keys by
   `inventory_search_trigrams_sync()` through three statement-level triggers (AFTER INSERT, DELETE, UPDATE with

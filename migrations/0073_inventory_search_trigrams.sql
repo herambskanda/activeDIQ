@@ -1,4 +1,4 @@
--- 0072_inventory_search_trigrams: a tenant-led B-tree of trigram postings, so that the fuzzy probe of
+-- 0073_inventory_search_trigrams: a tenant-led B-tree of trigram postings, so that the fuzzy probe of
 -- universal search is index-usable under FORCE row security (T-1335, ADR-0011 revision 3, rule 5a).
 --
 --  * Why: pg_trgm's %, <% and %> are not leakproof, so under FORCE RLS the planner never uses a trigram

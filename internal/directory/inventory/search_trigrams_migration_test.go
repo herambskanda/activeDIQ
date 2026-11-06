@@ -34,12 +34,12 @@ func migrationsFS(t *testing.T, keep func(name string) bool) fs.FS {
 	return m
 }
 
-// AC1: migration 0072 over a populated database. Two tenants with name, sam and other-kind keys exist before
+// AC1: migration 0073 over a populated database. Two tenants with name, sam and other-kind keys exist before
 // the migration; afterwards the postings equal what show_trgm gives over the name and sam keys (non-zero),
 // the structure is as the ADR says, and the privileges are the runtime role's.
-func Test_migration_0072_builds_the_postings_over_a_populated_database(t *testing.T) {
+func Test_migration_0073_builds_the_postings_over_a_populated_database(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		const mig = "0072_inventory_search_trigrams.sql"
+		const mig = "0073_inventory_search_trigrams.sql"
 		e := setupFS(t, s, migrationsFS(t, func(n string) bool { return n < mig }))
 		e.hStructure(t, e.adA)
 		if _, err := e.populate(t, e.adA, hBase, sSrchUser(1, "praman", "Priya Raman"), sSrchUser(2, "jdoe", "Jóhn Döe")); err != nil {
@@ -61,7 +61,7 @@ func Test_migration_0072_builds_the_postings_over_a_populated_database(t *testin
 		if n := e.count(t, `SELECT count(*) FROM public.inventory_search_keys WHERE key_kind NOT IN (1, 3)`); n == 0 {
 			t.Fatal("no other-kind keys before the migration")
 		}
-		// 0072 as the migration owner (no superuser, no CREATEROLE), with its "-- after:" statement.
+		//  0073 as the migration owner (no superuser, no CREATEROLE), with its "-- after:" statement.
 		if err := e.d.Apply(context.Background(), migrationsFS(t, func(n string) bool { return n == mig })); err != nil {
 			t.Fatal(err)
 		}
