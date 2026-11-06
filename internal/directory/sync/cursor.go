@@ -116,7 +116,7 @@ func (e *TransitionError) Error() string {
 func (e *TransitionError) Is(target error) bool { return target == ErrIllegalTransition }
 
 var (
-	guidText     = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	guidTextRE   = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	graphPartRe  = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 	nilGUID      = "00000000-0000-0000-0000-000000000000"
 	errBadCookie = fmt.Errorf("%w: cookie must be 1..%d bytes", ErrInvalid, maxCookieBytes)
@@ -129,7 +129,7 @@ type Partition string
 // NCPartition is the partition of an AD naming context. The GUID is the canonical lower-case text form.
 func NCPartition(guid string) (Partition, error) {
 	g := strings.ToLower(guid)
-	if !guidText.MatchString(g) || g == nilGUID {
+	if !guidTextRE.MatchString(g) || g == nilGUID {
 		return "", fmt.Errorf("%w: a naming context partition is its objectGUID", ErrInvalid)
 	}
 	return Partition(g), nil
@@ -145,7 +145,7 @@ func GraphPartition(resource string) (Partition, error) {
 
 func (p Partition) valid() bool {
 	s := string(p)
-	if guidText.MatchString(s) {
+	if guidTextRE.MatchString(s) {
 		return s != nilGUID
 	}
 	return len(s) <= maxGraphPartitionLength && graphPartRe.MatchString(s)
@@ -159,7 +159,7 @@ type Key struct {
 
 func (k Key) validate() error {
 	c := string(k.Connection)
-	if !guidText.MatchString(c) || c == nilGUID || !k.Partition.valid() {
+	if !guidTextRE.MatchString(c) || c == nilGUID || !k.Partition.valid() {
 		return fmt.Errorf("%w: key", ErrInvalid)
 	}
 	return nil
@@ -489,6 +489,32 @@ func (Store) CompleteFull(ctx context.Context, tx store.Tx, k Key, l jobs.Lease,
 		RETURNING `+cursorColumns, string(k.Connection), string(k.Partition), l.Token, movesTo(StateIncremental), f.Cookie.Bytes(), dsa, f.At.UTC()))
 }
 
+// CompleteScan records that a full read of the partition by a scoped search (no change feed) finished: an
+// initial_sync or resync_required cursor moves to incremental with last_full_sync_at at the read's start, and
+// an incremental one keeps its state and cookie and only moves last_full_sync_at forward. It writes no
+// cookie, because an AD initial state is a ScopedSearch and not a DirSync read (connector contract §6.1): the
+// change-feed ticket primes the cookie, so an incremental cursor with no cookie (Position's Cookie.IsZero)
+// means "no feed position yet", never "feed caught up". A paused cursor is ErrIllegalTransition. Call it in
+// the transaction that stores the last batch of the read's inventory rows (DM-19.I1).
+func (Store) CompleteScan(ctx context.Context, tx store.Tx, k Key, l jobs.Lease, at time.Time) (Cursor, error) {
+	if err := k.checkLease(l); err != nil {
+		return Cursor{}, err
+	}
+	if err := notFuture(ctx, tx, at); err != nil {
+		return Cursor{}, err
+	}
+	if err := requireTenant(ctx, tx); err != nil {
+		return Cursor{}, err
+	}
+	return written(ctx, tx, k, l.Token, StateIncremental, tx.QueryRow(ctx, `UPDATE public.sync_cursors SET state = 'incremental',
+		last_full_sync_at = GREATEST(last_full_sync_at, $5::timestamptz),
+		state_changed_at = CASE WHEN state = 'incremental' THEN state_changed_at ELSE now() END,
+		lease_fencing_token = $3, updated_at = now()
+		WHERE `+keyMatch+` AND lease_fencing_token <= $3 AND state = ANY($4)
+		RETURNING `+cursorColumns, string(k.Connection), string(k.Partition), l.Token,
+		[]string{string(StateInitialSync), string(StateResyncRequired), string(StateIncremental)}, at.UTC()))
+}
+
 // RequireResync records that the cookie is unusable (DM-19.I3: invalid or expired; I4: issued by another
 // DC; a Graph delta token that expired) and drops it, so the next cycle starts from a full sync. It is
 // idempotent on a cursor that already requires a resync. An initial_sync or paused cursor is
@@ -557,7 +583,7 @@ func (Store) ResumeConnection(ctx context.Context, tx store.Tx, c inventory.Conn
 }
 
 func checkConnection(ctx context.Context, tx store.Tx, c inventory.ConnectionID) error {
-	if s := string(c); !guidText.MatchString(s) || s == nilGUID {
+	if s := string(c); !guidTextRE.MatchString(s) || s == nilGUID {
 		return fmt.Errorf("%w: connection", ErrInvalid)
 	}
 	return requireTenant(ctx, tx)
@@ -584,7 +610,7 @@ func (Store) Get(ctx context.Context, tx store.Tx, k Key) (Cursor, error) {
 
 // List returns the cursors of one connection ordered by partition. It never carries a cookie.
 func (Store) List(ctx context.Context, tx store.Tx, c inventory.ConnectionID) ([]Cursor, error) {
-	if s := string(c); !guidText.MatchString(s) || s == nilGUID {
+	if s := string(c); !guidTextRE.MatchString(s) || s == nilGUID {
 		return nil, fmt.Errorf("%w: connection", ErrInvalid)
 	}
 	if err := requireTenant(ctx, tx); err != nil {
@@ -615,7 +641,7 @@ func optGUID(s string) (*string, error) {
 		return nil, nil
 	}
 	g := strings.ToLower(s)
-	if !guidText.MatchString(g) || g == nilGUID {
+	if !guidTextRE.MatchString(g) || g == nilGUID {
 		return nil, fmt.Errorf("%w: issuing DSA GUID", ErrInvalid)
 	}
 	return &g, nil

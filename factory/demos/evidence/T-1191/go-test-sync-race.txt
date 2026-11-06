@@ -1,0 +1,125 @@
+=== RUN   TestCompleteScan
+=== RUN   TestCompleteScan/pg16
+=== RUN   TestCompleteScan/pg18
+--- PASS: TestCompleteScan (8.24s)
+    --- PASS: TestCompleteScan/pg16 (4.87s)
+    --- PASS: TestCompleteScan/pg18 (3.37s)
+=== RUN   TestFullCycleMemoryIsBounded
+    engine_mem_test.go:126:   10000 objects: peak heap growth 1.4 MiB, 21 batches, largest 500, 1 pass
+    engine_mem_test.go:126:  100000 objects: peak heap growth 5.8 MiB, 201 batches, largest 500, 1 pass
+--- PASS: TestFullCycleMemoryIsBounded (12.00s)
+=== RUN   TestFullCycleStoresTheWholeForest
+=== RUN   TestFullCycleStoresTheWholeForest/pg16
+=== RUN   TestFullCycleStoresTheWholeForest/pg18
+--- PASS: TestFullCycleStoresTheWholeForest (20.51s)
+    --- PASS: TestFullCycleStoresTheWholeForest/pg16 (11.48s)
+    --- PASS: TestFullCycleStoresTheWholeForest/pg18 (9.03s)
+=== RUN   TestFullCycleIsIdempotent
+=== RUN   TestFullCycleIsIdempotent/pg16
+=== RUN   TestFullCycleIsIdempotent/pg18
+--- PASS: TestFullCycleIsIdempotent (34.38s)
+    --- PASS: TestFullCycleIsIdempotent/pg16 (18.56s)
+    --- PASS: TestFullCycleIsIdempotent/pg18 (15.81s)
+=== RUN   TestFullCycleSurvivesACutOffStream
+=== RUN   TestFullCycleSurvivesACutOffStream/cut
+=== RUN   TestFullCycleSurvivesACutOffStream/cut/pg16
+=== RUN   TestFullCycleSurvivesACutOffStream/cut/pg18
+=== RUN   TestFullCycleSurvivesACutOffStream/err
+=== RUN   TestFullCycleSurvivesACutOffStream/err/pg16
+=== RUN   TestFullCycleSurvivesACutOffStream/err/pg18
+--- PASS: TestFullCycleSurvivesACutOffStream (55.83s)
+    --- PASS: TestFullCycleSurvivesACutOffStream/cut (26.31s)
+        --- PASS: TestFullCycleSurvivesACutOffStream/cut/pg16 (16.26s)
+        --- PASS: TestFullCycleSurvivesACutOffStream/cut/pg18 (10.05s)
+    --- PASS: TestFullCycleSurvivesACutOffStream/err (29.52s)
+        --- PASS: TestFullCycleSurvivesACutOffStream/err/pg16 (15.97s)
+        --- PASS: TestFullCycleSurvivesACutOffStream/err/pg18 (13.54s)
+=== RUN   TestFullCycleRefusesBeforeReading
+=== RUN   TestFullCycleRefusesBeforeReading/pg16
+=== RUN   TestFullCycleRefusesBeforeReading/pg16/draft
+=== RUN   TestFullCycleRefusesBeforeReading/pg16/suspended
+=== RUN   TestFullCycleRefusesBeforeReading/pg16/not_AD
+=== RUN   TestFullCycleRefusesBeforeReading/pg18
+=== RUN   TestFullCycleRefusesBeforeReading/pg18/draft
+=== RUN   TestFullCycleRefusesBeforeReading/pg18/suspended
+=== RUN   TestFullCycleRefusesBeforeReading/pg18/not_AD
+--- PASS: TestFullCycleRefusesBeforeReading (2.37s)
+    --- PASS: TestFullCycleRefusesBeforeReading/pg16 (1.63s)
+        --- PASS: TestFullCycleRefusesBeforeReading/pg16/draft (0.06s)
+        --- PASS: TestFullCycleRefusesBeforeReading/pg16/suspended (0.02s)
+        --- PASS: TestFullCycleRefusesBeforeReading/pg16/not_AD (0.02s)
+    --- PASS: TestFullCycleRefusesBeforeReading/pg18 (0.75s)
+        --- PASS: TestFullCycleRefusesBeforeReading/pg18/draft (0.05s)
+        --- PASS: TestFullCycleRefusesBeforeReading/pg18/suspended (0.03s)
+        --- PASS: TestFullCycleRefusesBeforeReading/pg18/not_AD (0.01s)
+=== RUN   TestFullCycleRefusesAStaleLease
+=== RUN   TestFullCycleRefusesAStaleLease/pg16
+=== RUN   TestFullCycleRefusesAStaleLease/pg18
+--- PASS: TestFullCycleRefusesAStaleLease (1.93s)
+    --- PASS: TestFullCycleRefusesAStaleLease/pg16 (1.26s)
+    --- PASS: TestFullCycleRefusesAStaleLease/pg18 (0.67s)
+=== RUN   TestFullCycleReadsOnlyManagedDomains
+=== RUN   TestFullCycleReadsOnlyManagedDomains/pg16
+=== RUN   TestFullCycleReadsOnlyManagedDomains/pg18
+=== RUN   TestFullCycleReadsOnlyManagedDomains/configuration_and_schema
+=== RUN   TestFullCycleReadsOnlyManagedDomains/configuration_and_schema/pg16
+=== RUN   TestFullCycleReadsOnlyManagedDomains/configuration_and_schema/pg18
+--- PASS: TestFullCycleReadsOnlyManagedDomains (14.62s)
+    --- PASS: TestFullCycleReadsOnlyManagedDomains/pg16 (6.93s)
+    --- PASS: TestFullCycleReadsOnlyManagedDomains/pg18 (5.42s)
+    --- PASS: TestFullCycleReadsOnlyManagedDomains/configuration_and_schema (2.28s)
+        --- PASS: TestFullCycleReadsOnlyManagedDomains/configuration_and_schema/pg16 (1.58s)
+        --- PASS: TestFullCycleReadsOnlyManagedDomains/configuration_and_schema/pg18 (0.70s)
+=== RUN   TestFullCycleSkipsMalformedEntries
+=== RUN   TestFullCycleSkipsMalformedEntries/pg16
+=== RUN   TestFullCycleSkipsMalformedEntries/pg18
+--- PASS: TestFullCycleSkipsMalformedEntries (7.60s)
+    --- PASS: TestFullCycleSkipsMalformedEntries/pg16 (4.68s)
+    --- PASS: TestFullCycleSkipsMalformedEntries/pg18 (2.92s)
+=== RUN   TestFullCycleHonoursTheSearchLimits
+=== RUN   TestFullCycleHonoursTheSearchLimits/pg16
+=== RUN   TestFullCycleHonoursTheSearchLimits/pg18
+--- PASS: TestFullCycleHonoursTheSearchLimits (20.23s)
+    --- PASS: TestFullCycleHonoursTheSearchLimits/pg16 (12.40s)
+    --- PASS: TestFullCycleHonoursTheSearchLimits/pg18 (7.83s)
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended_and_paused
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended_and_paused/pg16
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended_and_paused/pg18
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended,_cursors_not_paused
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended,_cursors_not_paused/pg16
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended,_cursors_not_paused/pg18
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/decommissioning
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/decommissioning/pg16
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/decommissioning/pg18
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/cursors_paused_only
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/cursors_paused_only/pg16
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/cursors_paused_only/pg18
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended_during_the_pre-scan
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended_during_the_pre-scan/pg16
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended_during_the_pre-scan/pg18
+--- PASS: TestFullCycleStopsWhenSuspendedMidRead (35.22s)
+    --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended_and_paused (7.63s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended_and_paused/pg16 (4.66s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended_and_paused/pg18 (2.97s)
+    --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended,_cursors_not_paused (7.44s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended,_cursors_not_paused/pg16 (4.38s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended,_cursors_not_paused/pg18 (3.05s)
+    --- PASS: TestFullCycleStopsWhenSuspendedMidRead/decommissioning (7.77s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/decommissioning/pg16 (4.37s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/decommissioning/pg18 (3.40s)
+    --- PASS: TestFullCycleStopsWhenSuspendedMidRead/cursors_paused_only (9.63s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/cursors_paused_only/pg16 (5.59s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/cursors_paused_only/pg18 (4.03s)
+    --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended_during_the_pre-scan (2.75s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended_during_the_pre-scan/pg16 (1.69s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended_during_the_pre-scan/pg18 (1.06s)
+=== RUN   TestFullCycleLogsOnlyAFixedClass
+=== RUN   TestFullCycleLogsOnlyAFixedClass/pg16
+=== RUN   TestFullCycleLogsOnlyAFixedClass/pg18
+--- PASS: TestFullCycleLogsOnlyAFixedClass (3.01s)
+    --- PASS: TestFullCycleLogsOnlyAFixedClass/pg16 (2.10s)
+    --- PASS: TestFullCycleLogsOnlyAFixedClass/pg18 (0.91s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/directory/sync	219.716s
+EXIT=0
