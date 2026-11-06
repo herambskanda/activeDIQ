@@ -8,6 +8,7 @@ help:
 
 include lab/lab.mk
 include lab/windows/lab.mk
+include lab/proxmox/proxmox.mk
 include tools/ci/ci.mk
 include tools/gen/api/api.mk
 include tools/secrets/secrets.mk

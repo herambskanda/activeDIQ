@@ -280,7 +280,7 @@ func exchange(ctx context.Context, creds credentials.TransportCredentials, addr,
 func TestEnrollEndToEndThenRevocationKillsTheStream(t *testing.T) {
 	r := start(t)
 	mat := dial.Material{Address: r.addr, Token: "tok", Pin: fleetsql.PinOf(r.srvCA.cert)}
-	st, err := dial.Enroll(ctx5(t), mat, filepath.Join(t.TempDir(), "state"), exchange)
+	st, err := dial.Enroll(ctx5(t), mat, filepath.Join(tempParent(t), "state"), exchange)
 	if err != nil {
 		t.Fatalf("enrol with the right pin: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestComponentRefusesUnpinnedServers(t *testing.T) {
 	imposter := start(t)
 
 	// The imposter has a certificate chain that verifies against its own CA but not the pin.
-	dir := filepath.Join(t.TempDir(), "state")
+	dir := filepath.Join(tempParent(t), "state")
 	mat := dial.Material{Address: imposter.addr, Token: "secret-token", Pin: fleetsql.PinOf(good.srvCA.cert)}
 	_, err := dial.Enroll(ctx5(t), mat, dir, exchange)
 	if !errors.Is(err, dial.ErrUntrustedServer) {
@@ -407,7 +407,7 @@ func TestComponentRefusesUnpinnedServers(t *testing.T) {
 	}
 
 	// After enrolment the connector dials out only to the installation CA's servers.
-	st, err := dial.Enroll(ctx5(t), dial.Material{Address: good.addr, Token: "tok", Pin: fleetsql.PinOf(good.srvCA.cert)}, filepath.Join(t.TempDir(), "ok"), exchange)
+	st, err := dial.Enroll(ctx5(t), dial.Material{Address: good.addr, Token: "tok", Pin: fleetsql.PinOf(good.srvCA.cert)}, filepath.Join(tempParent(t), "ok"), exchange)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,4 +423,15 @@ func TestComponentRefusesUnpinnedServers(t *testing.T) {
 	if imposter.srv.tunnel.Load() != 0 {
 		t.Fatal("a handler of an unpinned server ran")
 	}
+}
+
+// tempParent is a test directory the state-directory parent check accepts whatever the umask of the
+// run (a umask of 002 makes t.TempDir's subdirectories group-writable).
+func tempParent(t *testing.T) string {
+	t.Helper()
+	p := t.TempDir()
+	if err := os.Chmod(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return p
 }

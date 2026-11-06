@@ -1,0 +1,6 @@
+svc-activediq direct member of: (only the primary group)
+  Domain Admins (S-1-5-21-3048684280-3061665338-2348266937-512): not a member (recursive)
+  Schema Admins (S-1-5-21-3048684280-3061665338-2348266937-518): not a member (recursive)
+  Enterprise Admins (S-1-5-21-3048684280-3061665338-2348266937-519): not a member (recursive)
+  Administrators (S-1-5-32-544): not a member (recursive)
+dc1-evidence: ok

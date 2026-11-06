@@ -27,6 +27,12 @@ func hooks(log *kernel.EventLog) agent.Hooks {
 		Version:        version,
 		HeldPrivileges: kernel.HeldPrivileges,
 		Confine:        kernel.Confine,
+		Burst:          kernel.Burst,
+		StateUnusable: func(e *agent.StateError) {
+			if log != nil {
+				log.StateUnusable(string(e.Class), e.Detail)
+			}
+		},
 		Applied: func(what string, seq uint64) {
 			if log != nil {
 				log.Applied(what, seq)
@@ -39,6 +45,7 @@ func run(cfg config.Config) int {
 	log, _ := kernel.OpenEventLog("activeDIQ Agent") // best effort: a missing source must not stop the agent
 	if log != nil {
 		defer log.Close()
+		kernel.SetCapReporter(log)
 	}
 	isSvc, err := svc.IsWindowsService()
 	if err == nil && isSvc {
@@ -67,7 +74,13 @@ func (h *handler) Execute(_ []string, req <-chan svc.ChangeRequest, st chan<- sv
 	st <- svc.Status{State: svc.StartPending}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- agent.RunWith(ctx, h.cfg, hooks(h.log)) }()
+	go func() {
+		done <- agent.RunServing(ctx, h.cfg, hooks(h.log), agent.WaitInterval, func() {
+			if h.log != nil {
+				h.log.NotEnrolled()
+			}
+		})
+	}()
 	st <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 	for {
 		select {

@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Evidence for the live user-search run on the lab DC dc1 (T-0765). Read-only over WinRM.
+
+  dc1-evidence now                 print dc1's own UTC clock (dc1's clock is not the host's; take run windows from it)
+  dc1-evidence events SINCE        list Directory Service events 2887/3039/3074 (judged) and 2889/3040/3041/3075 (recorded)
+                                   logged since SINCE (a dc1 instant from `now`). Exit 3 if any judged event is present.
+  dc1-evidence svc                 show the service account's direct groups and whether it is, through nesting, in Domain Admins,
+                                   Enterprise Admins, Schema Admins or Administrators. Exit 3 if it is.
+
+Wrap every call in the shared lock:  lab/windows/bin/with-dc1-lock lab/windows/bin/dc1-evidence now
+Lab DC only (A-0025). Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV and are never printed.
+"""
+import os, sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import dc1evidence as ev, dc1winrm
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] not in ("now", "events", "svc") or (argv[1] == "events") != (len(argv) == 3):
+        sys.exit(__doc__)
+    env, _, addr = dc1winrm.load_env("dc1-evidence")
+    ps = dc1winrm.make_ps(env, addr)
+    if argv[1] == "now":
+        rc, out = ps(ev.NOW_PS)
+        print(out.strip())
+        sys.exit(0 if rc == 0 and ev.ISO.match(out.strip()) else 2)
+    if argv[1] == "events":
+        try:
+            rc, out = ps(ev.events_ps(argv[2]))
+            counts = ev.parse_events(out)
+        except ValueError as e:
+            sys.exit(f"dc1-evidence: {e}")
+        for i in ev.FAIL_EVENT_IDS + ev.INFO_EVENT_IDS:
+            print(f"event {i}: {counts.get(i, 0)}" + ("" if i in ev.FAIL_EVENT_IDS else "  (recorded, not judged)"))
+        bad = ev.event_problems(counts)
+    else:
+        try:
+            rc, out = ps(ev.groups_ps())
+            member_of, priv = ev.parse_groups(out)
+        except ValueError as e:
+            sys.exit(f"dc1-evidence: {e}")
+        print(f"{ev.SVC_SAM} direct member of: {', '.join(m.split(',')[0] for m in member_of) or '(only the primary group)'}")
+        for n, sid, hit in priv:
+            print(f"  {n} ({sid}): {'MEMBER' if hit else 'not a member (recursive)'}")
+        bad = ev.group_problems(priv)
+    if bad:
+        print("dc1-evidence: FAIL: " + "; ".join(bad), file=sys.stderr)
+        sys.exit(3)
+    print("dc1-evidence: ok")
+
+
+if __name__ == "__main__":
+    main(sys.argv)

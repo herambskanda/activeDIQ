@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -522,6 +523,197 @@ func TestWithTenantSeparateCommitsBesideRolledBackOuter(t *testing.T) {
 		}
 		if got != "1500ms" && got != "1.5s" {
 			t.Fatalf("lock_timeout = %q", got)
+		}
+	})
+}
+
+// TestIsTxControlMatchesPostgres pins the transaction-control guard to the real PostgreSQL lexer: each
+// corpus string goes to a server by the simple protocol inside an open transaction, with
+// standard_conforming_strings on and off, and whenever PostgreSQL left the transaction IsTxControl must
+// have said so. The hand-written scanner drifted from scan.l three times; this is what stops a fourth.
+func TestIsTxControlMatchesPostgres(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		ctx := context.Background()
+		db := s.NewDatabase(t)
+		conn, err := db.App(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close(ctx)
+		pg := conn.PgConn()
+		simple := func(sql string) error {
+			_, err := pg.Exec(ctx, sql).ReadAll() // Exec is the simple query protocol: the whole text, unparsed by pgx
+			return err
+		}
+		ended := 0
+		for sql, want := range txControlCases {
+			for _, scs := range []string{"on", "off"} {
+				if err := simple("SET standard_conforming_strings = " + scs); err != nil {
+					t.Fatal(err)
+				}
+				if err := simple("BEGIN"); err != nil {
+					t.Fatal(err)
+				}
+				_ = simple(sql) // a syntax error is an expected outcome for many corpus strings
+				left := pg.TxStatus() == 'I'
+				if pg.TxStatus() != 'I' {
+					_ = simple("ROLLBACK")
+				}
+				if left {
+					ended++
+					if !IsTxControl(sql) {
+						t.Errorf("PostgreSQL left the transaction (standard_conforming_strings=%s) but IsTxControl(%q) = false", scs, sql)
+					}
+				}
+				if want && !IsTxControl(sql) {
+					t.Errorf("IsTxControl(%q) = false; the corpus says true", sql)
+				}
+			}
+		}
+		if ended == 0 {
+			t.Fatal("no corpus string ended the transaction on PostgreSQL: the probe is not working")
+		}
+	})
+}
+
+// TestGuardRefusesNonUTF8ClientEncoding: the scanner reads UTF-8, so a body that switches the session to
+// a client-only multibyte encoding (where 0x5C can be a trail byte) must have every later statement
+// refused, or `SELECT E'<lead>\\' ; COMMIT; --'` would close the literal early in PostgreSQL's eyes and
+// commit around the audit hook. The row inserted before the switch must not survive.
+func TestGuardRefusesNonUTF8ClientEncoding(t *testing.T) {
+	cases := []struct{ name, set, payload string }{
+		{"SJIS SET LOCAL", `SET LOCAL client_encoding = 'SJIS'`, "SELECT E'\x95\\' ; COMMIT; --'"},
+		{"BIG5 set_config", `SELECT set_config('client_encoding', 'BIG5', true)`, "SELECT E'\xa4\\' ; COMMIT; --'"},
+	}
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s, Config{})
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				ctx := context.Background()
+				id := "00000000-0000-0000-0000-" + fmt.Sprintf("%012d", len(c.name))
+				var got error
+				err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx Tx) error {
+					if _, err := tx.Exec(ctx, `INSERT INTO public.items (tenant_id, id, label) VALUES ($1, $2, 'x')`, e.a.String(), id); err != nil {
+						return err
+					}
+					if _, err := tx.Exec(ctx, c.set); err != nil {
+						return err
+					}
+					for _, call := range []func() error{
+						func() error { _, err := tx.Exec(ctx, c.payload); return err },
+						func() error {
+							rows, err := tx.Query(ctx, c.payload)
+							if err == nil {
+								rows.Close()
+							}
+							return err
+						},
+						func() error { var x int; return tx.QueryRow(ctx, c.payload).Scan(&x) },
+					} {
+						if err := call(); !errors.Is(err, ErrClientEncoding) || !errors.Is(err, ErrTxControl) {
+							return fmt.Errorf("payload under a non-UTF8 encoding = %v; want ErrClientEncoding", err)
+						}
+					}
+					got = ErrClientEncoding
+					return errors.New("body done")
+				})
+				if err == nil || got == nil {
+					t.Fatalf("body did not reach the payload checks: %v", err)
+				}
+				if err.Error() != "body done" {
+					t.Fatal(err)
+				}
+				var n int
+				if err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx Tx) error {
+					return tx.QueryRow(ctx, `SELECT count(*) FROM public.items WHERE id = $1`, id).Scan(&n)
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if n != 0 {
+					t.Fatalf("%d rows survived a body that ended in error: the payload committed", n)
+				}
+			})
+		}
+	})
+}
+
+// TestGuardDecisionMatchesPostgres asserts the full guard decision (encoding check plus IsTxControl)
+// through a real tenant transaction for every corpus string: under UTF8 the statement is refused with
+// ErrTxControl exactly when IsTxControl says so, and under SJIS every one is refused with ErrClientEncoding.
+func TestGuardDecisionMatchesPostgres(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s, Config{})
+		ctx := context.Background()
+		for sql := range txControlCases {
+			for _, enc := range []string{"UTF8", "SJIS"} {
+				stop := errors.New("stop")
+				var got error
+				err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx Tx) error {
+					if enc != "UTF8" {
+						if _, err := tx.Exec(ctx, "SET LOCAL client_encoding = '"+enc+"'"); err != nil {
+							return err
+						}
+					}
+					_, got = tx.Exec(ctx, sql)
+					return stop
+				})
+				if !errors.Is(err, stop) {
+					t.Fatalf("%s %q: body = %v", enc, sql, err)
+				}
+				switch {
+				case enc != "UTF8":
+					if !errors.Is(got, ErrClientEncoding) {
+						t.Errorf("%s %q: err = %v; want ErrClientEncoding", enc, sql, got)
+					}
+				case IsTxControl(sql):
+					if !errors.Is(got, ErrTxControl) || errors.Is(got, ErrClientEncoding) {
+						t.Errorf("%s %q: err = %v; want ErrTxControl", enc, sql, got)
+					}
+				default:
+					if errors.Is(got, ErrTxControl) {
+						t.Errorf("%s %q: refused although IsTxControl is false", enc, sql)
+					}
+				}
+			}
+		}
+	})
+}
+
+// A backend that has not yet run a pg_trgm operator does not know pg_trgm.word_similarity_threshold.
+// SetTrigramThreshold must still work on it (T-1096 QA: every search 500ed on a fresh pool) and must
+// put the value back afterwards. MaxConns 1 makes the pool hand out one brand-new backend.
+func TestSetTrigramThresholdOnColdConnection(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s, Config{MaxConns: 1})
+		ctx := context.Background()
+		// A separate pool opened after setup: no backend in it has used pg_trgm.
+		cfg := Config{DSN: e.d.AppDSN(), MaxConns: 1}
+		cold, err := Open(ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(cold.Close)
+		var during, after string
+		var similar bool
+		err = cold.WithTenant(ctx, e.a, func(ctx context.Context, tx Tx) error {
+			restore, err := SetTrigramThreshold(ctx, tx, 0.3)
+			if err != nil {
+				return err
+			}
+			if err := tx.QueryRow(ctx, `SELECT current_setting('pg_trgm.word_similarity_threshold'), 'pryia' <% 'priya ramn'`).Scan(&during, &similar); err != nil {
+				return err
+			}
+			restore()
+			return tx.QueryRow(ctx, `SELECT current_setting('pg_trgm.word_similarity_threshold')`).Scan(&after)
+		})
+		if err != nil {
+			t.Fatalf("SetTrigramThreshold on a cold connection: %v", err)
+		}
+		if during != "0.3" || !similar {
+			t.Fatalf("during = %q, similar = %v; want 0.3, true", during, similar)
+		}
+		if after != "0.6" {
+			t.Fatalf("after restore = %q; want pg_trgm's default 0.6", after)
 		}
 	})
 }

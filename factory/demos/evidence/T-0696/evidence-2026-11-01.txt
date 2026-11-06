@@ -1,0 +1,33 @@
+# targeted: TestOnlyPermittedFilesImportTenantref with main's callers_test.go
+--- FAIL: TestOnlyPermittedFilesImportTenantref (0.09s)
+    callers_test.go:106: files import tenantref without being permitted (add with security review): [internal/modules/reports/handlers.go]
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/platform/authn/tenantref	0.099s
+FAIL
+
+# same test with the branch's callers_test.go
+=== RUN   TestOnlyPermittedFilesImportTenantref
+--- PASS: TestOnlyPermittedFilesImportTenantref (0.04s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/platform/authn/tenantref	0.048s
+
+# factory premerge T-0696 -- go test -count=1 ./internal/platform/authn/tenantref/  (merge result on main 376c7eebc)
+PASS (green): go test -count=1 ./internal/platform/authn/tenantref/ passed on the merge result; migration numbering checked in 1.1 s
+log: /home/khushi/AD/activeDIQ/factory/state/premerge/T-0696-376c7eebc26e-1720623-66218b1e.log
+
+real	0m3.887s
+user	0m3.208s
+sys	0m1.500s
+
+# factory premerge T-0696 -- make secrets-scan
+PASS (ratchet): main is red (1 known findings); the merge result adds none (1 findings, all already on main); migration numbering checked in 1.3 s
+log: /home/khushi/AD/activeDIQ/factory/state/premerge/T-0696-376c7eebc26e-1722821-5f4c013d.log
+
+real	1m11.118s
+user	0m54.305s
+sys	0m32.483s
+
+# node --test factory/test/*.test.mjs
+ℹ tests 276
+ℹ pass 276
+ℹ fail 0
