@@ -1,0 +1,317 @@
+#!/usr/bin/env python3
+"""One-time setup and revoke of the Proxmox lab pool token (T-1326, D-0022). The CEO runs this once.
+
+  PVE_HOST=<address> proxmox-lab-bootstrap bootstrap [--dry-run] [--rotate] [--vmid 119]
+                                                     [--storage S] [--iso-storage S] [--bridge B] [--port 8006]
+  PVE_HOST=<address> proxmox-lab-bootstrap revoke    [--dry-run]
+
+`make proxmox-lab-bootstrap PVE_HOST=<address>` and `make proxmox-lab-revoke PVE_HOST=<address>` call this.
+
+How it runs: this host opens ONE ssh session to root@PVE_HOST (ssh asks for the login on your terminal; it is
+never read by this script) and reuses it for every command through ssh connection sharing. Each remote
+command is an argv list quoted with shlex; every value is validated first. The token secret travels back
+over that ssh channel into a variable and straight into lab/.proxmox-lab.env (mode 0600, gitignored). It is
+never printed, never put in argv, a log or a note.
+
+bootstrap creates: pool adiq-lab holding the dc1 VM, role AdiqLabWorker (privileges in lib/pvelab.py),
+user adiq-lab@pve (no password), a privilege-separated token adiq-lab@pve!worker, and ACLs on exactly
+/pool/adiq-lab, /storage/<lab storage> and /sdn/zones/localnetwork/<dc1's bridge>. Then it pins the API
+certificate (fingerprint read over ssh and cross-checked against what the API serves) and runs
+`proxmox-lab verify-scope`. Re-running is safe. revoke removes the ACLs, token, user and roles and the
+local env file, and touches no VM and not the pool.
+"""
+import argparse, json, os, re, shlex, socket, ssl, subprocess, sys, tempfile, hashlib
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import pvelab as P
+from pvelab import LabError, remote
+
+SSH = os.environ.get("PROXMOX_LAB_SSH", "ssh")
+HERE = os.path.dirname(os.path.abspath(__file__))
+COMMENT = "activeDIQ lab worker (T-1326, D-0022)"
+
+
+class Remote:
+    """One shared ssh connection to root@host. dry_run prints instead of running."""
+
+    def __init__(self, host, dry_run):
+        self.host, self.dry = host, dry_run
+        self.dir = tempfile.mkdtemp(prefix="pvl", dir=os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+        os.chmod(self.dir, 0o700)
+        self.opts = [SSH, "-o", f"ControlPath={self.dir}/c", "-o", "ControlMaster=auto", "-o", "ControlPersist=300", "-l", "root"]
+        self.base = [*self.opts, "--", host]
+
+    def show(self, argv):
+        print(f"  ssh root@{self.host} -- {remote(*argv)}")
+
+    def run(self, argv):
+        """Run one remote argv; returns its stdout, which is kept in memory and never printed."""
+        if self.dry:
+            self.show(argv); return None
+        r = subprocess.run([*self.base, remote(*argv)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if r.returncode:
+            err = (r.stderr or "").strip().splitlines()[-3:]
+            raise LabError(f"remote command failed ({argv[0]} {' '.join(argv[1:3])}): {' | '.join(err)[:300]}")
+        return r.stdout
+
+    def get(self, path, **params):
+        argv = ["pvesh", "get", path, *[x for k, v in params.items() for x in (f"--{k}", v)], "--output-format", "json"]
+        out = self.run(argv)
+        return None if out is None else json.loads(out)
+
+    def close(self):
+        if not self.dry:
+            subprocess.run([*self.opts, "-O", "exit", "--", self.host],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            os.rmdir(self.dir)
+        except OSError:
+            pass
+
+
+def served_fingerprint(host, port):
+    """Read the certificate the API actually serves (no request is sent, so no secret can leak)."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname, ctx.verify_mode = False, ssl.CERT_NONE
+    with socket.create_connection((host.strip("[]"), port), timeout=15) as s, ctx.wrap_socket(s) as t:
+        return hashlib.sha256(t.getpeercert(binary_form=True)).hexdigest()
+
+
+def acl_plan(storage, iso_storage, bridge):
+    plan = [(f"/pool/{P.POOL}", P.ROLE), (f"/storage/{storage}", P.ROLE), (f"/sdn/zones/localnetwork/{bridge}", P.ROLE)]
+    if iso_storage != storage:
+        plan.append((f"/storage/{iso_storage}", P.ISO_ROLE))
+    return plan
+
+
+def acl_modify(path, role):
+    return ["pveum", "acl", "modify", path, "--roles", role, "--users", P.USER, "--tokens", P.TOKEN_ID, "--propagate", "1"]
+
+
+def acl_delete(path, role, typ):
+    return ["pveum", "acl", "delete", path, "--roles", role, "--users" if typ == "user" else "--tokens",
+            P.USER if typ == "user" else P.TOKEN_ID]
+
+
+def env_path():
+    return os.environ.get("PROXMOX_LAB_ENV") or os.path.join(P.repo_root(), "lab", P.ENV_NAME)
+
+
+def write_env(path, values):
+    d = os.path.dirname(path)
+    tmp = os.path.join(d, f".{P.ENV_NAME}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write("# Proxmox lab pool token (T-1326, D-0022). Mode 0600, gitignored. Generated by proxmox-lab-bootstrap.\n")
+            for k, v in values.items():
+                f.write(f"{k}={v}\n")
+            f.flush(); os.fsync(f.fileno())
+        os.chmod(tmp, 0o600); os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def storages_of(config):
+    out = []
+    for k, v in config.items():
+        if re.fullmatch(r"(scsi|sata|virtio|ide)[0-9]+|efidisk0|tpmstate0", k) and isinstance(v, str) and "media=cdrom" not in v and ":" in v:
+            s = v.split(":", 1)[0]
+            if s != "none" and s not in out:
+                out.append(s)
+    return out
+
+
+# ---- bootstrap ------------------------------------------------------------------------------------
+def bootstrap(a):
+    host = P.check(P.HOST_RE, os.environ.get("PVE_HOST", ""), "PVE_HOST (set PVE_HOST=<proxmox address>)")
+    vmid = P.vmid_of(a.vmid)
+    envf = env_path()
+    R = Remote(host, a.dry_run)
+    try:
+        print(f"== bootstrap: pool {P.POOL} on {host}{' (DRY RUN: nothing is executed)' if a.dry_run else ''}")
+        if a.dry_run:
+            node, storage, iso, bridge, fpr = ("<node of VM %d>" % vmid, a.storage or "<storage of VM %d's disks>" % vmid,
+                                               a.iso_storage or a.storage or "<storage of VM %d's disks>" % vmid,
+                                               a.bridge or "<bridge of VM %d net0>" % vmid, "<sha256 of the API certificate>")
+            print("-- discovery (read-only). A real run also gives the token read-only (Datastore.Audit) access to the one storage\n"
+                  "-- that holds ISO images, as role AdiqLabIso, when that is not the lab storage; pass --iso-storage to list it here")
+            R.run(["pveversion"])
+            R.get("/cluster/resources", type="vm")
+            R.get(f"/nodes/{node}/qemu/{vmid}/config")
+            R.get("/storage")
+            R.get(f"/nodes/{node}/certificates/info")
+        else:
+            m = re.match(r"pve-manager/([0-9]+)\.", R.run(["pveversion"]) or "")
+            if not m or int(m.group(1)) < 8:
+                raise LabError("Proxmox VE 8 or newer is required (SDN.Use on /sdn/zones/localnetwork)")
+            vm = [r for r in R.get("/cluster/resources", type="vm") if r.get("vmid") == vmid and r.get("type") == "qemu"]
+            if not vm:
+                raise LabError(f"VM {vmid} not found on {host}")
+            node = P.check(P.NAME_RE, vm[0]["node"], "node")
+            cfg = R.get(f"/nodes/{node}/qemu/{vmid}/config")
+            st = [a.storage] if a.storage else storages_of(cfg)
+            if len(st) != 1:
+                raise LabError(f"VM {vmid} uses storages {st or 'none'}; pass --storage to choose the one lab storage")
+            storage = P.check(P.NAME_RE, st[0], "storage")
+            iso = a.iso_storage
+            if not iso:
+                withiso = [s["storage"] for s in R.get("/storage") if "iso" in str(s.get("content", "")).split(",")]
+                iso = storage if storage in withiso else (withiso[0] if len(withiso) == 1 else storage)
+            P.check(P.NAME_RE, iso, "iso storage")
+            bridge = a.bridge
+            if not bridge:
+                m = re.search(r"bridge=([A-Za-z0-9_.-]+)", str(cfg.get("net0", "")))
+                if not m:
+                    raise LabError(f"cannot read VM {vmid}'s bridge from net0; pass --bridge")
+                bridge = m.group(1)
+            P.check(P.NAME_RE, bridge, "bridge")
+            certs = R.get(f"/nodes/{node}/certificates/info")
+            pick = {c.get("filename"): c for c in certs}
+            c = pick.get("pveproxy-ssl.pem") or pick.get("pve-ssl.pem")
+            if not c:
+                raise LabError("cannot find the API certificate on the node")
+            fpr = P.norm_fpr(c["fingerprint"])
+            live = served_fingerprint(host, a.port)
+            if live != fpr:
+                raise LabError(f"the API at {host}:{a.port} serves a certificate ({live[:16]}…) that is not the node's "
+                               f"({fpr[:16]}…) — wrong address, a proxy, or interception; nothing was changed")
+            print(f"discovered: node {node}, VM {vmid} on {storage} via {bridge}, ISO storage {iso}; "
+                  f"API certificate sha256 {fpr[:16]}… (matches what {host}:{a.port} serves)")
+            print("-- configuration")
+        plan = acl_plan(storage, iso, bridge)
+        pools = None if a.dry_run else {p["poolid"] for p in R.get("/pools")}
+        if pools is None or P.POOL not in pools:
+            R.run(["pveum", "pool", "add", P.POOL, "--comment", COMMENT])
+        R.run(["pveum", "pool", "modify", P.POOL, "--vms", str(vmid)])
+        roles = None if a.dry_run else {r["roleid"] for r in R.get("/access/roles")}
+        for role, privs in [(P.ROLE, P.WORKER_PRIVS)] + ([(P.ISO_ROLE, P.ISO_PRIVS)] if iso != storage else []):
+            R.run(["pveum", "role", "modify" if roles and role in roles else "add", role, "--privs", " ".join(privs)])
+        users = None if a.dry_run else {u["userid"] for u in R.get("/access/users")}
+        if users is None or P.USER not in users:
+            R.run(["pveum", "user", "add", P.USER, "--comment", COMMENT])
+        tokens = None if a.dry_run else {t["tokenid"] for t in (R.get(f"/access/users/{P.USER}/token") or [])}
+        keep = (not a.dry_run and not a.rotate and P.TOKEN_NAME in tokens and os.path.isfile(envf)
+                and _env_matches(envf, host, P.TOKEN_ID))
+        if keep:
+            print("token exists and the local env file matches: keeping it (use --rotate to replace)")
+        else:
+            if tokens is None or P.TOKEN_NAME in tokens:
+                if a.dry_run:
+                    print("  (the next command runs only if the token already exists)")
+                R.run(["pveum", "user", "token", "remove", P.USER, P.TOKEN_NAME])
+            out = R.run(["pveum", "user", "token", "add", P.USER, P.TOKEN_NAME, "--privsep", "1",
+                         "--comment", COMMENT, "--output-format", "json"])
+        for path, role in plan:
+            R.run(acl_modify(path, role))
+        if a.dry_run:
+            print("-- reconcile: delete any other ACL entry held by the user or the token (read: pvesh get /access/acl)")
+            R.get("/access/acl")
+            print(f"== then write {envf} (mode 0600): PVE_HOST PVE_PORT PVE_NODE PVE_TOKEN_ID PVE_TOKEN_SECRET "
+                  f"PVE_CERT_SHA256 PVE_POOL PVE_STORAGE PVE_ISO_STORAGE PVE_BRIDGE; the secret comes from the token-add "
+                  f"output and is not printed\n== then run: proxmox-lab verify-scope")
+            return 0
+        want = {(p, r) for p, r in plan}
+        for e in R.get("/access/acl"):
+            ug = e.get("ugid")
+            if ug in (P.USER, P.TOKEN_ID) and (e.get("path"), e.get("roleid")) not in want:
+                print(f"removing unexpected ACL {e.get('path')} {e.get('roleid')} for {ug}")
+                R.run(acl_delete(e["path"], e["roleid"], e["type"]))
+        values = {"PVE_HOST": host, "PVE_PORT": str(a.port), "PVE_NODE": node, "PVE_TOKEN_ID": P.TOKEN_ID,
+                  "PVE_TOKEN_SECRET": None, "PVE_CERT_SHA256": fpr, "PVE_POOL": P.POOL, "PVE_STORAGE": storage,
+                  "PVE_ISO_STORAGE": iso, "PVE_BRIDGE": bridge}
+        if keep:
+            values["PVE_TOKEN_SECRET"] = P.load_env(envf)["PVE_TOKEN_SECRET"]
+        else:
+            try:
+                values["PVE_TOKEN_SECRET"] = json.loads(out)["value"]
+            except (ValueError, KeyError, TypeError):
+                raise LabError("could not read the token from `pveum user token add` (its output is not shown)") from None
+            out = None
+        write_env(envf, values)
+        values = None
+        print(f"wrote {envf} (mode 0600, git-ignored); the token secret was not printed")
+    finally:
+        R.close()
+    r = subprocess.run([os.path.join(HERE, "proxmox-lab"), "verify-scope"], env=dict(os.environ, PROXMOX_LAB_ENV=envf))
+    if r.returncode:
+        print("bootstrap: verify-scope FAILED. The token is NOT safe to use; run `make proxmox-lab-revoke`.", file=sys.stderr)
+        return 1
+    print("== done. Workers use lab/proxmox/bin/proxmox-lab; `make proxmox-lab-revoke` removes everything this created.")
+    return 0
+
+
+def _env_matches(path, host, token_id):
+    try:
+        e = P.load_env(path)
+        return e["PVE_HOST"] == host and e["PVE_TOKEN_ID"] == token_id
+    except (LabError, OSError):
+        return False
+
+
+# ---- revoke ---------------------------------------------------------------------------------------
+def revoke(a):
+    host = P.check(P.HOST_RE, os.environ.get("PVE_HOST", ""), "PVE_HOST (set PVE_HOST=<proxmox address>)")
+    envf = env_path()
+    R = Remote(host, a.dry_run)
+    try:
+        print(f"== revoke on {host}{' (DRY RUN: nothing is executed)' if a.dry_run else ''}: removes the ACLs, token, user "
+              f"and roles; no VM is touched and the pool {P.POOL} and its members stay as they are")
+        if a.dry_run:
+            try:
+                e = P.load_env(envf)
+                plan = acl_plan(e["PVE_STORAGE"], e["PVE_ISO_STORAGE"], e["PVE_BRIDGE"])
+            except (LabError, OSError):
+                plan = acl_plan("<lab storage>", "<lab storage>", "<dc1 bridge>")
+            print("-- read: pvesh get /access/acl; then for every entry held by the user or the token, expected to be:")
+            R.get("/access/acl")
+            for path, role in plan:
+                R.run(acl_delete(path, role, "user")); R.run(acl_delete(path, role, "token"))
+            R.run(["pveum", "user", "token", "remove", P.USER, P.TOKEN_NAME])
+            R.run(["pveum", "user", "delete", P.USER])
+            R.run(["pveum", "role", "delete", P.ROLE]); R.run(["pveum", "role", "delete", P.ISO_ROLE])
+            print(f"-- then delete {envf}")
+            return 0
+        for e in R.get("/access/acl"):
+            if e.get("ugid") in (P.USER, P.TOKEN_ID):
+                R.run(acl_delete(e["path"], e["roleid"], e["type"]))
+                print(f"removed ACL {e['path']} {e['roleid']} for {e['ugid']}")
+        users = {u["userid"] for u in R.get("/access/users")}
+        if P.USER in users:
+            if P.TOKEN_NAME in {t["tokenid"] for t in (R.get(f"/access/users/{P.USER}/token") or [])}:
+                R.run(["pveum", "user", "token", "remove", P.USER, P.TOKEN_NAME]); print("removed token", P.TOKEN_ID)
+            R.run(["pveum", "user", "delete", P.USER]); print("removed user", P.USER)
+        roles = {r["roleid"] for r in R.get("/access/roles")}
+        for role in (P.ROLE, P.ISO_ROLE):
+            if role in roles:
+                R.run(["pveum", "role", "delete", role]); print("removed role", role)
+        left = [e for e in R.get("/access/acl") if e.get("ugid") in (P.USER, P.TOKEN_ID)]
+        if left or P.USER in {u["userid"] for u in R.get("/access/users")}:
+            raise LabError("revoke incomplete: the user or an ACL still exists on the node; check `pveum acl list`")
+    finally:
+        R.close()
+    if os.path.exists(envf):
+        os.unlink(envf); print("removed", envf)
+    print("== revoked. VMs and pool", P.POOL, "were not touched.")
+    return 0
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="proxmox-lab-bootstrap", description=__doc__.split("\n\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    b = sub.add_parser("bootstrap"); b.set_defaults(fn=bootstrap)
+    b.add_argument("--dry-run", action="store_true"); b.add_argument("--rotate", action="store_true")
+    b.add_argument("--vmid", default=str(P.DC1_VMID)); b.add_argument("--storage"); b.add_argument("--iso-storage")
+    b.add_argument("--bridge"); b.add_argument("--port", type=int, default=8006)
+    r = sub.add_parser("revoke"); r.set_defaults(fn=revoke); r.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args(argv)
+    try:
+        return a.fn(a)
+    except LabError as e:
+        print(f"proxmox-lab-bootstrap: {e}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
