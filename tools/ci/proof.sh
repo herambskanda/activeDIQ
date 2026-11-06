@@ -879,6 +879,7 @@ GO
 CREATE TABLE public.authz_roles (id int);
 CREATE TABLE public.inventory_search_keys (key text, key_kind int);
 CREATE INDEX k_trgm ON public.inventory_search_keys USING gin (key gin_trgm_ops);
+DROP INDEX public.k_trgm;
 DO $$ BEGIN RAISE EXCEPTION 'bad id % in authz_roles', 1; END $$;
 SQL
 }
