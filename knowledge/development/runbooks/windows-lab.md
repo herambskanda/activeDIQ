@@ -676,7 +676,7 @@ sign-in API, runs `web/e2e/live-user-search.spec.ts` and records dc1's side with
 Needs `WIN_LAB_ENV` and `WIN_LAB_CA` as absolute paths (the env and CA files are gitignored and live in the main checkout), docker, go, node with the
 Playwright browser, and `pip install pywinrm requests-ntlm`. The script refuses to run outside `with-dc1-lock`. First record: `windows-lab-runs/T-0765-live-boot-20261101.md`.
 
-## 19. Tunnel-failure events in the Application log (T-1277)
+## 21. Tunnel-failure events in the Application log (T-1277)
 
 `lab/windows/bin/agent-tunnel-events-verify --log knowledge/development/runbooks/windows-lab-runs/T-1277-tunnel-events-<date>.log [--window-wait]`
 (under `with-dc1-lock`; `WIN_LAB_ENV=<main checkout>/lab/windows/.win-lab.env`; ~20 min with `--window-wait`, ~5 min without). It builds and installs the MSI of this checkout, enrols against `enrol-stub`, kills the stub and checks: AC1 exactly one event 110 after 75 s of retries (and, with `--window-wait`, the next one after 15 min says `(N more since the last report)`); AC2 a restarted stub (new server CA) gives event 112; AC3 every 110-119 event renders (`wevtutil /f:text`, no "cannot be found") and none contains the stub address, port, token, pin, a PEM header or a JWT prefix (the same search finds them when planted); AC4 `Stop-Service` during the retry loop reaches Stopped, exit code 0, no SCM 7031/7034/7024/7023/7009/7000, no Application Error. dc1 is restored (before/after snapshot). First run 2026-11-06, commit 96ab0ae14: 0 failures; log in `windows-lab-runs/`.
