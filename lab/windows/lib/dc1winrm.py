@@ -8,6 +8,8 @@ except ImportError:
     Protocol = None
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from labaddr import require_dc_addr  # noqa: E402  (T-1279: no default DC address)
 
 
 def load_env(tool):
@@ -18,12 +20,14 @@ def load_env(tool):
     if not os.path.exists(path):
         sys.exit(f"{tool}: lab env file not found: {path} (set WIN_LAB_ENV)")
     env = {}
-    for line in open(path):
+    with open(path) as f:
+        lines = f.read().splitlines()
+    for line in lines:
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
             env[k] = v.strip().strip('"')
-    return env, path, os.environ.get("WIN_LAB_DC_ADDR") or env.get("WIN_LAB_DC_ADDR", "192.168.1.250")
+    return env, path, require_dc_addr(tool, REPO)
 
 
 def strip(o):  # drop the CLIXML progress noise PowerShell writes on stderr/stdout
@@ -53,7 +57,8 @@ def make_ps(env, addr):
 
 def make_put(env, addr):
     def put(src, dst):
-        data = open(src, "rb").read()
+        with open(src, "rb") as f:
+            data = f.read()
         p = _protocol(env, addr)
         sh = p.open_shell()
         s = (f"$o=[IO.File]::Create('{dst}');$i=[Console]::OpenStandardInput();$b=New-Object byte[] 65536;"
