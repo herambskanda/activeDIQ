@@ -57,7 +57,9 @@ CREATE INDEX objects_naming_formats_list ON public.objects_naming_formats (tenan
 CREATE FUNCTION public.objects_version_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE live text := CASE TG_TABLE_NAME WHEN 'objects_templates' THEN 'published' ELSE 'active' END;
 BEGIN
-  IF NEW.tenant_id <> OLD.tenant_id OR NEW.id <> OLD.id OR NEW.version <> OLD.version
+  -- tenant_id is not judged here: re-assigning a row to another tenant is refused by the table's row-security
+  -- WITH CHECK, which the tenancy probe (ADR-0002 T4) expects to be the layer that says no.
+  IF NEW.id <> OLD.id OR NEW.version <> OLD.version
      OR NEW.purpose <> OLD.purpose OR NEW.created_at <> OLD.created_at THEN
     RAISE EXCEPTION 'objects: a version''s identity cannot change' USING ERRCODE = 'AD403';
   END IF;
