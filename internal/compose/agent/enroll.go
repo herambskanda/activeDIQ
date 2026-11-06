@@ -23,7 +23,7 @@ func Enroll(ctx context.Context, m dial.Material) error {
 	if err != nil {
 		return err
 	}
-	if _, err := dial.Enroll(ctx, m, loc.EnrollmentDir, exchange); err != nil {
+	if _, err := dial.Enroll(ctx, m, loc.EnrollmentDir, exchange, enrolOptions()...); err != nil {
 		return err
 	}
 	return nil

@@ -1,0 +1,134 @@
+{
+  "objectGuid":  {
+    "value":  "+zAmb96aRDG4n0kDS8X5mg=="
+  },
+  "dn":  {
+    "displayDn":  "CN=SYNCWS66339810,OU=syncmap-66339810,DC=lab,DC=activediq,DC=test"
+  },
+  "parentGuid":  {
+    "value":  "Js8dolmYRde8hiTz271q9Q=="
+  },
+  "attributes":  [
+    {
+      "name":  "accountexpires",
+      "values":  [
+        {
+          "time":  {
+            "sentinel":  "TIME_SENTINEL_MAX"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "dnshostname",
+      "values":  [
+        {
+          "text":  "syncws.lab.activediq.test"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectclass",
+      "values":  [
+        {
+          "text":  "top"
+        },
+        {
+          "text":  "person"
+        },
+        {
+          "text":  "organizationalPerson"
+        },
+        {
+          "text":  "user"
+        },
+        {
+          "text":  "computer"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectsid",
+      "values":  [
+        {
+          "sid":  {
+            "value":  "AQUAAAAAAAUVAAAAKiXVBoYZFFRm18iPjR4AAA=="
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "operatingsystem",
+      "values":  [
+        {
+          "text":  "Windows 11 Enterprise"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "primarygroupid",
+      "values":  [
+        {
+          "int32Value":  515
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "pwdlastset",
+      "values":  [
+        {
+          "time":  {
+            "sentinel":  "TIME_SENTINEL_ZERO"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "samaccountname",
+      "values":  [
+        {
+          "text":  "SYNCWS66339810$"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "useraccountcontrol",
+      "values":  [
+        {
+          "int32Value":  4096
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whenchanged",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-01T06:37:35Z"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whencreated",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-01T06:37:35Z"
+          }
+        }
+      ],
+      "complete":  true
+    }
+  ]
+}

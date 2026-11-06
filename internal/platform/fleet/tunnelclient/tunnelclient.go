@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -35,7 +36,22 @@ type Config struct {
 	// OnConnect, when set, receives the client side of each established tunnel (calls component → server)
 	// and returns the function to run when that tunnel ends. nil means the component makes no calls.
 	OnConnect func(c grpc.ClientConnInterface) (onClose func())
+	// Burst, when set, is called before each connection attempt; the function it returns is called
+	// when the attempt has failed or opened the tunnel stream. The component's resource limits may be
+	// lifted for exactly that window: dial + TLS handshake + stream open is a short bounded burst that
+	// a steady-state CPU cap stretches from about a second to half a minute (T-1249). nil = no limits.
+	Burst func() (done func())
+	// SetupTimeout bounds one connection set-up: the TLS handshake and the stream open. It is ours, not
+	// gRPC's default connect timeout, so the Burst window cannot depend on a peer that accepts TCP and
+	// then stalls (T-1249 security review). Zero means DefaultSetupTimeout.
+	SetupTimeout time.Duration
 }
+
+// DefaultSetupTimeout is how long one connection set-up may take before it is abandoned and retried
+// with backoff. An uncapped set-up measured 1.3 s on a lab DC.
+const DefaultSetupTimeout = 15 * time.Second
+
+var errSetupTimeout = errors.New("tunnelclient: connection set-up timed out")
 
 // Run serves the binding until ctx is done. It returns only then.
 func Run(ctx context.Context, c Config) {
@@ -78,13 +94,20 @@ func endpointAddr(e dial.Endpoint) string { return net.JoinHostPort(e.Host, strc
 
 func serveOnce(ctx context.Context, c Config) error {
 	var lastErr error
+	end := func() {}
+	if c.Burst != nil {
+		if done := c.Burst(); done != nil {
+			end = sync.OnceFunc(done)
+		}
+	}
+	defer end()
 	for _, ep := range c.State.Endpoints {
 		conn, err := dial.DialOut(endpointAddr(ep), c.State)
 		if err != nil {
 			lastErr = err
 			continue
 		}
-		err = serveConn(ctx, conn, c)
+		err = serveConn(ctx, conn, c, end)
 		_ = conn.Close()
 		return err
 	}
@@ -94,13 +117,26 @@ func serveOnce(ctx context.Context, c Config) error {
 	return lastErr
 }
 
-func serveConn(ctx context.Context, conn *grpc.ClientConn, c Config) error {
+// serveConn opens the stream and serves it; opened is called as soon as the stream open has returned.
+func serveConn(ctx context.Context, conn *grpc.ClientConn, c Config, opened func()) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	if c.Open == nil {
 		return errors.New("tunnelclient: no stream opener")
 	}
+	setup := c.SetupTimeout
+	if setup <= 0 {
+		setup = DefaultSetupTimeout
+	}
+	// The stream context lives as long as the tunnel, so the set-up deadline is a timer that cancels it
+	// only until the open has returned.
+	timer := time.AfterFunc(setup, cancel)
 	stream, err := c.Open(ctx, conn)
+	inTime := timer.Stop()
+	opened()
+	if !inTime {
+		return errSetupTimeout
+	}
 	if err != nil {
 		return err
 	}
