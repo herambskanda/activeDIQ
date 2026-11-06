@@ -57,9 +57,9 @@ VALUES ($1::uuid, $2::uuid, 'break_glass_used', $3, '198.51.100.7') RETURNING id
 				return err
 			}
 		}
-		total, given, err := s.Given(ctx, tx, notice)
-		if err != nil || total != 1 || given != 0 {
-			t.Errorf("counts = %d/%d, %v; want 1 delivery, none given up", total, given, err)
+		total, open, given, err := s.Given(ctx, tx, notice)
+		if err != nil || total != 1 || open != 1 || given != 0 {
+			t.Errorf("counts = %d/%d/%d, %v; want 1 open delivery, none given up", total, open, given, err)
 		}
 		dl, ok, err := ds.ForSource(ctx, tx, delivery.SourceRef{Kind: SourceKind, ID: notice}, delivery.Recipient{Account: owner})
 		if err != nil || !ok {

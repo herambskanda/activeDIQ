@@ -54,8 +54,8 @@ func (s Sink) Enqueue(ctx context.Context, tx store.Tx, d authn.AlertDelivery) e
 	return err
 }
 
-// Given counts the Deliveries of notice and those given up.
-func (s Sink) Given(ctx context.Context, tx store.Tx, notice string) (int, int, error) {
+// Given counts the Deliveries of notice, those still open (queued or failed) and those given up.
+func (s Sink) Given(ctx context.Context, tx store.Tx, notice string) (int, int, int, error) {
 	return s.Deliveries.SourceCounts(ctx, tx, delivery.SourceRef{Kind: SourceKind, ID: notice})
 }
 
@@ -84,8 +84,8 @@ func (r Renderer) Render(ctx context.Context, tx store.Tx, d delivery.Delivery) 
 			who = "the break-glass account"
 		}
 		return delivery.Content{
-			Subject: "activeDIQ: break-glass sign-in used",
-			Text:    fmt.Sprintf("The break-glass sign-in was used.\n\nAccount: %s\nTime: %s\nSource address: %s\n\nIf this was not you or a colleague, review the audit trail now.\n", who, at, src),
+			Subject: "activeDIQ: break-glass password accepted",
+			Text:    fmt.Sprintf("The break-glass password was accepted.\n\nAccount: %s\nTime: %s\nSource address: %s\n\nIf this was not you or a colleague, review the audit trail now.\n", who, at, src),
 		}, nil
 	default:
 		return delivery.Content{

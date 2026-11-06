@@ -9,6 +9,7 @@
 --
 --   source_ip, failure_count   what the message says; immutable
 --   pending_audited_at         an8_alert_pending_over_threshold was audited for this row (once)
+--   settled_at                 no Delivery of the row is queued or failed any more (sent or given up)
 --   given_up_at                every Delivery of the row was given up, or no recipient resolved; shown as a
 --                              banner to tenant-owners until acknowledged_at is set
 --   authn_an8_failure_window   the per-tenant count of failures in the current hour (alerted: the 10th has
@@ -23,6 +24,7 @@ ALTER TABLE public.authn_authority_notices
   ADD COLUMN failure_count integer CHECK (failure_count IS NULL OR failure_count > 0),
   ADD COLUMN pending_audited_at timestamptz,
   ADD COLUMN given_up_at timestamptz,
+  ADD COLUMN settled_at timestamptz,
   ADD COLUMN acknowledged_at timestamptz,
   ADD CONSTRAINT authn_authority_notices_event_check CHECK (event IN ('enrolled', 'reset', 'removed', 'break_glass_used', 'break_glass_failures')),
   ADD CONSTRAINT authn_authority_notices_shape CHECK (
@@ -35,8 +37,9 @@ DROP INDEX public.authn_authority_notices_pending;
 CREATE INDEX authn_authority_notices_pending ON public.authn_authority_notices (tenant_id, created_at)
   WHERE delivered_at IS NULL AND given_up_at IS NULL;
 -- Rows handed to notify and not yet known to be given up (the drain checks their Deliveries).
+-- settled_at leaves this set when no Delivery is queued or failed, so sent history never crowds out a newer row.
 CREATE INDEX authn_authority_notices_enqueued ON public.authn_authority_notices (tenant_id, created_at)
-  WHERE delivered_at IS NOT NULL AND given_up_at IS NULL AND event IN ('break_glass_used', 'break_glass_failures');
+  WHERE delivered_at IS NOT NULL AND settled_at IS NULL AND given_up_at IS NULL AND event IN ('break_glass_used', 'break_glass_failures');
 -- Banner: given up and not acknowledged.
 CREATE INDEX authn_authority_notices_banner ON public.authn_authority_notices (tenant_id, given_up_at)
   WHERE given_up_at IS NOT NULL AND acknowledged_at IS NULL;
@@ -74,6 +77,7 @@ BEGIN
        OR NEW.source_ip IS DISTINCT FROM OLD.source_ip OR NEW.failure_count IS DISTINCT FROM OLD.failure_count
        OR (OLD.delivered_at IS NOT NULL AND NEW.delivered_at IS DISTINCT FROM OLD.delivered_at)
        OR (OLD.pending_audited_at IS NOT NULL AND NEW.pending_audited_at IS DISTINCT FROM OLD.pending_audited_at)
+       OR (OLD.settled_at IS NOT NULL AND NEW.settled_at IS DISTINCT FROM OLD.settled_at)
        OR (OLD.given_up_at IS NOT NULL AND NEW.given_up_at IS DISTINCT FROM OLD.given_up_at)
        OR (OLD.acknowledged_at IS NOT NULL AND NEW.acknowledged_at IS DISTINCT FROM OLD.acknowledged_at) THEN
       RAISE EXCEPTION 'authn_authority_notices: only the delivery markers move, once' USING ERRCODE = 'AD403';

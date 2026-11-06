@@ -95,11 +95,11 @@ type AlertDelivery struct {
 }
 
 // AlertSink is the transport port (platform/notify/delivery behind authn/alertjob). Enqueue is idempotent
-// for the same (Notice, Recipient). Given reports for the notice how many Deliveries exist and how many
+// for the same (Notice, Recipient). Given reports for the notice how many Deliveries exist, how many are still open (queued or failed, a retry pending) and how many
 // were given up.
 type AlertSink interface {
 	Enqueue(ctx context.Context, tx store.Tx, d AlertDelivery) error
-	Given(ctx context.Context, tx store.Tx, notice string) (total, givenUp int, err error)
+	Given(ctx context.Context, tx store.Tx, notice string) (total, open, givenUp int, err error)
 }
 
 // AlertDrain fans the AN-8 outbox rows out to the tenant-owners, follows their Deliveries to the end and
@@ -179,7 +179,7 @@ WHERE tenant_id = $1::uuid AND delivered_at IS NULL AND given_up_at IS NULL AND 
 			return err
 		}
 		enqueued, err = scanIDs(ctx, tx, `SELECT id::text FROM public.authn_authority_notices
-WHERE tenant_id = $1::uuid AND delivered_at IS NOT NULL AND given_up_at IS NULL AND event IN ($2, $3) ORDER BY created_at LIMIT $4`,
+WHERE tenant_id = $1::uuid AND delivered_at IS NOT NULL AND settled_at IS NULL AND given_up_at IS NULL AND event IN ($2, $3) ORDER BY created_at LIMIT $4`,
 			t.String(), EventBreakGlassUsed, EventBreakGlassFailures, DrainBatch)
 		return err
 	})
@@ -236,23 +236,29 @@ WHERE tenant_id = $1::uuid AND id = $2::uuid AND delivered_at IS NULL AND given_
 	return err
 }
 
-// settle marks a row given up, audits it and so shows the banner, when every Delivery of it was given up.
+// settle closes a row once every Delivery of it is terminal (sent or given up), so it leaves the enqueued
+// set and a long history of sent alerts never hides a newer one. It is marked given up, audited and so shown
+// as a banner only when every Delivery was given up; one that reached an owner is settled without a banner.
 func (d *AlertDrain) settle(ctx context.Context, tx store.Tx, t tenant.ID, id string, sum *DrainSummary) error {
 	var open bool
 	err := tx.QueryRow(ctx, `SELECT true FROM public.authn_authority_notices
-WHERE tenant_id = $1::uuid AND id = $2::uuid AND given_up_at IS NULL FOR UPDATE SKIP LOCKED`, t.String(), id).Scan(&open)
+WHERE tenant_id = $1::uuid AND id = $2::uuid AND settled_at IS NULL AND given_up_at IS NULL FOR UPDATE SKIP LOCKED`, t.String(), id).Scan(&open)
 	if store.IsNoRows(err) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	total, given, err := d.Sink.Given(ctx, tx, id)
-	if err != nil || total == 0 || given < total {
+	total, stillOpen, given, err := d.Sink.Given(ctx, tx, id)
+	if err != nil || total == 0 || stillOpen > 0 {
 		return err
 	}
 	now := d.now()
-	if _, err := tx.Exec(ctx, `UPDATE public.authn_authority_notices SET given_up_at = $3 WHERE tenant_id = $1::uuid AND id = $2::uuid`, t.String(), id, now); err != nil {
+	if given < total {
+		_, err := tx.Exec(ctx, `UPDATE public.authn_authority_notices SET settled_at = $3 WHERE tenant_id = $1::uuid AND id = $2::uuid`, t.String(), id, now)
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE public.authn_authority_notices SET settled_at = $3, given_up_at = $3 WHERE tenant_id = $1::uuid AND id = $2::uuid`, t.String(), id, now); err != nil {
 		return err
 	}
 	sum.GivenUp++

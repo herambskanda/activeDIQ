@@ -26,7 +26,9 @@ type fakeSink struct {
 	got       []AlertDelivery
 	enqueueEr error
 	total     int
+	open      int
 	given     int
+	perNotice func(notice string) (total, open, given int) // overrides the three above when set
 }
 
 func (f *fakeSink) Enqueue(_ context.Context, _ store.Tx, d AlertDelivery) error {
@@ -36,8 +38,12 @@ func (f *fakeSink) Enqueue(_ context.Context, _ store.Tx, d AlertDelivery) error
 	f.got = append(f.got, d)
 	return nil
 }
-func (f *fakeSink) Given(context.Context, store.Tx, string) (int, int, error) {
-	return f.total, f.given, nil
+func (f *fakeSink) Given(_ context.Context, _ store.Tx, notice string) (int, int, int, error) {
+	if f.perNotice != nil {
+		a, b, c := f.perNotice(notice)
+		return a, b, c, nil
+	}
+	return f.total, f.open, f.given, nil
 }
 
 type an8Env struct {
@@ -295,5 +301,57 @@ func TestAN8NoticeRowsAreImmutableBeyondMarkers(t *testing.T) {
 	}
 	if err := fixtureAs(e.db, e.ten, `UPDATE public.authn_authority_notices SET delivered_at = NULL`); err == nil {
 		t.Error("delivered_at moved back to NULL")
+	}
+}
+
+// Security finding F1: more than DrainBatch alerts that were sent must not hide a newer alert whose
+// Deliveries were all given up. Sent rows leave the enqueued set (settled), so the give-up is still raised,
+// audited once and shown as a banner.
+func TestAN8GiveUpIsRaisedAfterMoreThanABatchOfSentAlerts(t *testing.T) {
+	e := newAN8Env(t, own1)
+	ctx := context.Background()
+	n := DrainBatch + 1
+	for i := 0; i < n; i++ {
+		if ok := e.Do(an8Seeds.Known, an8Seeds.Password, "198.51.100.70"); ok.Status != 204 {
+			t.Fatalf("sign-in %d answered %d", i, ok.Status)
+		}
+	}
+	// Hand every row to notify, then mark all but the newest as sent (nothing open, none given up).
+	for i := 0; i < 2; i++ {
+		if _, err := e.drain.Drain(ctx, e.ten); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var newestID string
+	if err := e.db.WithTenant(ctx, e.ten, func(ctx context.Context, tx store.Tx) error {
+		return tx.QueryRow(ctx, `SELECT id::text FROM public.authn_authority_notices WHERE event = 'break_glass_used' ORDER BY created_at DESC, id DESC LIMIT 1`).Scan(&newestID)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.sink.perNotice = func(notice string) (int, int, int) {
+		if notice == newestID {
+			return 1, 0, 1 // its only Delivery was given up
+		}
+		return 1, 0, 0 // sent
+	}
+	for i := 0; i < 4; i++ { // enough passes to settle every row, in batches
+		if _, err := e.drain.Drain(ctx, e.ten); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := e.kindCount(KindAlertGivenUp); got != 1 {
+		t.Fatalf("an8_alert_given_up audited %d times, want exactly once", got)
+	}
+	var banners []AlertBanner
+	_ = e.db.WithTenant(ctx, e.ten, func(ctx context.Context, tx store.Tx) error {
+		var err error
+		banners, err = e.drain.AlertBanners(ctx, tx, e.ten)
+		return err
+	})
+	if len(banners) != 1 || banners[0].ID != newestID {
+		t.Fatalf("banners = %+v, want the newest alert", banners)
+	}
+	if left := e.count(`SELECT count(*) FROM public.authn_authority_notices WHERE event = 'break_glass_used' AND delivered_at IS NOT NULL AND settled_at IS NULL`); left != 0 {
+		t.Fatalf("%d rows still unsettled", left)
 	}
 }
