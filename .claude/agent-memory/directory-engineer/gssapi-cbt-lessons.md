@@ -14,3 +14,5 @@ metadata:
 - go-ldap's `gssapi` package bundles gokrb5 v8 with the SSPI client: importing it on Windows links gokrb5.
 - Lab gotcha: lab may be running from a deleted worktree (no `.lab.env`); use own compose project + shifted ports.
 - zsh does not word-split `set -- $var`; use explicit args in test scripts.
+- WS2025 KDC sets EncPARep in the AS-REP w/o PA-FX-FAST; go-krb5 rejects it. Product client must use `DisablePAFXFAST(true)`
+  (`newKerberosClient`); Samba never sets the flag so only a Windows lab shows it. Wire-level unit test: fake TCP KDC, parse the AS-REQ.

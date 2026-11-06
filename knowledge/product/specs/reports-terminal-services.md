@@ -1,0 +1,254 @@
+---
+title: "Spec: Terminal Services user reports (USR-10) and the hardened userParameters decoder"
+date: 2026-11-04
+updated: 2026-11-04
+status: draft
+owner: heramb
+author: ad-expert
+ticket: T-1122
+epic: E-002
+milestone: M2a
+parity: [ADM-084]
+scope: proposed
+sources_last_checked: 2026-11-04
+---
+
+# Spec: Terminal Services user reports and the userParameters decoder
+
+> An admin who runs "Users' Terminal Services Properties" or "Users with Terminal Server Access"
+> sees what Active Directory Users and Computers shows on the user's Remote Desktop Services tabs,
+> row for row, and every user whose blob we cannot read is counted and named instead of guessed.
+
+This resolves follow-up F3 of [reports-2-second-slice.md](reports-2-second-slice.md) §2, §8 and
+§10. It inherits that spec's and reports-2a's library, run, scope, export and security rules.
+Verification status: **documentation only**. Nothing below was run on a Windows DC or on Samba;
+`[LAB: Windows]` marks what only a Windows lab can settle, `[UNVERIFIED]` what no Microsoft page
+states. ManageEngine (ME) meanings are from
+[ME's user-report help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-user-reports.html)
+(read 2026-11-04), which names both reports and gives no columns.
+
+## 1. Decision: userParameters, read-only, minimal; not msTS*
+
+**Decision D-TS1: decode `userParameters` with a hardened, read-only, fuzzed decoder. Do not build
+the reports on `msTS*`.**
+
+Why `msTS*` is not enough, from the protocol spec and not from how often they are populated:
+- [MS-TSTS §2.3](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsts/9b65ec6b-a9c7-401f-bc4a-0f20538004a1)
+  says of `msTSAllowLogon`, `msTSHomeDirectory`, `msTSHomeDrive`, `msTSInitialProgram`,
+  `msTSMaxConnectionTime`, `msTSMaxDisconnectionTime`, `msTSMaxIdleTime`, `msTSProfilePath`,
+  `msTSRemoteControl`, `msTSWorkDirectory` and the other `msTS*` session settings: "Not used by
+  Terminal Services", naming the `Ctx*` property inside `userParameters` that is used instead.
+- So an `msTS*` value can differ from what a terminal server enforces. A report on it is a number
+  an admin can disprove in ADUC in thirty seconds (the ADUC tabs write the blob). Whether any tool
+  keeps the two in sync is `[UNVERIFIED]` `[LAB: Windows]`; we do not rely on it.
+- `msTSProperty01` is the personal-desktop multi-string for RDS pooled/personal collections
+  ([MS-TSTS §2.3](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsts/9b65ec6b-a9c7-401f-bc4a-0f20538004a1)),
+  not session settings. The Win32 schema page calls it
+  ["reserved for future use"](https://learn.microsoft.com/en-us/windows/win32/adschema/a-mstsproperty01),
+  a conflict in Microsoft's own pages; it is out of this spec either way.
+- "Rarely populated" (the second-slice §2 claim) stays `[UNVERIFIED]`; it is no longer the reason.
+
+Why minimal: `userParameters` is one blob shared by several consumers
+([MS-ADA3](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-ada3/8710a141-a607-4b14-9d7c-f6370bff9b96)
+says Terminal Services and the Callback Control Protocol both use it). We decode only the
+properties §3 lists and treat the rest as opaque, counted and never stored.
+
+## 2. What the attribute is (exact format)
+
+Attribute: `userParameters`, OID 1.2.840.113556.1.4.138, syntax 2.5.5.12 (Unicode string),
+single-valued, `rangeUpper` 32767, `searchFlags` 0, `FLAG_ATTR_IS_CRITICAL` since Windows Server
+2008 ([MS-ADA3](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-ada3/8710a141-a607-4b14-9d7c-f6370bff9b96)).
+Whether it is in the global catalog partial set is `[UNVERIFIED]` (the page does not say); we read
+it from the user's own domain, never the GC.
+
+Layout ([MS-TSTS userParameters](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsts/15f8b01d-900d-4f89-a3fa-1681e55f383d),
+[TSProperty](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsts/0bd1a91d-3cd6-4e97-b5fa-5cf35d90f005)):
+
+| Part | Size | Rule |
+| --- | --- | --- |
+| ReservedData | 96 bytes | Not Terminal Services data. Microsoft's own correspondence says the RAS server uses it (dial-in/callback) and that the layout was "preliminary" ([cifs-protocol, 2011](https://lists.samba.org/archive/cifs-protocol/2011-June/001926.html)). **Never decoded, never stored.** Dial-in is `msNPAllowDialin` (second-slice §5.1) |
+| Signature | 2 bytes | The Unicode character "P" (0x0050). Anything else: "all information inside TSPropertyCount and TSPropertyArray is considered invalid" (spec). Rows then read *Not configured*, not an error |
+| TSPropertyCount | 2 bytes, uint16 | Number of TSProperty entries |
+| TSProperty | NameLength u16, ValueLength u16, Type u16 (0x01 only), PropName, PropValue | PropName is UTF-16 of NameLength bytes. **PropValue is hex-ASCII**: each source byte becomes two ASCII hex digits, so the stored length is twice the decoded length ([encoding](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsts/27cd734a-b780-41e6-b9d5-b6c9fba6c16a)) |
+
+Properties are valid only if one named `CtxCfgPresent` has the value 0xB00B1E55; otherwise "Terminal
+Services ignore the remaining contents".
+
+**Traps an AD admin and an engineer both meet:**
+1. **The spec says the blob is not UTF-8/UTF-16, yet the schema says Unicode string.** Microsoft
+   staff called the schema syntax possibly wrong ([cifs-protocol](https://lists.samba.org/archive/cifs-protocol/2011-June/001926.html)).
+   Over LDAP a Windows DC returns the UTF-16 code units converted to UTF-8; the "P" signature is
+   the two bytes 0x50 0x00, which is UTF-16LE. The decoder therefore takes the LDAP octets as UTF-8,
+   converts back to UTF-16LE to recover bytes, and **treats any code-unit sequence that is not valid
+   UTF-8 or contains a lone surrogate as `unreadable`** (it cannot be mapped back to bytes
+   losslessly). How often real blobs contain such units is `[UNVERIFIED]` `[LAB: Windows]`.
+2. **Text fields: spec says "ASCII characters", practice may be UTF-16.** `CtxWFProfilePath` etc. are
+   specified as "variable-length ASCII character array"; common implementations decode the
+   unhexed bytes as UTF-16LE with a terminating NUL `[UNVERIFIED]` `[LAB: Windows]`. The decoder
+   accepts one encoding per field, chosen by the Windows fixtures of §6 (follow-up F-TS1), and
+   returns `unreadable` for the other. Until the fixtures exist the decoder MUST NOT ship.
+3. **The one Microsoft table has a hole**: the 0x10000000 row of `CtxCfgFlags1` has no constant name
+   (presumably `F1MSK_INHERITINITIALPROGRAM`, from the field it returns) `[UNVERIFIED]`.
+4. **Duplicates, order, unknown names**: not defined by Microsoft. Policy in §4.
+5. **Machine policy overrides.** MS-TSTS: "Machine properties MAY override user properties". RDS
+   Group Policy session limits beat the per-user value. Every report header says so.
+6. **Samba gives a false pass.** Samba stores the attribute but does no Windows-side writing of it
+   (no RDS tools), so Samba fixtures must be injected with LDIF; a Samba run that returns clean
+   values proves nothing about Windows blobs, and Samba may return bytes that are not valid
+   UTF-8, which Windows never would. Windows-captured fixtures are mandatory (§6).
+
+## 3. The fields we decode (closed list)
+
+All other properties, `ReservedData`, `CtxCallbackNumber` (personal data, X11), `CtxCallBack`,
+`CtxNWLogonServer`, `CtxKeyboardLayout`, `CtxMinEncryptionLevel` are **not decoded or stored**.
+
+| Report column | Property / bit | Decode | Meaning to the admin |
+| --- | --- | --- | --- |
+| Logon allowed | `CtxCfgFlags1` bit `F1MSK_LOGONDISABLED` 0x00010000 | bit clear → Allowed, set → Denied | ADUC "Allow logon to terminal server" is the inverse of this bit `[LAB: Windows]`. Absent blob/property → *Not configured* (ADUC shows allowed) |
+| Remote control | `CtxShadow` u32 0–4 | 0 Disabled; 1 Input, notify; 2 Input, no notify; 3 View, notify; 4 View, no notify; else `unreadable` | ADUC "Remote control" tab, enabled/level/ask permission (mapping to the five values) |
+| Inherit flags | `CtxCfgFlags1`: `INHERITSHADOW` 0x02000000, `INHERITMAXSESSIONTIME` 0x01000000, `INHERITMAXDISCONNECTIONTIME` 0x00800000, `INHERITMAXIDLETIME` 0x00400000, `INHERITINITIALPROGRAM` 0x10000000 `[UNVERIFIED]` | bit set → the column shows "Client/server setting"; the stored value is not shown | The stored value of an inheriting field is not what applies `[LAB: Windows]` |
+| End a disconnected session / reconnect | `F1MSK_RESETBROKEN` 0x00040000, `F1MSK_RECONNECTSAME` 0x00020000 | booleans | ADUC Sessions tab |
+| Session limits | `CtxMaxConnectionTime`, `CtxMaxDisconnectionTime`, `CtxMaxIdleTime` u32, **minutes** | 0 → "No limit" `[UNVERIFIED]`; > 525,600 (1 year) → `unreadable` | ADUC Sessions tab |
+| Start program, working directory | `CtxInitialProgram`, `CtxWorkDirectory` | bounded text (§4 rule 9) | ADUC Environment tab |
+| Home folder, drive, profile path | `CtxWFHomeDir`, `CtxWFHomeDirDrive`, `CtxWFProfilePath` | bounded text; drive is `^[A-Z]:$` | ADUC RDS Profile tab. **Not** `homeDirectory`/`profilePath` (AD attributes for the normal profile); the two are shown in separate columns, never merged |
+| Client drive/printer mapping | `F1MSK_AUTOCLIENTDRIVES`, `AUTOCLIENTLPTS`, `FORCECLIENTLPTDEF`, `DISABLECLIP`… | **Out in v1** (default-off column group, F-TS2) | — |
+
+## 4. Parser safety (the contract the build ticket implements)
+
+Package: one decoder in the connector codec layer (`attr/tsprops`, beside `attr/flags` and
+`filetime`; solution-architect places it, as for T-1124's replication decoder in
+[connector-contract §5.7](../../development/architecture/connector-contract.md)).
+`security-architect` reviews; the build ticket is `security-sensitive`.
+
+1. **Read-only by construction.** No `Encode`, `Marshal` or `Set` exists for this type. A lint rule
+   (fitness function) fails any call that writes `userParameters` from the product. **No
+   round-trip**: the decoder never re-encodes to validate (re-encoding would hide the bytes we
+   dropped, such as ReservedData and unknown properties, and a future writer built from it would
+   destroy another application's data). A write feature, if ever wanted, is a separate spec that
+   edits the raw bytes in place (read-modify-write of named properties only) and is
+   `security-sensitive`.
+2. **Input is untrusted.** The caller passes the raw LDAP octets; the decoder never panics and
+   never allocates from a length field before checking it against the bytes that remain.
+3. **Hard bounds (all checked before use):** input ≤ 65,536 bytes after the UTF-16 conversion
+   (schema `rangeUpper` is 32,767 units); fewer than 98 bytes → *Not configured*; ≤ 64 properties
+   parsed (extra ones counted, not parsed); `NameLength` ≤ 64 and even; `ValueLength` ≤ 2,048 and
+   even (hex-ASCII); every `offset + length` is computed in 64-bit and compared to the remaining
+   bytes; `Type` must be 0x01 else the property is `unreadable`. `TSPropertyCount` larger than the
+   bytes could hold is *malformed*, not trusted.
+4. **Strict hex.** PropValue digits are `[0-9A-Fa-f]` only; any other byte → the property is
+   `unreadable`. Odd length → `unreadable`.
+5. **Signature and gate.** Signature ≠ "P" → state *Not configured (no valid settings)*. Missing
+   `CtxCfgPresent`, or a value other than 0xB00B1E55 → the same. Both are counted per run.
+6. **Per-field status, never per-row failure.** Each field is `value`, `not_configured`, or
+   `unreadable(reason)`. A bad field never turns another field's value into a guess, and a row
+   with any unreadable field still appears with that cell reading "Unreadable" and the reason in
+   the details. Reasons are a closed enum: `too_short, bad_signature, bad_count, truncated,
+   bad_type, bad_hex, bad_encoding, out_of_range, too_long, duplicate`.
+7. **Duplicates and unknowns.** The same decoded name twice → both ignored and the field
+   `unreadable(duplicate)`, because Windows' choice is `[UNVERIFIED]` and a report must not pick
+   one. Unknown names are skipped (bounded, counted, never stored).
+8. **Typed output.** `u32` values are range-checked per §3; booleans come from named bits only; no
+   `map[string]string` or raw `bytes` leaves the decoder.
+9. **Text hygiene.** Decoded text is valid Unicode, ≤ 520 code points (path limit with margin), no
+   C0/C1 control characters or NUL except one terminating NUL, which is dropped; otherwise
+   `unreadable(bad_encoding)`. Text is untrusted display data: every output encoder escapes it
+   (FF-SP4, TM-X3), including the CSV formula-prefix rule of the export code. Paths are **never
+   dereferenced, resolved or tested for existence**.
+10. **Deterministic and cheap.** Same input, same output; work is linear in the input; a 64 KiB
+    input decodes in well under 10 ms (build ticket measures; budget is a test).
+11. **Nothing secret.** The decoder logs no input bytes. Log lines carry the object GUID, the
+    reason enum and the counts only.
+
+**Fuzzing (FF-TS1, fitness function in CI):** Go native fuzz target `FuzzUserParameters`, seeded with
+(a) the Windows-captured fixtures of §6, (b) hand-built hostile blobs: bad signature, count
+65,535 with no data, name/value length beyond the end, odd hex, non-hex bytes, a duplicate
+`CtxCfgPresent`, a thousand duplicate properties, 64 KiB of one byte, lone surrogates, NULs
+inside text, an RAS-only blob with a zeroed tail. Properties asserted for every input: no panic; no
+allocation above 256 KiB per call; run time under the budget; every `value` field is within its
+§3 range; decode is deterministic; output never contains bytes from ReservedData (search for a
+marker written there); and **a differential test** against a second, independent, deliberately
+naive reference parser in the test code agrees with the decoder on every blob the reference
+accepts. CI runs the seed corpus on every change and 60 s of fuzzing per night.
+Minimum acceptance: 1 M executions without a finding before the build ticket may close.
+
+## 5. The reports (USR-10, taking the reserved ID)
+
+Dataset **D16**: `inventory.users` gains the closed column set of §3 plus `ts_state`
+(`configured | not_configured | unreadable`) and `ts_unreadable_reason`. The raw blob is **not
+stored**; the decoder runs in the collector, and only typed columns are persisted (D8). Read per
+user from the home domain with a normal user read; no extra right is expected, since the property
+set (attributeSecurityGuid 4c164200-20c0-11d0-a768-00aa006e0529) is
+read by authenticated users by default `[UNVERIFIED]` `[LAB: Windows]`; where unreadable the state
+is "Not confirmed" as D15 does. Re-decode on every sync of the user, since the 2a sync set uses
+`uSNChanged`/DirSync and the blob changes the same way as any attribute.
+
+### USR-10a Users' Terminal Services Properties (ME name; 1 ME name)
+
+Definition: every user in scope, with the §3 columns. Default columns: Name, Logon name, Domain,
+OU path, Logon allowed, Remote control, Start program, Home folder (with drive), Profile path, Max
+session / disconnected / idle (each with "Client/server setting" where inheriting), Status. A
+column group "Session behaviour" (reconnect, end-disconnected) is off by default. Filters: Logon
+allowed (any/allowed/denied/not configured), State (configured/not configured/unreadable), OU,
+Status.
+
+### USR-10b Users with Terminal Server Access (ME name; 1 ME name)
+
+ME's definition: users for whom "allow logon to terminal server" is enabled `[ME-HELP]`; ME's
+treatment of users with no stored settings is `[UNVERIFIED]`.
+Ours: users whose account-level setting does not deny logon. Rows carry **Basis**: *Explicit* (a
+valid blob with the bit clear) or *Default* (no stored settings; ADUC shows the box ticked). A
+switch "Only explicitly allowed" is off by default and a count shows each basis. Header counts:
+Denied, Not readable, Not configured. Header text, always shown: "Account setting only. Whether a
+user can sign in to a particular server also depends on Remote Desktop Users membership, the
+'Allow log on through Remote Desktop Services' user right and Group Policy, which are not read
+here." Default columns: Name, Logon name, Domain, OU path, Basis, Status.
+
+Neither report is a hit-list for action (no write controls, FR-13 of reports-2a). Disabled accounts
+appear with their Status, never filtered silently.
+
+## 6. Verification plan
+
+| Id | What | Where |
+| --- | --- | --- |
+| V1 | Capture ≥ 12 real blobs on Windows Server 2019/2022 DCs written by ADUC (allow/deny, each remote-control level, inherit on/off, each text field set, UNC and local home, long paths, non-ASCII path characters, a user also configured for dial-in callback, a user created by a third-party tool) | `[LAB: Windows]`, follow-up F-TS1 (devops-engineer, Windows lab) |
+| V2 | Settle each `[UNVERIFIED]`: text encoding, 0 = no limit, inherit semantics, bit 0x10000000, duplicate handling, GC membership, default read right | same |
+| V3 | Samba: inject the fixtures as LDIF; assert the decoder on the Samba-returned octets. **A pass here is not proof for Windows** (§2 trap 6) | Samba lab |
+| V4 | Compare each report row against ADUC's tabs for the same user for all fixtures | `qa-verifier`, Windows |
+
+## 7. Functional requirements and acceptance criteria
+
+| ID | Requirement |
+| --- | --- |
+| FR-TS01 | USR-10 MUST decode only the §3 fields, from `userParameters`, through the single decoder of §4, and MUST NOT read or display `msTS*` attributes |
+| FR-TS02 | The decoder MUST satisfy §4 rules 1–11 and the fuzz target FF-TS1 MUST run in CI; no `userParameters` write MAY exist in the product (lint) |
+| FR-TS03 | A user whose blob is absent, has a bad signature or lacks `CtxCfgPresent` MUST show *Not configured*, never Allowed-by-explicit and never an error row |
+| FR-TS04 | A field that cannot be decoded MUST show "Unreadable" with the reason; the header MUST count unreadable users; no value MAY be guessed |
+| FR-TS05 | USR-10b MUST show Basis, the account-setting-only header, and MUST NOT list a user whose bit denies logon |
+| FR-TS06 | Every text value MUST be escaped on every output and never dereferenced |
+| FR-TS07 | The raw blob and ReservedData MUST NOT be stored, logged, exported or returned by the API |
+
+Acceptance (Given/When/Then; ground truth is the Windows fixture and ADUC unless stated):
+- **AC-TS01** Given the 12 Windows fixtures, When USR-10a runs, Then every cell equals ADUC's tab for that user. *Evidence: V4 report* `[LAB: Windows]`.
+- **AC-TS02** Given a user with the deny bit set, When USR-10b runs, Then the user is absent and the header "Denied" count includes them.
+- **AC-TS03** Given a user with no `userParameters`, When USR-10b runs, Then the row has Basis "Default"; with "Only explicitly allowed" on, it is absent.
+- **AC-TS04** Given a blob with signature "Q", When either report runs, Then State is *Not configured* and no field is "Unreadable".
+- **AC-TS05** Given a blob with `TSPropertyCount` 65,535 and no data, When decoded, Then the field status is `unreadable(truncated)`, no panic, allocation under 256 KiB. *Evidence: unit test.*
+- **AC-TS06** Given a blob carrying `CtxWFProfilePath` of `=HYPERLINK(…)`, When exported to CSV and rendered in the grid, Then it is neutralised on both outputs.
+- **AC-TS07** Given a blob with a sentinel in ReservedData, When the full pipeline runs, Then the sentinel appears in no table, log line, export or API response.
+- **AC-TS08** Given the fuzz target, When CI runs, Then the seed corpus passes and the nightly job reports executions and zero findings.
+- **AC-TS09** Given a user with `CtxMaxIdleTime` set and its inherit bit set, When USR-10a runs, Then the cell reads "Client/server setting" `[LAB: Windows]`.
+- **AC-TS10** Given a repo search, When the lint runs, Then no code path writes `userParameters`.
+- **AC-TS11** Given two properties named `CtxWFHomeDir`, When decoded, Then the field is `unreadable(duplicate)` and the other fields still show values.
+
+## 8. Handoffs and follow-ups
+
+- `product-manager`: fold into second-slice §2/§8/§10 (F3 resolved), §3 (USR-10 now specced; 2 ME names, ADM-084 count 18), and the counts; T-1112 retitle in T-1118 is now moot for USR-10 which is a separate batch.
+- `solution-architect`: place the decoder; confirm the closed-AST fragments (a plain boolean/enum filter, no new fragment expected); `security-architect`: review D16, V-lint and FF-TS1.
+- `directory-engineer`: build the decoder and D16 after V1/V2 fixtures exist; `devops-engineer`: capture fixtures (V1).
+- New tickets to file: **F-TS1** Windows fixtures V1/V2 (blocks the build); **F-TS2** client drive/printer mapping and session-behaviour columns (P4, optional); build ticket for decoder + D16 + USR-10.
+- Parity differences chosen on purpose: **P7** Users with Terminal Server Access shows Basis and says it is account-level only; ME's treatment of "no stored settings" is `[UNVERIFIED]` and is compared in T-1120 (F1).
+- Glossary: *userParameters*, *TSProperty*, *Remote Desktop Services profile* (to add via the `memory` skill).
+
+## 9. Open questions
+
+None for the CEO. Engineering unknowns are the `[UNVERIFIED]` tags, all closed by V1/V2.

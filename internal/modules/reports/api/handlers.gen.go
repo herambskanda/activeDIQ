@@ -1348,6 +1348,7 @@ func (PreviewReassignReportSchedule200) isPreviewReassignReportScheduleOutput() 
 // PreviewResumeReportScheduleInput is the decoded input of previewResumeReportSchedule: path, query and header parameters, then the body.
 type PreviewResumeReportScheduleInput struct {
 	ScheduleID apitypes.UUID // path "scheduleId"
+	Body       ReportScheduleResume
 }
 
 func (in *PreviewResumeReportScheduleInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
@@ -1370,10 +1371,11 @@ func (in *PreviewResumeReportScheduleInput) BindRequest(r *apihost.Request, errs
 	}
 }
 
-func (in *PreviewResumeReportScheduleInput) BodyTarget() any { return nil }
+func (in *PreviewResumeReportScheduleInput) BodyTarget() any { return &in.Body }
 
 func (in *PreviewResumeReportScheduleInput) Validate(errs *apitypes.Errors) {
 	_ = errs
+	in.Body.Validate(jsontext.Pointer(""), errs)
 }
 
 func (in *PreviewResumeReportScheduleInput) DestroySecrets() {}
@@ -1608,6 +1610,7 @@ func (ReassignReportSchedule202) isReassignReportScheduleOutput() {}
 // ResumeReportScheduleInput is the decoded input of resumeReportSchedule: path, query and header parameters, then the body.
 type ResumeReportScheduleInput struct {
 	ScheduleID apitypes.UUID // path "scheduleId"
+	Body       ReportScheduleResume
 }
 
 func (in *ResumeReportScheduleInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
@@ -1630,10 +1633,11 @@ func (in *ResumeReportScheduleInput) BindRequest(r *apihost.Request, errs *apity
 	}
 }
 
-func (in *ResumeReportScheduleInput) BodyTarget() any { return nil }
+func (in *ResumeReportScheduleInput) BodyTarget() any { return &in.Body }
 
 func (in *ResumeReportScheduleInput) Validate(errs *apitypes.Errors) {
 	_ = errs
+	in.Body.Validate(jsontext.Pointer(""), errs)
 }
 
 func (in *ResumeReportScheduleInput) DestroySecrets() {}
@@ -2328,7 +2332,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "previewResumeReportSchedule", Tag: "reports", Method: "POST", Path: "/reports/schedules/{scheduleId}/previews/resume",
 			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
-			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Class: "read", MaxBody: 8192, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
 		},
 			func() apihost.Input { return new(PreviewResumeReportScheduleInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
@@ -2394,7 +2398,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "resumeReportSchedule", Tag: "reports", Method: "POST", Path: "/reports/schedules/{scheduleId}/resume",
 			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
-			Class: "write", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Class: "write", MaxBody: 8192, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
 		},
 			func() apihost.Input { return new(ResumeReportScheduleInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {

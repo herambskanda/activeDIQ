@@ -93,6 +93,8 @@ func TestFFSP1ImportBoundaries(t *testing.T) {
 	tsup := "internal/platform/store/storetest"
 	want(t, "product imports a test-support package", map[string]string{"internal/modules/m/m.go": gofile("\t_ \"fx.test/"+tsup+"\"\n", "")}, "FF-SP1", "test-support-import", "internal/modules/m/m.go")
 	want(t, "product imports jobstest", map[string]string{"internal/compose/server/s.go": gofile("\t_ \"fx.test/internal/platform/jobs/jobstest\"\n", "")}, "FF-SP1", "test-support-import", "internal/compose/server/s.go")
+	want(t, "product imports tenanttest", map[string]string{"internal/modules/m/m.go": gofile("\t_ \"fx.test/internal/platform/tenant/tenanttest\"\n", "")}, "FF-SP1", "test-support-import", "internal/modules/m/m.go")
+	want(t, "platform product imports tenanttest", map[string]string{"internal/platform/zz/z.go": gofile("\t_ \"fx.test/internal/platform/tenant/tenanttest\"\n", "")}, "FF-SP1", "test-support-import", "internal/platform/zz/z.go")
 	want(t, "a test imports a test-support package", map[string]string{"internal/modules/m/m_test.go": gofile("\t_ \"fx.test/"+tsup+"\"\n", "")}, "", "", "")
 	want(t, "test-support package starts a process", map[string]string{tsup + "/s.go": gofile("\t\"os/exec\"\n", "var _ = exec.Command")}, "", "", "")
 	want(t, "a product package next to it may not", map[string]string{"internal/platform/store/other/s.go": gofile("\t\"os/exec\"\n", "var _ = exec.Command")}, "FF-SP1", "process-api", "internal/platform/store/other/s.go")

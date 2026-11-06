@@ -70,6 +70,10 @@ func (s *tunnelServer) ScopedSearch(req *connectorv1.ScopedSearchRequest, st grp
 	return s.read.ScopedSearch(req, st)
 }
 
+func (s *tunnelServer) Describe(ctx context.Context, req *connectorv1.DescribeRequest) (*connectorv1.DescribeResponse, error) {
+	return s.read.Describe(ctx, req)
+}
+
 func (s *tunnelServer) Plan(ctx context.Context, req *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {
 	return s.write.Plan(ctx, req)
 }

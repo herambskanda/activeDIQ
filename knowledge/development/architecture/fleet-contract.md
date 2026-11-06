@@ -235,7 +235,35 @@ Threat-model links: TM-A11 (key never leaves the sealed column; unreachable here
   both roots, new pin, bundle without the old root). One audit event per use (Application log 4102/4103).
 - **Persistence.** `ca-bundle.pem`, `ca-pin.txt`, `endpoints.txt`, `key.pem` (0600, PKCS#8), `leaf.pem`
   in a 0700 directory, each by temp+rename, leaf last; `Load` re-validates everything. Nothing is written on
-  any failure. On Windows the directory is created atomically with a protected DACL (SYSTEM, Administrators, the service identity; typed ACL API, no SDDL), a pre-existing directory is never adopted unless already owner-only, and Load re-checks owner and DACL of the directory and every file (T-0291). Reparse points (junctions, symlinks) are refused via the file attributes, not Go's FileInfo mapping. **Enrol identity:** the directory is owned by, and grants, the token user at enrol time, so enrol as the identity the service runs as (gMSA/virtual account); enrolling as an interactive admin and running as another account fails closed on Load. The installer should own the parent directory. Load returns ErrExpired for an expired leaf or CA.
+  any failure. All of it goes through `internal/platform/ownerfile` (`Dir`, T-1315); `fleet/dial` has no owner-only code of its own.
+  - **One principal set** (decided T-1315): the **service identity** (the process token user) and **SYSTEM**, `FILE_ALL_ACCESS`,
+    in a PROTECTED DACL; the directory is owned by the service identity. Administrators are *not* granted: an administrator who
+    needs the state takes ownership deliberately (this leaves an audit trail only where the audit policy captures it, e.g. privilege use and object access, events 4674 and 4670) rather than reading `key.pem` by membership. On Unix: mode 0700
+    / 0600, owned by the euid. Typed ACL API, never SDDL.
+  - **Handle-based, no check-by-path-then-use-by-path.** `Load`, `Enroll` and `Repin` call `ownerfile.OpenDir` / `CreateDir` once and then
+    only `Dir.ReadFile` / `Dir.WriteFile` on that handle. Unix: the parent is opened `O_DIRECTORY|O_NOFOLLOW`, the directory is opened
+    relative to it, and files are `openat`'d with `O_NOFOLLOW`; owner and mode are read with `fstat` on the open descriptor. Windows:
+    `FILE_FLAG_OPEN_REPARSE_POINT` opens, `GetSecurityInfo` on the handle, the held handle shares read and write but never `FILE_SHARE_DELETE` (the directory cannot
+    be renamed or replaced while held; write sharing is needed so the temp-file rename into the directory is not a sharing violation),
+    each file's `GetFinalPathNameByHandle` must equal the directory's final path plus its name, and every read and write re-checks
+    before and after that the held handle's final path is still the path it was opened by, so a rename of an ancestor above the
+    parent after open is refused (`ErrDirUnsafe`) instead of redirecting I/O into a rebuilt tree. A rename that lands inside the
+    window of a single write can place only the owner-only temp file in that tree; it is removed and the write fails. A directory swapped for a junction or symlink after the open cannot redirect a read or a write; a fresh open of the
+    swapped path is refused (`ErrDirUnsafe`).
+  - **Parent trust.** The parent of the state directory must be a real directory (not a link or reparse point) that nobody but the
+    service identity, SYSTEM and (Windows) Administrators owns, can create in, can delete children of, can rename in or can change the
+    permissions of (`ErrParentUnsafe`; Unix: owned by root or the euid, no group or other write bit, sticky or not). It is verified
+    **before** anything is created, so an untrusted parent means nothing is written. Dial does not create the parent: the installer
+    does, with a protected DACL (`agentsetup prepare-datadir` for the agent). Read-only grants to other principals do not matter.
+  - **Created owner-only.** Every state file is written via a temp file created with an explicit PROTECTED descriptor in the
+    `CreateFile` call (Windows) or `openat(O_CREAT|O_EXCL, 0600)` (Unix), then synced and renamed; no file exists with an inherited
+    ACL, so the key is never in a readable file. A pre-existing directory is never adopted or repaired, only accepted if it passes.
+  - **Enrol identity:** the directory is owned by, and grants, the token user at enrol time, so enrol as the identity the service runs
+    as (gMSA or virtual account); enrolling as an interactive admin and running as another account fails closed on `Load`.
+  - **Residual risk, accepted:** a service identity shared with other services (LocalService, NetworkService, a shared domain
+    account) lets every service on the host that runs as it read `key.pem`. Only a gMSA or a virtual account (`NT SERVICE\<name>`) is
+    supported. Ancestors above the parent are followed (the checks are on the objects actually reached); a principal who controls an
+    ancestor can redirect the path but cannot produce a directory that passes both checks. Load returns ErrExpired for an expired leaf or CA.
 - **Dial-out.** `dial.DialOut(addr, state)` uses `Credentials`: TLS 1.3, roots exactly `State.Roots` (the pinned server CA); a leaf signed by a tenant CA is refused as a server.
   Nothing retries or falls back; retry policy is the caller's and must reuse the same pin.
 - **Seam.** `dial` imports no generated proto; the role package supplies `Exchange` (fleetv1 Enroll call).

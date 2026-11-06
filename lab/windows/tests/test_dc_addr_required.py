@@ -59,7 +59,6 @@ class DcAddrRequired(unittest.TestCase):
                     self.assertFalse(marker.exists())
 
     def test_set_key_passes_the_address_gate(self):
-        from importlib.machinery import SourceFileLoader
         sys.path.insert(0, str(LAB / "lib"))
         import labaddr
         d = Path(tempfile.mkdtemp()); f = d / "e"; f.write_text('WIN_LAB_DC_ADDR="10.9.8.7"\n')
@@ -68,11 +67,35 @@ class DcAddrRequired(unittest.TestCase):
 
     def test_every_driver_is_covered(self):
         # any driver under bin/ that talks WinRM must use the gate, so a new driver cannot reintroduce a default
+        # (dc1winrm.load_env applies the gate itself; the three named drivers also call it before the dc1 lock)
         for p in sorted((LAB / "bin").iterdir()):
+            if not p.is_file():
+                continue
             t = p.read_text(errors="replace")
-            if "winrm" in t or "dc1winrm" in t:
-                self.assertIn("require_dc_addr", t, f"{p.name} reaches the DC without the required-address gate")
-                self.assertIn(p.name, DRIVERS, f"add {p.name} to DRIVERS")
+            if "winrm" in t:
+                self.assertTrue("require_dc_addr" in t or "dc1winrm.load_env" in t,
+                                f"{p.name} reaches the DC without the required-address gate")
+        for name in DRIVERS:
+            t = (LAB / "bin" / name).read_text()
+            self.assertTrue("require_dc_addr" in t or "dc1winrm.load_env" in t, f"{name} has no address gate")
+            if "os.execv(" in t:  # a driver that re-execs under the lock must gate first
+                self.assertLess(t.index("require_dc_addr("), t.index("os.execv("), f"{name} gates after the lock")
+
+    def test_shared_loader_has_no_default(self):
+        sys.path.insert(0, str(LAB / "lib"))
+        import dc1winrm
+        d = Path(tempfile.mkdtemp()); f = d / "e"; f.write_text("WIN_LAB_ADMIN_PASSWORD=x\n")
+        old = {k: os.environ.pop(k, None) for k in ("WIN_LAB_DC_ADDR",)}
+        os.environ["WIN_LAB_ENV"] = str(f)
+        try:
+            with self.assertRaises(SystemExit) as c:
+                dc1winrm.load_env("t")
+            self.assertIn("WIN_LAB_DC_ADDR", str(c.exception))
+        finally:
+            os.environ.pop("WIN_LAB_ENV", None)
+            for k, v in old.items():
+                if v is not None:
+                    os.environ[k] = v
 
     def test_old_address_is_gone_from_lab_and_runbooks(self):
         hits = []

@@ -1,0 +1,10 @@
+{
+    "profile":  "windows",
+    "installer":  {
+                      "on_domain_controller":  true,
+                      "refused":  true,
+                      "installed":  false
+                  }
+}
+
+

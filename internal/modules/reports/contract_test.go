@@ -538,6 +538,139 @@ func TestScheduleActionsHavePreviewTwinsAndAnUndoPair(t *testing.T) {
 	}
 }
 
+// T-0979 (T-0893 R1-R6, TM-D30 SX-1): schedule update and delete are owner-only, with no text that grants
+// manage_all an edit or a delete; the export record is bound like the download; resume carries the external
+// confirmation and its two refusals; create, update and resume declare 401 StepUpRequired.
+func TestScheduleOwnerOnlyExportRecordBoundResumeConfirmedAndStepUpDeclared(t *testing.T) {
+	d := bundle(t)
+	ops := map[string]map[string]any{}
+	for path, item := range at(t, d, "paths") {
+		if !strings.HasPrefix(path, "/reports/") {
+			continue
+		}
+		for _, o := range item.(map[string]any) {
+			if op, ok := o.(map[string]any); ok {
+				if id, ok := op["operationId"].(string); ok {
+					ops[id] = op
+				}
+			}
+		}
+	}
+	desc := func(id string) string {
+		op, ok := ops[id]
+		if !ok {
+			t.Fatalf("operation %s missing", id)
+		}
+		s, _ := op["description"].(string)
+		return s
+	}
+	ref := func(v any) string {
+		m, _ := v.(map[string]any)
+		r, _ := m["$ref"].(string)
+		return r
+	}
+	// R1, R2 (acceptance 1): owner-only, on the write and on its preview twin. The write answers 404 / 403 not_owner;
+	// the twin answers 404 and, for a manage_all holder, a 200 refused with blocked[].code not_owner (ADR-0004 rule 14).
+	for _, id := range []string{"updateReportSchedule", "deleteReportSchedule", "resumeReportSchedule"} {
+		s := desc(id)
+		for _, want := range []string{"Owner-only", "404", "403", "not_owner"} {
+			if !strings.Contains(s, want) {
+				t.Errorf("%s does not say %q", id, want)
+			}
+		}
+	}
+	for _, id := range []string{"previewUpdateReportSchedule", "previewDeleteReportSchedule", "previewResumeReportSchedule"} {
+		s := desc(id)
+		for _, want := range []string{"owner-only", "404", "200 with outcome refused", "blocked[].code not_owner"} {
+			if !strings.Contains(s, want) {
+				t.Errorf("%s does not say %q", id, want)
+			}
+		}
+		if strings.Contains(s, "errors[].code not_owner") {
+			t.Errorf("%s must not answer a manage_all holder with a 403 problem", id)
+		}
+	}
+	for _, id := range []string{"updateReportSchedule", "deleteReportSchedule", "previewUpdateReportSchedule", "previewDeleteReportSchedule"} {
+		s := desc(id)
+		for _, banned := range []string{"additionally needs reports.schedule.manage_all", "same visibility", "Same visibility"} {
+			if strings.Contains(s, banned) {
+				t.Errorf("%s still says %q, which grants manage_all an edit or a delete", id, banned)
+			}
+		}
+		if ops[id]["x-permission"] != string(reports.SchedulePermission) {
+			t.Errorf("%s binds %v, want reports.schedule", id, ops[id]["x-permission"])
+		}
+		for _, c := range []string{"403", "404"} {
+			if _, ok := ops[id]["responses"].(map[string]any)[c]; !ok {
+				t.Errorf("%s declares no %s", id, c)
+			}
+		}
+	}
+	// One code for one refusal: owner_only appears nowhere under /reports/.
+	for id := range ops {
+		if strings.Contains(desc(id), "owner_only") {
+			t.Errorf("%s still says owner_only; the code is not_owner", id)
+		}
+	}
+	// Run now answers 404 to every non-owner; it is not in the 403 not_owner family.
+	if s := desc("runReportScheduleNow"); !strings.Contains(s, "a manage_all holder included, gets 404") || strings.Contains(s, "not_owner") {
+		t.Errorf("runReportScheduleNow must answer 404 to any non-owner and not mention not_owner")
+	}
+	// R3 (acceptance 2): the export record is bound like the download.
+	ge := desc("getReportExport")
+	for _, want := range []string{"downloadReportExport", "creator", "run-read gate", "DM-84 Delivery", "Anyone else", "404"} {
+		if !strings.Contains(ge, want) {
+			t.Errorf("getReportExport does not say %q", want)
+		}
+	}
+	// R4: whose reports.deliver.external is checked, and when.
+	for _, id := range []string{"createReportSchedule", "updateReportSchedule"} {
+		s := desc(id)
+		if !strings.Contains(s, "checked against the") || !strings.Contains(s, "caller") || !strings.Contains(s, "every fire") {
+			t.Errorf("%s must say reports.deliver.external is checked against the caller at write time and the owner at every fire", id)
+		}
+	}
+	// R5 (acceptance 3): resume takes a required body whose confirmedExternal is required, and declares 400 and 403.
+	schemas := at(t, d, "components", "schemas")
+	for _, id := range []string{"resumeReportSchedule", "previewResumeReportSchedule"} {
+		rb, _ := ops[id]["requestBody"].(map[string]any)
+		if rb == nil || rb["required"] != true {
+			t.Fatalf("%s must take a required request body", id)
+		}
+		j, _ := at(t, rb, "content")["application/json"].(map[string]any)
+		if got := ref(j["schema"]); got != "#/components/schemas/ReportScheduleResume" {
+			t.Errorf("%s body is %q, want ReportScheduleResume", id, got)
+		}
+		for _, c := range []string{"400", "403"} {
+			if _, ok := ops[id]["responses"].(map[string]any)[c]; !ok {
+				t.Errorf("%s declares no %s", id, c)
+			}
+		}
+	}
+	rs, _ := schemas["ReportScheduleResume"].(map[string]any)
+	if !slices.Contains(anyList(rs["required"]), any("confirmedExternal")) || rs["additionalProperties"] != false {
+		t.Errorf("ReportScheduleResume must require confirmedExternal and be closed: %v", rs)
+	}
+	rd := desc("resumeReportSchedule")
+	for _, want := range []string{"confirmedExternal", "external_not_confirmed", "external_not_permitted", "equal every external recipient"} {
+		if !strings.Contains(rd, want) {
+			t.Errorf("resumeReportSchedule does not say %q", want)
+		}
+	}
+	// R6 (acceptance 4): the Action writes that can step up declare 401 StepUpRequired. Pause, delete and reassign never step up.
+	for _, id := range []string{"createReportSchedule", "updateReportSchedule", "resumeReportSchedule", "undoReportScheduleOperation"} {
+		if got := ref(ops[id]["responses"].(map[string]any)["401"]); got != "#/components/responses/StepUpRequired" {
+			t.Errorf("%s 401 is %q, want StepUpRequired", id, got)
+		}
+	}
+	// SX-2 / ADR-0004 rule 14: an Action that never steps up declares 401 Unauthenticated, not StepUpRequired.
+	for _, id := range []string{"pauseReportSchedule", "deleteReportSchedule", "reassignReportSchedule", "runReportScheduleNow"} {
+		if got := ref(ops[id]["responses"].(map[string]any)["401"]); got != "#/components/responses/Unauthenticated" {
+			t.Errorf("%s 401 is %q, want Unauthenticated (it never steps up)", id, got)
+		}
+	}
+}
+
 func anyList(v any) []any {
 	l, _ := v.([]any)
 	return l

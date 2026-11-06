@@ -67,6 +67,8 @@ Read the ticket, then work through, in order:
 3. **Blocked tickets** — apply the escalation ladder after reading notes, history and the latest
    handoff (`handoff latest T-…`):
    missing context → add a note with the answer or file pointers, `ticket unblock`;
+   blocked only because a dependency is `done` but not on main → `ticket unblock T-… --to-ready
+   --by factory-director --note "…"` (status ready; the T-1266 claim gate holds it until the merge);
    under-powered or genuinely hard → `ticket set T-… owner=principal-engineer` (Opus `high`) with a
    note on what was tried — effort never goes above `high` (CEO, 2026-10-02);
    principal stuck → re-cut, split or spike; never raise effort;
