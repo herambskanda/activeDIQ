@@ -378,7 +378,8 @@ func dialComponent(ctx context.Context, t *testing.T, addr string, pki tunnelPKI
 func waitAttached(ctx context.Context, t *testing.T, hub *gateway.Hub, tid tenant.ID, comp string) {
 	t.Helper()
 	for end := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-		// Describe is not served by the lab connector (UNIMPLEMENTED), and it is not a Read.
+		// Describe with no connection is refused INVALID_ARGUMENT by the connector (T-1258): any answer but UNAVAILABLE
+		// means the tunnel is attached, and it is not a Read.
 		_, err := connectorv1.NewConnectorClient(hub.Conn(tid, comp)).Describe(ctx, &connectorv1.DescribeRequest{})
 		if status.Code(err) != codes.Unavailable {
 			return
