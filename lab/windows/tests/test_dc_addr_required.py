@@ -4,7 +4,7 @@ A driver started without WIN_LAB_DC_ADDR must exit non-zero naming the key, befo
 builds anything or opens a socket (a sitecustomize hook turns any connect into a recorded failure), and no
 file under lab/ or the runbooks may hard-code the old dc1 address that now belongs to another LAN device.
 """
-import os, subprocess, sys, tempfile, unittest
+import os, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 LAB = Path(__file__).resolve().parent.parent
@@ -78,7 +78,8 @@ class DcAddrRequired(unittest.TestCase):
             t = p.read_text(errors="replace")
             if "winrm" in t or "dc1winrm" in t:
                 # dc1winrm.load_env returns require_dc_addr(...), so a driver that loads its env through it is gated
-                self.assertTrue("require_dc_addr" in t or "dc1winrm.load_env" in t,
+                self.assertTrue("require_dc_addr" in t or "dc1winrm.load_env" in t
+                                or re.search(r"from dc1winrm import [^\n]*\bload_env\b", t),
                                 f"{p.name} reaches the DC without the required-address gate")
                 self.assertIn(p.name, DRIVERS, f"add {p.name} to DRIVERS")
 
