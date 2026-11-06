@@ -119,7 +119,7 @@ func (s *Session) search(ctx context.Context, req SearchRequest, deliver func([]
 	if req.ExtendedDN {
 		extra = append(extra, extendedDN{})
 	}
-	return s.pages(ctx, base, scope, flt.String(), attrs, ps, extra, deliver)
+	return s.pagesWith(ctx, base, scope, flt.String(), attrs, ps, extra, deliver)
 }
 
 // SearchPages is Search delivering one whole page at a time. The session lock is NOT held while
@@ -135,7 +135,12 @@ func (s *Session) SearchPages(ctx context.Context, req SearchRequest, page func(
 }
 
 // pages runs the paged loop. The lock is held only for each round trip, never across deliver.
-func (s *Session) pages(ctx context.Context, base string, scope int, flt string, attrs []string, ps uint32, extra []ldap.Control, deliver func([]*Entry) error) error {
+func (s *Session) pages(ctx context.Context, base string, scope int, flt string, attrs []string, ps uint32, deliver func([]*Entry) error) error {
+	return s.pagesWith(ctx, base, scope, flt, attrs, ps, nil, deliver)
+}
+
+// pagesWith is pages with extra controls the named operation owns (never a caller's).
+func (s *Session) pagesWith(ctx context.Context, base string, scope int, flt string, attrs []string, ps uint32, extra []ldap.Control, deliver func([]*Entry) error) error {
 	// one round trip under the lock
 	trip := func(c []byte, size uint32) (*ldap.SearchResult, error) {
 		s.mu.Lock()

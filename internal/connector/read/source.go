@@ -113,3 +113,19 @@ func (a *ADSource) ScopedSearch(ctx context.Context, req ad.ScopedRequest, fn fu
 	req.ExtendedDN = true // DN-valued attributes carry the target's GUID and SID (T-1202)
 	return a.sess.ScopedSearch(ctx, req, fn)
 }
+
+// Describer is the optional topology half of a Source. A Source without it answers Describe with
+// CAPABILITY_UNSUPPORTED.
+type Describer interface {
+	// Topology reads the forest's naming contexts and the bound DC's paging limits on the one session.
+	Topology(ctx context.Context) (*ad.Topology, error)
+}
+
+var _ Describer = (*ADSource)(nil)
+
+func (a *ADSource) Topology(ctx context.Context) (*ad.Topology, error) {
+	if !a.ok() {
+		return nil, write.ErrNoBoundDC
+	}
+	return a.sess.Topology(ctx)
+}
