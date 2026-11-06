@@ -28,7 +28,9 @@ const evidence = process.env["ADIQ_E2E_EVIDENCE_DIR"] ?? "../factory/demos/evide
 test.skip(!base, "set ADIQ_BASE_URL (lab/e2e/run-skeleton-proof.sh sets everything)");
 // ADIQ_E2E_VIDEO=1 records the run (CEO request, T-0671). Only masked password fields and the generated
 // console account are on screen; the lab passwords never reach the browser.
-test.use({ video: process.env["ADIQ_E2E_VIDEO"] ? { mode: "on", size: { width: 1280, height: 720 } } : "off" });
+test.use({
+  video: process.env["ADIQ_E2E_VIDEO"] ? { mode: "on", size: { width: 1280, height: 720 } } : "off",
+});
 test.use({ launchOptions: { args: pinnedSpkiArgs(process.env["ADIQ_E2E_CA"]) } });
 
 interface SearchItem {

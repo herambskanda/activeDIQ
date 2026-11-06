@@ -14,22 +14,20 @@ never printed. Lab only (A-0025).
 """
 import base64, os, sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import dc1winrm
+from labaddr import require_dc_addr
+
+# No default DC address (T-1279): fail before anything else touches the network.
+require_dc_addr("skeleton-proof-evidence", dc1winrm.REPO)
+
 try:
     from winrm.protocol import Protocol
 except ImportError:
     sys.exit("skeleton-proof-evidence: pip install pywinrm requests-ntlm")
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-path = os.environ.get("WIN_LAB_ENV") or os.path.join(REPO, "lab", "windows", ".win-lab.env")
-if not os.path.exists(path):
-    sys.exit(f"skeleton-proof-evidence: lab env file not found: {path} (set WIN_LAB_ENV)")
-env = {}
-for line in open(path):
-    line = line.strip()
-    if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1)
-        env[k] = v.strip().strip('"')
-ADDR = os.environ.get("WIN_LAB_DC_ADDR") or env.get("WIN_LAB_DC_ADDR", "192.168.1.250")
+REPO = dc1winrm.REPO
+env, path, ADDR = dc1winrm.load_env("skeleton-proof-evidence")
 USER = os.environ.get("ADIQ_E2E_USER_SAM", "lab-user-01")
 import re
 if not re.fullmatch(r"[A-Za-z0-9._-]+", USER):
