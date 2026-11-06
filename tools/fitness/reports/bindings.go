@@ -2,15 +2,6 @@ package main
 
 import (
 	"context"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"slices"
-	"sort"
-	"strings"
 
 	"github.com/skenzeriq/activediq/tools/fitness/internal/boundtest"
 )
@@ -53,7 +44,7 @@ var defaultBindings = []binding{
 
 // runBindings runs the landed bindings and lists the others as pending.
 func runBindings(ctx context.Context, root string, bs []binding, datasets []string, run boundtest.Runner) ([]Violation, []string, error) {
-	declared, err := declaredTests(root)
+	declared, err := boundtest.Declared(root)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -98,48 +89,4 @@ func runBindings(ctx context.Context, root string, bs []binding, datasets []stri
 		vs = append(vs, Violation{f.Check, f.Kind, f.Where, f.Msg})
 	}
 	return vs, pending, nil
-}
-
-// declaredTests maps each top-level Test function name to the "./dir" packages declaring it.
-func declaredTests(root string) (map[string][]string, error) {
-	out := map[string][]string{}
-	fset := token.NewFileSet()
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "node_modules", "testdata", "vendor", "web", "factory", "knowledge", ".activeDIQ-worktrees":
-				if p != root {
-					return filepath.SkipDir
-				}
-			}
-			return nil
-		}
-		if !strings.HasSuffix(p, "_test.go") {
-			return nil
-		}
-		src, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		f, err := parser.ParseFile(fset, p, src, parser.SkipObjectResolution)
-		if err != nil {
-			return err
-		}
-		dir := "./" + relSlash(root, filepath.Dir(p))
-		for _, d := range f.Decls {
-			if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && strings.HasPrefix(fd.Name.Name, "Test") {
-				if !slices.Contains(out[fd.Name.Name], dir) {
-					out[fd.Name.Name] = append(out[fd.Name.Name], dir)
-				}
-			}
-		}
-		return nil
-	})
-	for _, v := range out {
-		sort.Strings(v)
-	}
-	return out, err
 }

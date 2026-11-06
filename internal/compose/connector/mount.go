@@ -74,6 +74,10 @@ func (s *tunnelServer) ChangeFeed(req *connectorv1.ChangeFeedRequest, st grpc.Se
 	return s.read.ChangeFeed(req, st)
 }
 
+func (s *tunnelServer) Describe(ctx context.Context, req *connectorv1.DescribeRequest) (*connectorv1.DescribeResponse, error) {
+	return s.read.Describe(ctx, req)
+}
+
 func (s *tunnelServer) Plan(ctx context.Context, req *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {
 	return s.write.Plan(ctx, req)
 }

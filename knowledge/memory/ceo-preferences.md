@@ -1,6 +1,6 @@
 ---
 title: CEO preferences
-updated: 2026-11-01
+updated: 2026-11-02
 budget: 120 lines
 ---
 
@@ -10,6 +10,7 @@ Newest first within each section. Every entry: date · preference · source. Use
 CEO unless they state otherwise.
 
 ## Working style
+- 2026-11-02 · Lab access, second time: took the recommended pool-scoped Proxmox token over building VMs by hand or deferring, answered on the board with no note. Two data points now (A-0025, D-0022): for lab hand-steps the default offer is a narrowly scoped, one-command-revocable worker authorisation, recommended first. Still lab-only; do not extrapolate to customer or production-like systems. (D-0022, notice D-0023)
 - 2026-10-29 · Lab access: given the choice, they authorised workers ("workers may use WinRM on dc1 in the lab only") instead of doing the dc1 prep by hand. When a lab step needs a human, offer a scoped authorisation for workers as an option. Keep it lab-only. (A-0025)
 - 2026-10-29 · Deferred the Entra sandbox tenant to after M1 ("can we do it in last after m1 is completed"). Don't file Entra-tenant actions during M1. Re-file once at M1 acceptance (T-0075, T-0441 parked in M2). (A-0026; A-0030 withdrawn 2026-10-30)
 - 2026-10-09 · **Never publish activeDIQ material to the claude.ai Artifact site.** Visuals and docs live in the factory Library (board) in the board's own theme (tokens.css: monochrome + indigo). Source: architecture-diagram request.
@@ -25,7 +26,10 @@ CEO unless they state otherwise.
 - 2026-08-12 · Status reports in very few lines; no summaries of things they did not ask about. (../UEM/.claude/skills/domain-model/SKILL.md)
 
 ## Models and cost
+- 2026-11-02 · **M1 scope is closed by default.** New tickets go to M2 unless they (a) block T-0671, T-0765, T-0673 or T-1350, or (b) fix a security or correctness flaw in code M1 ships (sign-in, directory search, DB layer); the summary names the test. No new M1 tickets for lab or agent polish. Prompted by M1 growing 262→273 in a day. They want M1 finished, not grown. (F-0001)
+- 2026-11-02 · A day after D-0016 they gave M1 every slot ("all slots go to M1 until M1 is accepted"), setting the hold themselves on the board. Finishing and accepting M1 comes before any M2a progress. Do not release held tickets for throughput. Ask about M2a again only at M1 acceptance. (T-1347)
 - 2026-11-01 · On the date their "M2a only" hold ran out, they put finishing M1 (the lab proofs, the RC4 security fix) ahead of M2a speed. They gave the split as numbers in the answer note ("Resume M1/lab in 5 slot; keep 1 slots for M2a"), the reverse of the recommended 1-slot option. When an answer note gives numbers, apply the note over the option label and file a notice. When capacity is being split, offer the bolder split as an option too. (D-0016, notice D-0018)
+- 2026-11-03 · Offered "open your PC to the build host (3 steps, ~3 min)" against "workers install it on fs1 (slower)", they took the slower, worker-run path. They keep their own machine out of the lab, even when that costs M1 time. Make every lab host a VM in the adiq-lab pool, and always offer a worker-run option next to any step on the CEO's own PC. (A-0036, notice D-0027)
 - 2026-10-22 · On lab spend, took the free route (Developer Program sandbox) over a small paid tenant or deferring. They did not defer the least-privilege proof. Lead with free-if-eligible and give a priced fallback. Keep their hands-on steps to one command, with no credential pasting. (D-0001, current board)
 - 2026-10-02 · **Nothing runs above `high` effort** (this replaces the kickoff's xhigh/max-on-escalation rule). Use Sonnet at high for most roles and Opus at high only for the important ones ("like yourself"). Daily run cap 300. They prefer more runs on cheaper settings over fewer runs at maximum effort. (CLI answer 2026-10-02)
 - 2026-10-02 · Wanted 6 parallel worker slots and corrected the factory's cautious choice of 4. On throughput they lean towards more capacity, within the 300/day cap. When they ask to change a capacity setting without giving a number, ask for the number in one line. Don't pick a conservative value for them. (CLI, 2026-10-02)

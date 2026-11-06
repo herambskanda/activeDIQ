@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"google.golang.org/protobuf/reflect/protoreflect"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -118,10 +120,36 @@ func TestNoWritePathMeansNoWrite(t *testing.T) {
 	}
 }
 
-// TestWriteKindHasNoKindYet: v1.1 defines the envelope only. The first concrete WriteKind is a
-// visible change here, and must come with its WriteChange arm and conformance cases (contract §8.1).
-func TestWriteKindHasNoKindYet(t *testing.T) {
-	if n := len(connectorv1.WriteKind_name); n != 1 {
-		t.Fatalf("WriteKind has %d values; adding a kind needs its spec ticket, its WriteChange arm and CC-WRITE cases — update this test with them", n)
+// TestWriteKindList pins the WriteKind list of contract v1.4 (connector-contract.md §8.10, T-1581):
+// ten kinds, each with the WriteChange arm of the same number. Adding, removing or renumbering a
+// kind needs a change to §8.10 (its digest key, reversibility class, touched-set rule and CC-WK
+// cases) in the same commit; update this test with it.
+func TestWriteKindList(t *testing.T) {
+	want := map[connectorv1.WriteKind]string{
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE:       "object_create",
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE:       "object_update",
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE:       "object_delete",
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE:         "object_move",
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME:       "object_rename",
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE:      "object_restore",
+		connectorv1.WriteKind_WRITE_KIND_USER_PASSWORD_RESET: "user_password_reset",
+		connectorv1.WriteKind_WRITE_KIND_USER_UNLOCK:         "user_unlock",
+		connectorv1.WriteKind_WRITE_KIND_ACCOUNT_ENABLE:      "account_enable",
+		connectorv1.WriteKind_WRITE_KIND_ACCOUNT_DISABLE:     "account_disable",
+	}
+	if n := len(connectorv1.WriteKind_name); n != len(want)+1 {
+		t.Fatalf("WriteKind has %d values, want %d plus UNSPECIFIED: update contract §8.10 and this test together", n, len(want))
+	}
+	oneof := (&connectorv1.WriteChange{}).ProtoReflect().Descriptor().Oneofs().ByName("change")
+	if oneof == nil || oneof.Fields().Len() != len(want) {
+		t.Fatalf("WriteChange.change must have exactly %d arms", len(want))
+	}
+	for k, arm := range want {
+		f := oneof.Fields().ByName(protoreflectName(arm))
+		if f == nil || int32(f.Number()) != int32(k) {
+			t.Errorf("kind %s: WriteChange arm %q missing or its number differs from the kind's (%d)", k, arm, int32(k))
+		}
 	}
 }
+
+func protoreflectName(s string) protoreflect.Name { return protoreflect.Name(s) }

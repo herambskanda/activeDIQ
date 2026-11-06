@@ -37,3 +37,4 @@ SearchResultReference in scoped searches. `referral_fault_test.go` runs it over 
 (no lab needed); `ldapfault_lab_test.go` (tag `lab`, `make lab-test-connector`) runs it in front of the
 Samba lab. The real-Windows-DC case is `TestReferralWindowsRealDCPending`: it shows as SKIP/PENDING in
 `go test -v` output until the Windows lab can host a referral.
+- Proxmox lab pool (T-1326): `make proxmox-lab-bootstrap|revoke|test`, driver `lab/proxmox/bin/proxmox-lab`; runbook windows-lab.md §10.

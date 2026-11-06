@@ -173,3 +173,19 @@ func (a *ADSource) DirSyncCycle(ctx context.Context, req ad.DirSyncRequest, fn f
 	}
 	return a.sess.DirSyncCycle(ctx, req, fn)
 }
+
+// Describer is the optional topology half of a Source. A Source without it answers Describe with
+// CAPABILITY_UNSUPPORTED.
+type Describer interface {
+	// Topology reads the forest's naming contexts and the bound DC's paging limits on the one session.
+	Topology(ctx context.Context) (*ad.Topology, error)
+}
+
+var _ Describer = (*ADSource)(nil)
+
+func (a *ADSource) Topology(ctx context.Context) (*ad.Topology, error) {
+	if !a.ok() {
+		return nil, write.ErrNoBoundDC
+	}
+	return a.sess.Topology(ctx)
+}
