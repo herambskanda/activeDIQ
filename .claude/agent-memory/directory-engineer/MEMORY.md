@@ -28,3 +28,4 @@
 - [extended-DN lessons](extdn-lessons.md) — T-1202: Samba extends entry name too, opt-in control, ParseLinkValue, slow bulk lab test
 - [search meta lessons](search-meta-lessons.md) — T-1097: chips via users dataset + ExecAll, derivation fixture traps, Entra cloud-only rule
 - [sync cursor lessons](sync-cursor-lessons.md) — T-1190: fitness traps (tenant_id guard, SQL const, platform_leases), fencing limits
+- [sync engine lessons](sync-engine-lessons.md) — T-1191: RLS owner-update trap, lease release in rigs, per-NC lease, CompleteScan no cookie
