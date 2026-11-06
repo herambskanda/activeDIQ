@@ -269,7 +269,7 @@ The connector's codecs (P3) decode, so no caller sees raw bytes of a known synta
 | Integer (2.5.5.9) | `int32_value` (signed) | `groupType` stays negative for security groups; `userAccountControl` flags decoded by `attr/flags` |
 | Large Integer, not a time | `int64_value` | |
 | FILETIME, Generalized Time | `TimeValue` | `ZERO` (0), `MAX` (`0x7FFF…`), a timestamp, or raw ticks past year 9999. `accountExpires` 0 and `MAX` are both "never" to the caller; `pwdLastSet` 0 is "must change" |
-| DN syntax | `DnValue{display_dn, guid, sid}` | the GUID and SID come from the extended-DN control and are the identity of the target |
+| DN syntax | `DnValue{display_dn, guid, sid}` | the GUID (RFC 4122 order) and SID come from the extended-DN control, which `ScopedSearch` and `Read` attach (T-1202), and are the identity of the target. Each is set only if the DC sent it (a dangling or foreign link may have a SID and no GUID, a non-principal no SID, a DC that ignores the control neither); never derived. `display_dn` and the entry `dn` are the plain DN. Other session callers do not get the control: it is opt-in (`ReadOptions/SearchRequest/ScopedRequest.ExtendedDN`) |
 | Unknown syntax | `octets` | |
 
 ### 5.5 `ReadPerDC`
