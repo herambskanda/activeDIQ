@@ -31,6 +31,9 @@ for line in open(path):
         env[k] = v.strip().strip('"')
 ADDR = os.environ.get("WIN_LAB_DC_ADDR") or env.get("WIN_LAB_DC_ADDR", "192.168.1.250")
 USER = os.environ.get("ADIQ_E2E_USER_SAM", "lab-user-01")
+import re
+if not re.fullmatch(r"[A-Za-z0-9._-]+", USER):
+    sys.exit(f"ADIQ_E2E_USER_SAM must match ^[A-Za-z0-9._-]+$ (got {USER!r})")
 SVC = "svc-activediq"
 NTDS = r"HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters"
 TIER0 = ["Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators", "Account Operators",
@@ -92,6 +95,8 @@ print(out.strip())
 
 SINCE = os.environ.get("ADIQ_E2E_RUN_START")
 if SINCE:
+    if not re.fullmatch(r"[0-9TZ:.+ -]+", SINCE):
+        sys.exit(f"ADIQ_E2E_RUN_START must be a timestamp (got {SINCE!r})")
     section(f"Directory Service log since {SINCE}: events 2887/3039/3074/3075 (unsigned/CBT-less binds) must be absent")
     rc, out = ps(f"""
 $since = [datetime]::Parse('{SINCE}').ToUniversalTime()
