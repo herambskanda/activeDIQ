@@ -6,7 +6,7 @@
 #   lab/e2e/run-skeleton-proof.sh samba     the Samba lab of this worktree (make lab-up)
 #
 # windows needs, from the MAIN checkout (gitignored, absolute): WIN_LAB_ENV, WIN_LAB_CA; WIN_LAB_DC_ADDR,
-# WIN_LAB_TLS_NAME default to 192.168.1.9 / dc1.win.activediq.test. The run holds with-dc1-lock for its whole
+# WIN_LAB_TLS_NAME default to 192.168.1.250 / dc1.win.activediq.test. The run holds with-dc1-lock for its whole
 # length (runbook windows-lab.md section 10) and also writes the read-only dc1 proof.
 # Evidence lands in factory/demos/evidence/T-0671/ (override: ADIQ_E2E_EVIDENCE_DIR). The server log is saved only
 # after a scan proves none of the lab passwords is in it.
@@ -23,7 +23,7 @@ windows)
   if [ -z "${DIQ_DC1_LOCK_HELD:-}" ]; then
     exec "$root/lab/windows/bin/with-dc1-lock" -- "$0" "$@"
   fi
-  export WIN_LAB_DC_ADDR="${WIN_LAB_DC_ADDR:-192.168.1.9}" WIN_LAB_TLS_NAME="${WIN_LAB_TLS_NAME:-dc1.win.activediq.test}"
+  export WIN_LAB_DC_ADDR="${WIN_LAB_DC_ADDR:-192.168.1.250}" WIN_LAB_TLS_NAME="${WIN_LAB_TLS_NAME:-dc1.win.activediq.test}"
   svcpw="$(sed -n 's/^WIN_LAB_SVC_PASSWORD=//p' "$WIN_LAB_ENV" | head -1 | tr -d '"')"
   adminpw="$(sed -n 's/^WIN_LAB_ADMIN_PASSWORD=//p' "$WIN_LAB_ENV" | head -1 | tr -d '"')"
   [ -n "$svcpw" ] || die "WIN_LAB_SVC_PASSWORD missing from $WIN_LAB_ENV"
@@ -47,6 +47,12 @@ export ADIQ_E2E_LAB="$mode" ADIQ_E2E_USER_SAM="${ADIQ_E2E_USER_SAM:-lab-user-01}
 export ADIQ_E2E_EVIDENCE_DIR="${ADIQ_E2E_EVIDENCE_DIR:-$root/factory/demos/evidence/T-0671}"
 mkdir -p "$ADIQ_E2E_EVIDENCE_DIR"
 
+if [ "$mode" = windows ]; then
+  # D-0020: the DC policy before the run (registry must read signing=2 / CBT=2) ...
+  python3 "$root/lab/windows/bin/skeleton-proof-evidence" > "$ADIQ_E2E_EVIDENCE_DIR/windows-dc1-before.txt"
+  export ADIQ_E2E_RUN_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  export ADIQ_E2E_VIDEO=1
+fi
 dir="$(mktemp -d)"
 trap '"$root/lab/e2e/boot-lab-server.sh" down "$dir" >/dev/null 2>&1 || true; rm -rf "$dir"' EXIT
 "$root/lab/e2e/boot-lab-server.sh" up "$dir" >/dev/null

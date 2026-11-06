@@ -26,6 +26,9 @@ const sam = process.env["ADIQ_E2E_USER_SAM"] ?? "lab-user-01";
 const evidence = process.env["ADIQ_E2E_EVIDENCE_DIR"] ?? "../factory/demos/evidence/T-0671";
 
 test.skip(!base, "set ADIQ_BASE_URL (lab/e2e/run-skeleton-proof.sh sets everything)");
+// ADIQ_E2E_VIDEO=1 records the run (CEO request, T-0671). Only masked password fields and the generated
+// console account are on screen; the lab passwords never reach the browser.
+test.use({ video: process.env["ADIQ_E2E_VIDEO"] ? { mode: "on", size: { width: 1280, height: 720 } } : "off" });
 test.use({ launchOptions: { args: pinnedSpkiArgs(process.env["ADIQ_E2E_CA"]) } });
 
 interface SearchItem {
@@ -83,4 +86,9 @@ test(`typing ${sam} in the console finds the real ${lab} user`, async ({ page })
   await expect(page.getByText("No users match")).toBeVisible();
   await expect(row).toHaveCount(0);
   await page.screenshot({ path: `${evidence}/${lab}-3-no-match.png` });
+
+  if (process.env["ADIQ_E2E_VIDEO"]) {
+    await page.close(); // flushes the recording
+    await page.video()?.saveAs(`${evidence}/${lab}-run.webm`);
+  }
 });
