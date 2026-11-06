@@ -45,7 +45,7 @@ func ResetPassword(pw secret.Secret, mustChange bool) ad.AccountSender {
 		}
 		mod, err := unicodepwd.Replace(pw, sc)
 		if err != nil {
-			return errors.New("password not encodable")
+			return ad.NewError(ad.CodeInvalidArgument)
 		}
 		defer mod.Destroy()
 		if err := mod.Verify(); err != nil { // PW-17: the connection is still the verified one

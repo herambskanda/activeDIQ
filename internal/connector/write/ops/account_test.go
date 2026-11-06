@@ -120,3 +120,13 @@ func TestResetPasswordSendsNothingOnZeroOrStaleConn(t *testing.T) {
 		t.Fatalf("want a CodeInsecure error (TRANSPORT_SECURITY/NEVER), got %v", err)
 	}
 }
+
+// S3 defence in depth: a secret the encoder rejects is a classified error, never a DC-unreachable one.
+func TestResetPasswordEncodeFailureIsClassified(t *testing.T) {
+	rec := &recorder{}
+	send := ops.ResetPassword(secret.Secret{}, false)
+	err := send(rec, "<GUID=x>", acquire(t, &verifiedLink{}))
+	if err == nil || ad.CodeOf(err) != ad.CodeInvalidArgument || len(rec.sent) != 0 {
+		t.Fatalf("err=%v code=%q sent=%d", err, ad.CodeOf(err), len(rec.sent))
+	}
+}

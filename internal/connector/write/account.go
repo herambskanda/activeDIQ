@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -176,6 +177,8 @@ func adRefusal(err error) error {
 		return newRefusal(connectorv1.ErrorCode_ERROR_CODE_TARGET_CHANGED, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_REPLAN, "8", "target changed since plan")
 	case ad.CodePasswordPolicy:
 		return invalid("8", "PasswordPolicy", "secret_input")
+	case ad.CodeInvalidArgument:
+		return invalid("8", "SecretInvalid", "secret_input")
 	case ad.CodeUnreachable, ad.CodeCanceled:
 		return newRefusal(connectorv1.ErrorCode_ERROR_CODE_UNREACHABLE_DC, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_REPLAN, "8", "domain controller unreachable")
 	}
@@ -316,7 +319,17 @@ func planAccount(ctx context.Context, sp accountkind.Spec, a Authorised, req *co
 	}, nil
 }
 
+// validSecret is the S3 gate for a password: non-empty, valid UTF-8, no NUL, at most 256 code points
+// and 1,024 bytes. It runs before any directory call and reports nothing about the input.
+func validSecret(m []byte) bool {
+	return len(m) > 0 && len(m) <= 1024 && utf8.Valid(m) && !bytes.ContainsRune(m, 0) &&
+		utf8.RuneCount(m) <= 256
+}
+
 func applyAccount(ctx context.Context, sp accountkind.Spec, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
+	if sp.Key == accountkind.KeyResetPassword && !validSecret(req.GetSecretInput().GetMaterial()) {
+		return nil, invalid("1", "SecretInvalid", "secret_input")
+	}
 	target, err := fromWire(req.GetTarget().GetObject())
 	if err != nil {
 		return nil, invalid("1", "TargetRequired", "target.object")
@@ -362,12 +375,8 @@ func applyAccount(ctx context.Context, sp accountkind.Spec, a Authorised, req *c
 		}
 	case accountkind.KeyResetPassword:
 		secure = true
-		var pw secret.Secret
-		if m := req.GetSecretInput().GetMaterial(); len(m) > 0 {
-			pw = secret.FromBytes(m)
-			clear(m) // the request's own buffer; the Secret holds the only copy now
-			defer pw.Destroy()
-		}
+		pw := secret.FromBytes(req.GetSecretInput().GetMaterial()) // copies; the deferred clear wipes the request buffer
+		defer pw.Destroy()
 		send = ops.ResetPassword(pw, req.GetChange().GetUserPasswordReset().GetMustChangeAtNextLogon())
 	}
 	err = s.ModifyAccount(ctx, dn.GUIDRef(target), check, send, secure)

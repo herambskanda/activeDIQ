@@ -132,6 +132,12 @@ func (h *Handler) Apply(ctx context.Context, req *connectorv1.ApplyRequest) (*co
 	c := &call{name: "apply", conn: req.GetConnection(), step: req.GetStep(), target: req.GetTarget(), kind: req.GetKind(),
 		change: req.GetChange(), t0: req.GetTier0(), ov: req.GetTier0Override(), acting: req.GetActingPrincipal(),
 		attempt: req.GetAttempt(), pre: req.GetPrecondition(), digest: req.GetPlanDigest(), secret: req.GetSecretInput() != nil}
+	// S4 (T-1621): the decoded secret buffer is cleared on every path, early refusals included.
+	defer func() {
+		if si := req.GetSecretInput(); si != nil {
+			clear(si.GetMaterial())
+		}
+	}()
 	ev := h.event(c)
 	p, err := h.guard(ctx, c, &ev)
 	if err != nil {

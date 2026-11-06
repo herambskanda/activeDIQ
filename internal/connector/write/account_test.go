@@ -2,6 +2,7 @@ package write
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -358,6 +359,56 @@ func TestAccountEnableDisableComputerRefusedByDeviceRule(t *testing.T) {
 		}
 		if !user || !device {
 			t.Fatalf("%s: guard saw user=%v device=%v declarations", key, user, device)
+		}
+	}
+}
+
+// Security review T-1583 S3: a malformed or oversized password is refused as SecretInvalid before any
+// directory call, with fixed text, and never as an unreachable DC.
+func TestResetPasswordBadSecretRefusedBeforeAnyCall(t *testing.T) {
+	id := mk(37)
+	reset, _ := accountkind.ByKey(accountkind.KeyResetPassword)
+	long := make([]byte, 257)
+	for i := range long {
+		long[i] = 'a'
+	}
+	cases := map[string][]byte{
+		"nul":                          []byte("ab\x00cd"),
+		"bad utf8":                     {0xff, 0xfe, 'a'},
+		"257 points":                   long,
+		"1025 bytes":                   []byte(strings.Repeat("é", 513)),
+		"1 MiB":                        make([]byte, 1<<20),
+		"256 points ok-but-1025 bytes": []byte(strings.Repeat("a", 1025)),
+	}
+	for name, m := range cases {
+		r, fs := acctRig(t, nil, userState(id, 512, 0))
+		_, a := kindReqs(reset, id, true)
+		a.SecretInput.Material = m
+		_, err := r.h.Apply(context.Background(), a)
+		expectRule(t, err, "SecretInvalid")
+		if fs.calls != 0 || len(fs.sent) != 0 {
+			t.Errorf("%s: session touched %d times", name, fs.calls)
+		}
+		if msg := connErr(t, err).GetMessage(); strings.Contains(msg, "257") || strings.Contains(msg, "1025") {
+			t.Errorf("%s: message leaks input facts: %q", name, msg)
+		}
+	}
+}
+
+// S4: the request's secret buffer is zero on an early refusal (here: a refusal before the account op runs).
+func TestResetPasswordMaterialClearedOnEarlyRefusal(t *testing.T) {
+	id := mk(38)
+	reset, _ := accountkind.ByKey(accountkind.KeyResetPassword)
+	r, _ := acctRig(t, nil, userState(id, 512, 0))
+	_, a := kindReqs(reset, id, true)
+	a.Target.Object.Value = []byte{1} // bad target: refused before session()
+	m := a.SecretInput.Material
+	if _, err := r.h.Apply(context.Background(), a); err == nil {
+		t.Fatal("expected refusal")
+	}
+	for _, b := range m {
+		if b != 0 {
+			t.Fatalf("material not cleared: %v", m)
 		}
 	}
 }
