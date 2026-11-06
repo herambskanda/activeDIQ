@@ -131,8 +131,9 @@ and SID; the kind is the configuration/schema NC by DN, a domain by `systemFlags
 application; a `crossRef` with `enabled = FALSE` is not listed; `functional_level` is set only for the
 DC's own domain (rootDSE `domainFunctionality`). `max_page_size` is the DC's `lDAPAdminLimits`
 `MaxPageSize` (the NTDS Settings `queryPolicyObject`, else `Default Query Policy`; AD's documented 1000
-when absent) capped at the session's own page ceiling of 1000, never 0. The operations, features, DC
-list, forest settings and health sections are still unset (CC-DESC-01, 03, 05, 06 stay open).
+when absent) capped at the session's own page ceiling of 1000, never 0. `operations` carries the write group's PLAN and APPLY rows (`write.Capabilities`, SUPPORTED with the
+wired kinds named in `reason`, since `OperationSupport` has no per-kind field); the read rows, features,
+DC list, forest settings and health sections are still unset (CC-DESC-01, 03, 05, 06 stay open).
 
 `DescribeSchema` streams the schema the server-side filter builder needs for its allowlist
 (safe-primitives §3.3 rule 1): per attribute its syntax, value kind, single or multi, constructed,

@@ -3,6 +3,7 @@ package write
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
@@ -107,14 +108,19 @@ func validateOps(ops map[connectorv1.WriteKind]WriteOp) error {
 	return nil
 }
 
-// Capabilities reports the write group's rows for Describe (contract §4, §8.1): PLAN and APPLY are
-// UNSUPPORTED while the operation table is empty, whatever the handler's presence. Per-kind support
-// is not reported until a ticket adds it (follow-up C, T-1623); a kind with no row answers
-// CAPABILITY_UNSUPPORTED on the call.
+// Capabilities reports the write group's rows for Describe (contract §4, §8.1). PLAN and APPLY are
+// SUPPORTED once the operation table has a row; OperationSupport has no per-kind field, so the
+// wired kinds are named in Reason (sorted). A kind with no row answers CAPABILITY_UNSUPPORTED on
+// the call.
 func Capabilities() []*connectorv1.OperationSupport {
-	state, reason := connectorv1.SupportState_SUPPORT_STATE_SUPPORTED, ""
-	if len(operations) == 0 {
-		state, reason = connectorv1.SupportState_SUPPORT_STATE_UNSUPPORTED, "no write kind is defined yet"
+	state, reason := connectorv1.SupportState_SUPPORT_STATE_UNSUPPORTED, "no write kind is defined yet"
+	if len(operations) > 0 {
+		names := make([]string, 0, len(operations))
+		for k := range operations {
+			names = append(names, k.String())
+		}
+		sort.Strings(names)
+		state, reason = connectorv1.SupportState_SUPPORT_STATE_SUPPORTED, "kinds: "+strings.Join(names, ",")
 	}
 	return []*connectorv1.OperationSupport{
 		{Operation: connectorv1.Operation_OPERATION_PLAN, State: state, Reason: reason},
