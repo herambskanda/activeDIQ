@@ -11,8 +11,9 @@ ticket: T-0254
 
 The lab for everything Samba cannot prove (Windows event logs, GPO/audit policy, NTLM events, real
 LDAPS/WS2025 hardening behaviour, ADWS, native components — see `ad-lab.md` §6). Chosen in D-0003
-(option a): **local evaluation VMs on KVM, free**. One DC (`dc1`) and one member/file server (`fs1`) in
-a throwaway forest. Code: `lab/windows/`. Samba stays the default lab (`ad-lab.md`); use this one only
+(option a): **local evaluation VMs on KVM, free**. In the local-KVM mode, a DC (`dc1`) and a member/file server
+(`fs1`) in a throwaway forest; the live lab (§10) is `dc1` on Proxmox VM 119 plus, once a human has built it,
+a child-domain DC `dc2` (§20). Code: `lab/windows/`. Samba stays the default lab (`ad-lab.md`); use this one only
 for tests tagged `windowslab`.
 
 ## 1. Quick start
@@ -181,6 +182,11 @@ dc1 session. Once the CEO has run the pool bootstrap below, workers do those the
 `lab/proxmox/bin/proxmox-lab` (only on VMs in the `adiq-lab` pool); until then, or if the token was revoked,
 raise an `action new` for a rollback. Everything that runs *inside* dc1 is done by workers over WinRM.
 
+**dc2 (child domain) is human-only.** A-0025 covers `dc1` only: no worker may open WinRM, PowerShell remoting or
+any other session to `dc2` (VM, address or name), and the `with-dc1-lock` wrapper is not a licence to. In short,
+every step inside dc2 is done by a human (§20); workers verify the child domain only through dc1 (T-1234). Extending the
+authorisation to dc2 is a CEO decision, not a ticket step.
+
 **fs1 does not exist.** There is no member server in this lab: only dc1 (VM 119). The `fs1` rows in §1–§2
 describe the local-KVM mode, which was dropped. A human creates fs1 (A-0028; tickets T-0409, T-0413).
 Until then no worker step may assume `fs1`, and proofs that need a member server stay blocked on A-0028.
@@ -225,8 +231,8 @@ file; if the file is lost the token is replaced.
 **What the token can and cannot do.** Can, on VMs in `adiq-lab` only: create (new VMs are always created in the
 pool), start, stop, snapshot, roll back, attach or eject an ISO, read config and console, allocate disks on the
 lab storage, and use dc1's bridge. Cannot: see or touch any VM outside the pool (workers cannot even list
-them; the driver reads pool membership from the VM list, which needs only `VM.Audit`, because reading a
-pool object directly would need `Pool.Audit`), anything `Sys.*` (no node shell, no network, no certificates), `Permissions.*`, `User.*`, `Pool.*`,
+them; the driver reads pool membership from `GET /pools?poolid=adiq-lab`, which needs only `VM.Audit` on the members, because
+`GET /pools/adiq-lab` would need `Pool.Audit`), anything `Sys.*` (no node shell, no network, no certificates), `Permissions.*`, `User.*`, `Pool.*`,
 `Realm.*`, `Group.*`, change any ACL, create users or tokens, migrate, clone, back up, delete a datastore
 or reach the QEMU monitor (`VM.Monitor` is not granted). It holds no ACL on `/` or `/vms`. Note the role does
 include `VM.Allocate` (create and destroy VMs) and `Datastore.AllocateSpace` on the lab storage: a worker can
@@ -268,17 +274,19 @@ delete it in the Proxmox UI if you wish. Revoke also when a worker machine is lo
 then bootstrap again for a new token.
 
 **Recovery = snapshot rollback.** A worker that breaks dc1 (or any pool VM) runs `proxmox-lab rollback <vmid>
-<snapshot>`. If dc1 has no clean snapshot, the first worker session takes one (`proxmox-lab snapshot 119 clean`)
-before changing anything. `VM.Snapshot` also lets the token delete snapshots, so keep a second snapshot
-name before rolling back over the only one. If the token
-itself is suspect, the CEO revokes (above); VMs are unaffected.
+<snapshot>` under `with-dc1-lock`. **dc1's rollback target is `clean-signing-2026-11-02`** (taken 2026-11-04 with dc1 at
+`LDAPServerIntegrity`=2 and `LdapEnforceChannelBindingTokens`=2, T-1327). The older snapshot `clean` (2026-10-28, LDAP signing
+negotiated) is **superseded**: kept, not deleted, never the rollback target. Disk-only snapshots roll back to a stopped VM:
+`proxmox-lab start 119`, wait for NTDS, then run `dc1-policy check` (and `restore` if it fails). `VM.Snapshot` also lets the token
+delete snapshots, so keep a second snapshot name before rolling back over the only one. For another pool VM with no clean snapshot, the
+first worker session takes one before changing anything. If the token itself is suspect, the CEO revokes (above); VMs are unaffected.
 
 **Proof.** `make proxmox-lab-test` (offline, in `make ci` through `lab-test-unit`) runs the real scripts against
 a fake `ssh`/`pveum`/`pvesh` and a stub HTTPS API: scope refusals, `verify-scope` failures (outside VM, `Sys.`,
 `Permissions.`, `User.`, ACL on `/` and `/vms`, extra privilege, other pool, API error), TLS fingerprint mismatch
 sending no request, the secret absent from stdout, stderr, argv and logs, env file mode 0600, and revoke leaving
-every VM untouched. It has not been run against a real Proxmox host: the first real bootstrap is the live
-test; read the `ARGS=--dry-run` output first.
+every VM untouched. It was first run against the real host in T-1327 (`windows-lab-runs/T-1327-proxmox-pool-scope-20261104.md`), which found
+that the real API sends no `pool` field in `/cluster/resources` for the token; membership is now read from `GET /pools?poolid=adiq-lab`.
 
 ### History: preparing the VM (T-0428)
 
@@ -325,7 +333,7 @@ make lab-test-connector-windows   # go test -tags 'lab windowslab' against <DC_I
 ```
 
 In external mode `up`, `reset`, `down` and `destroy` refuse (they manage libvirt VMs); nothing calls `virsh`.
-Reset = `qm rollback <vmid> clean` on the Proxmox host (VM 119 for the first build; no worker has access, see the rule above). Certificate verification is never disabled: the Go tests dial
+Reset = `qm rollback <vmid> clean` on the Proxmox host (VM 119 for the first build; for dc1 workers now use `proxmox-lab rollback 119 clean-signing-2026-11-02`, see Recovery above). Certificate verification is never disabled: the Go tests dial
 `<DC_IP>:636` with `ServerName=$WIN_LAB_TLS_NAME` and the CA pool from `$WIN_LAB_CA`; a wrong CA fails
 (`TestWindowsLab…` untrusted-CA test). `make lab-test-windows-unit` proves the mode offline (stub `go`/`virsh`,
 checks refusals, misconfiguration errors and that the password never appears in argv, logs or stdout).
@@ -345,8 +353,8 @@ attribute on a DC and `gPLink` of the Domain Controllers OU are changed and rest
 `RESTORE … FAILED`: `qm rollback`). Classification runs as `svc-activediq`. Pinned: C5 (all DC computers), C15 (DC site),
 C8 (KDS container + a child, CN=System, RID Manager$, Directory Service; the Password Settings Container is unreadable to the
 service account and fails closed), C9 (GPO linked at the DC OU is tier0, an unlinked one is not), C11 (Get-Changes +
-Get-Changes-All ⇒ tier0; Get-Changes alone ⇒ not), C12 (RBCD trustee on a DC). Not coverable on this lab (single DC, single
-domain, no RODC): RODC corroboration, cross-domain GPO links, gPLink option/order edge cases, >1500-member ranged groups
+Get-Changes-All ⇒ tier0; Get-Changes alone ⇒ not), C12 (RBCD trustee on a DC). Not coverable on this lab (a single DC in the parent domain,
+no RODC; the child domain exists only after §20 is done): RODC corroboration, cross-domain GPO links, gPLink option/order edge cases, >1500-member ranged groups
 (Samba covers ranged retrieval); the ad-expert review of `c8Domain`/`c8SystemClasses` is separate (T-0620).
 From a git worktree the credentials live in the main checkout: set `WIN_LAB_ENV` and `WIN_LAB_CA` to its `lab/windows/` files.
 
@@ -399,7 +407,7 @@ cd C:\lab
 - fs1: expect exit 0, the install folder exists, `obs.json` says `installed`. Then clean up:
   `msiexec /x C:\lab\ActiveDIQ-Server.msi /qn`.
 - If dc1 shows leftovers, remove them over WinRM (`msiexec /x`, delete `C:\Program Files\activeDIQ`);
-  a rollback (`qm rollback 119 clean`) needs the Proxmox host, so raise an `action new` only if scripts cannot fix it.
+  a rollback is `proxmox-lab rollback 119 clean-signing-2026-11-02` (under the lock, then `dc1-policy check`); raise an `action new` only if the token is revoked.
 
 **Judge it on the repo host** (copy `obs.json` back, one per host: `obs-dc1.json`, `obs-fs1.json`):
 
@@ -594,7 +602,7 @@ Needs `pip install pywinrm requests-ntlm` and `WIN_LAB_ENV`; WinRM on dc1 is lab
 
 **Rules for lab scripts.** No script may write `LDAPServerIntegrity` or `LdapEnforceChannelBindingTokens` to anything but 2, and none may
 "restore a captured before-value" for them. `lab/windows/tests/test_dc1_policy.py` scans `lab/` for writes and fails on any other value;
-`make lab-test-windows-unit` runs it. A snapshot rollback (`qm rollback`, Proxmox, human only) puts back whatever the snapshot held:
+`make lab-test-windows-unit` runs it. A snapshot rollback (`proxmox-lab rollback`; before A-0038 a human `qm rollback`) puts back whatever the snapshot held:
 after any rollback or restore of VM 119 run `dc1-policy restore` before the next proof.
 
 **Offline tests.** `python3 -m unittest lab/windows/tests/test_dc1_policy.py`: a fake DC at 1/2, 2/1, absent and a drifting DC prove `gssapi-lab run`
@@ -605,6 +613,56 @@ SYSVOL, GUID `{6AC1786C-016F-11D2-945F-00C04fB984F9}`) defined `LDAPServerIntegr
 refresh and overwrote the registry value. `dc1-policy restore` sets the template to `4,2` and `check` fails while the GPO says anything else.
 The bind probe must use valid credentials (`svc-activediq`): a dummy password answers 49 at 2/2 too. Run log:
 `windows-lab-runs/T-1265-dc1-signing-20261102.md`. After restoring VM 119 from any snapshot taken before 2026-11-02, run `dc1-policy restore`.
+
+## 20. Child domain (dc2) (T-1233, for T-0786 / T-1234)
+
+Why: T-0786 (GC-routed sIDHistory) needs the global catalog to hold more than one domain's SIDs, so the forest
+needs a child domain. This section is the **human** procedure: a second DC is a second Proxmox VM and A-0025 covers
+`dc1` only (§10), so workers never touch dc2. They verify afterwards through dc1 (T-1234). The kit is
+`lab/windows/guest/child-dc-init.ps1` + `child-dc.ps1` (via `boot.ps1`, role `child-dc`), built on `common.ps1`.
+
+| Thing | Value |
+| --- | --- |
+| New domain | `child.win.activediq.test`, NetBIOS `WINCHILD`, child of `win.activediq.test` (dc1, `WINLAB`) |
+| Promotion | `Install-ADDSDomain -DomainType ChildDomain -CreateDnsDelegation -InstallDns -NoGlobalCatalog` (dc1 stays the only GC and holds the child's partial NC; T-0786 keeps dialling `dc1:3269`) |
+| VM | Windows Server 2025 **Evaluation**, 2 vCPU, 4 GiB RAM, 60 GB disk, one NIC on dc1's network (a fresh install; do not clone dc1) |
+| Host name / IP / DNS | `DC2`; a static IP on dc1's subnet (`<DC2_IP>`, a free address; same prefix and gateway as dc1); **DNS = dc1 only** (`<DC1_IP>`), never itself or a public resolver |
+| Secrets | You type the parent `WINLAB\Administrator` password once, at a hidden prompt (SecureString). It is never in argv, a file, a log or a note. The DSRM password is generated on dc2 into `C:\lab\dsrm-password.txt`, readable by SYSTEM and Administrators only |
+
+**Steps (human, on the new VM unless stated)**
+
+1. **Create the VM** in Proxmox from the same WS2025 evaluation ISO as dc1 (spec above). Log in as the local `Administrator`.
+2. **Name and network** (elevated PowerShell; check the alias with `Get-NetAdapter`):
+   `Rename-Computer -NewName DC2 -Restart`, then
+   `New-NetIPAddress -InterfaceAlias Ethernet -IPAddress <DC2_IP> -PrefixLength 24 -DefaultGateway <GATEWAY>` and
+   `Set-DnsClientServerAddress -InterfaceAlias Ethernet -ServerAddresses <DC1_IP>`.
+3. **Copy the guest scripts**: `lab/windows/guest/*.ps1` from the repo to the VM, e.g. `C:\guest\`.
+4. **Check and stage:** `powershell -ExecutionPolicy Bypass -File C:\guest\child-dc-init.ps1 -ParentDcIp <DC1_IP> -Dc2Ip <DC2_IP>`.
+   It refuses unless the name is `DC2`, the IP is configured, DNS includes dc1 and dc1 resolves the forest's locator
+   records. It writes `C:\lab` with the scripts and a `lab.json` that holds **no secret**.
+5. **Provision:** in an elevated console (not a scheduled task) run `powershell -ExecutionPolicy Bypass -File C:\lab\boot.ps1`.
+   It installs the roles (rebooting once if Windows asks; the `LabResume` task then waits and logs "waiting for a
+   human"), so after that reboot run the same `boot.ps1` again at a console. It prompts for the parent
+   Administrator password, generates the DSRM password, promotes (reboots by itself) and finishes through
+   `LabResume`. Done when `C:\lab\provision.log` ends with `dc2 provisioned`. A failed stage logs `FAILED stage=…`
+   there and re-runs at the next start; if promotion was refused, fix the cause and run `boot.ps1` again (the DSRM
+   file is reused).
+6. **Keep the DSRM password:** `scp` `C:\lab\dsrm-password.txt` to the lab host (mode 0600, never email or chat),
+   then delete it from dc2. Do not paste it anywhere.
+7. **Evidence** (paste the output into the CEO action / T-1234; none of these prints a secret):
+   - on dc1 and on dc2: `(Get-ADForest).Domains` and `(Get-ADForest).GlobalCatalogs` (expect both domains; dc1 is the GC);
+   - on dc1 and on dc2: `nltest /dclist:child.win.activediq.test` and `nltest /dclist:win.activediq.test`;
+   - on dc1 and on dc2: `repadmin /replsummary` (expect 0 failures, 0 errors) and, on dc1, `repadmin /showrepl` showing the
+     `DC=child,DC=win,DC=activediq,DC=test` partial replica;
+   - on dc1: `Resolve-DnsName child.win.activediq.test -Type NS` (the delegation).
+8. **Snapshot `clean`** (Proxmox host, dc2 shut down): `qm shutdown <DC2_VMID> && qm snapshot <DC2_VMID> clean --description "clean provisioned child DC" && qm start <DC2_VMID>`.
+   Revert later with `qm rollback <DC2_VMID> clean`. Note the build date: the evaluation licence is 180 days (§4); **rebuild, don't rearm**.
+   If dc1 is rolled back to its own `clean`, dc2 must be rolled back too (their replication partnership must agree), and vice versa.
+
+**Rebuild or abort.** Not promoted yet: delete `C:\lab` and start at step 4. Half-promoted or wrong: rebuild the VM
+(step 1), and tidy dc1 afterwards (`ntdsutil` metadata cleanup of the stale child domain and the DNS delegation) as a
+human; workers do not do that over WinRM.
+
 
 ## 19. Live user-search run and its DC evidence (T-0765)
 

@@ -1,11 +1,11 @@
 ---
 title: "Threat model v0 — activeDIQ security architecture"
 date: 2026-10-02
-updated: 2026-11-04
+updated: 2026-11-05
 status: review
 owner: heramb
 author: security-architect
-ticket: T-1142, T-1137, T-1125, T-0893, T-0212, T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395, T-0178, T-0623, T-0633, T-0631, T-0738
+ticket: T-1621, T-1142, T-1137, T-1125, T-0893, T-0212, T-0544, T-0495, T-0388, T-0359, old T-0007, T-0032, T-0044, T-0051, T-0055, T-0108, T-0179, T-0111, T-0227, T-0230, T-0235, T-0240, T-0395, T-0178, T-0623, T-0633, T-0631, T-0738
 binding_sources: ADR-0001 (ratified), ADR-0002 (ratified), blueprint v0 (review), safe-primitives.md (review)
 sources_last_checked: 2026-10-02
 ---
@@ -2212,6 +2212,7 @@ These operations require a fresh MFA within a short window, whatever the session
 | Designating or un-designating `tier0` objects (§6.4) | Widens or narrows the guard |
 | Report schedule writes (`reports.schedule.create`, `update`, `resume`, and their undo) whose after-state has an **external** recipient; conditional, kernel-enforced (DECISION TM-D30, T-0893) | Opens a standing outbound data channel that outlives the session (TM-TB15-T9) |
 | Notification settings: allowed recipient domains and SMTP relay (`notify.settings.update`, TM-D30 SX-7) | Turns external addresses internal, or re-points every outbound mail (TM-TB15-T10) |
+| Directory password reset: every Action that uses the connector's `USER_PASSWORD_RESET` kind, helpdesk resets included (`objects.user.reset_password`, TM-D28 class `reset_password`, §6.9a; ADM-136, ADM-162; T-1581 §8.10.5, T-1621) | Hands the actor a credential they know for a sign-in account, and it cannot be undone (ADR-0005 rule 1). On a hybrid-synced account the new password reaches Entra through hash sync or pass-through (C16, TM-R14). Same class as a LAPS reveal: a credential that outlives the session. A technician's session alone, however fresh the login, does not authorise it |
 
 **Secret-reveal harvesting.** A technician (X4) may reveal secrets one by one within scope. Each
 reveal is audited; reveals per technician are rate-limited, and a burst above a tenant threshold
@@ -3403,6 +3404,7 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-11-05 · T-1621 (review of T-1581 write kinds). §7.4 gains the directory password reset row (`USER_PASSWORD_RESET`, TM-D28 `reset_password`), which is the source for `StepUp = true`. `OBJECT_CREATE` of a USER with a password stays outside §7.4 (TM-D28 rule 3). Rulings on delete, restore, `SecretValue` and unlock are in [connector-contract.md](connector-contract.md) §8.10.9.
 - 2026-11-04 · T-1475: §7.6 rule 3 cites RULING AN8-A1 (owner alert rides the `authn_authority_notices` outbox, drained to notify; break-glass succeeds when the channel is down, alert retried, failure audited); new residual R-AN8-3 in the ruling; T-0801 split into four chained builds.
 
 - 2026-11-04 · T-1142. §5.4a and DECISION TM-D32 (directory-data amplification into derived tables): rows TM-TB3-T13 and TM-TB4-T11, the bound rule (declared row and decision-work budgets, finding-not-failure, no displacement of privileged groups, read-time CTE covered), a per-table budget and test table (closure, dirty set, policy CTE T-1073, PSO applies, ancestry rewrite), proof TM-F-AMPLIFY (§15), residual TM-R27. Gaps ticketed as T-1528.
