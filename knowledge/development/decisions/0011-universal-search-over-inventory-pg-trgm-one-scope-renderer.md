@@ -525,9 +525,18 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
    5. then the normalised display name;
    6. then `object_guid`, so the order is total and stable.
 
-   The IA's "the user's recent objects" step is **not** in the 2a server ranking. It needs a
-   per-account recents store, which T-1130 (P3) adds. Until then the palette shows no recents
-   rather than invented ones (CLAUDE.md rule 6).
+   **Recents (T-1130).** The IA's "the user's recent objects" step is built. `inventory_recent_objects`
+   (migration 0072; tenant table, forced RLS) keeps the newest 20 objects an account opened, keyed by
+   `(connection_id, object_guid)`, written by `inventory.Searcher.RecordOpened` when an object page is
+   opened (human accounts only; a token has none). The template reads it in a CTE bound to the account and
+   adds two leading rank terms, so the order of a group is `band` (0 exact, 1 recent, 2 other), then the
+   recency position (latest first) within band 1, then the class and rules 1-6 above. A recent object never
+   outranks an exact match, and a recent fuzzy hit outranks a plain prefix hit. A recent row grants
+   nothing: it only joins hits that the caller's `ReadScope` already admitted in the same statement. The
+   empty palette is `inventory.Searcher.Recents` / `search.Service.Recent`: the same statement with the
+   recents as the only candidates (`SearchQuery.RecentsOnly`), so the same scope trim and the same
+   ordering apply, and an object moved out of scope is not listed. An account with no recents gets empty
+   groups, never invented ones. The rank tuple of a "show all" cursor gained `Band` and `Recent`.
 
 9. **Identifier shapes the inventory serves at 2a.** The source is the 2a sync set, reports-2a D1–D3
    ([reports-2a §7](../../product/specs/reports-2a.md)), plus the columns of `directory_objects`.
