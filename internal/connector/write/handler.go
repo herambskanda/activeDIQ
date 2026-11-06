@@ -134,6 +134,8 @@ func (h *Handler) Apply(ctx context.Context, req *connectorv1.ApplyRequest) (*co
 	c := &call{name: "apply", conn: req.GetConnection(), step: req.GetStep(), target: req.GetTarget(), kind: req.GetKind(),
 		change: req.GetChange(), t0: req.GetTier0(), ov: req.GetTier0Override(), acting: req.GetActingPrincipal(),
 		attempt: req.GetAttempt(), pre: req.GetPrecondition(), digest: req.GetPlanDigest(), secret: req.GetSecretInput()}
+	// The request's secret material is wiped on every exit path, early refusals included.
+	defer clear(req.GetSecretInput().GetMaterial())
 	ev := h.event(c)
 	p, err := h.guard(ctx, c, &ev)
 	if err != nil {

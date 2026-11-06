@@ -258,3 +258,24 @@ func TestCapabilitiesSupported(t *testing.T) {
 		}
 	}
 }
+
+// ALREADY_APPLIED must not accept an object whose userAccountControl differs from the one value
+// a create sets (extra bits mean it is not activeDIQ's own create).
+func TestCreateMatchesComparesUserAccountControl(t *testing.T) {
+	oc := create(ctUser, nil) // disabled: 514
+	p := &createPlanned{oc: oc}
+	entry := func(uac string) *ad.Entry {
+		return ad.NewEntry("CN=x,DC=lab,DC=test", map[string][][]byte{
+			"objectClass":        {[]byte("top"), []byte("person"), []byte("organizationalPerson"), []byte("user")},
+			"userAccountControl": {[]byte(uac)},
+		})
+	}
+	if !p.matches(entry("514"), nil) {
+		t.Fatal("exact UAC must match")
+	}
+	for _, uac := range []string{"512", "66050", "546", ""} {
+		if p.matches(entry(uac), nil) {
+			t.Errorf("UAC %q wrongly matched", uac)
+		}
+	}
+}

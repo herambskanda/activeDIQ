@@ -247,6 +247,9 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	if w.hasSecret {
 		op.SecretInput.Expose(func(b []byte) { sec = &connectorv1.SecretValue{Material: append([]byte(nil), b...)} })
 	}
+	if sec != nil {
+		defer clear(sec.Material) // wipe the wire copy on every exit path
+	}
 	resp, err := c.sendApply(ctx, clr, s, &connectorv1.ApplyRequest{
 		Connection: w.conn, Step: key, Attempt: uint32(s.Attempt()), Target: w.target, SecretInput: sec,
 		Kind: w.kind, Change: w.change, Tier0: t0.Context, Precondition: plan.GetPrecondition(),

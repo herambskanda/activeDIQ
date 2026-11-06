@@ -7,11 +7,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -93,13 +95,19 @@ func withStepOf(t *testing.T, target authority.TargetRef, pins authority.Pins, f
 // withStepDSA is withStepOf with an explicit DSA pin set.
 func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, dsas authority.DSAPins, fn func(ctx context.Context, s step.Step)) {
 	t.Helper()
+	withStepKind(t, target, pins, dsas, "ad.object.update", []operation.Change{{Attribute: "set:description", Before: []string{"old"}, After: []string{"s:new"}}}, fn)
+}
+
+// withStepKind is withStepDSA for a chosen digest kind and diff.
+func withStepKind(t *testing.T, target authority.TargetRef, pins authority.Pins, dsas authority.DSAPins, kind string, diff []operation.Change, fn func(ctx context.Context, s step.Step)) {
+	t.Helper()
 	type none struct{}
 	a, err := operation.Define(operation.Typed[none, none, none]{
 		Descriptor: operation.Descriptor{ID: "settings.thing.set", Version: 1, Permission: "settings.thing.set",
 			Input: "#/components/schemas/Thing", Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: "settings.thing.changed"},
 		Plan: func(context.Context, operation.PlanContext, none) ([]operation.TypedStep[none], error) {
-			return []operation.TypedStep[none]{{Plan: operation.StepPlan{Target: target, Kind: "ad.object.update", Reversibility: operation.Reversible,
-				Diff: []operation.Change{{Attribute: "set:description", Before: []string{"old"}, After: []string{"s:new"}}}}}}, nil
+			return []operation.TypedStep[none]{{Plan: operation.StepPlan{Target: target, Kind: kind, Reversibility: operation.Reversible,
+				Diff: diff}}}, nil
 		},
 		Apply: func(ctx context.Context, s step.Step, _ operation.TypedStep[none]) (none, error) {
 			fn(ctx, s)
@@ -576,5 +584,37 @@ func TestKindTableClosed(t *testing.T) {
 			t.Errorf("kindTable keys %q and %q share a WriteKind", prev, k)
 		}
 		seen[row.Kind] = k
+	}
+}
+
+// The wire copy of a create's secret is wiped once Write returns, success or not.
+func TestWriteWipesTheWireSecretCopy(t *testing.T) {
+	_, attrs, err := writechange.Encode(&connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectCreate{ObjectCreate: &connectorv1.ObjectCreate{
+		ObjectClass: connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_USER, RdnValue: "x", HasSecretInput: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := authority.TargetRef{Connection: "c1", Parent: objGUID, Class: "user", RDN: "x", NC: ncGUID}
+	tr := &transport{}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	pins := authority.Pins{ncGUID: "dc1.corp.example"}
+	var diff []operation.Change
+	for _, a := range attrs {
+		diff = append(diff, operation.Change{Attribute: a.Name, After: a.Values, Secret: a.Secret})
+	}
+	withStepKind(t, target, pins, dsasFor(pins), "ad.object.create", diff, func(ctx context.Context, s step.Step) {
+		op := WriteOp{DigestKind: "ad.object.create", Target: target, Attrs: attrs, SecretInput: secret.FromBytes([]byte("Sup3r-secret-pw"))}
+		if _, err := c.Write(ctx, s, op); err != nil {
+			t.Fatal(err)
+		}
+	})
+	m := tr.applyReq.GetSecretInput().GetMaterial()
+	if len(m) == 0 {
+		t.Fatal("apply carried no secret material")
+	}
+	for i, b := range m {
+		if b != 0 {
+			t.Fatalf("wire secret byte %d not wiped", i)
+		}
 	}
 }

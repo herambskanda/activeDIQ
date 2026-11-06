@@ -193,7 +193,7 @@ func readForCreate(a Authorised, tx *ad.Tx, req interface {
 		return nil, r
 	}
 	obs.Dc = a.dcID()
-	names := []string{"objectClass", "whenCreated", "groupType"}
+	names := []string{"objectClass", "whenCreated", "groupType", "userAccountControl"}
 	for _, e := range p.edits {
 		names = append(names, e.name)
 	}
@@ -328,6 +328,13 @@ func (p *createPlanned) matches(e *ad.Entry, tx *ad.Tx) bool {
 	}
 	if v, ok := groupTypeFor(p.oc.GetGroupScope(), p.oc.GetGroupIsSecurity()); ok && p.oc.GetObjectClass() == ctGroup {
 		if strings.Join(rawStrings(e, "groupType"), "") != strconv.FormatInt(int64(v), 10) {
+			return false
+		}
+	}
+	// userAccountControl is compared exactly: an object carrying any bit beyond the one value a
+	// create sets is not activeDIQ's own create and must not be reported ALREADY_APPLIED.
+	if v, ok := uacFor(p.oc.GetObjectClass(), p.oc.GetAccountEnabled()); ok {
+		if strings.Join(rawStrings(e, "userAccountControl"), "") != strconv.FormatInt(int64(v), 10) {
 			return false
 		}
 	}
