@@ -15,4 +15,8 @@ Same check for classification criteria. On T-1221 (2026-11-01), the criterion re
 
 Round 2 (T-1221): every carve-out clause in a class test must be no wider than the list item it cites ("own credentials" vs item 1 "at first sign-in"). The test must be surface-independent, with a closed numbered list of no-Step exceptions. A qualifier such as "via the authenticated surface" lets anonymous routes escape. For a security-sensitive spec, consult security-architect in the review: the spec flow has no security stage, and that consult caught all three round-2 gaps.
 
+Round 3 (T-1221): check the *actor word* in the definition against the surfaces the test claims. "A value a principal chooses" excluded the anonymous and CLI items, where no principal exists. Also check who may add callers to a widening allow-list row. If it is only "reviewed, not an amendment", a generic writer (any Subject) silently gains new surfaces. Make it an amendment keyed on the category.
+
+Round 4 (T-1221, ratified): when an ADR adds a fenced source-of-truth block that a fitness check compares with a data file (`o3-widening` vs `o3-writers.json`), parse both in a python one-liner and diff them. Then grep the code for the block's callers before you ratify.
+
 Related: [[adr-ratification-flow]], [[generator-adr-review-checks]]

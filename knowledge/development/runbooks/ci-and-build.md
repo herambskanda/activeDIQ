@@ -232,7 +232,7 @@ If `make ci` fails on a fresh clone, that is a bug in the scaffold; file an `ops
     import)` means the row of `operation` itself.
   - `pending` packages are not checked until they exist; a `self-test` finding means the
     `internal/platform/<name>` mapping found none of the listed packages while the tree has them
-    elsewhere. O1 (step escape) also runs `tools/analyzers/stepescape` type-aware: the module must build first. To exempt a deliberate smuggle in a test, put `//fitness:allow-step-escape <reason>` on or above the line (test files only). O2 (write surface) and the SQL half of O4 (state column) run on every invocation; violations read `file:line: O2 [rule 2] …` / `O4 [rule 3] …`. O3 and O5–O7 print `pending <id> … (owner T-…)` until their code lands (T-0391, T-0392); the owner replaces the pending entry in `pendingChecks` (tools/fitness/operation/main.go) with the check. A pending line is not a pass.
+    elsewhere. O1 (step escape) also runs `tools/analyzers/stepescape` type-aware: the module must build first. To exempt a deliberate smuggle in a test, put `//fitness:allow-step-escape <reason>` on or above the line (test files only). O2 (write surface) also runs `tools/analyzers/connwrite` type-aware in the same load as stepescape (a violation reads `file:line: O2 [rule 2] …` like the syntactic ones; to hold a read-only view of the client, declare a narrow interface without Plan/Apply, never an alias of `ConnectorClient`; the exemptions apply to the top-level `internal/proto` and `internal/directory/client` only, judged by the path below the module root, so a nested `cmd/<x>/internal/…` directory of the same name is checked like any other package; the `_test` suffix is dropped only for a genuine external test package — `package x_test`, `_test.go` files only, in the directory of `x` — so a real directory named `internal/proto_test` or `internal/directory/client_test` is checked like any other package; the `_test.go` allowances use the file's real name, never a `//line`-adjusted one, so a non-test file cannot pose as a test). O2 (write surface) and the SQL half of O4 (state column) run on every invocation; violations read `file:line: O2 [rule 2] …` / `O4 [rule 3] …`. O3 and O5–O7 print `pending <id> … (owner T-…)` until their code lands (T-0391, T-0392); the owner replaces the pending entry in `pendingChecks` (tools/fitness/operation/main.go) with the check. A pending line is not a pass.
   - **O8 (pipeline behaviour, T-0393)** reads `internal/platform/operation/o8_manifest_test.go` (it parses the Go source; the list is never copied into the tool), then runs every test the manifest names with `go test -json -count=1` and fails, as `<dir> <Test>: O8 [pipeline behaviour] …`, when a named test is missing (renamed or deleted), fails, is skipped, or has a skipped subtest. **No Docker is a failure, not a skip**: the Postgres tests need the Docker daemon, exactly as `fitness-audit` does. A clause the manifest lists as a `Gap` prints `pending O8 <id>: T-nnnn …` (today the non-ancestry scope roots on T-0824, undo of a failed item T-0830, the Provenance implementation T-0831); when the ticket lands, the manifest owner moves the clause to `Tests`. Tests in `lab`-tagged files must exist but are listed `not run` unless you pass `-o8-lab` (`make lab-up` first, then `go run ./tools/fitness/operation -o8-lab`); a failing run of the lab arm fails the check. Proof: `go test ./tools/fitness/operation` (o8_test.go runs a real `go test` in a throw-away module: failing, skipped, subtest-skipped, renamed, deleted, unbuildable and gap-without-ticket each fail; the clean tree passes).
 - **`fitness-safeprim`** (FF-SP1 to FF-SP3, safe-primitives §8): each finding reads
   `file:line: FF-SPn [rule] message`. `make fitness-safeprim` re-runs it alone;
@@ -316,8 +316,14 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
   `require`, `verify-ca` without a root) that must each be refused before any dial.
 - **windows (lab):** on a lab host run `packaging/windows/Get-HostObservation.ps1 -ServiceName … -InstallDir …
   -ConfigPaths … -InstallerResult refused|installed > obs.json`, then `go run ./tools/fitness/host evaluate obs.json`.
-  Run it on dc1 with the MSI once it exists (T-0635) to prove the DC refusal. The script has not yet been run on a
-  Windows host (no MSI to observe); first run must be logged in `windows-lab-runs/`.
+  For the DC refusal run the driver instead: `packaging/windows/Test-MsiRefusesDc.ps1 -MsiPath … -LogPath … > obs.json`
+  on dc1 (expects msiexec exit 1603 and the sentence "cannot be installed on a domain controller" in the log) and on
+  fs1 as the control (must install). It runs msiexec, then `Get-HostObservation.ps1` observes the leftovers itself
+  (install directory, service), so `installed` is measured, not taken from the driver. The MSI source is
+  `packaging/windows/msi/Server.wxs` (a LaunchCondition on `MsiNTProductType`, which runs before any change).
+  `make fitness-packaging` parses `Server.wxs` as XML and asserts structure (exactly one `Launch` with the DC condition directly under `Package`; no sequence tables, custom actions, `SetProperty`, preprocessor instructions or authored `MsiNTProductType`/`Installed`, whatever the quoting or comments); with `ADIQ_SERVER_MSI=<built msi>` and `msitools` it also checks the built `LaunchCondition` and `InstallExecuteSequence` tables. The lab driver quotes and validates its msiexec paths because `Start-Process -ArgumentList` does no quoting. The driver ran on dc1 on 2026-10-30 (Windows Server 2025): the MSI exited 1603 with the DC message, left nothing, and HOST-DC-REFUSED is ok there ([run log](windows-lab-runs/T-0635-msi-refuses-dc-20261030.md)). The fs1 control install has not run on Windows yet (T-0849). The setup secret is issued server-side
+  (T-0636: the server generates it and stores only its SHA-256); the MSI does not write one. The Windows probe for
+  HOST-SETUP-SECRET-SINGLE-USE is T-0706.
 - **Results:** `ok`, `FAIL` (build fails), `INACTIVE` (the collector could not observe it: the subject does not exist
   yet), `GAP` (fails today, tolerated until the named ticket lands). `tools/fitness/host/known-gaps.json` is a
   ratchet: a gap that passes fails the build until its entry is deleted. Never add a gap without a ticket.
@@ -364,7 +370,20 @@ A core MSI with no agent in it is still judged by rules 2-4 and the LocalSystem/
 **What it is.** The dispatcher builds `main` + `factory/T-NNNN` in a scratch worktree
 (`<worktree_root>/.premerge/`) and runs `dispatcher.pre_merge.argv` (default `make -k ci`) there before
 it merges. Settings: `factory/config.json` `dispatcher.pre_merge` (`enabled`, `argv`,
-`timeout_minutes`). Logs and the per-`main`-commit baseline cache: `factory/state/premerge/`.
+`timeout_minutes`, `baseline_reuse_roots`). Logs and the baseline cache: `factory/state/premerge/`.
+
+**The baseline is reused, not re-run per `main` commit (T-1378).** When the merge result is red, the gate
+needs `make -k ci` findings of `main`. It takes them from a cached run (`baseline-*.json`) on the same
+tree, or on a tree that differs only in files under `knowledge/`, `.claude/`, `factory/`, `garage/` that
+no gate file (tracked, outside those directories, not `*.md`) mentions as a path (`readSurface` in
+`factory/lib/premerge.mjs`, computed from the tree each time). So memory, report and digest commits cost
+nothing, while a commit to the ADRs, the licence register, the architecture map or the runbooks the
+fitness tools name does re-run it. The gate summary (event, `factory premerge` output) states which:
+`baseline: reused the cached run …` or `baseline: ran a fresh baseline …`. A passing gate stores its
+merge-result run as the baseline of the tree it will become, so the second half of a split train runs no
+baseline. If a fresh baseline times out, the nearest cached run stands in: the train can pass if all its
+findings are in it, otherwise the gate stops with a message naming the findings. Never raise
+`timeout_minutes` as the fix for that; find what is loading the host (`uptime`) first.
 Rules and the comparison: `standards/ci-gates.md` "The pre-merge gate". It needs what `make ci` needs
 (Docker for the container jobs, Node, network once for toolchains).
 

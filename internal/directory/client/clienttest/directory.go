@@ -37,6 +37,11 @@ type Directory struct {
 	// ReadErr, when set, is returned by every container read.
 	ReadErr error
 
+	// SearchOpenErr, when set, is returned by ScopedSearch before any stream exists. SearchStreamErr,
+	// when set, ends the stream after its first batch (a mid-stream failure) instead of completing it.
+	SearchOpenErr   error
+	SearchStreamErr error
+
 	// Recorded traffic.
 	Searches [][]string // for each ScopedSearch call, the root GUIDs asked
 	Depths   []connectorv1.SearchDepth
@@ -102,6 +107,9 @@ func (c *conn) ScopedSearch(_ context.Context, in *connectorv1.ScopedSearchReque
 	d := c.d
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.SearchOpenErr != nil {
+		return nil, d.SearchOpenErr
+	}
 	var roots []string
 	for _, r := range in.GetRoots() {
 		roots = append(roots, text(r.GetGuid()))
@@ -132,6 +140,12 @@ func (c *conn) ScopedSearch(_ context.Context, in *connectorv1.ScopedSearchReque
 			attr("userAccountControl", &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int32Value{Int32Value: uac}}),
 		}
 		entries = append(entries, e)
+	}
+	if d.SearchStreamErr != nil {
+		return &stream{
+			msgs: []*connectorv1.ScopedSearchResponse{{Event: &connectorv1.ScopedSearchResponse_Batch{Batch: &connectorv1.SearchBatch{Entries: entries}}}},
+			end:  d.SearchStreamErr,
+		}, nil
 	}
 	return &stream{msgs: []*connectorv1.ScopedSearchResponse{
 		{Event: &connectorv1.ScopedSearchResponse_Batch{Batch: &connectorv1.SearchBatch{Entries: entries}}},
@@ -188,10 +202,14 @@ func substring(f *connectorv1.Filter) string {
 type stream struct {
 	grpc.ClientStream
 	msgs []*connectorv1.ScopedSearchResponse
+	end  error // returned once msgs run out, instead of io.EOF
 }
 
 func (s *stream) Recv() (*connectorv1.ScopedSearchResponse, error) {
 	if len(s.msgs) == 0 {
+		if s.end != nil {
+			return nil, s.end
+		}
 		return nil, io.EOF
 	}
 	m := s.msgs[0]
