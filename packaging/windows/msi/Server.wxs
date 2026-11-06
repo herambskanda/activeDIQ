@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  activeDIQ server MSI, refusal half (T-0635, TM-TB16-T1, ADR-0002 rule 9 "Never on a DC").
+  The server role is management plane and never runs on a domain controller. The refusal is a
+  LaunchCondition, not a custom action: Windows Installer evaluates it during LaunchConditions, before
+  CostFinalize and before the first InstallExecute change, so a refused run writes no file, service or
+  registry value. MsiNTProductType is 2 on a domain controller, 3 on a server and 1 on a workstation
+  ("MsiNTProductType property", https://learn.microsoft.com/en-us/windows/win32/msi/msintproducttype).
+  Installed (a product already present) is exempt so a customer can still uninstall or repair.
+  Win32_ComputerSystem.DomainRole >= 4 is the same fact read from WMI; the lab driver
+  packaging/windows/Test-MsiRefusesDc.ps1 asserts both agree on dc1.
+
+  The service, gMSA, TLS-directory ACL and setup-secret components land with the rest of the server
+  installer (this file carries only what T-0635 owns). Compiled by T-0702 with the pinned WiX 5.0.2
+  (MS-RL, no fee; tools/wix/build-msi.sh, which runs WiX under Wine in a container): the schema compiled
+  unchanged. ICE validation needs Windows and is not run there. The refusal ran on dc1 (exit 1603, no
+  leftovers): knowledge/development/runbooks/windows-lab-runs/T-0635-msi-refuses-dc-20261030.md. The
+  install on a member server (fs1) has not run yet.
+  Authoring: WiX v4 schema.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="activeDIQ Server" Manufacturer="skenzeriq" Version="0.1.0.0"
+           UpgradeCode="6B1F2D44-3C0E-4E8B-9D55-0A7C2E5B8F31" Scope="perMachine" InstallerVersion="500">
+    <MajorUpgrade DowngradeErrorMessage="A newer activeDIQ Server is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- The message is the contract: the lab proof and the log match this exact sentence. -->
+    <Launch Condition="Installed OR (MsiNTProductType &lt;&gt; 2)"
+            Message="activeDIQ Server cannot be installed on a domain controller. Install it on a member server (Windows Server 2019 or later); domain controllers host only the activeDIQ agent." />
+    <Launch Condition="Installed OR (VersionNT64)"
+            Message="activeDIQ Server requires a 64-bit version of Windows." />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="activeDIQ">
+        <Component Id="ReadmeMarker" Guid="0D8B7A0A-6A39-4B8F-A3C1-7E52A1C4D9E6" Bitness="always64">
+          <File Id="InstallMarker" Source="install-marker.txt" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Server" Title="activeDIQ Server" Level="1">
+      <ComponentRef Id="ReadmeMarker" />
+    </Feature>
+  </Package>
+</Wix>

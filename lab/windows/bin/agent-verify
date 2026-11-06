@@ -82,7 +82,7 @@ def main():
     ap.add_argument("--version", default="0.0.1")
     a = ap.parse_args()
     env = load_env()
-    dc = DC(env.get("WIN_LAB_DC_ADDR", "192.168.1.9"), env["WIN_LAB_ADMIN_PASSWORD"])
+    dc = DC(env.get("WIN_LAB_DC_ADDR", "192.168.1.250"), env["WIN_LAB_ADMIN_PASSWORD"])
     work = tempfile.mkdtemp(prefix="agent-verify-")
     genv = dict(os.environ, GOOS="windows", GOARCH="amd64", CGO_ENABLED="0")
     for name, pkg in (("activediq-agent.exe", "./cmd/agent"), ("agentsetup.exe", "./cmd/agentsetup")):

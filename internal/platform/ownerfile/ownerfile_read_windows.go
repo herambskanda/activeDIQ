@@ -119,6 +119,11 @@ func refuse(path string, why error) error {
 }
 
 func openNoFollow(path string, access uint32, dir bool) (windows.Handle, error) {
+	return openNoFollowShare(path, access, dir, windows.FILE_SHARE_READ)
+}
+
+// openNoFollowShare is openNoFollow with an explicit share mode.
+func openNoFollowShare(path string, access uint32, dir bool, share uint32) (windows.Handle, error) {
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return 0, err
@@ -127,7 +132,7 @@ func openNoFollow(path string, access uint32, dir bool) (windows.Handle, error) 
 	if dir {
 		flags |= windows.FILE_FLAG_BACKUP_SEMANTICS // required to open a directory
 	}
-	return windows.CreateFile(p, access|windows.READ_CONTROL, windows.FILE_SHARE_READ, nil,
+	return windows.CreateFile(p, access|windows.READ_CONTROL, share, nil,
 		windows.OPEN_EXISTING, flags, 0)
 }
 

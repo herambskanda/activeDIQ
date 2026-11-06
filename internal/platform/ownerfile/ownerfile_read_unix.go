@@ -23,24 +23,30 @@ func readFile(path string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	st, err := f.Stat() // fstat on the open descriptor, not the path
+	return readOpened(f, path)
+}
+
+// readOpened verifies the open descriptor (fstat, never the path) and reads from it. name is only used
+// for the base name in a refusal.
+func readOpened(f *os.File, name string) ([]byte, error) {
+	st, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
 	switch {
 	case !st.Mode().IsRegular():
-		return nil, refuse(path, ErrNotRegular)
+		return nil, refuse(name, ErrNotRegular)
 	case !ownedBy(st, os.Geteuid()):
-		return nil, refuse(path, ErrForeignOwner)
+		return nil, refuse(name, ErrForeignOwner)
 	case st.Mode().Perm()&0o077 != 0:
-		return nil, refuse(path, nil)
+		return nil, refuse(name, nil)
 	}
 	b, err := io.ReadAll(io.LimitReader(f, MaxReadSize+1))
 	if err != nil {
 		return nil, err
 	}
 	if len(b) > MaxReadSize {
-		return nil, refuse(path, nil)
+		return nil, refuse(name, nil)
 	}
 	return b, nil
 }

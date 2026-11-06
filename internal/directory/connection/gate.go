@@ -54,7 +54,7 @@ func onlyOverPrivilege(kind Kind, v Verification) (bool, string) {
 }
 
 // Qualifies decides DM-10.I9 for a run that is fresh and belongs to the current credential: it
-// qualifies if its verdict is pass, or if it is refused for over-privilege alone and every
+// qualifies if its verdict is pass (over-privilege pass or warn), or if it is refused for over-privilege alone and every
 // over-privilege finding is in the acknowledged set of the override in force (nil for none). The
 // second return is the stable refusal reason. It fails closed: anything it does not recognise as a
 // pass is a refusal.
@@ -65,8 +65,8 @@ func Qualifies(kind Kind, v Verification, ov *Tier0Override) (bool, string) {
 	switch v.Verdict {
 	case VerdictPass:
 		// Defence in depth for rows already stored: a pass counts only when its over-privilege
-		// check is itself a pass (RecordVerification refuses to store one that is not).
-		if v.Outcomes[overPrivilegeCheck(kind)] != OutcomePass {
+		// check is itself a pass or a warn (RecordVerification refuses to store one that is not).
+		if !overPrivilegeClear(v.Outcomes[overPrivilegeCheck(kind)]) {
 			return false, ReasonVerdictFailed
 		}
 		return true, ""
@@ -94,8 +94,9 @@ func Qualifies(kind Kind, v Verification, ov *Tier0Override) (bool, string) {
 }
 
 // WriteGateOpen is DM-10.I11: the gate for directory writes on an active connection is open only
-// when the newest run's over-privilege outcome is pass, or fail with every over-privilege fingerprint
-// acknowledged by the override in force. could_not_verify and not_run close it: an unanswered rights
+// when the newest run's over-privilege outcome is pass or warn, or fail with every over-privilege
+// fingerprint acknowledged by the override in force. A warn needs no acknowledgement: it is the
+// customer's ACL, not the identity's excess, and the connector's own gate opens on it too. could_not_verify and not_run close it: an unanswered rights
 // question fails closed, with no grace period. It reads the over-privilege check alone: a
 // read-sufficiency failure stops activation but does not close the write gate. An empty run (nil
 // verification) is closed.
@@ -104,7 +105,7 @@ func WriteGateOpen(kind Kind, v *Verification, ov *Tier0Override) bool {
 		return false
 	}
 	switch v.Outcomes[overPrivilegeCheck(kind)] {
-	case OutcomePass:
+	case OutcomePass, OutcomeWarn:
 		return true
 	case OutcomeFail:
 		fps := overPrivilegeFingerprints(kind, *v)

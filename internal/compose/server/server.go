@@ -189,7 +189,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	dirTag, err := buildDirectory(db, conns, csrc, reads, txReadScopes{db: db, rs: readScopes})
+	dirTag, err := buildDirectory(ctx, db, conns, csrc, reads, txReadScopes{db: db, rs: readScopes})
 	if err != nil {
 		return err
 	}

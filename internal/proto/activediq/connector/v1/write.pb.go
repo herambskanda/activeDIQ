@@ -12,8 +12,9 @@
 //     server asks (TM-D2). Every object the typed change touches is evaluated, not only `target`.
 //   * Plan and Apply fail with ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED while the connector's
 //     own last VerifyConnection for the connection does not open its write gate (DM-10.I11).
-//   * No credential material travels in these messages (fitness-proto P7). A write kind that sets a
-//     secret (password reset) needs its own sealed-secret shape and a security-architect review.
+//   * No credential material travels in these messages (fitness-proto P7), with one exception:
+//     ApplyRequest.secret_input (type SecretValue), for the two kinds that set a password
+//     (contract §8.10.5, fitness P9). PlanRequest and every response never carry it.
 //   * The touched set is derived by the connector from the typed change, never from a list the
 //     server sends. Tier0Context carries one CorrelationStatement per touched object; a touched
 //     object without one is refused (CONTEXT_MISSING).
@@ -42,23 +43,68 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// The write operation. v1.1 defines the envelope only: the concrete kinds (create user, set
-// attribute, add member, move, …) are added one per spec ticket, each with its WriteChange arm,
-// its touched-set rule and its conformance cases. Until a kind exists, every Plan and Apply fails
-// with ERROR_CODE_INVALID_ARGUMENT, and Describe reports PLAN and APPLY as UNSUPPORTED.
+// The write operations. v1.1 defined the envelope only; v1.4 (T-1581, connector-contract.md §8.10)
+// adds the first ten kinds, the M2b write-parity slice. A kind is a verb, parameterised by
+// DirectoryObjectClass where it applies to more than one class (parameterise, do not clone). Each
+// kind has exactly one WriteChange arm whose field number equals the kind's number, one
+// plan-digest key on the server (kindTable, §8.10.2), one touched-set rule, a reversibility class and
+// conformance cases CC-WK-nn. A request whose `change` arm is not the arm of `kind` is
+// ERROR_CODE_INVALID_ARGUMENT before any directory call. Adding a kind needs a spec change to
+// §8.10 in the same commit; reserved_test.go pins the list.
 type WriteKind int32
 
 const (
 	WriteKind_WRITE_KIND_UNSPECIFIED WriteKind = 0
+	// Add an object under `target` (the parent container). Class USER, GROUP, COMPUTER, CONTACT or
+	// ORGANIZATIONAL_UNIT. USER may carry the initial password in ApplyRequest.secret_input.
+	WriteKind_WRITE_KIND_OBJECT_CREATE WriteKind = 1
+	// Compare-and-set edits of ordinary attributes (§8.10.4 deny-list applies).
+	WriteKind_WRITE_KIND_OBJECT_UPDATE WriteKind = 2
+	// Delete a leaf object. No subtree delete in v1.4.
+	WriteKind_WRITE_KIND_OBJECT_DELETE WriteKind = 3
+	// ModifyDN with a new superior inside the same domain NC.
+	WriteKind_WRITE_KIND_OBJECT_MOVE WriteKind = 4
+	// ModifyDN with a new RDN, same parent.
+	WriteKind_WRITE_KIND_OBJECT_RENAME WriteKind = 5
+	// Reanimate a deleted object (AD Recycle Bin enabled forests only).
+	WriteKind_WRITE_KIND_OBJECT_RESTORE WriteKind = 6
+	// Administrative reset of a user's password. Secret input; Irreversible; TM-D16 step-up.
+	WriteKind_WRITE_KIND_USER_PASSWORD_RESET WriteKind = 7
+	// Clear the lockout of a user. Irreversible (no inverse: lockout is DC-managed).
+	WriteKind_WRITE_KIND_USER_UNLOCK WriteKind = 8
+	// Clear ACCOUNTDISABLE on a user or computer (TM-D28 class `enable`).
+	WriteKind_WRITE_KIND_ACCOUNT_ENABLE WriteKind = 9
+	// Set ACCOUNTDISABLE on a user or computer (tightening; TM-D28 class none).
+	WriteKind_WRITE_KIND_ACCOUNT_DISABLE WriteKind = 10
 )
 
 // Enum value maps for WriteKind.
 var (
 	WriteKind_name = map[int32]string{
-		0: "WRITE_KIND_UNSPECIFIED",
+		0:  "WRITE_KIND_UNSPECIFIED",
+		1:  "WRITE_KIND_OBJECT_CREATE",
+		2:  "WRITE_KIND_OBJECT_UPDATE",
+		3:  "WRITE_KIND_OBJECT_DELETE",
+		4:  "WRITE_KIND_OBJECT_MOVE",
+		5:  "WRITE_KIND_OBJECT_RENAME",
+		6:  "WRITE_KIND_OBJECT_RESTORE",
+		7:  "WRITE_KIND_USER_PASSWORD_RESET",
+		8:  "WRITE_KIND_USER_UNLOCK",
+		9:  "WRITE_KIND_ACCOUNT_ENABLE",
+		10: "WRITE_KIND_ACCOUNT_DISABLE",
 	}
 	WriteKind_value = map[string]int32{
-		"WRITE_KIND_UNSPECIFIED": 0,
+		"WRITE_KIND_UNSPECIFIED":         0,
+		"WRITE_KIND_OBJECT_CREATE":       1,
+		"WRITE_KIND_OBJECT_UPDATE":       2,
+		"WRITE_KIND_OBJECT_DELETE":       3,
+		"WRITE_KIND_OBJECT_MOVE":         4,
+		"WRITE_KIND_OBJECT_RENAME":       5,
+		"WRITE_KIND_OBJECT_RESTORE":      6,
+		"WRITE_KIND_USER_PASSWORD_RESET": 7,
+		"WRITE_KIND_USER_UNLOCK":         8,
+		"WRITE_KIND_ACCOUNT_ENABLE":      9,
+		"WRITE_KIND_ACCOUNT_DISABLE":     10,
 	}
 )
 
@@ -87,6 +133,178 @@ func (x WriteKind) Number() protoreflect.EnumNumber {
 // Deprecated: Use WriteKind.Descriptor instead.
 func (WriteKind) EnumDescriptor() ([]byte, []int) {
 	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{0}
+}
+
+// The classes the object kinds work on. `user` includes inetOrgPerson. A kind that does not allow
+// the live class of its target is INVALID_ARGUMENT, rule id "ClassNotAllowed" (§8.10.3 matrix).
+type DirectoryObjectClass int32
+
+const (
+	DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_UNSPECIFIED         DirectoryObjectClass = 0
+	DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_USER                DirectoryObjectClass = 1
+	DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_GROUP               DirectoryObjectClass = 2
+	DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_COMPUTER            DirectoryObjectClass = 3
+	DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_CONTACT             DirectoryObjectClass = 4
+	DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_ORGANIZATIONAL_UNIT DirectoryObjectClass = 5
+)
+
+// Enum value maps for DirectoryObjectClass.
+var (
+	DirectoryObjectClass_name = map[int32]string{
+		0: "DIRECTORY_OBJECT_CLASS_UNSPECIFIED",
+		1: "DIRECTORY_OBJECT_CLASS_USER",
+		2: "DIRECTORY_OBJECT_CLASS_GROUP",
+		3: "DIRECTORY_OBJECT_CLASS_COMPUTER",
+		4: "DIRECTORY_OBJECT_CLASS_CONTACT",
+		5: "DIRECTORY_OBJECT_CLASS_ORGANIZATIONAL_UNIT",
+	}
+	DirectoryObjectClass_value = map[string]int32{
+		"DIRECTORY_OBJECT_CLASS_UNSPECIFIED":         0,
+		"DIRECTORY_OBJECT_CLASS_USER":                1,
+		"DIRECTORY_OBJECT_CLASS_GROUP":               2,
+		"DIRECTORY_OBJECT_CLASS_COMPUTER":            3,
+		"DIRECTORY_OBJECT_CLASS_CONTACT":             4,
+		"DIRECTORY_OBJECT_CLASS_ORGANIZATIONAL_UNIT": 5,
+	}
+)
+
+func (x DirectoryObjectClass) Enum() *DirectoryObjectClass {
+	p := new(DirectoryObjectClass)
+	*p = x
+	return p
+}
+
+func (x DirectoryObjectClass) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DirectoryObjectClass) Descriptor() protoreflect.EnumDescriptor {
+	return file_activediq_connector_v1_write_proto_enumTypes[1].Descriptor()
+}
+
+func (DirectoryObjectClass) Type() protoreflect.EnumType {
+	return &file_activediq_connector_v1_write_proto_enumTypes[1]
+}
+
+func (x DirectoryObjectClass) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DirectoryObjectClass.Descriptor instead.
+func (DirectoryObjectClass) EnumDescriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{1}
+}
+
+type GroupScope int32
+
+const (
+	GroupScope_GROUP_SCOPE_UNSPECIFIED  GroupScope = 0
+	GroupScope_GROUP_SCOPE_GLOBAL       GroupScope = 1
+	GroupScope_GROUP_SCOPE_DOMAIN_LOCAL GroupScope = 2
+	GroupScope_GROUP_SCOPE_UNIVERSAL    GroupScope = 3
+)
+
+// Enum value maps for GroupScope.
+var (
+	GroupScope_name = map[int32]string{
+		0: "GROUP_SCOPE_UNSPECIFIED",
+		1: "GROUP_SCOPE_GLOBAL",
+		2: "GROUP_SCOPE_DOMAIN_LOCAL",
+		3: "GROUP_SCOPE_UNIVERSAL",
+	}
+	GroupScope_value = map[string]int32{
+		"GROUP_SCOPE_UNSPECIFIED":  0,
+		"GROUP_SCOPE_GLOBAL":       1,
+		"GROUP_SCOPE_DOMAIN_LOCAL": 2,
+		"GROUP_SCOPE_UNIVERSAL":    3,
+	}
+)
+
+func (x GroupScope) Enum() *GroupScope {
+	p := new(GroupScope)
+	*p = x
+	return p
+}
+
+func (x GroupScope) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (GroupScope) Descriptor() protoreflect.EnumDescriptor {
+	return file_activediq_connector_v1_write_proto_enumTypes[2].Descriptor()
+}
+
+func (GroupScope) Type() protoreflect.EnumType {
+	return &file_activediq_connector_v1_write_proto_enumTypes[2]
+}
+
+func (x GroupScope) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use GroupScope.Descriptor instead.
+func (GroupScope) EnumDescriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{2}
+}
+
+type EditOp int32
+
+const (
+	EditOp_EDIT_OP_UNSPECIFIED EditOp = 0
+	// Single- or multi-valued: the attribute ends with exactly `values`. Realised as delete(live old
+	// values) + add(values) in one Modify (compare-and-set, ADR-0005 rule 4).
+	EditOp_EDIT_OP_SET EditOp = 1
+	// Remove every value (delete of the live old values). `values` empty.
+	EditOp_EDIT_OP_CLEAR EditOp = 2
+	// Multi-valued only: add `values` (Modify add; fails if a value is already present).
+	EditOp_EDIT_OP_ADD_VALUE EditOp = 3
+	// Multi-valued only: remove `values` (Modify delete of exactly those values).
+	EditOp_EDIT_OP_REMOVE_VALUE EditOp = 4
+)
+
+// Enum value maps for EditOp.
+var (
+	EditOp_name = map[int32]string{
+		0: "EDIT_OP_UNSPECIFIED",
+		1: "EDIT_OP_SET",
+		2: "EDIT_OP_CLEAR",
+		3: "EDIT_OP_ADD_VALUE",
+		4: "EDIT_OP_REMOVE_VALUE",
+	}
+	EditOp_value = map[string]int32{
+		"EDIT_OP_UNSPECIFIED":  0,
+		"EDIT_OP_SET":          1,
+		"EDIT_OP_CLEAR":        2,
+		"EDIT_OP_ADD_VALUE":    3,
+		"EDIT_OP_REMOVE_VALUE": 4,
+	}
+)
+
+func (x EditOp) Enum() *EditOp {
+	p := new(EditOp)
+	*p = x
+	return p
+}
+
+func (x EditOp) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (EditOp) Descriptor() protoreflect.EnumDescriptor {
+	return file_activediq_connector_v1_write_proto_enumTypes[3].Descriptor()
+}
+
+func (EditOp) Type() protoreflect.EnumType {
+	return &file_activediq_connector_v1_write_proto_enumTypes[3]
+}
+
+func (x EditOp) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use EditOp.Descriptor instead.
+func (EditOp) EnumDescriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{3}
 }
 
 type ApplyOutcome int32
@@ -124,11 +342,11 @@ func (x ApplyOutcome) String() string {
 }
 
 func (ApplyOutcome) Descriptor() protoreflect.EnumDescriptor {
-	return file_activediq_connector_v1_write_proto_enumTypes[1].Descriptor()
+	return file_activediq_connector_v1_write_proto_enumTypes[4].Descriptor()
 }
 
 func (ApplyOutcome) Type() protoreflect.EnumType {
-	return &file_activediq_connector_v1_write_proto_enumTypes[1]
+	return &file_activediq_connector_v1_write_proto_enumTypes[4]
 }
 
 func (x ApplyOutcome) Number() protoreflect.EnumNumber {
@@ -137,21 +355,792 @@ func (x ApplyOutcome) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ApplyOutcome.Descriptor instead.
 func (ApplyOutcome) EnumDescriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{4}
+}
+
+// A value in a write. Typed; no DN text and no SID text. An object reference is a Guid that the
+// connector resolves to a DN on the pinned DC. `octets` is accepted only for attributes whose
+// syntax has no codec and that are not on the §8.10.4 deny-list.
+type EditValue struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Value:
+	//
+	//	*EditValue_Text
+	//	*EditValue_Int32Value
+	//	*EditValue_Int64Value
+	//	*EditValue_Boolean
+	//	*EditValue_Time
+	//	*EditValue_ObjectRef
+	//	*EditValue_Octets
+	Value         isEditValue_Value `protobuf_oneof:"value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EditValue) Reset() {
+	*x = EditValue{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EditValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EditValue) ProtoMessage() {}
+
+func (x *EditValue) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EditValue.ProtoReflect.Descriptor instead.
+func (*EditValue) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *EditValue) GetValue() isEditValue_Value {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *EditValue) GetText() string {
+	if x != nil {
+		if x, ok := x.Value.(*EditValue_Text); ok {
+			return x.Text
+		}
+	}
+	return ""
+}
+
+func (x *EditValue) GetInt32Value() int32 {
+	if x != nil {
+		if x, ok := x.Value.(*EditValue_Int32Value); ok {
+			return x.Int32Value
+		}
+	}
+	return 0
+}
+
+func (x *EditValue) GetInt64Value() int64 {
+	if x != nil {
+		if x, ok := x.Value.(*EditValue_Int64Value); ok {
+			return x.Int64Value
+		}
+	}
+	return 0
+}
+
+func (x *EditValue) GetBoolean() bool {
+	if x != nil {
+		if x, ok := x.Value.(*EditValue_Boolean); ok {
+			return x.Boolean
+		}
+	}
+	return false
+}
+
+func (x *EditValue) GetTime() *TimeValue {
+	if x != nil {
+		if x, ok := x.Value.(*EditValue_Time); ok {
+			return x.Time
+		}
+	}
+	return nil
+}
+
+func (x *EditValue) GetObjectRef() *Guid {
+	if x != nil {
+		if x, ok := x.Value.(*EditValue_ObjectRef); ok {
+			return x.ObjectRef
+		}
+	}
+	return nil
+}
+
+func (x *EditValue) GetOctets() []byte {
+	if x != nil {
+		if x, ok := x.Value.(*EditValue_Octets); ok {
+			return x.Octets
+		}
+	}
+	return nil
+}
+
+type isEditValue_Value interface {
+	isEditValue_Value()
+}
+
+type EditValue_Text struct {
+	Text string `protobuf:"bytes,1,opt,name=text,proto3,oneof"`
+}
+
+type EditValue_Int32Value struct {
+	Int32Value int32 `protobuf:"varint,2,opt,name=int32_value,json=int32Value,proto3,oneof"`
+}
+
+type EditValue_Int64Value struct {
+	Int64Value int64 `protobuf:"varint,3,opt,name=int64_value,json=int64Value,proto3,oneof"`
+}
+
+type EditValue_Boolean struct {
+	Boolean bool `protobuf:"varint,4,opt,name=boolean,proto3,oneof"`
+}
+
+type EditValue_Time struct {
+	Time *TimeValue `protobuf:"bytes,5,opt,name=time,proto3,oneof"`
+}
+
+type EditValue_ObjectRef struct {
+	ObjectRef *Guid `protobuf:"bytes,6,opt,name=object_ref,json=objectRef,proto3,oneof"`
+}
+
+type EditValue_Octets struct {
+	Octets []byte `protobuf:"bytes,7,opt,name=octets,proto3,oneof"`
+}
+
+func (*EditValue_Text) isEditValue_Value() {}
+
+func (*EditValue_Int32Value) isEditValue_Value() {}
+
+func (*EditValue_Int64Value) isEditValue_Value() {}
+
+func (*EditValue_Boolean) isEditValue_Value() {}
+
+func (*EditValue_Time) isEditValue_Value() {}
+
+func (*EditValue_ObjectRef) isEditValue_Value() {}
+
+func (*EditValue_Octets) isEditValue_Value() {}
+
+// One attribute change. `attribute` is an LDAP display name validated by the connector against the
+// schema snapshot and the canonical-key rule of §8.9 (an ASCII letter, then letters, digits or `-`).
+// It is a name only, never a filter or a DN. The §8.10.4 deny-list is checked first.
+type AttributeEdit struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Attribute     string                 `protobuf:"bytes,1,opt,name=attribute,proto3" json:"attribute,omitempty"`
+	Op            EditOp                 `protobuf:"varint,2,opt,name=op,proto3,enum=activediq.connector.v1.EditOp" json:"op,omitempty"`
+	Values        []*EditValue           `protobuf:"bytes,3,rep,name=values,proto3" json:"values,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AttributeEdit) Reset() {
+	*x = AttributeEdit{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AttributeEdit) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AttributeEdit) ProtoMessage() {}
+
+func (x *AttributeEdit) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AttributeEdit.ProtoReflect.Descriptor instead.
+func (*AttributeEdit) Descriptor() ([]byte, []int) {
 	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{1}
 }
 
-// The typed content of the change. Each WriteKind adds one message arm here (in a `oneof change`
-// introduced with the first kind). No arm may carry a DN, filter or script as text (P2), an Any
-// (P3), or a secret (P7).
-type WriteChange struct {
+func (x *AttributeEdit) GetAttribute() string {
+	if x != nil {
+		return x.Attribute
+	}
+	return ""
+}
+
+func (x *AttributeEdit) GetOp() EditOp {
+	if x != nil {
+		return x.Op
+	}
+	return EditOp_EDIT_OP_UNSPECIFIED
+}
+
+func (x *AttributeEdit) GetValues() []*EditValue {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
+// Create. `target` is the parent container. The RDN attribute follows from the class (cn for user,
+// group, computer and contact; ou for an organizational unit); the connector builds the DN with the
+// DN type from the parent's live DN and `rdn_value`, which is a value, never a DN.
+type ObjectCreate struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	ObjectClass DirectoryObjectClass   `protobuf:"varint,1,opt,name=object_class,json=objectClass,proto3,enum=activediq.connector.v1.DirectoryObjectClass" json:"object_class,omitempty"`
+	RdnValue    string                 `protobuf:"bytes,2,opt,name=rdn_value,json=rdnValue,proto3" json:"rdn_value,omitempty"`
+	// Initial attributes, EDIT_OP_SET only. sAMAccountName is required for user, group and computer.
+	Initial []*AttributeEdit `protobuf:"bytes,3,rep,name=initial,proto3" json:"initial,omitempty"`
+	// GROUP only: scope and type. The connector derives groupType; it is not an attribute edit.
+	GroupScope      GroupScope `protobuf:"varint,4,opt,name=group_scope,json=groupScope,proto3,enum=activediq.connector.v1.GroupScope" json:"group_scope,omitempty"`
+	GroupIsSecurity bool       `protobuf:"varint,5,opt,name=group_is_security,json=groupIsSecurity,proto3" json:"group_is_security,omitempty"`
+	// USER and COMPUTER: create enabled. USER enabled requires has_secret_input (AD refuses an
+	// enabled user without a password); a USER created disabled may have none.
+	AccountEnabled bool `protobuf:"varint,6,opt,name=account_enabled,json=accountEnabled,proto3" json:"account_enabled,omitempty"`
+	// The plan-time statement that Apply will carry ApplyRequest.secret_input (USER only). The flag
+	// is covered by the plan digest, the value never is (ADR-0005 rule 9). Apply refuses a mismatch
+	// between this flag and the presence of secret_input.
+	HasSecretInput bool `protobuf:"varint,7,opt,name=has_secret_input,json=hasSecretInput,proto3" json:"has_secret_input,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ObjectCreate) Reset() {
+	*x = ObjectCreate{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObjectCreate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObjectCreate) ProtoMessage() {}
+
+func (x *ObjectCreate) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObjectCreate.ProtoReflect.Descriptor instead.
+func (*ObjectCreate) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ObjectCreate) GetObjectClass() DirectoryObjectClass {
+	if x != nil {
+		return x.ObjectClass
+	}
+	return DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_UNSPECIFIED
+}
+
+func (x *ObjectCreate) GetRdnValue() string {
+	if x != nil {
+		return x.RdnValue
+	}
+	return ""
+}
+
+func (x *ObjectCreate) GetInitial() []*AttributeEdit {
+	if x != nil {
+		return x.Initial
+	}
+	return nil
+}
+
+func (x *ObjectCreate) GetGroupScope() GroupScope {
+	if x != nil {
+		return x.GroupScope
+	}
+	return GroupScope_GROUP_SCOPE_UNSPECIFIED
+}
+
+func (x *ObjectCreate) GetGroupIsSecurity() bool {
+	if x != nil {
+		return x.GroupIsSecurity
+	}
+	return false
+}
+
+func (x *ObjectCreate) GetAccountEnabled() bool {
+	if x != nil {
+		return x.AccountEnabled
+	}
+	return false
+}
+
+func (x *ObjectCreate) GetHasSecretInput() bool {
+	if x != nil {
+		return x.HasSecretInput
+	}
+	return false
+}
+
+type ObjectUpdate struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Edits         []*AttributeEdit       `protobuf:"bytes,1,rep,name=edits,proto3" json:"edits,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ObjectUpdate) Reset() {
+	*x = ObjectUpdate{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObjectUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObjectUpdate) ProtoMessage() {}
+
+func (x *ObjectUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObjectUpdate.ProtoReflect.Descriptor instead.
+func (*ObjectUpdate) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ObjectUpdate) GetEdits() []*AttributeEdit {
+	if x != nil {
+		return x.Edits
+	}
+	return nil
+}
+
+type ObjectDelete struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ObjectDelete) Reset() {
+	*x = ObjectDelete{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObjectDelete) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObjectDelete) ProtoMessage() {}
+
+func (x *ObjectDelete) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObjectDelete.ProtoReflect.Descriptor instead.
+func (*ObjectDelete) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{4}
+}
+
+// Move inside one domain NC. `new_parent.nc_guid` must equal the request target's nc_guid, else
+// INVALID_ARGUMENT, rule id "CrossDomainMoveUnsupported".
+type ObjectMove struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NewParent     *WriteTarget           `protobuf:"bytes,1,opt,name=new_parent,json=newParent,proto3" json:"new_parent,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ObjectMove) Reset() {
+	*x = ObjectMove{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObjectMove) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObjectMove) ProtoMessage() {}
+
+func (x *ObjectMove) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObjectMove.ProtoReflect.Descriptor instead.
+func (*ObjectMove) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ObjectMove) GetNewParent() *WriteTarget {
+	if x != nil {
+		return x.NewParent
+	}
+	return nil
+}
+
+type ObjectRename struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NewRdnValue   string                 `protobuf:"bytes,1,opt,name=new_rdn_value,json=newRdnValue,proto3" json:"new_rdn_value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ObjectRename) Reset() {
+	*x = ObjectRename{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObjectRename) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObjectRename) ProtoMessage() {}
+
+func (x *ObjectRename) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObjectRename.ProtoReflect.Descriptor instead.
+func (*ObjectRename) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ObjectRename) GetNewRdnValue() string {
+	if x != nil {
+		return x.NewRdnValue
+	}
+	return ""
+}
+
+// `target.object` is the deleted object. Restores into `new_parent` under `rdn_value`.
+type ObjectRestore struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NewParent     *WriteTarget           `protobuf:"bytes,1,opt,name=new_parent,json=newParent,proto3" json:"new_parent,omitempty"`
+	RdnValue      string                 `protobuf:"bytes,2,opt,name=rdn_value,json=rdnValue,proto3" json:"rdn_value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ObjectRestore) Reset() {
+	*x = ObjectRestore{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ObjectRestore) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ObjectRestore) ProtoMessage() {}
+
+func (x *ObjectRestore) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ObjectRestore.ProtoReflect.Descriptor instead.
+func (*ObjectRestore) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ObjectRestore) GetNewParent() *WriteTarget {
+	if x != nil {
+		return x.NewParent
+	}
+	return nil
+}
+
+func (x *ObjectRestore) GetRdnValue() string {
+	if x != nil {
+		return x.RdnValue
+	}
+	return ""
+}
+
+// The password itself is ApplyRequest.secret_input, never a field here.
+type UserPasswordReset struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Set pwdLastSet = 0 in the same Modify. False leaves the must-change state as the policy has it;
+	// the connector never writes pwdLastSet = -1 (TM-D28 `reset_password`, safe-primitives §5.6).
+	MustChangeAtNextLogon bool `protobuf:"varint,1,opt,name=must_change_at_next_logon,json=mustChangeAtNextLogon,proto3" json:"must_change_at_next_logon,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *UserPasswordReset) Reset() {
+	*x = UserPasswordReset{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UserPasswordReset) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UserPasswordReset) ProtoMessage() {}
+
+func (x *UserPasswordReset) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UserPasswordReset.ProtoReflect.Descriptor instead.
+func (*UserPasswordReset) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *UserPasswordReset) GetMustChangeAtNextLogon() bool {
+	if x != nil {
+		return x.MustChangeAtNextLogon
+	}
+	return false
+}
+
+type UserUnlock struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UserUnlock) Reset() {
+	*x = UserUnlock{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UserUnlock) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UserUnlock) ProtoMessage() {}
+
+func (x *UserUnlock) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UserUnlock.ProtoReflect.Descriptor instead.
+func (*UserUnlock) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{9}
+}
+
+type AccountEnable struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AccountEnable) Reset() {
+	*x = AccountEnable{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AccountEnable) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AccountEnable) ProtoMessage() {}
+
+func (x *AccountEnable) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AccountEnable.ProtoReflect.Descriptor instead.
+func (*AccountEnable) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{10}
+}
+
+type AccountDisable struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AccountDisable) Reset() {
+	*x = AccountDisable{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AccountDisable) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AccountDisable) ProtoMessage() {}
+
+func (x *AccountDisable) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AccountDisable.ProtoReflect.Descriptor instead.
+func (*AccountDisable) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{11}
+}
+
+// A secret in transit from the server to the connector inside Apply, over the mTLS tunnel
+// (ADR-0005 rule 9, "Transit to a remote connector"). The only message of the contract that may
+// hold secret bytes, and it may be used in exactly one place: ApplyRequest.secret_input (fitness
+// P9, connector-contract.md §8.10.5). `material` is UTF-8 text of the secret. The connector
+// encodes it for the directory (unicodePwd: quoted UTF-16LE), zeroes its own copies after the
+// call, and never logs, echoes or persists it. It is never in a PlanRequest, a response, an error
+// or a log line; generated code that prints it is a defect (CC-WK-26).
+type SecretValue struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Material      []byte                 `protobuf:"bytes,1,opt,name=material,proto3" json:"material,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SecretValue) Reset() {
+	*x = SecretValue{}
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SecretValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SecretValue) ProtoMessage() {}
+
+func (x *SecretValue) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SecretValue.ProtoReflect.Descriptor instead.
+func (*SecretValue) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *SecretValue) GetMaterial() []byte {
+	if x != nil {
+		return x.Material
+	}
+	return nil
+}
+
+// The typed content of the change. Exactly one arm, and the arm number equals the WriteKind number.
+// No arm may carry a DN, filter or script as text (P2), an Any (P3), or a secret (P7).
+type WriteChange struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Change:
+	//
+	//	*WriteChange_ObjectCreate
+	//	*WriteChange_ObjectUpdate
+	//	*WriteChange_ObjectDelete
+	//	*WriteChange_ObjectMove
+	//	*WriteChange_ObjectRename
+	//	*WriteChange_ObjectRestore
+	//	*WriteChange_UserPasswordReset
+	//	*WriteChange_UserUnlock
+	//	*WriteChange_AccountEnable
+	//	*WriteChange_AccountDisable
+	Change        isWriteChange_Change `protobuf_oneof:"change"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *WriteChange) Reset() {
 	*x = WriteChange{}
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[0]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -163,7 +1152,7 @@ func (x *WriteChange) String() string {
 func (*WriteChange) ProtoMessage() {}
 
 func (x *WriteChange) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[0]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -176,8 +1165,169 @@ func (x *WriteChange) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteChange.ProtoReflect.Descriptor instead.
 func (*WriteChange) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{0}
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{13}
 }
+
+func (x *WriteChange) GetChange() isWriteChange_Change {
+	if x != nil {
+		return x.Change
+	}
+	return nil
+}
+
+func (x *WriteChange) GetObjectCreate() *ObjectCreate {
+	if x != nil {
+		if x, ok := x.Change.(*WriteChange_ObjectCreate); ok {
+			return x.ObjectCreate
+		}
+	}
+	return nil
+}
+
+func (x *WriteChange) GetObjectUpdate() *ObjectUpdate {
+	if x != nil {
+		if x, ok := x.Change.(*WriteChange_ObjectUpdate); ok {
+			return x.ObjectUpdate
+		}
+	}
+	return nil
+}
+
+func (x *WriteChange) GetObjectDelete() *ObjectDelete {
+	if x != nil {
+		if x, ok := x.Change.(*WriteChange_ObjectDelete); ok {
+			return x.ObjectDelete
+		}
+	}
+	return nil
+}
+
+func (x *WriteChange) GetObjectMove() *ObjectMove {
+	if x != nil {
+		if x, ok := x.Change.(*WriteChange_ObjectMove); ok {
+			return x.ObjectMove
+		}
+	}
+	return nil
+}
+
+func (x *WriteChange) GetObjectRename() *ObjectRename {
+	if x != nil {
+		if x, ok := x.Change.(*WriteChange_ObjectRename); ok {
+			return x.ObjectRename
+		}
+	}
+	return nil
+}
+
+func (x *WriteChange) GetObjectRestore() *ObjectRestore {
+	if x != nil {
+		if x, ok := x.Change.(*WriteChange_ObjectRestore); ok {
+			return x.ObjectRestore
+		}
+	}
+	return nil
+}
+
+func (x *WriteChange) GetUserPasswordReset() *UserPasswordReset {
+	if x != nil {
+		if x, ok := x.Change.(*WriteChange_UserPasswordReset); ok {
+			return x.UserPasswordReset
+		}
+	}
+	return nil
+}
+
+func (x *WriteChange) GetUserUnlock() *UserUnlock {
+	if x != nil {
+		if x, ok := x.Change.(*WriteChange_UserUnlock); ok {
+			return x.UserUnlock
+		}
+	}
+	return nil
+}
+
+func (x *WriteChange) GetAccountEnable() *AccountEnable {
+	if x != nil {
+		if x, ok := x.Change.(*WriteChange_AccountEnable); ok {
+			return x.AccountEnable
+		}
+	}
+	return nil
+}
+
+func (x *WriteChange) GetAccountDisable() *AccountDisable {
+	if x != nil {
+		if x, ok := x.Change.(*WriteChange_AccountDisable); ok {
+			return x.AccountDisable
+		}
+	}
+	return nil
+}
+
+type isWriteChange_Change interface {
+	isWriteChange_Change()
+}
+
+type WriteChange_ObjectCreate struct {
+	ObjectCreate *ObjectCreate `protobuf:"bytes,1,opt,name=object_create,json=objectCreate,proto3,oneof"`
+}
+
+type WriteChange_ObjectUpdate struct {
+	ObjectUpdate *ObjectUpdate `protobuf:"bytes,2,opt,name=object_update,json=objectUpdate,proto3,oneof"`
+}
+
+type WriteChange_ObjectDelete struct {
+	ObjectDelete *ObjectDelete `protobuf:"bytes,3,opt,name=object_delete,json=objectDelete,proto3,oneof"`
+}
+
+type WriteChange_ObjectMove struct {
+	ObjectMove *ObjectMove `protobuf:"bytes,4,opt,name=object_move,json=objectMove,proto3,oneof"`
+}
+
+type WriteChange_ObjectRename struct {
+	ObjectRename *ObjectRename `protobuf:"bytes,5,opt,name=object_rename,json=objectRename,proto3,oneof"`
+}
+
+type WriteChange_ObjectRestore struct {
+	ObjectRestore *ObjectRestore `protobuf:"bytes,6,opt,name=object_restore,json=objectRestore,proto3,oneof"`
+}
+
+type WriteChange_UserPasswordReset struct {
+	UserPasswordReset *UserPasswordReset `protobuf:"bytes,7,opt,name=user_password_reset,json=userPasswordReset,proto3,oneof"`
+}
+
+type WriteChange_UserUnlock struct {
+	UserUnlock *UserUnlock `protobuf:"bytes,8,opt,name=user_unlock,json=userUnlock,proto3,oneof"`
+}
+
+type WriteChange_AccountEnable struct {
+	AccountEnable *AccountEnable `protobuf:"bytes,9,opt,name=account_enable,json=accountEnable,proto3,oneof"`
+}
+
+type WriteChange_AccountDisable struct {
+	AccountDisable *AccountDisable `protobuf:"bytes,10,opt,name=account_disable,json=accountDisable,proto3,oneof"`
+}
+
+func (*WriteChange_ObjectCreate) isWriteChange_Change() {}
+
+func (*WriteChange_ObjectUpdate) isWriteChange_Change() {}
+
+func (*WriteChange_ObjectDelete) isWriteChange_Change() {}
+
+func (*WriteChange_ObjectMove) isWriteChange_Change() {}
+
+func (*WriteChange_ObjectRename) isWriteChange_Change() {}
+
+func (*WriteChange_ObjectRestore) isWriteChange_Change() {}
+
+func (*WriteChange_UserPasswordReset) isWriteChange_Change() {}
+
+func (*WriteChange_UserUnlock) isWriteChange_Change() {}
+
+func (*WriteChange_AccountEnable) isWriteChange_Change() {}
+
+func (*WriteChange_AccountDisable) isWriteChange_Change() {}
 
 // The object the write is about. For a kind that creates an object this is the parent container.
 type WriteTarget struct {
@@ -192,7 +1342,7 @@ type WriteTarget struct {
 
 func (x *WriteTarget) Reset() {
 	*x = WriteTarget{}
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[1]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -204,7 +1354,7 @@ func (x *WriteTarget) String() string {
 func (*WriteTarget) ProtoMessage() {}
 
 func (x *WriteTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[1]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -217,7 +1367,7 @@ func (x *WriteTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteTarget.ProtoReflect.Descriptor instead.
 func (*WriteTarget) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{1}
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *WriteTarget) GetObject() *Guid {
@@ -246,14 +1396,18 @@ type TargetPrecondition struct {
 	// SHA-256 over the canonical encoding of the attribute values the kind reads or changes and the
 	// facts the tier0 evaluation used (memberships, parent), computed by the connector. Entra has no
 	// general If-Match on directory objects, so this digest is the Entra precondition.
-	StateDigest   []byte `protobuf:"bytes,3,opt,name=state_digest,json=stateDigest,proto3" json:"state_digest,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	StateDigest []byte `protobuf:"bytes,3,opt,name=state_digest,json=stateDigest,proto3" json:"state_digest,omitempty"`
+	// AD: the pinned DC's clock when Plan read the target. A create is ALREADY_APPLIED only if the
+	// object found at the planned parent and RDN has whenCreated at or after this instant (ADR-0005
+	// rule 4, "created after the step's claim"; contract §8.10.3).
+	PlanObservedAt *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=plan_observed_at,json=planObservedAt,proto3,oneof" json:"plan_observed_at,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *TargetPrecondition) Reset() {
 	*x = TargetPrecondition{}
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[2]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -265,7 +1419,7 @@ func (x *TargetPrecondition) String() string {
 func (*TargetPrecondition) ProtoMessage() {}
 
 func (x *TargetPrecondition) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[2]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -278,7 +1432,7 @@ func (x *TargetPrecondition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TargetPrecondition.ProtoReflect.Descriptor instead.
 func (*TargetPrecondition) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{2}
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *TargetPrecondition) GetDc() *DcIdentity {
@@ -302,6 +1456,13 @@ func (x *TargetPrecondition) GetStateDigest() []byte {
 	return nil
 }
 
+func (x *TargetPrecondition) GetPlanObservedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.PlanObservedAt
+	}
+	return nil
+}
+
 // The ADR-0005 step idempotency key (DM-42.I1). UUIDs travel as Guid (16 bytes, RFC 4122 order).
 type StepKey struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -314,7 +1475,7 @@ type StepKey struct {
 
 func (x *StepKey) Reset() {
 	*x = StepKey{}
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[3]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -326,7 +1487,7 @@ func (x *StepKey) String() string {
 func (*StepKey) ProtoMessage() {}
 
 func (x *StepKey) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[3]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -339,7 +1500,7 @@ func (x *StepKey) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StepKey.ProtoReflect.Descriptor instead.
 func (*StepKey) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{3}
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *StepKey) GetOperationId() *Guid {
@@ -377,7 +1538,7 @@ type ActingPrincipal struct {
 
 func (x *ActingPrincipal) Reset() {
 	*x = ActingPrincipal{}
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[4]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -389,7 +1550,7 @@ func (x *ActingPrincipal) String() string {
 func (*ActingPrincipal) ProtoMessage() {}
 
 func (x *ActingPrincipal) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[4]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -402,7 +1563,7 @@ func (x *ActingPrincipal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActingPrincipal.ProtoReflect.Descriptor instead.
 func (*ActingPrincipal) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{4}
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ActingPrincipal) GetAccountId() *Guid {
@@ -436,7 +1597,7 @@ type Tier0Evaluation struct {
 
 func (x *Tier0Evaluation) Reset() {
 	*x = Tier0Evaluation{}
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[5]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -448,7 +1609,7 @@ func (x *Tier0Evaluation) String() string {
 func (*Tier0Evaluation) ProtoMessage() {}
 
 func (x *Tier0Evaluation) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[5]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -461,7 +1622,7 @@ func (x *Tier0Evaluation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Tier0Evaluation.ProtoReflect.Descriptor instead.
 func (*Tier0Evaluation) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{5}
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Tier0Evaluation) GetEvaluated() []*Guid {
@@ -507,7 +1668,7 @@ type WriteGateOverride struct {
 
 func (x *WriteGateOverride) Reset() {
 	*x = WriteGateOverride{}
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[6]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -519,7 +1680,7 @@ func (x *WriteGateOverride) String() string {
 func (*WriteGateOverride) ProtoMessage() {}
 
 func (x *WriteGateOverride) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[6]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -532,7 +1693,7 @@ func (x *WriteGateOverride) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WriteGateOverride.ProtoReflect.Descriptor instead.
 func (*WriteGateOverride) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{6}
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *WriteGateOverride) GetOverrideId() *Guid {
@@ -568,7 +1729,7 @@ type PlanRequest struct {
 
 func (x *PlanRequest) Reset() {
 	*x = PlanRequest{}
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[7]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -580,7 +1741,7 @@ func (x *PlanRequest) String() string {
 func (*PlanRequest) ProtoMessage() {}
 
 func (x *PlanRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[7]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -593,7 +1754,7 @@ func (x *PlanRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanRequest.ProtoReflect.Descriptor instead.
 func (*PlanRequest) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{7}
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *PlanRequest) GetConnection() *ConnectionRef {
@@ -680,7 +1841,7 @@ type PlanResponse struct {
 
 func (x *PlanResponse) Reset() {
 	*x = PlanResponse{}
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[8]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -692,7 +1853,7 @@ func (x *PlanResponse) String() string {
 func (*PlanResponse) ProtoMessage() {}
 
 func (x *PlanResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[8]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -705,7 +1866,7 @@ func (x *PlanResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanResponse.ProtoReflect.Descriptor instead.
 func (*PlanResponse) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{8}
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *PlanResponse) GetStep() *StepKey {
@@ -783,14 +1944,19 @@ type ApplyRequest struct {
 	// The Step's plan digest (ADR-0005 rule 2). The connector recomputes it from the typed fields of
 	// this request with the same function and refuses a mismatch (INVALID_ARGUMENT, rule id
 	// "PlanDigestMismatch") before any directory call.
-	PlanDigest    []byte `protobuf:"bytes,11,opt,name=plan_digest,json=planDigest,proto3" json:"plan_digest,omitempty"`
+	PlanDigest []byte `protobuf:"bytes,11,opt,name=plan_digest,json=planDigest,proto3" json:"plan_digest,omitempty"`
+	// Only for the kinds whose Descriptor has SecretInput (OBJECT_CREATE of a USER with
+	// has_secret_input, USER_PASSWORD_RESET). Present on any other kind, or absent on those, is
+	// INVALID_ARGUMENT before any directory call. Never part of the plan digest (only its presence
+	// is). Contract §8.10.5.
+	SecretInput   *SecretValue `protobuf:"bytes,12,opt,name=secret_input,json=secretInput,proto3,oneof" json:"secret_input,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ApplyRequest) Reset() {
 	*x = ApplyRequest{}
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[9]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -802,7 +1968,7 @@ func (x *ApplyRequest) String() string {
 func (*ApplyRequest) ProtoMessage() {}
 
 func (x *ApplyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[9]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -815,7 +1981,7 @@ func (x *ApplyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApplyRequest.ProtoReflect.Descriptor instead.
 func (*ApplyRequest) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{9}
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ApplyRequest) GetConnection() *ConnectionRef {
@@ -895,6 +2061,13 @@ func (x *ApplyRequest) GetPlanDigest() []byte {
 	return nil
 }
 
+func (x *ApplyRequest) GetSecretInput() *SecretValue {
+	if x != nil {
+		return x.SecretInput
+	}
+	return nil
+}
+
 type ApplyResponse struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Step    *StepKey               `protobuf:"bytes,1,opt,name=step,proto3" json:"step,omitempty"`
@@ -925,7 +2098,7 @@ type ApplyResponse struct {
 
 func (x *ApplyResponse) Reset() {
 	*x = ApplyResponse{}
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[10]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -937,7 +2110,7 @@ func (x *ApplyResponse) String() string {
 func (*ApplyResponse) ProtoMessage() {}
 
 func (x *ApplyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_write_proto_msgTypes[10]
+	mi := &file_activediq_connector_v1_write_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -950,7 +2123,7 @@ func (x *ApplyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApplyResponse.ProtoReflect.Descriptor instead.
 func (*ApplyResponse) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{10}
+	return file_activediq_connector_v1_write_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ApplyResponse) GetStep() *StepKey {
@@ -1020,17 +2193,79 @@ var File_activediq_connector_v1_write_proto protoreflect.FileDescriptor
 
 const file_activediq_connector_v1_write_proto_rawDesc = "" +
 	"\n" +
-	"\"activediq/connector/v1/write.proto\x12\x16activediq.connector.v1\x1a#activediq/connector/v1/common.proto\x1a\"activediq/connector/v1/tier0.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\r\n" +
-	"\vWriteChange\"z\n" +
+	"\"activediq/connector/v1/write.proto\x12\x16activediq.connector.v1\x1a#activediq/connector/v1/common.proto\x1a\"activediq/connector/v1/tier0.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x9e\x02\n" +
+	"\tEditValue\x12\x14\n" +
+	"\x04text\x18\x01 \x01(\tH\x00R\x04text\x12!\n" +
+	"\vint32_value\x18\x02 \x01(\x05H\x00R\n" +
+	"int32Value\x12!\n" +
+	"\vint64_value\x18\x03 \x01(\x03H\x00R\n" +
+	"int64Value\x12\x1a\n" +
+	"\aboolean\x18\x04 \x01(\bH\x00R\aboolean\x127\n" +
+	"\x04time\x18\x05 \x01(\v2!.activediq.connector.v1.TimeValueH\x00R\x04time\x12=\n" +
+	"\n" +
+	"object_ref\x18\x06 \x01(\v2\x1c.activediq.connector.v1.GuidH\x00R\tobjectRef\x12\x18\n" +
+	"\x06octets\x18\a \x01(\fH\x00R\x06octetsB\a\n" +
+	"\x05value\"\x98\x01\n" +
+	"\rAttributeEdit\x12\x1c\n" +
+	"\tattribute\x18\x01 \x01(\tR\tattribute\x12.\n" +
+	"\x02op\x18\x02 \x01(\x0e2\x1e.activediq.connector.v1.EditOpR\x02op\x129\n" +
+	"\x06values\x18\x03 \x03(\v2!.activediq.connector.v1.EditValueR\x06values\"\x81\x03\n" +
+	"\fObjectCreate\x12O\n" +
+	"\fobject_class\x18\x01 \x01(\x0e2,.activediq.connector.v1.DirectoryObjectClassR\vobjectClass\x12\x1b\n" +
+	"\trdn_value\x18\x02 \x01(\tR\brdnValue\x12?\n" +
+	"\ainitial\x18\x03 \x03(\v2%.activediq.connector.v1.AttributeEditR\ainitial\x12C\n" +
+	"\vgroup_scope\x18\x04 \x01(\x0e2\".activediq.connector.v1.GroupScopeR\n" +
+	"groupScope\x12*\n" +
+	"\x11group_is_security\x18\x05 \x01(\bR\x0fgroupIsSecurity\x12'\n" +
+	"\x0faccount_enabled\x18\x06 \x01(\bR\x0eaccountEnabled\x12(\n" +
+	"\x10has_secret_input\x18\a \x01(\bR\x0ehasSecretInput\"K\n" +
+	"\fObjectUpdate\x12;\n" +
+	"\x05edits\x18\x01 \x03(\v2%.activediq.connector.v1.AttributeEditR\x05edits\"\x0e\n" +
+	"\fObjectDelete\"P\n" +
+	"\n" +
+	"ObjectMove\x12B\n" +
+	"\n" +
+	"new_parent\x18\x01 \x01(\v2#.activediq.connector.v1.WriteTargetR\tnewParent\"2\n" +
+	"\fObjectRename\x12\"\n" +
+	"\rnew_rdn_value\x18\x01 \x01(\tR\vnewRdnValue\"p\n" +
+	"\rObjectRestore\x12B\n" +
+	"\n" +
+	"new_parent\x18\x01 \x01(\v2#.activediq.connector.v1.WriteTargetR\tnewParent\x12\x1b\n" +
+	"\trdn_value\x18\x02 \x01(\tR\brdnValue\"M\n" +
+	"\x11UserPasswordReset\x128\n" +
+	"\x19must_change_at_next_logon\x18\x01 \x01(\bR\x15mustChangeAtNextLogon\"\f\n" +
+	"\n" +
+	"UserUnlock\"\x0f\n" +
+	"\rAccountEnable\"\x10\n" +
+	"\x0eAccountDisable\")\n" +
+	"\vSecretValue\x12\x1a\n" +
+	"\bmaterial\x18\x01 \x01(\fR\bmaterial\"\xa9\x06\n" +
+	"\vWriteChange\x12K\n" +
+	"\robject_create\x18\x01 \x01(\v2$.activediq.connector.v1.ObjectCreateH\x00R\fobjectCreate\x12K\n" +
+	"\robject_update\x18\x02 \x01(\v2$.activediq.connector.v1.ObjectUpdateH\x00R\fobjectUpdate\x12K\n" +
+	"\robject_delete\x18\x03 \x01(\v2$.activediq.connector.v1.ObjectDeleteH\x00R\fobjectDelete\x12E\n" +
+	"\vobject_move\x18\x04 \x01(\v2\".activediq.connector.v1.ObjectMoveH\x00R\n" +
+	"objectMove\x12K\n" +
+	"\robject_rename\x18\x05 \x01(\v2$.activediq.connector.v1.ObjectRenameH\x00R\fobjectRename\x12N\n" +
+	"\x0eobject_restore\x18\x06 \x01(\v2%.activediq.connector.v1.ObjectRestoreH\x00R\robjectRestore\x12[\n" +
+	"\x13user_password_reset\x18\a \x01(\v2).activediq.connector.v1.UserPasswordResetH\x00R\x11userPasswordReset\x12E\n" +
+	"\vuser_unlock\x18\b \x01(\v2\".activediq.connector.v1.UserUnlockH\x00R\n" +
+	"userUnlock\x12N\n" +
+	"\x0eaccount_enable\x18\t \x01(\v2%.activediq.connector.v1.AccountEnableH\x00R\raccountEnable\x12Q\n" +
+	"\x0faccount_disable\x18\n" +
+	" \x01(\v2&.activediq.connector.v1.AccountDisableH\x00R\x0eaccountDisableB\b\n" +
+	"\x06change\"z\n" +
 	"\vWriteTarget\x124\n" +
 	"\x06object\x18\x01 \x01(\v2\x1c.activediq.connector.v1.GuidR\x06object\x125\n" +
-	"\anc_guid\x18\x02 \x01(\v2\x1c.activediq.connector.v1.GuidR\x06ncGuid\"\xa1\x01\n" +
+	"\anc_guid\x18\x02 \x01(\v2\x1c.activediq.connector.v1.GuidR\x06ncGuid\"\x81\x02\n" +
 	"\x12TargetPrecondition\x122\n" +
 	"\x02dc\x18\x01 \x01(\v2\".activediq.connector.v1.DcIdentityR\x02dc\x12$\n" +
 	"\vusn_changed\x18\x02 \x01(\x04H\x00R\n" +
 	"usnChanged\x88\x01\x01\x12!\n" +
-	"\fstate_digest\x18\x03 \x01(\fR\vstateDigestB\x0e\n" +
-	"\f_usn_changed\"r\n" +
+	"\fstate_digest\x18\x03 \x01(\fR\vstateDigest\x12I\n" +
+	"\x10plan_observed_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampH\x01R\x0eplanObservedAt\x88\x01\x01B\x0e\n" +
+	"\f_usn_changedB\x13\n" +
+	"\x11_plan_observed_at\"r\n" +
 	"\aStepKey\x12?\n" +
 	"\foperation_id\x18\x01 \x01(\v2\x1c.activediq.connector.v1.GuidR\voperationId\x12\x12\n" +
 	"\x04item\x18\x02 \x01(\rR\x04item\x12\x12\n" +
@@ -1070,7 +2305,7 @@ const file_activediq_connector_v1_write_proto_rawDesc = "" +
 	"\fprecondition\x18\x05 \x01(\v2*.activediq.connector.v1.TargetPreconditionR\fprecondition\x12=\n" +
 	"\x05tier0\x18\x06 \x01(\v2'.activediq.connector.v1.Tier0EvaluationR\x05tier0\x12\x13\n" +
 	"\x05no_op\x18\a \x01(\bR\x04noOp\x12>\n" +
-	"\x06before\x18\b \x01(\v2&.activediq.connector.v1.DirectoryEntryR\x06before\"\xc0\x05\n" +
+	"\x06before\x18\b \x01(\v2&.activediq.connector.v1.DirectoryEntryR\x06before\"\x9e\x06\n" +
 	"\fApplyRequest\x12E\n" +
 	"\n" +
 	"connection\x18\x01 \x01(\v2%.activediq.connector.v1.ConnectionRefR\n" +
@@ -1086,8 +2321,10 @@ const file_activediq_connector_v1_write_proto_rawDesc = "" +
 	"\x10acting_principal\x18\n" +
 	" \x01(\v2'.activediq.connector.v1.ActingPrincipalR\x0factingPrincipal\x12\x1f\n" +
 	"\vplan_digest\x18\v \x01(\fR\n" +
-	"planDigestB\x11\n" +
-	"\x0f_tier0_override\"\xb6\x04\n" +
+	"planDigest\x12K\n" +
+	"\fsecret_input\x18\f \x01(\v2#.activediq.connector.v1.SecretValueH\x01R\vsecretInput\x88\x01\x01B\x11\n" +
+	"\x0f_tier0_overrideB\x0f\n" +
+	"\r_secret_input\"\xb6\x04\n" +
 	"\rApplyResponse\x123\n" +
 	"\x04step\x18\x01 \x01(\v2\x1f.activediq.connector.v1.StepKeyR\x04step\x12\x18\n" +
 	"\aattempt\x18\x02 \x01(\rR\aattempt\x12;\n" +
@@ -1098,9 +2335,39 @@ const file_activediq_connector_v1_write_proto_rawDesc = "" +
 	"\tread_back\x18\a \x01(\v2&.activediq.connector.v1.DirectoryEntryR\breadBack\x12=\n" +
 	"\x05tier0\x18\b \x01(\v2'.activediq.connector.v1.Tier0EvaluationR\x05tier0\x12O\n" +
 	"\x11tier0_after_write\x18\t \x03(\v2#.activediq.connector.v1.Tier0MemberR\x0ftier0AfterWriteB\x14\n" +
-	"\x12_usn_changed_after*'\n" +
+	"\x12_usn_changed_after*\xd9\x02\n" +
 	"\tWriteKind\x12\x1a\n" +
-	"\x16WRITE_KIND_UNSPECIFIED\x10\x00*k\n" +
+	"\x16WRITE_KIND_UNSPECIFIED\x10\x00\x12\x1c\n" +
+	"\x18WRITE_KIND_OBJECT_CREATE\x10\x01\x12\x1c\n" +
+	"\x18WRITE_KIND_OBJECT_UPDATE\x10\x02\x12\x1c\n" +
+	"\x18WRITE_KIND_OBJECT_DELETE\x10\x03\x12\x1a\n" +
+	"\x16WRITE_KIND_OBJECT_MOVE\x10\x04\x12\x1c\n" +
+	"\x18WRITE_KIND_OBJECT_RENAME\x10\x05\x12\x1d\n" +
+	"\x19WRITE_KIND_OBJECT_RESTORE\x10\x06\x12\"\n" +
+	"\x1eWRITE_KIND_USER_PASSWORD_RESET\x10\a\x12\x1a\n" +
+	"\x16WRITE_KIND_USER_UNLOCK\x10\b\x12\x1d\n" +
+	"\x19WRITE_KIND_ACCOUNT_ENABLE\x10\t\x12\x1e\n" +
+	"\x1aWRITE_KIND_ACCOUNT_DISABLE\x10\n" +
+	"*\xfa\x01\n" +
+	"\x14DirectoryObjectClass\x12&\n" +
+	"\"DIRECTORY_OBJECT_CLASS_UNSPECIFIED\x10\x00\x12\x1f\n" +
+	"\x1bDIRECTORY_OBJECT_CLASS_USER\x10\x01\x12 \n" +
+	"\x1cDIRECTORY_OBJECT_CLASS_GROUP\x10\x02\x12#\n" +
+	"\x1fDIRECTORY_OBJECT_CLASS_COMPUTER\x10\x03\x12\"\n" +
+	"\x1eDIRECTORY_OBJECT_CLASS_CONTACT\x10\x04\x12.\n" +
+	"*DIRECTORY_OBJECT_CLASS_ORGANIZATIONAL_UNIT\x10\x05*z\n" +
+	"\n" +
+	"GroupScope\x12\x1b\n" +
+	"\x17GROUP_SCOPE_UNSPECIFIED\x10\x00\x12\x16\n" +
+	"\x12GROUP_SCOPE_GLOBAL\x10\x01\x12\x1c\n" +
+	"\x18GROUP_SCOPE_DOMAIN_LOCAL\x10\x02\x12\x19\n" +
+	"\x15GROUP_SCOPE_UNIVERSAL\x10\x03*v\n" +
+	"\x06EditOp\x12\x17\n" +
+	"\x13EDIT_OP_UNSPECIFIED\x10\x00\x12\x0f\n" +
+	"\vEDIT_OP_SET\x10\x01\x12\x11\n" +
+	"\rEDIT_OP_CLEAR\x10\x02\x12\x15\n" +
+	"\x11EDIT_OP_ADD_VALUE\x10\x03\x12\x18\n" +
+	"\x14EDIT_OP_REMOVE_VALUE\x10\x04*k\n" +
 	"\fApplyOutcome\x12\x1d\n" +
 	"\x19APPLY_OUTCOME_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15APPLY_OUTCOME_APPLIED\x10\x01\x12!\n" +
@@ -1118,81 +2385,120 @@ func file_activediq_connector_v1_write_proto_rawDescGZIP() []byte {
 	return file_activediq_connector_v1_write_proto_rawDescData
 }
 
-var file_activediq_connector_v1_write_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_activediq_connector_v1_write_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_activediq_connector_v1_write_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_activediq_connector_v1_write_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_activediq_connector_v1_write_proto_goTypes = []any{
 	(WriteKind)(0),                // 0: activediq.connector.v1.WriteKind
-	(ApplyOutcome)(0),             // 1: activediq.connector.v1.ApplyOutcome
-	(*WriteChange)(nil),           // 2: activediq.connector.v1.WriteChange
-	(*WriteTarget)(nil),           // 3: activediq.connector.v1.WriteTarget
-	(*TargetPrecondition)(nil),    // 4: activediq.connector.v1.TargetPrecondition
-	(*StepKey)(nil),               // 5: activediq.connector.v1.StepKey
-	(*ActingPrincipal)(nil),       // 6: activediq.connector.v1.ActingPrincipal
-	(*Tier0Evaluation)(nil),       // 7: activediq.connector.v1.Tier0Evaluation
-	(*WriteGateOverride)(nil),     // 8: activediq.connector.v1.WriteGateOverride
-	(*PlanRequest)(nil),           // 9: activediq.connector.v1.PlanRequest
-	(*PlanResponse)(nil),          // 10: activediq.connector.v1.PlanResponse
-	(*ApplyRequest)(nil),          // 11: activediq.connector.v1.ApplyRequest
-	(*ApplyResponse)(nil),         // 12: activediq.connector.v1.ApplyResponse
-	(*Guid)(nil),                  // 13: activediq.connector.v1.Guid
-	(*DcIdentity)(nil),            // 14: activediq.connector.v1.DcIdentity
-	(*timestamppb.Timestamp)(nil), // 15: google.protobuf.Timestamp
-	(*ConnectionRef)(nil),         // 16: activediq.connector.v1.ConnectionRef
-	(*Tier0Context)(nil),          // 17: activediq.connector.v1.Tier0Context
-	(*DcSelection)(nil),           // 18: activediq.connector.v1.DcSelection
-	(*DnValue)(nil),               // 19: activediq.connector.v1.DnValue
-	(*Observation)(nil),           // 20: activediq.connector.v1.Observation
-	(*DirectoryEntry)(nil),        // 21: activediq.connector.v1.DirectoryEntry
-	(*Tier0Member)(nil),           // 22: activediq.connector.v1.Tier0Member
+	(DirectoryObjectClass)(0),     // 1: activediq.connector.v1.DirectoryObjectClass
+	(GroupScope)(0),               // 2: activediq.connector.v1.GroupScope
+	(EditOp)(0),                   // 3: activediq.connector.v1.EditOp
+	(ApplyOutcome)(0),             // 4: activediq.connector.v1.ApplyOutcome
+	(*EditValue)(nil),             // 5: activediq.connector.v1.EditValue
+	(*AttributeEdit)(nil),         // 6: activediq.connector.v1.AttributeEdit
+	(*ObjectCreate)(nil),          // 7: activediq.connector.v1.ObjectCreate
+	(*ObjectUpdate)(nil),          // 8: activediq.connector.v1.ObjectUpdate
+	(*ObjectDelete)(nil),          // 9: activediq.connector.v1.ObjectDelete
+	(*ObjectMove)(nil),            // 10: activediq.connector.v1.ObjectMove
+	(*ObjectRename)(nil),          // 11: activediq.connector.v1.ObjectRename
+	(*ObjectRestore)(nil),         // 12: activediq.connector.v1.ObjectRestore
+	(*UserPasswordReset)(nil),     // 13: activediq.connector.v1.UserPasswordReset
+	(*UserUnlock)(nil),            // 14: activediq.connector.v1.UserUnlock
+	(*AccountEnable)(nil),         // 15: activediq.connector.v1.AccountEnable
+	(*AccountDisable)(nil),        // 16: activediq.connector.v1.AccountDisable
+	(*SecretValue)(nil),           // 17: activediq.connector.v1.SecretValue
+	(*WriteChange)(nil),           // 18: activediq.connector.v1.WriteChange
+	(*WriteTarget)(nil),           // 19: activediq.connector.v1.WriteTarget
+	(*TargetPrecondition)(nil),    // 20: activediq.connector.v1.TargetPrecondition
+	(*StepKey)(nil),               // 21: activediq.connector.v1.StepKey
+	(*ActingPrincipal)(nil),       // 22: activediq.connector.v1.ActingPrincipal
+	(*Tier0Evaluation)(nil),       // 23: activediq.connector.v1.Tier0Evaluation
+	(*WriteGateOverride)(nil),     // 24: activediq.connector.v1.WriteGateOverride
+	(*PlanRequest)(nil),           // 25: activediq.connector.v1.PlanRequest
+	(*PlanResponse)(nil),          // 26: activediq.connector.v1.PlanResponse
+	(*ApplyRequest)(nil),          // 27: activediq.connector.v1.ApplyRequest
+	(*ApplyResponse)(nil),         // 28: activediq.connector.v1.ApplyResponse
+	(*TimeValue)(nil),             // 29: activediq.connector.v1.TimeValue
+	(*Guid)(nil),                  // 30: activediq.connector.v1.Guid
+	(*DcIdentity)(nil),            // 31: activediq.connector.v1.DcIdentity
+	(*timestamppb.Timestamp)(nil), // 32: google.protobuf.Timestamp
+	(*ConnectionRef)(nil),         // 33: activediq.connector.v1.ConnectionRef
+	(*Tier0Context)(nil),          // 34: activediq.connector.v1.Tier0Context
+	(*DcSelection)(nil),           // 35: activediq.connector.v1.DcSelection
+	(*DnValue)(nil),               // 36: activediq.connector.v1.DnValue
+	(*Observation)(nil),           // 37: activediq.connector.v1.Observation
+	(*DirectoryEntry)(nil),        // 38: activediq.connector.v1.DirectoryEntry
+	(*Tier0Member)(nil),           // 39: activediq.connector.v1.Tier0Member
 }
 var file_activediq_connector_v1_write_proto_depIdxs = []int32{
-	13, // 0: activediq.connector.v1.WriteTarget.object:type_name -> activediq.connector.v1.Guid
-	13, // 1: activediq.connector.v1.WriteTarget.nc_guid:type_name -> activediq.connector.v1.Guid
-	14, // 2: activediq.connector.v1.TargetPrecondition.dc:type_name -> activediq.connector.v1.DcIdentity
-	13, // 3: activediq.connector.v1.StepKey.operation_id:type_name -> activediq.connector.v1.Guid
-	13, // 4: activediq.connector.v1.ActingPrincipal.account_id:type_name -> activediq.connector.v1.Guid
-	13, // 5: activediq.connector.v1.ActingPrincipal.api_token_id:type_name -> activediq.connector.v1.Guid
-	13, // 6: activediq.connector.v1.Tier0Evaluation.evaluated:type_name -> activediq.connector.v1.Guid
-	15, // 7: activediq.connector.v1.Tier0Evaluation.tier0_set_computed_at:type_name -> google.protobuf.Timestamp
-	13, // 8: activediq.connector.v1.Tier0Evaluation.verification_id:type_name -> activediq.connector.v1.Guid
-	13, // 9: activediq.connector.v1.WriteGateOverride.override_id:type_name -> activediq.connector.v1.Guid
-	16, // 10: activediq.connector.v1.PlanRequest.connection:type_name -> activediq.connector.v1.ConnectionRef
-	5,  // 11: activediq.connector.v1.PlanRequest.step:type_name -> activediq.connector.v1.StepKey
-	3,  // 12: activediq.connector.v1.PlanRequest.target:type_name -> activediq.connector.v1.WriteTarget
-	0,  // 13: activediq.connector.v1.PlanRequest.kind:type_name -> activediq.connector.v1.WriteKind
-	2,  // 14: activediq.connector.v1.PlanRequest.change:type_name -> activediq.connector.v1.WriteChange
-	17, // 15: activediq.connector.v1.PlanRequest.tier0:type_name -> activediq.connector.v1.Tier0Context
-	8,  // 16: activediq.connector.v1.PlanRequest.tier0_override:type_name -> activediq.connector.v1.WriteGateOverride
-	6,  // 17: activediq.connector.v1.PlanRequest.acting_principal:type_name -> activediq.connector.v1.ActingPrincipal
-	18, // 18: activediq.connector.v1.PlanRequest.dc:type_name -> activediq.connector.v1.DcSelection
-	5,  // 19: activediq.connector.v1.PlanResponse.step:type_name -> activediq.connector.v1.StepKey
-	3,  // 20: activediq.connector.v1.PlanResponse.target:type_name -> activediq.connector.v1.WriteTarget
-	19, // 21: activediq.connector.v1.PlanResponse.target_dn:type_name -> activediq.connector.v1.DnValue
-	20, // 22: activediq.connector.v1.PlanResponse.observed:type_name -> activediq.connector.v1.Observation
-	4,  // 23: activediq.connector.v1.PlanResponse.precondition:type_name -> activediq.connector.v1.TargetPrecondition
-	7,  // 24: activediq.connector.v1.PlanResponse.tier0:type_name -> activediq.connector.v1.Tier0Evaluation
-	21, // 25: activediq.connector.v1.PlanResponse.before:type_name -> activediq.connector.v1.DirectoryEntry
-	16, // 26: activediq.connector.v1.ApplyRequest.connection:type_name -> activediq.connector.v1.ConnectionRef
-	5,  // 27: activediq.connector.v1.ApplyRequest.step:type_name -> activediq.connector.v1.StepKey
-	3,  // 28: activediq.connector.v1.ApplyRequest.target:type_name -> activediq.connector.v1.WriteTarget
-	0,  // 29: activediq.connector.v1.ApplyRequest.kind:type_name -> activediq.connector.v1.WriteKind
-	2,  // 30: activediq.connector.v1.ApplyRequest.change:type_name -> activediq.connector.v1.WriteChange
-	17, // 31: activediq.connector.v1.ApplyRequest.tier0:type_name -> activediq.connector.v1.Tier0Context
-	4,  // 32: activediq.connector.v1.ApplyRequest.precondition:type_name -> activediq.connector.v1.TargetPrecondition
-	8,  // 33: activediq.connector.v1.ApplyRequest.tier0_override:type_name -> activediq.connector.v1.WriteGateOverride
-	6,  // 34: activediq.connector.v1.ApplyRequest.acting_principal:type_name -> activediq.connector.v1.ActingPrincipal
-	5,  // 35: activediq.connector.v1.ApplyResponse.step:type_name -> activediq.connector.v1.StepKey
-	3,  // 36: activediq.connector.v1.ApplyResponse.target:type_name -> activediq.connector.v1.WriteTarget
-	1,  // 37: activediq.connector.v1.ApplyResponse.outcome:type_name -> activediq.connector.v1.ApplyOutcome
-	20, // 38: activediq.connector.v1.ApplyResponse.written:type_name -> activediq.connector.v1.Observation
-	21, // 39: activediq.connector.v1.ApplyResponse.read_back:type_name -> activediq.connector.v1.DirectoryEntry
-	7,  // 40: activediq.connector.v1.ApplyResponse.tier0:type_name -> activediq.connector.v1.Tier0Evaluation
-	22, // 41: activediq.connector.v1.ApplyResponse.tier0_after_write:type_name -> activediq.connector.v1.Tier0Member
-	42, // [42:42] is the sub-list for method output_type
-	42, // [42:42] is the sub-list for method input_type
-	42, // [42:42] is the sub-list for extension type_name
-	42, // [42:42] is the sub-list for extension extendee
-	0,  // [0:42] is the sub-list for field type_name
+	29, // 0: activediq.connector.v1.EditValue.time:type_name -> activediq.connector.v1.TimeValue
+	30, // 1: activediq.connector.v1.EditValue.object_ref:type_name -> activediq.connector.v1.Guid
+	3,  // 2: activediq.connector.v1.AttributeEdit.op:type_name -> activediq.connector.v1.EditOp
+	5,  // 3: activediq.connector.v1.AttributeEdit.values:type_name -> activediq.connector.v1.EditValue
+	1,  // 4: activediq.connector.v1.ObjectCreate.object_class:type_name -> activediq.connector.v1.DirectoryObjectClass
+	6,  // 5: activediq.connector.v1.ObjectCreate.initial:type_name -> activediq.connector.v1.AttributeEdit
+	2,  // 6: activediq.connector.v1.ObjectCreate.group_scope:type_name -> activediq.connector.v1.GroupScope
+	6,  // 7: activediq.connector.v1.ObjectUpdate.edits:type_name -> activediq.connector.v1.AttributeEdit
+	19, // 8: activediq.connector.v1.ObjectMove.new_parent:type_name -> activediq.connector.v1.WriteTarget
+	19, // 9: activediq.connector.v1.ObjectRestore.new_parent:type_name -> activediq.connector.v1.WriteTarget
+	7,  // 10: activediq.connector.v1.WriteChange.object_create:type_name -> activediq.connector.v1.ObjectCreate
+	8,  // 11: activediq.connector.v1.WriteChange.object_update:type_name -> activediq.connector.v1.ObjectUpdate
+	9,  // 12: activediq.connector.v1.WriteChange.object_delete:type_name -> activediq.connector.v1.ObjectDelete
+	10, // 13: activediq.connector.v1.WriteChange.object_move:type_name -> activediq.connector.v1.ObjectMove
+	11, // 14: activediq.connector.v1.WriteChange.object_rename:type_name -> activediq.connector.v1.ObjectRename
+	12, // 15: activediq.connector.v1.WriteChange.object_restore:type_name -> activediq.connector.v1.ObjectRestore
+	13, // 16: activediq.connector.v1.WriteChange.user_password_reset:type_name -> activediq.connector.v1.UserPasswordReset
+	14, // 17: activediq.connector.v1.WriteChange.user_unlock:type_name -> activediq.connector.v1.UserUnlock
+	15, // 18: activediq.connector.v1.WriteChange.account_enable:type_name -> activediq.connector.v1.AccountEnable
+	16, // 19: activediq.connector.v1.WriteChange.account_disable:type_name -> activediq.connector.v1.AccountDisable
+	30, // 20: activediq.connector.v1.WriteTarget.object:type_name -> activediq.connector.v1.Guid
+	30, // 21: activediq.connector.v1.WriteTarget.nc_guid:type_name -> activediq.connector.v1.Guid
+	31, // 22: activediq.connector.v1.TargetPrecondition.dc:type_name -> activediq.connector.v1.DcIdentity
+	32, // 23: activediq.connector.v1.TargetPrecondition.plan_observed_at:type_name -> google.protobuf.Timestamp
+	30, // 24: activediq.connector.v1.StepKey.operation_id:type_name -> activediq.connector.v1.Guid
+	30, // 25: activediq.connector.v1.ActingPrincipal.account_id:type_name -> activediq.connector.v1.Guid
+	30, // 26: activediq.connector.v1.ActingPrincipal.api_token_id:type_name -> activediq.connector.v1.Guid
+	30, // 27: activediq.connector.v1.Tier0Evaluation.evaluated:type_name -> activediq.connector.v1.Guid
+	32, // 28: activediq.connector.v1.Tier0Evaluation.tier0_set_computed_at:type_name -> google.protobuf.Timestamp
+	30, // 29: activediq.connector.v1.Tier0Evaluation.verification_id:type_name -> activediq.connector.v1.Guid
+	30, // 30: activediq.connector.v1.WriteGateOverride.override_id:type_name -> activediq.connector.v1.Guid
+	33, // 31: activediq.connector.v1.PlanRequest.connection:type_name -> activediq.connector.v1.ConnectionRef
+	21, // 32: activediq.connector.v1.PlanRequest.step:type_name -> activediq.connector.v1.StepKey
+	19, // 33: activediq.connector.v1.PlanRequest.target:type_name -> activediq.connector.v1.WriteTarget
+	0,  // 34: activediq.connector.v1.PlanRequest.kind:type_name -> activediq.connector.v1.WriteKind
+	18, // 35: activediq.connector.v1.PlanRequest.change:type_name -> activediq.connector.v1.WriteChange
+	34, // 36: activediq.connector.v1.PlanRequest.tier0:type_name -> activediq.connector.v1.Tier0Context
+	24, // 37: activediq.connector.v1.PlanRequest.tier0_override:type_name -> activediq.connector.v1.WriteGateOverride
+	22, // 38: activediq.connector.v1.PlanRequest.acting_principal:type_name -> activediq.connector.v1.ActingPrincipal
+	35, // 39: activediq.connector.v1.PlanRequest.dc:type_name -> activediq.connector.v1.DcSelection
+	21, // 40: activediq.connector.v1.PlanResponse.step:type_name -> activediq.connector.v1.StepKey
+	19, // 41: activediq.connector.v1.PlanResponse.target:type_name -> activediq.connector.v1.WriteTarget
+	36, // 42: activediq.connector.v1.PlanResponse.target_dn:type_name -> activediq.connector.v1.DnValue
+	37, // 43: activediq.connector.v1.PlanResponse.observed:type_name -> activediq.connector.v1.Observation
+	20, // 44: activediq.connector.v1.PlanResponse.precondition:type_name -> activediq.connector.v1.TargetPrecondition
+	23, // 45: activediq.connector.v1.PlanResponse.tier0:type_name -> activediq.connector.v1.Tier0Evaluation
+	38, // 46: activediq.connector.v1.PlanResponse.before:type_name -> activediq.connector.v1.DirectoryEntry
+	33, // 47: activediq.connector.v1.ApplyRequest.connection:type_name -> activediq.connector.v1.ConnectionRef
+	21, // 48: activediq.connector.v1.ApplyRequest.step:type_name -> activediq.connector.v1.StepKey
+	19, // 49: activediq.connector.v1.ApplyRequest.target:type_name -> activediq.connector.v1.WriteTarget
+	0,  // 50: activediq.connector.v1.ApplyRequest.kind:type_name -> activediq.connector.v1.WriteKind
+	18, // 51: activediq.connector.v1.ApplyRequest.change:type_name -> activediq.connector.v1.WriteChange
+	34, // 52: activediq.connector.v1.ApplyRequest.tier0:type_name -> activediq.connector.v1.Tier0Context
+	20, // 53: activediq.connector.v1.ApplyRequest.precondition:type_name -> activediq.connector.v1.TargetPrecondition
+	24, // 54: activediq.connector.v1.ApplyRequest.tier0_override:type_name -> activediq.connector.v1.WriteGateOverride
+	22, // 55: activediq.connector.v1.ApplyRequest.acting_principal:type_name -> activediq.connector.v1.ActingPrincipal
+	17, // 56: activediq.connector.v1.ApplyRequest.secret_input:type_name -> activediq.connector.v1.SecretValue
+	21, // 57: activediq.connector.v1.ApplyResponse.step:type_name -> activediq.connector.v1.StepKey
+	19, // 58: activediq.connector.v1.ApplyResponse.target:type_name -> activediq.connector.v1.WriteTarget
+	4,  // 59: activediq.connector.v1.ApplyResponse.outcome:type_name -> activediq.connector.v1.ApplyOutcome
+	37, // 60: activediq.connector.v1.ApplyResponse.written:type_name -> activediq.connector.v1.Observation
+	38, // 61: activediq.connector.v1.ApplyResponse.read_back:type_name -> activediq.connector.v1.DirectoryEntry
+	23, // 62: activediq.connector.v1.ApplyResponse.tier0:type_name -> activediq.connector.v1.Tier0Evaluation
+	39, // 63: activediq.connector.v1.ApplyResponse.tier0_after_write:type_name -> activediq.connector.v1.Tier0Member
+	64, // [64:64] is the sub-list for method output_type
+	64, // [64:64] is the sub-list for method input_type
+	64, // [64:64] is the sub-list for extension type_name
+	64, // [64:64] is the sub-list for extension extendee
+	0,  // [0:64] is the sub-list for field type_name
 }
 
 func init() { file_activediq_connector_v1_write_proto_init() }
@@ -1202,17 +2508,38 @@ func file_activediq_connector_v1_write_proto_init() {
 	}
 	file_activediq_connector_v1_common_proto_init()
 	file_activediq_connector_v1_tier0_proto_init()
-	file_activediq_connector_v1_write_proto_msgTypes[2].OneofWrappers = []any{}
-	file_activediq_connector_v1_write_proto_msgTypes[7].OneofWrappers = []any{}
-	file_activediq_connector_v1_write_proto_msgTypes[9].OneofWrappers = []any{}
-	file_activediq_connector_v1_write_proto_msgTypes[10].OneofWrappers = []any{}
+	file_activediq_connector_v1_write_proto_msgTypes[0].OneofWrappers = []any{
+		(*EditValue_Text)(nil),
+		(*EditValue_Int32Value)(nil),
+		(*EditValue_Int64Value)(nil),
+		(*EditValue_Boolean)(nil),
+		(*EditValue_Time)(nil),
+		(*EditValue_ObjectRef)(nil),
+		(*EditValue_Octets)(nil),
+	}
+	file_activediq_connector_v1_write_proto_msgTypes[13].OneofWrappers = []any{
+		(*WriteChange_ObjectCreate)(nil),
+		(*WriteChange_ObjectUpdate)(nil),
+		(*WriteChange_ObjectDelete)(nil),
+		(*WriteChange_ObjectMove)(nil),
+		(*WriteChange_ObjectRename)(nil),
+		(*WriteChange_ObjectRestore)(nil),
+		(*WriteChange_UserPasswordReset)(nil),
+		(*WriteChange_UserUnlock)(nil),
+		(*WriteChange_AccountEnable)(nil),
+		(*WriteChange_AccountDisable)(nil),
+	}
+	file_activediq_connector_v1_write_proto_msgTypes[15].OneofWrappers = []any{}
+	file_activediq_connector_v1_write_proto_msgTypes[20].OneofWrappers = []any{}
+	file_activediq_connector_v1_write_proto_msgTypes[22].OneofWrappers = []any{}
+	file_activediq_connector_v1_write_proto_msgTypes[23].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_activediq_connector_v1_write_proto_rawDesc), len(file_activediq_connector_v1_write_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   11,
+			NumEnums:      5,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

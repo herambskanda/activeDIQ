@@ -5,7 +5,7 @@
 - [Domain-model review checks](domain-model-review-checks.md) — ME map vs scope lock; derived states; gPLink; Entra scopes; authz join keys; Graph perms; "only X" vs "X or Y"; backstop predicates
 - [Benchmark review checks](benchmark-review-checks.md) — script step tables vs totals, recompute model times, read screenshot hints for shorter paths, secrets vs TM/SP
 - [AD research review checks](ad-research-review-checks.md) — fetch cited pages for verbatim quotes; trial-vs-paid condition drift; grep stale copies
-- [Blocked on another ticket](triage-blocked-on-another-ticket.md) — don't unblock (skips dep gating); set depends_on; walk the AC's data path for missing writers
+- [Blocked on another ticket](triage-blocked-on-another-ticket.md) — don't unblock (skips dep gating); done≠merged (merge-base check); walk AC data path
 - [Spike review checks](spike-review-checks.md) — gh-api upstream claims; amend disproved ADRs; histogram weighting; recs vs own data; grep ratified ADRs
 - [ADR review: allowlist + ownership](adr-review-allowlist-and-ownership.md) — allowlist matrix must cover every package incl. roots; run every DM owner through table rules
 - [Generator ADR checks](generator-adr-review-checks.md) — read codegen templates per allowed construct; nested strictness; secretjson/FF-SP2; host↔kernel cycles
@@ -15,12 +15,15 @@
 - [Env blockers: measure first](triage-env-blockers.md) — df/docker before deciding; name the worker's own leftovers; outage-window failures still need a root cause
 - [No claude.ai Artifacts for activeDIQ](no-claude-artifacts-for-activediq.md) — visuals go to the factory Library in board theme, never published to the Claude site
 - [Apply done CEO actions in triage](triage-apply-done-actions.md) — sweep done-notes vs blocked tickets; deferrals move milestones; serialise shared-lab runs
-- [Windows lab gate](windows-lab-gate.md) — dc1 VM 119 + WinRM (A-0025, lab only); what still needs a human (fs1, Win11, child DC, ADMP)
+- [Windows lab gate](windows-lab-gate.md) — dc1 VM 119 @ .250 + WinRM; D-0022 pool token → workers build fs1/Win11/dc2 (T-1326..T-1329); ADMP on fs1 (T-1395)
 - [CEO action handover](ceo-action-handover.md) — build one-command bootstrap tooling before re-queuing; done-without-note ≠ evidence
 - [Conflicting CEO holds](conflicting-ceo-holds.md) — newer hold wins, scoped to goal tickets; notice not question; dated hold → ask once on its date
 - [Stored-result contract checks](stored-result-contract-review-checks.md) — who reads stored runs; token AND layer; stored vs live ancestry; fragment scoping; state Go types
-- [Erratum guards vs own examples](erratum-guards-vs-own-examples.md) — run own examples/confirmations through the rule (T-0889 onprem_sid; T-1221 class criterion, callers [])
+- [Erratum guards vs own examples](erratum-guards-vs-own-examples.md) — run own examples/confirmations through the rule (T-0889 onprem_sid; T-1221 class criterion, callers [], actor word, widening-row callers)
 - [Ticket notes vs YAML](review-ticket-notes-vs-yaml.md) — verify each security note in the artefact, not the commit msg; new routes vs existing R-n findings
 - [Merge-conflict blocks](triage-merge-conflict-blocks.md) — primary MERGE_HEAD, merge-tree vs current main, migrations-number test on main
 - [Search ADR review checks](search-adr-review-checks.md) — fold step order vs own examples; LIMIT≠bound unless index-ordered (GIN can't); cap before scope leaks
-- [Main-green umbrella is a bad cut](triage-main-green-umbrella.md) — 2nd 'new causes outside scope' block → re-scope ACs to premerge ratchet; cancel dup fixes
+- [Main-green umbrella is a bad cut](triage-main-green-umbrella.md) — 2nd out-of-scope block → re-scope to premerge ratchet; no-diff → cancel after re-pointing deps
+- [Batch CEO hand-steps into one access offer](triage-batch-ceo-hand-steps.md) — ≥3 actions with the same hand-step → one scoped-authorisation decision (D-0022)
+- [RLS index/table ADR checks](rls-index-adr-review-checks.md) — run spec DDL on 16/18; no-read proofs count removed rows; float4 bounds; backfill under FORCE
+- [Hand-landing factory fixes](hand-landing-factory-fixes.md) — scoped premerge argv keeps exit codes (no tail pipe); reuse baselines; dispatcher restart = CEO action

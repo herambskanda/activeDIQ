@@ -1,14 +1,20 @@
 {
-  "about": "ADR-0005 rule 10 and fitness check O3: the guarded roots of SQL writes to `config`-class tables (internal/platform/store/owners/owners.gen.tsv) that do not take a step.Step. Read by tools/fitness/operation (O3, T-0391). The schema and the meaning of every field are in ADR-0005 rule 10, 'The O3 rule' (T-1221). A `system` row is permanent and is part of the ADR: adding one, or adding a table to one, is an amendment to ADR-0005. A `convert` row is a pending baseline entry: O3 prints it as pending (never a pass) and its ticket deletes it when the root takes a step.Step. Adding a caller to a `system` row is reviewed by solution-architect in the change that adds the call; it is not an amendment.",
+  "about": "ADR-0005 rule 10 and fitness check O3: the guarded roots of SQL writes to `config`-class tables (internal/platform/store/owners/owners.gen.tsv) that do not take a step.Step. Read by tools/fitness/operation (O3, T-0391). The schema and the meaning of every field are in ADR-0005 rule 10, 'The O3 rule' (T-1221). A `system` row is permanent and is part of the ADR: adding one, or adding a table to one, is an amendment to ADR-0005. A `convert` row is a pending baseline entry: O3 prints it as pending (never a pass) and its ticket deletes it when the root takes a step.Step. Adding a caller to a `system` row in a non-widening category is reviewed by solution-architect in the change that adds the call; it is not an amendment. The categories in `widening_categories` hold the no-Step widening writes (ADR-0005 rule 10 items 2, 9 and 10): adding a caller or a row to one of them, or moving a row into or out of one, is an amendment reviewed by security-architect. O3 fails unless those rows and their `callers`, and `widening_categories` itself, equal the ADR's `o3-widening` block.",
   "adr": "knowledge/development/decisions/0005-operation-pipeline-and-audit-trail.md",
   "categories": {
-    "signin": "Sign-in, sessions, and the signing-in user's own factor enrolment (rule 10 list item 1; DM-31, DM-37 self-service)",
-    "bootstrap": "The first-run bootstrap (ADR-0002 platform path internal/platform/tenant/provision FirstRun and the setup-secret owner claim) and the host-local `activediq-server account init-local` command, whose authority is host access (T-0808 precedent, principal cli-account-init-local) (rule 10 list item 2)",
+    "signin": "Sign-in, sessions and step-up, with what they record after verifying a proof (the session, a spent TOTP step, an authenticator's sign count, attempt counters and pauses), and a console account's enrolment of its first factor inside a sign-in that has no factor yet (trust on first use; audited and notified). It never covers an end user on the FD-05 page, which is category enduser-enrolment. A later add or replacement of one's own factor, or a change of one's own password, is a widening decision and not in this category (rule 10 list item 1, narrowed by T-1221)",
+    "bootstrap": "The first-run bootstrap (ADR-0002 platform path internal/platform/tenant/provision FirstRun and the setup-secret owner claim) and the host-local `activediq-server account init-local` command, whose authority is host access (T-0808 precedent, principal cli-account-init-local) including the enrolment and confirmation of the first TOTP factor of the account it creates (rule 10 list item 2). Widening category: adding a caller or a row is an amendment reviewed by security-architect, and the rows must equal the ADR's o3-widening block.",
     "verification": "Connection verification runs and what they record from the directory: run results, findings, the directory identity, the draft/verifying moves of a run, and takeover-attestation demotion signals (rule 10 list item 4, as amended by T-1221)",
-    "attestation": "The Entra takeover attestation callback: the IdP redirect of a Global Administrator sign-in that a principal started after passing the permission and step-up checks. It records the attested_* values the server read from Graph, sets first_attested_at once (DM-10.I7(f)) and clears demoted_at; the last two can move a stale takeover back to attested, so this write widens (rule 10 list item 9, added by T-1221)",
+    "attestation": "The Entra takeover attestation callback: the IdP redirect of a Global Administrator sign-in that a principal started after passing the permission and step-up checks. It records the attested_* values the server read from Graph, sets first_attested_at once (DM-10.I7(f)) and clears demoted_at; the last two can move a stale takeover back to attested, so this write widens. It writes only when its state matches one unexpired attempt row, which it consumes single-use, and the token's tid is the connection's directory_identity; otherwise it fails and writes nothing (rule 10 list item 9, added by T-1221). Widening category: adding a caller or a row is an amendment reviewed by security-architect, and the rows must equal the ADR's o3-widening block.",
     "sync": "Sync and inventory (rule 10 list item 4; DM-14..DM-23)",
-    "handshake": "Connector and agent enrollment handshakes: redeeming (consuming) a single-use enrollment token (rule 10 list item 3)"
+    "handshake": "Connector and agent enrollment handshakes: redeeming (consuming) a single-use enrollment token (rule 10 list item 3)",
+    "enduser-enrolment": "The v1 end-user TOTP enrolment page (threat model AN-5): an end user enrolling their own factor on an anonymous route, bounded by the end user's own AD authentication inside the flow, the existing factor for a re-enrolment, a notice to contact data already held and an audit event (TM-TB1-T13). No row uses it yet; the change that builds the page adds its row as an amendment (rule 10 list item 10, added by T-1221). Widening category: adding a caller or a row is an amendment reviewed by security-architect, and the rows must equal the ADR's o3-widening block."
   },
+  "widening_categories": [
+    "bootstrap",
+    "attestation",
+    "enduser-enrolment"
+  ],
   "writers": [
     {
       "package": "internal/directory/connection",
@@ -90,7 +96,7 @@
       "callers": [
         "internal/modules/connections.Attester.Callback"
       ],
-      "reason": "Records the result of the Entra Global Administrator sign-in that a principal started (Attester.Start checks connections.takeover.attest and step-up, DM-10.I7(a)). The callback is an unauthenticated IdP redirect (ADR-0002 platform path internal/modules/connections StateTenant), so no principal and no Step exist when it runs. It writes the attested_* columns, sets first_attested_at on the first move to attested (I7(f)), and clears demoted_at. Clearing demoted_at can move a stale takeover back to attested, so this write widens. That is accepted: I7(d) says a demotion lasts until a new attestation, and this is that attestation. The values are read from Graph by the server with the Global Administrator's token, never typed in (I7(a)); the permission and step-up are checked when the attempt starts; the callback appends its own audit event naming who started it and who signed in (I7(b))."
+      "reason": "Records the result of the Entra Global Administrator sign-in that a principal started (Attester.Start checks connections.takeover.attest and step-up, DM-10.I7(a)). The callback is an unauthenticated IdP redirect (ADR-0002 platform path internal/modules/connections StateTenant), so no principal and no Step exist when it runs. It writes the attested_* columns, sets first_attested_at on the first move to attested (I7(f)), and clears demoted_at. Clearing demoted_at can move a stale takeover back to attested, so this write widens. That is accepted: I7(d) says a demotion lasts until a new attestation, and this is that attestation. The values are read from Graph by the server with the Global Administrator's token, never typed in (I7(a)); the permission and step-up are checked when the attempt starts; the callback appends its own audit event naming who started it and who signed in (I7(b)). The callback writes only when its state matches one unexpired attempt row, which it consumes single-use (Store.ConsumeAttempt deletes the row by state_hash and refuses an expired one, called first in Attester.Callback), and the token's tid is the connection's directory_identity (DM-10.I7(a)); otherwise it fails and writes nothing."
     },
     {
       "package": "internal/directory/connection",
@@ -360,11 +366,9 @@
       "tables": [
         "authn_authority_approvals"
       ],
-      "disposition": "system",
-      "category": "signin",
-      "ticket": "T-1221",
-      "callers": [],
-      "reason": "Consumes an owner approval that names the enrolling account itself, during that account's own authority-factor enrolment (beginEnrol). Not mounted yet: the change that mounts the enrolment route adds its caller here."
+      "disposition": "convert",
+      "ticket": "T-1230",
+      "reason": "Spends the owner approval that names the enrolling account, at the start of that account's own authority-factor enrolment. Adding one's own authority factor after sign-in is a widening decision (rule 10, 'own first factor' is the only own-credential exemption), so the enrolment, with this approval spend and FinishEnrol's credential insert, becomes an Action of the enrolling account (T-1230). The challenge (authn_authority_challenges, system) may stay outside it. Not mounted yet."
     },
     {
       "package": "internal/platform/authn",
@@ -380,21 +384,122 @@
       "package": "internal/platform/authn",
       "function": "AuthorityFactors.Reset",
       "tables": [
-        "authn_authority_approvals"
+        "authn_authority_approvals",
+        "authn_webauthn_credentials"
       ],
       "disposition": "convert",
       "ticket": "T-1230",
-      "reason": "An owner resetting another account's authority factor is rule 10's 'reset by an administrator' (authn.account.*). Reaches the approvals write through revoke. Not mounted yet."
+      "reason": "An owner resetting another account's authority factor is rule 10's 'reset by an administrator' (authn.account.*). Reaches the approvals write and the credential revoke (authn_webauthn_credentials) through revoke. Not mounted yet."
     },
     {
       "package": "internal/platform/authn",
       "function": "AuthorityFactors.Remove",
       "tables": [
-        "authn_authority_approvals"
+        "authn_authority_approvals",
+        "authn_webauthn_credentials"
       ],
       "disposition": "convert",
       "ticket": "T-1230",
       "reason": "As Reset. Not mounted yet."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "AuthorityFactors.FinishEnrol",
+      "tables": [
+        "authn_webauthn_credentials"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1230",
+      "reason": "Registers the enrolling account's own authority credential (through finishEnrol and insertCredential) after sign-in. That creates a credential that outlives the session, so it is a widening decision and becomes the Step-taking writer of the enrolment Action, with BeginEnrol (T-1230). Not mounted yet."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "WebAuthnFactor.AddCredential",
+      "tables": [
+        "authn_webauthn_credentials"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1230",
+      "reason": "Registers a second-factor passkey for an active account (through insertCredential). Its only caller is the lab-tagged labpasskey seeding; the registration ceremony it was written for adds a factor after sign-in, a widening decision, so it becomes an Action (T-1230) or the function is deleted."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "AuthorityFactors.Verify",
+      "tables": [
+        "authn_webauthn_credentials"
+      ],
+      "disposition": "system",
+      "category": "signin",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "An authority-factor assertion inside a session (through verify and useCredential). Its credential write advances the sign count the authenticator reported: a value read, not a decision. Not mounted yet: the change that mounts it adds its caller here."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "WebAuthnFactor.Verify",
+      "tables": [
+        "authn_webauthn_credentials"
+      ],
+      "disposition": "system",
+      "category": "signin",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "The AN-10 passkey second factor of a pending sign-in (through useCredential). Its credential write advances the sign count the authenticator reported: a value read, not a decision. It is reached only through the internal/platform/httpx/authnhttp WebAuthnVerifier interface, which is not a static reference, so callers is empty; fitness-modules' import rules bound who can hold it."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "Service.Enroll",
+      "tables": [
+        "authn_authenticator_enrollments"
+      ],
+      "disposition": "system",
+      "category": "bootstrap",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/compose/server.createLocalAccount"
+      ],
+      "reason": "Creates the pending TOTP enrolment of the break-glass local account that the host CLI (`account init-local`) is creating. Widens: it issues a factor seed, a credential. Bounded by host access, and the enrolment is pending (it verifies nothing) until confirmTOTP activates it. Any other enrolment (the end-user page, item 10; a console account adding a factor, T-1230) must not call it through this row."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "Service.Activate",
+      "tables": [
+        "authn_authenticator_enrollments"
+      ],
+      "disposition": "system",
+      "category": "bootstrap",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/compose/server.confirmTOTP"
+      ],
+      "reason": "Moves the CLI-created pending TOTP enrolment to active on the first valid code (through check), in confirmTOTP of `account init-local`. Widens: the factor becomes usable. Bounded by host access and possession of the seed the operator was just shown; a wrong code only charges attempts and pauses."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "Service.Verify",
+      "tables": [
+        "authn_authenticator_enrollments"
+      ],
+      "disposition": "system",
+      "category": "signin",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/platform/authn.SecondFactor.VerifyTOTP",
+        "internal/platform/authn.StepUp.matchTOTP"
+      ],
+      "reason": "Checks a code against an active enrolment at sign-in (AN-10) and step-up (through check, charge, pause and settleFailure). It spends the time step, counts attempts, pauses and expires: values derived from the verified code and the clock, or narrowing only. It cannot activate a pending enrolment (it checks state active)."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "SecondFactor.VerifyTOTP",
+      "tables": [
+        "authn_authenticator_enrollments"
+      ],
+      "disposition": "system",
+      "category": "signin",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "The AN-10 TOTP second factor of a pending sign-in; it calls Service.Verify. Listed because it re-exports a system writer from the owning package (the closure rule). It is reached only through the internal/platform/httpx/authnhttp TOTPVerifier interface, which is not a static reference, so callers is empty."
     },
     {
       "package": "internal/platform/fleet/fleetsql",

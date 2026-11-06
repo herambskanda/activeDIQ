@@ -1,0 +1,195 @@
+T-0833 agent-unenrolled-verify  commit 376c7eebc26ef12d28cd35736374e5c1ae1f184a  host 192.168.1.5  dc1 192.168.1.9
+dc1 lock held (pid 2759572, waited 0s)
+start 2026-11-01T16:14:23.810826+00:00  dc1 clock: 2026-11-01T16:14:24.6142723Z
+code under test: factory/T-0813 merged with main @ c1d3d811e3dba7e8e157cc648a5fe78f76a90ec6 (tree 6d99a853e29dbb230440f382651dfa30550ce412)
+sha256 9f55cf0925f758a4c8dfbeb57b28841e24faf6ea5e160aaae4db07c044abf229 activediq-agent.exe
+sha256 ee08ea222c489ab8ac4a727e821eb7cec167f3bd8c92b7eb2d5cdd260b3fd72b agentsetup.exe
+
+== dc1 BEFORE ==
+service: absent
+uninstall entry: False
+C:\Program Files\skenzeriq: False
+C:\ProgramData\skenzeriq: False
+event source registered: False
+security channel ACE for the service: False
+LDAPServerIntegrity:
+
+== tools on dc1 ==
+wix 5.0.2+aa65968c
+reset done
+
+== AC1: wix build ==
+C:\lab\build\Agent.wxs(44) : warning WIX1149: ServiceConfig functionality is documented in the Windows Installer SDK to "not [work] as expected." Consider replacing ServiceConfig with the WixToolset.Util.wixext ServiceConfig element.
+C:\lab\build\Agent.wxs(44) : error WIX0004: The ServiceConfig element contains an unexpected attribute 'FirstFailureActionType'.
+C:\lab\build\Agent.wxs(44) : error WIX0004: The ServiceConfig element contains an unexpected attribute 'SecondFailureActionType'.
+C:\lab\build\Agent.wxs(44) : error WIX0004: The ServiceConfig element contains an unexpected attribute 'ThirdFailureActionType'.
+C:\lab\build\Agent.wxs(44) : error WIX0004: The ServiceConfig element contains an unexpected attribute 'RestartServiceDelayInSeconds'.
+C:\lab\build\Agent.wxs(44) : error WIX0004: The ServiceConfig element contains an unexpected attribute 'ResetPeriodInDays'.
+
+wix exit=4
+msi exists=False
+CHECK AC1.build FAIL wix build of factory/T-0813 Agent.wxs succeeds
+CHECK AC1.no-WIX1149 FAIL no WIX1149 in the build output
+-- failing fixture: the Agent.wxs from main (util:ServiceConfig)
+C:\lab\build\Agent-old.wxs(39) : warning WIX1149: ServiceConfig functionality is documented in the Windows Installer SDK to "not [work] as expected." Consider replacing ServiceConfig with the WixToolset.Util.wixext ServiceConfig element.
+
+wix exit=0
+msi exists=True
+msi sha256 0D2F3E4BABDCA35AB2CA9D9F497D0C71956C3B914FB4A6305663845A6968F84A
+CHECK AC1.fixture-detects PASS the same check flags the previous Agent.wxs (the check can fail)
+
+== AC1 failed: building a REPAIRED LAB VARIANT of Agent.wxs for AC2-AC4 (not the committed file) ==
+wix exit=0
+msi exists=True
+msi sha256 458CE1ACD5713B3925F1DE3B624BDA70616FD7086977273F5DF7D2AA623C75EC
+CHECK AC1.variant-builds PASS the repaired lab variant builds
+
+== AC2: install unenrolled with Start=install ==
+t0 2026-11-01T16:15:25.1608895Z
+msiexec exit=0
+log 1920 lines=0
+after install: state=Running pid=5172 startmode=Auto
+[SC] QueryServiceConfig2 SUCCESS
+
+SERVICE_NAME: activeDIQAgent
+        RESET_PERIOD (in seconds)    : 86400
+        REBOOT_MESSAGE               : 
+        COMMAND_LINE                 : 
+        FAILURE_ACTIONS              : RESTART -- Delay = 30000 milliseconds.
+                                       RESTART -- Delay = 30000 milliseconds.
+                                       RESTART -- Delay = 30000 milliseconds.
+
+after 45 s (past the 30 s recovery delay): state=Running pid=5172
+SCM events about the service since install:
+  7036 The activeDIQ Agent service entered the running state.
+  7045 A service was installed in the system.
+
+Service Name:  activeDIQ Agent
+Service File Name:  "C:\Program Files\skenzeriq\agent\activediq-agent.exe"
+Service Type:  user mode service
+Service Start Type:  auto start
+Service Account:  NT SERVICE\activeDIQAgent
+SCM failure events (7031/7034/7024/7023/7009/7000)=0
+agent events since install: ids 103
+event 101 count=0
+event 103 count=1
+CHECK AC2.install-exit PASS msiexec exit 0
+CHECK AC2.no-1920 PASS install log has no 1920
+CHECK AC2.running PASS service Running after install and after 45 s
+CHECK AC2.same-process PASS same process throughout (pid 5172 -> 5172): no exit, no SCM restart
+CHECK AC2.no-scm-failure PASS no Service Control Manager failure events
+CHECK AC2.no-event-101 PASS no start-refused event 101
+
+== AC3: event 103 ==
+count=12
+level=Warning
+message=[agent is installed but not enrolled; run `activediq-agent.exe enroll <server:port> <pin>` - waiting]
+-- Event Viewer text rendering (wevtutil, as the Event Viewer details pane):
+Event[0]
+  Log Name: Application
+  Source: activeDIQ Agent
+  Date: 2026-11-01T08:15:27.2000000Z
+  Event ID: 103
+  Task: None
+  Level: Warning
+  Opcode: Info
+  Keyword: Classic,
+  User: N/A
+  User Name: N/A
+  Computer: DC1.win.activediq.test
+  Description: 
+agent is installed but not enrolled; run `activediq-agent.exe enroll <server:port> <pin>` � waiting
+
+-- registered message file:
+C:\WINDOWS\Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll
+-- fixture: a source registered with NO message file
+fixture message=[]
+fixture wevtutil:
+Event[0]
+  Log Name: Application
+  Source: diq-lab-nomsg-2107309535
+  Date: 2026-11-01T08:16:16.7540000Z
+  Event ID: 103
+  Task: N/A
+  Level: Warning
+  Opcode: Info
+  Keyword: Classic,
+  User: N/A
+  User Name: N/A
+  Computer: DC1.win.activediq.test
+  Description: 
+N/A
+CHECK AC3.event-103-exists PASS event 103 of source 'activeDIQ Agent' is in the Application log
+CHECK AC3.renders PASS Message text present and names 'not enrolled'
+CHECK AC3.fixture-detects PASS the same predicate rejects a source with no message file (the check can fail)
+
+== AC4: enrol while the service is running ==
+
+-- trial 1/1
+unenrolled start: state=Running pid=6124 enrollment_dir=C:\ProgramData\skenzeriq\agent\enrol
+idle watch (20 s, unenrolled):
+idle watch end: state=Running pid=6124
+CHECK AC4.t1.reachable PASS dc1 reaches the lab stub at 192.168.1.5:7443
+activediq-agent.exe : agent: enrolled
+At line:3 char:8
++ $tok | & 'C:\Program Files\skenzeriq\agent\activediq-agent.exe' enrol ...
++        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (agent: enrolled:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+enroll exit=0
+enroll done 2026-11-01T16:17:20.1751195Z
+CHECK AC4.t1.enroll-exit PASS activediq-agent.exe enroll exit 0
+stub 16:16:49.935Z 2026/11/01 16:16:49 INFO: [core] [Server #1] Server created
+stub 16:16:49.935Z 2026/11/01 16:16:49 INFO: [core] [Server #1 ListenSocket #2] ListenSocket created
+stub 16:17:19.684Z 2026/11/01 16:17:19 INFO: [core] [Server #1] grpc: Server.Serve failed to create ServerTransport: connection error: desc = "ServerHandshake(\"192.168.1.9:53490\") failed: remote error: tls: bad certificate"
+stub 16:17:19.693Z 2026/11/01 16:17:19.693602 ENROLL ok component=1bc805e9-9002-4b45-9722-2ff7fa79f185
+after: state=Running pid=6124
+-- enrollment dir ACL (service SID is S-1-5-80-*):
+C:\ProgramData\skenzeriq\agent\enrol NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                                     BUILTIN\Administrators:(OI)(CI)(F)
+                                     WINLAB\Administrator:(OI)(CI)(F)
+
+Successfully processed 1 files; Failed processing 0 files
+file ca-bundle.pem 1162
+file ca-pin.txt 72
+file endpoints.txt 17
+file key.pem 241
+file leaf.pem 769
+-- TCP connections of the service process to the stub:
+  TimeWait owner=0
+  TimeWait owner=0
+-- agent + SCM events since the trial began:
+  app 16:16:23 id=103 agent is installed but not enrolled; run `activediq-agent.exe enroll <server:port> <pin>` - waiting
+  scm 16:16:23 id=7036 The activeDIQ Agent service entered the running state.
+  scm 16:16:23 id=7036 The activeDIQ Agent service entered the stopped state.
+DIAG no pickup: replacing the enrolling user's ACE with NT SERVICE\activeDIQAgent on the enrolment directory, then watching 25 s
+C:\ProgramData\skenzeriq\agent\enrol NT SERVICE\activeDIQAgent:(OI)(CI)(F)
+                                     NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                                     BUILTIN\Administrators:(OI)(CI)(F)
+
+Successfully processed 1 files; Failed processing 0 files
+C:\ProgramData\skenzeriq\agent\enrol\key.pem NT SERVICE\activeDIQAgent:(I)(F)
+                                             NT AUTHORITY\SYSTEM:(I)(F)
+                                             BUILTIN\Administrators:(I)(F)
+
+Successfully processed 1 files; Failed processing 0 files
+DIAG still no connection 25 s after the ACE grant
+CHECK AC4.t1.picked-up FAIL the running service connected to the stub with its issued mTLS certificate
+CHECK AC4.t1.within-15s FAIL no connection within 40 s
+CHECK AC4.t1.no-restart PASS same service process (pid 6124 -> 6124), Running
+
+== restore dc1 ==
+reset done
+== dc1 AFTER ==
+service: absent
+uninstall entry: False
+C:\Program Files\skenzeriq: False
+C:\ProgramData\skenzeriq: False
+event source registered: False
+security channel ACE for the service: False
+LDAPServerIntegrity:
+(compare BEFORE and AFTER above: they must match)
+
+SUMMARY failures=4 AC1.build AC1.no-WIX1149 AC4.t1.picked-up AC4.t1.within-15s

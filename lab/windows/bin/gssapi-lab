@@ -4,85 +4,45 @@
   gssapi-lab prepare   run guest/gssapi-ready.ps1 on dc1 (LDAP signing + channel binding = 2, accounts, keytab and
                        gMSA export), fetch the two artifacts into lab/windows/ of the MAIN checkout (gitignored,
                        0600), delete them on the VM, reboot dc1 and wait for it.
-  gssapi-lab run ARGS  put dc1's clock in step with this host for the duration (the lab DC's clock is hours off and
-                       Kerberos allows 5 minutes), turn on LDAP interface diagnostics, run
+  gssapi-lab run ARGS  first check dc1 is at LDAPServerIntegrity=2 / LdapEnforceChannelBindingTokens=2 and stop, naming the
+                       value read, if not (T-1265); then refuse to run if dc1's clock differs from this host by more than
+                       60 s (Kerberos allows 5 minutes; dc1 syncs from NTP since T-0850, so a larger skew means w32time is
+                       broken: fix that, do not step the clock here), turn on LDAP interface diagnostics, run
                        `go test -tags 'lab windowslab' -v ARGS`, print the DC's channel-binding events, then restore the
-                       clock offset and the diagnostics value in a finally block. Default ARGS: the whole T-0566 suite.
+                       diagnostics value in a finally block. Default ARGS: the whole T-0566 suite.
 
 Wrap every call in the shared lock:  flock -w 3600 /tmp/claude-1000/activediq-dc1.lock lab/windows/bin/gssapi-lab run
-Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (never printed). Runbook section 15.
+Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (never printed). Runbook section 15 (clock: section 16).
 """
 import base64, datetime as dt, os, re, subprocess, sys, time
 
-try:
-    from winrm.protocol import Protocol
-except ImportError:
-    sys.exit("gssapi-lab: pip install pywinrm requests-ntlm")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import dc1policy, dc1winrm
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-NTDS = r"HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters"
+REPO = dc1winrm.REPO
+NTDS = dc1policy.NTDS
 DIAG = r"HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics"
-env = {}
-path = os.environ.get("WIN_LAB_ENV") or os.path.join(REPO, "lab", "windows", ".win-lab.env")
-if not os.path.exists(path):
-    sys.exit(f"gssapi-lab: lab env file not found: {path} (set WIN_LAB_ENV)")
-for line in open(path):
-    line = line.strip()
-    if line and not line.startswith("#") and "=" in line:
-        k, v = line.split("=", 1)
-        env[k] = v.strip().strip('"')
-ADDR = os.environ.get("WIN_LAB_DC_ADDR") or env.get("WIN_LAB_DC_ADDR", "192.168.1.9")
+env, path, ADDR = dc1winrm.load_env("gssapi-lab")
 OUT = os.path.dirname(path)  # artifacts sit beside the lab env file (main checkout lab/windows/)
-
-
-def ps(script):
-    p = Protocol(endpoint=f"http://{ADDR}:5985/wsman", transport="ntlm", username="Administrator",
-                 password=env["WIN_LAB_ADMIN_PASSWORD"], read_timeout_sec=900, operation_timeout_sec=800)
-    sh = p.open_shell()
-    enc = base64.b64encode(script.encode("utf-16le")).decode()
-    cid = p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", enc])
-    out, err, rc = p.get_command_output(sh, cid)
-    try:  # a clock change can break the session teardown; the command already ran
-        p.cleanup_command(sh, cid)
-        p.close_shell(sh)
-    except Exception:
-        pass
-    return rc, strip(out.decode(errors="replace"))
-
-
-def strip(o):  # drop the CLIXML progress noise PowerShell writes on stderr/stdout
-    return "\n".join(l for l in o.splitlines() if not l.startswith(("#< CLIXML", "<Objs")))
-
-
-def put(src, dst):
-    data = open(src, "rb").read()
-    p = Protocol(endpoint=f"http://{ADDR}:5985/wsman", transport="ntlm", username="Administrator",
-                 password=env["WIN_LAB_ADMIN_PASSWORD"], read_timeout_sec=900, operation_timeout_sec=800)
-    sh = p.open_shell()
-    s = (f"$o=[IO.File]::Create('{dst}');$i=[Console]::OpenStandardInput();$b=New-Object byte[] 65536;"
-         "while(($n=$i.Read($b,0,$b.Length)) -gt 0){$o.Write($b,0,$n)};$o.Close()")
-    cid = p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand",
-                                           base64.b64encode(s.encode("utf-16le")).decode()])
-    for i in range(0, len(data), 32000):
-        p.send_command_input(sh, cid, data[i:i + 32000])
-    p.send_command_input(sh, cid, b"", end=True)
-    p.get_command_output(sh, cid)
-    p.cleanup_command(sh, cid)
-    p.close_shell(sh)
+ps = dc1winrm.make_ps(env, ADDR)
+put = dc1winrm.make_put(env, ADDR)
 
 
 def policy():
-    return ps(f"foreach($k in 'LDAPServerIntegrity','LdapEnforceChannelBindingTokens'){{ $k+' = '+((Get-Item '{NTDS}').GetValue($k)) }}")[1]
+    return ps(dc1policy.READ_PS)[1]
+
+
+def require_policy(when):
+    """T-1265: the proofs need signing required and channel binding always. Stop, naming the value read, when dc1 is not at 2/2."""
+    bad = dc1policy.problems(dc1policy.parse_policy(policy()))
+    if bad:
+        sys.exit(f"gssapi-lab: {when}: dc1 is not enforcing LDAP signing and channel binding: " + "; ".join(bad) +
+                 ". Restore with: flock -w 3600 /tmp/claude-1000/activediq-dc1.lock lab/windows/bin/dc1-policy restore (runbook windows-lab.md section 18)")
 
 
 def dc_utc():
     m = re.search(r"\d{4}-\d\d-\d\dT[\d:.]+", ps('[DateTime]::UtcNow.ToString("o")')[1])
     return dt.datetime.fromisoformat(m.group(0)[:26]).replace(tzinfo=dt.timezone.utc)
-
-
-def set_dc_clock(when):
-    ps('Set-Date ([DateTime]::SpecifyKind([DateTime]::Parse("%s"),"Utc").ToLocalTime()) | Out-Null' % when.strftime("%Y-%m-%dT%H:%M:%S"))
-    time.sleep(3)
 
 
 def prepare():
@@ -112,18 +72,21 @@ def prepare():
     else:
         sys.exit("gssapi-lab: dc1 did not come back")
     print("POLICY after reboot:\n" + policy())
+    require_policy("after prepare")
 
 
 def run(args):
     args = args or ["-run", "WindowsLabKerberos", "./internal/connector/ad/"]
-    offset = dc_utc() - dt.datetime.now(dt.timezone.utc)
-    print("CLOCK before: dc minus host =", offset)
+    require_policy("before the run")  # nothing is changed on dc1 and no test starts when it is not 2/2
+    skew = dc_utc() - dt.datetime.now(dt.timezone.utc)
+    print("CLOCK: dc minus host = %.3f s" % skew.total_seconds())
+    if abs(skew) > dt.timedelta(seconds=60):
+        sys.exit("gssapi-lab: dc1's clock is %.0f s off this host; Kerberos would fail with KRB_AP_ERR_SKEW. Check w32time on dc1 "
+                 "(runbook windows-lab.md section 16, T-0850); not stepping the clock from here." % skew.total_seconds())
     prior = ps(f"(Get-ItemProperty '{DIAG}' -Name '16 LDAP Interface Events').'16 LDAP Interface Events'")[1].strip() or "0"
     print("DIAG prior 16 LDAP Interface Events =", prior)
     rc = 1
     try:
-        set_dc_clock(dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1))
-        print("CLOCK during run: dc minus host =", dc_utc() - dt.datetime.now(dt.timezone.utc))
         ps(f"Set-ItemProperty '{DIAG}' -Name '16 LDAP Interface Events' -Type DWord -Value 2")
         genv = dict(os.environ, WIN_LAB_MODE="external", WIN_LAB_DC_ADDR=ADDR, WIN_LAB_ENV=path,
                     WIN_LAB_TLS_NAME=env.get("WIN_LAB_TLS_NAME", "dc1.win.activediq.test"),
@@ -136,9 +99,9 @@ def run(args):
         print(ps(r'''Get-WinEvent -FilterHashtable @{LogName='Directory Service'; StartTime=(Get-Date).AddMinutes(-5)} -EA SilentlyContinue | ? { $_.Id -in 3039,3040,3041,3074,3075 } | % { "$($_.TimeCreated.ToString("o")) id=$($_.Id) $($_.Message -replace '\s+',' ')".Substring(0,260) }''')[1])
     finally:
         ps(f"Set-ItemProperty '{DIAG}' -Name '16 LDAP Interface Events' -Type DWord -Value {prior}")
-        set_dc_clock(dt.datetime.now(dt.timezone.utc) + offset + dt.timedelta(seconds=1))
-        print("DIAG restored; CLOCK restored: dc minus host =", dc_utc() - dt.datetime.now(dt.timezone.utc))
+        print("DIAG restored")
         print("POLICY after:\n" + policy())
+    require_policy("after the run")  # a run that leaves signing weaker than it found it is a failed run
     sys.exit(rc)
 
 
