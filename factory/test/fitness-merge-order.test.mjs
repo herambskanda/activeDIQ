@@ -84,3 +84,13 @@ test('stackingLanded reads factory/lib for max_depth', () => {
   fs.writeFileSync(path.join(d, 'factory/lib/a.mjs'), 'cfg.max_depth');
   assert.equal(stackingLanded(d), true);
 });
+
+test('M5 recorded exceptions are exact: the listed merge+dependency passes, a sibling dependency or other sha fails', () => {
+  const d = repo(); land(d, 'T-2'); land(d, 'T-1');
+  const sha = g(d, 'log', '--first-parent', '--format=%H', '--grep=^Merge T-2:').split('\n')[0];
+  const base = { ...opts(d, { 'T-2': ['T-1'] }) };
+  assert.equal(checkHistory({ ...base, exceptions: [{ sha: sha.slice(0, 12), id: 'T-2', dep: 'T-1' }] }).violations.length, 0);
+  assert.equal(checkHistory({ ...base, exceptions: [{ sha: sha.slice(0, 12), id: 'T-2', dep: 'T-9' }] }).violations.length, 1);
+  assert.equal(checkHistory({ ...base, exceptions: [{ sha: '000000000000', id: 'T-2', dep: 'T-1' }] }).violations.length, 1);
+  assert.equal(checkHistory({ ...base, exceptions: [] }).violations.length, 1);
+});

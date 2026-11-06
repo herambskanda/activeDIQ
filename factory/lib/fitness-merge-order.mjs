@@ -15,6 +15,16 @@ import { execFileSync, spawnSync } from 'node:child_process';
  */
 export const GRANDFATHER_UNTIL = '6cb96d24d8d21c7bb211c6b296ad777fb9a02a44';
 
+/**
+ * Recorded exceptions (the ADR's "list in the script"): one entry per (merge commit, dependency) that landed
+ * after the boundary but before the stacking mechanism (T-1706) existed, so the rule could not have been followed.
+ * Each is exact: another dependency, or the same ticket merged again, still fails. Add nothing without an ADR note.
+ */
+export const KNOWN_EXCEPTIONS = Object.freeze([
+  // T-1191 landed carrying T-1189's mapper (stacked by hand) while T-1189 itself was still in its own train.
+  { sha: '1e0f197596cd', id: 'T-1191', dep: 'T-1189', reason: 'stacked by hand before T-1706 existed' },
+]);
+
 /** The bound tests: id -> test file and the title prefix every subtest of that part carries. */
 export const BOUND = Object.freeze([
   { id: 'M1', file: 'factory/test/stacking.test.mjs', prefix: 'M1' },
@@ -48,7 +58,7 @@ export function loadDependencies(stateDir) {
  * that landed before its dependency.
  * @returns {{violations: {id: string, dep: string, sha: string}[], checked: number}}
  */
-export function checkHistory({ repo, main = 'main', deps, grandfatherUntil = GRANDFATHER_UNTIL }) {
+export function checkHistory({ repo, main = 'main', deps, grandfatherUntil = GRANDFATHER_UNTIL, exceptions = KNOWN_EXCEPTIONS }) {
   const log = git(repo, ['log', '--first-parent', '--reverse', '--format=%H%x09%P%x09%s', main]);
   const merges = new Map(); // ticket id -> index on the first-parent line
   const rows = [];
@@ -69,6 +79,7 @@ export function checkHistory({ repo, main = 'main', deps, grandfatherUntil = GRA
       const tip = spawnSync('git', ['rev-parse', '-q', '--verify', `refs/heads/factory/${dep}^{commit}`], { cwd: repo, encoding: 'utf8' });
       if (tip.status !== 0) { if (!merges.has(dep)) continue; } // (b) no branch and no merge commit: spec/docs/no-diff
       else if (row.parent && gitOk(repo, ['merge-base', '--is-ancestor', tip.stdout.trim(), row.parent])) continue; // (c)
+      if (exceptions.some((e) => e.id === row.id && e.dep === dep && row.sha.startsWith(e.sha))) continue;
       violations.push({ id: row.id, dep, sha: row.sha });
     }
   });
