@@ -36,9 +36,10 @@ def _protocol(env, addr):
 
 
 def make_ps(env, addr):
-    def ps(script):
+    def ps(script, env_vars=None):
+        """Run a constant script. Secrets go in env_vars: they travel in the sealed WS-Man shell body, never in the script text."""
         p = _protocol(env, addr)
-        sh = p.open_shell()
+        sh = p.open_shell(env_vars=env_vars)
         enc = base64.b64encode(script.encode("utf-16le")).decode()
         cid = p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", enc])
         out, err, rc = p.get_command_output(sh, cid)

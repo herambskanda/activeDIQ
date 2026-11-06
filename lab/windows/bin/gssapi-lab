@@ -78,13 +78,16 @@ def prepare():
     require_policy("after prepare")
 
 
+KEYTAB_PS = r"& C:\lab\svc-keytab.ps1; 'script-exit ' + $?"  # constant: the password arrives as $env:SVC_PW via env_vars
+
+
 def keytab():
     require_policy("before keytab")
     pw = env.get("WIN_LAB_SVC_PASSWORD")
-    if not pw or "'" in pw:
+    if not pw:
         sys.exit("gssapi-lab: WIN_LAB_SVC_PASSWORD missing from the env file (or unusable)")
     put(os.path.join(REPO, "lab/windows/guest/svc-keytab.ps1"), r"C:\lab\svc-keytab.ps1")
-    rc, out = ps(f"$env:SVC_PW='{pw}'; & C:\\lab\\svc-keytab.ps1; 'script-exit ' + $?")
+    rc, out = ps(KEYTAB_PS, env_vars={"SVC_PW": pw})
     out = out.replace(pw, "<redacted>")
     print(out)
     if "script-exit True" not in out:

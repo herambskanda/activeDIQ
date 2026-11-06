@@ -18,4 +18,7 @@ $null = & ktpass /princ "$name@$realm" /mapuser "$($d.NetBIOSName)\$name" /pass 
 $ErrorActionPreference = 'Stop'
 if (-not (Test-Path "$out\svc-activediq.keytab")) { throw 'svc-keytab: ktpass produced no keytab' }
 icacls $out /inheritance:r /grant:r 'SYSTEM:(OI)(CI)F' 'Administrators:(OI)(CI)F' | Out-Null
+# ktpass /mapuser may stamp an SPN; the GSSAPI bind needs the UPN-mapped principal only, and an SPN makes the account kerberoastable
+Set-ADUser $name -Clear servicePrincipalName
+Get-ADUser $name -Properties servicePrincipalName, userPrincipalName | Select-Object SamAccountName, UserPrincipalName, @{n='SPN';e={@($_.servicePrincipalName) -join ','}} | Format-List | Out-String | Write-Output
 Write-LabLog "svc-keytab: $name keytab written to $out"
