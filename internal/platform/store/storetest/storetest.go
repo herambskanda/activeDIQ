@@ -516,3 +516,11 @@ func (d *Database) ProbeAsRole(ctx context.Context, role string, stmts ...string
 	}
 	return out, nil
 }
+
+// One returns a server of the newest configured PostgreSQL version, for a test that is not a per-version
+// matrix (a spec test that runs the real handler once). It skips, or fails under CI, like EachVersion.
+func One(t *testing.T) *Server {
+	t.Helper()
+	v := Versions()
+	return start(t, v[len(v)-1])
+}

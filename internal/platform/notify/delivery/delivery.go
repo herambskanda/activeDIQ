@@ -304,3 +304,15 @@ func (s *Deliveries) Get(ctx context.Context, tx store.Tx, id string) (Delivery,
 
 // ErrNotFound: no such delivery in the tenant.
 var ErrNotFound = errors.New("delivery: not found")
+
+// SourceCounts reports how many Deliveries exist for source and how many of them were given up, for the
+// owner of a message that fans out to several recipients and must know when none could be reached.
+func (s *Deliveries) SourceCounts(ctx context.Context, tx store.Tx, source SourceRef) (total, givenUp int, err error) {
+	if !kindRe.MatchString(source.Kind) || !idRe.MatchString(source.ID) {
+		return 0, 0, ErrInvalid
+	}
+	if err := tx.QueryRow(ctx, sqlSourceCounts, source.Kind, source.ID).Scan(&total, &givenUp); err != nil {
+		return 0, 0, fmt.Errorf("delivery: source counts: %w", err)
+	}
+	return total, givenUp, nil
+}

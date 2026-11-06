@@ -230,6 +230,10 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err := startThrottlePurge(ctx, db, jreg, console.Local, tid); err != nil {
 		return err
 	}
+	// The AN-8 owner alert is drained to the tenant-owners on a cadence (T-1544, RULING AN8-A1).
+	if _, _, err := startAN8Alert(ctx, db, jreg, ok.Chainer, tid); err != nil {
+		return err
+	}
 	// The report retention cadence is seeded for the install tenant, like the throttle purge.
 	if err := startReportRetention(ctx, db, reportRuns, tid); err != nil {
 		return err
