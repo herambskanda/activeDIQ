@@ -26,7 +26,27 @@ Design: [ADR-0006](../decisions/0006-dc-agent-runs-as-a-virtual-service-account.
 | --- | --- | --- | --- |
 | 100 | Info | A signed policy was applied (sequence in the text) | none |
 | 101 | Error | Start refused: token holds a privilege outside the pinned list, or the data directory DACL is unsafe | reinstall with the MSI; do not edit the token |
+| 103 | Warning | Installed but not enrolled: the service is running and idling, re-checking every 5 s | run `activediq-agent.exe enroll <server:port> <pin>`; the agent picks the enrolment up within seconds (re-check every 5 s, every 1 s while the files are being written), no restart needed |
+| 104 | Error | Enrolment state exists but the service refuses it. The text starts `enrolment state cannot be used (<class>)`: `unsafe-permissions` (owner or DACL names someone other than SYSTEM, Administrators and the service; a reparse point), `expired` (the component certificate is past its validity), `corrupt` (incomplete or does not verify). The service keeps running, does not connect, writes this once per class and re-checks every 5 s | `unsafe-permissions`: stop the service, delete `C:\ProgramData\skenzeriq\agent\enrol` and run `activediq-agent.exe enroll` again (state written by a build before T-1249 names the administrator who enrolled and is refused); `expired`/`corrupt`: enrol again with a new token |
 | 102 | Warning | The Security channel cannot be read | a GPO may have reset channel access: re-run `agentsetup grant-channel`; the server shows `channel_unreadable` |
+| 105 | Error | The 5 % hard CPU cap is lifted only for a connection set-up, at most 5 s per window even if the connection attempt is still stalled; the cap then goes back on by itself. This event means the cap could not be put back. The service retries at once (3 times), then every 2 s, and writes this once per episode. If the cap is still not back after 30 s the service writes it again with the text `exiting` and the process exits non-zero, so the SCM recovery action restarts it with the cap re-applied (if the cap cannot be applied at start, the service stops and the server shows the agent offline) | none: the service restarts itself; if it keeps stopping, send the support bundle. A 105 without `exiting` that is followed by a 106 needs no action |
+| 106 | Info | The CPU limit was restored by a retry after a 105 | none |
+
+## Enrolment state and who may read it
+
+`activediq-agent.exe enroll` is run by an administrator, but the service runs as `NT SERVICE\activeDIQAgent`. The enrolment directory and its files are therefore written for the service: owner `BUILTIN\Administrators`, protected DACL granting SYSTEM, Administrators and the service SID, never the administrator's own user SID (the service refuses state that names anyone else). `agentsetup repin` does the same. The service tells "no enrolment yet" (event 103) from "state exists but refused" (event 104).
+
+## Building the MSI
+
+```
+wix build Agent.wxs -ext WixToolset.Util.wixext -arch x64 -wx -sw1149 -d Version=<x.y.z> -d AgentExe=<path>\activediq-agent.exe -d SetupExe=<path>\agentsetup.exe -o activediq-agent-<x.y.z>.msi
+```
+
+WiX 5.0.2. `-wx` turns every warning into an error, so the build fails on any warning not suppressed on purpose. The one suppression is `-sw1149`: WIX1149 is raised by the **core** `ServiceConfig` itself, the only element that can set `ServiceSid="restricted"` and `RequiredPrivilege` (`util:ServiceConfig` has neither; ADR-0006 A2 needs both; T-0648 read back on a DC that it applies them). The recovery actions (restart x3, 30 s, reset 1 day) are on `util:ServiceConfig`, the only element that has them (the core one has no failure-action attributes: WIX0004); `sc qfailure activeDIQAgent` reads them back (T-0833). The release pipeline (devops-engineer) must use the same flags; `agent-unenrolled-verify` checks both fixtures.
+
+## Install order
+
+The MSI starts the service on install. Install, start (it idles with event 103), then enrol; the agent notices the enrolment within a few seconds (it polls every 5 s, 1 s while an enrolment is being written). Starting before enrolling is expected, not a failure; the SCM recovery action never fires for it.
 
 ## Verified in the lab (T-0648) and still owed
 
