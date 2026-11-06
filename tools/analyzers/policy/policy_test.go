@@ -33,12 +33,16 @@ func TestToolTier(t *testing.T) {
 
 func TestTestSupport(t *testing.T) {
 	for rel, want := range map[string]bool{
-		"internal/platform/store/storetest": true,
-		"internal/platform/jobs/jobstest":   true,
-		"internal/platform/jobs":            false,
-		"internal/platform/store":           false,
-		"internal/platform/store/footest":   false,
-		"internal/modules/storetest":        false,
+		"internal/platform/store/storetest":         true,
+		"internal/platform/jobs/jobstest":           true,
+		"internal/platform/operation/operationtest": true,
+		"internal/platform/tenant/tenanttest":       true,
+		"internal/platform/tenant":                  false,
+		"internal/platform/operation":               false,
+		"internal/platform/jobs":                    false,
+		"internal/platform/store":                   false,
+		"internal/platform/store/footest":           false,
+		"internal/modules/storetest":                false,
 	} {
 		if IsTestSupport(rel) != want {
 			t.Errorf("IsTestSupport(%q) != %v", rel, want)

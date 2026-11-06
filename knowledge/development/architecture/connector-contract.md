@@ -6,7 +6,7 @@ status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31)
+amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect)
 binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
@@ -122,6 +122,17 @@ only if `Describe` reports a provider for the connection's kind. It returns:
   schema, Graph token). The *delegated-rights check* of onboarding is `VerifyConnection` (§8.4),
   not `Describe`: it is slower, it streams findings that are access-restricted (DM-24.I5), and its
   result is the connector's write gate.
+
+**Served so far (T-1258):** `read.Server.Describe` answers the topology half only: `contract`,
+`provider_kind`, `directory_identity`, `described_at`, `naming_contexts[]` and `limits.max_page_size` /
+`max_value_range`. The partitions are read live (no cache) from the `crossRef` objects in
+`CN=Partitions` with the extended-DN control, so a domain this DC does not hold is listed with its GUID
+and SID; the kind is the configuration/schema NC by DN, a domain by `systemFlags & 2`, else
+application; a `crossRef` with `enabled = FALSE` is not listed; `functional_level` is set only for the
+DC's own domain (rootDSE `domainFunctionality`). `max_page_size` is the DC's `lDAPAdminLimits`
+`MaxPageSize` (the NTDS Settings `queryPolicyObject`, else `Default Query Policy`; AD's documented 1000
+when absent) capped at the session's own page ceiling of 1000, never 0. The operations, features, DC
+list, forest settings and health sections are still unset (CC-DESC-01, 03, 05, 06 stay open).
 
 `DescribeSchema` streams the schema the server-side filter builder needs for its allowlist
 (safe-primitives §3.3 rule 1): per attribute its syntax, value kind, single or multi, constructed,
@@ -1119,7 +1130,7 @@ must have it before the first write kind exists. T-0225 built the Entra half ove
 
 **Input: a typed `PropertyWrite`, not a key list.** `{plane: ENTRA | AD, kind: USER | DEVICE | GROUP,
 op, keys[]}`. `op` is one of `UPDATE`, `CREATE`, `INVITE`, `ASSIGN_LICENSE`, `SET_MANAGER`,
-`CLEAR_MANAGER`, `MOVE_OR_RENAME` (AD `ModifyDN`), `GROUP_MEMBERSHIP`. Each write kind declares its
+`CLEAR_MANAGER`, `MOVE_OR_RENAME` (AD `ModifyDN`), `GROUP_MEMBERSHIP`, `DELETE` (T-1621). Each write kind declares its
 `PropertyWrite` in its registration (a kind with none fails the build-time check in CC-WRITE-22's
 harness), so a new kind cannot forget it. `keys` are Graph PATCH keys on the Entra plane and LDAP
 attribute names on the AD plane, never rule-side names. **Keys must be canonical (T-0240)**; any
@@ -1152,6 +1163,7 @@ each per `Plan` and `Apply` (live, step 7); a changed `rule_hash` re-lexes. A re
 | `ASSIGN_LICENSE` | the scope holds `assignedPlans`, `mail` or `proxyAddresses`, or `RefuseAll`. Group-targeted calls too (7e) |
 | `SET_MANAGER`, `CLEAR_MANAGER` | the scope holds `user.manager` (`Direct Reports for`, 7c), or `RefuseAll` |
 | `MOVE_OR_RENAME` (AD) | the scope holds `onPremisesDistinguishedName`, or `RefuseAll` |
+| `DELETE` (AD, T-1621) | `kind` is GROUP and the scope holds `memberOf`, or `RefuseAll`. Any other kind: never refused (a deleted object only leaves a rule's scope; no other object's properties change). `keys` is empty and ignored |
 | `GROUP_MEMBERSHIP` | the scope holds `memberOf`, `assignedPlans`, `mail` or `proxyAddresses`, or `RefuseAll` **for any cause** (7b, 7e; group-based licensing, T-0240). Any target group, either plane |
 
 `RefuseAll` is set by an untokenisable rule, a rule property absent from `ruleprops v1`, an empty
@@ -1305,15 +1317,15 @@ field is a DN.
 - The connector never alters the DACL to make a delete succeed. An object protected from accidental
   deletion (deny Delete for Everyone) fails with `INSUFFICIENT_RIGHTS`.
 - `ALREADY_APPLIED` when the object by GUID is found as a deleted object (`isDeleted` TRUE, read with
-  the show-deleted control `1.2.840.113556.1.4.417`, control OID from memory `[UNVERIFIED]`: confirm in the MS-ADTS controls list in the ad-expert follow-up).
+  the show-deleted control `1.2.840.113556.1.4.417`, `LDAP_SERVER_SHOW_DELETED_OID`, [Microsoft Learn](https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ldap/ldap-server-show-deleted-oid); the control has no value; confirmed by the Samba rootDSE and used on the wire in [T-1628 Samba log](../runbooks/samba-lab-runs/T-1628-samba-write-semantics-20261105.log.txt)). It returns deleted objects only: an object with `isRecycled` TRUE needs `LDAP_SERVER_SHOW_RECYCLED_OID` `1.2.840.113556.1.4.2064` ([cifs-protocol thread quoting MS-ADTS](https://lists.samba.org/archive/cifs-protocol/2011-February/001816.html)), so `ALREADY_APPLIED` and the lifetime test read with 2064 and decide on `isRecycled` (T-1628).
 - Reversibility: the Descriptor says `Irreversible`. Plan reads whether the AD Recycle Bin is enabled
   for the forest (`msDS-EnabledFeature` on the `Recycle Bin Feature`, [AD Recycle Bin](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/adac/introduction-to-active-directory-administrative-center-enhancements--level-100-))
   and returns `Lossy` when it is (the object can be restored with `OBJECT_RESTORE` until
   `msDS-deletedObjectLifetime` ends, the loss being the non-replicated attributes and the window itself),
   `Irreversible` when it is not (a tombstone keeps few attributes; reanimation is not offered). The
   preview, the gate and the API show the class before anything runs (ADR-0005 rule 1).
-- §8.9: `UPDATE` with no keys (deleting a user can only remove it from a rule's scope).
-  `[security-architect to confirm in review, TM-D25 rule 7]`.
+- §8.9: `DELETE` (T-1621; `UPDATE` with no keys was **not** confirmed, §8.10.9 R1). A group delete under a
+  `memberOf` rule can make its members match a negated rule by absence.
 
 **4 `OBJECT_MOVE`.**
 - `ModifyDNRequest(entry = live DN of the target, newrdn = its current RDN, deleteoldrdn = false,
@@ -1336,10 +1348,24 @@ field is a DN.
   equals the value. §8.9 `MOVE_OR_RENAME`, class `move`.
 
 **6 `OBJECT_RESTORE`.**
-- Target is the deleted object's GUID, read with the show-deleted control. One `ModifyRequest`: delete
-  `isDeleted`, replace `distinguishedName` with the DN built from `new_parent`'s live DN and
-  `rdn_value`. An absent AD Recycle Bin is `CAPABILITY_UNSUPPORTED` (reanimating a tombstone loses
-  most attributes; not offered). A restore after `msDS-deletedObjectLifetime` is `OBJECT_NOT_FOUND`.
+- Target is the deleted object's GUID, read with the show-deleted control. One `ModifyRequest`
+  carrying `1.2.840.113556.1.4.417` **as a critical control**: delete `isDeleted` (remove the attribute;
+  never set it to FALSE), replace `distinguishedName` with the DN built from `new_parent`'s live DN and
+  `rdn_value`. The two changes together are what identifies an undelete ([MS-ADTS 3.1.1.5.3.7](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/4302a2eb-55c8-426c-b310-6791c6ae8307));
+  [Microsoft's restore procedure](https://learn.microsoft.com/en-us/windows/win32/ad/restoring-deleted-objects)
+  requires one LDAP operation with that control. The new RDN is the caller's `rdn_value`, never the
+  delete-mangled `name\0ADEL:<guid>` ([MS-ADTS 3.1.1.5.5](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/6c21dd2f-40cd-4963-90a2-a7f657f319a4)).
+  Rights: the *Reanimate Tombstones* control access right on the NC root, plus child-create on the new
+  parent and write on the RDN ([Win32 doc](https://learn.microsoft.com/en-us/windows/win32/ad/restoring-deleted-objects));
+  the Plan rights check (§8) must test them, and a missing right is `INSUFFICIENT_RIGHTS`. Parent must be
+  live (a deleted parent fails: "parent is either uninstantiated or deleted", [Ask the Directory Services Team](https://learn.microsoft.com/en-us/archive/blogs/askds/the-ad-recycle-bin-understanding-implementing-best-practices-and-troubleshooting)).
+  An absent AD Recycle Bin is `CAPABILITY_UNSUPPORTED`: this is **our decision, not an AD limit**. Without
+  the feature AD still reanimates a tombstone ([MS-ADTS constraints](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/76df255d-dc67-4c1f-adc6-1e5b60021304)),
+  but link values are gone and only a subset of attributes remains ([MS-ADTS 3.1.1.1.6](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/538ec135-1465-4266-bb0a-777924f02846)).
+  The gate is the Recycle Bin flag, **never try-and-see**: Samba reanimates a tombstone with the feature off
+  and would give a false pass (T-1628 log). An object with `isRecycled` TRUE (past
+  `msDS-deletedObjectLifetime`) cannot be undeleted when the feature is on (same constraints page) and is
+  `OBJECT_NOT_FOUND`.
 - Step 7 for the **deleted** target is replaced by a fixed read set (a deleted object has no
   `tokenGroups`): `objectSid`, every `sIDHistory` value, `userAccountControl`, `primaryGroupID`, the
   retained `memberOf` (link values are kept by the Recycle Bin, [source](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/adac/introduction-to-active-directory-administrative-center-enhancements--level-100-))
@@ -1347,10 +1373,30 @@ field is a DN.
   against the connector's set, C5, C18, and C3/C6 by the original parent chain when the parent still
   exists. An unreadable value is `tier0` as at step 7. The new parent is a touched object, live.
   Step 9 then runs the ordinary live classification on the restored object.
-- §8.9 `CREATE` (a restored object matches a dynamic rule by absence). `ALREADY_APPLIED` when the
+- Step 7 read set amended by T-1621 (§8.10.9 R2). §8.9 `CREATE` (a restored object matches a dynamic rule by absence). `ALREADY_APPLIED` when the
   object by GUID is live (`isDeleted` absent) at the planned parent and RDN. Class `move`.
-- Reversibility: Reversible (inverse: `OBJECT_DELETE`). `[UNVERIFIED]` on a real forest: the exact
-  control set and the attribute loss on Windows and on Samba (CC-WK-16..18).
+- Reversibility: Reversible (inverse: `OBJECT_DELETE`). **Link retention and attribute loss (T-1628).**
+  With the Recycle Bin on, a deleted object "maintain[s] virtually all of their state" and link values to
+  and from it are kept, so the restore re-grants every retained membership
+  ([MS-ADTS 3.1.1.9.1](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/e9482178-ee53-4b6c-841d-5259d6261985)).
+  A forward link to a deleted object is kept but **invisible** to LDAP unless the request carries
+  `LDAP_SERVER_SHOW_DEACTIVATED_LINK_OID` (`1.2.840.113556.1.4.2065`, a search control with no value,
+  [MS-ADTS 3.1.1.3.4.1.25](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/059e33fc-c7af-451e-92a9-fcb33d828f0f);
+  semantics in [3.1.1.1.6](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/538ec135-1465-4266-bb0a-777924f02846)); after a restore they become visible
+  again. **Samba divergence (measured):** with the Recycle Bin on, a plain `member` read of a group still
+  returned the deleted user's delete-mangled DN; a member read that passes on Samba can therefore show
+  ghost members on Samba only, and the connector must drop `member` values under `CN=Deleted Objects`. Recycled objects and tombstones lose their forward-link references. The exact set of attributes
+  *not* kept by a deleted object is `[UNVERIFIED Windows]` (the spec says "virtually all"; CC-WK-16 W
+  diffs the attribute set). Whether a restored user keeps `userAccountControl` (the Win32 text says a
+  tombstone reanimation disables users, which predates the Recycle Bin) is `[UNVERIFIED Windows]`; step 9
+  reads the live object, so the class is right either way.
+  **Samba 4.22.11 (measured, [T-1628 log](../runbooks/samba-lab-runs/T-1628-samba-write-semantics-20261105.log.txt)):**
+  Recycle Bin off: the delete leaves a tombstone with `isRecycled` TRUE, `member` and `memberOf` links gone,
+  and the undelete modify above succeeds, memberships not restored. Recycle Bin on (enabled in-process, see
+  §8.10.7): the deleted object keeps `memberOf` and `description`, but **the undelete modify fails**
+  (`noSuchAttribute`, "attribute 'isRecycled': no such attribute for delete"), with or without 417, 2064,
+  permissive-modify or an explicit `delete: isRecycled`. A Samba pass or fail therefore proves nothing
+  about the Windows restore path.
 
 **7 `USER_PASSWORD_RESET`.** See §8.10.5 for the secret. LDAP shape: one `ModifyRequest` with
 `replace unicodePwd` (the quoted password as UTF-16LE, the administrative "set" form that needs the
@@ -1377,14 +1423,24 @@ channel that is not TLS (`TRANSPORT_SECURITY`).
 **8 `USER_UNLOCK`.** Plan reads `lockoutTime`; `ALREADY_APPLIED` at Apply when it is absent or 0.
 Otherwise the connector compares `uSNChanged` and `lockoutTime` on the pinned DC and sends
 `replace lockoutTime 0`, the documented way to unlock ([KB 305144](https://support.microsoft.com/kb/305144), TM-D28). Whether the DC also accepts
-the delete-old + add-0 compare-and-set form is `[UNVERIFIED]` and is decided by CC-WK-24 on the
-Windows lab (the conservative form above is the contract until it is). The UAC `LOCKOUT` bit is
+the delete-old + add-0 compare-and-set form: **Samba 4.22.11 accepts it** (measured: `delete lockoutTime
+<value read>` + `add lockoutTime 0` unlocks, and a stale old value fails `noSuchAttribute`, i.e. it is a real
+compare-and-set; both unlock forms also reset `badPwdCount` to 0 and `msDS-User-Account-Control-Computed`
+from 16 to 0, [T-1628 log](../runbooks/samba-lab-runs/T-1628-samba-write-semantics-20261105.log.txt)).
+On Windows AD DS it stays `[UNVERIFIED Windows]`: MS-ADTS states the "replace with 0 only" rule for AD LDS
+only ([constraints](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/76df255d-dc67-4c1f-adc6-1e5b60021304))
+and says for AD DS that `lockoutTime` 0 forces `badPwdCount` 0 ([MS-SAMR](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-samr/85edb873-7549-401f-9108-01c128b875cb)),
+and nothing in it settles the delete-old form on a Windows DC. CC-WK-24 W decides; the conservative form
+above is the contract until it passes. **Samba divergence:** it also accepts a non-zero write
+(`replace lockoutTime 133000000000000000` returned success and set the computed lock bit), whereas Windows
+is reported to reject one `[UNVERIFIED Windows, community report]`; a "non-zero write is refused" test
+would false-fail on Samba, and the connector never sends one. The UAC `LOCKOUT` bit is
 computed and read-only on AD; the connector never writes it. Class `unlock`.
 - Reversibility `Irreversible` because no inverse exists: lockout is set by the DC on bad passwords and a
   write of a non-zero `lockoutTime` is not an offered inverse. The consequence is mild (an unlock
   needs no undo), so the preview shows the class with the reason "the directory controls this
-  state", not a destructive-action warning. `[product-manager and security-architect to confirm the
-  wording in review]`.
+  state", not a destructive-action warning. Wording confirmed by security-architect with a required
+  second line (§8.10.9 R3); `[product-manager to confirm the final copy]`.
 
 **9 and 10 `ACCOUNT_ENABLE`, `ACCOUNT_DISABLE`.** One `ModifyRequest`: delete the live
 `userAccountControl`, add the same value with `ACCOUNTDISABLE` (`0x0002`) cleared or set, computed by
@@ -1456,10 +1512,9 @@ as a reset's. This spec therefore requires `StepUp = true` on every Action that 
 | --- | --- |
 | Directory password reset (`objects.user.reset_password`, TM-D28 `reset_password`; ADM-136, ADM-162) | Sets a credential the actor knows for a sign-in account; on a hybrid-synced account it reaches Entra through hash sync (C16, TM-R14); Irreversible (ADR-0005 rule 1) |
 
-The §7.4 edit is not made here; it is the first item of the security-architect follow-up (below)
-because §7.4 and TM-D16 are theirs, and this ticket's `StepUp` bit is the requirement that edit
-satisfies. Until it lands, `fitness-operation` O-rules cannot check the bit against §7.4, so the
-Descriptor conformance is checked by `TestDescriptorStepUpMatrix` against this section's table.
+The §7.4 row **was added by T-1621** (threat-model §7.4, TM-D16 part 1, 2026-11-05), so
+`fitness-operation` O-rules can check the bit against §7.4. `TestDescriptorStepUpMatrix` stays as the
+second check against this section's table.
 Help-desk resets (ENH-09 caller verification) are the same kind under the `helpdesk.*` Actions and
 carry the same Descriptor bits; the technician's step-up is in addition to the caller's verification.
 
@@ -1486,9 +1541,9 @@ contains no value, DN or directory response (CC-WRITE-13).
 | Kind | Windows DC | Samba AD | Entra |
 | --- | --- | --- | --- |
 | 1 create, 2 update, 3 delete, 4 move, 5 rename | Supported (W) | Supported (S) | `CAPABILITY_UNSUPPORTED`; Entra provisioning is its own kinds (M2b Entra slice) |
-| 6 restore | Supported with the Recycle Bin (W) | `[UNVERIFIED]` Recycle Bin and the show-deleted control on Samba; CC-WK-16..18 decide; until then `CAPABILITY_UNSUPPORTED` on Samba | `CAPABILITY_UNSUPPORTED` |
-| 7 reset | Supported (W); policy hints confirmed on Windows Server 2025 (T-0076) | `[UNVERIFIED]` the policy-hints control on Samba; without it the reset still works but history and minimum age follow the DC's own rule | `CAPABILITY_UNSUPPORTED` (Graph `passwordProfile` is a separate kind, TM-Q14) |
-| 8 unlock | Supported (W) | `[UNVERIFIED]` Samba `lockoutTime` handling; S case CC-WK-24 | `CAPABILITY_UNSUPPORTED` |
+| 6 restore | Supported with the Recycle Bin (W) | `CAPABILITY_UNSUPPORTED` (T-1628, measured on 4.22.11: controls 417 and 2064 are advertised, but the Recycle Bin cannot be enabled over LDAP (`enableOptionalFeature` is refused to a domain admin; only a system session enables it) and with it on the undelete modify fails on `isRecycled`; with it off a tombstone reanimates without links) | `CAPABILITY_UNSUPPORTED` |
+| 7 reset | Supported (W); policy hints confirmed on Windows Server 2025 (T-0076) | Supported, **hint ignored** (T-1628, measured on 4.22.11): `2239` is not in `supportedControl`, yet a reset carrying it, critical or not, succeeds, and with history 3 and minimum age 1 day the same password was accepted again; so history and minimum age are not enforced on an admin reset on Samba. A Samba pass proves nothing about CC-WK password policy: those cases are W | `CAPABILITY_UNSUPPORTED` (Graph `passwordProfile` is a separate kind, TM-Q14) |
+| 8 unlock | Supported (W) | Supported (T-1628, measured): `replace lockoutTime 0` and delete-old + add-0 both unlock and reset `badPwdCount`; stale old value fails `noSuchAttribute`; a non-zero write is wrongly accepted (see §8.10.3 kind 8) | `CAPABILITY_UNSUPPORTED` |
 | 9, 10 enable, disable | Supported (W, S) | Supported (S) | `CAPABILITY_UNSUPPORTED` (Graph `accountEnabled` is a separate kind) |
 
 Asymmetry is a decision: Samba is a CI lab, not a customer target of v1, so a Samba gap is recorded
@@ -1496,7 +1551,76 @@ here and in `Describe`, not hidden. A provider reports `PLAN` and `APPLY` `SUPPO
 one kind of the table is wired; per-kind support is reported through a closed `Describe`
 reason string until a per-kind capability is added by the first ticket that needs one (follow-up C, T-1623).
 
-#### 8.10.9 Wired kinds (T-1583)
+#### 8.10.9 Security review of T-1581 (T-1621, security-architect, 2026-11-05)
+
+**Verdict: approved with the amendments below.** `SecretValue` (one `bytes material`, one use site,
+`optional` on `ApplyRequest` field 12) and the `StepUp`/`SecretInput` Descriptor bits are approved.
+P9 is approved as the **proto-shape** half only; the amendments S1 to S5 are binding on the P9 and
+build tickets. Sources for the facts used: [unicodePwd](https://learn.microsoft.com/en-us/windows/win32/adschema/a-unicodepwd),
+[RFC 4511 §4.6](https://www.rfc-editor.org/rfc/rfc4511#section-4.6), [AD Recycle Bin](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/adac/introduction-to-active-directory-administrative-center-enhancements--level-100-),
+[T-0076 lab log](../runbooks/windows-lab-runs/T-0076-ad-lab-confirmation-20261028.md).
+
+**S. `SecretValue` and fitness P9**
+
+| # | Amendment | Why |
+| --- | --- | --- |
+| S1 | P9 also requires: `ApplyRequest` is not a field of any other message (no envelope, queue record, audit record or fleet frame embeds it), `SecretValue` is never inside a `repeated`, `map`, `oneof` or `Any` (P3 already bans `Any`), and `ApplyRequest.secret_input` stays the only field with that type after codegen of `PlanRequest`'s and every response's closure | A containing message would reach the secret transitively while the "referenced by exactly one field" test still passes |
+| S2 | New **P9b**, a Go analyser in `fitness-proto` scope: `ApplyRequest`, `SecretValue` and `secret_input` may not be an argument to `fmt`, `log`, `log/slog`, the project logger, `protojson`, `prototext`, `proto.Clone` into a log field, an error wrap, or a span attribute; gRPC payload-logging interceptors and OpenTelemetry payload capture are denied on the connector and fleet services. Failing fixtures for each | Generated `String()` prints `bytes` fields. P9 on the `.proto` cannot see a `%v`. CC-WK-26 is a runtime test; P9b is the static one |
+| S3 | `material` is validated **first** in `Apply`, before any directory call: non-empty, valid UTF-8, no NUL, at most 256 Unicode code points ([unicodePwd](https://learn.microsoft.com/en-us/windows/win32/adschema/a-unicodepwd) allows up to 256 characters), at most 1,024 bytes on the wire. Otherwise `INVALID_ARGUMENT` `SecretInvalid` with fixed text, never the length or position of the offending byte | Bounds the buffer, and a malformed value must not reach the encoder. The wire cap is checked by a per-message limit on this RPC so a large frame never lands in a log buffer |
+| S4 | The connector decodes `ApplyRequest` without aliasing the transport buffer, converts straight to the UTF-16LE form in a `secret.Secret`-style buffer, and clears both the decoded `material` and the encoded buffer in a `defer` that runs on every path. The gRPC and protobuf buffers are outside its control: this is the §5.6 limit, declared as **residual TM-R-SV1** (a memory dump of the connector or server process during an in-flight reset can hold the password; lifetime is one RPC on the connector and at most 72 hours sealed on the server). Crash dumps of the connector must not include heap contents; the windows-engineer sets the dump type `[UNVERIFIED: setting to be confirmed on the Windows lab]` | Honest residual, not a claim of zeroisation |
+| S5 | `ApplyResponse` and every error carry no echo of the request. The `PasswordPolicy` text is fixed. A TLS-less LDAP channel returns `TRANSPORT_SECURITY` **before** the value is encoded | Already specified; made a test: CC-WK-23 asserts the secret never appears in the response, the audit event or the connector's log with a canary value |
+
+**What stays as specified:** no `PlanRequest` field; the plan hash covers the flag only; no
+`ALREADY_APPLIED` and no retry that re-sends a secret; LDAPS only (stricter than LDAP with sealing, kept);
+`USER_PASSWORD_RESET` `StepUp = true`, `SecretInput = true`, `Irreversible`; `OBJECT_CREATE` of a USER
+with a password `StepUp = false` (TM-D28 rule 3). That create exception depends on the tenant's
+hard/soft-match blocking being attested (TM-TB7-T9 (f)); a create Action must be refused while it is not,
+for any Entra-correlated forest.
+
+**R1. Kind 3 `OBJECT_DELETE` §8.9 op: not `UPDATE` with no keys; `DELETE` is added (table above).**
+Exploit sketch: a group delete removes the group from every member's `memberOf`; an Entra dynamic
+rule of the form `NOT memberOf …` (a `memberOf` rule is already `RefuseAll`) then matches those members
+by absence, adding them to a Conditional Access exclusion group. `UPDATE` with empty `keys` is never
+refused, so the guard would wave it through. A delete of a user, computer, contact or OU only removes the
+object from scopes; the `Direct Reports for` whole-rule form can only shrink. Required: the T-0239
+`PropertyWrite` registration for kind 3 returns `DELETE`, with `kind` from the live class; a conformance
+case CC-WRITE-30 (group delete under a `memberOf`/RefuseAll closure rule refused; user delete allowed).
+The Tier-0 guard, which refuses a `tier0` target and any C16-correlated object, runs before this and is
+unchanged. Kind 3's other rules (`NotLeaf`, no DACL change, Recycle Bin Lossy/Irreversible) are approved.
+The show-deleted control OID `1.2.840.113556.1.4.417` is confirmed (T-1628, §8.10.3 kind 3).
+
+**R2. Kind 6 `OBJECT_RESTORE` step-7 read set: not sufficient; amended.** A restore re-creates the
+object's retained attributes **and its group links**, so it re-grants every retained membership.
+Add to the fixed read set: `msDS-AllowedToDelegateTo` and `msDS-AllowedToActOnBehalfOfOtherIdentity`
+(C12), `msDS-SecondaryKrbTgtNumber` and `msDS-LastKnownRDN` (C4, and C14 by the pre-deletion name, since a
+deleted object's `name` is mangled), `adminCount`, the `isCriticalSystemObject` flag, and the retained
+`nTSecurityDescriptor` (the owner and the callback ACEs of C17/C18 on the object itself, read as
+a typed descriptor, never SDDL). C5 is judged on `userAccountControl` alone when `nTDSDSA` is unreadable
+(`SERVER_TRUST_ACCOUNT` or `PARTIAL_SECRETS_ACCOUNT` is `tier0` without corroboration). Any item
+unreadable is `tier0` (fail closed, as step 7). Plan lists the retained memberships the restore will re-grant,
+by group, so the technician sees them; a retained group that is `tier0` refuses (C2). Re-granting a
+non-`tier0` membership the object held before deletion is accepted as **residual TM-R-RS1**: the actor
+needs Reanimate-Tombstones (R9, JIT only), which is not an entitlement to add members.
+**Open conflict, not decided here:** T-0076 shows a Reanimate-only principal cannot read the deleted
+target beforehand (`noSuchObject`), and TM §6.2 R15 forbids requesting List/Read on `CN=Deleted Objects`.
+Step 7 would then fail closed for every restore. The restore build ticket (T-1624) must not ship a
+workaround that classifies on server-supplied attributes. The first option to test on the Windows lab is
+a read by the connector's separate classification identity of only the object by `<GUID=…>`
+with the show-deleted control and a per-object read grant, not a container grant. If it needs a
+container grant, the kind is refused and this comes back to security-architect as a decision.
+Ticketed as T-1633 (ad-expert); the DELETE op build is T-1632. Step 9 stays, but it is detection after the fact, not a gate.
+
+**R3. Kind 8 `USER_UNLOCK` wording: approved with a second line.** `Irreversible` with the reason "the
+directory controls this state" is correct and is not a destructive-action warning. The preview must also
+say: "Clears the lockout only. The password is not changed. If this account is under attack, the
+directory can lock it again." (An unlock during a password-spray is the case a technician needs to
+know about; the text must not suggest the account is now safe.) The replace-`lockoutTime`-0 form with a
+`uSNChanged`/`lockoutTime` compare on the pinned DC is accepted as the contract; the
+delete-old + add-0 form is not an alternative until CC-WK-24 passes on the Windows lab. A `tier0` or
+`adminCount = 1` target is refused by the guard before the kind runs, so a help-desk role cannot unlock
+a protected account. `[product-manager to confirm the final copy; the second line is required]`.
+
+#### 8.10.10 Wired kinds (T-1583)
 
 `internal/directory/accountkind` is the one definition of the four account kinds: digest keys
 (`ad.user.resetPassword`, `ad.user.unlock`, `ad.account.enable`, `ad.account.disable`), the typed
@@ -1516,12 +1640,11 @@ semantics; those are `[UNVERIFIED]` until the Windows-lab ticket for CC-WK-19, 2
 
 #### 8.10.8 Follow-ups this section creates
 
-Registered as tickets: (A, T-1621) security-architect: §7.4 amendment, `SecretValue` review,
-§8.9 op for delete, restore classification and the unlock wording; (B, T-1622) devops-engineer: fitness P9 and
+Registered as tickets: (A, T-1621) security-architect: **done** (§7.4 row, `SecretValue` review, §8.9 `DELETE` op, restore read set, unlock wording; §8.10.9); (B, T-1622) devops-engineer: fitness P9 and
 `TestKindTableClosed`; (C, T-1623 to T-1626) directory-engineer, one build ticket per group, each wiring its operation-table
 row and `kindTable` row together: object create/update/delete, move/rename/restore, account
 enable/disable/unlock, password reset; (D, T-1627) test-engineer: the CC-WK cases of §9.8; (E, T-1628) ad-expert: clear
-the `[UNVERIFIED]` items (unlock compare-and-set form, restore controls, Samba behaviour).
+the `[UNVERIFIED]` items (unlock compare-and-set form, restore controls, Samba behaviour). **Done (T-1628, ad-expert, 2026-11-05):** restore controls, OIDs, link retention, Samba restore, policy hints and Samba `lockoutTime` are now sourced or measured; what remains is Windows-only and is carried by CC-WK-16, CC-WK-18 and CC-WK-24 (W): the delete-old unlock form, the exact attribute loss on a deleted object, and the restored user's `userAccountControl`.
 
 ## 9. Provider conformance suite
 
@@ -1544,7 +1667,7 @@ disabled, expired and locked accounts.
 
 | ID | Case | Expectation | Lab |
 | --- | --- | --- | --- |
-| CC-DESC-01 | `Describe` on the lab | `provider_kind = AD`, contract `activediq.connector.v1`, `contract_minor` ≥ 1, directory identity equals the lab forest root GUID and SID; the six read operations `SUPPORTED`; `READ_SECRET` `VERIFY_USER` `RESERVED`; `VERIFY_CONNECTION` `SUPPORTED` once T-0096 lands; `PLAN` and `APPLY` `SUPPORTED` (the four account kinds wired by T-1583, §8.10.9) | S |
+| CC-DESC-01 | `Describe` on the lab | `provider_kind = AD`, contract `activediq.connector.v1`, `contract_minor` ≥ 1, directory identity equals the lab forest root GUID and SID; the six read operations `SUPPORTED`; `READ_SECRET` `VERIFY_USER` `RESERVED`; `VERIFY_CONNECTION` `SUPPORTED` once T-0096 lands; `PLAN` and `APPLY` `SUPPORTED` (the four account kinds wired by T-1583, §8.10.10) | S |
 | CC-DESC-02 | Topology | domain, configuration and schema NCs with GUIDs and the domain SID; `forest_settings` reflects what is read, with an absent `tombstoneLifetime` left **unset** (no default applied) | S |
 | CC-DESC-03 | DC facts | the lab DC has `dsa_guid`, `invocation_id` equal to its NTDS Settings object, site, `is_pdc_emulator = TRUE` after the `validFSMOs` cross-check; every fact Samba does not expose is `UNKNOWN`, never `FALSE` or `0` | S |
 | CC-DESC-04 | Wrong directory identity | `DIRECTORY_IDENTITY_MISMATCH`; no read was issued | S |
