@@ -1,7 +1,7 @@
 ---
 title: "Safe primitives: LDAP filters, DNs, attribute codecs, command invocation, SQL, output encoders"
 date: 2026-10-02
-updated: 2026-10-28
+updated: 2026-11-06
 status: review
 owner: heramb
 ticket: T-0035, T-0041
@@ -82,10 +82,12 @@ vectors, corpus format and the *meaning* of each lint rule. ADR-0001 is **ratifi
 library choice, the concrete lint tools and which tiers implement what. Package paths are fixed by
 [blueprint v0](blueprint.md) §1.1 and §7.4: `internal/directory/ldapfilter`, `internal/directory/dn`
 (with `ObjectRef`, `GUIDRef`), `internal/directory/attr/{guid,sid,filetime,gentime,flags,unicodepwd}`,
-`internal/platform/secret`, `internal/connector/ad/scope` and `internal/connector/ldap` (`SecureConn`),
-`internal/connector/psx`, `internal/platform/pslit`, `internal/platform/proc`, and
-`internal/platform/store` (with `store/exempt` and `store/reportsql`). Short names below (`scope`,
-`dn`, `store`) mean these packages. API sketches use neutral pseudo-signatures; Go, C#
+`internal/platform/secret`, `internal/connector/ad` (raw search, the closed general-search control set, scoped
+search and GC resolution: `search.go`, `scoped.go`, `gc.go`), `internal/directory/attr/unicodepwd` (`SecureConn`),
+`internal/connector/ad/scope` (**planned**: the escape-control named-operation table only, created by the first
+named operation that sets one, ADM-038 `RestoreDeleted`), `internal/connector/psx`, `internal/platform/pslit`, `internal/platform/proc`, and
+`internal/platform/store` (with `store/exempt` and `store/reportsql`). Short names below (`dn`, `store`) mean these packages; `scope` means the scoped-search layer of
+`internal/connector/ad` (`scoped.go`), not the planned escape-control table package. API sketches use neutral pseudo-signatures; Go, C#
 and TypeScript names illustrate the ratified stack. §10 lists what changes if ADR-0001 is amended.
 
 | Tier (ADR-0001) | P1 filter | P2 DN / ObjectRef | P3 codecs, `Secret` | P4 command | P5 SQL | P7 output |
@@ -162,8 +164,8 @@ codes `SyntaxError`, `TrailingInput`, `InvalidEscape`, `UnsupportedMatchingRule`
 read. Text input is strict: no surrounding whitespace, no second filter. Still to build: `scope` (LF-30–33,
 LF-35, LF-37–40).
 
-There is no public `Search(base, …)`. The raw connector search is internal to the `scope` package
-(§3.6), so a feature cannot choose a base, a control or a port.
+There is no public `Search(base, …)`. The raw connector search is internal to `internal/connector/ad`
+(`scope` layer, §3.6), so a feature cannot choose a base, a control or a port.
 
 ### 3.2 Canonical rendering
 
@@ -270,10 +272,10 @@ reveals whether an out-of-scope DN exists (LF-36).
   `SearchRequest` constructors of `System.DirectoryServices.Protocols` (BannedApiAnalyzers).
 - Literal-shape scanner (FF-SP3): string literals containing `(&(`, `(|(`, `(objectClass=`,
   `(sAMAccountName=` or `:1.2.840.113556.1.4.` outside `ldapfilter` and tests fail the build.
-- Raw search, control constructors and the GC port are confined to `internal/connector/ad/scope`
-  and `internal/connector/ldap` (FF-SP1). In go-ldap that means `Conn.Search`, `SearchWithPaging`, `NewSearchRequest`, `NewControl*`
+- Raw search, control constructors and the GC port are confined to `internal/connector/ad` (`search.go`,
+  `scoped.go`, `gc.go`) under the connector root (FF-SP1). In go-ldap that means `Conn.Search`, `SearchWithPaging`, `NewSearchRequest`, `NewControl*`
   and the literals `3268`/`3269`. The OID literal `1.2.840.113556.1.4.1504` and the other §3.6
-  escape-control OIDs may appear only in the named-operation table inside `scope` (LF-30).
+  escape-control OIDs may appear only in the named-operation table inside `internal/connector/ad/scope` (planned, LF-30; rule `escape-control-oid`, FF-SP2).
 
 ### 3.6 Scoped search: base, controls, referrals, Global Catalog
 
@@ -1205,7 +1207,7 @@ authoritative and FF-SP4 recomputes the counts.
 
 | FF | Check | Fails when |
 | --- | --- | --- |
-| FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only the connector root `internal/connector/`, with controls only in `internal/connector/ad/scope`); the SQL driver (only the data-access package `internal/platform/store`; generated `sqlcdb/` packages may import the other pgx packages, but not `pgxpool` or `pgx.Connect`/`ConnConfig`, blueprint §2); process APIs (only `internal/platform/proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). P7 adds: `encoding/csv` (only `export/csv`), the XLSX library (only `export/xlsx`), the PDF library (only `export/pdf`), `net/smtp`/`mime/multipart` (only `notify/mail`), any HTML-to-PDF or headless-browser module anywhere in product code (§12.3–§12.7). Enforced with depguard, BannedApiAnalyzers and clippy |
+| FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only the connector root `internal/connector/`, with the escape-control OIDs only in the planned `internal/connector/ad/scope` table); the SQL driver (only the data-access package `internal/platform/store`; generated `sqlcdb/` packages may import the other pgx packages, but not `pgxpool` or `pgx.Connect`/`ConnConfig`, blueprint §2); process APIs (only `internal/platform/proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). P7 adds: `encoding/csv` (only `export/csv`), the XLSX library (only `export/xlsx`), the PDF library (only `export/pdf`), `net/smtp`/`mime/multipart` (only `notify/mail`), any HTML-to-PDF or headless-browser module anywhere in product code (§12.3–§12.7). Enforced with depguard, BannedApiAnalyzers and clippy |
 | FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions, and (rule `asm-cgo`, T-0215) any non-Go native source (`.s .S .c .h .syso` and C++/Objective-C/Fortran/SWIG kin) or `import "C"` in product code: assembly can name any symbol with no `unsafe` import or linkname, and cgo leaves memory safety; tests and tier L are exempt for `import "C"`, tier L for native files, and `nativeHomes` is empty (a home needs a reviewed change). The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, old T-0033). `secretjson` enforces the §5.6 secret path of ADR-0004 rule 6: a decode into a `Secret`-bearing type only through `secretjson.Decode` (nested calls in generated `UnmarshalJSONFrom` methods excepted, as they inherit its options); `secretjson.Decode` called only from `apihost`; no `ReadToken`/`Token.String` in a `Secret` decoder, which must use `ReadValue`. The v1 `encoding/json` import and v1 JSON methods on contract types are banned by `fitness-api` A7, not here; the clean-up (`destroySecrets`, `clear(buf)`) is asserted by A7's per-operation corpus. P7 adds the §12.4–§12.7 lists (`text/template`, typed-string conversions outside `htmlx`, the `tmplconst` pass, `jsontext.EscapeForHTML(false)`/`EscapeForJS(false)` (§12.5 rule 7), `Content-Disposition` outside `httpx` (the literal by scan, any constant-folded spelling, including across files and packages, by the go/types pass `constdisp`, `odataname`, `graph-url-assembly`), XLSX formula/hyperlink/VBA setters, PDF link/JavaScript/attachment/page-import APIs) |
 | FF-SP3 | Literal-shape scanner | filter-, DN-, PowerShell- or SQL-shaped literals combined with concatenation or formatting outside primitive packages and tests. **`web/` is covered too**: TS/TSX template literals or concatenations containing `CN=`, `OU=`, `DC=`, `(&(`, `(\|(` or `(objectClass=`; quote doubling (`replace(/'/g, "''")`, `replaceAll("'", "''")`); `.split(',')`, `.endsWith(` or `.includes(` on a value named `dn`/`distinguishedName`; P7's §12.5 W1/W2 ESLint rules and CSV/XLSX `Blob`s. **P7 shapes in Go:** formula-lead `HasPrefix` checks outside `cellsafe`, joined CSV rows, `"text/csv"`/`".csv"` outside `export/csv`/`httpx`, HTML-shaped literals outside `htmlx`, mail-header literals outside `notify/mail` (§12.2–§12.6). Tier L is exempt (§2.1). Tool: Semgrep or ast-grep, chosen by devops-engineer via the licence register |
 | FF-SP4 | Corpus gate | a **unit** (§8 list) has < 10 records with `"hostile": true`; an implementation skips records of a unit it implements; a record disappears without a superseding one |

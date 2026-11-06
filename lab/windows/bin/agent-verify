@@ -112,7 +112,7 @@ if(-not (Test-Path C:\\lab\\tools\\wix\\wix.exe)){{ & C:\\lab\\tools\\dotnet\\do
     dc.put(os.path.join(REPO, "lab", "windows", "guest", "agent-verify.ps1"), "C:\\lab\\build\\agent-verify.ps1")
     rc, out = dc.ps(f"""
 $env:DOTNET_ROOT='C:\\lab\\tools\\dotnet'; $env:PATH='C:\\lab\\tools\\dotnet;'+$env:PATH; cd C:\\lab\\build
-& C:\\lab\\tools\\wix\\wix.exe build Agent.wxs -ext WixToolset.Util.wixext -d Version={a.version} -d AgentExe=C:\\lab\\build\\activediq-agent.exe -d SetupExe=C:\\lab\\build\\agentsetup.exe -arch x64 -o activediq-agent-{a.version}.msi 2>&1
+& C:\\lab\\tools\\wix\\wix.exe build Agent.wxs -ext WixToolset.Util.wixext -d Version={a.version} -d AgentExe=C:\\lab\\build\\activediq-agent.exe -d SetupExe=C:\\lab\\build\\agentsetup.exe -arch x64 -wx -sw1149 -o activediq-agent-{a.version}.msi 2>&1
 "msi sha256 " + (Get-FileHash activediq-agent-{a.version}.msi).Hash""")
     print(out.strip(), file=sys.stderr)
     hashes = "\n".join(f"sha256 {hashlib.sha256(open(os.path.join(work, n), 'rb').read()).hexdigest()} {n}"
