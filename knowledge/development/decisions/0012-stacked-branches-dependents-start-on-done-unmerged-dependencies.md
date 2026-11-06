@@ -2,7 +2,10 @@
 title: "ADR-0012: A dependent ticket may start on a done-but-unmerged dependency as a stacked branch; it merges only after its dependency, and a failed dependency gate invalidates the stack"
 date: 2026-11-06
 updated: 2026-11-06
-status: proposed
+status: ratified
+ratified_on: 2026-11-06
+ratified_by: factory-director
+decision: D-0030
 owner: heramb
 kind: technical
 ticket: T-1705
@@ -11,7 +14,7 @@ fitness: fitness-merge-order
 
 # ADR-0012: Dependents start on a done-but-unmerged dependency as a stacked branch; merge order is enforced, and a failed gate invalidates the stack
 
-**Status:** proposed. Becomes `ratified` at factory-director review of T-1705, and `accepted` only when `fitness-merge-order` (M1–M5 below) runs green in `make ci`.
+**Status:** ratified 2026-11-06 by factory-director at T-1705 review (notice D-0030), and `accepted` only when `fitness-merge-order` (M1–M5 below) runs green in `make ci`.
 **Kind:** technical. It changes factory workflow, nothing a customer or the brand sees. Notice to the CEO, who asked for it.
 **Deciders:** solution-architect (author); factory-director (ratifier). **Ticket:** T-1705.
 
