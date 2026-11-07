@@ -1,0 +1,61 @@
+dc1 lock held by pid 830790 for the whole run, waited 268s
+sha256 ff87bc300b5a2da51d5c7245650de1cdea1265fb81a0972b060265831302531e activediq-agent.exe
+sha256 46ed3dcf2e4e48c493f69b25e702836a3b7425c70b9473c582527743a7b16447 agentsetup.exe
+INFO os: Microsoft Windows Server 2025 Standard Evaluation build 26100; logical processors 4; RAM MiB 8171
+INFO Security maxSize before: 536870912; baseline channelAccess: O:BAG:SYD:(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+CASE T0-clean PASS no service-SID ACE and no log-access policy before the run
+CASE I1-install PASS msiexec exit 0; service-SID ACE in Security channelAccess: True
+CASE I2-readable-as-service PASS Security read as NT SERVICE\activeDIQAgent through the agent's event source: readable events=329654
+INFO elevated-admin run output: activediq-agent.exe : agent: agent: process token holds privileges outside the pinned list: SeBackupPrivilege, SeCreateGlobalPrivilege, SeCreatePagefilePrivilege, SeCreateSymbolicLinkPrivilege, SeDebugPrivilege, SeDelegateSessionUserImpersonatePrivilege, SeEnableDelegationPrivilege, SeImpersonatePrivilege, SeIncreaseBasePriorityPrivilege, SeIncreaseQuotaPrivilege, SeIncreaseWorkingSetPrivilege, SeLoadDriverPrivilege, SeMachineAccountPrivilege, SeManageVolumePrivilege, SeProfileSingleProcessPrivilege, SeRemoteShutdownPrivilege, SeRestorePrivilege, SeSecurityPrivilege, SeShutdownPrivilege, SeSystemEnvironmentPrivilege, SeSystemProfilePrivilege, SeSystemtimePrivilege, SeTakeOwnershipPrivilege, SeTimeZonePrivilege, SeUndockPrivilege At C:\lab\build\agent-t0557.ps1:100 char:6 + $o = & $AgentExe 2>&1 | Out-String + ~~~~~~~~~~~~~~~~ + CategoryInfo : NotSpecified: (agent: agent: p...UndockPrivilege:String) [], Remote Exception + FullyQualifiedErrorId : NativeCommandError
+CASE P1-admin-token-refused PASS activediq-agent.exe from an elevated administrator token exited 1
+CASE P2-refusal-names-extras PASS the refusal names the extra privileges
+INFO admin token privileges (for contrast): SeIncreaseQuotaPrivilege SeMachineAccountPrivilege SeSecurityPrivilege SeTakeOwnershipPrivilege SeLoadDriverPrivilege SeSystemProfilePrivilege SeSystemtimePrivilege SeProfileSingleProcessPrivilege SeIncreaseBasePriorityPrivilege SeCreatePagefilePrivilege SeBackupPrivilege SeRestorePrivilege SeShutdownPrivilege SeDebugPrivilege SeSystemEnvironmentPrivilege SeChangeNotifyPrivilege SeRemoteShutdownPrivilege SeUndockPrivilege SeEnableDelegationPrivilege SeManageVolumePrivilege SeImpersonatePrivilege SeCreateGlobalPrivilege SeIncreaseWorkingSetPrivilege SeTimeZonePrivilege SeCreateSymbolicLinkPrivilege SeDelegateSessionUserImpersonatePrivilege
+INFO gpupdate: Updating policy... Computer Policy update has completed successfully.
+INFO after-gpo-without-service-ace policy.ChannelAccess=O:BAG:SYD:(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+INFO after-gpo-without-service-ace wevtutil.channelAccess=O:BAG:SYD:(A;;CC;;;S-1-5-80-3803417868-3083394944-3978303958-4174658546-1200079750)(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+CASE G4-live-gpo-has-no-immediate-effect PASS characterisation: a real GPO whose ChannelAccess lacks the service SID, gpupdate done: the service identity stayed readable for 60 s (became unreadable after: -1 s; -1 = never) and wevtutil still reports the MSI ACE: True. Mode gpo-restart shows when it does apply
+CASE G4-policy-value-written PASS gpupdate wrote the GPO value to the Policies key
+INFO after-gpo-edited-to-name-service-sid policy.ChannelAccess=O:BAG:SYD:(A;;CC;;;S-1-5-80-3803417868-3083394944-3978303958-4174658546-1200079750)(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+INFO after-gpo-edited-to-name-service-sid wevtutil.channelAccess=O:BAG:SYD:(A;;CC;;;S-1-5-80-3803417868-3083394944-3978303958-4174658546-1200079750)(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+CASE G5-policy-value-follows-edit PASS edited GPO value (includes the service SID) is in the Policies key and the service identity reads
+INFO after-gpo-removed policy.ChannelAccess=<absent>
+INFO after-gpo-removed wevtutil.channelAccess=O:BAG:SYD:(A;;CC;;;S-1-5-80-3803417868-3083394944-3978303958-4174658546-1200079750)(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+CASE G6-gpo-removed-value-cleared PASS GPO deleted + gpupdate: policy value absent=True; MSI ACE in configuration=True; service identity reads
+INFO GPO left behind: 0; policy value present: False
+=== RUN   TestLabJobLimitsReadBack
+LAB priority class=0x4000 below_normal=true
+LAB job limit_flags=0x120 process_memory_limit=true process_memory_limit_mib=256.0 workingset_limit=false
+LAB commit_probe commit_128mib_ok=true commit_300mib_ok=false commit_300mib_err=The paging file is too small for this operation to complete.
+--- PASS: TestLabJobLimitsReadBack (0.00s)
+PASS
+CASE R-TestLabJobLimitsReadBack PASS see LAB lines above
+=== RUN   TestLabCPUCapMeasured
+LAB cpu_cap logical_cpus=4 wall_s=12.6 cpu_s=2.67 pct_of_all_cpus=5.30 pct_of_one_core=21.2
+--- PASS: TestLabCPUCapMeasured (12.60s)
+PASS
+CASE R-TestLabCPUCapMeasured PASS see LAB lines above
+INFO load threads=8 BASELINE (no agent): logons_ok=4680 logons_failed=0 secs=20 logons_per_s=234 lat_mean_ms=32.50 lat_p95_ms=36.60 lat_p99_ms=47.15; security events written 22533
+INFO load threads=8 WITH AGENT: logons_ok=13349 logons_failed=0 secs=60 logons_per_s=222 lat_mean_ms=34.42 lat_p95_ms=43.81 lat_p99_ms=54.50; security events written 58823; catalogue-id events in the log for the window 58822 (by id: 4769=11766 4768=11766 4634=11765 4648=11763 4624=11762 4672=1)
+LAB ready
+LAB load logical_cpus=4 wall_s=60.8 cpu_s=0.27 avg_pct_of_all_cpus=0.11 worst_1s_pct=0.39 peak_working_set_mib=19.6 peak_private_mib=53.7 outbox_records=0 outbox_dropped=0 outbox_write_errors=0 last_seq=321 delivered_to_drain=321 events_per_s_delivered=5 policy_rate_cap=3000 collected=321 throttled=0 gaps=0
+--- PASS: TestLabResourceLoad (195.07s)
+PASS
+CASE R-load-8 PASS TestLabResourceLoad with 8 generator threads (numbers above)
+INFO load threads=24 BASELINE (no agent): logons_ok=4711 logons_failed=0 secs=20 logons_per_s=236 lat_mean_ms=64.07 lat_p95_ms=120.84 lat_p99_ms=135.98; security events written 20284
+INFO load threads=24 WITH AGENT: logons_ok=14727 logons_failed=0 secs=60 logons_per_s=245 lat_mean_ms=88.72 lat_p95_ms=108.59 lat_p99_ms=128.95; security events written 58646; catalogue-id events in the log for the window 58645 (by id: 4768=11741 4769=11741 4634=11721 4624=11721 4648=11720 4776=1 4672=1)
+LAB ready
+LAB load logical_cpus=4 wall_s=60.1 cpu_s=0.19 avg_pct_of_all_cpus=0.08 worst_1s_pct=0.78 peak_working_set_mib=18.1 peak_private_mib=52.5 outbox_records=68 outbox_dropped=0 outbox_write_errors=0 last_seq=148 delivered_to_drain=147 events_per_s_delivered=2 policy_rate_cap=3000 collected=148 throttled=0 gaps=0
+--- PASS: TestLabResourceLoad (186.55s)
+PASS
+CASE R-load-24 PASS TestLabResourceLoad with 24 generator threads (numbers above)
+INFO catch-up window: Security record ids 51516 .. 568918
+=== RUN   TestLabResourceCatchUp
+LAB catchup logical_cpus=4 after_record=51516 last_record=461207 collected=344084 throttled=0 gaps=0 wall_s=595.8 cpu_s=107.36 events_per_s=578 pct_of_all_cpus=4.51 cpu_us_per_event=312 peak_working_set_mib=21.9 peak_private_mib=54.6 outbox_records=107993 outbox_dropped=0 delivered_to_drain=343833
+--- PASS: TestLabResourceCatchUp (761.72s)
+PASS
+CASE R-catchup PASS TestLabResourceCatchUp (LAB catchup line above)
+INFO lab user removed: True; Security maxSize restored to maxSize: 536870912
+CASE Z-restored PASS channelAccess back to baseline, no policy value, no agent data
+CASE Z-dc-healthy PASS DC services running
+SUMMARY failures=0
+

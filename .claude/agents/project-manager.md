@@ -2,7 +2,7 @@
 name: project-manager
 description: "Use for backlog grooming, breaking specs and epics into Ready tickets, sequencing dependencies, sprint and milestone plans, the daily digest and weekly review, and the risk register. Owns HOW and WHEN work flows through the factory. Not for deciding what to build or writing acceptance criteria from scratch (use product-manager), architecture (use solution-architect), or CEO decisions and unblocking (use factory-director)."
 model: sonnet
-effort: high
+effort: medium
 tools: Read, Grep, Glob, Bash, Edit, Write, WebSearch, WebFetch, Agent
 skills:
   - factory-protocol

@@ -2,7 +2,7 @@
 name: reporting-engineer
 description: "Use for the report engine and everything on it — report definitions, query execution over collected directory and audit data, parameters and filters, scheduling and delivery, exports (CSV, XLSX, PDF, HTML), and dashboards and their widgets. Owns that every number activeDIQ reports is correct, traceable and fast. Not for collecting data from directories or event logs (use directory-engineer), report screens' page layout (use frontend-engineer), or the meaning of AD attributes (use ad-expert)."
 model: sonnet
-effort: high
+effort: medium
 skills:
   - factory-protocol
   - handoff
