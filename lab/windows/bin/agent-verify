@@ -12,6 +12,11 @@ Runbook: knowledge/development/runbooks/windows-lab.md sections 10 and 13.
 import argparse, base64, hashlib, os, subprocess, sys, tempfile, time
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, os.path.join(REPO, "lab", "windows", "lib"))
+from labaddr import require_dc_addr  # noqa: E402
+
+# No default DC address (T-1279): fail before the dc1 lock, the build and any connection.
+DC_ADDR = require_dc_addr("agent-verify", REPO)
 
 # dc1 is shared by many tickets and this run reboots/installs/clears logs on it: hold the dc1 lock for the
 # whole run (T-0839, runbook section 10). Re-exec under the wrapper; the nested copy sees DIQ_DC1_LOCK_HELD.
@@ -82,7 +87,7 @@ def main():
     ap.add_argument("--version", default="0.0.1")
     a = ap.parse_args()
     env = load_env()
-    dc = DC(env.get("WIN_LAB_DC_ADDR", "192.168.1.250"), env["WIN_LAB_ADMIN_PASSWORD"])
+    dc = DC(DC_ADDR, env["WIN_LAB_ADMIN_PASSWORD"])
     work = tempfile.mkdtemp(prefix="agent-verify-")
     genv = dict(os.environ, GOOS="windows", GOARCH="amd64", CGO_ENABLED="0")
     for name, pkg in (("activediq-agent.exe", "./cmd/agent"), ("agentsetup.exe", "./cmd/agentsetup")):
@@ -107,7 +112,7 @@ if(-not (Test-Path C:\\lab\\tools\\wix\\wix.exe)){{ & C:\\lab\\tools\\dotnet\\do
     dc.put(os.path.join(REPO, "lab", "windows", "guest", "agent-verify.ps1"), "C:\\lab\\build\\agent-verify.ps1")
     rc, out = dc.ps(f"""
 $env:DOTNET_ROOT='C:\\lab\\tools\\dotnet'; $env:PATH='C:\\lab\\tools\\dotnet;'+$env:PATH; cd C:\\lab\\build
-& C:\\lab\\tools\\wix\\wix.exe build Agent.wxs -ext WixToolset.Util.wixext -d Version={a.version} -d AgentExe=C:\\lab\\build\\activediq-agent.exe -d SetupExe=C:\\lab\\build\\agentsetup.exe -arch x64 -o activediq-agent-{a.version}.msi 2>&1
+& C:\\lab\\tools\\wix\\wix.exe build Agent.wxs -ext WixToolset.Util.wixext -d Version={a.version} -d AgentExe=C:\\lab\\build\\activediq-agent.exe -d SetupExe=C:\\lab\\build\\agentsetup.exe -arch x64 -wx -sw1149 -o activediq-agent-{a.version}.msi 2>&1
 "msi sha256 " + (Get-FileHash activediq-agent-{a.version}.msi).Hash""")
     print(out.strip(), file=sys.stderr)
     hashes = "\n".join(f"sha256 {hashlib.sha256(open(os.path.join(work, n), 'rb').read()).hexdigest()} {n}"

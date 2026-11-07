@@ -36,6 +36,10 @@ type ReadOptions struct {
 	MaxValues int
 	// ShowDeleted sends the show-deleted control, so a deleted object can be read by GUID.
 	ShowDeleted bool
+	// ExtendedDN asks for extended DNs (<GUID=…>;<SID=…>;dn) in DN-syntax values, on the first
+	// request and on every range follow-up, so member values beyond the first range carry identity
+	// too. Entry.DN stays plain.
+	ExtendedDN bool
 }
 
 // Read reads one object by DN or GUID (base-scope search) and follows ranged attributes to the
@@ -90,6 +94,9 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 	if opts.ShowDeleted {
 		ctrls = append(ctrls, deletedControls()...)
 	}
+	if opts.ExtendedDN {
+		ctrls = append(ctrls, extendedDN{})
+	}
 
 	req := make([]string, len(names))
 	for i, n := range names {
@@ -114,7 +121,7 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 	if len(res.Entries) != 1 {
 		return nil, fail(CodeObjectNotFound, "", nil)
 	}
-	ent := newEntry(res.Entries[0].DN)
+	ent := newEntry(plainDN(res.Entries[0].DN))
 	pending := map[string]int{} // base name -> next range start still to fetch
 	asked := make(map[string]struct{}, len(names))
 	for _, n := range names {
@@ -123,6 +130,10 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 	absorb := func(raw *ldap.Entry) { absorbEntry(ent, pending, asked, raw) }
 	absorb(res.Entries[0])
 
+	var followCtrls []ldap.Control
+	if opts.ExtendedDN {
+		followCtrls = []ldap.Control{extendedDN{}}
+	}
 	// Follow ranges to the terminal "*" range, bounded by the value ceiling and a round-trip cap.
 	for round := 0; len(pending) > 0 && round < maxRangeRequests; round++ {
 		var next []string
@@ -138,7 +149,7 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 			break
 		}
 		clear(pending)
-		r, err := s.searchOnceLocked(ctx, base, ldap.ScopeBaseObject, objectClassPresent, next, nil)
+		r, err := s.searchOnceLocked(ctx, base, ldap.ScopeBaseObject, objectClassPresent, next, followCtrls)
 		if err != nil {
 			return nil, err
 		}
