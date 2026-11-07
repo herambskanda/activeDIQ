@@ -538,7 +538,7 @@ func (v *ReportCellInteger) Validate(at jsontext.Pointer, errs *apitypes.Errors)
 	}
 }
 
-// ReportCellNever: The value can never exist for this object, as distinct from absent (not yet set).
+// ReportCellNever: The value can never exist for this object, as distinct from absent (not yet set). In the SYS-01 policy columns it is the policy's own no-limit setting, read from 0 or the minimum signed 64-bit value by the 2a codec: in max_age it is "Never expires", in lockout_threshold "Never locks", in lockout_duration "Until an administrator unlocks". The column says which; no other policy column carries it. For a client that compares policies, such a cell is the loosest value of its column, not the smallest number: it is never an integer 0 and must not be ordered as one.
 type ReportCellNever struct {
 	Kind string `json:"kind"`
 
@@ -919,7 +919,7 @@ func (v *ReportChoice) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 }
 
-// ReportColumnId: A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8).
+// ReportColumnId: A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8). Policy columns (SYS-01, one row per policy, rowKey the policy GUID): policy_name (text); policy_kind (enum domain or pso, the ReportPolicyKindValue); precedence (integer, count; absent on the domain row); applies_to_count (integer, count of direct targets in the runner's scope, 0 for a PSO with none, absent on the domain row); applies_to_first (textList, the first two target names by name order, empty when none; the full list is listReportRunPolicyTargets); min_length, history_length, lockout_threshold (integer, count); max_age, min_age, lockout_duration, lockout_window (integer, seconds; max_age, lockout_threshold and lockout_duration are a never cell when the policy sets no limit, see ReportCellNever); complexity and reversible_encryption (boolean). A value that was not read is an unknown cell, never 0 or false. Deltas against the domain row are computed by the client from these typed cells (the unit is on the column); the server sends no delta text.
 type ReportColumnId string
 
 const (
@@ -974,12 +974,26 @@ const (
 	ReportColumnIdOtherObjects           ReportColumnId = "other_objects"
 	ReportColumnIdObjectsInSubtree       ReportColumnId = "objects_in_subtree"
 	ReportColumnIdEmail                  ReportColumnId = "email"
+	ReportColumnIdPolicyName             ReportColumnId = "policy_name"
+	ReportColumnIdPolicyKind             ReportColumnId = "policy_kind"
+	ReportColumnIdPrecedence             ReportColumnId = "precedence"
+	ReportColumnIdAppliesToCount         ReportColumnId = "applies_to_count"
+	ReportColumnIdAppliesToFirst         ReportColumnId = "applies_to_first"
+	ReportColumnIdMinLength              ReportColumnId = "min_length"
+	ReportColumnIdHistoryLength          ReportColumnId = "history_length"
+	ReportColumnIdMaxAge                 ReportColumnId = "max_age"
+	ReportColumnIdMinAge                 ReportColumnId = "min_age"
+	ReportColumnIdComplexity             ReportColumnId = "complexity"
+	ReportColumnIdReversibleEncryption   ReportColumnId = "reversible_encryption"
+	ReportColumnIdLockoutThreshold       ReportColumnId = "lockout_threshold"
+	ReportColumnIdLockoutDuration        ReportColumnId = "lockout_duration"
+	ReportColumnIdLockoutWindow          ReportColumnId = "lockout_window"
 )
 
 // Valid reports whether v is one of the closed set of values.
 func (v ReportColumnId) Valid() bool {
 	switch v {
-	case ReportColumnIdName, ReportColumnIdLogonName, ReportColumnIdUPN, ReportColumnIdStatus, ReportColumnIdDomain, ReportColumnIdOUPath, ReportColumnIdManager, ReportColumnIdCreated, ReportColumnIdAccountExpires, ReportColumnIdDaysToExpiry, ReportColumnIdLastLogon, ReportColumnIdDaysSince, ReportColumnIdProbableServiceAccount, ReportColumnIdRealLastLogon, ReportColumnIdFromDc, ReportColumnIdDcCoverage, ReportColumnIdLockedOutSince, ReportColumnIdLockoutEnds, ReportColumnIdPolicySource, ReportColumnIdDataAsOf, ReportColumnIdPasswordLastSet, ReportColumnIdPasswordExpires, ReportColumnIdPasswordState, ReportColumnIdLastFailedLogon, ReportColumnIdFailuresOnDc, ReportColumnIdGroupType, ReportColumnIdGroupScope, ReportColumnIdDirectMembers, ReportColumnIdEffectiveMembers, ReportColumnIdManagedBy, ReportColumnIdGroup, ReportColumnIdMember, ReportColumnIdMemberType, ReportColumnIdMembershipKind, ReportColumnIdVia, ReportColumnIdUser, ReportColumnIdPrimaryGroup, ReportColumnIdDnsName, ReportColumnIdComputerType, ReportColumnIdOperatingSystem, ReportColumnIdOsVersion, ReportColumnIdDelegation, ReportColumnIdLastActivity, ReportColumnIdActivitySource, ReportColumnIdPath, ReportColumnIdUsers, ReportColumnIdComputers, ReportColumnIdGroups, ReportColumnIdOtherObjects, ReportColumnIdObjectsInSubtree, ReportColumnIdEmail:
+	case ReportColumnIdName, ReportColumnIdLogonName, ReportColumnIdUPN, ReportColumnIdStatus, ReportColumnIdDomain, ReportColumnIdOUPath, ReportColumnIdManager, ReportColumnIdCreated, ReportColumnIdAccountExpires, ReportColumnIdDaysToExpiry, ReportColumnIdLastLogon, ReportColumnIdDaysSince, ReportColumnIdProbableServiceAccount, ReportColumnIdRealLastLogon, ReportColumnIdFromDc, ReportColumnIdDcCoverage, ReportColumnIdLockedOutSince, ReportColumnIdLockoutEnds, ReportColumnIdPolicySource, ReportColumnIdDataAsOf, ReportColumnIdPasswordLastSet, ReportColumnIdPasswordExpires, ReportColumnIdPasswordState, ReportColumnIdLastFailedLogon, ReportColumnIdFailuresOnDc, ReportColumnIdGroupType, ReportColumnIdGroupScope, ReportColumnIdDirectMembers, ReportColumnIdEffectiveMembers, ReportColumnIdManagedBy, ReportColumnIdGroup, ReportColumnIdMember, ReportColumnIdMemberType, ReportColumnIdMembershipKind, ReportColumnIdVia, ReportColumnIdUser, ReportColumnIdPrimaryGroup, ReportColumnIdDnsName, ReportColumnIdComputerType, ReportColumnIdOperatingSystem, ReportColumnIdOsVersion, ReportColumnIdDelegation, ReportColumnIdLastActivity, ReportColumnIdActivitySource, ReportColumnIdPath, ReportColumnIdUsers, ReportColumnIdComputers, ReportColumnIdGroups, ReportColumnIdOtherObjects, ReportColumnIdObjectsInSubtree, ReportColumnIdEmail, ReportColumnIdPolicyName, ReportColumnIdPolicyKind, ReportColumnIdPrecedence, ReportColumnIdAppliesToCount, ReportColumnIdAppliesToFirst, ReportColumnIdMinLength, ReportColumnIdHistoryLength, ReportColumnIdMaxAge, ReportColumnIdMinAge, ReportColumnIdComplexity, ReportColumnIdReversibleEncryption, ReportColumnIdLockoutThreshold, ReportColumnIdLockoutDuration, ReportColumnIdLockoutWindow:
 		return true
 	}
 	return false
@@ -992,7 +1006,7 @@ func (v ReportColumnId) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 }
 
-// ReportColumnInfo: A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes.
+// ReportColumnInfo: A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes. unit is present on an integer column that measures something, so a client can compare and format its cells without parsing text.
 type ReportColumnInfo struct {
 	Choices         []ReportChoice              `json:"choices"`
 	DefaultVisible  bool                        `json:"defaultVisible"`
@@ -1002,6 +1016,7 @@ type ReportColumnInfo struct {
 	Label           string                      `json:"label"`
 	Sortable        bool                        `json:"sortable"`
 	Type            ReportColumnTypeValue       `json:"type"`
+	Unit            *ReportColumnUnitValue      `json:"unit,omitzero"`
 
 	p apitypes.Presence
 }
@@ -1119,6 +1134,18 @@ func (v *ReportColumnInfo) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.Type); err != nil {
 				return err
 			}
+		case "unit":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(8, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Unit); err != nil {
+				return err
+			}
 		default:
 			return apitypes.UnknownMember(d)
 		}
@@ -1218,6 +1245,10 @@ func (v *ReportColumnInfo) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 			errs.NullNotAllowed(at, "type")
 		}
 	}
+	// unit
+	if v.p.Decoded() && v.p.IsNull(8) {
+		errs.NullNotAllowed(at, "unit")
+	}
 }
 
 // ReportColumnTypeValue: What a column holds, which decides the operators it takes.
@@ -1236,6 +1267,24 @@ const (
 func (v ReportColumnTypeValue) Valid() bool {
 	switch v {
 	case ReportColumnTypeValueText, ReportColumnTypeValueInteger, ReportColumnTypeValueBoolean, ReportColumnTypeValueTime, ReportColumnTypeValueEnum:
+		return true
+	}
+	return false
+}
+
+// ReportColumnUnitValue: What an integer column counts. count: a number of things (characters, remembered passwords, failed attempts, targets) or a rank (precedence). seconds: a length of time in whole seconds (maximum and minimum password age, lockout duration and observation window); the cell is the exact value, the console formats it.
+type ReportColumnUnitValue string
+
+const (
+	ReportColumnUnitValueCount   ReportColumnUnitValue = "count"
+	ReportColumnUnitValueSeconds ReportColumnUnitValue = "seconds"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportColumnUnitValue) Valid() bool {
+	switch v {
+	case ReportColumnUnitValueCount, ReportColumnUnitValueSeconds:
 		return true
 	}
 	return false
@@ -5062,6 +5111,1193 @@ func (v *ReportPeriodRange) Validate(at jsontext.Pointer, errs *apitypes.Errors)
 	}
 }
 
+// ReportPolicyDomainNoneExist: The container was read and holds no fine-grained policy: a real zero, true at readAt. Only the domain policy row exists for this domain. It is never sent for a container that could not be read.
+type ReportPolicyDomainNoneExist struct {
+	DomainID           apitypes.UUID      `json:"domainId"`
+	DomainName         string             `json:"domainName"`
+	DomainPolicyRowKey apitypes.UUID      `json:"domainPolicyRowKey"`
+	Kind               string             `json:"kind"`
+	ReadAt             apitypes.Timestamp `json:"readAt"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportPolicyDomainNoneExist) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportPolicyDomainNoneExist{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "domainId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DomainID); err != nil {
+				return err
+			}
+		case "domainName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DomainName); err != nil {
+				return err
+			}
+		case "domainPolicyRowKey":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DomainPolicyRowKey); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "readAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ReadAt); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportPolicyDomainNoneExist) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// domainId
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "domainId")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "domainId")
+		}
+	}
+	// domainName
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "domainName")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "domainName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("domainName"), string(v.DomainName), 1, 255)
+	}
+	// domainPolicyRowKey
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "domainPolicyRowKey")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "domainPolicyRowKey")
+		}
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		if v.Kind != "none_exist" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+	// readAt
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "readAt")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "readAt")
+		}
+	}
+}
+
+// ReportPolicyDomainRead: The read of one domain's Password Settings Container. Three kinds, never collapsed: readable (the container was read and holds at least one policy), none_exist (the container was read and is empty: a real zero) and unreadable (it could not be read, so how many policies exist is not known).
+type ReportPolicyDomainRead struct {
+	// Kind is the discriminator; exactly one variant pointer is set, the one Kind names.
+	Kind       string
+	NoneExist  *ReportPolicyDomainNoneExist
+	Readable   *ReportPolicyDomainReadable
+	Unreadable *ReportPolicyDomainUnreadable
+}
+
+// UnmarshalJSONFrom reads the value, takes its kind, and decodes the variant with the caller's
+// options, so the variant's own strict decoder applies.
+func (u *ReportPolicyDomainRead) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*u = ReportPolicyDomainRead{}
+	val, err := d.ReadValue()
+	if err != nil {
+		return err
+	}
+	prefix := d.StackPointer()
+	kind, err := apitypes.UnionKind(prefix, val)
+	if err != nil {
+		return err
+	}
+	switch kind {
+	case "none_exist":
+		var x ReportPolicyDomainNoneExist
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.NoneExist = kind, &x
+	case "readable":
+		var x ReportPolicyDomainReadable
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Readable = kind, &x
+	case "unreadable":
+		var x ReportPolicyDomainUnreadable
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Unreadable = kind, &x
+	default:
+		return apitypes.UnknownKind(prefix)
+	}
+	return nil
+}
+
+// MarshalJSONTo writes the one variant that is set, with its kind.
+func (u ReportPolicyDomainRead) MarshalJSONTo(e *jsontext.Encoder) error {
+	n := 0
+	if u.NoneExist != nil {
+		n++
+	}
+	if u.Readable != nil {
+		n++
+	}
+	if u.Unreadable != nil {
+		n++
+	}
+	if n != 1 {
+		return apitypes.ErrUnionVariants
+	}
+	switch {
+	case u.NoneExist != nil:
+		c := *u.NoneExist
+		c.Kind = "none_exist"
+		return json.MarshalEncode(e, &c)
+	case u.Readable != nil:
+		c := *u.Readable
+		c.Kind = "readable"
+		return json.MarshalEncode(e, &c)
+	case u.Unreadable != nil:
+		c := *u.Unreadable
+		c.Kind = "unreadable"
+		return json.MarshalEncode(e, &c)
+	}
+	return nil
+}
+
+// Validate validates the variant that is set.
+func (u *ReportPolicyDomainRead) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	switch u.Kind {
+	case "none_exist":
+		if u.NoneExist == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.NoneExist.Validate(at, errs)
+	case "readable":
+		if u.Readable == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Readable.Validate(at, errs)
+	case "unreadable":
+		if u.Unreadable == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Unreadable.Validate(at, errs)
+	default:
+		errs.AddBody(at.AppendToken("kind"), apitypes.CodeKind, "unknown kind")
+	}
+}
+
+// ReportPolicyDomainReadable: The container was read. psoCount is the number of fine-grained policies in it that the runner's scope shows, at least 1; the rows hold each of them. readAt is the policy sync read time.
+type ReportPolicyDomainReadable struct {
+	DomainID           apitypes.UUID      `json:"domainId"`
+	DomainName         string             `json:"domainName"`
+	DomainPolicyRowKey apitypes.UUID      `json:"domainPolicyRowKey"`
+	Kind               string             `json:"kind"`
+	PsoCount           int64              `json:"psoCount"`
+	ReadAt             apitypes.Timestamp `json:"readAt"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportPolicyDomainReadable) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportPolicyDomainReadable{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "domainId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DomainID); err != nil {
+				return err
+			}
+		case "domainName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DomainName); err != nil {
+				return err
+			}
+		case "domainPolicyRowKey":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DomainPolicyRowKey); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "psoCount":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.PsoCount); err != nil {
+				return err
+			}
+		case "readAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ReadAt); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportPolicyDomainReadable) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// domainId
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "domainId")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "domainId")
+		}
+	}
+	// domainName
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "domainName")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "domainName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("domainName"), string(v.DomainName), 1, 255)
+	}
+	// domainPolicyRowKey
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "domainPolicyRowKey")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "domainPolicyRowKey")
+		}
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		if v.Kind != "readable" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+	// psoCount
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "psoCount")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "psoCount")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(4) && !v.p.IsNull(4)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("psoCount"), int64(v.PsoCount), 1, 9007199254740991)
+	}
+	// readAt
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "readAt")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "readAt")
+		}
+	}
+}
+
+// ReportPolicyDomainUnreadable: The container could not be read, so whether this domain has fine-grained policies is not known. containerName is the container as the console names it (Password Settings Container) and reason says why. readAt is when the attempt was made, absent when none was (reason not_read). The domain policy row is still present and is the only policy shown for this domain.
+type ReportPolicyDomainUnreadable struct {
+	ContainerName      string                            `json:"containerName"`
+	DomainID           apitypes.UUID                     `json:"domainId"`
+	DomainName         string                            `json:"domainName"`
+	DomainPolicyRowKey apitypes.UUID                     `json:"domainPolicyRowKey"`
+	Kind               string                            `json:"kind"`
+	ReadAt             *apitypes.Timestamp               `json:"readAt,omitzero"`
+	Reason             ReportPolicyUnreadableReasonValue `json:"reason"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportPolicyDomainUnreadable) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportPolicyDomainUnreadable{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "containerName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ContainerName); err != nil {
+				return err
+			}
+		case "domainId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DomainID); err != nil {
+				return err
+			}
+		case "domainName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DomainName); err != nil {
+				return err
+			}
+		case "domainPolicyRowKey":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DomainPolicyRowKey); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "readAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ReadAt); err != nil {
+				return err
+			}
+		case "reason":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Reason); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportPolicyDomainUnreadable) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// containerName
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "containerName")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "containerName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("containerName"), string(v.ContainerName), 1, 255)
+	}
+	// domainId
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "domainId")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "domainId")
+		}
+	}
+	// domainName
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "domainName")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "domainName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("domainName"), string(v.DomainName), 1, 255)
+	}
+	// domainPolicyRowKey
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "domainPolicyRowKey")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "domainPolicyRowKey")
+		}
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(4) && !v.p.IsNull(4)) {
+		if v.Kind != "unreadable" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+	// readAt
+	if v.p.Decoded() && v.p.IsNull(5) {
+		errs.NullNotAllowed(at, "readAt")
+	}
+	// reason
+	if v.p.Decoded() {
+		if !v.p.Has(6) {
+			errs.Required(at, "reason")
+		}
+		if v.p.IsNull(6) {
+			errs.NullNotAllowed(at, "reason")
+		}
+	}
+}
+
+// ReportPolicyKindValue: What a policy row is. domain: the domain's own policy, the baseline. pso: a fine-grained policy.
+type ReportPolicyKindValue string
+
+const (
+	ReportPolicyKindValueDomain ReportPolicyKindValue = "domain"
+	ReportPolicyKindValuePso    ReportPolicyKindValue = "pso"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportPolicyKindValue) Valid() bool {
+	switch v {
+	case ReportPolicyKindValueDomain, ReportPolicyKindValuePso:
+		return true
+	}
+	return false
+}
+
+// ReportPolicyReads: What a policy report (SYS-01) could read of the Password Settings Container, one entry per domain in the runner's scope, stored with the run and frozen. It exists so that a container that could not be read is never shown as a container that holds no policies (spec 7.1 rule 3, AC-S19): each domain is exactly one of three kinds, readable, none_exist or unreadable, and a client branches on kind and never infers one from another or from a missing row. domainsInScope is the number of entries; domainsReadable is the number of entries of kind readable or none_exist (the read succeeded); complete is true when every domain was read. When complete is false the rows hold the domain policy of every domain and the fine-grained policies of the readable ones only, and users of an unreadable domain may be governed by policies not shown.
+type ReportPolicyReads struct {
+	Complete        bool                     `json:"complete"`
+	Domains         []ReportPolicyDomainRead `json:"domains"`
+	DomainsInScope  int64                    `json:"domainsInScope"`
+	DomainsReadable int64                    `json:"domainsReadable"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportPolicyReads) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportPolicyReads{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "complete":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Complete); err != nil {
+				return err
+			}
+		case "domains":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Domains); err != nil {
+				return err
+			}
+		case "domainsInScope":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DomainsInScope); err != nil {
+				return err
+			}
+		case "domainsReadable":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DomainsReadable); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportPolicyReads) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// complete
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "complete")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "complete")
+		}
+	}
+	// domains
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "domains")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "domains")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("domains"), len(v.Domains), 0, 10000, apitypes.CodeMaxItems)
+		for i := range v.Domains {
+			v.Domains[i].Validate(apitypes.Index(at.AppendToken("domains"), i), errs)
+		}
+	}
+	// domainsInScope
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "domainsInScope")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "domainsInScope")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("domainsInScope"), int64(v.DomainsInScope), 0, 10000)
+	}
+	// domainsReadable
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "domainsReadable")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "domainsReadable")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("domainsReadable"), int64(v.DomainsReadable), 0, 10000)
+	}
+}
+
+// ReportPolicyTarget: One direct target of a policy: a user or a global security group, addressed by objectGUID. A group is one entry; its members are never listed here.
+type ReportPolicyTarget struct {
+	Domain      string                       `json:"domain"`
+	Name        string                       `json:"name"`
+	ObjectGUID  apitypes.UUID                `json:"objectGuid"`
+	TargetClass ReportPolicyTargetClassValue `json:"targetClass"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportPolicyTarget) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportPolicyTarget{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "domain":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Domain); err != nil {
+				return err
+			}
+		case "name":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Name); err != nil {
+				return err
+			}
+		case "objectGuid":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ObjectGUID); err != nil {
+				return err
+			}
+		case "targetClass":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.TargetClass); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportPolicyTarget) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// domain
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "domain")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "domain")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("domain"), string(v.Domain), 0, 255)
+	}
+	// name
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "name")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "name")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("name"), string(v.Name), 0, 256)
+	}
+	// objectGuid
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "objectGuid")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "objectGuid")
+		}
+	}
+	// targetClass
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "targetClass")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "targetClass")
+		}
+	}
+}
+
+// ReportPolicyTargetBasisValue: What a list of policy targets is. direct_targets: the objects the policy is applied to; never the resultant set.
+type ReportPolicyTargetBasisValue string
+
+const (
+	ReportPolicyTargetBasisValueDirectTargets ReportPolicyTargetBasisValue = "direct_targets"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportPolicyTargetBasisValue) Valid() bool {
+	switch v {
+	case ReportPolicyTargetBasisValueDirectTargets:
+		return true
+	}
+	return false
+}
+
+// ReportPolicyTargetClassValue: The kind of object a PSO is applied to.
+type ReportPolicyTargetClassValue string
+
+const (
+	ReportPolicyTargetClassValueUser  ReportPolicyTargetClassValue = "user"
+	ReportPolicyTargetClassValueGroup ReportPolicyTargetClassValue = "group"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportPolicyTargetClassValue) Valid() bool {
+	switch v {
+	case ReportPolicyTargetClassValueUser, ReportPolicyTargetClassValueGroup:
+		return true
+	}
+	return false
+}
+
+// ReportPolicyTargetPage: A page of the direct targets of one policy row. basis is always direct_targets: the list is what the policy is applied to, not the resultant set, and says nothing about which policy governs a given user. count is the direct targets in the caller's scope, not the length of the page. policyName and kind repeat the policy row so the page stands alone.
+type ReportPolicyTargetPage struct {
+	Basis      ReportPolicyTargetBasisValue `json:"basis"`
+	Count      int64                        `json:"count"`
+	Kind       ReportPolicyKindValue        `json:"kind"`
+	Page       apitypes.PageInfo            `json:"page"`
+	PolicyID   apitypes.UUID                `json:"policyId"`
+	PolicyName string                       `json:"policyName"`
+	RunID      apitypes.UUID                `json:"runId"`
+	Targets    []ReportPolicyTarget         `json:"targets"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportPolicyTargetPage) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportPolicyTargetPage{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "basis":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Basis); err != nil {
+				return err
+			}
+		case "count":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Count); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "page":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Page); err != nil {
+				return err
+			}
+		case "policyId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.PolicyID); err != nil {
+				return err
+			}
+		case "policyName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.PolicyName); err != nil {
+				return err
+			}
+		case "runId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RunID); err != nil {
+				return err
+			}
+		case "targets":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(7, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Targets); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportPolicyTargetPage) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// basis
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "basis")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "basis")
+		}
+	}
+	// count
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "count")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "count")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("count"), int64(v.Count), 0, 9007199254740991)
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	// page
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "page")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "page")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		v.Page.Validate(at.AppendToken("page"), errs)
+	}
+	// policyId
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "policyId")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "policyId")
+		}
+	}
+	// policyName
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "policyName")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "policyName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(5) && !v.p.IsNull(5)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("policyName"), string(v.PolicyName), 0, 255)
+	}
+	// runId
+	if v.p.Decoded() {
+		if !v.p.Has(6) {
+			errs.Required(at, "runId")
+		}
+		if v.p.IsNull(6) {
+			errs.NullNotAllowed(at, "runId")
+		}
+	}
+	// targets
+	if v.p.Decoded() {
+		if !v.p.Has(7) {
+			errs.Required(at, "targets")
+		}
+		if v.p.IsNull(7) {
+			errs.NullNotAllowed(at, "targets")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(7) && !v.p.IsNull(7)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("targets"), len(v.Targets), 0, 1000, apitypes.CodeMaxItems)
+		for i := range v.Targets {
+			v.Targets[i].Validate(apitypes.Index(at.AppendToken("targets"), i), errs)
+		}
+	}
+}
+
+// ReportPolicyUnreadableReasonValue: Why a Password Settings Container could not be read. permission_denied: the connection account lacks the read right (Domain Admins hold it by default). container_absent: the container is not there, such as a domain below functional level 2008, and the report cannot tell it from an unreadable one. not_read: no read was attempted, such as a connection that was skipped.
+type ReportPolicyUnreadableReasonValue string
+
+const (
+	ReportPolicyUnreadableReasonValuePermissionDenied ReportPolicyUnreadableReasonValue = "permission_denied"
+	ReportPolicyUnreadableReasonValueContainerAbsent  ReportPolicyUnreadableReasonValue = "container_absent"
+	ReportPolicyUnreadableReasonValueNotRead          ReportPolicyUnreadableReasonValue = "not_read"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportPolicyUnreadableReasonValue) Valid() bool {
+	switch v {
+	case ReportPolicyUnreadableReasonValuePermissionDenied, ReportPolicyUnreadableReasonValueContainerAbsent, ReportPolicyUnreadableReasonValueNotRead:
+		return true
+	}
+	return false
+}
+
 // ReportPresence: Whether a column has a value.
 type ReportPresence string
 
@@ -7464,6 +8700,7 @@ type ReportRun struct {
 	ID                 apitypes.UUID             `json:"id"`
 	ObjectsChecked     *int64                    `json:"objectsChecked"`
 	Parameters         ReportParametersView      `json:"parameters"`
+	PolicyReads        *ReportPolicyReads        `json:"policyReads,omitzero"`
 	PresetID           *string                   `json:"presetId"`
 	Progress           ReportRunProgress         `json:"progress"`
 	RerunOf            *apitypes.UUID            `json:"rerunOf,omitzero"`
@@ -7650,8 +8887,20 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.Parameters); err != nil {
 				return err
 			}
+		case "policyReads":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(16, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.PolicyReads); err != nil {
+				return err
+			}
 		case "presetId":
-			v.p.Mark(16, false)
+			v.p.Mark(17, false)
 			if err := json.UnmarshalDecode(d, &v.PresetID); err != nil {
 				return err
 			}
@@ -7660,7 +8909,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(17, null)
+			v.p.Mark(18, null)
 			if null {
 				continue
 			}
@@ -7672,7 +8921,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(18, null)
+			v.p.Mark(19, null)
 			if null {
 				continue
 			}
@@ -7680,12 +8929,12 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 				return err
 			}
 		case "rowCount":
-			v.p.Mark(19, false)
+			v.p.Mark(20, false)
 			if err := json.UnmarshalDecode(d, &v.RowCount); err != nil {
 				return err
 			}
 		case "scopeApplied":
-			v.p.Mark(20, false)
+			v.p.Mark(21, false)
 			if err := json.UnmarshalDecode(d, &v.ScopeApplied); err != nil {
 				return err
 			}
@@ -7694,7 +8943,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(21, null)
+			v.p.Mark(22, null)
 			if null {
 				continue
 			}
@@ -7702,7 +8951,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 				return err
 			}
 		case "startedAt":
-			v.p.Mark(22, false)
+			v.p.Mark(23, false)
 			if err := json.UnmarshalDecode(d, &v.StartedAt); err != nil {
 				return err
 			}
@@ -7711,7 +8960,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(23, null)
+			v.p.Mark(24, null)
 			if null {
 				continue
 			}
@@ -7867,8 +9116,15 @@ func (v *ReportRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	if !v.p.Decoded() || (v.p.Has(15) && !v.p.IsNull(15)) {
 		v.Parameters.Validate(at.AppendToken("parameters"), errs)
 	}
+	// policyReads
+	if v.p.Decoded() && v.p.IsNull(16) {
+		errs.NullNotAllowed(at, "policyReads")
+	}
+	if v.PolicyReads != nil {
+		(*v.PolicyReads).Validate(at.AppendToken("policyReads"), errs)
+	}
 	// presetId
-	if v.p.Decoded() && !v.p.Has(16) {
+	if v.p.Decoded() && !v.p.Has(17) {
 		errs.Required(at, "presetId")
 	}
 	if v.PresetID != nil {
@@ -7876,29 +9132,29 @@ func (v *ReportRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	// progress
 	if v.p.Decoded() {
-		if !v.p.Has(17) {
+		if !v.p.Has(18) {
 			errs.Required(at, "progress")
 		}
-		if v.p.IsNull(17) {
+		if v.p.IsNull(18) {
 			errs.NullNotAllowed(at, "progress")
 		}
 	}
-	if !v.p.Decoded() || (v.p.Has(17) && !v.p.IsNull(17)) {
+	if !v.p.Decoded() || (v.p.Has(18) && !v.p.IsNull(18)) {
 		v.Progress.Validate(at.AppendToken("progress"), errs)
 	}
 	// rerunOf
-	if v.p.Decoded() && v.p.IsNull(18) {
+	if v.p.Decoded() && v.p.IsNull(19) {
 		errs.NullNotAllowed(at, "rerunOf")
 	}
 	// rowCount
-	if v.p.Decoded() && !v.p.Has(19) {
+	if v.p.Decoded() && !v.p.Has(20) {
 		errs.Required(at, "rowCount")
 	}
 	if v.RowCount != nil {
 		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("rowCount"), int64((*v.RowCount)), 0, 9007199254740991)
 	}
 	// scopeApplied
-	if v.p.Decoded() && !v.p.Has(20) {
+	if v.p.Decoded() && !v.p.Has(21) {
 		errs.Required(at, "scopeApplied")
 	}
 	if v.ScopeApplied != nil {
@@ -7906,29 +9162,29 @@ func (v *ReportRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	// skippedConnections
 	if v.p.Decoded() {
-		if !v.p.Has(21) {
+		if !v.p.Has(22) {
 			errs.Required(at, "skippedConnections")
 		}
-		if v.p.IsNull(21) {
+		if v.p.IsNull(22) {
 			errs.NullNotAllowed(at, "skippedConnections")
 		}
 	}
-	if !v.p.Decoded() || (v.p.Has(21) && !v.p.IsNull(21)) {
+	if !v.p.Decoded() || (v.p.Has(22) && !v.p.IsNull(22)) {
 		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("skippedConnections"), len(v.SkippedConnections), 0, 64, apitypes.CodeMaxItems)
 		for i := range v.SkippedConnections {
 			v.SkippedConnections[i].Validate(apitypes.Index(at.AppendToken("skippedConnections"), i), errs)
 		}
 	}
 	// startedAt
-	if v.p.Decoded() && !v.p.Has(22) {
+	if v.p.Decoded() && !v.p.Has(23) {
 		errs.Required(at, "startedAt")
 	}
 	// state
 	if v.p.Decoded() {
-		if !v.p.Has(23) {
+		if !v.p.Has(24) {
 			errs.Required(at, "state")
 		}
-		if v.p.IsNull(23) {
+		if v.p.IsNull(24) {
 			errs.NullNotAllowed(at, "state")
 		}
 	}

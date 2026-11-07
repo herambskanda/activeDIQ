@@ -701,6 +701,19 @@ Each is in review under §3.3's own rule ("a dataset that needs another function
   direction of "stricter" per field written once in the fragment (ad-expert confirms the direction
   table). A value that was not read, or a `0` that means "never" (max age) or "until unlocked"
   (duration) is handled through the 2a codec states, never as a number.
+- **API surface (T-1718, `api/openapi/modules/reports.yaml`, additive within `/api/v1`).** Columns `policy_name`,
+  `policy_kind` (`domain`|`pso`), `precedence`, `applies_to_count`, `applies_to_first`, `min_length`, `history_length`,
+  `max_age`, `min_age`, `complexity`, `reversible_encryption`, `lockout_threshold`, `lockout_duration`,
+  `lockout_window` are in `ReportColumnId`; numbers are `integer` cells and `ReportColumnInfo.unit` (`count`|`seconds`)
+  says what they count, so the console computes deltas from typed cells and the server sends no delta text (the
+  `*_vs_domain` enums above stay a dataset option for exports, not a contract member). The 2a codec's no-limit values
+  (max age 0, threshold 0, duration "until unlocked") arrive as a `never` cell and are the loosest value of their
+  column. The stored `pso_unreadable` fact and the container reads surface as `ReportRun.policyReads`: one entry
+  per domain in scope, `kind` = `readable` (psoCount, readAt) | `none_exist` (a real zero, readAt) | `unreadable`
+  (containerName, reason, optional readAt), each with `domainPolicyRowKey` (its baseline row); `complete` is false
+  and `domainsReadable < domainsInScope` for partial coverage. `GET /reports/runs/{runId}/policies/{policyId}/targets`
+  pages one policy row's direct targets (`basis: direct_targets`, `count` in scope, name order) behind the
+  `listReportRunRows` run-read gate. Until T-1114 lands the dataset it answers 501 (`pending.go`).
 - A PSO row's own name is its own identity (row anchor `dom` makes the row visible); a PSO is **not** a
   `MaskAnchor` identity here because the row is the PSO. The `policy_source` masking of `inventory.users`
   (§3.3) is unchanged.
