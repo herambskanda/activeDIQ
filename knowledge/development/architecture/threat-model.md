@@ -844,7 +844,7 @@ class of data.
    (T-0149; never SDDL text, never a glued `dsacls` string): take ownership of the container, add the ACE, then write owner and
    DACL back (SD_FLAGS 0x5) with the owner reset to SYSTEM. A customer Domain Admin applies it. The removal plan has the same
    shape. Owner reset to SYSTEM is measured (T-1633), and **the `LC`|`RC` ACE survives it, in both write orders** (one 0x5 write; or a DACL-only
-   0x4 write then an owner-only 0x1 write), as does a `dsacls` `LC` grant ([T-1734](../domain/deleted-object-read-access.md), Windows Server 2025). Two
+   0x4 write then an owner-only 0x1 write; [T-1734](../domain/deleted-object-read-access.md), Windows Server 2025). Two
    facts the plan must be built on (T-1734): the default container descriptor is unreadable to everyone but SYSTEM, Domain Admin included, so the plan's
    first step is the owner-only write (SD_FLAGS 0x1, accepted over LDAPS) and it cannot show the as-found DACL before it; and the removal plan needs the same
    takeover, because writing the baseline with the owner still SYSTEM is refused (`insufficientAccessRights`).
