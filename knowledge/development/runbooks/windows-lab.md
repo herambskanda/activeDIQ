@@ -707,3 +707,12 @@ is `lab/windows/tests/test_cbt_acceptance.py` (`make lab-test-windows-unit`, no 
 events outside the window do not, a control without 3039 fails, a skipped bind is not a pass, drift of the policy fails.
 2887 is a daily DC summary, so a 2-second window cannot prove it absent by itself; the run log also lists everything the queried ids logged in the
 preceding 26 h. Run log and broken-run proof: `windows-lab-runs/T-0148-cbt-acceptance-20261102.md`. Needs the keytab and gMSA files from `gssapi-lab prepare`.
+
+## 21. msDS-Repl* location and right, DirSync delete visibility (T-1510, TM-D31 rules 3 and 7)
+
+`lab/windows/bin/repl-rights-lab run [LOG]` (under `with-dc1-lock`, `WIN_LAB_ENV` set; ~50 s). It creates `OU=T1510-Lab` with two unprivileged users and a few throwaway objects, adds one
+`DS-Replication-Monitor-Topology` ACE (rightsGuid read from the forest) for one of them on the domain head, then on the configuration and schema heads, reads the four `msDS-Repl*` attributes at
+rootDSE / the three heads / dc1's NTDS Settings as Administrator, `svc-activediq`, the right-holder and a no-right user, and runs DirSync (OBJECT_SECURITY | INCREMENTAL_VALUES) over a modify and a delete for the same principals.
+Everything is removed in a `finally`; the run fails (exit 3) if a head's DACL hash differs afterwards, the OU remains, a throwaway principal is privileged, or the no-right read is an error. It prints `INCONCLUSIVE`
+when the Administrator control returns none of the four attributes (a DC with no replication partner: empty cannot be told from denied). Judge: `lib/replrights.py`; offline proof `tests/test_repl_rights.py`.
+First record, with the single-DC limitation and the DirSync result: `windows-lab-runs/T-1510-repl-rights-20261107.md`.
