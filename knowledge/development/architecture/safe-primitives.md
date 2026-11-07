@@ -5,7 +5,7 @@ updated: 2026-11-07
 status: review
 owner: heramb
 ticket: T-0035, T-0041
-amended_by: T-1729 (§2, §5, §5.7, §8: decode-only P3 unit `attr.tsprops`, author solution-architect), T-1759 (§5.7: the two decisions ratified into spec reports-terminal-services §4.1, Counts and `bad_count` aligned, no record changed; author product-manager)
+amended_by: T-1729 (§2, §5, §5.7, §8: decode-only P3 unit `attr.tsprops`, author solution-architect), T-1759 (§5.7: the two decisions ratified into spec reports-terminal-services §4.1, Counts and `bad_count` aligned, no record changed; author product-manager), T-1760 (§5.7, §8: records TSP-38 to TSP-43 for the spec §4.1 count bound, undecodable gate and trailing bytes; Counts 0 asserted on structural faults; author solution-architect)
 sources_last_checked: 2026-10-02
 ---
 
@@ -817,14 +817,16 @@ N, X and W have none (§2).
 - When `State` is `Unreadable`, every field is `unreadable` with the blob reason. That is AC-TS05's
   "the field status is `unreadable(truncated)`".
 - When `State` is `Configured`, a field the record does not name is `not_configured`.
-- `Counts.unknown_properties` counts parsed properties whose name is not in the spec §3 list. That
-  includes the excluded names such as `CtxCallbackNumber`. `Counts.skipped_properties` is
-  `TSPropertyCount` minus 64 when the count exceeds the rule 3 cap. `Counts.duplicates` counts the
-  distinct parsed names that occur more than once. All three are set once the walk of at most 64
-  properties finished (TSP-26 has `duplicates` 1 although the blob is `Unreadable`) and are 0 when it
-  did not. `skipped_properties` is the count the header claims and is not verified. `bad_count` is
-  retired: it keeps its enum number and no record produces it. A count the bytes cannot hold is
-  `truncated` (TSP-13). Evaluation order and the full fault classes are spec §4.1.
+- `Counts.unknown_properties` counts walked properties whose name is not in the spec §3 list and is
+  not `CtxCfgPresent`, one per occurrence (spec §4.1; TSP-01 counts 0). That includes the excluded
+  names such as `CtxCallbackNumber`. `Counts.skipped_properties` is `TSPropertyCount` minus 64 when
+  the count exceeds the rule 3 cap. `Counts.duplicates` counts the distinct parsed names that occur
+  more than once. All three are set once the walk of at most 64 properties finished (TSP-26 has
+  `duplicates` 1 although the blob is `Unreadable`; TSP-40 to TSP-42 set them although the blob is
+  `NotConfigured`) and are 0 when it did not (TSP-13, TSP-15 to TSP-18, TSP-30 to TSP-33, TSP-39).
+  `skipped_properties` is the count the header claims and is not verified. `bad_count` is retired:
+  it keeps its enum number and no record produces it. A count the bytes cannot hold is `truncated`
+  (TSP-13; at the bound, TSP-38 and TSP-39). Evaluation order and the full fault classes are spec §4.1.
 
 **Two decisions the records need (T-1729), adopted unchanged by T-1759 and now normative in spec
 [reports-terminal-services §4.1](../../product/specs/reports-terminal-services.md). No expectation in
@@ -872,12 +874,12 @@ ADUC (spec V4, contract CC-TS-01). They add records, not hostile ones.
 | TSP-10 | `R`, signature `51 00` ("Q"), count 1, `G` | `NotConfigured`, `bad_signature`; no field `unreadable` | **AC-TS04**; FF-TS1 seed "bad signature" |
 | TSP-11 | `H(1) u(CtxCfgPresent, 0xB00B1E54)` | `NotConfigured`, `bad_signature` | wrong gate value (rule 5) |
 | TSP-12 | `R` carrying RAS-style callback bytes and `RSVDMARK`, then `00 00` signature and a zero count: 100 bytes | `NotConfigured`, `bad_signature`; no `RSVDMARK` and no RAS byte in the output | FF-TS1 seed "RAS-only blob with a zeroed tail"; dial-in data must not cross (FR-TS07) |
-| TSP-13 | `H(65535)` and nothing after it (100 bytes) | `Unreadable`, `truncated`; no panic; ≤ 256 KiB allocated | **AC-TS05**; FF-TS1 seed; contract CC-TS-05 |
+| TSP-13 | `H(65535)` and nothing after it (100 bytes) | `Unreadable`, `truncated`; counts 0, 0, 0; no panic; ≤ 256 KiB allocated | **AC-TS05**; FF-TS1 seed; contract CC-TS-05 |
 | TSP-14 | `R` alone (96 bytes) | `NotConfigured`, `too_short` | fewer than 98 bytes (rule 3) |
-| TSP-15 | `H(1)`, then `NameLength` 64, `ValueLength` 8, `Type` 1 and only 10 more bytes | `Unreadable`, `truncated` | FF-TS1 seed "name length beyond the end"; rule 2 |
-| TSP-16 | `H(2) G`, then a `CtxShadow` header with `ValueLength` 2048 and only 8 digits after the name | `Unreadable`, `truncated` | FF-TS1 seed "value length beyond the end" |
-| TSP-17 | `H(2) G`, then a property with `NameLength` 66 (name and value bytes present) | `Unreadable`, `too_long` | rule 3 `NameLength` ≤ 64; the name cannot be matched to a field, so the fault is structural |
-| TSP-18 | `H(2) G`, then a property with `NameLength` 17 (bytes present) | `Unreadable`, `bad_encoding` | rule 3 `NameLength` even |
+| TSP-15 | `H(1)`, then `NameLength` 64, `ValueLength` 8, `Type` 1 and only 10 more bytes | `Unreadable`, `truncated`; counts 0, 0, 0 | FF-TS1 seed "name length beyond the end"; rule 2 |
+| TSP-16 | `H(2) G`, then a `CtxShadow` header with `ValueLength` 2048 and only 8 digits after the name | `Unreadable`, `truncated`; counts 0, 0, 0 | FF-TS1 seed "value length beyond the end" |
+| TSP-17 | `H(2) G`, then a property with `NameLength` 66 (name and value bytes present) | `Unreadable`, `too_long`; counts 0, 0, 0 | rule 3 `NameLength` ≤ 64; the name cannot be matched to a field, so the fault is structural |
+| TSP-18 | `H(2) G`, then a property with `NameLength` 17 (bytes present) | `Unreadable`, `bad_encoding`; counts 0, 0, 0 | rule 3 `NameLength` even |
 | TSP-19 | `H(3) G p(CtxShadow, "0100000") p(CtxMaxIdleTime, "000000000")` | `Configured`; remote control and max idle `unreadable(bad_hex)` | FF-TS1 seed "odd hex"; rule 4. The two odd lengths keep the blob a whole number of UTF-16 units |
 | TSP-20 | `H(2) G p(CtxShadow, "0g000000")` | `Configured`; remote control `unreadable(bad_hex)` | FF-TS1 seed "non-hex bytes"; rule 4 |
 | TSP-21 | `H(2) G`, then `CtxShadow` with `Type` `0x0002` and the value `01000000` | `Configured`; remote control `unreadable(bad_type)` | rule 3 |
@@ -889,18 +891,24 @@ ADUC (spec V4, contract CC-TS-01). They add records, not hostile ones.
 | TSP-27 | `H(1001) G`, then 1,000 × `u(CtxShadow, 1)` | `Configured`; remote control `unreadable(duplicate)`; `duplicates` 1; `skipped_properties` 937 | FF-TS1 seed "a thousand duplicate properties"; contract CC-TS-05; the 64 cap (rule 3) |
 | TSP-28 | `H(66) G u(CtxShadow, 1)`, then 64 × `p(CtxX01…CtxX64, "00")` | `Configured`; remote control `1`; `unknown_properties` 62; `skipped_properties` 2 | rule 3 count cap |
 | TSP-29 | 32,768 bytes `41` (65,536 bytes after conversion) | `NotConfigured`, `bad_signature`; within the rule 10 budget | at the size cap, inclusive |
-| TSP-30 | 32,769 bytes `41` | `Unreadable`, `too_long` | one unit over the cap |
-| TSP-31 | 65,536 bytes `41` | `Unreadable`, `too_long`; ≤ 256 KiB allocated | FF-TS1 seed "64 KiB of one byte"; contract CC-TS-05's 65,536-unit value |
-| TSP-32 | `H(2) G u(CtxShadow, 1)` with the UTF-8 octets `ED A0 80` (a lone surrogate) inside `R` | `Unreadable`, `bad_encoding` | FF-TS1 seed "lone surrogates"; spec §2 trap 1 |
-| TSP-33 | `H(2) G u(CtxShadow, 1)` with the octet `FF` inside `R` | `Unreadable`, `bad_encoding` | not UTF-8; Samba may return such bytes (spec §2 trap 6) |
+| TSP-30 | 32,769 bytes `41` | `Unreadable`, `too_long`; counts 0, 0, 0 | one unit over the cap |
+| TSP-31 | 65,536 bytes `41` | `Unreadable`, `too_long`; counts 0, 0, 0; ≤ 256 KiB allocated | FF-TS1 seed "64 KiB of one byte"; contract CC-TS-05's 65,536-unit value |
+| TSP-32 | `H(2) G u(CtxShadow, 1)` with the UTF-8 octets `ED A0 80` (a lone surrogate) inside `R` | `Unreadable`, `bad_encoding`; counts 0, 0, 0 | FF-TS1 seed "lone surrogates"; spec §2 trap 1 |
+| TSP-33 | `H(2) G u(CtxShadow, 1)` with the octet `FF` inside `R` | `Unreadable`, `bad_encoding`; counts 0, 0, 0 | not UTF-8; Samba may return such bytes (spec §2 trap 6) |
 | TSP-34 | `H(2) G p(CtxWFProfilePath, "6100000062000000")` | `Configured`; profile path `unreadable(bad_encoding)` | FF-TS1 seed "NULs inside text"; rule 9. The NUL sits inside the text in both candidate encodings (spec §2 trap 2) |
 | TSP-35 | `H(2) G p(CtxInitialProgram, "61001b006200")` | `Configured`; start program `unreadable(bad_encoding)` | C0 control (ESC) in text; rule 9; both encodings |
 | TSP-36 | `H(2) G p(CtxCallbackNumber, "2b0031003500350035000000")` | `Configured`; `unknown_properties` 1; no field and no output string carries the digits | personal data, not decoded (spec §3) |
 | TSP-37 | `H(2) G u(Ctx` U+0405 `hadow, 1)` (Cyrillic DZE for `S`) | `Configured`; remote control `not_configured`; `unknown_properties` 1 | a look-alike name never matches |
+| TSP-38 | `H(218) G u(CtxShadow, 1)`, then 62 × `p(CtxX01…CtxX62, "00")`: 1,312 bytes after the count | `Configured`; remote control `1`; `unknown_properties` 62; `skipped_properties` 154; `duplicates` 0 | rule 3 count bound at the limit: 218 × 6 = 1,308 ≤ 1,312 (40 + 32 + 62 × 20 bytes). Pairs with TSP-39 |
+| TSP-39 | TSP-38's bytes with `H(219)` | `Unreadable`, `truncated`; counts 0, 0, 0 | 219 × 6 = 1,314 > 1,312: one over the count bound, although all 64 entries a walk would read are present. Spec §4.1 step (4) precedes the walk, so no walk and no counts |
+| TSP-40 | `H(2)`, then `CtxCfgPresent` with `Type` `0x0002` and `G`'s 8 digits, then `u(CtxShadow, 1)` | `NotConfigured`, `bad_signature`; no field `unreadable`; counts 0, 0, 0 | undecodable gate, wrong `Type` (rule 5). The walk finished, so the counts are set; none applies |
+| TSP-41 | `H(3) p(CtxCfgPresent, "551e0bb") u(CtxShadow, 1) p(CtxX01, "0")` | `NotConfigured`, `bad_signature`; no field `unreadable`; `unknown_properties` 1 | undecodable gate, odd hex (rule 5): the first 7 of `G`'s digits. The unknown property's odd length keeps the blob a whole number of UTF-16 units and touches no field (rule 7) |
+| TSP-42 | `H(2) p(CtxCfgPresent, "551e0bb000") u(CtxShadow, 1)` | `NotConfigured`, `bad_signature`; no field `unreadable`; counts 0, 0, 0 | undecodable gate, wrong length (rule 5): 10 even hex digits are not a u32 |
+| TSP-43 | `H(2) G u(CtxShadow, 1)`, then `u(CtxMaxIdleTime, 60)` and the 4 bytes `40 00 40 00` after the last counted property | `Configured`; remote control `1`; max idle `not_configured`; counts 0, 0, 0 | bytes after the last counted property are never read and are not an error (spec §4.1). A decoder that read them would show max idle `60`, or `truncated` for the 4-byte stub |
 
 The IDs leave TSP-08 and TSP-09 unused, so hostile records start at TSP-10. TSP-01 to TSP-07 are
-`"hostile": false`: anchors, the empty sentinel, the absent gate and an unknown name. TSP-10 to TSP-37
-(28 records) are `"hostile": true`. They are malformed or oversized input, a duplicate the report must
+`"hostile": false`: anchors, the empty sentinel, the absent gate and an unknown name. TSP-10 to TSP-43
+(34 records) are `"hostile": true`. They are malformed or oversized input, a duplicate the report must
 not resolve, or a path by which `ReservedData`, RAS data or personal data could leak. Every row has one
 input, so no row expands (§8).
 
@@ -1324,7 +1332,7 @@ counts:
 | `attr.filetime` | 27 | 15 | FT-01 to -04, -06, -07#1–2, -09, -10, -12#1–2, -17 |
 | `attr.gentime` | 18 | 12 | GT-01 to -05, -12 |
 | `attr.flags` | 22 | 12 | FL-01 to -06, FL-09#1–4 |
-| `attr.tsprops` | 35 | 28 | TSP-01 to -07 |
+| `attr.tsprops` | 41 | 34 | TSP-01 to -07 |
 | `attr.unicodepwd` | 23 | 19 | PW-01 to -03, -13 |
 | `psx` | 21 | 21 | none |
 | `pslit` | 19 | 16 | PSQ-14#1–2, -16 |
@@ -1339,8 +1347,8 @@ counts:
 
 The margins are smallest for `attr.gentime` and `attr.flags`, at 12 each. A change that removes or
 reclassifies a hostile record in either unit adds a replacement in the same change, or FF-SP4
-fails. `attr.tsprops` (T-1729) counts §5.7's synthetic records only. The spec §4 hostile set and
-AC-TS04, AC-TS05 and AC-TS11 are TSP-10 to TSP-37. The T-1565 Windows fixtures add `"hostile": false`
+fails. `attr.tsprops` (T-1729, T-1760) counts §5.7's synthetic records only. The spec §4 hostile set,
+the spec §4.1 edge rules and AC-TS04, AC-TS05, AC-TS11 and AC-TS17 to AC-TS19 are TSP-10 to TSP-43. The T-1565 Windows fixtures add `"hostile": false`
 records (`TSP-W…`) and leave the hostile count unchanged. The table is a count of this document. Once the corpus files exist, the corpus is
 authoritative and FF-SP4 recomputes the counts.
 
@@ -1488,7 +1496,7 @@ old T-0034 (FF-SP4–6, 8) and old T-0036 (FF-SP7, implemented inside ADR-0002's
   `runtime/secret` evaluation (§5.6).
 - old T-0023 — whether GSSAPI sealing can be a `SecureConn` source (§5.6).
 - T-0106 — OData/Graph primitive P8: done as `safe-primitives-odata.md`; build, FF-SP3 rules and Graph lab vectors are follow-up tickets named in its §9.
-- T-1729 — `attr.tsprops` (§5.7): package and `attr.tsprops.jsonl` in T-1566, importer `wirevalue` in T-1739, fitness TS1–TS4 in T-1728, Windows fixtures in T-1565, spec alignment of the §5.7 decisions in T-1759.
+- T-1729 — `attr.tsprops` (§5.7): package and `attr.tsprops.jsonl` in T-1566, importer `wirevalue` in T-1739, fitness TS1–TS4 in T-1728, Windows fixtures in T-1565, spec alignment of the §5.7 decisions in T-1759, the §4.1 edge-rule records TSP-38 to TSP-43 in T-1760.
 - OPATH (Exchange) filter primitive: none planned. OPATH parameters stay banned for data (§6.1 rule 2)
   until the M365 parity scope needs one.
 

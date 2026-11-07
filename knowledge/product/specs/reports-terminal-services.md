@@ -2,7 +2,7 @@
 title: "Spec: Terminal Services user reports (USR-10) and the hardened userParameters decoder"
 date: 2026-11-04
 updated: 2026-11-07
-amended_by: T-1732 (§5, §6, §7, §8: 'collector' = connector read path, `not_confirmed`, USR-10 counts, AC-TS07 owner; author product-manager), T-1759 (§4 rules 3, 5, 6, 7 and new §4.1; §7 FR-TS03, AC-TS05, AC-TS17 to AC-TS19: blob-level vs field-level faults, gate faults, `bad_count` retired, Counts; author product-manager)
+amended_by: T-1732 (§5, §6, §7, §8: 'collector' = connector read path, `not_confirmed`, USR-10 counts, AC-TS07 owner; author product-manager), T-1759 (§4 rules 3, 5, 6, 7 and new §4.1; §7 FR-TS03, AC-TS05, AC-TS17 to AC-TS19: blob-level vs field-level faults, gate faults, `bad_count` retired, Counts; author product-manager), T-1760 (§4.1 and AC-TS17 evidence only: cites the new safe-primitives §5.7 records TSP-38 to TSP-43 and TSP-32/33; no rule changed; author solution-architect)
 status: draft
 owner: heramb
 author: ad-expert
@@ -188,7 +188,7 @@ The whole blob is `Unreadable` with the reason; every field reads `unreadable(<r
 | --- | --- | --- |
 | input over 65,536 bytes after conversion | `too_long` | TSP-30, TSP-31 |
 | not valid UTF-8, a lone surrogate (also inside a property name) | `bad_encoding` | TSP-32, TSP-33 |
-| `TSPropertyCount` × 6 more than the bytes after the count; a header, name or value that runs past the end | `truncated` | TSP-13, TSP-15, TSP-16 |
+| `TSPropertyCount` × 6 more than the bytes after the count; a header, name or value that runs past the end | `truncated` | TSP-13, TSP-15, TSP-16, TSP-39 (at the bound: TSP-38) |
 | `NameLength` over 64 | `too_long` | TSP-17 |
 | `NameLength` odd | `bad_encoding` | TSP-18 |
 | a duplicated `CtxCfgPresent` | `duplicate` | TSP-26 |
@@ -196,7 +196,8 @@ The whole blob is `Unreadable` with the reason; every field reads `unreadable(<r
 **Not configured (gate).** The blob is walkable but carries no valid settings; every field reads
 `not_configured`, no field is `unreadable`: fewer than 98 bytes (`too_short`, TSP-06, TSP-14);
 signature ≠ "P" (`bad_signature`, TSP-10, TSP-12, TSP-29); `CtxCfgPresent` missing, wrong or
-undecodable (`bad_signature`, TSP-07, TSP-11).
+undecodable (`bad_signature`, TSP-07, TSP-11; undecodable: wrong `Type` TSP-40, odd hex TSP-41,
+wrong length TSP-42).
 
 **Field-level.** The name was read and its bytes are present, so only that field is affected and the
 rest keep their values: `bad_type`, `bad_hex` (non-hex digit, or an odd `ValueLength`),
@@ -211,7 +212,7 @@ most 64 properties: header present, `NameLength` limits, then name and value pre
 (6) Find duplicates among the walked names. (7) The gate: duplicated → `Unreadable(duplicate)`;
 missing, wrong or undecodable → *Not configured*. (8) Decode each field. A `ValueLength` over 2,048
 is judged in (8), after presence in (5), so a long value that is also cut short is `truncated`.
-Bytes after the last counted property are never read, and are not an error.
+Bytes after the last counted property are never read, and are not an error (TSP-43).
 
 **Counts** (`Counts` of connector-contract §5.9.1; all three are decoder outputs and never alter a field):
 - `unknown_properties`: walked properties whose name is not in §3 and is not `CtxCfgPresent`, one per
@@ -346,7 +347,7 @@ Acceptance (Given/When/Then; ground truth is the Windows fixture and ADUC unless
 - **AC-TS15** Given a forest where `userParameters` is confidential or RODC-filtered, When either report runs, Then every user is *Not confirmed*, `secret_attribute`, the header says so once, and no request names the attribute.
 - **AC-TS16** Given a mix of Denied, Not configured, Unreadable and Not confirmed users, When USR-10b is exported, Then the file's header carries the same four counts as the screen and "Not readable" equals Unreadable plus Not confirmed.
 
-- **AC-TS17** Given a blob with a structural fault (a name or value running past the end, `NameLength` 66, `NameLength` 17, invalid UTF-8, input one unit over the cap), When decoded, Then State is `Unreadable` with the §4.1 reason, every field is `unreadable` with it, and all three Counts are 0. Given instead a field fault (`CtxShadow` of `Type` 2, `CtxMaxIdleTime` of 525,601, a 2,050-digit `CtxInitialProgram`, odd hex), Then State is `Configured`, only that field is `unreadable` with its reason, and the others keep their values. *Evidence: unit test, records TSP-15 to TSP-24, TSP-30.*
+- **AC-TS17** Given a blob with a structural fault (a name or value running past the end, `NameLength` 66, `NameLength` 17, invalid UTF-8, input one unit over the cap), When decoded, Then State is `Unreadable` with the §4.1 reason, every field is `unreadable` with it, and all three Counts are 0. Given instead a field fault (`CtxShadow` of `Type` 2, `CtxMaxIdleTime` of 525,601, a 2,050-digit `CtxInitialProgram`, odd hex), Then State is `Configured`, only that field is `unreadable` with its reason, and the others keep their values. *Evidence: unit test, records TSP-15 to TSP-24, TSP-30, TSP-32, TSP-33.*
 - **AC-TS18** Given a blob whose `CtxCfgPresent` is missing, or 0xB00B1E54, When decoded, Then State is `NotConfigured`, reason `bad_signature`, no field is `unreadable`; and Given `CtxCfgPresent` twice, Then State is `Unreadable`, reason `duplicate`, `duplicates` 1, whatever the text-field encoding is. *Evidence: unit test, records TSP-07, TSP-11, TSP-26.*
 - **AC-TS19** Given `TSPropertyCount` 1,001 with 1,000 `CtxShadow` entries after the gate, When decoded, Then `skipped_properties` is 937, `duplicates` is 1 and `unknown_properties` is 0; and Given `TSPropertyCount` 66 with 62 unknown names, Then `unknown_properties` is 62 and `skipped_properties` is 2. *Evidence: unit test, records TSP-27, TSP-28.*
 
