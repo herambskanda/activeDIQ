@@ -1,7 +1,8 @@
 ---
 title: "Spec: Terminal Services user reports (USR-10) and the hardened userParameters decoder"
 date: 2026-11-04
-updated: 2026-11-04
+updated: 2026-11-07
+amended_by: T-1732 (§5, §6, §7, §8: 'collector' = connector read path, `not_confirmed`, USR-10 counts, AC-TS07 owner; author product-manager)
 status: draft
 owner: heramb
 author: ad-expert
@@ -174,13 +175,35 @@ Minimum acceptance: 1 M executions without a finding before the build ticket may
 ## 5. The reports (USR-10, taking the reserved ID)
 
 Dataset **D16**: `inventory.users` gains the closed column set of §3 plus `ts_state`
-(`configured | not_configured | unreadable`) and `ts_unreadable_reason`. The raw blob is **not
-stored**; the decoder runs in the collector, and only typed columns are persisted (D8). Read per
+(`configured | not_configured | unreadable | not_confirmed`), `ts_unreadable_reason` (the §4
+decoder reasons, set only when `ts_state` is `unreadable` or a field is unreadable) and
+`ts_not_confirmed_reason` (set only when `ts_state` is `not_confirmed`, see below). The raw blob
+is **not stored**; the decoder runs in the **connector read path** (`internal/connector/read`, on
+the connector side of the contract, so a compromised server never receives the blob), and only
+typed columns are persisted (D8). This is the same place as the wire-value builder of
+[connector-contract §5.9](../../development/architecture/connector-contract.md); the spec
+previously said "the collector", a term the architecture does not define. Read per
 user from the home domain with a normal user read; no extra right is expected, since the property
 set (attributeSecurityGuid 4c164200-20c0-11d0-a768-00aa006e0529) is
-read by authenticated users by default `[UNVERIFIED]` `[LAB: Windows]`; where unreadable the state
-is "Not confirmed" as D15 does. Re-decode on every sync of the user, since the 2a sync set uses
-`uSNChanged`/DirSync and the blob changes the same way as any attribute.
+read by authenticated users by default `[UNVERIFIED]` `[LAB: Windows]`. Re-decode on every sync of
+the user, since the 2a sync set uses `uSNChanged`/DirSync and the blob changes the same way as any
+attribute.
+
+**Absent is not the same as not configured.** Active Directory omits an attribute the reader
+cannot see exactly as it omits one that is not set. So an absent blob is *Not configured* **only
+when the connector has proved the connection identity can read it**; otherwise the state is
+`not_confirmed`, the D15 "Not confirmed" pattern (§5.9.4 of the contract). A present blob proves
+readability. `ts_not_confirmed_reason` is one of:
+
+| Reason | Meaning | What the admin can do |
+| --- | --- | --- |
+| `read_denied` | The connection identity is denied read on `userParameters` for this user (per-object or inherited deny) | Grant read to the connection identity, or accept the count |
+| `readability_unknown` | Readability could not be proved: no clean rights check this epoch, user in another domain, base read served by an RODC, an ACE form the access check cannot model | Re-run the connection's rights check; the row corrects on the next sync |
+| `readability_not_evaluated` | Bulk search cannot prove readability; the sync resolves each such user with a per-user read. A row still carrying this reason means that read has not yet succeeded | None; it clears on the next sync |
+| `secret_attribute` | The forest marks `userParameters` confidential or RODC-filtered, so it is never requested | Accept the count; the reports state it |
+
+`not_confirmed` is never shown as *Not configured*, never as Basis *Default*, never as an error
+row, and never silently dropped.
 
 ### USR-10a Users' Terminal Services Properties (ME name; 1 ME name)
 
@@ -188,8 +211,10 @@ Definition: every user in scope, with the §3 columns. Default columns: Name, Lo
 OU path, Logon allowed, Remote control, Start program, Home folder (with drive), Profile path, Max
 session / disconnected / idle (each with "Client/server setting" where inheriting), Status. A
 column group "Session behaviour" (reconnect, end-disconnected) is off by default. Filters: Logon
-allowed (any/allowed/denied/not configured), State (configured/not configured/unreadable), OU,
-Status.
+allowed (any/allowed/denied/not configured/not confirmed), State (configured/not configured/unreadable/not
+confirmed), OU, Status. A user in state *Not confirmed* shows "Not confirmed" in every §3 cell and
+the reason in the State cell's detail; the cells are never blank and never read "Not configured".
+A user in state *Unreadable* shows the cell-level "Unreadable" and reason of §4 rule 6.
 
 ### USR-10b Users with Terminal Server Access (ME name; 1 ME name)
 
@@ -198,10 +223,18 @@ treatment of users with no stored settings is `[UNVERIFIED]`.
 Ours: users whose account-level setting does not deny logon. Rows carry **Basis**: *Explicit* (a
 valid blob with the bit clear) or *Default* (no stored settings; ADUC shows the box ticked). A
 switch "Only explicitly allowed" is off by default and a count shows each basis. Header counts:
-Denied, Not readable, Not configured. Header text, always shown: "Account setting only. Whether a
+Denied, Not readable, Not configured. **Not readable** is the sum of users in state *Unreadable*
+and users in state *Not confirmed*, shown with the two parts and, for *Not confirmed*, the count
+by reason; each part links to USR-10a filtered to that state. A *Not confirmed* or *Unreadable*
+user is **not listed** in the 10b rows (we do not know their setting, so they have neither basis)
+and is **never** given Basis *Default*; only a user whose blob is proved absent is *Default*.
+Header text, always shown: "Account setting only. Whether a
 user can sign in to a particular server also depends on Remote Desktop Users membership, the
 'Allow log on through Remote Desktop Services' user right and Group Policy, which are not read
 here." Default columns: Name, Logon name, Domain, OU path, Basis, Status.
+
+Both USR-10a and USR-10b, and their exports, carry the *Not confirmed* count and reasons in the
+header so an exported file cannot be read as complete when it is not.
 
 Neither report is a hit-list for action (no write controls, FR-13 of reports-2a). Disabled accounts
 appear with their Status, never filtered silently.
@@ -214,6 +247,7 @@ appear with their Status, never filtered silently.
 | V2 | Settle each `[UNVERIFIED]`: text encoding, 0 = no limit, inherit semantics, bit 0x10000000, duplicate handling, GC membership, default read right | same |
 | V3 | Samba: inject the fixtures as LDIF; assert the decoder on the Samba-returned octets. **A pass here is not proof for Windows** (§2 trap 6) | Samba lab |
 | V4 | Compare each report row against ADUC's tabs for the same user for all fixtures | `qa-verifier`, Windows |
+| V5 | For a user with a per-object deny-read ACE and one with an OU-inherited deny on the property set, confirm the DC's own answer is "cannot read" and that the report shows *Not confirmed*, `read_denied`, never *Default* (contract CC-TS-04) | `[LAB: Windows]` |
 
 ## 7. Functional requirements and acceptance criteria
 
@@ -221,8 +255,10 @@ appear with their Status, never filtered silently.
 | --- | --- |
 | FR-TS01 | USR-10 MUST decode only the §3 fields, from `userParameters`, through the single decoder of §4, and MUST NOT read or display `msTS*` attributes |
 | FR-TS02 | The decoder MUST satisfy §4 rules 1–11 and the fuzz target FF-TS1 MUST run in CI; no `userParameters` write MAY exist in the product (lint) |
-| FR-TS03 | A user whose blob is absent, has a bad signature or lacks `CtxCfgPresent` MUST show *Not configured*, never Allowed-by-explicit and never an error row |
+| FR-TS03 | A user whose blob is **proved readable and absent**, has a bad signature or lacks `CtxCfgPresent` MUST show *Not configured*, never Allowed-by-explicit and never an error row. A user whose blob is absent and **not proved readable** MUST show *Not confirmed* (§5), never *Not configured* |
 | FR-TS04 | A field that cannot be decoded MUST show "Unreadable" with the reason; the header MUST count unreadable users; no value MAY be guessed |
+| FR-TS08 | A user in state `not_confirmed` MUST appear in USR-10a as *Not confirmed* with its reason, MUST be counted under "Not readable" in both headers and exports, MUST NOT appear in USR-10b rows, and MUST NOT be given Basis *Default* or counted under "Not configured" |
+| FR-TS09 | The decoder MUST run in the connector read path and only typed columns MAY cross the connector contract (contract §5.9 T3); no server-side code MAY receive or decode the raw blob |
 | FR-TS05 | USR-10b MUST show Basis, the account-setting-only header, and MUST NOT list a user whose bit denies logon |
 | FR-TS06 | Every text value MUST be escaped on every output and never dereferenced |
 | FR-TS07 | The raw blob and ReservedData MUST NOT be stored, logged, exported or returned by the API |
@@ -234,16 +270,22 @@ Acceptance (Given/When/Then; ground truth is the Windows fixture and ADUC unless
 - **AC-TS04** Given a blob with signature "Q", When either report runs, Then State is *Not configured* and no field is "Unreadable".
 - **AC-TS05** Given a blob with `TSPropertyCount` 65,535 and no data, When decoded, Then the field status is `unreadable(truncated)`, no panic, allocation under 256 KiB. *Evidence: unit test.*
 - **AC-TS06** Given a blob carrying `CtxWFProfilePath` of `=HYPERLINK(…)`, When exported to CSV and rendered in the grid, Then it is neutralised on both outputs.
-- **AC-TS07** Given a blob with a sentinel in ReservedData, When the full pipeline runs, Then the sentinel appears in no table, log line, export or API response.
+- **AC-TS07** Given a blob with a sentinel in ReservedData (and an unknown property carrying a sentinel value), When the full pipeline runs (sync, USR-10a and USR-10b, CSV/XLSX/PDF/HTML exports, API), Then the sentinel, in UTF-8, UTF-16LE and hex form, appears in no table dump, log line, export or API response, and the test fails when a deliberate leak is introduced. *Evidence: the lab end-to-end test **TS8** of connector-contract "Fitness functions added in v1.5" (ticket **T-1733**), owner **`test-engineer`**; the connector-level cases are TS6 and are not this criterion.*
 - **AC-TS08** Given the fuzz target, When CI runs, Then the seed corpus passes and the nightly job reports executions and zero findings.
 - **AC-TS09** Given a user with `CtxMaxIdleTime` set and its inherit bit set, When USR-10a runs, Then the cell reads "Client/server setting" `[LAB: Windows]`.
 - **AC-TS10** Given a repo search, When the lint runs, Then no code path writes `userParameters`.
 - **AC-TS11** Given two properties named `CtxWFHomeDir`, When decoded, Then the field is `unreadable(duplicate)` and the other fields still show values.
+- **AC-TS12** Given a user whose `userParameters` is absent and the connection identity is denied read on it (a per-object deny and, separately, an inherited deny), When the sync, USR-10a and USR-10b run, Then USR-10a shows State *Not confirmed* with reason `read_denied`, USR-10b does not list the user and its "Not readable" count includes them, and no report row shows Basis *Default* or *Not configured* for that user. *Evidence: V5 on Windows; Samba rows are not evidence of the access check* `[LAB: Windows]`.
+- **AC-TS13** Given a user with no `userParameters` whose readability is proved, When USR-10b runs, Then the row has Basis *Default* (as AC-TS03); and Given the same user when readability cannot be proved (no clean rights check this epoch), Then the user is *Not confirmed*, `readability_unknown`, and absent from the 10b rows.
+- **AC-TS14** Given a sync in which bulk search returned a user with no blob, When the sync completes, Then each such user has been resolved by a per-user read to *Not configured* or *Not confirmed* with a reason other than `readability_not_evaluated`; a user whose per-user read failed stays `readability_not_evaluated` and is counted under "Not readable".
+- **AC-TS15** Given a forest where `userParameters` is confidential or RODC-filtered, When either report runs, Then every user is *Not confirmed*, `secret_attribute`, the header says so once, and no request names the attribute.
+- **AC-TS16** Given a mix of Denied, Not configured, Unreadable and Not confirmed users, When USR-10b is exported, Then the file's header carries the same four counts as the screen and "Not readable" equals Unreadable plus Not confirmed.
 
 ## 8. Handoffs and follow-ups
 
 - `product-manager`: fold into second-slice §2/§8/§10 (F3 resolved), §3 (USR-10 now specced; 2 ME names, ADM-084 count 18), and the counts; T-1112 retitle in T-1118 is now moot for USR-10 which is a separate batch.
-- `solution-architect`: place the decoder; confirm the closed-AST fragments (a plain boolean/enum filter, no new fragment expected); `security-architect`: review D16, V-lint and FF-TS1.
+- `test-engineer`: AC-TS07 end to end as TS8 (T-1733). `qa-verifier`: AC-TS12 to AC-TS16 on a Windows lab. `reporting-engineer`: the D16 columns, USR-10a/10b states, counts and export headers of §5.
+- `solution-architect`: decoder placement is settled by connector-contract v1.5 §5.9 (T-1567); confirm the closed-AST fragments (a plain boolean/enum filter, no new fragment expected); `security-architect`: review D16, V-lint and FF-TS1.
 - `directory-engineer`: build the decoder and D16 after V1/V2 fixtures exist; `devops-engineer`: capture fixtures (V1).
 - New tickets to file: **F-TS1** Windows fixtures V1/V2 (blocks the build); **F-TS2** client drive/printer mapping and session-behaviour columns (P4, optional); build ticket for decoder + D16 + USR-10.
 - Parity differences chosen on purpose: **P7** Users with Terminal Server Access shows Basis and says it is account-level only; ME's treatment of "no stored settings" is `[UNVERIFIED]` and is compared in T-1120 (F1).
