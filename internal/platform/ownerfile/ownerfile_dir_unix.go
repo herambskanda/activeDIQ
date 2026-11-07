@@ -25,7 +25,10 @@ type dirImpl struct {
 // Ancestors above the parent may be links: the checks are on the inodes actually reached, and an
 // attacker cannot make an inode owned by us (state directory) or by root/us and unwritable by others
 // (parent) out of a place they control.
-func openDir(path string, create bool) (*dirImpl, error) {
+func openDir(path string, create bool, o dirOptions) (*dirImpl, error) {
+	if o.account != "" {
+		return nil, ErrAccountUnsupported
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err

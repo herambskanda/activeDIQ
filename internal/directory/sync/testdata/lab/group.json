@@ -1,0 +1,97 @@
+{
+  "objectGuid":  {
+    "value":  "erwOezrLSpe5TrqbfW8RJQ=="
+  },
+  "dn":  {
+    "displayDn":  "CN=Team 66339810,OU=syncmap-66339810,DC=lab,DC=activediq,DC=test"
+  },
+  "parentGuid":  {
+    "value":  "Js8dolmYRde8hiTz271q9Q=="
+  },
+  "attributes":  [
+    {
+      "name":  "grouptype",
+      "values":  [
+        {
+          "int32Value":  -2147483646
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "member",
+      "values":  [
+        {
+          "dn":  {
+            "displayDn":  "CN=SYNCWS66339810,OU=syncmap-66339810,DC=lab,DC=activediq,DC=test"
+          }
+        },
+        {
+          "dn":  {
+            "displayDn":  "CN=Ramán\\, Priya 66339810,OU=syncmap-66339810,DC=lab,DC=activediq,DC=test"
+          }
+        },
+        {
+          "dn":  {
+            "displayDn":  "CN=Vendor 66339810,OU=syncmap-66339810,DC=lab,DC=activediq,DC=test"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectclass",
+      "values":  [
+        {
+          "text":  "top"
+        },
+        {
+          "text":  "group"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectsid",
+      "values":  [
+        {
+          "sid":  {
+            "value":  "AQUAAAAAAAUVAAAAKiXVBoYZFFRm18iPjh4AAA=="
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "samaccountname",
+      "values":  [
+        {
+          "text":  "team66339810"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whenchanged",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-01T06:37:35Z"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whencreated",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-01T06:37:35Z"
+          }
+        }
+      ],
+      "complete":  true
+    }
+  ]
+}

@@ -1,10 +1,11 @@
 ---
 title: "Safe primitives: LDAP filters, DNs, attribute codecs, command invocation, SQL, output encoders"
 date: 2026-10-02
-updated: 2026-10-28
+updated: 2026-11-07
 status: review
 owner: heramb
 ticket: T-0035, T-0041
+amended_by: T-1729 (§2, §5, §5.7, §8: decode-only P3 unit `attr.tsprops`, author solution-architect), T-1759 (§5.7: the two decisions ratified into spec reports-terminal-services §4.1, Counts and `bad_count` aligned, no record changed; author product-manager)
 sources_last_checked: 2026-10-02
 ---
 
@@ -25,7 +26,7 @@ with stable code `X`; nothing is sent to a DC, interpreter or database.
 | --- | --- | --- | --- | --- | --- |
 | P1 | `ldapfilter`: filter AST, canonical renderer, admin-filter parser | string-built filters; library filter compilation of user input | S, A | directory-engineer | 3 |
 | P2 | `dn`: DN parse/build/compare; `ObjectRef` (`<GUID=…>`, `<SID=…>`) | `"CN="+name+","+parent`; `HasSuffix(dn, ou)` scope checks | S, A | directory-engineer | 4 |
-| P3 | `attr`: codecs for GUID, SID, FILETIME/Interval, Generalized Time, flag integers (UAC, computed UAC, groupType), `unicodePwd` + `Secret` | ad-hoc byte/int parsing, bit maths in feature code, raw attribute access | S, A; `Secret` and any codec it parses also in N | directory-engineer | 5 |
+| P3 | `attr`: codecs for GUID, SID, FILETIME/Interval, Generalized Time, flag integers (UAC, computed UAC, groupType), `unicodePwd` + `Secret`; the decode-only `userParameters` decoder `tsprops` (§5.7) | ad-hoc byte/int parsing, bit maths in feature code, raw attribute access; any `userParameters` encoder or write | S, A; `Secret` and any codec it parses also in N; `tsprops` only where the connector runs (§5.7) | directory-engineer | 5 |
 | P4 | `psx` typed PowerShell operations · `pslit` display quoting · `proc` native process runner | script text with data, `-Command`, `-EncodedCommand`, shells, `.bat`/`.cmd` | S, A, X | backend-engineer (`psx`, `proc`), windows-engineer (sidecar host) | 6 |
 | P5 | SQL access: generated queries, tenant context, report compiler, LIKE patterns | `Sprintf`/concatenated SQL, session-level `SET` | S | backend-engineer | 7 |
 | P6 | `sd`: binary MS-DTYP security descriptors, SD_FLAGS, diff-based DACL edits, SDDL display-only | hand-sliced `nTSecurityDescriptor` bytes; SDDL on write paths; whole-SD writes | S, A | directory-engineer | sibling doc: `safe-primitives-security-descriptor.md` (old T-0028) |
@@ -82,10 +83,14 @@ vectors, corpus format and the *meaning* of each lint rule. ADR-0001 is **ratifi
 library choice, the concrete lint tools and which tiers implement what. Package paths are fixed by
 [blueprint v0](blueprint.md) §1.1 and §7.4: `internal/directory/ldapfilter`, `internal/directory/dn`
 (with `ObjectRef`, `GUIDRef`), `internal/directory/attr/{guid,sid,filetime,gentime,flags,unicodepwd}`,
-`internal/platform/secret`, `internal/connector/ad/scope` and `internal/connector/ldap` (`SecureConn`),
-`internal/connector/psx`, `internal/platform/pslit`, `internal/platform/proc`, and
-`internal/platform/store` (with `store/exempt` and `store/reportsql`). Short names below (`scope`,
-`dn`, `store`) mean these packages. API sketches use neutral pseudo-signatures; Go, C#
+`internal/directory/attr/tsprops` (**planned**, T-1566: decode-only, and imported only by the connector's wire-value
+builder `internal/connector/wirevalue`, [connector-contract §5.9.1](connector-contract.md); §5.7),
+`internal/platform/secret`, `internal/connector/ad` (raw search, the closed general-search control set, scoped
+search and GC resolution: `search.go`, `scoped.go`, `gc.go`), `internal/directory/attr/unicodepwd` (`SecureConn`),
+`internal/connector/ad/scope` (**planned**: the escape-control named-operation table only, created by the first
+named operation that sets one, ADM-038 `RestoreDeleted`), `internal/connector/psx`, `internal/platform/pslit`, `internal/platform/proc`, and
+`internal/platform/store` (with `store/exempt` and `store/reportsql`). Short names below (`dn`, `store`) mean these packages; `scope` means the scoped-search layer of
+`internal/connector/ad` (`scoped.go`), not the planned escape-control table package. API sketches use neutral pseudo-signatures; Go, C#
 and TypeScript names illustrate the ratified stack. §10 lists what changes if ADR-0001 is amended.
 
 | Tier (ADR-0001) | P1 filter | P2 DN / ObjectRef | P3 codecs, `Secret` | P4 command | P5 SQL | P7 output |
@@ -162,8 +167,8 @@ codes `SyntaxError`, `TrailingInput`, `InvalidEscape`, `UnsupportedMatchingRule`
 read. Text input is strict: no surrounding whitespace, no second filter. Still to build: `scope` (LF-30–33,
 LF-35, LF-37–40).
 
-There is no public `Search(base, …)`. The raw connector search is internal to the `scope` package
-(§3.6), so a feature cannot choose a base, a control or a port.
+There is no public `Search(base, …)`. The raw connector search is internal to `internal/connector/ad`
+(`scope` layer, §3.6), so a feature cannot choose a base, a control or a port.
 
 ### 3.2 Canonical rendering
 
@@ -270,10 +275,10 @@ reveals whether an out-of-scope DN exists (LF-36).
   `SearchRequest` constructors of `System.DirectoryServices.Protocols` (BannedApiAnalyzers).
 - Literal-shape scanner (FF-SP3): string literals containing `(&(`, `(|(`, `(objectClass=`,
   `(sAMAccountName=` or `:1.2.840.113556.1.4.` outside `ldapfilter` and tests fail the build.
-- Raw search, control constructors and the GC port are confined to `internal/connector/ad/scope`
-  and `internal/connector/ldap` (FF-SP1). In go-ldap that means `Conn.Search`, `SearchWithPaging`, `NewSearchRequest`, `NewControl*`
+- Raw search, control constructors and the GC port are confined to `internal/connector/ad` (`search.go`,
+  `scoped.go`, `gc.go`) under the connector root (FF-SP1). In go-ldap that means `Conn.Search`, `SearchWithPaging`, `NewSearchRequest`, `NewControl*`
   and the literals `3268`/`3269`. The OID literal `1.2.840.113556.1.4.1504` and the other §3.6
-  escape-control OIDs may appear only in the named-operation table inside `scope` (LF-30).
+  escape-control OIDs may appear only in the named-operation table inside `internal/connector/ad/scope` (planned, LF-30; rule `escape-control-oid`, FF-SP2).
 
 ### 3.6 Scoped search: base, controls, referrals, Global Catalog
 
@@ -482,6 +487,15 @@ from the name in feature code. Raw values never leave the codec package. API out
 (ISO 8601 UTC, decimal-as-string, canonical GUID/SID), never 64-bit JSON numbers (gotcha 22).
 Integer text uses [RFC 4517 §3.3.16][rfc4517-int]: `( "-" LDIGIT *DIGIT ) / number` — no `+`, no
 leading zeros, no `-0`, ASCII digits only.
+
+**One exception: `tsprops` (§5.7) is decode-only.** It has `decode` and no `encode`, and its `decode`
+returns no error. Each field carries its own status instead (spec
+[reports-terminal-services §4](../../product/specs/reports-terminal-services.md) rules 1 and 6;
+[connector-contract §5.9.2](connector-contract.md) T1). It is also the one codec chosen by the
+attribute's **identity**, not its syntax. The live schema gives `userParameters` syntax 2.5.5.12
+(Unicode string), which would route the blob to text. So the wire-value builder matches the name or
+OID first (contract §5.9.2 T3). That match lives only in the builder, never in feature code. The other
+shared rules hold for `tsprops` without change.
 
 **Lint (all codecs).** Raw entry accessors (go-ldap `GetAttributeValue(s)`, `GetRawAttributeValue(s)`)
 are banned outside the connector and `attr`; UAC/groupType bit constants and `binary.LittleEndian`
@@ -777,6 +791,129 @@ being the nested calls inside generated `UnmarshalJSONFrom` methods (files with 
 header), which inherit its options; a call to `secretjson.Decode` from any package but `apihost`;
 and `ReadToken` or `Token.String` inside a decoder method of a `Secret`-bearing type. FF-SP2 bans `net/http/pprof` and `runtime/pprof`
 outside `_test.go` and tier L, and bans the TLS-verification bypasses listed above.
+
+### 5.7 `userParameters` (`attr/tsprops`, decode-only)
+
+**Normative sources.** This section adds no rule of its own. It turns the rules into corpus records
+and fixes the gate unit. The format is spec [reports-terminal-services §2](../../product/specs/reports-terminal-services.md),
+the fields are spec §3, and parser safety is spec §4 rules 1 to 11. Placement, the public surface
+(`tsprops.Decode(raw []byte) Properties`), the one importer and rules T1 to T7 are
+[connector-contract §5.9](connector-contract.md). Where this section and either source disagree, the
+source wins and this section is amended.
+
+**Package and importer.** `internal/directory/attr/tsprops` (planned, T-1566). The only product
+package that may import it is the wire-value builder `internal/connector/wirevalue` (T-1739). The
+connector's `Read`, `ScopedSearch`, `ValueChunk`, the `Plan` before-image and `ChangeFeed` all reach it
+through that builder. Everything above the connector gets the typed `TsPropertiesValue`, never the
+codec and never the blob (blueprint §7.4; TS2(c) in connector-contract "Fitness functions added in
+v1.5"). Its imports are the tsprops import allowlist of contract T6. **Tiers:** the one Go
+implementation, run wherever the connector runs (S, or A if a host agent carries the connector).
+N, X and W have none (§2).
+
+**Decoded shape the records assert.** `Properties{State, BlobReason, Fields, Counts}` as in contract
+§5.9.1. These conventions apply to every record below:
+- When `State` is `NotConfigured`, every field is `not_configured` and none is `unreadable` (FR-TS03,
+  AC-TS04).
+- When `State` is `Unreadable`, every field is `unreadable` with the blob reason. That is AC-TS05's
+  "the field status is `unreadable(truncated)`".
+- When `State` is `Configured`, a field the record does not name is `not_configured`.
+- `Counts.unknown_properties` counts parsed properties whose name is not in the spec §3 list. That
+  includes the excluded names such as `CtxCallbackNumber`. `Counts.skipped_properties` is
+  `TSPropertyCount` minus 64 when the count exceeds the rule 3 cap. `Counts.duplicates` counts the
+  distinct parsed names that occur more than once. All three are set once the walk of at most 64
+  properties finished (TSP-26 has `duplicates` 1 although the blob is `Unreadable`) and are 0 when it
+  did not. `skipped_properties` is the count the header claims and is not verified. `bad_count` is
+  retired: it keeps its enum number and no record produces it. A count the bytes cannot hold is
+  `truncated` (TSP-13). Evaluation order and the full fault classes are spec §4.1.
+
+**Two decisions the records need (T-1729), adopted unchanged by T-1759 and now normative in spec
+[reports-terminal-services §4.1](../../product/specs/reports-terminal-services.md). No expectation in
+the table below changed. T-1566 implements them.** (1) **Structural versus field-local.** Some faults make the property array unwalkable
+or leave a property that cannot be matched to a field: a header, name or value that runs past the end;
+a `NameLength` that is odd or over 64; input that is not valid UTF-8 or holds a lone surrogate; input
+over the cap. Each of these makes the whole blob `Unreadable` with that reason. A fault inside a
+property whose name was read and whose bytes are present affects only that field: `bad_type`,
+`bad_hex`, `out_of_range`, a `ValueLength` over 2,048, text hygiene and `duplicate`. That keeps rule 6
+for the faults where the field is known, and fails closed where it is not. (2) **Gate faults.** A
+missing `CtxCfgPresent` or a wrong value gives `NotConfigured` with reason `bad_signature`, because
+spec §4 rule 5 treats it "the same" as a bad signature. A **duplicated** `CtxCfgPresent` gives
+`Unreadable(duplicate)`. Rule 7 forbids picking one of the two, and `NotConfigured` would also be a
+guess (FR-TS04). Duplicates are detected **before** a field is decoded. So AC-TS11 holds both before
+the T-1565 fixtures land, when contract T7 makes every text field `unreadable(bad_encoding)`, and after.
+
+**Notation.** A record's input is the LDAP octets exactly as a DC returns them: the UTF-16 code units
+of the blob, converted to UTF-8 (spec §2 trap 1). The corpus stores them as `{"hex": …}`. The table
+describes the blob **after** the decoder's conversion back to UTF-16LE bytes:
+- `R` is the 96-byte `ReservedData`. It holds the marker `RSVDMARK` in UTF-16LE, padded with
+  `20 00`. The FF-TS1 property "no `ReservedData` marker in the output" searches for that marker.
+- `H(c)` is `R`, then the signature `50 00` ("P"), then `TSPropertyCount` = c (u16 LE).
+- `p(name, digits)` is one TSProperty: `NameLength` = UTF-16LE byte length of the name, `ValueLength`
+  = number of hex digits, `Type` `0x0001`, the name in UTF-16LE, then the ASCII hex digits.
+- `u(name, v)` is `p(name, …)` with the 8 hex digits of the u32 `v`. `G` is `u(CtxCfgPresent, 0xB00B1E55)`.
+  MS-TSTS fixes the digit order within a byte
+  ([PropValue encoding](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsts/27cd734a-b780-41e6-b9d5-b6c9fba6c16a)),
+  but not the byte order of a u32. Little-endian is assumed `[UNVERIFIED]` until the T-1565 fixtures
+  settle it. If they show otherwise, the generator changes and no expectation does.
+
+Every record has `"verified": "doc"`. The corpus files are generated by a tier-L builder from this
+notation, so no hand-assembled hex is needed. T-1565's Windows captures join the unit as `TSP-W01`
+onward, with `"hostile": false` and `"verified": "windows"`, and their expected values checked against
+ADUC (spec V4, contract CC-TS-01). They add records, not hostile ones.
+
+| ID | Input | Expected | Note |
+| --- | --- | --- | --- |
+| TSP-01 | `H(2) G u(CtxShadow, 1)` | `Configured`; remote control `1` (input, notify); counts 0, 0, 0; no `RSVDMARK` in the output | anchor; spec §3 |
+| TSP-02 | `H(2) G u(CtxCfgFlags1, 0x00010000)` | `Configured`; logon allowed `false` (Denied); the reset-broken, reconnect-same and inherit flags `false` | named bit `F1MSK_LOGONDISABLED` |
+| TSP-03 | `H(2) G u(CtxMaxIdleTime, 525600)` | `Configured`; max idle `525600` minutes | upper bound, inclusive |
+| TSP-04 | `H(2) G u(CtxMaxConnectionTime, 0)` | `Configured`; max connection `0` | the "No limit" display is the report's (spec §3 `[UNVERIFIED]`), not the decoder's |
+| TSP-05 | `H(3) G u(CtxShadow, 0) p(CtxFutureProp, "00")` | `Configured`; remote control `0` (Disabled); `unknown_properties` 1 | unknown names are skipped and counted (rule 7) |
+| TSP-06 | empty input (0 bytes) | `NotConfigured`, `too_short` | rule 3 |
+| TSP-07 | `H(0)` | `NotConfigured`, `bad_signature`; no field `unreadable` | gate absent (rule 5; contract CC-TS-03) |
+| TSP-10 | `R`, signature `51 00` ("Q"), count 1, `G` | `NotConfigured`, `bad_signature`; no field `unreadable` | **AC-TS04**; FF-TS1 seed "bad signature" |
+| TSP-11 | `H(1) u(CtxCfgPresent, 0xB00B1E54)` | `NotConfigured`, `bad_signature` | wrong gate value (rule 5) |
+| TSP-12 | `R` carrying RAS-style callback bytes and `RSVDMARK`, then `00 00` signature and a zero count: 100 bytes | `NotConfigured`, `bad_signature`; no `RSVDMARK` and no RAS byte in the output | FF-TS1 seed "RAS-only blob with a zeroed tail"; dial-in data must not cross (FR-TS07) |
+| TSP-13 | `H(65535)` and nothing after it (100 bytes) | `Unreadable`, `truncated`; no panic; ≤ 256 KiB allocated | **AC-TS05**; FF-TS1 seed; contract CC-TS-05 |
+| TSP-14 | `R` alone (96 bytes) | `NotConfigured`, `too_short` | fewer than 98 bytes (rule 3) |
+| TSP-15 | `H(1)`, then `NameLength` 64, `ValueLength` 8, `Type` 1 and only 10 more bytes | `Unreadable`, `truncated` | FF-TS1 seed "name length beyond the end"; rule 2 |
+| TSP-16 | `H(2) G`, then a `CtxShadow` header with `ValueLength` 2048 and only 8 digits after the name | `Unreadable`, `truncated` | FF-TS1 seed "value length beyond the end" |
+| TSP-17 | `H(2) G`, then a property with `NameLength` 66 (name and value bytes present) | `Unreadable`, `too_long` | rule 3 `NameLength` ≤ 64; the name cannot be matched to a field, so the fault is structural |
+| TSP-18 | `H(2) G`, then a property with `NameLength` 17 (bytes present) | `Unreadable`, `bad_encoding` | rule 3 `NameLength` even |
+| TSP-19 | `H(3) G p(CtxShadow, "0100000") p(CtxMaxIdleTime, "000000000")` | `Configured`; remote control and max idle `unreadable(bad_hex)` | FF-TS1 seed "odd hex"; rule 4. The two odd lengths keep the blob a whole number of UTF-16 units |
+| TSP-20 | `H(2) G p(CtxShadow, "0g000000")` | `Configured`; remote control `unreadable(bad_hex)` | FF-TS1 seed "non-hex bytes"; rule 4 |
+| TSP-21 | `H(2) G`, then `CtxShadow` with `Type` `0x0002` and the value `01000000` | `Configured`; remote control `unreadable(bad_type)` | rule 3 |
+| TSP-22 | `H(2) G p(CtxInitialProgram, <2,050 digits>)` | `Configured`; start program `unreadable(too_long)` | rule 3 `ValueLength` ≤ 2,048 |
+| TSP-23 | `H(2) G u(CtxShadow, 5)` | `Configured`; remote control `unreadable(out_of_range)` | spec §3: 0 to 4 only |
+| TSP-24 | `H(2) G u(CtxMaxIdleTime, 525601)` | `Configured`; max idle `unreadable(out_of_range)` | spec §3: over one year |
+| TSP-25 | `H(4) G u(CtxShadow, 1) p(CtxWFHomeDir, "5c005c00") p(CtxWFHomeDir, "5c005c00")` | `Configured`; home folder `unreadable(duplicate)`; remote control `1`; `duplicates` 1 | **AC-TS11**; rule 7 |
+| TSP-26 | `H(3) G G u(CtxShadow, 1)` | `Unreadable`, `duplicate`; `duplicates` 1 | FF-TS1 seed "a duplicate `CtxCfgPresent`"; decision (2) |
+| TSP-27 | `H(1001) G`, then 1,000 × `u(CtxShadow, 1)` | `Configured`; remote control `unreadable(duplicate)`; `duplicates` 1; `skipped_properties` 937 | FF-TS1 seed "a thousand duplicate properties"; contract CC-TS-05; the 64 cap (rule 3) |
+| TSP-28 | `H(66) G u(CtxShadow, 1)`, then 64 × `p(CtxX01…CtxX64, "00")` | `Configured`; remote control `1`; `unknown_properties` 62; `skipped_properties` 2 | rule 3 count cap |
+| TSP-29 | 32,768 bytes `41` (65,536 bytes after conversion) | `NotConfigured`, `bad_signature`; within the rule 10 budget | at the size cap, inclusive |
+| TSP-30 | 32,769 bytes `41` | `Unreadable`, `too_long` | one unit over the cap |
+| TSP-31 | 65,536 bytes `41` | `Unreadable`, `too_long`; ≤ 256 KiB allocated | FF-TS1 seed "64 KiB of one byte"; contract CC-TS-05's 65,536-unit value |
+| TSP-32 | `H(2) G u(CtxShadow, 1)` with the UTF-8 octets `ED A0 80` (a lone surrogate) inside `R` | `Unreadable`, `bad_encoding` | FF-TS1 seed "lone surrogates"; spec §2 trap 1 |
+| TSP-33 | `H(2) G u(CtxShadow, 1)` with the octet `FF` inside `R` | `Unreadable`, `bad_encoding` | not UTF-8; Samba may return such bytes (spec §2 trap 6) |
+| TSP-34 | `H(2) G p(CtxWFProfilePath, "6100000062000000")` | `Configured`; profile path `unreadable(bad_encoding)` | FF-TS1 seed "NULs inside text"; rule 9. The NUL sits inside the text in both candidate encodings (spec §2 trap 2) |
+| TSP-35 | `H(2) G p(CtxInitialProgram, "61001b006200")` | `Configured`; start program `unreadable(bad_encoding)` | C0 control (ESC) in text; rule 9; both encodings |
+| TSP-36 | `H(2) G p(CtxCallbackNumber, "2b0031003500350035000000")` | `Configured`; `unknown_properties` 1; no field and no output string carries the digits | personal data, not decoded (spec §3) |
+| TSP-37 | `H(2) G u(Ctx` U+0405 `hadow, 1)` (Cyrillic DZE for `S`) | `Configured`; remote control `not_configured`; `unknown_properties` 1 | a look-alike name never matches |
+
+The IDs leave TSP-08 and TSP-09 unused, so hostile records start at TSP-10. TSP-01 to TSP-07 are
+`"hostile": false`: anchors, the empty sentinel, the absent gate and an unknown name. TSP-10 to TSP-37
+(28 records) are `"hostile": true`. They are malformed or oversized input, a duplicate the report must
+not resolve, or a path by which `ReservedData`, RAS data or personal data could leak. Every row has one
+input, so no row expands (§8).
+
+**Fuzz and oracles.** The FF-SP5 fuzz target for this unit is FF-TS1 (`FuzzUserParameters`, contract
+TS1), seeded from `attr.tsprops.jsonl` plus the T-1565 fixtures. The round-trip property
+`parse(render(x)) == x` does not apply, because there is no render. The rule 10 budget, the 256 KiB
+allocation cap and the naive reference parser replace it. The FF-SP6 oracle is Windows: CC-TS-01
+compares against ADUC. A Samba pass is not evidence (spec §2 trap 6).
+
+**Lint.** FF-SP2 carries no `tsprops` rule of its own. Contract TS2 (no write, importer confinement),
+TS3 (decode-only API shape) and TS4 (pure imports) run in `fitness-connector-tsprops` (T-1728). The
+§5 raw-accessor and `binary.LittleEndian` bans apply unchanged, and `attr` is the home that permits
+them.
 
 ## 6. P4 — Command invocation
 
@@ -1146,6 +1283,7 @@ and is updated by the lab tests, not by hand.
 - `ldapfilter` (incl. `scope`);
 - `dn`;
 - `attr.guid`, `attr.sid`, `attr.filetime`, `attr.gentime`, `attr.flags`;
+- `attr.tsprops` (decode-only, §5.7; the corpus file lands with the package in T-1566);
 - `attr.unicodepwd` (incl. `Secret`, `SecureConn`);
 - `psx`, `pslit`, `proc`;
 - `sql`;
@@ -1186,6 +1324,7 @@ counts:
 | `attr.filetime` | 27 | 15 | FT-01 to -04, -06, -07#1–2, -09, -10, -12#1–2, -17 |
 | `attr.gentime` | 18 | 12 | GT-01 to -05, -12 |
 | `attr.flags` | 22 | 12 | FL-01 to -06, FL-09#1–4 |
+| `attr.tsprops` | 35 | 28 | TSP-01 to -07 |
 | `attr.unicodepwd` | 23 | 19 | PW-01 to -03, -13 |
 | `psx` | 21 | 21 | none |
 | `pslit` | 19 | 16 | PSQ-14#1–2, -16 |
@@ -1200,12 +1339,14 @@ counts:
 
 The margins are smallest for `attr.gentime` and `attr.flags`, at 12 each. A change that removes or
 reclassifies a hostile record in either unit adds a replacement in the same change, or FF-SP4
-fails. The table is a count of this document. Once the corpus files exist, the corpus is
+fails. `attr.tsprops` (T-1729) counts §5.7's synthetic records only. The spec §4 hostile set and
+AC-TS04, AC-TS05 and AC-TS11 are TSP-10 to TSP-37. The T-1565 Windows fixtures add `"hostile": false`
+records (`TSP-W…`) and leave the hostile count unchanged. The table is a count of this document. Once the corpus files exist, the corpus is
 authoritative and FF-SP4 recomputes the counts.
 
 | FF | Check | Fails when |
 | --- | --- | --- |
-| FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only the connector root `internal/connector/`, with controls only in `internal/connector/ad/scope`); the SQL driver (only the data-access package `internal/platform/store`; generated `sqlcdb/` packages may import the other pgx packages, but not `pgxpool` or `pgx.Connect`/`ConnConfig`, blueprint §2); process APIs (only `internal/platform/proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). P7 adds: `encoding/csv` (only `export/csv`), the XLSX library (only `export/xlsx`), the PDF library (only `export/pdf`), `net/smtp`/`mime/multipart` (only `notify/mail`), any HTML-to-PDF or headless-browser module anywhere in product code (§12.3–§12.7). Enforced with depguard, BannedApiAnalyzers and clippy |
+| FF-SP1 | Import boundaries | any of these outside its home: the LDAP library and raw search/controls (only the connector root `internal/connector/`, with the escape-control OIDs only in the planned `internal/connector/ad/scope` table); the SQL driver (only the data-access package `internal/platform/store`; generated `sqlcdb/` packages may import the other pgx packages, but not `pgxpool` or `pgx.Connect`/`ConnConfig`, blueprint §2); process APIs (only `internal/platform/proc`); the PowerShell SDK (only the sidecar host). Also: any product package importing `lab/…` or `tools/…` (tier L). P7 adds: `encoding/csv` (only `export/csv`), the XLSX library (only `export/xlsx`), the PDF library (only `export/pdf`), `net/smtp`/`mime/multipart` (only `notify/mail`), any HTML-to-PDF or headless-browser module anywhere in product code (§12.3–§12.7). Enforced with depguard, BannedApiAnalyzers and clippy |
 | FF-SP2 | Banned APIs and custom analyzers | any symbol in the per-primitive lists in §3.5, §4.6, §5, §6, §7. Includes TLS-verification bypasses (§5.6), `net/http/pprof` and `runtime/pprof` outside tests and tier L, and `GOTRACEBACK=crash` in service definitions, and (rule `asm-cgo`, T-0215) any non-Go native source (`.s .S .c .h .syso` and C++/Objective-C/Fortran/SWIG kin) or `import "C"` in product code: assembly can name any symbol with no `unsafe` import or linkname, and cgo leaves memory safety; tests and tier L are exempt for `import "C"`, tier L for native files, and `nativeHomes` is empty (a home needs a reviewed change). The go/analysis passes `dnstring`, `sqlconst` and `secretjson` run here (`go vet -vettool`, old T-0033). `secretjson` enforces the §5.6 secret path of ADR-0004 rule 6: a decode into a `Secret`-bearing type only through `secretjson.Decode` (nested calls in generated `UnmarshalJSONFrom` methods excepted, as they inherit its options); `secretjson.Decode` called only from `apihost`; no `ReadToken`/`Token.String` in a `Secret` decoder, which must use `ReadValue`. The v1 `encoding/json` import and v1 JSON methods on contract types are banned by `fitness-api` A7, not here; the clean-up (`destroySecrets`, `clear(buf)`) is asserted by A7's per-operation corpus. P7 adds the §12.4–§12.7 lists (`text/template`, typed-string conversions outside `htmlx`, the `tmplconst` pass, `jsontext.EscapeForHTML(false)`/`EscapeForJS(false)` (§12.5 rule 7), `Content-Disposition` outside `httpx` (the literal by scan, any constant-folded spelling, including across files and packages, by the go/types pass `constdisp`, `odataname`, `graph-url-assembly`), XLSX formula/hyperlink/VBA setters, PDF link/JavaScript/attachment/page-import APIs) |
 | FF-SP3 | Literal-shape scanner | filter-, DN-, PowerShell- or SQL-shaped literals combined with concatenation or formatting outside primitive packages and tests. **`web/` is covered too**: TS/TSX template literals or concatenations containing `CN=`, `OU=`, `DC=`, `(&(`, `(\|(` or `(objectClass=`; quote doubling (`replace(/'/g, "''")`, `replaceAll("'", "''")`); `.split(',')`, `.endsWith(` or `.includes(` on a value named `dn`/`distinguishedName`; P7's §12.5 W1/W2 ESLint rules and CSV/XLSX `Blob`s. **P7 shapes in Go:** formula-lead `HasPrefix` checks outside `cellsafe`, joined CSV rows, `"text/csv"`/`".csv"` outside `export/csv`/`httpx`, HTML-shaped literals outside `htmlx`, mail-header literals outside `notify/mail` (§12.2–§12.6). Tier L is exempt (§2.1). Tool: Semgrep or ast-grep, chosen by devops-engineer via the licence register |
 | FF-SP4 | Corpus gate | a **unit** (§8 list) has < 10 records with `"hostile": true`; an implementation skips records of a unit it implements; a record disappears without a superseding one |
@@ -1304,6 +1445,7 @@ except the PowerShell quoting rules, which are confirmed in PowerShell's source 
 | `AllSigned` enforced; module-integrity check; module logging content and event ID | Microsoft (Windows-only enforcement) | **Windows** + Linux sidecar | n/a — Linux has no execution policy, which is why PSX-17 exists |
 | `runtime/secret` protection | Go docs: linux/amd64, linux/arm64 only | Linux | n/a — no effect on Windows |
 | SASL GSSAPI sealing as a `SecureConn` source | `[UNVERIFIED]` (old T-0023) | Samba + Windows | medium |
+| `userParameters` text encoding per field, u32 byte order, duplicate handling (§5.7, spec §2 traps 1–2) | `[UNVERIFIED]` (spec V2) | **Windows** (T-1565 fixtures) | **high**: Samba writes no blob, and its fixtures are LDIF-injected (spec §2 trap 6) |
 | PostgreSQL `security_invoker`, materialized-view and `SECURITY DEFINER` RLS behaviour | PostgreSQL docs | PostgreSQL 16 and 18 in CI | n/a |
 | P7: TAB-in-quotes keeps a lead cell as text in Excel, also after save-as-CSV and reopen (CSV-17) | [WSTG-INJT-21][wstg-csv] "observed behavior" | **Excel (Windows lab)** + LibreOffice | n/a: no spreadsheet on Samba; LibreOffice may differ from Excel, so both run |
 | P7: full-width and other look-alike leads, leading invisible characters, U+2212: does any spreadsheet evaluate them? (§12.2) | `[UNVERIFIED — lab]`; WSTG "depending on locale" | Excel (ja-JP and en-US locales) + LibreOffice | n/a: we neutralise regardless; the lab result only tells us if we over-neutralise |
@@ -1346,6 +1488,7 @@ old T-0034 (FF-SP4–6, 8) and old T-0036 (FF-SP7, implemented inside ADR-0002's
   `runtime/secret` evaluation (§5.6).
 - old T-0023 — whether GSSAPI sealing can be a `SecureConn` source (§5.6).
 - T-0106 — OData/Graph primitive P8: done as `safe-primitives-odata.md`; build, FF-SP3 rules and Graph lab vectors are follow-up tickets named in its §9.
+- T-1729 — `attr.tsprops` (§5.7): package and `attr.tsprops.jsonl` in T-1566, importer `wirevalue` in T-1739, fitness TS1–TS4 in T-1728, Windows fixtures in T-1565, spec alignment of the §5.7 decisions in T-1759.
 - OPATH (Exchange) filter primitive: none planned. OPATH parameters stay banned for data (§6.1 rule 2)
   until the M365 parity scope needs one.
 

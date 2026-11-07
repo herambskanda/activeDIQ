@@ -382,3 +382,7 @@ func (s *labServer) Read(req *connectorv1.ReadRequest, st grpc.ServerStreamingSe
 func (s *labServer) ScopedSearch(req *connectorv1.ScopedSearchRequest, st grpc.ServerStreamingServer[connectorv1.ScopedSearchResponse]) error {
 	return s.read.ScopedSearch(req, st)
 }
+
+func (s *labServer) Describe(ctx context.Context, req *connectorv1.DescribeRequest) (*connectorv1.DescribeResponse, error) {
+	return s.read.Describe(ctx, req)
+}
