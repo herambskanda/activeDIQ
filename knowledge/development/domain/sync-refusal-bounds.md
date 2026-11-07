@@ -53,3 +53,16 @@ Writers: "creator" is the principal that created a computer under MachineAccount
 `refused_object.N`. No value is carried. A GUID-only placeholder row was not added: the ingester upserts
 whole observations, so a placeholder would blank an already-stored object's state, and a report-visible
 "unreadable" state needs a store column and report semantics (follow-up ticket).
+
+## Lab evidence and accepted residuals (T-1250)
+
+* **Samba lab test**: `Test_lab_mapper_bounds_cover_the_schema_range_upper` (`make lab-test-sync`, tag `lab`,
+  `internal/directory/sync/schema_bounds_lab_test.go`) reads `rangeUpper` from the schema NC of the running
+  lab and asserts a value of exactly that many multi-byte characters maps for each attribute above. Run
+  2026-11-07 on Samba: pass (sAMAccountName 256, UPN 1024, displayName 256, mail 256, company 64,
+  description 1024, dNSHostName 2048; operatingSystem/Version carry no rangeUpper in Samba's schema).
+  This proves Samba's schema only. **Windows rangeUpper stays [UNVERIFIED]** until T-1243/T-1715.
+* **Accepted residual, tracked**: `CodeBadText` (invalid UTF-8 / unpaired surrogate) is not closable by
+  widening and not proven unreachable by a non-admin on Windows. The object is identified by GUID in the
+  cycle report and log only; nothing outside `internal/directory/sync` consumes `DomainReport` yet.
+  Tracked in T-1713 (GUID-only placeholder / U+FFFD option), T-1714 (health finding), T-1715 (Windows lab).

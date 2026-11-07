@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	dirsync "github.com/skenzeriq/activediq/internal/directory/sync"
@@ -146,7 +147,7 @@ func Fuzz_map_never_panics_and_respects_store_bounds(f *testing.F) {
 			return
 		}
 		o := got.Observation
-		if len(o.DN) > 4096 || len(o.RDN) > 1024 || len(o.SAMAccountName) > 256 || len(o.Class) > 100 || strings.ContainsRune(o.DN+o.RDN+o.SAMAccountName+o.Class, 0) {
+		if len(o.DN) > 4096 || utf8.RuneCountInString(o.RDN) > 1024 || utf8.RuneCountInString(o.SAMAccountName) > 256 || len(o.Class) > 100 || strings.ContainsRune(o.DN+o.RDN+o.SAMAccountName+o.Class, 0) {
 			t.Fatalf("observation outside the store's bounds")
 		}
 		if o.Kind != inventory.KindGroup && (len(o.Members) > 0 || o.MembersComplete) {
