@@ -6,7 +6,7 @@ status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect), T-1567 (v1.5, author solution-architect: §5.9 `attr/tsprops` read-only `userParameters` decoder and `TsPropertiesValue`, §8.10.4 deny-list entry, §9.4b CC-TS cases, fitness TS1-TS6)
+amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect), T-1567 (v1.5, author solution-architect: §5.9 `attr/tsprops` read-only `userParameters` decoder and `TsPropertiesValue`, wire-value identity gate, `NOT_CONFIRMED` readability proof, `not_filterable` schema flag, §8.10.4 OID-resolved deny-list and `AllowedAttr`, §9.4b CC-TS-01..10, fitness TS1-TS8; round 2 after review)
 binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
@@ -272,7 +272,7 @@ The connector's codecs (P3) decode, so no caller sees raw bytes of a known synta
 | Large Integer, not a time | `int64_value` | |
 | FILETIME, Generalized Time | `TimeValue` | `ZERO` (0), `MAX` (`0x7FFF…`), a timestamp, or raw ticks past year 9999. `accountExpires` 0 and `MAX` are both "never" to the caller; `pwdLastSet` 0 is "must change" |
 | DN syntax | `DnValue{display_dn, guid, sid}` | the GUID (RFC 4122 order) and SID come from the extended-DN control, which `ScopedSearch` and `Read` attach (T-1202), and are the identity of the target. Each is set only if the DC sent it (a dangling or foreign link may have a SID and no GUID, a non-principal no SID, a DC that ignores the control neither); never derived. `display_dn` and the entry `dn` are the plain DN. Other session callers do not get the control: it is opt-in (`ReadOptions/SearchRequest/ScopedRequest.ExtendedDN`) |
-| `userParameters` (v1.5) | `TsPropertiesValue` | decoded by `attr/tsprops` only, never `octets` or a string (§5.9 T3) |
+| `userParameters` (v1.5) | `TsPropertiesValue` | the wire-value builder's identity gate runs **before** the syntax switch (its live syntax 2.5.5.12 would otherwise be `text`), and decodes with `attr/tsprops` only; never `octets` or `text` (§5.9 T3) |
 | Unknown syntax | `octets` | |
 
 ### 5.5 `ReadPerDC`
@@ -416,45 +416,57 @@ One owner means one review and one fuzz run. This is the same reasoning as the L
 delivered by DirSync (spec §10 D10). They are read with `Read` from the same DC that produced the
 change, for flagged objects only. `AttributeValue` gains the typed value `ReplMetaValue` (repeated
 `{attribute_name, version, origin_time, originating_dsa, originating_usn, local_usn}`), produced by §5.7
-and by nothing else; the `octets` form of these attributes is refused (the codec registry marks them
-`xml-repl`, so an unknown-syntax fall-through to `octets` cannot happen). `DescribeSchema` marks both as
+and by nothing else; the `octets` form of these attributes is refused: like `userParameters` (§5.9 T3), they are
+routed to `replxml` by an identity gate ahead of the wire-value builder's syntax switch, so an
+unknown-syntax fall-through to `octets` cannot happen. (v1.3 called this "the codec registry"; no such
+registry exists, and the gate is the mechanism.) `DescribeSchema` marks both as
 `constructed`; they are on the read allowlist, not the secret list: **names and times of
 `unicodePwd`, `pwdLastSet` and `ntPwdHistory` changes are the credential-event signal (spec §4.1.2) and
 no value is involved.**
 
 ### 5.9 The `userParameters` decoder: `attr/tsprops`, read-only (v1.5, T-1567)
 
-`userParameters` (OID 1.2.840.113556.1.4.138) is a binary blob stored as a Unicode string. Remote
-Desktop Services keeps its per-user `Ctx*` session settings in it
+`userParameters` (attributeID 1.2.840.113556.1.4.138, syntax 2.5.5.12 Unicode string) is a binary
+blob stored as a Unicode string. Remote Desktop Services keeps its per-user `Ctx*` session settings
+in it
 ([MS-TSTS userParameters](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsts/15f8b01d-900d-4f89-a3fa-1681e55f383d)),
 and RAS dial-in data sits in the same blob
 ([MS-ADA3](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-ada3/8710a141-a607-4b14-9d7c-f6370bff9b96)).
 Spec [reports-terminal-services.md](../../product/specs/reports-terminal-services.md) decision
 D-TS1 builds USR-10a/10b and dataset D16 on it. Spec §2 defines the format and §4 rules 1 to 11
-define parser safety. Both are binding here. This section places the decoder and fixes how its
-output crosses the contract.
+define parser safety. Both are binding here. This section places the decoder, fixes how its output
+crosses the contract, and names the control behind each rule. Round 2 (after the T-1567 review)
+replaces controls that did not exist with ones that do or that a named ticket builds.
 
-**Placement decision (T-1567).** The decoder is the package **`internal/directory/attr/tsprops`**,
-beside `attr/flags` and `attr/filetime`. It is a P3 attribute codec (safe-primitives §5) and is
-**decode-only**. It is not under `internal/connector/ad/` the way `replxml` (§5.7) is, because:
+**"The collector" in spec §5 means the connector's read path** (`internal/connector/read`). The
+blueprint has no component called "collector". The spec amendment is T-1732.
 
-- its input is the octets of one attribute, so it has the shape of the other `attr` codecs: bytes
-  in, typed value out, `codec.Error` codes, a corpus unit. `replxml` is different: it is a
-  multi-document XML reader used only on the AD session path;
-- blueprint §7.4 gives `directory/attr/*` to the connector, `inventory` and the modules.
-  `tsprops` narrows that: only `internal/connector/ad` may import it (TS2b). The others get the
-  typed value, never the codec, so nobody else can decode a blob;
-- the package stays pure (rule T6), so its location gives no extra reach.
+#### 5.9.1 Placement
 
-Nobody else in the module parses `userParameters`. The **only** caller is the AD provider's read
-path in `internal/connector/ad`, which decodes before the value leaves the connector. The server,
-the collector and the reports never see the blob.
+The decoder is the package **`internal/directory/attr/tsprops`**, beside `attr/flags` and
+`attr/filetime`. It is a P3 attribute codec (safe-primitives §5) and is **decode-only**. It is not
+under `internal/connector/ad/` the way `replxml` (§5.7) is, because its input is the octets of one
+attribute (bytes in, typed value out, a corpus unit), the same shape as the other `attr` codecs, and
+because the package is pure (T6), so its location gives it no extra reach.
+
+**One importer: the wire-value builder.** Wire values are built in exactly one function today,
+`read.Handler.value` in `internal/connector/read/handler.go`. It turns one raw value into an
+`AttributeValue`, and it is the only non-test code that constructs `AttributeValue_Octets` or
+`AttributeValue_Text`. The T-1005 extraction (`connector/provider`, branch `factory/T-1005`) leaves
+it in `read`. **Only `internal/connector/read` may import `tsprops`** (TS2(c)). Blueprint §7.4 gives
+`directory/attr/*` to the connector, `inventory` and the modules; `tsprops` narrows that (T-1729).
+If wire-value construction ever moves, the TS2(c) allowlist moves with it in the same change.
+`ChangeFeed`, when the connector serves it, builds its `AttributeChange.values` through the same
+builder, never a second one (TS7). The server, the sync, the reports and the API get the typed
+value, never the blob and never the codec.
 
 **Public surface.** `tsprops.Decode(raw []byte) Properties`. It returns no error, because each
 field carries its own status (spec §4 rule 6). `Properties` is `{State, BlobReason, Fields,
 Counts}`:
 
-- `State` is one of `Configured`, `NotConfigured` or `Unreadable`.
+- `State` is one of `Configured`, `NotConfigured` or `Unreadable`. The decoder sees bytes only,
+  so it cannot know about read rights. `NOT_CONFIRMED` (§5.9.4) is added by the read path, not by
+  `tsprops`.
 - `BlobReason` is the closed reason enum of spec §4 rule 6. It is set when `State` is not
   `Configured`.
 - `Fields` holds one `Field[T]` per row of spec §3, each `{Status: Value | NotConfigured |
@@ -464,40 +476,130 @@ Counts}`:
 
 Nothing else is exported except these types and their constants.
 
-| # | Rule |
-| --- | --- |
-| T1 | **Decode only.** The package exports no `Encode*`, `Marshal*`, `Append*`, `Set*`, `Write*` or `Format*` function, and none of its types implements `encoding.BinaryMarshaler`, `encoding.TextMarshaler`, `json.Marshaler` or `fmt.Formatter`. Spec §4 rule 1 forbids a round trip. This is the one P3 codec with no `encode` (safe-primitives §5 "decode/encode" does not apply; follow-up T-1729 aligns that page) |
-| T2 | **No write of `userParameters` from the product.** It is on the §8.10.4 deny-list (name, any case, OID, any option). The connector enforces this, so a compromised server cannot get round it. The static lint TS2 (below) stops any product code from building a modify or add that names it. A future write feature is a separate spec and a contract change (spec §4 rule 1), never an edit to the deny-list |
-| T3 | **Typed on the wire, never raw.** The codec registry marks `userParameters` as `ts-props`. `Read` and `ScopedSearch` return it only as the typed value `TsPropertiesValue` (below), and never as `octets` or as a string, even when the caller asks for `;binary` or an unknown-syntax fall-through would apply. The raw blob, `ReservedData` and unknown properties do not cross the contract on either transport. That is FR-TS07 at the earliest point |
-| T4 | **Not a filter attribute.** `userParameters` is not on the `ScopedSearch` filter allowlist (`DescribeSchema` marks it `filterable: false`). A filter that names it is `INVALID_ARGUMENT` before any directory call. Reports filter on the typed D16 columns, server-side |
-| T5 | **Spec §4 rules 2 to 11 hold as written.** These are the hard bounds, strict hex, signature and `CtxCfgPresent` gate, per-field status, duplicate policy, typed output, text hygiene, cost budget and logging rule. Limits are constants in the package, and a test pins each one to the spec's number |
-| T6 | **Pure.** No imports from the X6 deny list of §5.7 (`net`, `os`, `net/http`, `io/ioutil`, `os/exec`, `plugin`, `unsafe`, `reflect`), and no `log`, `log/slog` or project logger. Logging happens in the caller, with only the object GUID, the reason enum and the counts (spec §4 rule 11). At most 256 KiB allocated per call |
-| T7 | **Ships only with Windows fixtures.** The text encoding of each text field is chosen from the fixtures captured in T-1565 (spec §2 trap 2). Until those fixtures are committed under `testdata/tsprops/windows/`, `Decode` returns `Unreadable(bad_encoding)` for every text field, and the D16 text columns stay off. The build ticket (T-1566) may not close without them |
+#### 5.9.2 Rules
 
-**Contract form.** `AttributeValue` gains one typed value, **`TsPropertiesValue`**, produced by
-`tsprops` through the AD provider and by nothing else. It is additive (rule 12) and `contract_minor`
+| # | Rule | Control (what enforces it) |
+| --- | --- | --- |
+| T1 | **Decode only.** The package exports no `Encode*`, `Marshal*`, `Append*`, `Set*`, `Write*` or `Format*` function, and none of its types implements `encoding.BinaryMarshaler`, `encoding.TextMarshaler`, `json.Marshaler` or `fmt.Formatter`. Spec §4 rule 1 forbids a round trip. This is the one P3 codec with no `encode` (safe-primitives §5 "decode/encode" does not apply; T-1729 aligns that page) | TS3 |
+| T2 | **No write of `userParameters` from the product.** It has three parts. **(a) The runtime deny-list is the control.** `AttributeEdit.attribute` and the `psx` attribute fields are runtime data, so no constant lint can see them. The deny check runs in the connector (§8.10.4), so a compromised server cannot get round it. It resolves every attribute description through the session schema to its attributeID: it strips options, resolves a `descr` case-insensitively or a numericoid through the schema's OID alias, the same way `ldapfilter.ParseAttrName` does, and then compares OIDs. Matching the string is not enough. **(b) The token.** The check is `write.CheckAttribute(desc, schema) (write.AllowedAttr, error)`. `AllowedAttr` has only an unexported constructor, the same pattern as `Authorised`. Every write body takes `AllowedAttr`, never a `string`: LDAP modify and add in a `WriteOp`, and every `psx` operation that carries an attribute name. That includes a future `Set-ADUser -Replace` adapter: the connector calls `CheckAttribute` before dispatch, and the sidecar refuses the name again. **(c) Paths that never use the name.** ADSI `IADsTSUserEx` ([interface](https://learn.microsoft.com/en-us/windows/win32/api/tsuserex/nn-tsuserex-iadstsuserex)) and its `InvokeSet`/`Put` of TS property names, and `WTSSetUserConfigW`/`WTSSetUserConfigA` ([function](https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/nf-wtsapi32-wtssetuserconfigw)), write the blob without naming it. They are banned in sidecar, agent and Windows-native code. A future write feature needs its own spec and a contract change (spec §4 rule 1), never an edit to the deny-list | (a)(b) TS6 `TestUserParameters_deny_listed` and `TestDenyListPrecedesFirstKind`; (b) TS2(e); (c) TS2(d) |
+| T3 | **Typed on the wire, never raw.** The wire-value builder checks the attribute's identity **before** its syntax switch. Without that check the live schema's 2.5.5.12 would route the blob to `SynString` and emit it as text, and an attribute unknown to the session schema would fall through to `octets`. The gate fires when the description, with every option (`;binary`, `;range=…`, tags) removed, equals `userParameters` case-insensitively, equals `1.2.840.113556.1.4.138`, **or** resolves through the session schema to that OID. On a match the value goes to `tsprops.Decode` and comes out as `TsPropertiesValue`, never `octets` and never `text`. This covers every path through the builder: `Read`, `ScopedSearch`, `ValueChunk` (chunks are built from the same values), and `ChangeFeed` `AttributeChange.values` (§5.9.5). The raw blob, `ReservedData` and unknown properties do not cross the contract. That is FR-TS07 at the earliest point. `DefaultSchema` (`internal/connector/ad/schema.go`) gains the `userParameters` entry with its OID, so it is a known attribute before `DescribeSchema` replaces the default | TS6 `TestUserParameters_never_raw`; TS7 |
+| T4 | **Not a filter or sort attribute.** `userParameters` stays readable, but no filter or sort may name it. A substring or ordering filter on it would be a byte-by-byte oracle on `ReservedData` (spec §4 rule 1). The control is a schema flag that survives a reload: see §5.9.3 | TS6 `TestUserParameters_not_filterable`, CC-TS-06, CC-TS-10 |
+| T5 | **Spec §4 rules 2 to 11 hold as written.** These are the hard bounds, strict hex, signature and `CtxCfgPresent` gate, per-field status, duplicate policy, typed output, text hygiene, cost budget and logging rule. Limits are constants in the package, and a test pins each one to the spec's number | TS1, unit tests |
+| T6 | **Pure.** No imports from the X6 deny list of §5.7 (`net`, `os`, `net/http`, `io/ioutil`, `os/exec`, `plugin`, `unsafe`, `reflect`), and no `log`, `log/slog` or project logger. Logging happens in the read path, with only the object GUID, the reason enum and the counts (spec §4 rule 11). At most 256 KiB allocated per call | TS4, TS1 |
+| T7 | **Ships only with Windows fixtures.** The text encoding of each text field is chosen from the fixtures captured in T-1565 (spec §2 trap 2). Until those fixtures are committed under `testdata/tsprops/windows/`, `Decode` returns `Unreadable(bad_encoding)` for every text field, and the D16 text columns stay off. The build ticket (T-1566) may not close without them | T-1566 acceptance, CC-TS-01 |
+
+#### 5.9.3 Not filterable: the schema flag (T4)
+
+`ldapfilter.AttrInfo` today has only `Secret` and `Constructed`. Neither fits: `Secret` refuses
+every request including `Read`, and `Constructed` refuses the attribute in `ScopedSearch` results.
+So this section adds a third flag:
+
+- **`AttrInfo.NotFilterable bool`**. `ParseFilterAST` refuses any node that names the attribute,
+  with the new code `AttributeNotFilterable` mapped to `INVALID_ARGUMENT`, before any directory
+  call. That covers equality, substring, presence, ordering, approximate, extensible match and
+  matching-rule-in-chain. `ParseSortKey` refuses it too, because ordering is an oracle (LF-35).
+- **A static list keyed by attributeID, with names as aliases.** The list is
+  `internal/directory/attr/filterdeny` (`Static() []Entry{Name, OID}`; v1.5 has one row,
+  `userParameters`/`1.2.840.113556.1.4.138`). `ldapfilter.NewSchema` sets the flag when either the
+  `Name` (case-insensitively) **or** the `OID` matches, whatever the caller passed. It merges the
+  flag upward across names that share an OID, the same way it merges `Secret` and `Constructed`.
+  So neither `With`, a `DescribeSchema` reload nor a schema that renames the attribute can clear
+  it. This mirrors `secretattr.Static()`, but the match is on the OID as well as the name. A
+  hostile schema that maps `userParameters` to another OID still trips the name match, and one
+  that renames it still trips the OID match.
+- **On the wire.** `describe.proto` `AttributeSchema` gains `bool not_filterable = 14`. It is
+  additive (rule 12), and false is the default, so only the listed attributes change. `DescribeSchema`
+  reports what the connector enforces, and the server's form builder hides the attribute from
+  filter pickers. The server is not the control.
+
+#### 5.9.4 Absent vs. no read right: `NOT_CONFIRMED`
+
+`Read` and `ChangeFeed` carry no per-attribute outcome. `PERMISSION_DENIED` exists only in the
+§5.6 `OutcomeKind`. AD **omits** an attribute the reader cannot see, the same as one that is not
+set. If "absent" became `NOT_CONFIGURED`, USR-10b would report a user whose blob we could not read
+as Basis *Default*. That breaks rule 10. So:
+
+- **`TsState` gains `NOT_CONFIRMED`**: absent, and readability not established. This is the D15
+  pattern (spec §5 "Not confirmed"; the T-1019 *Cannot Change Password* read).
+- **A present value is proof enough.** If the DC returned it, it was readable. The state is then
+  `CONFIGURED` or `UNREADABLE` from the decoder.
+- **`Read` establishes readability per object.** When a `Read` asks for `userParameters`, the
+  connector adds `nTSecurityDescriptor` with the SD-flags control set to DACL only to **the same
+  base read**, so there is no second round trip and no race. If `userParameters` is absent, the
+  connector evaluates `READ_PROPERTY` on it for the connection identity's principal
+  (`sd.PrincipalFromToken` over the identity SID and `tokenGroups` of the newest clean rights
+  check, §8.4) with `sd.Grants`. The evaluation runs on the object's own stored DACL, inherited
+  ACEs included, so a per-object deny ACE is evaluated, not assumed away. The result maps to a
+  state:
+  - `Yes`, not `Incomplete` and not `Anomalous`: `NOT_CONFIGURED`, `blob_reason: absent`.
+  - `No`: `NOT_CONFIRMED`, `read_denied`.
+  - `Unknown`, `Incomplete`, `Anomalous`, the DACL not returned, or no clean rights check: `NOT_CONFIRMED`, `readability_unknown`.
+- **Precondition: `sd.Grants` must resolve property sets.** Today `sd.Grants` answers `Unknown`
+  (`property_set_unresolved`) when an ACE on a property set meets an attribute ask
+  (`internal/directory/sd/grants.go`). Authenticated Users read `userParameters` through its
+  property set by default (spec §5, `attributeSecurityGuid` 4c164200-20c0-11d0-a768-00aa006e0529
+  `[UNVERIFIED]` `[LAB: Windows]`). Without the fix every absent blob would be `NOT_CONFIRMED`.
+  T-1731 extends the primitive to take the attribute's `schemaIDGUID` and its
+  `attributeSecurityGuid`, both read from the schema snapshot and never hard-coded, and to
+  evaluate the object-type tree (property set → attribute) the way the DC's access check does
+  ([MS-ADTS 5.1.3.3.3 Checking Object-Specific Access](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/3da5080d-de25-4ac8-9f2b-982709253dfb):
+  a tree with the class at the root and property-set and attribute nodes below it). T-1566 depends on T-1731.
+- **`ScopedSearch` cannot establish readability.** It does not return `nTSecurityDescriptor` in
+  bulk (`constructedReadOnly`). When `userParameters` is asked for and absent, the entry carries
+  `TsPropertiesValue{state: NOT_CONFIRMED, blob_reason: readability_not_evaluated}`. The D16 sync
+  (T-1566) resolves each such user with `Read`. That costs one base read per user without a blob,
+  the same order as the T-1019 per-user DACL read, and T-1566 may serve both from one base read.
+- **Confidential in this forest.** If the forest marks `userParameters` confidential (`searchFlags`
+  0x80), it joins SecretAttrs (§3.7), every request naming it fails, and the D16 sync records
+  `NOT_CONFIRMED`, `secret_attribute`.
+- **`userParameters` is the one attribute for which `Read` and `ScopedSearch` emit a value when the
+  DC returned none.** Absence is an answer here, because spec FR-TS03 defines it as *Not
+  configured*. It is only an answer when it is proved.
+
+**Residual risk.** (1) `sd.Grants` reimplements the DC's access check. A divergence, such as an
+object-type ACE form it does not model, gives a wrong `Yes`. The guard is that `Unknown` fails
+closed and CC-TS-04's Windows rows run the DC's own answer against ours. (2) `tokenGroups` is a
+snapshot from the newest clean rights check. A group membership change since then can change the
+answer until the next check (TM §6.5). (3) Conditional (callback) ACEs evaluate to `Unknown`, and
+so to `NOT_CONFIRMED`: safe, but noisy in forests that use them.
+
+#### 5.9.5 `ChangeFeed`
+
+DirSync returns the changed attributes, and it may return attributes nobody asked for (§6.4). If
+the feed passes `userParameters` on, the value goes through the wire-value builder (T3, TS7), so it
+is `TsPropertiesValue` or nothing. **`CHANGE_OP_CLEARED` for `userParameters` becomes `CHANGE_OP_SET`
+with one value `TsPropertiesValue{state: NOT_CONFIGURED, blob_reason: absent}`.** The feed never
+emits `userParameters` with `CLEARED` and zero values. A DirSync clear is the DC reporting the
+value removed. The premise that losing read access is not reported as a clear is `[UNVERIFIED]`
+`[LAB: Windows]`: DirSync in object-security mode omits unreadable attributes, and an ACL change
+does not change this attribute's metadata. CC-TS-09's Windows row tests that premise. If it fails,
+the mapping becomes `NOT_CONFIRMED`, `readability_unknown` by contract amendment.
+
+#### 5.9.6 Contract form
+
+`AttributeValue` gains one typed value, **`TsPropertiesValue`**. It is built only by the wire-value
+builder from `tsprops` output, and by nothing else. It is additive (rule 12), and `contract_minor`
 goes up. The message has these fields:
 
-- `state`: the `TsState` enum: `UNSPECIFIED`, `CONFIGURED`, `NOT_CONFIGURED`, `UNREADABLE`.
-- `blob_reason`: the `TsReason` enum, mirroring spec §4 rule 6, with new values added at the end.
+- `state`: the `TsState` enum: `UNSPECIFIED` 0, `CONFIGURED` 1, `NOT_CONFIGURED` 2,
+  `UNREADABLE` 3, `NOT_CONFIRMED` 4.
+- `blob_reason`: the `TsReason` enum. It mirrors spec §4 rule 6 and then adds `absent`,
+  `readability_not_evaluated`, `read_denied`, `readability_unknown` and `secret_attribute`. New
+  values go at the end.
 - One `TsField*` sub-message per spec §3 row. Each has a `TsFieldStatus`, a `TsReason` and one
   typed value: `bool`, `uint32`, the `TsShadow` enum, or a `string` for the bounded display texts
   `initial_program`, `work_directory`, `home_dir`, `home_drive` and `profile_path`.
 - The three `uint32` counts.
 
 `TsPropertiesValue` has no `bytes` field and no `map`. A text value is display data: every output
-encoder escapes it (FF-SP4, spec FR-TS06), and nothing dereferences it. A user with no
-`userParameters` gets `state: NOT_CONFIGURED`, and the attribute is not reported as missing. That
-is the one place where absence is an answer, because spec FR-TS03 defines it as *Not configured*
-(ADUC shows the defaults). A value the DC refused to return (no read right) is still the
-`PERMISSION_DENIED` attribute outcome, never `NOT_CONFIGURED` (rule 10, spec §5 "Not confirmed").
+encoder escapes it (FF-SP4, spec FR-TS06), and nothing dereferences it.
 
-**Platform matrix.**
+#### 5.9.7 Platform matrix
 
 | Provider | `userParameters` | Note |
 | --- | --- | --- |
 | AD, Windows DC | read, decoded, never written | ground truth (spec §6 V1, V4) |
-| AD, Samba | read, decoded, never written | Samba fixtures are LDIF-injected by `internal/connector/labadmin` (test support, T2 does not apply to `_test.go`/`labadmin`). **A Samba pass is not evidence for Windows** (spec §2 trap 6) |
+| AD, Samba | read, decoded, never written | Samba fixtures are LDIF-injected by `internal/connector/labadmin`. That package is exempt from TS2(a)/(b) only because `write.TestLabAdminImportedOnlyByTests` fails when any non-`_test.go` file imports it. If that test is removed or weakened, the exemption lapses, and TS2 checks that the test exists. **A Samba pass is not evidence for Windows** (spec §2 trap 6), and that includes Samba's access check for CC-TS-04 |
 | Entra | not applicable | Graph has no such property. The Entra provider never returns `TsPropertiesValue`, and `DescribeSchema` does not list the attribute |
 | Server OS | platform-independent | pure Go, standard library only (`unicode/utf16`, `unicode/utf8`, `encoding/binary`). No new dependency, nothing for the licence register |
 
@@ -1538,8 +1640,18 @@ inverse being the other. UAC semantics: [KB 305144](https://support.microsoft.co
 #### 8.10.4 The attribute deny-list for `OBJECT_UPDATE` and `OBJECT_CREATE.initial`
 
 An attribute that has its own kind, its own guard or a security meaning the kinds above do not carry is
-`ATTRIBUTE_NOT_ALLOWED`, checked first, by canonical name case-insensitively, and by OID. Nothing is
-decided by what the server's form allowed. Denied in v1.4:
+`ATTRIBUTE_NOT_ALLOWED`, checked first. Nothing is decided by what the server's form allowed.
+
+**How the check matches (v1.5, §5.9 T2).** The list is keyed by **attributeID OID**, with the
+canonical names as aliases. `write.CheckAttribute(desc, schema) (AllowedAttr, error)` refuses an
+attribute description that carries any option (no v1.4 kind writes one). It then resolves the
+description through the session schema the way `ldapfilter.ParseAttrName` does: a `descr`
+case-insensitively, a numericoid through the schema's OID alias. It refuses the attribute when the
+resolved OID **or** the lower-cased name is on the list. An attribute the schema does not know is
+refused, which fails closed. `AllowedAttr` has only an unexported constructor, so a `WriteOp` body or a
+`psx` operation cannot take a bare `string`. The file is `internal/connector/write/denylist.go`. It
+does not exist yet, because `operations` is empty. The first ticket that registers a kind lands it,
+and `TestDenyListPrecedesFirstKind` fails if `operations` is non-empty without it. Denied in v1.4:
 
 `unicodePwd`, `userPassword`, `dBCSPwd`, `ntPwdHistory`, `lmPwdHistory`, `supplementalCredentials`,
 `pwdLastSet`, `lockoutTime`, `userAccountControl`, `nTSecurityDescriptor`, `objectClass`,
@@ -1548,8 +1660,9 @@ decided by what the server's form allowed. Denied in v1.4:
 `primaryGroupID`, `member`, `memberOf` (membership kinds, a later spec), `msDS-KeyCredentialLink`,
 `altSecurityIdentities`, `servicePrincipalName`, `msDS-AllowedToDelegateTo`,
 `msDS-AllowedToActOnBehalfOfOtherIdentity`, `msDS-SupportedEncryptionTypes`, `accountExpires`,
-`logonHours`, `userWorkstations`, `gPLink`, `gPOptions`, `userParameters` (v1.5: read-only by
-design, §5.9 T2; no kind will ever return it, a writer needs its own spec), and every constructed or system-only
+`logonHours`, `userWorkstations`, `gPLink`, `gPOptions`, `userParameters` (v1.5,
+1.2.840.113556.1.4.138: read-only by design, §5.9 T2; no kind will ever return it, a writer needs its
+own spec), and every constructed or system-only
 attribute in the schema snapshot. These are the TM-D28 `map_credential`, `set_spn`, `signin_flags`
 and `signin_limits` classes plus the identity attributes; each returns through its own kind when its
 spec exists. `userPrincipalName`, `sAMAccountName` and (computers) `dNSHostName` **are** allowed:
@@ -1823,19 +1936,21 @@ disabled, expired and locked accounts.
 
 ### 9.4b `userParameters` and `attr/tsprops` (v1.5, T-1567)
 
-The decoder's own cases are spec reports-terminal-services AC-TS04, -05, -07, -10 and -11 and the
-FF-TS1 properties. These are the contract-level cases.
+The decoder's own cases are spec reports-terminal-services AC-TS04, -05, -10 and -11 and the FF-TS1
+properties. AC-TS07 runs end to end as TS8 (T-1733). These are the contract-level cases.
 
 | ID | Case | Expectation | Lab |
 | --- | --- | --- | --- |
 | CC-TS-01 | Windows fixtures | `Read` of each T-1565 fixture user returns `TsPropertiesValue` whose fields equal the fixture's expected file, which was checked against ADUC (spec V4) | W |
-| CC-TS-02 | Never raw | `Read` and `ScopedSearch` asking for `userParameters`, `userparameters`, `userParameters;binary` and the OID return `TsPropertiesValue` or an attribute outcome, never `octets` or a string. A wire capture (FI proxy) of the response has no byte of the fixture's `ReservedData` sentinel | S, FI |
-| CC-TS-03 | Absent and gated | a user with no `userParameters`, one with signature "Q", and one without `CtxCfgPresent` each give `state: NOT_CONFIGURED` with no field `UNREADABLE` (FR-TS03, AC-TS04) | S |
-| CC-TS-04 | Read right withheld | an account that cannot read the attribute: `PERMISSION_DENIED` for the attribute, never `NOT_CONFIGURED` | W |
-| CC-TS-05 | Hostile DC | the FI proxy returns a 65,536-unit value, a lone surrogate, `TSPropertyCount` 65,535 with no data, and 1,000 duplicate properties: each is a typed `UNREADABLE` with the spec §4 reason, the call finishes within the spec §4 rule 10 budget, and connector memory stays inside T6 | FI |
-| CC-TS-06 | Not filterable | a `ScopedSearch` filter naming `userParameters` (any node type) is `INVALID_ARGUMENT`, and the proxy shows no search | S |
-| CC-TS-07 | Not writable | `OBJECT_UPDATE` and `OBJECT_CREATE.initial` naming it by name, other case, OID and with `;binary`: `ATTRIBUTE_NOT_ALLOWED`, and no directory write (a CC-WK-07 row) | S |
-| CC-TS-08 | Entra | the Entra provider's `DescribeSchema` does not list it, and a `Read` naming it is `INVALID_ARGUMENT` | E |
+| CC-TS-02 | Never raw | `Read`, `ScopedSearch` and `ChangeFeed` (once served) asking for `userParameters`, `userparameters`, `userParameters;binary` and the OID return only `TsPropertiesValue`, never `octets` or `text`. This holds with the live schema (syntax 2.5.5.12, which would otherwise route to `text`), with `DefaultSchema`, and with a schema that lacks the attribute. A value forced across a `ValueChunk` boundary is typed too. A wire capture (FI proxy) of each response has no byte of the fixture's `ReservedData` sentinel | S, FI |
+| CC-TS-03 | Absent and gated | `Read`, with readability proved, of a user with no `userParameters`, one with signature "Q", and one without `CtxCfgPresent`: each gives `state: NOT_CONFIGURED` with no field `UNREADABLE` (FR-TS03, AC-TS04) | S |
+| CC-TS-04 | Read right withheld | The connection identity is denied `READ_PROPERTY` on `userParameters` by (a) a per-object deny ACE on one user and (b) an OU-inherited deny on the property set. `Read` gives `NOT_CONFIRMED`, `read_denied` for both, never `NOT_CONFIGURED`. An identity that cannot read the DACL, and a connection with no clean rights check, give `NOT_CONFIRMED`, `readability_unknown`. A user with the attribute absent in `ScopedSearch` gives `NOT_CONFIRMED`, `readability_not_evaluated`. On Windows, each `sd.Grants` answer equals the DC's own (an LDAP read as that identity). Samba rows do not count as evidence of the access check | S, W |
+| CC-TS-05 | Hostile DC | The FI proxy returns a 65,536-unit value, a lone surrogate, `TSPropertyCount` 65,535 with no data, and 1,000 duplicate properties. Each gives a typed `UNREADABLE` with the spec §4 reason, the call finishes within the spec §4 rule 10 budget, and connector memory stays inside T6 | FI |
+| CC-TS-06 | Not filterable | A `ScopedSearch` filter naming `userParameters` (by name, other case and OID) in each node type (equality, substring, presence, ordering, approximate, extensible, in-chain) is `INVALID_ARGUMENT`. So is a sort or VLV key naming it. The proxy shows no search | S |
+| CC-TS-07 | Not writable | `OBJECT_UPDATE` and `OBJECT_CREATE.initial` naming it by name, other case and OID, and with `;binary`, each give `ATTRIBUTE_NOT_ALLOWED` and no directory write (a CC-WK-07 row) | S |
+| CC-TS-08 | Entra | The Entra provider's `DescribeSchema` does not list it, and a `Read` naming it is `INVALID_ARGUMENT` | E |
+| CC-TS-09 | Feed | `ChangeFeed` after (a) a value set: `SET` with `TsPropertiesValue`; (b) the value cleared: `SET` with one `NOT_CONFIGURED`, `absent`, never `CLEARED`; (c) Windows only: a deny-read ACE for the connection identity added after the cookie does not surface as a clear of `userParameters`. If (c) fails, §5.9.5's mapping is amended to `NOT_CONFIRMED` | S, W |
+| CC-TS-10 | Flag survives reload | After `DescribeSchema` replaces `DefaultSchema`, after `With` adds an entry for the attribute without the flag, and against an FI schema that maps the name `userParameters` to another OID or that gives OID 1.2.840.113556.1.4.138 another name: `AttributeSchema.not_filterable` is true and CC-TS-06 still holds | S, FI |
 
 ### 9.5 ChangeFeed
 
@@ -2137,18 +2252,21 @@ Job `fitness-connector-repl` (owner `devops-engineer`, follow-up ticket below). 
 
 The job is `fitness-connector-tsprops`, a step of `make ci`. Its fuzz part runs in the nightly job.
 The owner is `devops-engineer` (T-1728). Every check has a committed failing fixture. **FF-TS1** in
-spec reports-terminal-services §4 is TS1 here, and spec FR-TS02/AC-TS10's **no-write lint** is
-TS2. Until T-1566 lands `internal/directory/attr/tsprops`, TS1, TS3 and TS4 fail because the
-target is missing. The job never passes vacuously.
+spec reports-terminal-services §4 is TS1 here. Spec FR-TS02/AC-TS10's **no-write lint** is TS2,
+**together with** TS6: the lint covers constants and APIs, and the runtime deny-list covers names
+that arrive as data. Until T-1566 lands `internal/directory/attr/tsprops`, TS1, TS3 and TS4 fail
+because the target is missing. The job never passes vacuously.
 
 | ID | Kind | Fails when | Enforces |
 | --- | --- | --- | --- |
-| TS1 (FF-TS1) | CI + nightly fuzz | `FuzzUserParameters` is missing or skipped, or the per-PR seed-corpus run fails. The seed corpus is the T-1565 Windows fixtures plus the spec §4 hostile set. Also fails when the nightly 60-second run finds a failure, or when a property is violated: no panic, ≤ 256 KiB allocated per call, the run-time budget, every `Value` within its spec §3 range, determinism, no `ReservedData` marker in the output, and agreement with the naive reference parser in `tsprops_test.go` on every input the reference accepts. A crash input is committed to the corpus before its fix merges. T-1566 may close only after ≥ 1 M executions with no finding | spec §4 rules 2-10, T5, T6 |
-| TS2 (no-write lint) | static, analyzer `tspropswrite` in `tools/analyzers`, run by `go vet -vettool` and in-process like FF-SP2 | (a) a string constant equal to `userParameters` (case-insensitive, with or without an option such as `;binary`) or to `1.2.840.113556.1.4.138` appears in a non-test product file outside the allowlist `tools/fitness/connectortsprops/attrname.txt`. The allowlist starts with the AD read path's codec-registry entry, the §8.10.4 deny-list file and the D16 sync attribute list, and a new entry needs this page amended. (b) Any go-ldap `ModifyRequest` (`Add`, `Replace`, `Delete`, `Increment`), `AddRequest.Attribute`, a `psx` typed operation, or a `WriteChange` attribute name built in product code resolves to that constant. (c) A package other than `internal/connector/ad` (and the `tsprops` package's own tests) imports `internal/directory/attr/tsprops`. Test files and `internal/connector/labadmin` are exempt from (a) and (b) only, for Samba fixture injection | T2, T3, blueprint §7.4 narrowing |
+| TS1 (FF-TS1) | CI + nightly fuzz | It fails in five cases. (1) `FuzzUserParameters` is missing or skipped. (2) The per-PR seed-corpus run fails. The seed corpus is the T-1565 Windows fixtures plus the spec §4 hostile set. (3) The nightly 60-second run finds a failure. (4) A property is violated: no panic, ≤ 256 KiB allocated per call, the run-time budget, every `Value` within its spec §3 range, determinism, no `ReservedData` marker in the output, and agreement with the naive reference parser in `tsprops_test.go` on every input the reference accepts. (5) A crash input is not committed to the corpus before its fix merges. T-1566 may close only after ≥ 1 M executions with no finding | spec §4 rules 2-10, T5, T6 |
+| TS2 (no-write lint) | static. Go parts: analyzer `tspropswrite` in `tools/analyzers`, run by `go vet -vettool` and in-process like FF-SP2. Non-Go part: a text scan in `tools/fitness/connectortsprops` | **(a)** A string constant equal to `userParameters` (case-insensitive, with or without an option) or to `1.2.840.113556.1.4.138` appears in a non-test product file outside the allowlist `tools/fitness/connectortsprops/attrname.txt`. The allowlist starts with the wire-value builder's identity gate (`internal/connector/read`), `DefaultSchema`, the `filterdeny` and `denylist.go` rows, and the D16 sync attribute list (the server must name the attribute to request it). A new entry needs this page amended. **(b)** A go-ldap `ModifyRequest` (`Add`, `Replace`, `Delete`, `Increment`) or `AddRequest.Attribute` whose attribute argument is such a constant. **(c)** A package other than `internal/connector/read` (and `tsprops`' own tests) imports `internal/directory/attr/tsprops`. **(d)** Under `sidecars/**` (`.cs`, `.ps1`, `.psm1`), `internal/agentmodules/**`, and Windows-native agent, filter and credential-provider sources (`.c`, `.cpp`, `.h`, `.cs`): any of `IADsTSUserEx`, `WTSSetUserConfig` (W or A), `InvokeSet`/`.Put(` with an `IADsTSUserEx` property name (`TerminalServicesProfilePath`, `TerminalServicesHomeDirectory`, `TerminalServicesHomeDrive`, `TerminalServicesWorkDirectory`, `TerminalServicesInitialProgram`, `AllowLogon`, `EnableRemoteControl`, `MaxConnectionTime`, `MaxDisconnectionTime`, `MaxIdleTime`, `ReconnectionAction`, `BrokenConnectionAction`, `ConnectClientDrivesAtLogon`, `ConnectClientPrintersAtLogon`, `DefaultToMainPrinter`), or the attribute name in a `-Replace`/`-Add`/`-Clear`/`-Remove` argument. Reading through LDAP is the only path. **(e)** A `WriteOp` body parameter, or an exported field of a `psx` operation type, carries an attribute name as `string` rather than `write.AllowedAttr`. **(f)** `write.TestLabAdminImportedOnlyByTests` is missing. `_test.go` files and `internal/connector/labadmin` are exempt from (a) and (b) only, and only while that test exists | T2, T3, blueprint §7.4 narrowing |
 | TS3 | static (go/types) | `tsprops` exports a function or method whose name starts with `Encode`, `Marshal`, `Append`, `Set`, `Write` or `Format`. Also fails when any exported type implements `encoding.BinaryMarshaler`, `encoding.TextMarshaler`, `json.Marshaler` or `fmt.Formatter`, when an exported function returns `[]byte`, or when an exported type contains a `map`, `[]byte`, `any` or interface field | T1, spec §4 rules 1 and 8 |
 | TS4 | static (import graph) | `tsprops` imports anything outside the standard-library allowlist (`unicode/utf16`, `unicode/utf8`, `encoding/binary`, `errors`, `math`, `strings`, the shared `attr/codec`), anything on the T6 deny list, or a logger | T6 |
-| TS5 | proto (in `fitness-proto`) | `TsPropertiesValue` or any `TsField*` message has a `bytes` field, a `map`, or an `Any`. Also fails when `TsReason` or `TsState` loses a value or reuses a number, or when a second message carries a field named like `user_parameters` or `ts_raw` | T3, rule 12 |
-| TS6 | test | `TestUserParameters_never_raw` (the CC-TS-02 assertion at the provider seam, against a fake DC) or `TestUserParameters_deny_listed` (CC-TS-07 against the write handler) fails. The §8.10.4 deny-list test table loses the `userParameters` row | T2, T3 |
+| TS5 | proto (in `fitness-proto`) | `TsPropertiesValue` or any `TsField*` message has a `bytes` field, a `map`, or an `Any`. Also fails when `TsReason` or `TsState` loses a value or reuses a number, when `AttributeSchema.not_filterable` is removed or renumbered, or when a second message carries a field named like `user_parameters` or `ts_raw` | T3, T4, rule 12 |
+| TS6 | test | Any of these fails or is missing: `TestUserParameters_never_raw` (CC-TS-02 at the provider seam against a fake DC, including the live-syntax, `DefaultSchema`, unknown-schema, `ValueChunk` and feed rows); `TestUserParameters_not_filterable` (CC-TS-06 and CC-TS-10 at the `ldapfilter` level); `TestUserParameters_not_confirmed` (CC-TS-04 rows against fixture DACLs); `TestUserParameters_deny_listed` (CC-TS-07 through `write.CheckAttribute`: name, case, OID, `;binary`, a schema that renames it); `TestDenyListPrecedesFirstKind` (`operations` is non-empty while `denylist.go` lacks the `userParameters` OID row, so **it gates the first write-kind ticket**). The provider-level tests run from T-1566, and the deny-list ones from the first write-kind ticket. Until then each is a skipped stub that the job reports as pending, never as passed | T2, T3, T4, §5.9.4 |
+| TS7 | static (AST) | `connectorv1.AttributeValue_Octets` or `AttributeValue_Text` is constructed in non-test code outside the wire-value builder file (`internal/connector/read/handler.go` today; `internal/directory/client/clienttest` is allowlisted as test support). This also fails a second value builder for `ChangeFeed` | T3, §5.9.5 |
+| TS8 (AC-TS07) | lab end-to-end | A `ReservedData` sentinel seeded through `labadmin` appears, in UTF-8, UTF-16LE or hex form, in a DB table dump, a log line, a USR-10a/10b export (CSV, XLSX, PDF, HTML) or an API response after a full sync. The owner is `test-engineer` (T-1733) | spec AC-TS07, FR-TS07 |
 
 ## Sources
 
@@ -2160,7 +2278,7 @@ target is missing. The job never passes vacuously.
 - v1.1, write group and rights check: [allowedAttributesEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-allowedattributeseffective) · [sDRightsEffective](https://learn.microsoft.com/en-us/windows/win32/adschema/a-sdrightseffective) · [Entra Connect source anchor design](https://learn.microsoft.com/en-us/entra/identity/hybrid/connect/plan-connect-design-concepts) · [Graph user resource (onPremisesImmutableId, onPremisesSecurityIdentifier, onPremisesSyncEnabled)](https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0) · [application addKey](https://learn.microsoft.com/en-us/graph/api/application-addkey?view=graph-rest-1.0) · [passwordCredential resource (hint, secretText, keyId)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0) · [servicePrincipal resource (keyCredentials, passwordCredentials)](https://learn.microsoft.com/en-us/graph/api/resources/serviceprincipal?view=graph-rest-1.0) · [tokenGroups](https://learn.microsoft.com/en-us/windows/win32/adschema/a-tokengroups) · [memberOf is a back-link](https://learn.microsoft.com/en-us/windows/win32/adschema/a-memberof) · [RFC 4511 §4.6 Modify](https://www.rfc-editor.org/rfc/rfc4511#section-4.6). Internal: threat-model §6.2 to §6.6 and §6.8, domain-model DM-10.I8 to I11, DM-20, DM-24, DM-25, ADR-0005 rules 2, 4, 5 and 7, forest-connection spec §7 (V1 to V9, FR-10 to FR-13, FR-35).
 - v1.2 (T-0122): [Binding to well-known objects using WKGUID (wellKnownObjects, Domain Controllers)](https://learn.microsoft.com/en-us/windows/win32/ad/binding-to-well-known-objects-using-wkguid) · [gPLink](https://learn.microsoft.com/en-us/windows/win32/adschema/a-gplink) · [MS-GPOL Domain SOM Search (gPLink format and options)](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpol/08090b22-bc16-49f4-8e10-f27a8fb16d18) · [passwordCredential (endDateTime, startDateTime)](https://learn.microsoft.com/en-us/graph/api/resources/passwordcredential?view=graph-rest-1.0). Internal: threat-model §6.2 TM-D23 rules 7 to 11 and the `ENTRA_PASSWORD_CREDENTIAL` severity, §6.4, §16.1 TM-R14 to TM-R17; domain-model DM-23.I1, DM-26; forest-connection spec FR-25.
 - v1.3 (T-1124): [MS-ADTS 3.1.1.3.2.28 msDS-ReplAllInboundNeighbors, msDS-ReplConnectionFailures, msDS-ReplLinkFailures, msDS-ReplPendingOps](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/b4a0b2bf-95f9-40b4-9301-834ccadea40c) · [MS-ADTS rootDSE attributes](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/96f7b086-1ca3-4764-9a08-33f8f7a543db) · [MS-DRSR IDL_DRSGetReplInfo structures](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-drsr/0597aff6-0177-4d52-99f2-14a5441bc3c1). Internal: spec reports-2-second-slice §7.3, §10 D10/D14.
-- v1.5 (T-1567): [MS-TSTS userParameters](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsts/15f8b01d-900d-4f89-a3fa-1681e55f383d) · [MS-TSTS TSProperty](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsts/0bd1a91d-3cd6-4e97-b5fa-5cf35d90f005) · [MS-ADA3 userParameters](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-ada3/8710a141-a607-4b14-9d7c-f6370bff9b96). Internal: spec reports-terminal-services §2-§4, §7 (T-1122); fixtures T-1565; build T-1566; fitness T-1728; safe-primitives and blueprint alignment T-1729.
+- v1.5 (T-1567): [MS-TSTS userParameters](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsts/15f8b01d-900d-4f89-a3fa-1681e55f383d) · [MS-TSTS TSProperty](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsts/0bd1a91d-3cd6-4e97-b5fa-5cf35d90f005) · [MS-ADA3 userParameters](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-ada3/8710a141-a607-4b14-9d7c-f6370bff9b96). Internal: spec reports-terminal-services §2-§4, §7 (T-1122); fixtures T-1565; build T-1566; fitness T-1728; safe-primitives and blueprint alignment T-1729. · round 2: [IADsTSUserEx](https://learn.microsoft.com/en-us/windows/win32/api/tsuserex/nn-tsuserex-iadstsuserex) · [WTSSetUserConfigW](https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/nf-wtsapi32-wtssetuserconfigw) · [MS-ADTS 5.1.3.3.3 Checking Object-Specific Access](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/3da5080d-de25-4ac8-9f2b-982709253dfb)
 - Internal: `knowledge/development/domain/ad-change-notifications.md` (T-0018), `knowledge/development/runbooks/ad-lab.md` §6, and the ad-expert consult recorded in the T-0064 notes. The Samba statements in the consult (no `MoreResults`, `;range=0-0`, skipped removed links) come from a reading of the source, not a run, and are `[UNVERIFIED lab]` until CC-FEED-04 and CC-FEED-21 run.
 
 ## DACL write path (T-0743, T-0726)
