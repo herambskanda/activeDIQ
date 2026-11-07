@@ -46,6 +46,11 @@ complete and split by attribute (§12); AC-S14 seeds user D only where the direc
 write; AC-S31 asserts the children are listed exactly when their descriptor metadata changed, so it
 passes whatever F1 finds; AC-S28 to AC-S33 now follow AC-S27.
 
+**Revision 5 (2026-11-07, T-1722, from the T-1511 review).** §7.3 rule 5 now says DC error text is
+attacker-influenced (a compromised DC controls it, TM-X3) and is escaped by the same encoder; §7.3
+rule 2, §13 and FR-S09 carry TM-D31 rule 4's empty-result label ("No inbound partners reported" only
+when the onboarding check says the right is granted, else "Not reported"); AC-S34 added (34 in all).
+
 **Revision 4 (2026-11-07, T-1511, aligning with DECISION TM-D31 of
 [the threat model](../../development/architecture/threat-model.md) §6.3).** Former rule 7b (an
 optional `CN=Deleted Objects` read and its tombstone columns) is removed and every "if the ruling
@@ -478,6 +483,14 @@ ME's report "fetches the replication status of the selected domain controller(s)
    does not return is "Not reported", never "healthy".
 2. **Coverage as in reports-2a §6.5**: "Read from 5 of 6 DCs", the unreachable DC and its error
    named, a row for every DC that did not answer. Never "no problems" with partial coverage.
+   **Empty result (TM-D31 rule 4).** A denied read returns an attribute-less entry, not an error,
+   and a single or isolated DC legitimately has no inbound neighbours, so an empty neighbour list
+   is not evidence of health. A DC with no neighbour rows reads **"No inbound partners reported"
+   only when the onboarding check says the replication-monitoring right is *granted*** (the check
+   reads the partition head's DACL; it never infers the right from a successful read). In every
+   other case (right not granted, check not run, check unable to read the DACL) it reads
+   **"Not reported"**. Neither label is ever "Healthy" or "no problems", and the Status and
+   Lingering-object risk cells of that row are "Not reported".
 3. **Status** is derived, not stored: Healthy (last success within the threshold and zero
    failures), Warning, Failing (failures > 0 or last success older than the threshold), Not
    reported. The thresholds are tenant-editable with defaults a `[PROPOSED]` 1 hour warning and 24
@@ -485,8 +498,12 @@ ME's report "fetches the replication status of the selected domain controller(s)
 4. **Lingering-object risk (an indicator, not detection).** "At risk" when a partner's last
    success is older than the forest's tombstone lifetime. The column heading and the AC forbid the
    word "detected". Proving a lingering object needs `DsReplicaVerifyObjects` and is out (§8).
-5. **Last error text** is shown and escaped like any attacker-controlled string (DC messages are
-   not attacker-controlled, but the same encoder applies, FF-SP4).
+5. **Last error text is attacker-influenced.** A compromised DC controls every string it returns
+   (TM-X3; TM-D31 rule 5), so the DC's error text, and any other text taken from a DC response, is
+   escaped on every output (screen, CSV/XLSX/PDF/HTML export, API) by the same encoder as every other
+   attacker-controlled string (FF-SP4), is length-bounded, and is never rendered as markup, a link
+   or a formula. The wording we add ourselves (the E-S3 meaning and remedy, rule 7) is kept visibly
+   separate from the DC's text.
 6. **Cap and cadence.** Reads are per DC and per partition (a handful per DC), not per object, so
    the object-level read cap of §6.5 does not apply. This report has its own bound: one concurrent
    read per DC and a hard limit of 100 DCs per run (`[PROPOSED]`, calibrated in B13). **Amendment
@@ -626,7 +643,8 @@ truth; they do not prove the Windows-only behaviour listed, which waits for `[LA
   the right every DC row is "Not reported" with the reason "connection account lacks the
   replication-monitoring right (optional, see Connection)" and coverage reads "0 of N DCs
   reported" (never "Healthy"; an empty result is "Not reported" unless the onboarding check says
-  the right is granted). SYS-03 needs its own RBAC permission, distinct from `reports.run`. The
+  the right is granted, in which case the label is "No inbound partners reported"; TM-D31 rule 4, §7.3
+  rule 2). SYS-03 needs its own RBAC permission, distinct from `reports.run`. The
   amendment to reports-2a §9 is A4 in §9. **The Deleted presets request no right on
   `CN=Deleted Objects`, now or as an option** (TM-D31 rule 6): under the default least-privilege
   account that container answers `noSuchObject`
@@ -639,7 +657,8 @@ truth; they do not prove the Windows-only behaviour listed, which waits for `[LA
   2a reports (reports-2a §9), covered by `reports.run`.
 - **Safe primitives.** Report SQL, scope and export encoders as reports-2a §9. The logon-hours,
   attribute and manager pickers send registry IDs, never text. Attribute values and error strings
-  are escaped on every output (TM-X3). The `userParameters` blob is deliberately not decoded (F3).
+  are escaped on every output (TM-X3); this includes the DC error text of SYS-03, which a
+  compromised DC controls (§7.3 rule 5, TM-D31 rule 5). The `userParameters` blob is deliberately not decoded (F3).
 - **Audit.** Run, export, download and schedule events as reports-2a §8.6. Nothing new is written
   to a directory, so no activeDIQ change event is added.
 
@@ -657,7 +676,7 @@ truth; they do not prove the Windows-only behaviour listed, which waits for `[LA
 | FR-S06 | Empty/Duplicate Attributes MUST accept only registered columns and count duplicates within the runner's scope | ADM-084, ADM-087 |
 | FR-S07 | Group-derived reports (USR-13, GRP-06) MUST count the primary group as stated in §6.2 and §6.3 and MUST include every edge of a group with more than 1,500 members | ADM-084, ADM-086 |
 | FR-S08 | SYS-01 MUST list the domain policy and every readable PSO with direct targets and MUST state when PSOs were unreadable | ADM-092 |
-| FR-S09 | SYS-03 MUST read each in-scope DC separately, show coverage, show "Not reported" for any unanswered value, and MUST NOT use the word "detected" for the lingering-object indicator | ADM-092 |
+| FR-S09 | SYS-03 MUST read each in-scope DC separately, show coverage, show "Not reported" for any unanswered value, MUST label an empty neighbour result "No inbound partners reported" only when the onboarding check says the right is granted (otherwise "Not reported"), MUST escape DC error text as attacker-influenced on every output, and MUST NOT use the word "detected" for the lingering-object indicator | ADM-092 |
 | FR-S10 | No kept-out item of §8 MAY appear as a dead control, a search hit or a preset | house rule 6 |
 
 ## 15. Acceptance criteria
@@ -918,6 +937,19 @@ When the Recently Deleted presets are inspected
 Then no control, column or export offers Restore, and every Restorable until cell shows "Unknown"
   under default rights
 Evidence: UI recording; API response schema check
+
+AC-S34 (FR-S09, FR-S12, TM-D31 rules 4 and 5)
+Given a single-DC lab domain whose DC returns no inbound neighbours, once with the onboarding check
+  reporting the replication-monitoring right "granted" and once with it "not granted" (and once
+  with the check not run), and a DC whose error text contains `<script>`, `=HYPERLINK(...)` and a
+  4,000-character string
+When DC Replication Status runs and is exported to CSV, XLSX, PDF and HTML
+Then the empty DC row reads "No inbound partners reported" only in the "granted" case and
+  "Not reported" in the other two; neither case shows "Healthy" or "no problems", and Status and
+  Lingering-object risk read "Not reported"; the error text is shown escaped and length-bounded on
+  screen and in every export (no markup, no active link, no formula), apart from our own E-S3 text
+Evidence: UI recording; export files inspected; encoder unit test (FF-SP4); TM-F-RIGHTS cases (c)
+  and (d) as ground truth for the label
 ```
 
 ## 16. Open questions
