@@ -11,3 +11,5 @@ metadata:
 - Go reports a non-UTF-8 declared encoding only as an error string containing "CharsetReader"; map it to bad_encoding. Pre-scan bytes (UTF-16, C0, invalid UTF-8) before the XML decoder so codes are stable.
 - Decode* take ONE attribute value and return `*DecodeError` (not `error`): nil-interface trap documented in doc.go. Own `Guid`/`Time`/`U32` types keep the package free of proto/guid imports (X6); proto mapping is the RPC ticket's job.
 - Element/field names are [UNVERIFIED] (MS-DRSR DS_REPL_*); `uuidObjectGuid` for the link target GUID is my guess. Windows capture is CC-REPLXML-01.
+- Review fix: encoding/xml allocates ALL attributes of a tag inside the one Token call, so a post-token check is too late (7,000-attr tag = 1.3 MiB). `scan.go` pre-scans raw bytes (quote-aware, counts '=') and must charge attrs even when a tag does not close (fuzz broke quote parity with `=d"`).
+- Hostile corpus test: rewrite root AND repeated field name per decoder (`forDecoder`), pad when shorter; accepting bad_root made the test vacuous. Fuzz alloc oracle (process-wide TotalAlloc) is noise below ~16 KiB.
