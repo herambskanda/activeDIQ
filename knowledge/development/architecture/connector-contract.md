@@ -6,7 +6,7 @@ status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect)
+amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect), T-1632 (§8.10.9 DELETE as built, author directory-engineer)
 binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
@@ -1656,6 +1656,14 @@ keys, attribute names `set:`, `add:`, `del:`, `clr:` and the typed value prefixe
   never a second delete, never a false success) and Verify settles the step. Samba proves both sides
   (`TestWKDelete`, `TestWKDeleteRetryWithoutDeletedObjectsRights`); the rights grant to the connector's
   account is a deployment item for the setup runbook. `isDeleted` joined the read-only default schema.
+- **Delete declares `DELETE`, the body repeats it with the live class (T-1632, CC-WRITE-30).** The typed
+  change names no class, and only a group delete can change another object's properties (§8.9), so step 4
+  declares `{AD, USER, DELETE}` (never refused) and `readForDelete`, the single read shared by `Plan` and
+  `Apply`, calls `deleteRecheck` with the live class (GROUP, DEVICE for a computer, USER otherwise)
+  before the `NotLeaf` check and before anything is sent. A refusal is `TIER0_REFUSED` basis `Designated`
+  at `CONNECTOR_SET`. An object already deleted (`ALREADY_APPLIED`) writes nothing and is not re-checked.
+  CC-WRITE-30 pins both sides: tier0 `TestCCWrite30DeleteGroupUnderMemberOfAndRefuseAll`, the declaration
+  and recheck units in `kinds_object_test.go`, and `TestCCWrite30DeleteUnderMemberOfRule` on Samba.
 - **Manager edits.** `manager` declares `SET_MANAGER` or `CLEAR_MANAGER` at step 4; the other edits (and
   the computer case) are re-checked in the body against the live class (`editsRecheck`). The live class
   is the last `objectClass` value, so gMSA and MSA objects are `ClassNotAllowed`.
