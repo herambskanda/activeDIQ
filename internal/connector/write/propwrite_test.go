@@ -103,14 +103,14 @@ func TestAC2RefusedAtStep4OnBothRPCsAndTransportsOverrideDoesNotAdmit(t *testing
 		r.prov.guard = c.g
 		for tname, tr := range transports(t, r.h) {
 			p := planReq(tgt, ctxFor(tgt))
-			p.Kind, p.Tier0Override = 1, c.ov
+			p.Kind, p.Change, p.Tier0Override = 1, testChange(), c.ov
 			_, err := tr.Plan(context.Background(), p)
 			d := wantTier0(t, err, c.stage)
 			if len(d.GetBasis()) != 1 || d.GetBasis()[0] != tier0.Designated {
 				t.Errorf("%s/%s plan basis %v", c.name, tname, d.GetBasis())
 			}
 			a := applyReq(tgt, ctxFor(tgt))
-			a.Kind, a.Tier0Override = 1, c.ov
+			a.Kind, a.Change, a.Tier0Override = 1, testChange(), c.ov
 			_, err = tr.Apply(context.Background(), a)
 			wantTier0(t, err, c.stage)
 		}
@@ -139,7 +139,7 @@ func TestPropertyGuardAllowsAndPassesTheDeclaration(t *testing.T) {
 	g := &stubGuard{}
 	r, rec := armed(t, g, declare(adUpdateTitle, nil), passRun(nil))
 	p := planReq(tgt, ctxFor(tgt))
-	p.Kind = 1
+	p.Kind, p.Change = 1, testChange()
 	if _, err := r.h.Plan(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestPropertyGuardFailsClosedOnBadDeclarationOrNoSnapshot(t *testing.T) {
 	} {
 		r, rec := armed(t, &stubGuard{}, pw, passRun(nil))
 		p := planReq(tgt, ctxFor(tgt))
-		p.Kind = 1
+		p.Kind, p.Change = 1, testChange()
 		_, err := r.h.Plan(context.Background(), p)
 		if c := connErr(t, err).GetCode(); c != connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT || rec.plan != 0 {
 			t.Errorf("%s: %s plan=%d", name, c, rec.plan)
@@ -167,7 +167,7 @@ func TestPropertyGuardFailsClosedOnBadDeclarationOrNoSnapshot(t *testing.T) {
 	// No snapshot (the provider's default guard): every property write is refused.
 	r, rec := armed(t, nil, declare(adUpdateTitle, nil), passRun(nil))
 	p := planReq(tgt, ctxFor(tgt))
-	p.Kind = 1
+	p.Kind, p.Change = 1, testChange()
 	_, err := r.h.Plan(context.Background(), p)
 	wantTier0(t, err, stConnectorSet)
 	if rec.plan != 0 {
@@ -228,7 +228,7 @@ func TestK0RealSnapshotThroughTheHandler(t *testing.T) {
 	for _, row := range rows {
 		r, rec := armed(t, set, declare(row.pw, nil), passRun(nil))
 		a := applyReq(tgt, ctxFor(tgt))
-		a.Kind = 1
+		a.Kind, a.Change = 1, testChange()
 		_, err := r.h.Apply(context.Background(), a)
 		if row.refused {
 			if connErr(t, err).GetCode() != connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED || rec.apply != 0 {
@@ -254,7 +254,7 @@ func TestPropertyRefusalRecordNeverCarriesValues(t *testing.T) {
 		r, _ := armed(t, g, declare(adUpdateTitle, nil), passRun(nil))
 		for tname, tr := range transports(t, r.h) {
 			p := planReq(tgt, ctxFor(tgt))
-			p.Kind = 1
+			p.Kind, p.Change = 1, testChange()
 			_, err := tr.Plan(context.Background(), p)
 			if err == nil || strings.Contains(err.Error(), canary) {
 				t.Errorf("%s/%s: error %v", name, tname, err)
@@ -273,7 +273,7 @@ func TestWrongPlaneDeclarationHasItsOwnReason(t *testing.T) {
 	bad.Plane = tier0.PlaneEntra
 	r, _ := armed(t, &stubGuard{}, declare(bad, nil), passRun(nil))
 	p := planReq(tgt, ctxFor(tgt))
-	p.Kind = 1
+	p.Kind, p.Change = 1, testChange()
 	if _, err := r.h.Plan(context.Background(), p); err == nil {
 		t.Fatal("wrong plane admitted")
 	}
