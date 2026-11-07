@@ -12,7 +12,7 @@ ticket: T-1633
 
 **Question (connector-contract §8.10.9 R2).** Kind 6 `OBJECT_RESTORE` step 7 must read a fixed attribute set of the
 *deleted* target before it restores it. T-0076 showed a Reanimate-only principal gets `noSuchObject` when it reads
-the target, and threat-model §6.2 R15 forbids requesting List/Read on `CN=Deleted Objects`. Can the connector's
+the target, and threat-model §6.3 R15 forbids requesting List/Read on `CN=Deleted Objects`. Can the connector's
 separate classification identity read the object with a per-object grant instead?
 
 ## Answer (conclusion first)
