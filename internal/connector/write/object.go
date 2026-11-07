@@ -35,9 +35,11 @@ const (
 // the provider's session is bound to (rule 5); Move, Rename and Restore re-check under the session
 // lock and send exactly one write.
 type ObjectDirectory interface {
-	// State reads one object by GUID. With deleted set the show-deleted control is sent, and a
-	// deleted object is returned with Deleted true.
-	State(ctx context.Context, id guid.GUID, deleted bool) (ad.ObjectState, error)
+	// State reads one live object by GUID; a deleted object is not visible to it.
+	State(ctx context.Context, id guid.GUID) (ad.ObjectState, error)
+	// DeletedState is the deleted-state read of kind 6 Plan and Apply (fixed shape, TM-D33 rule 3):
+	// a deleted object comes back with Deleted true, a live one with Deleted false.
+	DeletedState(ctx context.Context, id guid.GUID) (ad.ObjectState, error)
 	// RecycleBin reports whether the AD Recycle Bin is enabled for the forest.
 	RecycleBin(ctx context.Context) (bool, error)
 	Move(ctx context.Context, r ad.MoveRequest) error
@@ -50,7 +52,7 @@ type ObjectDirectory interface {
 	// owner+DACL descriptor of CN=Deleted Objects of domain.
 	DeletedContainer(ctx context.Context, domain dn.DN) (dn.DN, []byte, error)
 	// GroupMembers reads a live group's member values with the show-deactivated-link and extended-DN
-	// controls (so a deleted member's value is visible), ranged to the end. truncated reports a cut.
+	// controls and no show-deleted (so a deleted member's value is visible), ranged to the end. truncated reports a cut.
 	GroupMembers(ctx context.Context, group guid.GUID) (members []string, truncated bool, err error)
 }
 
@@ -63,8 +65,12 @@ type ObjectProvider interface {
 // SessionObjects is ObjectDirectory over an *ad.Session; the LDAP writes are the ops package's.
 type SessionObjects struct{ S *ad.Session }
 
-func (o SessionObjects) State(ctx context.Context, id guid.GUID, deleted bool) (ad.ObjectState, error) {
-	return o.S.ObjectState(ctx, id, deleted)
+func (o SessionObjects) State(ctx context.Context, id guid.GUID) (ad.ObjectState, error) {
+	return o.S.ObjectState(ctx, id)
+}
+
+func (o SessionObjects) DeletedState(ctx context.Context, id guid.GUID) (ad.ObjectState, error) {
+	return o.S.DeletedObjectState(ctx, id)
 }
 
 func (o SessionObjects) DeletedTarget(ctx context.Context, id guid.GUID) (*ad.Entry, error) {
@@ -76,17 +82,7 @@ func (o SessionObjects) DeletedContainer(ctx context.Context, domain dn.DN) (dn.
 }
 
 func (o SessionObjects) GroupMembers(ctx context.Context, group guid.GUID) ([]string, bool, error) {
-	e, err := o.S.Read(ctx, dn.GUIDRef(group), []string{"member"}, ad.ReadOptions{ShowDeleted: true, ExtendedDN: true, MaxValues: ad.DefaultMaxValues})
-	if err != nil {
-		return nil, false, err
-	}
-	truncated := false
-	for _, n := range e.Truncated {
-		if strings.EqualFold(n, "member") {
-			truncated = true
-		}
-	}
-	return e.Strings("member"), truncated, nil
+	return o.S.GroupMembers(ctx, group)
 }
 
 func (o SessionObjects) Move(ctx context.Context, r ad.MoveRequest) error {
@@ -125,7 +121,11 @@ func (o SessionObjects) RecycleBin(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	for _, v := range e.Strings("msDS-EnabledFeature") {
-		if strings.HasPrefix(strings.ToLower(v), "cn=recycle bin feature,") {
+		fd, err := dn.Parse(v, dn.Strict)
+		if err != nil || fd.Len() == 0 {
+			continue // a value that does not parse is not the feature
+		}
+		if r := fd.RDNs()[0]; r.Type() == dn.CN && strings.EqualFold(r.Value(), "Recycle Bin Feature") {
 			return true, nil
 		}
 	}
@@ -235,6 +235,7 @@ func objectOps() map[connectorv1.WriteKind]WriteOp {
 
 func moveOp() WriteOp {
 	return WriteOp{
+		AlsoDevice: true,
 		Touched: func(_ guid.GUID, c *connectorv1.WriteChange) ([]guid.GUID, error) {
 			m, err := moveChange(c)
 			if err != nil {
@@ -247,7 +248,7 @@ func moveOp() WriteOp {
 			return []guid.GUID{np}, nil
 		},
 		TouchedLive: func(ctx context.Context, d ObjectDirectory, target guid.GUID, _ *connectorv1.WriteChange) ([]guid.GUID, error) {
-			st, err := d.State(ctx, target, false)
+			st, err := d.State(ctx, target)
 			if err != nil {
 				return nil, err
 			}
@@ -288,7 +289,8 @@ func renameOp() WriteOp {
 		return r.GetNewRdnValue(), nil
 	}
 	return WriteOp{
-		Touched: func(guid.GUID, *connectorv1.WriteChange) ([]guid.GUID, error) { return nil, nil },
+		AlsoDevice: true,
+		Touched:    func(guid.GUID, *connectorv1.WriteChange) ([]guid.GUID, error) { return nil, nil },
 		PropertyWrite: func(c *connectorv1.WriteChange) (tier0.PropertyWrite, error) {
 			if _, err := get(c); err != nil {
 				return tier0.PropertyWrite{}, err
@@ -318,6 +320,7 @@ func restoreOp() WriteOp {
 	}
 	return WriteOp{
 		DeletedTarget: true,
+		AlsoDevice:    true,
 		Touched: func(_ guid.GUID, c *connectorv1.WriteChange) ([]guid.GUID, error) {
 			np, _, _, err := get(c)
 			if err != nil {
@@ -383,7 +386,7 @@ func precondition(st ad.ObjectState, digest []byte) *connectorv1.TargetPrecondit
 
 // liveTarget reads and class-checks the target.
 func liveTarget(ctx context.Context, d ObjectDirectory, id guid.GUID) (ad.ObjectState, error) {
-	st, err := d.State(ctx, id, false)
+	st, err := d.State(ctx, id)
 	if err != nil {
 		return st, adRefusal(err)
 	}
@@ -456,7 +459,7 @@ func applyMove(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest)
 	if err := d.Move(ctx, ad.MoveRequest{Object: id, ExpectParent: st.Parent, NewParent: np}); err != nil {
 		return nil, adRefusal(err)
 	}
-	after, err := d.State(ctx, id, false)
+	after, err := d.State(ctx, id)
 	if err != nil || after.Parent != np {
 		return nil, newRefusal(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "5", "read-back after write differs")
 	}
@@ -512,7 +515,7 @@ func applyRename(ctx context.Context, a Authorised, req *connectorv1.ApplyReques
 	if err := d.Rename(ctx, ad.RenameRequest{Object: id, NewValue: v}); err != nil {
 		return nil, adRefusal(err)
 	}
-	after, err := d.State(ctx, id, false)
+	after, err := d.State(ctx, id)
 	if err != nil || rdnValueOf(after) != v {
 		return nil, newRefusal(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "5", "read-back after write differs")
 	}
@@ -522,7 +525,7 @@ func applyRename(ctx context.Context, a Authorised, req *connectorv1.ApplyReques
 // restoreState reads the object with the show-deleted control and decides what it is: a deleted
 // object to restore, or one that is already live at the planned parent and RDN.
 func restoreState(ctx context.Context, d ObjectDirectory, id, np guid.GUID, rdn string) (st ad.ObjectState, already bool, err error) {
-	st, err = d.State(ctx, id, true)
+	st, err = d.DeletedState(ctx, id)
 	if err != nil {
 		return st, false, adRefusal(err)
 	}
@@ -563,7 +566,22 @@ func planRestore(ctx context.Context, a Authorised, req *connectorv1.PlanRequest
 	if _, err := dn.Child(dn.DN{}, rdnTypeFor(st.Entry.Strings("objectClass")), r.GetRdnValue()); err != nil {
 		return nil, invalid("5", "RdnInvalid", "change.rdn_value")
 	}
-	return &connectorv1.PlanResponse{NoOp: already, Precondition: precondition(st, stateDigest("restore", id.String(), np.String(), r.GetRdnValue()))}, nil
+	return &connectorv1.PlanResponse{NoOp: already, Before: regrantsEntry(id, a.p.regrants),
+		Precondition: precondition(st, stateDigest("restore", id.String(), np.String(), r.GetRdnValue()))}, nil
+}
+
+// regrantsEntry is PlanResponse.before of a restore: the memberOf the restore brings back, by group
+// (contract §8.10.9 R2), so the technician sees every membership before approving. Nil when none.
+func regrantsEntry(id guid.GUID, rg []Regrant) *connectorv1.DirectoryEntry {
+	if len(rg) == 0 {
+		return nil
+	}
+	at := &connectorv1.Attribute{Name: "memberOf", Complete: true}
+	for _, g := range rg {
+		at.Values = append(at.Values, &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Dn{
+			Dn: &connectorv1.DnValue{DisplayDn: g.DN, Guid: toWire(g.Group)}}})
+	}
+	return &connectorv1.DirectoryEntry{ObjectGuid: toWire(id), Attributes: []*connectorv1.Attribute{at}}
 }
 
 func applyRestore(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
@@ -597,7 +615,7 @@ func applyRestore(ctx context.Context, a Authorised, req *connectorv1.ApplyReque
 	if err := d.Restore(ctx, ad.RestoreRequest{Object: id, NewParent: np, RDNType: rdnTypeFor(st.Entry.Strings("objectClass")), Value: r.GetRdnValue()}); err != nil {
 		return nil, adRefusal(err)
 	}
-	after, err := d.State(ctx, id, true)
+	after, err := d.DeletedState(ctx, id)
 	if err != nil || after.Deleted || after.Parent != np || rdnValueOf(after) != r.GetRdnValue() {
 		return nil, newRefusal(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "5", "read-back after write differs")
 	}

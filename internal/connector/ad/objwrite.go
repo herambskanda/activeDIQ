@@ -26,10 +26,6 @@ func (showDeactivatedLink) GetControlType() string { return oidShowDeactivatedLi
 func (showDeactivatedLink) Encode() *berPacket     { return encodeValuelessControl(oidShowDeactivatedLink) }
 func (showDeactivatedLink) String() string         { return "Show deactivated link control" }
 
-// deletedControls are the controls of a read of a deleted object: show-deleted and, with it,
-// show-deactivated-link.
-func deletedControls() []ldap.Control { return []ldap.Control{showDeleted{}, showDeactivatedLink{}} }
-
 type showDeleted struct{}
 
 func (showDeleted) GetControlType() string { return oidShowDeleted }
@@ -85,19 +81,19 @@ type ObjectState struct {
 
 var stateAttrs = []string{"objectGUID", "objectClass", "distinguishedName", "isDeleted", "instanceType", "uSNChanged"}
 
-// ObjectState reads one object by GUID. With deleted set the show-deleted control is sent; the
-// object may still come back live (Deleted false). The classification read of a deleted target is
-// ReadDeletedTarget, not this. It reads through the session, so it must not be called from inside a
-// Search callback.
-func (s *Session) ObjectState(ctx context.Context, id guid.GUID, deleted bool) (ObjectState, error) {
-	e, err := s.Read(ctx, dn.GUIDRef(id), stateAttrs, ReadOptions{ShowDeleted: deleted})
+// ObjectState reads one live object by GUID. A deleted object is not visible to it (no show-deleted
+// control is ever sent here); the deleted-state read is DeletedObjectState and the classification
+// read of a deleted target is ReadDeletedTarget. It reads through the session, so it must not be
+// called from inside a Search callback.
+func (s *Session) ObjectState(ctx context.Context, id guid.GUID) (ObjectState, error) {
+	e, err := s.Read(ctx, dn.GUIDRef(id), stateAttrs, ReadOptions{})
 	if err != nil {
 		return ObjectState{}, err
 	}
-	return s.stateOf(ctx, id, e, deleted)
+	return s.stateOf(ctx, id, e)
 }
 
-func (s *Session) stateOf(ctx context.Context, id guid.GUID, e *Entry, deleted bool) (ObjectState, error) {
+func (s *Session) stateOf(ctx context.Context, id guid.GUID, e *Entry) (ObjectState, error) {
 	g, err := e.GUID()
 	if err != nil || g != id {
 		return ObjectState{}, fail(CodeProtocol, "object GUID", err)
@@ -198,7 +194,7 @@ func (s *Session) RestoreObject(ctx context.Context, r RestoreRequest, send Rest
 		return fail(CodeInvalidArgument, "no sender", nil)
 	}
 	return s.withObject(ctx, func(conn *ldap.Conn) error {
-		del, err := s.readLocked(ctx, dn.GUIDRef(r.Object), true)
+		del, err := s.readDeletedLocked(ctx, r.Object)
 		if err != nil {
 			return err
 		}
@@ -237,7 +233,7 @@ type lockedObject struct {
 
 // liveLocked reads a live object's GUID and DN. Callers hold s.mu.
 func (s *Session) liveLocked(ctx context.Context, ref dn.ObjectRef) (lockedObject, error) {
-	o, err := s.readLocked(ctx, ref, false)
+	o, err := s.readLocked(ctx, ref)
 	if err != nil {
 		return o, err
 	}
@@ -247,14 +243,16 @@ func (s *Session) liveLocked(ctx context.Context, ref dn.ObjectRef) (lockedObjec
 	return o, nil
 }
 
-func (s *Session) readLocked(ctx context.Context, ref dn.ObjectRef, deleted bool) (lockedObject, error) {
+func (s *Session) readLocked(ctx context.Context, ref dn.ObjectRef) (lockedObject, error) {
+	return s.lockedRead(ctx, ref, nil)
+}
+
+// lockedRead is the one-object base read under the held session lock, with the given extra controls.
+// Callers: readLocked (none) and readDeletedLocked (deletedread.go, show-deleted).
+func (s *Session) lockedRead(ctx context.Context, ref dn.ObjectRef, ctrls []ldap.Control) (lockedObject, error) {
 	base, err := ref.ForRequest()
 	if err != nil {
 		return lockedObject{}, fail(CodeInvalidArgument, "object reference", err)
-	}
-	var ctrls []ldap.Control
-	if deleted {
-		ctrls = append(ctrls, showDeleted{})
 	}
 	res, err := s.searchOnceLocked(ctx, base, ldap.ScopeBaseObject, objectClassPresent, []string{"objectGUID", "distinguishedName", "isDeleted"}, ctrls)
 	if err != nil {

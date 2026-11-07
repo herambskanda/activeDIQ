@@ -21,12 +21,19 @@ type refDir struct {
 	byDN   map[string]guid.GUID
 	errDN  map[string]error
 	schema map[string]*ad.Entry
+	bySID  map[string]guid.GUID
 }
 
 func (d *refDir) Get(_ context.Context, ref dn.ObjectRef, _ []string) (*ad.Entry, error) {
 	if id, ok := ref.GUID(); ok {
 		if e := d.byGUID[id]; e != nil {
 			return e, nil
+		}
+		return nil, &ad.Error{Code: ad.CodeObjectNotFound}
+	}
+	if sv, ok := ref.SID(); ok {
+		if id, ok := d.bySID[sv.String()]; ok {
+			return ad.NewEntry("CN=pg,DC=lab", map[string][][]byte{"objectGUID": {id.Bytes()}}), nil
 		}
 		return nil, &ad.Error{Code: ad.CodeObjectNotFound}
 	}
@@ -87,10 +94,15 @@ func buildSD(t *testing.T, aces ...testACE) []byte {
 	out[0] = 1
 	binary.LittleEndian.PutUint16(out[2:], 0x8004) // SELF_RELATIVE | DACL_PRESENT
 	binary.LittleEndian.PutUint32(out[16:], 20)    // DACL offset
-	return append(out, append(hdr, acl...)...)
+	out = append(out, append(hdr, acl...)...)
+	binary.LittleEndian.PutUint32(out[4:], uint32(len(out))) // owner offset: after the DACL
+	return append(out, sidBytes(t, ownerSID)...)
 }
 
-const authenticatedUsers = "S-1-5-11"
+const (
+	authenticatedUsers = "S-1-5-11"
+	ownerSID           = "S-1-5-21-1-2-3-512"
+)
 
 type delRig struct {
 	p      *ADProvider
@@ -99,13 +111,19 @@ type delRig struct {
 	grp    guid.GUID
 	parent guid.GUID
 	set    *tier0.ADSet
+	pg513  guid.GUID
 }
 
 func newDelRig(t *testing.T) *delRig {
 	t.Helper()
-	d := &refDir{byGUID: map[guid.GUID]*ad.Entry{}, byDN: map[string]guid.GUID{}, errDN: map[string]error{}, schema: map[string]*ad.Entry{}}
-	r := &delRig{d: d, grp: mk(80), parent: mk(81), set: tier0.NewADSet()}
+	d := &refDir{byGUID: map[guid.GUID]*ad.Entry{}, byDN: map[string]guid.GUID{}, errDN: map[string]error{}, schema: map[string]*ad.Entry{}, bySID: map[string]guid.GUID{}}
+	r := &delRig{d: d, grp: mk(80), parent: mk(81), set: tier0.NewADSet(), pg513: mk(83)}
 	d.byDN[grpDN], d.byDN[parentDN] = r.grp, r.parent
+	for i, rid := range []string{"513", "514", "515"} { // the default primary groups of the target's domain
+		id := mk(byte(83 + i))
+		d.bySID["S-1-5-21-1-2-3-"+rid] = id
+		d.byGUID[id] = ad.NewEntry("CN=pg"+rid+",DC=lab", map[string][][]byte{"objectClass": {[]byte("group")}, "cn": {[]byte("pg" + rid)}})
+	}
 	d.byGUID[r.grp] = ad.NewEntry(grpDN, map[string][][]byte{"objectClass": {[]byte("group")}, "cn": {[]byte("Staff")}})
 	d.byGUID[r.parent] = ad.NewEntry(parentDN, map[string][][]byte{"objectClass": {[]byte("organizationalUnit")}, "cn": {[]byte("Old")}})
 	self := mk(90)
@@ -200,6 +218,17 @@ func TestClassifyDeletedEntry(t *testing.T) {
 		{"designated group", nil, func(r *delRig) []guid.GUID { return []guid.GUID{r.grp} }, tier0.C2},
 		{"group unreadable", nil, func(r *delRig) []guid.GUID { r.d.errDN[grpDN] = errors.New("boom"); return nil }, tier0.C2},
 		{"bad memberOf", func(a map[string][][]byte) { a["memberOf"] = [][]byte{[]byte("not a dn")} }, nil, tier0.C2},
+		{"C4 secondary krbtgt number", func(a map[string][][]byte) { a["msDS-SecondaryKrbTgtNumber"] = [][]byte{[]byte("12345")} }, nil, tier0.C4},
+		{"C4 krbtgt rdn", func(a map[string][][]byte) { a["msDS-LastKnownRDN"] = [][]byte{[]byte("krbtgt")} }, nil, tier0.C4},
+		{"C4 RODC krbtgt rdn", func(a map[string][][]byte) { a["msDS-LastKnownRDN"] = [][]byte{[]byte("KRBTGT_12345")} }, nil, tier0.C4},
+		{"C14 seamless SSO", func(a map[string][][]byte) { a["msDS-LastKnownRDN"] = [][]byte{[]byte("azureadssoacc")} }, nil, tier0.C14},
+		{"C14 seamless SSO sam name", func(a map[string][][]byte) { a["msDS-LastKnownRDN"] = [][]byte{[]byte("AZUREADSSOACC$")} }, nil, tier0.C14},
+		{"C12 constrained delegation", func(a map[string][][]byte) { a["msDS-AllowedToDelegateTo"] = [][]byte{[]byte("ldap/dc01")} }, nil, tier0.C12},
+		{"C12 RBCD", func(a map[string][][]byte) { a["msDS-AllowedToActOnBehalfOfOtherIdentity"] = [][]byte{{1, 2, 3}} }, nil, tier0.C12},
+		{"critical system object", func(a map[string][][]byte) { a["isCriticalSystemObject"] = [][]byte{[]byte("TRUE")} }, nil, tier0.C8},
+		{"tier0 primary group 513", nil, func(r *delRig) []guid.GUID { r.setTier0(r.pg513); return nil }, tier0.C2},
+		{"designated primary group 513", nil, func(r *delRig) []guid.GUID { return []guid.GUID{r.pg513} }, tier0.C2},
+		{"unresolvable primary group", nil, func(r *delRig) []guid.GUID { delete(r.d.bySID, "S-1-5-21-1-2-3-513"); return nil }, tier0.C2},
 		{"tier0 last parent", nil, func(r *delRig) []guid.GUID { r.setTier0(r.parent); return nil }, tier0.C3},
 	}
 	for _, c := range cases {
@@ -461,5 +490,62 @@ func TestClassifyDeletedNoRecycleBin(t *testing.T) {
 	}
 	if len(r.objs.calls) != 0 {
 		t.Fatalf("read before the capability check: %v", r.objs.calls)
+	}
+}
+
+// A clean restore names the groups it re-grants, the retained memberOf and the primary group (Plan lists them).
+func TestClassifyDeletedRegrants(t *testing.T) {
+	r := newDelRig(t)
+	v, err := r.classify(t, r.entry(t, nil), nil)
+	if err != nil || v.Tier0 {
+		t.Fatalf("%+v %v", v, err)
+	}
+	got := map[guid.GUID]string{}
+	for _, g := range v.Regrants {
+		got[g.Group] = g.DN
+	}
+	if len(v.Regrants) != 2 || got[r.grp] != grpDN || got[r.pg513] == "" {
+		t.Fatalf("regrants: %+v", v.Regrants)
+	}
+}
+
+// The retained descriptor is read as a typed structure: a conditional ACE or no owner cannot be judged.
+func TestClassifyDeletedDescriptorFailsClosed(t *testing.T) {
+	cb := buildSD(t, testACE{mask: sd.MaskReadProp, sid: authenticatedUsers})
+	cb[20+8] = 0x09 // the only ACE becomes an allowed-callback ACE
+	noOwner := buildSD(t, testACE{mask: sd.MaskReadProp, sid: authenticatedUsers})
+	for i := 4; i < 8; i++ {
+		noOwner[i] = 0
+	}
+	for name, raw := range map[string][]byte{"callback ACE": cb, "no owner": noOwner, "garbage": {1, 2, 3}} {
+		r := newDelRig(t)
+		e := r.entry(t, func(a map[string][][]byte) { a["nTSecurityDescriptor"] = [][]byte{raw} })
+		if v, _ := r.classify(t, e, nil); !v.Tier0 {
+			t.Errorf("%s: passed", name)
+		}
+	}
+}
+
+// A deleted object under another container of the proven domain (DC=DomainDnsZones) or under another
+// domain is refused: the parent must equal the container whose grant was proven, as typed DNs.
+func TestClassifyDeletedContainerIsTyped(t *testing.T) {
+	for _, d := range []string{
+		"CN=Jo\\0ADEL:x,CN=Deleted Objects,DC=DomainDnsZones,DC=lab",
+		"CN=Jo\\0ADEL:x,CN=Deleted Objects,DC=other,DC=lab",
+		"CN=Jo\\0ADEL:x,CN=Other,DC=lab",
+		"CN=Jo\\0ADEL:x,CN=Deleted Objects,DC=lab,CN=x",
+		"not a dn",
+	} {
+		r := newDelRig(t)
+		r.objs.dnOf = map[guidT]dn.DN{newParentID: mustDN(t, "OU=New,DC=lab")}
+		full := r.entry(t, nil)
+		attrs := map[string][][]byte{}
+		for _, n := range full.Names() {
+			attrs[n] = full.Raw(n)
+		}
+		r.objs.target = ad.NewEntry(d, attrs)
+		if v, err := r.p.classifyDeleted(context.Background(), r.objs, delID, newParentID, nil); err == nil || !v.Tier0 {
+			t.Errorf("%q: not refused: %+v %v", d, v, err)
+		}
 	}
 }

@@ -340,15 +340,18 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 
 	// Step 7: live re-read and classification of every touched object. An error is tier0.
 	designated := unionGUIDs(parseGUIDs(c.t0.GetDesignated()), h.gates.Designated(c.conn.GetConnectionId()))
+	var regrants []Regrant
 	for i, id := range touched {
 		if i == 0 && op != nil && op.DeletedTarget {
 			var np guid.GUID
 			if len(touched) > 1 {
 				np = touched[1]
 			}
-			if r := h.liveDeleted(ctx, id, np, designated); r != nil {
+			v, r := h.liveDeleted(ctx, id, np, designated)
+			if r != nil {
 				return nil, r
 			}
+			regrants = v.Regrants
 			continue
 		}
 		if r := h.live(ctx, idx, id, designated); r != nil {
@@ -359,7 +362,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	if bound != nil {
 		boundDSA, _ = fromWire(bound.GetDsaGuid()) // verified equal to the pin at step 2b
 	}
-	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: h.objects()}}}, nil
+	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: h.objects(), regrants: regrants}}}, nil
 }
 
 // Refusal reasons recorded for a property-write refusal that is not a rule verdict.
@@ -394,11 +397,22 @@ func (h *Handler) propertyGuard(ctx context.Context, w WriteOp, c *call, target 
 	if err != nil || g == nil {
 		return refuse(reasonGuardUnavailable, stLive)
 	}
-	v, err := g.CheckPropertyWrite(ctx, pw)
-	if err != nil {
-		return refuse(reasonGuardUnavailable, stLive)
+	// The declaration is checked as declared and, for a kind that touches objects whose class is
+	// only known live (AlsoDevice), again as a device write: refused if either refuses.
+	decls := []tier0.PropertyWrite{pw}
+	if w.AlsoDevice && pw.Kind != tier0.WriteDevice {
+		dw := pw
+		dw.Kind = tier0.WriteDevice
+		decls = append(decls, dw)
 	}
-	if v.Refused {
+	for _, d := range decls {
+		v, err := g.CheckPropertyWrite(ctx, d)
+		if err != nil {
+			return refuse(reasonGuardUnavailable, stLive)
+		}
+		if !v.Refused {
+			continue
+		}
 		if v.Reason != "" {
 			ev.Reason = v.Reason
 		}
@@ -578,25 +592,25 @@ func (h *Handler) objects() ObjectDirectory {
 // check, the one target read and the fixed-read-set classification. A provider that cannot do it
 // refuses (fail closed). A grant that is not proven is INSUFFICIENT_RIGHTS naming the right, and a
 // target that does not exist is OBJECT_NOT_FOUND, both only after the checks that justify them.
-func (h *Handler) liveDeleted(ctx context.Context, id, newParent guid.GUID, designated []guid.GUID) *Refusal {
+func (h *Handler) liveDeleted(ctx context.Context, id, newParent guid.GUID, designated []guid.GUID) (Verdict, *Refusal) {
 	dc, ok := h.prov.(DeletedClassifier)
 	if !ok || newParent == (guid.GUID{}) {
-		return tier0Refusal(toWire(id), nil, stLive, "7")
+		return Verdict{}, tier0Refusal(toWire(id), nil, stLive, "7")
 	}
 	v, err := dc.ClassifyDeleted(ctx, id, newParent, designated)
 	var rights *DeletedRightsError
 	switch {
 	case errors.As(err, &rights):
-		return newRefusal(connectorv1.ErrorCode_ERROR_CODE_INSUFFICIENT_RIGHTS, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_OPERATOR_ACTION, "7",
+		return v, newRefusal(connectorv1.ErrorCode_ERROR_CODE_INSUFFICIENT_RIGHTS, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_OPERATOR_ACTION, "7",
 			"missing right: List Contents on Deleted Objects of "+rights.Domain)
 	case errors.Is(err, ErrNoRecycleBin):
-		return newRefusal(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "7", "AD Recycle Bin is not enabled")
+		return v, newRefusal(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "7", "AD Recycle Bin is not enabled")
 	case errors.Is(err, ErrDeletedNotFound):
-		return newRefusal(connectorv1.ErrorCode_ERROR_CODE_OBJECT_NOT_FOUND, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "7", "deleted object not found")
+		return v, newRefusal(connectorv1.ErrorCode_ERROR_CODE_OBJECT_NOT_FOUND, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "7", "deleted object not found")
 	case err != nil || v.Tier0:
-		return tier0Refusal(toWire(id), v.Bases, stLive, "7")
+		return v, tier0Refusal(toWire(id), v.Bases, stLive, "7")
 	}
-	return nil
+	return v, nil
 }
 
 // live is step 7 for one object: F4 evidence against the re-read anchors, then the classifier.

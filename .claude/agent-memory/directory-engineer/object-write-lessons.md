@@ -15,3 +15,5 @@ metadata:
 - write cannot import rights (rights imports write): schema GUIDs for the Read Property proof come from Dir.Find on the Schema NC.
 - ADProvider.Self (connection identity ref) must be set by the composition root; unset means restore is refused.
 - Unit-test SDs: hand-build a self-relative SD (header 20 bytes, DACL at 20) — see buildSD in deleted_test.go.
+- Security review T-1624: kinds 4-6 declare PropertyWrite as USER and DEVICE (`WriteOp.AlsoDevice`); R2 bases (C4/C8/C12/C14) are checked on present values, not just proven readable; primary group 513-515 judged like memberOf; no exported show-deleted option in `ad` (only fixed-shape fns in deletedread.go); deleted DN parent must equal the container DN typed.
+- Test descriptors (buildSD) need an owner now; refDir fake needs bySID for primary-group lookups.

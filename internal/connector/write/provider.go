@@ -18,6 +18,15 @@ import (
 type Verdict struct {
 	Tier0 bool
 	Bases []Basis
+	// Regrants are the groups a restore re-grants, by group: the retained memberOf values and the
+	// primary group (contract §8.10.3 kind 6 step 4, §8.10.9 R2). Set only on a clean restore verdict.
+	Regrants []Regrant
+}
+
+// Regrant is one group membership a restore brings back.
+type Regrant struct {
+	Group guid.GUID
+	DN    string // the group's DN as the DC sent it; display only
 }
 
 // Anchors are the identifiers of an object as re-read live, against which a correlation

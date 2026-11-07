@@ -3,11 +3,14 @@ package write
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
+	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/sd"
 )
@@ -72,7 +75,7 @@ func (p *ADProvider) classifyDeleted(ctx context.Context, objs ObjectDirectory, 
 	}
 	// Step 1: the grant, before the target read. The domain is the new parent's: a deleted object
 	// is restored inside its own domain, and the read below must come back from that same domain.
-	ps, err := objs.State(ctx, newParent, false)
+	ps, err := objs.State(ctx, newParent)
 	if err != nil {
 		return unknown, err
 	}
@@ -80,7 +83,7 @@ func (p *ADProvider) classifyDeleted(ctx context.Context, objs ObjectDirectory, 
 	if domain.Len() == 0 {
 		return unknown, errors.New("write: new parent has no domain")
 	}
-	pr, err := p.proveListContents(ctx, objs, domain)
+	pr, container, err := p.proveListContents(ctx, objs, domain)
 	if err != nil {
 		return unknown, err
 	}
@@ -105,10 +108,12 @@ func (p *ADProvider) classifyDeleted(ctx context.Context, objs ObjectDirectory, 
 	if !isTrue(e.Strings("isDeleted")) {
 		return unknown, errors.New("write: deleted target isDeleted is not TRUE")
 	}
-	// The deleted object must live in the domain whose grant was proven.
-	// (The DN of a deleted object carries a mangled RDN, so this is a suffix check on the rendered text.)
-	if !strings.HasSuffix(strings.ToLower(e.DN), ","+strings.ToLower(domain.String())) {
-		return unknown, errors.New("write: deleted target is not in the proven domain")
+	// The deleted object must be a direct child of the Deleted Objects container whose grant was
+	// proven (typed DN comparison; the mangled RDN parses under dn.Strict). This also refuses an
+	// object under another container of the same domain, such as DC=DomainDnsZones.
+	td, derr := dn.Parse(e.DN, dn.Strict)
+	if derr != nil || td.Len() == 0 || !dn.Equal(td.Parent(), container) {
+		return unknown, errors.New("write: deleted target is not in the proven Deleted Objects container")
 	}
 	v, err := p.classifyDeletedEntry(ctx, objs, id, e, designated, pr)
 	if err != nil || v.Tier0 {
@@ -122,7 +127,7 @@ func (p *ADProvider) classifyDeleted(ctx context.Context, objs ObjectDirectory, 
 	if hit {
 		return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
 	}
-	return Verdict{}, nil
+	return v, nil // v carries the groups the restore re-grants, for Plan
 }
 
 func has(e *ad.Entry, attr string) bool { return len(e.Raw(attr)) > 0 }
@@ -171,31 +176,31 @@ func (p *ADProvider) principal(ctx context.Context) (sd.Principal, error) {
 // owner and DACL of CN=Deleted Objects (TM-D33 rule 4). Never decided by trying the target read.
 // Not proven, or an unreadable descriptor, is a DeletedRightsError; only a lost DC or a cancelled
 // context is a plain error.
-func (p *ADProvider) proveListContents(ctx context.Context, objs ObjectDirectory, domain dn.DN) (sd.Principal, error) {
+func (p *ADProvider) proveListContents(ctx context.Context, objs ObjectDirectory, domain dn.DN) (sd.Principal, dn.DN, error) {
 	denied := &DeletedRightsError{Domain: domain.String()}
 	pr, err := p.principal(ctx)
 	if err != nil {
 		if isTransportErr(ctx, err) {
-			return sd.Principal{}, err
+			return sd.Principal{}, dn.DN{}, err
 		}
-		return sd.Principal{}, denied
+		return sd.Principal{}, dn.DN{}, denied
 	}
-	_, raw, err := objs.DeletedContainer(ctx, domain)
+	container, raw, err := objs.DeletedContainer(ctx, domain)
 	if err != nil {
 		if isTransportErr(ctx, err) {
-			return sd.Principal{}, err
+			return sd.Principal{}, dn.DN{}, err
 		}
-		return sd.Principal{}, denied
+		return sd.Principal{}, dn.DN{}, denied
 	}
 	desc, err := sd.Decode(sd.Raw(raw))
 	if err != nil {
-		return sd.Principal{}, denied
+		return sd.Principal{}, dn.DN{}, denied
 	}
 	res := sd.Grants(pr, sd.Right{Mask: sd.MaskListContents}, desc)
 	if res.Decision != sd.Yes || res.Incomplete {
-		return sd.Principal{}, denied
+		return sd.Principal{}, dn.DN{}, denied
 	}
-	return pr, nil
+	return pr, container, nil
 }
 
 func isTransportErr(ctx context.Context, err error) bool {
@@ -206,6 +211,7 @@ func isTransportErr(ctx context.Context, err error) bool {
 // so the fail-closed branches are testable without a Recycle Bin.
 func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs ObjectDirectory, id guid.GUID, e *ad.Entry, designated []guid.GUID, pr sd.Principal) (Verdict, error) {
 	unknown := Verdict{Tier0: true}
+	var regrants []Regrant
 	for _, g := range designated {
 		if g == id { // a customer-designated object stays Tier-0 once deleted
 			return Verdict{Tier0: true, Bases: []Basis{designatedBasis}}, nil
@@ -256,6 +262,13 @@ func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs ObjectDirect
 	if has(e, "sIDHistory") {
 		return Verdict{Tier0: true, Bases: []Basis{tier0.C18}}, nil
 	}
+	// §8.10.9 R2 bases, at least as strict as the live rules. A value that is present is tier0.
+	if b, hit := r2Basis(e); hit {
+		return Verdict{Tier0: true, Bases: []Basis{b}}, nil
+	}
+	if bad, err := retainedDescriptorRefuses(e); err != nil || bad {
+		return unknown, nil
+	}
 	// adminCount is set by SDProp on protected-group members and survives the delete (defence in depth).
 	if n, present, err := e.Int32("adminCount"); err != nil {
 		return unknown, err
@@ -279,6 +292,17 @@ func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs ObjectDirect
 		}
 		switch v[0] {
 		case "513", "514", "515":
+			// The default primary groups are judged like memberOf: against the set and by their own
+			// live token (a designated or tier0 Domain Users is not a default). Unresolvable is tier0.
+			rid, _ := strconv.ParseUint(v[0], 10, 32)
+			pg, ok := p.primaryGroup(ctx, e, uint32(rid))
+			if !ok {
+				return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
+			}
+			if p.groupTier0(ctx, pg.Group, designated) {
+				return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
+			}
+			regrants = append(regrants, pg)
 		case "516", "521":
 			return Verdict{Tier0: true, Bases: []Basis{tier0.C5}}, nil
 		default:
@@ -286,25 +310,18 @@ func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs ObjectDirect
 		}
 	}
 	// Step 4, retained side: every memberOf group, judged against the set and by its own live token.
-	des := map[guid.GUID]bool{}
-	for _, g := range designated {
-		des[g] = true
-	}
 	for _, m := range e.Strings("memberOf") {
-		gid, err := p.linkGUID(ctx, m)
+		gid, gdn, err := p.linkTarget(ctx, m)
 		if err != nil {
 			return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil // unreadable group: tier0
 		}
-		if des[gid] {
+		if p.groupTier0(ctx, gid, designated) {
 			return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
 		}
-		gv, err := p.Classify(ctx, gid, designated)
-		if err != nil || gv.Tier0 {
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
-		}
+		regrants = append(regrants, Regrant{Group: gid, DN: gdn})
 	}
 	if v := e.Strings("lastKnownParent"); len(v) == 1 {
-		pid, found, err := p.linkGUIDOpt(ctx, v[0])
+		pid, _, found, err := p.linkTargetOpt(ctx, v[0])
 		if err != nil {
 			return unknown, err
 		}
@@ -315,46 +332,134 @@ func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs ObjectDirect
 			}
 		}
 	}
-	return Verdict{}, nil
+	return Verdict{Regrants: regrants}, nil
 }
 
-// linkGUID is the objectGUID a DN-syntax value names: the extended-DN GUID when the DC sent one,
-// else a read by the plain DN. A value that names no readable object is an error.
-func (p *ADProvider) linkGUID(ctx context.Context, v string) (guid.GUID, error) {
-	g, found, err := p.linkGUIDOpt(ctx, v)
+// groupTier0 judges one retained group: designated, or tier0 by the live classifier (which also
+// applies the designated groups to the group's own token). An error is tier0.
+func (p *ADProvider) groupTier0(ctx context.Context, gid guid.GUID, designated []guid.GUID) bool {
+	for _, g := range designated {
+		if g == gid {
+			return true
+		}
+	}
+	gv, err := p.Classify(ctx, gid, designated)
+	return err != nil || gv.Tier0
+}
+
+// primaryGroup resolves the group named by a primaryGroupID RID in the target's domain: the
+// target's domain SID plus the RID, looked up by SID. ok is false when it cannot be resolved.
+func (p *ADProvider) primaryGroup(ctx context.Context, e *ad.Entry, rid uint32) (Regrant, bool) {
+	sids, err := e.SIDs("objectSid")
+	if err != nil || len(sids) != 1 {
+		return Regrant{}, false
+	}
+	dom, ok := sids[0].DomainSID()
+	if !ok {
+		return Regrant{}, false
+	}
+	gs, err := sid.Parse(fmt.Sprintf("%s-%d", dom, rid))
 	if err != nil {
-		return guid.GUID{}, err
+		return Regrant{}, false
+	}
+	ge, err := p.Dir.Get(ctx, dn.SIDRef(gs), []string{"objectGUID"})
+	if err != nil {
+		return Regrant{}, false
+	}
+	g, err := ge.GUID()
+	if err != nil {
+		return Regrant{}, false
+	}
+	return Regrant{Group: g, DN: ge.DN}, true
+}
+
+// r2Basis applies the §8.10.9 R2 bases to the attributes read: C4 (a secondary krbtgt number, or a
+// last known RDN of krbtgt or krbtgt_*), C14 (AZUREADSSOACC), C12 (any delegation or RBCD value),
+// and isCriticalSystemObject TRUE (C8). The live rules are tier0/ad.go c4, c12 and c14; a deleted
+// object's own name is mangled, so the last known RDN stands in for it.
+func r2Basis(e *ad.Entry) (Basis, bool) {
+	if has(e, "msDS-SecondaryKrbTgtNumber") {
+		return tier0.C4, true
+	}
+	for _, r := range e.Strings("msDS-LastKnownRDN") {
+		l := strings.ToLower(strings.TrimSuffix(r, "$"))
+		switch {
+		case l == "krbtgt" || strings.HasPrefix(l, "krbtgt_"):
+			return tier0.C4, true
+		case l == "azureadssoacc":
+			return tier0.C14, true
+		}
+	}
+	if has(e, "msDS-AllowedToDelegateTo") || has(e, "msDS-AllowedToActOnBehalfOfOtherIdentity") {
+		return tier0.C12, true
+	}
+	if isTrue(e.Strings("isCriticalSystemObject")) {
+		return tier0.C8, true
+	}
+	return 0, false
+}
+
+// retainedDescriptorRefuses reads the retained nTSecurityDescriptor as a typed descriptor (never
+// SDDL) for C17/C18 on the object itself: a descriptor that does not decode, one with no owner, or
+// one holding a callback (conditional) ACE cannot be judged by the effective-rights primitive and
+// refuses (fail closed).
+func retainedDescriptorRefuses(e *ad.Entry) (bool, error) {
+	raw := e.Raw("nTSecurityDescriptor")
+	if len(raw) != 1 {
+		return true, errors.New("write: no retained descriptor")
+	}
+	d, err := sd.Decode(sd.Raw(raw[0]))
+	if err != nil {
+		return true, err
+	}
+	if !d.HasOwner {
+		return true, nil
+	}
+	for _, a := range d.DACL.ACEs {
+		if a.Kind == sd.Opaque || a.Kind == sd.Callback {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// linkTarget is the objectGUID and display DN a DN-syntax value names: the extended-DN GUID when the
+// DC sent one, else a read by the plain DN. A value that names no readable object is an error.
+func (p *ADProvider) linkTarget(ctx context.Context, v string) (guid.GUID, string, error) {
+	g, d, found, err := p.linkTargetOpt(ctx, v)
+	if err != nil {
+		return guid.GUID{}, "", err
 	}
 	if !found {
-		return guid.GUID{}, ErrDeletedNotFound
+		return guid.GUID{}, "", ErrDeletedNotFound
 	}
-	return g, nil
+	return g, d, nil
 }
 
-// linkGUIDOpt is linkGUID where a value naming an object that no longer exists is found false.
-func (p *ADProvider) linkGUIDOpt(ctx context.Context, v string) (guid.GUID, bool, error) {
+// linkTargetOpt is linkTarget where a value naming an object that no longer exists is found false.
+func (p *ADProvider) linkTargetOpt(ctx context.Context, v string) (guid.GUID, string, bool, error) {
 	lv, err := dn.ParseLinkValue(v)
 	if err != nil {
-		return guid.GUID{}, false, err
+		return guid.GUID{}, "", false, err
 	}
 	var ref dn.ObjectRef
 	if lv.HasGUID {
 		ref = dn.GUIDRef(lv.GUID)
 	} else if ref, err = dn.ParseObjectRef(lv.DN); err != nil {
-		return guid.GUID{}, false, err
+		return guid.GUID{}, "", false, err
 	}
 	e, err := p.Dir.Get(ctx, ref, []string{"objectGUID"})
 	if ad.CodeOf(err) == ad.CodeObjectNotFound {
-		return guid.GUID{}, false, nil
+		return guid.GUID{}, "", false, nil
 	}
 	if err != nil {
-		return guid.GUID{}, false, err
+		return guid.GUID{}, "", false, err
 	}
 	g, err := e.GUID()
 	if err != nil {
-		return guid.GUID{}, false, err
+		return guid.GUID{}, "", false, err
 	}
-	return g, true, nil
+	return g, lv.DN, true, nil
 }
 
 // absentOptional lists the optional-set attributes the entry did not carry.

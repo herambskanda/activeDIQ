@@ -1591,7 +1591,9 @@ field is a DN.
   other than the target needs its own `CorrelationStatement` (step 6, F1/F3). A move into or out
   of a Tier-0 container is therefore refused (C3, C6, C7), whatever the identity may do.
 - `ALREADY_APPLIED` when the target's parent GUID already equals `new_parent`.
-- §8.9 `MOVE_OR_RENAME`. TM-D28 class `move`. Moving changes inherited ACEs and GPO scope; Plan
+- §8.9 `MOVE_OR_RENAME`, declared for **both** `kind` USER and DEVICE (the class is only known live, and an OU move changes the DN
+  of every computer below it; refused if either refuses; same for kinds 5 and 6 — `WriteOp.AlsoDevice`, T-1624 security review).
+  TM-D28 class `move`. Moving changes inherited ACEs and GPO scope; Plan
   shows the new parent's DN and warns when the new parent's `gPLink` or inheritance blocking differs
   from the old (display only; the decision is the technician's).
 

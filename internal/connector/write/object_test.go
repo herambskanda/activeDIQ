@@ -41,9 +41,13 @@ func (f *fakeObjects) DeletedTarget(context.Context, guidT) (*ad.Entry, error) {
 	return f.target, f.targetErr
 }
 
-func (f *fakeObjects) DeletedContainer(context.Context, dn.DN) (dn.DN, []byte, error) {
+func (f *fakeObjects) DeletedContainer(_ context.Context, domain dn.DN) (dn.DN, []byte, error) {
 	f.calls = append(f.calls, "container")
-	return dn.DN{}, f.container, f.containerErr
+	c, err := dn.Child(domain, dn.CN, "Deleted Objects")
+	if err != nil {
+		return dn.DN{}, nil, err
+	}
+	return c, f.container, f.containerErr
 }
 
 func (f *fakeObjects) GroupMembers(_ context.Context, g guidT) ([]string, bool, error) {
@@ -51,7 +55,15 @@ func (f *fakeObjects) GroupMembers(_ context.Context, g guidT) ([]string, bool, 
 	return f.members[g], false, f.memberErr
 }
 
-func (f *fakeObjects) State(_ context.Context, id guidT, _ bool) (ad.ObjectState, error) {
+func (f *fakeObjects) State(ctx context.Context, id guidT) (ad.ObjectState, error) {
+	st, err := f.DeletedState(ctx, id)
+	if err == nil && st.Deleted {
+		return ad.ObjectState{}, ad.NewError(ad.CodeObjectNotFound) // a live read cannot see a deleted object
+	}
+	return st, err
+}
+
+func (f *fakeObjects) DeletedState(_ context.Context, id guidT) (ad.ObjectState, error) {
 	if _, ok := f.rdn[id]; !ok {
 		return ad.ObjectState{}, ad.NewError(ad.CodeObjectNotFound)
 	}
@@ -325,5 +337,98 @@ func TestObjectDigestMismatchRefused(t *testing.T) {
 	_, err := r.apply(kind, ch, p.Precondition, moveAttrs(mk(70)), client.DigestObjectMove, oT, oP1, oP2)
 	if connErr(t, err).GetRejectedInput().GetRuleId() != "PlanDigestMismatch" || r.dir.writes != 0 {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// kindGuard refuses a property write declared with one kind, as a closure holding a dynamic device
+// group (or a dynamic user group) does.
+type kindGuard struct {
+	refuse tier0.WriteKind
+	seen   []tier0.WriteKind
+}
+
+func (g *kindGuard) CheckPropertyWrite(_ context.Context, w tier0.PropertyWrite) (tier0.DynamicRuleRefusal, error) {
+	g.seen = append(g.seen, w.Kind)
+	if w.Kind == g.refuse {
+		return tier0.DynamicRuleRefusal{Refused: true, Reason: tier0.ReasonDesignatedDynamicRule, Stage: tier0.StageConnectorSet}, nil
+	}
+	return tier0.DynamicRuleRefusal{}, nil
+}
+
+func restoreChangeTo(np guidT, rdn string) *connectorv1.WriteChange {
+	return &connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectRestore{ObjectRestore: &connectorv1.ObjectRestore{
+		NewParent: &connectorv1.WriteTarget{Object: toWire(np), NcGuid: toWire(oNC)}, RdnValue: rdn}}}
+}
+
+func renameChangeTo(v string) *connectorv1.WriteChange {
+	return &connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectRename{ObjectRename: &connectorv1.ObjectRename{NewRdnValue: v}}}
+}
+
+// Kinds 4 to 6 take computers and OUs as well as users, and an OU move changes the DN of every
+// computer below it, so the §8.9 guard runs for both the user and the device kind: either refuses.
+func TestObjectKindsGuardedAsUserAndDevice(t *testing.T) {
+	cases := map[string]struct {
+		kind connectorv1.WriteKind
+		ch   *connectorv1.WriteChange
+		ids  []guidT
+	}{
+		"move":    {connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE, moveChangeTo(oP2, oNC), []guidT{oT, oP1, oP2}},
+		"rename":  {connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME, renameChangeTo("New"), []guidT{oT}},
+		"restore": {connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE, restoreChangeTo(oP2, "Back"), []guidT{oT, oP2}},
+	}
+	for name, c := range cases {
+		for _, refuse := range []tier0.WriteKind{tier0.WriteUser, tier0.WriteDevice} {
+			r := newObjRig(t)
+			r.dir.deleted[oT] = c.kind == connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE
+			r.dir.bin = true
+			g := &kindGuard{refuse: refuse}
+			r.prov.guard = g
+			_, err := r.plan(c.kind, c.ch, c.ids...)
+			if code := connErr(t, err).GetCode(); code != connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED {
+				t.Errorf("%s refused as %v: got %s", name, refuse, code)
+			}
+			if r.dir.writes != 0 {
+				t.Errorf("%s: wrote", name)
+			}
+		}
+		// Neither kind refuses: both were checked, and the plan goes through.
+		r := newObjRig(t)
+		r.dir.deleted[oT] = c.kind == connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE
+		r.dir.bin = true
+		g := &kindGuard{refuse: tier0.WriteKind(99)}
+		r.prov.guard = g
+		if _, err := r.plan(c.kind, c.ch, c.ids...); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(g.seen) != 2 || g.seen[0] == g.seen[1] {
+			t.Errorf("%s: guard saw kinds %v, want user and device", name, g.seen)
+		}
+	}
+}
+
+// Plan lists the groups a restore re-grants (contract §8.10.9 R2).
+func TestRestorePlanListsRegrantedGroups(t *testing.T) {
+	r := newObjRig(t)
+	r.dir.deleted[oT] = true
+	r.dir.bin = true
+	g1, g2 := mk(120), mk(121)
+	r.h.prov = objProv{fakeProv: r.prov, dir: r.dir, cd: func() (Verdict, error) {
+		return Verdict{Regrants: []Regrant{{Group: g1, DN: "CN=Staff,OU=G,DC=lab"}, {Group: g2, DN: "CN=Domain Users,CN=Users,DC=lab"}}}, nil
+	}}
+	p, err := r.plan(connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE, restoreChangeTo(oP2, "Back"), oT, oP2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, a := range p.GetBefore().GetAttributes() {
+		if a.GetName() != "memberOf" {
+			continue
+		}
+		for _, v := range a.GetValues() {
+			got = append(got, v.GetDn().GetDisplayDn())
+		}
+	}
+	if len(got) != 2 || got[0] != "CN=Staff,OU=G,DC=lab" || got[1] != "CN=Domain Users,CN=Users,DC=lab" {
+		t.Fatalf("before: %v", p.GetBefore())
 	}
 }

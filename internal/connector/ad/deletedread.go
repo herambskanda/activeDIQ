@@ -2,9 +2,10 @@ package ad
 
 import (
 	"context"
-	"github.com/go-ldap/ldap/v3"
 	"strconv"
 	"strings"
+
+	"github.com/go-ldap/ldap/v3"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
@@ -41,9 +42,10 @@ var deletedTargetAttrs = append(append([]string{"objectSid", "userAccountControl
 // noSuchObject is CodeObjectNotFound.
 func (s *Session) ReadDeletedTarget(ctx context.Context, id guid.GUID) (*Entry, error) {
 	return s.Read(ctx, dn.GUIDRef(id), deletedTargetAttrs, ReadOptions{
-		ShowDeleted: true,
-		ExtendedDN:  true,
-		SD:          DefaultSDFlags(),
+		showDeleted:         true,
+		ShowDeactivatedLink: true,
+		ExtendedDN:          true,
+		SD:                  DefaultSDFlags(),
 	})
 }
 
@@ -125,4 +127,42 @@ func wellKnownDN(values []string, hexGUID string) (dn.DN, bool, error) {
 		return d, true, nil
 	}
 	return dn.DN{}, false, nil
+}
+
+// DeletedObjectState is the deleted-state read of kind 6 Plan and Apply: base scope on <GUID=…>,
+// the fixed state attributes only, the critical show-deleted control and nothing else. The object
+// may come back live (restored meanwhile or never deleted): Deleted is then false. It is not a
+// classification read; it returns no descriptor, no link value and no security attribute.
+func (s *Session) DeletedObjectState(ctx context.Context, id guid.GUID) (ObjectState, error) {
+	e, err := s.Read(ctx, dn.GUIDRef(id), stateAttrs, ReadOptions{showDeleted: true})
+	if err != nil {
+		return ObjectState{}, err
+	}
+	return s.stateOf(ctx, id, e)
+}
+
+// readDeletedLocked is the show-deleted read inside the restore write, under the held session lock,
+// that re-checks the object is still deleted immediately before the one Modify.
+func (s *Session) readDeletedLocked(ctx context.Context, id guid.GUID) (lockedObject, error) {
+	return s.lockedRead(ctx, dn.GUIDRef(id), []ldap.Control{showDeleted{}})
+}
+
+// groupMemberOptions is the read of a live group's member values: show-deactivated-link (so a
+// deleted member's value is visible; 2065 alone shows deactivated link values, TM-D33 measured) and
+// extended-DN, without show-deleted: the group is live.
+var groupMemberOptions = ReadOptions{ShowDeactivatedLink: true, ExtendedDN: true, MaxValues: DefaultMaxValues}
+
+// GroupMembers reads a live group's member values ranged to the end, with the extended DN and the
+// deactivated link values. truncated reports a cut at the value ceiling.
+func (s *Session) GroupMembers(ctx context.Context, group guid.GUID) (members []string, truncated bool, err error) {
+	e, err := s.Read(ctx, dn.GUIDRef(group), []string{"member"}, groupMemberOptions)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, n := range e.Truncated {
+		if strings.EqualFold(n, "member") {
+			truncated = true
+		}
+	}
+	return e.Strings("member"), truncated, nil
 }

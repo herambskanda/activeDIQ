@@ -146,7 +146,7 @@ func (l *labObj) apply(kind connectorv1.WriteKind, key string, attrs []step.Attr
 
 func (l *labObj) parentOf(t *testing.T, id guidT) guidT {
 	t.Helper()
-	st, err := l.sess.ObjectState(l.ctx, id, false)
+	st, err := l.sess.ObjectState(l.ctx, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestLabObjectRename(t *testing.T) {
 		if _, err := l.apply(kind, client.DigestObjectRename, attrs, u, ch, p.Precondition, u); err != nil {
 			t.Fatalf("%q apply: %v", name, err)
 		}
-		st, err := l.sess.ObjectState(l.ctx, u, false)
+		st, err := l.sess.ObjectState(l.ctx, u)
 		if err != nil {
 			t.Fatal(err)
 		}

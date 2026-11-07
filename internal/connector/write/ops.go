@@ -23,6 +23,8 @@ type pass struct {
 	props []string
 	// dir is the directory the object kinds act on; nil when the provider has none.
 	dir ObjectDirectory
+	// regrants are the group memberships a restore re-grants (step 7 of kind 6), for Plan to list.
+	regrants []Regrant
 }
 
 // DeclaresProperty reports whether the write kind this token was issued for declared the attribute in
@@ -70,6 +72,11 @@ type WriteOp struct {
 	// registered without it fails validateOps (the CC-WRITE-22 build-time check) and New. The guard
 	// calls it at step 4, before every other step that depends on the kind.
 	PropertyWrite func(change *connectorv1.WriteChange) (tier0.PropertyWrite, error)
+	// AlsoDevice makes the step-4 guard check the PropertyWrite declaration a second time with Kind
+	// WriteDevice (refused if either refuses). A kind whose target class is only known live (move,
+	// rename and restore take users, groups, computers and OUs, and an OU move changes the DN of
+	// every computer below it) sets it, because the closure's dynamic rules differ per kind.
+	AlsoDevice bool
 	// TouchedLive adds the objects only a live read can name (the old parent of a move). It runs at
 	// step 5, after Touched, against the provider's directory; an error refuses as TouchedSet.
 	TouchedLive func(ctx context.Context, d ObjectDirectory, target guid.GUID, change *connectorv1.WriteChange) ([]guid.GUID, error)
