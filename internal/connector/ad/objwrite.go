@@ -33,7 +33,7 @@ func deletedControls() []ldap.Control { return []ldap.Control{showDeleted{}, sho
 type showDeleted struct{}
 
 func (showDeleted) GetControlType() string { return oidShowDeleted }
-func (showDeleted) Encode() *berPacket     { return encodeValuelessControl(oidShowDeleted) }
+func (showDeleted) Encode() *berPacket     { return encodeCriticalValuelessControl(oidShowDeleted) }
 func (showDeleted) String() string         { return "Show deleted control" }
 
 // Additional codes of the object write operations.
@@ -85,19 +85,12 @@ type ObjectState struct {
 
 var stateAttrs = []string{"objectGUID", "objectClass", "distinguishedName", "isDeleted", "instanceType", "uSNChanged"}
 
-// DeletedAttrs are read for a deleted object (the fixed read set of contract §8.10.3 kind 6).
-var DeletedAttrs = []string{"objectSid", "sIDHistory", "userAccountControl", "primaryGroupID", "memberOf", "lastKnownParent", "adminCount"}
-
-// ObjectState reads one object by GUID. With deleted set the show-deleted control is sent and the
-// deleted read set is added; the object may still come back live (Deleted false). It reads through the session, so it must not be called from inside a
+// ObjectState reads one object by GUID. With deleted set the show-deleted control is sent; the
+// object may still come back live (Deleted false). The classification read of a deleted target is
+// ReadDeletedTarget, not this. It reads through the session, so it must not be called from inside a
 // Search callback.
 func (s *Session) ObjectState(ctx context.Context, id guid.GUID, deleted bool) (ObjectState, error) {
-	attrs := stateAttrs
-	opts := ReadOptions{ShowDeleted: deleted}
-	if deleted {
-		attrs = append(append([]string(nil), stateAttrs...), DeletedAttrs...)
-	}
-	e, err := s.Read(ctx, dn.GUIDRef(id), attrs, opts)
+	e, err := s.Read(ctx, dn.GUIDRef(id), stateAttrs, ReadOptions{ShowDeleted: deleted})
 	if err != nil {
 		return ObjectState{}, err
 	}

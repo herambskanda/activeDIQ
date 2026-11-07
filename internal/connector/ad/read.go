@@ -130,9 +130,14 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 	absorb := func(raw *ldap.Entry) { absorbEntry(ent, pending, asked, raw) }
 	absorb(res.Entries[0])
 
+	// A range follow-up of a deleted object needs the same visibility controls as the first request,
+	// or the DC answers noSuchObject / an empty memberOf for the rest of the values.
 	var followCtrls []ldap.Control
+	if opts.ShowDeleted {
+		followCtrls = append(followCtrls, deletedControls()...)
+	}
 	if opts.ExtendedDN {
-		followCtrls = []ldap.Control{extendedDN{}}
+		followCtrls = append(followCtrls, extendedDN{})
 	}
 	// Follow ranges to the terminal "*" range, bounded by the value ceiling and a round-trip cap.
 	for round := 0; len(pending) > 0 && round < maxRangeRequests; round++ {

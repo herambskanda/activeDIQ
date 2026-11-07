@@ -154,6 +154,13 @@ type ADProvider struct {
 	Dynamic PropertyGuard
 	// Bound reports the DC the connector is bound to (rule 5). Nil refuses every write.
 	Bound DCBinder
+	// Self is the connector's own account (the identity of every step-7 read), by GUID or DN. Kind 6
+	// proves List Contents on Deleted Objects for this identity's token; unset, restore is refused
+	// with INSUFFICIENT_RIGHTS (TM-D33 rule 4).
+	Self dn.ObjectRef
+	// snapshot computes the tier0 set for the member cross-check of kind 6; nil means the AD
+	// classifier over Dir. Tests substitute it.
+	snapshot func(ctx context.Context, designated []guid.GUID) (*tier0.ADSet, error)
 }
 
 var _ Provider = (*ADProvider)(nil)

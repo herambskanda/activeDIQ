@@ -13,12 +13,3 @@ func TestDeletedControlsIncludeDeactivatedLink(t *testing.T) {
 		t.Fatalf("controls: %v", got)
 	}
 }
-
-func TestDeletedAttrsReadAdminCount(t *testing.T) {
-	for _, a := range DeletedAttrs {
-		if a == "adminCount" {
-			return
-		}
-	}
-	t.Fatal("adminCount not in DeletedAttrs")
-}

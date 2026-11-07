@@ -74,6 +74,9 @@ func DefaultSchema() *ldapfilter.Schema {
 			// Object restore (T-1624): deleted-object reads and the Recycle Bin feature check.
 			ldapfilter.AttrInfo{Name: "isDeleted", OID: "1.2.840.113556.1.2.48", Syntax: ldapfilter.SynBool},
 			ldapfilter.AttrInfo{Name: "lastKnownParent", OID: "1.2.840.113556.1.4.781", Syntax: ldapfilter.SynDN},
+			ldapfilter.AttrInfo{Name: "isRecycled", Syntax: ldapfilter.SynBool},
+			ldapfilter.AttrInfo{Name: "msDS-LastKnownRDN", Syntax: s},
+			ldapfilter.AttrInfo{Name: "isCriticalSystemObject", Syntax: ldapfilter.SynBool},
 			ldapfilter.AttrInfo{Name: "msDS-EnabledFeature", OID: "1.2.840.113556.1.4.2061", Syntax: ldapfilter.SynDN},
 			ldapfilter.AttrInfo{Name: "serverReference", OID: "1.2.840.113556.1.4.515", Syntax: ldapfilter.SynDN},
 			// dNSHostName: name-only. Its attributeID is also the lazy-commit control OID, which FF-SP2 lets

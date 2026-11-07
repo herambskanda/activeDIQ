@@ -88,11 +88,6 @@ type WriteOp struct {
 // CAPABILITY_UNSUPPORTED until their build tickets land.
 var operations = objectOps()
 
-// DeletedClassifier is a Provider that can classify a deleted object (OBJECT_RESTORE's target).
-type DeletedClassifier interface {
-	ClassifyDeleted(ctx context.Context, id guid.GUID, designated []guid.GUID) (Verdict, error)
-}
-
 // validateOps is the build-time check of contract §8.9 / CC-WRITE-22: every registered write kind
 // declares its PropertyWrite and its other mandatory functions. It runs in New, so a handler cannot
 // be built over a table with a gap, and in the unit tests over the real table on every merge.

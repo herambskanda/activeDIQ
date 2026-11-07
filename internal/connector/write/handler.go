@@ -342,7 +342,11 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	designated := unionGUIDs(parseGUIDs(c.t0.GetDesignated()), h.gates.Designated(c.conn.GetConnectionId()))
 	for i, id := range touched {
 		if i == 0 && op != nil && op.DeletedTarget {
-			if r := h.liveDeleted(ctx, id, designated); r != nil {
+			var np guid.GUID
+			if len(touched) > 1 {
+				np = touched[1]
+			}
+			if r := h.liveDeleted(ctx, id, np, designated); r != nil {
 				return nil, r
 			}
 			continue
@@ -570,15 +574,26 @@ func (h *Handler) objects() ObjectDirectory {
 	return nil
 }
 
-// liveDeleted is step 7 for the deleted target of a restore: the fixed-read-set classification. A
-// provider that cannot do it refuses (fail closed).
-func (h *Handler) liveDeleted(ctx context.Context, id guid.GUID, designated []guid.GUID) *Refusal {
+// liveDeleted is step 7 for the deleted target of a restore (contract §8.10.3 kind 6): the grant
+// check, the one target read and the fixed-read-set classification. A provider that cannot do it
+// refuses (fail closed). A grant that is not proven is INSUFFICIENT_RIGHTS naming the right, and a
+// target that does not exist is OBJECT_NOT_FOUND, both only after the checks that justify them.
+func (h *Handler) liveDeleted(ctx context.Context, id, newParent guid.GUID, designated []guid.GUID) *Refusal {
 	dc, ok := h.prov.(DeletedClassifier)
-	if !ok {
+	if !ok || newParent == (guid.GUID{}) {
 		return tier0Refusal(toWire(id), nil, stLive, "7")
 	}
-	v, err := dc.ClassifyDeleted(ctx, id, designated)
-	if err != nil || v.Tier0 {
+	v, err := dc.ClassifyDeleted(ctx, id, newParent, designated)
+	var rights *DeletedRightsError
+	switch {
+	case errors.As(err, &rights):
+		return newRefusal(connectorv1.ErrorCode_ERROR_CODE_INSUFFICIENT_RIGHTS, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_OPERATOR_ACTION, "7",
+			"missing right: List Contents on Deleted Objects of "+rights.Domain)
+	case errors.Is(err, ErrNoRecycleBin):
+		return newRefusal(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "7", "AD Recycle Bin is not enabled")
+	case errors.Is(err, ErrDeletedNotFound):
+		return newRefusal(connectorv1.ErrorCode_ERROR_CODE_OBJECT_NOT_FOUND, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "7", "deleted object not found")
+	case err != nil || v.Tier0:
 		return tier0Refusal(toWire(id), v.Bases, stLive, "7")
 	}
 	return nil

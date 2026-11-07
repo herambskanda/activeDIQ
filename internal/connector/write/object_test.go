@@ -24,6 +24,31 @@ type fakeObjects struct {
 	writes   int
 	classes  []string
 	deadline error
+
+	// The deleted-object reads (kind 6 step 7).
+	target       *ad.Entry
+	targetErr    error
+	container    []byte
+	containerErr error
+	members      map[guidT][]string
+	memberErr    error
+	calls        []string // the order of the step-7 reads
+	dnOf         map[guidT]dn.DN
+}
+
+func (f *fakeObjects) DeletedTarget(context.Context, guidT) (*ad.Entry, error) {
+	f.calls = append(f.calls, "target")
+	return f.target, f.targetErr
+}
+
+func (f *fakeObjects) DeletedContainer(context.Context, dn.DN) (dn.DN, []byte, error) {
+	f.calls = append(f.calls, "container")
+	return dn.DN{}, f.container, f.containerErr
+}
+
+func (f *fakeObjects) GroupMembers(_ context.Context, g guidT) ([]string, bool, error) {
+	f.calls = append(f.calls, "members")
+	return f.members[g], false, f.memberErr
 }
 
 func (f *fakeObjects) State(_ context.Context, id guidT, _ bool) (ad.ObjectState, error) {
@@ -43,6 +68,9 @@ func (f *fakeObjects) State(_ context.Context, id guidT, _ bool) (ad.ObjectState
 		st.Parent = f.parent[id]
 		d, _ := dn.Child(dn.DN{}, dn.CN, f.rdn[id])
 		st.DN = d
+		if x, ok := f.dnOf[id]; ok {
+			st.DN = x
+		}
 	}
 	return st, nil
 }
@@ -85,7 +113,7 @@ type objProvPlain struct {
 func (p objProvPlain) Objects() ObjectDirectory { return p.dir }
 
 func (p objProv) Objects() ObjectDirectory { return p.dir }
-func (p objProv) ClassifyDeleted(context.Context, guidT, []guidT) (Verdict, error) {
+func (p objProv) ClassifyDeleted(context.Context, guidT, guidT, []guidT) (Verdict, error) {
 	if p.cd != nil {
 		return p.cd()
 	}

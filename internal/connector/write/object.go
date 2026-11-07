@@ -43,6 +43,15 @@ type ObjectDirectory interface {
 	Move(ctx context.Context, r ad.MoveRequest) error
 	Rename(ctx context.Context, r ad.RenameRequest) error
 	Restore(ctx context.Context, r ad.RestoreRequest) error
+	// DeletedTarget is the deleted-target read of kind 6 step 7 (TM-F-RIGHTS (b1)); its only caller
+	// is ADProvider.ClassifyDeleted, after the container grant was proven.
+	DeletedTarget(ctx context.Context, id guid.GUID) (*ad.Entry, error)
+	// DeletedContainer is the container descriptor read (TM-F-RIGHTS (b2)): the DN and the raw
+	// owner+DACL descriptor of CN=Deleted Objects of domain.
+	DeletedContainer(ctx context.Context, domain dn.DN) (dn.DN, []byte, error)
+	// GroupMembers reads a live group's member values with the show-deactivated-link and extended-DN
+	// controls (so a deleted member's value is visible), ranged to the end. truncated reports a cut.
+	GroupMembers(ctx context.Context, group guid.GUID) (members []string, truncated bool, err error)
 }
 
 // ObjectProvider is a Provider that can reach the directory to write objects. The Entra provider
@@ -56,6 +65,28 @@ type SessionObjects struct{ S *ad.Session }
 
 func (o SessionObjects) State(ctx context.Context, id guid.GUID, deleted bool) (ad.ObjectState, error) {
 	return o.S.ObjectState(ctx, id, deleted)
+}
+
+func (o SessionObjects) DeletedTarget(ctx context.Context, id guid.GUID) (*ad.Entry, error) {
+	return o.S.ReadDeletedTarget(ctx, id)
+}
+
+func (o SessionObjects) DeletedContainer(ctx context.Context, domain dn.DN) (dn.DN, []byte, error) {
+	return o.S.DeletedContainerDescriptor(ctx, domain)
+}
+
+func (o SessionObjects) GroupMembers(ctx context.Context, group guid.GUID) ([]string, bool, error) {
+	e, err := o.S.Read(ctx, dn.GUIDRef(group), []string{"member"}, ad.ReadOptions{ShowDeleted: true, ExtendedDN: true, MaxValues: ad.DefaultMaxValues})
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := false
+	for _, n := range e.Truncated {
+		if strings.EqualFold(n, "member") {
+			truncated = true
+		}
+	}
+	return e.Strings("member"), truncated, nil
 }
 
 func (o SessionObjects) Move(ctx context.Context, r ad.MoveRequest) error {
@@ -582,153 +613,4 @@ func equalBytes(a, b []byte) bool {
 		v |= a[i] ^ b[i]
 	}
 	return v == 0
-}
-
-// ClassifyDeleted is step 7 for the deleted target of OBJECT_RESTORE (contract §8.10.3 kind 6): a
-// deleted object has no tokenGroups, so the connector classifies on a fixed read set. Anything it
-// cannot read or decide is tier0.
-//
-//   - C1: a RID below 1000 (a built-in or well-known account);
-//   - Designated: the target itself is customer-designated;
-//   - C18: any sIDHistory value (history is a privilege path);
-//   - C3: adminCount nonzero (the deleted object was a protected-group member);
-//   - C5/C12: userAccountControl marks a DC/RODC or unconstrained delegation; primaryGroupID 516/521 is C5,
-//     any primary group other than Domain Users, Guests and Computers is C2; a user or computer whose
-//     userAccountControl or primaryGroupID cannot be read is unknown;
-//   - C2: any retained memberOf group the live classifier calls tier0, or that is designated, or
-//     that cannot be read;
-//   - C3/C6: the last known parent, when it still exists, classifies as tier0.
-func (p *ADProvider) ClassifyDeleted(ctx context.Context, id guid.GUID, designated []guid.GUID) (Verdict, error) {
-	unknown := Verdict{Tier0: true}
-	objs := p.Objects()
-	if objs == nil {
-		return unknown, ErrNoBoundDC
-	}
-	st, err := objs.State(ctx, id, true)
-	if err != nil {
-		return unknown, err
-	}
-	if !st.Deleted {
-		return p.Classify(ctx, id, designated) // restored meanwhile: the ordinary live classification
-	}
-	return p.classifyDeletedEntry(ctx, id, st.Entry, designated)
-}
-
-// classifyDeletedEntry is the fixed-read-set decision over the deleted object's retained
-// attributes; split out so the fail-closed branches are testable without a Recycle Bin.
-func (p *ADProvider) classifyDeletedEntry(ctx context.Context, id guid.GUID, e *ad.Entry, designated []guid.GUID) (Verdict, error) {
-	unknown := Verdict{Tier0: true}
-	for _, g := range designated {
-		if g == id { // a customer-designated object stays Tier-0 once deleted
-			return Verdict{Tier0: true, Bases: []Basis{designatedBasis}}, nil
-		}
-	}
-	classes := map[string]bool{}
-	for _, c := range e.Strings("objectClass") {
-		classes[strings.ToLower(c)] = true
-	}
-	principal := classes["user"] || classes["computer"] || classes["group"]
-	// Only an OU or a contact has no objectSid; an unknown class is treated as a security principal.
-	needSID := principal || !(classes["organizationalunit"] || classes["contact"])
-	if len(e.Truncated) > 0 {
-		for _, n := range e.Truncated {
-			if strings.EqualFold(n, "memberOf") {
-				return unknown, errors.New("write: deleted object memberOf cut at the value ceiling")
-			}
-		}
-	}
-	sids, err := e.SIDs("objectSid")
-	if err != nil {
-		return unknown, err
-	}
-	if needSID && len(sids) == 0 { // a SID that cannot be read is unknown, never "not tier0"
-		return unknown, errors.New("write: deleted object has no readable objectSid")
-	}
-	for _, s := range sids {
-		if rid, ok := s.RID(); !ok || rid < 1000 {
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C1}}, nil
-		}
-	}
-	if len(e.Raw("sIDHistory")) > 0 {
-		return Verdict{Tier0: true, Bases: []Basis{tier0.C18}}, nil
-	}
-	// adminCount is set by SDProp on protected-group members and survives the delete (defence in depth).
-	if n, has, err := e.Int32("adminCount"); err != nil {
-		return unknown, err
-	} else if has && n != 0 {
-		return Verdict{Tier0: true, Bases: []Basis{tier0.C3}}, nil
-	}
-	if classes["user"] || classes["computer"] { // userAccountControl and primaryGroupID must be readable
-		uac, has, err := e.Int32("userAccountControl")
-		if err != nil {
-			return unknown, err
-		}
-		if !has {
-			return unknown, errors.New("write: deleted object has no readable userAccountControl")
-		}
-		if uac&(0x2000|0x4000000) != 0 { // DC or RODC computer
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C5}}, nil
-		}
-		if uac&0x80000 != 0 { // unconstrained delegation
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C12}}, nil
-		}
-		v := e.Strings("primaryGroupID")
-		if len(v) != 1 {
-			return unknown, errors.New("write: deleted object has no readable primaryGroupID")
-		}
-		switch v[0] {
-		case "513", "514", "515":
-		case "516", "521":
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C5}}, nil
-		default:
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
-		}
-	}
-	des := map[guid.GUID]bool{}
-	for _, g := range designated {
-		des[g] = true
-	}
-	for _, m := range e.Strings("memberOf") {
-		ref, err := dn.ParseObjectRef(m)
-		if err != nil {
-			return unknown, err
-		}
-		ge, err := p.Dir.Get(ctx, ref, []string{"objectGUID"})
-		if err != nil {
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
-		}
-		gid, err := ge.GUID()
-		if err != nil {
-			return unknown, err
-		}
-		if des[gid] {
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
-		}
-		gv, err := p.Classify(ctx, gid, designated)
-		if err != nil || gv.Tier0 {
-			return Verdict{Tier0: true, Bases: []Basis{tier0.C2}}, nil
-		}
-	}
-	if v := e.Strings("lastKnownParent"); len(v) == 1 {
-		ref, err := dn.ParseObjectRef(v[0])
-		if err != nil {
-			return unknown, err
-		}
-		pe, err := p.Dir.Get(ctx, ref, []string{"objectGUID"})
-		switch {
-		case ad.CodeOf(err) == ad.CodeObjectNotFound: // the parent is gone: nothing to inherit
-		case err != nil:
-			return unknown, err
-		default:
-			pid, err := pe.GUID()
-			if err != nil {
-				return unknown, err
-			}
-			pv, err := p.Classify(ctx, pid, designated)
-			if err != nil || pv.Tier0 {
-				return Verdict{Tier0: true, Bases: []Basis{tier0.C3}}, nil
-			}
-		}
-	}
-	return Verdict{}, nil
 }

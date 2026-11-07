@@ -19,6 +19,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
+	"github.com/skenzeriq/activediq/internal/directory/sd"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
@@ -69,6 +70,7 @@ func newLabObj(t *testing.T) *labObj {
 	run.CompletedAt = time.Now()
 	book.Complete(connID, run)
 	prov := NewADProvider(sess, nil, adIdentity(), &memPins{})
+	prov.Self = dn.DNRef(mustParseDN(t, "CN=Administrator,CN=Users,"+labDom))
 	prov.Dynamic = &stubGuard{} // no Entra snapshot in the lab: the dynamic-rule guard allows (its own tests: propwrite_test.go)
 	dc, err := prov.BoundDC(ctx)
 	if err != nil {
@@ -297,4 +299,79 @@ func labDetail(err error) string {
 		}
 	}
 	return ""
+}
+
+// The two show-deleted reads of kind 6 step 7 against the Samba lab: the container descriptor read
+// (TM-F-RIGHTS (b2)) and the deleted-target read (b1) with its critical show-deleted, deactivated-link,
+// SD_FLAGS 7 and extended-DN controls. Samba proves the mechanics (controls accepted, descriptor
+// decodes, fixed attributes returned); it proves nothing about Windows' grant semantics (CC-WK-32..35, W).
+func TestLabDeletedReads(t *testing.T) {
+	l := newLabObj(t)
+	dom, err := dn.Parse(labDom, dn.Strict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Measured on Samba 4.22: the container resolves through wellKnownObjects and is readable with
+	// show-deleted, but nTSecurityDescriptor is not returned even to a domain admin. The function
+	// then fails (PROTOCOL_ERROR), which the grant check turns into INSUFFICIENT_RIGHTS: Samba can
+	// never prove List Contents, so a Samba pass says nothing about Windows (CC-WK-32, W).
+	container, raw, err := l.sess.DeletedContainerDescriptor(l.ctx, dom)
+	if err != nil {
+		if ad.CodeOf(err) != ad.CodeProtocol {
+			t.Fatalf("unexpected: %v", err)
+		}
+		t.Logf("Samba returns no container descriptor: %v", err)
+	} else {
+		if container.Len() != dom.Len()+1 || container.RDNs()[0].Value() != "Deleted Objects" {
+			t.Fatalf("container %s", container)
+		}
+		desc, err := sd.Decode(sd.Raw(raw))
+		if err != nil || desc.DACL.Kind == sd.Absent {
+			t.Fatalf("descriptor does not decode as a DACL: %v", err)
+		}
+		t.Logf("Deleted Objects owner/DACL decoded: %d ACEs, anomalies %d", len(desc.DACL.ACEs), len(desc.Anomalies))
+	}
+
+	sfx := fmt.Sprint(time.Now().UnixNano() % 1_000_000)
+	n, cls, at := labUser("dr" + sfx)
+	userDN := "CN=" + n + "," + labDom
+	u := l.add(t, userDN, cls, at)
+	if err := l.admin.Del(ldap.NewDelRequest(userDN, nil)); err != nil {
+		t.Fatal(err)
+	}
+	e, err := l.sess.ReadDeletedTarget(l.ctx, u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []string{"objectGUID", "isDeleted", "objectSid", "nTSecurityDescriptor", "lastKnownParent", "objectClass"} {
+		if len(e.Raw(a)) == 0 {
+			t.Errorf("deleted target read lacks %s", a)
+		}
+	}
+	for _, a := range ad.DeletedTargetMustBePresent {
+		if len(e.Raw(a)) == 0 {
+			t.Logf("Samba does not return %s for a deleted user (Windows: CC-WK-35)", a)
+		}
+	}
+	if v := e.Strings("isDeleted"); len(v) != 1 || v[0] != "TRUE" {
+		t.Errorf("isDeleted %v", v)
+	}
+	// A live object read the same way comes back live: isDeleted absent.
+	live, err := l.sess.ReadDeletedTarget(l.ctx, l.dom)
+	if err != nil || len(live.Raw("isDeleted")) != 0 {
+		t.Fatalf("live object through the deleted read: %v", err)
+	}
+	// Never existed: OBJECT_NOT_FOUND.
+	if _, err := l.sess.ReadDeletedTarget(l.ctx, mk(200)); ad.CodeOf(err) != ad.CodeObjectNotFound {
+		t.Errorf("unknown GUID: %v", err)
+	}
+}
+
+func mustParseDN(t *testing.T, s string) dn.DN {
+	t.Helper()
+	d, err := dn.Parse(s, dn.Strict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
 }
