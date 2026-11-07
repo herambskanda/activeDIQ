@@ -944,6 +944,7 @@ Computed, per forest and domain (ad-expert consult; Microsoft tier model; Specte
 | C17 | **Control of a root of trust (TM-D26).** Principals — resolved by token (`objectSid`, `tokenGroups`, **and `sIDHistory`**) — that hold, on the **domain head, the Configuration head, the Schema head or `CN=AdminSDHolder`**, any of: `WRITE_DAC`, `WRITE_OWNER`, `GENERIC_ALL`, `GENERIC_WRITE`, an all-properties or `gPLink` `WriteProperty`, all extended rights, or **ownership** of the object. WriteDACL on the domain object lets the holder "grant full control of the domain" ([BloodHound WriteDacl](https://bloodhound.specterops.io/resources/edges/write-dacl)), and so DCSync in one step. A `gPLink` write on the head reaches every DC (C9) |
 | C18 | **Privileged `sIDHistory` (TM-D26).** Any security principal (user, computer, group, `inetOrgPerson`) whose `sIDHistory` holds a SID that is privileged, by RID alone and whatever the domain prefix, or that resolves to a `tier0` object. It carries that SID in its token, so the member walk (C2) misses it. `sIDHistory` holds "previous SIDs used for the object if the object was moved from another domain" ([sIDHistory](https://learn.microsoft.com/en-us/windows/win32/adschema/a-sidhistory)) |
 | C19 | **Control of a Tier-0 object (TM-D27, depth 1).** Principals — by token, as C17 — that hold a takeover right (TM-D27 table) on, or own, a **C19 object**: a C1 or C13 group, a C1 account (`krbtgt`, `krbtgt_<n>` of each RODC, RID 500), a **DC computer object** (primary group 516 or 521, and the computer behind every `nTDSDSA`), the **Domain Controllers OU** (`wellKnownObjects`) and every OU or container that directly holds a DC object, and each GPO that C9 marks `tier0`. The rights are read from the object's own live DACL, never inferred from SDProp |
+| C20 | **The connector's own identity and registered activeDIQ service identities (TM-D34, T-1643).** The bound principal (from Who am I on the bound session), the bound gMSA and its retrieval-list computer accounts, and the server's registry of service identities in this directory (sent as `ACTIVEDIQ_SERVICE` designations). Refused for every write kind: otherwise an operator with `reset_password` sets a known password on the connector's account and gets TM-A1 outside RBAC and audit. See [connector-own-identity-tm-d34.md](connector-own-identity-tm-d34.md) |
 
 **Customer-designated** (not derivable from LDAP): Entra Connect servers — Microsoft: "must be
 treated as a Tier 0 component"
@@ -1496,6 +1497,7 @@ Run as the connector identity, no Domain Admin needed:
 5. **Delegation configuration of the identity itself:** no `msDS-AllowedToDelegateTo`, neither
    TRUSTED_FOR_DELEGATION nor TRUSTED_TO_AUTH_FOR_DELEGATION, and absent from every DC's RBCD
    attribute (§6.7).
+6. **The identity must not control itself (V7e, TM-D34).** Read the identity's own object and its gMSA host computer accounts; Fail if it lies inside a `managed_roots`, Warn if its token holds Reset Password, `WriteProperty` on `unicodePwd`/`userAccountControl`, `WRITE_DAC`, `WRITE_OWNER` or generic write/all on them.
 
 **Samba.** The three constructed attributes are implemented in Samba's ACL module with the same
 semantics (confirmed in Samba source by the ad-expert consult), so the CI check is meaningful.
@@ -3501,6 +3503,8 @@ External, in order of first use:
 94. https://thehacker.recipes/ad/movement/kerberos/asreproast (T-0388; not re-read, `[UNVERIFIED]`)
 
 ## Changelog
+
+- 2026-11-07 · T-1643. New basis C20 (connector's own identity and registered service identities, refused for every write kind), §6.5 step 6 (V7e: the identity must not control itself), DECISION TM-D34 in [connector-own-identity-tm-d34.md](connector-own-identity-tm-d34.md), threats TM-D34-T1..T10. Contract §8.1, §8.10.3, CC-WK-27/28/36-40.
 
 - 2026-11-05 · T-1621 (review of T-1581 write kinds). §7.4 gains the directory password reset row (`USER_PASSWORD_RESET`, TM-D28 `reset_password`), which is the source for `StepUp = true`. `OBJECT_CREATE` of a USER with a password stays outside §7.4 (TM-D28 rule 3). Rulings on delete, restore, `SecretValue` and unlock are in [connector-contract.md](connector-contract.md) §8.10.9.
 - 2026-11-04 · T-1475: §7.6 rule 3 cites RULING AN8-A1 (owner alert rides the `authn_authority_notices` outbox, drained to notify; break-glass succeeds when the channel is down, alert retried, failure audited); new residual R-AN8-3 in the ruling; T-0801 split into four chained builds.
