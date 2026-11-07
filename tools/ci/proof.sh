@@ -1714,6 +1714,10 @@ fresh_kc; mkdir -p "$kct/packaging"; printf 'p=passphrase; export ACTIVEDIQ_KEK_
 must_fail_with "fitness-keys FF-KEY-3 on a shell-variable ACTIVEDIQ_KEK_PROVIDER (T-1650)" 'packaging/run.sh:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
 fresh_kc; mkdir -p "$kct/packaging"; printf 'environment:\n  ACTIVEDIQ_KEK_PROVIDER: ${KP:?must choose}\n' >"$kct/packaging/compose.yaml"
 must_pass "fitness-keys accepts a required-without-default ACTIVEDIQ_KEK_PROVIDER" "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf ': "${ACTIVEDIQ_KEK_PROVIDER:?must choose}"\n' >"$kct/packaging/run.sh"
+must_pass "fitness-keys accepts a shell guard requiring ACTIVEDIQ_KEK_PROVIDER (T-1650)" "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf 'export ACTIVEDIQ_KEK_PROVIDER="${ACTIVEDIQ_KEK_PROVIDER:-passphrase}"\n' >"$kct/packaging/run.sh"
+must_fail_with "fitness-keys FF-KEY-3 on a shell self-reference default (T-1650)" 'packaging/run.sh:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
 fresh_kc; printf 'package keys\n\nfunc (k *KeySource) Lazy() { _ = `insert into tenant_keys (a) values (1)` }\n' >"$kct/internal/platform/keys/lazy.go"
 must_fail_with "fitness-keys FF-KEY-5 on an INSERT reachable from the KeySource" 'FF-KEY-5 \[insert-site\]' "$kcbin" -root "$kct" -static-only
 fresh_kc; printf 'package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: "public.tenant_keys", Entity: "DM-02", Kind: tablekind.Tenant})\n\nfunc Provision() { _ = `INSERT INTO tenant_keys` }\n' >"$kct/internal/platform/keys/store.go"

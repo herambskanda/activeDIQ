@@ -166,14 +166,27 @@ var (
 	// unset, so the operator has to choose.
 	requiredForm = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*:?\?[^}]*\}`)
 	valueToken   = regexp.MustCompile(`^[^\s;&|#,}\]\\]+`)
+	// providerRead is a read of the provider variable itself, `${ACTIVEDIQ_KEK_PROVIDER<op><body>}`, as in a
+	// launcher guard `: "${ACTIVEDIQ_KEK_PROVIDER:?must choose}"`. It is not an assignment: the ?-forms and an
+	// empty `${NAME:-}` (a test for "unset") are the operator-must-choose shapes; `${NAME:-x}`, `${NAME:=x}`
+	// and `${NAME-x}` hand the model a default, so a non-empty body is a violation.
+	providerRead = regexp.MustCompile(`\$\{` + kekPrefix + `PROVIDER(:?[-=+?])([^}]*)\}`)
 )
 
 // providerDefault is true when the line gives ACTIVEDIQ_KEK_PROVIDER a value other than "operator must
 // supply it". Empty (`NAME=`, `NAME:`), a YAML comment and the required-without-default expansion pass;
 // everything else is a shipped default, whether literal, a $VAR / ${VAR} reference, a ${VAR:-x} /
 // ${VAR-x} / ${VAR:=x} / ${VAR:+x} expansion, or command substitution: a variable defined by an ARG, a
-// shell assignment or the host environment is how a default hides one hop away (T-1650).
+// shell assignment or the host environment is how a default hides one hop away (T-1650). A read of the
+// provider variable (providerRead) is judged on its own: ${NAME:?msg} / ${NAME?msg} and an empty ${NAME:-}
+// guard pass, ${NAME:-x} / ${NAME:=x} / ${NAME-x} fail.
 func providerDefault(line string) bool {
+	for _, m := range providerRead.FindAllStringSubmatch(line, -1) {
+		if !strings.HasSuffix(m[1], "?") && m[2] != "" {
+			return true
+		}
+	}
+	line = providerRead.ReplaceAllString(line, "")
 	var rest string
 	if m := providerSet.FindStringSubmatch(line); m != nil {
 		rest = m[1]
