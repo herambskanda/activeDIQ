@@ -218,7 +218,7 @@ type fakeUpstream struct {
 	missingParent map[int]bool
 	dropOnParent  map[int]bool
 	mu            sync.Mutex
-	reads   map[string]int
+	reads         map[string]int
 	// sdAttrs, when set, is the entry served for every "<GUID=" base-scope read (an SD read), and
 	// modifies counts the Modify requests the upstream received (T-0726).
 	sdAttrs  map[string][][]byte
