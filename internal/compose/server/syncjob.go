@@ -32,7 +32,11 @@ type syncKernel struct {
 // activation hook it returns is handed to the connection service, so a connection that becomes active has
 // its first read queued in the activation's own transaction.
 func buildSync(db *store.DB, conns *connection.Registry, csrc client.ConnectorSource, jreg *jobs.Registry, holder string, interval time.Duration, leaseTTL time.Duration) (*syncKernel, error) {
-	eng := &dsync.Engine{Tenants: db, Conns: conns, Domains: connectionDomains{conns: conns}, Source: csrc,
+	rsrc, err := client.NewReaderSource(csrc)
+	if err != nil {
+		return nil, fmt.Errorf("server: sync job: %w", err)
+	}
+	eng := &dsync.Engine{Tenants: db, Conns: conns, Domains: connectionDomains{conns: conns}, Source: rsrc,
 		Ingester: dsync.NewIngester(), Cursors: dsync.Store{}, Log: slog.Default()}
 	j, err := dsync.RegisterJobs(jreg, dsync.JobConfig{DB: db, Cycle: eng, Passes: inventory.Writer{}, Holder: holder, LeaseTTL: leaseTTL, Log: slog.Default()})
 	if err != nil {

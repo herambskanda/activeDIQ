@@ -32,7 +32,7 @@ func TestSyncSupervisorQueuesOnlyActiveADConnections(t *testing.T) {
 		t.Cleanup(db.Close)
 		conns := connection.NewRegistry(db)
 		jreg := jobs.NewRegistry()
-		k, err := buildSync(db, conns, nil, jreg, "node-1", time.Hour, 0)
+		k, err := buildSync(db, conns, fixedConnectorSource{}, jreg, "node-1", time.Hour, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
