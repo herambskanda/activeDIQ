@@ -561,7 +561,13 @@ as Basis *Default*. That breaks rule 10. So:
   is safe. A missing deny-carrying SID gives a false *Yes*, and so a false `NOT_CONFIGURED`. T-1741
   exports that set as `TokenSet {IdentityGUID, DomainSID, Epoch, SIDs, Complete}`: the identity's
   `objectSid`, its `tokenGroups`, the implicit SIDs and its `sIDHistory`, recorded with the newest
-  clean rights check (§8.4). The principal is built from it with `WithObjectSID(target objectSid)`,
+  clean rights check (§8.4). **As built (T-1741):** `rights.TokenSet` is recorded by
+  `EpochState.CompleteWithTokens` only when the run's verdict is PASS, and `EpochState.TokenSet() (TokenSet, ok)`
+  returns a copy; `Epoch` is the run's `verification_id`. `ok` is false before any run in this process (the set is in
+  memory only, like the gate), after a run that did not pass, and after a failed `Complete`. `Complete` is
+  false when the domain SID cannot be derived, `tokenGroups` came back empty or a `sIDHistory` value did not decode.
+  `rights.PrincipalFromTokenSet(ts)` returns an `sd.Principal` that is Incomplete unless `Complete`. The
+  principal gets `WithObjectSID(target objectSid)`,
   so PRINCIPAL_SELF ACEs apply. The proof uses it only when **all** of these hold, and otherwise
   answers `readability_unknown`:
   1. The identity that bound this session (its object GUID) is the rights check's `IdentityGUID`.

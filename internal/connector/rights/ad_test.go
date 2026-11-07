@@ -271,7 +271,7 @@ func (w *world) setTokens(extra ...string) {
 
 func (w *world) putRaw(e *ad.Entry, name string, v [][]byte) {
 	m := map[string][][]byte{}
-	for _, k := range []string{"objectGUID", "objectSid", "userAccountControl", "primaryGroupID", "memberOf", "tokenGroups", "nTSecurityDescriptor", "allowedAttributesEffective", "allowedChildClassesEffective", "sDRightsEffective", "msDS-AllowedToDelegateTo"} {
+	for _, k := range []string{"objectGUID", "objectSid", "userAccountControl", "primaryGroupID", "memberOf", "tokenGroups", "sIDHistory", "nTSecurityDescriptor", "allowedAttributesEffective", "allowedChildClassesEffective", "sDRightsEffective", "msDS-AllowedToDelegateTo"} {
 		if r := e.Raw(k); r != nil {
 			m[k] = r
 		}
