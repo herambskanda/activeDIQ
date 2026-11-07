@@ -159,6 +159,14 @@ it and raise a decision; this authorisation does not stretch.
 (§13). The password comes from the gitignored lab env file (`WIN_LAB_ENV`; from a worktree it lives in the
 main checkout's `lab/windows/`). Read it from the file in code; never print it, put it in argv, a log or a note.
 
+**The DC address has no default (T-1279).** `agent-verify`, `agent-unenrolled-verify` and `gssapi-lab` need
+`WIN_LAB_DC_ADDR` (dc1's current IP or host name) in the environment or in the lab env file, and exit non-zero
+naming the key — before the lock, a build or any connection — when it is missing, empty or not a plain
+IP/host name (`lab/windows/lib/labaddr.py`). dc1 has changed address before (A-0032), and a baked-in fallback
+would aim these drivers, which reboot the DC and clear its logs, at whichever LAN device holds the old address.
+Before a run, confirm the address is dc1: `ip neigh show <ip>` should show the VM's MAC (prefix `bc:24:11`).
+`lab/windows/tests/test_dc_addr_required.py` fails if a driver regains a default or the old address returns.
+
 **The lock rule: wrap every dc1 session in `with-dc1-lock`.** About seven tickets share dc1, and some
 of them reboot it, change LDAP signing or channel-binding policy, install and remove the agent or clear the
 Security log. Two sessions at once corrupt each other's result. So every worker session that talks to dc1
@@ -455,8 +463,8 @@ major upgrade, `agentsetup` refusals, `CheckDataDir`, `EvtLogOldestRecordNumber`
 
 ```bash
 pip install pywinrm requests-ntlm                      # operator tooling; licence register row
-export WIN_LAB_ENV=<path to the main checkout's lab/windows/.win-lab.env>   # gitignored; DC address defaults to 192.168.1.250
-export WIN_LAB_DC_ADDR=<dc ip>                         # optional override
+export WIN_LAB_ENV=<path to the main checkout's lab/windows/.win-lab.env>   # gitignored
+export WIN_LAB_DC_ADDR=<dc ip>                         # REQUIRED unless it is set in that env file; no default
 lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-runs/T-0648-agent-<date>.log
 ```
 
@@ -675,3 +683,27 @@ sign-in API, runs `web/e2e/live-user-search.spec.ts` and records dc1's side with
 
 Needs `WIN_LAB_ENV` and `WIN_LAB_CA` as absolute paths (the env and CA files are gitignored and live in the main checkout), docker, go, node with the
 Playwright browser, and `pip install pywinrm requests-ntlm`. The script refuses to run outside `with-dc1-lock`. First record: `windows-lab-runs/T-0765-live-boot-20261101.md`.
+
+## 20. Channel-binding acceptance: binds succeed at signing required + CBT Always, and dc1 logs no 2887/3039/3074/3075 (T-0148)
+
+`lab/windows/bin/gssapi-lab accept` is the TM-TB3-T3 acceptance. Run it like every dc1 proof, under the lock, with
+`WIN_LAB_ENV`, `WIN_LAB_CA` and `WIN_LAB_DC_ADDR` set (sections 10, 15, 18):
+
+```
+lab/windows/bin/with-dc1-lock -- bash -c 'lab/windows/bin/dc1-policy check && lab/windows/bin/gssapi-lab accept && lab/windows/bin/dc1-policy check'
+```
+
+| Step | What it does | Fails when |
+| --- | --- | --- |
+| policy | `require_policy` (section 18): both registry values 2 | either value is not 2; nothing else is touched |
+| clock | dc1 minus host | over 60 s (Kerberos); never steps the clock (section 16) |
+| A. correct binds | the four correct-binding tests of section 15 (keytab + gMSA, test handshake and `ad.Open`), window taken from **dc1's** clock | any of them is not `--- PASS` (a skip or a missing test is a fail), or the Directory Service log holds 2887, 3039, 3074 or 3075 in the window (+-1 s) |
+| B. control | the wrong-binding test (refused with ldap 49); then polls (90 s max) until event 3039 is readable | the test fails, or 3039 never appears: an empty window would prove nothing |
+| after | restores `16 LDAP Interface Events`, re-checks 2/2 | the policy moved during the run |
+
+Exit 0 and the line `ACCEPTANCE PASSED` only if every step holds. It also prints the context ids it queried (2886, 2888, 2889, 3040, 3041) so a
+reader can see what else the DC said. The judge, query builder and parser are pure functions in `lab/windows/lib/cbtevents.py`; the offline proof
+is `lab/windows/tests/test_cbt_acceptance.py` (`make lab-test-windows-unit`, no Windows needed): each named event in the window fails the run,
+events outside the window do not, a control without 3039 fails, a skipped bind is not a pass, drift of the policy fails.
+2887 is a daily DC summary, so a 2-second window cannot prove it absent by itself; the run log also lists everything the queried ids logged in the
+preceding 26 h. Run log and broken-run proof: `windows-lab-runs/T-0148-cbt-acceptance-20261102.md`. Needs the keytab and gMSA files from `gssapi-lab prepare`.

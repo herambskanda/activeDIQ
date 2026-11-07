@@ -11,13 +11,23 @@
                        `go test -tags 'lab windowslab' -v ARGS`, print the DC's channel-binding events, then restore the
                        diagnostics value in a finally block. Default ARGS: the whole T-0566 suite.
 
+  gssapi-lab accept    the T-0148 acceptance (TM-TB3-T3): with signing required and channel binding Always, the connector's SASL binds
+                       over TLS (the correct-binding tests of the T-0566 suite, ad.Open included) pass, and dc1's Directory Service log
+                       holds none of 2887, 3039, 3074, 3075 in the window of those binds (window taken from dc1's own clock). Then the
+                       control: the wrong-binding test must pass and make 3039 appear, so an empty log above is not a blind query.
+                       Exit 0 only when all of that holds; prints the evidence. Runbook section 20.
+
 Wrap every call in the shared lock:  flock -w 3600 /tmp/claude-1000/activediq-dc1.lock lab/windows/bin/gssapi-lab run
 Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV (never printed). Runbook section 15 (clock: section 16).
 """
 import base64, datetime as dt, os, re, subprocess, sys, time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
-import dc1policy, dc1winrm
+import cbtevents, dc1policy, dc1winrm
+from labaddr import require_dc_addr
+
+# No default DC address (T-1279): fail before anything else touches the network.
+require_dc_addr("gssapi-lab", dc1winrm.REPO)
 
 REPO = dc1winrm.REPO
 NTDS = dc1policy.NTDS
@@ -105,7 +115,93 @@ def run(args):
     sys.exit(rc)
 
 
+CORRECT_BINDS = ["TestWindowsLabKerberosKeytabBindWithChannelBinding", "TestWindowsLabKerberosGMSAKeytabBind",
+                 "TestWindowsLabKerberosOpenKeytabBind", "TestWindowsLabKerberosOpenGMSABind"]
+CONTROL = ["TestWindowsLabKerberosWrongChannelBindingRejected"]
+PKG = "./internal/connector/ad/"
+
+
+def go_test(names, genv):
+    """Run exactly `names` against dc1; -> (returncode, output). The output is echoed so the run log has it."""
+    pattern = "^(" + "|".join(names) + ")$"
+    r = subprocess.run(["go", "test", "-count=1", "-tags", "lab windowslab", "-v", "-run", pattern, PKG], cwd=REPO, env=genv,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    print(r.stdout)
+    return r.returncode, r.stdout
+
+
+def events_between(start, end):
+    return cbtevents.parse(ps(cbtevents.events_ps(start, end))[1])
+
+
+def show(title, events):
+    print(f"{title}: {len(events)} event(s)")
+    for i, t, m in events:
+        print(f"  id={i} {t} {m[:120]}")
+
+
+def accept():
+    """T-0148. Returns a list of failure strings (empty = accepted); everything it saw is printed."""
+    fails = []
+    require_policy("before the acceptance run")
+    skew = dc_utc() - dt.datetime.now(dt.timezone.utc)
+    print("CLOCK: dc minus host =", skew)
+    if abs(skew) > dt.timedelta(seconds=60):
+        sys.exit(f"gssapi-lab: dc1's clock is {skew} off this host; Kerberos would fail with KRB_AP_ERR_SKEW (runbook section 16)")
+    prior = ps(f"(Get-ItemProperty '{DIAG}' -Name '16 LDAP Interface Events').'16 LDAP Interface Events'")[1].strip() or "0"
+    print("DIAG prior 16 LDAP Interface Events =", prior)
+    try:
+        ps(f"Set-ItemProperty '{DIAG}' -Name '16 LDAP Interface Events' -Type DWord -Value 2")  # makes the DC log its LDAP events
+        genv = dict(os.environ, WIN_LAB_MODE="external", WIN_LAB_DC_ADDR=ADDR, WIN_LAB_ENV=path,
+                    WIN_LAB_TLS_NAME=env.get("WIN_LAB_TLS_NAME", "dc1.win.activediq.test"),
+                    WIN_LAB_CA=os.environ.get("WIN_LAB_CA", os.path.join(OUT, ".win-lab-ca.pem")),
+                    WIN_LAB_GSSAPI_KEYTAB=os.path.join(OUT, ".win-lab-gssapi.keytab"),
+                    WIN_LAB_GMSA=os.path.join(OUT, ".win-lab-gmsa.json"))
+        print("== A. correct bindings: signing required + CBT Always")
+        a0 = dc_utc()
+        rc, out = go_test(CORRECT_BINDS, genv)
+        a1 = dc_utc()
+        good = cbtevents.passed_tests(out, CORRECT_BINDS)
+        if rc != 0 or good != CORRECT_BINDS:
+            fails.append("binds did not all succeed: passed %s of %s (go test rc=%d)" % (good, CORRECT_BINDS, rc))
+        print("== B. control: a wrong binding must be refused and logged")
+        b0 = dc_utc()
+        rc, out = go_test(CONTROL, genv)
+        if rc != 0 or cbtevents.passed_tests(out, CONTROL) != CONTROL:
+            fails.append("control test did not pass: %s" % CONTROL)
+        # The control's event is the clock for the log: once it is readable, anything the correct binds logged earlier is too.
+        seen = []
+        for _ in range(30):
+            seen = events_between(b0, dc_utc() + dt.timedelta(seconds=5))
+            if cbtevents.control_seen(seen):
+                break
+            time.sleep(3)
+        show("control window (wrong binding)", seen)
+        if not cbtevents.control_seen(seen):
+            fails.append(f"control: the wrong binding did not produce event {cbtevents.CONTROL_EVENT} within 90 s; the query cannot be trusted")
+        window = events_between(a0 - dt.timedelta(seconds=1), a1 + dt.timedelta(seconds=1))
+        print(f"window of the correct binds: dc1 {cbtevents.iso(a0)} .. {cbtevents.iso(a1)} (+-1 s), ids queried {list(cbtevents.QUERY_IDS)}")
+        show("correct-binding window", window)
+        for i, t, m in cbtevents.violations(window):
+            fails.append(f"event {i} at {t} logged during correct binds: {m[:100]}")
+    finally:
+        ps(f"Set-ItemProperty '{DIAG}' -Name '16 LDAP Interface Events' -Type DWord -Value {prior}")
+        print("DIAG restored")
+        print("POLICY after:\n" + policy())
+    try:
+        require_policy("after the acceptance run")
+    except SystemExit as e:
+        fails.append(str(e.code))
+    return fails
+
+
 if __name__ == "__main__":
-    if len(sys.argv) < 2 or sys.argv[1] not in ("prepare", "run"):
+    if len(sys.argv) < 2 or sys.argv[1] not in ("prepare", "run", "accept"):
         sys.exit(__doc__)
+    if sys.argv[1] == "accept":
+        problems = accept()
+        for f in problems:
+            print("ACCEPTANCE FAILED:", f, file=sys.stderr)
+        print("ACCEPTANCE", "FAILED" if problems else "PASSED: correct SASL-over-TLS binds succeeded with signing required + CBT Always and dc1 logged none of %s" % list(cbtevents.MUST_BE_ABSENT))
+        sys.exit(1 if problems else 0)
     prepare() if sys.argv[1] == "prepare" else run(sys.argv[2:])
