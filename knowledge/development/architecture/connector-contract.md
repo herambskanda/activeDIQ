@@ -6,7 +6,7 @@ status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect), T-1632 (§8.10.9 DELETE as built, author directory-engineer)
+amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect), T-1632 (§8.10.9 DELETE as built; security review: delete of a manager also checked as CLEAR_MANAGER; author directory-engineer)
 binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
@@ -1163,7 +1163,7 @@ each per `Plan` and `Apply` (live, step 7); a changed `rule_hash` re-lexes. A re
 | `ASSIGN_LICENSE` | the scope holds `assignedPlans`, `mail` or `proxyAddresses`, or `RefuseAll`. Group-targeted calls too (7e) |
 | `SET_MANAGER`, `CLEAR_MANAGER` | the scope holds `user.manager` (`Direct Reports for`, 7c), or `RefuseAll` |
 | `MOVE_OR_RENAME` (AD) | the scope holds `onPremisesDistinguishedName`, or `RefuseAll` |
-| `DELETE` (AD, T-1621) | `kind` is GROUP and the scope holds `memberOf`, or `RefuseAll`. Any other kind: never refused (a deleted object only leaves a rule's scope; no other object's properties change). `keys` is empty and ignored |
+| `DELETE` (AD, T-1621) | `kind` is GROUP and the scope holds `memberOf`, or `RefuseAll`. Any other kind: never refused as DELETE (a deleted object only leaves a rule's scope). `keys` is empty and ignored. A delete of an object with `directReports` is **also checked as `CLEAR_MANAGER`** by the connector (T-1632 security review), because removing a manager clears its reports' `manager` |
 | `GROUP_MEMBERSHIP` | the scope holds `memberOf`, `assignedPlans`, `mail` or `proxyAddresses`, or `RefuseAll` **for any cause** (7b, 7e; group-based licensing, T-0240). Any target group, either plane |
 
 `RefuseAll` is set by an untokenisable rule, a rule property absent from `ruleprops v1`, an empty
@@ -1662,8 +1662,17 @@ keys, attribute names `set:`, `add:`, `del:`, `clr:` and the typed value prefixe
   `Apply`, calls `deleteRecheck` with the live class (GROUP, DEVICE for a computer, USER otherwise)
   before the `NotLeaf` check and before anything is sent. A refusal is `TIER0_REFUSED` basis `Designated`
   at `CONNECTOR_SET`. An object already deleted (`ALREADY_APPLIED`) writes nothing and is not re-checked.
-  CC-WRITE-30 pins both sides: tier0 `TestCCWrite30DeleteGroupUnderMemberOfAndRefuseAll`, the declaration
-  and recheck units in `kinds_object_test.go`, and `TestCCWrite30DeleteUnderMemberOfRule` on Samba.
+  **A delete of an object with `directReports` is also checked as `CLEAR_MANAGER` (T-1632 security
+  review):** removing a manager clears every report's `manager` (MS-ADTS 3.1.1.1.6), so the same read
+  fetches `directReports` (any value, a ranged first page included) and `deleteRecheck` asks the guard for
+  `{AD, USER, CLEAR_MANAGER}` whatever the class. A read error refuses. If the bound identity lacks Read on
+  `directReports` the DC omits it and the check sees no reports, so the connector's account needs that
+  Read right (a V8 read-sufficiency concern, as for the other constructed reads). The refusal carries its audit record like step 4's:
+  `Reason` (`designated_dynamic_rule`, or `property_guard_unavailable` at stage `LIVE_REREAD`), the
+  declared kind and op. CC-WRITE-30 pins this: tier0 `TestCCWrite30DeleteGroupUnderMemberOfAndRefuseAll`,
+  the declaration, recheck, body (`TestKind3BodiesRecheckBeforeAnyDelete`, a fake session, no lab) and
+  audit units in `kinds_object_test.go`, and `TestCCWrite30DeleteUnderMemberOfRule` and
+  `TestCCWrite30DeleteOfAManagerUnderRules` on Samba.
 - **Manager edits.** `manager` declares `SET_MANAGER` or `CLEAR_MANAGER` at step 4; the other edits (and
   the computer case) are re-checked in the body against the live class (`editsRecheck`). The live class
   is the last `objectClass` value, so gMSA and MSA objects are `ClassNotAllowed`.
