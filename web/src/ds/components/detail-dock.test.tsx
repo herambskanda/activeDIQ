@@ -153,6 +153,22 @@ describe("DetailDock", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("formats the position through positionLabel (localisable)", () => {
+    const host = render(
+      <DetailDock
+        title="X"
+        position={{ index: 2, total: 9 }}
+        onPrev={() => {}}
+        onNext={() => {}}
+        positionLabel={(i, n) => `${i} / ${n}`}
+        onClose={() => {}}
+      >
+        body
+      </DetailDock>,
+    );
+    expect(q(host, ".diq-dock__pos").textContent).toBe("2 / 9");
+  });
+
   it("steps with Previous / Next, shows 'n of N' and keeps focus on the last row's button", () => {
     const host = render(<Screen start={3} />);
     expect(q(host, ".diq-dock__pos").textContent).toBe("4 of 5");

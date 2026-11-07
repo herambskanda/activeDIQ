@@ -147,7 +147,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   const [scrolledX, setScrolledX] = useState(false);
   const pendingFocus = useRef<{ r: number; c: number } | null>(null);
   const anchor = useRef(0);
-  const reportedRow = useRef(-1);
+  const reportedRow = useRef<string | null>(null);
 
   // Row height follows --diq-row (density); viewport height follows the box. Re-measured on resize and density change.
   const measure = useCallback(() => {
@@ -427,11 +427,17 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     if (!cell) return;
     const next = { r: Number(cell.dataset.r), c: Number(cell.dataset.c) };
     if (next.r !== active.r || next.c !== active.c) setActive(next);
-    // Keyboard moves set `active` before focus lands, so "changed" is judged against the last reported row.
-    if (next.r === reportedRow.current) return;
-    reportedRow.current = next.r;
+    // Keyboard moves set `active` before focus lands, so "changed" is judged against the last reported row (by key,
+    // so replaced rows report too). Leaving the grid forgets it (onBlur), so coming back to the same row reports again.
     const row = next.r >= 1 ? rows[next.r - 1] : undefined;
-    if (row !== undefined) onActiveRowChange?.(row);
+    if (row === undefined) return;
+    const key = rowKey(row);
+    if (key === reportedRow.current) return;
+    reportedRow.current = key;
+    onActiveRowChange?.(row);
+  };
+  const onBlur = (e: React.FocusEvent<HTMLTableElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) reportedRow.current = null;
   };
 
   const headerClick = (col: DataGridColumn<Row>) => {
@@ -471,6 +477,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         aria-busy={busy ? true : undefined}
         onKeyDown={onKeyDown}
         onFocus={onFocus}
+        onBlur={onBlur}
       >
         <caption className="diq-sr-only">{caption}</caption>
         <colgroup>

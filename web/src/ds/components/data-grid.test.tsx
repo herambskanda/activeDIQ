@@ -359,6 +359,26 @@ describe("DataGrid beside a detail pane", () => {
     key(document.activeElement as HTMLElement, "ArrowUp");
     expect(seen).toEqual(["u0", "u1", "u0"]);
   });
+  it("reports a row again when focus leaves the grid and comes back to the same row", () => {
+    const seen: string[] = [];
+    const host = render(
+      <div>
+        <button type="button">outside</button>
+        <DataGrid
+          caption="P"
+          columns={COLS}
+          rows={people(5)}
+          rowKey={(p) => p.id}
+          onActiveRowChange={(p) => seen.push(p.id)}
+        />
+      </div>,
+    );
+    const outside = host.querySelector("button") as HTMLElement;
+    cell(host, 2, 0).focus();
+    outside.focus(); // e.g. the dock's Next button
+    cell(host, 2, 0).focus();
+    expect(seen).toEqual(["u1", "u1"]);
+  });
   it("calls onEscape for Escape on a cell, and not from a widget inside a cell (that returns to the cell)", () => {
     const onEscape = vi.fn();
     const host = render(

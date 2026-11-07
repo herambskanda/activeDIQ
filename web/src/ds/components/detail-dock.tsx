@@ -16,6 +16,8 @@ export interface DetailDockProps {
   readonly position?: { readonly index: number; readonly total: number } | undefined;
   /** Pinned under the body (a link row, "Copy link"). */
   readonly footer?: ReactNode | undefined;
+  /** Spoken and shown place text. Default "5 of 214". */
+  readonly positionLabel?: ((index: number, total: number) => string) | undefined;
   readonly closeLabel?: string | undefined;
   readonly prevLabel?: string | undefined;
   readonly nextLabel?: string | undefined;
@@ -40,6 +42,7 @@ export function DetailDock(props: DetailDockProps) {
     onPrev,
     onNext,
     position,
+    positionLabel = (i, n) => `${i.toLocaleString("en")} of ${n.toLocaleString("en")}`,
     footer,
     closeLabel = "Close details",
     prevLabel = "Previous",
@@ -72,7 +75,7 @@ export function DetailDock(props: DetailDockProps) {
     if (!first.current && !inside) return;
     first.current = false;
     if (live.current && name !== undefined) {
-      live.current.textContent = `${name}${position ? `, ${position.index} of ${position.total}` : ""}`;
+      live.current.textContent = `${name}${position ? `, ${positionLabel(position.index, position.total)}` : ""}`;
     }
     // A new row starts at the top of its detail.
     if (body.current) body.current.scrollTop = 0;
@@ -128,7 +131,7 @@ export function DetailDock(props: DetailDockProps) {
             {nextLabel}
           </button>
           <span className="diq-dock__pos" dir="auto">
-            {position.index.toLocaleString("en")} of {position.total.toLocaleString("en")}
+            {positionLabel(position.index, position.total)}
           </span>
         </div>
       ) : null}
