@@ -15,12 +15,13 @@ import (
 
 type fixedThreshold struct {
 	n     int
+	obs   time.Duration
 	known bool
 	err   error
 }
 
-func (f fixedThreshold) LockoutThreshold(context.Context, tenant.ID, string) (int, bool, error) {
-	return f.n, f.known, f.err
+func (f fixedThreshold) LockoutThreshold(context.Context, tenant.ID, string) (int, time.Duration, bool, error) {
+	return f.n, f.obs, f.known, f.err
 }
 
 var key1 = bytes.Repeat([]byte{7}, 32)
@@ -39,7 +40,7 @@ func (e *env) node(t *testing.T, th LockoutThresholds, window time.Duration) *AD
 func TestCounterStopsBelowThreshold(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
-		c := e.node(t, fixedThreshold{n: 5, known: true}, 0)
+		c := e.node(t, fixedThreshold{n: 5, obs: 30 * time.Minute, known: true}, 0)
 		for i := 1; i <= 4; i++ {
 			if err := c.Take(context.Background(), e.a, "corp", key1); err != nil {
 				t.Fatalf("attempt %d refused: %v", i, err)
@@ -71,7 +72,7 @@ func TestCounterStopsBelowThreshold(t *testing.T) {
 func TestCounterSharedAcrossNodes(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
-		th := fixedThreshold{n: 5, known: true}
+		th := fixedThreshold{n: 5, obs: 30 * time.Minute, known: true}
 		nodes := []*ADAttempts{e.node(t, th, 0), e.node(t, th, 0)}
 		var wg sync.WaitGroup
 		var mu sync.Mutex
@@ -99,19 +100,20 @@ func TestCounterFailClosed(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
 		for name, th := range map[string]LockoutThresholds{
-			"unknown":    fixedThreshold{n: 5, known: false},
-			"zero":       fixedThreshold{n: 0, known: true},
-			"one":        fixedThreshold{n: 1, known: true},
-			"negative":   fixedThreshold{n: -1, known: true},
-			"port error": fixedThreshold{n: 5, known: true, err: errors.New("dc down")},
-			"nil port":   nil,
+			"unknown":               fixedThreshold{n: 5, obs: 30 * time.Minute, known: false},
+			"zero":                  fixedThreshold{n: 0, obs: time.Minute, known: true},
+			"one":                   fixedThreshold{n: 1, obs: time.Minute, known: true},
+			"negative":              fixedThreshold{n: -1, obs: time.Minute, known: true},
+			"port error":            fixedThreshold{n: 5, obs: 30 * time.Minute, known: true, err: errors.New("dc down")},
+			"no observation window": fixedThreshold{n: 5, known: true},
+			"nil port":              nil,
 		} {
 			c := e.node(t, th, 0)
 			if err := c.Take(context.Background(), e.a, "corp", key1); !errors.Is(err, ErrADAttemptsRefused) {
 				t.Errorf("%s: %v; want refused", name, err)
 			}
 		}
-		c := e.node(t, fixedThreshold{n: 5, known: true}, 0)
+		c := e.node(t, fixedThreshold{n: 5, obs: 30 * time.Minute, known: true}, 0)
 		if err := c.Take(context.Background(), e.a, "corp", []byte("short")); !errors.Is(err, ErrADAttemptsRefused) {
 			t.Errorf("short key: %v; want refused", err)
 		}
@@ -126,7 +128,7 @@ func TestCounterFailClosed(t *testing.T) {
 func TestCounterWindowReset(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
-		c := e.node(t, fixedThreshold{n: 3, known: true}, time.Second)
+		c := e.node(t, fixedThreshold{n: 3, obs: time.Second, known: true}, 0)
 		for i := 1; i <= 2; i++ {
 			if err := c.Take(context.Background(), e.a, "corp", key1); err != nil {
 				t.Fatalf("attempt %d: %v", i, err)
@@ -143,6 +145,43 @@ func TestCounterWindowReset(t *testing.T) {
 		}
 		if err := c.Take(context.Background(), e.a, "corp", key1); !errors.Is(err, ErrADAttemptsRefused) {
 			t.Fatalf("budget did not hold after reset: %v", err)
+		}
+	})
+}
+
+// The window slides: attempts each spaced under the window still accumulate, though the first is
+// older than the window by the time of the last.
+func TestCounterWindowSliding(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		c := e.node(t, fixedThreshold{n: 3, obs: 2 * time.Second, known: true}, 0)
+		ctx := context.Background()
+		if err := c.Take(ctx, e.a, "corp", key1); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(1200 * time.Millisecond)
+		if err := c.Take(ctx, e.a, "corp", key1); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(1200 * time.Millisecond) // 2.4s after the first: a fixed window would have reset
+		if err := c.Take(ctx, e.a, "corp", key1); !errors.Is(err, ErrADAttemptsRefused) {
+			t.Fatalf("third attempt = %v; want refused (window must slide)", err)
+		}
+	})
+}
+
+// A domain observation window longer than the configured one governs.
+func TestCounterObservationWindowGoverns(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		c := e.node(t, fixedThreshold{n: 2, obs: 3 * time.Second, known: true}, 100*time.Millisecond)
+		ctx := context.Background()
+		if err := c.Take(ctx, e.a, "corp", key1); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(500 * time.Millisecond) // past Window, inside the observation window
+		if err := c.Take(ctx, e.a, "corp", key1); !errors.Is(err, ErrADAttemptsRefused) {
+			t.Fatalf("second attempt = %v; want refused", err)
 		}
 	})
 }
