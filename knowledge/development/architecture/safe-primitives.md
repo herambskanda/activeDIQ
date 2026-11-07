@@ -5,7 +5,7 @@ updated: 2026-11-07
 status: review
 owner: heramb
 ticket: T-0035, T-0041
-amended_by: T-1729 (§2, §5, §5.7, §8: decode-only P3 unit `attr.tsprops`, author solution-architect)
+amended_by: T-1729 (§2, §5, §5.7, §8: decode-only P3 unit `attr.tsprops`, author solution-architect), T-1759 (§5.7: the two decisions ratified into spec reports-terminal-services §4.1, Counts and `bad_count` aligned, no record changed; author product-manager)
 sources_last_checked: 2026-10-02
 ---
 
@@ -820,10 +820,15 @@ N, X and W have none (§2).
 - `Counts.unknown_properties` counts parsed properties whose name is not in the spec §3 list. That
   includes the excluded names such as `CtxCallbackNumber`. `Counts.skipped_properties` is
   `TSPropertyCount` minus 64 when the count exceeds the rule 3 cap. `Counts.duplicates` counts the
-  distinct parsed names that occur more than once.
+  distinct parsed names that occur more than once. All three are set once the walk of at most 64
+  properties finished (TSP-26 has `duplicates` 1 although the blob is `Unreadable`) and are 0 when it
+  did not. `skipped_properties` is the count the header claims and is not verified. `bad_count` is
+  retired: it keeps its enum number and no record produces it. A count the bytes cannot hold is
+  `truncated` (TSP-13). Evaluation order and the full fault classes are spec §4.1.
 
-**Two decisions the records need (T-1729). T-1566 implements them, and the spec owner may amend them
-through T-1759.** (1) **Structural versus field-local.** Some faults make the property array unwalkable
+**Two decisions the records need (T-1729), adopted unchanged by T-1759 and now normative in spec
+[reports-terminal-services §4.1](../../product/specs/reports-terminal-services.md). No expectation in
+the table below changed. T-1566 implements them.** (1) **Structural versus field-local.** Some faults make the property array unwalkable
 or leave a property that cannot be matched to a field: a header, name or value that runs past the end;
 a `NameLength` that is odd or over 64; input that is not valid UTF-8 or holds a lone surrogate; input
 over the cap. Each of these makes the whole blob `Unreadable` with that reason. A fault inside a

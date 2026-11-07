@@ -2,7 +2,7 @@
 title: "Spec: Terminal Services user reports (USR-10) and the hardened userParameters decoder"
 date: 2026-11-04
 updated: 2026-11-07
-amended_by: T-1732 (§5, §6, §7, §8: 'collector' = connector read path, `not_confirmed`, USR-10 counts, AC-TS07 owner; author product-manager)
+amended_by: T-1732 (§5, §6, §7, §8: 'collector' = connector read path, `not_confirmed`, USR-10 counts, AC-TS07 owner; author product-manager), T-1759 (§4 rules 3, 5, 6, 7 and new §4.1; §7 FR-TS03, AC-TS05, AC-TS17 to AC-TS19: blob-level vs field-level faults, gate faults, `bad_count` retired, Counts; author product-manager)
 status: draft
 owner: heramb
 author: ad-expert
@@ -134,20 +134,39 @@ Package: one decoder in the connector codec layer (`attr/tsprops`, beside `attr/
    (schema `rangeUpper` is 32,767 units); fewer than 98 bytes → *Not configured*; ≤ 64 properties
    parsed (extra ones counted, not parsed); `NameLength` ≤ 64 and even; `ValueLength` ≤ 2,048 and
    even (hex-ASCII); every `offset + length` is computed in 64-bit and compared to the remaining
-   bytes; `Type` must be 0x01 else the property is `unreadable`. `TSPropertyCount` larger than the
-   bytes could hold is *malformed*, not trusted.
+   bytes; `Type` must be 0x01 else the property is `unreadable`. `TSPropertyCount` is never trusted:
+   a count the remaining bytes cannot hold (count × 6, the size of one property header, is more than
+   the bytes after the count) is a **blob-level** `truncated` fault (§4.1). Which faults make the
+   whole blob unreadable and which only one field is §4.1; an odd `ValueLength` is a field fault
+   `bad_hex` (rule 4), not a structural one.
 4. **Strict hex.** PropValue digits are `[0-9A-Fa-f]` only; any other byte → the property is
    `unreadable`. Odd length → `unreadable`.
-5. **Signature and gate.** Signature ≠ "P" → state *Not configured (no valid settings)*. Missing
-   `CtxCfgPresent`, or a value other than 0xB00B1E55 → the same. Both are counted per run.
+5. **Signature and gate.** Signature ≠ "P" → state *Not configured (no valid settings)*, reason
+   `bad_signature`. A missing `CtxCfgPresent`, one whose value is not 0xB00B1E55, or one whose
+   value cannot be decoded as a u32 (wrong `Type`, bad hex, wrong length) → the same state and
+   reason: Windows ignores the settings, so we show none. A **duplicated** `CtxCfgPresent` is not
+   this case: it is `Unreadable(duplicate)` for the whole blob (rule 7, §4.1). The reason of a
+   *Not configured* blob is counted per run; it is not an "unreadable" reason and no cell reads
+   "Unreadable".
 6. **Per-field status, never per-row failure.** Each field is `value`, `not_configured`, or
    `unreadable(reason)`. A bad field never turns another field's value into a guess, and a row
    with any unreadable field still appears with that cell reading "Unreadable" and the reason in
    the details. Reasons are a closed enum: `too_short, bad_signature, bad_count, truncated,
-   bad_type, bad_hex, bad_encoding, out_of_range, too_long, duplicate`.
+   bad_type, bad_hex, bad_encoding, out_of_range, too_long, duplicate`. **`bad_count` is retired:**
+   it stays in the enum so the wire number of the contract's `TsReason` never moves (connector-contract
+   fitness TS5), but no decoder path produces it and no record or report may show it. A count the
+   bytes cannot hold is `truncated` (rule 3), because it and a property that runs past the end are
+   the same observable fault: the array ends before the header says it does. A blob-level fault
+   (§4.1) is shown as every field `unreadable` with the blob reason; a field-level fault only on its
+   own field.
 7. **Duplicates and unknowns.** The same decoded name twice → both ignored and the field
    `unreadable(duplicate)`, because Windows' choice is `[UNVERIFIED]` and a report must not pick
-   one. Unknown names are skipped (bounded, counted, never stored).
+   one. Duplicates are found **before any field is decoded**, so the answer does not depend on
+   whether a text field's encoding is settled yet (contract T7). For `CtxCfgPresent` itself the
+   duplicate makes the whole blob `Unreadable(duplicate)`, since nothing can be trusted that the
+   gate does not vouch for and picking one of the two values would be a guess. Unknown names are
+   skipped (bounded, counted, never stored); a field-level fault in a property whose name is not
+   in §3 touches no field.
 8. **Typed output.** `u32` values are range-checked per §3; booleans come from named bits only; no
    `map[string]string` or raw `bytes` leaves the decoder.
 9. **Text hygiene.** Decoded text is valid Unicode, ≤ 520 code points (path limit with margin), no
@@ -159,6 +178,52 @@ Package: one decoder in the connector codec layer (`attr/tsprops`, beside `attr/
     input decodes in well under 10 ms (build ticket measures; budget is a test).
 11. **Nothing secret.** The decoder logs no input bytes. Log lines carry the object GUID, the
     reason enum and the counts only.
+
+### 4.1 Fault classes, evaluation order and Counts
+
+**Blob-level (structural).** The array cannot be walked, or a property cannot be matched to a field.
+The whole blob is `Unreadable` with the reason; every field reads `unreadable(<reason>)`:
+
+| Fault | Reason | Records |
+| --- | --- | --- |
+| input over 65,536 bytes after conversion | `too_long` | TSP-30, TSP-31 |
+| not valid UTF-8, a lone surrogate (also inside a property name) | `bad_encoding` | TSP-32, TSP-33 |
+| `TSPropertyCount` × 6 more than the bytes after the count; a header, name or value that runs past the end | `truncated` | TSP-13, TSP-15, TSP-16 |
+| `NameLength` over 64 | `too_long` | TSP-17 |
+| `NameLength` odd | `bad_encoding` | TSP-18 |
+| a duplicated `CtxCfgPresent` | `duplicate` | TSP-26 |
+
+**Not configured (gate).** The blob is walkable but carries no valid settings; every field reads
+`not_configured`, no field is `unreadable`: fewer than 98 bytes (`too_short`, TSP-06, TSP-14);
+signature ≠ "P" (`bad_signature`, TSP-10, TSP-12, TSP-29); `CtxCfgPresent` missing, wrong or
+undecodable (`bad_signature`, TSP-07, TSP-11).
+
+**Field-level.** The name was read and its bytes are present, so only that field is affected and the
+rest keep their values: `bad_type`, `bad_hex` (non-hex digit, or an odd `ValueLength`),
+`out_of_range`, `ValueLength` over 2,048 (`too_long`), text hygiene (`bad_encoding`), and `duplicate`
+of any name other than `CtxCfgPresent`. Records TSP-19 to TSP-25, TSP-27, TSP-34, TSP-35. The
+principle: fail closed where the field is unknown, fail narrow where it is known (rule 6).
+
+**Order, so one input has one answer; the first fault found wins.**
+(1) Convert LDAP octets to UTF-16LE bytes left to right: `bad_encoding` or `too_long` as met.
+(2) Fewer than 98 bytes → `too_short`. (3) Signature. (4) The count check of rule 3. (5) Walk at
+most 64 properties: header present, `NameLength` limits, then name and value present (`truncated`).
+(6) Find duplicates among the walked names. (7) The gate: duplicated → `Unreadable(duplicate)`;
+missing, wrong or undecodable → *Not configured*. (8) Decode each field. A `ValueLength` over 2,048
+is judged in (8), after presence in (5), so a long value that is also cut short is `truncated`.
+Bytes after the last counted property are never read, and are not an error.
+
+**Counts** (`Counts` of connector-contract §5.9.1; all three are decoder outputs and never alter a field):
+- `unknown_properties`: walked properties whose name is not in §3 and is not `CtxCfgPresent`, one per
+  occurrence. Excluded names such as `CtxCallbackNumber` are unknown. Their values are never kept.
+- `skipped_properties`: `TSPropertyCount` − 64 when the count exceeds 64, else 0. It is the number
+  the header **claims**; entries past the 64th are not read, so they are not verified, beyond the
+  rule 3 bound on the count.
+- `duplicates`: the number of **distinct** names seen more than once among the walked properties
+  (three `CtxShadow` entries is 1). It includes `CtxCfgPresent` and unknown names.
+- They are set when the walk of step (5) finished, whatever the state afterwards (a duplicated gate
+  gives `duplicates` 1, TSP-26), and are all 0 when it did not (a bad signature, `too_short`, a
+  structural fault): a count from half a walk would depend on where the fault was.
 
 **Fuzzing (FF-TS1, fitness function in CI):** Go native fuzz target `FuzzUserParameters`, seeded with
 (a) the Windows-captured fixtures of §6, (b) hand-built hostile blobs: bad signature, count
@@ -255,7 +320,7 @@ appear with their Status, never filtered silently.
 | --- | --- |
 | FR-TS01 | USR-10 MUST decode only the §3 fields, from `userParameters`, through the single decoder of §4, and MUST NOT read or display `msTS*` attributes |
 | FR-TS02 | The decoder MUST satisfy §4 rules 1–11 and the fuzz target FF-TS1 MUST run in CI; no `userParameters` write MAY exist in the product (lint) |
-| FR-TS03 | A user whose blob is **proved readable and absent**, has a bad signature or lacks `CtxCfgPresent` MUST show *Not configured*, never Allowed-by-explicit and never an error row. A user whose blob is absent and **not proved readable** MUST show *Not confirmed* (§5), never *Not configured* |
+| FR-TS03 | A user whose blob is **proved readable and absent**, has a bad signature or lacks, or has a wrong or undecodable, `CtxCfgPresent` MUST show *Not configured*, never Allowed-by-explicit and never an error row. A user whose blob is absent and **not proved readable** MUST show *Not confirmed* (§5), never *Not configured* |
 | FR-TS04 | A field that cannot be decoded MUST show "Unreadable" with the reason; the header MUST count unreadable users; no value MAY be guessed |
 | FR-TS08 | A user in state `not_confirmed` MUST appear in USR-10a as *Not confirmed* with its reason, MUST be counted under "Not readable" in both headers and exports, MUST NOT appear in USR-10b rows, and MUST NOT be given Basis *Default* or counted under "Not configured" |
 | FR-TS09 | The decoder MUST run in the connector read path and only typed columns MAY cross the connector contract (contract §5.9 T3); no server-side code MAY receive or decode the raw blob |
@@ -268,18 +333,22 @@ Acceptance (Given/When/Then; ground truth is the Windows fixture and ADUC unless
 - **AC-TS02** Given a user with the deny bit set, When USR-10b runs, Then the user is absent and the header "Denied" count includes them.
 - **AC-TS03** Given a user with no `userParameters`, When USR-10b runs, Then the row has Basis "Default"; with "Only explicitly allowed" on, it is absent.
 - **AC-TS04** Given a blob with signature "Q", When either report runs, Then State is *Not configured* and no field is "Unreadable".
-- **AC-TS05** Given a blob with `TSPropertyCount` 65,535 and no data, When decoded, Then the field status is `unreadable(truncated)`, no panic, allocation under 256 KiB. *Evidence: unit test.*
+- **AC-TS05** Given a blob with `TSPropertyCount` 65,535 and no data, When decoded, Then State is `Unreadable`, reason `truncated` (never `bad_count`), every field `unreadable(truncated)`, no panic, allocation under 256 KiB. *Evidence: unit test, record TSP-13.*
 - **AC-TS06** Given a blob carrying `CtxWFProfilePath` of `=HYPERLINK(…)`, When exported to CSV and rendered in the grid, Then it is neutralised on both outputs.
 - **AC-TS07** Given a blob with a sentinel in ReservedData (and an unknown property carrying a sentinel value), When the full pipeline runs (sync, USR-10a and USR-10b, CSV/XLSX/PDF/HTML exports, API), Then the sentinel, in UTF-8, UTF-16LE and hex form, appears in no table dump, log line, export or API response, and the test fails when a deliberate leak is introduced. *Evidence: the lab end-to-end test **TS8** of connector-contract "Fitness functions added in v1.5" (ticket **T-1733**), owner **`test-engineer`**; the connector-level cases are TS6 and are not this criterion.*
 - **AC-TS08** Given the fuzz target, When CI runs, Then the seed corpus passes and the nightly job reports executions and zero findings.
 - **AC-TS09** Given a user with `CtxMaxIdleTime` set and its inherit bit set, When USR-10a runs, Then the cell reads "Client/server setting" `[LAB: Windows]`.
 - **AC-TS10** Given a repo search, When the lint runs, Then no code path writes `userParameters`.
-- **AC-TS11** Given two properties named `CtxWFHomeDir`, When decoded, Then the field is `unreadable(duplicate)` and the other fields still show values.
+- **AC-TS11** Given two properties named `CtxWFHomeDir`, When decoded, Then the field is `unreadable(duplicate)` and the other fields still show values. *Evidence: unit test, record TSP-25.*
 - **AC-TS12** Given a user whose `userParameters` is absent and the connection identity is denied read on it (a per-object deny and, separately, an inherited deny), When the sync, USR-10a and USR-10b run, Then USR-10a shows State *Not confirmed* with reason `read_denied`, USR-10b does not list the user and its "Not readable" count includes them, and no report row shows Basis *Default* or *Not configured* for that user. *Evidence: V5 on Windows; Samba rows are not evidence of the access check* `[LAB: Windows]`.
 - **AC-TS13** Given a user with no `userParameters` whose readability is proved, When USR-10b runs, Then the row has Basis *Default* (as AC-TS03); and Given the same user when readability cannot be proved (no clean rights check this epoch), Then the user is *Not confirmed*, `readability_unknown`, and absent from the 10b rows.
 - **AC-TS14** Given a sync in which bulk search returned a user with no blob, When the sync completes, Then each such user has been resolved by a per-user read to *Not configured* or *Not confirmed* with a reason other than `readability_not_evaluated`; a user whose per-user read failed stays `readability_not_evaluated` and is counted under "Not readable".
 - **AC-TS15** Given a forest where `userParameters` is confidential or RODC-filtered, When either report runs, Then every user is *Not confirmed*, `secret_attribute`, the header says so once, and no request names the attribute.
 - **AC-TS16** Given a mix of Denied, Not configured, Unreadable and Not confirmed users, When USR-10b is exported, Then the file's header carries the same four counts as the screen and "Not readable" equals Unreadable plus Not confirmed.
+
+- **AC-TS17** Given a blob with a structural fault (a name or value running past the end, `NameLength` 66, `NameLength` 17, invalid UTF-8, input one unit over the cap), When decoded, Then State is `Unreadable` with the §4.1 reason, every field is `unreadable` with it, and all three Counts are 0. Given instead a field fault (`CtxShadow` of `Type` 2, `CtxMaxIdleTime` of 525,601, a 2,050-digit `CtxInitialProgram`, odd hex), Then State is `Configured`, only that field is `unreadable` with its reason, and the others keep their values. *Evidence: unit test, records TSP-15 to TSP-24, TSP-30.*
+- **AC-TS18** Given a blob whose `CtxCfgPresent` is missing, or 0xB00B1E54, When decoded, Then State is `NotConfigured`, reason `bad_signature`, no field is `unreadable`; and Given `CtxCfgPresent` twice, Then State is `Unreadable`, reason `duplicate`, `duplicates` 1, whatever the text-field encoding is. *Evidence: unit test, records TSP-07, TSP-11, TSP-26.*
+- **AC-TS19** Given `TSPropertyCount` 1,001 with 1,000 `CtxShadow` entries after the gate, When decoded, Then `skipped_properties` is 937, `duplicates` is 1 and `unknown_properties` is 0; and Given `TSPropertyCount` 66 with 62 unknown names, Then `unknown_properties` is 62 and `skipped_properties` is 2. *Evidence: unit test, records TSP-27, TSP-28.*
 
 ## 8. Handoffs and follow-ups
 
