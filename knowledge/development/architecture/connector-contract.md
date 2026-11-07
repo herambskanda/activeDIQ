@@ -1639,8 +1639,10 @@ field is a DN.
      (b2)) through the typed security-descriptor primitive and
      evaluate List Contents for the connection identity's token (`objectSid` plus `tokenGroups`). Not proven, or the descriptor
      unreadable: `INSUFFICIENT_RIGHTS` with the right named "List Contents on Deleted Objects of <domain>", never
-     `OBJECT_NOT_FOUND`. Never decide it by trying the target read. `[UNVERIFIED — LAB: Windows]` that Read Control plus the
-     show-deleted control returns the container's descriptor (T-1734).
+     `OBJECT_NOT_FOUND`. Never decide it by trying the target read. **Measured (T-1734, Windows Server 2025):** Read Control plus the show-deleted control returns the
+     container's descriptor to a non-administrator, by WKGUID or DN; `RC` alone suffices for the read, `LC` alone does not return it, and
+     the entry comes back **without** `nTSecurityDescriptor` and without an error when the identity lacks `RC` or when SD_FLAGS carries the
+     SACL bit (0x8, 0xF). Request exactly 0x5; an entry with no descriptor is `INSUFFICIENT_RIGHTS`.
   2. **The target read** (the only caller of the deleted-target function, TM-F-RIGHTS (b1)). One base-scope search on
      `<GUID=…>` with the show-deleted control (`1.2.840.113556.1.4.417`,
      critical), **`LDAP_SERVER_SHOW_DEACTIVATED_LINK_OID` (`1.2.840.113556.1.4.2065`)**, SD_FLAGS 0x7 (owner, group, DACL; never
@@ -1652,9 +1654,9 @@ field is a DN.
      **zero attributes**, not an error (measured, T-1633 v4), so absence alone never means "not set".
      *Must-be-present set:* `objectGUID`, `isDeleted`, `lastKnownParent`, `msDS-LastKnownRDN`, `nTSecurityDescriptor`; plus
      `objectSid` for user, computer and group; plus `userAccountControl` and `primaryGroupID` for user and computer. Any one
-     absent makes the target `tier0`, basis `UNKNOWN`. (Measured for a deleted user only; for the other classes a wrong entry
-     here refuses, which is the safe direction; CC-WK-35 W confirms.)
-     *Optional set:* `sIDHistory`, `memberOf`, `adminCount`, `msDS-AllowedToDelegateTo`,
+     absent makes the target `tier0`, basis `UNKNOWN`. (Measured on Windows Server 2025 for user, computer, group, contact and OU, T-1734: every class returned
+     its set; contact and OU have no `objectSid` or UAC, as listed. CC-WK-35 W keeps it as a regression case.)
+     *Optional set (T-1734: `msDS-AllowedToActOnBehalfOfOtherIdentity` and the computer's `isCriticalSystemObject` FALSE retained and readable; `sIDHistory` and `msDS-SecondaryKrbTgtNumber` retention `[UNVERIFIED — LAB: Windows]`, LDAP refuses to write either, so the lab cannot make the object):* `sIDHistory`, `memberOf`, `adminCount`, `msDS-AllowedToDelegateTo`,
      `msDS-AllowedToActOnBehalfOfOtherIdentity`, `msDS-SecondaryKrbTgtNumber`, `isCriticalSystemObject`. An absent optional
      attribute is **unreadable, `tier0` basis `UNKNOWN`**, unless the retained `nTSecurityDescriptor` from the same response,
      evaluated with the classifier's effective-rights helper (the one C17 uses) for the connection identity's token, grants

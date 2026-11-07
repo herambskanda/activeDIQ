@@ -199,6 +199,13 @@ authorisation to dc2 is a CEO decision, not a ticket step.
 describe the local-KVM mode, which was dropped. A human creates fs1 (A-0028; tickets T-0409, T-0413).
 Until then no worker step may assume `fs1`, and proofs that need a member server stay blocked on A-0028.
 
+**dc1 changes that a rollback of dc1 would undo (T-1734, 2026-11-07).** `Update-LapsADSchema` was run on dc1: the lab forest now has the
+Windows LAPS schema (`msLAPS-*` attributes, the `ms-LAPS-Encrypted-Password-Attributes` extended right, `mayContain` on `computer`); it was absent
+before, although the forest is level 2025. A schema extension cannot be removed; a rollback to an older snapshot removes it, and a LAPS test written
+against dc1 should call `Update-LapsADSchema` (idempotent) first. The `t1734-*` objects the run deleted stay in `CN=Deleted Objects` until they expire.
+`CN=Deleted Objects` is back to its default descriptor (owner SYSTEM): by default not even a Domain Admin can read it, see
+`knowledge/development/domain/deleted-object-read-access.md`.
+
 ### Proxmox lab pool (D-0022)
 
 **Decision.** The CEO answered D-0022 (a) on 2026-11-02: workers get a Proxmox API token that can reach only
