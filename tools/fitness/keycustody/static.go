@@ -158,8 +158,36 @@ var (
 	secretNameRE = regexp.MustCompile(`(?i)^(passphrase|kek|kekvalue|kekbytes|kekpassphrase|kekpass|rawkek|kekmaterial)$`)
 	secretFlagRE = regexp.MustCompile(`(?i)(passphrase|kek)`)
 	secretColRE  = regexp.MustCompile(`(?im)^\s*(passphrase|kek_value|kek_secret|raw_kek|kek_bytes|kek_passphrase)\s+(text|bytea|varchar|character)`)
-	providerDef  = regexp.MustCompile(kekPrefix + `PROVIDER["']?\s*[=:]\s*["']?[A-Za-z0-9]`)
+	// providerSet finds an assignment of the provider setting: NAME=v, NAME: v, "NAME": "v", ENV NAME v. The
+	// capture is everything after the separator; providerDefault judges it.
+	providerSet = regexp.MustCompile(kekPrefix + `PROVIDER["']?\s*[=:]\s*(.*)$`)
+	providerEnv = regexp.MustCompile(`^\s*(?i:ENV)\s+` + kekPrefix + `PROVIDER\s+(\S.*)$`)
+	// requiredForm is the only expansion that is not a default: ${VAR:?msg} / ${VAR?msg} fail when VAR is
+	// unset, so the operator has to choose.
+	requiredForm = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*:?\?[^}]*\}`)
+	valueToken   = regexp.MustCompile(`^[^\s;&|#,}\]\\]+`)
 )
+
+// providerDefault is true when the line gives ACTIVEDIQ_KEK_PROVIDER a value other than "operator must
+// supply it". Empty (`NAME=`, `NAME:`), a YAML comment and the required-without-default expansion pass;
+// everything else is a shipped default, whether literal, a $VAR / ${VAR} reference, a ${VAR:-x} /
+// ${VAR-x} / ${VAR:=x} / ${VAR:+x} expansion, or command substitution: a variable defined by an ARG, a
+// shell assignment or the host environment is how a default hides one hop away (T-1650).
+func providerDefault(line string) bool {
+	var rest string
+	if m := providerSet.FindStringSubmatch(line); m != nil {
+		rest = m[1]
+	} else if m := providerEnv.FindStringSubmatch(line); m != nil {
+		rest = m[1]
+	} else {
+		return false
+	}
+	rest = requiredForm.ReplaceAllString(rest, "")
+	rest = strings.TrimLeft(rest, " \t\"'")
+	rest = strings.ReplaceAll(rest, `"`, "")
+	rest = strings.ReplaceAll(rest, `'`, "")
+	return valueToken.MatchString(rest)
+}
 
 // checkFFKey3 is "config only in the root": the KEK settings are named only by the composition root (its
 // tests too, and this tool); no struct field, flag or column carries a passphrase or KEK value; no
@@ -220,7 +248,9 @@ func checkFFKey3(root string, files []goFile) ([]Violation, error) {
 		}
 		top := strings.SplitN(rel, "/", 2)[0]
 		inMig := top == "migrations" && strings.HasSuffix(rel, ".sql")
-		inShip := top == "packaging" || top == "helm.yaml" || top == "lab" || strings.HasPrefix(d.Name(), ".env") || strings.HasPrefix(d.Name(), "Dockerfile") || strings.HasSuffix(d.Name(), ".env")
+		// lab/ is not shipped: the lab scripts write per-run config for a throw-away server and name the provider
+		// they exercise explicitly; the scan covers what customers receive.
+		inShip := top == "packaging" || top == "helm.yaml" || strings.HasPrefix(d.Name(), ".env") || strings.HasPrefix(d.Name(), "Dockerfile") || strings.HasSuffix(d.Name(), ".env")
 		if !inMig && !inShip {
 			return nil
 		}
@@ -233,7 +263,7 @@ func checkFFKey3(root string, files []goFile) ([]Violation, error) {
 			if inMig && secretColRE.MatchString(ln) {
 				vs = append(vs, Violation{"FF-KEY-3", "secret-column", at, "a database column would hold a passphrase/KEK value"})
 			}
-			if inShip && providerDef.MatchString(ln) {
+			if inShip && providerDefault(ln) {
 				vs = append(vs, Violation{"FF-KEY-3", "provider-default", at, "the KEK provider setting is given a value in shipped config; there is no default custody model"})
 			}
 		}
