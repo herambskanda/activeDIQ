@@ -486,6 +486,11 @@ lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-ru
   `HKLM\SYSTEM\CurrentControlSet\Services\activeDIQAgent\ImagePath` is the quoted `activediq-agent.exe` path.
 - If a run leaves the DC odd, re-run (the script is idempotent) or clean up over WinRM; `qm rollback <vmid> clean`
   needs the Proxmox host (no worker access: raise an `action new`).
+- **T-0557 variant** `agent-verify --guest agent-t0557.ps1 [--mode gpo-restart]`: same build, then a real GPO
+  (`New-GPO`/`New-GPLink` on the Domain Controllers OU, removed at the end), refusal of an elevated administrator
+  token, job-limit read-back, CPU-cap measurement, a logon-load run and a 10-minute backlog read. About 35 minutes;
+  `--mode gpo-restart` restarts the Event Log service (a real GPO takes effect only then). Results:
+  [domain note](../domain/dc-agent-channel-acl-gpo-and-bounds.md). Re-run `dc1-policy check` afterwards (section 18).
 - Not covered (needs an enrolled agent talking to a server; T-0814): killing the server connection,
   filling the data disk, and the U+0001 `Data` value reaching the server.
 
