@@ -11,6 +11,9 @@ LOCKW="${LOCKW:-$BIN/with-dc1-lock}"
 T="$(mktemp -d)"; trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$T"' EXIT
 export DIQ_DC1_LOCK="$T/dc1.lock"
 unset DIQ_DC1_LOCK_HELD DIQ_DC1_LOCK_WHO
+# T-1279: the drivers refuse to start without a DC address, before they take the lock. A throwaway env file with a documentation-range
+# address (192.0.2.0/24) and no password passes that gate; agent-verify then takes the lock and stops at the missing password, offline.
+printf 'WIN_LAB_DC_ADDR="192.0.2.1"\n' > "$T/lab.env"; export WIN_LAB_ENV="$T/lab.env"; unset WIN_LAB_DC_ADDR
 fails=0
 ok()  { echo "ok   $*"; }
 bad() { echo "FAIL $*"; fails=$((fails+1)); }
@@ -46,7 +49,7 @@ DIQ_DC1_LOCK_WAIT=3 "$LOCKW" -- "$LOCKW" -- true 2>/dev/null; [ "$?" = 0 ] && ok
 DIQ_DC1_LOCK_HELD=999999 DIQ_DC1_LOCK_WAIT=3 "$LOCKW" -- true 2>"$T/e5"; grep -q "holding dc1 lock" "$T/e5" && ok "stale DIQ_DC1_LOCK_HELD ignored" || bad "stale marker trusted"
 
 # 6. a killed holder releases the lock
-setsid "$LOCKW" -- sleep 60 2>/dev/null & hp=$!; sleep 0.5; kill -KILL -- "-$hp" 2>/dev/null; sleep 0.3
+setsid "$LOCKW" -- sleep 60 2>/dev/null & hp=$!; disown "$hp"; sleep 0.5; kill -KILL -- "-$hp" 2>/dev/null; sleep 0.3
 DIQ_DC1_LOCK_WAIT=3 "$LOCKW" -- true 2>/dev/null; [ "$?" = 0 ] && ok "lock free after the holder died" || bad "lock stuck after the holder died"
 
 # 7. the real entry points take the lock (waiter times out while a holder runs; both fail fast with no hypervisor, no go, no winrm)
@@ -59,7 +62,7 @@ for target in "agent-verify --log $T/x.log" "windows-lab test-connector"; do
 done
 wait
 # ... and when the lock is free agent-verify announces that it holds it before doing anything else
-WIN_LAB_ENV="$T/none" "$BIN/agent-verify" --log "$T/x.log" >/dev/null 2>"$T/e8"
+"$BIN/agent-verify" --log "$T/x.log" >/dev/null 2>"$T/e8"
 grep -q "holding dc1 lock" "$T/e8" && ok "agent-verify holds the lock for its run" || bad "agent-verify run did not announce the lock: $(head -c 300 "$T/e8")"
 
 echo; [ "$fails" = 0 ] && echo "with-dc1-lock: all cases pass" || echo "with-dc1-lock: $fails case(s) FAILED"

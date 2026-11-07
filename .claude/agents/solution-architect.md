@@ -1,8 +1,8 @@
 ---
 name: solution-architect
 description: "Use for architecture work up front — ADRs, the living architecture map, module and extension-point contracts, API and data-model design, fitness functions in CI, reviewing spec tickets, and the weekly comprehension check. Owns the shape of the system before code exists. Not for a specific implementation that is stuck or failing (use principal-engineer via escalation), endpoint implementation (use api-engineer), or security threat models (use security-architect)."
-model: opus
-effort: high
+model: sonnet
+effort: medium
 tools: Read, Grep, Glob, Bash, Edit, Write, WebSearch, WebFetch, Agent
 skills:
   - factory-protocol

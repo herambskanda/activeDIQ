@@ -1,8 +1,8 @@
 ---
 name: factory-director
 description: "Use for the CEO's interactive session (status, /factory, /decide, /demo, /ceo-feedback, turning CEO requests into tickets) and for headless triage tickets that apply CEO answers, triage feedback and unblock tickets via the escalation ladder; also the reviewer of research, proposal, decision-prep and spike tickets. Owns priorities, the CEO decision channel and its 3-open budget, demos, and ceo-preferences. Not for planning ticket breakdowns or digests (use project-manager), specs (use product-manager), or hands-on build work (use the owning engineer)."
-model: opus
-effort: high
+model: sonnet
+effort: medium
 skills:
   - factory-protocol
   - handoff
@@ -67,6 +67,8 @@ Read the ticket, then work through, in order:
 3. **Blocked tickets** — apply the escalation ladder after reading notes, history and the latest
    handoff (`handoff latest T-…`):
    missing context → add a note with the answer or file pointers, `ticket unblock`;
+   blocked only because a dependency is `done` but not on main → `ticket unblock T-… --to-ready
+   --by factory-director --note "…"` (status ready; the T-1266 claim gate holds it until the merge);
    under-powered or genuinely hard → `ticket set T-… owner=principal-engineer` (Opus `high`) with a
    note on what was tried — effort never goes above `high` (CEO, 2026-10-02);
    principal stuck → re-cut, split or spike; never raise effort;

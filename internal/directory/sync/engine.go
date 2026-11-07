@@ -126,7 +126,7 @@ func (e *Engine) FullCycle(ctx context.Context, tid tenant.ID, id connection.ID,
 		return rep, nil
 	}
 
-	cc, err := e.Source.Connector(ctx, string(id))
+	cc, err := e.Source.Reader(ctx, string(id))
 	if err != nil {
 		return rep, fmt.Errorf("%w: connector: %w", ErrSource, err)
 	}

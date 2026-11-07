@@ -17,4 +17,6 @@ Round 2 (T-1221): every carve-out clause in a class test must be no wider than t
 
 Round 3 (T-1221): check the *actor word* in the definition against the surfaces the test claims. "A value a principal chooses" excluded the anonymous and CLI items, where no principal exists. Also check who may add callers to a widening allow-list row. If it is only "reviewed, not an amendment", a generic writer (any Subject) silently gains new surfaces. Make it an amendment keyed on the category.
 
+Round 4 (T-1221, ratified): when an ADR adds a fenced source-of-truth block that a fitness check compares with a data file (`o3-widening` vs `o3-writers.json`), parse both in a python one-liner and diff them. Then grep the code for the block's callers before you ratify.
+
 Related: [[adr-ratification-flow]], [[generator-adr-review-checks]]

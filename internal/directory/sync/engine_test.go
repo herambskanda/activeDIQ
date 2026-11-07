@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	dsync "github.com/skenzeriq/activediq/internal/directory/sync"
@@ -188,11 +189,11 @@ func domainsOf(ncs ...uint64) []dsync.Domain {
 }
 
 type connSource struct {
-	cc    connectorv1.ConnectorClient
+	cc    client.Reader
 	calls int
 }
 
-func (s *connSource) Connector(context.Context, string) (connectorv1.ConnectorClient, error) {
+func (s *connSource) Reader(context.Context, string) (client.Reader, error) {
 	s.calls++
 	return s.cc, nil
 }

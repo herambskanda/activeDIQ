@@ -10,6 +10,11 @@
   no Active Directory object is created or changed.
   No inbound firewall exception is installed: the agent has no listener and only dials out.
   No reboot is requested.
+  Flow: install starts the service UNENROLLED; it idles (event 103, warning) and picks up `agent enroll`
+  within a few seconds (polls every 5 s, T-0813/T-1249).
+  Build: `wix build -wx -sw1149 ...` (see knowledge/development/runbooks/dc-agent-operations.md, "Building the MSI"). WIX1149 is raised by the CORE
+  ServiceConfig itself, which is the only element that can set ServiceSid and RequiredPrivilege (T-1249);
+  every other warning is an error.
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="activeDIQ Agent" Manufacturer="skenzeriq" Version="$(var.Version)" UpgradeCode="6f3b8c1e-5d1a-4f6e-9a57-3c2b7d0e4a11" Scope="perMachine" InstallerVersion="500">
@@ -39,14 +44,14 @@
           <ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes">
             <RequiredPrivilege Name="SeChangeNotifyPrivilege" />
           </ServiceConfig>
+          <!-- Recovery actions: the core ServiceConfig has no failure-action attributes (WIX0004 with WiX 5.0.2),
+               util:ServiceConfig has only those (no ServiceSid, no RequiredPrivilege), so both are needed.
+               Verified on dc1 (T-0833 log): `sc qfailure` shows restart/30 s x3, reset 86400 s. -->
+          <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart"
+                              RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
         </ServiceInstall>
-        <!-- No Start="install": at install time the agent is not enrolled, so it reaches Running and then exits.
-             Windows Installer treats that race as "service failed to start" (error 1920) and rolls the install
-             back (T-0648, lab). The service is start=auto and is started once, after `agent enroll`. -->
-        <ServiceControl Id="AgentServiceControl" Name="activeDIQAgent" Stop="both" Remove="uninstall" Wait="yes" />
-        <util:ServiceConfig ServiceName="activeDIQAgent" FirstFailureActionType="restart" SecondFailureActionType="restart"
-                            ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
-        <util:EventSource Log="Application" Name="activeDIQ Agent" EventMessageFile="[SystemFolder]EventCreate.exe"
+        <ServiceControl Id="AgentServiceControl" Name="activeDIQAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+        <util:EventSource Log="Application" Name="activeDIQ Agent" EventMessageFile="[WindowsFolder]Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll"
                           SupportsErrors="yes" SupportsInformationals="yes" SupportsWarnings="yes" />
       </Component>
       <Component Id="SetupExe" Guid="*">

@@ -15,7 +15,8 @@ try {
     Set-DnsClientServerAddress -InterfaceIndex $nic.ifIndex -ServerAddresses $c.dcIp
   }
   # lab is isolated test infrastructure: no telemetry nags, but Defender and firewall stay ON
-  if ($c.role -eq 'dc') { & C:\lab\dc.ps1 } else { & C:\lab\member.ps1 }
+  # role 'child-dc' = dc2 (T-1233, child-dc-init.ps1); promotion there needs a human at a console (child-dc.ps1)
+  switch ($c.role) { 'dc' { & C:\lab\dc.ps1 } 'child-dc' { & C:\lab\child-dc.ps1 } default { & C:\lab\member.ps1 } }
 } catch {
   # never die silently (T-0496): exception text only, no config values; the task re-runs at the next startup
   Write-LabLog "FAILED stage=$(Get-Stage): $($_.Exception.Message) at $($_.InvocationInfo.ScriptName):$($_.InvocationInfo.ScriptLineNumber)"

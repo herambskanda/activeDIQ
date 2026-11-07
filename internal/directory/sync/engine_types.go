@@ -9,12 +9,12 @@ import (
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
-	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 // Ports of the Engine. Each is satisfied structurally by the production type named with it, so the engine
@@ -28,9 +28,11 @@ type (
 	Connections interface {
 		Get(ctx context.Context, tid tenant.ID, id connection.ID) (connection.Connection, error)
 	}
-	// ConnectorSource resolves a connection to its connector (client.TunnelSource).
+	// ConnectorSource resolves a connection to its read-only connector port (client.NewReaderSource over
+	// client.TunnelSource). The engine reads; it is never handed the generated client, so Plan and Apply are
+	// out of its reach.
 	ConnectorSource interface {
-		Connector(ctx context.Context, connectionID string) (connectorv1.ConnectorClient, error)
+		Reader(ctx context.Context, connectionID string) (client.Reader, error)
 	}
 	// Ingest is the inventory ingester's write side (inventory.Ingester).
 	Ingest interface {

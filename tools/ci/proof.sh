@@ -243,6 +243,32 @@ mkdir -p "$opt/internal/directory/client"
 printf 'package client\n\ntype C struct{}\n\nfunc (c *C) Send() { c.sendApply() }\nfunc (c *C) sendApply() {}\n' >"$opt/internal/directory/client/c.go"
 rm -f "$opt/internal/modules/a/a.go"
 must_fail_with "fitness-operation O2 on an exported client method issuing a write RPC without a step.Step" 'O2 \[rule 2\] exported Send issues a connector-contract write RPC but has no step.Step parameter' "$opbin" -root "$opt"
+# O2 type-aware half (tools/analyzers/connwrite, T-1408): an exported alias of the generated client in
+# directory/client and a call of its Apply from another package, with no identifier of the client in the caller.
+mkdir -p "$opt/internal/proto/activediq/connector/v1" "$opt/internal/modules/a"
+printf 'package connectorv1\n\nimport "context"\n\ntype CallOption interface{}\ntype ApplyRequest struct{}\ntype ApplyResponse struct{}\ntype ConnectorClient interface {\n\tApply(ctx context.Context, in *ApplyRequest, opts ...CallOption) (*ApplyResponse, error)\n}\n' >"$opt/internal/proto/activediq/connector/v1/v1.go"
+printf 'package client\n\nimport connectorv1 "op.test/internal/proto/activediq/connector/v1"\n\ntype Connector = connectorv1.ConnectorClient\n' >"$opt/internal/directory/client/c.go"
+printf 'package a\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(c client.Connector) { _, _ = c.Apply(context.Background(), nil) }\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O2 on an exported alias of the generated client in directory/client" 'internal/directory/client/c.go:5: O2 \[rule 2\] exported type Connector is, aliases or embeds the generated connector-contract client' "$opbin" -root "$opt"
+must_fail_with "fitness-operation O2 on Apply called through the alias from another package" 'internal/modules/a/a.go:9: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+# A nested internal/ dir (idiomatic under cmd/) is not the top-level one: a package's place is its path below the
+# module root (security review of T-1408). The caller names no ConnectorClient identifier, only holds what a source returns.
+printf 'package client\n\nimport (\n\t"context"\n\n\tconnectorv1 "op.test/internal/proto/activediq/connector/v1"\n)\n\ntype Source interface {\n\tConnector(ctx context.Context) (connectorv1.ConnectorClient, error)\n}\n' >"$opt/internal/directory/client/c.go"
+rm -f "$opt/internal/modules/a/a.go"
+mkdir -p "$opt/cmd/server/internal/proto/evil"
+printf 'package evil\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(s client.Source) {\n\tcc, _ := s.Connector(context.Background())\n\t_, _ = cc.Apply(context.Background(), nil)\n}\n' >"$opt/cmd/server/internal/proto/evil/e.go"
+must_fail_with "fitness-operation O2 on Apply under a nested cmd/*/internal/proto directory" 'cmd/server/internal/proto/evil/e.go:11: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+rm -rf "$opt/cmd"
+# A real directory called proto_test is not internal/proto (only a genuine external test package loses its _test suffix).
+mkdir -p "$opt/internal/proto_test"
+printf 'package evil\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(s client.Source) {\n\tcc, _ := s.Connector(context.Background())\n\t_, _ = cc.Apply(context.Background(), nil)\n}\n' >"$opt/internal/proto_test/e.go"
+must_fail_with "fitness-operation O2 on Apply under a real internal/proto_test directory" 'internal/proto_test/e.go:11: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+rm -rf "$opt/internal/proto_test"
+# A //line directive must not make a non-test file pass for a _test.go (the real filename decides every allowance).
+mkdir -p "$opt/internal/compose/server"
+printf '//line zz_evil_test.go:1\npackage server\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(s client.Source) {\n\tcc, _ := s.Connector(context.Background())\n\t_, _ = cc.Apply(context.Background(), nil)\n}\n' >"$opt/internal/compose/server/zz_evil.go"
+must_fail_with "fitness-operation O2 on Apply in a non-test file carrying a //line zz_test.go directive" 'internal/compose/server/zz_evil.go:12: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+rm -rf "$opt/internal/compose"
 rm -rf "$opt/internal/directory"
 rm -rf "$opt/internal/modules"
 must_pass "fitness-operation O9 on the repository itself" "$opbin" -root "$root"
@@ -778,6 +804,120 @@ printf '%s  USR-01.v1.json\n' "$(sha256sum "$rp/internal/modules/reports/library
 must_fail_with "fitness-reports RP7 on a definition and its LOCK entry edited together" 'RP7 \[lock-entry-rewritten\]' "$rpbin" -root "$rp" -static-only -lock-base main
 # a bound test that is declared but whose binding is not landed, and one that is absent when landed, are
 # the tool's own tests (TestBoundTest*, TestDeclaredButNotLandedFails, TestRP11* in tools/fitness/reports/check_test.go).
+
+# --- fitness-search (ADR-0011 Fitness function SE1, SE2 and the bound tests SE3-SE6, T-1126), the real CLI ----
+# (-static-only: the bound tests run on PostgreSQL 16 and 18 in make fitness-search; the failing fixture of
+# every rule, including the bound-test refusals, is go test ./tools/fitness/search)
+srbin="$tmp/fitness-search"; go build -o "$srbin" ./tools/fitness/search
+sr="$tmp/sr"
+sr_put() { mkdir -p "$sr/$(dirname "$1")"; cat >"$sr/$1"; }
+fresh_sr() {
+  rm -rf "$sr"; mkdir -p "$sr"; printf 'module sr.test\n\ngo 1.22\n' >"$sr/go.mod"
+  sr_put internal/platform/authz/a.go <<'GO'
+package authz
+
+type ReadScope struct{ n int }
+
+func (s ReadScope) Terms() []int            { return nil }
+func (s ReadScope) Token() (int, bool)      { return 0, false }
+func (s ReadScope) Connections() []int      { return nil }
+func (s ReadScope) Admits(v int) bool       { return v > s.n }
+func (s ReadScope) SearchRoots(c int) []int { return nil }
+GO
+  sr_put internal/platform/store/like.go <<'GO'
+package store
+
+type LikePattern struct{ p string }
+GO
+  sr_put internal/platform/store/reportsql/scope.go <<'GO'
+package reportsql
+
+import "sr.test/internal/platform/authz"
+
+func scope(s authz.ReadScope) int { return len(s.Terms()) }
+GO
+  sr_put internal/platform/store/reportsql/search.go <<'GO'
+package reportsql
+
+type Search struct{}
+
+func (Search) CompileSearch() string {
+	return "SELECT k.object_guid FROM inventory_search_keys k WHERE k.key_kind = 1 AND " + "$1 <% k.key ORDER BY k.key <-> $1 LIMIT 10"
+}
+GO
+  sr_put internal/directory/inventory/inventory.go <<'GO'
+package inventory
+
+import "sr.test/internal/platform/store/reportsql"
+
+func Compile(s reportsql.Search) string { return s.CompileSearch() }
+GO
+  # the four listed exceptions (the real files exist on main); a stale one fails the job
+  sr_put internal/directory/client/usersearch.go <<'GO'
+package client
+
+import "sr.test/internal/platform/authz"
+
+func Live(s authz.ReadScope) bool { return s.Admits(1) }
+GO
+  sr_put internal/compose/server/localaccount.go <<'GO'
+package server
+
+const countRoles = "SELECT count(*) FROM public.authz_roles"
+GO
+  sr_put internal/directory/inventory/closure.go <<'GO'
+package inventory
+
+const privileged = "SELECT g.guid FROM groups g WHERE g.sid ~ '^S-1-5-21-.*-512$'"
+GO
+  sr_put tools/fitness/tenancy/probes.go <<'GO'
+package main
+
+const leak = "SELECT set_config('app.tenant_id', $1, $2)"
+GO
+  sr_put migrations/0001_base.sql <<'SQL'
+CREATE TABLE public.authz_roles (id int);
+CREATE TABLE public.inventory_search_keys (key text, key_kind int);
+CREATE INDEX k_trgm ON public.inventory_search_keys USING gin (key gin_trgm_ops);
+DO $$ BEGIN RAISE EXCEPTION 'bad id % in authz_roles', 1; END $$;
+SQL
+}
+fresh_sr
+must_pass "fitness-search (clean tree, listed exceptions pending, the rest passing)" "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put internal/modules/reports/export/e.go <<'GO'
+package export
+
+import "sr.test/internal/platform/authz"
+
+func Leak(s authz.ReadScope) []int { return s.Terms() }
+GO
+must_fail_with "fitness-search SE1 on ReadScope.Terms outside authz and reportsql" 'internal/modules/reports/export/e.go:5 SE1 \[scope-renderer\]' "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put internal/modules/users/u.go <<'GO'
+package users
+
+import "sr.test/internal/platform/authz"
+
+func Mine(s authz.ReadScope) bool { return s.Admits(7) }
+GO
+must_fail_with "fitness-search SE1 on ReadScope.Admits outside authz (the second renderer)" 'internal/modules/users/u.go:5 SE1 \[scope-members\]' "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put internal/modules/search/s.go <<'GO'
+package search
+
+const q = "SELECT guid FROM inventory_objects WHERE sam ILIKE $1"
+GO
+must_fail_with "fitness-search SE2 on an ILIKE pattern in search SQL" 'internal/modules/search/s.go:3 SE2 \[pattern' "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put migrations/0002_trgm.sql <<'SQL'
+CREATE VIEW public.near AS SELECT a.key FROM public.inventory_search_keys a WHERE a.key % 'abc';
+SQL
+must_fail_with "fitness-search SE2 on a trigram operator in a migration (string literals and RAISE placeholders are not flagged)" 'migrations/0002_trgm.sql:1 SE2 \[trigram-operator\]' "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put internal/modules/x/x.go <<'GO'
+package x
+
+const q = "SELECT set_config('pg_trgm.word_similarity_threshold', $1, false)"
+GO
+must_fail_with "fitness-search SE2 on a persistent set_config" 'internal/modules/x/x.go:3 SE2 \[set-config-persistent\]' "$srbin" -root "$sr" -static-only
+fresh_sr; rm "$sr/internal/directory/client/usersearch.go"
+must_fail_with "fitness-search on a listed exception that no longer matches anything (the list cannot rot)" 'usersearch.go:1 SE1 \[stale-exception\]' "$srbin" -root "$sr" -static-only
 
 fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
 package users
