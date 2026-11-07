@@ -12,3 +12,5 @@ metadata:
 - A nil `*tier0.Set` PropertyGuard refuses every write: lab rigs build one from `graphtest` + `tier0.New(c).Snapshot`.
 - `internal/directory/sync` tests hang ~6 min without a DB (pre-existing); run `./internal/directory/client ./internal/directory/writechange ./internal/connector/...` instead.
 - `make lab-up` in a fresh worktree: image build + provision + seed ~10 min; `lab/.lab-ca.pem` appears last.
+- T-1632: `WriteOp.PropertyWrite` sees only the typed change, never the live class. A kind whose verdict depends on class (delete) declares at step 4 and repeats the check in the body via `Authorised.checkProperty` with the live class; test both halves, and mutation-check the body call (unit tests alone do not prove the body calls it).
+- `newWKRigRuleText(t, rule)` builds the lab rig with any Entra dynamic rule; `git checkout <file>` during a mutation check reverts UNCOMMITTED real edits too, so commit first.
