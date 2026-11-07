@@ -1,7 +1,11 @@
 ---
-title: Sync mapper refusal bounds vs AD schema rangeUpper (T-1250)
+title: "Sync mapper refusal bounds vs AD schema rangeUpper"
+date: 2026-11-07
+updated: 2026-11-07
 status: draft
 owner: directory-engineer
+author: directory-engineer
+ticket: T-1250
 ---
 
 # Sync mapper refusal bounds vs AD schema rangeUpper
