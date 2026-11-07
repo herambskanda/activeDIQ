@@ -427,8 +427,10 @@ func decide(w PropertyWrite, sc RuleScope, ext map[string]string) []string {
 	case OpDelete:
 		// Deleting a group removes it from every member's memberOf, so a rule that reads membership
 		// (a 'not memberOf' form) can start to match those members by absence (T-1621 R1). Any other
-		// object only leaves a rule's scope; no other object's properties change. A memberOf rule is
-		// RefuseAll, so the MemberOf and property tests are belt and braces.
+		// object only leaves a rule's scope. Removing an object that is some other object's manager
+		// clears that object's manager (MS-ADTS 3.1.1.1.6), which is not decided here: the connector
+		// declares it as CLEAR_MANAGER when the live read shows direct reports (T-1632 security
+		// review). A memberOf rule is RefuseAll, so the MemberOf and property tests are belt and braces.
 		if w.Kind == WriteGroup && (sc.RefuseAll || sc.MemberOf || sc.Properties["user.memberof"]) {
 			return none
 		}

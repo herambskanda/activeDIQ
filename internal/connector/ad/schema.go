@@ -84,6 +84,9 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "attributeSecurityGUID", OID: "1.2.840.113556.1.4.149", Syntax: ldapfilter.SynOctet},
 			ldapfilter.AttrInfo{Name: "rightsGuid", OID: "1.2.840.113556.1.4.340", Syntax: s},
 			ldapfilter.AttrInfo{Name: "searchFlags", OID: "1.2.840.113556.1.2.334", Syntax: ldapfilter.SynInt32},
+			// directReports: the manager back-link, read by OBJECT_DELETE to learn whether removing the object
+			// clears other objects' manager (T-1632, contract §8.9 DELETE). Constructed: never filterable or writable.
+			ldapfilter.AttrInfo{Name: "directReports", OID: "1.2.840.113556.1.2.436", Syntax: ldapfilter.SynDN, Constructed: c},
 			ldapfilter.AttrInfo{Name: "nTSecurityDescriptor", OID: "1.2.840.113556.1.2.281", Syntax: ldapfilter.SynOctet, Constructed: c},
 			ldapfilter.AttrInfo{Name: "tokenGroups", OID: "1.2.840.113556.1.4.1301", Syntax: ldapfilter.SynSID, Constructed: c},
 			ldapfilter.AttrInfo{Name: "allowedAttributesEffective", OID: "1.2.840.113556.1.4.914", Syntax: s, Constructed: c},

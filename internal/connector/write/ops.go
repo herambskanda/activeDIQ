@@ -26,7 +26,8 @@ type pass struct {
 	// dcID is the bound DC's identity (AD), for the observations a body returns.
 	dcID *connectorv1.DcIdentity
 	// recheck repeats the §8.9 property guard for a declaration only the body can derive (the live class).
-	recheck func(ctx context.Context, w tier0.PropertyWrite) bool
+	// It returns nil to allow, else the refusal (with its audit reason) for the target.
+	recheck func(ctx context.Context, w tier0.PropertyWrite, target guid.GUID, step string) *Refusal
 }
 
 func (a Authorised) dir() ObjectDirectory {
@@ -43,9 +44,13 @@ func (a Authorised) dcID() *connectorv1.DcIdentity {
 	return a.p.dcID
 }
 
-// checkProperty is false (refuse) for a token with no checker.
-func (a Authorised) checkProperty(ctx context.Context, w tier0.PropertyWrite) bool {
-	return a.p != nil && a.p.recheck != nil && a.p.recheck(ctx, w)
+// checkProperty is nil to allow, else the refusal to return. A token with no checker refuses, as a
+// guard that is unavailable does.
+func (a Authorised) checkProperty(ctx context.Context, w tier0.PropertyWrite, target guid.GUID, step string) *Refusal {
+	if a.p == nil || a.p.recheck == nil {
+		return propertyRefusal(w, target, step, reasonGuardUnavailable, stLive)
+	}
+	return a.p.recheck(ctx, w, target, step)
 }
 
 // DeclaresProperty reports whether the write kind this token was issued for declared the attribute in
