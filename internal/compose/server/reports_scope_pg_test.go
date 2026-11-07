@@ -101,7 +101,7 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		perms := apihost.Permissions{"reports.run", "reports.export", "reports.schedule", "reports.schedule.manage_all",
+		perms := apihost.Permissions{"reports.run", "reports.export", "reports.schedule", "reports.schedule.manage_all", "reports.replication.read", "reports.replication.configure",
 			"reports.deliver.external", "directory.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}
 		door := rptDoor{}
 		srv, err := apihost.Build(doc, []apihost.TagHandlers{tag}, pol, perms, apihost.Ports{Authn: door, Authz: door, Limits: door, StepUp: door})
