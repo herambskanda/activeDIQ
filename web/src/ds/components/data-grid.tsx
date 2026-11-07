@@ -47,6 +47,12 @@ export interface DataGridProps<Row> {
   /** Row selection is on when `onSelectedChange` is given. `selected` holds row keys. */
   readonly selected?: ReadonlySet<string> | undefined;
   readonly onSelectedChange?: ((next: ReadonlySet<string>) => void) | undefined;
+  /** The row whose detail a `DetailDock` shows: marked `aria-current`, tinted, and scrolled into view when it changes (focus does not move). */
+  readonly currentRowKey?: string | null | undefined;
+  /** Focus moved onto a different data row (arrows, Tab in, click). A detail pane uses it to follow the row. Not called for the header. */
+  readonly onActiveRowChange?: ((row: Row) => void) | undefined;
+  /** Escape on a cell of the grid (not inside a widget). Closing a docked detail pane. */
+  readonly onEscape?: (() => void) | undefined;
   /** Enter on a row cell. */
   readonly onRowActivate?: ((row: Row) => void) | undefined;
   /** Columns can be resized by pointer and with Shift+Left/Right on a focused header. */
@@ -75,6 +81,26 @@ function textOf(v: ReactNode): string | undefined {
   return typeof v === "string" || typeof v === "number" ? String(v) : undefined;
 }
 
+/**
+ * How far the content must move sideways (positive = towards the right) so a focused cell is not
+ * under the sticky columns nor past the far edge. `stuck` is the width the sticky columns cover at
+ * the inline start; `rtl` mirrors it. Pure: rectangles in, pixels out. The caller does
+ * `scrollLeft -= shift` (that holds in LTR and RTL).
+ */
+export function inlineShift(
+  cell: { readonly left: number; readonly right: number },
+  view: { readonly left: number; readonly right: number },
+  stuck: number,
+  rtl: boolean,
+): number {
+  const freeL = rtl ? view.left : view.left + stuck;
+  const freeR = rtl ? view.right - stuck : view.right;
+  const atLeft = cell.left < freeL ? freeL - cell.left : 0;
+  const atRight = cell.right > freeR ? freeR - cell.right : 0;
+  // A cell wider than the free area lines up with the inline start.
+  return rtl ? atRight || atLeft : atLeft || atRight;
+}
+
 function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
@@ -96,6 +122,9 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     selected,
     onSelectedChange,
     onRowActivate,
+    currentRowKey = null,
+    onActiveRowChange,
+    onEscape,
     resizable = false,
     onColumnResize,
     visibleRows = DEFAULT_VISIBLE_ROWS,
@@ -115,8 +144,10 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
   const [active, setActive] = useState({ r: 0, c: 0 });
   const [widths, setWidths] = useState<Readonly<Record<string, number>>>({});
   const [announce, setAnnounce] = useState("");
+  const [scrolledX, setScrolledX] = useState(false);
   const pendingFocus = useRef<{ r: number; c: number } | null>(null);
   const anchor = useRef(0);
+  const reportedRow = useRef(-1);
 
   // Row height follows --diq-row (density); viewport height follows the box. Re-measured on resize and density change.
   const measure = useCallback(() => {
@@ -195,6 +226,30 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       setTop(st);
     }
   };
+  // Sideways: keep the focused cell clear of the sticky name column and inside the box.
+  const revealX = (cell: HTMLElement) => {
+    const el = box.current;
+    if (!el || cell.classList.contains("diq-grid__rh") || cell.hasAttribute("data-sel")) return;
+    const stuck = Array.from(
+      el.querySelectorAll<HTMLElement>("thead .diq-grid__sel, thead .diq-grid__rh"),
+    ).reduce((n, h) => n + h.offsetWidth, 0);
+    const b = el.getBoundingClientRect();
+    const left = b.left + el.clientLeft;
+    const rtl = getComputedStyle(el).direction === "rtl";
+    const dx = inlineShift(
+      cell.getBoundingClientRect(),
+      { left, right: left + el.clientWidth },
+      stuck,
+      rtl,
+    );
+    if (dx !== 0) el.scrollLeft -= dx;
+  };
+  // The row a detail pane shows scrolls into view when it changes.
+  const currentIdx =
+    currentRowKey === null ? -1 : rows.findIndex((r) => rowKey(r) === currentRowKey);
+  useEffect(() => {
+    if (currentIdx >= 0) reveal(currentIdx + 1);
+  }, [currentRowKey]);
   const goto = (r: number, c: number) => {
     const next = { r: clamp(r, 0, rows.length), c: clamp(c, 0, nCols - 1) };
     reveal(next.r);
@@ -210,6 +265,7 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     if (cell) {
       pendingFocus.current = null;
       cell.focus({ preventScroll: true });
+      revealX(cell);
     }
   });
   // One tab stop: widgets inside cells (links, buttons) are reachable with Tab only from their own, active cell.
@@ -317,6 +373,12 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
         }
         return go(r, c + (forward ? 1 : -1));
       }
+      case "Escape":
+        if (onEscape) {
+          e.preventDefault();
+          onEscape();
+        }
+        return;
       case "Home":
         return go(ctrl ? 0 : r, 0);
       case "End":
@@ -365,6 +427,11 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
     if (!cell) return;
     const next = { r: Number(cell.dataset.r), c: Number(cell.dataset.c) };
     if (next.r !== active.r || next.c !== active.c) setActive(next);
+    // Keyboard moves set `active` before focus lands, so "changed" is judged against the last reported row.
+    if (next.r === reportedRow.current) return;
+    reportedRow.current = next.r;
+    const row = next.r >= 1 ? rows[next.r - 1] : undefined;
+    if (row !== undefined) onActiveRowChange?.(row);
   };
 
   const headerClick = (col: DataGridColumn<Row>) => {
@@ -387,7 +454,11 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
       className={`diq-grid${selectable ? " diq-grid--selectable" : ""}`}
       style={style}
       data-busy={busy ? "true" : undefined}
-      onScroll={(e) => setTop(e.currentTarget.scrollTop)}
+      data-scrolled-x={scrolledX ? "true" : undefined}
+      onScroll={(e) => {
+        setTop(e.currentTarget.scrollTop);
+        setScrolledX(e.currentTarget.scrollLeft !== 0);
+      }}
     >
       <span ref={chProbe} className="diq-grid__ch" aria-hidden="true" />
       <table
@@ -490,7 +561,15 @@ export function DataGrid<Row>(props: DataGridProps<Row>) {
                 data-row={r}
                 aria-rowindex={r + 1}
                 aria-selected={selectable ? isSel : undefined}
-                className={isSel ? "diq-grid__row--selected" : undefined}
+                aria-current={idx === currentIdx ? "true" : undefined}
+                className={
+                  [
+                    isSel ? "diq-grid__row--selected" : "",
+                    idx === currentIdx ? "diq-grid__row--current" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined
+                }
                 style={{ height: rowH }}
               >
                 {selectable ? (
