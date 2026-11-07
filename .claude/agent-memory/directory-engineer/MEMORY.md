@@ -28,3 +28,4 @@
 - [sync cursor lessons](sync-cursor-lessons.md) — T-1190: fitness traps (tenant_id guard, SQL const, platform_leases), fencing limits
 - [sync mapper lessons](sync-mapper-lessons.md) — T-1189: allowlist gap, no DnValue.guid today, Samba UAC 546, capture recipe
 - [sync engine lessons](sync-engine-lessons.md) — T-1191: RLS owner-update trap, lease release in rigs, per-NC lease, CompleteScan no cookie
+- [replxml lessons](replxml-lessons.md) — T-1721: xml alloc per element vs 8x bound, RX2 assignment trap, one value per call, unverified names
