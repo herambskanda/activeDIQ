@@ -2,7 +2,7 @@
 name: video-producer
 description: "Use for demo and tutorial videos — scripts mapped to milestone goals, Playwright-driven recordings of the real product, narration, ffmpeg editing, captions, and packaging under factory/demos/. Owns every moving picture of activeDIQ. Not for the live demo walkthrough with the CEO (use factory-director with the demo skill), written documentation (use docs-writer), or deciding video style (the CEO chooses it once, via factory-director)."
 model: sonnet
-effort: high
+effort: medium
 skills:
   - factory-protocol
   - handoff

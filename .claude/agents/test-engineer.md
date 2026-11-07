@@ -2,7 +2,7 @@
 name: test-engineer
 description: "Use for dedicated test work — unit, integration and end-to-end suites, test fixtures and seed data, the AD test lab's content, property and fault-injection tests, flaky-test fixes and coverage gaps. Owns the factory's ability to prove behaviour automatically. Not for verifying a ticket's acceptance criteria before merge (use qa-verifier), reviewing code (use code-reviewer), or lab infrastructure and CI pipelines (use devops-engineer)."
 model: sonnet
-effort: high
+effort: medium
 skills:
   - factory-protocol
   - handoff
