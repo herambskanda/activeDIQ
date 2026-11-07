@@ -159,8 +159,9 @@ var (
 	secretFlagRE = regexp.MustCompile(`(?i)(passphrase|kek)`)
 	secretColRE  = regexp.MustCompile(`(?im)^\s*(passphrase|kek_value|kek_secret|raw_kek|kek_bytes|kek_passphrase)\s+(text|bytea|varchar|character)`)
 	// providerSet finds an assignment of the provider setting: NAME=v, NAME: v, "NAME": "v", ENV NAME v. The
-	// capture is everything after the separator; providerDefault judges it.
-	providerSet = regexp.MustCompile(kekPrefix + `PROVIDER["']?\s*[=:]\s*(.*)$`)
+	// match is the name and separator; the value runs to the next assignment on the line (or the end of it),
+	// and providerDefault judges every such segment: a compliant first assignment must not hide a later default.
+	providerSet = regexp.MustCompile(kekPrefix + `PROVIDER["']?\s*[=:]\s*`)
 	providerEnv = regexp.MustCompile(`^\s*(?i:ENV)\s+` + kekPrefix + `PROVIDER\s+(\S.*)$`)
 	// requiredForm is the only expansion that is not a default: ${VAR:?msg} / ${VAR?msg} fail when VAR is
 	// unset, so the operator has to choose.
@@ -187,14 +188,30 @@ func providerDefault(line string) bool {
 		}
 	}
 	line = providerRead.ReplaceAllString(line, "")
-	var rest string
-	if m := providerSet.FindStringSubmatch(line); m != nil {
-		rest = m[1]
+	var segs []string
+	if locs := providerSet.FindAllStringIndex(line, -1); len(locs) > 0 {
+		for i, l := range locs {
+			end := len(line)
+			if i+1 < len(locs) {
+				end = locs[i+1][0]
+			}
+			segs = append(segs, line[l[1]:end])
+		}
 	} else if m := providerEnv.FindStringSubmatch(line); m != nil {
-		rest = m[1]
+		segs = append(segs, m[1])
 	} else {
 		return false
 	}
+	for _, rest := range segs {
+		if providerValueDefault(rest) {
+			return true
+		}
+	}
+	return false
+}
+
+// providerValueDefault judges the text that follows one assignment of the provider setting.
+func providerValueDefault(rest string) bool {
 	rest = requiredForm.ReplaceAllString(rest, "")
 	rest = strings.TrimLeft(rest, " \t\"'")
 	rest = strings.ReplaceAll(rest, `"`, "")
