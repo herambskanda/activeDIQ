@@ -21,6 +21,13 @@
 # POST /reports/schedules/operations/{operationId}/undo and .../previews/undo, bound to reports.schedule; the kernel plans the inverse
 # (reports.schedule.restore) for the caller with the checks of the transition it makes (ADR-0005 rule 10; modules/reports.md 8).
 #
+# SYS-03 DC Replication Status (T-1720; reports-2 second slice 7.3, 13). Typed columns, a per-DC coverage block with the Did not answer entries and the 100-DC cap count, status counts for
+# the chips, and the thresholds (read and edit). It adds two permissions, both distinct from reports.run (spec 13):
+#   reports.replication.read       getReportReplicationThresholds; also checked INSIDE createReportRun (and retry, schedules) for the SYS-03 definition, as createReportExport checks reports.run: 403 Forbidden
+#                                  with errors[].code replication_read_required when it is missing. It is not a second x-permission. The library lists SYS-03 only to holders.
+#   reports.replication.configure  updateReportReplicationThresholds, its preview twin and its undo pair.
+# listReportManagers (T-1720) is the picker list of USR-12; the pick travels as a ReportSubjectRef.
+#
 # Closed on purpose: columns are the ReportColumnId enum, filters are the typed ReportFilter tree, values are typed. There is no member that takes
 # a raw filter string, a DN, SQL, or a column name that is not in the registry (FR-05). The compiler's AST is not modelled here.
 # Request enums are closed; their response twins (...Value) are open (ADR-0004 rule 2).
@@ -507,6 +514,311 @@ paths:
           $ref: shared/problems.yaml#/components/responses/Conflict
         "410":
           $ref: shared/problems.yaml#/components/responses/ReportResultExpired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/managers:
+    get:
+      tags: [reports]
+      operationId: listReportManagers
+      summary: Find managers to run a manager report for
+      description: >-
+        The picker list of USR-12 Manager Based Users (reports-2 second slice 6.1, 11): users, inside the caller's read scope, who have at least one direct report, matching q. The pick is carried back as
+        a ReportSubjectRef (connectionId and objectGUID, never a DN) in ReportRunParameters.subjects of a definition whose subjectKind is manager; no new parameter shape is needed. q is literal text matched against name and logon name:
+        nothing from it is placed in a directory query as syntax, and a wildcard or filter character has no meaning. An absent or empty q lists the managers in a stable order (display name, then objectGUID), so the picker can show recent
+        or first managers before the admin types. Two managers with the same display name are told apart by logonName and ouPath, never by order. directReports counts the direct reports inside the caller's scope. The list is read from the inventory (a link edge), not
+        from a live directory read, and the run-time freshness label applies to the report, not to this list. A scope that grants nothing answers an empty page.
+      x-permission: reports.run
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-084]
+      parameters:
+        - name: q
+          in: query
+          required: false
+          description: Literal text to match in the display name or logon name. Up to 256 characters; control characters are refused.
+          schema:
+            type: string
+            maxLength: 256
+            pattern: "^[^\\x00-\\x1f\\x7f]*$"
+        - $ref: shared/paging.yaml#/components/parameters/PageCursor
+        - $ref: shared/paging.yaml#/components/parameters/PageLimit
+      responses:
+        "200":
+          description: A page of managers
+          content:
+            application/json:
+              schema:
+                $ref: modules/reports.yaml#/components/schemas/ReportManagerList
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/replication/thresholds:
+    get:
+      tags: [reports]
+      operationId: getReportReplicationThresholds
+      summary: Read the DC replication status thresholds
+      description: >-
+        The tenant's thresholds that turn a replication link's last-success age into a status in SYS-03 DC Replication Status (reports-2 second slice 7.3.3). They are the tenant's setting, not the run's: a run pins the values it used in
+        ReportRun.replication.thresholds and its stored statuses never change when this is edited. Before anyone edits them, isDefault is true and the values are the product defaults (defaults). The ETag is the version for updateReportReplicationThresholds.
+      x-permission: reports.replication.read
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-092]
+      responses:
+        "200":
+          description: The thresholds
+          headers:
+            ETag:
+              required: true
+              schema:
+                type: string
+                maxLength: 256
+          content:
+            application/json:
+              schema:
+                $ref: modules/reports.yaml#/components/schemas/ReportReplicationThresholds
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+    put:
+      tags: [reports]
+      operationId: updateReportReplicationThresholds
+      summary: Set the DC replication status thresholds
+      description: >-
+        Replaces both thresholds, as the Action reports.replication.thresholds.update (ADR-0005 rule 10): preview diff, gate, audit, and undo that restores the previous values. Needs If-Match with the ETag read. The warning threshold
+        must be shorter than the failing threshold, otherwise 400 with errors[].code thresholds_not_ordered; each is 5 minutes to 30 days, otherwise 400. A change applies to runs that start after it; it never rewrites a stored run. It widens no directory
+        right and reads no directory. Preview it first with previewUpdateReportReplicationThresholds (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle.
+      x-permission: reports.replication.configure
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: write
+        maxBodyBytes: 1024
+      x-activediq-parity: [ADM-092]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/RequiredIfMatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/reports.yaml#/components/schemas/ReportReplicationThresholdsWrite
+      responses:
+        "200":
+          description: The thresholds as stored
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The operation that made this change; the undo handle.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+            ETag:
+              required: true
+              schema:
+                type: string
+                maxLength: 256
+          content:
+            application/json:
+              schema:
+                $ref: modules/reports.yaml#/components/schemas/ReportReplicationThresholds
+        "202":
+          description: Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet; it applies when approved
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The held operation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "412":
+          $ref: shared/problems.yaml#/components/responses/PreconditionFailed
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "428":
+          $ref: shared/problems.yaml#/components/responses/PreconditionRequired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/replication/thresholds/previews/update:
+    post:
+      tags: [reports]
+      operationId: previewUpdateReportReplicationThresholds
+      summary: Preview setting the DC replication status thresholds
+      description: >-
+        The dry run of updateReportReplicationThresholds as the Action reports.replication.thresholds.update (ADR-0004 rule 14): it plans the change against the live values, authorises it for the caller and asks the gate, and answers the diff,
+        reversibility and whether it can be undone. It writes, persists and audits nothing. A refusal the plan finds, such as thresholds_not_ordered, is a 200 with outcome refused and blocked[].code, never a problem.
+        Same x-permission, parameters (including If-Match) and body as updateReportReplicationThresholds.
+      x-permission: reports.replication.configure
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+        maxBodyBytes: 1024
+      x-activediq-parity: [ADM-092]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/RequiredIfMatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/reports.yaml#/components/schemas/ReportReplicationThresholdsWrite
+      responses:
+        "200":
+          description: The preview
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationPreview
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "412":
+          $ref: shared/problems.yaml#/components/responses/PreconditionFailed
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
+        "428":
+          $ref: shared/problems.yaml#/components/responses/PreconditionRequired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/replication/thresholds/operations/{operationId}/previews/undo:
+    post:
+      tags: [reports]
+      operationId: previewUndoReportReplicationThresholdsOperation
+      summary: Preview undoing a thresholds change
+      description: >-
+        The dry run of undoing one reports.replication.thresholds.* operation (ADR-0004 rule 14): it plans the inverse, reports.replication.thresholds.restore, against the live thresholds for the caller. A plan refusal is a 200 with outcome refused.
+        It writes, persists and audits nothing. 404 when the operation is unknown or is not a reports.replication.thresholds.* operation. 409 operation-not-undoable with errors[].code irreversible, already_undone,
+        superseded (the thresholds changed after this operation; undo the later change first) or not_finished.
+      x-permission: reports.replication.configure
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-092]
+      parameters:
+        - $ref: shared/operation.yaml#/components/parameters/OperationId
+      responses:
+        "200":
+          description: The preview of the undo
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationPreview
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "409":
+          $ref: shared/problems.yaml#/components/responses/OperationNotUndoable
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/replication/thresholds/operations/{operationId}/undo:
+    post:
+      tags: [reports]
+      operationId: undoReportReplicationThresholdsOperation
+      summary: Undo a thresholds change
+      description: >-
+        Undoes one reports.replication.thresholds.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14, ADR-0005 rule 10). The undo is a new operation of the Action
+        reports.replication.thresholds.restore, planned against the live thresholds for the caller, run inline, audited, and itself undoable. It restores the values before the operation; runs already stored are not touched.
+        404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded, not_finished or plan_refused. Undoing an operation that itself needed approval is always held (202).
+      x-permission: reports.replication.configure
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: write
+        maxBodyBytes: 1024
+      x-activediq-parity: [ADM-092]
+      parameters:
+        - $ref: shared/operation.yaml#/components/parameters/OperationId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: shared/operation.yaml#/components/schemas/OperationUndoRequest
+      responses:
+        "200":
+          description: The undo operation; undoes names the operation it undid
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The undo operation. Undoing it re-applies the original change.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
+        "202":
+          description: The undo is held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet
+          headers:
+            ActiveDIQ-Operation-Id:
+              required: true
+              description: The held undo operation.
+              schema:
+                type: string
+                format: uuid
+                maxLength: 36
+          content:
+            application/json:
+              schema:
+                $ref: shared/operation.yaml#/components/schemas/OperationRef
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "409":
+          $ref: shared/problems.yaml#/components/responses/OperationNotUndoable
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
         "429":
           $ref: shared/problems.yaml#/components/responses/RateLimited
         "500":
@@ -1573,7 +1885,7 @@ components:
       name: If-Match
       in: header
       required: true
-      description: The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required.
+      description: The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required.
       schema:
         type: string
         minLength: 1
@@ -1583,8 +1895,14 @@ components:
     ReportColumnId:
       description: >-
         A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8).
+        SYS-03 DC Replication Status (reports-2 second slice 7.3) adds ten ids, one row per destination DC, partition and partner (source DC), and reuses domain and status. Cell kinds, in this order:
+        domain_controller text (the destination DC's DNS host name); domain text; partition text (the naming context's name, never a DN); partner_dc text (the source DC's DNS host name); last_attempt time; last_success time, or never when replication has never succeeded;
+        consecutive_failures integer; last_error_code integer (the error the DC reports, a Win32 or replication error number such as 8524); last_error text (the meaning of the code, or the DC's message, escaped like any text); status enum (ReportReplicationStatusValue);
+        lingering_risk enum (ReportLingeringRiskValue; the column's label never says detected); read_at time (when this DC was read). A value the DC did not return is absent, never a default, and its row's status is not_reported. A DC that did not answer has
+        one row: domain_controller, domain, status not_reported, last_error text from the coverage error, read_at, and absent in every other cell.
+        The status column of SYS-03 takes the choices of ReportReplicationStatusValue, and sorting by it orders by severity, failing first.
       type: string
-      enum: [name, logon_name, upn, status, domain, ou_path, manager, created, account_expires, days_to_expiry, last_logon, days_since, probable_service_account, real_last_logon, from_dc, dc_coverage, locked_out_since, lockout_ends, policy_source, data_as_of, password_last_set, password_expires, password_state, last_failed_logon, failures_on_dc, group_type, group_scope, direct_members, effective_members, managed_by, group, member, member_type, membership_kind, via, user, primary_group, dns_name, computer_type, operating_system, os_version, delegation, last_activity, activity_source, path, users, computers, groups, other_objects, objects_in_subtree, email]
+      enum: [name, logon_name, upn, status, domain, ou_path, manager, created, account_expires, days_to_expiry, last_logon, days_since, probable_service_account, real_last_logon, from_dc, dc_coverage, locked_out_since, lockout_ends, policy_source, data_as_of, password_last_set, password_expires, password_state, last_failed_logon, failures_on_dc, group_type, group_scope, direct_members, effective_members, managed_by, group, member, member_type, membership_kind, via, user, primary_group, dns_name, computer_type, operating_system, os_version, delegation, last_activity, activity_source, path, users, computers, groups, other_objects, objects_in_subtree, email, domain_controller, partition, partner_dc, last_attempt, last_success, consecutive_failures, last_error_code, last_error, lingering_risk, read_at]
     ReportCategory:
       description: >-
         The six categories of the 2a library (spec 6.1).
@@ -2168,6 +2486,21 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportRecipientEmail
       discriminator:
         propertyName: kind
+    ReportReplicationThresholdsWrite:
+      description: >-
+        Both thresholds of SYS-03 DC Replication Status, in seconds. warningAfterSeconds must be less than failingAfterSeconds. Both are required: a write replaces the pair.
+      type: object
+      required: [warningAfterSeconds, failingAfterSeconds]
+      additionalProperties: false
+      properties:
+        warningAfterSeconds:
+          type: integer
+          minimum: 300
+          maximum: 2592000
+        failingAfterSeconds:
+          type: integer
+          minimum: 300
+          maximum: 2592000
     ReportScheduleWrite:
       description: >-
         The writable settings of a schedule. It runs the report, preset, filters, columns and scope as saved, pinned to the definition version. confirmedExternal lists the external addresses the caller confirmed in the preview (Data leaves your organisation); it must equal the set of external recipients that are new or changed.
@@ -2717,12 +3050,202 @@ components:
           maximum: 9007199254740991
         locked:
           type: boolean
+    ReportReplicationStatusValue:
+      description: >-
+        The derived status of one SYS-03 row (reports-2 second slice 7.3.3). healthy: the last success is within the warning threshold and there are no consecutive failures. warning: no failures, and the last success is older than the warning threshold
+        and not older than the failing threshold. failing: consecutive failures above zero, or a last success older than the failing threshold. not_reported: the DC did not answer, or answered without the value; it is never healthy and never a count of problems.
+        unreachable is not a status: an unreachable DC is not_reported, with its reason and error in the coverage block.
+        Severity, for sort order, is failing, warning, not_reported, healthy.
+      type: string
+      x-activediq-enum: open
+      enum: [healthy, warning, failing, not_reported]
+    ReportLingeringRiskValue:
+      description: >-
+        The lingering-object risk indicator of SYS-03 (7.3.4). at_risk: a partner's last success is older than the forest's tombstone lifetime. no_indication: it is not. not_reported: the last success or the tombstone lifetime is not known.
+        This is an indicator, never a detection: no label, text or value says that lingering objects were detected.
+      type: string
+      x-activediq-enum: open
+      enum: [at_risk, no_indication, not_reported]
+    ReportDcUnansweredReason:
+      description: >-
+        Why a DC in scope gave no replication data. unreachable: no connection could be made. timed_out: the read passed its time limit. tls_failed: the TLS handshake or certificate check failed. access_denied: the connection account could not bind or read.
+        right_not_granted: the optional replication-monitoring right is not granted (reports-2 second slice 13). attributes_not_returned: the DC answered and returned no replication values. decode_refused: the connector's safe decoder refused the DC's value.
+      type: string
+      x-activediq-enum: open
+      enum: [unreachable, timed_out, tls_failed, access_denied, right_not_granted, attributes_not_returned, decode_refused]
+    ReportReplicationThresholds:
+      description: >-
+        The tenant's SYS-03 thresholds in seconds. defaults are the product defaults (1 hour warning, 24 hours failing; [PROPOSED] in reports-2 second slice 7.3.3 until ad-expert and reporting-engineer confirm), so a client can offer Reset. isDefault is true while nobody has set values.
+        updatedAt and updatedBy are absent while isDefault.
+      type: object
+      required: [warningAfterSeconds, failingAfterSeconds, defaults, isDefault]
+      properties:
+        warningAfterSeconds:
+          type: integer
+          minimum: 300
+          maximum: 2592000
+        failingAfterSeconds:
+          type: integer
+          minimum: 300
+          maximum: 2592000
+        defaults:
+          $ref: modules/reports.yaml#/components/schemas/ReportReplicationThresholdPair
+        isDefault:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+        updatedBy:
+          $ref: shared/job.yaml#/components/schemas/JobActor
+    ReportReplicationThresholdPair:
+      description: >-
+        A pair of thresholds in seconds.
+      type: object
+      required: [warningAfterSeconds, failingAfterSeconds]
+      properties:
+        warningAfterSeconds:
+          type: integer
+          minimum: 300
+          maximum: 2592000
+        failingAfterSeconds:
+          type: integer
+          minimum: 300
+          maximum: 2592000
+    ReportReplicationStatusCount:
+      description: >-
+        How many rows of the run have one status.
+      type: object
+      required: [status, count]
+      properties:
+        status:
+          $ref: modules/reports.yaml#/components/schemas/ReportReplicationStatusValue
+        count:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+    ReportReplicationSummary:
+      description: >-
+        What a SYS-03 run adds to its header, present only on a run of DC Replication Status (absent on every other report). thresholds are the values the run applied, pinned when it started. statusCounts has one entry for each of failing, warning,
+        healthy and not_reported, in that order, zeros included, and counts the run's stored rows; their sum is rowCount, so the chips All, Failing, Warning, Healthy and Not reported are filters on the status column with these counts. A DC that did not answer has a
+        row with status not_reported, so it is counted there and never under healthy. tombstoneLifetimeDays is the tombstone lifetime the risk indicator was judged against (the shortest of the forests in scope); null when it was not read, and then every
+        lingering_risk cell is not_reported. nextReadAllowedAfter is when the 1 hour floor of reports-2a 8.4 lets the next run read the DCs; null until the run has started.
+      type: object
+      required: [thresholds, statusCounts, tombstoneLifetimeDays, nextReadAllowedAfter]
+      properties:
+        thresholds:
+          $ref: modules/reports.yaml#/components/schemas/ReportReplicationThresholdPair
+        statusCounts:
+          type: array
+          maxItems: 16
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportReplicationStatusCount
+        tombstoneLifetimeDays:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 36500
+        nextReadAllowedAfter:
+          type: [string, "null"]
+          format: date-time
+    ReportDcError:
+      description: >-
+        Why a DC gave no data. code is a stable slug to branch on, such as connection_refused, dns_failure or tls_untrusted; message is fixed text for the code. Neither carries a DN, LDAP result text, a stack trace or a secret.
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          maxLength: 64
+          minLength: 1
+          pattern: "^[a-z][a-z0-9_.-]{0,63}$"
+        message:
+          type: string
+          maxLength: 512
+    ReportDcUnanswered:
+      description: >-
+        A DC in scope that was read and gave no replication data: one entry of the Did not answer band. dc is the DC's DNS host name. rowKey is the key of this DC's row in the stored result (status not_reported), so the band and the grid, the
+        export and the digest agree. readAt is when the read was tried.
+      type: object
+      required: [dc, connectionId, reason, error, rowKey, readAt]
+      properties:
+        dc:
+          type: string
+          maxLength: 253
+          minLength: 1
+        connectionId:
+          type: string
+          format: uuid
+        reason:
+          $ref: modules/reports.yaml#/components/schemas/ReportDcUnansweredReason
+        error:
+          $ref: modules/reports.yaml#/components/schemas/ReportDcError
+        rowKey:
+          type: string
+          maxLength: 128
+          minLength: 1
+        readAt:
+          type: string
+          format: date-time
+    ReportManagerCandidate:
+      description: >-
+        A user with at least one direct report, offered by the manager picker. Two with the same displayName differ in logonName or ouPath. connectionId and guid are what ReportSubjectRef carries back.
+      type: object
+      required: [connectionId, guid, displayName, logonName, ouPath, directReports]
+      properties:
+        connectionId:
+          type: string
+          format: uuid
+        guid:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          maxLength: 256
+        logonName:
+          type: string
+          maxLength: 256
+        ouPath:
+          type: string
+          maxLength: 1024
+        directReports:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+    ReportManagerList:
+      description: >-
+        A page of managers, ordered by display name then objectGUID.
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportManagerCandidate
+        page:
+          $ref: shared/paging.yaml#/components/schemas/PageInfo
     ReportDcCoverage:
       description: >-
-        How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5).
+        How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5). dcsInScope counts every DC in the runner's scope, including those a cap left unread. dcsAnswered counts the DCs that gave data.
+        complete is true only when every DC in scope answered: it is false when any DC did not answer or when notReadByCap is above zero, and zero DCs answered is coverage, never an empty result.
+        unanswered, notReadByCap and readCap are set by SYS-03 DC Replication Status (reports-2 second slice 7.3) and may be absent on other per-DC reports. unanswered lists the DCs that were read and gave no data, each with its reason and error, in DNS-name order;
+        dcsAnswered plus the length of unanswered plus notReadByCap equals dcsInScope. A DC not read because of readCap has no row and no entry in unanswered; only the count is given, and the console says Narrow the scope.
+        SYS-03 reads at most readCap DCs (100) and reads them in DNS-name order; it does not refuse the run, unlike the read cap of USR-04 and PWD-03 (failure reason per_dc_read_cap_exceeded).
       type: object
       required: [dcsInScope, dcsAnswered, complete]
       properties:
+        unanswered:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportDcUnanswered
+        notReadByCap:
+          type: integer
+          minimum: 0
+          maximum: 100000
+        readCap:
+          type: integer
+          minimum: 1
+          maximum: 100000
         dcsInScope:
           type: integer
           minimum: 0
@@ -2908,6 +3431,8 @@ components:
           $ref: modules/reports.yaml#/components/schemas/ReportFailure
         coverage:
           $ref: modules/reports.yaml#/components/schemas/ReportDcCoverage
+        replication:
+          $ref: modules/reports.yaml#/components/schemas/ReportReplicationSummary
         rerunOf:
           type: string
           format: uuid

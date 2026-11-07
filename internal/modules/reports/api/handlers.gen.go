@@ -455,7 +455,7 @@ func (in *GetReportDefinitionInput) Validate(errs *apitypes.Errors) {
 	_ = errs
 	{
 		apitypes.CheckLen(errs, apitypes.InPath, jsontext.Pointer("definitionId"), string(in.DefinitionID), 2, 64)
-		if !pattern5.MatchString(string(in.DefinitionID)) {
+		if !pattern6.MatchString(string(in.DefinitionID)) {
 			errs.Add(apitypes.InPath, jsontext.Pointer("definitionId"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -530,6 +530,45 @@ func (GetReportExport200) StatusCode() int                    { return 200 }
 func (o GetReportExport200) ResponseBody() any                { return o.Body }
 func (GetReportExport200) ResponseHeaders() map[string]string { return nil }
 func (GetReportExport200) isGetReportExportOutput()           {}
+
+// GetReportReplicationThresholdsInput is the decoded input of getReportReplicationThresholds: path, query and header parameters, then the body.
+type GetReportReplicationThresholdsInput struct {
+}
+
+func (in *GetReportReplicationThresholdsInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+}
+
+func (in *GetReportReplicationThresholdsInput) BodyTarget() any { return nil }
+
+func (in *GetReportReplicationThresholdsInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+}
+
+func (in *GetReportReplicationThresholdsInput) DestroySecrets() {}
+
+// GetReportReplicationThresholdsOutput is one of the responses getReportReplicationThresholds declares. Errors are returned as the error value.
+type GetReportReplicationThresholdsOutput interface {
+	apihost.Response
+	isGetReportReplicationThresholdsOutput()
+}
+
+// GetReportReplicationThresholds200 is the 200 response.
+type GetReportReplicationThresholds200 struct {
+	Body ReportReplicationThresholds
+	ETag string // header ETag
+}
+
+func (GetReportReplicationThresholds200) StatusCode() int     { return 200 }
+func (o GetReportReplicationThresholds200) ResponseBody() any { return o.Body }
+func (o GetReportReplicationThresholds200) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ETag != "" {
+		h["ETag"] = o.ETag
+	}
+	return h
+}
+func (GetReportReplicationThresholds200) isGetReportReplicationThresholdsOutput() {}
 
 // GetReportRunInput is the decoded input of getReportRun: path, query and header parameters, then the body.
 type GetReportRunInput struct {
@@ -706,7 +745,7 @@ func (in *ListReportDefinitionsInput) Validate(errs *apitypes.Errors) {
 	_ = errs
 	if in.Q != nil {
 		apitypes.CheckLen(errs, apitypes.InQuery, jsontext.Pointer("q"), string((*in.Q)), 1, 256)
-		if !pattern9.MatchString(string((*in.Q))) {
+		if !pattern10.MatchString(string((*in.Q))) {
 			errs.Add(apitypes.InQuery, jsontext.Pointer("q"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -740,6 +779,93 @@ func (ListReportDefinitions200) StatusCode() int                    { return 200
 func (o ListReportDefinitions200) ResponseBody() any                { return o.Body }
 func (ListReportDefinitions200) ResponseHeaders() map[string]string { return nil }
 func (ListReportDefinitions200) isListReportDefinitionsOutput()     {}
+
+// ListReportManagersInput is the decoded input of listReportManagers: path, query and header parameters, then the body.
+type ListReportManagersInput struct {
+	Q      *string          // query "q"
+	Cursor *apitypes.Cursor // query "cursor"
+	Limit  *int64           // query "limit"
+}
+
+func (in *ListReportManagersInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := r.Query["q"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("q"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e string
+			e = string(s)
+			in.Q = &e
+		}
+	}
+	{
+		vs := r.Query["cursor"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("cursor"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e apitypes.Cursor
+			e = apitypes.Cursor(s)
+			in.Cursor = &e
+		}
+	}
+	{
+		vs := r.Query["limit"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("limit"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e int64
+			if x, err := apitypes.ParseInt(s); err != nil {
+				errs.Add(apitypes.InQuery, jsontext.Pointer("limit"), apitypes.CodeType, "expected a valid value")
+			} else {
+				e = int64(x)
+			}
+			in.Limit = &e
+		}
+	}
+}
+
+func (in *ListReportManagersInput) BodyTarget() any { return nil }
+
+func (in *ListReportManagersInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	if in.Q != nil {
+		apitypes.CheckLen(errs, apitypes.InQuery, jsontext.Pointer("q"), string((*in.Q)), 0, 256)
+		if !pattern9.MatchString(string((*in.Q))) {
+			errs.Add(apitypes.InQuery, jsontext.Pointer("q"), apitypes.CodePattern, "value does not match the required pattern")
+		}
+	}
+	if in.Cursor != nil {
+		apitypes.CheckLen(errs, apitypes.InQuery, jsontext.Pointer("cursor"), string((*in.Cursor)), 1, 1024)
+	}
+	if in.Limit != nil {
+		apitypes.CheckInt(errs, apitypes.InQuery, jsontext.Pointer("limit"), int64((*in.Limit)), 1, 1000)
+	}
+}
+
+func (in *ListReportManagersInput) DestroySecrets() {}
+
+// ListReportManagersOutput is one of the responses listReportManagers declares. Errors are returned as the error value.
+type ListReportManagersOutput interface {
+	apihost.Response
+	isListReportManagersOutput()
+}
+
+// ListReportManagers200 is the 200 response.
+type ListReportManagers200 struct {
+	Body ReportManagerList
+}
+
+func (ListReportManagers200) StatusCode() int                    { return 200 }
+func (o ListReportManagers200) ResponseBody() any                { return o.Body }
+func (ListReportManagers200) ResponseHeaders() map[string]string { return nil }
+func (ListReportManagers200) isListReportManagersOutput()        {}
 
 // ListReportRunRowsInput is the decoded input of listReportRunRows: path, query and header parameters, then the body.
 type ListReportRunRowsInput struct {
@@ -937,7 +1063,7 @@ func (in *ListReportRunsInput) Validate(errs *apitypes.Errors) {
 	}
 	if in.DefinitionID != nil {
 		apitypes.CheckLen(errs, apitypes.InQuery, jsontext.Pointer("definitionId"), string((*in.DefinitionID)), 2, 64)
-		if !pattern5.MatchString(string((*in.DefinitionID))) {
+		if !pattern6.MatchString(string((*in.DefinitionID))) {
 			errs.Add(apitypes.InQuery, jsontext.Pointer("definitionId"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -1396,6 +1522,58 @@ func (o PreviewResumeReportSchedule200) ResponseBody() any                  { re
 func (PreviewResumeReportSchedule200) ResponseHeaders() map[string]string   { return nil }
 func (PreviewResumeReportSchedule200) isPreviewResumeReportScheduleOutput() {}
 
+// PreviewUndoReportReplicationThresholdsOperationInput is the decoded input of previewUndoReportReplicationThresholdsOperation: path, query and header parameters, then the body.
+type PreviewUndoReportReplicationThresholdsOperationInput struct {
+	OperationID apitypes.UUID // path "operationId"
+}
+
+func (in *PreviewUndoReportReplicationThresholdsOperationInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("operationId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("operationId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("operationId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.OperationID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("operationId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *PreviewUndoReportReplicationThresholdsOperationInput) BodyTarget() any { return nil }
+
+func (in *PreviewUndoReportReplicationThresholdsOperationInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+}
+
+func (in *PreviewUndoReportReplicationThresholdsOperationInput) DestroySecrets() {}
+
+// PreviewUndoReportReplicationThresholdsOperationOutput is one of the responses previewUndoReportReplicationThresholdsOperation declares. Errors are returned as the error value.
+type PreviewUndoReportReplicationThresholdsOperationOutput interface {
+	apihost.Response
+	isPreviewUndoReportReplicationThresholdsOperationOutput()
+}
+
+// PreviewUndoReportReplicationThresholdsOperation200 is the 200 response.
+type PreviewUndoReportReplicationThresholdsOperation200 struct {
+	Body apitypes.OperationPreview
+}
+
+func (PreviewUndoReportReplicationThresholdsOperation200) StatusCode() int     { return 200 }
+func (o PreviewUndoReportReplicationThresholdsOperation200) ResponseBody() any { return o.Body }
+func (PreviewUndoReportReplicationThresholdsOperation200) ResponseHeaders() map[string]string {
+	return nil
+}
+func (PreviewUndoReportReplicationThresholdsOperation200) isPreviewUndoReportReplicationThresholdsOperationOutput() {
+}
+
 // PreviewUndoReportScheduleOperationInput is the decoded input of previewUndoReportScheduleOperation: path, query and header parameters, then the body.
 type PreviewUndoReportScheduleOperationInput struct {
 	OperationID apitypes.UUID // path "operationId"
@@ -1444,6 +1622,57 @@ func (PreviewUndoReportScheduleOperation200) StatusCode() int                   
 func (o PreviewUndoReportScheduleOperation200) ResponseBody() any                         { return o.Body }
 func (PreviewUndoReportScheduleOperation200) ResponseHeaders() map[string]string          { return nil }
 func (PreviewUndoReportScheduleOperation200) isPreviewUndoReportScheduleOperationOutput() {}
+
+// PreviewUpdateReportReplicationThresholdsInput is the decoded input of previewUpdateReportReplicationThresholds: path, query and header parameters, then the body.
+type PreviewUpdateReportReplicationThresholdsInput struct {
+	IfMatch string // header "If-Match"
+	Body    ReportReplicationThresholdsWrite
+}
+
+func (in *PreviewUpdateReportReplicationThresholdsInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := r.Header.Values("If-Match")
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("If-Match"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			in.IfMatch = string(s)
+		default:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("If-Match"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *PreviewUpdateReportReplicationThresholdsInput) BodyTarget() any { return &in.Body }
+
+func (in *PreviewUpdateReportReplicationThresholdsInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	{
+		apitypes.CheckLen(errs, apitypes.InHeader, jsontext.Pointer("If-Match"), string(in.IfMatch), 1, 256)
+	}
+	in.Body.Validate(jsontext.Pointer(""), errs)
+}
+
+func (in *PreviewUpdateReportReplicationThresholdsInput) DestroySecrets() {}
+
+// PreviewUpdateReportReplicationThresholdsOutput is one of the responses previewUpdateReportReplicationThresholds declares. Errors are returned as the error value.
+type PreviewUpdateReportReplicationThresholdsOutput interface {
+	apihost.Response
+	isPreviewUpdateReportReplicationThresholdsOutput()
+}
+
+// PreviewUpdateReportReplicationThresholds200 is the 200 response.
+type PreviewUpdateReportReplicationThresholds200 struct {
+	Body apitypes.OperationPreview
+}
+
+func (PreviewUpdateReportReplicationThresholds200) StatusCode() int                    { return 200 }
+func (o PreviewUpdateReportReplicationThresholds200) ResponseBody() any                { return o.Body }
+func (PreviewUpdateReportReplicationThresholds200) ResponseHeaders() map[string]string { return nil }
+func (PreviewUpdateReportReplicationThresholds200) isPreviewUpdateReportReplicationThresholdsOutput() {
+}
 
 // PreviewUpdateReportScheduleInput is the decoded input of previewUpdateReportSchedule: path, query and header parameters, then the body.
 type PreviewUpdateReportScheduleInput struct {
@@ -1798,6 +2027,83 @@ func (o RunReportScheduleNow202) ResponseHeaders() map[string]string {
 }
 func (RunReportScheduleNow202) isRunReportScheduleNowOutput() {}
 
+// UndoReportReplicationThresholdsOperationInput is the decoded input of undoReportReplicationThresholdsOperation: path, query and header parameters, then the body.
+type UndoReportReplicationThresholdsOperationInput struct {
+	OperationID apitypes.UUID // path "operationId"
+	Body        apitypes.OperationUndoRequest
+}
+
+func (in *UndoReportReplicationThresholdsOperationInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("operationId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("operationId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("operationId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.OperationID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("operationId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *UndoReportReplicationThresholdsOperationInput) BodyTarget() any { return &in.Body }
+
+func (in *UndoReportReplicationThresholdsOperationInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	in.Body.Validate(jsontext.Pointer(""), errs)
+}
+
+func (in *UndoReportReplicationThresholdsOperationInput) DestroySecrets() {}
+
+// UndoReportReplicationThresholdsOperationOutput is one of the responses undoReportReplicationThresholdsOperation declares. Errors are returned as the error value.
+type UndoReportReplicationThresholdsOperationOutput interface {
+	apihost.Response
+	isUndoReportReplicationThresholdsOperationOutput()
+}
+
+// UndoReportReplicationThresholdsOperation200 is the 200 response.
+type UndoReportReplicationThresholdsOperation200 struct {
+	Body                 apitypes.OperationRef
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+}
+
+func (UndoReportReplicationThresholdsOperation200) StatusCode() int     { return 200 }
+func (o UndoReportReplicationThresholdsOperation200) ResponseBody() any { return o.Body }
+func (o UndoReportReplicationThresholdsOperation200) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	return h
+}
+func (UndoReportReplicationThresholdsOperation200) isUndoReportReplicationThresholdsOperationOutput() {
+}
+
+// UndoReportReplicationThresholdsOperation202 is the 202 response.
+type UndoReportReplicationThresholdsOperation202 struct {
+	Body                 apitypes.OperationRef
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+}
+
+func (UndoReportReplicationThresholdsOperation202) StatusCode() int     { return 202 }
+func (o UndoReportReplicationThresholdsOperation202) ResponseBody() any { return o.Body }
+func (o UndoReportReplicationThresholdsOperation202) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	return h
+}
+func (UndoReportReplicationThresholdsOperation202) isUndoReportReplicationThresholdsOperationOutput() {
+}
+
 // UndoReportScheduleOperationInput is the decoded input of undoReportScheduleOperation: path, query and header parameters, then the body.
 type UndoReportScheduleOperationInput struct {
 	OperationID apitypes.UUID // path "operationId"
@@ -1872,6 +2178,84 @@ func (o UndoReportScheduleOperation202) ResponseHeaders() map[string]string {
 	return h
 }
 func (UndoReportScheduleOperation202) isUndoReportScheduleOperationOutput() {}
+
+// UpdateReportReplicationThresholdsInput is the decoded input of updateReportReplicationThresholds: path, query and header parameters, then the body.
+type UpdateReportReplicationThresholdsInput struct {
+	IfMatch string // header "If-Match"
+	Body    ReportReplicationThresholdsWrite
+}
+
+func (in *UpdateReportReplicationThresholdsInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := r.Header.Values("If-Match")
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("If-Match"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			in.IfMatch = string(s)
+		default:
+			errs.Add(apitypes.InHeader, jsontext.Pointer("If-Match"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+}
+
+func (in *UpdateReportReplicationThresholdsInput) BodyTarget() any { return &in.Body }
+
+func (in *UpdateReportReplicationThresholdsInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	{
+		apitypes.CheckLen(errs, apitypes.InHeader, jsontext.Pointer("If-Match"), string(in.IfMatch), 1, 256)
+	}
+	in.Body.Validate(jsontext.Pointer(""), errs)
+}
+
+func (in *UpdateReportReplicationThresholdsInput) DestroySecrets() {}
+
+// UpdateReportReplicationThresholdsOutput is one of the responses updateReportReplicationThresholds declares. Errors are returned as the error value.
+type UpdateReportReplicationThresholdsOutput interface {
+	apihost.Response
+	isUpdateReportReplicationThresholdsOutput()
+}
+
+// UpdateReportReplicationThresholds200 is the 200 response.
+type UpdateReportReplicationThresholds200 struct {
+	Body                 ReportReplicationThresholds
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+	ETag                 string // header ETag
+}
+
+func (UpdateReportReplicationThresholds200) StatusCode() int     { return 200 }
+func (o UpdateReportReplicationThresholds200) ResponseBody() any { return o.Body }
+func (o UpdateReportReplicationThresholds200) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	if o.ETag != "" {
+		h["ETag"] = o.ETag
+	}
+	return h
+}
+func (UpdateReportReplicationThresholds200) isUpdateReportReplicationThresholdsOutput() {}
+
+// UpdateReportReplicationThresholds202 is the 202 response.
+type UpdateReportReplicationThresholds202 struct {
+	Body                 apitypes.OperationRef
+	ActiveDiqOperationID string // header ActiveDIQ-Operation-Id
+}
+
+func (UpdateReportReplicationThresholds202) StatusCode() int     { return 202 }
+func (o UpdateReportReplicationThresholds202) ResponseBody() any { return o.Body }
+func (o UpdateReportReplicationThresholds202) ResponseHeaders() map[string]string {
+	h := map[string]string{}
+	if o.ActiveDiqOperationID != "" {
+		h["ActiveDIQ-Operation-Id"] = o.ActiveDiqOperationID
+	}
+	return h
+}
+func (UpdateReportReplicationThresholds202) isUpdateReportReplicationThresholdsOutput() {}
 
 // UpdateReportScheduleInput is the decoded input of updateReportSchedule: path, query and header parameters, then the body.
 type UpdateReportScheduleInput struct {
@@ -1980,9 +2364,11 @@ type Handlers interface {
 	DownloadReportExport(ctx context.Context, in DownloadReportExportInput) (DownloadReportExportOutput, error)
 	GetReportDefinition(ctx context.Context, in GetReportDefinitionInput) (GetReportDefinitionOutput, error)
 	GetReportExport(ctx context.Context, in GetReportExportInput) (GetReportExportOutput, error)
+	GetReportReplicationThresholds(ctx context.Context, in GetReportReplicationThresholdsInput) (GetReportReplicationThresholdsOutput, error)
 	GetReportRun(ctx context.Context, in GetReportRunInput) (GetReportRunOutput, error)
 	GetReportSchedule(ctx context.Context, in GetReportScheduleInput) (GetReportScheduleOutput, error)
 	ListReportDefinitions(ctx context.Context, in ListReportDefinitionsInput) (ListReportDefinitionsOutput, error)
+	ListReportManagers(ctx context.Context, in ListReportManagersInput) (ListReportManagersOutput, error)
 	ListReportRunRows(ctx context.Context, in ListReportRunRowsInput) (ListReportRunRowsOutput, error)
 	ListReportRuns(ctx context.Context, in ListReportRunsInput) (ListReportRunsOutput, error)
 	ListReportSchedules(ctx context.Context, in ListReportSchedulesInput) (ListReportSchedulesOutput, error)
@@ -1992,13 +2378,17 @@ type Handlers interface {
 	PreviewPauseReportSchedule(ctx context.Context, in PreviewPauseReportScheduleInput) (PreviewPauseReportScheduleOutput, error)
 	PreviewReassignReportSchedule(ctx context.Context, in PreviewReassignReportScheduleInput) (PreviewReassignReportScheduleOutput, error)
 	PreviewResumeReportSchedule(ctx context.Context, in PreviewResumeReportScheduleInput) (PreviewResumeReportScheduleOutput, error)
+	PreviewUndoReportReplicationThresholdsOperation(ctx context.Context, in PreviewUndoReportReplicationThresholdsOperationInput) (PreviewUndoReportReplicationThresholdsOperationOutput, error)
 	PreviewUndoReportScheduleOperation(ctx context.Context, in PreviewUndoReportScheduleOperationInput) (PreviewUndoReportScheduleOperationOutput, error)
+	PreviewUpdateReportReplicationThresholds(ctx context.Context, in PreviewUpdateReportReplicationThresholdsInput) (PreviewUpdateReportReplicationThresholdsOutput, error)
 	PreviewUpdateReportSchedule(ctx context.Context, in PreviewUpdateReportScheduleInput) (PreviewUpdateReportScheduleOutput, error)
 	ReassignReportSchedule(ctx context.Context, in ReassignReportScheduleInput) (ReassignReportScheduleOutput, error)
 	ResumeReportSchedule(ctx context.Context, in ResumeReportScheduleInput) (ResumeReportScheduleOutput, error)
 	RetryReportRun(ctx context.Context, in RetryReportRunInput) (RetryReportRunOutput, error)
 	RunReportScheduleNow(ctx context.Context, in RunReportScheduleNowInput) (RunReportScheduleNowOutput, error)
+	UndoReportReplicationThresholdsOperation(ctx context.Context, in UndoReportReplicationThresholdsOperationInput) (UndoReportReplicationThresholdsOperationOutput, error)
 	UndoReportScheduleOperation(ctx context.Context, in UndoReportScheduleOperationInput) (UndoReportScheduleOperationOutput, error)
+	UpdateReportReplicationThresholds(ctx context.Context, in UpdateReportReplicationThresholdsInput) (UpdateReportReplicationThresholdsOutput, error)
 	UpdateReportSchedule(ctx context.Context, in UpdateReportScheduleInput) (UpdateReportScheduleOutput, error)
 }
 
@@ -2152,6 +2542,22 @@ func Bind(h Handlers) apihost.TagHandlers {
 				return out, nil
 			}),
 		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "getReportReplicationThresholds", Tag: "reports", Method: "GET", Path: "/reports/replication/thresholds",
+			Permission: "reports.replication.read", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(GetReportReplicationThresholdsInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.GetReportReplicationThresholds(ctx, *in.(*GetReportReplicationThresholdsInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("GetReportReplicationThresholds returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "getReportRun", Tag: "reports", Method: "GET", Path: "/reports/runs/{runId}",
 			Permission: "reports.run", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
 			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
@@ -2196,6 +2602,22 @@ func Bind(h Handlers) apihost.TagHandlers {
 				}
 				if out == nil {
 					return nil, fmt.Errorf("ListReportDefinitions returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "listReportManagers", Tag: "reports", Method: "GET", Path: "/reports/managers",
+			Permission: "reports.run", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(ListReportManagersInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.ListReportManagers(ctx, *in.(*ListReportManagersInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("ListReportManagers returned no output and no error")
 				}
 				return out, nil
 			}),
@@ -2346,6 +2768,22 @@ func Bind(h Handlers) apihost.TagHandlers {
 				return out, nil
 			}),
 		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "previewUndoReportReplicationThresholdsOperation", Tag: "reports", Method: "POST", Path: "/reports/replication/thresholds/operations/{operationId}/previews/undo",
+			Permission: "reports.replication.configure", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(PreviewUndoReportReplicationThresholdsOperationInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.PreviewUndoReportReplicationThresholdsOperation(ctx, *in.(*PreviewUndoReportReplicationThresholdsOperationInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("PreviewUndoReportReplicationThresholdsOperation returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "previewUndoReportScheduleOperation", Tag: "reports", Method: "POST", Path: "/reports/schedules/operations/{operationId}/previews/undo",
 			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
 			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
@@ -2358,6 +2796,23 @@ func Bind(h Handlers) apihost.TagHandlers {
 				}
 				if out == nil {
 					return nil, fmt.Errorf("PreviewUndoReportScheduleOperation returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "previewUpdateReportReplicationThresholds", Tag: "reports", Method: "POST", Path: "/reports/replication/thresholds/previews/update",
+			Permission: "reports.replication.configure", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 1024, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
+			Headers: []string{"If-Match"},
+		},
+			func() apihost.Input { return new(PreviewUpdateReportReplicationThresholdsInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.PreviewUpdateReportReplicationThresholds(ctx, *in.(*PreviewUpdateReportReplicationThresholdsInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("PreviewUpdateReportReplicationThresholds returned no output and no error")
 				}
 				return out, nil
 			}),
@@ -2444,6 +2899,22 @@ func Bind(h Handlers) apihost.TagHandlers {
 				return out, nil
 			}),
 		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "undoReportReplicationThresholdsOperation", Tag: "reports", Method: "POST", Path: "/reports/replication/thresholds/operations/{operationId}/undo",
+			Permission: "reports.replication.configure", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "write", MaxBody: 1024, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
+		},
+			func() apihost.Input { return new(UndoReportReplicationThresholdsOperationInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.UndoReportReplicationThresholdsOperation(ctx, *in.(*UndoReportReplicationThresholdsOperationInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("UndoReportReplicationThresholdsOperation returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "undoReportScheduleOperation", Tag: "reports", Method: "POST", Path: "/reports/schedules/operations/{operationId}/undo",
 			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
 			Class: "write", MaxBody: 32768, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
@@ -2456,6 +2927,23 @@ func Bind(h Handlers) apihost.TagHandlers {
 				}
 				if out == nil {
 					return nil, fmt.Errorf("UndoReportScheduleOperation returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "updateReportReplicationThresholds", Tag: "reports", Method: "PUT", Path: "/reports/replication/thresholds",
+			Permission: "reports.replication.configure", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "write", MaxBody: 1024, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
+			Headers: []string{"If-Match"},
+		},
+			func() apihost.Input { return new(UpdateReportReplicationThresholdsInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.UpdateReportReplicationThresholds(ctx, *in.(*UpdateReportReplicationThresholdsInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("UpdateReportReplicationThresholds returned no output and no error")
 				}
 				return out, nil
 			}),
@@ -2480,5 +2968,5 @@ func Bind(h Handlers) apihost.TagHandlers {
 }
 
 var (
-	pattern9 = regexp.MustCompile("^[^()*\\\\&|=!<>~\\x00-\\x1f\\x7f]+$")
+	pattern10 = regexp.MustCompile("^[^()*\\\\&|=!<>~\\x00-\\x1f\\x7f]+$")
 )

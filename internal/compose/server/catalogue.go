@@ -20,6 +20,8 @@ var moduleOperationPermissions = []string{
 	string(directory.ReadPermission),
 	string(reports.DeliverExternalPermission),
 	string(reports.ExportPermission),
+	string(reports.ReplicationConfigurePermission),
+	string(reports.ReplicationReadPermission),
 	string(reports.RunPermission),
 	string(reports.ScheduleManageAllPermission),
 	string(reports.SchedulePermission),
