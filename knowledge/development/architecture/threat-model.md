@@ -802,7 +802,7 @@ Rules for the second report slice ([reports-2-second-slice.md](../../product/spe
 7. **No new access via DirSync.** If the lab shows that the DirSync feed under `LDAP_DIRSYNC_OBJECT_SECURITY` delivers a delete with an originating time, the build may show that time (Basis "DC time, originating") because it needs no new right; if it does not, the resync diff is the signal and the header states the detection latency. Get-Changes is not requested to obtain deletions (R2).
 8. **Revisit trigger.** Customer demand for tombstone state is handled by a new RT-4 review with a customer-run, documented, JIT grant and its own ADR; it is not a toggle in this slice.
 
-Fitness functions (owners on the build tickets): **TM-F-RIGHTS** gains cases (a) the wizard output for SYS-03 contains exactly the Monitor-Topology ACE on partition heads and no Get-Changes/Get-Changes-All/Administrators membership; (b) no code path issues a search with the Show-Deleted control against `CN=Deleted Objects` as a listing or sets an owner/DACL on it (grep-level plus connector-contract test; *tightened by TM-D33: base scope only, one call site*); (c) SYS-03 run with the right absent yields only "Not reported" rows and never a Healthy status (reporting-engineer unit + Windows lab case); (d) an empty result with the right unverified is "Not reported".
+Fitness functions (owners on the build tickets): **TM-F-RIGHTS** gains cases (a) the wizard output for SYS-03 contains exactly the Monitor-Topology ACE on partition heads and no Get-Changes/Get-Changes-All/Administrators membership; (b) no code path issues a search with the Show-Deleted control against `CN=Deleted Objects` as a listing or sets an owner/DACL on it (grep-level plus connector-contract test; *superseded by TM-D33's (b1)/(b2): two base-scope connector functions with allow-listed callers, owner T-1737*); (c) SYS-03 run with the right absent yields only "Not reported" rows and never a Healthy status (reporting-engineer unit + Windows lab case); (d) an empty result with the right unverified is "Not reported".
 
 **TM-D33: Restore classification read of a deleted target (R15 (b)) (T-1730, security-architect, 2026-11-07).**
 Question: connector-contract §8.10.9 R2 makes kind 6 `OBJECT_RESTORE` classify the *deleted* target in step 7 from the
@@ -847,8 +847,9 @@ class of data.
    (T-1734).
 3. **What the connector may do with it.** Only a **base-scope** read of `<GUID=…>` with the show-deleted control
    (`1.2.840.113556.1.4.417`, critical), the show-deactivated-link control (`1.2.840.113556.1.4.2065`), SD_FLAGS 0x7 (owner,
-   group, DACL; never the SACL), and the fixed R2 attribute list, from kind 6 `Plan`/`Apply` step 7 only, plus the container
-   descriptor read of rule 4. Never a one-level or subtree search at or under the container, never a listing, never from
+   group, DACL; never the SACL), and the fixed R2 attribute list, from kind 6 `Plan`/`Apply` step 7 only; plus a base-scope read
+   of the container's `nTSecurityDescriptor` alone (SD_FLAGS 0x5), from the rule 4 grant check and the rule 5
+   VerifyConnection findings only, through one shared connector function (TM-F-RIGHTS (b2) below). Never a one-level or subtree search at or under the container, never a listing, never from
    another kind, report, API or job. Reports-2 rule 7b stays unbuilt (TM-D31 rule 6). A kind-6 `Plan` needs the restore
    permission and is audited like every Plan, so a server that probes deleted objects by GUID leaves a record.
 4. **Prove the grant, never infer it.** At step 7, live on the pinned DC, the connector resolves the container through the
@@ -873,13 +874,29 @@ class of data.
    readable on a deleted object without its live right, withdraws the grant (kind 6 refused) pending a new review; customer
    reports that the ownership procedure blocks adoption go to product-manager as a scope question.
 
-Fitness functions: **TM-F-RIGHTS** case (b) is amended to: no code path issues a show-deleted search whose scope is not base,
-or whose base is the container (by DN, GUID or WKGUID), and none writes the container's owner or DACL; the deleted-object read
-has exactly one call site, kind 6 step 7 (package-visibility or analyser check, failing fixture). New cases: (e) the wizard's
-restore output for a domain is exactly one ACE `LC`|`RC`, no inheritance flags, trustee the dedicated group, plus the owner
-reset to SYSTEM, and never Read Property, generic rights or an inheritable ACE; (f) a kind-6 Plan with the grant absent answers
-`INSUFFICIENT_RIGHTS` with the named right, never `OBJECT_NOT_FOUND` (W); (g) the rule 5 findings (unit, and W for the DACL
-read). Conformance CC-WK-32 to CC-WK-35 (contract §9.8).
+Fitness functions: **TM-F-RIGHTS** case (b) is amended to the following (it supersedes the original (b) of TM-D31; owner
+**T-1737**, directory-engineer). No code path writes the container's owner or DACL. The show-deleted control
+(`1.2.840.113556.1.4.417`) is sent by exactly **two connector functions**, both base scope, and by no other code
+(package-visibility or analyser check: the control's constructor is visible only to these two, and each has an allow list of
+callers):
+- **(b1) Deleted-target read**: base a `<GUID=…>` DN built by the DN primitive, scope base, controls 417 (critical) + 2065 +
+  SD_FLAGS 0x7 + extended DN, attribute list exactly the fixed R2 set. **Sole caller:** kind 6 step 7 (`Plan`/`Apply`).
+- **(b2) Container-descriptor read**: base the `CN=Deleted Objects` container resolved through the domain head's
+  `wellKnownObjects` WKGUID, scope base, attribute list exactly `nTSecurityDescriptor`, SD_FLAGS 0x5 (owner and DACL), no
+  paged-results control. The container is itself `isDeleted`, so this read needs 417 too. **Callers:** kind 6 step 7's grant
+  check (rule 4) and VerifyConnection's R15 (b) findings (rule 5), and nothing else; both call this one function, so the
+  check stays "one function, allow-listed callers".
+
+Everything else with 417 is forbidden. Failing fixtures: a one-level search on the container; a subtree search at the domain
+head or the container; a base read of the container requesting any attribute other than `nTSecurityDescriptor` (including
+`*`, an empty list or an R2 attribute); SD_FLAGS other than 0x5 on (b2) or 0x7 on (b1); the paged-results control with 417;
+a (b1) read whose base is a string DN or a WKGUID DN; (b1) or (b2) called from outside its allow list (a report, an API
+handler, a job, another kind); an owner or DACL write on the container. New cases: (e) the wizard's restore output for a
+domain is exactly one ACE `LC`|`RC`, no inheritance flags, trustee the dedicated group, plus the owner reset to SYSTEM, and
+never Read Property, generic rights or an inheritable ACE (owner T-1735, its AC2); (f) a kind-6 Plan with the grant absent
+answers `INSUFFICIENT_RIGHTS` with the named right, never `OBJECT_NOT_FOUND`, and issues no (b1) read (W; owner T-1737);
+(g) the rule 5 findings (unit, and W for the DACL read; owner T-1735, its AC1). Conformance CC-WK-32 to CC-WK-35
+(contract §9.8; T-1736).
 
 **Default posture.** Per-attribute WP, never property sets that over-grant. No GenericAll,
 GenericWrite, WRITE_DAC, WRITE_OWNER or Delete-Tree anywhere. No Get-Changes or Get-Changes-All.
@@ -3513,7 +3530,7 @@ External, in order of first use:
 - 2026-10-02 · v0.2 (old T-0007 review round 2). TM-D17 rule 4 (g) corrected: only a correlation that first became eligible **after** the tenant's first `attested` state, while the state was `open` or `stale`, needs a `tenant-owner` re-confirmation. The install-time population (correlations eligible before the first attested state, through `unattested` or `open`) becomes `matched` on that attestation, under TM-R11 and with TM-D19 rule 2 as the AD-side control. Two TM-F-HYBRID cases added (§6.8, §15). The TB7-T9 residual and TM-R11 extended to match. §6.6: RMAU members are protected from every property write (verbatim quotes). §6.9 rule 6: the RMAU Programmability consequence is stated as intended. §4.1 diagram: `radius` is on its own line. §8.1: RadSec (TCP) would be a new L-row through RT-6.
 - 2026-10-02 · v0.1 (old T-0007 rework after the solution-architect review). New boundaries TB18 (ManageEngine source ↔ migration importer, scanner, comparator; TM-D21) and TB19 (RADIUS; TM-D20, co-location bounded). `fileserver` agent rows TM-TB12-T10…T15 and TM-D13 extended to it; `fpolicy` and `t0-connector` out of scope with an RT-6 trigger. Authentication-plane residual closed by TM-D19 (activeDIQ-held authority factor anchored in the AD plane; TM-TB8-T8, TM-R12). TM-D17 aligned to DM-10.I7 and D-0009: 90 days, optional monitor, DM vocabulary and permissions, old T-0061. §6.3 R9 Deleted Objects finding (TM-Q27). §6.4 C rows reordered. New proofs TM-F-MIGRATE and TM-F-RADIUS; RT-18; TM-R13; TM-Q25 (Exchange leg) to TM-Q28. §18 regenerated (65 URLs).
 - 2026-10-02 · v0 (old T-0007). 17 trust boundaries with STRIDE tables; minimum AD rights R1–R13 and Graph allow and deny lists; the `tier0` set for AD (C1–C16) and Entra (E1–E5), answering DM Q1 and confirming DM-23.I5; the hybrid correlation gate (TM-D17), which confirms DM-20.I4 and tightens it, with (f) attested because Graph has no app-only read; role-granting groups as escalation objects (TM-D18, the DM-36.I2 referral); decisions TM-D1–D18; follow-up tickets old T-0053 to old T-0060. Status `review`.
-- 2026-11-07 · T-1730. §6.3 R15 split: (a) report and listing use stays never-requested (TM-D31 rule 6, amended pointer); (b) DECISION TM-D33: kind 6 restore ships, gated on an optional, customer-applied `LC`+`RC` ACE on `CN=Deleted Objects` to the connection identity only, proven from the container DACL, never inferred; R9 note; TM-F-RIGHTS (b) tightened, cases (e)-(g); §16.1 TM-R28. Evidence: T-1633 lab. Contract §8.10.3 kind 6 and §8.10.9 R2 amended in the same change.
+- 2026-11-07 · T-1730. §6.3 R15 split: (a) report and listing use stays never-requested (TM-D31 rule 6, amended pointer); (b) DECISION TM-D33: kind 6 restore ships, gated on an optional, customer-applied `LC`+`RC` ACE on `CN=Deleted Objects` to the connection identity only, proven from the container DACL, never inferred; R9 note; TM-F-RIGHTS (b) tightened, cases (e)-(g); §16.1 TM-R28. Evidence: T-1633 lab. Contract §8.10.3 kind 6 and §8.10.9 R2 amended in the same change. Round 2 (solution-architect review): TM-F-RIGHTS (b) restated as (b1) deleted-target read and (b2) container-descriptor read, two base-scope functions with allow-listed callers (step 7; step 7 and VerifyConnection), failing fixtures named; owners T-1737 ((b), (f)), T-1735 ((e), (g)).
 - 2026-11-04 · T-1125. §6.3 R14 (optional replication-monitoring read for SYS-03) and R15 (Deleted Objects read: never requested), DECISION TM-D31 with fallback behaviour and TM-F-RIGHTS cases; reports-2 §4.1 rule 7b not built in v1. Spec edit ticketed as T-1511 (product-manager); SYS-03 build, RBAC permission and TM-F-RIGHTS cases (a)-(d) as T-1512 (reporting-engineer); lab case T-1510. ID renumbered from TM-D30 (taken by T-0893).
 - 2026-10-24 · T-0235 (answers TM-Q29, ad-expert consult). §6.4: new C19 (control of a C1 or C13 group, `krbtgt`, a DC computer object, the Domain Controllers OU and DC-holding containers, and `tier0` GPOs) and DECISION TM-D27: eleven rules (per-class takeover rights, SDProp not trusted and live DACL read, ownership, ignore list, depth 1, live basis, connector self-check, Samba cannot prove SDProp) and 19 named T0-C19-* / T0-RIGHTS-C19 tests added to TM-F-T0GUARD. New TM-R21 (depth 1) and TM-R22 (SYSVOL ACL) accepted; TM-Q30 opened. Windows-lab items stay `[UNVERIFIED]`.
 - 2026-10-28 · T-0178: §9.2.1 and TM-D29 (rollback of sealed values): no seal counter in the AAD (it rolls back with the blob); per column new-row-on-change plus terminal rows hold no secret (CHECK and trigger), detective or ADR-bounded for key material, TM-R24 accepted for DM-63/82/85. TM-F-SEAL extended.
