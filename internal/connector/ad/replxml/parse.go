@@ -28,7 +28,7 @@ const (
 // (name strings, the boxed token, the element stack), so a document of tiny elements would break
 // the bound long before the X3 element count. The effective element limit is therefore
 // min(MaxElements, (8 x len + allocSlack) / allocPerElement): a DS_REPL_* value averages tens of
-// bytes per element, a hostile one 4.
+// bytes per element, a hostile one 4. Attributes are charged against the same budget (scan.go).
 const (
 	allocPerElement = 256
 	allocSlack      = 8 << 10 // fixed cost of the decoder, reader and result, not input-proportional
@@ -111,6 +111,9 @@ func parse(data []byte, sp *spec, lim limits) (*parsed, *DecodeError) {
 		return nil, fail(CodeTooLarge)
 	}
 	if e := precheck(data); e != nil {
+		return nil, e
+	}
+	if e := scanTags(data, lim); e != nil {
 		return nil, e
 	}
 	maxElems := elementLimit(len(data), lim.elements)

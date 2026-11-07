@@ -16,10 +16,19 @@ import (
 // and X5 (typed fields: real times, canonical GUIDs).
 func checkInvariants(t *testing.T, name string, dec func([]byte) (any, *DecodeError), data []byte) {
 	t.Helper()
+	before := totalAlloc()
 	start := time.Now()
 	v, e := dec(data)
 	if d := time.Since(start); len(data) <= MaxValueBytes && d > 100*time.Millisecond {
 		t.Fatalf("%s: %v for %d bytes", name, d, len(data))
+	}
+	// X6: allocation within 8 x the input. TotalAlloc is process-wide and the fuzz engine allocates
+	// on its own goroutines, so small inputs are noise (a first version tripped on 500-byte inputs);
+	// from 16 KiB up a regression is a multiple of the input and far above the 64 KiB allowance.
+	if n := min(len(data), MaxValueBytes); n >= 16<<10 {
+		if used, bound := totalAlloc()-before, uint64(8*n+64<<10); used > bound {
+			t.Fatalf("%s: allocated %d bytes for %d-byte input (bound %d)", name, used, len(data), bound)
+		}
 	}
 	rv := reflect.ValueOf(v)
 	if e != nil {
@@ -98,36 +107,35 @@ func walk(t *testing.T, name string, rv reflect.Value) {
 	t.Fatalf("%s: unexpected field kind %s: a decoded struct may hold only X5 types", name, rv.Kind())
 }
 
-func seed(f *testing.F, validPrefix string) {
+func seed(f *testing.F) {
 	for _, dir := range []string{"valid", "hostile"} {
 		files, _ := filepath.Glob(filepath.Join("testdata", dir, "*.xml"))
 		for _, p := range files {
 			f.Add(readFile(f, filepath.Join(dir, filepath.Base(p))))
 		}
 	}
-	_ = validPrefix
 }
 
 func FuzzDecodeNeighbors(f *testing.F) {
-	seed(f, "")
+	seed(f)
 	f.Fuzz(func(t *testing.T, b []byte) { checkInvariants(t, "DecodeNeighbors", decoders["DecodeNeighbors"], b) })
 }
 func FuzzDecodePendingOps(f *testing.F) {
-	seed(f, "")
+	seed(f)
 	f.Fuzz(func(t *testing.T, b []byte) { checkInvariants(t, "DecodePendingOps", decoders["DecodePendingOps"], b) })
 }
 func FuzzDecodeFailures(f *testing.F) {
-	seed(f, "")
+	seed(f)
 	f.Fuzz(func(t *testing.T, b []byte) { checkInvariants(t, "DecodeFailures", decoders["DecodeFailures"], b) })
 }
 func FuzzDecodeAttrMetaData(f *testing.F) {
-	seed(f, "")
+	seed(f)
 	f.Fuzz(func(t *testing.T, b []byte) {
 		checkInvariants(t, "DecodeAttrMetaData", decoders["DecodeAttrMetaData"], b)
 	})
 }
 func FuzzDecodeValueMetaData(f *testing.F) {
-	seed(f, "")
+	seed(f)
 	f.Fuzz(func(t *testing.T, b []byte) {
 		checkInvariants(t, "DecodeValueMetaData", decoders["DecodeValueMetaData"], b)
 	})
