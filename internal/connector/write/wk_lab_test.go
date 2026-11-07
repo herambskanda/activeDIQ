@@ -739,6 +739,45 @@ func TestCCWrite30DeleteUnderMemberOfRule(t *testing.T) {
 	}
 }
 
+// T-1632 security review F1 (CC-WRITE-30): deleting an object that is another object's manager clears
+// that object's manager, so under a 'Direct Reports for' closure rule (user.manager) the delete is
+// refused at Plan and Apply and the report keeps its manager; a manager with no reports is deleted.
+// Under the memberOf rule of the AC2 test a user with reports is refused too (RefuseAll covers
+// CLEAR_MANAGER), and one without reports is applied.
+func TestCCWrite30DeleteOfAManagerUnderRules(t *testing.T) {
+	del := connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE
+	for i, rc := range []struct{ name, rule string }{
+		{"direct reports rule", `Direct Reports for "77777777-7777-7777-7777-000000000199"`},
+		{"memberOf rule", `-not (user.memberOf -any (group.objectId -in ["77777777-7777-7777-7777-000000000199"]))`},
+	} {
+		r := newWKRigRuleText(t, rc.rule)
+		sfx := fmt.Sprint(i) // sAMAccountName is unique per domain, the rigs share it
+		r.rebind("Administrator", r.env["LAB_ADMIN_PASSWORD"])
+		r.adminAdd("CN=wkboss30"+sfx+","+r.ou, "user", map[string][]string{"sAMAccountName": {"wkboss30" + sfx}})
+		r.adminAdd("CN=wkemp30"+sfx+","+r.ou, "user", map[string][]string{"sAMAccountName": {"wkemp30" + sfx}})
+		r.adminAdd("CN=wkalone30"+sfx+","+r.ou, "user", map[string][]string{"sAMAccountName": {"wkalone30" + sfx}})
+		mod := ldap.NewModifyRequest("CN=wkemp30"+sfx+","+r.ou, nil)
+		mod.Replace("manager", []string{"CN=wkboss30" + sfx + "," + r.ou})
+		if err := r.admin.Modify(mod); err != nil {
+			t.Fatalf("%s: set manager: %v", rc.name, err)
+		}
+		boss, alone := r.guidOf("CN=wkboss30"+sfx+","+r.ou), r.guidOf("CN=wkalone30"+sfx+","+r.ou)
+
+		p := r.planReq(del, boss, deleteChange())
+		_, err := r.plan(p)
+		wantCode(t, rc.name+": manager delete, plan", err, connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED)
+		_, err = r.apply(r.applyFrom(p, &connectorv1.PlanResponse{}, nil))
+		wantCode(t, rc.name+": manager delete, apply", err, connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED)
+		if !r.exists("CN=wkboss30"+sfx+","+r.ou) || len(r.entry("CN=wkemp30"+sfx+","+r.ou, "manager").GetAttributeValues("manager")) != 1 {
+			t.Fatalf("%s: the manager was deleted or the report lost its manager", rc.name)
+		}
+		resp, err := r.planApply(del, alone, deleteChange())
+		if err != nil || resp.GetOutcome() != connectorv1.ApplyOutcome_APPLY_OUTCOME_APPLIED || r.exists("CN=wkalone30"+sfx+","+r.ou) {
+			t.Fatalf("%s: delete of a user with no reports: %v %v", rc.name, resp.GetOutcome(), err)
+		}
+	}
+}
+
 // CC-WK-28: a Tier-0 target is refused at CONNECTOR_SET before the kind's code, for each kind.
 func TestWKTier0Targets(t *testing.T) {
 	r := newWKRig(t)
