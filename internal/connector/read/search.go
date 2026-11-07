@@ -119,7 +119,7 @@ func (h *Handler) ScopedSearch(ctx context.Context, req *connectorv1.ScopedSearc
 		batch, size = nil, 0
 		return out.Send(m)
 	}
-	_, err = srch.ScopedSearch(ctx, ad.ScopedRequest{Roots: roots, Depth: depth, Filter: flt, Attributes: canon,
+	res, err := srch.ScopedSearch(ctx, ad.ScopedRequest{Roots: roots, Depth: depth, Filter: flt, Attributes: canon,
 		PageSize: req.GetPageSize(), ResolveParents: true}, func(e *ad.Entry) error {
 		id, err := e.GUID()
 		if err != nil {
@@ -159,6 +159,11 @@ func (h *Handler) ScopedSearch(ctx context.Context, req *connectorv1.ScopedSearc
 	}
 	if err := flush(); err != nil {
 		return err
+	}
+	if res.Unreadable > 0 {
+		// The completed event cannot carry the count (no proto field yet): the connector logs it, so a
+		// pass that withheld entries is never silent. Count only, no directory value.
+		h.log.Warn("connector: scoped search withheld unreadable entries", "withheld", res.Unreadable, "returned", res.Returned)
 	}
 	after, err := h.bound(ctx, pin)
 	if err != nil {

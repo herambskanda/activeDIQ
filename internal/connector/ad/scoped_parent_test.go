@@ -68,3 +68,55 @@ func TestScopedSearchWithoutResolveParentsReadsNothingExtra(t *testing.T) {
 		t.Fatalf("err=%v reads=%v", err, up.parentReads())
 	}
 }
+
+func countScoped(t *testing.T, s *Session, req ScopedRequest) (ScopedResult, int, error) {
+	t.Helper()
+	got := 0
+	res, err := s.ScopedSearch(context.Background(), req, func(*Entry) error { got++; return nil })
+	return res, got, err
+}
+
+// An entry listed without objectGUID is withheld and counted, not a failure of the whole search, and
+// the entries around it are still delivered (Samba lists some system objects partially).
+func TestScopedSearchWithholdsEntryWithoutObjectGUID(t *testing.T) {
+	up := startFakeUpstream(t, 10)
+	up.parents = 2
+	up.noGUID = 3
+	s, _ := faultSession(t, up.dial, injectPlan{skip: 1 << 30})
+	req := scopedReq(t, s, guid.GUID{1})
+	req.ResolveParents = true
+	res, got, err := countScoped(t, s, req)
+	if err != nil || got != 7 || res.Returned != 7 || res.Unreadable != 3 {
+		t.Fatalf("err=%v got=%d res=%+v", err, got, res)
+	}
+}
+
+// An entry whose parent cannot be read is withheld and counted; its siblings under a readable parent
+// are delivered. 10 entries over 2 parents: the 5 under the missing parent are the withheld ones.
+func TestScopedSearchWithholdsEntryWithUnreadableParent(t *testing.T) {
+	up := startFakeUpstream(t, 10)
+	up.parents = 2
+	up.missingParent = map[int]bool{1: true}
+	s, _ := faultSession(t, up.dial, injectPlan{skip: 1 << 30})
+	req := scopedReq(t, s, guid.GUID{1})
+	req.ResolveParents = true
+	res, got, err := countScoped(t, s, req)
+	if err != nil || got != 5 || res.Returned != 5 || res.Unreadable != 5 {
+		t.Fatalf("err=%v got=%d res=%+v", err, got, res)
+	}
+}
+
+// A session failure while resolving a parent is not "unplaceable": the search fails, never a silent
+// withhold.
+func TestScopedSearchSessionFailureOnParentStillFails(t *testing.T) {
+	up := startFakeUpstream(t, 10)
+	up.parents = 2
+	up.dropOnParent = map[int]bool{0: true}
+	s, _ := faultSession(t, up.dial, injectPlan{skip: 1 << 30})
+	req := scopedReq(t, s, guid.GUID{1})
+	req.ResolveParents = true
+	res, _, err := countScoped(t, s, req)
+	if err == nil {
+		t.Fatalf("a dropped session was swallowed: %+v", res)
+	}
+}

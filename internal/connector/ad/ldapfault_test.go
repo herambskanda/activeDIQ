@@ -211,7 +211,13 @@ type fakeUpstream struct {
 	// parents > 0 spreads the entries over that many parent OUs, gives each an instanceType, and
 	// answers a base-scope read of "OU=p<k>,..." with the parent's GUID, counting the reads (T-0694).
 	parents int
-	mu      sync.Mutex
+	// noGUID: the first noGUID entries are listed without objectGUID (a DC's partial system objects).
+	noGUID int
+	// missingParent / dropOnParent: a read of parent OU k answers no entry (parent unreadable), or drops
+	// the connection (a session fault, which must still fail the search).
+	missingParent map[int]bool
+	dropOnParent  map[int]bool
+	mu            sync.Mutex
 	reads   map[string]int
 	// sdAttrs, when set, is the entry served for every "<GUID=" base-scope read (an SD read), and
 	// modifies counts the Modify requests the upstream received (T-0726).
@@ -302,6 +308,12 @@ func (f *fakeUpstream) serve(c net.Conn) {
 				}
 				f.reads[base]++
 				f.mu.Unlock()
+				if f.dropOnParent[k] {
+					return
+				}
+				if f.missingParent[k] {
+					break
+				}
 				out = append(out, entryMsg(id, base, map[string][][]byte{"objectGUID": {parentGUID(k)}}))
 			case f.sdAttrs != nil && strings.HasPrefix(base, "<GUID="):
 				out = append(out, entryMsg(id, "CN=x,DC=lab,DC=test", f.sdAttrs))
@@ -309,8 +321,11 @@ func (f *fakeUpstream) serve(c net.Conn) {
 				for i := 0; i < f.entries; i++ {
 					g := make([]byte, 16)
 					g[0], g[14], g[15] = 0xA0, byte((i+1)>>8), byte(i+1)
-					out = append(out, entryMsg(id, "CN=u"+strconv.Itoa(i)+",OU=p"+strconv.Itoa(i%f.parents)+",DC=lab,DC=test",
-						map[string][][]byte{"objectGUID": {g}, "instanceType": {[]byte("4")}}))
+					attrs := map[string][][]byte{"objectGUID": {g}, "instanceType": {[]byte("4")}}
+					if i < f.noGUID {
+						delete(attrs, "objectGUID")
+					}
+					out = append(out, entryMsg(id, "CN=u"+strconv.Itoa(i)+",OU=p"+strconv.Itoa(i%f.parents)+",DC=lab,DC=test", attrs))
 				}
 			case strings.HasPrefix(base, "<GUID="):
 				for i := 0; i < f.entries; i++ {
