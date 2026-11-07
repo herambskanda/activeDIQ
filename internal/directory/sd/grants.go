@@ -104,6 +104,21 @@ type Right struct {
 	Mask   uint32
 	Object *guid.GUID
 	Kind   RightKind
+	// Tree, set only on an Attribute ask, supplies the rest of the object-type tree the DC builds
+	// (MS-ADTS 5.1.3.3.3): the object's class at the root and the attribute's property set below
+	// it. Object is then the attribute's schemaIDGUID. Without it an ACE on another object type
+	// that meets the ask makes the answer Unknown (property_set_unresolved).
+	Tree *ObjectTree
+}
+
+// ObjectTree is the schema-derived context of an attribute ask. Every GUID in it comes from the
+// schema snapshot (schemaIDGUID of the class and the attribute, attributeSecurityGuid of the
+// attribute), never from a literal. A nil Class or Set means the snapshot did not supply it, which
+// is Unknown and never "no property set".
+type ObjectTree struct {
+	Class   *guid.GUID    // schemaIDGUID of the object's structural class (the tree root)
+	Set     *guid.GUID    // attributeSecurityGuid of the asked attribute
+	Catalog RightsCatalog // what any other object-type GUID in an ACE names
 }
 
 // Source is an ACE that contributed to the answer.
@@ -137,6 +152,12 @@ func Grants(p Principal, right Right, s SD) Result {
 		right.Kind != PropertySet && right.Kind != ControlAccess && right.Kind != ValidatedWrite {
 		res.Decision, res.Why = Unknown, "right_kind_unset"
 		return res
+	}
+	if right.Tree != nil {
+		if why := right.Tree.check(right); why != "" {
+			res.Decision, res.Why = Unknown, why
+			return res
+		}
 	}
 	switch s.DACL.Kind {
 	case Null:
@@ -199,21 +220,30 @@ func Grants(p Principal, right Right, s SD) Result {
 			a.Type != TypeAccessAllowedObject && a.Type != TypeAccessDeniedObject {
 			continue // audit, label and policy ACEs grant nothing
 		}
-		if a.ObjectType != nil && (right.Object == nil || *right.Object != *a.ObjectType) {
-			// A grant or refusal on an object-tree node (a property set) covers the attributes
-			// in it. Without a catalogue we cannot tell whether this GUID is the asked
-			// attribute's set, so a held ACE that meets the asked read/write bits makes the
-			// answer Unknown. Control-access, validated-write and class asks are exact matches.
-			// A property-set ask is covered too: a denied child means the set is not fully granted.
-			// An OWNER RIGHTS ACE counts as held when the principal is the owner.
-			if (right.Kind == Attribute || right.Kind == PropertySet) &&
-				a.Mask&remaining&(MaskReadProp|MaskWriteProp) != 0 &&
-				(p.holds(a.Trustee, p.objectSID) || a.Trustee == sidSelf && p.objectSID == nil ||
-					a.Trustee == sidOwnerRights && s.HasOwner && p.holds(s.Owner, nil)) {
-				res.Decision, res.Sources, res.Why = Unknown, nil, "property_set_unresolved"
-				return res
+		if a.ObjectType != nil {
+			applies, unresolved := right.objectTypeApplies(*a.ObjectType)
+			if unresolved {
+				// A grant or refusal on an object-tree node (a property set) covers the attributes
+				// in it. With no tree, or a GUID the snapshot cannot place, we cannot tell whether
+				// it covers the asked attribute, so a held ACE that meets the asked read/write
+				// bits makes the answer Unknown. Control-access, validated-write and class asks
+				// are exact matches. A property-set ask is covered too: a denied child means the
+				// set is not fully granted. An OWNER RIGHTS ACE counts as held when the principal
+				// is the owner.
+				if (right.Kind == Attribute || right.Kind == PropertySet) &&
+					a.Mask&remaining&(MaskReadProp|MaskWriteProp) != 0 &&
+					(p.holds(a.Trustee, p.objectSID) || a.Trustee == sidSelf && p.objectSID == nil ||
+						a.Trustee == sidOwnerRights && s.HasOwner && p.holds(s.Owner, nil)) {
+					res.Decision, res.Sources, res.Why = Unknown, nil, "property_set_unresolved"
+					if right.Tree != nil {
+						res.Why = "object_type_unresolved"
+					}
+					return res
+				}
 			}
-			continue
+			if !applies {
+				continue
+			}
 		}
 		hit := a.Mask & remaining
 		if hit == 0 {
@@ -288,4 +318,64 @@ func (p Principal) holds(t sid.SID, self *sid.SID) bool {
 		return ok
 	}
 	return false
+}
+
+// check reports why the tree cannot be evaluated, or "" when it can. The class, the property set
+// and the attribute must each be present and classified by the snapshot as what they are, and
+// distinct: a tree the snapshot cannot vouch for is Unknown, never "the attribute has no set".
+func (t *ObjectTree) check(r Right) string {
+	if r.Kind != Attribute || r.Object == nil {
+		return "tree_needs_attribute_ask"
+	}
+	if r.Mask&^(MaskReadProp|MaskWriteProp) != 0 {
+		return "mask_not_property"
+	}
+	if t.Catalog == nil {
+		return "catalog_missing"
+	}
+	if t.Class == nil {
+		return "class_unknown"
+	}
+	if t.Set == nil {
+		return "property_set_unknown"
+	}
+	for _, c := range []struct {
+		g    guid.GUID
+		want RightKind
+		why  string
+	}{
+		{*t.Class, Class, "class_unknown"},
+		{*t.Set, PropertySet, "property_set_unknown"},
+		{*r.Object, Attribute, "attribute_unknown"},
+	} {
+		if k, ok := t.Catalog.Kind(c.g); !ok || k != c.want {
+			return c.why
+		}
+	}
+	if *t.Class == *t.Set || *t.Class == *r.Object || *t.Set == *r.Object {
+		return "tree_inconsistent"
+	}
+	return ""
+}
+
+// objectTypeApplies decides whether an object ACE scoped to g covers the asked right. unresolved
+// means the answer is not known: the caller makes it Unknown if the ACE is one that matters.
+// Without a Tree only an exact match applies and every other GUID is unresolved for an Attribute
+// or PropertySet ask. With a Tree an ACE applies when it names the attribute, its property set or
+// its class (the whole tree), and is ignored only when the catalog proves it names something else.
+func (r Right) objectTypeApplies(g guid.GUID) (applies, unresolved bool) {
+	if r.Object != nil && g == *r.Object {
+		return true, false
+	}
+	if r.Tree == nil {
+		return false, true
+	}
+	if g == *r.Tree.Set || g == *r.Tree.Class {
+		return true, false
+	}
+	switch k, ok := r.Tree.Catalog.Kind(g); {
+	case ok && (k == Class || k == Attribute || k == PropertySet || k == ControlAccess || k == ValidatedWrite):
+		return false, false
+	}
+	return false, true
 }
