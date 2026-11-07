@@ -165,7 +165,7 @@ func (m *Mapper) Map(e *connectorv1.DirectoryEntry) (Mapped, error) {
 	if e == nil {
 		return out, refuse("objectGUID", CodeMissing)
 	}
-	object, err := guidText(e.GetObjectGuid(), "objectGUID")
+	object, err := entryGUID(e.GetObjectGuid(), "objectGUID")
 	if err != nil {
 		return out, err
 	}
@@ -349,12 +349,12 @@ func (m *Mapper) place(o *inventory.Observation, e *connectorv1.DirectoryEntry, 
 			return err
 		}
 		if present && lkp != nil && lkp.GetGuid() != nil {
-			if o.Parent, err = guidText(lkp.Guid, "lastKnownParent"); err != nil {
+			if o.Parent, err = entryGUID(lkp.Guid, "lastKnownParent"); err != nil {
 				return err
 			}
 		}
 	} else if e.GetParentGuid() != nil {
-		if o.Parent, err = guidText(e.ParentGuid, "parentGuid"); err != nil {
+		if o.Parent, err = entryGUID(e.ParentGuid, "parentGuid"); err != nil {
 			return err
 		}
 	} else if o.Object != m.nc {
@@ -502,7 +502,7 @@ func (m *Mapper) group(out *Mapped, set attrSet) error {
 			out.MembersUnresolved++
 			continue
 		}
-		g, err := guidText(d.Dn.Guid, "member")
+		g, err := entryGUID(d.Dn.Guid, "member")
 		if err != nil {
 			return err
 		}
