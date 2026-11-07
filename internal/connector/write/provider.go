@@ -77,12 +77,16 @@ func (d SessionDC) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error)
 // are all built over the one sess, so the DC whose identity rule 5 checks is the DC the reads and
 // writes reach. A binder on another session would re-open the TOCTOU rule 5 closes.
 func NewADProvider(sess *ad.Session, gc *ad.GCResolver, id *connectorv1.DirectoryIdentity, pins PinStore) *ADProvider {
-	return &ADProvider{
+	p := &ADProvider{
 		Dir:   tier0.SessionDirectory{S: sess, GC: gc},
 		ID:    id,
 		Pins:  pins,
 		Bound: SessionDC{S: sess},
 	}
+	if sess != nil {
+		p.Accounts = sess
+	}
+	return p
 }
 
 // sameSession is false when Dir and Bound are both session-backed but over different sessions.
@@ -154,6 +158,10 @@ type ADProvider struct {
 	Dynamic PropertyGuard
 	// Bound reports the DC the connector is bound to (rule 5). Nil refuses every write.
 	Bound DCBinder
+	// Accounts is the session the account kinds (T-1583) read and write on: the same session as Dir and
+	// Bound, so the DC whose identity rule 5 checks is the DC the write reaches. Nil: those kinds answer
+	// CAPABILITY_UNSUPPORTED.
+	Accounts AccountSession
 }
 
 var _ Provider = (*ADProvider)(nil)

@@ -21,6 +21,9 @@ const (
 	CodeSecretNotSet        Code = "SECRET_NOT_SET"
 	CodeProtocol            Code = "PROTOCOL_ERROR"
 	CodeCanceled            Code = "CANCELED"
+	CodePasswordPolicy      Code = "PASSWORD_POLICY"
+	CodeInsecure            Code = "TRANSPORT_SECURITY"
+	CodeStaleValue          Code = "STALE_VALUE"
 )
 
 // Error is the package's error type.
