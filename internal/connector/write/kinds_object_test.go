@@ -249,6 +249,45 @@ func TestPropertyWriteDeclarations(t *testing.T) {
 	if _, err := deletePropertyWrite(&connectorv1.WriteChange{}); err == nil {
 		t.Error("a delete with no arm declared a write")
 	}
+	pw, err = deletePropertyWrite(&connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectDelete{ObjectDelete: &connectorv1.ObjectDelete{}}})
+	if err != nil || pw.Plane != tier0.PlaneAD || pw.Op != tier0.OpDelete || len(pw.Keys) != 0 {
+		t.Errorf("delete declared %+v %v; want the AD DELETE op with no keys (never UPDATE: contract 8.10.9 R1)", pw, err)
+	}
+}
+
+// CC-WRITE-30 (unit half): deleteRecheck hands the §8.9 guard the DELETE op with the kind of the live
+// class, and a token with no checker refuses. The decision itself is tier0's (dynprop_test.go).
+func TestDeleteRecheckUsesTheLiveClass(t *testing.T) {
+	var seen []tier0.PropertyWrite
+	// A guard that refuses exactly what the contract table refuses under a memberOf closure rule.
+	tok := Authorised{p: &pass{recheck: func(_ context.Context, w tier0.PropertyWrite) bool {
+		seen = append(seen, w)
+		return !(w.Op == tier0.OpDelete && w.Kind == tier0.WriteGroup)
+	}}}
+	target := mk(7)
+	for _, c := range []struct {
+		class   connectorv1.DirectoryObjectClass
+		kind    tier0.WriteKind
+		refused bool
+	}{
+		{connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_GROUP, tier0.WriteGroup, true},
+		{connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_USER, tier0.WriteUser, false},
+		{connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_COMPUTER, tier0.WriteDevice, false},
+		{connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_CONTACT, tier0.WriteUser, false},
+		{connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_ORGANIZATIONAL_UNIT, tier0.WriteUser, false},
+	} {
+		seen = nil
+		r := deleteRecheck(context.Background(), tok, c.class, target)
+		if (r != nil) != c.refused {
+			t.Errorf("%v: refusal %v, want refused=%v", c.class, r, c.refused)
+		}
+		if len(seen) != 1 || seen[0].Plane != tier0.PlaneAD || seen[0].Op != tier0.OpDelete || seen[0].Kind != c.kind || len(seen[0].Keys) != 0 {
+			t.Errorf("%v: guard saw %+v", c.class, seen)
+		}
+	}
+	if deleteRecheck(context.Background(), Authorised{}, connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_USER, target) == nil {
+		t.Error("a token with no checker passed the delete recheck")
+	}
 }
 
 func TestCapabilitiesSupported(t *testing.T) {

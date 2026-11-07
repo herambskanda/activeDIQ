@@ -48,10 +48,19 @@ type wkRig struct {
 	guard  PropertyGuard
 }
 
-func newWKRig(t *testing.T) *wkRig { return newWKRigRule(t, false) }
+func newWKRig(t *testing.T) *wkRig { return newWKRigRuleText(t, "") }
 
 // newWKRigRule: withRule designates a dynamic group with a rule on `title` (CC-WRITE-25/27).
 func newWKRigRule(t *testing.T, withRule bool) *wkRig {
+	t.Helper()
+	if withRule {
+		return newWKRigRuleText(t, `user.jobTitle -eq "X"`)
+	}
+	return newWKRigRuleText(t, "")
+}
+
+// newWKRigRuleText: a non-empty rule designates a dynamic group with that membership rule.
+func newWKRigRuleText(t *testing.T, rule string) *wkRig {
 	t.Helper()
 	env := labEnv(t)
 	pem, err := os.ReadFile(filepath.Join("..", "..", "..", "lab", ".lab-ca.pem"))
@@ -95,8 +104,8 @@ func newWKRigRule(t *testing.T, withRule bool) *wkRig {
 	const gA, gD = "77777777-7777-7777-7777-000000000100", "77777777-7777-7777-7777-000000000150"
 	groups := []graph.Group{{ID: gA}}
 	members := map[string][]graph.DirectoryObject{}
-	if withRule {
-		groups = append(groups, graph.Group{ID: gD, GroupTypes: []string{"DynamicMembership"}, MembershipRule: `user.jobTitle -eq "X"`})
+	if rule != "" {
+		groups = append(groups, graph.Group{ID: gD, GroupTypes: []string{"DynamicMembership"}, MembershipRule: rule})
 		members[gA] = []graph.DirectoryObject{{ID: gD, ODataType: "#microsoft.graph.group"}}
 	}
 	cred := graphtest.NewCredential(t)
@@ -690,6 +699,44 @@ func TestWKDelete(t *testing.T) {
 	}
 	// protected from accidental deletion: Deny Delete + DeleteTree for Everyone (Samba may or may not enforce; recorded)
 	t.Log("protected-from-accidental-deletion is exercised by the Windows lab (Samba dsacl cannot set the inherited deny reliably)")
+}
+
+// CC-WRITE-30 (contract §8.9 DELETE, T-1632): a group delete is refused at Plan and at Apply under a
+// closure rule that reads membership (RefuseAll), and the group survives; a user delete under the same
+// closure is not refused; a closure rule that does not read membership refuses neither.
+func TestCCWrite30DeleteUnderMemberOfRule(t *testing.T) {
+	del := connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE
+	r := newWKRigRuleText(t, `-not (user.memberOf -any (group.objectId -in ["77777777-7777-7777-7777-000000000199"]))`)
+	r.rebind("Administrator", r.env["LAB_ADMIN_PASSWORD"])
+	r.adminAdd("CN=wkgrp30,"+r.ou, "group", map[string][]string{"sAMAccountName": {"wkgrp30"}})
+	r.adminAdd("CN=wkusr30,"+r.ou, "user", map[string][]string{"sAMAccountName": {"wkusr30"}})
+	gid, uid := r.guidOf("CN=wkgrp30,"+r.ou), r.guidOf("CN=wkusr30,"+r.ou)
+
+	p := r.planReq(del, gid, deleteChange())
+	_, err := r.plan(p)
+	wantCode(t, "group delete, plan", err, connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED)
+	_, err = r.apply(r.applyFrom(p, &connectorv1.PlanResponse{}, nil))
+	wantCode(t, "group delete, apply", err, connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED)
+	if !r.exists("CN=wkgrp30," + r.ou) {
+		t.Fatal("the group was deleted under a memberOf closure rule")
+	}
+
+	resp, err := r.planApply(del, uid, deleteChange())
+	if err != nil || resp.GetOutcome() != connectorv1.ApplyOutcome_APPLY_OUTCOME_APPLIED {
+		t.Fatalf("user delete under the same closure: %v %v", resp.GetOutcome(), err)
+	}
+	if r.exists("CN=wkusr30," + r.ou) {
+		t.Fatal("the user is still there")
+	}
+
+	// Twin: a rule that does not read membership refuses neither class.
+	r2 := newWKRigRuleText(t, `user.jobTitle -eq "X"`)
+	r2.rebind("Administrator", r2.env["LAB_ADMIN_PASSWORD"])
+	r2.adminAdd("CN=wkgrp30b,"+r2.ou, "group", map[string][]string{"sAMAccountName": {"wkgrp30b"}})
+	resp, err = r2.planApply(del, r2.guidOf("CN=wkgrp30b,"+r2.ou), deleteChange())
+	if err != nil || resp.GetOutcome() != connectorv1.ApplyOutcome_APPLY_OUTCOME_APPLIED {
+		t.Fatalf("twin group delete: %v %v", resp.GetOutcome(), err)
+	}
 }
 
 // CC-WK-28: a Tier-0 target is refused at CONNECTOR_SET before the kind's code, for each kind.

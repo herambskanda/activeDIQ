@@ -94,7 +94,28 @@ func deletePropertyWrite(c *connectorv1.WriteChange) (tier0.PropertyWrite, error
 	if c.GetObjectDelete() == nil {
 		return tier0.PropertyWrite{}, errBadChange
 	}
-	return tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteGroup, Op: tier0.OpUpdate}, nil
+	// The typed change names no class, and the class decides the verdict (contract §8.9 DELETE: only a
+	// group delete can change another object's properties). Step 4 therefore declares the op with the
+	// least-restricted kind and readForDelete repeats the check with the live class through
+	// deleteRecheck before anything is sent, on Plan and on Apply (T-1632, CC-WRITE-30).
+	return tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteUser, Op: tier0.OpDelete}, nil
+}
+
+// deleteRecheck is the §8.9 DELETE check with the live class of the target. It is the part of the
+// guard the step-4 declaration could not do. A refusal is the same TIER0_REFUSED basis Designated
+// as step 4's; an unknown class never reaches it (liveClass refuses first).
+func deleteRecheck(ctx context.Context, a Authorised, cls connectorv1.DirectoryObjectClass, target guid.GUID) *Refusal {
+	k := tier0.WriteUser
+	switch cls {
+	case connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_GROUP:
+		k = tier0.WriteGroup
+	case connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_COMPUTER:
+		k = tier0.WriteDevice
+	}
+	if !a.checkProperty(ctx, tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: k, Op: tier0.OpDelete}) {
+		return tier0Refusal(toWire(target), []basis{tier0.Designated}, stConnectorSet, "5")
+	}
+	return nil
 }
 
 type constErr string
@@ -679,7 +700,7 @@ type deleteRead struct {
 	gone  bool
 }
 
-func readForDelete(tx *ad.Tx, a Authorised, target guid.GUID) (*deleteRead, *Refusal) {
+func readForDelete(ctx context.Context, tx *ad.Tx, a Authorised, target guid.GUID) (*deleteRead, *Refusal) {
 	obs, dct, r := dcTimes(tx)
 	if r != nil {
 		return nil, r
@@ -694,6 +715,9 @@ func readForDelete(tx *ad.Tx, a Authorised, target guid.GUID) (*deleteRead, *Ref
 	}
 	cls, r := liveClass(e)
 	if r != nil {
+		return nil, r
+	}
+	if r := deleteRecheck(ctx, a, cls, target); r != nil {
 		return nil, r
 	}
 	kids, err := tx.HasChildren(dn.GUIDRef(target))
@@ -714,7 +738,7 @@ func planDelete(ctx context.Context, a Authorised, req *connectorv1.PlanRequest)
 	}
 	var resp *connectorv1.PlanResponse
 	err = run(ctx, a, func(tx *ad.Tx) *Refusal {
-		d, r := readForDelete(tx, a, target)
+		d, r := readForDelete(ctx, tx, a, target)
 		if r != nil {
 			return r
 		}
@@ -734,7 +758,7 @@ func applyDelete(ctx context.Context, a Authorised, req *connectorv1.ApplyReques
 	}
 	var resp *connectorv1.ApplyResponse
 	err = run(ctx, a, func(tx *ad.Tx) *Refusal {
-		d, r := readForDelete(tx, a, target)
+		d, r := readForDelete(ctx, tx, a, target)
 		if r != nil {
 			return r
 		}
