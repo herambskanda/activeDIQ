@@ -589,3 +589,39 @@ On the dropped counts the director asked about:
 **E2.6:** R2-M1 (FB-3b supersedes ADR-0010, with its fitness ticket), R2-M2 (no "n users not yet read"), R2-m1…m6, and the §17 rows above.
 
 **CEO:** nothing new. OQ-C1 and Q11 stay dormant. All ADR work above is technical, so factory-director ratifies it.
+
+### E2.6 round 1→2 responses
+
+Moved here from E2.6 §24 (revision 2) in round 3. The round-3 answers are in [e2-6-report-builder.md §24](../e2-6-report-builder.md#round-3).
+
+Reviews: [architecture](reviews/2026-11-11-m2c-architecture-review.md) (R-, X-) and
+[security](reviews/2026-11-11-m2c-security-review.md) (B-). `R-m1..11` and `R-n1..4` are the architecture
+minors and nits in order; `B-m1..5` and `B-n1` are the security B.4 items in order. Everything is taken
+unless stated.
+
+| Finding | Response |
+| --- | --- |
+| R-B1 | Match count in the run's one statement (§5, §9, FR-B08); no `CompileCount` path; per-condition counts and picker row counts dropped (§6, FR-B01); "1,000+" only after the rows-only fallback; FB-3b |
+| R-M1 | ADR-0010 left alone; FB-3b is a new ADR (count, preview class, group/total rows, unsaved-AST run); snapshot option dropped. Round 2 (R2-M1) corrected the type: FB-3b **supersedes** ADR-0010 |
+| R-M2 | FB-3a: `CustomDefinition`, `Resolve`, category, ID namespace, nodes, `ActionSubject`, read permission |
+| R-M3 | No roll-up: one `reports.preview.run` event per preview run, chained at commit; no ADR-0005 amendment; rate limit bounds volume (§16, AC-B35) |
+| R-M4 | `audit.events` is the own-audit source, not DC events (§7, §21); display-name columns dropped; visibility rules; FB-5 |
+| R-M5 | The ADR-0011 claim was unproven: now FB-6a, an interim residual and `Resolve` re-authorisation (§9 L5, L6, §16) |
+| R-M6 | True `exact` example, `changed` examples, scripts `manual`, raw SQL `not supported`, matching E2.11 (§11.2, AC-B28) |
+| R-M7 | One lifecycle: browser editing state, Save publishes, server `draft` only for imports, no delete, apply needs step-up (§8, §11.3, FR-B09, AC-B44) |
+| R-m1 to R-m4 | FR-B07 to AC-B36, FR-B24 to AC-B37, FR-B23 to AC-B15/B34/B42; AC-B19 traces FR-B21/B08 with the preview caps in FR-B08; AC-B08 traces FR-B06; AC-B09 uses its Given and replicated logon replaces `lastLogon` (AC-B09, B17); LIKE metacharacters in AC-B06 |
+| R-m5, R-m6, R-m7 | One FB table (§17), no unlettered "FB-3"; one limits table (§9) used by `Resolve` (§5); preview timeout 10 s `[PROPOSED]` named in AC-B16 |
+| R-m8, R-m9 | Label from the masked column and time zone in the query hash (§5, AC-B38, AC-B40); GUID and DN default, FB-6b extension (FR-B17, AC-B26) |
+| R-m10, R-m11 | `-- write-class` line, FB-12; ownership lock in §11.5 and AC-B29, and the E2.11 §6.4 citation for attached tasks removed (§11.4) |
+| R-n1 to R-n4 | Frontmatter `reviewer`, `security-sensitive`; header explains E2.6 at 2a versus 2c; matrix rows for FR-B19 to B25, B27 and the new FRs; "independent of the Entra tenant" (§18) |
+| X-1, X-2 | E2.7 owns Graph sync and registers the Entra datasets, E2.6 defines none (§7, FR-B25, FB-11, AC-B30; Q6 closed). FB-4 is the shared scope-root follow-up (E-011 / T-1131, ADR-0011 rule 9) that both specs list |
+| X-3 | Scripts `manual`; apply is step-up; ownership lock; FB-10 for E2.11's cross-reference (§11) |
+| B-B1 | Post-mask rule, one masked bucket, Unknown propagation, `groupable`/`aggregatable`, OU key rule (§5, FR-B28, AC-B38) |
+| B-B2 | GUIDs without labels, re-authorisation at every `Resolve`, viewer-scope labels, `value_not_permitted`, metadata limits, owner-typed text as a stated residual (§8, §9 L6, §16, FR-B29, AC-B39) |
+| B-M1 | RP-B3 replaced by the non-interference property test with failing fixtures (FB-3c, FR-B30, AC-B40); RP-B2 widened |
+| B-M2 | `{run_id, row_keys[] or all_matching}`, derivation from stored rows, 409/410, new drill-down run (§10, FR-B16, AC-B41) |
+| B-m1 | RP-B1 allow-lists the E2.11 intake only; sync-set input is a schema reference; carve-outs stated (§5, FR-B02, FR-B03, AC-B43) |
+| B-m2 | Exact resolver only, DNs via the `dn` package, no fuzzy (FR-B17, FB-6b, AC-B26) |
+| B-m3 | Taken except the roll-up: the security review accepted aggregation, but the architecture review and ruling 7 rule it out, so one event per preview. Visibility rules, HMAC hashes and ID-only listing taken (§7, §16) |
+| B-m4, B-m5, B-n1 | Edit-level save and schedule-fire checks fail closed (§8, AC-B10, AC-B45); per-account preview cap of 1 (§9, AC-B19); grand total over all matching rows with "k of n groups shown" (§5) |
+| B.1, B.2 rulings | Accepted as stated; residuals in §16 |
