@@ -23,6 +23,8 @@ same change.
 | 6 | test (lab, needs Entra tenant A-0026) | Lab G11: does Graph refuse a `GroupMember.ReadWrite.All` add to a PIM-eligible nested group? | test-engineer | P2 | same, A2-M2 |
 | 7 | spec tickets | E2.7 and E2.6 specs: file each as a `spec` ticket carrying its review history (two rounds of reviews in `knowledge/product/specs/reviews/`) | product-manager | P1 | this branch |
 | 8 | build follow-up, security-sensitive | Outside a hybrid request: adding a user to an AD-synced group whose Entra twin carries a licence must check `m365.licence.assign` over that user (licence state read live at Plan and Apply; unreadable counts as licensed) | backend-engineer (`objects`) | P2 | reviews/2026-11-11-m2c-security-review.md (round 3, A3-m3) |
+| 9 | chore, security-sensitive | Threat model §5.18 (TB18): add the E2.11 importer threats from the C-02 review (TM-TB18-T1…T12 coverage table) | security-architect | P1 | reviews/2026-11-11-e2-11-security-review.md (F1) |
+| 10 | decision-prep (factory, technical) | What a `request`-mode privilege does when no workflow matches: hold for approval, never allow | solution-architect | P2 | same (F2) |
 
 Rows for the ADR, domain-model and build tickets come from the M2c ticket plan, not from here.
 
@@ -34,3 +36,13 @@ Rows for the ADR, domain-model and build tickets come from the M2c ticket plan, 
   switch and §8 limits are 2d.
 - C-01 and C-02 (the E2.11 reviews) were run off-board; their reviews are in
   `knowledge/product/specs/reviews/2026-11-11-e2-11-*.md`. Start from C-03.
+- **E2.11 reviews rejected the draft** (C-01: 2 blockers, 9 majors; C-02: 3 blockers, 7 majors). C-03 grows
+  S → M and applies both. Plan corrections at filing:
+  - C-27 depends on C-07; C-95 on FB-6b; C-94 waits for the dump-format ruling (PostgreSQL plain-format
+    data, parsed and never restored, column allow-list for ADMP 8043).
+  - Reword C-97: apply is one Operation of the owning modules' Actions, with no second pipeline.
+  - Reword C-99: register a fidelity dataset and export it through `platform/export`.
+  - Ownership: the field and its refuse-to-run guard are 2c; only the switch Action is 2d. §8
+    leaves E2.11 for E2.9 plus an ADR-0005 amendment.
+  - E2.6 erratum: use the `execution_owner` value `activediq | external`.
+  - Reconcile the ADMP-trial action ids: A-0024 in the decisions log, A-0036 in the digest and plan.
