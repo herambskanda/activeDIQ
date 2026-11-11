@@ -625,3 +625,110 @@ unless stated.
 | B-m3 | Taken except the roll-up: the security review accepted aggregation, but the architecture review and ruling 7 rule it out, so one event per preview. Visibility rules, HMAC hashes and ID-only listing taken (§7, §16) |
 | B-m4, B-m5, B-n1 | Edit-level save and schedule-fire checks fail closed (§8, AC-B10, AC-B45); per-account preview cap of 1 (§9, AC-B19); grand total over all matching rows with "k of n groups shown" (§5) |
 | B.1, B.2 rulings | Accepted as stated; residuals in §16 |
+
+## Round 3 — 2026-11-11
+
+This is a delta review of the round-2 IDs only, at `3a6444c3` (branch `m2c-plan`). The files are E2.7 revision 3 (429 lines), e2-7a revision 1 (127 lines) and E2.6 revision 3 (750 lines). Every item was checked in the spec text, not in the response lists, and line numbers below are revision 3's. No `factory` command was run and no spec was edited. New findings are minors only. Each one names the follow-up that absorbs it, so none needs a round 4.
+
+### Verdicts, round 3
+
+| Spec | Verdict | Round-2 items open | New (this round) |
+| --- | --- | --- | --- |
+| E2.7 + e2-7a | **advance** | 0 of 11 (3 majors, 7 minors, 1 nit) | 1 minor (H3-m1), 1 nit (H3-n1), 1 cross-spec minor (X3-1) |
+| E2.6 | **advance** | 0 of 9 (2 majors, 6 minors, 1 nit) | 3 minors from the trim (R3-m1…m3), 3 nits |
+
+### E2.7: round-2 items
+
+| ID | Status | Evidence (revision 3) |
+| --- | --- | --- |
+| H2-M1 | **Closed** | §8 "Ownership" (268): `objects` owns the HybridRequest entity, the evaluator and `objects.hybrid.*`. The condition is declared on the Action descriptor and supplied through `Registrar.Action`, with no new EP. The evaluator reads only through `inventory`. `platform/operation` holds only the generic machine and imports no module. Also FR-34 (249), §9 (274), §14.1 item 2 (371), §14.3 (382), AC-53 (344), MAP-1 (391). The remaining `connection.*` kinds follow the forest-spec convention (`ad-forest-connection.md` 341) |
+| H2-M2 | **Closed** | FR-17 (182): gate pass binds and does not plan, and `replan_changed` is not a rule-8 hold. FR-18 (206) has one Resume rule: it supersedes a live original in one transaction (`cloud_superseded`, `superseded_by`, unique key on `request_id`), carry-over applies only after `cloud_step_failed` with an equal recomputed digest, and every other path needs a new approval. Also the FR-21 row (221), FR-35 (260), §14.1 items 3–4 (372–373), AC-23 (316) and AC-49 (340). See H3-m1 |
+| H2-M3 | **Closed** | §14.1 item 2 (371): a waiting gate holds no claim and is exempt from `operation.sweep` until its deadline. FIT-1 covers O4 with the `transitions` block and property test, FIT-2 covers the O8 cases (379), and FIT-3 extends A15 (381). All three are in §14.7 (392). AC-53 asserts the sweeper exemption |
+| H2-m1 | **Closed** | FR-22 (232), FR-23 (233), FR-35 (254–260) and AC-33 (326): an unreadable target stays `applying` for the rule-6 reconciler. Old item 8 is gone, and `outcome_unknown` survives only in the two "dropped" notes (379, 423) |
+| H2-m2 | **Closed** | FR-35: `pim_read_failed` is in the Plan row (254), and the `cloud_reason` set has its own row (260) |
+| H2-m3 | **Closed** | e2-7a FR-38 (73) is a Boot rule and e2-7a AC-43 (106) tests the refusal. See X3-1 for the E2.6 side |
+| H2-m4 | **Closed** | AC-35 (328) covers the Resume and Undo permissions and the 30 s Check-now limit |
+| H2-m5 | **Closed** | AC-54 (345) is the search-row badge, which depends on T-1131 |
+| H2-m6 | **Closed** | FR-33 (248) and AC-52 (343): a step on a licence-carrying group also needs `m365.licence.assign`/`.remove`. `security-architect` still has to confirm, and the spec says so |
+| H2-m7 | **Closed** | FR-04 (155) names `LicenseAssignment.Read.All`, citing the subscribedSkus page |
+| H-n3 | **Closed** | §5 rows FR-09…13 and FR-14…21, 40 (105–106) |
+| §14 corrections | **Closed** | MAP-1 (391). `outcome_unknown` is dropped (379). `cloud_superseded` and the `objects` owner are in §14.3 (382) |
+
+**The e2-7a split.** It is clean. FR-36…38 and AC-42/43 keep their numbers (e2-7a 29–30). The new ACs AC-55…57 do not collide: E2.7 holds AC-01…41 and AC-44…54, so all 57 numbers are unique. E2.7 has no dangling reference. FR-15, FR-16, FR-19 and FR-40 cite "e2-7a FR-37", and the §5 matrix (112), §9, §11 (290), §14.3 and §14.6 point at e2-7a. AC-40 (FR "23, 36") and OQ-F4/F6 cite FR-36 by its global number, which is fine. Traceability holds: all 41 FRs (38 in E2.7, 3 in e2-7a) reach at least one AC.
+
+**New (does not block)**
+- **H3-m1 · FR-18 (206), D3 (199) and AC-48 (339): copying `approval_valid_until` when Resume needs a new approval.** After `cloud_expired`, the copied window is already in the past. A Resume with a new approval would therefore start an Operation that expires on arrival, so the Resume in AC-25 is a dead control. **Resolution, to be written into the ADR-0005 amendment (items 4–5) and confirmed by `security-architect`:** Resume always copies the identity values (`objectGUID` and the anchor), and they are never recomputed. On the carry-over path it also copies the window and the digest. A *new* approval sets a new `approval_valid_until`, capped by D6 from the new approval's time, and a new digest. Both are written once under D2 and D3 on the new continuation row. The product-manager then applies a one-line erratum to FR-18 and AC-48 when grooming.
+- **H3-n1 · naming.** ADR-0005 already has a `Gate` interface: the rule-8 approval gate (ADR-0005 line 343, blueprint 712). The amendment will therefore name the new seam `Descriptor.Waits` (type `WaitCondition`, step kind `wait`), not `Descriptor.Gates`. The spec's product word "gate" may stay. O5 (registry completeness) gains one case: a declared wait has an evaluator.
+- **X3-1 · e2-7a AC-43 (106) and E2.6 AC-B30 (594–598).** AC-43 says that E2.6 "shows its 'not available' state", but E2.6 has no such state: AC-B30 lists no Entra source. AC-43 should read "E2.6 lists no Entra source (AC-B30, first state)". FR-B25 (434) and AC-B30 should then cite e2-7a FR-38 and describe their first state as the Boot refusal. These are errata at grooming.
+
+### E2.6: round-2 items
+
+| ID | Status | Evidence (revision 3) |
+| --- | --- | --- |
+| R2-M1 | **Closed** | FB-3b (367) is a "New ADR **superseding** ADR-0010". It lists rules 3 and 5 and the run identity, restates the unchanged rules, carries RP3–RP5 forward, and has a fitness ticket for RP12/RP13. The same wording appears in §5 (137), §22 (703) and Sources (741). FB-3a (366) deletes `CompileCount` for library runs as well, together with its code. No "extend" remains anywhere |
+| R2-M2 | **Closed** | §15 (327) and AC-B04 (467): the message has no number, and the test asserts both the text and that no count is shown. The header count is over stored rows only |
+| R2-m1 | **Closed** (a different fix from mine, and coherent) | §8 (193–195): `restore` is only the rule-10 inverse (version and lifecycle state), and `unarchive` is a separate forward Action, so the two cannot collide. FB-3d (369) adds `archived → published`, which both of them use. Also FR-B09 and AC-B12/B44 |
+| R2-m2 | **Closed** | FB-3a registers `reports.preview.run` and `.refused`, and FB-5 (371) has no kind |
+| R2-m3 | **Closed** | FB-6b (373) has owner `directory-engineer`, a blueprint `inventory` row and a design note |
+| R2-m4 | **Closed** | FB-12 is retired and folded into the AC of the definition-store build ticket (380–381) |
+| R2-m5 | **Closed** | §15 "Preview truncated" (324) gives the exact count, and "1,000+" appears only in the fallback row (325) |
+| R2-m6 | **Closed** | §9 (230) and AC-B16: the fallback is a new run counted against the rate. §5 (132) and AC-B17: *n* comes from the grouped statement |
+| Nit §1 | **Closed** | Line 39 points at e2-7a FR-36…38 |
+
+**RP12 and RP13: consistent.** `modules/reports.md` §9 uses RP1…RP11 (1574–1584), and RP6 and RP7 are taken. AC-B14's "RP7 unchanged" correctly means the library `LOCK`. RP12 and RP13 are not used anywhere else in `knowledge/`. ADR-0010's frontmatter fitness is RP3–RP5, which matches "carried forward". One point for the ADR text, which I write: RP3 today names `CompileCount` (reports.md 1576). The superseding ADR restates RP3 without it, and RP12 bans it.
+
+**The trim.** Every round-2 normative rule has a home. Round-2 §5 rules 1–3 are now the §5 prose (133–134), FR-B13 and FR-B28. L1, L2 and L6–L8 are now §9 (245–247), FR-B29, FR-B06 and §5 (137). The NUL/UTF-8 refusal is inherited from reports.md §3.2 (208). The §10 and §11 summaries keep every rule, with FR-B16, FR-B18 and AC-B44 holding the detail. **Three constraints did not survive** (new minors, below).
+
+**New (does not block)**
+- **R3-m1 · §5 (122–123).** The int and time lists lost "has a value / is empty", which round 2 offered (`OpPresent`/`OpAbsent`, reports.md §3.2). Without it the builder cannot express "never logged on" or "password never set". Restore it, and carry it into FB-3a.
+- **R3-m2 · §5 (129).** The source of the time-zone rule was dropped: interactive runs use the runner's profile zone, and a schedule fire uses the schedule's stored zone. reports.md §7.1b (1471) already lists "the owner's zone on a run" as open. Carry the rule into FB-3d (DM-72, time zone) and FB-3a. Write the bucket set out ("day, week, month, quarter, year"), not "day to year".
+- **R3-m3 · §16 (342).** "No user-defined column labels in v1" was dropped. It is a scope limit on attacker-controlled text. Restore it.
+- **Nits.** §9 (246) still cites "§5 rules 1 to 3", which are no longer numbered: cite §5 and FR-B28. §14 repeats the >1,500-member paragraph (311, 313–314). A `reports.preview.refused` event aggregated "per account per minute" needs a writer that closes the minute, because a chained event cannot be incremented later. FB-3a should state that writer.
+
+**Traceability.** The table (676–687) covers FR-B01…B30. I checked mechanically that all 45 ACs appear in it and that every AC's FR header agrees with the table.
+
+### Cross-spec: are E2.6's Entra references pointing at e2-7a?
+
+Mostly. §1 (39), §2 ADM-094 (76), the §7 Entra row (175), FB-11 (378), §23 (717) and Sources (742) cite e2-7a FR-36…38. FR-B25 (434), AC-B30 (595), the §7 rows 176–177, the §18 matrix and §21 still say "E2.7". That is not wrong, because e2-7a is E2.7's split, but it is not "every reference" either. The X3-1 erratum repoints FR-B25 and AC-B30. E2.7 §14.6 (385) and e2-7a §6 (113–114) agree with E2.6 on FB-4 / E-011 / T-1131 and on e2-7a owning the datasets.
+
+### Follow-ups for the project-manager to groom (flat, by spec)
+
+**E2.7**
+1. ADR-0005 amendment, one dated amendment (`solution-architect`, ratified by the director; technical): §14.1 items 1–8, plus the H3-m1 Resume window rule (`security-architect` confirms) and the H3-n1 names `Descriptor.Waits`/`WaitCondition`.
+2. FIT-1 (`backend-engineer`, depends on 1): O4 `transitions` block and its property test.
+3. FIT-2 (`backend-engineer`, depends on FIT-1): O8 cases (coupled blocking, gate expiry, sweeper exemption, Resume supersede, carry-over refusal) and the O5 declared-wait case.
+4. ADR-0004 rule-14 amendment (`solution-architect`): the §14.2 operation-level routes.
+5. FIT-3 (`api-engineer`, depends on 4): A15 extended to those routes.
+6. Domain-model update (`ad-expert` + `backend-engineer`): the §14.3 list, including DM-24 "EV3 not acknowledgeable for Entra" and the DM-33 permissions.
+7. Connector-contract revision (`solution-architect` + `directory-engineer`): the §14.4 list (Entra `WriteKind`s with `PropertyWrite`, the membership touched set, the retryable not-visible error, the ambiguous-outcome signal, targeted re-sync).
+8. MAP-1 (`solution-architect`): blueprint §5 rows for `objects` and `sync`, and the new `modules/m365.md`.
+9. SEC-1 (`security-architect`): the §14.5 TM rows and residuals, the Azure-RBAC designation category, and the TM-F-HYBRID cases.
+10. P1 `bug`, `security-sensitive` (`directory-engineer`): `ms-DS-ConsistencyGuid` into `guarded-v1` under `map_credential`.
+11. Lab work (`directory-engineer`, sandbox, after A-0026): G3 extended, G11 extended, OQ-F3/F4/F8/F9.
+12. Research OQ-F7 (`market-analyst`) and design (`product-designer`): the hybrid flow, wait states, breadth wording and the writable-group picker.
+13. The 2c OpenAPI slice (`api-engineer`).
+14. Build slices: connection, rotation and writable groups; hybrid plan and continuation (depends on 1, 6 and FIT-1); cloud steps (depends on 7); SOA view and search badge (depends on T-1131).
+15. Spec errata (`product-manager`): FR-18/AC-48 per H3-m1, after 1.
+
+**e2-7a**
+1. Domain model (inside E2.7 item 6): DM-16 Entra rows and delta cursors, and the three DM-70 datasets.
+2. Connector contract (inside E2.7 item 7): targeted re-sync by id and anchor, the `nextLink`/`deltaLink` host pin, and the `tid` check on every token acquisition.
+3. The dataset-registry Boot rule (refuse a dataset whose root kinds the scope renderer does not render), placed in E2.6 FB-3a (reports.md §3, EP-8 host). Its test is `dataset_registry_refuses_unrendered_root`.
+4. Build (`directory-engineer`): Entra delta sync, the licence-state reconcile and the targeted re-sync with its budget.
+5. Build (`directory-engineer` + `reporting-engineer`): the three datasets with masking, which depends on 3 and T-1131.
+6. Spec erratum (`product-manager`): AC-43 wording per X3-1.
+
+**E2.6**
+1. FB-3b: a new ADR superseding ADR-0010 (`solution-architect`, next free number ADR-0012, ratified by the director). It restates RP3 without `CompileCount`. When it is ratified, ADR-0010 gets `superseded_by`.
+2. RP12/RP13 fitness (`reporting-engineer`, depends on 1). RP3–RP5 stay green.
+3. FB-3a: the reports.md amendment (`solution-architect` + `reporting-engineer`). It covers the existing list, plus R3-m1 presence operators, the R3-m2 zone rule, the R3-m3 label limit, the writer of the aggregated refusal event, the e2-7a Boot rule, and repointing the §9 RP3–RP5 "Rule" column to item 1.
+4. FB-3c: the security review and RP-B1…B3 (`security-architect`).
+5. FB-3d: the domain model (`ad-expert` + `backend-engineer`): DM-71 edge and origins, DM-72 run class, AST hash, match count and time zone, and DM-34 read semantics (Q4).
+6. FB-5: the `audit.events` dataset and the erasure ruling (`security-architect` + audit owner).
+7. FB-6a: the ADR-0011 amendment, caller-named permission on `inventory.Search` (`solution-architect`).
+8. FB-6b: `inventory.ResolveIdentifiers` (`directory-engineer` build, blueprint row, design note by `solution-architect`).
+9. FB-1 (`market-analyst`), FB-2 (`product-designer` + `market-analyst`), FB-7 (`product-designer`), FB-8 (`product-manager` + `directory-engineer`), FB-10 (E2.11 owner). FB-9 is later. FB-4 is the existing T-1131.
+10. Build: `reportsql` grouping and in-statement count (depends on 1 and 3); the definition store and sharing (former FB-12 as an AC); preview runs and the audit kinds; builder UI (depends on FB-7); act-on-results hand-off; the sync-set Action (depends on FB-8); match list (GUID/DN, then FB-6b). Every one is tagged `security-sensitive` per §16.
+11. Spec errata (`product-manager`): R3-m1…m3, the §9 "rules 1 to 3" citation, the duplicated §14 paragraph, and FR-B25/AC-B30 citing e2-7a FR-38 (X3-1).
+
+**CEO:** nothing. OQ-C1 and Q11 stay dormant. Every ADR and amendment above is technical.

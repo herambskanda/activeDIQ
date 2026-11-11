@@ -22,5 +22,6 @@ same change.
 | 5 | chore, security-sensitive | Threat model §6.6: add a residual-risk row for `GroupMember.ReadWrite.All` (reaches Azure-RBAC groups, CA exclusion groups, M365 groups, PIM-eligible nested groups); §6.4: a designation for Azure-privileged groups | security-architect | P1 | reviews/2026-11-11-m2c-security-review.md (round 2, A2-M2) |
 | 6 | test (lab, needs Entra tenant A-0026) | Lab G11: does Graph refuse a `GroupMember.ReadWrite.All` add to a PIM-eligible nested group? | test-engineer | P2 | same, A2-M2 |
 | 7 | spec tickets | E2.7 and E2.6 specs: file each as a `spec` ticket carrying its review history (two rounds of reviews in `knowledge/product/specs/reviews/`) | product-manager | P1 | this branch |
+| 8 | build follow-up, security-sensitive | Outside a hybrid request: adding a user to an AD-synced group whose Entra twin carries a licence must check `m365.licence.assign` over that user (licence state read live at Plan and Apply; unreadable counts as licensed) | backend-engineer (`objects`) | P2 | reviews/2026-11-11-m2c-security-review.md (round 3, A3-m3) |
 
 Rows for the ADR, domain-model and build tickets come from the M2c ticket plan, not from here.

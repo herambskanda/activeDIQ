@@ -796,3 +796,126 @@ and X-3 are not part of this diff.
 | A.6 #8 `$filter` cite | Taken | FR-15 |
 | A.6 #9 observed UPN | Taken | FR-16, AC-37 |
 | A.1–A.3 rulings; `guarded-v1` follow-up | Applied; follow-up listed | §10, §14.5 |
+
+## Round 3 — 2026-11-11
+
+**Verdict. E2.7 (revision 3) and e2-7a (revision 1): advance.** A2-M1 and A2-M2 are closed in the
+spec text. Every round-2 minor and the nit are present. The split lost nothing security-relevant. I
+confirm H2-m6 on four conditions. Round 3 raises 0 blockers, 0 majors, 3 minors (A3-m1…m3) and
+2 nits. Land them before the build tickets are cut. Scope was narrow: the round-2 open items only.
+This was a document review, so nothing was run. Each attack below is a walk-through against the
+written rules. I read the FR, AC and §14 text, and used the spec's `### Round 3` list only as an
+index.
+
+### R3.1 Round-2 items, verified in the text
+
+| ID | Verdict | Evidence (E2.7 unless marked) |
+| --- | --- | --- |
+| A2-M1 (a) D1–D6 | **Closed** | FR-17 "Activation digest rules" states D1–D6 as ruled. FR-14 sets one transaction for `approval_valid_until` and the digest. §14.1 item 5 points to them. AC-47 holds a test per rule: `create_records_guid_from_pinned_readback` (D2 input), `activation_digest_write_once` (D3), `awaiting_sync_event_carries_digest_inputs` (D4), `digest_mismatch_refuses_token` (D5), `window_cap_asserted` (D6). D1 is in the AC-47 text but has no named test (nit 1). |
+| A2-M1 (b) Resume | **Closed** (A3-m1 tightens it) | FR-18 Resume rule. A live original ends `cloud_superseded` with `superseded_by` in the same transaction, and a unique key on `request_id` allows one live continuation (AC-49, `one_live_continuation_per_request`, `no_double_cloud_write`). Approval carries over only after `cloud_step_failed`, before `approval_valid_until`, with equal bound elements. Cancel, `cloud_denied`, `cloud_expired` and security holds consume it (AC-48, `resume_after_cancel_requires_new_approval`). FR-20 Cancel → `cloud_cancelled`. Attack walk-through, the round-2 exploit: SOC presses Cancel, the initiator presses Resume 10 min later → the terminal reason is `cloud_cancelled`, so a new approval is required. Refused. |
+| A2-M1 (c) holds | **Closed** | FR-35 has a sticky row (`anchor_on_cloud_object`, `anchor_tampered`, `ambiguous_anchor`) and a transient row. FR-18: sticky holds end only through Cancel, or through Resume with a new approval after `tenant-owner` acknowledges the alert. AC-48 `security_hold_does_not_autoclear`, `transient_hold_autoclears`. AC-41 renders sticky or transient. |
+| A2-M2 | **Closed** | FR-41 (a)–(d): breadth text, which equals Flow A step 2. A deny-by-default writable-group allow-list: a step-up `tenant-owner` Action that shows each group's classification, `group_not_writable(not_allow_listed)`, audited as `connection.writable_groups.changed` (FR-34). `Policy.Read.ConditionalAccess` is required with the family (FR-04; a missing permission disables the family, AC-51). CA-excluded groups are proposed for `tier0`. A CA-include removal previews as a security weakening. RMAU guidance with its limits. Sources inline (permissions reference, add members, RMAU, Azure RBAC). E4 is reworded ("reduced-privilege", breadth stated). §10 Privileges. TM residual and lab G11 are in §14.5 and OQ-F4. AC-50, AC-51. Attack walk-through: a compromised template names an Azure-Owner group → not on the list → Plan refuses. A compromised server stays the residual that FR-41(d) and the TM row cover. |
+| A2-m1 | **Closed** | e2-7a FR-38 "AD-derived columns" and the dataset footnote (correlation state, `candidate_reason`, `ad_object` related-object and masked; synced/cloud visible). AC-57 `entra_only_runner_sees_no_ad_derived_reason`. |
+| A2-m2 | **Closed** | FR-12, FR-31 (licensed-group removal and undo of the add are Lossy). AC-52 `licensed_group_removal_is_lossy`. |
+| A2-m3 | **Closed** (A3-m2 clarifies it) | FR-40 caps per request, per account and per tenant. e2-7a FR-37 budget (6 per account and 30 per tenant per minute `[PROPOSED]`, writes ahead of re-syncs). AC-56. |
+| A2-m4 | **Closed** | Folded into A2-M1 (FR-35 classes). |
+| A2-m5 | **Closed** | FR-14 pinned-DC read-back by DN, `uSNCreated` above the pre-add `highestCommittedUSN`, value recorded in the step result, RFC 4511 §4.7 cited. AC-47. |
+| A2-m6 | **Closed** | FR-39 step-up audited Action, 14-day pending thumbprint, unknown key still flagged. AC-10 `pending_thumbprint_expires`, `unknown_key_flagged_during_rotation`. |
+| A2-m7 | **Closed** | e2-7a FR-36 "Link and token binding": links stored per connection, followed after the P8 host pin, `tid` checked on every acquisition, foreign page refused. AC-55. |
+| A2-m8 | **Closed** | FR-16: the pre-write read is a targeted re-sync inside the same step claim, and the write uses its `id`. AC-20 `write_uses_id_from_presync_read`. |
+| A2 nit | **Closed** | §14.4: the membership touched set is the group **and** the member. |
+
+### R3.2 Ruling: a terminal original keeps its own `cloud_reason`
+
+**Confirmed. This opens nothing, and it is the safer choice.** The carry-over test in FR-18 keys
+off the original's terminal reason: only `cloud_step_failed` carries over. If a terminal original
+were re-marked `cloud_superseded`, the `cloud_cancelled`, `cloud_denied` or `cloud_expired` signal
+that consumes the approval would be overwritten. Re-marking would also mutate a terminal row in an
+append-only audit design. Walk-throughs:
+- **Resume on a terminal original while a later continuation is live.** The `request_id` unique key
+  refuses it (fail closed, AC-49).
+- **Chained carry-over.** A fails (`cloud_step_failed`), B is resumed from it and also fails, then C
+  is resumed. Every hop copies A's `approval_valid_until` (D3), so the window never grows.
+- **Superseding a live original.** A waiting or held original is never `cloud_step_failed`, so
+  superseding it always needs a new approval.
+
+The terminal original has no `superseded_by` link, so traceability rests on `request_id` and
+`objects.hybrid.resumed`. Nit 2 makes that event carry what an auditor needs.
+
+### R3.3 The split (E2.7 → e2-7a)
+
+**Nothing lost.**
+- **Deny list:** stays in E2.7 FR-04. e2-7a adds no permission and reads with the Read family (e2-7a
+  intro, §4).
+- **`onPremisesImmutableId`:** still synced (FR-36; correlation needs it) and not exposed (dataset
+  footnote, §4 "never a column", AC-43).
+- **Scope gating:** the FR-38 Boot rule refuses a dataset whose root kinds the renderer cannot
+  render (AC-43 `dataset_registry_refuses_unrendered_root`). A dataset is readable only under its
+  scope. Each dataset declares its scope roots.
+- **Takeover signal:** sync sets `cloud_seen_at`, protected by the inventory trigger (e2-7a §4).
+- **Safe primitives:** P8 only, with `nextLink` followed after the host pin.
+- **References:** E2.6 now cites e2-7a FR-38 (E2.6 lines 39, 76, 378).
+
+### R3.4 Ruling on H2-m6 (FR-33: a licence-carrying group step also needs `m365.licence.assign`)
+
+**Confirmed, on four conditions** (A3-m3). The rule is right: membership rights alone must never
+spend a paid licence or grant the services it carries. The FR-41 allow-list already limits this to
+groups a `tenant-owner` listed. The conditions close the gaps the one-line rule leaves:
+1. **Whose scope.** `m365.licence.assign` (`.remove` for a removal or an undo) is evaluated over the
+   **member user**, the licensee, exactly as on the direct path. This is in addition to the
+   membership permission over the group.
+2. **Live and fail-closed.** "Carries a licence" is read live from the group's `assignedLicenses`
+   at Plan and at Apply, not only from inventory: group delta returning `assignedLicenses` is
+   `[UNVERIFIED — lab]` (e2-7a FR-36). If the value cannot be read, the group is treated as
+   licence-carrying.
+3. **Bound at approval.** Add "carries licence SKU set S" to the FR-17 Groups classification. A group
+   that gains or changes a licence during the wait then holds `replan_changed`. Otherwise an
+   approver who approved a plain group add would have a paid licence spent under their approval by
+   an initiator who happens to hold `.assign`.
+4. **The AD arm.** FR-24 routes AD-synced groups to an AD step. Licensing groups are often
+   AD-synced, so where the Entra twin (matched by SID) carries a licence, the same permission and
+   the "assigns licence via sync" preview apply. The general case, AD group-membership Actions on
+   synced licensed groups outside a hybrid request (E2.2), is a server-board follow-up for the
+   `objects` owner. It is not part of this diff.
+
+Test: AC-52 `licensed_group_add_needs_licence_permission`, extended with
+`licence_gained_during_wait_holds`, `licence_flag_unreadable_fails_closed` and
+`synced_licensed_group_needs_licence_permission`.
+
+### R3.5 Minors and nits (land before the build tickets are cut)
+
+1. **A3-m1 [minor] · FR-18, FR-17 D3, AC-48 "the new Operation copies `approval_valid_until` and
+   the digest values" after Cancel, denial, expiry or a security hold.**
+   - **Problem.** Those cases need a new approval. With an expired window copied over, the resumed
+     Operation is dead on arrival. With the original digest copied over, D5 (which hashes the new
+     plan hash) never matches. This fails closed, but an implementer will "fix" it by adding an
+     UPDATE path, and that is how D3 erodes.
+   - **Fix.** `objectGUID` and the anchor are **always** copied, never re-read.
+     `approval_valid_until` and the digest are copied **only on carry-over**. After a new approval,
+     the new continuation row writes its own window and digest once, by the D2–D6 rules relative to
+     the new approval (the D1 supplying step is still the original's create step), with its own
+     `objects.hybrid.awaiting_sync.started`. That is a new write-once row, never an UPDATE.
+   - **Test.** `resume_with_new_approval_writes_fresh_row_copies_identity`.
+2. **A3-m2 [minor] · e2-7a FR-37 budget vs E2.7 FR-15/FR-16.**
+   - **Problem.** The FR-15 lookup and the FR-16 pre-write read are targeted re-syncs. If they count
+     against the 30-per-minute tenant cap, five readers pressing Check now can starve every
+     continuation until it expires.
+   - **Fix.** State that the account and tenant caps apply to human-initiated re-syncs only. The
+     continuation's own reads belong to the write path's budget and priority.
+   - **Test.** `continuation_reads_not_starved_by_check_now`.
+3. **A3-m3 [minor] · FR-33, FR-17 Groups row, FR-24.** The H2-m6 conditions 1–4 above.
+4. **[nit] AC-47.** Name a D1 test (`plan_hash_commits_to_derivation`).
+5. **[nit] FR-34.** `objects.hybrid.resumed` carries the source Operation ID, the source's
+   `cloud_reason`, and whether the approval carried over or which new approval IDs replaced it.
+
+### Round 3 summary
+
+| Spec | Verdict | Open blockers | Open majors | Minors | Nits |
+| --- | --- | --- | --- | --- | --- |
+| E2.7 rev 3 + e2-7a rev 1 | **advance** | none | none | 3 (A3-m1…m3) | 2 |
+
+**Follow-ups for the server board (unchanged from round 2, plus one):** TM §6.6
+`GroupMember.ReadWrite.All` residual. TM §6.4 Azure-RBAC designation category. Lab G11 extended.
+P1 `guarded-v1` for `ms-DS-ConsistencyGuid`. **New:** AD group-membership Actions on AD-synced
+groups whose Entra twin carries a licence need the `m365.licence.assign` rule once an Entra
+connection exists (owner `backend-engineer`, `objects`; R3.4 condition 4).
