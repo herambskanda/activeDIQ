@@ -19,6 +19,8 @@ same change.
 | 2 | bug, security-sensitive | Add `ms-DS-ConsistencyGuid` to `guarded-v1` under `map_credential` (AD side of the sync anchor; Entra `onPremisesImmutableId` is already there). Check the code's guarded set on main and the merged branches, not only TM §6.9a line 1911 | directory-engineer | P1 | reviews/2026-11-11-m2c-security-review.md (A-B2) |
 | 3 | decision-prep (hold; blocks nothing in 2c) | OQ-C1: ever ship a customer-run helper on the Entra Connect server to start a sync? Recommendation: no — a new component on a Tier-0 host | product-manager | P3 | specs/e2-7-hybrid-provisioning.md |
 | 4 | research | Time ADMP's M365-at-creation flow and its behaviour during the sync gap (needs the ADMP trial, A-0036) | market-analyst | P2 | specs/e2-7-hybrid-provisioning.md |
-| 5 | spec tickets | E2.7 and E2.6 specs: file each as a `spec` ticket carrying its review history (two rounds of reviews in `knowledge/product/specs/reviews/`) | product-manager | P1 | this branch |
+| 5 | chore, security-sensitive | Threat model §6.6: add a residual-risk row for `GroupMember.ReadWrite.All` (reaches Azure-RBAC groups, CA exclusion groups, M365 groups, PIM-eligible nested groups); §6.4: a designation for Azure-privileged groups | security-architect | P1 | reviews/2026-11-11-m2c-security-review.md (round 2, A2-M2) |
+| 6 | test (lab, needs Entra tenant A-0026) | Lab G11: does Graph refuse a `GroupMember.ReadWrite.All` add to a PIM-eligible nested group? | test-engineer | P2 | same, A2-M2 |
+| 7 | spec tickets | E2.7 and E2.6 specs: file each as a `spec` ticket carrying its review history (two rounds of reviews in `knowledge/product/specs/reviews/`) | product-manager | P1 | this branch |
 
 Rows for the ADR, domain-model and build tickets come from the M2c ticket plan, not from here.

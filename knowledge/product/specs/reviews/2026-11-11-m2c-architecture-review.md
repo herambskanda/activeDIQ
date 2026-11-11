@@ -387,3 +387,205 @@ cross-reference.
 conditional cut order) are already framed as directional and are filed only on need. The new ADR that
 replaces the ADR-0010 change and the ADR-0004/0005/0011 amendments are technical, so factory-director
 ratifies them.
+
+---
+
+## Round 2 — 2026-11-11
+
+Round-2 drafts at `abec6994`: E2.7 revision 2 (599 lines) and E2.6 revision 2 (943 lines). Every round-1
+finding was checked **in the spec text**, not in the response tables (E2.7 §15, E2.6 §24). A parallel
+security round 2 is running, so this round stays on architecture. No `factory` command was run.
+Checked again against ADR-0003 (ratified), ADR-0004 (ratified, rule 14 and A15), ADR-0005 (ratified;
+rules 1–3, 6, 8–11, 13, and the T-0892 rule 10 amendment), ADR-0010 (**accepted**), ADR-0011 (ratified), the
+blueprint parity → module table (lines 1839–1861), and DM-71.
+
+### Verdicts, round 2
+
+| Spec | Verdict | Blockers | Majors | Minors | Nits |
+| --- | --- | --- | --- | --- | --- |
+| E2.7 | **reject** (small delta) | 0 | 3 (H2-M1…M3) | 7 | 1 |
+| E2.6 | **reject** (small delta) | 0 | 2 (R2-M1, R2-M2) | 6 | 1 |
+
+Both specs moved a long way. Every round-1 blocker and major is fixed in the text, and so is every cross-spec
+item. What is left are new findings, most of them caused by the round-2 additions themselves. None needs a
+redesign. I estimate the E2.7 delta at about 30 lines and the E2.6 delta at about 15. Round 3 will be a
+**delta review of the IDs below only**.
+
+### Round-1 findings: verified in the text
+
+| ID | Status | Evidence in the text (round-2 line numbers) |
+| --- | --- | --- |
+| H-B1 | **Closed** | FR-09 (241) declares a coupled item group. FR-10 (242) blocks every item at Plan, giving `plan_failed`, a state that exists in ADR-0005 rule 3. FR-11 and AC-15 move a later shortage to `partially_succeeded` + `cloud_step_failed`. §14.1 item 1 |
+| H-M1 | **Closed for terminal states, re-opened for holds** → H2-M2 | FR-21's table (283–293) uses only closed results plus `cloud_reason`, and Resume is a new Operation (FR-18). The part about a *held* request that is still `running` is new: H2-M2 |
+| H-M2 | **Closed** | FR-33 (319) covers Plan-time authority. The two-stage binding (plan hash + activation digest, FR-17, §14.1 item 5) is coherent, because `objectGUID` does not exist at Plan. Security confirms the binding |
+| H-M3 | **Closed** | FR-36…38 (§7.6) and the targeted re-sync (FR-37). "Check now" reads after a re-sync (FR-19). T-1131 / E-011 is listed in §14.6 |
+| H-M4 | **Closed** | FR-23, FR-33 and §9 (368) are the Entra arm of `objects`. The `m365.group.member.*` and `usage_location.set` Actions are explicitly superseded. This matches blueprint 1859 |
+| H-M5 | **Closed** | FR-25 (306) and AC-28 |
+| H-M6 | **Closed** | AC-23 covers the FR-17 hold. Every AC has an FR column. Every FR-01…FR-40 has at least one AC (checked one by one) |
+| H-M7 | **Closed**; fitness missing → H2-M3 | §14.2 |
+| H-m1…m8 | **Closed** | FR-12/AC-34; FR-08 and FR-10(i) (binary anchors only, a clean Dec); FR-08 at 20 min; FR-35 table; §14.1 item 8 (but see H2-m1); FR-11; FR-03 + §14.3; FR-34 + §14.1 item 9 |
+| H-n1, n2 | **Closed** | §5; Flow B step 3 |
+| H-n3 | **Open** | §5 row 168 still reads "FR-13…21, 40 continuation and wait", but FR-13 sits in §7.2 |
+| R-B1 | **Closed** | §5 "Match count" (179–181), §9 (313–316), FR-B08, and AC-B15 (statement log: one cursor statement). But one per-condition count survives in §15: R2-M2 |
+| R-M1 | **Closed in direction; the type is still ambiguous** → R2-M1 | FB-3b (526) is a new ADR, and ADR-0010 is not edited |
+| R-M2 | **Closed** | FB-3a (525) |
+| R-M3 | **Closed** | §16: one `reports.preview.run` per preview, chained at commit; AC-B35 expects 12 events |
+| R-M4 | **Closed** | §7 (236) has restricted columns and no display names; §21 puts DC events in M3 |
+| R-M5 | **Closed** | FB-6a is an ADR-0011 amendment (ADR-0011 is ratified, so that is the right type). §9 L5/L6 and the §16 interim residual are acceptable, because `Resolve` re-authorises every value |
+| R-M6 | **Closed** | §11.2 (390–400), AC-B28 |
+| R-M7 | **Closed** (a different model from the one I recommended, and coherent) | §8 (251–261): editing state lives in the browser, Save publishes, a server `draft` exists only for imports, and nothing is hard-deleted. FR-B09, AC-B44. See R2-m1 for a naming collision |
+| R-m1…m11, R-n1…n4 | **Closed** | Spot-checked each: AC-B36/B37/B42; AC-B09 Given and replicated logon; AC-B06 `% _ \`; one FB table; one limits table (§9); 10 s preview timeout; masked group label and zone in the hash; GUID/DN default; FB-12; §11.5 lock; frontmatter |
+| X-1 | **Closed** | E2.7 §7.6 registers three datasets owned by `directory/inventory` (DM-70). E2.6 §7 (237), FR-B25 and FB-11 cite it and define none |
+| X-2 | **Closed** | E2.7 §14.6 and E2.6 FB-4 name the same dependency (E-011 / T-1131) |
+| X-3 | **Closed** | E2.6 §11.2–11.5; FB-10 |
+
+### Director rulings: coherent and buildable?
+
+1. **ADR-0010 accepted → E2.6 storage in a new ADR (FB-3b).** This is the right direction, but the ADR must be **superseding**. "Extending" is not a valid type here (R2-M1).
+2. **E2.7 owns Entra delta sync and the Entra datasets.** This is coherent. Producer (`sync`/`provider/entra`) → `inventory` Populator/Ingester (T-0326) → datasets declared by `directory/inventory` matches blueprint 1860–1861 and DM-20.I5. E2.6 AC-B30 and E2.7 AC-43 are two sides of one gate. Make the gate a Boot rule (H2-m3) so that both can be tested.
+3. **Group membership through `objects` on the Entra provider.** This is coherent with blueprint 1859 and EP-11. One RBAC consequence of the default licence path is left unstated (H2-m6).
+4. **Group-based licensing as the default.** This is buildable. FR-26 verifies through `licenseAssignmentStates`, AC-12 proves that no profile-write or direct-licence call is made, and the wizard states the preconditions (§2). It also improves least privilege (E4).
+
+### E2.7: round-2 findings
+
+**H2-M1 (major) · §9 (365–372), §14.1 item 2 (475–479) and FR-34 (320): no module owns the continuation, and the kernel cannot evaluate the gate's condition.**
+- The spec adds a `gate` step whose condition is "the Entra object exists and is `matched`". It also adds a HybridRequest/continuation entity and `hybrid.*` audit kinds, but never says which module owns any of them.
+- `platform/operation` imports no module or directory package (ADR-0005 rule 13 `dag`, O9; ADR-0003), so the kernel cannot evaluate an Entra correlation. Left unowned, the condition gets hard-coded into the kernel or bolted onto `objects` ad hoc. That is PatchIQ §11 #2.
+- Audit kinds are `<owner>.<…>`, and no module is named `hybrid`.
+- Blueprint 1839 assigns ADM-027 to **`objects`** ("one flow for AD + Entra"), with the `m365` licence Action beside it.
+
+**Fix:**
+- The gate condition is declared by the Action's owner on the EP-3 Action descriptor. For example, `Descriptor.Gates`: a named condition with an evaluator the module supplies through `Registrar.Action`. The kernel holds only the generic gate state machine and the sweeper deadline. This needs no new EP. A separate `Registrar` method would instead be an ADR-0003 amendment, so the descriptor field is preferred.
+- `objects` owns the HybridRequest record and the evaluator. The evaluator reads correlation only through `inventory`'s read API.
+- The kinds become `objects.hybrid.*`.
+- §14.7 gains an architecture-map ticket: blueprint §5 rows for `objects` (Entra arm, continuation) and `sync` (Graph delta producer), plus an `architecture/modules/m365.md` page. Today `m365` has only a blueprint row (988) and no page.
+
+**H2-M2 (major) · FR-17 (257), FR-18 (278), FR-21 table row "waiting or held" (293), §14.1 items 2 and 4, AC-23: Resume of a *held* request starts a second live Operation and leaves the first undefined.**
+- A `hold` "resolves only by Resume". Yet a held Operation stays `running` with its gate `waiting`, and Resume is a *new* Operation. Nothing ends the original, so two Operations could write the same cloud steps for one `request_id`.
+- Approval carry-over across Operations (FR-18: "same hash, ADR-0005 rule 8") is undefined. The new Operation plans against live state with a resolved target, so its plan hash cannot equal the original's.
+- §14.1 item 2 says cloud steps "are planned against live state" when the gate passes. That is a Plan inside `running`, which rule 1 does not have.
+
+**Fix:**
+1. **Pass the gate by binding, not by planning.** Gate pass *binds* the resolved target into the steps planned at Plan and computes the live diff read-only. If it differs, the step-level wait reason becomes `replan_changed`. This is not a rule 8 kernel hold, which comes before approval; say so.
+2. **Resume supersedes the original in one transaction.** Resuming a waiting or held request ends the original's cloud item in the same transaction (`cancelled`, `cloud_reason = cloud_superseded`, added to the closed set in FR-21 and §14.1 item 3, with a `superseded_by` link). A unique key on `request_id` over live continuations allows at most one per request.
+3. **Define carry-over.** Approvals carry over only if the new Operation's FR-17 bound elements, recomputed, equal those in the original activation digest, and only inside `approval_valid_until`. This is an explicit rule 8 addition in §14.1 item 4.
+4. **Test it.** AC-23 asserts that the original ends `partially_succeeded` / `cloud_superseded` and that no Graph write happens twice.
+
+**H2-M3 (major) · §14.1 and §14.2 name no fitness additions, so grooming would produce amendments with no CI behind them.**
+§14.1 adds a step kind, a state and edges: `planned → waiting`, `waiting → verified | not_run`, item `planned → cancelled`, gate-driven `running → cancelled`, and a wider `partially_succeeded`. ADR-0005's O4 compares `transitions.go` with the ADR's `transitions` block, so O4 fails until the block changes. O8 has no case for coupled blocking, gate expiry, Resume supersede or carry-over refusal. Rule 6's `operation.sweep` re-drives every `running` operation it thinks stalled (ADR-0005 line 262), and a 24-hour `waiting` gate is exactly what that rule would re-drive. §14.2 changes rule 14 routes, which A15 checks.
+
+**Fix:**
+- §14.1 states that waiting gates hold no step claim and are excluded from stalled detection: the sweeper drives the deadline and a scheduled poll drives the re-check.
+- §14.1 lists the fitness ticket: O4 `transitions` block and its property test, O8 cases, owner `backend-engineer`, depends on the amendment.
+- §14.2 lists the A15 extension, owner `api-engineer`.
+
+**Minor**
+1. **H2-m1 · FR-22 (303), FR-23, §14.1 item 8, AC-33: drop the Entra `outcome_unknown`.** Round-1 minor 5 pointed the wrong way, and this corrects it. "Resolved by Check now or Resume" contradicts rule 3: `failed` is terminal, and Check now is a read. Rule 6 already covers this case: "a step whose state cannot be read stays `applying` for the reconciler". Graph writes are read-then-write idempotent (FR-22, FR-23), so the reconciler can re-read and either finish or re-apply. Delete item 8 and the `outcome_unknown` row of FR-35. AC-33 then asserts that the step stays `applying` until the target is readable. This also keeps rule 3's undo corollary true without amending it.
+2. **H2-m2 · FR-35 table (323–327).** `pim_read_failed` is missing from the Plan row, although FR-10(f) and AC-14 use it at Plan. `cloud_expired` is a `cloud_reason`, not a step outcome. Give the cloud reasons a row of their own: `cloud_step_failed`, `cloud_expired`, `cloud_cancelled`, `cloud_denied`, and `cloud_superseded` from H2-M2.
+3. **H2-m3 · FR-38 (338), AC-43: "MUST NOT be registered until the scope renderer supports the root kinds".** As written this is a merge-order instruction that no test can hold. Make it a Boot rule: the dataset registry refuses a dataset whose declared root kinds the scope renderer does not render. AC-43 then tests the refusal, and E2.6 AC-B30's first state is the same Boot outcome.
+4. **H2-m4 · FR-40 (297), AC-35.** Only Cancel's permission is tested. Add cases for the Resume and Undo permissions and for the Check-now rate limit (one per 30 s).
+5. **H2-m5 · FR-30 (316).** "Every … search row" has no AC, because AC-37 covers the user page. Add a search-row case that depends on T-1131.
+6. **H2-m6 · FR-33 (319) with FR-26: the default licence path is a group-membership Action.** As written, a technician with membership rights over a licensed group assigns a paid licence without `m365.licence.assign`. State the rule. Recommendation: a step targeting a group that carries a licence (FR-38 column "carries a licence") also requires `m365.licence.assign` over the target at Plan and Apply. Security-architect confirms.
+7. **H2-m7 · FR-04 (230): "SKU reads via `LicenseAssignment.Read.All` or `Organization.Read.All`".** The consent list is closed (AC-04), so name one.
+
+**Nit**
+1. H-n3, still open (above).
+
+### E2.7: follow-up list corrections (§14.1–14.7)
+
+| List | Type as written | Correct? | Change |
+| --- | --- | --- | --- |
+| §14.1 ADR-0005 | amendment | Yes: ADR-0005 is `ratified`, and nothing in the list reverses a rule | Add the gate-condition seam (H2-M1), Resume supersede and carry-over (H2-M2), and the sweeper exclusion plus the fitness ticket (H2-M3). Delete item 8 (H2-m1). solution-architect writes it as **one** dated amendment. The spec should keep a five-line pointer and not a second copy of the text (see Length) |
+| §14.2 ADR-0004 rule 14 | amendment | Yes: ADR-0004 is `ratified` | Add the A15 fitness ticket |
+| §14.3 domain model | DM changes | Yes | Add `cloud_superseded` to the `cloud_reason` set. Add the owner of the HybridRequest entity (`objects`, H2-M1) |
+| §14.4 connector contract | contract revision | Yes | none |
+| §14.5 threat model, `guarded-v1` P1 bug | TM change + `bug` | Yes (security's call) | none |
+| §14.6 cross-spec | dependency | Yes | none |
+| §14.7 tickets | tickets | **Incomplete** | Add the architecture-map ticket (H2-M1) and the fitness tickets (H2-M3) |
+| Accepted ADR amended? | n/a | **None.** ADR-0002, 0004, 0005 and 0011 are not accepted | none |
+
+### E2.6: round-2 findings
+
+**R2-M1 (major) · FB-3b (526): "New ADR extending or superseding ADR-0010" must be *superseding*. "Extending" is not a valid type here.**
+ADR-0010 is `accepted`. The new ADR changes what three of its rules require:
+- **Rule 3 ("the total is `report_runs.row_count`").** A preview's match count exceeds its 1,000 stored rows, so a second user-visible total is introduced.
+- **Rule 5 (7-day retention, later 1–30 days).** A 1-hour preview class falls outside it.
+- **The run identity (DM-72, reports.md §6.2).** A run would exist with no definition ID.
+
+An "extending" ADR would leave ADR-0010 `accepted`, with text that contradicts a binding successor. That is two documents that disagree, which is the drift the ladder exists to stop, and the ladder has no partial supersede.
+
+**Fix:**
+- FB-3b reads "**new ADR superseding ADR-0010**". It restates the unchanged rules, carries RP3–RP5 forward unchanged, and adds its own checks. Proposal: RP6, no `CompileCount` or second count statement on any run path (a `reportsql` call-site check plus the AC-B15 statement-log test); RP7, preview-class supersede and expiry.
+- ADR-0010 becomes `superseded` when the new ADR is ratified. List the fitness ticket.
+- State whether `CompileCount` is deleted for library runs as well. §15's "1.4 million rows" over-cap message now comes from the window count, so yes. That makes it a reports.md §5 change under FB-3a, with the superseded code deleted in the same change.
+
+**R2-M2 (major) · §15 "Unsynced attribute" (474) and AC-B04 (630): "a filter on it says 'n users not yet read'" is a per-condition count that survived R-B1.**
+The number counts in-scope users that the condition *excludes*, so it cannot come from the result statement. It can only come from one of two places:
+- a separate `COUNT`, which contradicts §5 "Match count" and FB-3b; or
+- the sync-set backfill's progress counter, which is tenant-wide and would leak a count outside the runner's scope (FR-B30, AC-B40).
+
+**Fix:** show no number: "<Field> has not been read for every user yet (sync started 09:12). Users not yet read do not match." AC-B04 asserts this text and that no count is shown. The header count of "Not synced yet" cells among *stored* rows may stay, because it is computed from stored rows.
+
+On the dropped counts the director asked about:
+- **Source-picker row counts.** Dropping them is consistent with the experience target. Step 2 shows the scoped match count one interaction later. T21–T23 count interactions, not numbers, and E-B1 promises "rows plus match count" per preview, which is kept.
+- **Per-condition live counts.** Also consistent. The header count refreshes on every debounced edit (§6 step 4), which gives the same signal one edit at a time.
+- **The "N checked" count.** It appears nowhere in revision 2, and the selection contract binds `all_matching` to the stored `row_count` (§10.2), so no separate count is needed.
+- **Result.** No dead or fake element remains apart from R2-M2 and the wording in R2-m5.
+
+**Minor**
+1. **R2-m1 · §8 (256–261): `reports.definition.restore` collides with ADR-0005 rule 10 (T-0892 amendment).** That rule makes "`<owner>.<noun>.restore`" the family's **undo inverse**, refused as `superseded` when the row has moved on. The spec uses `restore` for un-archive, and undo of an update "publishes a new version equal to the previous". Define one `reports.definition.restore` as "restore a recorded state (version and lifecycle state)". It is both the undo inverse and the un-archive control. FB-3d adds the DM-71 edge `archived → published`, which DM-71 lacks today. It has `draft → published → archived` only.
+2. **R2-m2 · FB-5 (530): "register the `reports.preview.run` kind" under the `platform/audit` owner.** EP-7 kinds are registered by their owner, and `reports.*` belongs to `modules/reports`. Move the kind into FB-3a or the reports build ticket. FB-5 keeps the `audit.events` dataset and the erasure ruling.
+3. **R2-m3 · FB-6b (532): owner and type.** `inventory.ResolveIdentifiers` is an `inventory` read API (blueprint 930, owner `directory-engineer`). Type it as a blueprint `inventory` row plus a build ticket for `directory-engineer`, with a design note by solution-architect. If it is meant as a search-producer variant, it rides on FB-6a's ADR-0011 amendment instead.
+4. **R2-m4 · FB-12 (538)** is a constraint on the definition-store build ticket, not a follow-up. Fold it into that ticket's AC so that grooming does not create an empty ticket.
+5. **R2-m5 · §15 "Preview truncated" (472).** "At least 1,000 users match" contradicts FR-B08: the count is exact, and "1,000+" appears only after the rows-only fallback. Write "4,312 users match; the preview shows the first 1,000. The saved report stores up to 1,000,000." Keep "1,000+" for the fallback state only.
+6. **R2-m6 · §9 (313–316) and §5 (163).**
+   - The rows-only fallback is a **new** preview run (ADR-0010 rule 2: never resume into the same run) and counts against the per-account rate. Say so.
+   - Say that the *n* in "k of n groups shown" comes from the same grouped statement (a window over the groups before Top N and the minimum group size), so it is not a second count either.
+
+**Nit**
+1. §1 (43): "owns Entra sync and datasets, §7" should read "§7.6".
+
+### E2.6: follow-up list corrections (§17 FB-1…FB-12)
+
+| FB | Type as written | Correct? | Change |
+| --- | --- | --- | --- |
+| FB-1, FB-2, FB-7, FB-8, FB-9 | research, lab, design, spec, later | Yes | none |
+| FB-3a | reports.md amendment (architecture page) | Yes | Add `CompileCount` removal (R2-M1), the `reports.preview.run` kind (R2-m2), and the single `restore` Action (R2-m1) |
+| FB-3b | "new ADR extending or superseding" | **No** | **Superseding ADR**, plus its fitness ticket (RP6/RP7), RP3–RP5 carried (R2-M1) |
+| FB-3c | security review + fitness RP-B1…B3 | Yes | none |
+| FB-3d | domain model | Yes | Add the DM-71 edge `archived → published` (R2-m1) |
+| FB-4 | shared dependency (E-011 / T-1131) | Yes, and it matches E2.7 §14.6 | none |
+| FB-5 | `platform/audit` dataset + erasure ruling + kind | Partly | Remove the kind (R2-m2) |
+| FB-6a | ADR-0011 amendment | Yes: ADR-0011 is `ratified` | none |
+| FB-6b | owner solution-architect | **No** | `directory-engineer` build plus a blueprint `inventory` row (R2-m3) |
+| FB-10, FB-11 | cross-reference; done in E2.7 | Yes | none |
+| FB-12 | follow-up | **No** | A build-ticket AC (R2-m4) |
+| Accepted ADR amended? | | ADR-0010 stays untouched, as ruled. FB-3b must supersede it, not extend it | |
+
+### Traceability
+
+- **E2.7.** All 40 FRs map to ACs (46 ACs, each with a tier and named evidence). The numbers agree across sections: 20/30 min, 3×, 24 h, 90/14 days, 30-day certificate warning, 50/51, four writes, 2-minute window, 30 s. Gaps are H2-m4 and H2-m5 only.
+- **E2.6.** The trace table (839–850) covers FR-B01…B30. Every AC names its evidence. The preview caps (1 / 2 / 30 per minute / 10 s), the limits table, Top N, 10,000 groups and AC-B35's 12 events agree everywhere. The only number that disagrees with its FR is §15's "At least 1,000" (R2-m5).
+
+### Length: are these still usable working documents?
+
+**E2.7 (599 lines): usable, but trim it to about 450 and split out one slice.**
+1. Move §15 (the review-response table, 43 lines) into this review file, and leave a one-line pointer in the changelog. Response tables belong to the review record, not the contract.
+2. Replace §14.1's 37-line amendment text with a five-line pointer once solution-architect drafts the ADR-0005 amendment. Two copies of one amendment will drift.
+3. Split §7.6 (FR-36…38, the dataset table, AC-42, AC-43; about 70 lines) into `e2-7a-entra-inventory-sync.md`. It is its own build slice (§14.7 already says so), it is E2.6's dependency, and FB-11 can then point at a stable document instead of a section number.
+
+**E2.6 (943 lines): too long to work from. Target ≤ 750 now and ≤ 650 once FB-3a and FB-3b land.**
+1. Move §24 (35 lines) into this file, as for E2.7.
+2. Once FB-3a and FB-3b exist, replace the architecture they will own with links: §5 "How it compiles" and "Match count", §5 rules 1–3, and §9 L1–L8 (about 60 lines). Keep FR-B28 and FR-B30, which are the product contract.
+3. Merge §12 into §3's "Differs" column (−10).
+4. Cut §16's abuse-case list to one line per case pointing at its ACs (−10).
+5. Cut §11 to the target classes and FR-B18; the intake rules are E2.11's (−15).
+6. Do not split the ACs: they are the test plan.
+
+### Must change before grooming (round 3, delta only)
+
+**E2.7:** H2-M1 (owner and gate seam), H2-M2 (Resume of a held request), H2-M3 (fitness lines and sweeper exclusion), H2-m1…m7, H-n3, and the §14 follow-up rows above.
+
+**E2.6:** R2-M1 (FB-3b supersedes ADR-0010, with its fitness ticket), R2-M2 (no "n users not yet read"), R2-m1…m6, and the §17 rows above.
+
+**CEO:** nothing new. OQ-C1 and Q11 stay dormant. All ADR work above is technical, so factory-director ratifies it.

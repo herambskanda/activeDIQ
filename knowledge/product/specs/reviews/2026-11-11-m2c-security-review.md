@@ -455,3 +455,344 @@ fitness).
   `[UNVERIFIED]`; `msExchUsageLocation` flowing to `usageLocation` `[UNVERIFIED]`; app-only writes
   of `onPremisesImmutableId` and UPN with `User.ReadUpdate.All` `[UNVERIFIED — lab G3]`.
 - Repository ground truth: as listed under "How this was reviewed".
+
+---
+
+## Round 2 — 2026-11-11
+
+**Verdicts.** E2.7 (revision 2): **reject**. Every round-1 blocker and major is closed in the spec
+text, but there are 2 new majors (A2-M1, A2-M2), 0 blockers and 7 minors. E2.6 (revision 2):
+**advance**, with 3 minors and 1 nit to land before the build tickets are cut.
+
+**How this was reviewed.** I verified each round-1 item against the FR, AC and §14 text itself. I
+used the §15 and §24 response tables only as an index. I re-read: TM §6.4 (E1–E5, TM-D25 rule 1),
+§6.6 (allow and deny lists, the "Gaps" paragraph), connector contract F1/F2 and CC-WRITE-14
+(touched set), and the `inventory` notes in `blueprint.md` (`cloud_seen_at` trigger, `AnchorMatches`).
+Microsoft pages were read on 2026-11-11 and are cited inline. This is still a document review, so
+nothing was run. Each "attack attempted" below is a walk-through against the written rules.
+
+### R2-A. E2.7 hybrid provisioning
+
+#### R2-A.1 Round-1 items, verified in the text
+
+| ID | Verdict | Evidence in the spec (not the response table) |
+| --- | --- | --- |
+| A-B1 | **Closed, on the conditions in R2-A.2** | FR-17 table (tenant and identity refuse; usage location, licences and groups hold; actors deny; fixed expiry); FR-18 (wait ends at `approval_valid_until`; Resume after it always needs a new approval); FR-16(5) and FR-33 (approver re-check at Apply on the resolved object, SoD, account active); FR-33 Plan rule (`entra_tenant` root or planned parent with `include_correlated`, initiator **and** approver); FR-16 no fall-through to FR-32; AC-22…AC-26 carry every round-1 test name. Attack walk-through: an AD-only approver approves → FR-33 blocks at Plan (`scope_denied`), and if their scope is removed later, FR-16(5) denies. Resume three weeks later → FR-18 requires a new approval. |
+| A-B2 | **Closed** | (i) FR-15: a single cloud-only or cloud-managed match sets `cloud_seen_at`, holds `anchor_on_cloud_object` and raises a `high` alert; every poll feeds DM-16.I9; AC-18. (ii) FR-16(1): `ad_ref` = the recorded `objectGUID`, `entra_ref` = the found `id`, and the anchor re-read live; AC-20. (iii) FR-14: anchor = the created `objectGUID`; a foreign `ms-DS-ConsistencyGuid` holds `anchor_tampered` with an alert; FR-09: Plan refuses any write of `ms-DS-ConsistencyGuid`/`onPremisesImmutableId`; AC-19. (iv) FR-15: the I1a lookup fails closed; AC-21. Attack walk-through: a stamp on the new user *after* AD verify still fails, because the lookup uses base64 of our `objectGUID` and FR-16(1) compares the cloud object's anchor live. A second AD object stamped with our anchor → (e) `ambiguous_anchor` (live under FR-16). The `guarded-v1` follow-up is in §14.5. |
+| A-M1 | **Closed** | FR-25 cites "any `tier0` group per TM §6.4 E1–E5 and TM-D25 rules 1–7", PIM-eligible nesting and designated groups included; FR-16(2) re-runs the guard on the user and every group before each write; `pim_read_failed` holds; `tier0_after_write` at Verify; FR-10(f) at Plan; AC-27. |
+| A-M2 | **Closed for `User.ReadUpdate.All`** (the breadth moved, see A2-M2) | FR-04: Usage location is its own opt-in family, off by default, with EV5 breadth text; Flow A step 2; AC-04; the Action is single-key (§9, FR-33, AC-45); TM row and lab G3 extended (§14.5, OQ-F4). |
+| A-M3 | **Closed** | FR-04 (recommended with a HybridLink; `Policy.Read.ConditionalAccess` optional; EV5 does not flag it), FR-06 ("change monitoring off"), FR-18 (late cause), AC-11. |
+| A-M4 | **Closed** (minor A2-m6 tightens it) | FR-39 and FR-03 (a pending certificate is not an extra key); AC-10. |
+| A.6 #1–#9 | **Spot-checked, all present** | FR-11/FR-17 split; Flow A step 7; FR-34 evidence fields and password wording; FR-40; FR-17 "scope denies"; AC-18…AC-27; FR-15 `$filter` cite; FR-16 observed UPN. |
+
+#### R2-A.2 Ruling on the two-stage binding (plan hash plus activation digest)
+
+**Ruling: the two-stage binding is equivalent in strength to the round-1 ruling, on six conditions.**
+The round-1 requirement was that the approver's signature commits to the identity the cloud steps
+act on. `objectGUID` cannot be in the plan hash, but it does not need to be. It is enough that:
+
+- the plan hash commits to a *deterministic rule* for producing the identity;
+- the only free input to that rule is a fact our own create step records once; and
+- that fact is fixed in the hash chain before any cloud step can claim a token.
+
+The conditions are:
+
+| # | Condition | Why it matters |
+| --- | --- | --- |
+| D1 | **The plan hash commits to the derivation, not just to "a reference".** It names the operation, item and step whose result supplies `objectGUID`; the anchor rule (`anchor_attr`, base64 of `objectGUID`); the tenant connection and `directory_identity`; and the approval TTL constant (24 h) | Then nothing in the digest is chosen after approval. Every digest input is either in the plan hash or is the create step's recorded result |
+| D2 | **One writer, one moment.** The continuation writes the digest exactly once, in the same transaction that records the AD item `succeeded` (step verified). `objectGUID` comes from the create step's own result record (see A2-m5), never from a later read or from inventory | A second write (a verify retry, a re-plan, Resume) would slide `approval_valid_until` or re-point the identity |
+| D3 | **Write-once in storage.** The HybridRequest columns `objectGUID`, anchor, `approval_valid_until` and `activation_digest` have no UPDATE path for the runtime role (a guard trigger, as on `authn_accounts`). Resume is a new Operation that **copies** these values from the original record. It never recomputes them | This answers "can it be rewritten": no |
+| D4 | **In the audit chain at birth.** `hybrid.awaiting_sync.started` is written in the D2 transaction and carries `plan_hash`, `objectGUID`, anchor, tenant ID, `approval_valid_until` and the digest. It is chained at commit (DM-80.I1) | Tampering with the row is then detectable against the chain, and an auditor can recompute the digest from one event |
+| D5 | **Recompute, don't trust.** Before each cloud write the executor recomputes SHA-256(plan hash ‖ `objectGUID` ‖ anchor ‖ tenant ID ‖ `approval_valid_until`) from the D3 values and compares it with the token's bound digest. The inputs use a fixed-width canonical encoding, never string concatenation | A token bound to a digest the executor does not re-derive is a label, not a binding |
+| D6 | **Absolute cap.** `approval_valid_until` ≤ approval time + `plan_valid_until` (1 h) + AD verify window + 24 h, asserted at D2 | It bounds the window even if AD verify is delayed |
+
+FR-14, FR-17 and §14.1 item 5 state D2 in part and D5 in part ("tokens bind to it"). D1, D3, D4 and
+D6 are absent. This, together with the Resume carry-over below, is **A2-M1**.
+
+#### R2-A.3 New majors
+
+**A2-M1 [major] · FR-14, FR-17 (paragraph after the table), FR-18 (Resume), FR-20, §14.1 items 4–5.
+The activation-digest lifecycle and Resume carry-over are unspecified.**
+- **Problem.** (a) Conditions D1, D3, D4 and D6 above are missing, so the text allows a recompute of
+  `approval_valid_until` on Resume or on a verify retry. (b) FR-18 lets Resume "before
+  `approval_valid_until` with an identical activation digest" keep the original approvals from
+  **any** terminal state, `cloud_cancelled` included. (c) It does not say whether a held request
+  under a security reason (`anchor_on_cloud_object`, `anchor_tampered`, `ambiguous_anchor`) may
+  continue on the original approval once the condition clears.
+- **Exploit sketch.**
+  - A SOC analyst or the approver presses **Cancel cloud steps** after an `anchor_on_cloud_object`
+    alert or on spotting a wrong group. The initiator presses **Resume** 10 minutes later. The digest
+    is identical, so the cancelled approval licenses and groups the user with no new human sign-off.
+  - Separately: if Resume recomputes "AD verify + 24 h" from the new Operation's clock, every
+    Resume extends the window. That is the open-ended approval A-B1 closed.
+- **Fix.**
+  - Write D1–D6 into FR-17 and §14.1 item 5.
+  - Approvals carry over only from `cloud_step_failed` (a retry of the same diff), and only within
+    the window.
+  - `cloud_cancelled` and `cloud_denied` **consume** the approvals: Resume then needs a new
+    approval.
+  - The security holds (`anchor_on_cloud_object`, `anchor_tampered`, `ambiguous_anchor`) are
+    **sticky**. They never auto-clear on a later poll. They resolve only through Cancel, or through
+    Resume with a fresh approval after a `tenant-owner` acknowledges the alert.
+  - The transient holds (`tenant_takeover_open`, `pim_read_failed`, `reconfirm_required`,
+    `not_matched`, `throttled`) auto-clear.
+  - List both classes in FR-35.
+- **Tests.**
+  - `resume_after_cancel_requires_new_approval`
+  - `resume_copies_window_never_recomputes`
+  - `activation_digest_write_once` (an UPDATE is refused for the runtime role)
+  - `awaiting_sync_event_carries_digest_inputs` (the digest recomputes from the event alone)
+  - `security_hold_does_not_autoclear`
+  - `digest_mismatch_refuses_token`
+
+**A2-M2 [major] · §3 E4, FR-04 "Group membership (on by default)", Flow A step 2, §10 "Privileges",
+AC-04. The new default grant `GroupMember.ReadWrite.All` is tenant-wide group-membership write, and
+the spec presents it as the least-privilege path with no breadth text.**
+- **What the permission actually reaches** (Microsoft Learn, read 2026-11-11):
+  - The application permission "Allows the app to list groups, read basic properties, read and
+    update the membership of the groups this app has access to without a signed-in user. Group
+    properties and owners cannot be updated and groups cannot be deleted"
+    ([permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference),
+    `GroupMember.ReadWrite.All`, application ID `dbaae8cf-10b5-4b86-a4a1-f871c94c6695`).
+    "Membership" covers add **and** remove.
+  - **Role-assignable groups: no.** "To add members to a role-assignable group, the app must also
+    be assigned the *RoleManagement.ReadWrite.Directory* permission". The API answers `403` when
+    "you're attempting to add a member to a role-assignable group and you don't have the required
+    permissions" ([add members](https://learn.microsoft.com/en-us/graph/api/group-post-members?view=graph-rest-1.0)).
+    `RoleManagement.ReadWrite.Directory` is on the TM §6.6 deny list and EV3 refuses it without
+    acknowledgement, so **Microsoft enforces this boundary for us**. Good.
+  - **Groups in a restricted management AU: no.** "Applications can't modify objects in restricted
+    management administrative units by default … If you assign Microsoft Graph application
+    permissions to the application, those permissions won't apply"
+    ([RMAU](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/admin-units-restricted-management)).
+    The same page notes that RMAUs hold only security groups, not Microsoft 365 groups, and need
+    Entra ID P1 for each AU administrator.
+  - **AD-synced groups: no** (FR-24; group SOA page).
+  - **Everything else: yes, add and remove, for any user.** That includes:
+    - **groups holding Azure RBAC roles.** "You can assign a role to any of these security
+      principals" (user, group, service principal, managed identity), and assignments are
+      transitive through nested groups
+      ([Azure RBAC](https://learn.microsoft.com/en-us/azure/role-based-access-control/overview)).
+      A group that holds Owner on a management group is therefore one membership write away from
+      subscription takeover. **Graph cannot see Azure role assignments, and TM §6.4 E1–E5 has no
+      Azure RBAC basis.**
+    - **groups that Conditional Access excludes** (MFA bypass). These are `tier0` only if the
+      customer designated them, and the proposal read `Policy.Read.ConditionalAccess` is optional
+      in FR-04.
+    - **groups that are a PIM-for-Groups eligible member of a role-assignable group.** These are in
+      our TM-D25 closure, so our guard refuses them. Whether Graph refuses a membership write on
+      them is `[UNVERIFIED — lab G11]`, and I assume it does not.
+    - **app-access and Intune-RBAC groups.**
+    - **Microsoft 365 groups**, whose membership grants their Teams, SharePoint and mailbox data.
+- **Exploit sketch.**
+  - A stolen Entra certificate (the TM §6.6 residual) or a compromised activeDIQ server adds an
+    attacker-held ordinary user to an Azure-Owner group or a CA-exclusion group. Neither Microsoft
+    nor our guard stops it on the default configuration.
+  - Through a PIM-nested group, the only thing between the attacker and Global Administrator is
+    our own server-side guard, which the attacker in this scenario controls.
+  - The removal direction is a weakening too: taking a user out of a CA *include* group (for
+    example "MFA required") drops their protection.
+- **Fix.**
+  1. Group-membership breadth text in Flow A step 2 and EV5 (FR-04), parallel to the
+     `User.ReadUpdate.All` text: "can add or remove any user in any cloud security or Microsoft 365
+     group that is not role-assignable, not in a restricted management AU and not synced from AD,
+     including groups that grant Azure roles, app access or Conditional Access exclusions".
+  2. Reword §3 E4. The claim "no profile-write permission on the default path" is true. "Least
+     privilege" must not imply narrow membership reach.
+  3. **Onboarding guidance (Microsoft-enforced boundary):** put CA-excluded groups, groups holding
+     privileged Azure roles, groups nested as PIM-eligible members of role-assignable groups, and
+     break-glass accounts into an RMAU. Health shows whether designated groups sit in one
+     `[PROPOSED]`.
+  4. **`Policy.Read.ConditionalAccess` becomes required whenever the Group-membership family is
+     on.** CA-excluded groups are then proposed for designation (TM-D25 rule 9), and CA-*include*
+     groups are flagged so that a removal from them previews as a security weakening.
+  5. **Per-connection writable-group allow-list** (default empty apart from the licensed groups the
+     admin picks at onboarding). Changing it is a step-up `tenant-owner` Action that shows each
+     group's classification. Plan refuses any other group with `group_not_writable(not_allow_listed)`.
+     This bounds a malicious technician or template. Items 3 and 4 bound a compromised server.
+  6. TM follow-ups: a §6.6 residual row for `GroupMember.ReadWrite.All` reach, and a §6.4
+     designation category "groups holding privileged Azure RBAC roles", entered by hand because
+     Graph cannot see Azure role assignments.
+- **Tests.**
+  - `ev5_warns_groupmember_breadth`
+  - `group_not_on_allowlist_refused`
+  - `ca_policy_read_required_with_group_family`
+  - `removal_from_ca_include_group_flagged`
+  - lab G11 extended: a membership write on a non-role-assignable group that is a PIM-eligible
+    member of a role-assignable group, app-only, records whether Graph refuses it
+
+#### R2-A.4 New attack surface: FR-36…FR-40, minors and nit
+
+- **FR-36 (delta sync).** Sound: the property list is fixed at the first request; `cloud_seen_at` is
+  set by sync and protected by the inventory trigger (`blueprint.md`, T-0431); nothing in it is
+  written to Entra. Minor A2-m7 covers token and host binding.
+- **FR-37 (targeted re-sync).** Sound: lookup is by `id` or by anchor through P8 `Eq`/`Str`.
+  Minors A2-m3 (rate) and A2-m8 (TOCTOU).
+- **FR-38 (datasets).** Sound: `onPremisesImmutableId`, mail and proxy addresses are not columns;
+  related-object flags are used. Minor A2-m1.
+- **FR-39 (rotation).** Minor A2-m6.
+- **FR-40 (request controls).** Minor A2-m3.
+
+1. **A2-m1 [minor] · FR-38, `inventory.entra_users` and `.entra_groups`.** Correlation state,
+   `candidate_reason` (for example `sid_mismatch`, `ambiguous_anchor`) and the AD-derived part of the
+   SOA badge are facts about **AD** objects. A runner scoped only to `entra_tenant` learns from them
+   that out-of-scope AD objects exist and carry an anchor. Flag these columns related-object and
+   mask them for a runner without read on the AD side. Synced/cloud stays visible, because it is an
+   Entra fact (`onPremisesSyncEnabled`). Test: `entra_only_runner_sees_no_ad_derived_reason`
+   (E2.6 FR-B30 covers it once the column is flagged).
+2. **A2-m2 [minor] · FR-12, FR-31.** Removing a user from a **licensed** group, including the undo
+   of the add, removes a licence. Class it **Lossy**, as direct licence removal is. Test:
+   `licensed_group_removal_is_lossy`.
+3. **A2-m3 [minor] · FR-37, FR-40.** Check now is limited only per request, and anyone who can read
+   requests may press it. One account across many requests can spend the tenant's Graph throttling
+   budget, which writes share (FR-27). Add per-account and per-tenant caps, and give the write path
+   priority over re-sync. Test: `check_now_tenant_cap`.
+4. **A2-m4 [minor] · FR-35.** Covered by A2-M1: the two hold classes (sticky security holds,
+   transient holds) must be named in the error table.
+5. **A2-m5 [minor] · FR-14, FR-17 "the `objectGUID` returned by our own create".** An LDAP add
+   returns no attributes (`AddResponse ::= [APPLICATION 9] LDAPResult`,
+   [RFC 4511 §4.7](https://www.rfc-editor.org/rfc/rfc4511#section-4.7)). Define the value as the
+   create step's read on the same pinned DC immediately after the add, by DN, checked by
+   `uSNCreated` above the pre-add `highestCommittedUSN`, and recorded in the step result. Test:
+   `create_records_guid_from_pinned_readback`.
+6. **A2-m6 [minor] · FR-39.**
+   - Rotation is a step-up, audited Action.
+   - A pending thumbprint lives at most 14 days `[PROPOSED]`, then EV5 flags it again.
+   - A key the server did not generate is still flagged during a rotation.
+   - Test: `pending_thumbprint_expires`, `unknown_key_flagged_during_rotation`.
+7. **A2-m7 [minor] · FR-36, §9.** `@odata.deltaLink` and `@odata.nextLink` are stored per
+   connection and followed only after the P8 host pin. Each access token's `tid` is checked against
+   `directory_identity` on acquisition, not only at EV2. A delta page from another tenant is
+   refused. Test: `delta_link_foreign_host_refused`, `token_tid_mismatch_refused`.
+8. **A2-m8 [minor] · FR-16 vs FR-37.** FR-16 says "re-read live immediately before each write",
+   while FR-37 makes the targeted re-sync plus the *stored* result the only read. Say that the
+   FR-16 read is a targeted re-sync inside the same step claim, and that the write uses the object
+   `id` from that read.
+9. **[nit] §14.4.** State the Entra membership touched set: the group **and** the member, as
+   CC-WRITE-14 does for AD. A `tier0` user is then never added to or removed from any group through
+   Graph.
+
+### R2-B. E2.6 report builder
+
+#### R2-B.1 Round-1 items, verified in the text
+
+| ID | Verdict | Evidence in the spec |
+| --- | --- | --- |
+| B-B1 | **Closed** | §5 rules 1–3 (post-scope, post-mask; one masked bucket per column; labels from the masked column; OU key from the row's own `dn`; Unknown propagation; refusals post-scope); the Fields paragraph adds `groupable`/`aggregatable`; FR-B28; L1–L3; AC-B38 (4 buckets, `count distinct` 4 not 7, max Unknown, OU own container). Attack walk-through (group Sales by manager): the 4 hidden HR managers collapse into one bucket whose count equals what the row cells already show. |
+| B-B2 | **Closed** | FR-B29 (GUIDs without labels; re-authorisation at every `Resolve`; `value_not_permitted` with the path only; viewer-scope labels; `manage_all` metadata without values), §8 recipient rules, L6 (run, preview, drill-down, schedule fire, comparator, validate-only), §16 residual for owner-typed text, AC-B39. |
+| B-M1 | **Closed** (minor B2-m1) | FR-B30, AC-B40 (the worlds I specified, the five run kinds plus export, the oracle kept, the two failing fixtures), FB-3c with RP-B2 widened, §5 rule 3. |
+| B-M2 | **Closed** | §10 item 2 and FR-B16 (`{run_id, row_keys[] or all_matching}`, GUIDs → 400, derivation through `ActionSubject`, own, `succeeded`, unexpired run, 410/409, `all_matching` bound to `row_count`, masked identity rows skipped), drill-down as a new run, run ID and digest recorded; AC-B41. |
+| B-m1, B-m2, B-m4, B-m5, B-n1 | **Spot-checked, present** | §5 carve-outs and AC-B43; FR-B17 and FB-6b; §8 Edit-level and schedule fire with AC-B10 and AC-B45; §9 per-account cap with AC-B19; §5 grand total. |
+| B-m3 | **Present except the roll-up** | Ruled below. |
+
+#### R2-B.2 Ruling on B-m3 (one `reports.preview.run` event per preview run)
+
+**Acceptable, and better than what I accepted in round 1.** I accepted the roll-up only to save
+volume. It was not a security requirement. A roll-up also needs either a mutable aggregate row or
+a deferred write, and both conflict with "written in the same transaction" and the append-only,
+chained store (security-baseline §7). One event per run, chained at commit, is the stronger
+control. The §9 rate limit of 30 per minute per account bounds chain volume. AC-B35 proves 12
+events and a verifying chain.
+
+Two conditions are folded into B2-m3:
+- every preview that started is recorded, whatever its end; and
+- refused previews are recorded as denials without flooding the chain.
+
+#### R2-B.3 New surface: FR-B28…FR-B30, and minors
+
+FR-B28 and FR-B29 are correct as written. FR-B30 is the right property, with one contradiction
+(B2-m1).
+
+1. **B2-m1 [minor] · FR-B30 vs §16 "Residuals accepted".** FR-B30 requires the "timing class" to be
+   identical across worlds. §16 accepts that a timeout reveals tenant data volume. The "1,000+"
+   flag (rows-only fallback after a count timeout) and "too heavy" both depend on how many hidden
+   rows exist. As written, the property is either flaky or quietly weakened in the test.
+   - State the property **modulo resource limits**: the property test runs with the statement
+     timeout disabled.
+   - Timeout-driven outcomes are the §16 residual.
+   - Every other error class must be identical.
+2. **B2-m2 [minor] · §9 L5, FR-B29.** L5 answers "not found" for an unreadable GUID, while FR-B29
+   answers `value_not_permitted`. Use **one** code in every path, own or shared, for nonexistent
+   and unreadable alike. Otherwise a runner can craft definitions through the API and tell hidden
+   objects from deleted ones. The AC-B40 generator must draw `GUIDV`s from out-of-scope objects
+   that W′ removes.
+3. **B2-m3 [minor] · §16 preview audit.**
+   - Write the event in the transaction that makes the preview terminal: `succeeded`, superseded,
+     cancelled, failed or "too heavy". It carries the outcome and row count.
+   - A preview that read data and was then superseded must still appear.
+   - Record rate-limit and cap refusals as one `reports.preview.refused` per account per minute,
+     with a count. Nothing was read, so aggregating them is acceptable.
+   - Test: `superseded_preview_audited`, `preview_refusals_aggregated`.
+4. **[nit] FR-B29.** Once FB-6a ships, editor labels resolve under the `reports.run` scope, the
+   same scope `Resolve` uses. Until then they resolve under `directory.read` (residual already in
+   §16).
+
+### Round 2 summary
+
+| Spec | Verdict | Open blockers | Open majors | Minors | Nits |
+| --- | --- | --- | --- | --- | --- |
+| E2.7 | **reject** | none | A2-M1 activation-digest lifecycle and Resume carry-over; A2-M2 `GroupMember.ReadWrite.All` reach on the default path | 7 (A2-m1–m3, m5–m8; m4 folds into A2-M1) | 1 |
+| E2.6 | **advance** | none | none | 3 (B2-m1–m3) | 1 |
+
+Re-review of E2.7 covers A2-M1 and A2-M2 only.
+
+**Follow-ups for the server board (outside both diffs; owner `security-architect` unless noted):**
+- TM §6.6: residual row for `GroupMember.ReadWrite.All` reach (A2-M2 item 6).
+- TM §6.4: designation category for groups holding privileged Azure RBAC roles.
+- Lab G11 extended: is a membership write refused on a PIM-eligible nested group? (`directory-engineer`.)
+- Still open from round 1: the P1 `guarded-v1` addition of `ms-DS-ConsistencyGuid`.
+
+### Round 2 sources
+
+- [Add members (Graph v1.0)](https://learn.microsoft.com/en-us/graph/api/group-post-members?view=graph-rest-1.0): the permissions table, the role-assignable sentence and the `403` cases (read in full 2026-11-11).
+- [Permissions reference](https://learn.microsoft.com/en-us/graph/permissions-reference): the `GroupMember.ReadWrite.All` and `GroupMember.Read.All` entries (read 2026-11-11).
+- [Restricted management administrative units](https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/admin-units-restricted-management): blocked operations, programmability, supported object types, licence (read in full 2026-11-11).
+- [Azure RBAC overview](https://learn.microsoft.com/en-us/azure/role-based-access-control/overview): security principals include groups; group assignments are transitive (read in full 2026-11-11).
+- [RFC 4511 §4.7](https://www.rfc-editor.org/rfc/rfc4511#section-4.7): `AddResponse` is a bare `LDAPResult` (from the standard; not re-read today).
+- Not verified and tagged in the text: whether Graph refuses a membership write on a non-role-assignable group that is a PIM-eligible member of a role-assignable group `[UNVERIFIED — lab G11]`.
+
+### E2.7 round 1→2 responses
+
+Moved here from the E2.7 spec ("§15 Review response", revision 2) in round 3, per the architecture review's length finding. It answers **both** round-1 reviews (architecture `H-*`, `X-*`; security `A-*`, `A.6`). Spec locations are as of revision 2: §7.6 now lives in [e2-7a-entra-inventory-sync.md](../e2-7a-entra-inventory-sync.md), and §14.1 item 8 was dropped in round 3 (H2-m1). The round 2→3 responses are in the spec's own `### Round 3` section.
+
+Both reviews are dated 2026-11-11. "Taken" = changed as asked. Findings that concern only E2.6 (R-\*, B-\*)
+and X-3 are not part of this diff.
+
+| Finding | Disposition | Where |
+| --- | --- | --- |
+| H-B1 coupled items, FR-10 vs FR-21 | Taken, with Plan-time checks for everything knowable before the AD write; a later refusal gives `partially_succeeded` + `cloud_reason` and offers AD undo | FR-09, FR-10, FR-21, §14.1 items 1–3 |
+| H-M1 outcome names, Resume | Taken. One name per state; display labels derived; Resume is a new Operation | FR-18, FR-21, AC-25, §14.1 items 3–4 |
+| H-M2 Plan-time authority, hash binding | Taken. Binding is two-stage because `objectGUID` does not exist at Plan (reference in the plan hash, values in the activation digest). Security to confirm | FR-17, FR-33, §14.1 items 5–6 |
+| H-M3 Entra sync, T-1131/E-011 | Taken. Sync is in this spec | FR-36, FR-37, §14.6 |
+| H-M4 group membership under `objects`, usage location | Taken: Entra arm of `objects` group-membership Actions; usage location is an Entra arm of `objects.user.update` limited to one key | FR-23, FR-33, §9 |
+| H-M5 §8.9 guard on licence and `usageLocation` | Taken | FR-25, AC-28 |
+| H-M6 FR-17 AC, `replan_changed`, FR column, missing ACs | Taken. FR column added; ACs added for FR-02, 05, 06, 07, 17, 26, 31, 35 | §11, AC-05…AC-08, AC-23, AC-38, AC-41, AC-46 |
+| H-M7 ADR-0004 follow-up | Taken | §14.2 |
+| H-m1 undo of AD create is Lossy | Taken | FR-12, AC-34 |
+| H-m2 non-default anchor | Taken in part: 2c supports binary anchors only; a string anchor blocks at Plan; `source_anchor_attr` on the link | FR-08, FR-10(i), AC-09 |
+| H-m3 Cloud Sync default | Taken: 20 min `[PROPOSED]` | FR-08 |
+| H-m4 closed error set | Taken: table by phase | FR-35, AC-41 |
+| H-m5 `outcome_unknown` for Graph | Taken | FR-22, FR-23, §14.1 item 8, AC-33 |
+| H-m6 availability wording | Taken | FR-11, AC-15 |
+| H-m7 EV3 acknowledgement | Taken as the stricter option: not acknowledgeable for Entra in 2c. This departs from DM-24's text, so it is a domain-model follow-up | FR-03, §14.3, AC-02 |
+| H-m8 `hybrid.*` EP-7 registration | Taken | FR-34, §14.1 item 9 |
+| H nits 1–3 (T-1005 reference, step-up vs kernel hold, FR-13 row) | Taken | §5 matrix, Flow B step 3 |
+| X-1 Entra datasets | Taken: E2.7 owns and registers users, groups, licence assignments | FR-38, §7.6, AC-43 |
+| X-2 shared scope dependency | Taken, listed here; the E2.6 side is an E2.6 edit | §14.6, §5 |
+| X-3 E2.6 vs E2.11 | Not this spec | none |
+| A-B1 / OQ-F2 approval binding | Taken as ruled, OQ-F2 closed, with the two-stage hash noted above | FR-14, FR-16…FR-18, FR-33, AC-22…AC-26 |
+| A-B2 identity binding | Taken: single cloud-only match holds and alerts, `ad_ref` binding, `anchor_tampered`, Plan refuses the write, fail-closed lookup | FR-09, FR-14…FR-16, AC-18…AC-21 |
+| A-M1 tier0 at Apply | Taken | FR-16, FR-25, AC-27 |
+| A-M2 `User.ReadUpdate.All` breadth | Taken: opt-in family, default licence path via licensed group, single-key Action, TM row as follow-up. `msExchUsageLocation` kept as an optional lab question, not relied on | FR-04, FR-26, §2, §14.5, OQ-F9 |
+| A-M3 `AuditLog.Read.All` | Taken: recommended with a link, "monitoring off" health and late cause | FR-04, FR-06, FR-18, AC-11 |
+| A-M4 certificate rotation | Taken | FR-39, AC-10 |
+| A.6 #1 availability vs re-approval | Taken | FR-11, FR-17 |
+| A.6 #2 declared link is `confirmed` | Taken | Flow A step 7, AC-09 |
+| A.6 #3 audit content | Taken | FR-34, AC-39 |
+| A.6 #4 password wording | Taken | FR-34 |
+| A.6 #5 permissions of Cancel, Undo, Resume, Check now | Taken | FR-40, AC-35 |
+| A.6 #6 scope denies, never re-approves | Taken | FR-17, FR-33 |
+| A.6 #7 ACs for A-B1, A-B2, A-M1 | Taken | AC-18…AC-27 |
+| A.6 #8 `$filter` cite | Taken | FR-15 |
+| A.6 #9 observed UPN | Taken | FR-16, AC-37 |
+| A.1–A.3 rulings; `guarded-v1` follow-up | Applied; follow-up listed | §10, §14.5 |

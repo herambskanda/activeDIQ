@@ -170,8 +170,6 @@ Per-requirement matrix (✓ full · ◐ partial · ✗ not delivered, reason · 
 | FR-30 SOA view | ✓ | ✓ | ✗ | ✓ | ◐ | ✓ ("Cloud" only) | n/a | ✓ | ✓ |
 | FR-31…33 licence, groups, authority | ✓ | ✓ | ✗ | ✓ | ◐ | ✓ | n/a | ✓ | ✓ |
 | FR-34…35 audit, errors | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| FR-36…37 Entra sync, targeted re-sync | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | n/a | ✓ | ✓ |
-| FR-38 Entra datasets | ✓ | ✓ | ✗ | ✓ | ◐ correlation columns stay `candidate` until OQ-F3 | ◐ correlation columns empty | n/a | ✓ | ✓ |
 
 Datasets and Entra scopes also depend on E-011 / T-1131 (§14.6); until it lands, the cells that need
 those roots read ✗ → E-011, not ✓. PowerShell module: n/a (M3, FD-07). Samba cannot exercise Entra; the
@@ -326,26 +324,6 @@ that the cloud steps' tokens bind to (§14.1 item 5). Security-architect to conf
 | Apply (hold, deny, refuse) | `not_matched(<reason>)`, `ambiguous_anchor`, `anchor_on_cloud_object`, `anchor_tampered`, `replan_changed`, `approver_scope_denied`, `scope_denied`, `pim_read_failed`, `tenant_takeover_open`, `reconfirm_required` |
 | Apply (step outcome) | `throttled`, `replication_pending`, `insufficient_licences`, `read_back_mismatch`, `licence_state_error(<error>)`, `outcome_unknown`, `tier0_after_write`, `cloud_expired` |
 
-### 7.6 Entra inventory sync and report datasets (I360-003, ADM-169; new in round 2)
-
-E2.7 owns this section (director ruling, cross-spec X-1/X-2). It is how correlation changes (DM-20.I5), and
-the report builder (E2.6) consumes it. It depends on the Entra scope roots of E-011 / T-1131 (§14.6).
-
-| ID | Requirement | Parity / enh |
-| --- | --- | --- |
-| FR-36 | The system MUST sync Entra **users, groups, subscribed SKUs and per-user licence assignments** into inventory (connector contract §6.6; DM-16 Entra rows; `ancestry_complete` is false for Entra rows). Users and groups use Graph delta ([user delta](https://learn.microsoft.com/en-us/graph/api/user-delta?view=graph-rest-1.0), [group delta](https://learn.microsoft.com/en-us/graph/api/group-delta?view=graph-rest-1.0)) with the property list selected in the initial request (query parameters other than the tokens must be given up front, user delta page). User properties: `id`, `userPrincipalName`, `displayName`, `accountEnabled`, `usageLocation`, `assignedLicenses`, `onPremisesSyncEnabled`, `onPremisesImmutableId`, `onPremisesSecurityIdentifier`, `onPremisesDomainName`, `onPremisesLastSyncDateTime`, `onPremisesSyncBehavior` (beta; when unreadable, DM-20.I4(a) alone decides). Group properties: `id`, `displayName`, `securityEnabled`, `groupTypes`, `membershipRule` presence, `isAssignableToRole`, `onPremisesSyncEnabled`, `onPremisesSecurityIdentifier`, `assignedLicenses` `[UNVERIFIED — lab]`. **Delta does not track `licenseAssignmentStates`** ([user delta note](https://learn.microsoft.com/en-us/graph/api/user-delta?view=graph-rest-1.0)), so licence-assignment state is read per user on a targeted re-sync, for users whose `assignedLicenses` changed, and by a scheduled reconcile (default daily `[PROPOSED]`, paged). Sync sets `cloud_seen_at` when it sees a user or group cloud-only or cloud-managed (DM-16.I9). A lost or expired delta token causes a full resync `[UNVERIFIED — lab]`. Not synced in 2c: devices, group member lists or counts, service-plan detail. | I360-003, ADM-169 |
-| FR-37 | The system MUST support a **targeted re-sync** of one user or group by object `id` or, for users, by anchor (DM-20.I5). It MUST refresh the object and its licence-assignment state, re-evaluate the correlation gate, and be the only thing "Check now" (FR-19) and the FR-15 lookup do before they *read* the stored result. It is rate-limited (FR-40) and follows the same Graph throttling rules (FR-27). | I360-003, E2 |
-| FR-38 | The system MUST register these datasets, declared by `directory/inventory` (DM-70), as the Entra sources that E2.6 reads (E2.6 FR-B25 cites this section; E2.6 does not define them). A dataset MUST NOT be registered until the scope renderer supports the root kinds it needs (E-011 / T-1131). Columns that reach another object are flagged related-object so E2.6's masking, grouping and aggregation rules apply unchanged; no cross-dataset join. |  I360-003, ADM-169, ADM-094 (input only) |
-
-| Dataset | Columns (typed; ID = Entra object `id`) | Scope roots needed |
-| --- | --- | --- |
-| `inventory.entra_users` | object id, UPN, display name, enabled, usage location, sync enabled, last sync time, **source-of-authority** (AD / Cloud / Candidate / Broken), correlation state, `candidate_reason`, `ad_object` (related-object reference to the AD object, only for a `matched` correlation), licence count, created | `entra_tenant`, `administrative_unit`, `group_members` (Entra); an AD scope with `include_correlated` for matched rows |
-| `inventory.entra_groups` | object id, display name, security enabled, membership kind (assigned / dynamic), role-assignable, source (AD-synced / cloud / cloud-managed), carries a licence, `ad_object` (matched by SID, DM-20.I1b), created | same |
-| `inventory.entra_licence_assignments` | one row per user × SKU: user id, SKU id, SKU part number, SKU friendly name, assignment kind (direct / via group), assigning group (related-object), state, error, observed time | same |
-
-`onPremisesImmutableId`, mail and proxy addresses are not exposed as columns in 2c. A dataset is readable
-only under its scope: a runner sees the rows their scope reaches and the SOA badge is derived, never edited.
-
 ## 8. Pipeline fit (ADR-0005)
 
 What this spec uses **unchanged**: Plan is read-only; `plan_hash` over steps, diffs, reversibility and
@@ -429,8 +407,6 @@ Lab tiers per §5: **F** fake Graph, **E** Entra sandbox, **H** E + Entra Connec
 | AC-39 | 34 | **Given** any hybrid request **when** the audit chain is read **then** AD and Entra steps share the request ID, each cloud-step event carries the evidence fields of FR-34, and a search for the initial password, certificate bytes and tokens finds nothing in any event, log, plan or API response. | F | Canary test (TM-F-SECRETOUT style) |
 | AC-40 | 23, 36 | **Given** a tenant with 100,000 users and a group with > 1,500 members **when** previewing a membership add **then** the page responds without enumerating members and shows a membership test result. | F (synthetic) | Request log shows no member paging |
 | AC-41 | 35 | **Given** each code in the FR-35 table is provoked **when** the UI and API render it **then** it shows cause and next action, and no response carries a generic error. | F | Per-code test |
-| AC-42 | 36, 37 | **Given** a tenant with users, groups and licence assignments **when** sync runs **then** inventory holds them with the §7.6 properties; a delta round applies only changes; a changed licence assignment appears after the targeted re-sync or the reconcile although delta does not track `licenseAssignmentStates`; a lost delta token triggers a full resync; Check now refreshes one object and re-evaluates the correlation without writing to Entra. | F, E | Sync tests; request log |
-| AC-43 | 38 | **Given** the three datasets **when** the scope renderer lacks the Entra roots **then** none is registered (E2.6 shows its "not available" state); **when** it supports them **then** each is registered with the §7.6 columns, related-object columns are flagged, `onPremisesImmutableId` is not exposed, and a runner sees only rows their scope reaches. | F | Registry test; scope test (E-011 dependency) |
 | AC-44 | 09, 11, 26, 30 | **Given** no tenants, no licensed groups or SKUs, Graph unreachable, or the connection `suspended` **when** the admin opens the screens **then** each shows its named empty or error state, every control works or is absent, and no number is invented. | F, E | Screenshots; QA control sweep |
 | AC-45 | 09 | **Given** a fitness run **when** CI executes **then** no Graph URL or OData option is built outside the home packages, no script verb is reachable from a hybrid input, and the usage-location Action emits only the key `usageLocation`. | CI | FF-SP2/3 output; `usage_location_action_emits_only_usageLocation` |
 | AC-46 | 26, 29 | **Given** the licensed-group path and `licenseAssignmentStates` reports an error for the SKU (for example not enough licences or usage location not allowed) **when** verify reads it **then** the step ends `verify_failed` showing the error and the request is `partially_succeeded`. | F | Test |
@@ -464,42 +440,6 @@ National clouds; air-gapped Entra. A Windows helper on the sync server. Guest/B2
 ## 14. Follow-ups (outside this diff; for the server board)
 
 ### 14.1 ADR-0005 amendment (technical, director-ratified)
-
-One amendment, written by `solution-architect`, ratified by `factory-director` (ADR-0005 is ratified, so an
-amendment is allowed; no CEO decision). Proposed content:
-
-1. **Coupled item group** (DM-41/42). An Operation may declare items as one group, planned all-or-nothing:
-   any `blocked` item blocks every item (`plan_failed`, no item runs). At Apply each item keeps its own
-   outcome; a failed predecessor item sends the successor `planned → cancelled`. Phases still order the
-   items (AD phase 1, cloud phase 2).
-2. **Wait / gate step.** A new step kind `gate` with a `waiting` state and a condition (`external_object`
-   with a deadline): `planned → waiting`; `waiting → verified` when the condition holds and the cloud
-   steps are planned against live state; `waiting → not_run` on expiry, cancel or denial; `wait_reason`
-   updates are in place. The item and the Operation stay `running` while it waits. The sweeper owns
-   deadlines.
-3. **Outcome names inside the closed sets.** No new Operation result. `partially_succeeded` is extended
-   to "at least one item succeeded and at least one failed, was blocked **or was cancelled**"; item
-   `running → cancelled` also by gate expiry or cancel; the Operation records `cloud_reason` ∈
-   {`cloud_step_failed`, `cloud_expired`, `cloud_cancelled`, `cloud_denied`} and `operation.completed`
-   carries it. `expired_waiting` and `ad_done_*` are not states.
-4. **Resume.** A new Operation (origin `console`, linked by `request_id`), planned against live state;
-   nothing leaves a terminal state. Approvals carry over only within `approval_valid_until` with an
-   identical activation digest.
-5. **Deferred target, hash and tokens (rules 2, 9).** The plan hash binds a *reference* to the AD create's
-   result plus the tenant, licence, group and classification elements known at Plan. At AD verify the
-   *activation digest* (plan hash, `objectGUID`, anchor, tenant ID, `approval_valid_until`) is recorded;
-   cloud step tokens bind to it. A mismatch refuses or holds as in FR-17.
-6. **Plan-time authority for a not-yet-existing Entra object (rule 7) and approver re-check (rule 8).** At
-   Plan: permission over the tenant's `entra_tenant` root, or over the planned AD parent with
-   `include_correlated`. At Apply: the resolved object, the initiator chain and **each approver**. A kernel
-   hold reason `replan_changed`.
-7. **`plan_valid_until` vs sync interval.** `plan_valid_until` (1 h for directory Actions) governs approval
-   to queue for the AD item only; the cloud item is governed by `approval_valid_until` (24 h). The 72-hour
-   secret TTL is irrelevant because the password is used in phase 1 and the cloud half holds no secret.
-8. **`outcome_unknown` for Entra steps.** Reachable for a non-password step after a timeout-after-send with
-   an unreadable target; the corollary "a `failed` step never changed its target" is amended accordingly.
-9. **Audit kinds.** The `hybrid.*` kinds and `connection.certificate.rotated` registered by their owners
-   (rule 1, EP-7; `Boot` refuses unregistered kinds).
 
 ### 14.2 ADR-0004 rule 14 amendment
 
@@ -542,50 +482,6 @@ flow, wait-state previews, opt-in family wording. The 2c OpenAPI slice. The Entr
 Connect lab (T-0183, T-0075, T-0441, already in the decisions log). Build slices to be cut by
 `project-manager`: connection and rotation; Entra sync and datasets; hybrid plan and continuation; cloud
 steps; SOA view.
-
-## 15. Review response (round 2)
-
-Both reviews are dated 2026-11-11. "Taken" = changed as asked. Findings that concern only E2.6 (R-\*, B-\*)
-and X-3 are not part of this diff.
-
-| Finding | Disposition | Where |
-| --- | --- | --- |
-| H-B1 coupled items, FR-10 vs FR-21 | Taken, with Plan-time checks for everything knowable before the AD write; a later refusal gives `partially_succeeded` + `cloud_reason` and offers AD undo | FR-09, FR-10, FR-21, §14.1 items 1–3 |
-| H-M1 outcome names, Resume | Taken. One name per state; display labels derived; Resume is a new Operation | FR-18, FR-21, AC-25, §14.1 items 3–4 |
-| H-M2 Plan-time authority, hash binding | Taken. Binding is two-stage because `objectGUID` does not exist at Plan (reference in the plan hash, values in the activation digest). Security to confirm | FR-17, FR-33, §14.1 items 5–6 |
-| H-M3 Entra sync, T-1131/E-011 | Taken. Sync is in this spec | FR-36, FR-37, §14.6 |
-| H-M4 group membership under `objects`, usage location | Taken: Entra arm of `objects` group-membership Actions; usage location is an Entra arm of `objects.user.update` limited to one key | FR-23, FR-33, §9 |
-| H-M5 §8.9 guard on licence and `usageLocation` | Taken | FR-25, AC-28 |
-| H-M6 FR-17 AC, `replan_changed`, FR column, missing ACs | Taken. FR column added; ACs added for FR-02, 05, 06, 07, 17, 26, 31, 35 | §11, AC-05…AC-08, AC-23, AC-38, AC-41, AC-46 |
-| H-M7 ADR-0004 follow-up | Taken | §14.2 |
-| H-m1 undo of AD create is Lossy | Taken | FR-12, AC-34 |
-| H-m2 non-default anchor | Taken in part: 2c supports binary anchors only; a string anchor blocks at Plan; `source_anchor_attr` on the link | FR-08, FR-10(i), AC-09 |
-| H-m3 Cloud Sync default | Taken: 20 min `[PROPOSED]` | FR-08 |
-| H-m4 closed error set | Taken: table by phase | FR-35, AC-41 |
-| H-m5 `outcome_unknown` for Graph | Taken | FR-22, FR-23, §14.1 item 8, AC-33 |
-| H-m6 availability wording | Taken | FR-11, AC-15 |
-| H-m7 EV3 acknowledgement | Taken as the stricter option: not acknowledgeable for Entra in 2c. This departs from DM-24's text, so it is a domain-model follow-up | FR-03, §14.3, AC-02 |
-| H-m8 `hybrid.*` EP-7 registration | Taken | FR-34, §14.1 item 9 |
-| H nits 1–3 (T-1005 reference, step-up vs kernel hold, FR-13 row) | Taken | §5 matrix, Flow B step 3 |
-| X-1 Entra datasets | Taken: E2.7 owns and registers users, groups, licence assignments | FR-38, §7.6, AC-43 |
-| X-2 shared scope dependency | Taken, listed here; the E2.6 side is an E2.6 edit | §14.6, §5 |
-| X-3 E2.6 vs E2.11 | Not this spec | none |
-| A-B1 / OQ-F2 approval binding | Taken as ruled, OQ-F2 closed, with the two-stage hash noted above | FR-14, FR-16…FR-18, FR-33, AC-22…AC-26 |
-| A-B2 identity binding | Taken: single cloud-only match holds and alerts, `ad_ref` binding, `anchor_tampered`, Plan refuses the write, fail-closed lookup | FR-09, FR-14…FR-16, AC-18…AC-21 |
-| A-M1 tier0 at Apply | Taken | FR-16, FR-25, AC-27 |
-| A-M2 `User.ReadUpdate.All` breadth | Taken: opt-in family, default licence path via licensed group, single-key Action, TM row as follow-up. `msExchUsageLocation` kept as an optional lab question, not relied on | FR-04, FR-26, §2, §14.5, OQ-F9 |
-| A-M3 `AuditLog.Read.All` | Taken: recommended with a link, "monitoring off" health and late cause | FR-04, FR-06, FR-18, AC-11 |
-| A-M4 certificate rotation | Taken | FR-39, AC-10 |
-| A.6 #1 availability vs re-approval | Taken | FR-11, FR-17 |
-| A.6 #2 declared link is `confirmed` | Taken | Flow A step 7, AC-09 |
-| A.6 #3 audit content | Taken | FR-34, AC-39 |
-| A.6 #4 password wording | Taken | FR-34 |
-| A.6 #5 permissions of Cancel, Undo, Resume, Check now | Taken | FR-40, AC-35 |
-| A.6 #6 scope denies, never re-approves | Taken | FR-17, FR-33 |
-| A.6 #7 ACs for A-B1, A-B2, A-M1 | Taken | AC-18…AC-27 |
-| A.6 #8 `$filter` cite | Taken | FR-15 |
-| A.6 #9 observed UPN | Taken | FR-16, AC-37 |
-| A.1–A.3 rulings; `guarded-v1` follow-up | Applied; follow-up listed | §10, §14.5 |
 
 ## Sources
 
