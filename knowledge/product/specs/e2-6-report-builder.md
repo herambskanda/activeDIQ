@@ -3,7 +3,7 @@ title: "Spec: E2.6 report builder (checkpoint 2c; ADM-097 and its neighbours)"
 date: 2026-11-11
 updated: 2026-11-11
 status: draft
-revision: 2
+revision: 3
 owner: heramb
 author: product-manager
 reviewer: solution-architect
@@ -24,15 +24,11 @@ sources_last_checked: 2026-11-11
 > a query or an attribute name, and what they build can never show anyone an object, a value, a
 > count or an ordering outside that person's delegated scope.
 
-This is the builder half of E2.6. The epic starts at checkpoint 2a with the library, export and
-scheduling ([m2-plan](../../business/scoping/m2-plan.md) row E2.6); the **builder** is its checkpoint
-**2c "Hybrid and import"** part ([roadmap-skeleton](../../business/scoping/roadmap-skeleton.md), row 2c:
-"E2.6 (builder)"). ENH-05 is one of the CEO's five signature enhancements
-([v1-scope-options](../../business/scoping/v1-scope-options.md);
-[ENH-05](../../business/strategy/enhancement-catalog.md)). The spec inherits every rule of
-[reports-2a](reports-2a.md) and [reports-2-second-slice](reports-2-second-slice.md) that it does not
-change (library, run, scope, freshness, export, schedule, permissions, audit: FR-01 to FR-32, FR-S01 to
-FR-S12) and adds the model, screens and rules for reports **users define**. DC audit-event reports are M3.
+This is the builder half of E2.6. The epic starts at checkpoint 2a with the library, export and scheduling ([m2-plan](../../business/scoping/m2-plan.md) row E2.6); the
+**builder** is its checkpoint **2c "Hybrid and import"** part ([roadmap-skeleton](../../business/scoping/roadmap-skeleton.md), row 2c). ENH-05 is one of the CEO's five
+signature enhancements ([v1-scope-options](../../business/scoping/v1-scope-options.md); [ENH-05](../../business/strategy/enhancement-catalog.md)). The spec inherits every rule of
+[reports-2a](reports-2a.md) and [reports-2-second-slice](reports-2-second-slice.md) that it does not change (FR-01 to FR-32, FR-S01 to FR-S12) and adds the model, screens and
+rules for reports **users define**. DC audit-event reports are M3.
 
 **Planning document** (CEO decision 2026-11-10, [decisions-log](../../memory/decisions-log.md)): no board,
 ticket ID, lab or Entra tenant. Follow-ups are `FB-n` (one table, §17); what only a lab or tenant can
@@ -41,21 +37,17 @@ only from the [parity matrix](../../business/competitive-analysis/feature-parity
 [ADMP research](../../business/market-research/manageengine-admanager-plus.md); the ME custom-report page is
 cited by the matrix but its detail is not in the research, so ME's builder beyond the matrix row is
 `[UNVERIFIED]` until FB-1. Siblings: `e2-7-hybrid-provisioning.md` (owns Entra sync and datasets, §7) and
-[e2-11-migration-importer.md](e2-11-migration-importer.md) (owns import classes, §11). Round 2 answers the
-architecture and security rejections (§24).
+[e2-11-migration-importer.md](e2-11-migration-importer.md) (owns import classes, §11). Review responses: §24.
 
 ## 1. Problem and users
 
-ME's custom report is built from "an LDAP filter or raw LDAP query", filtering "on database fields", a
-column picker "including custom attributes", attached management actions, categories, and
-copy/share/delegate (matrix ADM-097). Report customisation limits are the #2 complaint theme, about 17
-reviews: "custom reporting is somewhat limited", "old school bar charts", reports that "overflow from the
-container" ([ENH-05](../../business/strategy/enhancement-catalog.md) quoting
-[customer voice X2](../../business/market-research/manageengine-ad-customer-voice-and-security.md)). A
-custom LDAP report builder is an RFP checklist item
-([research §7a](../../business/market-research/manageengine-admanager-plus.md)). So a switcher's own custom
-reports must come across (§11), and a builder that only matches ME's raw-filter model would carry ME's
-problem (admins who do not know LDAP cannot use it) into our product.
+ME's custom report is built from "an LDAP filter or raw LDAP query", filtering "on database fields", a column picker "including custom
+attributes", attached management actions, categories, and copy/share/delegate (matrix ADM-097). Report customisation limits are the #2 complaint
+theme, about 17 reviews: "custom reporting is somewhat limited", "old school bar charts", reports that "overflow from the container"
+([ENH-05](../../business/strategy/enhancement-catalog.md) quoting [customer voice X2](../../business/market-research/manageengine-ad-customer-voice-and-security.md)).
+A custom LDAP report builder is an RFP checklist item ([research §7a](../../business/market-research/manageengine-admanager-plus.md)). So a switcher's
+own custom reports must come across (§11), and a builder that only matches ME's raw-filter model would carry its problem (admins who do not know LDAP
+cannot use it) into our product.
 
 | Persona | Job (what the 2a/second-slice library cannot do) |
 | --- | --- |
@@ -82,23 +74,26 @@ Rows from the matrix, ADM-083 to ADM-103 (importance · stance · size · priori
 | **ADM-101** | Scheduled reports (Pro) | must · enhance · M · P1 | **Inherited**, plus version pinning | FR-B14 |
 | **ADM-102** | Report-level delegation (edition not stated) | should · parity · S · P1 | **Partial** | FR-B11, FR-B12: a "Custom" category a role can allow, plus sharing. The per-report role editor is the delegation epic's |
 | ADM-103 | Custom-report dashboard widgets | could · parity · S · P1 | **Out** | No dashboard surface in 2c. A saved report gets a stable ID and chart definition so a widget can bind later (FB-9) |
-| ADM-093 | Compliance report sets | must · enhance · M · P1 | **Out** | "Later E-012 slice" (reports-2a §11): content work with legal weight (ENH-15) |
-| ADM-083 to 092 | Prebuilt library | various | **Out** (2a, second slice) | The builder **clones** them (FR-B10) |
+| ADM-083 to 092, ADM-093, ADM-095 | Prebuilt library; compliance sets (must · enhance · M); Google Workspace reports (could · defer) | **Out** | The library is 2a and the second slice (the builder **clones** it, FR-B10); compliance sets are a later E-012 slice (ENH-15, reports-2a §11); matrix: defer Google |
 | ADM-094 | Microsoft 365 reports (P4) | should · parity · M · P4 | **Out as content**; the builder reads the Entra datasets **E2.7 registers** (§7) | No Entra dataset is defined here |
-| ADM-095 | Google Workspace reports | could · defer | **Out** | Matrix: defer |
 | ADA-101 | ADAP custom, aggregate, profile reports (P2) | must · enhance · M | **Partial** | Grouping/aggregates over directory and activeDIQ-audit data; DC events are M3. Matrix: "Same builder as ADM-097" |
 
 ## 3. ManageEngine parity baseline for ADM-097
 
 | ME capability (matrix ADM-097, research §K) | activeDIQ | Same / differs |
 | --- | --- | --- |
-| LDAP filter or raw LDAP query | A typed condition tree over registered columns (§5). **No filter or query text is accepted by any builder screen or API** | **Differs** (D2). An ME filter arrives through the importer, parsed once and classed (§11) |
+| LDAP filter or raw LDAP query | A typed condition tree over registered columns (§5). **No filter or query text is accepted by any builder screen or API**, including a paste-to-convert box | **Differs** (D2): rule 5, and the importer is the only parser. An ME filter arrives through the importer, parsed once and classed (§11) |
 | Filter on "database fields (e.g., bad-password count, days since password set)" | Registered **derived columns** (reports-2a §6.4), filterable like any column | Same capability, no syntax |
 | Column picker "including custom attributes" | Picker over registered columns; extra attributes join through the sync set (FR-B03) | Same, with a stated sync delay |
 | Attach management actions | Saved shortcuts that start an ADR-0005 Operation with preview and undo (FR-B16) | Same, safer path |
 | Categories; copy, share, delegate | Category "Custom" plus labels; clone, share to accounts, roles or tenant, run under the **runner's** scope | Same; sharing never shares data |
 | Advanced scheduler for custom reports | The 2a scheduler for any saved report, in every tier | Same / better (§4) |
 | How ME runs it (cache or live LDAP), operator set, condition limit | `[UNVERIFIED]` | FB-1 |
+
+**Differences chosen on purpose** (our design choices; no claim about ME behaviour). **D1** One dataset per report, no joins: a join in a user-built query is a way around
+per-anchor scope (revisit with FB-3c). **D2** as above. **D3** No user-defined computed column or formula: they are reviewed fragments (reports module §3.3). **D4** A shared report
+runs under the recipient's scope and re-authorises every picked value. **D5** A filter or sort on a field, or a picked value, the runner cannot read refuses the run: dropping it
+changes the meaning, honouring it leaks. **D6** An unsynced attribute reads "Not synced yet", never "empty". **D7** Minimum schedule interval 1 hour; no save-to-path; no mail-body.
 
 ## 4. What we do better than ADMP (all v1; each tied to a sourced pain)
 
@@ -115,92 +110,42 @@ on every view and export (reports-2a FR-08): honesty, not speed.
 
 ## 5. The model: a typed, allow-listed grammar (the answer to domain-model Q5)
 
-Q5 asked how admin filters map onto inventory datasets versus a live scoped search. Answer: **the builder
-never queries a directory and never accepts query text**. A custom report is data: a stored
-`CustomDefinition` (FB-3a; not the shipped library type of reports module §3.4) with `origin` custom,
-cloned or imported, one dataset, columns, a condition tree, sorts, optional grouping and parameters. It
-runs through the same `Resolve` → `reportsql.Compile` → `report_run_rows` path as a shipped report
-(ADR-0010).
+Q5 asked how admin filters map onto inventory datasets versus a live scoped search. Answer: **the builder never queries a directory and never accepts
+query text**. A custom report is data: a stored `CustomDefinition` (FB-3a) with `origin` custom, cloned or imported, one dataset, columns, a condition tree,
+sorts, optional grouping and parameters. It runs through the same `Resolve` → `reportsql.Compile` → `report_run_rows` path as a shipped report
+([ADR-0010](../../development/decisions/0010-report-results-stored-as-rows-in-postgres.md), [modules/reports.md](../../development/architecture/modules/reports.md) §3.4, §5, §6).
 
-**Source.** One registered dataset: `inventory.users`, `.computers`, `.groups`, `.group_members`, `.ous`,
-`.contacts`, the second slice's `object_changes`, `policies`, `printers`, and the §7 sources. No joins in
-v1: related facts (manager's name, member counts, "group outside your scope") are registered columns over
-compiler-scoped anchors (reports module §3.3).
+**Source and fields.** One registered dataset per report (§7); no joins in v1: related facts (manager's name, member counts, "group outside your scope") are
+registered columns over compiler-scoped anchors (reports module §3.3). A `Column` has an ID, label, type (`text`, `int`, `bool`, `time`, `enum`, `guid`,
+`text list`), accepted operators, `sortable`, `groupable`, `aggregatable`, a freshness source and an optional **read permission** (FB-3a). The picker is built
+from the registry and tagged "from the last sync" or "computed now". A field the runner may not read is not offered and, in a saved report, is refused (FR-B12).
+A secret attribute is never a field (D8, X4). Attributes beyond the 2a columns join through FR-B03.
 
-**Fields.** A registered `Column`: ID, label, type (`text`, `int`, `bool`, `time`, `enum`, `guid`, `text
-list`), accepted operators, sortable, `groupable`, `aggregatable`, a freshness source and an optional
-**read permission** (FB-3a). The picker is built from the registry, searchable, with a description and a
-"from the last sync" or "computed now" tag. A field the runner may not read is not offered and, if a saved
-report uses it, is refused (FR-B12). A secret attribute is never a field (D8, X4). Attributes beyond the 2a
-columns join through FR-B03; the second slice's first list (e-mail, employee ID, department, title, company,
-telephone, mobile, [§5.5](reports-2-second-slice.md)) is what the examples here use.
+**Conditions.** A tree of `And` / `Or` / `Not` over `Cmp{field, operator, value-or-parameter}` within §9's limits, using reports module §3.2's closed operators;
+each column registers the subset it accepts: text (is, is not, is one of, contains, starts with, has a value, is empty); int (comparisons, is one of); bool (is);
+time (before, after, within the last / older than / within the next N days); enum (is, is not, is one of, values from the column's enum, never typed); guid
+(is, is not, is one of, has a value, is empty; values from a picker, §9 L5); text list (has a value, is empty, contains an element equal to). Values are typed
+constructors (`TextV`, `IntV`, `TimeV`, `EnumV`, `GUIDV`); `contains` and `starts with` are bound `LikePattern` values (P5 rule 4), never SQL. Relative-time
+operators take whole days and honour a column floor (30 days on replicated logon, reports-2a §6.4). A `GUIDV` is stored **without a label** (FR-B29).
+**Not in v1:** column-to-column comparison, arithmetic, formulas, regular expressions, functions.
 
-**Conditions.** A tree of `And` / `Or` / `Not` over `Cmp{field, operator, value-or-parameter}` within the
-limits of §9, using reports module §3.2's closed operators:
+**Grouping and totals (needs FB-3a).** Up to 3 **group keys** (enum, bool, text, guid-with-label, or `time` bucketed by day to year in the time zone recorded on
+the run, which is part of the query hash); up to 8 **aggregates** (`count`, `count distinct`, `min`/`max` on time or int, `sum`/`avg` on int); an optional
+**minimum group size** (on `count`), Top N (≤ 1,000) and a **grand total over all matching in-scope rows**, not the groups shown. Over 10,000 groups is refused,
+naming the cause and the fix. When a minimum or Top N hides groups the table says "k of n groups shown"; *n* comes from the same grouped statement (a window over
+the groups before Top N and the minimum), so it is not a second count. FR-B28 and FR-B30 are the contract: scope and masking apply, in the same statement, before any group, aggregate, sort, Top N or chart bucket, and each works on the masked cell the
+runner would see; an aggregate over any Unknown input is "Unknown"; the 10,000-group check and every error class are evaluated post-scope, so there is no one-bit oracle on hidden objects.
 
-| Field type | Operators offered (only those the column registers) |
-| --- | --- |
-| text | is, is not, is one of, contains, starts with, has a value, is empty |
-| int | =, ≠, <, ≤, >, ≥, is one of, has a value, is empty |
-| bool | is |
-| time | before, after (absolute); within the last N days; older than N days; within the next N days; has a value; is empty |
-| enum | is, is not, is one of (values from the column's enum, never typed) |
-| guid (manager, group, OU, subject) | is, is not, is one of, has a value, is empty; values from a picker (§9 L5) |
-| text list (for example SPN) | has a value, is empty, contains an element equal to |
-
-Values are typed constructors (`TextV`, `IntV`, `TimeV`, `EnumV`, `GUIDV`); NUL or invalid UTF-8 is
-refused; `contains` and `starts with` become bound `LikePattern` values (P5 rule 4), never SQL. Relative-time
-operators take whole days and honour a column floor (30 days on replicated logon, reports-2a §6.4). A
-`GUIDV` is stored as a GUID **without a label** (FR-B29). **Not in v1:** column-to-column comparison,
-arithmetic, formulas, regular expressions, functions; a "computed" column is a dataset owner's reviewed
-fragment, not an admin's text.
-
-**Grouping and totals (needs FB-3a).** Up to 3 **group keys** (enum, bool, text, guid-with-label, or `time`
-bucketed by day, week, month, quarter, year). Bucket boundaries use the time zone recorded on the run
-(interactive: the runner's profile zone; schedule fire: the schedule's stored zone), and the zone is part
-of the query hash. Up to 8 **aggregates**: `count`, `count distinct <field>`, `min`/`max` (time, int),
-`sum`/`avg` (int). An optional **minimum group size** (on `count`), Top N (≤ 1,000) and a **grand total over
-all matching in-scope rows**, not the groups shown (the table says "k of n groups shown" when a minimum or
-Top N hides some). Over 10,000 groups is refused, naming the cause and the fix. Three rules make it safe:
-
-1. **Post-scope, post-mask.** Scope and masking apply before any group, aggregate, sort, Top N or chart
-   bucket, in the same statement. Group keys, aggregate inputs, `count distinct`, sort keys and chart buckets
-   operate on the **masked cell value the runner would see**, never the raw value (FR-B28). Masked identities
-   (a manager, group or policy outside scope) are one value, "(outside your scope)": one bucket per
-   column. A guid-with-label key takes its label from the masked related column. An OU key is the row's own
-   container; ancestors are named only from the row's own `dn` (reports module DN disclosure rule). A column
-   on a `MaskAnchor` or `Via` is `groupable` only on its masked rendering.
-2. **Unknown stays Unknown.** An aggregate over a group holding any Unknown input cell (registry
-   `UnknownWhen`: another object's hidden time or size) is Unknown, shown "Unknown", never computed from the
-   raw value. The minimum applies to `count` only, which is always known.
-3. **Refusals are post-scope.** The 10,000-group check, the "1,000+" flag and every error class are evaluated
-   on in-scope, masked rows, so none is a one-bit oracle on hidden objects.
-
-**Match count.** The run's cursor statement returns the match count beside the stored rows (`count(*) OVER
-()` with `LIMIT cap+1`) and stores it as a typed run field (FB-3b); the total row of a grouped result comes
-from the same statement (grouping sets). No path issues a separate count statement (ADR-0010 rule 3).
-
-**How it compiles (rule 5).**
-1. The console builds a JSON `ReportAst` of registry IDs, enum IDs, GUIDs and typed values. The OpenAPI
-   schema has **no string member interpreted as query, filter, expression or SQL** (fitness RP-B1), save the
-   one allow-listed intake below.
-2. `Resolve` refuses an unknown column, an operator the column does not accept, a missing parameter, a value
-   under a floor, anything over a §9 limit, and **re-authorises every `GUIDV` and parameter default for the
-   runner** (FR-B29). Errors are `ValidationError{Code, Path}` and never echo a value or name an object.
-3. `reportsql.Compile` renders SQL from pre-quoted registry identifiers, fixed keywords and numbered `$n`
-   arguments. The runner's `ReadScope`, from `rbac.ReadScopes.For` only, is rendered into the `WHERE` by
-   `planScope`/`scopeSQL` before any condition, group, sort or limit; the admin's narrowing is AND-ed on top.
-4. Rows are stored as `report_run_rows`. Pages, sorts, chart data, exports, the digest and deliveries read
-   them and never re-query.
-
-**The only two places text from outside the grammar enters; neither reaches a directory or database as
-text.** (1) The **E2.11 file intake**: an uploaded ADMP file whose LDAP filter is parsed once by the
-admin-filter parser (safe-primitives P1: strict RFC 4515, whole input consumed, canonical re-rendering) into
-this tree or classed (§11); the text is kept only as inert, escaped evidence. RP-B1 allow-lists this one
-operation by name. (2) The importer's **sync-set suggestion** carries an attribute name taken from a hostile
-file. The Action's input is not that text but a reference to an `attributeSchema` entry in the connection's
-live schema, resolved server-side: a name matching no entry is refused, a match passes the schema-driven
-`SecretAttrs` predicate (safe-primitives §3.7, LF-38), and the Action shows its preview (FR-B03).
+**Match count and compilation.** The run's single cursor statement returns the match count beside the stored rows (`count(*) OVER ()`, `LIMIT cap+1`) and stores it as a
+typed run field; a grouped result's total row comes from the same statement (grouping sets); no path issues a separate count. This changes ADR-0010 rule 3 ("the total
+is `report_runs.row_count`"), which is why FB-3b **supersedes** ADR-0010; `CompileCount` is deleted for library runs too (FB-3a). Otherwise as ADR-0010 and reports
+module §5: `Resolve` refuses what the registry does not allow and **re-authorises every `GUIDV` and parameter default for the runner** (FR-B29) with errors
+`ValidationError{Code, Path}` that never echo a value; `Compile` renders SQL from pre-quoted identifiers and numbered `$n` arguments with the runner's `ReadScope`
+(`rbac.ReadScopes.For` only) before any condition, group, sort or limit; pages, charts, exports and deliveries read stored rows and never re-query. The OpenAPI schema
+has **no string member interpreted as query, filter, expression or SQL** (fitness RP-B1, FR-B02), save two inputs that never reach a directory or database as text:
+the **E2.11 file intake** (an ADMP filter parsed once by the admin-filter parser, safe-primitives P1, into this tree or classed, §11; RP-B1 allow-lists this one
+operation by name) and the importer's **sync-set suggestion** (a reference to an `attributeSchema` entry of the live schema, resolved server-side: no match is refused,
+a match passes the schema-driven `SecretAttrs` predicate, safe-primitives §3.7, LF-38, and the Action shows its preview, FR-B03).
 
 ## 6. The build flow
 
@@ -214,17 +159,14 @@ left rail of steps, data table, side sheet. Rows are the units for `product-desi
 | 3 | Adds/removes **fields** by search, drags order, sets sort | Preview refreshes in place (debounced ≥ 500 ms `[PROPOSED]`); an unreadable field is absent, not greyed | Column chooser |
 | 4 | Adds **conditions**: field, operator, value (pickers for dates, enums, OUs, groups, managers) | Header count and rows update per edit; each condition has Remove; `And`/`Or` are indented blocks. No per-condition counts (one count per preview, §9) | Filter builder |
 | 5 | Optionally **groups and totals**: keys, aggregates, minimum, Top N, chart (bar; line for time buckets) | Group table with chart above, both from the same stored rows; "Show rows" starts a detail run | Grouped table, chart |
-| 6 | Reads the **preview** | Up to 1,000 stored rows, match count or "1,000+", `as_of`, Unknown notes, any refused item with its reason | Preview run (§9) |
+| 6 | Reads the **preview** | Up to 1,000 stored rows, the exact match count ("1,000+" only after the §9 fallback), `as_of`, Unknown notes, any refused item with its reason | Preview run (§9) |
 | 7 | **Saves** (name, description, labels) | `reports.definition.create` Action inline: diff, then version 1 published, opened in My reports | Sheet; ADR-0005 rule 10 |
 | 8 | **Share**, **Schedule**, **Export**, **Act** | 2a schedule sheet (external-recipient confirmation); sharing sheet; bulk bar (FR-B16) | Side sheets |
 
-**The admin never has to:** write or paste a filter or query; know an attribute's LDAP name or whether it is
-synced; pick a domain before seeing data; click Generate; guess whether a number is scoped.
-
-**Unhappy paths (each is an AC):** no `reports.build` (entry absent; by URL 403); no readable source (empty
-state, not error); a connection never synced ("Not synced yet: <connection>", others run); a field or picked
-value that became unreadable (§8); too many groups; over the row cap; preview superseded; stale connection;
-10k and 100k sources; a group with more than 1,500 members.
+**The admin never has to:** write or paste a filter or query; know an attribute's LDAP name or whether it is synced; pick a domain before seeing data; click Generate; guess
+whether a number is scoped. **Unhappy paths (each is an AC):** no `reports.build` (entry absent; by URL 403); no readable source (empty state, not error); a connection never
+synced ("Not synced yet: <connection>", others run); an unreadable field or picked value (§8); too many groups; over the row cap; preview superseded; stale connection; 10k
+and 100k sources; a group with more than 1,500 members.
 
 ## 7. Data sources at 2c, and which wait
 
@@ -246,19 +188,15 @@ scoped audit reader only when every target is in their read scope.
 
 ## 8. Ownership, lifecycle, sharing and RBAC
 
-**Ownership and lifecycle.** The creator owns a custom report: a `report_definitions` row (owner
-`modules/reports`) with immutable **versions**. One model (DM-71 `draft → published → archived`):
-- **Editing state lives in the browser.** Previews store *run rows*, never a definition. Nothing is stored
-  before Save.
-- **Save publishes version n+1.** A run records `definition_id`, version and SHA-256 (reports module §3.6);
-  a preview records the AST hash instead (FB-3b); a schedule pins its version.
-- **A server-side `draft` exists only for an applied import** (§11.3): private, unshared, unschedulable.
-- **No hard delete in v1** (DM-71 has none): `archive` hides, `restore` returns it to `published`; runs expire
-  by retention. Origin: `custom`, `cloned` (source ID and version), `imported`. Shipped definitions stay
-  immutable (DM-71.I2).
-- Every write is an EP-3 Action (ADR-0005 rule 10): `reports.definition.create | update | share | unshare |
-  archive | restore | reassign`, each with preview diff, audit and undo; undoing an update publishes a new
-  version equal to the previous one.
+**Lifecycle.** The creator owns a custom report: a `report_definitions` row (owner `modules/reports`) with immutable **versions** (DM-71 `draft → published →
+archived`, plus the edge `archived → published` that FB-3d adds).
+- **Editing state lives in the browser**; previews store run rows, never a definition. **Save publishes version n+1.** A run records `definition_id`, version and
+  SHA-256 (reports module §3.6), a preview its AST hash (FB-3b); a schedule pins its version. A server-side `draft` exists only for an applied import (§11).
+- **No hard delete in v1**: `archive` hides, `unarchive` returns it to `published`; runs expire by retention. Origin: `custom`, `cloned` (source ID and version) or
+  `imported`. Shipped definitions stay immutable (DM-71.I2).
+- Every write is an EP-3 Action (ADR-0005 rule 10): `reports.definition.create | update | share | unshare | archive | unarchive | reassign`, each with preview diff,
+  audit and undo. Undo is the family's inverse-only `reports.definition.restore` (rule 10, T-0892), restoring a recorded version and lifecycle state (undoing an update
+  publishes a new version equal to the previous one). `unarchive` is a forward Action with its own check, deliberately not named `restore`, so the two cannot collide.
 
 **Permissions** (proposed IDs for `api-engineer`; the first three exist from 2a):
 
@@ -267,56 +205,36 @@ scoped audit reader only when every target is in their read scope.
 | `reports.run`, `reports.export`, `reports.schedule` | As reports-2a §8.5; unchanged for custom reports |
 | `reports.build` | Create, edit and clone own custom reports; run previews |
 | `reports.share` | Share own reports with accounts, roles or the tenant; `edit` access needs it too |
-| `reports.manage_all` | See **metadata** of any custom report (name, owner, dataset, description, labels, versions, share targets, counts of columns and conditions); archive or reassign it. **Never opens rows or files, and never shows condition values or picked-object labels** |
+| `reports.manage_all` | See **metadata** of any custom report (name, owner, dataset, description, labels, versions, share targets, counts of columns and conditions); archive, unarchive or reassign it. **Never opens rows or files, and never shows condition values or picked-object labels** |
 
-**Sharing.** Default private. Targets: accounts, roles, or "everyone with `reports.run`". *Run* (open, run,
-export, schedule their own) or *Edit* (create a version; the editor becomes a co-owner in the audit). A
-recipient always runs the report **under their own scope and permissions**; sharing never shares data
-(DM-71.I1, LF-39, reports-2a decision 5). A URL carries no data. A role target means whoever holds the role at
-open. Unsharing takes effect on the next open; stored runs the recipient already made expire normally.
+**Sharing.** Default private; targets are accounts, roles (whoever holds the role at open) or "everyone with `reports.run`"; *Run* (open, run, export, schedule their own) or
+*Edit* (create a version; the editor becomes a co-owner in the audit). A recipient always runs the report **under their own scope and permissions**; sharing never shares
+data (DM-71.I1, LF-39, reports-2a decision 5) and a URL carries no data. Unsharing takes effect on the next open. All custom reports are in category "Custom", which a
+role's *report categories* constraint (DM-34) can allow or deny (ADM-102, partial); per-report restrictions use sharing.
 
 **What a recipient may and may not see (FR-B12, FR-B29).**
-- A dataset they cannot read: the report is absent from lists and search; by ID, 404.
-- A **display column** whose field they cannot read: omitted, header "2 columns not available to you".
-- A **condition, sort, group key or aggregate** on such a field: the run is **refused** (`column_not_permitted`,
-  field only). Dropping it would change the meaning; honouring it would let presence or order reveal the value.
-- A **picked value** (`GUIDV`, parameter default) they cannot read: the run is refused (`value_not_permitted`,
-  condition *path*, no object named). The editor shows "(object outside your scope)". Labels resolve at display
-  under the **viewer's** scope, so a recipient never sees the owner's GUIDs or labels.
-- An **Edit-level** sharee's save is validated against the **editor's** permissions.
-- A **schedule fire** re-applies both refusals under the owner's *current* permissions and fails closed:
-  delivery fails with a reason; no condition or column is dropped.
-- Scope kinds the evaluator does not support grant nothing; the empty state names the reason.
-- Whether a role's attribute allowlist (DM-34) constrains **read** as well as write is `[UNVERIFIED]` (FB-3d).
-  Until settled the builder trusts dataset permission plus the registry's per-field read permission.
+- A dataset they cannot read: the report is absent from lists and search; by ID, 404. A **display column** they cannot read is omitted ("2 columns not available to you").
+- A **condition, sort, group key or aggregate** on such a field refuses the run (`column_not_permitted`, field only): dropping it changes the meaning, honouring it lets presence or order reveal the value.
+- A **picked value** (`GUIDV`, parameter default) they cannot read, or that does not exist, refuses the run with one code, `value_not_permitted` (condition *path*, no object
+  named). The editor shows "(object outside your scope)"; labels resolve under the **viewer's** scope.
+- An **Edit-level** sharee's save is validated against the **editor's** permissions. A **schedule fire** re-applies both refusals under the owner's *current* permissions and fails closed.
+- Scope kinds the evaluator does not support grant nothing; the empty state names the reason. Whether a role's attribute allowlist (DM-34) constrains **read** as well as write is
+  `[UNVERIFIED]` (FB-3d); until settled the builder trusts dataset permission plus the registry's per-field read permission. Owner-typed text values (for example "Finance") are
+  the owner's disclosure and readable by recipients: an accepted residual (§16).
 
-Text values the owner typed (for example "Finance") are the owner's disclosure and a recipient can read
-them: an accepted residual (§16).
-
-**Category delegation (ADM-102, partial).** All custom reports are in category "Custom"; a role's *report
-categories* constraint (DM-34) can allow or deny it. Per-report restrictions are done with sharing.
-
-**Orphans.** If the owner is disabled or deleted, schedules pause (2a rule); `reports.manage_all` can reassign
-or archive; reassigning pauses schedules until the new owner resumes them after seeing the recipients
-(reports-2a §8.4).
-
-**A new version and a live schedule.** A schedule runs the version it pinned. Moving it to a newer version is
-a `reports.schedule.update` Action whose preview shows the **column and condition diff** (labels under the
-owner's scope) and repeats the external-recipient confirmation, so a newer version cannot widen what recipients
-get without the owner's visible act (TM-TB15-T2).
+**Orphans and versions.** If the owner is disabled or deleted, schedules pause (2a rule); `reports.manage_all` can reassign or archive, and reassigning pauses schedules until the new owner
+resumes them after seeing the recipients (reports-2a §8.4). A schedule runs the version it pinned; moving it to a newer one is a `reports.schedule.update` Action whose preview shows the
+**column and condition diff** and repeats the external-recipient confirmation (TM-TB15-T2).
 
 ## 9. Preview, runs, caps and the large-directory cases
 
-**Preview is a run** of the unsaved `ReportAst`, `class = preview` (FB-3b), through the same `Resolve`,
-`Compile`, scope and `report_run_rows`: at most 1,000 stored rows, retention 1 hour, superseded (expired) by a
-newer preview from the same account. ADR-0010 writes rows while `running` and reads once `succeeded`, so a
-preview is complete or absent. It has its **own statement timeout** (10 s `[PROPOSED]`, against the run's
-15 minutes) and caps. If the windowed count cannot finish, the preview is re-issued **once** rows-only
-(`LIMIT 1001`, no count) and the header says "1,000+"; if that also times out the preview fails as "too
-heavy". A page and its count never come from different statements.
+**Preview is a run** of the unsaved `ReportAst`, `class = preview` (FB-3b), through the same `Resolve`, `Compile`, scope and `report_run_rows`: at most 1,000 stored rows,
+retention 1 hour, superseded (expired) by a newer preview from the same account, complete or absent (ADR-0010 writes rows while `running` and reads once `succeeded`). It has
+its **own statement timeout** (10 s `[PROPOSED]`, against the run's 15 minutes) and caps. If the windowed count cannot finish, the preview is re-issued **once** rows-only
+(`LIMIT 1001`, no count) and the header says "1,000+"; if that also times out it fails as "too heavy". The re-issue is a **new preview run** (ADR-0010 rule 2: never resume
+into the same run) and counts against the per-account rate. A page and its count never come from different statements.
 
-**Limits** (refuse and explain, never truncate; run numbers inherit reports-2a §8.3). `Resolve` enforces
-this one table:
+**Limits** (refuse and explain, never truncate; run numbers inherit reports-2a §8.3); `Resolve` enforces this one table:
 
 | Limit | Value |
 | --- | --- |
@@ -324,114 +242,57 @@ this one table:
 | `is one of` values (also the ADM-096 list size) | 1,000 |
 | Group keys · aggregates · Top N · groups | 3 · 8 · 1,000 · 10,000 `[PROPOSED]` |
 | Rows stored per run, CSV/XLSX · PDF · HTML | 1,000,000 · 5,000 · 20,000 |
-| Custom definitions per tenant · per account | 2,000 · 200 `[PROPOSED]` |
-| Versions kept | all; latest 20 shown `[PROPOSED]` |
+| Custom definitions per tenant · per account · versions kept | 2,000 · 200 · all, latest 20 shown `[PROPOSED]` |
 | Previews: running per account · per tenant · rate | 1 (a newer one supersedes) · 2 · 30 per minute per account `[PROPOSED]`; apart from the 4-job cap for scheduled runs |
 | Statement time | run: P5 SQL-22; preview: 10 s `[PROPOSED]`. A timeout is a typed failure, "too heavy", never a partial result |
 
-**Aggregates, sort and exports can never leak scope** (FR-B30's property test covers all of it):
-- **L1** Scope and masks come before any group, aggregate, sort or limit, so every group, count, minimum,
-  sum or chart bar uses in-scope, masked values only (LF-39, §5 rules 1 to 3).
-- **L2** A count of *other* objects (members, children) is a registered `Count` column over a masked anchor
-  (RP11); there is no free aggregate over a related object.
-- **L3** Sort keys are limited to readable fields, and stored `sort_keys` come from the same masked values.
-- **L4** `Top N` applies after sort over scoped rows, so it does not depend on how many hidden rows exist.
-- **L5** Guid pickers list only objects the runner can read **under `reports.run`**, the scope the report runs
-  under (FB-6a; today ADR-0011 rule 10 fixes search to `directory.read`, so this is not yet true). Whatever a
-  picker offers, `Resolve` re-authorises the value at every run (L6), so a picker can never put an unreadable
-  value into a result; until FB-6a ships the picker shows only what `directory.read` already shows that account
-  in global search (residual, §16). An unreadable GUID sent to the API answers "not found", as a nonexistent one.
-- **L6** Every `GUIDV` and parameter default is re-authorised at every `Resolve` (run, preview, drill-down,
-  schedule fire, comparator, validate-only).
-- **L7** Groups and total come from **one statement**; a total can never disagree with its groups.
-- **L8** Exports serialise stored rows only, with the 2a encoders, caps and digest; a group row's `row_key` is
-  the canonical hash of its key values (FB-3b).
+**Aggregates, sort and exports can never leak scope** (FR-B30's property test covers all of it). Scope, masks, grouping and the one grouped
+statement are §5 rules 1 to 3 and FR-B28; a count of *other* objects is a registered `Count` column over a masked anchor (RP11), never a free
+aggregate; exports serialise stored rows only, with the 2a encoders, caps and digest (a group row's `row_key` is the canonical hash of its key values, FB-3b).
+- **L3** Sort keys are limited to readable fields, and stored `sort_keys` come from the same masked values. **L4** `Top N` applies after sort over scoped
+  rows, so it does not depend on how many hidden rows exist.
+- **L5** Guid pickers list only objects the runner can read **under `reports.run`** (FB-6a; until then `directory.read`, a residual, §16); `Resolve` re-authorises what a picker
+  offered (L6). An unreadable GUID answers `value_not_permitted`, the same code as a nonexistent one, in every path (own or shared).
+- **L6** Every `GUIDV` and parameter default is re-authorised at every `Resolve` (run, preview, drill-down, schedule fire, comparator, validate-only).
 
 ## 10. Act on results (ADM-098) through the ADR-0005 pipeline
 
-The grid's bulk bar and first Actions are the 2b spec's. The builder adds the following and changes nothing in
-the pipeline.
-
-1. **Eligibility.** The dataset declares an *action subject* (object kind and the GUID column(s) identifying
-   it; FB-3a) and the rows are objects or edges. Grouped rows are not actionable: "Show rows" starts a **new
-   detail run by the actor**, then acts.
-2. **Selection contract (never raw GUIDs).** The API takes `{run_id, row_keys[] | all_matching}`. The server
-   re-derives the targets: it reads the selected rows from `report_run_rows` of that run and takes each row's
-   subject identity through the dataset's `ActionSubject`. The run must be the actor's own, `succeeded` and
-   unexpired (else 410, "run again") and pass the scope-fingerprint check of DM-72.I5 (else 409, "Your access
-   changed since this run"). `all_matching` means every row of that run, bound to its stored `row_count`; a
-   different count is refused. A row whose identity cell is masked or Unknown is not a target and is counted as
-   skipped. A request carrying GUIDs is refused (400).
-3. **Start.** One Operation, origin `report_results`, records `run_id`, the run digest and `as_of`. The bar
-   offers only catalogue Actions that accept the subject kind and that the account may plan. A saved report can
-   carry **shortcuts** (`attached_actions`, DM-71) shown first; a shortcut is not a grant or an automation.
-4. **The pipeline decides, not the report.** Plan re-checks authorisation live per target at Plan and again at
-   Apply (ADR-0005 rule 7, DM-35), fails closed on `unknown`, skips `tier0` (DM-35.I5), and lists a target that
-   moved out of scope, changed or vanished as "n of m targets changed since the report ran", with reasons and
-   the run's `as_of`.
-5. **Limits and gates.** `max_batch` and `csv_allowed` apply (above the limit Plan refuses and says how many);
-   workflow gate and step-up as for any Operation; preview diff, per-item results, verify and undo are the
-   pipeline's.
-6. **No unattended acting.** A schedule delivers a report; it never starts an Action (ADM-104, 2d).
-7. **Audit.** The run, the Operation and each item link by ID; the run's event records row count and digest,
-   the Operation's records the targets; no values.
+The grid's bulk bar and first Actions are the 2b spec's; the builder adds the following and changes nothing in the pipeline.
+1. **Eligibility.** The dataset declares an *action subject* (object kind and GUID column(s); FB-3a). Grouped rows are not actionable: "Show rows"
+   starts a **new detail run by the actor**, then acts.
+2. **Selection contract (FR-B16).** `{run_id, row_keys[] | all_matching}`, never raw GUIDs (400). The server re-derives targets from the stored rows
+   of the actor's own, `succeeded`, unexpired run through `ActionSubject`: expired is 410 ("run again"), a changed scope fingerprint (DM-72.I5) is 409
+   ("Your access changed since this run"). `all_matching` is bound to the stored `row_count`; masked or Unknown identity rows are skipped and counted.
+3. **Start.** One Operation, origin `report_results`, records run ID, digest and `as_of`. The bar offers only catalogue Actions that accept the subject
+   kind and that the account may plan. A saved report can carry **shortcuts** (`attached_actions`, DM-71) shown first; a shortcut is not a grant.
+4. **The pipeline decides.** Authorisation is re-checked live per target at Plan and Apply (ADR-0005 rule 7, DM-35), failing closed on `unknown` and
+   skipping `tier0` (DM-35.I5); changed targets are listed as "n of m targets changed since the report ran" with reasons and the run's `as_of`.
+   `max_batch`, `csv_allowed`, gates, step-up, preview diff, verify and undo are the pipeline's.
+5. **No unattended acting** (ADM-104, 2d): a schedule delivers a report and never starts an Action. **Audit:** run, Operation and items link by ID; no values.
 
 ## 11. How a migrated ADMP custom report lands (with E2.11)
 
-[E2.11](e2-11-migration-importer.md) owns intake, hostile-file limits, classification, the fidelity report and
-proposal-then-apply. This spec defines only the target grammar and what the builder offers. The four classes
-are E2.11's: `exact`, `changed`, `manual`, `not supported`.
+[E2.11](e2-11-migration-importer.md) owns intake, hostile-file limits, the fidelity report, step-up and proposal-then-apply; this spec defines the target grammar and what the
+builder offers (FR-B18). A custom-report proposal (E2.11 §6.2) carries a `ReportAst` of this schema, `ast_version`, the ADMP name and category and a fidelity row, and has no
+effect until applied (TM-D21). **Classes** (E2.11 §6.5, refined compatibly; FB-10 makes E2.11 AC-12 cite this list), mapping each ADMP attribute to a registered column by LDAP display name:
+- `exact`: every attribute, operator and **object class** maps with the same meaning: `(&(objectCategory=person)(objectClass=user)(department=Finance))` is Users, `department is Finance`.
+- `changed` (with diff): same intent, different representation or a narrower result. The UAC bit test `(userAccountControl:1.2.840.113556.1.4.803:=2)` becomes the registered *enabled* column; `memberOf` the direct-membership column; `(objectCategory=person)` alone becomes Users and no longer matches contacts.
+- `manual`: a valid attribute that is not registered (one click, "Add `<attribute>` to the sync set", FR-B03; no value is guessed), **and any script-bearing content**, kept as inert escaped text.
+- `not supported`: a matching rule or construct with no registered equivalent, raw SQL, a secret attribute, a cross-dataset reference. Reported, never dropped silently.
 
-1. **Proposal.** A custom-report proposal (E2.11 §6.2) carries a `ReportAst` of this schema with
-   `ast_version`, the ADMP name and category, and the source in a fidelity row. No effect until applied (TM-D21).
-2. **Filter conversion.** E2.11 §6.5 says a filter becomes the typed tree or `not supported`; this spec refines
-   that, compatibly, with the classes below (FB-10: E2.11 AC-12 cites this list). The importer maps each ADMP
-   attribute to a registered column by LDAP display name.
-   - `exact`: every attribute, operator and **object class** maps with the same meaning. Example:
-     `(&(objectCategory=person)(objectClass=user)(department=Finance))` to Users, `department is Finance`
-     (the users dataset is exactly that class pair).
-   - `changed` (with diff): same intent, different representation or a narrower result. Examples: the bit test
-     `(userAccountControl:1.2.840.113556.1.4.803:=2)` becomes the registered *enabled* column; `memberOf` becomes
-     the direct-membership column; `(objectCategory=person)` alone becomes Users and no longer matches contacts.
-   - `manual`: a valid attribute that is not registered (one click, "Add `<attribute>` to the sync set",
-     FR-B03, then conversion re-runs; no value is guessed), **and any script-bearing content**, kept as inert
-     escaped text with no code path (E2.11 §6.5, AC-11).
-   - `not supported`: a matching rule or construct with no registered equivalent, raw SQL, a secret attribute,
-     a cross-dataset reference. Reported, never dropped silently.
-3. **Apply.** An Action needing `reports.build` **and step-up** (E2.11 §6.3), by an admin, never the importer's
-   identity. The report lands as a server-side **`draft`** (§8): private to the applier, unshared, unscheduled,
-   with a banner "Imported from ADMP: n items changed, m need review" and the diff. The applier may open it and
-   run **previews** (their own scope); nobody else sees it, and it cannot be shared, scheduled, exported or
-   run in full. **Save** publishes version 1.
-4. **Never imported:** script bodies, raw SQL, credentials (E2.11 §6.4). ADMP's attached tasks are not carried
-   over, by this spec's own rule: an Action binding is a privilege decision, so the admin re-attaches a
-   shortcut by hand (§10).
-5. **Schedules** land **disabled**, recipients shown, external ones flagged (E2.11 §6.6, TM-TB18-T9), with
-   owner `manageengine` so they **cannot run** until the step-up switch of E2.11 §6.8; enabling is then the 2a
-   schedule Action with its confirmation.
-6. **Exposed to the importer:** (a) the `ReportAst` schema and a stable version; (b) a **validate-only** call
-   with per-path errors and class reasons, writing nothing; (c) the attribute-to-column map; (d) a run API for
-   the parallel-run comparator (advisory, Plan-only, E2.11 §6.8). All go through `Resolve` (RP-B2).
-7. **Fidelity bar.** The share converting `exact` or `changed` on lab ADMP 8043 is E2.11's acceptance number.
-   `[LAB]` fixtures come from the trial install (FB-2).
+**Apply** needs `reports.build` **and step-up** (E2.11 §6.3), by an admin, never the importer's identity. The report lands as a private server-side **`draft`** (§8) with a banner
+"Imported from ADMP: n items changed, m need review" and the diff; the applier may run previews only, and **Save** publishes version 1. Imported schedules land disabled, owner
+`manageengine`, until E2.11 §6.8's switch (TM-TB18-T9). Script bodies, raw SQL, credentials and attached tasks are never imported (E2.11 §6.4; an Action binding is a privilege
+decision, so the admin re-attaches a shortcut by hand, §10). **Exposed to the importer:** the `ReportAst` schema and a stable version; a **validate-only** call with per-path errors
+and class reasons, writing nothing; the attribute-to-column map; a run API for the comparator (advisory, Plan-only, E2.11 §6.8), all through `Resolve` (RP-B2). The `exact` plus
+`changed` share on lab ADMP 8043 is E2.11's acceptance number; `[LAB]` fixtures come from FB-2.
 
-## 12. Differences from ME chosen on purpose
-
-| # | Difference | Why |
-| --- | --- | --- |
-| D1 | One dataset per report, no joins | A join in a user-built query is a way around per-anchor scope. Revisit with FB-3c |
-| D2 | No raw LDAP or SQL, no paste-to-convert box | Rule 5. The importer is the only parser |
-| D3 | No user-defined computed column or formula | Computed columns are reviewed fragments (reports module §3.3) |
-| D4 | A shared report runs under the recipient's scope and re-authorises every picked value | Sharing never shares data |
-| D5 | A filter/sort on a field, or a picked value, the runner cannot read refuses the run | Silent dropping changes meaning; honouring leaks |
-| D6 | An unsynced attribute reads "Not synced yet", never "empty" | Unknown is not none (reports-2a §6.4) |
-| D7 | Minimum schedule interval 1 hour; no save-to-path; no mail-body | Unchanged from 2a (§11) |
+## 12. (Merged into §3)
 
 ## 13. Experience target (with `product-designer`, FB-7)
 
-Counted by [top-admin-tasks-benchmark](top-admin-tasks-benchmark.md) §1.2 (interactions / typed fields /
-screens). It has no custom-report task, so **ME baselines are `[UNVERIFIED]`**, measured on the ADMP trial lab
-(FB-2) as rows T21 to T25. Targets `[PROPOSED]`:
+Counted as [top-admin-tasks-benchmark](top-admin-tasks-benchmark.md) §1.2 does (interactions / typed fields / screens). It has no custom-report task, so
+**ME baselines are `[UNVERIFIED]`**, measured on the ADMP trial lab (FB-2) as T21 to T25. Targets `[PROPOSED]`; every step is reachable by keyboard and the picker opens on `/`:
 
 | Task | Target |
 | --- | --- |
@@ -441,22 +302,20 @@ screens). It has no custom-report task, so **ME baselines are `[UNVERIFIED]`**, 
 | T24 Share a saved report with a role | ≤ 4 / 0 / 1 |
 | T25 Select all matching rows of a saved report and start "Disable" through to the Plan preview | ≤ 5 / 0 / 2 (step-up extra) |
 
-Every step is reachable by keyboard; the picker opens on `/` inside the builder.
-
 ## 14. Performance budgets
 
 `[PROPOSED]`, for `reporting-engineer` to calibrate on the scale tier (B13 pattern).
 
 | Operation | 10,000 objects | 100,000 objects |
 | --- | --- | --- |
-| Source list, field picker, operator list | ≤ 200 ms | ≤ 200 ms (registry, independent of data) |
-| Guid value picker (manager, group, OU) | ≤ 200 ms | ≤ 200 ms (ADR-0011 rule 14 class) |
+| Source list, field picker, operator list; guid value picker (ADR-0011 rule 14 class) | ≤ 200 ms | ≤ 200 ms (independent of data) |
 | Preview complete: stored rows (≤ 1,000) and match count (≤ 5 conditions) | ≤ 2 s p95 | ≤ 5 s p95 |
 | Grouped preview (3 keys, 8 aggregates, total row) | ≤ 2 s p95 | ≤ 5 s p95 |
 | Full run, stored rows ≤ 100k | ≤ 3 s | ≤ 15 s |
 | Re-sort, page, change chart type (stored rows) | ≤ 500 ms | ≤ 500 ms |
-| Drill-down from a group | as a preview | as a preview |
 | `group_members`, group with 6,000 members: first page | ≤ 5 s | ≤ 5 s (reports-2a §5) |
+
+A drill-down from a group is budgeted as a preview. A group with more than 1,500 members: the edge dataset contributes every edge (reports-2a FR-15, FR-S07); tested at 6,000.
 
 A group with more than 1,500 members: the edge dataset contributes every edge (reports-2a FR-15, FR-S07);
 a builder report on it is tested at 6,000.
@@ -468,10 +327,11 @@ a builder report on it is tested at 6,000.
 | No `reports.build` | Builder entry absent; Library, My reports, Shared with me still shown if `reports.run` |
 | No readable source | "Your role covers no directory objects. Ask an administrator to grant a scope." Zero rows, not an error |
 | Empty result | "No users match in your scope, as of 09:41, 3 domains." Each condition offered for removal |
-| Loading | Skeleton rows and "Previewing…" with cancel; a newer edit cancels the previous preview (the old one is discarded silently) |
-| Preview truncated | "At least 1,000 users match. The saved report stores up to 1,000,000." |
+| Loading | Skeleton rows and "Previewing…" with cancel; a newer edit supersedes the previous preview (the old one is not shown; it is still audited, §16) |
+| Preview truncated | "4,312 users match; the preview shows the first 1,000. The saved report stores up to 1,000,000." |
+| Count not finished (rows-only fallback) | "1,000+ users match (the exact count did not finish in time). The saved report stores up to 1,000,000." Only in this state |
 | Stale or never synced | Banner as reports-2a §8.2; the builder still works on other connections |
-| Unsynced attribute | Cell "Not synced yet" and a header count; a filter on it says "n users not yet read" |
+| Unsynced attribute | Cell "Not synced yet" and a header count of those cells among the **stored** rows. A filter on it says "<Field> has not been read for every user yet (sync started 09:12). Users not yet read do not match." No count of excluded users is shown |
 | Unreadable field | "You can't use <field> in a condition." (run refused); display column omitted with "2 columns not available to you" |
 | Unreadable picked value | "A value in this report is outside your scope." with the condition path; the editor shows "(object outside your scope)" |
 | Unknown aggregate | Cell "Unknown", tooltip "Depends on objects outside your scope" |
@@ -483,38 +343,27 @@ a builder report on it is tested at 6,000.
 
 ## 16. Security and audit
 
-- **Directory rights.** Inventory read only; no new directory right, no directory write. Adding an attribute
-  to a sync set widens what the connector **reads**, so it is a connection setting changed by an Action with the
-  connection's rights check; the attribute comes from the live schema, and a secret or confidential one is
-  refused by the schema-driven `SecretAttrs` set (safe-primitives §3.7, LF-38). Entra reads come with E2.7's
-  Graph permissions.
-- **Tier-0.** Reports may list Tier-0 objects (reports-2a §9); acting on them is blocked by the pipeline
-  (DM-35.I5).
-- **Safe primitives.** Report SQL only from `store/reportsql` with registry identifiers and bound arguments
-  (FF-SP4, SP-P5); LIKE only through `LikePattern`; scope only from `rbac.ReadScopes.For`; GUIDs and DNs only
-  through pickers or the `dn` package; export bytes only from the P7 encoders. Titles, descriptions and labels
-  are attacker-controlled text and go through the formula, HTML and file-name encoders everywhere (console,
-  About block, e-mail subject, attachment name). No user-defined column labels in v1.
-- **Abuse cases.** (1) A technician builds a report to see objects, values, counts or ordering outside scope:
-  AC-B08, B09, B38, B40. (2) A shared report with a picked value the recipient cannot read: AC-B13, B39.
-  (3) A schedule on a broad report to an outside address, or a version swap: AC-B25, B45. (4) A hostile value or
-  title: AC-B27. (5) Probing and denial of service: AC-B19. (6) A secret read through "custom attributes",
-  including a hostile importer suggestion: AC-B05, B43. (7) A forged selection or a stale or foreign run used to
-  act: AC-B41. (8) A hostile ADMP file: AC-B28 and E2.11's limits.
-- **Audit (our own).** One event per item, never values: actor, definition and version (a preview, its AST
-  hash), scope summary, row count and digest. Every "filters hash" and "query hash" is an **HMAC under a
-  per-tenant salt** (as `digest_salt`, DM-24.I5), so low-entropy filter values cannot be brute-forced by audit
-  readers. Definition events: created, updated, shared, unshared, archived, restored, reassigned, cloned,
-  imported; run, export, download and schedule events as reports-2a §8.6. **A preview is one light
-  `reports.preview.run` event per preview run**, listing field, operator, group-key and aggregate IDs and the
-  HMAC. Events are chained at commit (ADR-0005 rule 11, DM-80.I1), so there is no roll-up and no ADR-0005
-  amendment; the per-account rate (§9) bounds chain volume. FB-5 registers the kind.
-- **Residuals accepted.** Owner-typed text values are readable by anyone the report is shared with. Until
-  FB-6a ships, a picker offers what `directory.read` shows the account in global search. A statement timeout
-  reveals only tenant data volume, not objects.
-- **Tags.** `security-sensitive` on every build ticket for: the `reportsql` grouping change, the definition
-  store and sharing, the selection contract and act-on-results hand-off, the `audit.events` dataset, the
-  per-field read permission and the sync-set widening.
+- **Directory rights.** Inventory read only; no new directory right, no directory write. Adding an attribute to a sync set widens what the connector **reads**, so it is a
+  connection setting changed by an Action with the connection's rights check, from the live schema, with a secret or confidential one refused by the schema-driven `SecretAttrs`
+  set (safe-primitives §3.7, LF-38). Entra reads come with E2.7's Graph permissions. Reports may list Tier-0 objects (reports-2a §9); acting on them is blocked by the pipeline (DM-35.I5).
+- **Safe primitives.** Report SQL only from `store/reportsql` with registry identifiers and bound arguments (FF-SP4, SP-P5); LIKE only through `LikePattern`; scope only from
+  `rbac.ReadScopes.For`; GUIDs and DNs only through pickers or the `dn` package; export bytes only from the P7 encoders; titles, descriptions and labels, which are attacker-controlled, only through the encoders.
+- **Abuse cases** (each tested): scope escape through values, counts or order (AC-B08, B09, B38, B40); a shared report with a picked value the recipient cannot read (B13, B39);
+  a broad schedule to an outside address or a version swap (B25, B45); a hostile value or title (B27); probing and denial of service (B19); a secret read through "custom
+  attributes" or an importer suggestion (B05, B43); a forged, stale or foreign run used to act (B41); a hostile ADMP file (B28, E2.11's limits).
+- **Audit (our own).** One event per item, never values: actor, definition and version (a preview, its AST hash), scope summary, row count and digest. Every "filters hash" and
+  "query hash" is an **HMAC under a per-tenant salt** (`digest_salt`, DM-24.I5). Definition events: created, updated, shared, unshared, archived, unarchived, restored (undo),
+  reassigned, cloned, imported; run, export, download and schedule events as reports-2a §8.6. **Previews:** one light `reports.preview.run` event per preview run, written in the
+  transaction that makes the preview terminal (succeeded, superseded, cancelled, failed or "too heavy"), so a superseded preview that read data still appears; it carries the outcome,
+  row count, field, operator, group-key and aggregate IDs and the HMAC. Previews refused by the rate limit or caps read nothing and are recorded as **one aggregated
+  `reports.preview.refused` per account per minute**, with a count. Events are chained at commit (ADR-0005 rule 11, DM-80.I1): no roll-up of runs, no ADR-0005 amendment; the
+  per-account rate (§9) bounds chain volume. FB-3a registers both kinds (`reports.*` belongs to the reports module, EP-7).
+- **Residuals accepted.** (1) Owner-typed text values are readable by anyone the report is shared with. (2) Until FB-6a ships, a picker and the editor labels offer what
+  `directory.read` shows in global search. (3) A **statement timeout** reveals tenant data volume, not objects: the rows-only "1,000+" fallback and "too heavy" depend on how many
+  hidden rows exist. This is an accepted limit, so FR-B30 asserts non-interference **modulo resource limits** (the property test disables the statement timeout) and requires every
+  other error class to be identical.
+- **Tags.** `security-sensitive` on every build ticket for: the `reportsql` grouping change, the definition store and sharing, the selection contract and act-on-results
+  hand-off, the `audit.events` dataset, the per-field read permission and the sync-set widening.
 
 ## 17. Follow-ups this spec needs (one table; the project-manager maps `FB-n` to ticket IDs)
 
@@ -522,38 +371,35 @@ a builder report on it is tested at 6,000.
 | --- | --- | --- | --- |
 | FB-1 | Research: ME custom-report mechanics (operators, condition limit, cache or live, "database fields", delegate, advanced scheduler) | `market-analyst` | Q1 |
 | FB-2 | ADMP trial lab: baselines T21 to T25 and custom-report fixtures for the importer | `product-designer`, `market-analyst` | Q2, §11.7 |
-| FB-3a | **[modules/reports.md](../../development/architecture/modules/reports.md) amendment** (§3.2 anticipates it): stored `CustomDefinition` (table, owner, origin, `ast_version`, versions, shares) and how `Resolve` takes it; `Custom` category and ID namespace; group-key, aggregate, minimum, total nodes; `groupable`/`aggregatable` flags and Unknown propagation; `ActionSubject`; per-field read permission; validate-only entry | `solution-architect`, `reporting-engineer` | R-M2, B-B1 |
-| FB-3b | **New ADR extending or superseding ADR-0010** (technical, director-ratified; ADR-0010 is accepted and not edited): (1) match count in the run's one cursor statement as a typed run field, no separate `CompileCount`; (2) run class `preview`: 1 h retention, supersede-expiry (the `succeeded → expired` edge exists), own caps; (3) group and total rows: `row_key` = canonical hash of key values, a row-kind marker for the total row, digest and export coverage, totals in the same statement (grouping sets), no snapshot option; (4) a run of an unsaved definition: AST hash and typed AST instead of definition ID, version and hash. RP3 to RP5 stay green | `solution-architect` | R-B1, R-M1 |
+| FB-3a | **[modules/reports.md](../../development/architecture/modules/reports.md) amendment** (§3.2 anticipates it): stored `CustomDefinition` (table, owner, origin, `ast_version`, versions, shares) and how `Resolve` takes it; `Custom` category and ID namespace; group-key, aggregate, minimum, total nodes; `groupable`/`aggregatable` flags and Unknown propagation; `ActionSubject`; per-field read permission; validate-only entry; **removal of `CompileCount` for library runs too** (§5), with the superseded code deleted in the same change; the EP-7 kinds `reports.preview.run` and `reports.preview.refused`; the Action set with the inverse-only `reports.definition.restore` and the forward `unarchive` | `solution-architect`, `reporting-engineer` | R-M2, B-B1, R2-M1 |
+| FB-3b | **New ADR superseding ADR-0010** (technical, director-ratified). It changes ADR-0010's rule 3 (the total is `report_runs.row_count`), rule 5 (7-day retention) and the run identity (DM-72), so ADR-0010 is not extended or edited: it becomes `superseded` when this ADR is ratified. The ADR restates the unchanged rules and carries RP3 to RP5 forward. It fixes: (1) the match count in the run's one cursor statement as a typed run field, no separate count; (2) run class `preview`: 1 h retention, supersede-expiry (the `succeeded → expired` edge exists), own caps; (3) group and total rows: `row_key` = canonical hash of key values, a row-kind marker for the total row, digest and export coverage, totals in the same statement (grouping sets), no snapshot option; (4) a run of an unsaved definition: AST hash and typed AST instead of definition ID, version and hash. **Fitness ticket** (`reporting-engineer`, depends on the ADR): **RP12** no `CompileCount` and no second count statement on any run path (a `reportsql` call-site check plus the AC-B15 statement-log test); **RP13** preview-class supersede and expiry. (The architecture review called these RP6 and RP7; those IDs are taken in reports.md §9.) | `solution-architect` | R-B1, R-M1, R2-M1 |
 | FB-3c | Security review of the grouping renderer; fitness **RP-B1** (no free-text member except the one allow-listed intake), **RP-B2** (run, preview, drill-down, validate-only, comparator all through `Resolve`), **RP-B3** (non-interference property test, FR-B30) | `security-architect` | B-B1, B-M1, B-m1 |
-| FB-3d | Domain model: DM-71 (`cloned`, `imported`, `ast_version`, grouping in `ast`, server-side `draft` for imports, no delete); DM-72 (run class, AST hash, match count, time zone); DM-34 allowlist read/write meaning; Q5 answered by §5 | `ad-expert`, `backend-engineer` | R-M7, Q4 |
+| FB-3d | Domain model: DM-71 (`cloned`, `imported`, `ast_version`, grouping in `ast`, server-side `draft` for imports, no delete, **the edge `archived → published`** for `unarchive`); DM-72 (run class, AST hash, match count, time zone); DM-34 allowlist read/write meaning; Q5 answered by §5 | `ad-expert`, `backend-engineer` | R-M7, Q4, R2-m1 |
 | FB-4 | **Entra scope roots**: renderer for `entra_tenant`, `administrative_unit`, `group_members` (m2-plan E-011, T-1131). **Shared with E2.7** and ADR-0011 rule 9; both specs cite it | `backend-engineer` (delegation) | X-2 |
-| FB-5 | `platform/audit`: register `audit.events` with the §7 columns and visibility; an erasure ruling before any personal column; register the `reports.preview.run` kind (EP-7) | `security-architect`, audit owner | R-M3, R-M4 |
+| FB-5 | `platform/audit`: register the `audit.events` dataset with the §7 columns and visibility; an erasure ruling before any personal column. (The `reports.preview.*` kinds belong to the reports module: FB-3a) | `security-architect`, audit owner | R-M3, R-M4, R2-m2 |
 | FB-6a | **ADR-0011 amendment** (ratified, so an amendment): `inventory.Search` takes a caller-named permission so a picker is trimmed under `reports.run`, with an SE3-style test. Replaces the unproven "no amendment" claim | `solution-architect` | R-M5 |
-| FB-6b | ADM-096 exact batch resolver `inventory.ResolveIdentifiers` (≤ 1,000 values, one statement through `scopeSQL`; GUID and DN; DNs via the `dn` package; never `CompileSearch` or trigram). Without it FR-B17 stays GUID/DN | `solution-architect` | B-m2 |
+| FB-6b | ADM-096 exact batch resolver `inventory.ResolveIdentifiers`: an `inventory` read API (blueprint `inventory` row plus a build ticket; design note by `solution-architect`). ≤ 1,000 values, one statement through `scopeSQL`; GUID and DN; DNs via the `dn` package; never `CompileSearch` or trigram. Without it FR-B17 stays GUID/DN | `directory-engineer` | B-m2, R2-m3 |
 | FB-7 | Design: builder, group table with chart, share sheet, Plan hand-off | `product-designer` | Q3 |
 | FB-8 | Sync-set additions spec: who may add which attribute, permissions, backfill, freshness label | `product-manager`, `directory-engineer` | Q9 |
 | FB-9 | Dashboard widget binding to a saved report (ADM-103) | later | §2 |
 | FB-10 | E2.11 one-line cross-reference: AC-12 cites e2-6 §11.2 as the target grammar; confirm §6.3 step-up and §6.8 lock as used here | E2.11 owner | X-3 |
 | FB-11 | **Done in E2.7 round 2:** §7.6 "Entra inventory sync and report datasets" (FR-36 to FR-38, AC-43) covers Graph delta sync, the three datasets, columns, correlation columns and root kinds. E2.6 only consumes | E2.7 author | X-1 |
-| FB-12 | Migration `-- write-class` lines: `report_definitions`, `report_shares`, `report_definition_actions` are `config` (ADR-0005 rule 10, a widening decision); not an O3 `system` writer. No ADR-0005 amendment | `backend-engineer` | R-m10 |
+
+**Build-ticket AC (was FB-12; the number is retired).** The definition-store build ticket (`backend-engineer`): the migration `-- write-class` lines for
+`report_definitions`, `report_shares`, `report_definition_actions` are `config` (ADR-0005 rule 10), not an O3 `system` writer; no ADR-0005 amendment (R-m10, R2-m4).
 
 ## 18. Platform matrix
 
-`✓` supported · `◐` partial as stated · `✗` not in this slice, with the follow-up · `n/a`. The builder is
-server-side and reads inventory: **no DC-side or Windows-native component is added**, so no Windows Server
-version of an added component applies. Managed DCs are Windows Server 2016 to 2025 (ADR-0002). No new
-functional-level requirement (derived columns keep reports-2a §10's note). `windows` and `linux-oci` behave
-identically (ADR-0002 rule 1); the Windows-profile GA gate is reports-2a §10. 2c is demoed on the profile
-m2-plan names.
+`✓` supported · `◐` partial as stated · `✗` not in this slice, with the follow-up · `n/a`. The builder is server-side and reads inventory: **no DC-side or
+Windows-native component is added**, so no Windows Server version of an added component applies (managed DCs are Windows Server 2016 to 2025, ADR-0002; no new
+functional-level requirement). `windows` and `linux-oci` behave identically (ADR-0002 rule 1); the Windows-profile GA gate is reports-2a §10.
 
 | FR group | AD on-prem WS2016 to 2025 | Entra cloud-only | Hybrid synced objects | Samba AD (CI lab) | Console | REST API | PowerShell module | `windows` | `linux-oci` |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | B01 to B07 model, fields, conditions, sort | ✓ | ✗ → FB-4, FB-11 | ◐ AD side now; Entra when E2.7 registers | ✓ | ✓ | ✓ | ◐ follows the API, no cmdlet spec | ✓ | ✓ |
 | B03 custom attributes | ✓ any attribute the connector reads | ✗ → E2.7 | ◐ AD attributes only | ✓ plain LDAP | ✓ | ✓ | ◐ | ✓ | ✓ |
-| B06, B15, B28 grouping, totals, charts, masked values | ✓ | ✗ → same | ◐ AD side | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
-| B08 to B10 preview, save, versions, clone | ✓ | ✗ → same | ◐ AD side | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
+| B06, B08 to B10, B14, B15, B28 grouping, totals, charts, masked values, preview, save, versions, clone, run/export/schedule reuse | ✓ | ✗ → same | ◐ AD side | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
 | B11 to B13, B29, B30 sharing, scope, non-interference | ✓ AD scope kinds of 2a; others grant nothing | ✗ → FB-4 | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
-| B14 run, export, schedule reuse | ✓ | ✗ → same | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
 | B16 act on results | ✓ Actions that exist then (2b set) | ✗ → E2.7 Actions | ◐ AD Actions; cloud with E2.7 | ◐ writes testable on Samba as in 2b; Windows-only effects `[LAB: Windows]` | ✓ | ✓ | ◐ | ✓ | ✓ |
 | B17 report from list | ✓ GUID, DN; more with FB-6b | ✗ → same | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
 | B18 migrated ADMP reports | ✓ (E2.11 matrix) | ◐ AD-only constructs `not supported`, never dropped | ◐ | ✓ file tests; ADMP DB tests need the lab `[LAB]` | ✓ | ✓ | ◐ | ✓ | ✓ |
@@ -577,8 +423,8 @@ Each FR names a parity ID or `enhancement`. Cite as `e2-6-report-builder#FR-B07`
 | FR-B05 | Every custom run (full, preview, drill-down, validate-only, importer comparator) MUST go through `Resolve` and `reportsql.Compile`. The OpenAPI schema MUST contain no free-text query, filter, expression or SQL member except the one allow-listed intake, and the server MUST NOT accept LDAP filter text or SQL from a builder client | DM-71.I3, rule 5 |
 | FR-B06 | The builder MUST support up to 3 group keys, 8 aggregates (`count`, `count distinct`, `min`, `max`, `sum`, `avg`), a minimum group size, Top N and a grand total over all matching rows, all computed after scope and masking with groups and total in one statement, and refused above 10,000 groups with a reason | ADM-097, ADA-101 (partial) |
 | FR-B07 | Columns (≤ 64), their order and a sort (≤ 4 keys on readable fields) MUST be user-set; column order MUST be the export and digest order | ADM-097, ADM-099 |
-| FR-B08 | The preview MUST be a flagged run of the unsaved definition (≤ 1,000 stored rows, 1-hour retention, superseded by the account's next) whose match count MUST come from the same statement as its rows; "1,000+" MUST appear only after the rows-only fallback. It MUST obey the §9 preview caps (1 running per account, 2 per tenant, 30 per minute, 10 s timeout) and MUST NOT show a half-filled page | enhancement (E-B1) |
-| FR-B09 | A save MUST publish an immutable version through a `reports.definition.*` Action with preview diff, audit and undo (a new version equal to the previous). The browser MUST hold editing state; a server-side `draft` MUST exist only for an applied import; there MUST be no hard delete. Runs MUST record definition ID, version and hash (a preview, its AST hash); a schedule MUST pin its version | ADM-097, ADM-101 |
+| FR-B08 | The preview MUST be a flagged run of the unsaved definition (≤ 1,000 stored rows, 1-hour retention, superseded by the account's next) whose match count MUST come from the same statement as its rows; "1,000+" MUST appear only after the rows-only fallback, which MUST be a new preview run counted against the account's rate. It MUST obey the §9 preview caps (1 running per account, 2 per tenant, 30 per minute, 10 s timeout) and MUST NOT show a half-filled page | enhancement (E-B1) |
+| FR-B09 | A save MUST publish an immutable version through a `reports.definition.*` Action with preview diff, audit and undo (the inverse-only `restore`: a new version equal to the previous). The browser MUST hold editing state; a server-side `draft` MUST exist only for an applied import; there MUST be no hard delete, and `unarchive` MUST return an archived report to `published`. Runs MUST record definition ID, version and hash (a preview, its AST hash); a schedule MUST pin its version | ADM-097, ADM-101 |
 | FR-B10 | Any report, shipped or custom, MUST be cloneable to a new custom report with the source recorded; shipped definitions MUST stay immutable | ADM-097 |
 | FR-B11 | A report MUST default private. It MAY be shared with accounts, roles or the tenant at *Run* or *Edit* level by a holder of `reports.share`. A recipient MUST run it under their own scope and permissions; an Edit-level save MUST be validated against the editor's permissions; unsharing MUST take effect on the next open | ADM-097, ADM-102 |
 | FR-B12 | A condition, sort, group key or aggregate on a field the runner may not read MUST refuse the run (`column_not_permitted`); a display column MUST be omitted with a count; an unreadable dataset MUST answer 404. A schedule fire MUST apply this under the owner's current permissions and fail closed, dropping nothing | ADM-102, DM-71.I1 |
@@ -591,15 +437,15 @@ Each FR names a parity ID or `enhancement`. Cite as `e2-6-report-builder#FR-B07`
 | FR-B19 | A shared or own custom report MUST be findable by name in `/` search under Reports, trimmed by permission, and listed under My reports and Shared with me | enhancement |
 | FR-B20 | Every builder screen MUST show the empty, error, loading, stale, partial and over-cap states of §15 with no fake data and no control that does nothing | house rule 6 |
 | FR-B21 | The limits of §9 MUST be enforced and MUST refuse and explain, never truncate | TM-TB15-T8 |
-| FR-B22 | Definition, share, preview, run, export and schedule events MUST be audited as §16 (one event per preview run, HMAC hashes), with no values | TM-TB15-T6 |
+| FR-B22 | Definition, share, preview, run, export and schedule events MUST be audited as §16: one `reports.preview.run` event per preview run, written when the preview ends (superseded ones included), refused previews as one aggregated `reports.preview.refused` per account per minute, HMAC hashes, and no values | TM-TB15-T6 |
 | FR-B23 | The budgets of §14 MUST be met on the scale tier | enhancement |
 | FR-B24 | Every behaviour MUST be an OpenAPI operation first with one `x-permission`, and the console MUST use only the generated client | ADR-0004 |
 | FR-B25 | A source from E2.7 MUST appear only when E2.7 has registered it and the scope renderer supports its root kinds; this spec MUST define no Entra dataset | ADM-097 |
 | FR-B26 | If `platform/audit` registers `audit.events`, the builder MUST expose it with §7's restricted columns (no display name, no `details`), only to holders of audit-read, with §7's scoping | ENH-05 |
 | FR-B27 | Report titles, descriptions and labels MUST be encoded wherever they are rendered, exported or mailed | TM-TB15-T1 |
-| FR-B28 | Group keys, aggregate inputs, `count distinct`, sort keys and chart buckets MUST be computed over the masked cell value the runner would see; masked identities MUST form one bucket per column; an aggregate over any Unknown cell MUST be Unknown; group-cardinality and error decisions MUST be evaluated post-scope | ADM-097, LF-39 |
-| FR-B29 | A definition MUST store GUIDs without labels. Every `GUIDV` and parameter default MUST be re-authorised for the runner at every `Resolve`; an unreadable one MUST refuse the run (`value_not_permitted`, condition path only). Labels MUST resolve under the viewer's scope; `reports.manage_all` metadata MUST contain no condition value or picked-object label | ADM-102, DM-71.I1, LF-36 |
-| FR-B30 | A runner's output (rows, counts, totals, sort order, group keys, chart buckets, export bytes, and the error or refusal class and its timing class) MUST be identical across worlds that differ only in objects and attributes outside their scope | ADM-097, LF-39 |
+| FR-B28 | Group keys, aggregate inputs, `count distinct`, sort keys and chart buckets MUST be computed over the masked cell value the runner would see; masked identities MUST form one bucket per column; an aggregate over any Unknown cell MUST be Unknown (registry `UnknownWhen`); a guid-with-label key MUST take its label from the masked related column, an OU key MUST be the row's own container (ancestors named only from its own `dn`), and a `MaskAnchor` or `Via` column MUST be groupable only on its masked rendering; group-cardinality and error decisions MUST be evaluated post-scope | ADM-097, LF-39 |
+| FR-B29 | A definition MUST store GUIDs without labels. Every `GUIDV` and parameter default MUST be re-authorised for the runner at every `Resolve`; an unreadable one MUST refuse the run (`value_not_permitted`, condition path only). A GUID that does not exist and one the runner cannot read MUST give the same `value_not_permitted` in every path. Labels MUST resolve under the viewer's scope (`reports.run` once FB-6a ships, `directory.read` until then); `reports.manage_all` metadata MUST contain no condition value or picked-object label | ADM-102, DM-71.I1, LF-36 |
+| FR-B30 | A runner's output (rows, counts, totals, sort order, group keys, chart buckets, export bytes and the error or refusal class) MUST be identical across worlds that differ only in objects and attributes outside their scope, **modulo resource limits**: the property test runs with the statement timeout disabled, and timeout-driven outcomes (the rows-only "1,000+" fallback, "too heavy") are the accepted residual of §16 | ADM-097, LF-39 |
 
 ## 20. Acceptance criteria
 
@@ -627,8 +473,8 @@ Evidence: API test picker_lists_registered_only; registry boot test (secret JSON
 AC-B04 (FR-B03)
 Given an admin adds the schema attribute "extensionAttribute3" to a connection's sync set through the Action
 When the preview is confirmed and before the next full sync completes
-Then the field is listed with the right type, existing users show "Not synced yet" (not blank), a condition on it states "n users not yet read", and after the sync values equal an LDAP read of the lab
-Evidence: lab test sync_set_addition; screenshots of both states; LDAP ground truth
+Then the field is listed with the right type, existing users show "Not synced yet" (not blank), the header counts those cells among the stored rows only, a condition on it states "extensionAttribute3 has not been read for every user yet (sync started 09:12). Users not yet read do not match." with no count of excluded users, and after the sync values equal an LDAP read of the lab
+Evidence: lab test sync_set_addition; test unsynced_condition_message_has_no_count (message text and statement log: no separate count); screenshots of both states; LDAP ground truth
 AC-B05 (FR-B03)
 Given attempts to add msFVE-RecoveryPassword, a LAPS password attribute, unicodePwd, and a seeded custom attribute with only searchFlags 0x200
 When the Action is planned
@@ -668,7 +514,7 @@ AC-B12 (FR-B09)
 Given version 2 of a report
 When the owner undoes the update from the audit record
 Then version 3 equals version 1's definition and no version is deleted
-Evidence: Action undo test report_definition_undo
+Evidence: Action undo test report_definition_undo (inverse `reports.definition.restore`, planned for the principal undoing)
 AC-B13 (FR-B11)
 Given a report shared Run-level from an admin (whole domain) to a technician (OU=Sales)
 When the technician opens it, copies the URL to the admin, and the admin opens it
@@ -687,13 +533,13 @@ Evidence: scale-tier test preview_supersede (p50/p95); report_run_rows row count
 AC-B16 (FR-B08, FR-B21)
 Given the same source and a preview whose windowed count does not finish within the 10 s preview timeout
 When the timeout fires
-Then the preview is re-issued once rows-only and shows "1,000+" with its rows and no estimated number; if that also times out it fails as "too heavy" with no rows
-Evidence: fault-injection tests count_timeout_fallback, preview_timeout_too_heavy
+Then the preview is re-issued once rows-only as a new preview run that counts against the per-account rate, and shows "1,000+" with its rows and no estimated number; if that also times out it fails as "too heavy" with no rows
+Evidence: fault-injection tests count_timeout_fallback, preview_timeout_too_heavy, fallback_is_new_run_counted_in_rate
 AC-B17 (FR-B06)
 Given 100,000 users in 2,000 departments and a report grouped by department with count and max(replicated logon)
 When it runs
-Then it has 2,000 group rows, each count and max equals an independent query, the grand total equals 100,000 and the sum of group counts, and groups and total come from one statement (a concurrent writer test)
-Evidence: lab test group_totals_one_statement; statement log
+Then it has 2,000 group rows, each count and max equals an independent query, the grand total equals 100,000 and the sum of group counts, and groups and total come from one statement (a concurrent writer test); with a minimum group size of 100 the table says "k of n groups shown", n coming from that same statement
+Evidence: lab test group_totals_one_statement; test groups_shown_n_same_statement; statement log
 AC-B18 (FR-B06, FR-B21)
 Given a group key with more than 10,000 distinct in-scope values
 When the report runs
@@ -702,7 +548,7 @@ Evidence: API test group_cardinality_refused
 AC-B19 (FR-B21, FR-B08)
 Given 5 concurrent previews from 3 accounts of one tenant (one account sending a second while its first runs), a 31st preview in a minute from one account, and a scheduled run due
 When all run
-Then at most 2 previews execute per tenant, the account's first is superseded by its second, the 31st is refused "Too many previews", the scheduled run starts on time, and a statement over its timeout fails as "too heavy" with no partial rows
+Then at most 2 previews execute per tenant, the account's first is superseded by its second, the 31st is refused "Too many previews" and counted in the aggregated refusal event (AC-B35), the scheduled run starts on time, and a statement over its timeout fails as "too heavy" with no partial rows
 Evidence: job-cap tests preview_cap, preview_rate; timeout test
 AC-B20 (FR-B15)
 Given a report grouped by month with count, a bar chart and a line chart
@@ -780,10 +626,10 @@ When the report runs
 Then the group contributes all 6,000 edges, the first page appears within the §14 budget, and the count equals the LDAP ground truth
 Evidence: scale-tier timings; LDAP ground truth
 AC-B35 (FR-B22)
-Given a session with 12 previews in 8 minutes, one save, one share, one export
+Given a session with 12 previews in 8 minutes (two superseded by a newer edit while running, one failing as "too heavy"), 3 more previews refused by the rate limit within one minute, one save, one share, one export
 When the audit trail is read
-Then there are 12 reports.preview.run events (each with an HMAC filter hash and field, operator and group-key IDs, no values) plus one each for create, share and export, none carrying values, and the hash chain verifies
-Evidence: audit query test; chain verification
+Then there are 12 reports.preview.run events, each written when its preview ended, with its outcome and row count, an HMAC filter hash and field, operator and group-key IDs, and no values; exactly one reports.preview.refused for that account and minute with count 3; one each for create, share and export; and the hash chain verifies
+Evidence: audit query tests preview_event_per_run, superseded_preview_audited, preview_refusals_aggregated; chain verification
 AC-B36 (FR-B07)
 Given a request with 65 columns, one with 5 sort keys, and a saved report with columns reordered
 When each is validated, run and exported
@@ -802,12 +648,12 @@ Evidence: tests group_by_masked_column_single_bucket, count_distinct_masked_rela
 AC-B39 (FR-B29)
 Given an admin's report "Reports of manager = <HR director>" shared Run-level to a Sales technician who cannot read the HR director, a technician-owned schedule on it, and an account with reports.manage_all
 When the technician opens the condition editor, runs, previews, drills down, the schedule fires, and the manage_all account reads the metadata
-Then the editor shows "(object outside your scope)", each run and the fire are refused value_not_permitted with the condition path and no object name or row, and the metadata shows no condition value or label
-Evidence: tests shared_guid_value_unreadable_refused, shared_definition_label_masked, manage_all_metadata_labels_masked, schedule_fire_guid_value_rechecked
+Then the editor shows "(object outside your scope)", each run and the fire are refused value_not_permitted with the condition path and no object name or row, the metadata shows no condition value or label, and a condition naming a deleted object is refused with the same value_not_permitted as an unreadable one
+Evidence: tests guid_nonexistent_equals_unreadable, shared_guid_value_unreadable_refused, shared_definition_label_masked, manage_all_metadata_labels_masked, schedule_fire_guid_value_rechecked
 AC-B40 (FR-B30)
-Given a seeded property test drawing reports from the full grammar (every registered column, conditions, up to 3 group keys, aggregates, minimum, Top N, sorts, parameters, GUIDV) over pairs of worlds that differ only in out-of-scope objects, their attributes, and in-scope objects' links to out-of-scope objects (link existence constant)
+Given a seeded property test drawing reports from the full grammar (every registered column, conditions, up to 3 group keys, aggregates, minimum, Top N, sorts, parameters, GUIDV) over pairs of worlds that differ only in out-of-scope objects, their attributes, and in-scope objects' links to out-of-scope objects (link existence constant); GUIDV values are also drawn from out-of-scope objects that the second world removes
 When each report runs as an own run, a shared run by a lower-scoped recipient, a preview, a drill-down and a schedule fire, and is exported
-Then rows, counts, totals, sort order, group keys, chart buckets, export bytes and the error or refusal class and timing class are identical across each pair, the oracle equality over AuthorizeRead also holds, and the deliberately failing fixtures (a raw-GUID group key, a pre-scope cardinality check) are caught
+Then rows, counts, totals, sort order, group keys, chart buckets, export bytes and the error or refusal class are identical across each pair (statement timeout disabled in the run; timeout outcomes are the §16 residual, tested in AC-B16), the oracle equality over AuthorizeRead also holds, and the deliberately failing fixtures (a raw-GUID group key, a pre-scope cardinality check) are caught
 Evidence: rp_b3_noninterference (seeded, PostgreSQL, in CI) with its two failing-fixture runs
 AC-B41 (FR-B16)
 Given an actor with a stored 50-row run, another account's run, an expired run, a run whose scope fingerprint changed, and a grouped result
@@ -826,9 +672,9 @@ Then the first two are refused "not in schema" with no directory or SQL string b
 Evidence: tests sync_set_suggestion_hostile_name, sync_set_suggestion_unknown_attr; FF-SP1 green
 AC-B44 (FR-B09, FR-B18)
 Given an applied import and a published report
-When the applier previews the draft, another account opens it by ID, the applier tries to share, schedule and export it and then saves it, and the owner archives and restores the published report and looks for a delete
-Then the draft previews for the applier only, the other account gets 404, share, schedule and export are refused until Save, Save publishes version 1, archive and restore keep every version, and no delete operation exists in the API or console
-Evidence: tests import_draft_lifecycle, archive_restore_keeps_versions; OpenAPI has no delete operation
+When the applier previews the draft, another account opens it by ID, the applier tries to share, schedule and export it and then saves it, and the owner archives and unarchives the published report and looks for a delete
+Then the draft previews for the applier only, the other account gets 404, share, schedule and export are refused until Save, Save publishes version 1, archive and unarchive keep every version, and no delete operation exists in the API or console
+Evidence: tests import_draft_lifecycle, archive_unarchive_keeps_versions; OpenAPI has no delete operation
 AC-B45 (FR-B12, FR-B14)
 Given a schedule pinned to a version that groups by a field the owner has since lost permission to read
 When the schedule fires
@@ -856,22 +702,19 @@ Evidence: test schedule_fire_fails_closed
 | Reports over DC security events | M3 (event pipeline) |
 | Compliance report sets (ADM-093); dashboard widgets (ADM-103) | Later E-012 slice; FB-9 |
 | CSVDE, password-protected export, logo; mail-body and save-to-path delivery | reports-2a §11 / T-1017; mail-body later; save-to-path never |
-| Joins; column-to-column comparison; formulas; regular expressions; hard delete of definitions | Later, with a security review (D1, D3); delete needs a DM-71 change |
-| A box that accepts an LDAP filter or SQL, including "paste to convert" | Never in the builder (D2) |
+| Joins; column-to-column comparison; formulas; regular expressions; hard delete; a box accepting an LDAP filter or SQL, including "paste to convert" | Later with a security review (D1, D3), delete needs a DM-71 change; the box never (D2) |
 | Per-DC fields (USR-04, PWD-03, SYS-03) as builder fields; Entra devices | Library only; E2.7 |
-| Automatic Actions from a schedule | Automation, 2d |
-| Old/new value diffs in change reports | Later (second slice §4.1.3) |
+| Automatic Actions from a schedule; old/new value diffs in change reports | Automation, 2d; second slice §4.1.3 |
 | Public or cross-tenant share links, embedding; natural-language building (ENH-20); Exchange, M365 content packs, GPO, NTFS, Google | Not planned; not in the set of 5; their milestones |
 
 ## 22. Open questions
 
-Closed in round 2: Q6 (Entra datasets belong to E2.7, FB-11) and Q8 (new ADR, FB-3b). Numbers are kept.
+Closed in round 2: Q6 (Entra datasets belong to E2.7, FB-11) and Q8 (a new ADR that supersedes ADR-0010, FB-3b). Numbers are kept.
 
 | # | Question | Owner | Blocks |
 | --- | --- | --- | --- |
 | Q1 | What do ME's custom reports support: operators, condition count, cache or live LDAP, "database fields", "delegate", the advanced scheduler | `market-analyst` (FB-1) | §3's final parity table only |
-| Q2 | ME baselines for T21 to T25 | `product-designer` (FB-2) | Claims in §4 |
-| Q3 | Design of the builder, group table with chart, share sheet, Plan hand-off | `product-designer` (FB-7) | Screens |
+| Q2, Q3 | ME baselines for T21 to T25 (FB-2); design of the builder, group table with chart, share sheet, Plan hand-off (FB-7) | `product-designer` | Claims in §4; screens |
 | Q4 | Does the role attribute allowlist (DM-34) constrain **read**? | `solution-architect`, `ad-expert` (FB-3d) | FR-B12 build |
 | Q5 | `audit.events`: erasure rule if a personal column is ever added; confirm §7's visibility | `security-architect` (FB-5) | FR-B26 |
 | Q7 | Does the 2b bulk bar and first Actions set land before 2c? If not, FR-B16 reduces to builder reports and the bar moves into 2c | `project-manager` | FR-B16 sequencing |
@@ -883,61 +726,43 @@ No question blocks the spec from review. Q11 is the only CEO item and is filed o
 
 ## 23. Hand-offs
 
-- `solution-architect`: FB-3a, FB-3b (new ADR), FB-6a, FB-6b; confirm the in-statement count, grouped statement
-  and `ActionSubject` fit the closed AST. `security-architect`: tag list in §16; FB-3c, FB-5.
-- `reporting-engineer`: Q10, chart data contract, stored-row group keys, Unknown propagation.
-  `product-designer`: FB-7, T21 to T25. `market-analyst`: FB-1. `project-manager`: tickets at merge, Q7.
-- E2.7 owner: FB-11 and FB-4. E2.11 owner: FB-10. §7 and §11 are the interfaces; neither spec is redefined here.
+`solution-architect`: FB-3a, FB-3b, FB-6a, FB-6b design note. `security-architect`: §16 tags, FB-3c, FB-5. `reporting-engineer`: Q10, the RP12/RP13 fitness
+ticket. `directory-engineer`: FB-6b, FB-8. E2.7 owner: FB-4, FB-11. E2.11 owner: FB-10. `product-designer`: FB-7. `market-analyst`: FB-1. `project-manager`: Q7.
 
-## 24. Review response (round 2)
+## 24. Review responses
 
-Reviews: [architecture](reviews/2026-11-11-m2c-architecture-review.md) (R-, X-) and
-[security](reviews/2026-11-11-m2c-security-review.md) (B-). `R-m1..11` and `R-n1..4` are the architecture
-minors and nits in order; `B-m1..5` and `B-n1` are the security B.4 items in order. Everything is taken
-unless stated.
+Round 1 to 2 responses (the table that was this section) are in the review record: [E2.6 round 1→2 responses](reviews/2026-11-11-m2c-architecture-review.md#e26-round-12-responses).
+Round 3 answers the round-2 findings of the [architecture](reviews/2026-11-11-m2c-architecture-review.md) and [security](reviews/2026-11-11-m2c-security-review.md) reviews.
 
-| Finding | Response |
-| --- | --- |
-| R-B1 | Match count in the run's one statement (§5, §9, FR-B08); no `CompileCount` path; per-condition counts and picker row counts dropped (§6, FR-B01); "1,000+" only after the rows-only fallback; FB-3b |
-| R-M1 | ADR-0010 left alone; FB-3b is a new extending/superseding ADR (count, preview class, group/total rows, unsaved-AST run); snapshot option dropped |
-| R-M2 | FB-3a: `CustomDefinition`, `Resolve`, category, ID namespace, nodes, `ActionSubject`, read permission |
-| R-M3 | No roll-up: one `reports.preview.run` event per preview run, chained at commit; no ADR-0005 amendment; rate limit bounds volume (§16, AC-B35) |
-| R-M4 | `audit.events` is the own-audit source, not DC events (§7, §21); display-name columns dropped; visibility rules; FB-5 |
-| R-M5 | The ADR-0011 claim was unproven: now FB-6a, an interim residual and `Resolve` re-authorisation (§9 L5, L6, §16) |
-| R-M6 | True `exact` example, `changed` examples, scripts `manual`, raw SQL `not supported`, matching E2.11 (§11.2, AC-B28) |
-| R-M7 | One lifecycle: browser editing state, Save publishes, server `draft` only for imports, no delete, apply needs step-up (§8, §11.3, FR-B09, AC-B44) |
-| R-m1 to R-m4 | FR-B07 to AC-B36, FR-B24 to AC-B37, FR-B23 to AC-B15/B34/B42; AC-B19 traces FR-B21/B08 with the preview caps in FR-B08; AC-B08 traces FR-B06; AC-B09 uses its Given and replicated logon replaces `lastLogon` (AC-B09, B17); LIKE metacharacters in AC-B06 |
-| R-m5, R-m6, R-m7 | One FB table (§17), no unlettered "FB-3"; one limits table (§9) used by `Resolve` (§5); preview timeout 10 s `[PROPOSED]` named in AC-B16 |
-| R-m8, R-m9 | Label from the masked column and time zone in the query hash (§5, AC-B38, AC-B40); GUID and DN default, FB-6b extension (FR-B17, AC-B26) |
-| R-m10, R-m11 | `-- write-class` line, FB-12; ownership lock in §11.5 and AC-B29, and the E2.11 §6.4 citation for attached tasks removed (§11.4) |
-| R-n1 to R-n4 | Frontmatter `reviewer`, `security-sensitive`; header explains E2.6 at 2a versus 2c; matrix rows for FR-B19 to B25, B27 and the new FRs; "independent of the Entra tenant" (§18) |
-| X-1, X-2 | E2.7 owns Graph sync and registers the Entra datasets, E2.6 defines none (§7, FR-B25, FB-11, AC-B30; Q6 closed). FB-4 is the shared scope-root follow-up (E-011 / T-1131, ADR-0011 rule 9) that both specs list |
-| X-3 | Scripts `manual`; apply is step-up; ownership lock; FB-10 for E2.11's cross-reference (§11) |
-| B-B1 | Post-mask rule, one masked bucket, Unknown propagation, `groupable`/`aggregatable`, OU key rule (§5, FR-B28, AC-B38) |
-| B-B2 | GUIDs without labels, re-authorisation at every `Resolve`, viewer-scope labels, `value_not_permitted`, metadata limits, owner-typed text as a stated residual (§8, §9 L6, §16, FR-B29, AC-B39) |
-| B-M1 | RP-B3 replaced by the non-interference property test with failing fixtures (FB-3c, FR-B30, AC-B40); RP-B2 widened |
-| B-M2 | `{run_id, row_keys[] or all_matching}`, derivation from stored rows, 409/410, new drill-down run (§10, FR-B16, AC-B41) |
-| B-m1 | RP-B1 allow-lists the E2.11 intake only; sync-set input is a schema reference; carve-outs stated (§5, FR-B02, FR-B03, AC-B43) |
-| B-m2 | Exact resolver only, DNs via the `dn` package, no fuzzy (FR-B17, FB-6b, AC-B26) |
-| B-m3 | Taken except the roll-up: the security review accepted aggregation, but the architecture review and ruling 7 rule it out, so one event per preview. Visibility rules, HMAC hashes and ID-only listing taken (§7, §16) |
-| B-m4, B-m5, B-n1 | Edit-level save and schedule-fire checks fail closed (§8, AC-B10, AC-B45); per-account preview cap of 1 (§9, AC-B19); grand total over all matching rows with "k of n groups shown" (§5) |
-| B.1, B.2 rulings | Accepted as stated; residuals in §16 |
+### Round 3
+
+- **R2-M1** FB-3b supersedes ADR-0010 (rules 3 and 5 and the run identity change), carries RP3 to RP5 forward and has a fitness ticket, RP12 and RP13 (RP6 and RP7 are taken in
+  reports.md §9); `CompileCount` goes for library runs too (FB-3a). "Supersedes" is used in §5, §8, §9, §17, §22, §23, Sources.
+- **R2-M2, R2-m5** No "n users not yet read" number (§15, AC-B04); "At least 1,000" is now the exact count, and "1,000+" appears only in the fallback state.
+- **R2-m1** `unarchive` is the forward Action, `restore` the inverse-only undo; FB-3d adds `archived → published` (§8, FR-B09, AC-B44). **R2-m2** the `reports.preview.*` kinds move to
+  FB-3a. **R2-m3** FB-6b is an `inventory` API for `directory-engineer`. **R2-m4** FB-12 is a build-ticket AC. **R2-m6** the fallback is a new run counted against the rate (§9,
+  AC-B16); *n* of "k of n groups shown" comes from the grouped statement (§5, AC-B17). **R2-n1** (§1 cites E2.7 "§7") is left to the E2.7 split author, who owns those references.
+- **Follow-up rows, length.** FB-3a, FB-3b, FB-3d, FB-5, FB-6b, FB-12 corrected (§17); the response table moved out; §5, §8 to §11 and §16 tightened and linked; §12 merged into §3.
+- **B2-m1** FR-B30 holds modulo resource limits (timeout disabled in the property test); "timing class" removed; timeout outcomes are the §16 residual (AC-B40). **B2-m2** one code,
+  `value_not_permitted`, for a nonexistent and an unreadable GUID in every path (§9 L5, FR-B29, AC-B39, AC-B40). **B2-m3** the preview event is written when the preview ends,
+  superseded ones included; refusals are one aggregated `reports.preview.refused` per account per minute (§16, FR-B22, AC-B35, AC-B19). **Nit** editor labels resolve under
+  `reports.run` once FB-6a ships, `directory.read` until then (FR-B29).
 
 ## Sources
 
 - Parity rows ADM-083 to ADM-103, ADA-101: [feature-parity-matrix](../../business/competitive-analysis/feature-parity-matrix.md) and its [CSV](../../business/competitive-analysis/feature-parity-matrix.csv).
 - ME custom report row and the help page the matrix cites: [ADMP custom reports help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-custom-reports.html) (cited by the research; contents beyond the matrix row not read, `[UNVERIFIED]`); research [§K](../../business/market-research/manageengine-admanager-plus.md), §7a, §7c, W6, Resolved gaps.
 - Pain: [customer voice X2](../../business/market-research/manageengine-ad-customer-voice-and-security.md); [ENH-05](../../business/strategy/enhancement-catalog.md).
-- Scope: [v1-scope-options](../../business/scoping/v1-scope-options.md), [roadmap-skeleton](../../business/scoping/roadmap-skeleton.md), [m2-plan](../../business/scoping/m2-plan.md), [decisions-log](../../memory/decisions-log.md).
-- Constraints: [ADR-0010](../../development/decisions/0010-report-results-stored-as-rows-in-postgres.md) (accepted, unchanged), [ADR-0011 rev 3](../../development/decisions/0011-universal-search-over-inventory-pg-trgm-one-scope-renderer.md), [ADR-0005](../../development/decisions/0005-operation-pipeline-and-audit-trail.md), [modules/reports.md](../../development/architecture/modules/reports.md), [safe-primitives](../../development/architecture/safe-primitives.md) (P1, P5, §3.7), [threat-model](../../development/architecture/threat-model.md), [reports-schedules-security-review](../../development/architecture/reports-schedules-security-review.md), [domain-model](../../development/domain/domain-model.md) (DM-20, DM-24, DM-33 to DM-36, DM-70 to DM-73, DM-80, Q5).
+- Constraints: [ADR-0010](../../development/decisions/0010-report-results-stored-as-rows-in-postgres.md) (accepted; superseded by the FB-3b ADR once ratified, not edited), [ADR-0011 rev 3](../../development/decisions/0011-universal-search-over-inventory-pg-trgm-one-scope-renderer.md), [ADR-0005](../../development/decisions/0005-operation-pipeline-and-audit-trail.md), [modules/reports.md](../../development/architecture/modules/reports.md), [safe-primitives](../../development/architecture/safe-primitives.md) (P1, P5, §3.7), [threat-model](../../development/architecture/threat-model.md), [reports-schedules-security-review](../../development/architecture/reports-schedules-security-review.md), [domain-model](../../development/domain/domain-model.md) (DM-20, DM-24, DM-33 to DM-36, DM-70 to DM-73, DM-80, Q5).
 - Siblings: [reports-2a](reports-2a.md), [reports-2-second-slice](reports-2-second-slice.md), [e2-11-migration-importer](e2-11-migration-importer.md), `e2-7-hybrid-provisioning.md`.
-- Reviews answered: [architecture](reviews/2026-11-11-m2c-architecture-review.md), [security](reviews/2026-11-11-m2c-security-review.md).
 
 ## Changelog
 
 - 2026-11-11: first draft, off-board (`m2c-plan`).
-- 2026-11-11: round 2, answering both rejecting reviews (§24): in-statement match count and a new extending ADR in
-  place of an ADR-0010 amendment; post-mask grouping; re-authorised picked values; non-interference test;
-  run-bound selection contract; free-text carve-outs; Entra datasets left to E2.7 with the shared scope-root
-  dependency; E2.11 classes; one lifecycle, limits table and follow-up table; FR-B28 to B30 and AC-B36 to B45
-  added, every FR traced to an AC.
+- 2026-11-11: round 2 (both rejecting reviews): in-statement match count, post-mask grouping, re-authorised picked values, non-interference test,
+  run-bound selection contract, Entra datasets left to E2.7, E2.11 classes, one lifecycle, FR-B28 to B30 and AC-B36 to B45 added.
+- 2026-11-11: revision 3, answering the round-2 findings (§24 Round 3): FB-3b supersedes ADR-0010 with RP12/RP13;
+  no per-condition "not yet read" count; `unarchive` and the `archived → published` edge; one code for unreadable and
+  nonexistent picked values; FR-B30 modulo resource limits; preview events written at the end of each preview and
+  refusals aggregated; FB-5, FB-6b, FB-12 corrected; trimmed (response table moved to the review record, §5, §9, §10,
+  §11, §16 summarised, §12 merged into §3). FR and AC numbers unchanged.
