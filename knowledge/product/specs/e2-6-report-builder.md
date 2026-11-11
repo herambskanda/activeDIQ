@@ -119,15 +119,16 @@ from the registry and tagged "from the last sync" or "computed now". A field the
 A secret attribute is never a field (D8, X4). Attributes beyond the 2a columns join through FR-B03.
 
 **Conditions.** A tree of `And` / `Or` / `Not` over `Cmp{field, operator, value-or-parameter}` within §9's limits, using reports module §3.2's closed operators;
-each column registers the subset it accepts: text (is, is not, is one of, contains, starts with, has a value, is empty); int (comparisons, is one of); bool (is);
-time (before, after, within the last / older than / within the next N days); enum (is, is not, is one of, values from the column's enum, never typed); guid
+each column registers the subset it accepts: text (is, is not, is one of, contains, starts with, has a value, is empty); int (comparisons, is one of, has a value, is empty); bool (is);
+time (before, after, within the last / older than / within the next N days, has a value, is empty); enum (is, is not, is one of, values from the column's enum, never typed); guid
 (is, is not, is one of, has a value, is empty; values from a picker, §9 L5); text list (has a value, is empty, contains an element equal to). Values are typed
 constructors (`TextV`, `IntV`, `TimeV`, `EnumV`, `GUIDV`); `contains` and `starts with` are bound `LikePattern` values (P5 rule 4), never SQL. Relative-time
 operators take whole days and honour a column floor (30 days on replicated logon, reports-2a §6.4). A `GUIDV` is stored **without a label** (FR-B29).
+"Has a value" and "is empty" are the closed `OpPresent` / `OpAbsent` operators of reports module §3.2, so "never logged on" and "password never set" are buildable (R3-m1).
 **Not in v1:** column-to-column comparison, arithmetic, formulas, regular expressions, functions.
 
-**Grouping and totals (needs FB-3a).** Up to 3 **group keys** (enum, bool, text, guid-with-label, or `time` bucketed by day to year in the time zone recorded on
-the run, which is part of the query hash); up to 8 **aggregates** (`count`, `count distinct`, `min`/`max` on time or int, `sum`/`avg` on int); an optional
+**Grouping and totals (needs FB-3a).** Up to 3 **group keys** (enum, bool, text, guid-with-label, or `time` bucketed by day, week, month, quarter or year in the time zone recorded on
+the run, which is part of the query hash: an interactive run uses the runner's profile zone, a schedule fire uses the schedule's stored zone, R3-m2); up to 8 **aggregates** (`count`, `count distinct`, `min`/`max` on time or int, `sum`/`avg` on int); an optional
 **minimum group size** (on `count`), Top N (≤ 1,000) and a **grand total over all matching in-scope rows**, not the groups shown. Over 10,000 groups is refused,
 naming the cause and the fix. When a minimum or Top N hides groups the table says "k of n groups shown"; *n* comes from the same grouped statement (a window over
 the groups before Top N and the minimum), so it is not a second count. FR-B28 and FR-B30 are the contract: scope and masking apply, in the same statement, before any group, aggregate, sort, Top N or chart bucket, and each works on the masked cell the
@@ -172,9 +173,9 @@ and 100k sources; a group with more than 1,500 members.
 | AD history, policies, printers | `inventory.object_changes`, `.policies`, `.printers` (second slice) | **Yes, each when its batch has shipped**; an unshipped one is not listed | second slice |
 | AD extra attributes | Registered `JSONAttr` columns for attributes in a connection's sync set (FR-B03) | **Yes** | FB-8 |
 | activeDIQ's own audit trail (**not** DC security events, which are M3) | `audit.events` (DM-70), **restricted columns**: time, kind, outcome, operation reference, target kind, actor kind. **No actor or target display name, no `details`, no personal value** (DM-80.I4: display snapshots are erasable and must not be copied into stored rows) | **Yes if `platform/audit` registers it before the 2c build**; otherwise the next slice. Not a blocker | FB-5 |
-| Entra users, groups, licence assignments | Datasets that **E2.7a registers**: it owns Graph delta sync into inventory and the dataset names, columns and correlation columns (`e2-7a-entra-inventory-sync.md`, split out of E2.7 §7.6 in round 3: FR-36 to FR-38; FB-11). **This spec defines none** | **Gated.** A source appears only when E2.7 has registered it **and** the scope evaluator renders the Entra roots (`entra_tenant`, `administrative_unit`, `group_members`). Until then reports-2a §8.1 applies: such a scope grants nothing and the empty state names the reason | E2.7; **FB-4**, the Entra scope-root dependency shared with E2.7 (E-011 / T-1131, ADR-0011 rule 9) |
-| One person across AD and Entra | Only columns E2.7 registers showing the **matched** correlation (DM-20.I4); never a cross-dataset join | Only if E2.7 defines them | E2.7 |
-| Entra devices | Not a dataset unless E2.7 syncs them | No | E2.7 |
+| Entra users, groups, licence assignments | Datasets that **E2.7a registers**: it owns Graph delta sync into inventory and the dataset names, columns and correlation columns (`e2-7a-entra-inventory-sync.md`, split out of E2.7 §7.6 in round 3: FR-36 to FR-38; FB-11). **This spec defines none** | **Gated.** A source appears only when e2-7a FR-38 has registered it (its Boot rule admits a dataset only if the scope renderer renders its root kinds) **and** the scope evaluator renders the Entra roots (`entra_tenant`, `administrative_unit`, `group_members`). Until then reports-2a §8.1 applies: such a scope grants nothing and the empty state names the reason | e2-7a FR-38; **FB-4**, the Entra scope-root dependency shared with E2.7 (E-011 / T-1131, ADR-0011 rule 9) |
+| One person across AD and Entra | Only columns e2-7a FR-38 registers showing the **matched** correlation (DM-20.I4); never a cross-dataset join | Only if e2-7a FR-38 defines them | e2-7a FR-38 |
+| Entra devices | Not a dataset unless e2-7a syncs them | No | e2-7a |
 | Per-DC values (USR-04, PWD-03), SYS-03 | Not stored datasets (reports-2a §6.5) | **No**, library-only | later |
 | DC security events; file servers, Exchange, GPO, NTFS | | **No** | M3; E3.6, M5, E-008 |
 
@@ -243,7 +244,7 @@ into the same run) and counts against the per-account rate. A page and its count
 | Statement time | run: P5 SQL-22; preview: 10 s `[PROPOSED]`. A timeout is a typed failure, "too heavy", never a partial result |
 
 **Aggregates, sort and exports can never leak scope** (FR-B30's property test covers all of it). Scope, masks, grouping and the one grouped
-statement are §5 rules 1 to 3 and FR-B28; a count of *other* objects is a registered `Count` column over a masked anchor (RP11), never a free
+statement are specified in §5 and FR-B28; a count of *other* objects is a registered `Count` column over a masked anchor (RP11), never a free
 aggregate; exports serialise stored rows only, with the 2a encoders, caps and digest (a group row's `row_key` is the canonical hash of its key values, FB-3b).
 - **L3** Sort keys are limited to readable fields, and stored `sort_keys` come from the same masked values. **L4** `Top N` applies after sort over scoped
   rows, so it does not depend on how many hidden rows exist.
@@ -308,10 +309,7 @@ Counted as [top-admin-tasks-benchmark](top-admin-tasks-benchmark.md) §1.2 does 
 | Re-sort, page, change chart type (stored rows) | ≤ 500 ms | ≤ 500 ms |
 | `group_members`, group with 6,000 members: first page | ≤ 5 s | ≤ 5 s (reports-2a §5) |
 
-A drill-down from a group is budgeted as a preview. A group with more than 1,500 members: the edge dataset contributes every edge (reports-2a FR-15, FR-S07); tested at 6,000.
-
-A group with more than 1,500 members: the edge dataset contributes every edge (reports-2a FR-15, FR-S07);
-a builder report on it is tested at 6,000.
+A drill-down from a group is budgeted as a preview. A group with more than 1,500 members: the edge dataset contributes every edge (reports-2a FR-15, FR-S07); a builder report on it is tested at 6,000.
 
 ## 15. States and exact messages
 
@@ -339,7 +337,7 @@ a builder report on it is tested at 6,000.
   connection setting changed by an Action with the connection's rights check, from the live schema, with a secret or confidential one refused by the schema-driven `SecretAttrs`
   set (safe-primitives §3.7, LF-38). Entra reads come with E2.7's Graph permissions. Reports may list Tier-0 objects (reports-2a §9); acting on them is blocked by the pipeline (DM-35.I5).
 - **Safe primitives.** Report SQL only from `store/reportsql` with registry identifiers and bound arguments (FF-SP4, SP-P5); LIKE only through `LikePattern`; scope only from
-  `rbac.ReadScopes.For`; GUIDs and DNs only through pickers or the `dn` package; export bytes only from the P7 encoders; titles, descriptions and labels, which are attacker-controlled, only through the encoders.
+  `rbac.ReadScopes.For`; GUIDs and DNs only through pickers or the `dn` package; export bytes only from the P7 encoders; titles, descriptions and labels, which are attacker-controlled, only through the encoders. **No user-defined column labels in v1:** a column's label comes from the registry, never from owner-typed text (R3-m3).
 - **Abuse cases** (each tested): scope escape through values, counts or order (AC-B08, B09, B38, B40); a shared report with a picked value the recipient cannot read (B13, B39);
   a broad schedule to an outside address or a version swap (B25, B45); a hostile value or title (B27); probing and denial of service (B19); a secret read through "custom
   attributes" or an importer suggestion (B05, B43); a forged, stale or foreign run used to act (B41); a hostile ADMP file (B28, E2.11's limits).
@@ -348,7 +346,7 @@ a builder report on it is tested at 6,000.
   reassigned, cloned, imported; run, export, download and schedule events as reports-2a §8.6. **Previews:** one light `reports.preview.run` event per preview run, written in the
   transaction that makes the preview terminal (succeeded, superseded, cancelled, failed or "too heavy"), so a superseded preview that read data still appears; it carries the outcome,
   row count, field, operator, group-key and aggregate IDs and the HMAC. Previews refused by the rate limit or caps read nothing and are recorded as **one aggregated
-  `reports.preview.refused` per account per minute**, with a count. Events are chained at commit (ADR-0005 rule 11, DM-80.I1): no roll-up of runs, no ADR-0005 amendment; the
+  `reports.preview.refused` per account per minute**, with a count. A writer that closes each minute emits it once, when the minute ends (a chained event cannot be incremented later; FB-3a). Events are chained at commit (ADR-0005 rule 11, DM-80.I1): no roll-up of runs, no ADR-0005 amendment; the
   per-account rate (§9) bounds chain volume. FB-3a registers both kinds (`reports.*` belongs to the reports module, EP-7).
 - **Residuals accepted.** (1) Owner-typed text values are readable by anyone the report is shared with. (2) Until FB-6a ships, a picker and the editor labels offer what
   `directory.read` shows in global search. (3) A **statement timeout** reveals tenant data volume, not objects: the rows-only "1,000+" fallback and "too heavy" depend on how many
@@ -363,10 +361,10 @@ a builder report on it is tested at 6,000.
 | --- | --- | --- | --- |
 | FB-1 | Research: ME custom-report mechanics (operators, condition limit, cache or live, "database fields", delegate, advanced scheduler) | `market-analyst` | Q1 |
 | FB-2 | ADMP trial lab: baselines T21 to T25 and custom-report fixtures for the importer | `product-designer`, `market-analyst` | Q2, §11.4 |
-| FB-3a | **[modules/reports.md](../../development/architecture/modules/reports.md) amendment** (§3.2 anticipates it): stored `CustomDefinition` (table, owner, origin, `ast_version`, versions, shares) and how `Resolve` takes it; `Custom` category and ID namespace; group-key, aggregate, minimum, total nodes; `groupable`/`aggregatable` flags and Unknown propagation; `ActionSubject`; per-field read permission; validate-only entry; **removal of `CompileCount` for library runs too** (§5), with the superseded code deleted in the same change; the EP-7 kinds `reports.preview.run` and `reports.preview.refused`; the Action set with the inverse-only `reports.definition.restore` and the forward `unarchive` | `solution-architect`, `reporting-engineer` | R-M2, B-B1, R2-M1 |
+| FB-3a | **[modules/reports.md](../../development/architecture/modules/reports.md) amendment** (§3.2 anticipates it): stored `CustomDefinition` (table, owner, origin, `ast_version`, versions, shares) and how `Resolve` takes it; `Custom` category and ID namespace; group-key, aggregate, minimum, total nodes; `groupable`/`aggregatable` flags and Unknown propagation; `ActionSubject`; per-field read permission; validate-only entry; **removal of `CompileCount` for library runs too** (§5), with the superseded code deleted in the same change; the EP-7 kinds `reports.preview.run` and `reports.preview.refused`, with the minute-closing writer of the aggregated refusal event; the `OpPresent` / `OpAbsent` operators on int and time columns (R3-m1); the time-zone rule of a run (interactive: the runner's profile zone; schedule fire: the schedule's stored zone; bucket set day, week, month, quarter, year; R3-m2); no user-defined column labels in v1 (R3-m3); the Action set with the inverse-only `reports.definition.restore` and the forward `unarchive` | `solution-architect`, `reporting-engineer` | R-M2, B-B1, R2-M1 |
 | FB-3b | **New ADR superseding ADR-0010** (technical, director-ratified). It changes ADR-0010's rule 3 (the total is `report_runs.row_count`), rule 5 (7-day retention) and the run identity (DM-72), so ADR-0010 is not extended or edited: it becomes `superseded` when this ADR is ratified. The ADR restates the unchanged rules and carries RP3 to RP5 forward. It fixes: (1) the match count in the run's one cursor statement as a typed run field, no separate count; (2) run class `preview`: 1 h retention, supersede-expiry (the `succeeded → expired` edge exists), own caps; (3) group and total rows: `row_key` = canonical hash of key values, a row-kind marker for the total row, digest and export coverage, totals in the same statement (grouping sets), no snapshot option; (4) a run of an unsaved definition: AST hash and typed AST instead of definition ID, version and hash. **Fitness ticket** (`reporting-engineer`, depends on the ADR): **RP12** no `CompileCount` and no second count statement on any run path (a `reportsql` call-site check plus the AC-B15 statement-log test); **RP13** preview-class supersede and expiry. (The architecture review called these RP6 and RP7; those IDs are taken in reports.md §9.) | `solution-architect` | R-B1, R-M1, R2-M1 |
 | FB-3c | Security review of the grouping renderer; fitness **RP-B1** (no free-text member except the one allow-listed intake), **RP-B2** (run, preview, drill-down, validate-only, comparator all through `Resolve`), **RP-B3** (non-interference property test, FR-B30) | `security-architect` | B-B1, B-M1, B-m1 |
-| FB-3d | Domain model: DM-71 (`cloned`, `imported`, `ast_version`, grouping in `ast`, server-side `draft` for imports, no delete, **the edge `archived → published`** for `unarchive`); DM-72 (run class, AST hash, match count, time zone); DM-34 allowlist read/write meaning; Q5 answered by §5 | `ad-expert`, `backend-engineer` | R-M7, Q4, R2-m1 |
+| FB-3d | Domain model: DM-71 (`cloned`, `imported`, `ast_version`, grouping in `ast`, server-side `draft` for imports, no delete, **the edge `archived → published`** for `unarchive`); DM-72 (run class, AST hash, match count, time zone, with the interactive and schedule source of the zone, R3-m2); DM-34 allowlist read/write meaning; Q5 answered by §5 | `ad-expert`, `backend-engineer` | R-M7, Q4, R2-m1 |
 | FB-4 | **Entra scope roots**: renderer for `entra_tenant`, `administrative_unit`, `group_members` (m2-plan E-011, T-1131). **Shared with E2.7** and ADR-0011 rule 9; both specs cite it | `backend-engineer` (delegation) | X-2 |
 | FB-5 | `platform/audit`: register the `audit.events` dataset with the §7 columns and visibility; an erasure ruling before any personal column. (The `reports.preview.*` kinds belong to the reports module: FB-3a) | `security-architect`, audit owner | R-M3, R-M4, R2-m2 |
 | FB-6a | **ADR-0011 amendment** (ratified, so an amendment): `inventory.Search` takes a caller-named permission so a picker is trimmed under `reports.run`, with an SE3-style test. Replaces the unproven "no amendment" claim | `solution-architect` | R-M5 |
@@ -388,15 +386,15 @@ functional-level requirement). `windows` and `linux-oci` behave identically (ADR
 
 | FR group | AD on-prem WS2016 to 2025 | Entra cloud-only | Hybrid synced objects | Samba AD (CI lab) | Console | REST API | PowerShell module | `windows` | `linux-oci` |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| B01 to B07 model, fields, conditions, sort | ✓ | ✗ → FB-4, FB-11 | ◐ AD side now; Entra when E2.7 registers | ✓ | ✓ | ✓ | ◐ follows the API, no cmdlet spec | ✓ | ✓ |
-| B03 custom attributes | ✓ any attribute the connector reads | ✗ → E2.7 | ◐ AD attributes only | ✓ plain LDAP | ✓ | ✓ | ◐ | ✓ | ✓ |
+| B01 to B07 model, fields, conditions, sort | ✓ | ✗ → FB-4, FB-11 | ◐ AD side now; Entra when e2-7a FR-38 registers | ✓ | ✓ | ✓ | ◐ follows the API, no cmdlet spec | ✓ | ✓ |
+| B03 custom attributes | ✓ any attribute the connector reads | ✗ → e2-7a FR-38 | ◐ AD attributes only | ✓ plain LDAP | ✓ | ✓ | ◐ | ✓ | ✓ |
 | B06, B08 to B10, B14, B15, B28 grouping, totals, charts, masked values, preview, save, versions, clone, run/export/schedule reuse | ✓ | ✗ → same | ◐ AD side | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
 | B11 to B13, B29, B30 sharing, scope, non-interference | ✓ AD scope kinds of 2a; others grant nothing | ✗ → FB-4 | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
 | B16 act on results | ✓ Actions that exist then (2b set) | ✗ → E2.7 Actions | ◐ AD Actions; cloud with E2.7 | ◐ writes testable on Samba as in 2b; Windows-only effects `[LAB: Windows]` | ✓ | ✓ | ◐ | ✓ | ✓ |
 | B17 report from list | ✓ GUID, DN; more with FB-6b | ✗ → same | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
 | B18 migrated ADMP reports | ✓ (E2.11 matrix) | ◐ AD-only constructs `not supported`, never dropped | ◐ | ✓ file tests; ADMP DB tests need the lab `[LAB]` | ✓ | ✓ | ◐ | ✓ | ✓ |
-| B19 to B24, B27 search, states, limits, audit, budgets, API, encoding | ✓ | ◐ for sources E2.7 registers; none before | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
-| B25 Entra gating | n/a | ◐ source appears after E2.7 registers it and FB-4 ships | ◐ same | n/a | ✓ | ✓ | ◐ | ✓ | ✓ |
+| B19 to B24, B27 search, states, limits, audit, budgets, API, encoding | ✓ | ◐ for sources e2-7a FR-38 registers; none before | ◐ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
+| B25 Entra gating | n/a | ◐ source appears after e2-7a FR-38 registers it and FB-4 ships | ◐ same | n/a | ✓ | ✓ | ◐ | ✓ | ✓ |
 | B26 `audit.events` source | ✓ activeDIQ's own data | ✓ own data, independent of the Entra tenant | ✓ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
 
 Samba results prove the plumbing and the LDAP-readable truth; what only a real Windows DC settles stays `[LAB: Windows]`, reported separately.
@@ -431,7 +429,7 @@ Each FR names a parity ID or `enhancement`. Cite as `e2-6-report-builder#FR-B07`
 | FR-B22 | Definition, share, preview, run, export and schedule events MUST be audited as §16: one `reports.preview.run` event per preview run, written when the preview ends (superseded ones included), refused previews as one aggregated `reports.preview.refused` per account per minute, HMAC hashes, and no values | TM-TB15-T6 |
 | FR-B23 | The budgets of §14 MUST be met on the scale tier | enhancement |
 | FR-B24 | Every behaviour MUST be an OpenAPI operation first with one `x-permission`, and the console MUST use only the generated client | ADR-0004 |
-| FR-B25 | A source from E2.7 MUST appear only when E2.7 has registered it and the scope renderer supports its root kinds; this spec MUST define no Entra dataset | ADM-097 |
+| FR-B25 | An Entra source MUST appear only when `e2-7a-entra-inventory-sync.md` FR-38 has registered it (its Boot rule refuses a dataset whose root kinds the scope renderer cannot render) and the scope renderer supports its root kinds; this spec MUST define no Entra dataset | ADM-097 |
 | FR-B26 | If `platform/audit` registers `audit.events`, the builder MUST expose it with §7's restricted columns (no display name, no `details`), only to holders of audit-read, with §7's scoping | ENH-05 |
 | FR-B27 | Report titles, descriptions and labels MUST be encoded wherever they are rendered, exported or mailed | TM-TB15-T1 |
 | FR-B28 | Group keys, aggregate inputs, `count distinct`, sort keys and chart buckets MUST be computed over the masked cell value the runner would see; masked identities MUST form one bucket per column; an aggregate over any Unknown cell MUST be Unknown (registry `UnknownWhen`); a guid-with-label key MUST take its label from the masked related column, an OU key MUST be the row's own container (ancestors named only from its own `dn`), and a `MaskAnchor` or `Via` column MUST be groupable only on its masked rendering; group-cardinality and error decisions MUST be evaluated post-scope | ADM-097, LF-39 |
@@ -592,9 +590,9 @@ When the report is applied
 Then the schedule is disabled, the recipient flagged external, owner manageengine, it refuses to run, and cannot be enabled without the step-up switch and the Action's confirmation
 Evidence: E2.11 tests with TM-TB18-T9 and §6.8 assertions
 AC-B30 (FR-B25)
-Given E2.7 has not registered an Entra dataset, and then has
+Given e2-7a FR-38 has not registered an Entra dataset (its Boot refusal), and then has
 When the source picker opens in each state
-Then the first state lists no Entra source; the second lists it only for an account whose scope can be rendered (entra_tenant, administrative_unit or group_members), and an account with an unsupported scope kind sees the empty state naming the reason; the reports registry defines no Entra dataset itself
+Then the first state (the Boot refusal) lists no Entra source; the second lists it only for an account whose scope can be rendered (entra_tenant, administrative_unit or group_members), and an account with an unsupported scope kind sees the empty state naming the reason; the reports registry defines no Entra dataset itself
 Evidence: API test entra_source_gating; screenshot of the reason; registry test no_entra_dataset_in_reports
 AC-B31 (FR-B26)
 Given audit.events registered, a technician with directory scope only, an auditor with scoped audit-read, and an auditor with tenant-wide audit-read
@@ -694,13 +692,13 @@ Evidence: test schedule_fire_fails_closed
 | Compliance report sets (ADM-093); dashboard widgets (ADM-103) | Later E-012 slice; FB-9 |
 | CSVDE, password-protected export, logo; mail-body and save-to-path delivery | reports-2a §11 / T-1017; mail-body later; save-to-path never |
 | Joins; column-to-column comparison; formulas; regular expressions; hard delete; a box accepting an LDAP filter or SQL, including "paste to convert" | Later with a security review (D1, D3), delete needs a DM-71 change; the box never (D2) |
-| Per-DC fields (USR-04, PWD-03, SYS-03) as builder fields; Entra devices | Library only; E2.7 |
+| Per-DC fields (USR-04, PWD-03, SYS-03) as builder fields; Entra devices | Library only; Entra devices: e2-7a FR-38 if it syncs them |
 | Automatic Actions from a schedule; old/new value diffs in change reports | Automation, 2d; second slice §4.1.3 |
 | Public or cross-tenant share links, embedding; natural-language building (ENH-20); Exchange, M365 content packs, GPO, NTFS, Google | Not planned; not in the set of 5; their milestones |
 
 ## 22. Open questions
 
-Closed in round 2: Q6 (Entra datasets belong to E2.7, FB-11) and Q8 (a new ADR that supersedes ADR-0010, FB-3b). Numbers are kept. No question blocks the spec from review; Q11 is the only CEO item and is filed only if needed.
+Closed in round 2: Q6 (Entra datasets belong to e2-7a, FB-11) and Q8 (a new ADR that supersedes ADR-0010, FB-3b). Numbers are kept. No question blocks the spec from review; Q11 is the only CEO item and is filed only if needed.
 
 | # | Question | Owner | Blocks |
 | --- | --- | --- | --- |
@@ -733,6 +731,16 @@ Round 3 answers the round-2 findings of the [architecture](reviews/2026-11-11-m2
   superseded ones included; refusals are one aggregated `reports.preview.refused` per account per minute (§16, FR-B22, AC-B35, AC-B19). **Nit** editor labels resolve under
   `reports.run` once FB-6a ships, `directory.read` until then (FR-B29).
 
+### Erratum (after round 3 review, 2026-11-11)
+
+Finding → change. No FR or AC number changed.
+
+- **R3-m1** §5: int and time columns accept "has a value" and "is empty" (`OpPresent` / `OpAbsent`); carried into FB-3a.
+- **R3-m2** §5: the run's time-zone rule (interactive: runner's profile zone; schedule fire: schedule's stored zone) and the bucket set written out; carried into FB-3a and FB-3d (DM-72).
+- **R3-m3** §16: "No user-defined column labels in v1"; carried into FB-3a.
+- **X3-1** FR-B25, AC-B30 (first state is the Boot refusal), the §7 rows, the §18 rows and §22 Q6 cite e2-7a FR-38 for the Entra datasets. "E2.7" stays where it means E2.7's Actions, Graph permissions or the shared E-011 dependency (FB-4, B16, §16).
+- **Nits** §9 no longer cites "§5 rules 1 to 3" (now §5 and FR-B28); the duplicated >1,500-member paragraph in §14 is removed; the aggregated `reports.preview.refused` has a minute-closing writer (§16, FB-3a).
+
 ## Sources
 
 - Parity rows ADM-083 to ADM-103, ADA-101: [feature-parity-matrix](../../business/competitive-analysis/feature-parity-matrix.md) and its [CSV](../../business/competitive-analysis/feature-parity-matrix.csv).
@@ -748,3 +756,4 @@ Round 3 answers the round-2 findings of the [architecture](reviews/2026-11-11-m2
 - 2026-11-11: revision 3, answering the round-2 findings (§24 Round 3): FB-3b supersedes ADR-0010 (RP12/RP13); no per-condition "not yet read" count; `unarchive` and the
   `archived → published` edge; one code for unreadable and nonexistent picked values; FR-B30 modulo resource limits; preview events written at the end of each preview, refusals
   aggregated; FB-5, FB-6b, FB-12 corrected; trimmed (response table moved to the review record, §5, §8 to §11, §16 tightened, §12 merged into §3). FR and AC numbers unchanged.
+- 2026-11-11: erratum after round 3 review (R3-m1…m3, X3-1 repoint to e2-7a, three nits); see §24 Erratum. FR and AC numbers unchanged.
