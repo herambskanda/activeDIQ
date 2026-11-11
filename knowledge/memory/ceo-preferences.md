@@ -1,6 +1,6 @@
 ---
 title: CEO preferences
-updated: 2026-11-02
+updated: 2026-11-10
 budget: 120 lines
 ---
 
@@ -10,6 +10,7 @@ Newest first within each section. Every entry: date · preference · source. Use
 CEO unless they state otherwise.
 
 ## Working style
+- 2026-11-10 · When the factory host was out of reach, they wanted M2c to keep moving on a second machine, and took the recommended "plan here, build later" over building on stale code. Away from the server, offer document-only work (specs, plans) that merges cleanly, not a second board. (off-board decision, decisions-log 2026-11-10)
 - 2026-11-02 · Lab access, second time: took the recommended pool-scoped Proxmox token over building VMs by hand or deferring, answered on the board with no note. Two data points now (A-0025, D-0022): for lab hand-steps the default offer is a narrowly scoped, one-command-revocable worker authorisation, recommended first. Still lab-only; do not extrapolate to customer or production-like systems. (D-0022, notice D-0023)
 - 2026-10-29 · Lab access: given the choice, they authorised workers ("workers may use WinRM on dc1 in the lab only") instead of doing the dc1 prep by hand. When a lab step needs a human, offer a scoped authorisation for workers as an option. Keep it lab-only. (A-0025)
 - 2026-10-29 · Deferred the Entra sandbox tenant to after M1 ("can we do it in last after m1 is completed"). Don't file Entra-tenant actions during M1. Re-file once at M1 acceptance (T-0075, T-0441 parked in M2). (A-0026; A-0030 withdrawn 2026-10-30)

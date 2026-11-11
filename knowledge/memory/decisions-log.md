@@ -1,6 +1,6 @@
 ---
 title: Decisions log
-updated: 2026-11-02
+updated: 2026-11-10
 budget: 120 lines
 ---
 
@@ -10,6 +10,7 @@ Newest first. `date · who · decision · why/source`. CEO decisions also live o
 architecture decisions as ADRs in knowledge/development/decisions/. Roll entries older than the
 current milestone into archive/ when this file nears its budget.
 
+- 2026-11-10 · CEO · **M2c (checkpoint 2c "Hybrid and import") is planned on the second machine and built later on the server.** No board, no Docker or AD lab, and code from 11-02 main here, so this branch (`m2c-plan`) carries documents only: specs for E2.7 hybrid provisioning and the E2.6 report builder, plus a groomed ticket plan. No product code and no ticket IDs: tickets are created on the server board when it is reachable. The 2026-11-02 M1-focus hold on the server stands. Recorded off-board, so there is no D-id; file it on the board at merge. (interactive session 2026-11-10)
 - 2026-11-02 · CEO · **Hold: all slots go to M1 until M1 is accepted.** At 14:37 the CEO blocked M2/M2a work with "Held for M1 focus" (resume: `ticket unblock T-… --by ceo --note resume`). This reverses D-0016's 1 slot for M2a. Triage T-1347 kept all 10 it was given on hold: T-0965, T-0967, T-1198, T-1199, T-1303, T-1322, T-1323, T-1329, T-1340, T-1345. No open M1 ticket depends on any of them. Security bugs on the list (T-1340) are not exempt. Resume order when M1 is accepted: T-1345 → T-1303 (search plan, then the W sweep), T-1198 → T-1199, T-0965 → T-0967, T-1329 → T-1234, then the rest. (T-1347)
 - 2026-11-02 · factory · **ADR-0011 revision 3 ratified (notice D-0025): fuzzy search reads a tenant-led B-tree of trigram postings (`inventory_search_trigrams`, FORCE RLS, maintained by one invoker function on three statement-level triggers) and rechecks each candidate with `<%` in a correlated per-key lookup; the GIN is dropped.** Why: `pg_trgm` operators are not leakproof, so under FORCE RLS the GIN was never used and fuzzy was a 372 ms scan at 50k. Spike: 7–105 ms. No superuser, no RLS bypass; security-architect confirmed no cross-tenant read and rule 16 closed by construction (proof: rows examined and blocks read per relation, equal with B empty/=A/10×A). Trades: fuzzy covers `name`/`sam` and 3–32 runes only. Build: T-1335 (T-1332, T-1136 cancelled). (T-1314)
 - 2026-11-02 · CEO · **D-0022: a · workers get a Proxmox API token scoped to an `adiq-lab` pool (dc1 VM 119 + VMs they build) to create, start, snapshot and roll back lab VMs; revocable with one command.** Factory calls (notice D-0023): worker WinRM extends to the guests of pool VMs, lab only (supersedes A-0031's "no access to dc2"); the CEO never pastes a password or the token secret; the director files the single bootstrap action only once T-1326 is on main. Chain: T-1326 (bootstrap, verify-scope, revoke) → T-1327 (scope proof on the real host + dc1 snapshot clean-signing-2026-11-02, replaces A-0033) → T-1328 fs1 (→ T-0409 → P1 T-0413), T-0610 Win 11 client (→ T-0147), T-1329 dc2 (→ T-1234 → T-0786). A-0023/A-0028/A-0031/A-0033 withdrawn. Still human: ADMP trial A-0024, dc1 DHCP reservation A-0034, Entra (deferred). (T-1325)
