@@ -25,3 +25,12 @@ same change.
 | 8 | build follow-up, security-sensitive | Outside a hybrid request: adding a user to an AD-synced group whose Entra twin carries a licence must check `m365.licence.assign` over that user (licence state read live at Plan and Apply; unreadable counts as licensed) | backend-engineer (`objects`) | P2 | reviews/2026-11-11-m2c-security-review.md (round 3, A3-m3) |
 
 Rows for the ADR, domain-model and build tickets come from the M2c ticket plan, not from here.
+
+## At merge, also
+- File the C-keys of `m2c-plan.md` as tickets. Shrink C-33, C-34 and C-38 against server main first,
+  because `internal/modules/connections` already holds attestation, HybridLink and reconfirm code.
+- File the two off-board CEO decisions (decisions-log 2026-11-10 and 2026-11-11) as answered D-ids,
+  plus a notice for the E2.11 2c scope: file and DB-dump routes; discovery, comparator, ownership
+  switch and §8 limits are 2d.
+- C-01 and C-02 (the E2.11 reviews) were run off-board; their reviews are in
+  `knowledge/product/specs/reviews/2026-11-11-e2-11-*.md`. Start from C-03.
