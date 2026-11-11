@@ -1,6 +1,6 @@
 ---
 title: Decisions log
-updated: 2026-11-10
+updated: 2026-11-11
 budget: 120 lines
 ---
 
@@ -10,6 +10,7 @@ Newest first. `date · who · decision · why/source`. CEO decisions also live o
 architecture decisions as ADRs in knowledge/development/decisions/. Roll entries older than the
 current milestone into archive/ when this file nears its budget.
 
+- 2026-11-11 · CEO · **Off-board M2c: the 2c plan stops at the ticket plan; only the two E2.11 importer reviews (plan keys C-01, C-02) run here before M1 is accepted. Push `m2c-plan` to the public GitHub repo.** Both picks were the recommended options. ADR drafts (C-04, C-07, C-11, C-16, C-22) wait for the server, because they would be written against 11-02 code. The push publishes the specs and their security reviews, consistent with D-0018. Off-board, so no D-id; file at merge (carry-over row 1). Factory call (notice at merge): E2.11's 2c scope is the file and DB-dump routes; discovery, comparator, ownership switch and §8 lifecycle limits are 2d (roadmap 2d row: MIG-14). (knowledge/business/scoping/m2c-plan.md)
 - 2026-11-10 · CEO · **M2c (checkpoint 2c "Hybrid and import") is planned on the second machine and built later on the server.** No board, no Docker or AD lab, and code from 11-02 main here, so this branch (`m2c-plan`) carries documents only: specs for E2.7 hybrid provisioning and the E2.6 report builder, plus a groomed ticket plan. No product code and no ticket IDs: tickets are created on the server board when it is reachable. The 2026-11-02 M1-focus hold on the server stands. Recorded off-board, so there is no D-id; file it on the board at merge. (interactive session 2026-11-10)
 - 2026-11-02 · CEO · **Hold: all slots go to M1 until M1 is accepted.** At 14:37 the CEO blocked M2/M2a work with "Held for M1 focus" (resume: `ticket unblock T-… --by ceo --note resume`). This reverses D-0016's 1 slot for M2a. Triage T-1347 kept all 10 it was given on hold: T-0965, T-0967, T-1198, T-1199, T-1303, T-1322, T-1323, T-1329, T-1340, T-1345. No open M1 ticket depends on any of them. Security bugs on the list (T-1340) are not exempt. Resume order when M1 is accepted: T-1345 → T-1303 (search plan, then the W sweep), T-1198 → T-1199, T-0965 → T-0967, T-1329 → T-1234, then the rest. (T-1347)
 - 2026-11-02 · factory · **ADR-0011 revision 3 ratified (notice D-0025): fuzzy search reads a tenant-led B-tree of trigram postings (`inventory_search_trigrams`, FORCE RLS, maintained by one invoker function on three statement-level triggers) and rechecks each candidate with `<%` in a correlated per-key lookup; the GIN is dropped.** Why: `pg_trgm` operators are not leakproof, so under FORCE RLS the GIN was never used and fuzzy was a 372 ms scan at 50k. Spike: 7–105 ms. No superuser, no RLS bypass; security-architect confirmed no cross-tenant read and rule 16 closed by construction (proof: rows examined and blocks read per relation, equal with B empty/=A/10×A). Trades: fuzzy covers `name`/`sam` and 3–32 runes only. Build: T-1335 (T-1332, T-1136 cancelled). (T-1314)
