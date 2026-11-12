@@ -415,8 +415,9 @@ func TestLabO8RemovedFromScopeADOUMovedOut(t *testing.T) {
 	})
 }
 
-// T-1600 acceptance 2 (ADM-133) on the lab: the site the real DC reports (DcIdentity.site, from the
-// connector's bound DC) is what the pinner ranks by. Preferring that site pins the DC; preferring a site
+// T-1600 acceptance 2 (ADM-133) on the lab: the site the real bound DC reports (DcIdentity.site) is what
+// the pinner ranks by. The DcIdentity.site -> WritableDC.Site mapping itself is proven by the non-lab
+// TestWritableDCsCarriesReportedSite; this test supplies the lab's real site value to the pinner. Preferring that site pins the DC; preferring a site
 // with no reachable DC still pins it, because the preference is a hint. Samba hosts one DC, so the
 // two-site case (preferred DC down, another site's DC used) is covered by TestPinPreferringSite over a
 // fake list; a real two-site topology is a Windows-lab case (ticket filed for test-engineer).
