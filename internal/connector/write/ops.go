@@ -30,6 +30,10 @@ type pass struct {
 	recheck func(ctx context.Context, w tier0.PropertyWrite) bool
 	// prov is the provider the guard classified against; a body that needs the directory session asks it.
 	prov Provider
+	// objs is the directory the object move, rename and restore kinds act on; nil when the provider has none.
+	objs StructureDirectory
+	// regrants are the group memberships a restore re-grants (step 7 of kind 6), for Plan to list.
+	regrants []Regrant
 }
 
 func (a Authorised) dir() ObjectDirectory {
@@ -96,6 +100,17 @@ type WriteOp struct {
 	// registered without it fails validateOps (the CC-WRITE-22 build-time check) and New. The guard
 	// calls it at step 4, before every other step that depends on the kind.
 	PropertyWrite func(change *connectorv1.WriteChange) (tier0.PropertyWrite, error)
+	// AlsoDevice makes the step-4 guard check the PropertyWrite declaration a second time with Kind
+	// WriteDevice (refused if either refuses). A kind whose target class is only known live (move,
+	// rename and restore take users, groups, computers and OUs, and an OU move changes the DN of
+	// every computer below it) sets it, because the closure's dynamic rules differ per kind.
+	AlsoDevice bool
+	// TouchedLive adds the objects only a live read can name (the old parent of a move). It runs at
+	// step 5, after Touched, against the provider's directory; an error refuses as TouchedSet.
+	TouchedLive func(ctx context.Context, d StructureDirectory, target guid.GUID, change *connectorv1.WriteChange) ([]guid.GUID, error)
+	// DeletedTarget marks a kind whose target is a deleted object: step 7 classifies it with the
+	// provider's DeletedClassifier instead of the live classifier.
+	DeletedTarget bool
 	// AlsoDeclares lists further declarations for the same change, each checked by the same guard
 	// and each of which must pass (a directory attribute that feeds rule properties of two object
 	// classes). Optional.
@@ -120,15 +135,22 @@ type WriteOp struct {
 	Apply       func(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error)
 }
 
-// operations is the operation table. A kind ticket registers its row (account.go: T-1583, the first
-// four kinds); a WriteKind with no row ends in CAPABILITY_UNSUPPORTED. The only place a
-// directory or Graph write may be called from is a WriteOp body reachable from this table; the
-// fitness test in fitness_test.go enforces that.
-var operations = map[connectorv1.WriteKind]WriteOp{
-	connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE: objectCreateOp,
-	connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE: objectUpdateOp,
-	connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE: objectDeleteOp,
-}
+// operations is the operation table. A kind ticket registers its row (account.go: T-1583, the four
+// account kinds); a WriteKind with no row ends in CAPABILITY_UNSUPPORTED. Kinds 1 to 3 are T-1623 and
+// kinds 4 to 6 (object move, rename, restore) are T-1624. The only place a directory or Graph write may
+// be called from is a WriteOp body reachable from this table; the fitness test in fitness_test.go
+// enforces that.
+var operations = func() map[connectorv1.WriteKind]WriteOp {
+	m := map[connectorv1.WriteKind]WriteOp{
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE: objectCreateOp,
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE: objectUpdateOp,
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE: objectDeleteOp,
+	}
+	for k, op := range objectOps() {
+		m[k] = op
+	}
+	return m
+}()
 
 // validateOps is the build-time check of contract §8.9 / CC-WRITE-22: every registered write kind
 // declares its PropertyWrite and its other mandatory functions. It runs in New, so a handler cannot

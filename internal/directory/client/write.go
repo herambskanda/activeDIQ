@@ -41,8 +41,8 @@ var (
 // Attrs and refuses a mismatch. Everything that goes on the wire is derived from these fields: the
 // connection from Target.Connection, the object from Target.GUID (the planned parent for a create),
 // the naming context from the Step (Target.NC, digest-covered), the
-// WriteKind from DigestKind through kindTable. No wire field is caller-supplied, so none can differ from what the digest covers. WriteChange has no arm until a
-// kind ticket adds one with a constructor deriving it from Attrs; until then Change is never sent.
+// WriteKind from DigestKind through kindTable. No wire field is caller-supplied, so none can differ from what the digest covers. The WriteChange is derived from Attrs by one constructor per
+// kind (objectchange.go), never filled in by the caller.
 type WriteOp struct {
 	// DigestKind names the operation in the plan digest ("user.setAttribute").
 	DigestKind string
@@ -54,8 +54,34 @@ type WriteOp struct {
 	SecretInput secret.Secret
 }
 
+// The plan-digest keys of the wired kinds (contract §8.10.1). Compile-time constants; the connector
+// holds the same strings (write.DigestObject*) and a test pins the two.
+const (
+	DigestObjectMove    = "ad.object.move"
+	DigestObjectRename  = "ad.object.rename"
+	DigestObjectRestore = "ad.object.restore"
+)
+
+// The attribute names the object kinds' digests cover (contract §8.10.2 rule 5).
+const (
+	AttrNewParent   = "newParent"
+	AttrNewParentNC = "newParentNC"
+	AttrNewRDN      = "newRDN"
+	AttrRDN         = "rdn"
+)
+
+// ClassMove is the TM-D28 class of the object move, rename and restore kinds.
+const ClassMove = "move"
+
 // kindRow is one registered kind: the connector WriteKind and its TM-D28 class ("none" when the kind
 // is outside every class). A row without a class is refused by TestKindTableClosed.
+
+// structureKind is true for the object move, rename and restore digest kinds (T-1624): their change comes from
+// op.change, not from writechange or accountkind.
+func structureKind(k string) bool {
+	return k == DigestObjectMove || k == DigestObjectRename || k == DigestObjectRestore
+}
+
 type kindRow struct {
 	Kind  connectorv1.WriteKind
 	Class string
@@ -68,6 +94,9 @@ var kindTable = map[string]kindRow{
 	writechange.KeyObjectCreate: {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE, Class: "none"},
 	writechange.KeyObjectUpdate: {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE, Class: "attributes"},
 	writechange.KeyObjectDelete: {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE, Class: "none"},
+	DigestObjectMove:            {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE, Class: ClassMove},
+	DigestObjectRename:          {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME, Class: ClassMove},
+	DigestObjectRestore:         {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE, Class: ClassMove},
 }
 
 // kindClass is the TM-D28 class of each registered kind ("none" for a tightening, contract §8.10.1).
@@ -310,11 +339,29 @@ func (op WriteOp) derive() (wire, error) {
 		return wire{}, ErrUnknownKind
 	}
 	kind := row.Kind
-	// The account kinds (T-1583) have their own change codec, class label and secret rule, applied by
-	// deriveChange; the object kinds (T-1623) are decoded here.
 	var change *connectorv1.WriteChange
 	hasSecret := false
-	if _, account := accountkind.ByKey(op.DigestKind); !account {
+	_, account := accountkind.ByKey(op.DigestKind)
+	switch {
+	case account:
+		// The account kinds (T-1583) have their own change codec, class label and secret rule, applied by
+		// deriveChange. A reset takes its secret from the step, so op.SecretInput is never theirs.
+		if !op.SecretInput.IsEmpty() {
+			return wire{}, fmt.Errorf("%w: secret input", ErrInvalidOp)
+		}
+	case structureKind(op.DigestKind):
+		// Kinds 4-6 (T-1624): the change comes from op.change; the connector reads the class live. They
+		// carry no secret: one passed here is refused, not dropped.
+		if !op.SecretInput.IsEmpty() {
+			return wire{}, fmt.Errorf("%w: secret input", ErrInvalidOp)
+		}
+		var err error
+		change, err = op.change(kind)
+		if err != nil {
+			return wire{}, err
+		}
+	default:
+		// The object create, update and delete kinds (T-1623) are decoded here.
 		var err error
 		change, err = writechange.Decode(op.DigestKind, op.Attrs)
 		if err != nil {

@@ -98,8 +98,6 @@ func (t *Tx) ReadDeleted(ref dn.ObjectRef, attrs []string) (*Entry, error) {
 	return ent, nil
 }
 
-const oidShowDeleted = "1.2.840.113556.1.4.417"
-
 // Exists reports whether an object is at the DN (a base-scope read, live objects only).
 func (t *Tx) Exists(d dn.DN) (bool, error) {
 	_, err := t.Read(dn.DNRef(d), []string{"objectClass"})

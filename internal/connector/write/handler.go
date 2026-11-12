@@ -329,6 +329,17 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 		if err != nil {
 			return nil, invalid("5", "TouchedSet", "change")
 		}
+		if w.TouchedLive != nil {
+			op2, ok := h.prov.(ObjectProvider)
+			if !ok || op2.Objects() == nil {
+				return nil, unsupported()
+			}
+			more, err := w.TouchedLive(ctx, op2.Objects(), target, c.change)
+			if err != nil {
+				return nil, invalid("5", "TouchedSet", "change")
+			}
+			ts = append(ts, more...)
+		}
 		touched = dedupe(target, ts)
 	}
 
@@ -353,11 +364,24 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 
 	// Step 7: live re-read and classification of every touched object. An error is tier0.
 	designated := unionGUIDs(parseGUIDs(c.t0.GetDesignated()), h.gates.Designated(c.conn.GetConnectionId()))
+	var regrants []Regrant
 	var pdir ObjectDirectory
 	if wd, ok := h.prov.(writeDirectory); ok {
 		pdir = wd.WriteDirectory()
 	}
 	for i, id := range touched {
+		if i == 0 && op != nil && op.DeletedTarget {
+			var np guid.GUID
+			if len(touched) > 1 {
+				np = touched[1]
+			}
+			v, r := h.liveDeleted(ctx, id, np, designated)
+			if r != nil {
+				return nil, r
+			}
+			regrants = v.Regrants
+			continue
+		}
 		if r := h.live(ctx, idx, id, designated); r != nil {
 			// A delete retried after success: the target is shown deleted, so there is nothing to
 			// classify and nothing will be written; the body answers ALREADY_APPLIED.
@@ -381,7 +405,8 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	}
 	removes := op != nil && op.RemovesTarget
 	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, removes: removes,
-		auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: pdir, dcID: bound, recheck: recheck, prov: h.prov}}}, nil
+		auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: pdir, dcID: bound, recheck: recheck, prov: h.prov,
+			objs: h.objects(), regrants: regrants}}}, nil
 }
 
 // Refusal reasons recorded for a property-write refusal that is not a rule verdict.
@@ -406,18 +431,20 @@ func (h *Handler) propertyGuard(ctx context.Context, w WriteOp, c *call, target 
 		ev.Reason = reasonBadDeclaration
 		return invalid("4", "PropertyWrite", "change")
 	}
-	if r := h.propertyGuardOne(ctx, pw, target, ev); r != nil {
+	if r := h.propertyGuardOne(ctx, pw, w.AlsoDevice, target, ev); r != nil {
 		return r
 	}
 	for _, x := range extra {
-		if r := h.propertyGuardOne(ctx, x, target, ev); r != nil {
+		if r := h.propertyGuardOne(ctx, x, w.AlsoDevice, target, ev); r != nil {
 			return r
 		}
 	}
 	return nil
 }
 
-func (h *Handler) propertyGuardOne(ctx context.Context, pw tier0.PropertyWrite, target guid.GUID, ev *Event) *Refusal {
+// propertyGuardOne checks one declaration. alsoDevice (WriteOp.AlsoDevice, kinds 4-6) checks it a second time
+// as a device write, because the target's class is only known live.
+func (h *Handler) propertyGuardOne(ctx context.Context, pw tier0.PropertyWrite, alsoDevice bool, target guid.GUID, ev *Event) *Refusal {
 	plane := tier0.PlaneEntra
 	if h.prov.Kind() == connectorv1.ProviderKind_PROVIDER_KIND_AD {
 		plane = tier0.PlaneAD
@@ -436,11 +463,22 @@ func (h *Handler) propertyGuardOne(ctx context.Context, pw tier0.PropertyWrite, 
 	if err != nil || g == nil {
 		return refuse(reasonGuardUnavailable, stLive)
 	}
-	v, err := g.CheckPropertyWrite(ctx, pw)
-	if err != nil {
-		return refuse(reasonGuardUnavailable, stLive)
+	// The declaration is checked as declared and, for a kind that touches objects whose class is
+	// only known live (AlsoDevice), again as a device write: refused if either refuses.
+	decls := []tier0.PropertyWrite{pw}
+	if alsoDevice && pw.Kind != tier0.WriteDevice {
+		dw := pw
+		dw.Kind = tier0.WriteDevice
+		decls = append(decls, dw)
 	}
-	if v.Refused {
+	for _, d := range decls {
+		v, err := g.CheckPropertyWrite(ctx, d)
+		if err != nil {
+			return refuse(reasonGuardUnavailable, stLive)
+		}
+		if !v.Refused {
+			continue
+		}
 		if v.Reason != "" {
 			ev.Reason = v.Reason
 		}
@@ -606,6 +644,39 @@ func (h *Handler) checkRequest(c *call, idx map[string]*stmt, id guid.GUID, isAD
 		return tier0Refusal(toWire(id), b, stConnectorSet, step)
 	}
 	return nil
+}
+
+// objects is the provider's object directory, nil when it has none.
+func (h *Handler) objects() StructureDirectory {
+	if p, ok := h.prov.(ObjectProvider); ok {
+		return p.Objects()
+	}
+	return nil
+}
+
+// liveDeleted is step 7 for the deleted target of a restore (contract §8.10.3 kind 6): the grant
+// check, the one target read and the fixed-read-set classification. A provider that cannot do it
+// refuses (fail closed). A grant that is not proven is INSUFFICIENT_RIGHTS naming the right, and a
+// target that does not exist is OBJECT_NOT_FOUND, both only after the checks that justify them.
+func (h *Handler) liveDeleted(ctx context.Context, id, newParent guid.GUID, designated []guid.GUID) (Verdict, *Refusal) {
+	dc, ok := h.prov.(DeletedClassifier)
+	if !ok || newParent == (guid.GUID{}) {
+		return Verdict{}, tier0Refusal(toWire(id), nil, stLive, "7")
+	}
+	v, err := dc.ClassifyDeleted(ctx, id, newParent, designated)
+	var rights *DeletedRightsError
+	switch {
+	case errors.As(err, &rights):
+		return v, newRefusal(connectorv1.ErrorCode_ERROR_CODE_INSUFFICIENT_RIGHTS, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_OPERATOR_ACTION, "7",
+			"missing right: List Contents on Deleted Objects of "+rights.Domain)
+	case errors.Is(err, ErrNoRecycleBin):
+		return v, newRefusal(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "7", "AD Recycle Bin is not enabled")
+	case errors.Is(err, ErrDeletedNotFound):
+		return v, newRefusal(connectorv1.ErrorCode_ERROR_CODE_OBJECT_NOT_FOUND, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "7", "deleted object not found")
+	case err != nil || v.Tier0:
+		return v, tier0Refusal(toWire(id), v.Bases, stLive, "7")
+	}
+	return v, nil
 }
 
 // live is step 7 for one object: F4 evidence against the re-read anchors, then the classifier.

@@ -335,7 +335,6 @@ func TestMismatchedOpRefusedBeforeTransport(t *testing.T) {
 		"wrong case":       {func(o *WriteOp) { o.DigestKind = "AD.object.update" }, ErrUnknownKind},
 		"spelled like":     {func(o *WriteOp) { o.DigestKind = "ad.object.createUser" }, ErrUnknownKind},
 		"empty kind":       {func(o *WriteOp) { o.DigestKind = "" }, ErrInvalidOp},
-		"listed, unwired":  {func(o *WriteOp) { o.DigestKind = "ad.object.move" }, ErrUnknownKind},
 		"no connection":    {func(o *WriteOp) { o.Target.Connection = "" }, ErrInvalidOp},
 		"other nc":         {func(o *WriteOp) { o.Target.NC = otherNC }, ErrDigest},
 		"empty nc":         {func(o *WriteOp) { o.Target.NC = "" }, ErrDigest},
