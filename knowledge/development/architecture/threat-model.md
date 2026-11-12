@@ -1994,10 +1994,37 @@ authority through activeDIQ.
    already "never delegate" in §6.3 R7; `sIDHistory` is C18; `primaryGroupID` changes grants and
    belongs to TM-D18. B3 fails any Action that writes one.
 
+   **Also denied (T-1646): `msDS-AdditionalDnsHostName` and `msDS-AdditionalSamAccountName`.**
+   Decision: denied, not `rename_logon`. Reasons: (1) the schema marks `msDS-AdditionalDnsHostName`
+   System-Only True with "This value is set by the system", at computer rename or `netdom
+   computername` ([schema](https://learn.microsoft.com/en-us/windows/win32/adschema/a-msds-additionaldnshostname));
+   the supported client path is the NetLogon RPC `NetrAddAlternateComputerName`
+   ([MS-NRPC](https://msdn.microsoft.com/en-us/library/0d84af25-9310-4b2e-bcba-b9b085554102)),
+   which is a rename operation, not an attribute edit, so a generic setter has no business with it.
+   (2) It is not a harmless label. MS-ADTS lets a `servicePrincipalName` hostname match
+   `dNSHostName`, the `sAMAccountName`, **any `msDS-AdditionalDnsHostName` value** or any
+   `msDS-AdditionalSamAccountName` value
+   ([MS-ADTS SPN rules](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/28ca4eca-0e0b-4666-9175-a37ccb8edada)),
+   so an extra value widens which SPNs a Validated-SPN writer may add. An actor who can write it can
+   mint SPNs for a hostname of their choice on a computer, which is `set_spn`/`map_credential`
+   power (Kerberos service impersonation) reached without those permissions. (3) `dNSHostName` is
+   already `rename_logon` because spoofing it is a known escalation
+   ([Certifried](https://legacy.thehacker.recipes/~/revisions/X3zcRQTzmPqPbYiycUUx/a-d/movement/ad-cs/certifried));
+   the additional-name attributes are the same identity surface and gain no weaker class.
+   (4) A tenant has a validated write right for it
+   ([validated writes](https://learn.microsoft.com/en-us/windows/win32/adschema/validated-writes)),
+   so the DC's own check is a second line, never the only one. `msDS-AdditionalSamAccountName` is
+   denied with it as its sibling in the same SPN rule; its System-Only flag is `[UNVERIFIED]`
+   (lab G17 reads both flags on Samba and Windows), and the denial does not depend on it.
+   **Reviewed and kept as they are:** `sAMAccountName`, `userPrincipalName`, `dNSHostName`
+   (`rename_logon`); `servicePrincipalName` (`set_spn`); `displayName`, `givenName`, `sn`,
+   `description`, `department` (labels with no sign-in meaning, unguarded). Reversing the decision
+   needs a review that edits this paragraph, the block and connector-contract 8.10.4 together.
+
    **Considered, not guarded (and why).** `scriptPath`, `profilePath`, `homeDirectory`: they run
    code or mount a share at the account's own sign-in; they do not let the actor sign in as it
    (code execution as the user is a different threat, TM-D18 neighbour; left to the OU/GPO
-   guards). `msDS-AdditionalDnsHostName`: no known sign-in effect `[UNVERIFIED]`. `mail`,
+   guards). `mail`,
    `otherMails`, `mobilePhone` in Entra can feed self-service password reset contact data
    `[UNVERIFIED — lab G17, Entra tenant with SSPR]`; until G17 reports, they are written only
    through the same Entra constructor path and are guarded as `reset_password` (conservative).
@@ -2118,7 +2145,7 @@ map_credential: msDS-KeyCredentialLink, altSecurityIdentities, entra:authorizati
 set_spn: servicePrincipalName
 signin_flags: uac.set(PASSWD_NOTREQD 0x0020, ENCRYPTED_TEXT_PWD_ALLOWED 0x0080, DONT_EXPIRE_PASSWORD 0x10000, USE_DES_KEY_ONLY 0x200000, DONT_REQ_PREAUTH 0x400000), uac.clear(SMARTCARD_REQUIRED 0x40000, NOT_DELEGATED 0x100000), msDS-SupportedEncryptionTypes
 signin_limits: accountExpires>now, logonHours (not provably a subset), userWorkstations (widened or cleared)
-denied: msDS-AllowedToActOnBehalfOfOtherIdentity, msDS-AllowedToDelegateTo, uac.set(TRUSTED_FOR_DELEGATION 0x80000, TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000), sIDHistory, primaryGroupID, entra:authenticationMethods, entra:temporaryAccessPass
+denied: msDS-AllowedToActOnBehalfOfOtherIdentity, msDS-AllowedToDelegateTo, uac.set(TRUSTED_FOR_DELEGATION 0x80000, TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000), sIDHistory, primaryGroupID, msDS-AdditionalDnsHostName, msDS-AdditionalSamAccountName, entra:authenticationMethods, entra:temporaryAccessPass
 ```
 
 Hex values are `[UNVERIFIED]` against MS-ADTS until lab G17 reads each bit on Samba and
@@ -3501,9 +3528,13 @@ External, in order of first use:
 92. https://learn.microsoft.com/en-gb/windows/win32/ad/security-properties (T-0388; `logonHours`, `userWorkstations`)
 93. https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0 (T-0388; not re-read, `[UNVERIFIED]`)
 94. https://thehacker.recipes/ad/movement/kerberos/asreproast (T-0388; not re-read, `[UNVERIFIED]`)
+95. https://learn.microsoft.com/en-us/windows/win32/adschema/a-msds-additionaldnshostname (T-1646; System-Only True, set by the system)
+96. https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/28ca4eca-0e0b-4666-9175-a37ccb8edada (T-1646; SPN hostname rule)
+97. https://learn.microsoft.com/en-us/windows/win32/adschema/validated-writes (T-1646)
 
 ## Changelog
 
+- 2026-11-12 · T-1646. `msDS-AdditionalDnsHostName` and `msDS-AdditionalSamAccountName` are `denied` in §6.9 rule 5 and the `guarded-v1` block (not `rename_logon`), with sources 95 to 97; connector-contract 8.10.4 gains both names in the same change. Reviewed name attributes listed in rule 5.
 - 2026-11-07 · T-1643. New basis C20 (connector's own identity and registered service identities, refused for every write kind), §6.5 step 6 (V7e: the identity must not control itself), DECISION TM-D34 in [connector-own-identity-tm-d34.md](connector-own-identity-tm-d34.md), threats TM-D34-T1..T10. Contract §8.1, §8.10.3, CC-WK-27/28/36-40.
 
 - 2026-11-05 · T-1621 (review of T-1581 write kinds). §7.4 gains the directory password reset row (`USER_PASSWORD_RESET`, TM-D28 `reset_password`), which is the source for `StepUp = true`. `OBJECT_CREATE` of a USER with a password stays outside §7.4 (TM-D28 rule 3). Rulings on delete, restore, `SecretValue` and unlock are in [connector-contract.md](connector-contract.md) §8.10.9.

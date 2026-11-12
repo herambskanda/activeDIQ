@@ -1800,7 +1800,7 @@ Denied in v1.4 and v1.5:
 (rename), `isDeleted`, `isCriticalSystemObject`, `groupType` (create only), `sAMAccountType`,
 `primaryGroupID`, `member`, `memberOf` (membership kinds, a later spec), `msDS-KeyCredentialLink`,
 `altSecurityIdentities`, `servicePrincipalName`, `msDS-AllowedToDelegateTo`,
-`msDS-AllowedToActOnBehalfOfOtherIdentity`, `msDS-SupportedEncryptionTypes`, `accountExpires`,
+`msDS-AllowedToActOnBehalfOfOtherIdentity`, `msDS-AdditionalDnsHostName` and `msDS-AdditionalSamAccountName` (T-1646, TM-D28 `denied`: System-Only, set by rename, and they widen the SPN hostname rule; threat-model §6.9 rule 5), `msDS-SupportedEncryptionTypes`, `accountExpires`,
 `logonHours`, `userWorkstations`, `gPLink`, `gPOptions`, `userParameters` (v1.5,
 1.2.840.113556.1.4.138: read-only by design, §5.9 T2; no kind will ever return it, a writer needs its
 own spec). Every constructed attribute of the schema snapshot is refused as well, at step 3. The
