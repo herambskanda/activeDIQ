@@ -31,10 +31,10 @@ const (
 	AttrRDN         = "rdn"
 )
 
-// ObjectDirectory is what the object kinds need from the directory. Every method acts on the one DC
+// StructureDirectory is what the object kinds need from the directory. Every method acts on the one DC
 // the provider's session is bound to (rule 5); Move, Rename and Restore re-check under the session
 // lock and send exactly one write.
-type ObjectDirectory interface {
+type StructureDirectory interface {
 	// State reads one live object by GUID; a deleted object is not visible to it.
 	State(ctx context.Context, id guid.GUID) (ad.ObjectState, error)
 	// DeletedState is the deleted-state read of kind 6 Plan and Apply (fixed shape, TM-D33 rule 3):
@@ -59,10 +59,10 @@ type ObjectDirectory interface {
 // ObjectProvider is a Provider that can reach the directory to write objects. The Entra provider
 // and a test double without one answer CAPABILITY_UNSUPPORTED.
 type ObjectProvider interface {
-	Objects() ObjectDirectory
+	Objects() StructureDirectory
 }
 
-// SessionObjects is ObjectDirectory over an *ad.Session; the LDAP writes are the ops package's.
+// SessionObjects is StructureDirectory over an *ad.Session; the LDAP writes are the ops package's.
 type SessionObjects struct{ S *ad.Session }
 
 func (o SessionObjects) State(ctx context.Context, id guid.GUID) (ad.ObjectState, error) {
@@ -133,7 +133,7 @@ func (o SessionObjects) RecycleBin(ctx context.Context) (bool, error) {
 }
 
 // Objects implements ObjectProvider when the directory and the bound DC are one session.
-func (p *ADProvider) Objects() ObjectDirectory {
+func (p *ADProvider) Objects() StructureDirectory {
 	var s *ad.Session
 	switch d := p.Dir.(type) {
 	case tier0.SessionDirectory:
@@ -195,11 +195,11 @@ func adRefusal(err error) error {
 	return newRefusal(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "5", "directory failure")
 }
 
-func (a Authorised) objects() (ObjectDirectory, error) {
-	if a.p == nil || a.p.dir == nil {
+func (a Authorised) objects() (StructureDirectory, error) {
+	if a.p == nil || a.p.objs == nil {
 		return nil, unsupported()
 	}
-	return a.p.dir, nil
+	return a.p.objs, nil
 }
 
 // ---- change extraction (the typed change, never a list the server sent) ----
@@ -247,7 +247,7 @@ func moveOp() WriteOp {
 			}
 			return []guid.GUID{np}, nil
 		},
-		TouchedLive: func(ctx context.Context, d ObjectDirectory, target guid.GUID, _ *connectorv1.WriteChange) ([]guid.GUID, error) {
+		TouchedLive: func(ctx context.Context, d StructureDirectory, target guid.GUID, _ *connectorv1.WriteChange) ([]guid.GUID, error) {
 			st, err := d.State(ctx, target)
 			if err != nil {
 				return nil, err
@@ -385,7 +385,7 @@ func precondition(st ad.ObjectState, digest []byte) *connectorv1.TargetPrecondit
 }
 
 // liveTarget reads and class-checks the target.
-func liveTarget(ctx context.Context, d ObjectDirectory, id guid.GUID) (ad.ObjectState, error) {
+func liveTarget(ctx context.Context, d StructureDirectory, id guid.GUID) (ad.ObjectState, error) {
 	st, err := d.State(ctx, id)
 	if err != nil {
 		return st, adRefusal(err)
@@ -524,7 +524,7 @@ func applyRename(ctx context.Context, a Authorised, req *connectorv1.ApplyReques
 
 // restoreState reads the object with the show-deleted control and decides what it is: a deleted
 // object to restore, or one that is already live at the planned parent and RDN.
-func restoreState(ctx context.Context, d ObjectDirectory, id, np guid.GUID, rdn string) (st ad.ObjectState, already bool, err error) {
+func restoreState(ctx context.Context, d StructureDirectory, id, np guid.GUID, rdn string) (st ad.ObjectState, already bool, err error) {
 	st, err = d.DeletedState(ctx, id)
 	if err != nil {
 		return st, false, adRefusal(err)

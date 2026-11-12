@@ -21,8 +21,8 @@ type pass struct {
 	// props are the attribute keys the kind's PropertyWrite declared at step 4 (the ones the §8.9 guard
 	// and the step-7 Tier-0 checks were run for). Only the DACL kind declares nTSecurityDescriptor.
 	props []string
-	// dir is the directory the object kinds act on; nil when the provider has none.
-	dir ObjectDirectory
+	// objs is the directory the object move, rename and restore kinds act on; nil when the provider has none.
+	objs StructureDirectory
 	// regrants are the group memberships a restore re-grants (step 7 of kind 6), for Plan to list.
 	regrants []Regrant
 }
@@ -79,7 +79,7 @@ type WriteOp struct {
 	AlsoDevice bool
 	// TouchedLive adds the objects only a live read can name (the old parent of a move). It runs at
 	// step 5, after Touched, against the provider's directory; an error refuses as TouchedSet.
-	TouchedLive func(ctx context.Context, d ObjectDirectory, target guid.GUID, change *connectorv1.WriteChange) ([]guid.GUID, error)
+	TouchedLive func(ctx context.Context, d StructureDirectory, target guid.GUID, change *connectorv1.WriteChange) ([]guid.GUID, error)
 	// DeletedTarget marks a kind whose target is a deleted object: step 7 classifies it with the
 	// provider's DeletedClassifier instead of the live classifier.
 	DeletedTarget bool

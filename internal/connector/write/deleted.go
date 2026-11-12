@@ -64,7 +64,7 @@ func (p *ADProvider) ClassifyDeleted(ctx context.Context, id, newParent guid.GUI
 }
 
 // classifyDeleted is ClassifyDeleted over a given object directory.
-func (p *ADProvider) classifyDeleted(ctx context.Context, objs ObjectDirectory, id, newParent guid.GUID, designated []guid.GUID) (Verdict, error) {
+func (p *ADProvider) classifyDeleted(ctx context.Context, objs StructureDirectory, id, newParent guid.GUID, designated []guid.GUID) (Verdict, error) {
 	unknown := Verdict{Tier0: true}
 	on, err := objs.RecycleBin(ctx)
 	if err != nil {
@@ -176,7 +176,7 @@ func (p *ADProvider) principal(ctx context.Context) (sd.Principal, error) {
 // owner and DACL of CN=Deleted Objects (TM-D33 rule 4). Never decided by trying the target read.
 // Not proven, or an unreadable descriptor, is a DeletedRightsError; only a lost DC or a cancelled
 // context is a plain error.
-func (p *ADProvider) proveListContents(ctx context.Context, objs ObjectDirectory, domain dn.DN) (sd.Principal, dn.DN, error) {
+func (p *ADProvider) proveListContents(ctx context.Context, objs StructureDirectory, domain dn.DN) (sd.Principal, dn.DN, error) {
 	denied := &DeletedRightsError{Domain: domain.String()}
 	pr, err := p.principal(ctx)
 	if err != nil {
@@ -209,7 +209,7 @@ func isTransportErr(ctx context.Context, err error) bool {
 
 // classifyDeletedEntry decides over the retained attributes of one deleted object read; split out
 // so the fail-closed branches are testable without a Recycle Bin.
-func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs ObjectDirectory, id guid.GUID, e *ad.Entry, designated []guid.GUID, pr sd.Principal) (Verdict, error) {
+func (p *ADProvider) classifyDeletedEntry(ctx context.Context, objs StructureDirectory, id guid.GUID, e *ad.Entry, designated []guid.GUID, pr sd.Principal) (Verdict, error) {
 	unknown := Verdict{Tier0: true}
 	var regrants []Regrant
 	for _, g := range designated {
@@ -554,7 +554,7 @@ func (p *ADProvider) tier0Set(ctx context.Context, designated []guid.GUID) (*tie
 // ranged retrieval; a value whose extended-DN GUID is the target makes it tier0 (basis C2), whatever
 // memberOf said. A failed or partial read is an error (tier0). Deleted member values are the point
 // here, so the "drop values under CN=Deleted Objects" rule of ordinary member reads does not apply.
-func (p *ADProvider) memberCrossCheck(ctx context.Context, objs ObjectDirectory, id guid.GUID, designated []guid.GUID) (bool, error) {
+func (p *ADProvider) memberCrossCheck(ctx context.Context, objs StructureDirectory, id guid.GUID, designated []guid.GUID) (bool, error) {
 	set, err := p.tier0Set(ctx, designated)
 	if err != nil {
 		return false, err

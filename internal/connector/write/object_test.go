@@ -14,7 +14,7 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
-// fakeObjects is an in-memory ObjectDirectory: parents and RDN values of live objects.
+// fakeObjects is an in-memory StructureDirectory: parents and RDN values of live objects.
 type fakeObjects struct {
 	parent   map[guidT]guidT
 	rdn      map[guidT]string
@@ -112,19 +112,19 @@ func (f *fakeObjects) Restore(_ context.Context, r ad.RestoreRequest) error {
 
 type objProv struct {
 	*fakeProv
-	dir ObjectDirectory
+	dir StructureDirectory
 	cd  func() (Verdict, error) // ClassifyDeleted's answer; nil is a clean verdict
 }
 
 // objProvPlain has an object directory but no DeletedClassifier.
 type objProvPlain struct {
 	*fakeProv
-	dir ObjectDirectory
+	dir StructureDirectory
 }
 
-func (p objProvPlain) Objects() ObjectDirectory { return p.dir }
+func (p objProvPlain) Objects() StructureDirectory { return p.dir }
 
-func (p objProv) Objects() ObjectDirectory { return p.dir }
+func (p objProv) Objects() StructureDirectory { return p.dir }
 func (p objProv) ClassifyDeleted(context.Context, guidT, guidT, []guidT) (Verdict, error) {
 	if p.cd != nil {
 		return p.cd()

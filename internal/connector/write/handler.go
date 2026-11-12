@@ -362,7 +362,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	if bound != nil {
 		boundDSA, _ = fromWire(bound.GetDsaGuid()) // verified equal to the pin at step 2b
 	}
-	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: h.objects(), regrants: regrants}}}, nil
+	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, objs: h.objects(), regrants: regrants}}}, nil
 }
 
 // Refusal reasons recorded for a property-write refusal that is not a rule verdict.
@@ -581,7 +581,7 @@ func (h *Handler) checkRequest(c *call, idx map[string]*stmt, id guid.GUID, isAD
 }
 
 // objects is the provider's object directory, nil when it has none.
-func (h *Handler) objects() ObjectDirectory {
+func (h *Handler) objects() StructureDirectory {
 	if p, ok := h.prov.(ObjectProvider); ok {
 		return p.Objects()
 	}
