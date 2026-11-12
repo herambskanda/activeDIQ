@@ -25,6 +25,8 @@ authn_totp_failures	authn	system
 authn_webauthn_challenges	authn	system
 authn_webauthn_credentials	authn	config
 authz_assignment_roots	authz	config
+authz_assignment_sites	authz	config
+authz_assignment_templates	authz	config
 authz_assignments	authz	config
 authz_role_permissions	authz	config
 authz_roles	authz	config
