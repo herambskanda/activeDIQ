@@ -99,7 +99,7 @@ func TestSeedCreatesReadOnlyTenantOwnerRole(t *testing.T) {
 				return err
 			}
 			return tx.QueryRow(ctx, `SELECT count(*) FROM public.authz_role_permissions p JOIN public.authz_roles r ON r.tenant_id = p.tenant_id AND r.id = p.role_id WHERE r.role_name = 'tenant-owner'`).Scan(&perms)
-		}); err != nil || !builtIn || perms != 1 {
+		}); err != nil || !builtIn || perms != ownerPermCount() {
 			t.Fatalf("role: builtIn=%v perms=%d err=%v", builtIn, perms, err)
 		}
 		// Read-only: no rename, no new permission, and the name is reserved.
@@ -313,4 +313,15 @@ func TestGrantedOwnerHoldsTheTenantRoot(t *testing.T) {
 			t.Fatalf("root %q %q: %v", kind, guid, err)
 		}
 	})
+}
+
+// ownerPermCount is the number of permissions the catalogue gives the tenant-owner role; the seed must
+// write exactly those (the database guard allow-lists the same set, migrations 0043 and 0072).
+func ownerPermCount() int {
+	for _, r := range BuiltInRoles() {
+		if r.Name == TenantOwnerRole {
+			return len(r.Permissions)
+		}
+	}
+	return -1
 }

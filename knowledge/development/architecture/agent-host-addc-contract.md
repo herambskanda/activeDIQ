@@ -89,7 +89,7 @@ R-tests run in `fitness-agent-host` (CI, `tools/fitness/agenthost`, T-0554: R1/R
 
 ## 7. Open items
 
-- The server side is named: module `agentfleet` ([page](modules/agentfleet.md), T-0556). The signer, keyset rotation job and event ingest are built; the `activediq.addc.v1` RPC handlers wait for the proto (T-0600), the composition for the tenant DEK source (T-0598), the operator Actions for T-0599 and the dc_guid cross-check data for T-0601.
+- The server side is named: module `agentfleet` ([page](modules/agentfleet.md), T-0556). The signer, keyset rotation job, event ingest and the operator Actions (policy edit, key rotation; T-0599) are built; the `activediq.addc.v1` RPC handlers wait for the proto (T-0600), the composition for the tenant DEK source (T-0598) and the dc_guid cross-check data for T-0601.
 - The lab confirmations in ADR-0006 "Verification owed" gate `accepted`, not `ratified`; all items are now recorded ([T-0557 note](../domain/dc-agent-channel-acl-gpo-and-bounds.md)).
 - Password-filter IPC content (C15) belongs to T-0145; this file fixes only what the agent surface must never carry.
 - Resource figures in §5: CPU, memory and below-normal CPU priority confirmed (T-0557); low I/O priority is specified, not implemented (T-1756); live-load collection and logon latency under collection remain `[UNVERIFIED]` (bug T-1752).

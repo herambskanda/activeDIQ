@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/modules/agentfleet"
 	"github.com/skenzeriq/activediq/internal/modules/compliance"
 	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/modules/delegation"
@@ -44,6 +45,9 @@ var stepUpTable = map[operation.ActionID]string{
 	delegation.RoleUpdateID: "RBAC change: editing a custom role's permissions",
 	delegation.GrantID:      "RBAC change: granting an assignment",
 	delegation.RevokeID:     "RBAC change: revoking an assignment",
+	// Host-agent policy (T-0599, ADR-0007): the policy every DC agent enforces and the key that signs it.
+	agentfleet.PolicyEditActionID: "Editing the addc password and event policy every DC agent enforces",
+	agentfleet.KeyRotateActionID:  "Rotating the agent policy signing key (suspected exposure)",
 }
 
 func catalogue(t *testing.T) []operation.Descriptor {
