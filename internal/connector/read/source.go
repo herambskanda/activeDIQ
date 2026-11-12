@@ -53,7 +53,7 @@ func (a *ADSource) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error)
 }
 
 func (a *ADSource) Read(ctx context.Context, id guid.GUID, attrs []string, maxValues int) (*ad.Entry, error) {
-	return a.sess.Read(ctx, dn.GUIDRef(id), attrs, ad.ReadOptions{MaxValues: maxValues})
+	return a.sess.Read(ctx, dn.GUIDRef(id), attrs, ad.ReadOptions{MaxValues: maxValues, ExtendedDN: true})
 }
 
 // Parent returns the parent's objectGUID. ok is false only for a naming-context head, which the
@@ -110,6 +110,7 @@ func (a *ADSource) ScopedSearch(ctx context.Context, req ad.ScopedRequest, fn fu
 	if !a.ok() {
 		return ad.ScopedResult{}, write.ErrNoBoundDC
 	}
+	req.ExtendedDN = true // DN-valued attributes carry the target's GUID and SID (T-1202)
 	return a.sess.ScopedSearch(ctx, req, fn)
 }
 

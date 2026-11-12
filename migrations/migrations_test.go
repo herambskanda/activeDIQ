@@ -43,14 +43,16 @@ func TestSequenceStartsAtTenantsAndIsNamedByOwner(t *testing.T) {
 // key is the top-level package that owns it (modules/agentfleet.md §Owned tables; invhost for DM-27).
 func TestOwnerKeyMatchesTableOwner(t *testing.T) {
 	want := map[string]string{ // table -> owner key
-		"agent_policy_key":    "agentpolicy",
-		"agent_policy_keyset": "agentpolicy",
-		"agent_policy_head":   "agentpolicy",
-		"agent_event":         "agentingest",
-		"inventory_servers":   "invhost",
-		"report_runs":         "reports",
-		"report_run_rows":     "reports",
-		"report_exports":      "reports",
+		"agent_policy_key":       "agentpolicy",
+		"agent_policy_keyset":    "agentpolicy",
+		"agent_policy_head":      "agentpolicy",
+		"agent_event":            "agentingest",
+		"inventory_servers":      "invhost",
+		"report_runs":            "reports",
+		"report_run_rows":        "reports",
+		"report_exports":         "reports",
+		"objects_templates":      "objects",
+		"objects_naming_formats": "objects",
 	}
 	ents, err := migrations.FS.ReadDir(".")
 	if err != nil {

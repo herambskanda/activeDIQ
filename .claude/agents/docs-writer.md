@@ -2,7 +2,7 @@
 name: docs-writer
 description: "Use for customer-facing product documentation — user and admin guides, installation and upgrade guides, API reference and PowerShell help, product SOPs and runbooks, release notes — with screenshots taken from the running product. Owns that every documented procedure works exactly as written. Not for partner proposals, SOWs, SLAs or service/support SOPs (use service-manager), specs and PRDs (use product-manager), or internal architecture docs and ADRs (use solution-architect)."
 model: sonnet
-effort: high
+effort: medium
 skills:
   - factory-protocol
   - handoff
