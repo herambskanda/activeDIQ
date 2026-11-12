@@ -179,6 +179,7 @@ func (c *Client) Facts(ctx context.Context, pins authority.Pins, q authority.Fac
 // facts the Step names, runs the Step's authorisation re-check, and sends only with the Clearance
 // that issues.
 func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, error) {
+	defer op.SecretInput.Destroy() // on every exit, a refused op included
 	if err := s.Valid(); err != nil {
 		return Result{}, err
 	}
@@ -186,7 +187,6 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	if err != nil {
 		return Result{}, err
 	}
-	defer op.SecretInput.Destroy()
 	if step.Compute(op.DigestKind, op.Target, op.Attrs) != s.Digest() || op.Target.NC != s.NC() {
 		return Result{}, ErrDigest
 	}

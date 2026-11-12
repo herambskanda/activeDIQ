@@ -629,3 +629,31 @@ func TestWriteWipesTheWireSecretCopy(t *testing.T) {
 		}
 	}
 }
+
+// The caller's secret is destroyed when the op is refused before anything is sent, not only after a send.
+func TestWriteDestroysTheSecretWhenTheOpIsRefused(t *testing.T) {
+	sec := secret.FromBytes([]byte("Passw0rd!"))
+	var backing []byte
+	sec.Expose(func(b []byte) { backing = b }) // the live buffer, to see it zeroed
+	if len(backing) == 0 {
+		t.Fatal("no backing buffer")
+	}
+	tr := &transport{}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	withStepOf(t, testTarget, authority.Pins{ncGUID: "dc1.corp.example"}, func(ctx context.Context, s step.Step) {
+		// An update that carries a secret it must not: derive() refuses it before any send.
+		op := goodOp()
+		op.SecretInput = sec
+		if _, err := c.Write(ctx, s, op); err == nil {
+			t.Fatal("an update carrying a secret was accepted")
+		}
+	})
+	for i, b := range backing {
+		if b != 0 {
+			t.Fatalf("secret byte %d survived a refused Write", i)
+		}
+	}
+	if tr.plans != 0 || tr.applies != 0 {
+		t.Errorf("transport reached: plans=%d applies=%d", tr.plans, tr.applies)
+	}
+}
