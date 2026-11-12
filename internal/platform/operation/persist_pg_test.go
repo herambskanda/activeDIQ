@@ -788,6 +788,46 @@ func TestReconcileLapsedClaim(t *testing.T) {
 	}
 }
 
+// A step left applying with no stored credential_id (deployed before migration 0072) whose credential can
+// no longer be resolved: a write that landed is recorded as applied, not as "never written" (T-1629).
+func TestReconcileUnresolvedCredentialObservesBeforeRecording(t *testing.T) {
+	cases := []struct {
+		name, dirValue, wantPrefix string
+		wantApply                  int
+	}{
+		{"write landed", "new", "verified||", 0},
+		{"write did not land", "old", "failed|credential_unresolved|", 0},
+	}
+	for _, tc := range cases {
+		storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+			t.Run(tc.name, func(t *testing.T) {
+				cc := &credCtl{err: errors.New("gone")}
+				p := newPRig(t, s, rigOpt{cred: cc})
+				p.dir.set("g1", "old")
+				sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g1", Want: "new"}))
+				if err != nil {
+					t.Fatal(err)
+				}
+				p.claimOnly(sub.Operation) // applying, credential_id still ''
+				p.dir.set("g1", tc.dirValue)
+				p.lapse(sub.Operation)
+				if n, err := p.r.Reconcile(context.Background(), p.tn, p.r.txFor(p.tn), 10); err != nil || n != 1 {
+					t.Fatalf("reconcile = %d %v", n, err)
+				}
+				if got := p.stepRow(sub.Operation, 0); !strings.HasPrefix(got, tc.wantPrefix) {
+					t.Fatalf("step = %s, want prefix %s", got, tc.wantPrefix)
+				}
+				if p.dir.applies["g1"] != tc.wantApply {
+					t.Fatalf("applies = %d", p.dir.applies["g1"])
+				}
+				if d := detailsOf(p.lastStepEvent(sub.Operation)); d["dc"] != "" || d["credential_id"] != "" {
+					t.Fatalf("an event without a resolved credential names dc/credential_id: %v", d)
+				}
+			})
+		})
+	}
+}
+
 func TestSupersededAttemptChangesNothing(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		p := newPRig(t, s, rigOpt{})

@@ -89,11 +89,14 @@ ORDER BY claimed_until LIMIT $2 FOR UPDATE SKIP LOCKED`, t.String(), limit)
 }
 
 func (r *Runner) reconcileOne(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
-	// An empty stored credential_id means this step never reached its write (the id is stored before
-	// it). Name it now; if that fails the step is recorded as not written, so the pass cannot loop.
+	// A step whose credential_id is stored has not been named yet if it is empty: either it never reached
+	// its write, or it was left applying before the id was stored (a deployment of migration 0072). The
+	// two cannot be told apart, so when the credential cannot be resolved the target is observed first
+	// and a write that landed is recorded as applied, without dc or credential_id on its event.
+	unresolved := false
 	switch ok, err := r.ensureCredential(ctx, t, tx, c); {
 	case errors.Is(err, errCredentialUnresolved):
-		return r.noCredential(ctx, t, tx, c)
+		unresolved = true
 	case err != nil:
 		return err
 	case !ok:
@@ -105,7 +108,10 @@ func (r *Runner) reconcileOne(ctx context.Context, t tenant.ID, tx txFunc, c *cl
 	}
 	switch {
 	case obs == ObservedAfter:
+		c.unresolved = unresolved
 		return r.verifyAndRecord(ctx, t, tx, c, Outcome{AlreadyApplied: true}, true)
+	case unresolved:
+		return r.noCredential(ctx, t, tx, c) // not written: nothing to re-apply without a credential
 	case c.cred:
 		return r.record(ctx, t, tx, c, recordSpec{failed: "outcome_unknown"})
 	case obs == ObservedBefore && c.op.State == OpCancelling:

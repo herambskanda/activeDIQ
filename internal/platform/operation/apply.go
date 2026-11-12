@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"math/rand/v2"
 	"slices"
@@ -392,6 +393,7 @@ func (r *Runner) ensureCredential(ctx context.Context, t tenant.ID, tx txFunc, c
 		err = errors.New("connection has no credential")
 	}
 	if err != nil {
+		r.logCredentialUnresolved(ctx, c, err)
 		return true, fmt.Errorf("%w: %w", errCredentialUnresolved, err)
 	}
 	var stored string
@@ -413,6 +415,17 @@ RETURNING credential_id`, t.String(), string(c.key.Operation), c.key.Item, c.key
 	}
 	c.credentialID = stored
 	return true, nil
+}
+
+// logCredentialUnresolved tells operations why a step could not name its credential: the error class and
+// the step key, never the credential or the error's text (a store error can carry values).
+func (r *Runner) logCredentialUnresolved(ctx context.Context, c *claimed, err error) {
+	class := "lookup_failed"
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		class = "lookup_cancelled"
+	}
+	slog.WarnContext(ctx, "operation: step credential unresolved",
+		"operation", string(c.key.Operation), "item", c.key.Item, "step", c.key.Step, "class", class)
 }
 
 var errCredentialUnresolved = errors.New("operation: the connection's credential could not be resolved")
