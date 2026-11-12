@@ -16,6 +16,7 @@ import (
 // operations they mount on the API. They are named by the owners' own constants, so a rename there
 // changes the catalogue and a contract still carrying the old name fails Build.
 var moduleOperationPermissions = []string{
+	string(connections.ReadPermission),
 	string(connections.TakeoverAttestPermission),
 	string(directory.ReadPermission),
 	string(reports.DeliverExternalPermission),
