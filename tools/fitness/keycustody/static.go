@@ -159,29 +159,59 @@ var (
 	secretFlagRE = regexp.MustCompile(`(?i)(passphrase|kek)`)
 	secretColRE  = regexp.MustCompile(`(?im)^\s*(passphrase|kek_value|kek_secret|raw_kek|kek_bytes|kek_passphrase)\s+(text|bytea|varchar|character)`)
 	// providerSet finds an assignment of the provider setting: NAME=v, NAME: v, "NAME": "v", ENV NAME v. The
-	// capture is everything after the separator; providerDefault judges it.
-	providerSet = regexp.MustCompile(kekPrefix + `PROVIDER["']?\s*[=:]\s*(.*)$`)
+	// match is the name and separator; the value runs to the next assignment on the line (or the end of it),
+	// and providerDefault judges every such segment: a compliant first assignment must not hide a later default.
+	providerSet = regexp.MustCompile(kekPrefix + `PROVIDER["']?\s*[=:]\s*`)
 	providerEnv = regexp.MustCompile(`^\s*(?i:ENV)\s+` + kekPrefix + `PROVIDER\s+(\S.*)$`)
 	// requiredForm is the only expansion that is not a default: ${VAR:?msg} / ${VAR?msg} fail when VAR is
 	// unset, so the operator has to choose.
 	requiredForm = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*:?\?[^}]*\}`)
 	valueToken   = regexp.MustCompile(`^[^\s;&|#,}\]\\]+`)
+	// providerRead is a read of the provider variable itself, `${ACTIVEDIQ_KEK_PROVIDER<op><body>}`, as in a
+	// launcher guard `: "${ACTIVEDIQ_KEK_PROVIDER:?must choose}"`. It is not an assignment: the ?-forms and an
+	// empty `${NAME:-}` (a test for "unset") are the operator-must-choose shapes; `${NAME:-x}`, `${NAME:=x}`
+	// and `${NAME-x}` hand the model a default, so a non-empty body is a violation.
+	providerRead = regexp.MustCompile(`\$\{` + kekPrefix + `PROVIDER(:?[-=+?])([^}]*)\}`)
 )
 
 // providerDefault is true when the line gives ACTIVEDIQ_KEK_PROVIDER a value other than "operator must
 // supply it". Empty (`NAME=`, `NAME:`), a YAML comment and the required-without-default expansion pass;
 // everything else is a shipped default, whether literal, a $VAR / ${VAR} reference, a ${VAR:-x} /
 // ${VAR-x} / ${VAR:=x} / ${VAR:+x} expansion, or command substitution: a variable defined by an ARG, a
-// shell assignment or the host environment is how a default hides one hop away (T-1650).
+// shell assignment or the host environment is how a default hides one hop away (T-1650). A read of the
+// provider variable (providerRead) is judged on its own: ${NAME:?msg} / ${NAME?msg} and an empty ${NAME:-}
+// guard pass, ${NAME:-x} / ${NAME:=x} / ${NAME-x} fail.
 func providerDefault(line string) bool {
-	var rest string
-	if m := providerSet.FindStringSubmatch(line); m != nil {
-		rest = m[1]
+	for _, m := range providerRead.FindAllStringSubmatch(line, -1) {
+		if !strings.HasSuffix(m[1], "?") && m[2] != "" {
+			return true
+		}
+	}
+	line = providerRead.ReplaceAllString(line, "")
+	var segs []string
+	if locs := providerSet.FindAllStringIndex(line, -1); len(locs) > 0 {
+		for i, l := range locs {
+			end := len(line)
+			if i+1 < len(locs) {
+				end = locs[i+1][0]
+			}
+			segs = append(segs, line[l[1]:end])
+		}
 	} else if m := providerEnv.FindStringSubmatch(line); m != nil {
-		rest = m[1]
+		segs = append(segs, m[1])
 	} else {
 		return false
 	}
+	for _, rest := range segs {
+		if providerValueDefault(rest) {
+			return true
+		}
+	}
+	return false
+}
+
+// providerValueDefault judges the text that follows one assignment of the provider setting.
+func providerValueDefault(rest string) bool {
 	rest = requiredForm.ReplaceAllString(rest, "")
 	rest = strings.TrimLeft(rest, " \t\"'")
 	rest = strings.ReplaceAll(rest, `"`, "")

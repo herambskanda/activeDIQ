@@ -1714,6 +1714,12 @@ fresh_kc; mkdir -p "$kct/packaging"; printf 'p=passphrase; export ACTIVEDIQ_KEK_
 must_fail_with "fitness-keys FF-KEY-3 on a shell-variable ACTIVEDIQ_KEK_PROVIDER (T-1650)" 'packaging/run.sh:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
 fresh_kc; mkdir -p "$kct/packaging"; printf 'environment:\n  ACTIVEDIQ_KEK_PROVIDER: ${KP:?must choose}\n' >"$kct/packaging/compose.yaml"
 must_pass "fitness-keys accepts a required-without-default ACTIVEDIQ_KEK_PROVIDER" "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf ': "${ACTIVEDIQ_KEK_PROVIDER:?must choose}"\n' >"$kct/packaging/run.sh"
+must_pass "fitness-keys accepts a shell guard requiring ACTIVEDIQ_KEK_PROVIDER (T-1650)" "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf 'export ACTIVEDIQ_KEK_PROVIDER="${ACTIVEDIQ_KEK_PROVIDER:-passphrase}"\n' >"$kct/packaging/run.sh"
+must_fail_with "fitness-keys FF-KEY-3 on a shell self-reference default (T-1650)" 'packaging/run.sh:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging"; printf 'ACTIVEDIQ_KEK_PROVIDER=${KP:?x}; ACTIVEDIQ_KEK_PROVIDER=passphrase\n' >"$kct/packaging/run.sh"
+must_fail_with "fitness-keys FF-KEY-3 on a default assigned after a compliant assignment on the same line (T-1650)" 'packaging/run.sh:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
 fresh_kc; mkdir -p "$kct/packaging/windows/msi"; printf '<Wix><Component>\n  <Environment Id="e" Name="ACTIVEDIQ_KEK_PROVIDER" Value="passphrase" Action="set" />\n</Component></Wix>\n' >"$kct/packaging/windows/msi/Server.wxs"
 must_fail_with "fitness-keys FF-KEY-3 on a WiX <Environment Name=.. Value=..> ACTIVEDIQ_KEK_PROVIDER (T-1764)" 'packaging/windows/msi/Server.wxs:2 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
 fresh_kc; mkdir -p "$kct/packaging/windows"; printf '[Environment]::SetEnvironmentVariable("ACTIVEDIQ_KEK_PROVIDER", "passphrase", "Machine")\n' >"$kct/packaging/windows/Set-Env.ps1"

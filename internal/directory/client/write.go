@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/skenzeriq/activediq/internal/directory/accountkind"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -27,6 +28,10 @@ var (
 	ErrDCMismatch     = errors.New("client: plan precondition names a DC other than the pinned one; apply refused")
 	ErrNoDSAPin       = errors.New("client: step pins no DSA GUID for the naming context; write refused")
 	ErrTransport      = errors.New("client: connector call failed")
+	ErrKindAttrs      = errors.New("client: operation attributes are not the kind's; write refused")
+	ErrKindClass      = errors.New("client: target class is not one the kind allows; write refused")
+	ErrNoSecret       = errors.New("client: the step carries no secret input for this kind; write refused")
+	ErrNotCanonical   = errors.New("client: target or naming context is not canonical lower-case UUID text; write refused")
 )
 
 // WriteOp is one planned directory write, as the Action's Apply hands it over. The Step authorises
@@ -47,11 +52,33 @@ type WriteOp struct {
 // until one does, every write is refused as an unknown kind.
 var kindTable = map[string]connectorv1.WriteKind{}
 
+// kindClass is the TM-D28 class of each registered kind ("none" for a tightening, contract §8.10.1).
+// A kind in kindTable without a class here is refused at init (TM §6.9 rule 4).
+var kindClass = map[string]string{
+	accountkind.KeyResetPassword: "reset_password",
+	accountkind.KeyUnlock:        "unlock",
+	accountkind.KeyEnable:        "enable",
+	accountkind.KeyDisable:       "none",
+}
+
+func init() {
+	for _, sp := range accountkind.Specs() {
+		if _, ok := kindClass[sp.Key]; !ok {
+			panic("client: kind registered without a TM-D28 class: " + sp.Key)
+		}
+		kindTable[sp.Key] = sp.Kind
+	}
+}
+
 // wire is the request material derived from a validated WriteOp.
 type wire struct {
 	conn   *connectorv1.ConnectionRef
 	target *connectorv1.WriteTarget
 	kind   connectorv1.WriteKind
+	// change is the typed change derived from the digested Attrs; nil for a kind with no arm yet.
+	change *connectorv1.WriteChange
+	// secret is set for a kind whose Apply carries secret_input (reset password).
+	secret bool
 }
 
 // Result is what a completed Write returns.
@@ -142,6 +169,9 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	if step.Compute(op.DigestKind, op.Target, op.Attrs) != s.Digest() || op.Target.NC != s.NC() {
 		return Result{}, ErrDigest
 	}
+	if err := op.deriveChange(&w); err != nil {
+		return Result{}, err
+	}
 	// The NC comes from the Step, not the caller. Every write needs one until an Entra kind declares
 	// itself (no such kind exists); an empty NC never falls back to an unpinned write.
 	nc := s.NC()
@@ -200,7 +230,7 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 		return Result{}, err
 	}
 	plan, err := c.sendPlan(ctx, clr, s, &connectorv1.PlanRequest{
-		Connection: w.conn, Step: key, Target: w.target, Kind: w.kind,
+		Connection: w.conn, Step: key, Target: w.target, Kind: w.kind, Change: w.change,
 		Tier0: t0.Context, Tier0Override: t0.Override, ActingPrincipal: acting,
 		Dc: &connectorv1.DcSelection{PinnedDsaGuid: &connectorv1.Guid{Value: dsaID}},
 	})
@@ -222,11 +252,20 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 		return Result{}, err
 	}
 	d := s.Digest()
-	resp, err := c.sendApply(ctx, clr, s, &connectorv1.ApplyRequest{
+	areq := &connectorv1.ApplyRequest{
 		Connection: w.conn, Step: key, Attempt: uint32(s.Attempt()), Target: w.target,
-		Kind: w.kind, Tier0: t0.Context, Precondition: plan.GetPrecondition(),
+		Kind: w.kind, Change: w.change, Tier0: t0.Context, Precondition: plan.GetPrecondition(),
 		Tier0Override: t0.Override, ActingPrincipal: acting, PlanDigest: d[:],
-	})
+	}
+	if w.secret {
+		sv, err := secretInput(s)
+		if err != nil {
+			return Result{}, err
+		}
+		areq.SecretInput = sv
+		defer clear(sv.Material) // the copy this call made; the step's own secret is the runner's to destroy
+	}
+	resp, err := c.sendApply(ctx, clr, s, areq)
 	if err != nil {
 		return Result{}, err
 	}
@@ -251,6 +290,42 @@ func (op WriteOp) derive() (wire, error) {
 	}
 	wt := &connectorv1.WriteTarget{Object: &connectorv1.Guid{Value: id}}
 	return wire{conn: &connectorv1.ConnectionRef{ConnectionId: op.Target.Connection}, target: wt, kind: kind}, nil
+}
+
+// deriveChange fills the typed change of a kind that has an arm (the account kinds). The change comes
+// from the digested Attrs by accountkind.ChangeFromAttrs, which the connector inverts, and the class
+// label and UUID texts must be the forms the connector recomputes the digest with: an op the
+// connector could not verify is refused here, before any transport call.
+func (op WriteOp) deriveChange(w *wire) error {
+	sp, ok := accountkind.ByKey(op.DigestKind)
+	if !ok {
+		return nil
+	}
+	if !sp.AllowsClass(op.Target.Class) {
+		return ErrKindClass
+	}
+	if !accountkind.Canonical(op.Target.GUID) || !accountkind.Canonical(string(op.Target.NC)) || op.Target.Parent != "" || op.Target.RDN != "" {
+		return ErrNotCanonical
+	}
+	ch, err := accountkind.ChangeFromAttrs(op.DigestKind, op.Attrs)
+	if err != nil {
+		return ErrKindAttrs
+	}
+	w.change = ch
+	w.secret = op.DigestKind == accountkind.KeyResetPassword
+	return nil
+}
+
+// secretInput copies the step's transient secret into the wire message. It is never logged, and the
+// caller zeroes the copy once the call returns.
+func secretInput(s step.Step) (*connectorv1.SecretValue, error) {
+	sec := s.Secret()
+	if sec.IsEmpty() {
+		return nil, ErrNoSecret
+	}
+	var b []byte
+	sec.Expose(func(x []byte) { b = append([]byte(nil), x...) })
+	return &connectorv1.SecretValue{Material: b}, nil
 }
 
 func (c *Client) buildTier0(ctx context.Context, st Stage, op WriteOp) (Tier0, error) {
