@@ -1,0 +1,18 @@
+refusal[dashes] Try-again count=0 reqs=[] buttons=[]
+  body: Recovery password refused | That looks like a recovery password. Search by the 8-character key ID instead. | ↑ ↓ move | ↵ open | Esc close
+refusal[spaces] Try-again count=0 reqs=[] buttons=[]
+  body: Recovery password refused | That looks like a recovery password. Search by the 8-character key ID instead. | ↑ ↓ move | ↵ open | Esc close
+refusal[none] Try-again count=0 reqs=[] buttons=[]
+  body: Recovery password refused | That looks like a recovery password. Search by the 8-character key ID instead. | ↑ ↓ move | ↵ open | Esc close
+refusal[fullwidth] Try-again count=0 reqs=[] buttons=[]
+  body: Recovery password refused | That looks like a recovery password. Search by the 8-character key ID instead. | ↑ ↓ move | ↵ open | Esc close
+retry[500] present=1 reqs=["ada","ada"]
+  before: The search failed | The server could not answer. Retry; if it keeps failing, quote the trace ID to your administrator. | Trace ID tr-500 | Try again | ↑ ↓ move | ↵ open | Esc close
+  after: No objects match “ada” in your scope | If you expected a result, your scope may not cover it: ask activeDIQ administrators. | index as of | ↑ ↓ move | ↵ open | Esc close | No results
+retry[429] present=1 reqs=["ada","ada"]
+  before: Too many searches | Wait a moment, then retry. | Trace ID tr-429 | Try again | ↑ ↓ move | ↵ open | Esc close
+  after: No objects match “ada” in your scope | If you expected a result, your scope may not cover it: ask activeDIQ administrators. | index as of | ↑ ↓ move | ↵ open | Esc close | No results
+retry[unreachable] present=1 reqs=["ada","ada"]
+  before: Can't reach the server | Check your connection, then retry. | Try again | ↑ ↓ move | ↵ open | Esc close
+  after: No objects match “ada” in your scope | If you expected a result, your scope may not cover it: ask activeDIQ administrators. | index as of | ↑ ↓ move | ↵ open | Esc close | No results
+edit-after-refusal reqs ["alovelace"] retry btn: 0
