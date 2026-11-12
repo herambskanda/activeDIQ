@@ -8,10 +8,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
-	"github.com/skenzeriq/activediq/internal/platform/secret"
 )
 
 // reversibilityViolations runs the inverse of every step the success run applied and checks the
@@ -324,7 +324,7 @@ func unflaggedSecrets(diff []operation.Change) []string {
 		if c.Secret {
 			continue
 		}
-		if secret.IsStaticAttr(c.Attribute) {
+		if secretattr.IsStatic(c.Attribute) {
 			out = append(out, c.Attribute)
 		}
 	}

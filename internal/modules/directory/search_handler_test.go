@@ -251,7 +251,7 @@ func TestSearchDirectoryMapsTheAnswer(t *testing.T) {
 	n := 1
 	guid := "aaaaaaaa-0000-4000-8000-00000000000a"
 	hit := search.Hit{Type: reportsql.TypeUser, Object: guid, DisplayName: "Priya Raman", Class: reportsql.ClassPrefix,
-		Highlights: []search.Highlight{{Field: "displayName", Start: 0, Length: 5}}, DN: "CN=Priya Raman,DC=lab,DC=test", Domain: "lab.test", Deleted: true}
+		Highlights: []search.Highlight{{Field: "displayName", Start: 0, Length: 5}}, DN: "CN=Priya Raman,DC=lab,DC=test", Domain: "lab.test", Status: []search.Chip{{Kind: search.ChipDeleted}}}
 	t.Run("normal", func(t *testing.T) {
 		f := &fakeSearch{res: search.Result{AsOf: time.Date(2026, 11, 1, 5, 0, 0, 0, time.UTC),
 			Groups: []search.Group{{Type: reportsql.TypeUser, Items: []search.Hit{hit}, Count: &n, More: true, NextCursor: "c1"}, {Type: reportsql.TypeGroup}}}}
@@ -342,6 +342,47 @@ func (c *countingIndex) Search(context.Context, store.Tx, tenant.ID, reportsql.S
 	return inventory.SearchResult{}, nil
 }
 
-func (*countingIndex) SearchMetadata(context.Context, store.Tx, tenant.ID, []reportsql.SearchHit) (map[inventory.SearchRef]inventory.SearchMeta, error) {
+func (*countingIndex) SearchMetadata(context.Context, store.Tx, tenant.ID, authz.ReadScope, time.Time, []reportsql.SearchHit) (map[inventory.SearchRef]inventory.SearchMeta, error) {
 	return nil, nil
+}
+
+// T-1097 AC4: a hostile DN or title is returned as data, byte for byte, in the contract's fields; chips carry
+// their kind, time and days; the disambiguator holds only what was read.
+func TestSearchDirectoryReturnsMetadataVerbatim(t *testing.T) {
+	guid := "aaaaaaaa-0000-4000-8000-00000000000b"
+	long := strings.Repeat("W", 200)
+	dn := `CN=<img src=x onerror=alert(1)>\, *)(cn=*,OU=A,DC=corp,DC=example,DC=test`
+	days := int64(3)
+	at := time.Date(2026, 11, 1, 9, 12, 0, 0, time.UTC)
+	hit := search.Hit{Type: reportsql.TypeUser, Object: guid, DisplayName: "Priya Raman", Class: reportsql.ClassExact, DN: dn, Domain: "corp.example.test",
+		Title: "<b>Analyst</b>", Department: long,
+		Status: []search.Chip{{Kind: search.ChipLocked, At: at}, {Kind: search.ChipPasswordExpiresInDays, Days: &days}, {Kind: search.ChipTier0}}}
+	f := &fakeSearch{res: search.Result{Groups: []search.Group{{Type: reportsql.TypeUser, Items: []search.Hit{hit}}}}}
+	w := postSearch(t, directory.Handlers{Searcher: f}, ports{}, ports{}, `{"q":"priya"}`)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	var got map[string]any
+	if err := jsonv2.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	item := got["groups"].([]any)[0].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if item["distinguishedName"] != dn || item["domain"] != "corp.example.test" {
+		t.Errorf("dn/domain changed: %v / %v", item["distinguishedName"], item["domain"])
+	}
+	d := item["disambiguator"].(map[string]any)
+	if d["title"] != "<b>Analyst</b>" || d["department"] != long || d["office"] != nil {
+		t.Errorf("disambiguator = %v", d)
+	}
+	chips := item["status"].([]any)
+	if len(chips) != 3 {
+		t.Fatalf("chips = %v", chips)
+	}
+	c0, c1, c2 := chips[0].(map[string]any), chips[1].(map[string]any), chips[2].(map[string]any)
+	if c0["kind"] != "locked" || c0["at"] != "2026-11-01T09:12:00Z" || c1["kind"] != "passwordExpiresInDays" || c1["days"] != float64(3) || c2["kind"] != "tier0" || c2["at"] != nil {
+		t.Errorf("chips = %v", chips)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("content type %q: a field could be read as markup", ct)
+	}
 }

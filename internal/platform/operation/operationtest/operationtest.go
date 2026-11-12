@@ -65,6 +65,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"reflect"
 	"slices"
 	"sync"
@@ -75,7 +76,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
-	"github.com/skenzeriq/activediq/internal/platform/tenant"
+	"github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest"
 )
 
 // Clause names, as they appear in a Violation and in the coverage record.
@@ -137,7 +138,7 @@ func (v Violation) String() string { return v.Clause + ": " + v.Detail }
 // It then appends the run to the coverage file; failing to do so also fails t.
 func Contract(t testing.TB, action operation.Action, fx Fixture) {
 	t.Helper()
-	rec, vs := check(action, fx)
+	rec, vs := check(t, action, fx)
 	rec.Test = t.Name()
 	for _, v := range vs {
 		t.Errorf("operationtest.Contract %q: clause %s (ADR-0005 O7)", rec.Action, v)
@@ -153,8 +154,9 @@ func Contract(t testing.TB, action operation.Action, fx Fixture) {
 
 // Check runs the clauses and returns the violations without failing a test, so a test of the
 // harness itself can assert that a broken Action is caught.
-func Check(action operation.Action, fx Fixture) []Violation {
-	_, vs := check(action, fx)
+func Check(t testing.TB, action operation.Action, fx Fixture) []Violation {
+	t.Helper()
+	_, vs := check(t, action, fx)
 	return vs
 }
 
@@ -168,11 +170,11 @@ type options struct {
 // component is the source component the runner is configured with, and the event must carry.
 const component = "operationtest"
 
-func check(action operation.Action, fx Fixture) (Record, []Violation) {
-	return checkWith(action, fx, options{})
+func check(t testing.TB, action operation.Action, fx Fixture) (Record, []Violation) {
+	return checkWith(t, action, fx, options{})
 }
 
-func checkWith(action operation.Action, fx Fixture, o options) (Record, []Violation) {
+func checkWith(t testing.TB, action operation.Action, fx Fixture, o options) (Record, []Violation) {
 	rec := Record{At: time.Now().UTC()}
 	if action == nil {
 		return rec, []Violation{{ClauseDescriptor, "nil action"}}
@@ -185,7 +187,7 @@ func checkWith(action operation.Action, fx Fixture, o options) (Record, []Violat
 		actor = authority.Chain{Requester: authority.Principal{ID: "contract-human", Kind: authority.Human}}
 	}
 	newH := func(m mode) *harness {
-		return &harness{inner: action, fx: fx, d: d, actor: actor, o: o, mode: m, deny: &denyAfterPlan{}}
+		return &harness{t: t, inner: action, fx: fx, d: d, actor: actor, o: o, mode: m, deny: &denyAfterPlan{}}
 	}
 
 	// The failure and denial paths first, from the Action's pristine state: neither reaches the
@@ -281,6 +283,7 @@ const (
 
 // harness is the state of one Contract run, shared by the probe's hooks.
 type harness struct {
+	t     testing.TB
 	inner operation.Action
 	fx    Fixture
 	d     operation.Descriptor
@@ -356,7 +359,7 @@ func (h *harness) run(act operation.Action, az operation.Authorizer, in operatio
 	if h.o.sink != nil {
 		sink = h.o.sink(sink)
 	}
-	r, err := operation.NewRunner(operation.Config{DB: db, Audit: sink, Authz: az, Registry: reg,
+	r, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: sink, Authz: az, Registry: reg,
 		Facts: h.fx.Facts, Component: component})
 	if err != nil {
 		return runOut{}, err
@@ -371,7 +374,7 @@ func (h *harness) run(act operation.Action, az operation.Authorizer, in operatio
 	}
 	h.mu.Unlock()
 	res, runErr := r.RunStore(context.Background(), operation.Request{
-		Tenant: tenant.New(), Actor: h.actor, Action: act.Describe().ID, Input: in, Pins: h.fx.Pins,
+		Tenant: tenanttest.NewID(h.t), Actor: h.actor, Action: act.Describe().ID, Input: in, Pins: h.fx.Pins,
 		Operation: step.OperationID(id),
 	})
 	return runOut{res: res, err: runErr, db: db, sink: rs}, nil

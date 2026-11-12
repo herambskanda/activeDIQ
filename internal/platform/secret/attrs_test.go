@@ -2,24 +2,15 @@ package secret
 
 import "testing"
 
-func TestIsStaticAttrIgnoresCase(t *testing.T) {
-	for _, a := range StaticAttrs() {
-		if !IsStaticAttr(a) {
-			t.Errorf("%s not recognised", a)
+func TestIsPlainAttrName(t *testing.T) {
+	for _, ok := range []string{"mail", "msDS-ManagedPassword", "a1", "snake_case"} {
+		if !IsPlainAttrName(ok) {
+			t.Errorf("%q refused", ok)
 		}
 	}
-	if !IsStaticAttr("UNICODEPWD") || !IsStaticAttr("MS-MCS-ADMPWD") {
-		t.Error("case-insensitive match failed")
-	}
-	if IsStaticAttr("mail") || IsStaticAttr("") {
-		t.Error("false positive")
-	}
-}
-
-func TestStaticAttrsReturnsACopy(t *testing.T) {
-	s := StaticAttrs()
-	s[0] = "tampered"
-	if StaticAttrs()[0] == "tampered" {
-		t.Fatal("StaticAttrs exposes the package's list")
+	for _, bad := range []string{"", "1.2.840.113556.1.4.90", "OID.1.2", "mail;binary", " mail", "mail ", "mail\x00", "9mail", "-mail", "a.b"} {
+		if IsPlainAttrName(bad) {
+			t.Errorf("%q accepted", bad)
+		}
 	}
 }

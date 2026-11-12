@@ -2,10 +2,12 @@ package search
 
 import (
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/skenzeriq/activediq/internal/directory/dn"
+	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/store/reportsql"
 )
 
@@ -138,4 +140,97 @@ func domainOf(dnText string) string {
 		parts = append([]string{strings.ToLower(rdns[i].Value())}, parts...)
 	}
 	return strings.Join(parts, ".")
+}
+
+// ChipKind is the contract's DirectorySearchChipKind.
+type ChipKind string
+
+// The chip kinds of the contract.
+const (
+	ChipLocked                ChipKind = "locked"
+	ChipDisabled              ChipKind = "disabled"
+	ChipPasswordExpired       ChipKind = "passwordExpired"
+	ChipPasswordExpiresInDays ChipKind = "passwordExpiresInDays"
+	ChipAccountExpires        ChipKind = "accountExpires"
+	ChipDeleted               ChipKind = "deleted"
+	ChipTier0                 ChipKind = "tier0"
+	ChipCloudOnly             ChipKind = "cloudOnly"
+)
+
+// PasswordExpiryWarnDays is the window in which "password expires in N days" is worth a chip: the days Windows
+// itself warns before expiry on a domain-joined machine. A password further from expiry has no chip, so a row
+// that shows nothing means nothing needs attention. [PROPOSED] product may change it.
+const PasswordExpiryWarnDays = 14
+
+// Chip is one status chip. At is set for locked, accountExpires and deleted when the time is known; Days for
+// passwordExpiresInDays.
+type Chip struct {
+	Kind ChipKind
+	At   time.Time
+	Days *int64
+}
+
+// chips builds the chips of a hit from stored facts only. The order is the contract's "most urgent first".
+// The locked, password and account-expiry facts come from the inventory.users derivation (inventory
+// .SearchStatus); this function only decides which of them are worth a chip, and holds no policy rule.
+func chips(h reportsql.SearchHit, st inventory.SearchStatus, now time.Time) []Chip {
+	out := []Chip{}
+	switch h.State {
+	case "deleted", "recycled", "purged", "soft_deleted":
+		out = append(out, Chip{Kind: ChipDeleted})
+	}
+	if st.Tier0 {
+		out = append(out, Chip{Kind: ChipTier0})
+	}
+	if st.Locked {
+		out = append(out, Chip{Kind: ChipLocked, At: st.LockedAt})
+	}
+	if h.Enabled != nil && !*h.Enabled {
+		out = append(out, Chip{Kind: ChipDisabled})
+	}
+	if st.PasswordExpired {
+		out = append(out, Chip{Kind: ChipPasswordExpired})
+	}
+	if !st.AccountExpires.IsZero() {
+		out = append(out, Chip{Kind: ChipAccountExpires, At: st.AccountExpires})
+	}
+	if d := st.PasswordExpiresInDays; d != nil && *d >= 0 && *d <= PasswordExpiryWarnDays {
+		out = append(out, Chip{Kind: ChipPasswordExpiresInDays, Days: d})
+	}
+	if st.CloudOnly {
+		out = append(out, Chip{Kind: ChipCloudOnly})
+	}
+	return out
+}
+
+// present builds the row of a permitted hit. Everything on it is a stored fact of that object: no field is
+// read from another object (a manager, a group), so a scope that hides one cannot show through.
+func present(h reportsql.SearchHit, m inventory.SearchMeta, text string, now time.Time) Hit {
+	out := Hit{Type: h.Group, Object: h.Object, DisplayName: h.DisplayName, Class: h.Class,
+		SAMAccountName: m.SAMAccountName, UserPrincipalName: m.UserPrincipalName, Mail: m.Mail, DN: m.DN, Domain: domainOf(m.DN),
+		Title: m.Title, Office: m.Office, Department: m.Department, Status: chips(h, m.Status, now)}
+	out.Highlights = highlights(text, [][2]string{{FieldDisplayName, h.DisplayName}, {FieldSAM, m.SAMAccountName}, {FieldUPN, m.UserPrincipalName}, {FieldMail, m.Mail}})
+	return out
+}
+
+// hideSingleDomain clears Domain on every hit unless the answer spans more than one domain: the domain is
+// there to tell two objects with one name apart, and a caller who sees one domain does not need it. It looks
+// only at permitted hits, so it reveals nothing the scope hides.
+func hideSingleDomain(groups []Group) {
+	seen := map[string]bool{}
+	for _, g := range groups {
+		for _, h := range g.Items {
+			if h.Domain != "" {
+				seen[h.Domain] = true
+			}
+		}
+	}
+	if len(seen) > 1 {
+		return
+	}
+	for gi := range groups {
+		for hi := range groups[gi].Items {
+			groups[gi].Items[hi].Domain = ""
+		}
+	}
 }

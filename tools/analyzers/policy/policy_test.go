@@ -36,6 +36,8 @@ func TestTestSupport(t *testing.T) {
 		"internal/platform/store/storetest":         true,
 		"internal/platform/jobs/jobstest":           true,
 		"internal/platform/operation/operationtest": true,
+		"internal/platform/tenant/tenanttest":       true,
+		"internal/platform/tenant":                  false,
 		"internal/platform/operation":               false,
 		"internal/platform/jobs":                    false,
 		"internal/platform/store":                   false,

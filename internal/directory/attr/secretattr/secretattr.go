@@ -4,10 +4,39 @@
 //
 // The static list is the one source for everything that must recognise a secret attribute by name,
 // the fitness-domain-keys check (no column named for one outside the sealed allow-list) among them.
+// The operation runner may not import this package (the kernel imports nothing above it), so it takes
+// IsStatic through operation.Config.SecretAttr, which the composition root supplies.
 package secretattr
 
-import "github.com/skenzeriq/activediq/internal/platform/secret"
+import (
+	"slices"
+	"strings"
+)
 
-// Static returns a copy of the static list. The list itself lives in internal/platform/secret, where
-// the operation runner (which may not import this package) reads it: there is one copy.
-func Static() []string { return secret.StaticAttrs() }
+// static is §3.7's static list, as the schema's ldapDisplayName spells each attribute.
+var static = []string{
+	"unicodePwd", "dBCSPwd", "ntPwdHistory", "lmPwdHistory", "supplementalCredentials",
+	"userPassword", "unixUserPassword", "msDS-ManagedPassword",
+	"ms-Mcs-AdmPwd", "msLAPS-Password", "msLAPS-EncryptedPassword", "msLAPS-EncryptedPasswordHistory",
+	"msLAPS-EncryptedDSRMPassword", "msLAPS-EncryptedDSRMPasswordHistory",
+	"msFVE-RecoveryPassword", "msFVE-KeyPackage", "msTPM-OwnerInformation",
+	"msPKIAccountCredentials", "msPKIDPAPIMasterKeys",
+}
+
+// staticFold is static, lower-cased: AD attribute names are case-insensitive.
+var staticFold = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(static))
+	for _, a := range static {
+		m[strings.ToLower(a)] = struct{}{}
+	}
+	return m
+}()
+
+// Static returns a copy of the static list.
+func Static() []string { return slices.Clone(static) }
+
+// IsStatic reports whether name is on the static list, ignoring case.
+func IsStatic(name string) bool {
+	_, ok := staticFold[strings.ToLower(name)]
+	return ok
+}

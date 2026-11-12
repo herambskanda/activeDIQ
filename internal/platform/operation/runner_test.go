@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,7 +14,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
-	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -177,7 +177,7 @@ func newRunner(t *testing.T, b behaviour, az *authzFake, f LiveFacts, s sink) (*
 	if az == nil {
 		az = &authzFake{}
 	}
-	r, err := NewRunner(Config{DB: db, Audit: s, Authz: az, Registry: reg, Facts: f,
+	r, err := NewRunner(Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: s, Authz: az, Registry: reg, Facts: f,
 		Now: func() time.Time { return time.Unix(1_700_000_000, 0) }})
 	if err != nil {
 		t.Fatal(err)
@@ -376,7 +376,7 @@ func TestPlanContractViolations(t *testing.T) {
 		Inverse: func(TypedStep[payload], out) (in, error) { return in{}, nil }})
 	reg, _ := NewRegistry(a)
 	db := &fakeDB{}
-	r, _ := NewRunner(Config{DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+	r, _ := NewRunner(Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
 	if _, err := r.RunStore(context.Background(), req()); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err = %v", err)
 	}
@@ -426,7 +426,7 @@ func TestStepUpRequired(t *testing.T) {
 	a := b.action(t, db).(defined[in, payload, out])
 	a.t.Descriptor.StepUp = true
 	reg, _ := NewRegistry(a)
-	r, _ := NewRunner(Config{DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+	r, _ := NewRunner(Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
 	rq := req()
 	if _, err := r.RunStore(context.Background(), rq); !errors.Is(err, ErrDenied) || applied != 0 {
 		t.Fatalf("err=%v", err)
@@ -464,7 +464,7 @@ func TestRequestAndTargetValidation(t *testing.T) {
 			return ObservedBefore, nil
 		}})
 	reg, _ := NewRegistry(a)
-	r2, _ := NewRunner(Config{DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+	r2, _ := NewRunner(Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
 	rq := req()
 	rq.Action = "objects.user.create"
 	if _, err := r2.RunStore(context.Background(), rq); !errors.Is(err, ErrTarget) {
@@ -645,7 +645,7 @@ func TestDirectoryActionWithNoFactsPortIsRefusedBeforePlan(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		r, err := NewRunner(Config{DB: &fakeDB{}, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+		r, err := NewRunner(Config{SecretAttr: secretattr.IsStatic, DB: &fakeDB{}, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -723,7 +723,7 @@ func TestPlanReaderCarriesTenantAndDSAPins(t *testing.T) {
 // A Descriptor.TargetClass binds every planned step: an Action declaring "group" cannot plan a step
 // aimed at the member (TM-D18).
 func TestCheckPlanEnforcesTargetClass(t *testing.T) {
-	u := &run{d: Descriptor{ID: "x.group.add", Reversibility: Reversible, TargetClass: "group"}}
+	u := &run{r: &Runner{cfg: Config{SecretAttr: secretattr.IsStatic}}, d: Descriptor{ID: "x.group.add", Reversibility: Reversible, TargetClass: "group"}}
 	step := func(class string) []StepPlan {
 		return []StepPlan{{Kind: "k", Reversibility: Reversible, Target: authority.TargetRef{Class: class}}}
 	}
@@ -738,12 +738,12 @@ func TestCheckPlanEnforcesTargetClass(t *testing.T) {
 // A known secret attribute planned without Secret is refused, not silently redacted (AG-9, DM-80.I4):
 // the Action author must find out, and no value may reach the plan hash, a diff or an event (T-1287).
 func TestCheckPlanRefusesStaticSecretAttributeWithoutSecretFlag(t *testing.T) {
-	u := &run{d: Descriptor{ID: "x.user.set", Reversibility: Reversible}}
+	u := &run{r: &Runner{cfg: Config{SecretAttr: secretattr.IsStatic}}, d: Descriptor{ID: "x.user.set", Reversibility: Reversible}}
 	plan := func(attr string, flagged bool) []StepPlan {
 		return []StepPlan{{Kind: "k", Reversibility: Reversible,
 			Diff: []Change{{Attribute: attr, Secret: flagged, Before: []string{"old-value"}, After: []string{"P@ssw0rd!"}}}}}
 	}
-	for _, name := range secret.StaticAttrs() {
+	for _, name := range secretattr.Static() {
 		for _, spelled := range []string{name, strings.ToLower(name), strings.ToUpper(name)} {
 			err := u.checkPlan(plan(spelled, false))
 			if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), spelled) {
@@ -797,7 +797,7 @@ func TestRunRefusesUnflaggedSecretAttribute(t *testing.T) {
 // ";option" suffix and padded names for the same attribute, so every non-plain name is refused, flagged
 // Secret or not, and the error never carries a value (T-1287, security review).
 func TestCheckPlanRefusesNonPlainAttributeNames(t *testing.T) {
-	u := &run{d: Descriptor{ID: "x.user.set", Reversibility: Reversible}}
+	u := &run{r: &Runner{cfg: Config{SecretAttr: secretattr.IsStatic}}, d: Descriptor{ID: "x.user.set", Reversibility: Reversible}}
 	for _, name := range []string{
 		"1.2.840.113556.1.4.90", "unicodePwd;binary", " unicodePwd", "unicodePwd ",
 		"OID.1.2.840.113556.1.4.90", "unicodePwd\x00", "", "9mail", "a.b",
@@ -840,5 +840,15 @@ func TestRunRefusesSecretAttributeByOID(t *testing.T) {
 	}
 	if s := fmt.Sprintf("%+v %+v", db.committed, db.writes); strings.Contains(s, "P@ssw0rd!") {
 		t.Fatalf("a persisted record or event carries the value: %s", s)
+	}
+}
+
+// A runner without the secret-attribute predicate would let a password into the plan and the audit
+// trail, so it is not built (AG-9).
+func TestNewRunnerRequiresSecretAttr(t *testing.T) {
+	reg, _ := NewRegistry()
+	_, err := NewRunner(Config{DB: &fakeDB{}, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "SecretAttr") {
+		t.Fatalf("NewRunner without SecretAttr: %v", err)
 	}
 }

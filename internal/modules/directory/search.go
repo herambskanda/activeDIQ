@@ -153,11 +153,26 @@ func searchHit(h search.Hit) (api.DirectorySearchHit, error) {
 			*f.dst = &v
 		}
 	}
-	if h.Deleted {
-		out.Status = append(out.Status, api.DirectorySearchChip{Kind: api.DirectorySearchChipKindDeleted})
+	for _, c := range h.Status {
+		chip := api.DirectorySearchChip{Kind: api.DirectorySearchChipKind(c.Kind), Days: c.Days}
+		if !c.At.IsZero() {
+			ts := apitypes.NewTimestamp(c.At)
+			chip.At = &ts
+		}
+		out.Status = append(out.Status, chip)
 	}
-	if h.Disabled {
-		out.Status = append(out.Status, api.DirectorySearchChip{Kind: api.DirectorySearchChipKindDisabled})
+	if h.Title != "" || h.Office != "" || h.Department != "" {
+		d := api.DirectorySearchDisambiguator{}
+		for _, f := range []struct {
+			dst **string
+			v   string
+		}{{&d.Title, h.Title}, {&d.Office, h.Office}, {&d.Department, h.Department}} {
+			if f.v != "" {
+				v := f.v
+				*f.dst = &v
+			}
+		}
+		out.Disambiguator = &d
 	}
 	return out, nil
 }

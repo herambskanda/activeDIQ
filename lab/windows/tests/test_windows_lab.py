@@ -252,5 +252,161 @@ class GuestStageOrdering(unittest.TestCase):
         self.assertIn("catch", boot.split("& C:\\lab\\dc.ps1")[1])  # failure handler covers both modes
 
 
+# ---------------------------------------------------------------------------------------------------------------
+# T-1233: child-domain DC (dc2) kit. No PowerShell in CI, so this is static proof over the guest scripts, with a
+# checker that is itself proven to fail on violating fixtures (a gate that cannot fail proves nothing).
+
+SECRET_VARS = r"\$(?:parentPw|cred|dsrm|dsrmPw|password|pw)\b"
+SINKS = r"(?:Write-Host|Write-Output|Write-Verbose|Write-Warning|Write-Error|Write-LabLog|Write-Debug|echo|Out-File|Tee-Object|Add-Content|Start-Transcript)"
+NATIVE = r"(?:icacls|net|netdom|dsacls|dcpromo|dsmgmt|ntdsutil|certutil|schtasks|cmdkey|runas|psexec|winrm)"
+
+
+def secret_leaks(script: str):
+    """Findings for a guest script: where a password could reach argv, stdout, a log or a note."""
+    out = []
+    for n, line in enumerate(script.splitlines(), 1):
+        code = line.split("#")[0] if not re.search(r"['\"].*#.*['\"]", line) else line
+        if re.search(r"-AsPlainText|GetNetworkCredential|PtrToString|ConvertFrom-SecureString|\[Console\]::Write", code):
+            out.append((n, "plaintext conversion"))
+        if re.search(SINKS + r"\b.*" + SECRET_VARS, code) or re.search(SECRET_VARS + r".*\|\s*" + SINKS, code):
+            out.append((n, "secret variable reaches an output sink"))
+        if re.search(r"\b" + NATIVE + r"(?:\.exe)?\b[^\n|]*" + SECRET_VARS, code) or re.search(r"&\s*\S+.*" + SECRET_VARS, code):
+            out.append((n, "secret variable in a native command line"))
+        if re.search(r"\$env:\w*(?:PASS|PW|SECRET)\w*", code, re.I):
+            out.append((n, "secret in an environment variable"))
+        if re.search(r"(?i)param\([^)]*password", code):
+            out.append((n, "password accepted as a parameter (argv)"))
+        if re.search(r"Wl-[0-9a-f]{20}", code):
+            out.append((n, "literal lab password"))
+    return out
+
+
+class ChildDomainKit(unittest.TestCase):
+    G = LAB / "guest"
+    RB = LAB.parent.parent / "knowledge/development/runbooks/windows-lab.md"
+
+    def rd(self, n):
+        return (self.G / n).read_text()
+
+    def start(self):
+        t = self.rd("child-dc.ps1")
+        return t[t.index("'start' {"):t.index("'promoted' {")]
+
+    # --- AC1: promotes as a child domain, resumes safely, SecureString prompt only ---------------------------------
+    def test_promotes_as_child_domain_of_the_lab_forest(self):
+        b = self.start()
+        for frag in ("Install-ADDSDomain", "-DomainType ChildDomain", "-ParentDomainName $c.domain",
+                     "-NewDomainName $c.childName", "-NewDomainNetbiosName $c.childNetbios", "-CreateDnsDelegation",
+                     "-InstallDns", "-NoGlobalCatalog", "-SafeModeAdministratorPassword", "-Credential $cred"):
+            self.assertIn(frag, b, frag)
+        init = self.rd("child-dc-init.ps1")
+        for frag in ("$parent = 'win.activediq.test'", "childName = 'child'", "childNetbios = 'WINCHILD'",
+                     "role = 'child-dc'", "external = $true", "'DC2'"):
+            self.assertIn(frag, init, frag)
+        self.assertIn("-notcontains $ParentDcIp", init)
+
+    def test_resumes_safely_across_reboots(self):
+        t, b = self.rd("child-dc.ps1"), self.start()
+        self.assertLess(b.index("RestartNeeded"), b.index("Restart-Computer"))
+        self.assertLess(b.index("Restart-Computer"), b.index("Install-ADDSDomain -DomainType"))
+        self.assertRegex(b, r"Restart-Computer -Force\s+return")
+        self.assertIn("feature-reboot", b)
+        self.assertLess(b.index("Install-ADDSDomain -DomainType"), b.index("Set-Stage 'promoted'"))  # stage recorded only after success
+        self.assertIn("-NoRebootOnCompletion", b)
+        self.assertLess(b.index("Set-Stage 'promoted'"), b.rindex("Restart-Computer"))
+        self.assertIn("'promoted' {", t); self.assertIn("Set-Stage 'done'", t); self.assertIn("Remove-LabSecrets", t)
+        self.assertIn("Unregister-ScheduledTask LabResume", t)
+        self.assertIn(". C:\\lab\\common.ps1", t)  # shared helpers reused, not forked
+        boot = self.rd("boot.ps1")
+        self.assertIn("'child-dc' { & C:\\lab\\child-dc.ps1 }", boot)
+        self.assertIn("child-dc-init.ps1", self.rd("external-init.ps1"))  # dc1 init does not ship dc2's init to C:\lab
+
+    def test_headless_resume_never_prompts(self):
+        """LabResume runs as SYSTEM and cannot answer a prompt: the interactive guard must come before Read-Host."""
+        b = self.start()
+        self.assertLess(b.index("[Environment]::UserInteractive"), b.index("Read-Host"))
+        self.assertRegex(b, r"UserInteractive\)\s*\{[\s\S]*?return\s*\}")
+
+    def test_parent_password_is_only_a_securestring_prompt(self):
+        t = self.rd("child-dc.ps1")
+        self.assertEqual(len(re.findall(r"Read-Host", t)), 1)
+        self.assertIn("Read-Host -AsSecureString", t)
+        self.assertIn("New-Object pscredential(", t)
+        for n in ("child-dc.ps1", "child-dc-init.ps1"):
+            self.assertNotRegex(self.rd(n), r"(?i)param\([^)]*password", n)
+        # the domain Administrator password is not in lab.json for dc2: nothing for a script to read it from
+        self.assertNotRegex(self.rd("child-dc-init.ps1"), r"(?i)adminPassword|dsrmPassword")
+
+    # --- AC2: no password in argv, stdout, logs, notes; DSRM file ACL'd -----------------------------------------
+    def test_no_secret_reaches_argv_stdout_logs_or_notes(self):
+        for n in ("child-dc.ps1", "child-dc-init.ps1"):
+            self.assertEqual(secret_leaks(self.rd(n)), [], n)
+        # the only log lines are literals plus non-secret values
+        for m in re.finditer(r"Write-LabLog\s+\"([^\"]*)\"", self.rd("child-dc.ps1")):
+            self.assertNotRegex(m.group(1), SECRET_VARS)
+
+    def test_the_secret_checker_fails_on_violations(self):
+        bad = {
+            "plaintext": "$x = $parentPw | ConvertFrom-SecureString",
+            "as-plain": "ConvertTo-SecureString $p -AsPlainText -Force",
+            "log": 'Write-LabLog "pw is $parentPw"',
+            "host": "Write-Host $dsrm",
+            "pipe": "$dsrm | Out-File C:\\x.txt",
+            "native": "net use \\\\dc1\\c$ /user:WINLAB\\Administrator $parentPw",
+            "ampersand": "& dsmgmt.exe $dsrm",
+            "env": "$env:LAB_PASSWORD = 'x'",
+            "param": "param([string]$Password)",
+            "literal": "$p = 'Wl-" + "ab" * 10 + "-aA1!'",
+            "network-cred": "$cred.GetNetworkCredential().Password",
+        }
+        for k, v in bad.items():
+            self.assertNotEqual(secret_leaks(v), [], k)
+        self.assertEqual(secret_leaks("$cred = New-Object pscredential('a', $parentPw)\nWrite-LabLog 'done'"), [])
+
+    def test_dsrm_file_is_locked_before_the_secret_is_written(self):
+        t, common = self.rd("child-dc.ps1"), self.rd("common.ps1")
+        self.assertRegex(common, r"function Protect-LabFile[^\n]*icacls \$path /inheritance:r /grant:r 'SYSTEM:\(F\)' 'BUILTIN\\Administrators:\(F\)'")
+        self.assertEqual(len(re.findall(r"/grant:r", common)), 1)  # exactly the one ACL helper
+        i_new, i_acl, i_write = t.index("New-Item -ItemType File $dsrmFile"), t.index("Protect-LabFile $dsrmFile"), t.index("Set-Content $dsrmFile (New-LabPassword)")
+        self.assertLess(i_new, i_acl); self.assertLess(i_acl, i_write)
+        self.assertLess(i_write, t.index("Install-ADDSDomain -DomainType"))  # the password is safe on disk before it is used
+        self.assertNotIn("Everyone", t); self.assertNotIn("Users", t)
+        self.assertIn("Protect-LabFile C:\\lab\\lab.json", self.rd("child-dc-init.ps1"))
+
+    def test_password_generator_and_acl_helper_are_shared_not_forked(self):
+        self.assertIn("function New-LabPassword", self.rd("common.ps1"))
+        for n in ("external-init.ps1", "child-dc.ps1", "child-dc-init.ps1", "dc.ps1"):
+            self.assertNotIn("function New-LabPassword", self.rd(n), n)
+        self.assertIn("New-LabPassword", self.rd("external-init.ps1"))
+        self.assertIn("Protect-LabFile", self.rd("external-init.ps1"))
+        self.assertNotIn("icacls", self.rd("external-init.ps1"))
+
+    def test_no_partner_names_or_hardcoded_addresses_in_the_kit(self):
+        for n in ("child-dc.ps1", "child-dc-init.ps1"):
+            self.assertNotRegex(self.rd(n), r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", n)  # IPs are parameters
+
+    # --- AC3: runbook -------------------------------------------------------------------------------------------------
+    def test_runbook_child_domain_section_is_complete(self):
+        rb = self.RB.read_text()
+        self.assertIn("Child domain (dc2)", rb)
+        sec = rb[rb.index("Child domain (dc2)"):]
+        sec = sec[:sec.index("\n## ", 1)] if "\n## " in sec[1:] else sec
+        for frag in ("child.win.activediq.test", "WINCHILD", "DC2", "static IP", "DNS", "dc1", "child-dc-init.ps1", "boot.ps1",
+                     "clean", "Get-ADForest", "nltest /dclist", "repadmin /replsummary", "A-0025", "human", "DSRM", "SecureString",
+                     "Rename-Computer -NewName DC2", "-NoGlobalCatalog", "rebuild"):
+            self.assertIn(frag, sec, frag)
+        self.assertRegex(sec, r"(?i)vCPU|cores")
+        self.assertRegex(sec, r"(?i)GiB|GB")
+        self.assertNotRegex(sec, r"Wl-[0-9a-f]{10}")
+
+    def test_single_domain_statements_are_corrected(self):
+        rb = self.RB.read_text()
+        self.assertNotIn("single DC, single\ndomain", rb)
+        self.assertNotIn("single domain, no RODC", rb)
+        self.assertNotRegex(rb, r"One DC \(`dc1`\) and one member")  # §intro was local-KVM mode; §10 now says what exists
+        self.assertIn("every step inside dc2 is done by a human", rb)
+        self.assertRegex(rb, r"A-0025 covers (only )?`?dc1`?")
+
+
 if __name__ == "__main__":
     unittest.main()

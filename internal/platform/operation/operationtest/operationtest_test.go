@@ -159,7 +159,7 @@ func clauses(vs []Violation) []string {
 
 func TestContractPassesACorrectAction(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
-	vs := Check(a, fx)
+	vs := Check(t, a, fx)
 	if len(vs) != 0 {
 		t.Fatalf("a correct Action was refused: %v", vs)
 	}
@@ -182,7 +182,7 @@ func TestPlanRunsReadOnlyWithZeroWrites(t *testing.T) {
 		_, err := pc.Tx.Exec(context.Background(), "INSERT INTO t VALUES (1)")
 		sawReadOnly = err != nil && strings.Contains(err.Error(), "read-only transaction")
 	}}
-	_ = Check(plan, fx)
+	_ = Check(t, plan, fx)
 	if !sawReadOnly {
 		t.Fatal("a write in Plan's transaction was not refused as read-only")
 	}
@@ -203,7 +203,7 @@ func TestWritingPlanFailsNamingTheClause(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a, fx := newFixture("test.thing.modify")
 			a.planWritesSQL, a.planSwallows = true, swallow
-			vs := Check(a, fx)
+			vs := Check(t, a, fx)
 			if !slices.Contains(clauses(vs), ClausePlanReadOnly) {
 				t.Fatalf("a writing Plan passed Contract: %v", vs)
 			}
@@ -221,7 +221,7 @@ func TestPlanWritingToTheFakeDirectoryFails(t *testing.T) {
 		var none step.Step
 		_ = a.dir.Write(none, Mutation{GUID: guid, Attribute: "description", Op: Replace, Values: []string{"x"}})
 	}
-	vs := Check(a, fx)
+	vs := Check(t, a, fx)
 	if !slices.Contains(clauses(vs), ClausePlanReadOnly) {
 		t.Fatalf("a Plan that wrote to the directory passed: %v", vs)
 	}
@@ -232,7 +232,7 @@ func TestPlanWritingToTheFakeDirectoryFails(t *testing.T) {
 
 func TestApplyTwiceWithOneKeyChangesStateOnce(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
-	if vs := Check(a, fx); len(vs) != 0 {
+	if vs := Check(t, a, fx); len(vs) != 0 {
 		t.Fatal(vs)
 	}
 	if fx.Directory.Writes() != 2 || fx.Directory.Changes() != 1 {
@@ -243,7 +243,7 @@ func TestApplyTwiceWithOneKeyChangesStateOnce(t *testing.T) {
 func TestNonIdempotentActionFails(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
 	a.nonIdempotent = true
-	vs := Check(a, fx)
+	vs := Check(t, a, fx)
 	if !slices.Contains(clauses(vs), ClauseApplyIdempotent) {
 		t.Fatalf("a non-idempotent Action passed: %v", vs)
 	}
@@ -257,7 +257,7 @@ func TestStoreWriteOnSecondApplyNeedsState(t *testing.T) {
 		return err
 	}
 	act := &sqlAction{apply: apply}
-	if vs := Check(act, Fixture{Input: operation.Input(`{}`)}); !slices.Contains(clauses(vs), ClauseApplyIdempotent) {
+	if vs := Check(t, act, Fixture{Input: operation.Input(`{}`)}); !slices.Contains(clauses(vs), ClauseApplyIdempotent) {
 		t.Fatalf("a repeated store write with no State passed: %v", vs)
 	}
 	state = 0
@@ -269,7 +269,7 @@ func TestStoreWriteOnSecondApplyNeedsState(t *testing.T) {
 		}
 		return err
 	}}
-	if vs := Check(idem, Fixture{Input: operation.Input(`{}`), State: func() any { return state }}); len(vs) != 0 {
+	if vs := Check(t, idem, Fixture{Input: operation.Input(`{}`), State: func() any { return state }}); len(vs) != 0 {
 		t.Fatalf("an idempotent store Action with State was refused: %v", vs)
 	}
 }
@@ -299,7 +299,7 @@ func (*sqlAction) Inverse(operation.StepPlan, operation.Outcome) (operation.Inpu
 func TestVerifyMustFailWhenTheWriteIsDropped(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
 	a.verifyBlind = true
-	vs := Check(a, fx)
+	vs := Check(t, a, fx)
 	if !slices.Contains(clauses(vs), ClauseVerifyAfterDrop) {
 		t.Fatalf("a Verify that passes after the write was dropped passed Contract: %v", vs)
 	}
@@ -311,7 +311,7 @@ func TestVerifyMustFailWhenTheWriteIsDropped(t *testing.T) {
 
 func TestVerifyThatReadsTheDirectoryPasses(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
-	rec, vs := check(a, fx)
+	rec, vs := check(t, a, fx)
 	if len(vs) != 0 {
 		t.Fatal(vs)
 	}
@@ -325,7 +325,7 @@ func TestFailedVerifyOfACorrectWriteIsReported(t *testing.T) {
 	a.nonIdempotent = false
 	fx.Directory.Seed(guid, "description", "old")
 	bad := &spyVerify{Action: a}
-	vs := Check(bad, fx)
+	vs := Check(t, bad, fx)
 	if !slices.Contains(clauses(vs), ClauseRun) {
 		t.Fatalf("a Verify failing a correct write was not reported: %v", vs)
 	}
@@ -344,7 +344,7 @@ func TestModuletestActionRunsGreen(t *testing.T) {
 func TestInvalidDescriptorIsAViolation(t *testing.T) {
 	bad := &sqlAction{}
 	bad2 := &badDescriptor{sqlAction: bad}
-	vs := Check(bad2, Fixture{})
+	vs := Check(t, bad2, Fixture{})
 	if !slices.Contains(clauses(vs), ClauseDescriptor) {
 		t.Fatalf("an Action with no valid Descriptor passed: %v", vs)
 	}
@@ -389,7 +389,7 @@ func TestFailingRunIsRecordedAsFailed(t *testing.T) {
 	t.Setenv(CoverageEnv, path)
 	a, fx := newFixture("test.thing.modify")
 	a.nonIdempotent = true
-	rec, vs := check(a, fx)
+	rec, vs := check(t, a, fx)
 	if err := appendRecord(path, rec); err != nil || len(vs) == 0 {
 		t.Fatalf("err=%v violations=%v", err, vs)
 	}
@@ -491,7 +491,7 @@ func TestPlanStatementsThatMustFailTheClause(t *testing.T) {
 	} {
 		a, fx := newFixture("test.thing.modify")
 		a.planWritesSQL, a.planSwallows, a.planSQL = true, true, sql
-		got := slices.Contains(clauses(Check(a, fx)), ClausePlanReadOnly)
+		got := slices.Contains(clauses(Check(t, a, fx)), ClausePlanReadOnly)
 		if got != wantViolation {
 			t.Errorf("Plan sending %q: plan-read-only violation = %v, want %v", sql, got, wantViolation)
 		}
@@ -508,7 +508,6 @@ func TestSettingChangesAreModeChanges(t *testing.T) {
 		"default read-only mode": {"SET", "LOCAL", "DEFAULT_TRANSACTION_READ_ONLY", "TO", "OFF"},
 		"client encoding":        {"SET", "LOCAL", "CLIENT_ENCODING"},
 		"setting function":       {"SELECT", "SET_SESSION_VALUE", "TRANSACTION_READ_ONLY", "OFF", "TRUE"},
-		"other setting function": {"SELECT", "SET_LIMIT"},
 	} {
 		if !changesReadOnly(words) {
 			t.Errorf("%s: changesReadOnly(%v) = false, want true", name, words)
@@ -561,7 +560,7 @@ func detailOf(vs []Violation, clause string) string {
 
 func TestInverseRestoresTheBeforeState(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
-	rec, vs := check(a, fx)
+	rec, vs := check(t, a, fx)
 	if len(vs) != 0 {
 		t.Fatal(vs)
 	}
@@ -577,7 +576,7 @@ func TestInverseRestoresTheBeforeState(t *testing.T) {
 func TestInverseThatDoesNotRestoreFailsNamingTheClause(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
 	a.inverseWrongs = true
-	vs := Check(a, fx)
+	vs := Check(t, a, fx)
 	if !hasClause(vs, ClauseInverseRestores) || !strings.Contains(detailOf(vs, ClauseInverseRestores), guid+"/description") {
 		t.Fatalf("an inverse that restores the wrong value passed: %v", vs)
 	}
@@ -587,7 +586,7 @@ func TestApplyWithASideEffectTheInverseDoesNotUndoFails(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
 	a.lossyDeletes = "thumbnailPhoto" // the forward apply also wipes this; the Action says Reversible
 	fx.Directory.Seed(guid, "thumbnailPhoto", "bytes")
-	vs := Check(a, fx)
+	vs := Check(t, a, fx)
 	if !hasClause(vs, ClauseInverseRestores) || !strings.Contains(detailOf(vs, ClauseInverseRestores), "thumbnailPhoto") {
 		t.Fatalf("a Reversible Action that loses a field passed: %v", vs)
 	}
@@ -601,7 +600,7 @@ func TestInverseThatIsIrreversibleForAReversibleActionFails(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			a, fx := newFixture("test.thing.modify")
 			a.noInverse, a.lossy = true, lossy
-			vs := Check(a, fx)
+			vs := Check(t, a, fx)
 			if !hasClause(vs, ClauseInverseAvailable) || !strings.Contains(detailOf(vs, ClauseInverseAvailable), "ErrIrreversible") {
 				t.Fatalf("an Action declaring %s whose Inverse is ErrIrreversible passed: %v", name, vs)
 			}
@@ -629,7 +628,7 @@ func (a irreversibleAction) Plan(ctx context.Context, pc operation.PlanContext, 
 func TestIrreversibleActionNeedsNoInverse(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
 	a.noInverse = true
-	rec, vs := check(irreversibleAction{a}, fx)
+	rec, vs := check(t, irreversibleAction{a}, fx)
 	if len(vs) != 0 {
 		t.Fatalf("an Irreversible Action with ErrIrreversible failed: %v", vs)
 	}
@@ -647,7 +646,7 @@ func TestLossyStepMayLoseOnlyWhatItDeclares(t *testing.T) {
 	}
 	t.Run("undeclared loss fails", func(t *testing.T) {
 		a, fx := setup()
-		vs := Check(a, fx)
+		vs := Check(t, a, fx)
 		if !hasClause(vs, ClauseLossyUndeclared) || !strings.Contains(detailOf(vs, ClauseLossyUndeclared), "thumbnailPhoto") {
 			t.Fatalf("a Lossy step that loses an undeclared field passed: %v", vs)
 		}
@@ -658,7 +657,7 @@ func TestLossyStepMayLoseOnlyWhatItDeclares(t *testing.T) {
 	t.Run("declared loss passes", func(t *testing.T) {
 		a, fx := setup()
 		fx.Lost = []string{"thumbnailPhoto"}
-		rec, vs := check(a, fx)
+		rec, vs := check(t, a, fx)
 		if len(vs) != 0 {
 			t.Fatalf("a declared loss was refused: %v", vs)
 		}
@@ -669,14 +668,14 @@ func TestLossyStepMayLoseOnlyWhatItDeclares(t *testing.T) {
 	t.Run("declared for another object fails", func(t *testing.T) {
 		a, fx := setup()
 		fx.Lost = []string{"someone-else/thumbnailPhoto"}
-		if vs := Check(a, fx); !hasClause(vs, ClauseLossyUndeclared) {
+		if vs := Check(t, a, fx); !hasClause(vs, ClauseLossyUndeclared) {
 			t.Fatalf("a loss declared for another object passed: %v", vs)
 		}
 	})
 	t.Run("declared for the object passes", func(t *testing.T) {
 		a, fx := setup()
 		fx.Lost = []string{guid + "/thumbnailPhoto"}
-		if vs := Check(a, fx); len(vs) != 0 {
+		if vs := Check(t, a, fx); len(vs) != 0 {
 			t.Fatalf("%v", vs)
 		}
 	})
@@ -684,7 +683,7 @@ func TestLossyStepMayLoseOnlyWhatItDeclares(t *testing.T) {
 		a, fx := setup()
 		fx.Lost = []string{"thumbnailPhoto"}
 		noReason := &mutPlan{Action: a, mut: func(sp *operation.StepPlan) { sp.ReversibilityReason = "" }}
-		if vs := Check(noReason, fx); !hasClause(vs, ClauseLossyUndeclared) || !strings.Contains(detailOf(vs, ClauseLossyUndeclared), "ReversibilityReason") {
+		if vs := Check(t, noReason, fx); !hasClause(vs, ClauseLossyUndeclared) || !strings.Contains(detailOf(vs, ClauseLossyUndeclared), "ReversibilityReason") {
 			t.Fatalf("a Lossy step with no reason passed: %v", vs)
 		}
 	})
@@ -710,7 +709,7 @@ func TestInverseOfAStoreActionIsRunByItsRestoreAction(t *testing.T) {
 	restore, _ := newFixture("test.thing.restore")
 	restore.dir = a.dir
 	fx.InverseAction = restore
-	if vs := Check(a, fx); len(vs) != 0 {
+	if vs := Check(t, a, fx); len(vs) != 0 {
 		t.Fatalf("%v", vs)
 	}
 	if restore.applies != 1 {
@@ -741,7 +740,7 @@ func withSink(mut func(audit.Event) (audit.Event, bool)) options {
 
 func TestEveryPathEmitsItsEvent(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
-	rec, vs := check(a, fx)
+	rec, vs := check(t, a, fx)
 	if len(vs) != 0 {
 		t.Fatal(vs)
 	}
@@ -758,7 +757,7 @@ func TestMissingEventFailsTheClauseOfItsPath(t *testing.T) {
 	} {
 		t.Run(string(outcome), func(t *testing.T) {
 			a, fx := newFixture("test.thing.modify")
-			_, vs := checkWith(a, fx, withSink(func(ev audit.Event) (audit.Event, bool) { return ev, ev.Outcome != outcome }))
+			_, vs := checkWith(t, a, fx, withSink(func(ev audit.Event) (audit.Event, bool) { return ev, ev.Outcome != outcome }))
 			if !hasClause(vs, clause) {
 				t.Fatalf("a pipeline that never emits the %s event passed: %v", outcome, vs)
 			}
@@ -796,7 +795,7 @@ func TestEventMissingAnAG3FieldFails(t *testing.T) {
 		} {
 			t.Run(field+"/"+string(outcome), func(t *testing.T) {
 				a, fx := newFixture("test.thing.modify")
-				_, vs := checkWith(a, fx, withSink(func(ev audit.Event) (audit.Event, bool) {
+				_, vs := checkWith(t, a, fx, withSink(func(ev audit.Event) (audit.Event, bool) {
 					if ev.Outcome == outcome {
 						damage(&ev)
 					}
@@ -812,7 +811,7 @@ func TestEventMissingAnAG3FieldFails(t *testing.T) {
 
 func TestEventThatDoesNotValidateIsReportedUnderItsClause(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
-	_, vs := checkWith(a, fx, withSink(func(ev audit.Event) (audit.Event, bool) {
+	_, vs := checkWith(t, a, fx, withSink(func(ev audit.Event) (audit.Event, bool) {
 		if ev.Outcome == audit.Denied {
 			ev.ID = ""
 		}
@@ -825,7 +824,7 @@ func TestEventThatDoesNotValidateIsReportedUnderItsClause(t *testing.T) {
 
 func TestSuccessEventRecordsThePlansBeforeAndAfter(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
-	_, vs := checkWith(a, fx, withSink(func(ev audit.Event) (audit.Event, bool) {
+	_, vs := checkWith(t, a, fx, withSink(func(ev audit.Event) (audit.Event, bool) {
 		if ev.Outcome == audit.Success && len(ev.Changes) > 0 {
 			ev.Changes = slices.Clone(ev.Changes)
 			ev.Changes[0].After = []string{"something else"}
@@ -843,11 +842,11 @@ func TestSecretChangeCarriesNoValueInTheEvent(t *testing.T) {
 	}
 	a, fx := newFixture("test.thing.modify")
 	// The runner redacts a secret value from the plan before the event: a correct pipeline passes...
-	if vs := Check(&mutPlan{Action: a, mut: secret}, fx); len(vs) != 0 {
+	if vs := Check(t, &mutPlan{Action: a, mut: secret}, fx); len(vs) != 0 {
 		t.Fatalf("a redacted secret change failed: %v", vs)
 	}
 	// ...and one that lets the value into the event does not (AG-9).
-	_, vs := checkWith(&mutPlan{Action: a, mut: secret}, fx, withSink(func(ev audit.Event) (audit.Event, bool) {
+	_, vs := checkWith(t, &mutPlan{Action: a, mut: secret}, fx, withSink(func(ev audit.Event) (audit.Event, bool) {
 		ev.Changes = cloneChanges(ev.Changes)
 		for i := range ev.Changes {
 			if ev.Changes[i].Secret {
@@ -870,7 +869,7 @@ func TestUnflaggedSecretAttributeFailsAG9(t *testing.T) {
 		unflagged := &mutPlan{Action: a, mut: func(sp *operation.StepPlan) {
 			sp.Diff = append(sp.Diff, operation.Change{Attribute: attr, Before: []string{"old"}, After: []string{"P@ssw0rd!"}})
 		}}
-		vs := Check(unflagged, fx)
+		vs := Check(t, unflagged, fx)
 		if len(vs) == 0 || !strings.Contains(fmt.Sprint(vs), attr) || strings.Contains(fmt.Sprint(vs), "P@ssw0rd!") {
 			t.Errorf("%s planned with Secret=false passed, did not name the attribute or leaked the value: %v", attr, vs)
 		}
@@ -887,7 +886,7 @@ func TestUnflaggedSecretAttributeFailsAG9(t *testing.T) {
 
 func TestApplyAfterTheRecheckRefusedFailsTheDenialClause(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
-	hd := &harness{inner: a, fx: fx, d: a.Describe(), actor: authority.Chain{Requester: authority.Principal{ID: "h", Kind: authority.Human}},
+	hd := &harness{t: t, inner: a, fx: fx, d: a.Describe(), actor: authority.Chain{Requester: authority.Principal{ID: "h", Kind: authority.Human}},
 		mode: modeDenial, deny: &denyAfterPlan{}}
 	// A runner regression that reaches Apply anyway: authorisation allows the re-check.
 	out, err := hd.run(&probe{h: hd}, allowAll{}, fx.Input, "denial")
@@ -906,7 +905,7 @@ func TestApplyAfterTheRecheckRefusedFailsTheDenialClause(t *testing.T) {
 func TestApplyThatSwallowsTheDirectoryErrorFails(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
 	a.swallowsFail = true
-	vs := Check(a, fx)
+	vs := Check(t, a, fx)
 	if !hasClause(vs, ClauseAuditFailure) || !strings.Contains(detailOf(vs, ClauseAuditFailure), "refused its write") {
 		t.Fatalf("an Apply that reports success when the write was refused passed: %v", vs)
 	}
@@ -916,7 +915,7 @@ func TestFailureAndDenialPathsLeaveNoTrace(t *testing.T) {
 	a, fx := newFixture("test.thing.modify")
 	// A Plan-only look: the failure and denial paths must not change the directory or its counters.
 	before := fx.Directory.snapshot()
-	hf := &harness{inner: a, fx: fx, d: a.Describe(), actor: authority.Chain{Requester: authority.Principal{ID: "h", Kind: authority.Human}},
+	hf := &harness{t: t, inner: a, fx: fx, d: a.Describe(), actor: authority.Chain{Requester: authority.Principal{ID: "h", Kind: authority.Human}},
 		mode: modeFailure, deny: &denyAfterPlan{}}
 	if _, err := hf.run(&probe{h: hf}, allowAll{}, fx.Input, "failure"); err != nil {
 		t.Fatal(err)
@@ -927,7 +926,7 @@ func TestFailureAndDenialPathsLeaveNoTrace(t *testing.T) {
 }
 
 func TestNoStepMeansNoInverseFailureOrDenialToDrive(t *testing.T) {
-	rec, vs := check(moduletest.Action("test.noop.run"), Fixture{Input: operation.Input(`{}`)})
+	rec, vs := check(t, moduletest.Action("test.noop.run"), Fixture{Input: operation.Input(`{}`)})
 	if len(vs) != 0 {
 		t.Fatal(vs)
 	}

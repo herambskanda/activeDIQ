@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
@@ -39,7 +40,7 @@ func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveF
 		return nil, ErrNoFacts
 	}
 	ch := audit.NewChainer(db)
-	r, err := operation.NewRunner(operation.Config{DB: db, Audit: ch, Authz: authzr, Registry: reg, Facts: facts, Pinner: pinner, Component: "server"})
+	r, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: ch, Authz: authzr, Registry: reg, Facts: facts, Pinner: pinner, Component: "server"})
 	if err != nil {
 		return nil, fmt.Errorf("server: operation runner: %w", err)
 	}

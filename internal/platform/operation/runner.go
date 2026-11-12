@@ -65,6 +65,11 @@ type Config struct {
 	Now       func() time.Time
 	NewID     func() string
 	Component string
+	// SecretAttr says whether a directory attribute name (a plain descr) is a known secret attribute
+	// (AG-9). Required: a runner with no list would let a password into the plan and the audit trail, so
+	// NewRunner refuses a nil. The kernel cannot import the attribute catalogue; the composition root
+	// passes secretattr.IsStatic (and, once the connector supplies it, the schema-driven half).
+	SecretAttr func(name string) bool
 
 	// The fields below are used by the persisted Directory path. SubmitDirectory needs Jobs, Keys and
 	// Pinner (when an Action writes to AD); the others are optional.
@@ -96,6 +101,9 @@ type Runner struct {
 func NewRunner(cfg Config) (*Runner, error) {
 	if cfg.DB == nil || cfg.Audit == nil || cfg.Authz == nil || cfg.Registry == nil {
 		return nil, fmt.Errorf("%w: runner needs DB, Audit, Authz and Registry", ErrInvalid)
+	}
+	if cfg.SecretAttr == nil {
+		return nil, fmt.Errorf("%w: runner needs SecretAttr, the secret-attribute predicate (AG-9)", ErrInvalid)
 	}
 	if cfg.Gate == nil {
 		cfg.Gate = PermissionOnly{}
@@ -433,7 +441,7 @@ func (u *run) checkPlan(steps []StepPlan) error {
 			}
 			// Fail closed: a known secret attribute must be declared Secret by the Action author. Redacting
 			// it silently here would hide the mistake and leave the next code path to leak the value.
-			if !sp.Diff[j].Secret && secret.IsStaticAttr(sp.Diff[j].Attribute) {
+			if !sp.Diff[j].Secret && u.r.cfg.SecretAttr(sp.Diff[j].Attribute) {
 				return fmt.Errorf("%w: step %d of %q plans a change to secret attribute %q without Secret set", ErrInvalid, i, u.d.ID, sp.Diff[j].Attribute)
 			}
 			if sp.Diff[j].Secret { // a secret value is never held in a plan, diff or event

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"os"
 	"sync"
 	"testing"
@@ -141,7 +142,7 @@ func refusedDraftWith(t *testing.T, s *storetest.Server, mk func(*testing.T, *st
 	if mk != nil {
 		az = mk(t, db, tid)
 	}
-	runner, err := operation.NewRunner(operation.Config{DB: db, Audit: rec, Authz: az, Facts: facts, Registry: r,
+	runner, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: rec, Authz: az, Facts: facts, Registry: r,
 		Now: time.Now, NewID: nil})
 	if err != nil {
 		t.Fatal(err)

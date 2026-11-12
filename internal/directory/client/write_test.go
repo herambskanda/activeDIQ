@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +31,7 @@ const (
 	ncGUID  = "6f1c2a40-0000-4000-8000-0000000000cc"
 
 	otherNC  = authority.NamingContextID("6f1c2a40-0000-4000-8000-0000000000dd")
-	testKind = connectorv1.WriteKind(7)
+	testKind = connectorv1.WriteKind(6) // not a registered account kind (7-10)
 )
 
 var (
@@ -98,8 +99,12 @@ func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, 
 		Descriptor: operation.Descriptor{ID: "settings.thing.set", Version: 1, Permission: "settings.thing.set",
 			Input: "#/components/schemas/Thing", Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: "settings.thing.changed"},
 		Plan: func(context.Context, operation.PlanContext, none) ([]operation.TypedStep[none], error) {
-			return []operation.TypedStep[none]{{Plan: operation.StepPlan{Target: target, Kind: "user.set", Reversibility: operation.Reversible,
-				Diff: []operation.Change{{Attribute: "description", Before: []string{"old"}, After: []string{"new"}}}}}}, nil
+			diff := []operation.Change{{Attribute: "description", Before: []string{"old"}, After: []string{"new"}}}
+			if stepDiff != nil {
+				diff = *stepDiff
+			}
+			return []operation.TypedStep[none]{{Plan: operation.StepPlan{Target: target, Kind: stepKind, Reversibility: operation.Reversible,
+				Diff: diff}}}, nil
 		},
 		Apply: func(ctx context.Context, s step.Step, _ operation.TypedStep[none]) (none, error) {
 			fn(ctx, s)
@@ -117,7 +122,7 @@ func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := operation.NewRunner(operation.Config{DB: fakeDB{}, Audit: sink{}, Authz: allowAll{}, Registry: reg,
+	r, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: fakeDB{}, Audit: sink{}, Authz: allowAll{}, Registry: reg,
 		Now: func() time.Time { return time.Unix(1_700_000_000, 0) }})
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +135,12 @@ func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, 
 }
 
 func init() { kindTable["user.set"] = testKind }
+
+// stepKind and stepDiff let a test mint a Step for another digest kind (the account kinds).
+var (
+	stepKind = "user.set"
+	stepDiff *[]operation.Change
+)
 
 func goodOp() WriteOp {
 	return WriteOp{DigestKind: "user.set", Target: testTarget, Attrs: testAttrs}

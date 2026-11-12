@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -81,7 +82,7 @@ func TestRunnerEventsAreChainedAtCommit(t *testing.T) {
 				}
 			}
 			// Each run uses its own registry, so build a runner over it against the same chainer.
-			rn, err := operation.NewRunner(operation.Config{DB: e.db, Audit: k.Chainer, Authz: allowAuthz{}, Registry: reg, Component: "test"})
+			rn, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: e.db, Audit: k.Chainer, Authz: allowAuthz{}, Registry: reg, Component: "test"})
 			if err != nil {
 				t.Fatal(err)
 			}
