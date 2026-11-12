@@ -30,14 +30,14 @@ def strip(o):  # drop the CLIXML progress noise PowerShell writes on stderr/stdo
     return "\n".join(l for l in o.splitlines() if not l.startswith(("#< CLIXML", "<Objs")))
 
 
-def _protocol(env, addr):
+def _protocol(env, addr, key="WIN_LAB_ADMIN_PASSWORD"):
     return Protocol(endpoint=f"http://{addr}:5985/wsman", transport="ntlm", username="Administrator",
-                    password=env["WIN_LAB_ADMIN_PASSWORD"], read_timeout_sec=900, operation_timeout_sec=800)
+                    password=env[key], read_timeout_sec=900, operation_timeout_sec=800)
 
 
-def make_ps(env, addr):
+def make_ps(env, addr, key="WIN_LAB_ADMIN_PASSWORD"):  # key: env var holding that host's local Administrator password (fs1: WIN_LAB_FS1_ADMIN_PASSWORD)
     def ps(script):
-        p = _protocol(env, addr)
+        p = _protocol(env, addr, key)
         sh = p.open_shell()
         enc = base64.b64encode(script.encode("utf-16le")).decode()
         cid = p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", enc])

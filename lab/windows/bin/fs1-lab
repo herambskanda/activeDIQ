@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Build, check and gather evidence for fs1, the lab's domain-joined member server (T-1328, D-0022). Lab only (A-0025).
+
+  fs1-lab build      static IP + DNS=dc1, join win.activediq.test, create the gMSA on dc1, install it on fs1, create the local
+                     non-admin user. Idempotent: every step checks first. Then runs `check`.
+  fs1-lab check      read the evidence over WinRM and judge it (exit 3 and name each problem when it fails). Writes nothing.
+  fs1-lab evidence   print the raw evidence (winver, nltest, PartOfDomain, Test-ADServiceAccount, Administrators) for a run log.
+
+The VM itself is Proxmox VM 181 in the adiq-lab pool; snapshot and rollback are `lab/proxmox/bin/proxmox-lab`, not this tool.
+Wrap every call:  lab/windows/bin/with-dc1-lock -- lab/windows/bin/fs1-lab build   (build touches dc1 for the gMSA)
+Credentials come from WIN_LAB_ENV (WIN_LAB_FS1_ADMIN_PASSWORD, WIN_LAB_FS1_ADDR, WIN_LAB_ADMIN_PASSWORD, WIN_LAB_DC_ADDR) and are never
+printed; the local user's password is generated into the same 0600 file as WIN_LAB_FS1_USER_PASSWORD. Runbook section 21.
+"""
+import os, secrets, string, sys, time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import dc1winrm, fs1lab
+
+GATEWAY = os.environ.get("WIN_LAB_FS1_GATEWAY", "192.168.1.1")
+
+
+def say(m):
+    print(m, flush=True)
+
+
+def gen_password():
+    a = string.ascii_letters + string.digits
+    while True:
+        p = "".join(secrets.choice(a) for _ in range(24))
+        if any(c.islower() for c in p) and any(c.isupper() for c in p) and any(c.isdigit() for c in p):
+            return p
+
+
+def ensure_user_password(env, path):
+    if env.get("WIN_LAB_FS1_USER_PASSWORD"):
+        return env["WIN_LAB_FS1_USER_PASSWORD"]
+    p = gen_password()
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND)
+    with os.fdopen(fd, "a") as f:
+        f.write(f"\nWIN_LAB_FS1_USER_PASSWORD={p}\n")
+    os.chmod(path, 0o600)
+    env["WIN_LAB_FS1_USER_PASSWORD"] = p
+    return p
+
+
+def wait_for(ps, tries=60, want=None):
+    for _ in range(tries):
+        try:
+            rc, out = ps(fs1lab.MEMBER_PS)
+            if rc == 0 and (want is None or want in out):
+                return out
+        except Exception:
+            pass
+        time.sleep(10)
+    sys.exit("fs1-lab: fs1 did not come back over WinRM in time")
+
+
+def member(ps):
+    return fs1lab.parse_kv(ps(fs1lab.MEMBER_PS)[1]).get("PartOfDomain") == "True"
+
+
+def evidence(ps):
+    return ps(fs1lab.EVIDENCE_PS)[1]
+
+
+def check(ps, dc_addr, say=say):
+    out = evidence(ps)
+    bad = fs1lab.problems(fs1lab.parse_kv(out), dc_addr)
+    for b in bad:
+        say("PROBLEM: " + b)
+    return bad
+
+
+def build(env, path, ip, dc_addr):
+    fs1 = dc1winrm.make_ps(env, ip, "WIN_LAB_FS1_ADMIN_PASSWORD")
+    dc = dc1winrm.make_ps(env, dc_addr)
+    upw = ensure_user_password(env, path)
+    say("1. static IPv4 and DNS=dc1")
+    say(fs1(fs1lab.net_ps(ip, GATEWAY, dc_addr))[1])
+    if not member(fs1):
+        say("2. joining " + fs1lab.DOMAIN)
+        try:
+            rc, out = fs1(fs1lab.join_ps(env["WIN_LAB_ADMIN_PASSWORD"]))
+            say(out)
+        except Exception as e:  # the restart may cut the session
+            say(f"(session ended by the restart: {type(e).__name__})")
+        time.sleep(45)
+        wait_for(fs1, want="PartOfDomain=True")
+    else:
+        say("2. already joined")
+    say("3. gMSA on dc1")
+    rc, out = dc(fs1lab.GMSA_DC_PS)
+    say(out)
+    if rc != 0:
+        sys.exit("fs1-lab: gMSA creation on dc1 failed")
+    say("4. gMSA installed on fs1")
+    say(fs1(fs1lab.GMSA_FS1_PS)[1])
+    say("5. local non-admin user")
+    say(fs1(fs1lab.user_ps(upw))[1])
+    say("6. check")
+    return check(fs1, dc_addr)
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in ("build", "check", "evidence"):
+        sys.exit(__doc__)
+    env, path, dc_addr = dc1winrm.load_env("fs1-lab")
+    for k in ("WIN_LAB_FS1_ADMIN_PASSWORD", "WIN_LAB_FS1_ADDR", "WIN_LAB_ADMIN_PASSWORD"):
+        if not env.get(k):
+            sys.exit(f"fs1-lab: {k} missing from {path}")
+    ip = env["WIN_LAB_FS1_ADDR"]
+    fs1 = dc1winrm.make_ps(env, ip, "WIN_LAB_FS1_ADMIN_PASSWORD")
+    if sys.argv[1] == "evidence":
+        print(evidence(fs1))
+        return 0
+    bad = build(env, path, ip, dc_addr) if sys.argv[1] == "build" else check(fs1, dc_addr)
+    say("fs1 OK" if not bad else f"fs1 FAILED: {len(bad)} problem(s)")
+    return 0 if not bad else 3
+
+
+if __name__ == "__main__":
+    sys.exit(main())
