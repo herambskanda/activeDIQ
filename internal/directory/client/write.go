@@ -345,9 +345,16 @@ func (op WriteOp) derive() (wire, error) {
 	switch {
 	case account:
 		// The account kinds (T-1583) have their own change codec, class label and secret rule, applied by
-		// deriveChange.
+		// deriveChange. A reset takes its secret from the step, so op.SecretInput is never theirs.
+		if !op.SecretInput.IsEmpty() {
+			return wire{}, fmt.Errorf("%w: secret input", ErrInvalidOp)
+		}
 	case structureKind(op.DigestKind):
-		// Kinds 4-6 (T-1624): the change comes from op.change; the connector reads the class live.
+		// Kinds 4-6 (T-1624): the change comes from op.change; the connector reads the class live. They
+		// carry no secret: one passed here is refused, not dropped.
+		if !op.SecretInput.IsEmpty() {
+			return wire{}, fmt.Errorf("%w: secret input", ErrInvalidOp)
+		}
 		var err error
 		change, err = op.change(kind)
 		if err != nil {

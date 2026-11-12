@@ -4,8 +4,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/skenzeriq/activediq/internal/directory/accountkind"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 )
 
 const (
@@ -93,6 +95,20 @@ func TestUnregisteredKindsAreUnknown(t *testing.T) {
 		}
 		if !errors.Is(err, ErrUnknownKind) {
 			t.Errorf("%q: %v", k, err)
+		}
+	}
+}
+
+// A secret handed to a kind that carries none is refused, not dropped (kinds 4-6 and the account kinds).
+func TestSecretInputOnKindsWithoutOneIsRefused(t *testing.T) {
+	for _, op := range []WriteOp{
+		objOp(DigestObjectMove, one(AttrNewParent, objNP), one(AttrNewParentNC, objNC)),
+		objOp(DigestObjectRename, one(AttrNewRDN, "x")),
+		{DigestKind: accountkind.KeyUnlock, Target: acctTarget},
+	} {
+		op.SecretInput = secret.FromBytes([]byte("Passw0rd!"))
+		if _, err := op.derive(); !errors.Is(err, ErrInvalidOp) {
+			t.Errorf("%s: got %v, want ErrInvalidOp", op.DigestKind, err)
 		}
 	}
 }
