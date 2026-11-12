@@ -219,6 +219,105 @@ func providerValueDefault(rest string) bool {
 	return valueToken.MatchString(rest)
 }
 
+var (
+	xmlComment = regexp.MustCompile(`(?s)<!--.*?-->`)
+	// xmlElement matches one start tag, attribute-aware (a ">" inside a quoted value does not end it), over
+	// several lines; xmlAttr then reads its name="value" pairs.
+	xmlElement = regexp.MustCompile(`(?s)<[A-Za-z][\w:.-]*((?:\s+[\w:.-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*/?>`)
+	xmlAttr    = regexp.MustCompile(`([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+	// pairArgs is NAME followed by a separate value token as the next call argument: SetEnvironmentVariable(
+	// "NAME", "v"), Setenv, os.environ.setdefault, which may sit on the next line (PowerShell backtick
+	// continuation allowed). pairWords is the word-separated form of the commands that set a variable: setx NAME v,
+	// Set-Item Env:NAME v, New-ItemProperty/Set-ItemProperty -Name NAME -Value v (either order). Prose that
+	// merely mentions the name is not a set.
+	//
+	// pairArgs needs a call context: an identifier (optionally ::member), "(", and the quoted name followed by a
+	// comma. A list of names (@("NAME", "OTHER"), foreach ... in ('NAME','X')) or prose ("NAME, the KEK provider,
+	// must be set") is not a set, and a preflight check that merely names the variable must not be flagged, or
+	// authors split the name and every FF-KEY-3 rule goes blind (T-1764 review).
+	pairArgs = regexp.MustCompile(`(?s)([\w-]+)(?:::\w+)?\s*\([\s` + "`" + `]*["']` + kekPrefix + `PROVIDER["']\s*,[\s` + "`" + `]*("[^"]*"|'[^']*'|[^\s,)"';&|}\]]+)`)
+	tok      = `("[^"]*"|'[^']*'|[^\s,)"';&|}\]` + "`" + `]+)`
+	// posTok is a positional value: a token that does not start with "-" (that would be the next parameter).
+	posTok = `("[^"]*"|'[^']*'|[^\s,)"';&|}\]` + "`" + `\-][^\s,)"';&|}\]` + "`" + `]*)`
+	// gap spans the rest of a PowerShell statement, following backtick line continuations.
+	gap = "(?:[^\\n]|`\\r?\\n)*?"
+	ws  = "(?:[ \\t]|`\\r?\\n)+"
+	// envCmds are the cmdlets that write an Env: drive item.
+	envCmds   = `\b(?:Set-Item|New-Item|Set-Content|Add-Content)\b`
+	envName   = `["']?Env:\\?` + kekPrefix + `PROVIDER(?:["']|\b)`
+	pairWords = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bsetx(?:\.exe)?\s+(?:/\w+\s+)*["']?` + kekPrefix + `PROVIDER["']?[ \t]+` + tok),
+		// Set-Item Env:NAME v, Set-Item Env:\NAME v, Set-Item -Path Env:NAME -Value v, New-Item/Set-Content alike.
+		regexp.MustCompile(`(?i)` + envCmds + ws + `(?:-(?:Literal)?Path` + ws + `)?` + envName + ws + `(?:-Value` + ws + `)?` + posTok),
+		regexp.MustCompile(`(?i)` + envCmds + gap + envName + gap + `-Value` + ws + tok),
+		regexp.MustCompile(`(?i)` + envCmds + gap + `-Value` + ws + tok + gap + envName),
+		// New-ItemProperty/Set-ItemProperty -Name NAME -Value v, either order, continued lines included.
+		regexp.MustCompile(`(?i)-Name` + ws + `["']?` + kekPrefix + `PROVIDER(?:["']|\b)` + gap + `-Value` + ws + tok),
+		regexp.MustCompile(`(?i)-Value` + ws + tok + gap + `-Name` + ws + `["']?` + kekPrefix + `PROVIDER\b`),
+	}
+	// readCall: a name followed by a scope is a read, not a value: GetEnvironmentVariable("NAME", "Machine").
+	readCall = regexp.MustCompile(`(?i)^(GetEnvironmentVariable|ExpandEnvironmentVariables|LookupEnv)$`)
+	// notCalls are keywords that take a parenthesised list, not calls: foreach ($v in ('NAME','X')).
+	notCalls = map[string]bool{"in": true, "if": true, "elseif": true, "foreach": true, "for": true, "while": true, "switch": true, "return": true, "and": true, "or": true, "not": true, "array": true}
+	// emptyValue is a token that unsets or leaves the setting empty.
+	emptyValue = regexp.MustCompile(`(?i)^(""|''|\$null|\$\{?null\}?)$`)
+	nameAttrs  = map[string]bool{"name": true, "key": true, "id": true, "variable": true}
+	valueAttrs = map[string]bool{"value": true, "default": true, "defaultvalue": true}
+)
+
+// providerMultiToken finds the provider setting given a value where the name and the value are separate
+// tokens, which the per-line providerDefault cannot see (T-1764): an XML element whose name-like attribute
+// (Name, Key, Id) is ACTIVEDIQ_KEK_PROVIDER and whose Value attribute is non-empty — WiX <Environment
+// Name=".." Value=".."/> in any attribute order or across lines — and a name followed by its value as the next
+// call argument or word (SetEnvironmentVariable("NAME","v"), setx NAME v). It returns the 1-based lines of the
+// offending names, which the caller dedupes against the per-line pass.
+func providerMultiToken(src string) []int {
+	var lines []int
+	lineOf := func(off int) int { return 1 + strings.Count(src[:off], "\n") }
+	// XML comments are blanked, newlines kept so line numbers stay true.
+	xml := xmlComment.ReplaceAllStringFunc(src, func(c string) string {
+		return strings.Map(func(r rune) rune {
+			if r == '\n' {
+				return r
+			}
+			return ' '
+		}, c)
+	})
+	for _, m := range xmlElement.FindAllStringSubmatchIndex(xml, -1) {
+		var named, valued bool
+		for _, a := range xmlAttr.FindAllStringSubmatch(xml[m[2]:m[3]], -1) {
+			v := a[2] + a[3]
+			k := strings.ToLower(a[1])
+			if nameAttrs[k] && kekEnvRE.MatchString(v) && strings.EqualFold(v, kekPrefix+"PROVIDER") {
+				named = true
+			}
+			if valueAttrs[k] && strings.TrimSpace(v) != "" {
+				valued = true
+			}
+		}
+		if named && valued {
+			lines = append(lines, lineOf(m[0]))
+		}
+	}
+	for _, m := range pairArgs.FindAllStringSubmatchIndex(src, -1) {
+		if id := src[m[2]:m[3]]; readCall.MatchString(id) || notCalls[strings.ToLower(id)] {
+			continue
+		}
+		if emptyValue.MatchString(src[m[4]:m[5]]) {
+			continue
+		}
+		lines = append(lines, lineOf(m[0]))
+	}
+	for _, re := range pairWords {
+		for _, m := range re.FindAllStringSubmatchIndex(src, -1) {
+			if !emptyValue.MatchString(src[m[2]:m[3]]) {
+				lines = append(lines, lineOf(m[0]))
+			}
+		}
+	}
+	return lines
+}
+
 // checkFFKey3 is "config only in the root": the KEK settings are named only by the composition root (its
 // tests too, and this tool); no struct field, flag or column carries a passphrase or KEK value; no
 // shipped file gives the provider setting a default.
@@ -288,12 +387,21 @@ func checkFFKey3(root string, files []goFile) ([]Violation, error) {
 		if err != nil {
 			return err
 		}
+		reported := map[int]bool{}
+		if inShip {
+			for _, n := range providerMultiToken(string(b)) {
+				if !reported[n] {
+					reported[n] = true
+					vs = append(vs, Violation{"FF-KEY-3", "provider-default", rel + ":" + strconv.Itoa(n), "the KEK provider setting is given a value in shipped config (name and value in separate tokens); there is no default custody model"})
+				}
+			}
+		}
 		for i, ln := range strings.Split(string(b), "\n") {
 			at := rel + ":" + strconv.Itoa(i+1)
 			if inMig && secretColRE.MatchString(ln) {
 				vs = append(vs, Violation{"FF-KEY-3", "secret-column", at, "a database column would hold a passphrase/KEK value"})
 			}
-			if inShip && providerDefault(ln) {
+			if inShip && !reported[i+1] && providerDefault(ln) {
 				vs = append(vs, Violation{"FF-KEY-3", "provider-default", at, "the KEK provider setting is given a value in shipped config; there is no default custody model"})
 			}
 		}
