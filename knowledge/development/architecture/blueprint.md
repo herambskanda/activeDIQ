@@ -600,6 +600,7 @@ func Boot(ctx context.Context, mods []Entry, enabled capability.Set) (*Contribut
 type Entry struct { ID ID; Module Module }                  // what the generated list builds
 ```
 
+- **`API` and `Permission` are due now.** [ADR-0013](../decisions/0013-compose-server-wires-modules-through-registrar-no-exemption.md) (T-1863) orders them built before any further module wiring: modules build their own services in `Register` from kernel ports and `compose/server` names no module outside `modules.gen.go`. Rule 2.5 admits no exemption.
 - **Each method arrives with its extension point.** The ticket that builds EP-2 … EP-10 adds the
   matching Registrar method, so the type never names something that does not exist yet.
 - **Concrete, not an interface.** Only the kernel's own `Registrar` can attribute each
