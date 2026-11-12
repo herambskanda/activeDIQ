@@ -83,7 +83,7 @@ const backfill = "SELECT k.connection_id, k.object_guid, k.norm_version FROM pub
 
 func Compile(s reportsql.Search) string { return s.CompileSearch() }
 `,
-		"internal/modules/search/search.go": `package search
+		"internal/directory/search/search.go": `package search
 
 import "` + mod + `/internal/platform/authz"
 
@@ -163,9 +163,9 @@ func TestCleanTreePasses(t *testing.T) {
 
 // A tree without the search module is pending, not passing.
 func TestAbsentSearchModuleIsPending(t *testing.T) {
-	r := run(t, tree(t, nil, "internal/modules/search/search.go"), Options{})
+	r := run(t, tree(t, nil, "internal/directory/search/search.go"), Options{})
 	none(t, r)
-	if got := strings.Join(r.Pending, ";"); !strings.Contains(got, "SE2 internal/modules/search") {
+	if got := strings.Join(r.Pending, ";"); !strings.Contains(got, "SE2 internal/directory/search") {
 		t.Fatalf("pending: %v", r.Pending)
 	}
 	for _, p := range r.Passed {
@@ -252,13 +252,13 @@ func f(s authz.ReadScope) int { return len(s.Connections()) }
 }
 
 func TestSE1CompileSearchOnlyFromInventory(t *testing.T) {
-	r := run(t, tree(t, map[string]string{"internal/modules/search/s.go": `package search
+	r := run(t, tree(t, map[string]string{"internal/directory/search/s.go": `package search
 
 import "` + mod + `/internal/platform/store/reportsql"
 
 func Again(s reportsql.Search) string { return s.CompileSearch() }
 `}), Options{})
-	expect(t, r, "SE1", "compile-search", "internal/modules/search/s.go:5", "CompileSearch")
+	expect(t, r, "SE1", "compile-search", "internal/directory/search/s.go:5", "CompileSearch")
 }
 
 func TestSE1RBACTablesNamedInGoSQL(t *testing.T) {
@@ -353,7 +353,7 @@ func TestSE2PatternsInSearchSQL(t *testing.T) {
 		"~~":         "SELECT id FROM t WHERE name ~~ 'a%'",
 		"regexp":     "SELECT regexp_matches(name, 'a') FROM t",
 	} {
-		for _, dir := range []string{"internal/directory/inventory", "internal/modules/search"} {
+		for _, dir := range []string{"internal/directory/inventory", "internal/directory/search"} {
 			t.Run(name+" in "+dir, func(t *testing.T) {
 				r := run(t, tree(t, map[string]string{dir + "/bad.go": "package " + filepath.Base(dir) + "\n\nconst q = `" + q + "`\n"}), Options{})
 				expect(t, r, "SE2", "pattern", dir+"/bad.go:3", "")
@@ -568,7 +568,7 @@ var oneBinding = []binding{{Check: "SE5", Name: "Test_bounded", Pkg: "./internal
 	Subtests: pg(), What: "bounded work"}}
 
 func TestBindingsPendingWhenTheTestIsAbsent(t *testing.T) {
-	bs := []binding{{Check: "SE4", Name: "Test_later", Pkg: "./internal/modules/search", Owner: "T-1096", What: "x"}}
+	bs := []binding{{Check: "SE4", Name: "Test_later", Pkg: "./internal/directory/search", Owner: "T-1096", What: "x"}}
 	r := run(t, tree(t, nil), Options{Bindings: bs})
 	none(t, r)
 	if !strings.Contains(strings.Join(r.Pending, ";"), "SE4 Test_later (T-1096 has not landed it)") {
@@ -577,8 +577,8 @@ func TestBindingsPendingWhenTheTestIsAbsent(t *testing.T) {
 }
 
 func TestBindingDeclaredButNotMarkedLandedFails(t *testing.T) {
-	bs := []binding{{Check: "SE4", Name: "Test_later", Pkg: "./internal/modules/search", Owner: "T-1096", What: "x"}}
-	r := run(t, bindingTree(t, "internal/modules/search:Test_later"), Options{Bindings: bs})
+	bs := []binding{{Check: "SE4", Name: "Test_later", Pkg: "./internal/directory/search", Owner: "T-1096", What: "x"}}
+	r := run(t, bindingTree(t, "internal/directory/search:Test_later"), Options{Bindings: bs})
 	expect(t, r, "SE4", "binding-not-landed", "Test_later", "Landed")
 }
 
@@ -623,10 +623,10 @@ func TestDefaultBindingsCoverSE3ToSE6AndKnowTheirPackages(t *testing.T) {
 func TestNightlyRunsOnlySE6(t *testing.T) {
 	bs := []binding{
 		{Check: "SE5", Name: "Test_bounded", Pkg: "./internal/directory/inventory", Landed: true, Owner: "T-1095", What: "x"},
-		{Check: "SE6", Name: "TestSearchLatency50k", Pkg: "./internal/modules/search/latency", Nightly: true, Landed: true, Owner: "T-1102", Subtests: []string{"pg16", "pg18"}, What: "latency"},
+		{Check: "SE6", Name: "TestSearchLatency50k", Pkg: "./internal/directory/search/latency", Nightly: true, Landed: true, Owner: "T-1102", Subtests: []string{"pg16", "pg18"}, What: "latency"},
 	}
-	root := bindingTree(t, "internal/modules/search/latency:TestSearchLatency50k")
-	pkg := "./internal/modules/search/latency"
+	root := bindingTree(t, "internal/directory/search/latency:TestSearchLatency50k")
+	pkg := "./internal/directory/search/latency"
 	ok := recorded(map[string]map[string]string{pkg: {"TestSearchLatency50k": "pass", "TestSearchLatency50k/pg16": "pass", "TestSearchLatency50k/pg18": "pass"}})
 	r := run(t, root, Options{Nightly: true, Bindings: bs, Runner: ok})
 	none(t, r)

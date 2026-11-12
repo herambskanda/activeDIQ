@@ -900,12 +900,12 @@ import "sr.test/internal/platform/authz"
 func Mine(s authz.ReadScope) bool { return s.Admits(7) }
 GO
 must_fail_with "fitness-search SE1 on ReadScope.Admits outside authz (the second renderer)" 'internal/modules/users/u.go:5 SE1 \[scope-members\]' "$srbin" -root "$sr" -static-only
-fresh_sr; sr_put internal/modules/search/s.go <<'GO'
+fresh_sr; sr_put internal/directory/search/s.go <<'GO'
 package search
 
 const q = "SELECT guid FROM inventory_objects WHERE sam ILIKE $1"
 GO
-must_fail_with "fitness-search SE2 on an ILIKE pattern in search SQL" 'internal/modules/search/s.go:3 SE2 \[pattern' "$srbin" -root "$sr" -static-only
+must_fail_with "fitness-search SE2 on an ILIKE pattern in search SQL" 'internal/directory/search/s.go:3 SE2 \[pattern' "$srbin" -root "$sr" -static-only
 fresh_sr; sr_put migrations/0002_trgm.sql <<'SQL'
 CREATE VIEW public.near AS SELECT a.key FROM public.inventory_search_keys a WHERE a.key % 'abc';
 SQL

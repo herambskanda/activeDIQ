@@ -19,7 +19,7 @@ missing Docker fails the job instead of skipping it. Tool: `tools/fitness/search
 
 | Check | What fails |
 | --- | --- |
-| SE1 | `ReadScope.Terms`/`.Token` outside `store/reportsql`; `Admits`/`SearchRoots` outside `authz`; `Connections` outside `authz`, `reportsql`, `reports`, `reports/run`, `modules/search`; `CompileSearch` outside `internal/directory/inventory`; embedding `ReadScope` or re-declaring its methods in an interface (type-checked); an RBAC assignment table named in SQL outside `rbac`, `authz`, migrations (Go constants, `.sql` files, and any new `authz_*` table in `owners.gen.tsv`); a migration view, matview, rule or non-trigger function over those tables (the guards `authz_tier2_guard`, `authz_tenant_owner_role_guard`, `authz_control_plane_guard` are allowed and must be attached by `CREATE TRIGGER`); `inventory_search_keys` read by anything but the template, the key writers and the named backfill projection |
+| SE1 | `ReadScope.Terms`/`.Token` outside `store/reportsql`; `Admits`/`SearchRoots` outside `authz`; `Connections` outside `authz`, `reportsql`, `reports`, `reports/run`, `directory/search`; `CompileSearch` outside `internal/directory/inventory`; embedding `ReadScope` or re-declaring its methods in an interface (type-checked); an RBAC assignment table named in SQL outside `rbac`, `authz`, migrations (Go constants, `.sql` files, and any new `authz_*` table in `owners.gen.tsv`); a migration view, matview, rule or non-trigger function over those tables (the guards `authz_tier2_guard`, `authz_tenant_owner_role_guard`, `authz_control_plane_guard` are allowed and must be attached by `CREATE TRIGGER`); `inventory_search_keys` read by anything but the template, the key writers and the named backfill projection |
 | SE2 | `LIKE`, `ILIKE`, `SIMILAR TO`, POSIX operators (`~ ~* !~ !~*`) or regex functions in the search packages and the template; a trigram operator (`% <% %> <<% %>> <-> <<-> <->> <<<-> <->>>`) or function (`similarity`, `word_similarity`, `strict_word_similarity`, `show_trgm`, `set_limit`, `show_limit`) outside the template, migrations included (`gin_trgm_ops` is allowed); `SET pg_trgm.*`; a `set_config` whose third argument is not literal `true`, or on `pg_trgm.*` outside `store/localsetting.go` and not bound; a `LIKE` operand that is not a `store.LikePattern`; the search packages missing from `sqlconst` coverage |
 | SE3 | `Test_search_scope_matches_read_oracle` (subtests `pg16`/`pg18`, inner `oracle`, `invariance_M4`, `above_ceiling`, `gated_kinds`, `empty_scope`) and the other bound tests of that check |
 | SE4 | hostile-input and folding vectors, the search text as a bound parameter, no secret attribute stored, the logging tests |
@@ -57,7 +57,7 @@ In `tools/fitness/search/bindings.go` set `Landed: true` (and `Pkg` if elsewhere
 the test: a test that is declared while its binding is not `Landed` fails the job (`binding-not-landed`), and
 a landed one that is renamed, missing, failed, skipped, or lacks a `pg16`/`pg18` subtest fails. Pending rows
 today: T-1323's two (reportsql template, console route log) and SE6 from T-1102. T-1096's three tests
-(`./internal/modules/search`) are landed and bound. A `binding-not-landed` failure on main means a flip was
+(`./internal/directory/search`) are landed and bound. A `binding-not-landed` failure on main means a flip was
 missed.
 
 ## Large-dataset switch (SE6)

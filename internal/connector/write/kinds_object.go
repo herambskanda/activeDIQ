@@ -19,7 +19,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
-	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/operation/digest"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -147,7 +147,7 @@ func objectDigest(req *connectorv1.ApplyRequest) ([]byte, error) {
 	default:
 		tr.GUID = obj
 	}
-	d := step.Compute(key, tr, attrs)
+	d := digest.Compute(key, tr, attrs)
 	return d[:], nil
 }
 

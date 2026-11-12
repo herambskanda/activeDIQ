@@ -43,7 +43,7 @@ func pg(inner ...string) []string {
 const (
 	inv = "./internal/directory/inventory"
 	key = "./internal/platform/searchkey"
-	srv = "./internal/modules/search"
+	srv = "./internal/directory/search"
 )
 
 var defaultBindings = []binding{
@@ -72,7 +72,7 @@ var defaultBindings = []binding{
 		What: "the console's /search route puts q in no access-log or trace line (ADR-0011 SE4 search text, rule 15)"},
 	{Check: "SE5", Name: "Test_search_work_is_bounded", Pkg: inv, Landed: true, Owner: "T-1095", Subtests: pg(),
 		What: "the scan nodes of the compiled statement examine W+1 rows or fewer however much the scope hides, there is no Seq Scan on the key or object table, and the answers equal the H=0 and the unscoped refine responses (ADR-0011 SE5)"},
-	{Check: "SE6", Name: "TestSearchLatency50k", Pkg: "./internal/modules/search/latency", Nightly: true, Owner: "T-1102",
+	{Check: "SE6", Name: "TestSearchLatency50k", Pkg: "./internal/directory/search/latency", Nightly: true, Owner: "T-1102",
 		Subtests: []string{"pg16", "pg18"},
 		What:     "universal search answers within rule 14's budget per class, scoped and unscoped, over 50,000 objects on PostgreSQL 16 and 18 (ADR-0011 SE6)"},
 }

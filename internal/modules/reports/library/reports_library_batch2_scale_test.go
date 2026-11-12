@@ -1,4 +1,4 @@
-package inventory_test
+package library_test
 
 // Batch-2 library reports on a larger directory (T-0962; ADR-0010 budgets are calibrated by B13). The test
 // loads 20,000 users, 5,000 computers, 1,000 groups (about 40 members each, one chain of nested groups) and

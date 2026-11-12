@@ -17,7 +17,7 @@ type sqlScope int
 
 const (
 	scopeRepo     sqlScope = iota // trigram operators and functions, SET pg_trgm, set_config
-	scopeSearch                   // plus LIKE, ILIKE, SIMILAR TO and regular expressions (inventory, modules/search)
+	scopeSearch                   // plus LIKE, ILIKE, SIMILAR TO and regular expressions (inventory, directory/search)
 	scopeTemplate                 // the reportsql search template: trigram use is its job, patterns are still banned
 )
 
