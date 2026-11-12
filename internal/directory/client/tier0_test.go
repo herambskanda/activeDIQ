@@ -143,8 +143,8 @@ func (r *rig) builder(t *testing.T) Tier0Builder {
 }
 
 func adOp() WriteOp {
-	tg := authority.TargetRef{Connection: adConn, GUID: objGUID, Class: "user", NC: ncGUID}
-	return WriteOp{DigestKind: "user.set", Target: tg, Attrs: testAttrs}
+	tg := authority.TargetRef{Connection: adConn, GUID: objGUID, NC: ncGUID}
+	return WriteOp{DigestKind: "ad.object.update", Target: tg, Attrs: testAttrs}
 }
 
 func link(state inventory.State, tier0 bool, bases ...inventory.Basis) inventory.Link {
@@ -456,10 +456,10 @@ func TestWriteCarriesStatementAtPlanAndApplyAndRefusalNeverReachesAudit(t *testi
 			r.corr.links = []inventory.Link{link(st, true, "E1")}
 			ctr := &refusingConnector{}
 			c := New(WithTransport(ctr), WithFacts(&facts{}), WithTier0Builder(r.builder(t)))
-			tg := authority.TargetRef{Connection: adConn, GUID: objGUID, Class: "user", NC: ncGUID}
+			tg := authority.TargetRef{Connection: adConn, GUID: objGUID, NC: ncGUID}
 			var werr error
 			withStepOf(t, tg, authority.Pins{ncGUID: "dc1.corp.example"}, func(ctx context.Context, s step.Step) {
-				_, werr = c.Write(ctx, s, WriteOp{DigestKind: "user.set", Target: tg, Attrs: testAttrs})
+				_, werr = c.Write(ctx, s, WriteOp{DigestKind: "ad.object.update", Target: tg, Attrs: testAttrs})
 			})
 			if len(ctr.plans) != 1 {
 				t.Fatalf("plans %d", len(ctr.plans))
@@ -491,9 +491,9 @@ func TestApplyBuildsAFreshContext(t *testing.T) {
 	r.corr.links = []inventory.Link{link(inventory.StateMatched, false)}
 	ctr := &refusingConnector{}
 	c := New(WithTransport(ctr), WithFacts(&facts{}), WithTier0Builder(r.builder(t)))
-	tg := authority.TargetRef{Connection: adConn, GUID: objGUID, Class: "user", NC: ncGUID}
+	tg := authority.TargetRef{Connection: adConn, GUID: objGUID, NC: ncGUID}
 	withStepOf(t, tg, authority.Pins{ncGUID: "dc1.corp.example"}, func(ctx context.Context, s step.Step) {
-		if _, err := c.Write(ctx, s, WriteOp{DigestKind: "user.set", Target: tg, Attrs: testAttrs}); err != nil {
+		if _, err := c.Write(ctx, s, WriteOp{DigestKind: "ad.object.update", Target: tg, Attrs: testAttrs}); err != nil {
 			t.Fatal(err)
 		}
 	})

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
+	"github.com/skenzeriq/activediq/internal/directory/accountkind"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/sd"
@@ -94,13 +95,21 @@ func TestNonTier0IsUnsupported(t *testing.T) {
 			t.Errorf("%s reported %s", c.GetOperation(), c.GetState())
 		}
 	}
-	if len(operations) != 4 {
-		t.Fatalf("the operation table holds %d rows, want the four account kinds", len(operations))
-	}
-	for _, k := range []connectorv1.WriteKind{connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE, connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE} {
-		if _, ok := operations[k]; ok {
-			t.Errorf("kind %s must not be wired by this ticket", k)
+	// Kinds 1-3 (object create, update, delete, T-1623) and the four account kinds (T-1583) are the
+	// registered rows; a new kind ticket adds its own.
+	for _, k := range []connectorv1.WriteKind{connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE,
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE, connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE} {
+		if _, ok := operations[k]; !ok {
+			t.Errorf("kind %s has no operation row", k)
 		}
+	}
+	for _, sp := range accountkind.Specs() {
+		if _, ok := operations[sp.Kind]; !ok {
+			t.Errorf("account kind %s has no operation row", sp.Key)
+		}
+	}
+	if len(operations) != 7 {
+		t.Fatalf("operation table has %d rows, want 7 (three object kinds, four account kinds)", len(operations))
 	}
 }
 
@@ -482,7 +491,7 @@ func TestKnownKindTouchedSetAndStep9(t *testing.T) {
 	tgt, second := mk(40), mk(41)
 	mkReq := func(c *connectorv1.Tier0Context) *connectorv1.ApplyRequest {
 		q := applyReq(tgt, c)
-		q.Kind = 1
+		q.Kind, q.Change = 1, testChange()
 		return q
 	}
 	// second touched object has no statement: CONTEXT_MISSING at step 6, op never reached.
@@ -530,7 +539,7 @@ func TestStep9ReportsBasis(t *testing.T) {
 	tgt := mk(43)
 	withTestOp(r)
 	q := applyReq(tgt, ctxFor(tgt))
-	q.Kind = 1
+	q.Kind, q.Change = 1, testChange()
 	// Replace the fake's behaviour after the write: tier0 with C2, no error.
 	r.h.ops[1] = func() WriteOp {
 		w := r.h.ops[1]
@@ -557,7 +566,7 @@ func TestPlanThroughKnownKind(t *testing.T) {
 	rec := withTestOp(r)
 	tgt := mk(42)
 	q := planReq(tgt, ctxFor(tgt))
-	q.Kind = 1
+	q.Kind, q.Change = 1, testChange()
 	resp, err := r.h.Plan(context.Background(), q)
 	if err != nil || rec.plan != 1 || len(resp.GetTier0().GetEvaluated()) != 1 || resp.GetTier0().GetVerificationId() == nil {
 		t.Fatalf("%v %v %d", resp, err, rec.plan)
@@ -615,7 +624,7 @@ func TestStep9UsesDesignatedSet(t *testing.T) {
 	r := newRig(t, &run)
 	withTestOp(r)
 	q := applyReq(tgt, ctxFor(tgt))
-	q.Kind = 1
+	q.Kind, q.Change = 1, testChange()
 	w := r.h.ops[1]
 	inner := w.Apply
 	w.Apply = func(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {

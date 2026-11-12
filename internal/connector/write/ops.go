@@ -22,8 +22,33 @@ type pass struct {
 	// props are the attribute keys the kind's PropertyWrite declared at step 4 (the ones the §8.9 guard
 	// and the step-7 Tier-0 checks were run for). Only the DACL kind declares nTSecurityDescriptor.
 	props []string
+	// dir runs object writes on the session the guard evaluated on; nil when the provider has none.
+	dir ObjectDirectory
+	// dcID is the bound DC's identity (AD), for the observations a body returns.
+	dcID *connectorv1.DcIdentity
+	// recheck repeats the §8.9 property guard for a declaration only the body can derive (the live class).
+	recheck func(ctx context.Context, w tier0.PropertyWrite) bool
 	// prov is the provider the guard classified against; a body that needs the directory session asks it.
 	prov Provider
+}
+
+func (a Authorised) dir() ObjectDirectory {
+	if a.p == nil {
+		return nil
+	}
+	return a.p.dir
+}
+
+func (a Authorised) dcID() *connectorv1.DcIdentity {
+	if a.p == nil {
+		return nil
+	}
+	return a.p.dcID
+}
+
+// checkProperty is false (refuse) for a token with no checker.
+func (a Authorised) checkProperty(ctx context.Context, w tier0.PropertyWrite) bool {
+	return a.p != nil && a.p.recheck != nil && a.p.recheck(ctx, w)
 }
 
 // DeclaresProperty reports whether the write kind this token was issued for declared the attribute in
@@ -77,6 +102,14 @@ type WriteOp struct {
 	AlsoDeclares func(change *connectorv1.WriteChange) ([]tier0.PropertyWrite, error)
 	// Digest recomputes the plan digest from the typed fields with the operation/step function.
 	Digest func(req *connectorv1.ApplyRequest) ([]byte, error)
+	// Vet checks what needs the schema but no directory call: attribute names, limits, the deny-list.
+	// It runs at step 4 before the property guard, so a denied attribute is ATTRIBUTE_NOT_ALLOWED.
+	Vet func(d ObjectDirectory, change *connectorv1.WriteChange) *Refusal
+	// RemovesTarget: the write deletes the target, so step 9 has nothing to re-read for it.
+	RemovesTarget bool
+	// TargetGone: step 7 cannot classify the target because it is already deleted; true only when
+	// the object is shown to be deleted. A retry of the delete is then answered ALREADY_APPLIED.
+	TargetGone func(ctx context.Context, d ObjectDirectory, id guid.GUID) bool
 	// Arm reports whether the change is the arm of this kind; nil means no check. A mismatch is
 	// INVALID_ARGUMENT WriteChangeArmMismatch at step 4, before any live directory read (CC-WK-29).
 	Arm func(*connectorv1.WriteChange) bool
@@ -91,7 +124,11 @@ type WriteOp struct {
 // four kinds); a WriteKind with no row ends in CAPABILITY_UNSUPPORTED. The only place a
 // directory or Graph write may be called from is a WriteOp body reachable from this table; the
 // fitness test in fitness_test.go enforces that.
-var operations = map[connectorv1.WriteKind]WriteOp{}
+var operations = map[connectorv1.WriteKind]WriteOp{
+	connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE: objectCreateOp,
+	connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE: objectUpdateOp,
+	connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE: objectDeleteOp,
+}
 
 // validateOps is the build-time check of contract §8.9 / CC-WRITE-22: every registered write kind
 // declares its PropertyWrite and its other mandatory functions. It runs in New, so a handler cannot

@@ -85,9 +85,13 @@ func NewADProvider(sess *ad.Session, gc *ad.GCResolver, id *connectorv1.Director
 	}
 	if sess != nil {
 		p.Accounts = sess
+		p.Writes = sess
 	}
 	return p
 }
+
+// WriteDirectory is the session the object kinds write through (nil: those kinds answer unsupported).
+func (p *ADProvider) WriteDirectory() ObjectDirectory { return p.Writes }
 
 // sameSession is false when Dir and Bound are both session-backed but over different sessions.
 // Anything else (a test double on either side) is not a session mismatch.
@@ -158,6 +162,8 @@ type ADProvider struct {
 	Dynamic PropertyGuard
 	// Bound reports the DC the connector is bound to (rule 5). Nil refuses every write.
 	Bound DCBinder
+	// Writes runs the object writes (kinds 1 to 3). It must be over the same session as Dir and Bound.
+	Writes ObjectDirectory
 	// Accounts is the session the account kinds (T-1583) read and write on: the same session as Dir and
 	// Bound, so the DC whose identity rule 5 checks is the DC the write reaches. Nil: those kinds answer
 	// CAPABILITY_UNSUPPORTED.

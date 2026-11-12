@@ -94,6 +94,8 @@ type passed struct {
 	dec        Decision
 	// dc is the bound DC's identity (AD only), verified equal to the pin (Plan) or to precondition.dc (Apply).
 	dc *connectorv1.DcIdentity
+	// removes: the kind deletes its target, which step 9 therefore cannot re-read.
+	removes bool
 }
 
 // Plan implements connectorv1.ConnectorServer.
@@ -228,6 +230,9 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	if err != nil {
 		return nil, invalid("1", "TargetRequired", "target.object")
 	}
+	if r := shapeCheck(c); r != nil {
+		return nil, r
+	}
 	if c.name == "apply" && (c.pre == nil || len(c.digest) == 0) {
 		return nil, invalid("1", "PreconditionRequired", "precondition")
 	}
@@ -298,11 +303,17 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	var declared []string
 	if w, ok := h.ops[c.kind]; ok && c.kind != connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
 		op = &w
-		if w.Arm != nil && !w.Arm(c.change) && !(c.name == "apply" && w.WantsSecret && !c.secret) {
-			return nil, invalid("4", "WriteChangeArmMismatch", "change")
+		if r := stepFourShape(w, c); r != nil {
+			return nil, r
 		}
-		if c.name == "apply" && c.secret != w.WantsSecret {
-			return nil, invalid("4", "SecretInputMismatch", "secret_input")
+		if w.Vet != nil {
+			var pd ObjectDirectory
+			if wd, ok := h.prov.(writeDirectory); ok {
+				pd = wd.WriteDirectory()
+			}
+			if r := w.Vet(pd, c.change); r != nil {
+				return nil, r
+			}
 		}
 		if r := h.propertyGuard(ctx, w, c, target, ev); r != nil {
 			return nil, r
@@ -342,8 +353,17 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 
 	// Step 7: live re-read and classification of every touched object. An error is tier0.
 	designated := unionGUIDs(parseGUIDs(c.t0.GetDesignated()), h.gates.Designated(c.conn.GetConnectionId()))
-	for _, id := range touched {
+	var pdir ObjectDirectory
+	if wd, ok := h.prov.(writeDirectory); ok {
+		pdir = wd.WriteDirectory()
+	}
+	for i, id := range touched {
 		if r := h.live(ctx, idx, id, designated); r != nil {
+			// A delete retried after success: the target is shown deleted, so there is nothing to
+			// classify and nothing will be written; the body answers ALREADY_APPLIED.
+			if i == 0 && op != nil && op.TargetGone != nil && op.TargetGone(ctx, pdir, id) {
+				continue
+			}
 			return nil, r
 		}
 	}
@@ -351,7 +371,17 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	if bound != nil {
 		boundDSA, _ = fromWire(bound.GetDsaGuid()) // verified equal to the pin at step 2b
 	}
-	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, prov: h.prov}}}, nil
+	recheck := func(ctx context.Context, w tier0.PropertyWrite) bool {
+		g, err := h.prov.PropertyGuard(ctx)
+		if err != nil || g == nil {
+			return false
+		}
+		v, err := g.CheckPropertyWrite(ctx, w)
+		return err == nil && !v.Refused
+	}
+	removes := op != nil && op.RemovesTarget
+	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, removes: removes,
+		auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: pdir, dcID: bound, recheck: recheck, prov: h.prov}}}, nil
 }
 
 // Refusal reasons recorded for a property-write refusal that is not a rule verdict.
@@ -611,7 +641,10 @@ func (h *Handler) afterWrite(ctx context.Context, p *passed, ev *Event) []*conne
 	defer cancel()
 	designated := p.designated
 	var out []*connectorv1.Tier0Member
-	for _, id := range p.touched {
+	for i, id := range p.touched {
+		if i == 0 && p.removes {
+			continue // the target no longer exists; there is nothing left to classify
+		}
 		v, err := h.prov.Classify(ctx, id, designated)
 		switch {
 		case err != nil:
@@ -688,4 +721,68 @@ func unionGUIDs(a, b []guid.GUID) []guid.GUID {
 		}
 	}
 	return out
+}
+
+// armKind is the WriteKind whose arm the change holds (UNSPECIFIED for no arm).
+func armKind(c *connectorv1.WriteChange) connectorv1.WriteKind {
+	switch c.GetChange().(type) {
+	case *connectorv1.WriteChange_ObjectCreate:
+		return connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE
+	case *connectorv1.WriteChange_ObjectUpdate:
+		return connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE
+	case *connectorv1.WriteChange_ObjectDelete:
+		return connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE
+	case *connectorv1.WriteChange_ObjectMove:
+		return connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE
+	case *connectorv1.WriteChange_ObjectRename:
+		return connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME
+	case *connectorv1.WriteChange_ObjectRestore:
+		return connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE
+	case *connectorv1.WriteChange_UserPasswordReset:
+		return connectorv1.WriteKind_WRITE_KIND_USER_PASSWORD_RESET
+	case *connectorv1.WriteChange_UserUnlock:
+		return connectorv1.WriteKind_WRITE_KIND_USER_UNLOCK
+	case *connectorv1.WriteChange_AccountEnable:
+		return connectorv1.WriteKind_WRITE_KIND_ACCOUNT_ENABLE
+	case *connectorv1.WriteChange_AccountDisable:
+		return connectorv1.WriteKind_WRITE_KIND_ACCOUNT_DISABLE
+	}
+	return connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED
+}
+
+// shapeCheck is the part of step 1 that needs no directory: the change arm is the kind's arm
+// (CC-WK-29), and secret_input is present exactly for the two kinds whose Descriptor has
+// SecretInput (contract §8.10.5). It runs before any directory call.
+func shapeCheck(c *call) *Refusal {
+	if c.kind != connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED && armKind(c.change) != c.kind {
+		return invalid("1", "WriteChangeArmMismatch", "change")
+	}
+	if c.name != "apply" {
+		return nil
+	}
+	wants := c.kind == connectorv1.WriteKind_WRITE_KIND_USER_PASSWORD_RESET ||
+		c.kind == connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE &&
+			c.change.GetObjectCreate().GetObjectClass() == connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_USER &&
+			c.change.GetObjectCreate().GetHasSecretInput()
+	if wants != c.secret {
+		return invalid("1", "SecretInputMismatch", "secret_input")
+	}
+	return nil
+}
+
+// stepFourShape is the step-4 check of the arm and the secret for a kind that declares its own Arm (the
+// account kinds). A kind with no Arm (the object kinds) has both rules in shapeCheck at step 1, because
+// whether a create carries a secret depends on its change, not on the kind alone: comparing c.secret
+// with WantsSecret here would refuse every user create that carries a password.
+func stepFourShape(w WriteOp, c *call) *Refusal {
+	if w.Arm == nil {
+		return nil
+	}
+	if !w.Arm(c.change) && !(c.name == "apply" && w.WantsSecret && !c.secret) {
+		return invalid("4", "WriteChangeArmMismatch", "change")
+	}
+	if c.name == "apply" && c.secret != w.WantsSecret {
+		return invalid("4", "SecretInputMismatch", "secret_input")
+	}
+	return nil
 }
