@@ -719,3 +719,19 @@ is `lab/windows/tests/test_cbt_acceptance.py` (`make lab-test-windows-unit`, no 
 events outside the window do not, a control without 3039 fails, a skipped bind is not a pass, drift of the policy fails.
 2887 is a daily DC summary, so a 2-second window cannot prove it absent by itself; the run log also lists everything the queried ids logged in the
 preceding 26 h. Run log and broken-run proof: `windows-lab-runs/T-0148-cbt-acceptance-20261102.md`. Needs the keytab and gMSA files from `gssapi-lab prepare`.
+
+## 21. Sync mapper golden capture from dc1 (T-1787)
+
+`internal/connector/read` `TestWindowsLabSyncCapture` (tags `lab windowslab`) seeds users with accountExpires
+`0`, `9223372036854775807` and a far-future value plus a never-logged-on user in a throw-away
+`OU=t1787-<stamp>` by LDAPS adds as the lab Administrator, reads them (and the Administrator's real
+lastLogonTimestamp, which is system-only and cannot be written) back through the real ScopedSearch handler with
+the widened sync attribute list, and removes the OU. It refuses to run outside `with-dc1-lock`. Recapture:
+
+```bash
+export WIN_LAB_ENV=<main checkout>/lab/windows/.win-lab.env WIN_LAB_CA=<main checkout>/lab/windows/.win-lab-ca.pem
+lab/windows/bin/with-dc1-lock -- env SYNC_CAPTURE_DIR=$PWD/internal/directory/sync/testdata/windows \
+  go test -tags 'lab windowslab' ./internal/connector/read -run TestWindowsLabSyncCapture
+go test ./internal/directory/sync -run Test_windows_dc
+```
+Recycled/tombstone and raw ranged-member captures stay with T-1205.

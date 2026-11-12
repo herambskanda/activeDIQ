@@ -1,0 +1,133 @@
+{
+  "objectGuid":  {
+    "value":  "Dm2wdvnsQPunZvijeLqUuA=="
+  },
+  "dn":  {
+    "displayDn":  "CN=Administrator,CN=Users,DC=win,DC=activediq,DC=test"
+  },
+  "parentGuid":  {
+    "value":  "wWsNtSS4SXWKaz4W+ydPvw=="
+  },
+  "attributes":  [
+    {
+      "name":  "accountexpires",
+      "values":  [
+        {
+          "time":  {
+            "sentinel":  "TIME_SENTINEL_MAX"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "description",
+      "values":  [
+        {
+          "text":  "Built-in account for administering the computer/domain"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "lastlogontimestamp",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-07T10:55:45.459061800Z"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectclass",
+      "values":  [
+        {
+          "text":  "top"
+        },
+        {
+          "text":  "person"
+        },
+        {
+          "text":  "organizationalPerson"
+        },
+        {
+          "text":  "user"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectsid",
+      "values":  [
+        {
+          "sid":  {
+            "value":  "AQUAAAAAAAUVAAAA+Dq3tTpOfba5tfeL9AEAAA=="
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "primarygroupid",
+      "values":  [
+        {
+          "int32Value":  513
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "pwdlastset",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-10-27T11:31:10.109031800Z"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "samaccountname",
+      "values":  [
+        {
+          "text":  "Administrator"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "useraccountcontrol",
+      "values":  [
+        {
+          "int32Value":  66048
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whenchanged",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-07T10:55:45Z"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whencreated",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-10-27T12:15:48Z"
+          }
+        }
+      ],
+      "complete":  true
+    }
+  ]
+}
