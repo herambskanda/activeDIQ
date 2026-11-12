@@ -419,3 +419,13 @@ checkout (a failed `merge --abort`, for example "Unable to write index"). `merge
 that as an error and retries, instead of calling it the next ticket's conflict and reopening it
 (T-0941 was reopened twice that way). Finish or abort that merge by hand (`git -C <root> merge --abort`
 once its index is writable); every pending merge then proceeds on the next pass.
+
+## fitness-merge-order (T-1707, ADR-0012)
+
+`make fitness-merge-order` is part of `make fitness`, so of `make ci` and the pre-merge gate.
+
+- **Checker tests** (`factory/test/fitness-merge-order.test.mjs`): a history where a dependent merged before its dependency fails M5; a clean one, a dependency without a branch (spec/docs) and a fast-forwarded dependency pass; a stacked dependent that carries its dependency's commits but lands first still fails.
+- **M1-M4** are bound tests: subtests titled `M1 …` to `M3 …` in `factory/test/stacking.test.mjs` and `M4 …` in `factory/test/premerge.test.mjs` (T-1706 writes them). Until `max_depth` exists in `factory/lib` they print `pending (not a pass)`; afterwards a missing, failed or skipped one fails the build.
+- **M5** (`factory/bin/fitness-merge-order`) scans `git log --first-parent main` against `depends_on` in `factory/state/tickets/` (found via `FACTORY_STATE_DIR`, this tree, or the primary checkout). Without ticket data it prints `inactive`, not a pass. History up to `GRANDFATHER_UNTIL` (main at ratification, `6cb96d24d`) is not judged: it holds dependents merged before their dependency and reused ticket numbers. `KNOWN_EXCEPTIONS` records the exact (merge, dependency) pairs that landed after that, before T-1706 existed (T-1191 on T-1189, stacked by hand); each is exact and tested, and none is added without an ADR note.
+- **Accepting ADR-0012** needs every line green (no `pending`, no `inactive`) on main; flip the ADR then.
+- A violation line names the ticket, the merge SHA and the dependency; fix by landing the dependency first, never by editing the boundary.

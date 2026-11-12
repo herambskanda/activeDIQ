@@ -2,7 +2,7 @@
 name: backend-engineer
 description: "Use for server-side services, domain logic, persistence and migrations, background jobs, workflow and approval engines, RBAC enforcement, and activeDIQ's own audit trail. Owns the core application between the directory connectors and the API surface. Not for LDAP, Graph, sync or audit collectors (use directory-engineer), HTTP contracts, SDKs or the PowerShell module (use api-engineer), report definitions and exports (use reporting-engineer), or Windows-native code (use windows-engineer)."
 model: sonnet
-effort: high
+effort: medium
 skills:
   - factory-protocol
   - handoff
