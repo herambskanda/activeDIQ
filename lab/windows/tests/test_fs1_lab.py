@@ -39,9 +39,10 @@ class Quote(unittest.TestCase):
                 fs1lab.ps_quote(v)
 
     def test_secret_charset(self):
-        for v in ("short", "has space 12345678901", "q'uote1234567890ab"):
+        for v in ("short", "ctrl\n123456789012", "uni\u00e9code123456789"):
             with self.assertRaises(ValueError):
                 fs1lab.ps_secret(v)
+        self.assertEqual(fs1lab.ps_secret("it's;$(x)123456"), "'it''s;$(x)123456'")
 
     def test_user_script_never_admin(self):
         s = fs1lab.user_ps("Abcdefghijklmnop1234")

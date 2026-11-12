@@ -4,10 +4,10 @@ Every value interpolated into PowerShell goes through ps_quote(), which only acc
 returns a single-quoted literal. Secrets are passed in as arguments by the caller and never printed or stored here.
 The WinRM transport is dc1winrm.py (parameterised by host and password key); lab only (A-0025, extended by D-0022).
 """
-import re
+import base64, re
 
 DOMAIN = "win.activediq.test"
-NETBIOS = "WIN"
+NETBIOS = "WINLAB"
 DC_ADDR_DEFAULT = "192.168.1.250"
 COMPUTER = "FS1"
 GMSA = "adiq-gmsa"            # sAMAccountName without the trailing $ (<= 15 chars)
@@ -26,11 +26,12 @@ def ps_quote(v):
 
 
 def ps_secret(v):
-    """Single-quoted literal for a generated password (alphanumerics only, as the generator makes them)."""
+    """Single-quoted literal for a lab password: printable ASCII only (no control characters), embedded ' doubled.
+    Inside a PowerShell single-quoted string nothing else is special, so this cannot be broken out of."""
     v = str(v)
-    if not re.fullmatch(r"[A-Za-z0-9]{12,128}", v):
-        raise ValueError("password is not a generated alphanumeric secret")
-    return "'" + v + "'"
+    if not re.fullmatch(r"[\x20-\x7e]{12,128}", v):
+        raise ValueError("password is not 12-128 printable ASCII characters")
+    return "'" + v.replace("'", "''") + "'"
 
 
 def net_ps(ip, gateway, dc):
@@ -70,11 +71,27 @@ GMSA_DC_PS = (
     "'gMSA='+$g.SamAccountName;'Enabled='+$g.Enabled;"
     "'Principals='+(($g.PrincipalsAllowedToRetrieveManagedPassword|%{(Get-ADObject $_).Name}) -join ',')")
 
+def as_system(script):
+    """Wrap a script so it runs as SYSTEM (the computer's domain identity) through a one-shot scheduled task, and its output
+    comes back. The WinRM user is the local Administrator, which has no domain identity, so AD cmdlets there cannot reach dc1."""
+    enc = base64.b64encode(script.encode("utf-16le")).decode()   # base64 alphabet only: safe inside the literal below
+    return (
+        "$d='C:\\ProgramData\\adiq-lab';New-Item -ItemType Directory -Force $d|Out-Null;$o=Join-Path $d 'sys.out';"
+        "Remove-Item $o -ErrorAction SilentlyContinue;"
+        f"$s=[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String('{enc}'));"
+        "$cmd='& {'+$s+'} *> '+\"'\"+$o+\"'\";"
+        "$a=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-NoProfile -EncodedCommand '+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd)));"
+        "Register-ScheduledTask -TaskName AdiqLabSys -Action $a -User 'SYSTEM' -RunLevel Highest -Force|Out-Null;Start-ScheduledTask AdiqLabSys;"
+        "for($i=0;$i -lt 120;$i++){Start-Sleep 2;if((Get-ScheduledTask AdiqLabSys).State -ne 'Running'){break}};"
+        "Unregister-ScheduledTask AdiqLabSys -Confirm:$false;Get-Content $o -ErrorAction SilentlyContinue")
+
+
 # On fs1: the AD module, the gMSA installed. Test-ADServiceAccount is the proof.
-GMSA_FS1_PS = (
-    "Install-WindowsFeature RSAT-AD-PowerShell|Out-Null;Import-Module ActiveDirectory;"
+GMSA_FS1_INNER = (
+    "$ErrorActionPreference='Stop';try{Import-Module ActiveDirectory;"
     f"Install-ADServiceAccount {ps_quote(GMSA)};"
-    f"'Test-ADServiceAccount='+(Test-ADServiceAccount {ps_quote(GMSA)})")
+    f"'Test-ADServiceAccount='+(Test-ADServiceAccount {ps_quote(GMSA)})}}catch{{'ERR: '+$_.Exception.Message}}")
+GMSA_FS1_PS = "Install-WindowsFeature RSAT-AD-PowerShell|Out-Null;" + as_system(GMSA_FS1_INNER)
 
 
 def user_ps(password):
@@ -92,8 +109,7 @@ EVIDENCE_PS = (
     "'OS='+(Get-CimInstance Win32_OperatingSystem).Caption;"
     "$s=Get-CimInstance Win32_ComputerSystem;'PartOfDomain='+$s.PartOfDomain;'Domain='+$s.Domain;"
     "'NLTEST='+((nltest /sc_verify:" + DOMAIN + ") -join ' | ');"
-    "Import-Module ActiveDirectory -ErrorAction SilentlyContinue;"
-    f"'Test-ADServiceAccount='+(Test-ADServiceAccount {ps_quote(GMSA)});"
+    + as_system("try{Import-Module ActiveDirectory -ErrorAction Stop;'Test-ADServiceAccount='+(Test-ADServiceAccount " + ps_quote(GMSA) + ")}catch{'Test-ADServiceAccount=ERR '+$_.Exception.Message}") + ";"
     "'ADMINS='+((Get-LocalGroupMember Administrators|%{$_.Name}) -join ',');"
     f"'USERS='+((Get-LocalGroupMember Users|%{{$_.Name}}) -join ',');"
     f"'LOCALUSER_ENABLED='+(Get-LocalUser {ps_quote(LOCAL_USER)}).Enabled;"
