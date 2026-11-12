@@ -410,3 +410,39 @@ func (a *armedAuthz) Authorize(ctx context.Context, c authority.Chain, p authz.P
 	}
 	return nil
 }
+
+// A Template default on an attribute outside the allowlist is refused at Plan, with 0 writes
+// (security review: defaults must not bypass the technician allowlist).
+func TestCreateTemplateDefaultOutsideAllowlistRefused(t *testing.T) {
+	long := strings.Repeat("x", 1025)
+	for _, attr := range []string{"userAccountControl", "memberOf", "primaryGroupID", "scriptPath", "servicePrincipalName"} {
+		tpl := userTemplate()
+		tpl.Fields = append(tpl.Fields, objects.FieldRule{Attribute: attr, Mode: objects.ModeReadOnly, Default: "1"})
+		d := newDir()
+		err := planErr(lifeActions(t, d, defsFake{tpl})[ad.CreateID], input(t, createIn(map[string]string{"givenName": "A", "sn": "S"})))
+		if !errors.Is(err, operation.ErrInvalid) || !strings.Contains(err.Error(), "attribute_not_allowed") && !strings.Contains(err.Error(), ad.ReasonAttributeDenied) {
+			t.Errorf("%s: %v", attr, err)
+		}
+		if len(d.writes) != 0 {
+			t.Errorf("%s: %d writes", attr, len(d.writes))
+		}
+	}
+	tpl := userTemplate()
+	tpl.Fields[2].Default = long
+	if err := planErr(lifeActions(t, newDir(), defsFake{tpl})[ad.CreateID], input(t, createIn(map[string]string{"givenName": "A", "sn": "S"}))); !errors.Is(err, operation.ErrInvalid) {
+		t.Errorf("long default: %v", err)
+	}
+}
+
+// TM-F-AUTHZ: a create's planned parent is authorised live at Plan and again before Apply.
+func TestCreateParentRecheckedAtApply(t *testing.T) {
+	d := newDir()
+	act := lifeActions(t, d, defsFake{userTemplate()})[ad.CreateID]
+	sp := plan1(t, act, createIn(map[string]string{"givenName": "A", "sn": "S"}))
+	steps, err := act.(interface {
+		AlsoAuthorize(operation.StepPlan) []authority.TargetRef
+	}).AlsoAuthorize(sp), error(nil)
+	if err != nil || len(steps) != 1 || steps[0].GUID != ouA || steps[0].NC != nc {
+		t.Fatalf("also %+v", steps)
+	}
+}

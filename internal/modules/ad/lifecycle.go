@@ -377,6 +377,11 @@ func alsoOf(tp operation.TypedStep[lifePayload]) []authority.TargetRef {
 	pl := tp.Payload
 	t := tp.Plan.Target
 	switch tp.Plan.Kind {
+	case writechange.KeyObjectCreate:
+		// The planned parent is authorised live (rule 7) at Plan and again before Apply.
+		if pl.Parent != "" {
+			return []authority.TargetRef{parentRef(t.Connection, pl.Parent, t.NC)}
+		}
 	case client.DigestObjectMove, client.DigestObjectRestore:
 		if pl.Parent != "" {
 			return []authority.TargetRef{parentRef(t.Connection, pl.Parent, t.NC)}
@@ -549,6 +554,19 @@ func planCreate(ctx context.Context, p LifecyclePorts, pc operation.PlanContext,
 		if err := deriveNames(ctx, p.defs(), pc, tpl.Def, attrs, in.UPNSuffix); err != nil {
 			return nil, err
 		}
+		// Template defaults and derived names get the same allowlist as technician input.
+		clean := objects.Input{}
+		for k, v := range attrs {
+			c, ok := canonicalAttr(k, true)
+			if !ok && strings.EqualFold(k, "cn") {
+				c, ok = "cn", true
+			}
+			if !ok || !validValue(v) {
+				return nil, fmt.Errorf("%w: %s: %s: template field %s", operation.ErrInvalid, ReasonAttributeDenied, k, tpl.ID)
+			}
+			clean[c] = v
+		}
+		attrs = clean
 	}
 	rdn := attrs["cn"]
 	delete(attrs, "cn")
