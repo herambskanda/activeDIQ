@@ -226,13 +226,38 @@ func TestAccountApplyRefusesChangedTargetAndWrongClass(t *testing.T) {
 	if c := connErr(t, err).GetCode(); c != connectorv1.ErrorCode_ERROR_CODE_TARGET_CHANGED || len(fs.sent) != 0 {
 		t.Fatalf("got %s, %d sent", c, len(fs.sent))
 	}
-	for name, classes := range map[string][]string{"group": {"top", "group"}, "gmsa": {"top", "computer", "msDS-GroupManagedServiceAccount"}} {
+	// T-1803: a class outside the known chain is refused on Plan and on Apply wherever it sits in the
+	// list (LDAP values are an unordered set), including the probe that used to pass: the foreign class in
+	// the middle with computer and user last.
+	for name, classes := range map[string][]string{
+		"group":        {"top", "group"},
+		"gmsa":         {"top", "computer", "msDS-GroupManagedServiceAccount"},
+		"gmsa-middle":  {"top", "msDS-GroupManagedServiceAccount", "person", "organizationalPerson", "computer", "user"},
+		"gmsa-first":   {"msDS-GroupManagedServiceAccount", "top", "person", "organizationalPerson", "user"},
+		"unknown-last": {"top", "person", "organizationalPerson", "user", "contact"},
+		"unknown-mid":  {"top", "person", "fooBar", "organizationalPerson", "user"},
+	} {
 		fs.state = userState(id, 512, 0)
 		fs.state.Classes = classes
+		sent := len(fs.sent)
 		_, err = r.h.Plan(context.Background(), p)
 		if ce := connErr(t, err); ce.GetRejectedInput().GetRuleId() != "ClassNotAllowed" {
-			t.Errorf("%s: %v", name, ce)
+			t.Errorf("%s plan: %v", name, ce)
 		}
+		a.Precondition = pr.Precondition
+		_, err = r.h.Apply(context.Background(), a)
+		if ce := connErr(t, err); ce.GetRejectedInput().GetRuleId() != "ClassNotAllowed" {
+			t.Errorf("%s apply: %v", name, ce)
+		}
+		if len(fs.sent) != sent {
+			t.Errorf("%s: %d Modify requests sent", name, len(fs.sent)-sent)
+		}
+	}
+	// The allowed chain in any order, with inetOrgPerson, still plans.
+	fs.state = userState(id, 512, 0)
+	fs.state.Classes = []string{"user", "inetOrgPerson", "organizationalPerson", "person", "top"}
+	if _, err = r.h.Plan(context.Background(), p); err != nil {
+		t.Errorf("allowed chain in reverse order refused: %v", err)
 	}
 	// A reset and an unlock are users only: a computer is ClassNotAllowed.
 	for _, k := range []string{accountkind.KeyUnlock, accountkind.KeyResetPassword} {
