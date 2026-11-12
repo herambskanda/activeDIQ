@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 )
@@ -22,4 +23,17 @@ func Register(m module.Module, opts ...module.BootOption) (*module.Contributions
 	}
 	enabled := capability.NewSet(m.Requires()...)
 	return module.Boot(context.Background(), []module.Entry{{ID: m.ID(), Module: m}}, enabled, opts...)
+}
+
+// Tag returns an API contribution for tag with one route per permission, for tests that register
+// API tags. The routes have no handlers and are never mounted.
+func Tag(tag string, permissions ...string) apihost.TagHandlers {
+	routes := make([]apihost.Route, 0, len(permissions))
+	for i, p := range permissions {
+		routes = append(routes, apihost.NewRoute(apihost.RouteMeta{
+			OperationID: fmt.Sprintf("%sOp%d", tag, i), Tag: tag, Method: "GET",
+			Path: fmt.Sprintf("/%s/%d", tag, i), Permission: p,
+		}, nil, nil))
+	}
+	return apihost.NewTagHandlers(tag, routes...)
 }

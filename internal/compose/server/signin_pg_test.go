@@ -126,7 +126,7 @@ func TestLocalAccountSignInThroughTheMountedRoutes(t *testing.T) {
 		}
 		found := &oneUser{}
 		cfg := config.Config{APIBodyBudget: config.DefaultAPIBodyBudget, PublicURL: chainOrigin}
-		h, err := buildAPIPorts(cfg, permissionCatalogue(), console.ports(testLimiter(t), az, permissionCatalogue()), console.Tags(), directory.Handlers{Connections: activeConns{}, Search: found, Scopes: consoleScopes{}}.Bind())
+		h, err := buildAPIPorts(cfg, bootedCatalogue(), console.ports(testLimiter(t), az, bootedCatalogue()), console.Tags(), directory.Handlers{Connections: activeConns{}, Search: found, Scopes: consoleScopes{}}.Bind())
 		if err != nil {
 			t.Fatal(err)
 		}

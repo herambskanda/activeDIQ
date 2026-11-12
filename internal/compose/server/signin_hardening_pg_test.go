@@ -69,7 +69,7 @@ func hardeningHandler(t *testing.T, db *store.DB, ten tenant.ID, ks *keys.Store)
 		t.Fatal(err)
 	}
 	cfg := config.Config{APIBodyBudget: config.DefaultAPIBodyBudget, PublicURL: chainOrigin}
-	h, err := buildAPIPorts(cfg, permissionCatalogue(), console.ports(testLimiter(t), az, permissionCatalogue()), console.Tags(), directory.Handlers{Connections: activeConns{}, Search: &oneUser{}, Scopes: consoleScopes{}}.Bind())
+	h, err := buildAPIPorts(cfg, bootedCatalogue(), console.ports(testLimiter(t), az, bootedCatalogue()), console.Tags(), directory.Handlers{Connections: activeConns{}, Search: &oneUser{}, Scopes: consoleScopes{}}.Bind())
 	if err != nil {
 		t.Fatal(err)
 	}
