@@ -281,3 +281,66 @@ func TestWrongPlaneDeclarationHasItsOwnReason(t *testing.T) {
 		t.Errorf("reason %q", ev.Reason)
 	}
 }
+
+// kindRefuser refuses a declaration of one object class and allows the others.
+type kindRefuser struct {
+	kind  tier0.WriteKind
+	calls []tier0.WriteKind
+}
+
+func (g *kindRefuser) CheckPropertyWrite(_ context.Context, w tier0.PropertyWrite) (tier0.DynamicRuleRefusal, error) {
+	g.calls = append(g.calls, w.Kind)
+	if w.Kind == g.kind {
+		return tier0.DynamicRuleRefusal{Refused: true, Reason: tier0.ReasonDesignatedDynamicRule, Stage: tier0.StageConnectorSet}, nil
+	}
+	return tier0.DynamicRuleRefusal{}, nil
+}
+
+// A kind that touches objects whose class is only known live (AlsoDevice, kinds 4-6) has its declaration
+// checked a second time as a device write; the refusal carries the declared variant that refused, with the
+// kind, op and key names for the audit record. Without AlsoDevice the device variant is never asked.
+func TestGuardPropertyAlsoDeviceRecordsTheDeviceVariant(t *testing.T) {
+	r := newRig(t, nil)
+	target := mk(41)
+	decl := tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteUser, Op: tier0.OpUpdate, Keys: []string{"title"}}
+
+	g := &kindRefuser{kind: tier0.WriteDevice}
+	r.prov.guard = g
+	ref := r.h.guardProperty(context.Background(), decl, true, target, "4")
+	if ref == nil {
+		t.Fatal("a device-refused declaration was accepted with AlsoDevice")
+	}
+	if ref.propKind != "DEVICE" || ref.propOp != "UPDATE" || len(ref.propKeys) != 1 || ref.propKeys[0] != "title" ||
+		ref.reason != tier0.ReasonDesignatedDynamicRule || ref.stage != "4" {
+		t.Errorf("audit record kind %q op %q keys %v reason %q stage %q", ref.propKind, ref.propOp, ref.propKeys, ref.reason, ref.stage)
+	}
+	if len(g.calls) != 2 || g.calls[0] != tier0.WriteUser || g.calls[1] != tier0.WriteDevice {
+		t.Errorf("guard asked %v, want user then device", g.calls)
+	}
+
+	g = &kindRefuser{kind: tier0.WriteDevice}
+	r.prov.guard = g
+	if ref := r.h.guardProperty(context.Background(), decl, false, target, "4"); ref != nil {
+		t.Errorf("the device variant was checked without AlsoDevice: %+v", ref)
+	}
+	if len(g.calls) != 1 {
+		t.Errorf("guard asked %v, want the declaration only", g.calls)
+	}
+
+	// A declaration that is already a device write is not checked twice.
+	g = &kindRefuser{kind: tier0.WriteGroup}
+	r.prov.guard = g
+	dev := decl
+	dev.Kind = tier0.WriteDevice
+	if ref := r.h.guardProperty(context.Background(), dev, true, target, "4"); ref != nil || len(g.calls) != 1 {
+		t.Errorf("a device declaration was checked %d times (%v)", len(g.calls), ref)
+	}
+
+	// The user-variant refusal is reported as the user declaration, and the device variant is not reached.
+	g = &kindRefuser{kind: tier0.WriteUser}
+	r.prov.guard = g
+	ref = r.h.guardProperty(context.Background(), decl, true, target, "4")
+	if ref == nil || ref.propKind != "USER" || len(g.calls) != 1 {
+		t.Errorf("user refusal: %+v calls %v", ref, g.calls)
+	}
+}
