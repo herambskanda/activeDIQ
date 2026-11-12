@@ -1,0 +1,20 @@
+ok  	github.com/skenzeriq/activediq/internal/platform/operation	209.382s
+ok  	github.com/skenzeriq/activediq/internal/platform/operation/operationtest	2.097s
+ok  	github.com/skenzeriq/activediq/internal/platform/operation/step	0.017s
+ok  	github.com/skenzeriq/activediq/internal/platform/secret	0.019s
+ok  	github.com/skenzeriq/activediq/internal/platform/secret/secretjson	0.017s
+ok  	github.com/skenzeriq/activediq/tools/fitness/tenancy	133.598s
+?   	github.com/skenzeriq/activediq/tools/fitness/tenancy/registry	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/fitness/tenancy/static	10.562s
+?   	github.com/skenzeriq/activediq/tools/analyzers	[no test files]
+ok  	github.com/skenzeriq/activediq/tools/analyzers/constdisp	4.563s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/dnstring	4.146s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/graphurl	4.713s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/nestedtx	1.184s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/odataname	4.138s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/policy	0.006s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/secretjson	3.536s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/sqlconst	3.733s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/stepescape	4.044s
+ok  	github.com/skenzeriq/activediq/tools/analyzers/tmplconst	2.319s
+?   	github.com/skenzeriq/activediq/tools/analyzers/util	[no test files]

@@ -1,0 +1,1086 @@
+--- FAIL: TestO8ScopeControlInScopeStillApplies (783.80s)
+    --- FAIL: TestO8ScopeControlInScopeStillApplies/pg16 (258.56s)
+        storetest.go:97: storetest: PostgreSQL 16 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32886 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34860->127.0.0.1:32886: read: connection reset by peer
+--- FAIL: TestO8RemovedFromScopeADOUMovedOut (5.12s)
+    --- FAIL: TestO8RemovedFromScopeADOUMovedOut/pg16 (0.01s)
+        o8_scope_pg_test.go:145: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestO8RemovedFromScopeADExcludedSubOU (2.18s)
+    --- FAIL: TestO8RemovedFromScopeADExcludedSubOU/pg16 (0.01s)
+        o8_scope_pg_test.go:159: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestO8ScopeFactsThatCannotBeProvenAreRefusedAtApply (3.99s)
+    --- FAIL: TestO8ScopeFactsThatCannotBeProvenAreRefusedAtApply/pg16 (0.03s)
+        --- FAIL: TestO8ScopeFactsThatCannotBeProvenAreRefusedAtApply/pg16/read_error (0.01s)
+            o8_scope_pg_test.go:179: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestO8ScopeFactsThatCannotBeProvenAreRefusedAtApply/pg16/incomplete_chain (0.01s)
+            o8_scope_pg_test.go:179: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestSubmitAndApplyEndToEnd (5.42s)
+    --- FAIL: TestSubmitAndApplyEndToEnd/pg16 (0.01s)
+        persist_pg_test.go:433: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestBadDSAPinFailsPlanAndIsNotPersisted (4.43s)
+    --- FAIL: TestBadDSAPinFailsPlanAndIsNotPersisted/pg16 (0.01s)
+        persist_pg_test.go:482: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestBadDSAPinFailsPlanAndIsNotPersisted/pg16#01 (0.01s)
+        persist_pg_test.go:482: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestBadDSAPinFailsPlanAndIsNotPersisted/pg16#02 (0.02s)
+        persist_pg_test.go:482: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestPhasesRunInOrder (0.82s)
+    --- FAIL: TestPhasesRunInOrder/pg16 (0.02s)
+        persist_pg_test.go:500: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestReconcileLapsedClaim (24.75s)
+    --- FAIL: TestReconcileLapsedClaim/pg16 (0.02s)
+        --- FAIL: TestReconcileLapsedClaim/pg16/after-state_is_applied,_recovered (0.02s)
+            persist_pg_test.go:558: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestReconcileLapsedClaim/pg16#01 (0.01s)
+        --- FAIL: TestReconcileLapsedClaim/pg16#01/before-state_is_applied_again (0.01s)
+            persist_pg_test.go:558: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestReconcileLapsedClaim/pg16#02 (0.02s)
+        --- FAIL: TestReconcileLapsedClaim/pg16#02/before-state_while_cancelling_is_not_run (0.02s)
+            persist_pg_test.go:558: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestReconcileLapsedClaim/pg16#03 (0.02s)
+        --- FAIL: TestReconcileLapsedClaim/pg16#03/anything_else_is_stale_state (0.02s)
+            persist_pg_test.go:558: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestReconcileLapsedClaim/pg16#04 (0.02s)
+        --- FAIL: TestReconcileLapsedClaim/pg16#04/password_never_re-applied:_outcome_unknown (0.02s)
+            persist_pg_test.go:558: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestReconcileLapsedClaim/pg16#05 (0.02s)
+        --- FAIL: TestReconcileLapsedClaim/pg16#05/password_set_after_the_claim_is_applied (0.02s)
+            persist_pg_test.go:558: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestSupersededAttemptChangesNothing (3.23s)
+    --- FAIL: TestSupersededAttemptChangesNothing/pg16 (0.02s)
+        persist_pg_test.go:594: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestRetriesExhausted (1.59s)
+    --- FAIL: TestRetriesExhausted/pg16 (0.02s)
+        persist_pg_test.go:619: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestStaleStateAndOutcomeUnknown (0.89s)
+    --- FAIL: TestStaleStateAndOutcomeUnknown/pg16 (0.02s)
+        persist_pg_test.go:642: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestLostJobRedrivenBySweeper (1.88s)
+    --- FAIL: TestLostJobRedrivenBySweeper/pg16 (0.01s)
+        persist_pg_test.go:657: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestSweepSettlesFinishedOperationAndDropsExpiredSecrets (1.34s)
+    --- FAIL: TestSweepSettlesFinishedOperationAndDropsExpiredSecrets/pg16 (0.01s)
+        persist_pg_test.go:680: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestSecretUsedThenDeleted (3.79s)
+    --- FAIL: TestSecretUsedThenDeleted/pg16 (0.01s)
+        persist_pg_test.go:709: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestADTargetWithoutNCIsBlockedAtPlan (5.15s)
+    --- FAIL: TestADTargetWithoutNCIsBlockedAtPlan/pg16 (0.02s)
+        persist_pg_test.go:734: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestPlanRefusalAuditOutcome (7.04s)
+    --- FAIL: TestPlanRefusalAuditOutcome/pg16 (0.02s)
+        persist_pg_test.go:789: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPlanRefusalAuditOutcome/pg16#01 (0.01s)
+        persist_pg_test.go:789: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPlanRefusalAuditOutcome/pg16#02 (0.02s)
+        persist_pg_test.go:789: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPlanRefusalAuditOutcome/pg16#03 (0.01s)
+        persist_pg_test.go:789: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestPlanRefusalsAreAudited (3.62s)
+    --- FAIL: TestPlanRefusalsAreAudited/pg16 (0.02s)
+        persist_pg_test.go:852: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPlanRefusalsAreAudited/pg16#01 (0.02s)
+        persist_pg_test.go:852: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPlanRefusalsAreAudited/pg16#02 (0.01s)
+        persist_pg_test.go:852: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestSlotLimit (3.87s)
+    --- FAIL: TestSlotLimit/pg16 (0.02s)
+        persist_pg_test.go:876: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestGateErrorLeavesOperationPlannedAndAlerts (1.40s)
+    --- FAIL: TestGateErrorLeavesOperationPlannedAndAlerts/pg16 (0.01s)
+        persist_pg_test.go:891: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestKernelHolds (7.62s)
+    --- FAIL: TestKernelHolds/pg16 (0.08s)
+        --- FAIL: TestKernelHolds/pg16/automation_over_max_objects_is_held (0.02s)
+            persist_pg_test.go:910: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestKernelHolds/pg16/irreversible_with_the_tenant_setting_is_held (0.02s)
+            persist_pg_test.go:920: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestKernelHolds/pg16/a_StepUp_action_started_by_a_token_is_held;_a_human_without_step-up_is_refused (0.02s)
+            persist_pg_test.go:927: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestKernelHolds/pg16/undo_of_an_operation_that_needed_approval_is_held (0.02s)
+            persist_pg_test.go:939: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestApprovals (24.21s)
+    --- FAIL: TestApprovals/pg16 (0.18s)
+        --- FAIL: TestApprovals/pg16/a_directory-admitted_human_approves;_the_operation_is_queued (0.02s)
+            persist_pg_test.go:955: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg16/refusals (0.01s)
+            persist_pg_test.go:955: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg16/sock_puppet_approver-created-requester (0.01s)
+            persist_pg_test.go:955: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg16/sock_puppet_requester-created-approver (0.01s)
+            persist_pg_test.go:955: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg16/a_provenance_error_fails_closed (0.01s)
+            persist_pg_test.go:955: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg16/an_approver_outside_the_scope_is_refused (0.02s)
+            persist_pg_test.go:955: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg16/a_re-plan_with_the_same_hash_keeps_the_approval (0.01s)
+            persist_pg_test.go:955: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg16/approval_needs_operation.approve_over_an_item_blocked_at_plan (0.02s)
+            persist_pg_test.go:1040: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg16/a_re-plan_that_unblocks_an_item_clears_the_approval (0.01s)
+            persist_pg_test.go:1055: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg16/a_Request-held_operation_is_decided_only_through_the_gate_callback (0.02s)
+            persist_pg_test.go:955: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg16/reject_needs_operation.approve_over_the_items (0.02s)
+            persist_pg_test.go:955: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg16/a_re-plan_with_a_changed_hash_clears_the_approval (0.01s)
+            persist_pg_test.go:955: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestCancelRunning (1.08s)
+    --- FAIL: TestCancelRunning/pg16 (0.02s)
+        persist_pg_test.go:1122: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestDeferredVerifyIsDrivenLater (1.35s)
+    --- FAIL: TestDeferredVerifyIsDrivenLater/pg16 (0.01s)
+        persist_pg_test.go:1140: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestPlanRefusalsKeepEachReason (3.64s)
+    --- FAIL: TestPlanRefusalsKeepEachReason/pg16 (0.02s)
+        persist_pg_test.go:1162: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPlanRefusalsKeepEachReason/pg16#01 (0.01s)
+        persist_pg_test.go:1162: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestTier0AfterWriteCancelsRunningOperation (1.31s)
+    --- FAIL: TestTier0AfterWriteCancelsRunningOperation/pg16 (0.01s)
+        persist_pg_test.go:1199: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestTier0AfterWriteFromDeferredVerify (1.95s)
+    --- FAIL: TestTier0AfterWriteFromDeferredVerify/pg16 (0.02s)
+        persist_pg_test.go:1230: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestTier0AfterWriteOnSettledOperationIsOnlyAudited (1.25s)
+    --- FAIL: TestTier0AfterWriteOnSettledOperationIsOnlyAudited/pg16 (0.02s)
+        persist_pg_test.go:1252: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestTier0AfterWriteFromSupersededAttempt (2.65s)
+    --- FAIL: TestTier0AfterWriteFromSupersededAttempt/pg16 (0.01s)
+        persist_pg_test.go:1281: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestTier0AfterWriteFromSupersededDeferredVerify (1.64s)
+    --- FAIL: TestTier0AfterWriteFromSupersededDeferredVerify/pg16 (0.02s)
+        persist_pg_test.go:1319: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestPinnerReceivesOperationTenant (1.03s)
+    --- FAIL: TestPinnerReceivesOperationTenant/pg16 (0.02s)
+        persist_pg_test.go:1375: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:18:53 ERROR audit.record_failed kind=settings.thing.changed operation=op-1 principal=alice target=row-1 outcome=failure reason=apply_failed
+2026/11/12 09:18:53 ERROR audit.record_failed kind=settings.thing.changed operation=op-1 principal=alice target=row-1 outcome=failure reason=audit_failed
+--- FAIL: TestConnectorReportProducesTier0AfterWrite (6.46s)
+    --- FAIL: TestConnectorReportProducesTier0AfterWrite/pg16 (0.02s)
+        tier0_pg_test.go:64: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestConnectorReportProducesTier0AfterWrite/pg16#01 (0.02s)
+        tier0_pg_test.go:64: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestConnectorReportProducesTier0AfterWrite/pg16#02 (0.02s)
+        tier0_pg_test.go:64: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestServerRereadProducesTier0AfterWrite (3.53s)
+    --- FAIL: TestServerRereadProducesTier0AfterWrite/pg16 (0.02s)
+        tier0_pg_test.go:88: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestServerRereadUnknownCountsAsTier0 (1.06s)
+    --- FAIL: TestServerRereadUnknownCountsAsTier0/pg16 (0.02s)
+        tier0_pg_test.go:103: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestNoTier0KeepsOtherReasons (3.72s)
+    --- FAIL: TestNoTier0KeepsOtherReasons/pg16 (0.01s)
+        tier0_pg_test.go:118: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestServerRereadCleanVerifies (2.65s)
+    --- FAIL: TestServerRereadCleanVerifies/pg16 (0.01s)
+        tier0_pg_test.go:188: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestServerRereadCoversTouchedObject (3.03s)
+    --- FAIL: TestServerRereadCoversTouchedObject/pg16 (0.02s)
+        tier0_pg_test.go:205: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestServerRereadFallbackDC (12.99s)
+    --- FAIL: TestServerRereadFallbackDC/pg16 (0.02s)
+        tier0_pg_test.go:237: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestServerRereadFallbackDC/pg16#01 (0.02s)
+        tier0_pg_test.go:237: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestServerRereadFallbackDC/pg16#02 (0.02s)
+        tier0_pg_test.go:237: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestServerRereadFallbackDC/pg16#03 (0.02s)
+        tier0_pg_test.go:237: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestServerRereadFallbackDC/pg16#04 (0.03s)
+        tier0_pg_test.go:237: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/platform/operation	1022.908s
+?   	github.com/skenzeriq/activediq/internal/modules	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/agentfleet	0.010s
+ok  	github.com/skenzeriq/activediq/internal/modules/compliance	877.609s
+--- FAIL: TestAttestStartRequiresPermissionAndStepUp (633.34s)
+    --- FAIL: TestAttestStartRequiresPermissionAndStepUp/pg18 (395.04s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32896 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:56514->127.0.0.1:32896: read: connection reset by peer
+--- FAIL: TestAttestScopeAndTid (6.03s)
+    --- FAIL: TestAttestScopeAndTid/pg18 (0.00s)
+        attest_test.go:292: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32896 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:40320->127.0.0.1:32896: read: connection reset by peer
+--- FAIL: TestAttestNoTokenRetained (8.73s)
+    --- FAIL: TestAttestNoTokenRetained/pg18 (0.00s)
+        attest_test.go:359: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32896 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:54762->127.0.0.1:32896: read: connection reset by peer
+--- FAIL: TestTakeoverStateMachine (4.69s)
+    --- FAIL: TestTakeoverStateMachine/pg18 (0.00s)
+        attest_test.go:479: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32896 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:54778->127.0.0.1:32896: read: connection reset by peer
+--- FAIL: TestAttestMaxAgeRequiresStepUp (4.86s)
+    --- FAIL: TestAttestMaxAgeRequiresStepUp/pg18 (0.00s)
+        attest_test.go:589: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32896 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35604->127.0.0.1:32896: read: connection reset by peer
+--- FAIL: TestAttestExpiredAttemptsPurged (1.60s)
+    --- FAIL: TestAttestExpiredAttemptsPurged/pg18 (0.00s)
+        attest_test.go:610: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32896 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35616->127.0.0.1:32896: read: connection reset by peer
+--- FAIL: TestAttestMaxAgeCap (1.89s)
+    --- FAIL: TestAttestMaxAgeCap/pg18 (0.00s)
+        attest_test.go:630: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32896 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35632->127.0.0.1:32896: read: connection reset by peer
+--- FAIL: TestAttestExpiredStateRefused (1.90s)
+    --- FAIL: TestAttestExpiredStateRefused/pg18 (0.00s)
+        attest_test.go:665: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32896 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35644->127.0.0.1:32896: read: connection reset by peer
+--- FAIL: TestHybridLinkConfirmAndDeclare (3.36s)
+    --- FAIL: TestHybridLinkConfirmAndDeclare/pg18 (0.00s)
+        hybridlink_test.go:132: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32896 (127.0.0.1): failed to receive message: unexpected EOF
+--- FAIL: TestHybridLinkRefusedWithoutBothScopes (4.65s)
+    --- FAIL: TestHybridLinkRefusedWithoutBothScopes/pg18 (0.02s)
+        hybridlink_test.go:182: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestHybridLinkRemoveFlipsHasHybridLinkAfterAuditedTransition (2.58s)
+    --- FAIL: TestHybridLinkRemoveFlipsHasHybridLinkAfterAuditedTransition/pg18 (0.01s)
+        hybridlink_test.go:213: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestHybridLinkInputsAreStrict (3.19s)
+    --- FAIL: TestHybridLinkInputsAreStrict/pg18 (0.02s)
+        hybridlink_test.go:246: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: Test_reconfirm_by_owner_with_stepup (2.00s)
+    --- FAIL: Test_reconfirm_by_owner_with_stepup/pg18 (0.02s)
+        reconfirm_test.go:167: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: Test_reconfirm_refused (1.91s)
+    --- FAIL: Test_reconfirm_refused/pg18 (0.01s)
+        reconfirm_test.go:203: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: Test_reconfirm_vs_install_population (4.04s)
+    --- FAIL: Test_reconfirm_vs_install_population/pg18 (0.02s)
+        reconfirm_test.go:247: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestOverrideDenied (2.27s)
+    --- FAIL: TestOverrideDenied/pg18 (0.02s)
+        tier0override_test.go:174: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestOverrideSucceeds (3.50s)
+    --- FAIL: TestOverrideSucceeds/pg18 (0.01s)
+        tier0override_test.go:204: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestOverrideRefusesNonHumanRequesters (4.13s)
+    --- FAIL: TestOverrideRefusesNonHumanRequesters/pg18 (0.02s)
+        tier0override_test.go:268: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestOverrideThroughRealAuthorizer (2.78s)
+    --- FAIL: TestOverrideThroughRealAuthorizer/pg18 (0.01s)
+        tier0override_test.go:312: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/connections	847.146s
+?   	github.com/skenzeriq/activediq/internal/modules/connections/api	[no test files]
+--- FAIL: TestDelegatedGrantEndToEnd (616.88s)
+    --- FAIL: TestDelegatedGrantEndToEnd/pg16 (216.75s)
+        storetest.go:97: storetest: PostgreSQL 16 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32877 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:57134->127.0.0.1:32877: read: connection reset by peer
+    --- FAIL: TestDelegatedGrantEndToEnd/pg18 (400.13s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32894 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:33990->127.0.0.1:32894: read: connection reset by peer
+--- FAIL: TestNoAccessServiceFailsClosed (0.02s)
+    --- FAIL: TestNoAccessServiceFailsClosed/pg16 (0.02s)
+        delegation_test.go:298: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestNoAccessServiceFailsClosed/pg18 (0.00s)
+        delegation_test.go:298: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32894 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34008->127.0.0.1:32894: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/delegation	780.386s
+?   	github.com/skenzeriq/activediq/internal/modules/delegation/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/directory	0.194s
+?   	github.com/skenzeriq/activediq/internal/modules/directory/api	[no test files]
+--- FAIL: TestDesignationChangeGated (781.59s)
+    --- FAIL: TestDesignationChangeGated/pg16 (303.31s)
+        storetest.go:97: storetest: PostgreSQL 16 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32890 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:50682->127.0.0.1:32890: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/inventory	864.506s
+--- FAIL: TestAllowedDomainsClassifyAfterUpdate (662.04s)
+    --- FAIL: TestAllowedDomainsClassifyAfterUpdate/pg16 (223.79s)
+        storetest.go:97: storetest: PostgreSQL 16 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32878 (127.0.0.1): server error: FATAL: the database system is starting up (SQLSTATE 57P03)
+    --- FAIL: TestAllowedDomainsClassifyAfterUpdate/pg18 (438.24s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32899 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45958->127.0.0.1:32899: read: connection reset by peer
+--- FAIL: TestUpdateRefusals (0.02s)
+    --- FAIL: TestUpdateRefusals/pg16 (0.02s)
+        settings_test.go:214: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestUpdateRefusals/pg18 (0.00s)
+        settings_test.go:214: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32899 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45968->127.0.0.1:32899: read: connection reset by peer
+--- FAIL: TestUpdateInputValidated (0.02s)
+    --- FAIL: TestUpdateInputValidated/pg16 (0.01s)
+        settings_test.go:241: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestUpdateInputValidated/pg18 (0.00s)
+        settings_test.go:241: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32899 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45976->127.0.0.1:32899: read: connection reset by peer
+--- FAIL: TestRelayUpdateAndInverse (0.02s)
+    --- FAIL: TestRelayUpdateAndInverse/pg16 (0.02s)
+        settings_test.go:266: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestRelayUpdateAndInverse/pg18 (0.00s)
+        settings_test.go:266: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32899 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:46000->127.0.0.1:32899: read: connection reset by peer
+--- FAIL: TestUpdateInverseIsBeforeImage (0.01s)
+    --- FAIL: TestUpdateInverseIsBeforeImage/pg16 (0.01s)
+        settings_test.go:312: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestUpdateInverseIsBeforeImage/pg18 (0.00s)
+        settings_test.go:312: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32899 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:46010->127.0.0.1:32899: read: connection reset by peer
+--- FAIL: TestVersionAdvancesPerWrite (0.01s)
+    --- FAIL: TestVersionAdvancesPerWrite/pg16 (0.01s)
+        settings_test.go:351: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestVersionAdvancesPerWrite/pg18 (0.00s)
+        settings_test.go:351: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32899 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:46024->127.0.0.1:32899: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/notify	840.091s
+--- FAIL: TestTemplateLifecycle (648.10s)
+    --- FAIL: TestTemplateLifecycle/pg16 (306.67s)
+        storetest.go:97: storetest: PostgreSQL 16 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32891 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:59914->127.0.0.1:32891: read: connection reset by peer
+    --- FAIL: TestTemplateLifecycle/pg18 (341.42s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32898 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:56596->127.0.0.1:32898: read: connection reset by peer
+--- FAIL: TestPublishedVersionIsImmutableInTheDatabase (0.02s)
+    --- FAIL: TestPublishedVersionIsImmutableInTheDatabase/pg16 (0.02s)
+        store_pg_test.go:123: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPublishedVersionIsImmutableInTheDatabase/pg18 (0.00s)
+        store_pg_test.go:123: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32898 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:56622->127.0.0.1:32898: read: connection reset by peer
+--- FAIL: TestTenantIsolationAndNoTenant (0.02s)
+    --- FAIL: TestTenantIsolationAndNoTenant/pg16 (0.01s)
+        store_pg_test.go:162: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestTenantIsolationAndNoTenant/pg18 (0.00s)
+        store_pg_test.go:162: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32898 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:56636->127.0.0.1:32898: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/objects	843.126s
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:03:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestListReportDefinitionsEveryShippedDefinitionOnceInStableOrder (730.72s)
+    --- FAIL: TestListReportDefinitionsEveryShippedDefinitionOnceInStableOrder/pg16 (306.14s)
+        storetest.go:97: storetest: PostgreSQL 16 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32889 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:53676->127.0.0.1:32889: read: connection reset by peer
+    --- FAIL: TestListReportDefinitionsEveryShippedDefinitionOnceInStableOrder/pg18 (424.58s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45550->127.0.0.1:32902: read: connection reset by peer
+--- FAIL: TestListReportDefinitionsSearchByMEName (0.02s)
+    --- FAIL: TestListReportDefinitionsSearchByMEName/pg16 (0.02s)
+        definitions_pg_test.go:220: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestListReportDefinitionsSearchByMEName/pg18 (0.00s)
+        definitions_pg_test.go:220: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: unexpected EOF
+--- FAIL: TestGetReportDefinition (0.01s)
+    --- FAIL: TestGetReportDefinition/pg16 (0.01s)
+        definitions_pg_test.go:287: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestGetReportDefinition/pg18 (0.00s)
+        definitions_pg_test.go:287: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45560->127.0.0.1:32902: read: connection reset by peer
+--- FAIL: TestDefinitionsWithoutLibraryAreNotReady (0.02s)
+    --- FAIL: TestDefinitionsWithoutLibraryAreNotReady/pg16 (0.02s)
+        definitions_pg_test.go:413: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestDefinitionsWithoutLibraryAreNotReady/pg18 (0.00s)
+        definitions_pg_test.go:413: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45578->127.0.0.1:32902: read: connection reset by peer
+--- FAIL: TestDefinitionOffersExportFormats (0.02s)
+    --- FAIL: TestDefinitionOffersExportFormats/pg16 (0.02s)
+        definitions_pg_test.go:427: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestDefinitionOffersExportFormats/pg18 (0.00s)
+        definitions_pg_test.go:427: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45602->127.0.0.1:32902: read: connection reset by peer
+--- FAIL: TestExportAPI (0.01s)
+    --- FAIL: TestExportAPI/pg16 (0.01s)
+        exports_api_pg_test.go:38: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestExportAPI/pg18 (0.00s)
+        exports_api_pg_test.go:38: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45616->127.0.0.1:32902: read: connection reset by peer
+--- FAIL: TestExportPDFAndHTMLAPI (0.02s)
+    --- FAIL: TestExportPDFAndHTMLAPI/pg16 (0.02s)
+        exports_api_pg_test.go:115: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestExportPDFAndHTMLAPI/pg18 (0.00s)
+        exports_api_pg_test.go:115: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45636->127.0.0.1:32902: read: connection reset by peer
+--- FAIL: TestExportNeedsReportsRun (0.01s)
+    --- FAIL: TestExportNeedsReportsRun/pg16 (0.01s)
+        exports_api_pg_test.go:168: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestExportNeedsReportsRun/pg18 (0.00s)
+        exports_api_pg_test.go:168: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45650->127.0.0.1:32902: read: connection reset by peer
+--- FAIL: TestRunHeaderPagingAndFilterChange (0.01s)
+    --- FAIL: TestRunHeaderPagingAndFilterChange/pg16 (0.01s)
+        runs_api_pg_test.go:280: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestRunHeaderPagingAndFilterChange/pg18 (0.00s)
+        runs_api_pg_test.go:280: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45662->127.0.0.1:32902: read: connection reset by peer
+--- FAIL: TestOtherAccountMeetsNotFound (0.01s)
+    --- FAIL: TestOtherAccountMeetsNotFound/pg16 (0.01s)
+        runs_api_pg_test.go:362: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestOtherAccountMeetsNotFound/pg18 (0.00s)
+        runs_api_pg_test.go:362: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45684->127.0.0.1:32902: read: connection reset by peer
+--- FAIL: TestForbiddenWithoutPermissionAndForTokens (0.01s)
+    --- FAIL: TestForbiddenWithoutPermissionAndForTokens/pg16 (0.01s)
+        runs_api_pg_test.go:388: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestForbiddenWithoutPermissionAndForTokens/pg18 (0.00s)
+        runs_api_pg_test.go:388: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45704->127.0.0.1:32902: read: connection reset by peer
+--- FAIL: TestNotReadyCancelAndRetry (0.01s)
+    --- FAIL: TestNotReadyCancelAndRetry/pg16 (0.01s)
+        runs_api_pg_test.go:418: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestNotReadyCancelAndRetry/pg18 (0.00s)
+        runs_api_pg_test.go:418: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45718->127.0.0.1:32902: read: connection reset by peer
+--- FAIL: TestStaleFreshnessNamesCauseAndConnections (0.01s)
+    --- FAIL: TestStaleFreshnessNamesCauseAndConnections/pg16 (0.01s)
+        runs_freshness_pg_test.go:52: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestStaleFreshnessNamesCauseAndConnections/pg18 (0.00s)
+        runs_freshness_pg_test.go:52: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45738->127.0.0.1:32902: read: connection reset by peer
+--- FAIL: TestRunReturnsHiddenGroupCounts (0.02s)
+    --- FAIL: TestRunReturnsHiddenGroupCounts/pg16 (0.02s)
+        runs_freshness_pg_test.go:117: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestRunReturnsHiddenGroupCounts/pg18 (0.00s)
+        runs_freshness_pg_test.go:117: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32902 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45756->127.0.0.1:32902: read: connection reset by peer
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:15:52 INFO api tag not mounted: no module contributes it tag=platform.setup
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/reports	843.307s
+?   	github.com/skenzeriq/activediq/internal/modules/reports/api	[no test files]
+--- FAIL: Test_export_digest_equals_run_digest (740.34s)
+    --- FAIL: Test_export_digest_equals_run_digest/pg16 (316.78s)
+        storetest.go:97: storetest: PostgreSQL 16 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32893 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:39142->127.0.0.1:32893: read: connection reset by peer
+    --- FAIL: Test_export_digest_equals_run_digest/pg18 (423.56s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35102->127.0.0.1:32903: read: connection reset by peer
+--- FAIL: TestCapRefusesBeforeAnythingExists (0.02s)
+    --- FAIL: TestCapRefusesBeforeAnythingExists/pg16 (0.02s)
+        export_pg_test.go:204: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestCapRefusesBeforeAnythingExists/pg18 (0.00s)
+        export_pg_test.go:204: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35114->127.0.0.1:32903: read: connection reset by peer
+--- FAIL: TestJobRefusesOverCapRerun (0.01s)
+    --- FAIL: TestJobRefusesOverCapRerun/pg16 (0.01s)
+        export_pg_test.go:262: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestJobRefusesOverCapRerun/pg18 (0.00s)
+        export_pg_test.go:262: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35144->127.0.0.1:32903: read: connection reset by peer
+--- FAIL: TestHostileValuesAreNeutralInBothFormats (0.01s)
+    --- FAIL: TestHostileValuesAreNeutralInBothFormats/pg16 (0.01s)
+        export_pg_test.go:286: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestHostileValuesAreNeutralInBothFormats/pg18 (0.00s)
+        export_pg_test.go:286: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35154->127.0.0.1:32903: read: connection reset by peer
+--- FAIL: TestAuditDownloadDenialAndExpiry (0.01s)
+    --- FAIL: TestAuditDownloadDenialAndExpiry/pg16 (0.01s)
+        export_pg_test.go:359: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestAuditDownloadDenialAndExpiry/pg18 (0.00s)
+        export_pg_test.go:359: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35170->127.0.0.1:32903: read: connection reset by peer
+--- FAIL: TestDeleteAndLimits (0.01s)
+    --- FAIL: TestDeleteAndLimits/pg16 (0.01s)
+        export_pg_test.go:421: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestDeleteAndLimits/pg18 (0.00s)
+        export_pg_test.go:421: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35174->127.0.0.1:32903: read: connection reset by peer
+--- FAIL: TestExpiredSourceIsRerun (0.02s)
+    --- FAIL: TestExpiredSourceIsRerun/pg16 (0.02s)
+        export_pg_test.go:470: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestExpiredSourceIsRerun/pg18 (0.00s)
+        export_pg_test.go:470: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35186->127.0.0.1:32903: read: connection reset by peer
+--- FAIL: TestRetentionExpiresExports (0.02s)
+    --- FAIL: TestRetentionExpiresExports/pg16 (0.01s)
+        export_pg_test.go:503: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestRetentionExpiresExports/pg18 (0.00s)
+        export_pg_test.go:503: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35214->127.0.0.1:32903: read: connection reset by peer
+--- FAIL: TestGuardRefusesBadEdges (0.01s)
+    --- FAIL: TestGuardRefusesBadEdges/pg16 (0.01s)
+        export_pg_test.go:530: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestGuardRefusesBadEdges/pg18 (0.00s)
+        export_pg_test.go:530: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35218->127.0.0.1:32903: read: connection reset by peer
+--- FAIL: TestCreateNeedsReportsRun (0.01s)
+    --- FAIL: TestCreateNeedsReportsRun/pg16 (0.01s)
+        export_pg_test.go:551: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestCreateNeedsReportsRun/pg18 (0.00s)
+        export_pg_test.go:551: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35236->127.0.0.1:32903: read: connection reset by peer
+--- FAIL: TestRunDenialNotRecordedIsNotRefusedQuietly (0.01s)
+    --- FAIL: TestRunDenialNotRecordedIsNotRefusedQuietly/pg16 (0.01s)
+        export_pg_test.go:606: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestRunDenialNotRecordedIsNotRefusedQuietly/pg18 (0.00s)
+        export_pg_test.go:606: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35254->127.0.0.1:32903: read: connection reset by peer
+--- FAIL: TestHostileValuesAreInertInPDFAndHTML (0.01s)
+    --- FAIL: TestHostileValuesAreInertInPDFAndHTML/pg16 (0.01s)
+        export_pg_test.go:722: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestHostileValuesAreInertInPDFAndHTML/pg18 (0.00s)
+        export_pg_test.go:722: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35268->127.0.0.1:32903: read: connection reset by peer
+--- FAIL: TestPageFormatCapsRefuse (0.01s)
+    --- FAIL: TestPageFormatCapsRefuse/pg16 (0.01s)
+        export_pg_test.go:770: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPageFormatCapsRefuse/pg18 (0.00s)
+        export_pg_test.go:770: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32903 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35292->127.0.0.1:32903: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/reports/export	964.757s
+--- FAIL: Test_reports_library_matches_spec (633.73s)
+    --- FAIL: Test_reports_library_matches_spec/pg18 (397.65s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32897 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48698->127.0.0.1:32897: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/reports/library	847.995s
+--- FAIL: TestRunStoresRowsFreshnessAndPages (760.67s)
+    --- FAIL: TestRunStoresRowsFreshnessAndPages/pg16 (255.90s)
+        storetest.go:97: storetest: PostgreSQL 16 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32887 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35890->127.0.0.1:32887: read: connection reset by peer
+    --- FAIL: TestRunStoresRowsFreshnessAndPages/pg18 (504.77s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32904 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34600->127.0.0.1:32904: read: connection reset by peer
+--- FAIL: Test_run_read_bound_to_runner_and_scope (0.01s)
+    --- FAIL: Test_run_read_bound_to_runner_and_scope/pg16 (0.01s)
+        run_pg_test.go:379: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: Test_run_read_bound_to_runner_and_scope/pg18 (0.00s)
+        run_pg_test.go:379: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32904 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34624->127.0.0.1:32904: read: connection reset by peer
+--- FAIL: Test_read_denied_append_failure_is_logged (0.02s)
+    --- FAIL: Test_read_denied_append_failure_is_logged/pg16 (0.02s)
+        run_pg_test.go:443: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: Test_read_denied_append_failure_is_logged/pg18 (0.00s)
+        run_pg_test.go:443: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32904 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34636->127.0.0.1:32904: read: connection reset by peer
+--- FAIL: Test_expired_run_is_not_served (0.01s)
+    --- FAIL: Test_expired_run_is_not_served/pg16 (0.01s)
+        run_pg_test.go:468: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: Test_expired_run_is_not_served/pg18 (0.00s)
+        run_pg_test.go:468: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32904 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34656->127.0.0.1:32904: read: connection reset by peer
+--- FAIL: TestJobFindingRunningFailsInterruptedNeverResumes (0.01s)
+    --- FAIL: TestJobFindingRunningFailsInterruptedNeverResumes/pg16 (0.01s)
+        run_pg_test.go:529: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestJobFindingRunningFailsInterruptedNeverResumes/pg18 (0.00s)
+        run_pg_test.go:529: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32904 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34674->127.0.0.1:32904: read: connection reset by peer
+--- FAIL: TestFailuresAreNamedAndLeaveNoRows (0.02s)
+    --- FAIL: TestFailuresAreNamedAndLeaveNoRows/pg16 (0.01s)
+        run_pg_test.go:555: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestFailuresAreNamedAndLeaveNoRows/pg18 (0.00s)
+        run_pg_test.go:555: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32904 (127.0.0.1): failed to receive message: unexpected EOF
+--- FAIL: TestReuseCapCancelAndRetry (0.01s)
+    --- FAIL: TestReuseCapCancelAndRetry/pg16 (0.01s)
+        run_pg_test.go:589: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestReuseCapCancelAndRetry/pg18 (0.00s)
+        run_pg_test.go:589: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32904 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34714->127.0.0.1:32904: read: connection reset by peer
+--- FAIL: Test_report_runs_insert_guard (0.01s)
+    --- FAIL: Test_report_runs_insert_guard/pg16 (0.01s)
+        run_pg_test.go:648: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: Test_report_runs_insert_guard/pg18 (0.00s)
+        run_pg_test.go:648: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32904 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34736->127.0.0.1:32904: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/reports/run	964.668s
+--- FAIL: Test_status_chips_table (761.59s)
+    --- FAIL: Test_status_chips_table/pg16 (263.91s)
+        storetest.go:97: storetest: PostgreSQL 16 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32888 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:59018->127.0.0.1:32888: read: connection reset by peer
+    --- FAIL: Test_status_chips_table/pg18 (497.68s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32907 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48532->127.0.0.1:32907: read: connection reset by peer
+--- FAIL: Test_same_name_is_distinguishable (0.01s)
+    --- FAIL: Test_same_name_is_distinguishable/pg16 (0.01s)
+        search_meta_pg_test.go:177: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: Test_same_name_is_distinguishable/pg18 (0.00s)
+        search_meta_pg_test.go:177: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32907 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48544->127.0.0.1:32907: read: connection reset by peer
+--- FAIL: Test_hostile_values_verbatim_and_nothing_outside_scope (0.01s)
+    --- FAIL: Test_hostile_values_verbatim_and_nothing_outside_scope/pg16 (0.01s)
+        search_meta_pg_test.go:224: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: Test_hostile_values_verbatim_and_nothing_outside_scope/pg18 (0.00s)
+        search_meta_pg_test.go:224: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32907 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48558->127.0.0.1:32907: read: connection reset by peer
+--- FAIL: Test_cloud_only_chip (0.01s)
+    --- FAIL: Test_cloud_only_chip/pg16 (0.01s)
+        search_meta_pg_test.go:271: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: Test_cloud_only_chip/pg18 (0.00s)
+        search_meta_pg_test.go:271: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32907 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48576->127.0.0.1:32907: read: connection reset by peer
+--- FAIL: Test_scoped_technician_never_learns_of_an_object_in_another_OU (0.01s)
+    --- FAIL: Test_scoped_technician_never_learns_of_an_object_in_another_OU/pg16 (0.01s)
+        search_pg_test.go:168: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: Test_scoped_technician_never_learns_of_an_object_in_another_OU/pg18 (0.00s)
+        search_pg_test.go:168: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32907 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48592->127.0.0.1:32907: read: connection reset by peer
+--- FAIL: Test_ranking_table (0.02s)
+    --- FAIL: Test_ranking_table/pg16 (0.01s)
+        search_pg_test.go:222: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: Test_ranking_table/pg18 (0.00s)
+        search_pg_test.go:222: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32907 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48602->127.0.0.1:32907: read: connection reset by peer
+--- FAIL: Test_counts_limits_and_pages_come_after_trimming (0.01s)
+    --- FAIL: Test_counts_limits_and_pages_come_after_trimming/pg16 (0.01s)
+        search_pg_test.go:325: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: Test_counts_limits_and_pages_come_after_trimming/pg18 (0.00s)
+        search_pg_test.go:325: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32907 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48616->127.0.0.1:32907: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/search	963.097s
+2026/11/12 09:19:49 INFO tenant created by first-run bootstrap tenant_id=55c697a3-6889-48ee-9f31-f9543a32d02d
+--- FAIL: TestBootstrapTenantEmptyDatabase (388.93s)
+    --- FAIL: TestBootstrapTenantEmptyDatabase/pg18 (197.22s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:41446->127.0.0.1:32941: read: connection reset by peer
+2026/11/12 09:23:13 INFO tenant created by first-run bootstrap tenant_id=30605ac6-a5eb-40b4-85f5-8f99decff2bc
+--- FAIL: TestActivateReachesActive (2.64s)
+    --- FAIL: TestActivateReachesActive/pg18 (0.00s)
+        activation_test.go:166: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:41468->127.0.0.1:32941: read: connection reset by peer
+2026/11/12 09:23:18 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:18 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:18 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:18 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:18 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:23:18 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestAttestOverHTTPWithRealAdapters (4.59s)
+    --- FAIL: TestAttestOverHTTPWithRealAdapters/pg18 (0.00s)
+        attestation_http_test.go:319: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: unexpected EOF
+2026/11/12 09:23:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:20 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:23:20 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestAttestCallbackRefusals (1.87s)
+    --- FAIL: TestAttestCallbackRefusals/pg18 (0.00s)
+        attestation_http_test.go:364: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: unexpected EOF
+2026/11/12 09:23:24 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:24 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:24 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:24 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:24 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:23:24 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestAttestCallbackIsRateLimited (5.15s)
+    --- FAIL: TestAttestCallbackIsRateLimited/pg18 (0.00s)
+        attestation_http_test.go:386: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48388->127.0.0.1:32941: read: connection reset by peer
+2026/11/12 09:23:25 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:25 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:25 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:25 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:25 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:23:25 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:23:25 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:23:25 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:25 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:25 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:25 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:23:25 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestBackingExpandsAccountsAndCorrelations (2.99s)
+    --- FAIL: TestBackingExpandsAccountsAndCorrelations/pg18 (0.00s)
+        backing_pg_test.go:112: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48412->127.0.0.1:32941: read: connection reset by peer
+--- FAIL: TestBackingExpandsEntraObjectToADSideAccount (8.79s)
+    --- FAIL: TestBackingExpandsEntraObjectToADSideAccount/pg18 (0.00s)
+        backing_pg_test.go:178: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:45990->127.0.0.1:32941: read: connection reset by peer
+--- FAIL: TestComposedAuthorizerRefusesResetOfBackingObject (5.16s)
+    --- FAIL: TestComposedAuthorizerRefusesResetOfBackingObject/pg18 (0.00s)
+        backing_pg_test.go:231: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:46010->127.0.0.1:32941: read: connection reset by peer
+--- FAIL: TestDirectoryServicesConnection (1.97s)
+    --- FAIL: TestDirectoryServicesConnection/pg18 (0.00s)
+        boot_internal_test.go:35: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:46028->127.0.0.1:32941: read: connection reset by peer
+--- FAIL: TestBootReportSealsHost (0.00s)
+    boot_internal_test.go:65: host datasets = [inventory.computers inventory.contacts inventory.group_members inventory.groups inventory.ous inventory.principals inventory.users], want [inventory.computers inventory.contacts inventory.group_members inventory.groups inventory.ous inventory.users]
+2026/11/12 09:23:44 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:23:44 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:44 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:44 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:44 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:44 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:23:44 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestBuildConnectionsRegistersTheScheduledCheck (7.99s)
+    --- FAIL: TestBuildConnectionsRegistersTheScheduledCheck/pg18 (0.00s)
+        connections_test.go:16: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34784->127.0.0.1:32941: read: connection reset by peer
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:23:55 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestConsoleChainStartAndMaxAge (3.24s)
+    --- FAIL: TestConsoleChainStartAndMaxAge/pg18 (0.00s)
+        console_chain_pg_test.go:173: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:39750->127.0.0.1:32941: read: connection reset by peer
+--- FAIL: TestReverifyInTheServerRoleUsesTheTenantDEK (1.70s)
+    --- FAIL: TestReverifyInTheServerRoleUsesTheTenantDEK/pg18 (0.00s)
+        console_totp_pg_test.go:47: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:39762->127.0.0.1:32941: read: connection reset by peer
+--- FAIL: TestReverifyFailsClosedWithoutUsableDEK (15.52s)
+    --- FAIL: TestReverifyFailsClosedWithoutUsableDEK/pg18 (0.00s)
+        --- FAIL: TestReverifyFailsClosedWithoutUsableDEK/pg18/shredded (0.00s)
+            console_totp_pg_test.go:192: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34952->127.0.0.1:32941: read: connection reset by peer
+        --- FAIL: TestReverifyFailsClosedWithoutUsableDEK/pg18/provider_down (0.00s)
+            console_totp_pg_test.go:192: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34974->127.0.0.1:32941: read: connection reset by peer
+2026/11/12 09:24:14 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:14 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:14 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:14 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:14 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestGetCSRFTokenThroughTheMountedRoutes (1.80s)
+    --- FAIL: TestGetCSRFTokenThroughTheMountedRoutes/pg18 (0.00s)
+        csrf_pg_test.go:47: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48882->127.0.0.1:32941: read: connection reset by peer
+2026/11/12 09:24:16 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:16 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:16 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:16 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:16 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestGetCSRFTokenRefusesWithoutSession (1.59s)
+    --- FAIL: TestGetCSRFTokenRefusesWithoutSession/pg18 (0.00s)
+        csrf_pg_test.go:84: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48896->127.0.0.1:32941: read: connection reset by peer
+2026/11/12 09:24:19 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:19 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:19 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:19 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:19 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestCSRFValueIsBoundToTheSession (2.87s)
+    --- FAIL: TestCSRFValueIsBoundToTheSession/pg18 (0.00s)
+        csrf_pg_test.go:125: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48912->127.0.0.1:32941: read: connection reset by peer
+--- FAIL: TestFirstOwnerCreatedOnceAndAudited (2.15s)
+    --- FAIL: TestFirstOwnerCreatedOnceAndAudited/pg18 (0.00s)
+        firstrun_pg_test.go:67: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48926->127.0.0.1:32941: read: connection reset by peer
+--- FAIL: TestFirstOwnerRollsBackOnAuditFailure (5.39s)
+    --- FAIL: TestFirstOwnerRollsBackOnAuditFailure/pg18 (0.00s)
+        firstrun_pg_test.go:114: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:60896->127.0.0.1:32941: read: connection reset by peer
+--- FAIL: TestFirstOwnerConcurrentOneWinner (5.91s)
+    --- FAIL: TestFirstOwnerConcurrentOneWinner/pg18 (0.00s)
+        firstrun_pg_test.go:136: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:60912->127.0.0.1:32941: read: connection reset by peer
+2026/11/12 09:24:32 INFO server: first-run setup secret issued; read it as the installing administrator with `activediq-server setup show` file=/tmp/TestBuildSetupIssuesOnceAndShowPrintsIt2039271545/001/setup/setup-secret expires=2026-11-12T10:24:32Z
+2026/11/12 09:24:32 INFO server: first-run setup secret still valid expires=2026-11-12T10:24:32Z
+2026/11/12 09:24:32 INFO server: first-run setup was already claimed
+2026/11/12 09:24:32 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:32 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:32 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:32 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:32 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:32 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:33 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:24:34 WARN readiness check failed check=store error="store: ping: closed pool"
+--- FAIL: TestHealthReadyFollowsTheRealStore (1.95s)
+    --- FAIL: TestHealthReadyFollowsTheRealStore/pg18 (0.00s)
+        health_test.go:70: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32941 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:60928->127.0.0.1:32941: read: connection reset by peer
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:34 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:24:35 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:35 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:35 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:35 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:35 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:35 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:35 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestInitLocalAccountReadsActiveADConnections (3.85s)
+    --- FAIL: TestInitLocalAccountReadsActiveADConnections/pg18 (0.02s)
+        localaccount_scope_pg_test.go:52: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:24:53 ERROR audit.record_failed kind=settings.thing.changed operation=op-ok principal=u1 target=row-1 outcome=failure reason=failed
+--- FAIL: TestRunnerEventsAreChainedAtCommit (4.50s)
+    --- FAIL: TestRunnerEventsAreChainedAtCommit/pg18 (0.02s)
+        operation_pg_test.go:71: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:24:55 INFO server: ops listening (TLS) addr=127.0.0.1:35797
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:55 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestOwnerStatusActive (2.00s)
+    --- FAIL: TestOwnerStatusActive/pg18 (0.01s)
+        readscopes_pg_test.go:37: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestObjectConnectionsConnectionOf (1.67s)
+    --- FAIL: TestObjectConnectionsConnectionOf/pg18 (0.01s)
+        readscopes_pg_test.go:69: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestBuildReadScopesComposed (1.82s)
+    --- FAIL: TestBuildReadScopesComposed/pg18 (0.02s)
+        readscopes_pg_test.go:116: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:03 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:03 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:25:03 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:25:03 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:03 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:03 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestReportsCatalogServesShippedLibrary (2.54s)
+    --- FAIL: TestReportsCatalogServesShippedLibrary/pg18 (0.01s)
+        reports_pg_test.go:70: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:06 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:06 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:25:06 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:25:06 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:06 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:06 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestReportsRunOverComposedReadScopes (2.31s)
+    --- FAIL: TestReportsRunOverComposedReadScopes/pg18 (0.12s)
+        reports_scope_pg_test.go:37: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:09 INFO directory search rune_length=6 shapes=sam+host classes=exact+prefix+fuzzy paged=false
+2026/11/12 09:25:09 INFO directory search rune_length=6 shapes=sam+host classes=exact+prefix+fuzzy paged=false
+--- FAIL: TestSearchTakesItsScopeFromTheComposedProducer (5.48s)
+    --- FAIL: TestSearchTakesItsScopeFromTheComposedProducer/pg18 (0.01s)
+        search_scope_pg_test.go:35: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:13 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:13 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:13 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:13 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:25:13 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestSignInBurstIsCappedAndHoldsNoConnection (2.29s)
+    --- FAIL: TestSignInBurstIsCappedAndHoldsNoConnection/pg18 (0.01s)
+        signin_hardening_pg_test.go:84: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:16 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:16 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:16 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:16 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:25:16 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestSignInFairShareLetsASecondSourceIn (7.50s)
+    --- FAIL: TestSignInFairShareLetsASecondSourceIn/pg18 (0.01s)
+        signin_hardening_pg_test.go:139: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:24 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:24 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:24 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:24 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:25:24 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestInitLocalAttributionAndFailedConfirm (2.61s)
+    --- FAIL: TestInitLocalAttributionAndFailedConfirm/pg18 (0.01s)
+        signin_hardening_pg_test.go:205: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:26 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:26 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:26 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:26 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:25:26 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestLocalAccountSignInThroughTheMountedRoutes (8.65s)
+    --- FAIL: TestLocalAccountSignInThroughTheMountedRoutes/pg18 (0.02s)
+        signin_pg_test.go:87: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:35 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:35 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:35 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:35 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:25:35 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestWebAuthnChallengeThroughTheMountedRoutes (2.79s)
+    --- FAIL: TestWebAuthnChallengeThroughTheMountedRoutes/pg18 (0.02s)
+        signin_webauthn_pg_test.go:195: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:37 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:37 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:37 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:37 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:25:37 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestWebAuthnSignInThroughTheMountedRoutes (2.23s)
+    --- FAIL: TestWebAuthnSignInThroughTheMountedRoutes/pg18 (0.02s)
+        signin_webauthn_pg_test.go:214: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:39 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:39 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:39 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:39 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:25:39 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestWebAuthnSignInRefusalsAreUniform (4.62s)
+    --- FAIL: TestWebAuthnSignInRefusalsAreUniform/pg18 (0.02s)
+        signin_webauthn_pg_test.go:254: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:44 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:44 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:44 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:44 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:25:44 INFO api tag not mounted: no module contributes it tag=reports
+--- FAIL: TestWebAuthnOffWithoutPublicURL (2.22s)
+    --- FAIL: TestWebAuthnOffWithoutPublicURL/pg18 (0.01s)
+        signin_webauthn_pg_test.go:315: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:47 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:47 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:47 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:47 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:25:47 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:25:49 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:49 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:49 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:49 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:25:49 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:25:50 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:50 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:50 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:50 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:25:50 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:25:53 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:25:53 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:25:53 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:25:53 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:25:53 INFO api tag not mounted: no module contributes it tag=reports
+2026/11/12 09:25:53 INFO authn: purged dead sign-in throttle rows tenant=72fe9282-a126-4778-8c62-29ee0896f5dc deleted=1
+--- FAIL: TestThrottlePurge (8.47s)
+    --- FAIL: TestThrottlePurge/pg18 (0.06s)
+        --- FAIL: TestThrottlePurge/pg18/purge_keeps_live_throttle (0.01s)
+            throttlepurge_pg_test.go:151: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestThrottlePurge/pg18/purge_is_tenant_scoped (0.02s)
+            throttlepurge_pg_test.go:174: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestThrottlePurge/pg18/purge_frees_capacity (0.01s)
+            throttlepurge_pg_test.go:194: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestThrottlePurge/pg18/job_registered_enqueued_and_runs (0.01s)
+            throttlepurge_pg_test.go:217: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:25:54 http: TLS handshake error from 127.0.0.1:48778: tls: client offered only unsupported versions: [302]
+2026/11/12 09:25:54 http: TLS handshake error from 127.0.0.1:48808: client sent an HTTP request to an HTTPS server
+2026/11/12 09:26:01 INFO server: job worker started
+2026/11/12 09:26:01 INFO server: job worker stopped
+--- FAIL: TestRunWorkerClaimsAndRunsQueuedJobs (1.44s)
+    --- FAIL: TestRunWorkerClaimsAndRunsQueuedJobs/pg18 (0.02s)
+        worker_internal_test.go:73: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:26:02 INFO server: job worker started
+2026/11/12 09:26:03 WARN jobs: shutdown deadline reached; cancelling running bodies, their claims are left for rescue
+2026/11/12 09:26:03 INFO server: job worker stopped
+2026/11/12 09:26:03 INFO server: job worker started
+2026/11/12 09:26:03 INFO server: job worker stopped
+--- FAIL: TestSIGTERMDrainsWithinGraceAndLeavesTheClaimForRescue (1.82s)
+    --- FAIL: TestSIGTERMDrainsWithinGraceAndLeavesTheClaimForRescue/pg18 (0.02s)
+        worker_internal_test.go:97: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:26:04 INFO server: job worker started
+2026/11/12 09:26:04 WARN jobs: shutdown deadline reached; cancelling running bodies, their claims are left for rescue
+2026/11/12 09:26:04 ERROR server: job worker did not drain; unfinished claims are left for the next process to rescue err="jobs: in-flight bodies did not stop before the shutdown deadline"
+--- FAIL: TestRunWorkerReportsDrainTimeout (2.69s)
+    --- FAIL: TestRunWorkerReportsDrainTimeout/pg18 (0.01s)
+        worker_internal_test.go:175: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/compose/server	641.685s
+ok  	github.com/skenzeriq/activediq/internal/directory/client	0.243s
+FAIL

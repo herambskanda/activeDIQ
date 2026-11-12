@@ -1,0 +1,661 @@
+--- FAIL: TestO8ScopeControlInScopeStillApplies (270.25s)
+    --- FAIL: TestO8ScopeControlInScopeStillApplies/pg18 (134.17s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34642->127.0.0.1:32943: read: connection reset by peer
+--- FAIL: TestO8RemovedFromScopeADOUMovedOut (5.79s)
+    --- FAIL: TestO8RemovedFromScopeADOUMovedOut/pg18 (0.00s)
+        o8_scope_pg_test.go:145: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: unexpected EOF
+--- FAIL: TestO8RemovedFromScopeADExcludedSubOU (1.96s)
+    --- FAIL: TestO8RemovedFromScopeADExcludedSubOU/pg18 (0.00s)
+        o8_scope_pg_test.go:159: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: unexpected EOF
+--- FAIL: TestO8ScopeFactsThatCannotBeProvenAreRefusedAtApply (8.95s)
+    --- FAIL: TestO8ScopeFactsThatCannotBeProvenAreRefusedAtApply/pg18 (0.00s)
+        --- FAIL: TestO8ScopeFactsThatCannotBeProvenAreRefusedAtApply/pg18/read_error (0.00s)
+            o8_scope_pg_test.go:179: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:59734->127.0.0.1:32943: read: connection reset by peer
+        --- FAIL: TestO8ScopeFactsThatCannotBeProvenAreRefusedAtApply/pg18/incomplete_chain (0.00s)
+            o8_scope_pg_test.go:179: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:59746->127.0.0.1:32943: read: connection reset by peer
+--- FAIL: TestSubmitAndApplyEndToEnd (8.86s)
+    --- FAIL: TestSubmitAndApplyEndToEnd/pg18 (0.00s)
+        persist_pg_test.go:432: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:52064->127.0.0.1:32943: read: connection reset by peer
+--- FAIL: TestBadDSAPinFailsPlanAndIsNotPersisted (14.23s)
+    --- FAIL: TestBadDSAPinFailsPlanAndIsNotPersisted/pg18 (0.00s)
+        persist_pg_test.go:481: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:52082->127.0.0.1:32943: read: connection reset by peer
+    --- FAIL: TestBadDSAPinFailsPlanAndIsNotPersisted/pg18#01 (0.00s)
+        persist_pg_test.go:481: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:52088->127.0.0.1:32943: read: connection reset by peer
+    --- FAIL: TestBadDSAPinFailsPlanAndIsNotPersisted/pg18#02 (0.00s)
+        persist_pg_test.go:481: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:57850->127.0.0.1:32943: read: connection reset by peer
+--- FAIL: TestPhasesRunInOrder (3.43s)
+    --- FAIL: TestPhasesRunInOrder/pg18 (0.00s)
+        persist_pg_test.go:499: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: unexpected EOF
+--- FAIL: TestReconcileLapsedClaim (27.88s)
+    --- FAIL: TestReconcileLapsedClaim/pg18 (0.00s)
+        --- FAIL: TestReconcileLapsedClaim/pg18/after-state_is_applied,_recovered (0.00s)
+            persist_pg_test.go:557: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:56100->127.0.0.1:32943: read: connection reset by peer
+    --- FAIL: TestReconcileLapsedClaim/pg18#01 (0.00s)
+        --- FAIL: TestReconcileLapsedClaim/pg18#01/before-state_is_applied_again (0.00s)
+            persist_pg_test.go:557: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:56124->127.0.0.1:32943: read: connection reset by peer
+    --- FAIL: TestReconcileLapsedClaim/pg18#02 (0.00s)
+        --- FAIL: TestReconcileLapsedClaim/pg18#02/before-state_while_cancelling_is_not_run (0.00s)
+            persist_pg_test.go:557: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:42412->127.0.0.1:32943: read: connection reset by peer
+    --- FAIL: TestReconcileLapsedClaim/pg18#03 (0.00s)
+        --- FAIL: TestReconcileLapsedClaim/pg18#03/anything_else_is_stale_state (0.00s)
+            persist_pg_test.go:557: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:42430->127.0.0.1:32943: read: connection reset by peer
+    --- FAIL: TestReconcileLapsedClaim/pg18#04 (0.00s)
+        --- FAIL: TestReconcileLapsedClaim/pg18#04/password_never_re-applied:_outcome_unknown (0.00s)
+            persist_pg_test.go:557: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:42442->127.0.0.1:32943: read: connection reset by peer
+    --- FAIL: TestReconcileLapsedClaim/pg18#05 (0.00s)
+        --- FAIL: TestReconcileLapsedClaim/pg18#05/password_set_after_the_claim_is_applied (0.00s)
+            persist_pg_test.go:557: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:42468->127.0.0.1:32943: read: connection reset by peer
+--- FAIL: TestSupersededAttemptChangesNothing (3.84s)
+    --- FAIL: TestSupersededAttemptChangesNothing/pg18 (0.00s)
+        persist_pg_test.go:593: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:56734->127.0.0.1:32943: read: connection reset by peer
+--- FAIL: TestRetriesExhausted (5.92s)
+    --- FAIL: TestRetriesExhausted/pg18 (0.00s)
+        persist_pg_test.go:618: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:56742->127.0.0.1:32943: read: connection reset by peer
+--- FAIL: TestStaleStateAndOutcomeUnknown (8.46s)
+    --- FAIL: TestStaleStateAndOutcomeUnknown/pg18 (0.01s)
+        persist_pg_test.go:641: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32943 (127.0.0.1): server error: FATAL: the database system is starting up (SQLSTATE 57P03)
+--- FAIL: TestLostJobRedrivenBySweeper (3.05s)
+    --- FAIL: TestLostJobRedrivenBySweeper/pg18 (0.02s)
+        persist_pg_test.go:656: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestSweepSettlesFinishedOperationAndDropsExpiredSecrets (3.95s)
+    --- FAIL: TestSweepSettlesFinishedOperationAndDropsExpiredSecrets/pg18 (0.01s)
+        persist_pg_test.go:679: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestSecretUsedThenDeleted (3.86s)
+    --- FAIL: TestSecretUsedThenDeleted/pg18 (0.01s)
+        persist_pg_test.go:708: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestADTargetWithoutNCIsBlockedAtPlan (2.79s)
+    --- FAIL: TestADTargetWithoutNCIsBlockedAtPlan/pg18 (0.02s)
+        persist_pg_test.go:733: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestPlanRefusalAuditOutcome (8.89s)
+    --- FAIL: TestPlanRefusalAuditOutcome/pg18 (0.01s)
+        persist_pg_test.go:788: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPlanRefusalAuditOutcome/pg18#01 (0.01s)
+        persist_pg_test.go:788: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPlanRefusalAuditOutcome/pg18#02 (0.01s)
+        persist_pg_test.go:788: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPlanRefusalAuditOutcome/pg18#03 (0.01s)
+        persist_pg_test.go:788: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestPlanRefusalsAreAudited (9.60s)
+    --- FAIL: TestPlanRefusalsAreAudited/pg18 (0.01s)
+        persist_pg_test.go:851: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPlanRefusalsAreAudited/pg18#01 (0.02s)
+        persist_pg_test.go:851: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPlanRefusalsAreAudited/pg18#02 (0.21s)
+        persist_pg_test.go:851: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestSlotLimit (1.82s)
+    --- FAIL: TestSlotLimit/pg18 (0.02s)
+        persist_pg_test.go:875: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestGateErrorLeavesOperationPlannedAndAlerts (1.63s)
+    --- FAIL: TestGateErrorLeavesOperationPlannedAndAlerts/pg18 (0.02s)
+        persist_pg_test.go:890: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestKernelHolds (9.07s)
+    --- FAIL: TestKernelHolds/pg18 (0.04s)
+        --- FAIL: TestKernelHolds/pg18/automation_over_max_objects_is_held (0.01s)
+            persist_pg_test.go:909: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestKernelHolds/pg18/irreversible_with_the_tenant_setting_is_held (0.01s)
+            persist_pg_test.go:919: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestKernelHolds/pg18/a_StepUp_action_started_by_a_token_is_held;_a_human_without_step-up_is_refused (0.01s)
+            persist_pg_test.go:926: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestKernelHolds/pg18/undo_of_an_operation_that_needed_approval_is_held (0.01s)
+            persist_pg_test.go:938: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestApprovals (26.58s)
+    --- FAIL: TestApprovals/pg18 (0.16s)
+        --- FAIL: TestApprovals/pg18/a_directory-admitted_human_approves;_the_operation_is_queued (0.01s)
+            persist_pg_test.go:954: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg18/refusals (0.01s)
+            persist_pg_test.go:954: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg18/sock_puppet_approver-created-requester (0.01s)
+            persist_pg_test.go:954: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg18/sock_puppet_requester-created-approver (0.01s)
+            persist_pg_test.go:954: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg18/a_provenance_error_fails_closed (0.01s)
+            persist_pg_test.go:954: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg18/an_approver_outside_the_scope_is_refused (0.01s)
+            persist_pg_test.go:954: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg18/a_re-plan_with_the_same_hash_keeps_the_approval (0.01s)
+            persist_pg_test.go:954: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg18/approval_needs_operation.approve_over_an_item_blocked_at_plan (0.01s)
+            persist_pg_test.go:1039: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg18/a_re-plan_that_unblocks_an_item_clears_the_approval (0.01s)
+            persist_pg_test.go:1054: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg18/a_Request-held_operation_is_decided_only_through_the_gate_callback (0.02s)
+            persist_pg_test.go:954: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg18/reject_needs_operation.approve_over_the_items (0.02s)
+            persist_pg_test.go:954: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+        --- FAIL: TestApprovals/pg18/a_re-plan_with_a_changed_hash_clears_the_approval (0.02s)
+            persist_pg_test.go:954: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestCancelRunning (1.79s)
+    --- FAIL: TestCancelRunning/pg18 (0.01s)
+        persist_pg_test.go:1121: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestDeferredVerifyIsDrivenLater (1.83s)
+    --- FAIL: TestDeferredVerifyIsDrivenLater/pg18 (0.01s)
+        persist_pg_test.go:1139: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestPlanRefusalsKeepEachReason (4.51s)
+    --- FAIL: TestPlanRefusalsKeepEachReason/pg18 (0.02s)
+        persist_pg_test.go:1161: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestPlanRefusalsKeepEachReason/pg18#01 (0.01s)
+        persist_pg_test.go:1161: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestTier0AfterWriteCancelsRunningOperation (1.78s)
+    --- FAIL: TestTier0AfterWriteCancelsRunningOperation/pg18 (0.01s)
+        persist_pg_test.go:1198: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestTier0AfterWriteFromDeferredVerify (3.12s)
+    --- FAIL: TestTier0AfterWriteFromDeferredVerify/pg18 (0.02s)
+        persist_pg_test.go:1229: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestTier0AfterWriteOnSettledOperationIsOnlyAudited (3.56s)
+    --- FAIL: TestTier0AfterWriteOnSettledOperationIsOnlyAudited/pg18 (0.01s)
+        persist_pg_test.go:1251: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestTier0AfterWriteFromSupersededAttempt (1.87s)
+    --- FAIL: TestTier0AfterWriteFromSupersededAttempt/pg18 (0.01s)
+        persist_pg_test.go:1280: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestTier0AfterWriteFromSupersededDeferredVerify (2.02s)
+    --- FAIL: TestTier0AfterWriteFromSupersededDeferredVerify/pg18 (0.12s)
+        persist_pg_test.go:1318: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestPinnerReceivesOperationTenant (2.40s)
+    --- FAIL: TestPinnerReceivesOperationTenant/pg18 (0.03s)
+        persist_pg_test.go:1374: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+2026/11/12 09:26:15 ERROR audit.record_failed kind=settings.thing.changed operation=op-1 principal=alice target=row-1 outcome=failure reason=apply_failed
+2026/11/12 09:26:15 ERROR audit.record_failed kind=settings.thing.changed operation=op-1 principal=alice target=row-1 outcome=failure reason=audit_failed
+--- FAIL: TestConnectorReportProducesTier0AfterWrite (8.25s)
+    --- FAIL: TestConnectorReportProducesTier0AfterWrite/pg18 (0.02s)
+        tier0_pg_test.go:64: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestConnectorReportProducesTier0AfterWrite/pg18#01 (0.02s)
+        tier0_pg_test.go:64: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestConnectorReportProducesTier0AfterWrite/pg18#02 (0.02s)
+        tier0_pg_test.go:64: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestServerRereadProducesTier0AfterWrite (2.32s)
+    --- FAIL: TestServerRereadProducesTier0AfterWrite/pg18 (0.01s)
+        tier0_pg_test.go:88: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestServerRereadUnknownCountsAsTier0 (4.38s)
+    --- FAIL: TestServerRereadUnknownCountsAsTier0/pg18 (0.02s)
+        tier0_pg_test.go:103: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestNoTier0KeepsOtherReasons (1.71s)
+    --- FAIL: TestNoTier0KeepsOtherReasons/pg18 (0.02s)
+        tier0_pg_test.go:118: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestServerRereadCleanVerifies (3.55s)
+    --- FAIL: TestServerRereadCleanVerifies/pg18 (0.02s)
+        tier0_pg_test.go:188: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestServerRereadCoversTouchedObject (1.72s)
+    --- FAIL: TestServerRereadCoversTouchedObject/pg18 (0.02s)
+        tier0_pg_test.go:205: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestServerRereadFallbackDC (21.55s)
+    --- FAIL: TestServerRereadFallbackDC/pg18 (0.01s)
+        tier0_pg_test.go:237: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestServerRereadFallbackDC/pg18#01 (0.01s)
+        tier0_pg_test.go:237: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestServerRereadFallbackDC/pg18#02 (0.01s)
+        tier0_pg_test.go:237: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestServerRereadFallbackDC/pg18#03 (0.02s)
+        tier0_pg_test.go:237: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+    --- FAIL: TestServerRereadFallbackDC/pg18#04 (0.02s)
+        tier0_pg_test.go:237: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/platform/operation	594.678s
+?   	github.com/skenzeriq/activediq/internal/platform/operation/digest	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/platform/operation/operationtest	0.745s
+ok  	github.com/skenzeriq/activediq/internal/platform/operation/step	0.012s
+ok  	github.com/skenzeriq/activediq/internal/directory/client	0.290s
+?   	github.com/skenzeriq/activediq/internal/modules	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/agentfleet	0.014s
+ok  	github.com/skenzeriq/activediq/internal/modules/compliance	480.053s
+--- FAIL: TestAttestStartRequiresPermissionAndStepUp (525.28s)
+    --- FAIL: TestAttestStartRequiresPermissionAndStepUp/pg16 (268.98s)
+        storetest.go:97: storetest: PostgreSQL 16 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32938 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:43090->127.0.0.1:32938: read: connection reset by peer
+--- FAIL: TestAttestScopeAndTid (0.88s)
+    --- FAIL: TestAttestScopeAndTid/pg16 (0.01s)
+        attest_test.go:292: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestAttestNoTokenRetained (2.88s)
+    --- FAIL: TestAttestNoTokenRetained/pg16 (0.01s)
+        attest_test.go:359: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestTakeoverStateMachine (0.88s)
+    --- FAIL: TestTakeoverStateMachine/pg16 (0.01s)
+        attest_test.go:479: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestAttestMaxAgeRequiresStepUp (0.80s)
+    --- FAIL: TestAttestMaxAgeRequiresStepUp/pg16 (0.01s)
+        attest_test.go:589: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestAttestExpiredAttemptsPurged (1.30s)
+    --- FAIL: TestAttestExpiredAttemptsPurged/pg16 (0.01s)
+        attest_test.go:610: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestAttestMaxAgeCap (1.25s)
+    --- FAIL: TestAttestMaxAgeCap/pg16 (0.01s)
+        attest_test.go:630: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestAttestExpiredStateRefused (0.91s)
+    --- FAIL: TestAttestExpiredStateRefused/pg16 (0.01s)
+        attest_test.go:665: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestHybridLinkConfirmAndDeclare (1.02s)
+    --- FAIL: TestHybridLinkConfirmAndDeclare/pg16 (0.01s)
+        hybridlink_test.go:132: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestHybridLinkRefusedWithoutBothScopes (3.85s)
+    --- FAIL: TestHybridLinkRefusedWithoutBothScopes/pg16 (0.01s)
+        hybridlink_test.go:182: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestHybridLinkRemoveFlipsHasHybridLinkAfterAuditedTransition (3.06s)
+    --- FAIL: TestHybridLinkRemoveFlipsHasHybridLinkAfterAuditedTransition/pg16 (0.02s)
+        hybridlink_test.go:213: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestHybridLinkInputsAreStrict (0.97s)
+    --- FAIL: TestHybridLinkInputsAreStrict/pg16 (0.02s)
+        hybridlink_test.go:246: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: Test_reconfirm_by_owner_with_stepup (1.78s)
+    --- FAIL: Test_reconfirm_by_owner_with_stepup/pg16 (0.01s)
+        reconfirm_test.go:167: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: Test_reconfirm_refused (1.04s)
+    --- FAIL: Test_reconfirm_refused/pg16 (0.01s)
+        reconfirm_test.go:203: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: Test_reconfirm_vs_install_population (2.86s)
+    --- FAIL: Test_reconfirm_vs_install_population/pg16 (0.01s)
+        reconfirm_test.go:247: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestOverrideDenied (2.16s)
+    --- FAIL: TestOverrideDenied/pg16 (0.01s)
+        tier0override_test.go:174: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestOverrideSucceeds (2.02s)
+    --- FAIL: TestOverrideSucceeds/pg16 (0.02s)
+        tier0override_test.go:204: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestOverrideRefusesNonHumanRequesters (1.86s)
+    --- FAIL: TestOverrideRefusesNonHumanRequesters/pg16 (0.01s)
+        tier0override_test.go:268: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+--- FAIL: TestOverrideThroughRealAuthorizer (7.07s)
+    --- FAIL: TestOverrideThroughRealAuthorizer/pg16 (0.01s)
+        tier0override_test.go:312: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/connections	609.554s
+?   	github.com/skenzeriq/activediq/internal/modules/connections/api	[no test files]
+--- FAIL: TestDelegatedGrantEndToEnd (314.88s)
+    --- FAIL: TestDelegatedGrantEndToEnd/pg18 (179.28s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32949 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:58012->127.0.0.1:32949: read: connection reset by peer
+--- FAIL: TestNoAccessServiceFailsClosed (5.41s)
+    --- FAIL: TestNoAccessServiceFailsClosed/pg18 (0.00s)
+        delegation_test.go:298: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32949 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:58028->127.0.0.1:32949: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/delegation	530.748s
+?   	github.com/skenzeriq/activediq/internal/modules/delegation/api	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/modules/directory	0.243s
+?   	github.com/skenzeriq/activediq/internal/modules/directory/api	[no test files]
+--- FAIL: TestDesignationChangeGated (313.28s)
+    --- FAIL: TestDesignationChangeGated/pg18 (179.45s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32948 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:32906->127.0.0.1:32948: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/inventory	478.894s
+--- FAIL: TestAllowedDomainsClassifyAfterUpdate (289.09s)
+    --- FAIL: TestAllowedDomainsClassifyAfterUpdate/pg18 (152.63s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32945 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:56478->127.0.0.1:32945: read: connection reset by peer
+--- FAIL: TestUpdateRefusals (8.92s)
+    --- FAIL: TestUpdateRefusals/pg18 (0.00s)
+        settings_test.go:214: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32945 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:41432->127.0.0.1:32945: read: connection reset by peer
+--- FAIL: TestUpdateInputValidated (4.95s)
+    --- FAIL: TestUpdateInputValidated/pg18 (0.00s)
+        settings_test.go:241: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32945 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:41452->127.0.0.1:32945: read: connection reset by peer
+--- FAIL: TestRelayUpdateAndInverse (9.09s)
+    --- FAIL: TestRelayUpdateAndInverse/pg18 (0.00s)
+        settings_test.go:266: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32945 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:60922->127.0.0.1:32945: read: connection reset by peer
+--- FAIL: TestUpdateInverseIsBeforeImage (2.23s)
+    --- FAIL: TestUpdateInverseIsBeforeImage/pg18 (0.00s)
+        settings_test.go:312: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32945 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:53796->127.0.0.1:32945: read: connection reset by peer
+--- FAIL: TestVersionAdvancesPerWrite (1.67s)
+    --- FAIL: TestVersionAdvancesPerWrite/pg18 (0.00s)
+        settings_test.go:351: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32945 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:53826->127.0.0.1:32945: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/notify	531.454s
+ok  	github.com/skenzeriq/activediq/internal/modules/objects	605.034s
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:18:41 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:20:52 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:20:52 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:20:52 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:20:52 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:20:52 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:20:52 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestListReportDefinitionsEveryShippedDefinitionOnceInStableOrder (270.19s)
+    --- FAIL: TestListReportDefinitionsEveryShippedDefinitionOnceInStableOrder/pg18 (133.85s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:42976->127.0.0.1:32944: read: connection reset by peer
+2026/11/12 09:23:14 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:23:14 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:14 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:14 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:14 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:14 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestListReportDefinitionsSearchByMEName (5.17s)
+    --- FAIL: TestListReportDefinitionsSearchByMEName/pg18 (0.00s)
+        definitions_pg_test.go:220: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:46204->127.0.0.1:32944: read: connection reset by peer
+2026/11/12 09:23:19 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:23:19 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:19 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:19 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:19 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:19 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestGetReportDefinition (2.28s)
+    --- FAIL: TestGetReportDefinition/pg18 (0.00s)
+        definitions_pg_test.go:287: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: unexpected EOF
+2026/11/12 09:23:23 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:23:23 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:23 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:23 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:23 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:23 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestDefinitionsWithoutLibraryAreNotReady (8.48s)
+    --- FAIL: TestDefinitionsWithoutLibraryAreNotReady/pg18 (0.00s)
+        definitions_pg_test.go:413: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:50022->127.0.0.1:32944: read: connection reset by peer
+2026/11/12 09:23:29 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:23:29 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:29 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:29 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:29 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:29 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestDefinitionOffersExportFormats (3.66s)
+    --- FAIL: TestDefinitionOffersExportFormats/pg18 (0.00s)
+        definitions_pg_test.go:427: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:50038->127.0.0.1:32944: read: connection reset by peer
+2026/11/12 09:23:39 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:23:39 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:39 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:39 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:39 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:39 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestExportAPI (12.41s)
+    --- FAIL: TestExportAPI/pg18 (0.00s)
+        exports_api_pg_test.go:38: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34506->127.0.0.1:32944: read: connection reset by peer
+2026/11/12 09:23:45 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:23:45 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:45 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:45 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:45 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:45 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestExportPDFAndHTMLAPI (10.31s)
+    --- FAIL: TestExportPDFAndHTMLAPI/pg18 (0.00s)
+        exports_api_pg_test.go:115: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48712->127.0.0.1:32944: read: connection reset by peer
+2026/11/12 09:23:56 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:23:56 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:56 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:56 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:56 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:56 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestExportNeedsReportsRun (2.39s)
+    --- FAIL: TestExportNeedsReportsRun/pg18 (0.00s)
+        exports_api_pg_test.go:168: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: unexpected EOF
+2026/11/12 09:23:58 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:23:58 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:23:58 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:23:58 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:23:58 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:23:58 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestRunHeaderPagingAndFilterChange (6.16s)
+    --- FAIL: TestRunHeaderPagingAndFilterChange/pg18 (0.00s)
+        runs_api_pg_test.go:280: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:48144->127.0.0.1:32944: read: connection reset by peer
+2026/11/12 09:24:05 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:05 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:05 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:05 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:05 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:05 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestOtherAccountMeetsNotFound (7.00s)
+    --- FAIL: TestOtherAccountMeetsNotFound/pg18 (0.00s)
+        runs_api_pg_test.go:362: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35888->127.0.0.1:32944: read: connection reset by peer
+2026/11/12 09:24:12 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:12 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:12 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:12 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:12 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:12 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestForbiddenWithoutPermissionAndForTokens (2.80s)
+    --- FAIL: TestForbiddenWithoutPermissionAndForTokens/pg18 (0.00s)
+        runs_api_pg_test.go:388: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35916->127.0.0.1:32944: read: connection reset by peer
+2026/11/12 09:24:14 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:14 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:14 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:14 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:14 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:14 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestNotReadyCancelAndRetry (2.00s)
+    --- FAIL: TestNotReadyCancelAndRetry/pg18 (0.00s)
+        runs_api_pg_test.go:418: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35936->127.0.0.1:32944: read: connection reset by peer
+2026/11/12 09:24:16 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:16 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:16 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:16 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:16 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:16 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestStaleFreshnessNamesCauseAndConnections (2.02s)
+    --- FAIL: TestStaleFreshnessNamesCauseAndConnections/pg18 (0.00s)
+        runs_freshness_pg_test.go:52: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:43730->127.0.0.1:32944: read: connection reset by peer
+2026/11/12 09:24:19 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:19 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:19 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:19 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:19 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:19 INFO api tag not mounted: no module contributes it tag=platform.setup
+--- FAIL: TestRunReturnsHiddenGroupCounts (3.42s)
+    --- FAIL: TestRunReturnsHiddenGroupCounts/pg18 (0.00s)
+        runs_freshness_pg_test.go:117: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32944 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:43746->127.0.0.1:32944: read: connection reset by peer
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=directory
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.authn
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.health
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.notify
+2026/11/12 09:24:20 INFO api tag not mounted: no module contributes it tag=platform.setup
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/reports	523.106s
+?   	github.com/skenzeriq/activediq/internal/modules/reports/api	[no test files]
+--- FAIL: Test_export_digest_equals_run_digest (269.75s)
+    --- FAIL: Test_export_digest_equals_run_digest/pg18 (164.98s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32940 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:36700->127.0.0.1:32940: read: connection reset by peer
+--- FAIL: TestCapRefusesBeforeAnythingExists (6.86s)
+    --- FAIL: TestCapRefusesBeforeAnythingExists/pg18 (0.00s)
+        export_pg_test.go:204: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32940 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:52304->127.0.0.1:32940: read: connection reset by peer
+--- FAIL: TestJobRefusesOverCapRerun (2.33s)
+    --- FAIL: TestJobRefusesOverCapRerun/pg18 (0.00s)
+        export_pg_test.go:262: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32940 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:52316->127.0.0.1:32940: read: connection reset by peer
+--- FAIL: TestHostileValuesAreNeutralInBothFormats (7.69s)
+    --- FAIL: TestHostileValuesAreNeutralInBothFormats/pg18 (0.00s)
+        export_pg_test.go:286: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32940 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:34164->127.0.0.1:32940: read: connection reset by peer
+--- FAIL: TestAuditDownloadDenialAndExpiry (9.32s)
+    --- FAIL: TestAuditDownloadDenialAndExpiry/pg18 (0.00s)
+        export_pg_test.go:359: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32940 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:53862->127.0.0.1:32940: read: connection reset by peer
+--- FAIL: TestDeleteAndLimits (6.31s)
+    --- FAIL: TestDeleteAndLimits/pg18 (0.00s)
+        export_pg_test.go:421: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32940 (127.0.0.1): failed to receive message: unexpected EOF
+--- FAIL: TestExpiredSourceIsRerun (8.76s)
+    --- FAIL: TestExpiredSourceIsRerun/pg18 (0.00s)
+        export_pg_test.go:470: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32940 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:53884->127.0.0.1:32940: read: connection reset by peer
+--- FAIL: TestRetentionExpiresExports (3.99s)
+    --- FAIL: TestRetentionExpiresExports/pg18 (0.00s)
+        export_pg_test.go:503: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32940 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:36132->127.0.0.1:32940: read: connection reset by peer
+--- FAIL: TestGuardRefusesBadEdges (7.32s)
+    --- FAIL: TestGuardRefusesBadEdges/pg18 (0.00s)
+        export_pg_test.go:530: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32940 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:36148->127.0.0.1:32940: read: connection reset by peer
+--- FAIL: TestCreateNeedsReportsRun (10.48s)
+    --- FAIL: TestCreateNeedsReportsRun/pg18 (0.00s)
+        export_pg_test.go:551: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32940 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:35020->127.0.0.1:32940: read: connection reset by peer
+2026/11/12 09:24:16 ERROR reports: an export refusal could not be audited err="audit store down"
+--- FAIL: TestRunDenialNotRecordedIsNotRefusedQuietly (2.05s)
+    --- FAIL: TestRunDenialNotRecordedIsNotRefusedQuietly/pg18 (0.00s)
+        export_pg_test.go:606: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32940 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:38520->127.0.0.1:32940: read: connection reset by peer
+--- FAIL: TestHostileValuesAreInertInPDFAndHTML (4.21s)
+    --- FAIL: TestHostileValuesAreInertInPDFAndHTML/pg18 (0.00s)
+        export_pg_test.go:722: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32940 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:38542->127.0.0.1:32940: read: connection reset by peer
+--- FAIL: TestPageFormatCapsRefuse (20.45s)
+    --- FAIL: TestPageFormatCapsRefuse/pg18 (0.02s)
+        export_pg_test.go:770: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/reports/export	529.677s
+--- FAIL: Test_reports_library_matches_spec (322.99s)
+    --- FAIL: Test_reports_library_matches_spec/pg18 (187.64s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32950 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:57240->127.0.0.1:32950: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/reports/library	527.748s
+--- FAIL: TestRunStoresRowsFreshnessAndPages (321.02s)
+    --- FAIL: TestRunStoresRowsFreshnessAndPages/pg18 (187.56s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32951 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:56062->127.0.0.1:32951: read: connection reset by peer
+--- FAIL: Test_run_read_bound_to_runner_and_scope (7.46s)
+    --- FAIL: Test_run_read_bound_to_runner_and_scope/pg18 (0.00s)
+        run_pg_test.go:379: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32951 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:56076->127.0.0.1:32951: read: connection reset by peer
+--- FAIL: Test_read_denied_append_failure_is_logged (2.13s)
+    --- FAIL: Test_read_denied_append_failure_is_logged/pg18 (0.00s)
+        run_pg_test.go:443: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32951 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:60150->127.0.0.1:32951: read: connection reset by peer
+--- FAIL: Test_expired_run_is_not_served (18.36s)
+    --- FAIL: Test_expired_run_is_not_served/pg18 (0.00s)
+        run_pg_test.go:468: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32951 (127.0.0.1): failed to receive message: unexpected EOF
+--- FAIL: TestJobFindingRunningFailsInterruptedNeverResumes (7.89s)
+    --- FAIL: TestJobFindingRunningFailsInterruptedNeverResumes/pg18 (0.00s)
+        run_pg_test.go:529: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32951 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:33800->127.0.0.1:32951: read: connection reset by peer
+--- FAIL: TestFailuresAreNamedAndLeaveNoRows (3.16s)
+    --- FAIL: TestFailuresAreNamedAndLeaveNoRows/pg18 (0.00s)
+        run_pg_test.go:555: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32951 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:33822->127.0.0.1:32951: read: connection reset by peer
+--- FAIL: TestReuseCapCancelAndRetry (3.96s)
+    --- FAIL: TestReuseCapCancelAndRetry/pg18 (0.00s)
+        run_pg_test.go:589: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32951 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:51964->127.0.0.1:32951: read: connection reset by peer
+--- FAIL: Test_report_runs_insert_guard (4.14s)
+    --- FAIL: Test_report_runs_insert_guard/pg18 (0.03s)
+        run_pg_test.go:648: storetest: create database: ERROR: role "activediq_owner" does not exist (SQLSTATE 42704)
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/reports/run	524.530s
+--- FAIL: Test_status_chips_table (269.15s)
+    --- FAIL: Test_status_chips_table/pg18 (133.35s)
+        storetest.go:97: storetest: PostgreSQL 18 did not become ready: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32942 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:37996->127.0.0.1:32942: read: connection reset by peer
+--- FAIL: Test_same_name_is_distinguishable (2.60s)
+    --- FAIL: Test_same_name_is_distinguishable/pg18 (0.00s)
+        search_meta_pg_test.go:177: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32942 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:38018->127.0.0.1:32942: read: connection reset by peer
+--- FAIL: Test_hostile_values_verbatim_and_nothing_outside_scope (4.59s)
+    --- FAIL: Test_hostile_values_verbatim_and_nothing_outside_scope/pg18 (0.00s)
+        search_meta_pg_test.go:224: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32942 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:43012->127.0.0.1:32942: read: connection reset by peer
+--- FAIL: Test_cloud_only_chip (1.87s)
+    --- FAIL: Test_cloud_only_chip/pg18 (0.00s)
+        search_meta_pg_test.go:271: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32942 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:43032->127.0.0.1:32942: read: connection reset by peer
+--- FAIL: Test_scoped_technician_never_learns_of_an_object_in_another_OU (6.73s)
+    --- FAIL: Test_scoped_technician_never_learns_of_an_object_in_another_OU/pg18 (0.00s)
+        search_pg_test.go:168: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32942 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:59996->127.0.0.1:32942: read: connection reset by peer
+--- FAIL: Test_ranking_table (5.21s)
+    --- FAIL: Test_ranking_table/pg18 (0.00s)
+        search_pg_test.go:222: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32942 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:60014->127.0.0.1:32942: read: connection reset by peer
+--- FAIL: Test_counts_limits_and_pages_come_after_trimming (20.53s)
+    --- FAIL: Test_counts_limits_and_pages_come_after_trimming/pg18 (0.00s)
+        search_pg_test.go:325: failed to connect to `user=postgres database=postgres`: 127.0.0.1:32942 (127.0.0.1): failed to receive message: read tcp 127.0.0.1:60718->127.0.0.1:32942: read: connection reset by peer
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/modules/search	478.806s
+FAIL
+END
