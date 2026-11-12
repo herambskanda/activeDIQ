@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/directory/accountkind"
 	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -37,6 +38,8 @@ const (
 
 var (
 	testTarget = authority.TargetRef{Connection: "c1", GUID: objGUID, NC: ncGUID}
+	// acctTarget is the target of an account kind (T-1583): its class label is part of the digest.
+	acctTarget = authority.TargetRef{Connection: "c1", GUID: objGUID, Class: "user", NC: ncGUID}
 	testAttrs  = []step.Attr{{Name: "set:description", Values: []string{"s:new"}}}
 )
 
@@ -332,7 +335,6 @@ func TestMismatchedOpRefusedBeforeTransport(t *testing.T) {
 		"wrong case":       {func(o *WriteOp) { o.DigestKind = "AD.object.update" }, ErrUnknownKind},
 		"spelled like":     {func(o *WriteOp) { o.DigestKind = "ad.object.createUser" }, ErrUnknownKind},
 		"empty kind":       {func(o *WriteOp) { o.DigestKind = "" }, ErrInvalidOp},
-		"listed, unwired":  {func(o *WriteOp) { o.DigestKind = "ad.object.move" }, ErrUnknownKind},
 		"no connection":    {func(o *WriteOp) { o.Target.Connection = "" }, ErrInvalidOp},
 		"other nc":         {func(o *WriteOp) { o.Target.NC = otherNC }, ErrDigest},
 		"empty nc":         {func(o *WriteOp) { o.Target.NC = "" }, ErrDigest},
@@ -575,6 +577,14 @@ func TestKindTableClosed(t *testing.T) {
 	allowed := map[string]bool{"ad.object.create": true, "ad.object.update": true, "ad.object.delete": true, "ad.object.move": true,
 		"ad.object.rename": true, "ad.object.restore": true, "ad.user.resetPassword": true, "ad.user.unlock": true,
 		"ad.account.enable": true, "ad.account.disable": true}
+	for _, sp := range accountkind.Specs() {
+		if _, ok := kindTable[sp.Key]; !ok {
+			t.Errorf("%s missing from kindTable", sp.Key)
+		}
+		if kindClass[sp.Key] == "" {
+			t.Errorf("%s has no kindClass", sp.Key)
+		}
+	}
 	seen := map[connectorv1.WriteKind]string{}
 	for k, row := range kindTable {
 		if !allowed[k] || row.Class == "" || row.Kind == connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
@@ -616,5 +626,33 @@ func TestWriteWipesTheWireSecretCopy(t *testing.T) {
 		if b != 0 {
 			t.Fatalf("wire secret byte %d not wiped", i)
 		}
+	}
+}
+
+// The caller's secret is destroyed when the op is refused before anything is sent, not only after a send.
+func TestWriteDestroysTheSecretWhenTheOpIsRefused(t *testing.T) {
+	sec := secret.FromBytes([]byte("Passw0rd!"))
+	var backing []byte
+	sec.Expose(func(b []byte) { backing = b }) // the live buffer, to see it zeroed
+	if len(backing) == 0 {
+		t.Fatal("no backing buffer")
+	}
+	tr := &transport{}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	withStepOf(t, testTarget, authority.Pins{ncGUID: "dc1.corp.example"}, func(ctx context.Context, s step.Step) {
+		// An update that carries a secret it must not: derive() refuses it before any send.
+		op := goodOp()
+		op.SecretInput = sec
+		if _, err := c.Write(ctx, s, op); err == nil {
+			t.Fatal("an update carrying a secret was accepted")
+		}
+	})
+	for i, b := range backing {
+		if b != 0 {
+			t.Fatalf("secret byte %d survived a refused Write", i)
+		}
+	}
+	if tr.plans != 0 || tr.applies != 0 {
+		t.Errorf("transport reached: plans=%d applies=%d", tr.plans, tr.applies)
 	}
 }

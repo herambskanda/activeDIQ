@@ -2,10 +2,9 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "agent": "factory-director",
   "autoCompactWindow": 300000,
-  "effortLevel": "high",
+  "effortLevel": "medium",
   "modelSettings": {
-    "claude-opus-5-5": { "effortLevel": "high" },
-    "claude-sonnet-5-5": { "effortLevel": "high" }
+    "claude-sonnet-5-5": { "effortLevel": "medium" }
   },
   "env": {
     "FACTORY_CONTEXT_BUDGET": "300000"

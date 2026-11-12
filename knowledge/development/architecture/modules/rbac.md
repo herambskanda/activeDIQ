@@ -33,7 +33,6 @@ Code: `internal/platform/rbac/`, `internal/modules/delegation/`; migrations `001
   root beneath it. `Authorizer.resolve` sets `OneLevel` from the kind whatever a `RootResolver` returns. Excludes
   of such an assignment are ordinary subtree excludes and beat the include. The object view fails closed on a
   root kind it does not know (a zero root: the scope covers nothing), so a new kind is never read as a subtree.
-  The OpenAPI `AssignmentRootKind` enum does not list `ou_one_level` yet (the API follows the store).
 - **Read scopes (T-0882):** `ReadScopes.For(ctx, tx, tenant, chain, perm)` is the one producer of directory
   read-scope predicates (`authz.ReadScope`); reports and search consume it and nothing else renders scope
   (modules/reports.md §4). `NewReadScopes(authorizer, evaluators, owner, conns)` reuses the Authorizer's

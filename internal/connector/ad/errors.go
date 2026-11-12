@@ -25,6 +25,9 @@ const (
 	CodeNotLeaf             Code = "NOT_LEAF"       // notAllowedOnNonLeaf
 	CodeConflict            Code = "WRITE_CONFLICT" // noSuchAttribute / attributeOrValueExists: a compare-and-set lost
 	CodeConstraint          Code = "CONSTRAINT"     // constraint, schema or policy violation the DC refused
+	CodePasswordPolicy      Code = "PASSWORD_POLICY"
+	CodeInsecure            Code = "TRANSPORT_SECURITY"
+	CodeStaleValue          Code = "STALE_VALUE"
 )
 
 // Error is the package's error type.

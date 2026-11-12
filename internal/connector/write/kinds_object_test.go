@@ -196,7 +196,7 @@ func TestShapeCheck(t *testing.T) {
 			c.name = "apply"
 		}
 		if secret {
-			c.secret = &connectorv1.SecretValue{}
+			c.secret = true
 		}
 		return shapeCheck(c)
 	}
@@ -386,7 +386,7 @@ func (f *fakeDeleteTx) Send(fn func(ad.WriteConn) error) error {
 func deleteRig(t *testing.T) (*rig, Authorised) {
 	t.Helper()
 	r := newRig(t, nil)
-	return r, Authorised{p: &pass{recheck: r.h.guardProperty}}
+	return r, Authorised{p: &pass{recheck: r.h.recheckProperty}}
 }
 
 // refuseDelete is a guard that refuses a GROUP delete and a CLEAR_MANAGER, as the closure rules of
@@ -521,5 +521,43 @@ func TestCreateMatchesComparesUserAccountControl(t *testing.T) {
 		if p.matches(entry(uac), nil) {
 			t.Errorf("UAC %q wrongly matched", uac)
 		}
+	}
+}
+
+// A user create that carries a password reaches the directory: the step-4 secret rule belongs to the
+// kinds that declare an Arm (account kinds), not to the object kinds, whose rule is shapeCheck at step 1.
+// Found in review of the T-1623 merge with main; no non-lab test sent Apply with a create and secret_input.
+func TestStepFourShapeLeavesObjectKindsToShapeCheck(t *testing.T) {
+	apply := func(ch *connectorv1.WriteChange, secret bool) *call {
+		return &call{kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE, change: ch, name: "apply", secret: secret}
+	}
+	userSecret := &connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectCreate{ObjectCreate: create(ctUser, func(o *connectorv1.ObjectCreate) { o.HasSecretInput = true })}}
+	userNoSecret := &connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectCreate{ObjectCreate: create(ctUser, nil)}}
+	for name, c := range map[string]*call{"user create with a password": apply(userSecret, true), "user create without": apply(userNoSecret, false)} {
+		if r := stepFourShape(objectCreateOp, c); r != nil {
+			t.Errorf("%s refused at step 4: %v", name, r)
+		}
+		if r := shapeCheck(c); r != nil {
+			t.Errorf("%s refused by shapeCheck: %v", name, r)
+		}
+	}
+	// The same presence mismatch is still refused, by shapeCheck.
+	if r := shapeCheck(apply(userSecret, false)); r == nil {
+		t.Error("a create that declares a secret but carries none was accepted")
+	}
+	if r := shapeCheck(apply(userNoSecret, true)); r == nil {
+		t.Error("a create that carries a secret it did not declare was accepted")
+	}
+	// A kind with an Arm keeps its step-4 rule: a reset wants the secret, an enable must not carry one.
+	reset := WriteOp{Arm: func(*connectorv1.WriteChange) bool { return true }, WantsSecret: true}
+	enable := WriteOp{Arm: func(*connectorv1.WriteChange) bool { return true }}
+	if r := stepFourShape(reset, &call{name: "apply", secret: false}); r == nil {
+		t.Error("a reset with no secret_input was accepted")
+	}
+	if r := stepFourShape(enable, &call{name: "apply", secret: true}); r == nil {
+		t.Error("an enable carrying secret_input was accepted")
+	}
+	if r := stepFourShape(reset, &call{name: "apply", secret: true}); r != nil {
+		t.Errorf("a reset with secret_input refused: %v", r)
 	}
 }
