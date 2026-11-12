@@ -1187,6 +1187,13 @@ connector (§2 rule 3, §2.1). So the write path is a **credential port**:
 A remote connector that needs more than a local credential (an Entra certificate or a password
 fallback on a remote host) is `[OPEN → old T-0007]`.
 
+**Fence (ADR-0002 P3, T-1464).** `safeprim -p3`, a row of `make fitness-profiles`, fails when a package
+outside `internal/connector/` imports a directory-protocol, Kerberos/GSSAPI/NTLM or Graph/Entra client
+library (one list, `tools/analyzers/policy`), names an exported type of `connector/credential` (all but
+`Source`), calls an `Unseal*` function in a file that imports a credential package, or imports
+`credential/sealed` outside `compose/server` or `credential/local` outside `compose/server` and
+`compose/connector`. `compose/server` therefore builds the sealed source and hands it over as a value.
+
 ### 7.4 Where each primitive lives and who uses it
 
 | Primitive | Package | Used by | Not by |

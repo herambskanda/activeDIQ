@@ -964,3 +964,95 @@ func TestP1EnvironInConfigLoaderAndToolsIsExempt(t *testing.T) {
 		t.Fatalf("the config loader and tools may read the environment:\n%s", dump(vs))
 	}
 }
+
+// --- The static half of a row (T-1464, ADR-0002 P3 bullets 2 and 3) ---------------------------
+
+const d3 = `{"ticket": "T-0929", "expires": "2026-11-30", "adr": "0002-deployment-model.md"}`
+
+// p3StaticRepo is a repository whose P3 row carries the deferral and the given static command.
+func p3StaticRepo(t *testing.T, static string) string {
+	t.Helper()
+	return deferralRepo(t, "P3", "internal/connector/ldap/README.md", d3, func(s string) string {
+		i := strings.Index(s, `"check": "P3"`)
+		j := strings.Index(s[i:], `"static": [`)
+		k := strings.Index(s[i+j:], "]")
+		if j < 0 || k < 0 {
+			t.Fatal("the shipped P3 row has no static command")
+		}
+		return s[:i+j] + `"static": ` + static + s[i+j+k+1:]
+	})
+}
+
+var p3Day = Options{Branches: onlyMain.Branches, Now: time.Date(2026, 11, 10, 0, 0, 0, 0, time.UTC)}
+
+// The shipped P3 row registers the P3 static command of safeprim, so the row is never green on the
+// conformance half alone.
+func TestShippedP3RowRunsTheStaticHalf(t *testing.T) {
+	b, err := os.ReadFile("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Activation []Activation `json:"activation"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range m.Activation {
+		if a.Check == "P3" {
+			if got := strings.Join(a.Static, " "); got != "go run ./tools/fitness/safeprim -p3" {
+				t.Fatalf("P3 static command = %q", got)
+			}
+			return
+		}
+	}
+	t.Fatal("no P3 row")
+}
+
+// A passing static half runs while the conformance half is deferred, and the table says so.
+func TestActivationStaticHalfPassesUnderDeferral(t *testing.T) {
+	root := p3StaticRepo(t, `["go", "version"]`)
+	vs, rows, err := Run(root, defaultManifest, []string{"ACT"}, p3Day)
+	if err != nil || len(only(vs, "P3")) != 0 {
+		t.Fatalf("err=%v\n%s", err, dump(vs))
+	}
+	var b strings.Builder
+	PrintTable(&b, rows)
+	if !strings.Contains(b.String(), "ACTIVE, DEFERRED (T-0929 until 2026-11-30), static half passing") {
+		t.Errorf("table does not show the static half:\n%s", b.String())
+	}
+}
+
+// A failing static half is a violation although the row is deferred: the deferral covers the
+// conformance half only.
+func TestActivationStaticHalfFailsUnderDeferral(t *testing.T) {
+	root := p3StaticRepo(t, `["go", "tool", "no-such-tool-xyz"]`)
+	vs, rows, err := Run(root, defaultManifest, []string{"ACT"}, p3Day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, vs, "ACT", "activation table P3", "static half", "fails")
+	var b strings.Builder
+	PrintTable(&b, rows)
+	if !strings.Contains(b.String(), "STATIC HALF FAILING") {
+		t.Errorf("table does not flag the failing static half:\n%s", b.String())
+	}
+	// A static command that does not exist is a violation too, not a skip.
+	root = p3StaticRepo(t, `["go", "run", "./tools/fitness/no-such-check"]`)
+	vs, _, _ = Run(root, defaultManifest, []string{"ACT"}, p3Day)
+	expect(t, vs, "ACT", "activation table P3", "static half", "does not exist")
+}
+
+// The static half does not run before the subject exists.
+func TestActivationStaticHalfWaitsForTheSubject(t *testing.T) {
+	root := repo(t, nil)
+	_, rows, err := Run(root, defaultManifest, []string{"ACT"}, p3Day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.Check == "P3" && r.StaticRan {
+			t.Fatal("P3 static half ran with no subject")
+		}
+	}
+}
