@@ -151,3 +151,15 @@ test('the board header line is built by the real app.js from merge_queue', async
     assert.match(src, /setText\(mq, mqText\)/);
   }
 });
+
+test('T-1817: a done ticket named in a blocked ticket\'s block note is taken ahead of the queue, with no depends_on', () => {
+  const done = (id, priority, ts) => ({ id, priority, status: 'done', history: [{ to: 'done', ts }] });
+  const a = done('T-0001', 'P1', '2026-11-01T10:00:00Z');
+  const b = done('T-0002', 'P1', '2026-11-01T09:00:00Z');
+  const c = done('T-0003', 'P3', '2026-11-01T11:00:00Z');
+  const waiter = (status, note, extra = {}) => ({ id: 'T-0009', status, history: [{ to: status, note }], ...extra });
+  const order = (w) => orderDoneQueue([a, b, c], [a, b, c, w]).map((t) => t.id);
+  assert.deepEqual(order(waiter('blocked', 'blocked: T-0003 is done but not merged to main')), ['T-0003', 'T-0002', 'T-0001']);
+  assert.deepEqual(order(waiter('in_progress', 'T-0003 mentioned')), ['T-0002', 'T-0001', 'T-0003'], 'only a blocked ticket waits');
+  assert.deepEqual(order(waiter('blocked', 'blocked on T-0009 itself and T-0777')), ['T-0002', 'T-0001', 'T-0003'], 'self and unknown ids do not count');
+});
