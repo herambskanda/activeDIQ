@@ -67,7 +67,7 @@ func (r *readJob) run(ctx context.Context) error {
 	err = func() error {
 		_, err := r.stream(ctx, searchSpec{attrs: mp.Attributes(), pageSize: r.pageSize, pin: pre.pin}, func(en *connectorv1.DirectoryEntry) error {
 			r.rep.Entries++
-			o, ok, err := r.mapEntry(mp, pre, en, dsa)
+			o, ok, err := r.mapEntry(ctx, mp, pre, en, dsa)
 			if err != nil {
 				return err
 			}
@@ -159,7 +159,7 @@ func groupSID(en *connectorv1.DirectoryEntry) []byte {
 
 // mapEntry maps one entry of the main pass. ok is false for an entry that was refused as malformed (counted,
 // and skipped without aborting the batch). Any other error aborts the read.
-func (r *readJob) mapEntry(mp *Mapper, pre *prescan, en *connectorv1.DirectoryEntry, dsa string) (inventory.Observation, bool, error) {
+func (r *readJob) mapEntry(ctx context.Context, mp *Mapper, pre *prescan, en *connectorv1.DirectoryEntry, dsa string) (inventory.Observation, bool, error) {
 	m, err := mp.Map(en)
 	if err != nil {
 		var me *Error
@@ -186,10 +186,26 @@ func (r *readJob) mapEntry(mp *Mapper, pre *prescan, en *connectorv1.DirectoryEn
 			// without it has none. The set is complete (and empty), so edges from an earlier read are removed.
 			o.MembersComplete = true
 		}
+		unresolved := m.MembersUnresolved
+		if !o.MembersComplete && ranged(en) {
+			// The search never follows attr;range=: finish the member list with Read before the group is
+			// ingested, so the ingester sees the whole set and drops removed members.
+			full, err := r.completeMembers(ctx, mp, en, dsa)
+			if err != nil {
+				return inventory.Observation{}, false, err
+			}
+			if full != nil {
+				o.Members, o.MembersComplete = full.Observation.Members, full.Observation.MembersComplete
+				unresolved = full.MembersUnresolved
+				if o.MembersComplete {
+					r.rep.GroupsCompleted++
+				}
+			}
+		}
 		if !o.MembersComplete {
 			r.rep.GroupsPartial++
 		}
-		r.rep.MembersUnresolved += m.MembersUnresolved
+		r.rep.MembersUnresolved += unresolved
 	}
 	if m.PrimaryGroup == PrimaryGroupUnresolved {
 		r.rep.PrimaryGroupUnresolved++

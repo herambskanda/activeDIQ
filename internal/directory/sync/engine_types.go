@@ -168,10 +168,13 @@ type DomainReport struct {
 	// objects (a parent the search did not deliver, a cycle, a chain past the store's bound): the store keeps
 	// them with ancestry_complete false, which is out of every delegated scope.
 	AncestryUnresolved int
-	// GroupsPartial counts groups whose member list was not complete (a ranged value: the search never
-	// follows ranges) and MembersUnresolved the member values that named no object GUID. Their edges are
+	// GroupsPartial counts groups whose member list was not complete (a ranged value the Read follow-up could
+	// not finish: truncated, out of order or no terminal range) and MembersUnresolved the member values that named no object GUID. Their edges are
 	// added but no edge is removed on their account.
 	GroupsPartial, MembersUnresolved int
+	// GroupsCompleted counts groups whose ranged member list the engine finished with Read after the search
+	// delivered only its first range; they are complete and not counted in GroupsPartial.
+	GroupsCompleted int
 	// PrimaryGroupUnresolved counts principals whose primaryGroupID named no group of the domain.
 	PrimaryGroupUnresolved int
 }

@@ -861,3 +861,46 @@ func TestFullCycleLogsOnlyAFixedClass(t *testing.T) {
 		}
 	})
 }
+
+// A group past the DC's value limit arrives as its first range; the engine finishes it with Read, so every
+// edge is stored and nothing is partial.
+func TestFullCycleCompletesRangedMembers(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		fo := newForest()
+		fo.build(ncA, 1, 3500, 3200)
+		fake := newFake(fo.doms...)
+		r := e.rig(t, fake, ncA)
+		rep, err := r.run(context.Background())
+		if err != nil {
+			t.Fatalf("FullCycle: %v", err)
+		}
+		d := rep.Domains[0]
+		if d.GroupsPartial != 0 || d.GroupsCompleted != 1 {
+			t.Fatalf("partial=%d completed=%d, want 0 and 1", d.GroupsPartial, d.GroupsCompleted)
+		}
+		if len(fake.reads) != 1 || fake.reads[0].pin != gtext(fake.dsa) || len(fake.reads[0].attrs) != 1 || fake.reads[0].attrs[0] != "member" {
+			t.Fatalf("reads = %+v", fake.reads)
+		}
+		if n := e.count(t, `SELECT count(*) FROM public.links WHERE connection_id = $1::uuid AND link_attr = 'member' AND state = 'active' AND source_guid = $2::uuid`, string(e.conn), gtext(ncA+11)); n != 3200 {
+			t.Fatalf("member edges of the big group = %d, want 3200", n)
+		}
+	})
+}
+
+// A member list the connector cut off at its cap is not whole: the group stays partial.
+func TestFullCycleKeepsATruncatedGroupPartial(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		fo := newForest()
+		fo.build(ncA, 1, 3500, 3200)
+		fake := newFake(fo.doms...)
+		fake.readTruncate = true
+		r := e.rig(t, fake, ncA)
+		rep, err := r.run(context.Background())
+		if err != nil {
+			t.Fatalf("FullCycle: %v", err)
+		}
+		if d := rep.Domains[0]; d.GroupsPartial != 1 || d.GroupsCompleted != 0 {
+			t.Fatalf("partial=%d completed=%d, want 1 and 0", d.GroupsPartial, d.GroupsCompleted)
+		}
+	})
+}
