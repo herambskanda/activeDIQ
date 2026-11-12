@@ -15,7 +15,7 @@ import (
 
 // fakeSchema stands in for ad.Session.EditableAttr: the pure vetting is all that is tested here; the
 // directory behaviour of kinds 1-3 is proved against Samba in wk_lab_test.go.
-type fakeSchema struct{ attrs map[string]string }
+type fakeSchema struct{ attrs, oids map[string]string }
 
 func (f fakeSchema) EditableAttr(name string) (string, ldapfilter.Syntax, error) {
 	if c, ok := f.attrs[strings.ToLower(name)]; ok {
@@ -24,6 +24,9 @@ func (f fakeSchema) EditableAttr(name string) (string, ldapfilter.Syntax, error)
 	return "", 0, errors.New("not in the snapshot")
 }
 
+// AttrOID maps a resolved ldapDisplayName to its attributeID.
+func (f fakeSchema) AttrOID(name string) string { return f.oids[strings.ToLower(name)] }
+
 func (fakeSchema) Do(_ context.Context, _ func(*ad.Tx) error) error { return errors.New("unused") }
 
 var schema = fakeSchema{attrs: map[string]string{
@@ -31,7 +34,8 @@ var schema = fakeSchema{attrs: map[string]string{
 	// the deny-listed names are in the schema snapshot on purpose: the list must win over the schema
 	"unicodepwd": "unicodePwd", "useraccountcontrol": "userAccountControl", "member": "member",
 	"1.2.840.113556.1.4.90": "unicodePwd",
-}}
+	"userparameters":        "userParameters", "1.2.840.113556.1.4.138": "userParameters",
+}, oids: map[string]string{"userparameters": "1.2.840.113556.1.4.138"}}
 
 func txt(s string) *connectorv1.EditValue {
 	return &connectorv1.EditValue{Value: &connectorv1.EditValue_Text{Text: s}}
@@ -315,5 +319,44 @@ func TestStepFourShapeLeavesObjectKindsToShapeCheck(t *testing.T) {
 	}
 	if r := stepFourShape(reset, &call{name: "apply", secret: true}); r != nil {
 		t.Errorf("a reset with secret_input refused: %v", r)
+	}
+}
+
+// CC-TS-07: userParameters (Terminal Services blob) is never written, whatever the spelling.
+func TestUserParameters_deny_listed(t *testing.T) {
+	for _, name := range []string{"userParameters", "userparameters", "USERPARAMETERS", "1.2.840.113556.1.4.138", "userParameters;binary"} {
+		for _, createInitial := range []bool{false, true} {
+			_, r := prepareEdits(schema, []*connectorv1.AttributeEdit{set(name, "x")}, createInitial)
+			if code(r) != connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED {
+				t.Errorf("%q create=%v: got %v, want ATTRIBUTE_NOT_ALLOWED", name, createInitial, code(r))
+			}
+		}
+	}
+	// The deny check itself, not through EditableAttr.
+	for _, n := range []string{"userParameters", "USERPARAMETERS"} {
+		if !isDenied(n) {
+			t.Errorf("isDenied(%q) = false", n)
+		}
+	}
+}
+
+// A schema that gives the userParameters attributeID another ldapDisplayName is still refused (OID match).
+func TestUserParameters_renamed_refused_by_OID(t *testing.T) {
+	renamed := fakeSchema{
+		attrs: map[string]string{"tsblob": "tsBlob"},
+		oids:  map[string]string{"tsblob": "1.2.840.113556.1.4.138"},
+	}
+	_, r := prepareEdits(renamed, []*connectorv1.AttributeEdit{set("tsBlob", "x")}, false)
+	if code(r) != connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED {
+		t.Fatalf("renamed userParameters: got %v", code(r))
+	}
+}
+
+func TestDenyList_userParameters_OID_row(t *testing.T) {
+	if !isDeniedOID("1.2.840.113556.1.4.138") {
+		t.Fatal("the userParameters OID row is missing from the deny-list")
+	}
+	if !isDenied("1.2.840.113556.1.4.138") {
+		t.Fatal("isDenied does not match the OID")
 	}
 }

@@ -28,6 +28,8 @@ import (
 type ObjectDirectory interface {
 	Do(ctx context.Context, fn func(*ad.Tx) error) error
 	EditableAttr(name string) (string, ldapfilter.Syntax, error)
+	// AttrOID is the schema attributeID of a resolved ldapDisplayName ("" if unknown).
+	AttrOID(name string) string
 }
 
 // writeDirectory is implemented by a Provider that can run object writes.
@@ -257,7 +259,7 @@ func prepareEdits(d ObjectDirectory, in []*connectorv1.AttributeEdit, createInit
 			return nil, attrNotAllowed("4")
 		}
 		name, syn, err := d.EditableAttr(base)
-		if err != nil || isDenied(name) {
+		if err != nil || isDenied(name) || isDeniedOID(d.AttrOID(name)) {
 			return nil, attrNotAllowed("4")
 		}
 		if seen[strings.ToLower(name)] {
