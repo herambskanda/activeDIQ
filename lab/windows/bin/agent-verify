@@ -12,6 +12,11 @@ Runbook: knowledge/development/runbooks/windows-lab.md sections 10 and 13.
 import argparse, base64, hashlib, os, subprocess, sys, tempfile, time
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+sys.path.insert(0, os.path.join(REPO, "lab", "windows", "lib"))
+from labaddr import require_dc_addr  # noqa: E402
+
+# No default DC address (T-1279): fail before the dc1 lock, the build and any connection.
+DC_ADDR = require_dc_addr("agent-verify", REPO)
 
 # dc1 is shared by many tickets and this run reboots/installs/clears logs on it: hold the dc1 lock for the
 # whole run (T-0839, runbook section 10). Re-exec under the wrapper; the nested copy sees DIQ_DC1_LOCK_HELD.
@@ -80,9 +85,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--log", required=True, help="where to write the run log")
     ap.add_argument("--version", default="0.0.1")
+    ap.add_argument("--guest", default="agent-verify.ps1", choices=["agent-verify.ps1", "agent-t0557.ps1"],
+                    help="which guest script to run on the DC (agent-t0557.ps1: real GPO, token refusal and resource bounds, T-0557)")
+    ap.add_argument("--mode", choices=["full", "gpo-restart"], help="agent-t0557.ps1 only: gpo-restart applies a real GPO and restarts the Event Log service")
     a = ap.parse_args()
+    if a.mode and a.guest != "agent-t0557.ps1":
+        sys.exit("agent-verify: --mode needs --guest agent-t0557.ps1")
     env = load_env()
-    dc = DC(env.get("WIN_LAB_DC_ADDR", "192.168.1.9"), env["WIN_LAB_ADMIN_PASSWORD"])
+    dc = DC(DC_ADDR, env["WIN_LAB_ADMIN_PASSWORD"])
     work = tempfile.mkdtemp(prefix="agent-verify-")
     genv = dict(os.environ, GOOS="windows", GOARCH="amd64", CGO_ENABLED="0")
     for name, pkg in (("activediq-agent.exe", "./cmd/agent"), ("agentsetup.exe", "./cmd/agentsetup")):
@@ -101,13 +111,15 @@ if(-not (Test-Path C:\\lab\\tools\\wix\\wix.exe)){{ & C:\\lab\\tools\\dotnet\\do
     print(out.strip().splitlines()[-1] if out.strip() else "no output", file=sys.stderr)
     subprocess.check_call(["go", "test", "-c", "-tags", "windowslab", "-o", os.path.join(work, "agent.test.exe"),
                            "./internal/platform/agent"], cwd=REPO, env=genv)
-    for name in ("activediq-agent.exe", "agentsetup.exe", "agent.test.exe"):
+    subprocess.check_call(["go", "test", "-c", "-tags", "windowslab", "-o", os.path.join(work, "resource.test.exe"),
+                           "./internal/compose/agent"], cwd=REPO, env=genv)
+    for name in ("activediq-agent.exe", "agentsetup.exe", "agent.test.exe", "resource.test.exe"):
         dc.put(os.path.join(work, name), f"C:\\lab\\build\\{name}")
     dc.put(os.path.join(REPO, "packaging", "windows", "agent", "Agent.wxs"), "C:\\lab\\build\\Agent.wxs")
-    dc.put(os.path.join(REPO, "lab", "windows", "guest", "agent-verify.ps1"), "C:\\lab\\build\\agent-verify.ps1")
+    dc.put(os.path.join(REPO, "lab", "windows", "guest", a.guest), f"C:\\lab\\build\\{a.guest}")
     rc, out = dc.ps(f"""
 $env:DOTNET_ROOT='C:\\lab\\tools\\dotnet'; $env:PATH='C:\\lab\\tools\\dotnet;'+$env:PATH; cd C:\\lab\\build
-& C:\\lab\\tools\\wix\\wix.exe build Agent.wxs -ext WixToolset.Util.wixext -d Version={a.version} -d AgentExe=C:\\lab\\build\\activediq-agent.exe -d SetupExe=C:\\lab\\build\\agentsetup.exe -arch x64 -o activediq-agent-{a.version}.msi 2>&1
+& C:\\lab\\tools\\wix\\wix.exe build Agent.wxs -ext WixToolset.Util.wixext -d Version={a.version} -d AgentExe=C:\\lab\\build\\activediq-agent.exe -d SetupExe=C:\\lab\\build\\agentsetup.exe -arch x64 -wx -sw1149 -o activediq-agent-{a.version}.msi 2>&1
 "msi sha256 " + (Get-FileHash activediq-agent-{a.version}.msi).Hash""")
     print(out.strip(), file=sys.stderr)
     hashes = "\n".join(f"sha256 {hashlib.sha256(open(os.path.join(work, n), 'rb').read()).hexdigest()} {n}"
@@ -115,7 +127,7 @@ $env:DOTNET_ROOT='C:\\lab\\tools\\dotnet'; $env:PATH='C:\\lab\\tools\\dotnet;'+$
     # Detached on the DC with its own log, polled here: a long run must not depend on one WinRM call.
     dc.ps("Remove-Item C:\\lab\\out\\run.log,C:\\lab\\out\\run.done -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force C:\\lab\\out | Out-Null; "
           "Start-Process powershell -WindowStyle Hidden -RedirectStandardOutput C:\\lab\\out\\launch.out -RedirectStandardError C:\\lab\\out\\launch.err -ArgumentList '-NoProfile','-Command',"
-          f"\"& C:\\lab\\build\\agent-verify.ps1 -Version {a.version} *>&1 | Out-File -Encoding utf8 -Width 400 C:\\lab\\out\\run.log; 'done' | Set-Content C:\\lab\\out\\run.done\"")
+          f"\"& C:\\lab\\build\\{a.guest} -Version {a.version}{' -Mode ' + a.mode if a.mode else ''} *>&1 | Out-File -Encoding utf8 -Width 400 C:\\lab\\out\\run.log; 'done' | Set-Content C:\\lab\\out\\run.done\"")
     out = ""
     for _ in range(360):  # up to 30 minutes
         time.sleep(5)

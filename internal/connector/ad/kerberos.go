@@ -152,7 +152,7 @@ func bindWithKeytab(conn *ldap.Conn, k Kerberos, cb *krb5gssapi.ChannelBinding, 
 // PermittedEnctypes: it takes the pre-authentication etype from the ETYPE-INFO2 of an
 // unauthenticated KRB-ERROR and the reply key from the AS-REP's etype, so a rogue or on-path KDC
 // could otherwise make the client encrypt its timestamp with the account's RC4 key (the NT hash)
-// and hand an offline-crackable blob to an attacker (T-0856, TM-TB3-T13). With no RC4 key in the
+// and hand an offline-crackable blob to an attacker (T-0856, TM-TB3-T14). With no RC4 key in the
 // keytab the client cannot answer such a request at all. A keytab left with no AES key is refused.
 func dropNonAESKeys(kt *keytab.Keytab) error {
 	kept := kt.Entries[:0]
@@ -202,8 +202,17 @@ func zeroKeytab(kt *keytab.Keytab) {
 	}
 }
 
+// newKerberosClient builds the Kerberos client with PA-REQ-ENC-PA-REP (RFC 6806 FAST negotiation) switched
+// off. A Windows Server 2025 KDC answers that request by setting the EncPARep flag in the AS-REP without
+// PA-FX-FAST in the encrypted pa-data, and go-krb5's AS-REP check (messages/kdc_rep.go) then fails the login
+// with "KDC did not respond appropriately to FAST negotiation" (T-0846). We use no FAST armor, so nothing
+// else depends on the negotiation; Samba never sets the flag, so only a Windows lab proves this path.
+func newKerberosClient(k Kerberos, kt *keytab.Keytab, conf *config.Config) *client.Client {
+	return client.NewWithKeytab(k.Principal, k.Realm, kt, conf, client.DisablePAFXFAST(true))
+}
+
 func gssapiHandshake(conn *ldap.Conn, k Kerberos, kt *keytab.Keytab, conf *config.Config, cb *krb5gssapi.ChannelBinding, spnHost string) error {
-	krb := client.NewWithKeytab(k.Principal, k.Realm, kt, conf)
+	krb := newKerberosClient(k, kt, conf)
 	defer krb.Destroy()
 	g := gssapi.New(krb, cb)
 	spn := "ldap/" + strings.ToLower(strings.TrimSuffix(spnHost, "."))

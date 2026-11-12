@@ -1,0 +1,679 @@
+{
+  "about": "ADR-0005 rule 10 and fitness check O3: the guarded roots of SQL writes to `config`-class tables (internal/platform/store/owners/owners.gen.tsv) that do not take a step.Step. Read by tools/fitness/operation (O3, T-0391). The schema and the meaning of every field are in ADR-0005 rule 10, 'The O3 rule' (T-1221). A `system` row is permanent and is part of the ADR: adding one, or adding a table to one, is an amendment to ADR-0005. A `convert` row is a pending baseline entry: O3 prints it as pending (never a pass) and its ticket deletes it when the root takes a step.Step. Adding a caller to a `system` row in a non-widening category is reviewed by solution-architect in the change that adds the call; it is not an amendment. The categories in `widening_categories` hold the no-Step widening writes (ADR-0005 rule 10 items 2, 9 and 10): adding a caller or a row to one of them, or moving a row into or out of one, is an amendment reviewed by security-architect. O3 fails unless those rows and their `callers`, and `widening_categories` itself, equal the ADR's `o3-widening` block.",
+  "adr": "knowledge/development/decisions/0005-operation-pipeline-and-audit-trail.md",
+  "categories": {
+    "signin": "Sign-in, sessions and step-up, with what they record after verifying a proof (the session, a spent TOTP step, an authenticator's sign count, attempt counters and pauses), and a console account's enrolment of its first factor inside a sign-in that has no factor yet (trust on first use; audited and notified). It never covers an end user on the FD-05 page, which is category enduser-enrolment. A later add or replacement of one's own factor, or a change of one's own password, is a widening decision and not in this category (rule 10 list item 1, narrowed by T-1221)",
+    "bootstrap": "The first-run bootstrap (ADR-0002 platform path internal/platform/tenant/provision FirstRun and the setup-secret owner claim) and the host-local `activediq-server account init-local` command, whose authority is host access (T-0808 precedent, principal cli-account-init-local) including the enrolment and confirmation of the first TOTP factor of the account it creates (rule 10 list item 2). Widening category: adding a caller or a row is an amendment reviewed by security-architect, and the rows must equal the ADR's o3-widening block.",
+    "verification": "Connection verification runs and what they record from the directory: run results, findings, the directory identity, the draft/verifying moves of a run, and takeover-attestation demotion signals (rule 10 list item 4, as amended by T-1221)",
+    "attestation": "The Entra takeover attestation callback: the IdP redirect of a Global Administrator sign-in that a principal started after passing the permission and step-up checks. It records the attested_* values the server read from Graph, sets first_attested_at once (DM-10.I7(f)) and clears demoted_at; the last two can move a stale takeover back to attested, so this write widens. It writes only when its state matches one unexpired attempt row, which it consumes single-use, and the token's tid is the connection's directory_identity; otherwise it fails and writes nothing (rule 10 list item 9, added by T-1221). Widening category: adding a caller or a row is an amendment reviewed by security-architect, and the rows must equal the ADR's o3-widening block.",
+    "sync": "Sync and inventory (rule 10 list item 4; DM-14..DM-23)",
+    "handshake": "Connector and agent enrollment handshakes: redeeming (consuming) a single-use enrollment token (rule 10 list item 3)",
+    "enduser-enrolment": "The v1 end-user TOTP enrolment page (threat model AN-5): an end user enrolling their own factor on an anonymous route, bounded by the end user's own AD authentication inside the flow, the existing factor for a re-enrolment, a notice to contact data already held and an audit event (TM-TB1-T13). No row uses it yet; the change that builds the page adds its row as an amendment (rule 10 list item 10, added by T-1221). Widening category: adding a caller or a row is an amendment reviewed by security-architect, and the rows must equal the ADR's o3-widening block."
+  },
+  "widening_categories": [
+    "bootstrap",
+    "attestation",
+    "enduser-enrolment"
+  ],
+  "writers": [
+    {
+      "package": "internal/directory/connection",
+      "function": "Store.Activate",
+      "tables": [
+        "connector_bindings"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1229",
+      "reason": "Activating a connection is a principal's configuration change (rule 10, connections.*). Reached today from the connections.tier0_override.acknowledge Action's Apply and from Service.Activate (lab seed). Take a step.Step; ensureEmbeddedBinding and the activation leg of Transition stay unexported helpers reached only from it."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Store.Create",
+      "tables": [
+        "connections"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1229",
+      "reason": "Creating a connection is rule 10's first example (T-0093). Only the lab seed (Registry.Create, build tag lab) calls it today; the lab seed then submits the create Action or is removed."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Store.Transition",
+      "tables": [
+        "connections"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1229",
+      "reason": "Mixed root: Activate (principal) and the verification service (draft->verifying, verifying->draft). Split it: the moves to active run under Store.Activate's step.Step; the run's own draft/verifying moves get a narrow system writer that T-1229 adds here under category verification (pre-authorised by the T-1221 amendment; callers named). No generic Tx-taking state writer remains."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Store.RecordVerification",
+      "tables": [
+        "connections"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1229",
+      "reason": "Split it: the run bookkeeping (run, findings, last_verification_id, verified_at, last_stamp_at) becomes a system writer under category verification that T-1229 adds here (pre-authorised); the credential_id swap on a passing credential_change run is a credential change (rule 10, connections and credentials) and moves to a step.Step writer called by the credential-change Action, whose plan names the passing run as its precondition."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Store.SetDirectoryIdentity",
+      "tables": [
+        "connections"
+      ],
+      "disposition": "system",
+      "category": "verification",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/directory/connection.Registry.SetDirectoryIdentity"
+      ],
+      "reason": "Writes directory_identity from the V5 check of a verification run: the value is what the directory reports, not a principal's choice."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Registry.SetDirectoryIdentity",
+      "tables": [
+        "connections"
+      ],
+      "disposition": "system",
+      "category": "verification",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/directory/connection.Service.applyIdentity"
+      ],
+      "reason": "The transaction-opening wrapper of Store.SetDirectoryIdentity used by the verification service. Listed because it re-exports a system writer from the owning package (the closure rule)."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Store.RecordAttestation",
+      "tables": [
+        "connections"
+      ],
+      "disposition": "system",
+      "category": "attestation",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/modules/connections.Attester.Callback"
+      ],
+      "reason": "Records the result of the Entra Global Administrator sign-in that a principal started (Attester.Start checks connections.takeover.attest and step-up, DM-10.I7(a)). The callback is an unauthenticated IdP redirect (ADR-0002 platform path internal/modules/connections StateTenant), so no principal and no Step exist when it runs. It writes the attested_* columns, sets first_attested_at on the first move to attested (I7(f)), and clears demoted_at. Clearing demoted_at can move a stale takeover back to attested, so this write widens. That is accepted: I7(d) says a demotion lasts until a new attestation, and this is that attestation. The values are read from Graph by the server with the Global Administrator's token, never typed in (I7(a)); the permission and step-up are checked when the attempt starts; the callback appends its own audit event naming who started it and who signed in (I7(b)). The callback writes only when its state matches one unexpired attempt row, which it consumes single-use (Store.ConsumeAttempt deletes the row by state_hash and refuses an expired one, called first in Attester.Callback), and the token's tid is the connection's directory_identity (DM-10.I7(a)); otherwise it fails and writes nothing."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Store.RecordDemotion",
+      "tables": [
+        "connections"
+      ],
+      "disposition": "system",
+      "category": "verification",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/directory/connection.Registry.RecordDemotion"
+      ],
+      "reason": "Stores a demotion signal (I7(d)) observed from the directory; it can only make a takeover stale, never grant one. Its one caller is the dead wrapper Registry.RecordDemotion, a convert row that T-1229 deletes; T-1229 removes it from these callers in the same change. The change that wires the signal adds its real caller here."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Registry.RecordDemotion",
+      "tables": [
+        "connections"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1229",
+      "reason": "Dead exported wrapper (no product caller) that re-exports the system writer Store.RecordDemotion from the owning package, so it breaks the closure rule. It is listed as the system row's caller until it is deleted, so O3 stays green meanwhile. Delete it."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Store.SetAttestationMaxAge",
+      "tables": [
+        "connections"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1229",
+      "reason": "A tenant setting changed by a principal over HTTP (Attester.SetMaxAge checks permission and step-up inline, no Action). Becomes a connections.* Action whose Apply passes its step.Step."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Store.AcknowledgeTier0Override",
+      "tables": [
+        "connection_tier0_overrides",
+        "connections"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1229",
+      "reason": "Already reached only from the connections.tier0_override.acknowledge Action's Apply; pass the Action's step.Step instead of its transaction."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Store.DeclareHybridLink",
+      "tables": [
+        "hybrid_links"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1229",
+      "reason": "Reached from the connections.hybrid_link.declare Action's Apply; pass the step.Step. createLink stays an unexported helper reached from this and DiscoverHybridLink."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Store.DiscoverHybridLink",
+      "tables": [
+        "hybrid_links"
+      ],
+      "disposition": "system",
+      "category": "sync",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/directory/connection.Registry.DiscoverHybridLink"
+      ],
+      "reason": "A link discovered by inventory sync (origin discovered) is a sync result; confirming or removing it is a principal's Action (TransitionHybridLink). Its one caller is the dead wrapper Registry.DiscoverHybridLink, a convert row that T-1229 deletes or turns into a system row with named callers; T-1229 updates these callers in the same change."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Registry.DiscoverHybridLink",
+      "tables": [
+        "hybrid_links"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1229",
+      "reason": "Dead exported wrapper (no product caller) that re-exports the system writer Store.DiscoverHybridLink from the owning package, so it breaks the closure rule. It is listed as the system row's caller until it is deleted, so O3 stays green meanwhile. Delete it, or list it as a system row with named callers in the ingest change that needs it."
+    },
+    {
+      "package": "internal/directory/connection",
+      "function": "Store.TransitionHybridLink",
+      "tables": [
+        "hybrid_links"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1229",
+      "reason": "Reached from the connections.hybrid_link.confirm and .remove Actions' Apply; pass the step.Step."
+    },
+    {
+      "package": "internal/directory/inventory",
+      "function": "Writer.Designate",
+      "tables": [
+        "tier0_designations"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1232",
+      "reason": "Reached from the inventory.tier0_designation.set Action's Apply; pass the step.Step."
+    },
+    {
+      "package": "internal/directory/inventory",
+      "function": "Writer.Undesignate",
+      "tables": [
+        "tier0_designations"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1232",
+      "reason": "Reached from the inventory.tier0_designation.set Action's Apply; pass the step.Step."
+    },
+    {
+      "package": "internal/directory/inventory",
+      "function": "Writer.Form",
+      "tables": [
+        "correlations"
+      ],
+      "disposition": "system",
+      "category": "sync",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/directory/inventory.Ingester.judge"
+      ],
+      "reason": "Forms or re-forms a correlation from what sync read from both directories and the I4 gate's verdict (DM-20.I4 (a)-(g)). The state it sets, matched or candidate, is derived, never chosen by a principal; a re-formed correlation inherits the I4(g) markers but makes no decision. Reached through the Populator embedded in Ingester (a static, promoted call)."
+    },
+    {
+      "package": "internal/directory/inventory",
+      "function": "Writer.Remove",
+      "tables": [
+        "correlations"
+      ],
+      "disposition": "system",
+      "category": "sync",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "Marks a correlation removed when sync no longer sees the pair. It can only withdraw a correlation's authority and routing, never grant it. No product caller yet: the ingest change that calls it adds its caller here."
+    },
+    {
+      "package": "internal/directory/inventory",
+      "function": "Writer.RecordLiveFacts",
+      "tables": [
+        "correlations"
+      ],
+      "disposition": "system",
+      "category": "sync",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/directory/inventory.Facts.RecordLiveFacts"
+      ],
+      "reason": "Stores the Tier-0 verdict of a live directory read on the object's correlations (rule 7 live facts). The value is what the directory reports, even when a principal's Plan started the read."
+    },
+    {
+      "package": "internal/directory/inventory",
+      "function": "Facts.RecordLiveFacts",
+      "tables": [
+        "correlations"
+      ],
+      "disposition": "system",
+      "category": "sync",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "The transaction-opening wrapper of Writer.RecordLiveFacts. Listed because it re-exports a system writer (the closure rule). It is reached only through the internal/directory/client FactsStore interface, which is not a static reference, so callers is empty; the interface and fitness-modules' import rules bound who can hold it."
+    },
+    {
+      "package": "internal/directory/inventory",
+      "function": "Writer.Reconfirm",
+      "tables": [
+        "correlations"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1232",
+      "reason": "A tenant owner's re-confirmation makes a correlation matched, and a matched correlation carries authority and write routing across the two directories (DM-20, I4(g)), so it is a principal's widening decision (table reclassified config by the T-1221 rework). Already reached only from the connections.correlation.reconfirm Action's Apply with s.Tx(); pass the step.Step."
+    },
+    {
+      "package": "internal/directory/invhost",
+      "function": "PGStore.Insert",
+      "tables": [
+        "inventory_servers"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1232",
+      "reason": "Registering an inventory host is an administrator's configuration change (rule 10, data sources). Service.Register has no product caller yet; it becomes the write function of an invhost Action and takes the step.Step, and the store interface method takes it too."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "CreateIn",
+      "tables": [
+        "authn_accounts"
+      ],
+      "disposition": "system",
+      "category": "bootstrap",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/compose/server.firstOwners.CreateFirstOwner",
+        "internal/compose/server.createLocalAccount"
+      ],
+      "reason": "Creates the first owner at the setup-secret claim and the break-glass local account from the host CLI. An administrator creating an account is an authn.account.* Action (T-0096) and does not use this function. Widens: it creates an account that will hold tenant-owner. Bounded by the one-time setup secret (first run) or by host access (init-local), with no principal and so no Step yet."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "Accounts.Create",
+      "tables": [
+        "authn_accounts"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1230",
+      "reason": "Exported, transaction-opening, no product caller; it re-exports CreateIn. Delete it, or make it the Step-taking writer of the authn.account.create Action."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "Accounts.Bind",
+      "tables": [
+        "authn_accounts"
+      ],
+      "disposition": "system",
+      "category": "signin",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/platform/authn/sso/signin.Service.applyAnchor"
+      ],
+      "reason": "Binds the signing-in SSO account to its directory anchor during the sign-in callback (system actor)."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "Accounts.SetState",
+      "tables": [
+        "authn_accounts"
+      ],
+      "disposition": "system",
+      "category": "bootstrap",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/compose/server.confirmTOTP"
+      ],
+      "reason": "Activates the local account once the host CLI confirms its TOTP (confirmTOTP, the second step of `account init-local`). The first-owner claim does not call it. An administrator disabling, enabling or deleting an account is an authn.account.* Action (T-0096) with its own Step-taking writer; it does not call this function. Widens: an active account can sign in. Bounded by host access and the TOTP code the operator just enrolled."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "LocalCredentials.SetPassword",
+      "tables": [
+        "authn_local_credentials"
+      ],
+      "disposition": "system",
+      "category": "bootstrap",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/compose/server.createLocalAccount"
+      ],
+      "reason": "Sets the local account's password from the host CLI. An administrator's password reset is an authn.account.* Action with its own Step-taking writer. Widens: it sets a credential. Bounded by host access; the account cannot sign in until confirmTOTP activates it."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "Store.RevokeAccountTx",
+      "tables": [
+        "authn_accounts"
+      ],
+      "disposition": "system",
+      "category": "signin",
+      "ticket": "T-1221",
+      "callers": [
+        "*"
+      ],
+      "reason": "Executes sqlBumpEpoch, which only increments session_epoch: it can only end sessions. Any caller that revokes sessions (role change, password or MFA reset, on demand) may call it, so its callers are not restricted."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "AuthorityFactors.BeginEnrol",
+      "tables": [
+        "authn_authority_approvals"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1230",
+      "reason": "Spends the owner approval that names the enrolling account, at the start of that account's own authority-factor enrolment. Adding one's own authority factor after sign-in is a widening decision (rule 10, 'own first factor' is the only own-credential exemption), so the enrolment, with this approval spend and FinishEnrol's credential insert, becomes an Action of the enrolling account (T-1230). The challenge (authn_authority_challenges, system) may stay outside it. Not mounted yet."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "AuthorityFactors.Approve",
+      "tables": [
+        "authn_authority_approvals"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1230",
+      "reason": "A tenant owner approving another account's authority-factor enrolment (TM-D19 rule 2) is a principal's change to that account's authority, so it is an authn.account.* Action (table reclassified config by T-1221). Not mounted yet."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "AuthorityFactors.Reset",
+      "tables": [
+        "authn_authority_approvals",
+        "authn_webauthn_credentials"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1230",
+      "reason": "An owner resetting another account's authority factor is rule 10's 'reset by an administrator' (authn.account.*). Reaches the approvals write and the credential revoke (authn_webauthn_credentials) through revoke. Not mounted yet."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "AuthorityFactors.Remove",
+      "tables": [
+        "authn_authority_approvals",
+        "authn_webauthn_credentials"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1230",
+      "reason": "As Reset. Not mounted yet."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "AuthorityFactors.FinishEnrol",
+      "tables": [
+        "authn_webauthn_credentials"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1230",
+      "reason": "Registers the enrolling account's own authority credential (through finishEnrol and insertCredential) after sign-in. That creates a credential that outlives the session, so it is a widening decision and becomes the Step-taking writer of the enrolment Action, with BeginEnrol (T-1230). Not mounted yet."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "WebAuthnFactor.AddCredential",
+      "tables": [
+        "authn_webauthn_credentials"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1230",
+      "reason": "Registers a second-factor passkey for an active account (through insertCredential). Its only caller is the lab-tagged labpasskey seeding; the registration ceremony it was written for adds a factor after sign-in, a widening decision, so it becomes an Action (T-1230) or the function is deleted."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "AuthorityFactors.Verify",
+      "tables": [
+        "authn_webauthn_credentials"
+      ],
+      "disposition": "system",
+      "category": "signin",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "An authority-factor assertion inside a session (through verify and useCredential). Its credential write advances the sign count the authenticator reported: a value read, not a decision. Not mounted yet: the change that mounts it adds its caller here."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "WebAuthnFactor.Verify",
+      "tables": [
+        "authn_webauthn_credentials"
+      ],
+      "disposition": "system",
+      "category": "signin",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "The AN-10 passkey second factor of a pending sign-in (through useCredential). Its credential write advances the sign count the authenticator reported: a value read, not a decision. It is reached only through the internal/platform/httpx/authnhttp WebAuthnVerifier interface, which is not a static reference, so callers is empty; fitness-modules' import rules bound who can hold it."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "Service.Enroll",
+      "tables": [
+        "authn_authenticator_enrollments"
+      ],
+      "disposition": "system",
+      "category": "bootstrap",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/compose/server.createLocalAccount"
+      ],
+      "reason": "Creates the pending TOTP enrolment of the break-glass local account that the host CLI (`account init-local`) is creating. Widens: it issues a factor seed, a credential. Bounded by host access, and the enrolment is pending (it verifies nothing) until confirmTOTP activates it. Any other enrolment (the end-user page, item 10; a console account adding a factor, T-1230) must not call it through this row."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "Service.Activate",
+      "tables": [
+        "authn_authenticator_enrollments"
+      ],
+      "disposition": "system",
+      "category": "bootstrap",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/compose/server.confirmTOTP"
+      ],
+      "reason": "Moves the CLI-created pending TOTP enrolment to active on the first valid code (through check), in confirmTOTP of `account init-local`. Widens: the factor becomes usable. Bounded by host access and possession of the seed the operator was just shown; a wrong code only charges attempts and pauses."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "Service.Verify",
+      "tables": [
+        "authn_authenticator_enrollments"
+      ],
+      "disposition": "system",
+      "category": "signin",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/platform/authn.SecondFactor.VerifyTOTP",
+        "internal/platform/authn.StepUp.matchTOTP"
+      ],
+      "reason": "Checks a code against an active enrolment at sign-in (AN-10) and step-up (through check, charge, pause and settleFailure). It spends the time step, counts attempts, pauses and expires: values derived from the verified code and the clock, or narrowing only. It cannot activate a pending enrolment (it checks state active)."
+    },
+    {
+      "package": "internal/platform/authn",
+      "function": "SecondFactor.VerifyTOTP",
+      "tables": [
+        "authn_authenticator_enrollments"
+      ],
+      "disposition": "system",
+      "category": "signin",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "The AN-10 TOTP second factor of a pending sign-in; it calls Service.Verify. Listed because it re-exports a system writer from the owning package (the closure rule). It is reached only through the internal/platform/httpx/authnhttp TOTPVerifier interface, which is not a static reference, so callers is empty."
+    },
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "Enrollment.Issue",
+      "tables": [
+        "enrollment_tokens"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1246",
+      "reason": "Issuing a token issues the means to obtain a component certificate, which admits an agent or connector to the tenant: a credential and a data source (table reclassified config by the T-1221 rework). Checks PermissionIssue and step-up inline today and has no product caller; it becomes the Step-taking writer of a fleet Store Action."
+    },
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "Reenroller.ReenrolAddc",
+      "tables": [
+        "enrollment_tokens"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1246",
+      "reason": "The ADDC re-enrolment sweep revokes each agent and issues its successor's token (reenrol.go, via the unexported one). The revoke narrows; the token issue widens, as Enrollment.Issue does. No product caller yet; it becomes the Step-taking writer of a fleet Store Action."
+    },
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "Enrollment.Redeem",
+      "tables": [
+        "enrollment_tokens"
+      ],
+      "disposition": "system",
+      "category": "handshake",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "Consumes a token (sets used_at once, DM-12.I2, enforced by the enrollment_tokens_guard trigger) through redeemWith. Consuming can only spend a credential a principal already issued. No product caller yet."
+    },
+    {
+      "package": "internal/platform/fleet/fleetsql",
+      "function": "Enroller.Enroll",
+      "tables": [
+        "enrollment_tokens"
+      ],
+      "disposition": "system",
+      "category": "handshake",
+      "ticket": "T-1221",
+      "callers": [],
+      "reason": "The Enroll handshake: redeems the token through redeemWith in the transaction that records the component's certificate. It is reached through the internal/compose/server enrollBackend interface, which is not a static reference, so callers is empty. Not wired in product code yet."
+    },
+    {
+      "package": "internal/platform/notify/syslog",
+      "function": "Store.Create",
+      "tables": [
+        "notify_syslog_destinations"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1231",
+      "reason": "SIEM sinks are configuration Actions by rule 10 (audit retention and SIEM sinks). Called today from the CreateSiemDestination HTTP handler, audited inline, no Action."
+    },
+    {
+      "package": "internal/platform/notify/syslog",
+      "function": "Store.Update",
+      "tables": [
+        "notify_syslog_destinations"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1231",
+      "reason": "As Store.Create (UpdateSiemDestination handler)."
+    },
+    {
+      "package": "internal/platform/rbac",
+      "function": "SeedBuiltIns",
+      "tables": [
+        "authz_roles",
+        "authz_role_permissions"
+      ],
+      "disposition": "system",
+      "category": "bootstrap",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/compose/server.firstOwners.CreateFirstOwner",
+        "internal/compose/server.createLocalAccount"
+      ],
+      "reason": "Idempotent seed of the built-in roles of a new tenant, in the tenant's bootstrap transaction. Built-in roles are not edited by principals. Widens only in the sense that the roles exist; it assigns them to no one."
+    },
+    {
+      "package": "internal/platform/rbac",
+      "function": "Grants.CreateRole",
+      "tables": [
+        "authz_roles",
+        "authz_role_permissions"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1228",
+      "reason": "Reached from the delegation.role.create Action's Apply and from the host CLI (grantDirectoryReader). Take the step.Step; the CLI gets a narrow bootstrap twin that T-1228 adds here under category bootstrap with callers [internal/compose/server.grantDirectoryReader] (pre-authorised by the T-1221 amendment), as GrantBootstrap already is."
+    },
+    {
+      "package": "internal/platform/rbac",
+      "function": "Grants.SetRolePermissions",
+      "tables": [
+        "authz_role_permissions"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1228",
+      "reason": "Reached from the delegation.role.update Action's Apply; pass the step.Step."
+    },
+    {
+      "package": "internal/platform/rbac",
+      "function": "Grants.Grant",
+      "tables": [
+        "authz_assignments",
+        "authz_assignment_roots"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1228",
+      "reason": "Reached from the delegation.assignment.grant Action's Apply; pass the step.Step. grant stays an unexported helper reached from this and GrantBootstrap."
+    },
+    {
+      "package": "internal/platform/rbac",
+      "function": "Grants.GrantBootstrap",
+      "tables": [
+        "authz_assignments",
+        "authz_assignment_roots"
+      ],
+      "disposition": "system",
+      "category": "bootstrap",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/compose/server.grantDirectoryReader"
+      ],
+      "reason": "The host CLI's grant path that skips the grantor-holds-it check, accepted only for principal cli-account-init-local (T-0808; fitness-grantbootstrap already restricts its mentions to localaccount.go). Widens: it grants directory-reader to the CLI's local account. Bounded by host access and the single principal it accepts."
+    },
+    {
+      "package": "internal/platform/rbac",
+      "function": "Grants.Revoke",
+      "tables": [
+        "authz_assignments"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1228",
+      "reason": "Reached from the delegation.assignment.revoke Action's Apply; pass the step.Step."
+    },
+    {
+      "package": "internal/platform/rbac",
+      "function": "OwnerAssignments.GrantIn",
+      "tables": [
+        "authz_assignments",
+        "authz_assignment_roots"
+      ],
+      "disposition": "system",
+      "category": "bootstrap",
+      "ticket": "T-1221",
+      "callers": [
+        "internal/compose/server.firstOwners.CreateFirstOwner",
+        "internal/compose/server.createLocalAccount"
+      ],
+      "reason": "Grants tenant-owner to the first owner at the setup-secret claim, and to the CLI's local account only when the tenant has no owner. Widens: tenant-owner. Bounded by the setup secret, or by host access only while the tenant has no owner."
+    },
+    {
+      "package": "internal/platform/rbac",
+      "function": "OwnerAssignments.Grant",
+      "tables": [
+        "authz_assignments",
+        "authz_assignment_roots"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1228",
+      "reason": "Exported, transaction-opening, no product caller; it re-exports GrantIn. Delete it, or make it the Step-taking writer of the authz.* Action that adds a tenant owner."
+    },
+    {
+      "package": "internal/platform/rbac",
+      "function": "OwnerAssignments.Revoke",
+      "tables": [
+        "authz_assignments"
+      ],
+      "disposition": "convert",
+      "ticket": "T-1228",
+      "reason": "Removing a tenant owner is a principal's authz.* change. No product caller yet; delete it or make it Step-taking."
+    }
+  ]
+}

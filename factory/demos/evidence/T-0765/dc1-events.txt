@@ -1,0 +1,9 @@
+window: 2026-11-03T06:08:14.453Z .. 2026-11-03T06:08:49.103Z
+event 2887: 0
+event 3039: 0
+event 3074: 0
+event 2889: 0  (recorded, not judged)
+event 3040: 0  (recorded, not judged)
+event 3041: 0  (recorded, not judged)
+event 3075: 0  (recorded, not judged)
+dc1-evidence: ok

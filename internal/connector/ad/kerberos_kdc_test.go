@@ -33,7 +33,7 @@ import (
 )
 
 // fakeKDC is a TCP KDC that answers every AS-REQ with KDC_ERR_PREAUTH_REQUIRED whose ETYPE-INFO2
-// lists only offered (a rogue or on-path KDC steering the client to RC4, TM-TB3-T13) and records
+// lists only offered (a rogue or on-path KDC steering the client to RC4, TM-TB3-T14) and records
 // the etype of every PA-ENC-TIMESTAMP it receives. It never returns a ticket.
 type fakeKDC struct {
 	ln       net.Listener

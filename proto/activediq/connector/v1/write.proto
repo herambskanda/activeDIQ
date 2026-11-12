@@ -12,8 +12,9 @@
 //     server asks (TM-D2). Every object the typed change touches is evaluated, not only `target`.
 //   * Plan and Apply fail with ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED while the connector's
 //     own last VerifyConnection for the connection does not open its write gate (DM-10.I11).
-//   * No credential material travels in these messages (fitness-proto P7). A write kind that sets a
-//     secret (password reset) needs its own sealed-secret shape and a security-architect review.
+//   * No credential material travels in these messages (fitness-proto P7), with one exception:
+//     ApplyRequest.secret_input (type SecretValue), for the two kinds that set a password
+//     (contract §8.10.5, fitness P9). PlanRequest and every response never carry it.
 //   * The touched set is derived by the connector from the typed change, never from a list the
 //     server sends. Tier0Context carries one CorrelationStatement per touched object; a touched
 //     object without one is refused (CONTEXT_MISSING).
@@ -27,18 +28,174 @@ import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
 
-// The write operation. v1.1 defines the envelope only: the concrete kinds (create user, set
-// attribute, add member, move, …) are added one per spec ticket, each with its WriteChange arm,
-// its touched-set rule and its conformance cases. Until a kind exists, every Plan and Apply fails
-// with ERROR_CODE_INVALID_ARGUMENT, and Describe reports PLAN and APPLY as UNSUPPORTED.
+// The write operations. v1.1 defined the envelope only; v1.4 (T-1581, connector-contract.md §8.10)
+// adds the first ten kinds, the M2b write-parity slice. A kind is a verb, parameterised by
+// DirectoryObjectClass where it applies to more than one class (parameterise, do not clone). Each
+// kind has exactly one WriteChange arm whose field number equals the kind's number, one
+// plan-digest key on the server (kindTable, §8.10.2), one touched-set rule, a reversibility class and
+// conformance cases CC-WK-nn. A request whose `change` arm is not the arm of `kind` is
+// ERROR_CODE_INVALID_ARGUMENT before any directory call. Adding a kind needs a spec change to
+// §8.10 in the same commit; reserved_test.go pins the list.
 enum WriteKind {
   WRITE_KIND_UNSPECIFIED = 0;
+  // Add an object under `target` (the parent container). Class USER, GROUP, COMPUTER, CONTACT or
+  // ORGANIZATIONAL_UNIT. USER may carry the initial password in ApplyRequest.secret_input.
+  WRITE_KIND_OBJECT_CREATE = 1;
+  // Compare-and-set edits of ordinary attributes (§8.10.4 deny-list applies).
+  WRITE_KIND_OBJECT_UPDATE = 2;
+  // Delete a leaf object. No subtree delete in v1.4.
+  WRITE_KIND_OBJECT_DELETE = 3;
+  // ModifyDN with a new superior inside the same domain NC.
+  WRITE_KIND_OBJECT_MOVE = 4;
+  // ModifyDN with a new RDN, same parent.
+  WRITE_KIND_OBJECT_RENAME = 5;
+  // Reanimate a deleted object (AD Recycle Bin enabled forests only).
+  WRITE_KIND_OBJECT_RESTORE = 6;
+  // Administrative reset of a user's password. Secret input; Irreversible; TM-D16 step-up.
+  WRITE_KIND_USER_PASSWORD_RESET = 7;
+  // Clear the lockout of a user. Irreversible (no inverse: lockout is DC-managed).
+  WRITE_KIND_USER_UNLOCK = 8;
+  // Clear ACCOUNTDISABLE on a user or computer (TM-D28 class `enable`).
+  WRITE_KIND_ACCOUNT_ENABLE = 9;
+  // Set ACCOUNTDISABLE on a user or computer (tightening; TM-D28 class none).
+  WRITE_KIND_ACCOUNT_DISABLE = 10;
 }
 
-// The typed content of the change. Each WriteKind adds one message arm here (in a `oneof change`
-// introduced with the first kind). No arm may carry a DN, filter or script as text (P2), an Any
-// (P3), or a secret (P7).
-message WriteChange {}
+// The classes the object kinds work on. `user` includes inetOrgPerson. A kind that does not allow
+// the live class of its target is INVALID_ARGUMENT, rule id "ClassNotAllowed" (§8.10.3 matrix).
+enum DirectoryObjectClass {
+  DIRECTORY_OBJECT_CLASS_UNSPECIFIED = 0;
+  DIRECTORY_OBJECT_CLASS_USER = 1;
+  DIRECTORY_OBJECT_CLASS_GROUP = 2;
+  DIRECTORY_OBJECT_CLASS_COMPUTER = 3;
+  DIRECTORY_OBJECT_CLASS_CONTACT = 4;
+  DIRECTORY_OBJECT_CLASS_ORGANIZATIONAL_UNIT = 5;
+}
+
+enum GroupScope {
+  GROUP_SCOPE_UNSPECIFIED = 0;
+  GROUP_SCOPE_GLOBAL = 1;
+  GROUP_SCOPE_DOMAIN_LOCAL = 2;
+  GROUP_SCOPE_UNIVERSAL = 3;
+}
+
+enum EditOp {
+  EDIT_OP_UNSPECIFIED = 0;
+  // Single- or multi-valued: the attribute ends with exactly `values`. Realised as delete(live old
+  // values) + add(values) in one Modify (compare-and-set, ADR-0005 rule 4).
+  EDIT_OP_SET = 1;
+  // Remove every value (delete of the live old values). `values` empty.
+  EDIT_OP_CLEAR = 2;
+  // Multi-valued only: add `values` (Modify add; fails if a value is already present).
+  EDIT_OP_ADD_VALUE = 3;
+  // Multi-valued only: remove `values` (Modify delete of exactly those values).
+  EDIT_OP_REMOVE_VALUE = 4;
+}
+
+// A value in a write. Typed; no DN text and no SID text. An object reference is a Guid that the
+// connector resolves to a DN on the pinned DC. `octets` is accepted only for attributes whose
+// syntax has no codec and that are not on the §8.10.4 deny-list.
+message EditValue {
+  oneof value {
+    string text = 1;
+    int32 int32_value = 2;
+    int64 int64_value = 3;
+    bool boolean = 4;
+    TimeValue time = 5;
+    Guid object_ref = 6;
+    bytes octets = 7;
+  }
+}
+
+// One attribute change. `attribute` is an LDAP display name validated by the connector against the
+// schema snapshot and the canonical-key rule of §8.9 (an ASCII letter, then letters, digits or `-`).
+// It is a name only, never a filter or a DN. The §8.10.4 deny-list is checked first.
+message AttributeEdit {
+  string attribute = 1;
+  EditOp op = 2;
+  repeated EditValue values = 3;
+}
+
+// Create. `target` is the parent container. The RDN attribute follows from the class (cn for user,
+// group, computer and contact; ou for an organizational unit); the connector builds the DN with the
+// DN type from the parent's live DN and `rdn_value`, which is a value, never a DN.
+message ObjectCreate {
+  DirectoryObjectClass object_class = 1;
+  string rdn_value = 2;
+  // Initial attributes, EDIT_OP_SET only. sAMAccountName is required for user, group and computer.
+  repeated AttributeEdit initial = 3;
+  // GROUP only: scope and type. The connector derives groupType; it is not an attribute edit.
+  GroupScope group_scope = 4;
+  bool group_is_security = 5;
+  // USER and COMPUTER: create enabled. USER enabled requires has_secret_input (AD refuses an
+  // enabled user without a password); a USER created disabled may have none.
+  bool account_enabled = 6;
+  // The plan-time statement that Apply will carry ApplyRequest.secret_input (USER only). The flag
+  // is covered by the plan digest, the value never is (ADR-0005 rule 9). Apply refuses a mismatch
+  // between this flag and the presence of secret_input.
+  bool has_secret_input = 7;
+}
+
+message ObjectUpdate {
+  repeated AttributeEdit edits = 1;
+}
+
+message ObjectDelete {}
+
+// Move inside one domain NC. `new_parent.nc_guid` must equal the request target's nc_guid, else
+// INVALID_ARGUMENT, rule id "CrossDomainMoveUnsupported".
+message ObjectMove {
+  WriteTarget new_parent = 1;
+}
+
+message ObjectRename {
+  string new_rdn_value = 1;
+}
+
+// `target.object` is the deleted object. Restores into `new_parent` under `rdn_value`.
+message ObjectRestore {
+  WriteTarget new_parent = 1;
+  string rdn_value = 2;
+}
+
+// The password itself is ApplyRequest.secret_input, never a field here.
+message UserPasswordReset {
+  // Set pwdLastSet = 0 in the same Modify. False leaves the must-change state as the policy has it;
+  // the connector never writes pwdLastSet = -1 (TM-D28 `reset_password`, safe-primitives §5.6).
+  bool must_change_at_next_logon = 1;
+}
+
+message UserUnlock {}
+message AccountEnable {}
+message AccountDisable {}
+
+// A secret in transit from the server to the connector inside Apply, over the mTLS tunnel
+// (ADR-0005 rule 9, "Transit to a remote connector"). The only message of the contract that may
+// hold secret bytes, and it may be used in exactly one place: ApplyRequest.secret_input (fitness
+// P9, connector-contract.md §8.10.5). `material` is UTF-8 text of the secret. The connector
+// encodes it for the directory (unicodePwd: quoted UTF-16LE), zeroes its own copies after the
+// call, and never logs, echoes or persists it. It is never in a PlanRequest, a response, an error
+// or a log line; generated code that prints it is a defect (CC-WK-26).
+message SecretValue {
+  bytes material = 1;
+}
+
+// The typed content of the change. Exactly one arm, and the arm number equals the WriteKind number.
+// No arm may carry a DN, filter or script as text (P2), an Any (P3), or a secret (P7).
+message WriteChange {
+  oneof change {
+    ObjectCreate object_create = 1;
+    ObjectUpdate object_update = 2;
+    ObjectDelete object_delete = 3;
+    ObjectMove object_move = 4;
+    ObjectRename object_rename = 5;
+    ObjectRestore object_restore = 6;
+    UserPasswordReset user_password_reset = 7;
+    UserUnlock user_unlock = 8;
+    AccountEnable account_enable = 9;
+    AccountDisable account_disable = 10;
+  }
+}
 
 // The object the write is about. For a kind that creates an object this is the parent container.
 message WriteTarget {
@@ -60,6 +217,10 @@ message TargetPrecondition {
   // facts the tier0 evaluation used (memberships, parent), computed by the connector. Entra has no
   // general If-Match on directory objects, so this digest is the Entra precondition.
   bytes state_digest = 3;
+  // AD: the pinned DC's clock when Plan read the target. A create is ALREADY_APPLIED only if the
+  // object found at the planned parent and RDN has whenCreated at or after this instant (ADR-0005
+  // rule 4, "created after the step's claim"; contract §8.10.3).
+  optional google.protobuf.Timestamp plan_observed_at = 4;
 }
 
 // The ADR-0005 step idempotency key (DM-42.I1). UUIDs travel as Guid (16 bytes, RFC 4122 order).
@@ -149,6 +310,11 @@ message ApplyRequest {
   // this request with the same function and refuses a mismatch (INVALID_ARGUMENT, rule id
   // "PlanDigestMismatch") before any directory call.
   bytes plan_digest = 11;
+  // Only for the kinds whose Descriptor has SecretInput (OBJECT_CREATE of a USER with
+  // has_secret_input, USER_PASSWORD_RESET). Present on any other kind, or absent on those, is
+  // INVALID_ARGUMENT before any directory call. Never part of the plan digest (only its presence
+  // is). Contract §8.10.5.
+  optional SecretValue secret_input = 12;
 }
 
 enum ApplyOutcome {

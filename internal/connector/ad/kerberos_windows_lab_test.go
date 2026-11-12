@@ -150,14 +150,11 @@ func winKrbConfig(t *testing.T, k Kerberos) Config {
 	return cfg
 }
 
-// BUG T-0846 (filed by this ticket): the product bind path (gssapiHandshake -> client.NewWithKeytab) cannot
-// log in to a Windows Server 2025 KDC: go-krb5 sends PA-REQ-ENC-PA-REP, the KDC sets the EncPARep flag, and
-// the client then rejects the AS-REP ("KDC did not respond appropriately to FAST negotiation", as_xchange /
-// kdc_rep.go requires PA-FX-FAST in the encrypted pa-data). Samba does not set the flag, so T-0560 never saw it.
-// The Open-based tests below therefore stay RED until the connector builds its client with
-// client.DisablePAFXFAST(true) (or the library check is fixed); like TestWinLabTM26GCOpens they are red on
-// purpose. Every other test in this file drives the same handshake with PA-FX-FAST disabled (winHandshake)
-// so the DC-side behaviour (channel binding, SPN, keys, gMSA derivation) is pinned independently of that bug.
+// T-0846 (fixed): the product bind path used to fail against a Windows Server 2025 KDC, which answers
+// go-krb5's PA-REQ-ENC-PA-REP with the EncPARep flag but no PA-FX-FAST, and go-krb5 rejects such an AS-REP.
+// The connector's client (newKerberosClient) now disables PA-FX-FAST, so the Open-based tests below must pass
+// on dc1. Every other test in this file drives the same handshake with PA-FX-FAST disabled (winHandshake) so
+// the DC-side behaviour (channel binding, SPN, keys, gMSA derivation) is pinned independently of the Open path.
 
 // winDialBound dials the DC over verified LDAPS (the product dial path) and returns the connection and the
 // RFC 5929 binding of the certificate it presented.

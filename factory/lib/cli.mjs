@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { FactoryError, UsageError } from './errors.mjs';
 import {
-  EVENT_KINDS, appendEvent, ensureStateDirs, listEntities, listRecentRuns, openStore, requireEntity, resolveHome, setControl,
+  EVENT_KINDS, appendEvent, ensureStateDirs, getEntity, listEntities, listRecentRuns, openStore, requireEntity, resolveHome, setControl,
 } from './store.mjs';
 import {
   addNote, advanceTicket, blockTicket, cancelTicket, createTicket, markReady, rejectTicket, setTicketFields, unblockTicket,
@@ -16,13 +16,14 @@ import {
 import {
   completeAction, createAction, createEpic, createFeedback, createMilestone, listItems, setEpic, setMilestone, sortById, triageFeedback,
 } from './items.mjs';
+import { unmergedBranches } from './worktree.mjs';
 import { createHandoff, latestHandoff } from './handoffs.mjs';
 import { Dispatcher, planDryRun } from './dispatcher.mjs';
 import { blockedNote, runPreMergeGate } from './premerge.mjs';
 import { pollAdvisories } from './advisories.mjs';
 import { runDoctor } from './doctor.mjs';
 import { buildDigest, buildStatus } from './status.mjs';
-import { down, up } from './lifecycle.mjs';
+import { down, restart, up } from './lifecycle.mjs';
 import {
   formatDecision, formatDecisionList, formatDigest, formatDoctor, formatDryRun, formatStatus, formatTicket, formatTicketList, table,
 } from './format.mjs';
@@ -34,6 +35,7 @@ const BIN_PATH = path.join(FALLBACK_HOME, 'bin', 'factory');
 const USAGE = `usage: factory <command>
 
   up | down | status [--json] | pause [--reason R] | resume | doctor
+  restart                           reload the dispatcher and board on the code now on disk; running workers are kept and adopted
   board [--port N]                  run the board in the foreground
   run [--once] [--dry-run]          run the dispatcher in the foreground
   premerge ID [-- CMD ARGS…]        dry-run the pre-merge gate for a ticket's branch (changes nothing); CMD overrides dispatcher.pre_merge.argv
@@ -43,6 +45,7 @@ const USAGE = `usage: factory <command>
              [--body-file F] [--ac "…"]... [--status backlog|ready]
   ticket list [--status S] [--owner R] [--epic E] | show ID | ready ID | note ID --by ROLE "text"
   ticket advance|reject|block|unblock|cancel ID --by ROLE --note "…"
+  ticket unblock ID --to-ready …   park in ready; the claim gate holds it until its dependencies are on main
   ticket set ID field=value …       priority owner epic milestone effort_override tags depends_on decisions
 
   decision new --kind K --title T --question Q --option "a|Label|summary"... [--recommend a]
@@ -104,6 +107,13 @@ const COMMANDS = {
     c.out(`board       ${stopped.board ? `stopping (pid ${stopped.board})` : 'was not running'}`);
     c.out(`dispatcher  ${stopped.dispatcher ? `stopping (pid ${stopped.dispatcher}); running workers get up to 2 minutes to finish` : 'was not running'}`);
   } },
+  restart: { options: {}, run: async (c) => {
+    const r = await restart(c.ctx, BIN_PATH);
+    c.out(r.dispatcher
+      ? `dispatcher  restarted${r.legacy ? ' (the old one predates self-reload and was stopped by the signal)' : ''}: pid ${r.dispatcher.old} → ${r.dispatcher.pid}; running workers kept`
+      : 'dispatcher  was not running (factory up starts it)');
+    c.out(r.board ? `board       pid ${r.board.pid}  http://${c.ctx.config.board.host}:${r.board.port}` : 'board       was not running');
+  } },
   status: { options: {}, run: (c) => {
     const status = buildStatus(c.ctx);
     c.print(status, () => formatStatus(status, c.ctx.now().getTime()));
@@ -132,7 +142,9 @@ const COMMANDS = {
       const plan = await planDryRun(c.ctx);
       return c.print(plan, () => formatDryRun(plan));
     }
-    await new Dispatcher(c.ctx).run({ once: c.values.once });
+    const dispatcher = new Dispatcher(c.ctx);
+    await dispatcher.run({ once: c.values.once });
+    if (dispatcher.reloaded) setTimeout(() => process.exit(0), 10_000).unref(); // handed over: never linger on a stray handle
     return undefined;
   } },
 
@@ -178,7 +190,17 @@ const COMMANDS = {
   'ticket advance': { options: { by: str, note: str }, run: (c) => transitionCommand(c, advanceTicket, 'advanced') },
   'ticket reject': { options: { by: str, note: str }, run: (c) => transitionCommand(c, rejectTicket, 'rejected') },
   'ticket block': { options: { by: str, note: str }, run: (c) => transitionCommand(c, blockTicket, 'blocked') },
-  'ticket unblock': { options: { by: str, note: str }, run: (c) => transitionCommand(c, unblockTicket, 'unblocked') },
+  'ticket unblock': { options: { by: str, note: str, 'to-ready': bool }, run: async (c) => {
+    if (!c.values['to-ready']) return transitionCommand(c, unblockTicket, 'unblocked');
+    need(c.values, 'note');
+    // T-1400: park it in ready; the dispatcher's claim check holds it until every dependency is on main.
+    const deps = requireEntity(c.ctx, 'tickets', c.pos[0], 'ticket').depends_on ?? [];
+    const done = deps.filter((id) => getEntity(c.ctx, 'tickets', id)?.status === 'done');
+    const unmerged = await unmergedBranches(c.ctx, done);
+    const waitingOn = deps.filter((id) => !done.includes(id) || unmerged.has(id));
+    const t = unblockTicket(c.ctx, c.pos[0], who(c.values, c.env), c.values.note, { toReady: true, waitingOn });
+    c.print(t, () => `${t.id} unblocked to ready${waitingOn.length ? `, waiting on ${waitingOn.join(', ')}` : ''}`);
+  } },
   'ticket cancel': { options: { by: str, note: str }, run: (c) => transitionCommand(c, cancelTicket, 'cancelled') },
   'ticket set': { options: { by: str }, run: (c) => {
     const t = setTicketFields(c.ctx, c.pos[0], assignments(c.pos.slice(1)), c.values.by ?? c.env.FACTORY_ROLE ?? 'cli');

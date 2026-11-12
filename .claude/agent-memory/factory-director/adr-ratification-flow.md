@@ -19,4 +19,6 @@ When a technical ADR passes review, ratify it in the same session. Send residual
 - The approving advance **is** the ratification. Set the fields and the notice before you run `ticket advance`, never "later". Missed cases (found 2026-11-01, T-1145): T-0865/ADR-0010 had neither. T-0713/ADR-0008 had a notice but no fields. Either gap blocks the `accepted` rung (T-0968).
 - Never advance an ADR ticket to done with "ratify after security review". The flow does not route it back, so T-0142 (ADR-0006/0007) went review → done with no security stage. Reject it or route it to security-architect instead. When sweeping, also look for ADRs that another agent authored and solution-architect reviewed (ADR-0009). Those wait for the director.
 
+- A notice is published copy, so rule 7 applies to it. Grep the research for every competitor or parity line before filing. On T-1314 (2026-11-02) "ME ADM-003 has no fuzzy" came from my own rejection note, not from research, so D-0024 had to be withdrawn and refiled as D-0025.
+
 Related: [[review-check-ceo-answers-vs-draft-time]]

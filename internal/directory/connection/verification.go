@@ -100,6 +100,15 @@ func requiredForPass(k Kind) []Check {
 	return []Check{identityCheck(k), overPrivilegeCheck(k), readSufficiencyCheck(k)}
 }
 
+// overPrivilegeClear reports whether the over-privilege outcome leaves the gates open: a pass, or a
+// warn. A warn is a finding about the customer's own ACL (a broad principal on a tier0 object,
+// T-0237), not rights the identity holds, and DM-24.I2 says a warn never changes the verdict. Only
+// a fail needs the override, and only a fail can be acknowledged (TM-D1, FR-13). could_not_verify
+// and not_run are not clear: an unanswered rights question fails closed.
+func overPrivilegeClear(o Outcome) bool {
+	return o == OutcomePass || o == OutcomeWarn
+}
+
 // passComplete reports whether a pass verdict is backed by an answered outcome for every required
 // check and carries no not_run outcome.
 func passComplete(k Kind, outcomes map[Check]Outcome) bool {
@@ -110,8 +119,8 @@ func passComplete(k Kind, outcomes map[Check]Outcome) bool {
 	}
 	for _, c := range requiredForPass(k) {
 		o := outcomes[c]
-		if o != OutcomePass && (o != OutcomeWarn || c == overPrivilegeCheck(k)) {
-			return false // the over-privilege check must be a clean pass, as the gate requires
+		if o != OutcomePass && o != OutcomeWarn {
+			return false // every required check is answered with a pass or a warn
 		}
 	}
 	return true
