@@ -1714,6 +1714,18 @@ fresh_kc; mkdir -p "$kct/packaging"; printf 'p=passphrase; export ACTIVEDIQ_KEK_
 must_fail_with "fitness-keys FF-KEY-3 on a shell-variable ACTIVEDIQ_KEK_PROVIDER (T-1650)" 'packaging/run.sh:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
 fresh_kc; mkdir -p "$kct/packaging"; printf 'environment:\n  ACTIVEDIQ_KEK_PROVIDER: ${KP:?must choose}\n' >"$kct/packaging/compose.yaml"
 must_pass "fitness-keys accepts a required-without-default ACTIVEDIQ_KEK_PROVIDER" "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging/windows/msi"; printf '<Wix><Component>\n  <Environment Id="e" Name="ACTIVEDIQ_KEK_PROVIDER" Value="passphrase" Action="set" />\n</Component></Wix>\n' >"$kct/packaging/windows/msi/Server.wxs"
+must_fail_with "fitness-keys FF-KEY-3 on a WiX <Environment Name=.. Value=..> ACTIVEDIQ_KEK_PROVIDER (T-1764)" 'packaging/windows/msi/Server.wxs:2 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging/windows"; printf '[Environment]::SetEnvironmentVariable("ACTIVEDIQ_KEK_PROVIDER", "passphrase", "Machine")\n' >"$kct/packaging/windows/Set-Env.ps1"
+must_fail_with "fitness-keys FF-KEY-3 on SetEnvironmentVariable(name, value) for ACTIVEDIQ_KEK_PROVIDER (T-1764)" 'packaging/windows/Set-Env.ps1:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging/windows/msi"; printf '<Wix><Environment Name="ACTIVEDIQ_KEK_PROVIDER" Value="" /></Wix>\n' >"$kct/packaging/windows/msi/Server.wxs"
+must_pass "fitness-keys accepts a WiX ACTIVEDIQ_KEK_PROVIDER with an empty Value" "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging/windows"; printf 'Set-ItemProperty -Path $k -Name ACTIVEDIQ_KEK_PROVIDER `\n  -Value passphrase\n' >"$kct/packaging/windows/Set-Env.ps1"
+must_fail_with "fitness-keys FF-KEY-3 on a backtick-continued Set-ItemProperty -Name/-Value (T-1764)" 'packaging/windows/Set-Env.ps1:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging/windows"; printf "New-Item -Path Env:\\\\ACTIVEDIQ_KEK_PROVIDER -Value 'passphrase'\n" >"$kct/packaging/windows/Set-Env.ps1"
+must_fail_with "fitness-keys FF-KEY-3 on New-Item -Path Env:\\NAME -Value (T-1764)" 'packaging/windows/Set-Env.ps1:1 FF-KEY-3 \[provider-default\]' "$kcbin" -root "$kct" -static-only
+fresh_kc; mkdir -p "$kct/packaging/windows"; printf '$required = @("ACTIVEDIQ_KEK_PROVIDER", "ACTIVEDIQ_KEK_DIR")\n' >"$kct/packaging/windows/Test-Env.ps1"
+must_pass "fitness-keys accepts a preflight list that merely names ACTIVEDIQ_KEK_PROVIDER (T-1764)" "$kcbin" -root "$kct" -static-only
 fresh_kc; printf 'package keys\n\nfunc (k *KeySource) Lazy() { _ = `insert into tenant_keys (a) values (1)` }\n' >"$kct/internal/platform/keys/lazy.go"
 must_fail_with "fitness-keys FF-KEY-5 on an INSERT reachable from the KeySource" 'FF-KEY-5 \[insert-site\]' "$kcbin" -root "$kct" -static-only
 fresh_kc; printf 'package keys\n\nvar _ = tablekind.Declare(tablekind.Table{Name: "public.tenant_keys", Entity: "DM-02", Kind: tablekind.Tenant})\n\nfunc Provision() { _ = `INSERT INTO tenant_keys` }\n' >"$kct/internal/platform/keys/store.go"
