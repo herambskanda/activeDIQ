@@ -18,7 +18,7 @@ import (
 // assignment DEL1 already stores.
 //
 //   - Templates (ADM-132) restrict which Templates the holder may create or modify with. No rows means
-//     every Template. The check is TemplateGate.Check, called from an Action's Plan before any read.
+//     every Template. The check is Authorizer.CheckTemplate, called from an Action's Plan before any read.
 //   - Sites (ADM-133) order the AD sites whose DCs the holder's operations try first. It is a hint:
 //     ADR-0005 rule 5 still pins one DC per naming context, and an unhealthy preferred DC just loses.
 
