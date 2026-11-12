@@ -37,6 +37,7 @@ and the agent modules in §5.5. Add a row here when a page is created.
 | --- | --- | --- | --- | --- |
 | `agentfleet` | server | backend-engineer | [agentfleet.md](agentfleet.md) | [agent-host-addc-contract](../agent-host-addc-contract.md) |
 | `notify` | server | backend-engineer | [notify.md](notify.md) | [reports-2a](../../../product/specs/reports-2a.md) |
+| `objects` | server | backend-engineer | [objects.md](objects.md) (library package; Module registration is T-1631) | domain-model DM-50, DM-51 |
 | `reports` | server | reporting-engineer | [reports.md](reports.md) (contract ahead of the module, T-0865) | [reports-2a](../../../product/specs/reports-2a.md) |
 
 ## Template

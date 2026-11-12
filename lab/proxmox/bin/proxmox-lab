@@ -20,13 +20,17 @@ from pvelab import LabError
 
 
 def pool_members(api):
-    """The pool's VMs, read from /cluster/resources (needs only VM.Audit, which the token has on the pool's VMs).
-    GET /pools/{id} would need Pool.Audit, which the lab role deliberately does not hold (all Pool.* is excluded)."""
-    d = api.call("GET", "/cluster/resources", {"type": "vm"})
+    """The pool's VMs, read from GET /pools?poolid=adiq-lab, which the token may call with only VM.Audit on the
+    members (proved on the real host, T-1327). Not GET /pools/{id} (needs Pool.Audit, which the lab role does not
+    hold) and not the `pool` field of /cluster/resources (the real host omits it for this token, T-1327)."""
+    d = api.call("GET", "/pools", {"poolid": P.POOL})
     if not isinstance(d, list):
-        raise LabError("unexpected resources response; refusing")
-    return [m for m in d if isinstance(m, dict) and m.get("type") == "qemu" and m.get("pool") == P.POOL
-            and isinstance(m.get("vmid"), int)]
+        raise LabError("unexpected pools response; refusing")
+    out = []
+    for pool in d:
+        if isinstance(pool, dict) and pool.get("poolid") == P.POOL and isinstance(pool.get("members"), list):
+            out += [m for m in pool["members"] if isinstance(m, dict) and m.get("type") == "qemu" and isinstance(m.get("vmid"), int)]
+    return out
 
 
 def require_in_pool(api, vmid):
@@ -148,7 +152,7 @@ def scope_problems(api):
     if not isinstance(seen, list):
         return ["resources response has an unexpected shape"]
     for r in seen:
-        if isinstance(r, dict) and not (r.get("pool") == P.POOL and r.get("vmid") in members):
+        if isinstance(r, dict) and r.get("type") == "qemu" and r.get("vmid") not in members:
             bad.append(f"token can see VM {r.get('vmid')} which is not in {P.POOL}")
     # other pools: any ACL on /pool/<other> is reported above as a path outside the pool (GET /pools needs Pool.Audit)
     if P.DC1_VMID not in members:

@@ -411,6 +411,10 @@ func ops(t *testing.T) []op {
 			_, err := e.store.CompleteFull(ctx, tx, k, l, dsync.FullSync{At: time.Now().Add(-time.Second), Cookie: ck})
 			return err
 		}, dsync.StateIncremental},
+		{"CompleteScan", func(e *env, tx store.Tx, ctx context.Context, k dsync.Key, l jobs.Lease) error {
+			_, err := e.store.CompleteScan(ctx, tx, k, l, time.Now().Add(-time.Second))
+			return err
+		}, dsync.StateIncremental},
 		{"RequireResync", func(e *env, tx store.Tx, ctx context.Context, k dsync.Key, l jobs.Lease) error {
 			_, err := e.store.RequireResync(ctx, tx, k, l)
 			return err
@@ -457,6 +461,7 @@ func TestTransitionMatrix(t *testing.T) {
 	ok := map[string]map[dsync.State]bool{
 		"Advance":       {dsync.StateIncremental: true},
 		"CompleteFull":  {dsync.StateInitialSync: true, dsync.StateResyncRequired: true},
+		"CompleteScan":  {dsync.StateInitialSync: true, dsync.StateResyncRequired: true, dsync.StateIncremental: true},
 		"RequireResync": {dsync.StateIncremental: true, dsync.StateResyncRequired: true},
 	}
 	each(t, func(t *testing.T, e *env) {
@@ -855,4 +860,70 @@ func TestKeysLeasesAndCookies(t *testing.T) {
 	if n, _ := dsync.LeaseName(dsync.Key{Connection: "aaaaaaaa-0000-4000-8000-000000000001", Partition: long}); len(n) > 100 {
 		t.Errorf("lease name is %d characters; the platform allows 100", len(n))
 	}
+}
+
+// CompleteScan is the end of a scoped-search full read: it moves the cursor to incremental without ever
+// writing a cookie (the change-feed ticket primes it), never moves last_full_sync_at back, keeps the
+// cookie an incremental cursor already has, and is fenced like every other write.
+func TestCompleteScan(t *testing.T) {
+	each(t, func(t *testing.T, e *env) {
+		scan := func(l jobs.Lease, k dsync.Key, at time.Time) error {
+			return e.tx(e.a, func(ctx context.Context, tx store.Tx) error {
+				_, err := e.store.CompleteScan(ctx, tx, k, l, at)
+				return err
+			})
+		}
+		k := e.key(t, nc1)
+		l := e.lease(t, k, "node-a")
+		e.claim(t, k, l)
+		t1 := time.Now().Add(-time.Hour).Truncate(time.Microsecond)
+		if err := scan(l, k, t1); err != nil {
+			t.Fatalf("CompleteScan: %v", err)
+		}
+		c := e.get(t, k)
+		if c.State != dsync.StateIncremental || c.HasCookie || !c.LastFullSync.Equal(t1) {
+			t.Fatalf("after the scan: %v, last full sync %v; want incremental, no cookie, %v", c, c.LastFullSync, t1)
+		}
+		// An older read finishing later does not move the clock back.
+		if err := scan(l, k, t1.Add(-time.Hour)); err != nil {
+			t.Fatalf("second CompleteScan: %v", err)
+		}
+		if got := e.get(t, k).LastFullSync; !got.Equal(t1) {
+			t.Fatalf("last full sync went back to %v", got)
+		}
+		t2 := t1.Add(30 * time.Minute)
+		if err := scan(l, k, t2); err != nil {
+			t.Fatal(err)
+		}
+		if got := e.get(t, k).LastFullSync; !got.Equal(t2) {
+			t.Fatalf("last full sync = %v, want %v", got, t2)
+		}
+		// An incremental cursor with a cookie keeps it.
+		if err := e.advance(l, k, []byte("feed-position"), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := scan(l, k, time.Now().Add(-time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if c := e.get(t, k); !c.HasCookie {
+			t.Fatalf("a re-scan dropped the cookie: %v", c)
+		}
+		// The future is refused, and a deposed holder is fenced.
+		if err := scan(l, k, time.Now().Add(time.Hour)); err == nil {
+			t.Fatal("a scan completed in the future was accepted")
+		}
+		k2 := e.key(t, nc2)
+		a := e.leaseFor(t, k2, "node-a", lapseTTL)
+		e.claim(t, k2, a)
+		lapse()
+		b := e.lease(t, k2, "node-b")
+		e.claim(t, k2, b)
+		before := e.get(t, k2)
+		if err := scan(a, k2, time.Now().Add(-time.Second)); !errors.Is(err, dsync.ErrFenced) {
+			t.Fatalf("a deposed holder's scan = %v, want ErrFenced", err)
+		}
+		if after := e.get(t, k2); after != before {
+			t.Fatalf("a fenced scan changed the row:\n before %v\n after  %v", before, after)
+		}
+	})
 }
