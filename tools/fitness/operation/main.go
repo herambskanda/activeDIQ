@@ -63,7 +63,7 @@ func main() {
 	for _, l := range o8rep.LabNotRun {
 		fmt.Printf("  not run   O8     %s (needs the Samba lab: make lab-up, then -o8-lab; not a pass)\n", l)
 	}
-	o1t, err := CheckO1Types(*root)
+	typed, err := CheckTyped(*root)
 	if err != nil {
 		// Fail closed: a tree that cannot be type-checked never passes. When violations are already
 		// known (an import cycle is itself an O9 violation) report them, with the reason O1's
@@ -72,9 +72,9 @@ func main() {
 			fmt.Fprintln(os.Stderr, "fitness-operation:", err)
 			os.Exit(2)
 		}
-		fmt.Fprintln(os.Stderr, "fitness-operation: type-aware O1 did not run:", err)
+		fmt.Fprintln(os.Stderr, "fitness-operation: type-aware O1/O2 did not run:", err)
 	}
-	rep.Violations = append(rep.Violations, o1t...)
+	rep.Violations = append(rep.Violations, typed...)
 	for _, p := range pendingChecks {
 		fmt.Printf("  pending   %-6s %s (owner %s; not yet checked, not a pass)\n", p.id, p.what, p.ticket)
 	}

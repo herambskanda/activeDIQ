@@ -50,6 +50,8 @@ type ScopedRequest struct {
 	// each page, outside the session lock, with one Read per distinct parent DN for the whole
 	// search; entries the caller is not given (duplicates, denied) cost no read.
 	ResolveParents bool
+	// ExtendedDN requests extended DNs for DN-syntax values (SearchRequest.ExtendedDN).
+	ExtendedDN bool
 }
 
 // ScopedResult counts what the caller was handed. There is no DC-side estimate anywhere in it.
@@ -83,7 +85,7 @@ func (s *Session) ScopedSearch(ctx context.Context, req ScopedRequest, fn func(*
 	seen := map[guid.GUID]struct{}{}
 	parents := map[string]guid.GUID{} // normalised parent DN -> objectGUID, for the whole call
 	for _, root := range req.Roots {
-		err := s.SearchPages(ctx, SearchRequest{Base: root, Scope: req.Depth, Filter: req.Filter, Attributes: attrs, PageSize: req.PageSize},
+		err := s.SearchPages(ctx, SearchRequest{Base: root, Scope: req.Depth, Filter: req.Filter, Attributes: attrs, PageSize: req.PageSize, ExtendedDN: req.ExtendedDN},
 			func(page []*Entry) error {
 				keep := page[:0:0]
 				for _, e := range page {

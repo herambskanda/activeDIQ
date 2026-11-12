@@ -78,10 +78,10 @@ type call struct {
 
 	dc *connectorv1.DcSelection // Plan only
 
+	secret  bool // Apply only: the request carries secret_input
 	attempt uint32
 	pre     *connectorv1.TargetPrecondition
 	digest  []byte
-	secret  *connectorv1.SecretValue // Apply only
 }
 
 // outcome of the guard: the operation to run, or nil when the kind is not wired.
@@ -133,9 +133,13 @@ func (h *Handler) Plan(ctx context.Context, req *connectorv1.PlanRequest) (*conn
 func (h *Handler) Apply(ctx context.Context, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
 	c := &call{name: "apply", conn: req.GetConnection(), step: req.GetStep(), target: req.GetTarget(), kind: req.GetKind(),
 		change: req.GetChange(), t0: req.GetTier0(), ov: req.GetTier0Override(), acting: req.GetActingPrincipal(),
-		attempt: req.GetAttempt(), pre: req.GetPrecondition(), digest: req.GetPlanDigest(), secret: req.GetSecretInput()}
-	// The request's secret material is wiped on every exit path, early refusals included.
-	defer clear(req.GetSecretInput().GetMaterial())
+		attempt: req.GetAttempt(), pre: req.GetPrecondition(), digest: req.GetPlanDigest(), secret: req.GetSecretInput() != nil}
+	// S4 (T-1621): the decoded secret buffer is cleared on every path, early refusals included.
+	defer func() {
+		if si := req.GetSecretInput(); si != nil {
+			clear(si.GetMaterial())
+		}
+	}()
 	ev := h.event(c)
 	p, err := h.guard(ctx, c, &ev)
 	if err != nil {
@@ -299,6 +303,12 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	var declared []string
 	if w, ok := h.ops[c.kind]; ok && c.kind != connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
 		op = &w
+		if w.Arm != nil && !w.Arm(c.change) && !(c.name == "apply" && w.WantsSecret && !c.secret) {
+			return nil, invalid("4", "WriteChangeArmMismatch", "change")
+		}
+		if c.name == "apply" && c.secret != w.WantsSecret {
+			return nil, invalid("4", "SecretInputMismatch", "secret_input")
+		}
 		if w.Vet != nil {
 			var pd ObjectDirectory
 			if wd, ok := h.prov.(writeDirectory); ok {
@@ -374,7 +384,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	}
 	removes := op != nil && op.RemovesTarget
 	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, removes: removes,
-		auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: pdir, dcID: bound, recheck: recheck}}}, nil
+		auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: pdir, dcID: bound, recheck: recheck, prov: h.prov}}}, nil
 }
 
 // Refusal reasons recorded for a property-write refusal that is not a rule verdict.
@@ -389,15 +399,35 @@ const (
 // audit-ready refusal record); attribute values and guard error text never are.
 func (h *Handler) propertyGuard(ctx context.Context, w WriteOp, c *call, target guid.GUID, ev *Event) *Refusal {
 	pw, err := w.PropertyWrite(c.change)
+	var extra []tier0.PropertyWrite
+	if err == nil && w.AlsoDeclares != nil {
+		// A kind whose attribute feeds rule properties of more than one object class (userAccountControl
+		// feeds user.accountEnabled and device.accountEnabled) declares each; every declaration must pass.
+		extra, err = w.AlsoDeclares(c.change)
+	}
+	if err != nil {
+		ev.Reason = reasonBadDeclaration
+		return invalid("4", "PropertyWrite", "change")
+	}
+	if r := h.propertyGuardOne(ctx, pw, target, ev); r != nil {
+		return r
+	}
+	for _, x := range extra {
+		if r := h.propertyGuardOne(ctx, x, target, ev); r != nil {
+			return r
+		}
+	}
+	return nil
+}
+
+func (h *Handler) propertyGuardOne(ctx context.Context, pw tier0.PropertyWrite, target guid.GUID, ev *Event) *Refusal {
 	plane := tier0.PlaneEntra
 	if h.prov.Kind() == connectorv1.ProviderKind_PROVIDER_KIND_AD {
 		plane = tier0.PlaneAD
 	}
-	if err != nil || pw.Plane != plane { // a declaration for the other plane is a bug in the kind
+	if pw.Plane != plane { // a declaration for the other plane is a bug in the kind
 		ev.Reason = reasonBadDeclaration
-		if err == nil {
-			ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)
-		}
+		ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)
 		return invalid("4", "PropertyWrite", "change")
 	}
 	ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)
@@ -737,7 +767,7 @@ func shapeCheck(c *call) *Refusal {
 		c.kind == connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE &&
 			c.change.GetObjectCreate().GetObjectClass() == connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_USER &&
 			c.change.GetObjectCreate().GetHasSecretInput()
-	if wants != (c.secret != nil) {
+	if wants != c.secret {
 		return invalid("1", "SecretInputMismatch", "secret_input")
 	}
 	return nil

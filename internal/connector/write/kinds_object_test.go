@@ -191,7 +191,7 @@ func TestShapeCheck(t *testing.T) {
 			c.name = "apply"
 		}
 		if secret {
-			c.secret = &connectorv1.SecretValue{}
+			c.secret = true
 		}
 		return shapeCheck(c)
 	}

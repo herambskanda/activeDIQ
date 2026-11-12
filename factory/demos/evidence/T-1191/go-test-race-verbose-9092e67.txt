@@ -1,0 +1,765 @@
+=== RUN   TestMigrationShape
+=== RUN   TestMigrationShape/pg16
+=== RUN   TestMigrationShape/pg18
+--- PASS: TestMigrationShape (16.47s)
+    --- PASS: TestMigrationShape/pg16 (11.63s)
+    --- PASS: TestMigrationShape/pg18 (4.84s)
+=== RUN   TestDeposedHolderIsFenced
+=== RUN   TestDeposedHolderIsFenced/pg16
+=== RUN   TestDeposedHolderIsFenced/pg18
+--- PASS: TestDeposedHolderIsFenced (4.16s)
+    --- PASS: TestDeposedHolderIsFenced/pg16 (2.73s)
+    --- PASS: TestDeposedHolderIsFenced/pg18 (1.42s)
+=== RUN   TestSameHolderKeepsWriting
+=== RUN   TestSameHolderKeepsWriting/pg16
+=== RUN   TestSameHolderKeepsWriting/pg18
+--- PASS: TestSameHolderKeepsWriting (2.45s)
+    --- PASS: TestSameHolderKeepsWriting/pg16 (1.69s)
+    --- PASS: TestSameHolderKeepsWriting/pg18 (0.77s)
+=== RUN   TestCursorRollsBackWithTheCallersTransaction
+=== RUN   TestCursorRollsBackWithTheCallersTransaction/pg16
+=== RUN   TestCursorRollsBackWithTheCallersTransaction/pg18
+--- PASS: TestCursorRollsBackWithTheCallersTransaction (3.00s)
+    --- PASS: TestCursorRollsBackWithTheCallersTransaction/pg16 (1.64s)
+    --- PASS: TestCursorRollsBackWithTheCallersTransaction/pg18 (1.36s)
+=== RUN   TestTransitionMatrix
+=== RUN   TestTransitionMatrix/pg16
+=== RUN   TestTransitionMatrix/pg18
+--- PASS: TestTransitionMatrix (2.80s)
+    --- PASS: TestTransitionMatrix/pg16 (1.71s)
+    --- PASS: TestTransitionMatrix/pg18 (1.09s)
+=== RUN   TestLifecycleMatrixMatchesTheDatabase
+=== RUN   TestLifecycleMatrixMatchesTheDatabase/pg16
+=== RUN   TestLifecycleMatrixMatchesTheDatabase/pg18
+--- PASS: TestLifecycleMatrixMatchesTheDatabase (2.66s)
+    --- PASS: TestLifecycleMatrixMatchesTheDatabase/pg16 (1.87s)
+    --- PASS: TestLifecycleMatrixMatchesTheDatabase/pg18 (0.79s)
+=== RUN   TestSuspendPausesAndResumeRequiresResync
+=== RUN   TestSuspendPausesAndResumeRequiresResync/pg16
+=== RUN   TestSuspendPausesAndResumeRequiresResync/pg18
+--- PASS: TestSuspendPausesAndResumeRequiresResync (3.10s)
+    --- PASS: TestSuspendPausesAndResumeRequiresResync/pg16 (1.94s)
+    --- PASS: TestSuspendPausesAndResumeRequiresResync/pg18 (1.16s)
+=== RUN   TestTenantIsolation
+=== RUN   TestTenantIsolation/pg16
+=== RUN   TestTenantIsolation/pg18
+--- PASS: TestTenantIsolation (2.41s)
+    --- PASS: TestTenantIsolation/pg16 (1.58s)
+    --- PASS: TestTenantIsolation/pg18 (0.83s)
+=== RUN   TestCookieNeverLeaks
+=== RUN   TestCookieNeverLeaks/pg16
+=== RUN   TestCookieNeverLeaks/pg18
+--- PASS: TestCookieNeverLeaks (2.66s)
+    --- PASS: TestCookieNeverLeaks/pg16 (1.82s)
+    --- PASS: TestCookieNeverLeaks/pg18 (0.84s)
+=== RUN   TestCookieNeverPrintsFromUnexportedFields
+--- PASS: TestCookieNeverPrintsFromUnexportedFields (0.00s)
+=== RUN   TestKeysLeasesAndCookies
+--- PASS: TestKeysLeasesAndCookies (0.00s)
+=== RUN   TestCompleteScan
+=== RUN   TestCompleteScan/pg16
+=== RUN   TestCompleteScan/pg18
+--- PASS: TestCompleteScan (2.85s)
+    --- PASS: TestCompleteScan/pg16 (1.76s)
+    --- PASS: TestCompleteScan/pg18 (1.08s)
+=== RUN   Test_members_and_completeness
+=== RUN   Test_members_and_completeness/three_members,_whole_set
+=== RUN   Test_members_and_completeness/a_ranged_slice_is_not_complete
+=== RUN   Test_members_and_completeness/a_range_that_is_the_whole_set_is_complete
+=== RUN   Test_members_and_completeness/a_member_value_without_a_GUID_makes_the_set_incomplete
+=== RUN   Test_members_and_completeness/an_empty_group_that_was_read_is_complete_and_empty
+=== RUN   Test_members_and_completeness/member_not_on_the_entry_is_not_read
+=== RUN   Test_members_and_completeness/duplicates_are_one_edge
+=== RUN   Test_members_and_completeness/members_of_a_non-group_are_ignored
+=== RUN   Test_members_and_completeness/a_50_000-member_group_is_mapped_whole
+--- PASS: Test_members_and_completeness (0.21s)
+    --- PASS: Test_members_and_completeness/three_members,_whole_set (0.00s)
+    --- PASS: Test_members_and_completeness/a_ranged_slice_is_not_complete (0.00s)
+    --- PASS: Test_members_and_completeness/a_range_that_is_the_whole_set_is_complete (0.00s)
+    --- PASS: Test_members_and_completeness/a_member_value_without_a_GUID_makes_the_set_incomplete (0.00s)
+    --- PASS: Test_members_and_completeness/an_empty_group_that_was_read_is_complete_and_empty (0.00s)
+    --- PASS: Test_members_and_completeness/member_not_on_the_entry_is_not_read (0.00s)
+    --- PASS: Test_members_and_completeness/duplicates_are_one_edge (0.00s)
+    --- PASS: Test_members_and_completeness/members_of_a_non-group_are_ignored (0.00s)
+    --- PASS: Test_members_and_completeness/a_50_000-member_group_is_mapped_whole (0.21s)
+=== RUN   Test_primary_group
+=== RUN   Test_primary_group/resolved
+=== RUN   Test_primary_group/unresolved:_no_such_group_in_the_domain
+=== RUN   Test_primary_group/primaryGroupID_not_read
+=== RUN   Test_primary_group/objectSid_not_read
+=== RUN   Test_primary_group/no_resolver
+=== RUN   Test_primary_group/a_group_from_another_domain_never_resolves_a_RID_of_this_one
+--- PASS: Test_primary_group (0.00s)
+    --- PASS: Test_primary_group/resolved (0.00s)
+    --- PASS: Test_primary_group/unresolved:_no_such_group_in_the_domain (0.00s)
+    --- PASS: Test_primary_group/primaryGroupID_not_read (0.00s)
+    --- PASS: Test_primary_group/objectSid_not_read (0.00s)
+    --- PASS: Test_primary_group/no_resolver (0.00s)
+    --- PASS: Test_primary_group/a_group_from_another_domain_never_resolves_a_RID_of_this_one (0.00s)
+=== RUN   Test_deleted_and_recycled
+=== RUN   Test_deleted_and_recycled/deleted
+=== RUN   Test_deleted_and_recycled/recycled_with_nothing_else
+=== RUN   Test_deleted_and_recycled/no_lastKnownParent_GUID_leaves_no_parent,_never_the_container
+=== RUN   Test_deleted_and_recycled/a_live_entry_without_objectClass_is_refused
+=== RUN   Test_deleted_and_recycled/a_live_entry_without_a_parent_must_be_the_NC_head
+--- PASS: Test_deleted_and_recycled (0.00s)
+    --- PASS: Test_deleted_and_recycled/deleted (0.00s)
+    --- PASS: Test_deleted_and_recycled/recycled_with_nothing_else (0.00s)
+    --- PASS: Test_deleted_and_recycled/no_lastKnownParent_GUID_leaves_no_parent,_never_the_container (0.00s)
+    --- PASS: Test_deleted_and_recycled/a_live_entry_without_objectClass_is_refused (0.00s)
+    --- PASS: Test_deleted_and_recycled/a_live_entry_without_a_parent_must_be_the_NC_head (0.00s)
+=== RUN   TestFullCycleMemoryIsBounded
+    engine_mem_test.go:126:   10000 objects: peak heap growth 1.4 MiB, 21 batches, largest 500, 1 pass
+    engine_mem_test.go:126:  100000 objects: peak heap growth 5.8 MiB, 201 batches, largest 500, 1 pass
+--- PASS: TestFullCycleMemoryIsBounded (13.97s)
+=== RUN   TestFullCycleStoresTheWholeForest
+=== RUN   TestFullCycleStoresTheWholeForest/pg16
+=== RUN   TestFullCycleStoresTheWholeForest/pg18
+--- PASS: TestFullCycleStoresTheWholeForest (29.05s)
+    --- PASS: TestFullCycleStoresTheWholeForest/pg16 (16.71s)
+    --- PASS: TestFullCycleStoresTheWholeForest/pg18 (12.34s)
+=== RUN   TestFullCycleIsIdempotent
+=== RUN   TestFullCycleIsIdempotent/pg16
+=== RUN   TestFullCycleIsIdempotent/pg18
+--- PASS: TestFullCycleIsIdempotent (41.36s)
+    --- PASS: TestFullCycleIsIdempotent/pg16 (22.05s)
+    --- PASS: TestFullCycleIsIdempotent/pg18 (19.30s)
+=== RUN   TestFullCycleSurvivesACutOffStream
+=== RUN   TestFullCycleSurvivesACutOffStream/cut
+=== RUN   TestFullCycleSurvivesACutOffStream/cut/pg16
+=== RUN   TestFullCycleSurvivesACutOffStream/cut/pg18
+=== RUN   TestFullCycleSurvivesACutOffStream/err
+=== RUN   TestFullCycleSurvivesACutOffStream/err/pg16
+=== RUN   TestFullCycleSurvivesACutOffStream/err/pg18
+--- PASS: TestFullCycleSurvivesACutOffStream (68.46s)
+    --- PASS: TestFullCycleSurvivesACutOffStream/cut (32.04s)
+        --- PASS: TestFullCycleSurvivesACutOffStream/cut/pg16 (17.58s)
+        --- PASS: TestFullCycleSurvivesACutOffStream/cut/pg18 (14.46s)
+    --- PASS: TestFullCycleSurvivesACutOffStream/err (36.42s)
+        --- PASS: TestFullCycleSurvivesACutOffStream/err/pg16 (20.36s)
+        --- PASS: TestFullCycleSurvivesACutOffStream/err/pg18 (16.06s)
+=== RUN   TestFullCycleRefusesBeforeReading
+=== RUN   TestFullCycleRefusesBeforeReading/pg16
+=== RUN   TestFullCycleRefusesBeforeReading/pg16/draft
+=== RUN   TestFullCycleRefusesBeforeReading/pg16/suspended
+=== RUN   TestFullCycleRefusesBeforeReading/pg16/not_AD
+=== RUN   TestFullCycleRefusesBeforeReading/pg18
+=== RUN   TestFullCycleRefusesBeforeReading/pg18/draft
+=== RUN   TestFullCycleRefusesBeforeReading/pg18/suspended
+=== RUN   TestFullCycleRefusesBeforeReading/pg18/not_AD
+--- PASS: TestFullCycleRefusesBeforeReading (2.54s)
+    --- PASS: TestFullCycleRefusesBeforeReading/pg16 (1.70s)
+        --- PASS: TestFullCycleRefusesBeforeReading/pg16/draft (0.09s)
+        --- PASS: TestFullCycleRefusesBeforeReading/pg16/suspended (0.03s)
+        --- PASS: TestFullCycleRefusesBeforeReading/pg16/not_AD (0.03s)
+    --- PASS: TestFullCycleRefusesBeforeReading/pg18 (0.84s)
+        --- PASS: TestFullCycleRefusesBeforeReading/pg18/draft (0.05s)
+        --- PASS: TestFullCycleRefusesBeforeReading/pg18/suspended (0.03s)
+        --- PASS: TestFullCycleRefusesBeforeReading/pg18/not_AD (0.03s)
+=== RUN   TestFullCycleRefusesAStaleLease
+=== RUN   TestFullCycleRefusesAStaleLease/pg16
+=== RUN   TestFullCycleRefusesAStaleLease/pg18
+--- PASS: TestFullCycleRefusesAStaleLease (2.32s)
+    --- PASS: TestFullCycleRefusesAStaleLease/pg16 (1.53s)
+    --- PASS: TestFullCycleRefusesAStaleLease/pg18 (0.79s)
+=== RUN   TestFullCycleReadsOnlyManagedDomains
+=== RUN   TestFullCycleReadsOnlyManagedDomains/pg16
+=== RUN   TestFullCycleReadsOnlyManagedDomains/pg18
+=== RUN   TestFullCycleReadsOnlyManagedDomains/configuration_and_schema
+=== RUN   TestFullCycleReadsOnlyManagedDomains/configuration_and_schema/pg16
+=== RUN   TestFullCycleReadsOnlyManagedDomains/configuration_and_schema/pg18
+--- PASS: TestFullCycleReadsOnlyManagedDomains (19.73s)
+    --- PASS: TestFullCycleReadsOnlyManagedDomains/pg16 (9.00s)
+    --- PASS: TestFullCycleReadsOnlyManagedDomains/pg18 (6.37s)
+    --- PASS: TestFullCycleReadsOnlyManagedDomains/configuration_and_schema (4.36s)
+        --- PASS: TestFullCycleReadsOnlyManagedDomains/configuration_and_schema/pg16 (2.34s)
+        --- PASS: TestFullCycleReadsOnlyManagedDomains/configuration_and_schema/pg18 (2.02s)
+=== RUN   TestFullCycleSkipsMalformedEntries
+=== RUN   TestFullCycleSkipsMalformedEntries/pg16
+=== RUN   TestFullCycleSkipsMalformedEntries/pg18
+--- PASS: TestFullCycleSkipsMalformedEntries (11.93s)
+    --- PASS: TestFullCycleSkipsMalformedEntries/pg16 (6.25s)
+    --- PASS: TestFullCycleSkipsMalformedEntries/pg18 (5.68s)
+=== RUN   TestFullCycleHonoursTheSearchLimits
+=== RUN   TestFullCycleHonoursTheSearchLimits/pg16
+=== RUN   TestFullCycleHonoursTheSearchLimits/pg18
+--- PASS: TestFullCycleHonoursTheSearchLimits (25.26s)
+    --- PASS: TestFullCycleHonoursTheSearchLimits/pg16 (15.53s)
+    --- PASS: TestFullCycleHonoursTheSearchLimits/pg18 (9.73s)
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended_and_paused
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended_and_paused/pg16
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended_and_paused/pg18
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended,_cursors_not_paused
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended,_cursors_not_paused/pg16
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended,_cursors_not_paused/pg18
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/decommissioning
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/decommissioning/pg16
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/decommissioning/pg18
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/cursors_paused_only
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/cursors_paused_only/pg16
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/cursors_paused_only/pg18
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended_during_the_pre-scan
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended_during_the_pre-scan/pg16
+=== RUN   TestFullCycleStopsWhenSuspendedMidRead/suspended_during_the_pre-scan/pg18
+--- PASS: TestFullCycleStopsWhenSuspendedMidRead (42.37s)
+    --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended_and_paused (9.92s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended_and_paused/pg16 (5.76s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended_and_paused/pg18 (4.15s)
+    --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended,_cursors_not_paused (10.06s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended,_cursors_not_paused/pg16 (6.09s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended,_cursors_not_paused/pg18 (3.97s)
+    --- PASS: TestFullCycleStopsWhenSuspendedMidRead/decommissioning (10.00s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/decommissioning/pg16 (6.06s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/decommissioning/pg18 (3.94s)
+    --- PASS: TestFullCycleStopsWhenSuspendedMidRead/cursors_paused_only (9.99s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/cursors_paused_only/pg16 (6.19s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/cursors_paused_only/pg18 (3.80s)
+    --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended_during_the_pre-scan (2.40s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended_during_the_pre-scan/pg16 (1.55s)
+        --- PASS: TestFullCycleStopsWhenSuspendedMidRead/suspended_during_the_pre-scan/pg18 (0.85s)
+=== RUN   TestFullCycleLogsOnlyAFixedClass
+=== RUN   TestFullCycleLogsOnlyAFixedClass/pg16
+=== RUN   TestFullCycleLogsOnlyAFixedClass/pg18
+--- PASS: TestFullCycleLogsOnlyAFixedClass (2.50s)
+    --- PASS: TestFullCycleLogsOnlyAFixedClass/pg16 (1.62s)
+    --- PASS: TestFullCycleLogsOnlyAFixedClass/pg18 (0.88s)
+=== RUN   Test_lab_entries_map_to_observations_that_agree_with_the_dc
+=== RUN   Test_lab_entries_map_to_observations_that_agree_with_the_dc/user
+=== RUN   Test_lab_entries_map_to_observations_that_agree_with_the_dc/computer
+=== RUN   Test_lab_entries_map_to_observations_that_agree_with_the_dc/group
+=== RUN   Test_lab_entries_map_to_observations_that_agree_with_the_dc/ou
+=== RUN   Test_lab_entries_map_to_observations_that_agree_with_the_dc/contact
+=== RUN   Test_lab_entries_map_to_observations_that_agree_with_the_dc/domain
+=== RUN   Test_lab_entries_map_to_observations_that_agree_with_the_dc/user_fields
+=== RUN   Test_lab_entries_map_to_observations_that_agree_with_the_dc/computer_fields
+=== RUN   Test_lab_entries_map_to_observations_that_agree_with_the_dc/group_members_without_guids_are_never_an_edge_set
+--- PASS: Test_lab_entries_map_to_observations_that_agree_with_the_dc (0.01s)
+    --- PASS: Test_lab_entries_map_to_observations_that_agree_with_the_dc/user (0.00s)
+    --- PASS: Test_lab_entries_map_to_observations_that_agree_with_the_dc/computer (0.00s)
+    --- PASS: Test_lab_entries_map_to_observations_that_agree_with_the_dc/group (0.00s)
+    --- PASS: Test_lab_entries_map_to_observations_that_agree_with_the_dc/ou (0.00s)
+    --- PASS: Test_lab_entries_map_to_observations_that_agree_with_the_dc/contact (0.00s)
+    --- PASS: Test_lab_entries_map_to_observations_that_agree_with_the_dc/domain (0.00s)
+    --- PASS: Test_lab_entries_map_to_observations_that_agree_with_the_dc/user_fields (0.00s)
+    --- PASS: Test_lab_entries_map_to_observations_that_agree_with_the_dc/computer_fields (0.00s)
+    --- PASS: Test_lab_entries_map_to_observations_that_agree_with_the_dc/group_members_without_guids_are_never_an_edge_set (0.00s)
+=== RUN   Test_malformed_values_are_refused_without_echo
+=== RUN   Test_malformed_values_are_refused_without_echo/uac_of_the_wrong_type
+=== RUN   Test_malformed_values_are_refused_without_echo/sid_of_the_wrong_type
+=== RUN   Test_malformed_values_are_refused_without_echo/sid_truncated
+=== RUN   Test_malformed_values_are_refused_without_echo/sid_with_trailing_bytes
+=== RUN   Test_malformed_values_are_refused_without_echo/sid_empty
+=== RUN   Test_malformed_values_are_refused_without_echo/sam_twice
+=== RUN   Test_malformed_values_are_refused_without_echo/sam_with_NUL
+=== RUN   Test_malformed_values_are_refused_without_echo/sam_not_UTF-8
+=== RUN   Test_malformed_values_are_refused_without_echo/sam_too_long
+=== RUN   Test_malformed_values_are_refused_without_echo/duplicate_attribute
+=== RUN   Test_malformed_values_are_refused_without_echo/primaryGroupID_negative
+=== RUN   Test_malformed_values_are_refused_without_echo/lockoutTime_a_string
+=== RUN   Test_malformed_values_are_refused_without_echo/pwdLastSet_before_1601
+=== RUN   Test_malformed_values_are_refused_without_echo/whenCreated_a_sentinel
+=== RUN   Test_malformed_values_are_refused_without_echo/consistency_guid_short
+=== RUN   Test_malformed_values_are_refused_without_echo/consistency_guid_nil
+=== RUN   Test_malformed_values_are_refused_without_echo/objectClass_too_long
+=== RUN   Test_malformed_values_are_refused_without_echo/object_guid_of_the_wrong_length
+=== RUN   Test_malformed_values_are_refused_without_echo/object_guid_nil
+=== RUN   Test_malformed_values_are_refused_without_echo/object_guid_absent
+=== RUN   Test_malformed_values_are_refused_without_echo/parent_guid_wrong_length
+=== RUN   Test_malformed_values_are_refused_without_echo/dn_missing
+=== RUN   Test_malformed_values_are_refused_without_echo/dn_malformed
+=== RUN   Test_malformed_values_are_refused_without_echo/dn_with_an_unescaped_comma_in_a_value
+=== RUN   Test_malformed_values_are_refused_without_echo/dn_too_long
+=== RUN   Test_malformed_values_are_refused_without_echo/own_parent
+=== RUN   Test_malformed_values_are_refused_without_echo/member_of_the_wrong_type
+=== RUN   Test_malformed_values_are_refused_without_echo/member_guid_short
+=== RUN   Test_malformed_values_are_refused_without_echo/group_that_is_its_own_member
+=== RUN   Test_malformed_values_are_refused_without_echo/groupType_a_string
+=== RUN   Test_malformed_values_are_refused_without_echo/managedBy_a_string
+=== RUN   Test_malformed_values_are_refused_without_echo/attribute_bag_too_large
+=== RUN   Test_malformed_values_are_refused_without_echo/a_nil_entry
+--- PASS: Test_malformed_values_are_refused_without_echo (0.01s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/uac_of_the_wrong_type (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/sid_of_the_wrong_type (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/sid_truncated (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/sid_with_trailing_bytes (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/sid_empty (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/sam_twice (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/sam_with_NUL (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/sam_not_UTF-8 (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/sam_too_long (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/duplicate_attribute (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/primaryGroupID_negative (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/lockoutTime_a_string (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/pwdLastSet_before_1601 (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/whenCreated_a_sentinel (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/consistency_guid_short (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/consistency_guid_nil (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/objectClass_too_long (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/object_guid_of_the_wrong_length (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/object_guid_nil (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/object_guid_absent (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/parent_guid_wrong_length (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/dn_missing (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/dn_malformed (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/dn_with_an_unescaped_comma_in_a_value (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/dn_too_long (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/own_parent (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/member_of_the_wrong_type (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/member_guid_short (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/group_that_is_its_own_member (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/groupType_a_string (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/managedBy_a_string (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/attribute_bag_too_large (0.00s)
+    --- PASS: Test_malformed_values_are_refused_without_echo/a_nil_entry (0.00s)
+=== RUN   Test_a_refused_entry_does_not_abort_the_batch
+--- PASS: Test_a_refused_entry_does_not_abort_the_batch (0.00s)
+=== RUN   Test_guid_is_canonical_text_of_the_rfc_bytes
+--- PASS: Test_guid_is_canonical_text_of_the_rfc_bytes (0.00s)
+=== RUN   Test_map_one_entry_per_kind
+=== RUN   Test_map_one_entry_per_kind/user
+=== RUN   Test_map_one_entry_per_kind/computer
+=== RUN   Test_map_one_entry_per_kind/group
+=== RUN   Test_map_one_entry_per_kind/ou
+=== RUN   Test_map_one_entry_per_kind/contact
+=== RUN   Test_map_one_entry_per_kind/domain_head
+--- PASS: Test_map_one_entry_per_kind (0.00s)
+    --- PASS: Test_map_one_entry_per_kind/user (0.00s)
+    --- PASS: Test_map_one_entry_per_kind/computer (0.00s)
+    --- PASS: Test_map_one_entry_per_kind/group (0.00s)
+    --- PASS: Test_map_one_entry_per_kind/ou (0.00s)
+    --- PASS: Test_map_one_entry_per_kind/contact (0.00s)
+    --- PASS: Test_map_one_entry_per_kind/domain_head (0.00s)
+=== RUN   Test_time_inputs_are_tri_state
+=== RUN   Test_time_inputs_are_tri_state/present
+=== RUN   Test_time_inputs_are_tri_state/absent_is_not_read
+=== RUN   Test_time_inputs_are_tri_state/not_requested_is_not_read_even_when_the_entry_carries_it
+=== RUN   Test_time_inputs_are_tri_state/zero_and_never
+=== RUN   Test_time_inputs_are_tri_state/present_with_no_value_is_read_and_empty
+=== RUN   Test_time_inputs_are_tri_state/MAX_is_only_a_way_of_saying_never_for_accountExpires
+=== RUN   Test_time_inputs_are_tri_state/spn
+--- PASS: Test_time_inputs_are_tri_state (0.00s)
+    --- PASS: Test_time_inputs_are_tri_state/present (0.00s)
+    --- PASS: Test_time_inputs_are_tri_state/absent_is_not_read (0.00s)
+    --- PASS: Test_time_inputs_are_tri_state/not_requested_is_not_read_even_when_the_entry_carries_it (0.00s)
+    --- PASS: Test_time_inputs_are_tri_state/zero_and_never (0.00s)
+    --- PASS: Test_time_inputs_are_tri_state/present_with_no_value_is_read_and_empty (0.00s)
+    --- PASS: Test_time_inputs_are_tri_state/MAX_is_only_a_way_of_saying_never_for_accountExpires (0.00s)
+    --- PASS: Test_time_inputs_are_tri_state/spn (0.00s)
+=== RUN   Test_closed_list_holds_no_secret
+--- PASS: Test_closed_list_holds_no_secret (0.00s)
+=== RUN   Test_closed_list_covers_the_datasets
+--- PASS: Test_closed_list_covers_the_datasets (0.00s)
+=== RUN   Test_hostile_entry_leaves_no_trace
+--- PASS: Test_hostile_entry_leaves_no_trace (0.01s)
+=== RUN   Test_malformed_unrequested_attribute_is_not_examined
+--- PASS: Test_malformed_unrequested_attribute_is_not_examined (0.00s)
+=== RUN   Test_request_validation
+--- PASS: Test_request_validation (0.00s)
+=== RUN   Test_schema_secrets_leave_the_request
+--- PASS: Test_schema_secrets_leave_the_request (0.00s)
+=== RUN   Fuzz_map_never_panics_and_respects_store_bounds
+=== RUN   Fuzz_map_never_panics_and_respects_store_bounds/seed#0
+=== RUN   Fuzz_map_never_panics_and_respects_store_bounds/seed#1
+=== RUN   Fuzz_map_never_panics_and_respects_store_bounds/seed#2
+--- PASS: Fuzz_map_never_panics_and_respects_store_bounds (0.00s)
+    --- PASS: Fuzz_map_never_panics_and_respects_store_bounds/seed#0 (0.00s)
+    --- PASS: Fuzz_map_never_panics_and_respects_store_bounds/seed#1 (0.00s)
+    --- PASS: Fuzz_map_never_panics_and_respects_store_bounds/seed#2 (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/directory/sync	306.568s
+=== RUN   TestWritableDCsFiltersAndDecodes
+--- PASS: TestWritableDCsFiltersAndDecodes (0.00s)
+=== RUN   TestWritableDCsForestWideNCUsesEveryWritableDC
+--- PASS: TestWritableDCsForestWideNCUsesEveryWritableDC (0.00s)
+=== RUN   TestWritableDCsRefusesUnknownNCAndBadIdentity
+--- PASS: TestWritableDCsRefusesUnknownNCAndBadIdentity (0.00s)
+=== RUN   TestMapError
+=== RUN   TestMapError/target_changed
+=== RUN   TestMapError/tier0_refused
+=== RUN   TestMapError/activation_refused
+=== RUN   TestMapError/unreachable_dc_retries
+=== RUN   TestMapError/insufficient_rights_does_not
+--- PASS: TestMapError (0.00s)
+    --- PASS: TestMapError/target_changed (0.00s)
+    --- PASS: TestMapError/tier0_refused (0.00s)
+    --- PASS: TestMapError/activation_refused (0.00s)
+    --- PASS: TestMapError/unreachable_dc_retries (0.00s)
+    --- PASS: TestMapError/insufficient_rights_does_not (0.00s)
+=== RUN   TestMapErrorNonConnectorAndNil
+--- PASS: TestMapErrorNonConnectorAndNil (0.00s)
+=== RUN   TestTier0ScopeTargetIsNeitherReadNorTier0
+--- PASS: TestTier0ScopeTargetIsNeitherReadNorTier0 (0.00s)
+=== RUN   TestStoreTargetIsNotReadFromTheDirectory
+--- PASS: TestStoreTargetIsNotReadFromTheDirectory (0.00s)
+=== RUN   TestDirectoryTargetWithNoReadsFailsClosed
+--- PASS: TestDirectoryTargetWithNoReadsFailsClosed (0.00s)
+=== RUN   TestParentChainIsWalkedLive
+--- PASS: TestParentChainIsWalkedLive (0.00s)
+=== RUN   TestTier0AndMissingAndBrokenChains
+--- PASS: TestTier0AndMissingAndBrokenChains (0.00s)
+=== RUN   TestRefreshReadsStoresAndReturnsReadTime
+--- PASS: TestRefreshReadsStoresAndReturnsReadTime (0.00s)
+=== RUN   TestRefreshFailureStoresNothing
+=== RUN   TestRefreshFailureStoresNothing/store_fails
+=== RUN   TestRefreshFailureStoresNothing/unknown_base
+=== RUN   TestRefreshFailureStoresNothing/read_fails
+=== RUN   TestRefreshFailureStoresNothing/object_gone
+--- PASS: TestRefreshFailureStoresNothing (0.00s)
+    --- PASS: TestRefreshFailureStoresNothing/store_fails (0.00s)
+    --- PASS: TestRefreshFailureStoresNothing/unknown_base (0.00s)
+    --- PASS: TestRefreshFailureStoresNothing/read_fails (0.00s)
+    --- PASS: TestRefreshFailureStoresNothing/object_gone (0.00s)
+=== RUN   TestRefreshRefusesOtherTenantsRef
+--- PASS: TestRefreshRefusesOtherTenantsRef (0.00s)
+=== RUN   TestRefresherSatisfiesPort
+--- PASS: TestRefresherSatisfiesPort (0.00s)
+=== RUN   TestReaderIsReadOnly
+--- PASS: TestReaderIsReadOnly (0.00s)
+=== RUN   TestFactsThroughRealGRPCOnPinnedDC
+--- PASS: TestFactsThroughRealGRPCOnPinnedDC (0.01s)
+=== RUN   TestMissingObjectIsNotExists
+--- PASS: TestMissingObjectIsNotExists (0.01s)
+=== RUN   TestPinnedReadWithoutDSAFailsClosed
+--- PASS: TestPinnedReadWithoutDSAFailsClosed (0.00s)
+=== RUN   TestNilPinsLeavesDCToConnector
+--- PASS: TestNilPinsLeavesDCToConnector (0.00s)
+=== RUN   TestConnectionOfAnotherTenantIsRefused
+--- PASS: TestConnectionOfAnotherTenantIsRefused (0.00s)
+=== RUN   TestVerdictErrorAndStreamViolationsFailClosed
+--- PASS: TestVerdictErrorAndStreamViolationsFailClosed (0.02s)
+=== RUN   TestNewConnectorReadsRequiresEveryPort
+--- PASS: TestNewConnectorReadsRequiresEveryPort (0.00s)
+=== RUN   TestPinnedReadServedByAnotherDCFails
+--- PASS: TestPinnedReadServedByAnotherDCFails (0.00s)
+=== RUN   TestAskedVerdictMissingIsAnError
+--- PASS: TestAskedVerdictMissingIsAnError (0.00s)
+=== RUN   TestUnverifiedConnectionReadIsRefusedBeforeTheConnector
+--- PASS: TestUnverifiedConnectionReadIsRefusedBeforeTheConnector (0.00s)
+=== RUN   TestTunnelSource
+=== RUN   TestTunnelSource/component_binding
+=== RUN   TestTunnelSource/no_tenant
+=== RUN   TestTunnelSource/bad_id
+=== RUN   TestTunnelSource/other_tenant_/_unknown
+=== RUN   TestTunnelSource/retired
+=== RUN   TestTunnelSource/embedded_only
+=== RUN   TestTunnelSource/disabled_component
+=== RUN   TestTunnelSource/binding_read_fails
+--- PASS: TestTunnelSource (0.00s)
+    --- PASS: TestTunnelSource/component_binding (0.00s)
+    --- PASS: TestTunnelSource/no_tenant (0.00s)
+    --- PASS: TestTunnelSource/bad_id (0.00s)
+    --- PASS: TestTunnelSource/other_tenant_/_unknown (0.00s)
+    --- PASS: TestTunnelSource/retired (0.00s)
+    --- PASS: TestTunnelSource/embedded_only (0.00s)
+    --- PASS: TestTunnelSource/disabled_component (0.00s)
+    --- PASS: TestTunnelSource/binding_read_fails (0.00s)
+=== RUN   TestResultTier0AfterWrite
+--- PASS: TestResultTier0AfterWrite (0.00s)
+=== RUN   TestEveryCorrelationStateIsListedWithPeerTier0AndEvidence
+=== RUN   TestEveryCorrelationStateIsListedWithPeerTier0AndEvidence/candidate
+=== RUN   TestEveryCorrelationStateIsListedWithPeerTier0AndEvidence/matched
+=== RUN   TestEveryCorrelationStateIsListedWithPeerTier0AndEvidence/broken
+--- PASS: TestEveryCorrelationStateIsListedWithPeerTier0AndEvidence (0.00s)
+    --- PASS: TestEveryCorrelationStateIsListedWithPeerTier0AndEvidence/candidate (0.00s)
+    --- PASS: TestEveryCorrelationStateIsListedWithPeerTier0AndEvidence/matched (0.00s)
+    --- PASS: TestEveryCorrelationStateIsListedWithPeerTier0AndEvidence/broken (0.00s)
+=== RUN   TestSIDEvidenceAndNonTier0Peer
+--- PASS: TestSIDEvidenceAndNonTier0Peer (0.00s)
+=== RUN   TestNoHybridLinkOnlyWhenTheConnectionHasNone
+--- PASS: TestNoHybridLinkOnlyWhenTheConnectionHasNone (0.00s)
+=== RUN   TestComputedAtIsTheOldestFactNotAssemblyTime
+--- PASS: TestComputedAtIsTheOldestFactNotAssemblyTime (0.00s)
+=== RUN   TestStaleFactsAreRefreshedLiveOrTheCallIsNotSent
+--- PASS: TestStaleFactsAreRefreshedLiveOrTheCallIsNotSent (0.00s)
+=== RUN   TestFailClosedOnUnmappableLinks
+=== RUN   TestFailClosedOnUnmappableLinks/tier0_without_basis
+=== RUN   TestFailClosedOnUnmappableLinks/unknown_basis
+=== RUN   TestFailClosedOnUnmappableLinks/unknown_state
+=== RUN   TestFailClosedOnUnmappableLinks/removed_state
+=== RUN   TestFailClosedOnUnmappableLinks/no_evidence
+=== RUN   TestFailClosedOnUnmappableLinks/unknown_match
+--- PASS: TestFailClosedOnUnmappableLinks (0.00s)
+    --- PASS: TestFailClosedOnUnmappableLinks/tier0_without_basis (0.00s)
+    --- PASS: TestFailClosedOnUnmappableLinks/unknown_basis (0.00s)
+    --- PASS: TestFailClosedOnUnmappableLinks/unknown_state (0.00s)
+    --- PASS: TestFailClosedOnUnmappableLinks/removed_state (0.00s)
+    --- PASS: TestFailClosedOnUnmappableLinks/no_evidence (0.00s)
+    --- PASS: TestFailClosedOnUnmappableLinks/unknown_match (0.00s)
+=== RUN   TestSourceErrorsRefuse
+--- PASS: TestSourceErrorsRefuse (0.00s)
+=== RUN   TestDesignationsAndCreateParent
+--- PASS: TestDesignationsAndCreateParent (0.00s)
+=== RUN   TestOverrideInForceBecomesWriteGateOverride
+--- PASS: TestOverrideInForceBecomesWriteGateOverride (0.00s)
+=== RUN   TestEntraTargetGetsADPeerKind
+--- PASS: TestEntraTargetGetsADPeerKind (0.00s)
+=== RUN   TestNewTier0BuilderRequiresSources
+--- PASS: TestNewTier0BuilderRequiresSources (0.00s)
+=== RUN   TestWriteCarriesStatementAtPlanAndApplyAndRefusalNeverReachesAudit
+=== RUN   TestWriteCarriesStatementAtPlanAndApplyAndRefusalNeverReachesAudit/candidate
+=== RUN   TestWriteCarriesStatementAtPlanAndApplyAndRefusalNeverReachesAudit/matched
+=== RUN   TestWriteCarriesStatementAtPlanAndApplyAndRefusalNeverReachesAudit/broken
+--- PASS: TestWriteCarriesStatementAtPlanAndApplyAndRefusalNeverReachesAudit (0.00s)
+    --- PASS: TestWriteCarriesStatementAtPlanAndApplyAndRefusalNeverReachesAudit/candidate (0.00s)
+    --- PASS: TestWriteCarriesStatementAtPlanAndApplyAndRefusalNeverReachesAudit/matched (0.00s)
+    --- PASS: TestWriteCarriesStatementAtPlanAndApplyAndRefusalNeverReachesAudit/broken (0.00s)
+=== RUN   TestApplyBuildsAFreshContext
+--- PASS: TestApplyBuildsAFreshContext (0.00s)
+=== RUN   TestMapErrorTier0ContextRefusal
+--- PASS: TestMapErrorTier0ContextRefusal (0.00s)
+=== RUN   TestNonTier0PeerWithoutFactsAsOfIsStale
+--- PASS: TestNonTier0PeerWithoutFactsAsOfIsStale (0.00s)
+=== RUN   TestUserFilterEscapesMetacharactersThroughTheSafeBuilder
+--- PASS: TestUserFilterEscapesMetacharactersThroughTheSafeBuilder (0.00s)
+=== RUN   TestVerifyConnectionRejectsMissingOrWrongIdentityFailClosed
+=== RUN   TestVerifyConnectionRejectsMissingOrWrongIdentityFailClosed/nil
+=== RUN   TestVerifyConnectionRejectsMissingOrWrongIdentityFailClosed/empty_oneof
+=== RUN   TestVerifyConnectionRejectsMissingOrWrongIdentityFailClosed/entra_tenant_on_an_AD_forest
+=== RUN   TestVerifyConnectionRejectsMissingOrWrongIdentityFailClosed/malformed_forest_guid
+--- PASS: TestVerifyConnectionRejectsMissingOrWrongIdentityFailClosed (0.00s)
+    --- PASS: TestVerifyConnectionRejectsMissingOrWrongIdentityFailClosed/nil (0.00s)
+    --- PASS: TestVerifyConnectionRejectsMissingOrWrongIdentityFailClosed/empty_oneof (0.00s)
+    --- PASS: TestVerifyConnectionRejectsMissingOrWrongIdentityFailClosed/entra_tenant_on_an_AD_forest (0.00s)
+    --- PASS: TestVerifyConnectionRejectsMissingOrWrongIdentityFailClosed/malformed_forest_guid (0.00s)
+=== RUN   TestVerifyConnectionEntraIdentityOnEntraConnection
+--- PASS: TestVerifyConnectionEntraIdentityOnEntraConnection (0.00s)
+=== RUN   TestVerifyConnectionFailedRunNeedsNoIdentity
+--- PASS: TestVerifyConnectionFailedRunNeedsNoIdentity (0.00s)
+=== RUN   TestGRPCVerifyTransportRoundTripsDirectoryIdentity
+--- PASS: TestGRPCVerifyTransportRoundTripsDirectoryIdentity (0.01s)
+=== RUN   TestVerifyConnectionFoldsStreamAndSendsScope
+--- PASS: TestVerifyConnectionFoldsStreamAndSendsScope (0.00s)
+=== RUN   TestVerifyConnectionIncompleteStreamsAreNotResults
+--- PASS: TestVerifyConnectionIncompleteStreamsAreNotResults (0.00s)
+=== RUN   TestVerifyConnectionStreamErrorKeepsOnlyTheCode
+--- PASS: TestVerifyConnectionStreamErrorKeepsOnlyTheCode (0.00s)
+=== RUN   TestVerifyConnectionRefusesBadInputBeforeTheWire
+--- PASS: TestVerifyConnectionRefusesBadInputBeforeTheWire (0.00s)
+=== RUN   TestVerifyQualifiers
+--- PASS: TestVerifyQualifiers (0.00s)
+=== RUN   TestVerifyConnectionSendsPinsAndFoldsC13Groups
+--- PASS: TestVerifyConnectionSendsPinsAndFoldsC13Groups (0.00s)
+=== RUN   TestZeroStepRefusedBeforeTransport
+--- PASS: TestZeroStepRefusedBeforeTransport (0.00s)
+=== RUN   TestRevokedStepRefused
+--- PASS: TestRevokedStepRefused (0.00s)
+=== RUN   TestFailClosedWithoutBuilder
+--- PASS: TestFailClosedWithoutBuilder (0.00s)
+=== RUN   TestFailClosedBuilderErrorAndNilContext
+--- PASS: TestFailClosedBuilderErrorAndNilContext (0.00s)
+=== RUN   TestDigestMismatchRefused
+--- PASS: TestDigestMismatchRefused (0.00s)
+=== RUN   TestWritePlansThenAppliesWithTier0AtBothStages
+--- PASS: TestWritePlansThenAppliesWithTier0AtBothStages (0.00s)
+=== RUN   TestNoOpPlanSkipsApply
+--- PASS: TestNoOpPlanSkipsApply (0.00s)
+=== RUN   TestTransportErrorPassesThroughForMapper
+--- PASS: TestTransportErrorPassesThroughForMapper (0.00s)
+=== RUN   TestWireFieldsDerivedFromTheDigestedTarget
+--- PASS: TestWireFieldsDerivedFromTheDigestedTarget (0.00s)
+=== RUN   TestMismatchedOpRefusedBeforeTransport
+--- PASS: TestMismatchedOpRefusedBeforeTransport (0.00s)
+=== RUN   TestADOpWithoutDCPinRefused
+--- PASS: TestADOpWithoutDCPinRefused (0.00s)
+=== RUN   TestOverrideComesOnlyFromTheBuilder
+--- PASS: TestOverrideComesOnlyFromTheBuilder (0.00s)
+=== RUN   TestTransportErrorTextNeverLeaks
+--- PASS: TestTransportErrorTextNeverLeaks (0.00s)
+=== RUN   TestStepWithoutNCRefused
+--- PASS: TestStepWithoutNCRefused (0.00s)
+=== RUN   TestOpNCOtherThanStepNCRefused
+--- PASS: TestOpNCOtherThanStepNCRefused (0.00s)
+=== RUN   TestPinReadsFactsOnStepNC
+--- PASS: TestPinReadsFactsOnStepNC (0.00s)
+=== RUN   TestPinsMutatedAfterMintDoNotRepointStep
+--- PASS: TestPinsMutatedAfterMintDoNotRepointStep (0.00s)
+=== RUN   TestPlanSendsPinnedDSAGUID
+--- PASS: TestPlanSendsPinnedDSAGUID (0.00s)
+=== RUN   TestApplyRefusedWhenPlanPreconditionNamesAnotherDC
+--- PASS: TestApplyRefusedWhenPlanPreconditionNamesAnotherDC (0.00s)
+=== RUN   TestApplyRefusedWhenPlanPreconditionHasNoDC
+--- PASS: TestApplyRefusedWhenPlanPreconditionHasNoDC (0.00s)
+=== RUN   TestPlanWithoutDSAGUIDRefusedBeforeTransport
+--- PASS: TestPlanWithoutDSAGUIDRefusedBeforeTransport (0.00s)
+=== RUN   TestDSAPinMutatedAfterMintDoesNotRepointStep
+--- PASS: TestDSAPinMutatedAfterMintDoesNotRepointStep (0.00s)
+=== RUN   TestReadPerDCAllAnswer
+--- PASS: TestReadPerDCAllAnswer (0.01s)
+=== RUN   TestReadPerDCOneDCDown
+--- PASS: TestReadPerDCOneDCDown (0.01s)
+=== RUN   TestReadPerDCCallFailure
+--- PASS: TestReadPerDCCallFailure (0.01s)
+=== RUN   TestReadPerDCBoundedInFlight
+--- PASS: TestReadPerDCBoundedInFlight (0.12s)
+=== RUN   TestReadPerDCBoundIsPerTenant
+--- PASS: TestReadPerDCBoundIsPerTenant (0.01s)
+=== RUN   TestReadPerDCCancel
+--- PASS: TestReadPerDCCancel (0.05s)
+=== RUN   TestReadPerDCRefusesHostileAttributes
+--- PASS: TestReadPerDCRefusesHostileAttributes (0.00s)
+=== RUN   TestReadPerDCRefusesBadInputs
+--- PASS: TestReadPerDCRefusesBadInputs (0.00s)
+=== RUN   TestReadPerDCConnectionGate
+--- PASS: TestReadPerDCConnectionGate (0.00s)
+=== RUN   TestNewConnectorPerDCRequiresPorts
+--- PASS: TestNewConnectorPerDCRequiresPorts (0.00s)
+=== RUN   TestReadPerDCStreamContract
+=== RUN   TestReadPerDCStreamContract/no_summary
+=== RUN   TestReadPerDCStreamContract/empty_stream
+=== RUN   TestReadPerDCStreamContract/result_after_summary
+=== RUN   TestReadPerDCStreamContract/two_summaries
+=== RUN   TestReadPerDCStreamContract/scope_count_differs_from_results
+=== RUN   TestReadPerDCStreamContract/complete_but_not_all_answered
+=== RUN   TestReadPerDCStreamContract/partial_but_all_answered
+=== RUN   TestReadPerDCStreamContract/unspecified_coverage
+=== RUN   TestReadPerDCStreamContract/answered_above_scope
+=== RUN   TestReadPerDCStreamContract/zero_DCs_complete
+=== RUN   TestReadPerDCStreamContract/same_DC_twice
+=== RUN   TestReadPerDCStreamContract/DC_without_identity
+=== RUN   TestReadPerDCStreamContract/markup_in_DC_name
+=== RUN   TestReadPerDCStreamContract/control_in_DC_name
+=== RUN   TestReadPerDCStreamContract/empty_event
+=== RUN   TestReadPerDCStreamContract/outcome_missing
+=== RUN   TestReadPerDCStreamContract/omitted_attribute_is_not_'not_set'
+=== RUN   TestReadPerDCStreamContract/wrong_value_kind
+=== RUN   TestReadPerDCStreamContract/MAX_is_not_a_last_logon
+=== RUN   TestReadPerDCStreamContract/attribute_twice
+=== RUN   TestReadPerDCStreamContract/attribute_not_asked
+=== RUN   TestReadPerDCStreamContract/unknown_error_code
+=== RUN   TestReadPerDCStreamContract/not_yet_replicated
+--- PASS: TestReadPerDCStreamContract (0.01s)
+    --- PASS: TestReadPerDCStreamContract/no_summary (0.00s)
+    --- PASS: TestReadPerDCStreamContract/empty_stream (0.00s)
+    --- PASS: TestReadPerDCStreamContract/result_after_summary (0.00s)
+    --- PASS: TestReadPerDCStreamContract/two_summaries (0.00s)
+    --- PASS: TestReadPerDCStreamContract/scope_count_differs_from_results (0.00s)
+    --- PASS: TestReadPerDCStreamContract/complete_but_not_all_answered (0.00s)
+    --- PASS: TestReadPerDCStreamContract/partial_but_all_answered (0.00s)
+    --- PASS: TestReadPerDCStreamContract/unspecified_coverage (0.00s)
+    --- PASS: TestReadPerDCStreamContract/answered_above_scope (0.00s)
+    --- PASS: TestReadPerDCStreamContract/zero_DCs_complete (0.00s)
+    --- PASS: TestReadPerDCStreamContract/same_DC_twice (0.00s)
+    --- PASS: TestReadPerDCStreamContract/DC_without_identity (0.00s)
+    --- PASS: TestReadPerDCStreamContract/markup_in_DC_name (0.00s)
+    --- PASS: TestReadPerDCStreamContract/control_in_DC_name (0.00s)
+    --- PASS: TestReadPerDCStreamContract/empty_event (0.00s)
+    --- PASS: TestReadPerDCStreamContract/outcome_missing (0.00s)
+    --- PASS: TestReadPerDCStreamContract/omitted_attribute_is_not_'not_set' (0.00s)
+    --- PASS: TestReadPerDCStreamContract/wrong_value_kind (0.00s)
+    --- PASS: TestReadPerDCStreamContract/MAX_is_not_a_last_logon (0.00s)
+    --- PASS: TestReadPerDCStreamContract/attribute_twice (0.00s)
+    --- PASS: TestReadPerDCStreamContract/attribute_not_asked (0.00s)
+    --- PASS: TestReadPerDCStreamContract/unknown_error_code (0.00s)
+    --- PASS: TestReadPerDCStreamContract/not_yet_replicated (0.00s)
+=== RUN   TestReadPerDCObjectGone
+--- PASS: TestReadPerDCObjectGone (0.01s)
+=== RUN   TestReadPerDCBatchSummaryIsWeakest
+--- PASS: TestReadPerDCBatchSummaryIsWeakest (0.01s)
+=== RUN   TestSearchScopedToAFindsNobodyInB
+--- PASS: TestSearchScopedToAFindsNobodyInB (0.00s)
+=== RUN   TestSearchScopedToAFindsOnlyAUsers
+--- PASS: TestSearchScopedToAFindsOnlyAUsers (0.00s)
+=== RUN   TestSearchAppliesExcludesTheDirectoryCannotExpress
+--- PASS: TestSearchAppliesExcludesTheDirectoryCannotExpress (0.00s)
+=== RUN   TestSearchOneLevelReachesDirectChildrenOnly
+--- PASS: TestSearchOneLevelReachesDirectChildrenOnly (0.00s)
+=== RUN   TestSearchTokenLayerNarrowsTheGrants
+--- PASS: TestSearchTokenLayerNarrowsTheGrants (0.00s)
+=== RUN   TestSearchWithNoScopeAsksNothing
+--- PASS: TestSearchWithNoScopeAsksNothing (0.00s)
+=== RUN   TestSearchCapAndLimitCountOnlyAdmittedUsers
+--- PASS: TestSearchCapAndLimitCountOnlyAdmittedUsers (0.06s)
+=== RUN   TestSearchRootsOverlapAnswerEachUserOnce
+--- PASS: TestSearchRootsOverlapAnswerEachUserOnce (0.00s)
+=== RUN   TestSearchReadsEachContainerOncePerSearch
+--- PASS: TestSearchReadsEachContainerOncePerSearch (0.00s)
+=== RUN   TestSearchFailsClosedWhenAncestryCannotBeRead
+--- PASS: TestSearchFailsClosedWhenAncestryCannotBeRead (0.00s)
+=== RUN   TestNewUserSearchNeedsReads
+--- PASS: TestNewUserSearchNeedsReads (0.00s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/directory/client	1.464s
+=== RUN   TestAllowedEdgesPass
+--- PASS: TestAllowedEdgesPass (0.00s)
+=== RUN   TestForbiddenEdgesFailNamingImporterImportedAndRule
+--- PASS: TestForbiddenEdgesFailNamingImporterImportedAndRule (0.00s)
+=== RUN   TestTestFilesCount
+--- PASS: TestTestFilesCount (0.00s)
+=== RUN   TestOperationMayImportRows
+--- PASS: TestOperationMayImportRows (0.01s)
+=== RUN   TestMacroFollowsEditsToTheReferencedRow
+--- PASS: TestMacroFollowsEditsToTheReferencedRow (0.00s)
+=== RUN   TestCheckFollowsTheADREditWithNoCodeChange
+--- PASS: TestCheckFollowsTheADREditWithNoCodeChange (0.01s)
+=== RUN   TestPendingPackagesAreReportedNotPassed
+--- PASS: TestPendingPackagesAreReportedNotPassed (0.00s)
+=== RUN   TestZeroResolvedWhereTheTreeHasSomeFails
+--- PASS: TestZeroResolvedWhereTheTreeHasSomeFails (0.00s)
+=== RUN   TestUnlistedAndSelfImportsAreNotEdges
+--- PASS: TestUnlistedAndSelfImportsAreNotEdges (0.00s)
+=== RUN   TestBadBlocksAreErrors
+--- PASS: TestBadBlocksAreErrors (0.35s)
+=== RUN   TestRealADRBlock
+--- PASS: TestRealADRBlock (0.01s)
+=== RUN   TestO1Violations
+--- PASS: TestO1Violations (0.02s)
+=== RUN   TestO1Allowed
+--- PASS: TestO1Allowed (0.00s)
+=== RUN   TestO1OnTheRepository
+--- PASS: TestO1OnTheRepository (5.52s)
+=== RUN   TestO2Violations
+--- PASS: TestO2Violations (0.01s)
+=== RUN   TestO2Allowed
+--- PASS: TestO2Allowed (0.00s)
+=== RUN   TestO4Violations
+--- PASS: TestO4Violations (0.00s)
+=== RUN   TestO4Allowed
+--- PASS: TestO4Allowed (0.00s)
+=== RUN   TestO2O4OnTheRepository
+--- PASS: TestO2O4OnTheRepository (7.85s)
+=== RUN   TestO8Passes
+--- PASS: TestO8Passes (0.38s)
+=== RUN   TestO8Violations
+--- PASS: TestO8Violations (2.14s)
+=== RUN   TestO8ManifestShape
+--- PASS: TestO8ManifestShape (2.49s)
+=== RUN   TestO8LabTestsAreListedUnlessRequested
+--- PASS: TestO8LabTestsAreListedUnlessRequested (0.41s)
+=== RUN   TestO8RealManifestParses
+--- PASS: TestO8RealManifestParses (0.01s)
+PASS
+ok  	github.com/skenzeriq/activediq/tools/fitness/operation	20.283s
+=== RUN   TestBootedServerListensOnlyOnSection81
+=== RUN   TestBootedServerListensOnlyOnSection81/pg16
+=== RUN   TestBootedServerListensOnlyOnSection81/pg16/default:_L1_only
+=== RUN   TestBootedServerListensOnlyOnSection81/pg16/ops_enabled:_L1_and_L4
+=== RUN   TestBootedServerListensOnlyOnSection81/pg16/an_undeclared_listener_fails_the_proof_and_names_its_port
+=== RUN   TestBootedServerListensOnlyOnSection81/pg18
+=== RUN   TestBootedServerListensOnlyOnSection81/pg18/default:_L1_only
+=== RUN   TestBootedServerListensOnlyOnSection81/pg18/ops_enabled:_L1_and_L4
+=== RUN   TestBootedServerListensOnlyOnSection81/pg18/an_undeclared_listener_fails_the_proof_and_names_its_port
+--- PASS: TestBootedServerListensOnlyOnSection81 (38.54s)
+    --- PASS: TestBootedServerListensOnlyOnSection81/pg16 (18.38s)
+        --- PASS: TestBootedServerListensOnlyOnSection81/pg16/default:_L1_only (2.35s)
+        --- PASS: TestBootedServerListensOnlyOnSection81/pg16/ops_enabled:_L1_and_L4 (4.58s)
+        --- PASS: TestBootedServerListensOnlyOnSection81/pg16/an_undeclared_listener_fails_the_proof_and_names_its_port (5.81s)
+    --- PASS: TestBootedServerListensOnlyOnSection81/pg18 (18.08s)
+        --- PASS: TestBootedServerListensOnlyOnSection81/pg18/default:_L1_only (7.42s)
+        --- PASS: TestBootedServerListensOnlyOnSection81/pg18/ops_enabled:_L1_and_L4 (2.80s)
+        --- PASS: TestBootedServerListensOnlyOnSection81/pg18/an_undeclared_listener_fails_the_proof_and_names_its_port (2.30s)
+=== RUN   TestListeningReadsOnlyThisProcessesListeners
+--- PASS: TestListeningReadsOnlyThisProcessesListeners (0.00s)
+=== RUN   TestCompareFailsNamingAnUnlistedPort
+--- PASS: TestCompareFailsNamingAnUnlistedPort (0.00s)
+=== RUN   TestComparePassesWhenEqual
+--- PASS: TestComparePassesWhenEqual (0.00s)
+=== RUN   TestCompareFailsWhenADeclaredListenerIsMissing
+--- PASS: TestCompareFailsWhenADeclaredListenerIsMissing (0.00s)
+=== RUN   TestCompareHonoursLoopbackAndProtocol
+--- PASS: TestCompareHonoursLoopbackAndProtocol (0.00s)
+=== RUN   TestListeningSeesARealListener
+--- PASS: TestListeningSeesARealListener (0.06s)
+PASS
+ok  	github.com/skenzeriq/activediq/tools/fitness/ports	41.161s
+exit 0

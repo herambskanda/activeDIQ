@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
+	"github.com/skenzeriq/activediq/internal/directory/accountkind"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/sd"
@@ -88,19 +89,27 @@ func TestNonTier0IsUnsupported(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 	for _, c := range got {
+		// CC-WK-30: SUPPORTED once the first kinds are wired (T-1583); a kind with no row, and
+		// WRITE_KIND_UNSPECIFIED above, still answers CAPABILITY_UNSUPPORTED.
 		if c.GetState() != connectorv1.SupportState_SUPPORT_STATE_SUPPORTED {
 			t.Errorf("%s reported %s", c.GetOperation(), c.GetState())
 		}
 	}
-	// Kinds 1-3 (object create, update, delete) are the registered rows; a new kind ticket adds its own.
+	// Kinds 1-3 (object create, update, delete, T-1623) and the four account kinds (T-1583) are the
+	// registered rows; a new kind ticket adds its own.
 	for _, k := range []connectorv1.WriteKind{connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE,
 		connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE, connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE} {
 		if _, ok := operations[k]; !ok {
 			t.Errorf("kind %s has no operation row", k)
 		}
 	}
-	if len(operations) != 3 {
-		t.Fatalf("operation table has %d rows, want 3", len(operations))
+	for _, sp := range accountkind.Specs() {
+		if _, ok := operations[sp.Kind]; !ok {
+			t.Errorf("account kind %s has no operation row", sp.Key)
+		}
+	}
+	if len(operations) != 7 {
+		t.Fatalf("operation table has %d rows, want 7 (three object kinds, four account kinds)", len(operations))
 	}
 }
 
