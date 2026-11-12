@@ -1,0 +1,58 @@
+{
+  "objectGuid":  {
+    "value":  "3Cy3lKBuRkyhG/2I6I/i/g=="
+  },
+  "dn":  {
+    "displayDn":  "DC=lab,DC=activediq,DC=test"
+  },
+  "attributes":  [
+    {
+      "name":  "objectclass",
+      "values":  [
+        {
+          "text":  "top"
+        },
+        {
+          "text":  "domain"
+        },
+        {
+          "text":  "domainDNS"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectsid",
+      "values":  [
+        {
+          "sid":  {
+            "value":  "AQQAAAAAAAUVAAAAKiXVBoYZFFRm18iP"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whenchanged",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-01T06:26:35Z"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whencreated",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-01T06:26:05Z"
+          }
+        }
+      ],
+      "complete":  true
+    }
+  ]
+}

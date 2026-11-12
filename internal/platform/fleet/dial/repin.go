@@ -36,7 +36,14 @@ type RepinEvent struct {
 // then the bundle without the old root): a crash leaves a working component, never a half-pinned one.
 // The old root is left in the bundle only as a non-root until the last step removes it. audit is
 // called once with the outcome.
-func Repin(ctx context.Context, dir string, newPin string, audit func(RepinEvent)) error {
+//
+// ForAccount must be passed when the state was written for the service by an administrator (Enroll with
+// ForAccount): the caller is then not the identity the state names.
+func Repin(ctx context.Context, dir string, newPin string, audit func(RepinEvent), opts ...Option) error {
+	var o enrollOptions
+	for _, f := range opts {
+		f(&o)
+	}
 	if audit == nil {
 		return errors.New("dial: repin requires an audit sink")
 	}
@@ -46,9 +53,9 @@ func Repin(ctx context.Context, dir string, newPin string, audit func(RepinEvent
 	}
 	// One verified, held handle for the whole operation: the state read here is the state rewritten
 	// below, and the directory cannot be swapped between the two (T-1315).
-	d, err := ownerfile.OpenDir(dir)
+	d, err := ownerfile.OpenDir(dir, o.dirOpts()...)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrState, err)
+		return stateErr(err)
 	}
 	defer d.Close()
 	st, err := load(d)

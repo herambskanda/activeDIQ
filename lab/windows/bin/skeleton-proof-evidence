@@ -1,0 +1,109 @@
+#!/usr/bin/env python3
+"""Evidence for the walking-skeleton proof on dc1 (T-0671). READ-ONLY: it changes nothing on the DC.
+
+Prints, for the evidence file:
+  1. the DC's LDAP policy (LDAPServerIntegrity, LdapEnforceChannelBindingTokens) from the registry;
+  2. the product service account svc-activediq: DN, adminCount, direct groups, and the groups in its token
+     (recursive), with an explicit "Domain Admin: NO" / "Tier-0 groups held: none" verdict;
+  3. the user the console must find (lab-user-01): Get-ADUser;
+  4. nltest /dsgetdc;
+  5. (with ADIQ_E2E_RUN_START) the Directory Service events 2887/3039/3074/3075 in the run window: none.
+
+Run under lab/windows/bin/with-dc1-lock. Needs pywinrm + requests-ntlm; credentials come from WIN_LAB_ENV and are
+never printed. Lab only (A-0025).
+"""
+import base64, os, sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import dc1winrm
+from labaddr import require_dc_addr
+
+# No default DC address (T-1279): fail before anything else touches the network.
+require_dc_addr("skeleton-proof-evidence", dc1winrm.REPO)
+
+try:
+    from winrm.protocol import Protocol
+except ImportError:
+    sys.exit("skeleton-proof-evidence: pip install pywinrm requests-ntlm")
+
+REPO = dc1winrm.REPO
+env, path, ADDR = dc1winrm.load_env("skeleton-proof-evidence")
+USER = os.environ.get("ADIQ_E2E_USER_SAM", "lab-user-01")
+import re
+if not re.fullmatch(r"[A-Za-z0-9._-]+", USER):
+    sys.exit(f"ADIQ_E2E_USER_SAM must match ^[A-Za-z0-9._-]+$ (got {USER!r})")
+SVC = "svc-activediq"
+NTDS = r"HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters"
+TIER0 = ["Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators", "Account Operators",
+         "Server Operators", "Backup Operators", "Print Operators", "Group Policy Creator Owners", "DnsAdmins"]
+
+
+def ps(script):
+    p = Protocol(endpoint=f"http://{ADDR}:5985/wsman", transport="ntlm", username="Administrator",
+                 password=env["WIN_LAB_ADMIN_PASSWORD"], read_timeout_sec=300, operation_timeout_sec=250)
+    sh = p.open_shell()
+    enc = base64.b64encode(script.encode("utf-16le")).decode()
+    cid = p.run_command(sh, "powershell", ["-NoProfile", "-NonInteractive", "-EncodedCommand", enc])
+    out, err, rc = p.get_command_output(sh, cid)
+    try:
+        p.cleanup_command(sh, cid)
+        p.close_shell(sh)
+    except Exception:
+        pass
+    text = out.decode(errors="replace")
+    return rc, "\n".join(l for l in text.splitlines() if not l.startswith(("#< CLIXML", "<Objs")))
+
+
+def section(title):
+    print(f"\n=== {title} ===")
+
+
+print(f"skeleton-proof-evidence: dc1 {ADDR}  (read-only)")
+rc, out = ps("(Get-Date).ToUniversalTime().ToString('o'); $env:COMPUTERNAME; (Get-CimInstance Win32_OperatingSystem).Caption")
+section("dc1"); print(out)
+
+section("LDAP policy on dc1 (registry; 2 = required / always)")
+rc, out = ps(f"foreach($k in 'LDAPServerIntegrity','LdapEnforceChannelBindingTokens'){{ $k+' = '+((Get-Item '{NTDS}').GetValue($k)) }}")
+print(out)
+
+section(f"service account {SVC}: not a Domain Admin")
+tier0 = ",".join(f"'{g}'" for g in TIER0)
+rc, out = ps(f"""
+Import-Module ActiveDirectory
+$u = Get-ADUser -Identity '{SVC}' -Properties MemberOf,adminCount,userPrincipalName,Enabled
+'DistinguishedName : ' + $u.DistinguishedName
+'UserPrincipalName : ' + $u.userPrincipalName
+'Enabled           : ' + $u.Enabled
+'adminCount        : ' + $(if($u.adminCount){{$u.adminCount}}else{{'(not set)'}})
+'Direct MemberOf   : ' + $(if($u.MemberOf){{($u.MemberOf -join '; ')}}else{{'(none)'}})
+# tokenGroups is constructed and answers base searches only: read it through ADSI.
+$e = [adsi]('LDAP://' + $u.DistinguishedName); $e.RefreshCache(@('tokenGroups'))
+$names = @($e.Properties['tokenGroups'] | ForEach-Object {{ try {{ (New-Object Security.Principal.SecurityIdentifier ($_,0)).Translate([Security.Principal.NTAccount]).Value }} catch {{ (New-Object Security.Principal.SecurityIdentifier ($_,0)).Value }} }})
+'Token groups      : ' + ($names -join '; ')
+$t0 = @({tier0})
+$held = @($t0 | Where-Object {{ $g=$_; $names | Where-Object {{ $_ -like "*\\$g" }} }})
+'Domain Admin      : ' + $(if($names | Where-Object {{ $_ -like '*\\Domain Admins' }}){{'YES'}}else{{'NO'}})
+'Tier-0 groups held: ' + $(if($held){{$held -join ', '}}else{{'none'}})
+""")
+print(out)
+
+section(f"the user the console must find: {USER}")
+rc, out = ps(f"Get-ADUser -Identity '{USER}' -Properties Enabled,userPrincipalName,objectGUID | Format-List DistinguishedName,SamAccountName,UserPrincipalName,Enabled,ObjectGUID | Out-String -Width 200")
+print(out.strip())
+
+SINCE = os.environ.get("ADIQ_E2E_RUN_START")
+if SINCE:
+    if not re.fullmatch(r"[0-9TZ:.+ -]+", SINCE):
+        sys.exit(f"ADIQ_E2E_RUN_START must be a timestamp (got {SINCE!r})")
+    section(f"Directory Service log since {SINCE}: events 2887/3039/3074/3075 (unsigned/CBT-less binds) must be absent")
+    rc, out = ps(f"""
+$since = [datetime]::Parse('{SINCE}').ToUniversalTime()
+$ev = @(Get-WinEvent -FilterHashtable @{{LogName='Directory Service'; Id=2887,3039,3074,3075; StartTime=$since}} -ErrorAction SilentlyContinue)
+'events found in window: ' + $ev.Count
+$ev | ForEach-Object {{ '  ' + $_.TimeCreated.ToUniversalTime().ToString('o') + '  id ' + $_.Id }}
+""")
+    print(out)
+
+section("nltest /dsgetdc")
+rc, out = ps("nltest /dsgetdc:win.activediq.test")
+print(out.strip())
