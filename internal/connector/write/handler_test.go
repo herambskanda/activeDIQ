@@ -88,12 +88,19 @@ func TestNonTier0IsUnsupported(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 	for _, c := range got {
-		if c.GetState() != connectorv1.SupportState_SUPPORT_STATE_UNSUPPORTED {
+		// CC-WK-30: SUPPORTED once the first kinds are wired (T-1583); a kind with no row, and
+		// WRITE_KIND_UNSPECIFIED above, still answers CAPABILITY_UNSUPPORTED.
+		if c.GetState() != connectorv1.SupportState_SUPPORT_STATE_SUPPORTED {
 			t.Errorf("%s reported %s", c.GetOperation(), c.GetState())
 		}
 	}
-	if len(operations) != 0 {
-		t.Fatal("the operation table must be empty until a kind ticket adds a row")
+	if len(operations) != 4 {
+		t.Fatalf("the operation table holds %d rows, want the four account kinds", len(operations))
+	}
+	for _, k := range []connectorv1.WriteKind{connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE, connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE} {
+		if _, ok := operations[k]; ok {
+			t.Errorf("kind %s must not be wired by this ticket", k)
+		}
 	}
 }
 
