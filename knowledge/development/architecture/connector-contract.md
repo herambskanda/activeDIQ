@@ -346,7 +346,7 @@ message InboundNeighbor {
   optional uint32 consecutive_failures = 7;
   optional uint32 last_result_win32 = 8;       // the number is the fact; text below is the DC's words
   string last_result_text = 9;                 // untrusted display string, <= 512 bytes, encoded on output (FF-SP4)
-  uint32 flags = 10;                           // DS_REPL_NBR_* bits, decoded by the report not here
+  optional uint32 flags = 10;                  // DS_REPL_NBR_* bits, decoded by the report not here; unset = not reported (T-1723)
 }
 // PendingOp and ReplFailure carry the same kind of fields (DSA GUID, DNS host, times, count, win32 result).
 message ReplicationSummary { uint32 dcs_in_scope = 1; uint32 dcs_answered = 2; Coverage coverage = 3; }
@@ -383,6 +383,20 @@ Rules:
    `forest_settings` (§4), read and never assumed.
 9. **Evolution.** Additive (rule 12). `contract_minor` goes to 3. `reserved_test.go` pins the RPC count
    (ten) and the number 9.
+
+**As built (T-1723).** Messages live in `replication.proto`; the handler is
+`internal/connector/replstatus` (`Handler`, `Server`, `Capability`), the one rootDSE read is
+`ad.Session.ReadReplication` (one base search per attribute, **no LDAP control** - it bypasses the
+domain-scope control the other reads add - ranges followed to `*`, 8 MiB per DC cap). DC listing
+and per-DC sessions are seams (`DCLister`, `Opener`); `replstatus.Bound` serves the one bound DC
+until Describe's `domain_controllers` can feed a multi-DC source, and it cannot tell an RODC
+(`ReadOnly` is false [UNVERIFIED]). `flags`, the times, counts and win32 results are `optional`
+(unset = not reported, rule 10). `last_result_text` is declared but not set: the decoder returns
+no result text. `PendingOp` and `ReplFailure` carry exactly the decoder's fields. Zero DCs in scope
+is `UNREACHABLE_DC`, never a `COMPLETE` summary over nothing. Samba is recognised by rootDSE
+`vendorName` containing "samba" [UNVERIFIED on Windows]; an unreadable rootDSE counts as
+Samba, so the row is `UNVERIFIED`, never `SUPPORTED` by default. `Describe.contract_minor` is not
+populated by any group yet, so this ticket does not set it.
 
 ### 5.7 The replication-metadata decoder (v1.3, T-1124)
 
