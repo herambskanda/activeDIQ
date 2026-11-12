@@ -63,6 +63,9 @@ type SearchRequest struct {
 	Filter     ldapfilter.Filter
 	Attributes []string // explicit names; "*" and "+" are refused
 	PageSize   uint32   // 0 = the session default; clamped to MaxPageSize
+	// ExtendedDN asks the DC for extended DNs (<GUID=…>;<SID=…>;dn) in DN-syntax values, so a link
+	// value carries the identity of its target. Entry.DN stays plain.
+	ExtendedDN bool
 }
 
 // Search streams every matching entry to fn, one page at a time; it never buffers the result set.
@@ -112,7 +115,11 @@ func (s *Session) search(ctx context.Context, req SearchRequest, deliver func([]
 		ps = MaxPageSize
 	}
 
-	return s.pages(ctx, base, scope, flt.String(), attrs, ps, deliver)
+	var extra []ldap.Control
+	if req.ExtendedDN {
+		extra = append(extra, extendedDN{})
+	}
+	return s.pagesWith(ctx, base, scope, flt.String(), attrs, ps, extra, deliver)
 }
 
 // SearchPages is Search delivering one whole page at a time. The session lock is NOT held while
@@ -129,6 +136,11 @@ func (s *Session) SearchPages(ctx context.Context, req SearchRequest, page func(
 
 // pages runs the paged loop. The lock is held only for each round trip, never across deliver.
 func (s *Session) pages(ctx context.Context, base string, scope int, flt string, attrs []string, ps uint32, deliver func([]*Entry) error) error {
+	return s.pagesWith(ctx, base, scope, flt, attrs, ps, nil, deliver)
+}
+
+// pagesWith is pages with extra controls the named operation owns (never a caller's).
+func (s *Session) pagesWith(ctx context.Context, base string, scope int, flt string, attrs []string, ps uint32, extra []ldap.Control, deliver func([]*Entry) error) error {
 	// one round trip under the lock
 	trip := func(c []byte, size uint32) (*ldap.SearchResult, error) {
 		s.mu.Lock()
@@ -140,7 +152,7 @@ func (s *Session) pages(ctx context.Context, base string, scope int, flt string,
 		defer stop()
 		p := ldap.NewControlPaging(size)
 		p.SetCookie(c)
-		return s.searchOnceLocked(ctx, base, scope, flt, attrs, []ldap.Control{p})
+		return s.searchOnceLocked(ctx, base, scope, flt, attrs, append([]ldap.Control{p}, extra...))
 	}
 	// abandon tells the DC to drop a paging cursor: the same request with page size 0 and the cookie.
 	abandon := func(c []byte) {
@@ -259,7 +271,7 @@ func (s *Session) searchRaw(ctx context.Context, base string, scope int, filter 
 }
 
 func toEntry(e *ldap.Entry) *Entry {
-	out := newEntry(e.DN)
+	out := newEntry(plainDN(e.DN))
 	for _, a := range e.Attributes {
 		out.attrs[strings.ToLower(a.Name)] = a.ByteValues
 	}
