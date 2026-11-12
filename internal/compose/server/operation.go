@@ -105,4 +105,5 @@ func rbacAuthorizer(db *store.DB, facts rbac.FactsReader) (*rbac.Authorizer, err
 	}
 	return az, nil
 }
+
 var _ operation.SiteHints = (*rbac.Authorizer)(nil)
