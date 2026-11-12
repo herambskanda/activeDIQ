@@ -203,6 +203,9 @@ func (h *Handler) finish(ev *Event, err error) error {
 			if ev.Stage == "" {
 				ev.Stage = r.stage
 			}
+			if r.reason != "" {
+				ev.Reason, ev.PropertyKind, ev.PropertyOp, ev.PropertyKeys = r.reason, r.propKind, r.propOp, r.propKeys
+			}
 			if d := r.Err.GetTier0Refused(); d != nil {
 				ev.Object = guidText(d.GetObject())
 				for _, b := range d.GetBasis() {
@@ -395,14 +398,7 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	if bound != nil {
 		boundDSA, _ = fromWire(bound.GetDsaGuid()) // verified equal to the pin at step 2b
 	}
-	recheck := func(ctx context.Context, w tier0.PropertyWrite) bool {
-		g, err := h.prov.PropertyGuard(ctx)
-		if err != nil || g == nil {
-			return false
-		}
-		v, err := g.CheckPropertyWrite(ctx, w)
-		return err == nil && !v.Refused
-	}
+	recheck := h.recheckProperty
 	removes := op != nil && op.RemovesTarget
 	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, removes: removes,
 		auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: pdir, dcID: bound, recheck: recheck, prov: h.prov,
@@ -415,89 +411,115 @@ const (
 	reasonBadDeclaration   = "property_declaration_invalid"
 )
 
-// propertyGuard is CheckPropertyWrite at step 4. Every outcome but a clean allow refuses: a kind
-// whose PropertyWrite cannot be derived, a guard that cannot be built, a read error (LIVE_REREAD)
-// and a refusal verdict. The reason, the declared op and the key names are set on ev (the
-// audit-ready refusal record); attribute values and guard error text never are.
-func (h *Handler) propertyGuard(ctx context.Context, w WriteOp, c *call, target guid.GUID, ev *Event) *Refusal {
-	pw, err := w.PropertyWrite(c.change)
-	var extra []tier0.PropertyWrite
-	if err == nil && w.AlsoDeclares != nil {
-		// A kind whose attribute feeds rule properties of more than one object class (userAccountControl
-		// feeds user.accountEnabled and device.accountEnabled) declares each; every declaration must pass.
-		extra, err = w.AlsoDeclares(c.change)
+// propertyRefusal is the TIER0_REFUSED of a property-write check with its audit record: the reason,
+// the declared kind and op, and the key names. Never values.
+func propertyRefusal(w tier0.PropertyWrite, target guid.GUID, step, reason string, st connectorv1.Tier0RefusalStage) *Refusal {
+	r := tier0Refusal(toWire(target), []basis{tier0.Designated}, st, step)
+	r.reason, r.propKind, r.propOp, r.propKeys = reason, kindName(w.Kind), w.Op.String(), append([]string(nil), w.Keys...)
+	return r
+}
+
+func kindName(k tier0.WriteKind) string {
+	switch k {
+	case tier0.WriteUser:
+		return "USER"
+	case tier0.WriteDevice:
+		return "DEVICE"
+	case tier0.WriteGroup:
+		return "GROUP"
 	}
-	if err != nil {
-		ev.Reason = reasonBadDeclaration
-		return invalid("4", "PropertyWrite", "change")
-	}
-	if r := h.propertyGuardOne(ctx, pw, w.AlsoDevice, target, ev); r != nil {
+	return "UNKNOWN"
+}
+
+// guardProperty is CheckPropertyWrite for one declaration, at step 4 and again in a body that can
+// derive a stricter one (the live class). Every outcome but a clean allow refuses: a guard that
+// cannot be built, a read error (LIVE_REREAD) and a refusal verdict. The refusal carries the reason,
+// the declared kind and op and the key names for the audit record; attribute values and guard error
+// text never are.
+func (h *Handler) guardProperty(ctx context.Context, w tier0.PropertyWrite, alsoDevice bool, target guid.GUID, step string) *Refusal {
+	if r := h.guardPropertyOnce(ctx, w, target, step); r != nil {
 		return r
 	}
-	for _, x := range extra {
-		if r := h.propertyGuardOne(ctx, x, w.AlsoDevice, target, ev); r != nil {
-			return r
-		}
+	if alsoDevice && w.Kind != tier0.WriteDevice {
+		dw := w
+		dw.Kind = tier0.WriteDevice
+		return h.guardPropertyOnce(ctx, dw, target, step)
 	}
 	return nil
 }
 
-// propertyGuardOne checks one declaration. alsoDevice (WriteOp.AlsoDevice, kinds 4-6) checks it a second time
-// as a device write, because the target's class is only known live.
-func (h *Handler) propertyGuardOne(ctx context.Context, pw tier0.PropertyWrite, alsoDevice bool, target guid.GUID, ev *Event) *Refusal {
+// recheckProperty is what a body calls (Authorised.checkProperty) for a declaration only it can derive,
+// such as the live class: one declaration, the step the body is at.
+func (h *Handler) recheckProperty(ctx context.Context, w tier0.PropertyWrite, target guid.GUID, step string) *Refusal {
+	return h.guardProperty(ctx, w, false, target, step)
+}
+
+// guardPropertyOnce is CheckPropertyWrite for exactly one declaration.
+func (h *Handler) guardPropertyOnce(ctx context.Context, w tier0.PropertyWrite, target guid.GUID, step string) *Refusal {
+	g, err := h.prov.PropertyGuard(ctx)
+	if err != nil || g == nil {
+		return propertyRefusal(w, target, step, reasonGuardUnavailable, stLive)
+	}
+	v, err := g.CheckPropertyWrite(ctx, w)
+	if err != nil {
+		return propertyRefusal(w, target, step, reasonGuardUnavailable, stLive)
+	}
+	if !v.Refused {
+		return nil
+	}
+	reason := v.Reason
+	if reason == "" {
+		reason = tier0.ReasonDesignatedDynamicRule
+	}
+	st := stConnectorSet
+	if v.Stage == tier0.StageLiveReread {
+		st = stLive
+	}
+	r := propertyRefusal(w, target, step, reason, st)
+	if v.Op != 0 {
+		r.propOp = v.Op.String()
+	}
+	if v.Keys != nil {
+		r.propKeys = append([]string(nil), v.Keys...)
+	}
+	return r
+}
+
+// propertyGuard is step 4: the declarations the kind makes from the typed change. The kind's own
+// declaration and every AlsoDeclares extra (a directory attribute that feeds rule properties of more than
+// one object class) must pass; a kind that touches objects whose class is only known live (AlsoDevice) has
+// each also checked as a device write.
+func (h *Handler) propertyGuard(ctx context.Context, w WriteOp, c *call, target guid.GUID, ev *Event) *Refusal {
+	pw, err := w.PropertyWrite(c.change)
+	var extra []tier0.PropertyWrite
+	if err == nil && w.AlsoDeclares != nil {
+		extra, err = w.AlsoDeclares(c.change)
+	}
 	plane := tier0.PlaneEntra
 	if h.prov.Kind() == connectorv1.ProviderKind_PROVIDER_KIND_AD {
 		plane = tier0.PlaneAD
 	}
-	if pw.Plane != plane { // a declaration for the other plane is a bug in the kind
+	bad := err != nil || pw.Plane != plane // a declaration for the other plane is a bug in the kind
+	for _, x := range extra {
+		bad = bad || x.Plane != plane
+	}
+	if bad {
 		ev.Reason = reasonBadDeclaration
-		ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)
+		if err == nil {
+			ev.PropertyKind, ev.PropertyOp, ev.PropertyKeys = kindName(pw.Kind), pw.Op.String(), append([]string(nil), pw.Keys...)
+		}
 		return invalid("4", "PropertyWrite", "change")
 	}
-	ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)
-	refuse := func(reason string, st connectorv1.Tier0RefusalStage) *Refusal {
-		ev.Reason = reason
-		return tier0Refusal(toWire(target), []basis{tier0.Designated}, st, "4")
+	r := h.guardProperty(ctx, pw, w.AlsoDevice, target, "4")
+	if r == nil {
+		ev.PropertyKind, ev.PropertyOp, ev.PropertyKeys = kindName(pw.Kind), pw.Op.String(), append([]string(nil), pw.Keys...)
+		for _, x := range extra {
+			if r = h.guardProperty(ctx, x, w.AlsoDevice, target, "4"); r != nil {
+				break
+			}
+		}
 	}
-	g, err := h.prov.PropertyGuard(ctx)
-	if err != nil || g == nil {
-		return refuse(reasonGuardUnavailable, stLive)
-	}
-	// The declaration is checked as declared and, for a kind that touches objects whose class is
-	// only known live (AlsoDevice), again as a device write: refused if either refuses.
-	decls := []tier0.PropertyWrite{pw}
-	if alsoDevice && pw.Kind != tier0.WriteDevice {
-		dw := pw
-		dw.Kind = tier0.WriteDevice
-		decls = append(decls, dw)
-	}
-	for _, d := range decls {
-		v, err := g.CheckPropertyWrite(ctx, d)
-		if err != nil {
-			return refuse(reasonGuardUnavailable, stLive)
-		}
-		if !v.Refused {
-			continue
-		}
-		if v.Reason != "" {
-			ev.Reason = v.Reason
-		}
-		if v.Op != 0 {
-			ev.PropertyOp = v.Op.String()
-		}
-		if v.Keys != nil {
-			ev.PropertyKeys = append([]string(nil), v.Keys...)
-		}
-		reason := v.Reason
-		if reason == "" {
-			reason = tier0.ReasonDesignatedDynamicRule
-		}
-		if v.Stage == tier0.StageLiveReread {
-			return refuse(reason, stLive)
-		}
-		return refuse(reason, stConnectorSet)
-	}
-	return nil
+	return r
 }
 
 // stmt is the merge of every complete statement about one object (F1).

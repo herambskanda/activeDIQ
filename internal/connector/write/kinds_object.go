@@ -94,7 +94,35 @@ func deletePropertyWrite(c *connectorv1.WriteChange) (tier0.PropertyWrite, error
 	if c.GetObjectDelete() == nil {
 		return tier0.PropertyWrite{}, errBadChange
 	}
-	return tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteGroup, Op: tier0.OpUpdate}, nil
+	// The typed change names no class, and the class decides the verdict (contract §8.9 DELETE: only a
+	// group delete can change another object's properties). Step 4 therefore declares the op with the
+	// least-restricted kind and readForDelete repeats the check with the live class through
+	// deleteRecheck before anything is sent, on Plan and on Apply (T-1632, CC-WRITE-30).
+	return tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteUser, Op: tier0.OpDelete}, nil
+}
+
+// deleteRecheck is the §8.9 DELETE check with what only the live read knows: the class of the target
+// and whether other objects point at it through manager. It is the part of the guard the step-4
+// declaration could not do. A group delete is checked as DELETE (it empties every member's memberOf).
+// Deleting any object that has direct reports also clears each report's manager (MS-ADTS 3.1.1.1.6:
+// a forward link to a deleted object is removed or hidden), so it is checked as CLEAR_MANAGER too
+// (T-1632 security review). A refusal carries the guard's reason and stage; an unknown class never
+// reaches it (liveClass refuses first).
+func deleteRecheck(ctx context.Context, a Authorised, cls connectorv1.DirectoryObjectClass, target guid.GUID, hasReports bool) *Refusal {
+	k := tier0.WriteUser
+	switch cls {
+	case connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_GROUP:
+		k = tier0.WriteGroup
+	case connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_COMPUTER:
+		k = tier0.WriteDevice
+	}
+	if r := a.checkProperty(ctx, tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: k, Op: tier0.OpDelete}, target, "5"); r != nil {
+		return r
+	}
+	if hasReports {
+		return a.checkProperty(ctx, tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteUser, Op: tier0.OpClearManager}, target, "5")
+	}
+	return nil
 }
 
 type constErr string
@@ -192,7 +220,7 @@ func liveClass(e *ad.Entry) (connectorv1.DirectoryObjectClass, *Refusal) {
 	return c, nil
 }
 
-func dcTimes(tx *ad.Tx) (*connectorv1.Observation, time.Time, *Refusal) {
+func dcTimes(tx interface{ DCTime() (time.Time, error) }) (*connectorv1.Observation, time.Time, *Refusal) {
 	t, err := tx.DCTime()
 	if err != nil {
 		return nil, time.Time{}, fromDir(err)
@@ -526,10 +554,9 @@ func editsRecheck(ctx context.Context, a Authorised, cls connectorv1.DirectoryOb
 		}
 		other = append(other, e.name)
 	}
-	refuse := func() *Refusal { return tier0Refusal(toWire(target), []basis{tier0.Designated}, stConnectorSet, "5") }
 	if len(other) > 0 && hasManager {
-		if !a.checkProperty(ctx, tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteUser, Op: tier0.OpUpdate, Keys: other}) {
-			return refuse()
+		if r := a.checkProperty(ctx, tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteUser, Op: tier0.OpUpdate, Keys: other}, target, "5"); r != nil {
+			return r
 		}
 	}
 	if cls == connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_COMPUTER {
@@ -537,8 +564,10 @@ func editsRecheck(ctx context.Context, a Authorised, cls connectorv1.DirectoryOb
 		if hasManager {
 			keys = append(keys, "manager")
 		}
-		if len(keys) > 0 && !a.checkProperty(ctx, tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteDevice, Op: tier0.OpUpdate, Keys: keys}) {
-			return refuse()
+		if len(keys) > 0 {
+			if r := a.checkProperty(ctx, tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteDevice, Op: tier0.OpUpdate, Keys: keys}, target, "5"); r != nil {
+				return r
+			}
 		}
 	}
 	return nil
@@ -679,7 +708,18 @@ type deleteRead struct {
 	gone  bool
 }
 
-func readForDelete(tx *ad.Tx, a Authorised, target guid.GUID) (*deleteRead, *Refusal) {
+// deleteTx is what kind 3 needs of the session. *ad.Tx is the only production implementation; the
+// seam exists so a non-lab test can drive the Plan and Apply bodies, and so prove the live-class
+// recheck sits on both paths (T-1632).
+type deleteTx interface {
+	DCTime() (time.Time, error)
+	Read(ref dn.ObjectRef, attrs []string) (*ad.Entry, error)
+	ReadDeleted(ref dn.ObjectRef, attrs []string) (*ad.Entry, error)
+	HasChildren(ref dn.ObjectRef) (bool, error)
+	Send(send func(ad.WriteConn) error) error
+}
+
+func readForDelete(ctx context.Context, tx deleteTx, a Authorised, target guid.GUID) (*deleteRead, *Refusal) {
 	obs, dct, r := dcTimes(tx)
 	if r != nil {
 		return nil, r
@@ -688,12 +728,16 @@ func readForDelete(tx *ad.Tx, a Authorised, target guid.GUID) (*deleteRead, *Ref
 	if e, err := tx.ReadDeleted(dn.GUIDRef(target), []string{"isDeleted"}); err == nil && strings.EqualFold(strings.Join(rawStrings(e, "isDeleted"), ""), "TRUE") {
 		return &deleteRead{entry: e, obs: obs, dct: dct, gone: true}, nil
 	}
-	e, err := tx.Read(dn.GUIDRef(target), []string{"objectClass", "uSNChanged"})
+	e, err := tx.Read(dn.GUIDRef(target), []string{"objectClass", "uSNChanged", "directReports"})
 	if err != nil {
 		return nil, fromDir(err)
 	}
 	cls, r := liveClass(e)
 	if r != nil {
+		return nil, r
+	}
+	// Any value (a ranged first page included) means other objects hold this one as manager.
+	if r := deleteRecheck(ctx, a, cls, target, len(e.Raw("directReports")) > 0); r != nil {
 		return nil, r
 	}
 	kids, err := tx.HasChildren(dn.GUIDRef(target))
@@ -714,17 +758,22 @@ func planDelete(ctx context.Context, a Authorised, req *connectorv1.PlanRequest)
 	}
 	var resp *connectorv1.PlanResponse
 	err = run(ctx, a, func(tx *ad.Tx) *Refusal {
-		d, r := readForDelete(tx, a, target)
-		if r != nil {
-			return r
-		}
-		usn := d.usn
-		resp = &connectorv1.PlanResponse{TargetDn: targetEntryDN(d.entry, target), Observed: d.obs, NoOp: d.gone,
-			Before:       &connectorv1.DirectoryEntry{ObjectGuid: toWire(target), Dn: targetEntryDN(d.entry, target)},
-			Precondition: &connectorv1.TargetPrecondition{UsnChanged: &usn, StateDigest: d.dig, PlanObservedAt: timestamppb.New(d.dct)}}
-		return nil
+		var r *Refusal
+		resp, r = planDeleteIn(ctx, a, tx, target)
+		return r
 	})
 	return resp, err
+}
+
+func planDeleteIn(ctx context.Context, a Authorised, tx deleteTx, target guid.GUID) (*connectorv1.PlanResponse, *Refusal) {
+	d, r := readForDelete(ctx, tx, a, target)
+	if r != nil {
+		return nil, r
+	}
+	usn := d.usn
+	return &connectorv1.PlanResponse{TargetDn: targetEntryDN(d.entry, target), Observed: d.obs, NoOp: d.gone,
+		Before:       &connectorv1.DirectoryEntry{ObjectGuid: toWire(target), Dn: targetEntryDN(d.entry, target)},
+		Precondition: &connectorv1.TargetPrecondition{UsnChanged: &usn, StateDigest: d.dig, PlanObservedAt: timestamppb.New(d.dct)}}, nil
 }
 
 func applyDelete(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
@@ -734,33 +783,36 @@ func applyDelete(ctx context.Context, a Authorised, req *connectorv1.ApplyReques
 	}
 	var resp *connectorv1.ApplyResponse
 	err = run(ctx, a, func(tx *ad.Tx) *Refusal {
-		d, r := readForDelete(tx, a, target)
-		if r != nil {
-			return r
-		}
-		if d.gone {
-			resp = &connectorv1.ApplyResponse{Outcome: connectorv1.ApplyOutcome_APPLY_OUTCOME_ALREADY_APPLIED, Written: d.obs,
-				ReadBack: &connectorv1.DirectoryEntry{ObjectGuid: toWire(target), Dn: targetEntryDN(d.entry, target)}}
-			return nil
-		}
-		pre := req.GetPrecondition()
-		if pre.UsnChanged == nil || *pre.UsnChanged != d.usn || !bytes.Equal(pre.GetStateDigest(), d.dig) {
-			return targetChanged("5")
-		}
-		live, perr := dn.Parse(d.entry.DN, dn.Strict)
-		if perr != nil {
-			return invalid("5", "TargetRequired", "target.object")
-		}
-		ref, rerr := dn.DNRef(live).ForRequest()
-		if rerr != nil {
-			return invalid("5", "TargetRequired", "target.object")
-		}
-		if err := tx.Send(func(c ad.WriteConn) error { return ops.DeleteObject(c, ref) }); err != nil {
-			return fromDir(err)
-		}
-		resp = &connectorv1.ApplyResponse{Outcome: connectorv1.ApplyOutcome_APPLY_OUTCOME_APPLIED, Written: d.obs,
-			ReadBack: &connectorv1.DirectoryEntry{ObjectGuid: toWire(target), Dn: targetEntryDN(d.entry, target)}}
-		return nil
+		var r *Refusal
+		resp, r = applyDeleteIn(ctx, a, tx, target, req.GetPrecondition())
+		return r
 	})
 	return resp, err
+}
+
+func applyDeleteIn(ctx context.Context, a Authorised, tx deleteTx, target guid.GUID, pre *connectorv1.TargetPrecondition) (*connectorv1.ApplyResponse, *Refusal) {
+	d, r := readForDelete(ctx, tx, a, target)
+	if r != nil {
+		return nil, r
+	}
+	if d.gone {
+		return &connectorv1.ApplyResponse{Outcome: connectorv1.ApplyOutcome_APPLY_OUTCOME_ALREADY_APPLIED, Written: d.obs,
+			ReadBack: &connectorv1.DirectoryEntry{ObjectGuid: toWire(target), Dn: targetEntryDN(d.entry, target)}}, nil
+	}
+	if pre.UsnChanged == nil || *pre.UsnChanged != d.usn || !bytes.Equal(pre.GetStateDigest(), d.dig) {
+		return nil, targetChanged("5")
+	}
+	live, perr := dn.Parse(d.entry.DN, dn.Strict)
+	if perr != nil {
+		return nil, invalid("5", "TargetRequired", "target.object")
+	}
+	ref, rerr := dn.DNRef(live).ForRequest()
+	if rerr != nil {
+		return nil, invalid("5", "TargetRequired", "target.object")
+	}
+	if err := tx.Send(func(c ad.WriteConn) error { return ops.DeleteObject(c, ref) }); err != nil {
+		return nil, fromDir(err)
+	}
+	return &connectorv1.ApplyResponse{Outcome: connectorv1.ApplyOutcome_APPLY_OUTCOME_APPLIED, Written: d.obs,
+		ReadBack: &connectorv1.DirectoryEntry{ObjectGuid: toWire(target), Dn: targetEntryDN(d.entry, target)}}, nil
 }
