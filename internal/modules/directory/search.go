@@ -5,8 +5,8 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 
-	"github.com/skenzeriq/activediq/internal/modules/directory/api"
 	"github.com/skenzeriq/activediq/internal/directory/search"
+	"github.com/skenzeriq/activediq/internal/modules/directory/api"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
