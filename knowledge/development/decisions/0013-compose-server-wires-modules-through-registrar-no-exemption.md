@@ -5,6 +5,7 @@ updated: 2026-11-12
 status: ratified
 ratified_on: 2026-11-12
 ratified_by: factory-director
+decision: D-0031
 kind: technical
 ticket: T-1863
 fitness: fitness-modules (M3, M11, M14)
@@ -12,7 +13,7 @@ fitness: fitness-modules (M3, M11, M14)
 
 # ADR-0013: compose/server wires modules only through the Registrar; builders move into modules, and rule 2.5 admits no exemption
 
-**Status:** ratified 2026-11-12 on the T-1863 review (notice to the CEO); `accepted` only when M14 and the tightened M11 (below) run green in `make ci` and `go run ./tools/fitness/modules` exits 0 on main.
+**Status:** ratified 2026-11-12 on the T-1863 review (notice D-0031); `accepted` only when M14 and the tightened M11 (below) run green in `make ci` and `go run ./tools/fitness/modules` exits 0 on main.
 **Kind:** technical (internal seams, nothing a customer or the brand sees). **Deciders:** solution-architect (author), factory-director (ratifier). **Ticket:** T-1863. Subsumes T-1048, T-1658, T-1133.
 
 ## Context
