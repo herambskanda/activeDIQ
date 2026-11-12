@@ -49,9 +49,13 @@ type claimed struct {
 	plan      StepPlan
 	conn, dc  string
 	cred      bool
-	// credentialID is the DM-11 row of the connection's bound credential, resolved before the step is
-	// recorded. It is stamped on the audit event of a directory-write step (T-1629), never the bind name.
+	// credentialID is the DM-11 row of the connection's bound credential, resolved once at claim time
+	// before the write and stored on the step row (T-1629). It is stamped on the audit event of a
+	// directory-write step, never the bind name.
 	credentialID string
+	// unresolved marks a directory-write step that never wrote because its credential could not be
+	// named; its event carries no dc/credential_id, since nothing was transported.
+	unresolved bool
 }
 
 func (c *claimed) event(r *Runner, o audit.Outcome, reason string, recovered bool) audit.Event {
@@ -61,7 +65,7 @@ func (c *claimed) event(r *Runner, o audit.Outcome, reason string, recovered boo
 	// A step that writes to a directory (it has a pinned DC) names the DC and the credential it was
 	// transported by, so an auditor can join a DC log line to this event from the exported chain alone.
 	// Never the bind account name or SID: DM-11 metadata is their single source (T-1601 section 5).
-	if c.dc != "" {
+	if c.dc != "" && !c.unresolved {
 		ev.Details = detail("credential_id", c.credentialID, "dc", c.dc)
 	}
 	if recovered {
@@ -195,6 +199,15 @@ func (r *Runner) mintFor(c *claimed, attempt int, sec secret.Secret) (step.Step,
 
 // execute writes one claimed step and records the outcome.
 func (r *Runner) execute(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
+	// Name the credential before anything is written (T-1629): no credential, no write.
+	switch ok, err := r.ensureCredential(ctx, t, tx, c); {
+	case errors.Is(err, errCredentialUnresolved):
+		return r.noCredential(ctx, t, tx, c)
+	case err != nil:
+		return err
+	case !ok:
+		return nil // another attempt owns the step
+	}
 	var sec secret.Secret
 	if c.d.SecretInput {
 		err := tx(ctx, func(ctx context.Context, q store.Tx) (err error) {
@@ -365,31 +378,55 @@ type recordSpec struct {
 	t0           *tier0Report // set with verifyFailed == ReasonTier0AfterWrite
 }
 
-// resolveCredential names the DM-11 credential of a directory-write step's connection, once per claim.
-// Fail closed: no directory-write event is appended without its credential_id, so a connection with no
-// credential (or a lookup error) leaves the step claimed, its lease lapses and the reconciler decides.
-func (r *Runner) resolveCredential(ctx context.Context, t tenant.ID, c *claimed) error {
+// ensureCredential names the DM-11 credential of a directory-write step's connection and stores it on
+// the step row, fenced by the attempt. It runs BEFORE the write: if it fails the step does not write
+// (callers record credential_unresolved), so a write on the DC is never left without its credential_id.
+// A value already stored by the first claim wins, so a retry or takeover keeps the original. A false ok
+// means the attempt was superseded.
+func (r *Runner) ensureCredential(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) (ok bool, err error) {
 	if c.dc == "" || c.credentialID != "" {
-		return nil
+		return true, nil
 	}
 	id, err := r.cfg.Credentials.CredentialOf(ctx, t, c.conn)
 	if err == nil && id == "" {
 		err = errors.New("connection has no credential")
 	}
 	if err != nil {
-		return fmt.Errorf("operation: resolving the connection's credential for the step event: %w", err)
+		return true, fmt.Errorf("%w: %w", errCredentialUnresolved, err)
 	}
-	c.credentialID = id
-	return nil
+	var stored string
+	err = tx(context.WithoutCancel(ctx), func(ctx context.Context, q store.Tx) error {
+		stored = ""
+		e := q.QueryRow(ctx, `UPDATE public.operation_steps SET credential_id = CASE WHEN credential_id = '' THEN $6 ELSE credential_id END
+WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND item_no = $3 AND step_no = $4 AND state = 'applying' AND attempt = $5
+RETURNING credential_id`, t.String(), string(c.key.Operation), c.key.Item, c.key.Step, c.attempt, id).Scan(&stored)
+		if store.IsNoRows(e) {
+			return nil
+		}
+		return e
+	})
+	if err != nil {
+		return true, fmt.Errorf("operation: storing the step's credential id: %w", err)
+	}
+	if stored == "" {
+		return false, nil
+	}
+	c.credentialID = stored
+	return true, nil
+}
+
+var errCredentialUnresolved = errors.New("operation: the connection's credential could not be resolved")
+
+// noCredential records a directory-write step that did not write because its credential is unresolved.
+func (r *Runner) noCredential(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
+	c.unresolved = true
+	return r.record(ctx, t, tx, c, recordSpec{failed: "credential_unresolved"})
 }
 
 // record is the second short transaction: state, item, event and secret deletion commit together,
 // fenced by the attempt. A superseded attempt records nothing.
 func (r *Runner) record(ctx context.Context, t tenant.ID, tx txFunc, c *claimed, s recordSpec) error {
 	rctx := context.WithoutCancel(ctx) // a recorded outcome is never lost to a shutdown
-	if err := r.resolveCredential(rctx, t, c); err != nil {
-		return err
-	}
 	err := tx(rctx, func(ctx context.Context, q store.Tx) error {
 		return r.recordIn(ctx, q, t, c, s)
 	})

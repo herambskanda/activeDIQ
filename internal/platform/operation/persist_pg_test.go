@@ -222,6 +222,30 @@ func (credFake) CredentialOf(context.Context, tenant.ID, string) (string, error)
 	return fakeCredentialID, nil
 }
 
+func cmpCreds(c CredentialSource) CredentialSource {
+	if c == nil {
+		return credFake{}
+	}
+	return c
+}
+
+// credCtl is a credential source a test can change or break between steps.
+type credCtl struct {
+	mu    sync.Mutex
+	id    string
+	err   error
+	calls int
+}
+
+func (c *credCtl) CredentialOf(context.Context, tenant.ID, string) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls++
+	return c.id, c.err
+}
+
+func (c *credCtl) set(id string, err error) { c.mu.Lock(); c.id, c.err = id, err; c.mu.Unlock() }
+
 type badPin DCPin
 
 func (b badPin) Pin(context.Context, string, authority.NamingContextID, string) (DCPin, error) {
@@ -304,8 +328,9 @@ type rigOpt struct {
 	stepUp   bool
 	secretIn bool
 	class    Reversibility
-	pinner   Pinner // overrides pinFake
-	ref      string // Request reference the hold gate returns
+	pinner   Pinner           // overrides pinFake
+	ref      string           // Request reference the hold gate returns
+	cred     CredentialSource // overrides credFake
 }
 
 func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
@@ -333,7 +358,7 @@ func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
 		t.Fatal(err)
 	}
 	cfg := Config{DB: db, Audit: ch, Authz: &authzFake{}, Registry: reg, Facts: factsFake{}, Gate: o.gate, Jobs: jobs.NewRegistry(),
-		Keys: keySrc{}, Pinner: cmpPinner(o.pinner), Credentials: credFake{}, Settings: settingsFake{irreversible: o.irrev}, Provenance: p.prov, Alerts: p.alerts,
+		Keys: keySrc{}, Pinner: cmpPinner(o.pinner), Credentials: cmpCreds(o.cred), Settings: settingsFake{irreversible: o.irrev}, Provenance: p.prov, Alerts: p.alerts,
 		Attempts: o.attempts, Slots: o.slots, Backoff: time.Millisecond, Lease: time.Minute}
 	if p.r, err = NewRunner(cfg); err != nil {
 		t.Fatal(err)
@@ -550,6 +575,86 @@ func TestVerifiedLaterEventCarriesDCAndCredentialID(t *testing.T) {
 		}
 		if got["dc"] != "dc1.example.test" || got["credential_id"] != fakeCredentialID || !sort.StringsAreSorted(keys) {
 			t.Fatalf("details = %v", env.Details)
+		}
+	})
+}
+
+// lastStepEvent returns the newest step event of an operation.
+func (p *prig) lastStepEvent(op step.OperationID) audit.Envelope {
+	p.t.Helper()
+	rows := p.owner(`SELECT encode(envelope, 'hex') FROM public.audit_event WHERE kind = 'directory.user.changed' AND event_id LIKE $1 ORDER BY seq DESC LIMIT 1`, "op-"+string(op)+"-%")
+	if len(rows) != 1 {
+		p.t.Fatalf("events = %d", len(rows))
+	}
+	raw, _ := hex.DecodeString(rows[0])
+	env, err := audit.ParseEnvelope(raw)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	return env
+}
+
+func detailsOf(env audit.Envelope) map[string]string {
+	m := map[string]string{}
+	for _, d := range env.Details {
+		m[d.Key] = d.Value
+	}
+	return m
+}
+
+// The credential is named before the write: when it cannot be, nothing is written (T-1629).
+func TestCredentialUnresolvedBeforeWriteWritesNothing(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		cc := &credCtl{err: errors.New("no credential")}
+		p := newPRig(t, s, rigOpt{cred: cc})
+		p.dir.set("a", "old")
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "new"}))
+		p.runChunks(sub.Operation)
+		if p.dir.applies["a"] != 0 || p.dir.get("a") != "old" {
+			t.Fatalf("a write reached the directory (applies=%d)", p.dir.applies["a"])
+		}
+		if row := p.stepRow(sub.Operation, 0); !strings.HasPrefix(row, "failed|credential_unresolved|") {
+			t.Fatalf("step = %q", row)
+		}
+		env := p.lastStepEvent(sub.Operation)
+		if env.Outcome != string(audit.Failure) || env.Reason != "credential_unresolved" || len(env.Details) != 0 {
+			t.Fatalf("event = %+v", env)
+		}
+	})
+}
+
+// The lookup failing after the write must not lose the audit event, and a rotation must not change it.
+func TestCredentialLostAfterWriteStillAuditedWithClaimTimeID(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		cc := &credCtl{id: fakeCredentialID}
+		p := newPRig(t, s, rigOpt{cred: cc})
+		p.dir.mode["a"] = "defer"
+		sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+		p.runChunks(sub.Operation)
+		if p.dir.applies["a"] != 1 {
+			t.Fatalf("applies = %d", p.dir.applies["a"])
+		}
+		first := detailsOf(p.lastStepEvent(sub.Operation))
+		if first["credential_id"] != fakeCredentialID {
+			t.Fatalf("applied event details = %v", first)
+		}
+		// The connection's credential is replaced, then the lookup breaks altogether.
+		cc.set("00000000-0000-4000-8000-00000000beef", nil)
+		callsBefore := cc.calls
+		p.dir.mode["verified"] = "yes"
+		if err := p.r.Verify(context.Background(), p.tn, p.r.txFor(p.tn), string(sub.Operation)); err != nil {
+			t.Fatal(err)
+		}
+		cc.set("", errors.New("gone"))
+		if _, err := p.r.Reconcile(context.Background(), p.tn, p.r.txFor(p.tn), 10); err != nil {
+			t.Fatalf("reconcile looped on an error: %v", err)
+		}
+		env := p.lastStepEvent(sub.Operation)
+		if env.Reason != "verified_later" || detailsOf(env)["credential_id"] != fakeCredentialID {
+			t.Fatalf("verified_later event = %+v", env)
+		}
+		if cc.calls != callsBefore {
+			t.Fatalf("the credential was looked up again after the write (%d calls)", cc.calls-callsBefore)
 		}
 	})
 }
