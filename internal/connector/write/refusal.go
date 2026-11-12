@@ -108,3 +108,27 @@ func gateRefusal(state connectorv1.WriteGateState, vid *connectorv1.Guid, unack 
 func NewRefusal(code connectorv1.ErrorCode, retry connectorv1.RetryAdvice, msg string) *Refusal {
 	return newRefusal(code, retry, "", msg)
 }
+
+// coded builds a refusal with a fixed text for a code that carries no details.
+func coded(code connectorv1.ErrorCode, retry connectorv1.RetryAdvice, stage, msg string) *Refusal {
+	return newRefusal(code, retry, stage, msg)
+}
+
+var (
+	errReplan   = connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_REPLAN
+	errNever    = connectorv1.RetryAdvice_RETRY_ADVICE_NEVER
+	errOperator = connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_OPERATOR_ACTION
+)
+
+func attrNotAllowed(stage string) *Refusal {
+	return coded(connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED, errNever, stage, "attribute not allowed")
+}
+func limitExceeded(stage string) *Refusal {
+	return coded(connectorv1.ErrorCode_ERROR_CODE_LIMIT_EXCEEDED, errNever, stage, "limit exceeded")
+}
+func targetChanged(stage string) *Refusal {
+	return coded(connectorv1.ErrorCode_ERROR_CODE_TARGET_CHANGED, errReplan, stage, "target changed")
+}
+func transportSecurity(stage string) *Refusal {
+	return coded(connectorv1.ErrorCode_ERROR_CODE_TRANSPORT_SECURITY, errOperator, stage, "channel is not secure")
+}

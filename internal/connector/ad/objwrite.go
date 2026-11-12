@@ -36,7 +36,6 @@ func (showDeleted) String() string         { return "Show deleted control" }
 const (
 	CodeTargetChanged Code = "TARGET_CHANGED" // the object is no longer the one the plan was made on
 	CodeNameInUse     Code = "NAME_IN_USE"    // entryAlreadyExists at the destination
-	CodeNotLeaf       Code = "NOT_LEAF"
 )
 
 // ObjectConn is the connection lent to a sender for one object write. The senders live in

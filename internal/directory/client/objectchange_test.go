@@ -6,7 +6,6 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
-	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 const (
@@ -21,21 +20,9 @@ func objOp(key string, attrs ...step.Attr) WriteOp {
 
 func one(n, v string) step.Attr { return step.Attr{Name: n, Values: []string{v}} }
 
-// TestKindTableClosed: the table holds exactly the wired keys, one WriteKind each, each with a class.
-func TestKindTableClosed(t *testing.T) {
-	seen := map[connectorv1.WriteKind]string{}
-	for k, row := range kindTable {
-		if k == "user.set" { // the test kind of write_test.go's init
-			continue
-		}
-		if row.Kind == connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED || row.Class == "" {
-			t.Errorf("%s: row without kind or class", k)
-		}
-		if o, dup := seen[row.Kind]; dup {
-			t.Errorf("%s and %s share %s", k, o, row.Kind)
-		}
-		seen[row.Kind] = k
-	}
+// TestKindTableStructureClass: the object move, rename and restore rows carry the move class. The closed
+// list, the classes and the one-WriteKind-per-row rule for every row are TestKindTableClosed in write_test.go.
+func TestKindTableStructureClass(t *testing.T) {
 	for _, k := range []string{DigestObjectMove, DigestObjectRename, DigestObjectRestore} {
 		if kindTable[k].Class != ClassMove {
 			t.Errorf("%s: class %q, want move", k, kindTable[k].Class)
@@ -93,9 +80,10 @@ func TestObjectChangeRefusesMalformedAttrs(t *testing.T) {
 	}
 }
 
-// Acceptance 2 / CC-WK-31: keys outside the registered set are unknown kinds.
+// Acceptance 2 / CC-WK-31: keys outside the registered set are unknown kinds. All ten kinds of contract
+// 8.10.1 are registered now, so the unknown ones are misspelled or invented keys.
 func TestUnregisteredKindsAreUnknown(t *testing.T) {
-	for _, k := range []string{"ad.object.createUser", "AD.object.move", "ad.object.create", "ad.object.delete", "ad.user.resetPassword", ""} {
+	for _, k := range []string{"ad.object.createUser", "AD.object.move", "ad.object.Create", "ad.user.reset", ""} {
 		_, err := objOp(k).derive()
 		if k == "" {
 			if !errors.Is(err, ErrInvalidOp) {

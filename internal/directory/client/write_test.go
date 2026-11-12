@@ -7,11 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/skenzeriq/activediq/internal/directory/accountkind"
+	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
@@ -30,12 +33,14 @@ const (
 	ncGUID  = "6f1c2a40-0000-4000-8000-0000000000cc"
 
 	otherNC  = authority.NamingContextID("6f1c2a40-0000-4000-8000-0000000000dd")
-	testKind = connectorv1.WriteKind(7)
+	testKind = connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE
 )
 
 var (
-	testTarget = authority.TargetRef{Connection: "c1", GUID: objGUID, Class: "user", NC: ncGUID}
-	testAttrs  = []step.Attr{{Name: "description", Values: []string{"new"}}}
+	testTarget = authority.TargetRef{Connection: "c1", GUID: objGUID, NC: ncGUID}
+	// acctTarget is the target of an account kind (T-1583): its class label is part of the digest.
+	acctTarget = authority.TargetRef{Connection: "c1", GUID: objGUID, Class: "user", NC: ncGUID}
+	testAttrs  = []step.Attr{{Name: "set:description", Values: []string{"s:new"}}}
 )
 
 type fakeDB struct{}
@@ -93,13 +98,19 @@ func withStepOf(t *testing.T, target authority.TargetRef, pins authority.Pins, f
 // withStepDSA is withStepOf with an explicit DSA pin set.
 func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, dsas authority.DSAPins, fn func(ctx context.Context, s step.Step)) {
 	t.Helper()
+	withStepKind(t, target, pins, dsas, "ad.object.update", []operation.Change{{Attribute: "set:description", Before: []string{"old"}, After: []string{"s:new"}}}, fn)
+}
+
+// withStepKind is withStepDSA for a chosen digest kind and diff.
+func withStepKind(t *testing.T, target authority.TargetRef, pins authority.Pins, dsas authority.DSAPins, kind string, diff []operation.Change, fn func(ctx context.Context, s step.Step)) {
+	t.Helper()
 	type none struct{}
 	a, err := operation.Define(operation.Typed[none, none, none]{
 		Descriptor: operation.Descriptor{ID: "settings.thing.set", Version: 1, Permission: "settings.thing.set",
 			Input: "#/components/schemas/Thing", Target: operation.TargetStore, Reversibility: operation.Irreversible, AuditKind: "settings.thing.changed"},
 		Plan: func(context.Context, operation.PlanContext, none) ([]operation.TypedStep[none], error) {
-			return []operation.TypedStep[none]{{Plan: operation.StepPlan{Target: target, Kind: "user.set", Reversibility: operation.Reversible,
-				Diff: []operation.Change{{Attribute: "description", Before: []string{"old"}, After: []string{"new"}}}}}}, nil
+			return []operation.TypedStep[none]{{Plan: operation.StepPlan{Target: target, Kind: kind, Reversibility: operation.Reversible,
+				Diff: diff}}}, nil
 		},
 		Apply: func(ctx context.Context, s step.Step, _ operation.TypedStep[none]) (none, error) {
 			fn(ctx, s)
@@ -129,10 +140,8 @@ func withStepDSA(t *testing.T, target authority.TargetRef, pins authority.Pins, 
 	}
 }
 
-func init() { kindTable["user.set"] = kindRow{testKind, "none"} }
-
 func goodOp() WriteOp {
-	return WriteOp{DigestKind: "user.set", Target: testTarget, Attrs: testAttrs}
+	return WriteOp{DigestKind: "ad.object.update", Target: testTarget, Attrs: testAttrs}
 }
 
 type builder struct {
@@ -237,7 +246,7 @@ func TestDigestMismatchRefused(t *testing.T) {
 	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
 	withStep(t, func(ctx context.Context, s step.Step) {
 		op := goodOp()
-		op.Attrs = []step.Attr{{Name: "description", Values: []string{"other"}}}
+		op.Attrs = []step.Attr{{Name: "set:description", Values: []string{"s:other"}}}
 		if _, err := c.Write(ctx, s, op); !errors.Is(err, ErrDigest) {
 			t.Errorf("got %v, want ErrDigest", err)
 		}
@@ -306,7 +315,7 @@ func TestWireFieldsDerivedFromTheDigestedTarget(t *testing.T) {
 		}
 	})
 	r := tr.planReq
-	if r.GetConnection().GetConnectionId() != "c1" || r.GetKind() != testKind || r.GetChange() != nil || r.GetTier0Override() != nil {
+	if r.GetConnection().GetConnectionId() != "c1" || r.GetKind() != testKind || r.GetChange().GetObjectUpdate() == nil || r.GetTier0Override() != nil {
 		t.Errorf("plan request %+v", r)
 	}
 	want, _ := parseUUID(objGUID)
@@ -323,6 +332,9 @@ func TestMismatchedOpRefusedBeforeTransport(t *testing.T) {
 		"other connection": {func(o *WriteOp) { o.Target.Connection = "other" }, ErrDigest},
 		"other object":     {func(o *WriteOp) { o.Target.GUID = ncGUID }, ErrDigest},
 		"unknown kind":     {func(o *WriteOp) { o.DigestKind = "user.unknown" }, ErrUnknownKind},
+		"wrong case":       {func(o *WriteOp) { o.DigestKind = "AD.object.update" }, ErrUnknownKind},
+		"spelled like":     {func(o *WriteOp) { o.DigestKind = "ad.object.createUser" }, ErrUnknownKind},
+		"empty kind":       {func(o *WriteOp) { o.DigestKind = "" }, ErrInvalidOp},
 		"no connection":    {func(o *WriteOp) { o.Target.Connection = "" }, ErrInvalidOp},
 		"other nc":         {func(o *WriteOp) { o.Target.NC = otherNC }, ErrDigest},
 		"empty nc":         {func(o *WriteOp) { o.Target.NC = "" }, ErrDigest},
@@ -558,5 +570,89 @@ func TestDSAPinMutatedAfterMintDoesNotRepointStep(t *testing.T) {
 	want, _ := parseUUID(dsaGUID)
 	if got := tr.planReq.GetDc().GetPinnedDsaGuid().GetValue(); string(got) != string(want) {
 		t.Errorf("wire DSA GUID %x, want original %x", got, want)
+	}
+}
+
+func TestKindTableClosed(t *testing.T) {
+	allowed := map[string]bool{"ad.object.create": true, "ad.object.update": true, "ad.object.delete": true, "ad.object.move": true,
+		"ad.object.rename": true, "ad.object.restore": true, "ad.user.resetPassword": true, "ad.user.unlock": true,
+		"ad.account.enable": true, "ad.account.disable": true}
+	for _, sp := range accountkind.Specs() {
+		if _, ok := kindTable[sp.Key]; !ok {
+			t.Errorf("%s missing from kindTable", sp.Key)
+		}
+		if kindClass[sp.Key] == "" {
+			t.Errorf("%s has no kindClass", sp.Key)
+		}
+	}
+	seen := map[connectorv1.WriteKind]string{}
+	for k, row := range kindTable {
+		if !allowed[k] || row.Class == "" || row.Kind == connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
+			t.Errorf("kindTable row %q is outside the list, has no class or is UNSPECIFIED", k)
+		}
+		if prev, dup := seen[row.Kind]; dup {
+			t.Errorf("kindTable keys %q and %q share a WriteKind", prev, k)
+		}
+		seen[row.Kind] = k
+	}
+}
+
+// The wire copy of a create's secret is wiped once Write returns, success or not.
+func TestWriteWipesTheWireSecretCopy(t *testing.T) {
+	_, attrs, err := writechange.Encode(&connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectCreate{ObjectCreate: &connectorv1.ObjectCreate{
+		ObjectClass: connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_USER, RdnValue: "x", HasSecretInput: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := authority.TargetRef{Connection: "c1", Parent: objGUID, Class: "user", RDN: "x", NC: ncGUID}
+	tr := &transport{}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	pins := authority.Pins{ncGUID: "dc1.corp.example"}
+	var diff []operation.Change
+	for _, a := range attrs {
+		diff = append(diff, operation.Change{Attribute: a.Name, After: a.Values, Secret: a.Secret})
+	}
+	withStepKind(t, target, pins, dsasFor(pins), "ad.object.create", diff, func(ctx context.Context, s step.Step) {
+		op := WriteOp{DigestKind: "ad.object.create", Target: target, Attrs: attrs, SecretInput: secret.FromBytes([]byte("Sup3r-secret-pw"))}
+		if _, err := c.Write(ctx, s, op); err != nil {
+			t.Fatal(err)
+		}
+	})
+	m := tr.applyReq.GetSecretInput().GetMaterial()
+	if len(m) == 0 {
+		t.Fatal("apply carried no secret material")
+	}
+	for i, b := range m {
+		if b != 0 {
+			t.Fatalf("wire secret byte %d not wiped", i)
+		}
+	}
+}
+
+// The caller's secret is destroyed when the op is refused before anything is sent, not only after a send.
+func TestWriteDestroysTheSecretWhenTheOpIsRefused(t *testing.T) {
+	sec := secret.FromBytes([]byte("Passw0rd!"))
+	var backing []byte
+	sec.Expose(func(b []byte) { backing = b }) // the live buffer, to see it zeroed
+	if len(backing) == 0 {
+		t.Fatal("no backing buffer")
+	}
+	tr := &transport{}
+	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
+	withStepOf(t, testTarget, authority.Pins{ncGUID: "dc1.corp.example"}, func(ctx context.Context, s step.Step) {
+		// An update that carries a secret it must not: derive() refuses it before any send.
+		op := goodOp()
+		op.SecretInput = sec
+		if _, err := c.Write(ctx, s, op); err == nil {
+			t.Fatal("an update carrying a secret was accepted")
+		}
+	})
+	for i, b := range backing {
+		if b != 0 {
+			t.Fatalf("secret byte %d survived a refused Write", i)
+		}
+	}
+	if tr.plans != 0 || tr.applies != 0 {
+		t.Errorf("transport reached: plans=%d applies=%d", tr.plans, tr.applies)
 	}
 }

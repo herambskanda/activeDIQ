@@ -172,8 +172,8 @@ func rdnTypeFor(classes []string) dn.RDNType {
 
 func classNotAllowed() *Refusal { return invalid("5", "ClassNotAllowed", "target") }
 
-// adRefusal maps a directory error to a connector refusal. No directory text goes into it.
-func adRefusal(err error) error {
+// structureRefusal maps a directory error to a connector refusal. No directory text goes into it.
+func structureRefusal(err error) error {
 	var r *Refusal
 	if errors.As(err, &r) {
 		return err
@@ -272,7 +272,7 @@ func moveOp() WriteOp {
 			if err != nil {
 				return nil, err
 			}
-			return objectDigest(DigestObjectMove, req.GetConnection(), req.GetTarget(), []step.Attr{
+			return structureDigest(DigestObjectMove, req.GetConnection(), req.GetTarget(), []step.Attr{
 				{Name: AttrNewParent, Values: []string{np.String()}}, {Name: AttrNewParentNC, Values: []string{nc.String()}}})
 		},
 		Plan:  planMove,
@@ -302,7 +302,7 @@ func renameOp() WriteOp {
 			if err != nil {
 				return nil, err
 			}
-			return objectDigest(DigestObjectRename, req.GetConnection(), req.GetTarget(), []step.Attr{{Name: AttrNewRDN, Values: []string{v}}})
+			return structureDigest(DigestObjectRename, req.GetConnection(), req.GetTarget(), []step.Attr{{Name: AttrNewRDN, Values: []string{v}}})
 		},
 		Plan:  planRename,
 		Apply: applyRename,
@@ -340,7 +340,7 @@ func restoreOp() WriteOp {
 			if err != nil {
 				return nil, err
 			}
-			return objectDigest(DigestObjectRestore, req.GetConnection(), req.GetTarget(), []step.Attr{
+			return structureDigest(DigestObjectRestore, req.GetConnection(), req.GetTarget(), []step.Attr{
 				{Name: AttrNewParent, Values: []string{np.String()}}, {Name: AttrNewParentNC, Values: []string{nc.String()}},
 				{Name: AttrRDN, Values: []string{v}}})
 		},
@@ -349,9 +349,9 @@ func restoreOp() WriteOp {
 	}
 }
 
-// objectDigest is the digest the Action's step carries: the kinds put nothing in Class, Parent or
+// structureDigest is the digest the Action's step carries: the kinds put nothing in Class, Parent or
 // RDN of the target; everything the write adds is an attribute.
-func objectDigest(key string, conn *connectorv1.ConnectionRef, t *connectorv1.WriteTarget, attrs []step.Attr) ([]byte, error) {
+func structureDigest(key string, conn *connectorv1.ConnectionRef, t *connectorv1.WriteTarget, attrs []step.Attr) ([]byte, error) {
 	obj, err := fromWire(t.GetObject())
 	if err != nil {
 		return nil, err
@@ -366,7 +366,7 @@ func objectDigest(key string, conn *connectorv1.ConnectionRef, t *connectorv1.Wr
 
 // ---- plan and apply ----
 
-func stateDigest(parts ...string) []byte {
+func structureStateDigest(parts ...string) []byte {
 	h := sha256.New()
 	for _, p := range parts {
 		h.Write([]byte(strconv.Itoa(len(p)) + ":" + p))
@@ -388,7 +388,7 @@ func precondition(st ad.ObjectState, digest []byte) *connectorv1.TargetPrecondit
 func liveTarget(ctx context.Context, d StructureDirectory, id guid.GUID) (ad.ObjectState, error) {
 	st, err := d.State(ctx, id)
 	if err != nil {
-		return st, adRefusal(err)
+		return st, structureRefusal(err)
 	}
 	if st.Deleted || !objectClassOK(st.Entry.Strings("objectClass")) {
 		return st, classNotAllowed()
@@ -427,7 +427,7 @@ func planMove(ctx context.Context, a Authorised, req *connectorv1.PlanRequest) (
 	if err != nil {
 		return nil, err
 	}
-	resp := &connectorv1.PlanResponse{Precondition: precondition(st, stateDigest("move", id.String(), st.Parent.String(), np.String()))}
+	resp := &connectorv1.PlanResponse{Precondition: precondition(st, structureStateDigest("move", id.String(), st.Parent.String(), np.String()))}
 	resp.NoOp = st.Parent == np
 	return resp, nil
 }
@@ -453,11 +453,11 @@ func applyMove(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest)
 	if st.Parent == np {
 		return &connectorv1.ApplyResponse{Outcome: connectorv1.ApplyOutcome_APPLY_OUTCOME_ALREADY_APPLIED}, nil
 	}
-	if !equalBytes(stateDigest("move", id.String(), st.Parent.String(), np.String()), req.GetPrecondition().GetStateDigest()) {
-		return nil, adRefusal(ad.NewError(ad.CodeTargetChanged))
+	if !equalBytes(structureStateDigest("move", id.String(), st.Parent.String(), np.String()), req.GetPrecondition().GetStateDigest()) {
+		return nil, structureRefusal(ad.NewError(ad.CodeTargetChanged))
 	}
 	if err := d.Move(ctx, ad.MoveRequest{Object: id, ExpectParent: st.Parent, NewParent: np}); err != nil {
-		return nil, adRefusal(err)
+		return nil, structureRefusal(err)
 	}
 	after, err := d.State(ctx, id)
 	if err != nil || after.Parent != np {
@@ -491,7 +491,7 @@ func planRename(ctx context.Context, a Authorised, req *connectorv1.PlanRequest)
 		return nil, invalid("5", "RdnInvalid", "change.new_rdn_value")
 	}
 	cur := rdnValueOf(st)
-	return &connectorv1.PlanResponse{NoOp: cur == v, Precondition: precondition(st, stateDigest("rename", id.String(), st.Parent.String(), cur, v))}, nil
+	return &connectorv1.PlanResponse{NoOp: cur == v, Precondition: precondition(st, structureStateDigest("rename", id.String(), st.Parent.String(), cur, v))}, nil
 }
 
 func applyRename(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {
@@ -509,11 +509,11 @@ func applyRename(ctx context.Context, a Authorised, req *connectorv1.ApplyReques
 	if cur == v {
 		return &connectorv1.ApplyResponse{Outcome: connectorv1.ApplyOutcome_APPLY_OUTCOME_ALREADY_APPLIED}, nil
 	}
-	if !equalBytes(stateDigest("rename", id.String(), st.Parent.String(), cur, v), req.GetPrecondition().GetStateDigest()) {
-		return nil, adRefusal(ad.NewError(ad.CodeTargetChanged))
+	if !equalBytes(structureStateDigest("rename", id.String(), st.Parent.String(), cur, v), req.GetPrecondition().GetStateDigest()) {
+		return nil, structureRefusal(ad.NewError(ad.CodeTargetChanged))
 	}
 	if err := d.Rename(ctx, ad.RenameRequest{Object: id, NewValue: v}); err != nil {
-		return nil, adRefusal(err)
+		return nil, structureRefusal(err)
 	}
 	after, err := d.State(ctx, id)
 	if err != nil || rdnValueOf(after) != v {
@@ -527,7 +527,7 @@ func applyRename(ctx context.Context, a Authorised, req *connectorv1.ApplyReques
 func restoreState(ctx context.Context, d StructureDirectory, id, np guid.GUID, rdn string) (st ad.ObjectState, already bool, err error) {
 	st, err = d.DeletedState(ctx, id)
 	if err != nil {
-		return st, false, adRefusal(err)
+		return st, false, structureRefusal(err)
 	}
 	if !objectClassOK(st.Entry.Strings("objectClass")) {
 		return st, false, classNotAllowed()
@@ -553,7 +553,7 @@ func planRestore(ctx context.Context, a Authorised, req *connectorv1.PlanRequest
 	}
 	on, err := d.RecycleBin(ctx)
 	if err != nil {
-		return nil, adRefusal(err)
+		return nil, structureRefusal(err)
 	}
 	if !on {
 		return nil, unsupported() // reanimating a tombstone loses most attributes; not offered
@@ -567,7 +567,7 @@ func planRestore(ctx context.Context, a Authorised, req *connectorv1.PlanRequest
 		return nil, invalid("5", "RdnInvalid", "change.rdn_value")
 	}
 	return &connectorv1.PlanResponse{NoOp: already, Before: regrantsEntry(id, a.p.regrants),
-		Precondition: precondition(st, stateDigest("restore", id.String(), np.String(), r.GetRdnValue()))}, nil
+		Precondition: precondition(st, structureStateDigest("restore", id.String(), np.String(), r.GetRdnValue()))}, nil
 }
 
 // regrantsEntry is PlanResponse.before of a restore: the memberOf the restore brings back, by group
@@ -596,7 +596,7 @@ func applyRestore(ctx context.Context, a Authorised, req *connectorv1.ApplyReque
 	}
 	on, err := d.RecycleBin(ctx)
 	if err != nil {
-		return nil, adRefusal(err)
+		return nil, structureRefusal(err)
 	}
 	if !on {
 		return nil, unsupported()
@@ -609,11 +609,11 @@ func applyRestore(ctx context.Context, a Authorised, req *connectorv1.ApplyReque
 	if already {
 		return &connectorv1.ApplyResponse{Outcome: connectorv1.ApplyOutcome_APPLY_OUTCOME_ALREADY_APPLIED}, nil
 	}
-	if !equalBytes(stateDigest("restore", id.String(), np.String(), r.GetRdnValue()), req.GetPrecondition().GetStateDigest()) {
-		return nil, adRefusal(ad.NewError(ad.CodeTargetChanged))
+	if !equalBytes(structureStateDigest("restore", id.String(), np.String(), r.GetRdnValue()), req.GetPrecondition().GetStateDigest()) {
+		return nil, structureRefusal(ad.NewError(ad.CodeTargetChanged))
 	}
 	if err := d.Restore(ctx, ad.RestoreRequest{Object: id, NewParent: np, RDNType: rdnTypeFor(st.Entry.Strings("objectClass")), Value: r.GetRdnValue()}); err != nil {
-		return nil, adRefusal(err)
+		return nil, structureRefusal(err)
 	}
 	after, err := d.DeletedState(ctx, id)
 	if err != nil || after.Deleted || after.Parent != np || rdnValueOf(after) != r.GetRdnValue() {

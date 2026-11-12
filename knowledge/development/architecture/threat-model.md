@@ -788,7 +788,7 @@ SW validated write. GUIDs shortened with "…" are taken **from the forest's sch
 | R12 | Home and profile folders (ADM-023) | AD: WP `homeDirectory`, `homeDrive`, `profilePath`. File server: "Create Folders / Append Data" + Read on the share root; the **user** owns their folder with Modify | File server (an `InventoryHost`) + user attributes | No standing Full Control over all home folders; implementation with windows-engineer |
 | R13 | Hardening wizard (ENH-08) | **None standing** (TM-D3) | — | — |
 | R14 | Replication-status read (SYS-03, ADM-092) — **optional, off by default** (TM-D31) | Control access right **Monitor Active Directory Replication** (DS-Replication-Monitor-Topology; GUID read from the forest's `rightsGuid` at run time, never hard-coded) `[UNVERIFIED — LAB: Windows]` on the head of each partition the report covers, granted to a dedicated read-only group holding the connection account | Partition heads of the domains in scope; no write, no data-replication right | Reads topology and failure metadata, not directory data; it is **not** Get-Changes, is not in C11 and the scanner must never treat the two as interchangeable. Membership in Administrators or Domain Admins to obtain it is a reject. The report-visible effect of a missing right is TM-D31 rule 4 |
-| R15 | Read of `CN=Deleted Objects`. **Two uses, two answers (TM-D33, T-1730).** (a) Recently Deleted tombstone columns and any listing: **never requested in v1** (TM-D31 rule 6). (b) Kind 6 `OBJECT_RESTORE` step-7 read of the deleted target: **optional, off by default, requested only when restore (R9) is enabled for that domain** | (b) only: **List Contents (`LC`, 0x4) and Read Control (`RC`) on `CN=Deleted Objects` itself**, one explicit non-inheritable ACE (no CI/OI flags) whose trustee is a dedicated group holding only the connector's connection identity (the identity that makes every step-7 read). Never Read Property, never Write, never ownership left with anyone but SYSTEM, never to `adq-restore`, a technician role or a broad principal | The `CN=Deleted Objects` container of each domain where restore is enabled (a child domain has its own container and its own grant). Cannot be scoped to an OU or a class | `LC` alone is the only grant that makes a deleted object readable to a non-administrator; no per-object grant works (measured on Windows Server 2025, [T-1633](../domain/deleted-object-read-access.md)). `RC` is for the check only: it lets VerifyConnection and Plan read the container's owner and DACL and prove the grant instead of inferring it from a read (`RC` sufficiency `[UNVERIFIED — LAB: Windows]`, T-1734). Applying it needs a customer Domain Admin to take ownership of the container and put the owner back to SYSTEM ([KB 892806](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/non-administrators-view-deleted-object-container)); activeDIQ emits the plan and never performs it (TM-D3). The restorer (R9) still requests no list right (T-0076) |
+| R15 | Read of `CN=Deleted Objects`. **Two uses, two answers (TM-D33, T-1730).** (a) Recently Deleted tombstone columns and any listing: **never requested in v1** (TM-D31 rule 6). (b) Kind 6 `OBJECT_RESTORE` step-7 read of the deleted target: **optional, off by default, requested only when restore (R9) is enabled for that domain** | (b) only: **List Contents (`LC`, 0x4) and Read Control (`RC`) on `CN=Deleted Objects` itself**, one explicit non-inheritable ACE (no CI/OI flags) whose trustee is a dedicated group holding only the connector's connection identity (the identity that makes every step-7 read). Never Read Property, never Write, never ownership left with anyone but SYSTEM, never to `adq-restore`, a technician role or a broad principal | The `CN=Deleted Objects` container of each domain where restore is enabled (a child domain has its own container and its own grant). Cannot be scoped to an OU or a class | `LC` alone is the only grant that makes a deleted object readable to a non-administrator; no per-object grant works (measured on Windows Server 2025, [T-1633](../domain/deleted-object-read-access.md)). `RC` is for the check only: it lets VerifyConnection and Plan read the container's owner and DACL and prove the grant instead of inferring it from a read (`RC` sufficiency measured, T-1734: the holder reads the container's owner and DACL by WKGUID or DN with show-deleted and SD_FLAGS exactly 0x5, and `RC` alone is enough to read it; an SD_FLAGS value with the SACL bit returns the entry **without** the attribute and without an error). Applying it needs a customer Domain Admin to take ownership of the container and put the owner back to SYSTEM ([KB 892806](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/non-administrators-view-deleted-object-container)); activeDIQ emits the plan and never performs it (TM-D3). The restorer (R9) still requests no list right (T-0076) |
 
 **TM-D31 — Replication-monitoring read and Deleted Objects visibility (T-1125, security-architect).**
 Rules for the second report slice ([reports-2-second-slice.md](../../product/specs/reports-2-second-slice.md) §4.1 rule 7/7b, §7.3, §13):
@@ -843,8 +843,11 @@ class of data.
 2. **How it is applied.** The hardening wizard emits a reviewed plan built with the typed security-descriptor primitive
    (T-0149; never SDDL text, never a glued `dsacls` string): take ownership of the container, add the ACE, then write owner and
    DACL back (SD_FLAGS 0x5) with the owner reset to SYSTEM. A customer Domain Admin applies it. The removal plan has the same
-   shape. Owner reset to SYSTEM is measured (T-1633); that the `LC` ACE survives the owner reset is `[UNVERIFIED — LAB: Windows]`
-   (T-1734).
+   shape. Owner reset to SYSTEM is measured (T-1633), and **the `LC`|`RC` ACE survives it, in both write orders** (one 0x5 write; or a DACL-only
+   0x4 write then an owner-only 0x1 write; [T-1734](../domain/deleted-object-read-access.md), Windows Server 2025). Two
+   facts the plan must be built on (T-1734): the default container descriptor is unreadable to everyone but SYSTEM, Domain Admin included, so the plan's
+   first step is the owner-only write (SD_FLAGS 0x1, accepted over LDAPS) and it cannot show the as-found DACL before it; and the removal plan needs the same
+   takeover, because writing the baseline with the owner still SYSTEM is refused (`insufficientAccessRights`).
 3. **What the connector may do with it.** Only a **base-scope** read of `<GUID=…>` with the show-deleted control
    (`1.2.840.113556.1.4.417`, critical), the show-deactivated-link control (`1.2.840.113556.1.4.2065`), SD_FLAGS 0x7 (owner,
    group, DACL; never the SACL), and the fixed R2 attribute list, from kind 6 `Plan`/`Apply` step 7 only; plus a base-scope read
@@ -941,6 +944,7 @@ Computed, per forest and domain (ad-expert consult; Microsoft tier model; Specte
 | C17 | **Control of a root of trust (TM-D26).** Principals — resolved by token (`objectSid`, `tokenGroups`, **and `sIDHistory`**) — that hold, on the **domain head, the Configuration head, the Schema head or `CN=AdminSDHolder`**, any of: `WRITE_DAC`, `WRITE_OWNER`, `GENERIC_ALL`, `GENERIC_WRITE`, an all-properties or `gPLink` `WriteProperty`, all extended rights, or **ownership** of the object. WriteDACL on the domain object lets the holder "grant full control of the domain" ([BloodHound WriteDacl](https://bloodhound.specterops.io/resources/edges/write-dacl)), and so DCSync in one step. A `gPLink` write on the head reaches every DC (C9) |
 | C18 | **Privileged `sIDHistory` (TM-D26).** Any security principal (user, computer, group, `inetOrgPerson`) whose `sIDHistory` holds a SID that is privileged, by RID alone and whatever the domain prefix, or that resolves to a `tier0` object. It carries that SID in its token, so the member walk (C2) misses it. `sIDHistory` holds "previous SIDs used for the object if the object was moved from another domain" ([sIDHistory](https://learn.microsoft.com/en-us/windows/win32/adschema/a-sidhistory)) |
 | C19 | **Control of a Tier-0 object (TM-D27, depth 1).** Principals — by token, as C17 — that hold a takeover right (TM-D27 table) on, or own, a **C19 object**: a C1 or C13 group, a C1 account (`krbtgt`, `krbtgt_<n>` of each RODC, RID 500), a **DC computer object** (primary group 516 or 521, and the computer behind every `nTDSDSA`), the **Domain Controllers OU** (`wellKnownObjects`) and every OU or container that directly holds a DC object, and each GPO that C9 marks `tier0`. The rights are read from the object's own live DACL, never inferred from SDProp |
+| C20 | **The connector's own identity and registered activeDIQ service identities (TM-D34, T-1643).** The bound principal (from Who am I on the bound session), the bound gMSA and its retrieval-list computer accounts, and the server's registry of service identities in this directory (sent as `ACTIVEDIQ_SERVICE` designations). Refused for every write kind: otherwise an operator with `reset_password` sets a known password on the connector's account and gets TM-A1 outside RBAC and audit. See [connector-own-identity-tm-d34.md](connector-own-identity-tm-d34.md) |
 
 **Customer-designated** (not derivable from LDAP): Entra Connect servers — Microsoft: "must be
 treated as a Tier 0 component"
@@ -1493,6 +1497,7 @@ Run as the connector identity, no Domain Admin needed:
 5. **Delegation configuration of the identity itself:** no `msDS-AllowedToDelegateTo`, neither
    TRUSTED_FOR_DELEGATION nor TRUSTED_TO_AUTH_FOR_DELEGATION, and absent from every DC's RBCD
    attribute (§6.7).
+6. **The identity must not control itself (V7e, TM-D34).** Read the identity's own object and its gMSA host computer accounts; Fail if it lies inside a `managed_roots`, Warn if its token holds Reset Password, `WriteProperty` on `unicodePwd`/`userAccountControl`, `WRITE_DAC`, `WRITE_OWNER` or generic write/all on them.
 
 **Samba.** The three constructed attributes are implemented in Samba's ACL module with the same
 semantics (confirmed in Samba source by the ad-expert consult), so the CI check is meaningful.
@@ -1989,10 +1994,37 @@ authority through activeDIQ.
    already "never delegate" in §6.3 R7; `sIDHistory` is C18; `primaryGroupID` changes grants and
    belongs to TM-D18. B3 fails any Action that writes one.
 
+   **Also denied (T-1646): `msDS-AdditionalDnsHostName` and `msDS-AdditionalSamAccountName`.**
+   Decision: denied, not `rename_logon`. Reasons: (1) the schema marks `msDS-AdditionalDnsHostName`
+   System-Only True with "This value is set by the system", at computer rename or `netdom
+   computername` ([schema](https://learn.microsoft.com/en-us/windows/win32/adschema/a-msds-additionaldnshostname));
+   the supported client path is the NetLogon RPC `NetrAddAlternateComputerName`
+   ([MS-NRPC](https://msdn.microsoft.com/en-us/library/0d84af25-9310-4b2e-bcba-b9b085554102)),
+   which is a rename operation, not an attribute edit, so a generic setter has no business with it.
+   (2) It is not a harmless label. MS-ADTS lets a `servicePrincipalName` hostname match
+   `dNSHostName`, the `sAMAccountName`, **any `msDS-AdditionalDnsHostName` value** or any
+   `msDS-AdditionalSamAccountName` value
+   ([MS-ADTS SPN rules](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/28ca4eca-0e0b-4666-9175-a37ccb8edada)),
+   so an extra value widens which SPNs a Validated-SPN writer may add. An actor who can write it can
+   mint SPNs for a hostname of their choice on a computer, which is `set_spn`/`map_credential`
+   power (Kerberos service impersonation) reached without those permissions. (3) `dNSHostName` is
+   already `rename_logon` because spoofing it is a known escalation
+   ([Certifried](https://legacy.thehacker.recipes/~/revisions/X3zcRQTzmPqPbYiycUUx/a-d/movement/ad-cs/certifried));
+   the additional-name attributes are the same identity surface and gain no weaker class.
+   (4) A tenant has a validated write right for it
+   ([validated writes](https://learn.microsoft.com/en-us/windows/win32/adschema/validated-writes)),
+   so the DC's own check is a second line, never the only one. `msDS-AdditionalSamAccountName` is
+   denied with it as its sibling in the same SPN rule; its System-Only flag is `[UNVERIFIED]`
+   (lab G17 reads both flags on Samba and Windows), and the denial does not depend on it.
+   **Reviewed and kept as they are:** `sAMAccountName`, `userPrincipalName`, `dNSHostName`
+   (`rename_logon`); `servicePrincipalName` (`set_spn`); `displayName`, `givenName`, `sn`,
+   `description`, `department` (labels with no sign-in meaning, unguarded). Reversing the decision
+   needs a review that edits this paragraph, the block and connector-contract 8.10.4 together.
+
    **Considered, not guarded (and why).** `scriptPath`, `profilePath`, `homeDirectory`: they run
    code or mount a share at the account's own sign-in; they do not let the actor sign in as it
    (code execution as the user is a different threat, TM-D18 neighbour; left to the OU/GPO
-   guards). `msDS-AdditionalDnsHostName`: no known sign-in effect `[UNVERIFIED]`. `mail`,
+   guards). `mail`,
    `otherMails`, `mobilePhone` in Entra can feed self-service password reset contact data
    `[UNVERIFIED — lab G17, Entra tenant with SSPR]`; until G17 reports, they are written only
    through the same Entra constructor path and are guarded as `reset_password` (conservative).
@@ -2113,7 +2145,7 @@ map_credential: msDS-KeyCredentialLink, altSecurityIdentities, entra:authorizati
 set_spn: servicePrincipalName
 signin_flags: uac.set(PASSWD_NOTREQD 0x0020, ENCRYPTED_TEXT_PWD_ALLOWED 0x0080, DONT_EXPIRE_PASSWORD 0x10000, USE_DES_KEY_ONLY 0x200000, DONT_REQ_PREAUTH 0x400000), uac.clear(SMARTCARD_REQUIRED 0x40000, NOT_DELEGATED 0x100000), msDS-SupportedEncryptionTypes
 signin_limits: accountExpires>now, logonHours (not provably a subset), userWorkstations (widened or cleared)
-denied: msDS-AllowedToActOnBehalfOfOtherIdentity, msDS-AllowedToDelegateTo, uac.set(TRUSTED_FOR_DELEGATION 0x80000, TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000), sIDHistory, primaryGroupID, entra:authenticationMethods, entra:temporaryAccessPass
+denied: msDS-AllowedToActOnBehalfOfOtherIdentity, msDS-AllowedToDelegateTo, uac.set(TRUSTED_FOR_DELEGATION 0x80000, TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000), sIDHistory, primaryGroupID, msDS-AdditionalDnsHostName, msDS-AdditionalSamAccountName, entra:authenticationMethods, entra:temporaryAccessPass
 ```
 
 Hex values are `[UNVERIFIED]` against MS-ADTS until lab G17 reads each bit on Samba and
@@ -3344,7 +3376,7 @@ control.
 | R-AN8-2 | Multi-source and shared-address saturation of the AN-8 in-flight gate (T-0809, §7.6 rule 2d): an attacker with 4 sources (4 IPv4 addresses, or an IPv6 /62) holds all 4 slots and every other source gets the `429`; an attacker sharing an address with the break-glass admin (same NAT/CGNAT, or a proxy not listed in `ACTIVEDIQ_TRUSTED_PROXIES`) holds that address's one slot | A slot gate cannot tell sources apart beyond the address; per-source share lifts the bar from one client to four distinct prefixes, each also held to the §7.8 per-IP `auth` rate. A larger global cap costs 64 MiB per slot | security-architect | console source-CIDR allow-list (§7.6 rule 4), per-IP `auth` rate (§7.8), edge rate limits (TM-O8), uniform name-independent `429`; revisit if a deployment reports a break-glass lock-out, or when prefix lengths are tightened (§7.8 rule 3) |
 
 | TM-R26 | **External report schedule with a stolen second factor, accepted (T-0893).** An attacker holding a hijacked session and the victim's MFA factor can still create a schedule that mails owner-scope data outside the organisation | Step-up cannot defend a stolen factor; the schedule is visible to its owner and `manage_all` holders, every write, fire and delivery is audited with the confirmed addresses, and the owner-authority rule pauses it when the owner is disabled (TM-D30) | security-architect | If customers ask for four-eyes on external delivery, add an optional approval gate for SX-1 writes |
-| TM-R28 | **TM-D33, accepted.** Where a customer grants R15 (b), the connection identity's credential, and a compromised server through kind-6 Plans by GUID, can enumerate every deleted object of that domain (name, DN, GUID, class) and read each one's attributes as far as its retained descriptor allows | The only grant that makes the restore gate work (T-1633). Bounded by retained descriptors (measured for explicit ACEs). The identity already reads the live directory; deleted members of live groups are visible to anyone through control 2065. Password hashes are never LDAP-readable; that confidential attributes still need CONTROL_ACCESS on a deleted object is `[UNVERIFIED — LAB: Windows]` (T-1734). Optional and per domain; activeDIQ issues no listing (TM-F-RIGHTS (b)); every Plan audited | security-architect | A deleted object more readable than it was live, or a secret-bearing attribute readable on a deleted object without its live right (TM-D33 rule 7) |
+| TM-R28 | **TM-D33, accepted.** Where a customer grants R15 (b), the connection identity's credential, and a compromised server through kind-6 Plans by GUID, can enumerate every deleted object of that domain (name, DN, GUID, class) and read each one's attributes as far as its retained descriptor allows | The only grant that makes the restore gate work (T-1633). Bounded by retained descriptors (measured for explicit ACEs). The identity already reads the live directory; deleted members of live groups are visible to anyone through control 2065. Password hashes are never LDAP-readable; that confidential attributes still need CONTROL_ACCESS on a deleted object is **measured** (T-1734: `msLAPS-Password` and `unixUserPassword` on a deleted computer were returned only to the identity holding Control Access, exactly as live; and an inherited deny on the OU applies to the deleted child, whose descriptor is byte-identical to its live one, so TM-D33 rule 7's triggers did not fire). Optional and per domain; activeDIQ issues no listing (TM-F-RIGHTS (b)); every Plan audited | security-architect | A deleted object more readable than it was live, or a secret-bearing attribute readable on a deleted object without its live right (TM-D33 rule 7) |
 
 ### 16.2 Decisions owed to the CEO (not asked now)
 
@@ -3496,8 +3528,14 @@ External, in order of first use:
 92. https://learn.microsoft.com/en-gb/windows/win32/ad/security-properties (T-0388; `logonHours`, `userWorkstations`)
 93. https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0 (T-0388; not re-read, `[UNVERIFIED]`)
 94. https://thehacker.recipes/ad/movement/kerberos/asreproast (T-0388; not re-read, `[UNVERIFIED]`)
+95. https://learn.microsoft.com/en-us/windows/win32/adschema/a-msds-additionaldnshostname (T-1646; System-Only True, set by the system)
+96. https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/28ca4eca-0e0b-4666-9175-a37ccb8edada (T-1646; SPN hostname rule)
+97. https://learn.microsoft.com/en-us/windows/win32/adschema/validated-writes (T-1646)
 
 ## Changelog
+
+- 2026-11-12 · T-1646. `msDS-AdditionalDnsHostName` and `msDS-AdditionalSamAccountName` are `denied` in §6.9 rule 5 and the `guarded-v1` block (not `rename_logon`), with sources 95 to 97; connector-contract 8.10.4 gains both names in the same change. Reviewed name attributes listed in rule 5.
+- 2026-11-07 · T-1643. New basis C20 (connector's own identity and registered service identities, refused for every write kind), §6.5 step 6 (V7e: the identity must not control itself), DECISION TM-D34 in [connector-own-identity-tm-d34.md](connector-own-identity-tm-d34.md), threats TM-D34-T1..T10. Contract §8.1, §8.10.3, CC-WK-27/28/36-40.
 
 - 2026-11-05 · T-1621 (review of T-1581 write kinds). §7.4 gains the directory password reset row (`USER_PASSWORD_RESET`, TM-D28 `reset_password`), which is the source for `StepUp = true`. `OBJECT_CREATE` of a USER with a password stays outside §7.4 (TM-D28 rule 3). Rulings on delete, restore, `SecretValue` and unlock are in [connector-contract.md](connector-contract.md) §8.10.9.
 - 2026-11-04 · T-1475: §7.6 rule 3 cites RULING AN8-A1 (owner alert rides the `authn_authority_notices` outbox, drained to notify; break-glass succeeds when the channel is down, alert retried, failure audited); new residual R-AN8-3 in the ruling; T-0801 split into four chained builds.

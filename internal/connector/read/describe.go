@@ -54,6 +54,7 @@ func (h *Handler) Describe(ctx context.Context, req *connectorv1.DescribeRequest
 		DescribedAt:       timestamppb.New(h.now()),
 		Limits:            &connectorv1.Limits{MaxPageSize: top.Limits.MaxPageSize, MaxValueRange: top.Limits.MaxValueRange},
 	}
+	out.Operations = write.Capabilities()
 	for _, nc := range top.NamingContexts {
 		info := &connectorv1.NamingContextInfo{
 			NcGuid:      write.GUIDToWire(nc.GUID),

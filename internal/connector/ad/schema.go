@@ -84,6 +84,8 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "dNSHostName", Syntax: s},
 			ldapfilter.AttrInfo{Name: "servicePrincipalName", OID: "1.2.840.113556.1.4.771", Syntax: s},
 			ldapfilter.AttrInfo{Name: "msDS-AdditionalDnsHostName", OID: "1.2.840.113556.1.4.1717", Syntax: s},
+			// isDeleted: read with the show-deleted control for the OBJECT_DELETE retry check (T-1623); never writable (deny-list).
+			ldapfilter.AttrInfo{Name: "isDeleted", OID: "1.2.840.113556.1.2.48", Syntax: ldapfilter.SynBool},
 			ldapfilter.AttrInfo{Name: "lDAPDisplayName", OID: "1.2.840.113556.1.2.460", Syntax: s},
 			ldapfilter.AttrInfo{Name: "schemaIDGUID", OID: "1.2.840.113556.1.4.148", Syntax: ldapfilter.SynOctet},
 			ldapfilter.AttrInfo{Name: "attributeSecurityGUID", OID: "1.2.840.113556.1.4.149", Syntax: ldapfilter.SynOctet},
