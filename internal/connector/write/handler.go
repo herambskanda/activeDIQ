@@ -303,11 +303,8 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	var declared []string
 	if w, ok := h.ops[c.kind]; ok && c.kind != connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
 		op = &w
-		if w.Arm != nil && !w.Arm(c.change) && !(c.name == "apply" && w.WantsSecret && !c.secret) {
-			return nil, invalid("4", "WriteChangeArmMismatch", "change")
-		}
-		if c.name == "apply" && c.secret != w.WantsSecret {
-			return nil, invalid("4", "SecretInputMismatch", "secret_input")
+		if r := stepFourShape(w, c); r != nil {
+			return nil, r
 		}
 		if w.Vet != nil {
 			var pd ObjectDirectory
@@ -769,6 +766,23 @@ func shapeCheck(c *call) *Refusal {
 			c.change.GetObjectCreate().GetHasSecretInput()
 	if wants != c.secret {
 		return invalid("1", "SecretInputMismatch", "secret_input")
+	}
+	return nil
+}
+
+// stepFourShape is the step-4 check of the arm and the secret for a kind that declares its own Arm (the
+// account kinds). A kind with no Arm (the object kinds) has both rules in shapeCheck at step 1, because
+// whether a create carries a secret depends on its change, not on the kind alone: comparing c.secret
+// with WantsSecret here would refuse every user create that carries a password.
+func stepFourShape(w WriteOp, c *call) *Refusal {
+	if w.Arm == nil {
+		return nil
+	}
+	if !w.Arm(c.change) && !(c.name == "apply" && w.WantsSecret && !c.secret) {
+		return invalid("4", "WriteChangeArmMismatch", "change")
+	}
+	if c.name == "apply" && c.secret != w.WantsSecret {
+		return invalid("4", "SecretInputMismatch", "secret_input")
 	}
 	return nil
 }
