@@ -272,6 +272,50 @@ func TestAccountApplyRefusesChangedTargetAndWrongClass(t *testing.T) {
 	}
 }
 
+// T-1803: kinds 8-10 (disable, enable, unlock): every refused class row goes through both Plan and Apply for every account kind, with zero
+// Modify requests, wherever the foreign class sits in the (unordered) objectClass list.
+func TestAccountClassMatrix(t *testing.T) {
+	id := mk(35)
+	states := map[string]func() ad.AccountState{
+		accountkind.KeyDisable: func() ad.AccountState { return userState(id, 512, 0) },
+		accountkind.KeyEnable:  func() ad.AccountState { return userState(id, 514, 0) },
+		accountkind.KeyUnlock:  func() ad.AccountState { return userState(id, 512, 5) },
+	}
+	rows := map[string][]string{
+		"group":        {"top", "group"},
+		"gmsa-last":    {"top", "computer", "msDS-GroupManagedServiceAccount"},
+		"gmsa-middle":  {"top", "msDS-GroupManagedServiceAccount", "person", "organizationalPerson", "computer", "user"},
+		"gmsa-first":   {"msDS-GroupManagedServiceAccount", "top", "person", "organizationalPerson", "user"},
+		"unknown-last": {"top", "person", "organizationalPerson", "user", "contact"},
+		"unknown-mid":  {"top", "person", "fooBar", "organizationalPerson", "user"},
+	}
+	for key, mkState := range states {
+		sp, _ := accountkind.ByKey(key)
+		r, fs := acctRig(t, nil, mkState())
+		p, a := kindReqs(sp, id, false)
+		pr, err := r.h.Plan(context.Background(), p)
+		if err != nil {
+			t.Fatalf("%s baseline plan: %v", key, err)
+		}
+		a.Precondition = pr.Precondition
+		for name, classes := range rows {
+			fs.state = mkState()
+			fs.state.Classes = classes
+			_, err = r.h.Plan(context.Background(), p)
+			if ce := connErr(t, err); ce.GetRejectedInput().GetRuleId() != "ClassNotAllowed" {
+				t.Errorf("%s/%s plan: %v", key, name, ce)
+			}
+			_, err = r.h.Apply(context.Background(), a)
+			if ce := connErr(t, err); ce.GetRejectedInput().GetRuleId() != "ClassNotAllowed" {
+				t.Errorf("%s/%s apply: %v", key, name, ce)
+			}
+			if len(fs.sent) != 0 {
+				t.Errorf("%s/%s: %d Modify requests sent", key, name, len(fs.sent))
+			}
+		}
+	}
+}
+
 // CC-WK-29: the arm and the secret presence are checked before any directory call.
 func TestAccountArmAndSecretMismatchBeforeDirectoryCall(t *testing.T) {
 	id := mk(34)
