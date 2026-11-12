@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
@@ -232,7 +231,7 @@ func (h *harness) successEventViolations(out runOut) []Violation {
 			key: a.key, component: component, diff: a.sp.Diff, checkDiff: true}) {
 			vs = append(vs, Violation{ClauseAuditSuccess, fmt.Sprintf("step %d: %s", a.key.Item, p)})
 		}
-		for _, attr := range unflaggedSecrets(a.sp.Diff) {
+		for _, attr := range unflaggedSecrets(a.sp.Diff, h.fx.SecretAttr) {
 			vs = append(vs, Violation{ClauseAuditSuccess, fmt.Sprintf("step %d: change to %q is a secret attribute but the plan does not flag it Secret, so its values reach the event (AG-9)", a.key.Item, attr)})
 		}
 		if a.key.Operation != op {
@@ -318,13 +317,13 @@ func (h *harness) denialEventViolations(out runOut) []Violation {
 // §3.7) and are not marked Secret. The runner redacts only what the plan flags, so an Action that forgets
 // the flag would write a password into the append-only trail (AG-9). AD attribute names are
 // case-insensitive.
-func unflaggedSecrets(diff []operation.Change) []string {
+func unflaggedSecrets(diff []operation.Change, isSecret func(string) bool) []string {
 	var out []string
 	for _, c := range diff {
 		if c.Secret {
 			continue
 		}
-		if secretattr.IsStatic(c.Attribute) {
+		if isSecret(c.Attribute) {
 			out = append(out, c.Attribute)
 		}
 	}

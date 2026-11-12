@@ -65,7 +65,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"reflect"
 	"slices"
 	"sync"
@@ -97,6 +96,10 @@ const (
 
 // Fixture is what an Action needs to be exercised.
 type Fixture struct {
+	// SecretAttr says whether an attribute name is a known secret attribute (AG-9). Required: the
+	// runner is built with it, and the harness flags a plan that changes such an attribute without
+	// Secret. Pass secretattr.IsStatic (the kernel cannot import it, so the caller does).
+	SecretAttr func(name string) bool
 	// Input is a valid input for the Action. It must plan at least one step for the Apply and Verify
 	// clauses to be exercised; an Action that plans none is recorded as such.
 	Input operation.Input
@@ -181,6 +184,9 @@ func checkWith(t testing.TB, action operation.Action, fx Fixture, o options) (Re
 	}
 	d := action.Describe()
 	rec.Action, rec.Version, rec.Target = d.ID, d.Version, string(d.Target)
+	if fx.SecretAttr == nil {
+		return rec, []Violation{{ClauseDescriptor, "Fixture.SecretAttr is required (AG-9): pass secretattr.IsStatic"}}
+	}
 
 	actor := fx.Actor
 	if actor.Validate() != nil {
@@ -359,7 +365,7 @@ func (h *harness) run(act operation.Action, az operation.Authorizer, in operatio
 	if h.o.sink != nil {
 		sink = h.o.sink(sink)
 	}
-	r, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: sink, Authz: az, Registry: reg,
+	r, err := operation.NewRunner(operation.Config{SecretAttr: h.fx.SecretAttr, DB: db, Audit: sink, Authz: az, Registry: reg,
 		Facts: h.fx.Facts, Component: component})
 	if err != nil {
 		return runOut{}, err
