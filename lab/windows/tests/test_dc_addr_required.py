@@ -4,13 +4,14 @@ A driver started without WIN_LAB_DC_ADDR must exit non-zero naming the key, befo
 builds anything or opens a socket (a sitecustomize hook turns any connect into a recorded failure), and no
 file under lab/ or the runbooks may hard-code the old dc1 address that now belongs to another LAN device.
 """
-import os, subprocess, sys, tempfile, unittest
+import os, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 LAB = Path(__file__).resolve().parent.parent
 REPO = LAB.parent.parent
 OLD = "192.168.1." + "9"  # assembled so this file does not match its own scan
-DRIVERS = ["agent-verify", "agent-unenrolled-verify", "gssapi-lab"]
+DRIVERS = ["agent-verify", "agent-unenrolled-verify", "gssapi-lab", "dc1-clock", "dc1-policy", "dc1-evidence", "skeleton-proof-evidence"]
+GATED_VIA_LOADER = ["capture-tsprops"]  # subcommand CLI; gated by dc1winrm.load_env, covered by test_shared_loader_has_no_default
 HOOK = """import socket
 def _no(*a, **k):
     open(%r, "a").write("connect\\n"); raise OSError("network blocked by test")
@@ -30,7 +31,13 @@ class DcAddrRequired(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k != "WIN_LAB_DC_ADDR"}
         env.update(WIN_LAB_ENV=str(envf), PYTHONPATH=str(d), DIQ_DC1_LOCK_DIR=str(d / "lock"))
         env.update(extra_env or {})
-        r = subprocess.run([sys.executable, str(LAB / "bin" / name), "--log", str(d / "x.log"), "prepare"],
+        if name == "dc1-evidence":
+            args = ["now"]
+        elif name == "agent-unenrolled-verify":
+            args = ["--log", str(d / "x.log")]  # no subcommand; the address gate runs right after parse_args
+        else:
+            args = ["--log", str(d / "x.log"), "prepare"]
+        r = subprocess.run([sys.executable, str(LAB / "bin" / name), *args],
                            env=env, capture_output=True, text=True, timeout=60)
         return r, marker, d
 
@@ -59,6 +66,7 @@ class DcAddrRequired(unittest.TestCase):
                     self.assertFalse(marker.exists())
 
     def test_set_key_passes_the_address_gate(self):
+        from importlib.machinery import SourceFileLoader
         sys.path.insert(0, str(LAB / "lib"))
         import labaddr
         d = Path(tempfile.mkdtemp()); f = d / "e"; f.write_text('WIN_LAB_DC_ADDR="10.9.8.7"\n')
@@ -67,35 +75,14 @@ class DcAddrRequired(unittest.TestCase):
 
     def test_every_driver_is_covered(self):
         # any driver under bin/ that talks WinRM must use the gate, so a new driver cannot reintroduce a default
-        # (dc1winrm.load_env applies the gate itself; the three named drivers also call it before the dc1 lock)
-        for p in sorted((LAB / "bin").iterdir()):
-            if not p.is_file():
-                continue
+        for p in sorted(q for q in (LAB / "bin").iterdir() if q.is_file()):
             t = p.read_text(errors="replace")
-            if "winrm" in t:
-                self.assertTrue("require_dc_addr" in t or "dc1winrm.load_env" in t,
+            if "winrm" in t or "dc1winrm" in t:
+                # dc1winrm.load_env returns require_dc_addr(...), so a driver that loads its env through it is gated
+                self.assertTrue("require_dc_addr" in t or "dc1winrm.load_env" in t
+                                or re.search(r"from dc1winrm import [^\n]*\bload_env\b", t),
                                 f"{p.name} reaches the DC without the required-address gate")
-        for name in DRIVERS:
-            t = (LAB / "bin" / name).read_text()
-            self.assertTrue("require_dc_addr" in t or "dc1winrm.load_env" in t, f"{name} has no address gate")
-            if "os.execv(" in t:  # a driver that re-execs under the lock must gate first
-                self.assertLess(t.index("require_dc_addr("), t.index("os.execv("), f"{name} gates after the lock")
-
-    def test_shared_loader_has_no_default(self):
-        sys.path.insert(0, str(LAB / "lib"))
-        import dc1winrm
-        d = Path(tempfile.mkdtemp()); f = d / "e"; f.write_text("WIN_LAB_ADMIN_PASSWORD=x\n")
-        old = {k: os.environ.pop(k, None) for k in ("WIN_LAB_DC_ADDR",)}
-        os.environ["WIN_LAB_ENV"] = str(f)
-        try:
-            with self.assertRaises(SystemExit) as c:
-                dc1winrm.load_env("t")
-            self.assertIn("WIN_LAB_DC_ADDR", str(c.exception))
-        finally:
-            os.environ.pop("WIN_LAB_ENV", None)
-            for k, v in old.items():
-                if v is not None:
-                    os.environ[k] = v
+                self.assertIn(p.name, DRIVERS + GATED_VIA_LOADER, f"add {p.name} to DRIVERS")
 
     def test_old_address_is_gone_from_lab_and_runbooks(self):
         hits = []
@@ -109,6 +96,21 @@ class DcAddrRequired(unittest.TestCase):
                     except UnicodeDecodeError:
                         pass
         self.assertEqual(hits, [])
+
+    def test_shared_loader_has_no_default(self):
+        sys.path.insert(0, str(LAB / "lib"))
+        import dc1winrm
+        d = Path(tempfile.mkdtemp()); f = d / "e"; f.write_text("WIN_LAB_ADMIN_PASSWORD=x\n")
+        old = os.environ.pop("WIN_LAB_DC_ADDR", None)
+        os.environ["WIN_LAB_ENV"] = str(f)
+        try:
+            with self.assertRaises(SystemExit) as c:
+                dc1winrm.load_env("t")
+            self.assertIn("WIN_LAB_DC_ADDR", str(c.exception))
+        finally:
+            os.environ.pop("WIN_LAB_ENV", None)
+            if old is not None:
+                os.environ["WIN_LAB_DC_ADDR"] = old
 
 
 if __name__ == "__main__":

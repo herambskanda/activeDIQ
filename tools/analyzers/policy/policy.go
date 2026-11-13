@@ -17,7 +17,7 @@ import (
 // Homes of the primitives (blueprint §1.1 and §7.4).
 const (
 	Connector   = "internal/connector"                   // the only importer of directory protocol libraries
-	Scope       = "internal/connector/ad/scope"          // escape controls and the Global Catalog port
+	Scope       = "internal/connector/ad/scope"          // escape-control named-operation table only (LF-30)
 	Psx         = "internal/connector/psx"               // typed PowerShell sidecar client
 	LDAPFilter  = "internal/directory/ldapfilter"        // P1
 	DN          = "internal/directory/dn"                // P2

@@ -245,10 +245,11 @@ const (
 	OpClearManager
 	OpMoveOrRename
 	OpGroupMembership
+	OpDelete // AD only (contract §8.9, T-1621): removes the object; Keys are empty and ignored
 )
 
 func (o Op) String() string {
-	names := [...]string{"", "UPDATE", "CREATE", "INVITE", "ASSIGN_LICENSE", "SET_MANAGER", "CLEAR_MANAGER", "MOVE_OR_RENAME", "GROUP_MEMBERSHIP"}
+	names := [...]string{"", "UPDATE", "CREATE", "INVITE", "ASSIGN_LICENSE", "SET_MANAGER", "CLEAR_MANAGER", "MOVE_OR_RENAME", "GROUP_MEMBERSHIP", "DELETE"}
 	if o < 1 || int(o) >= len(names) {
 		return "UNKNOWN"
 	}
@@ -344,7 +345,7 @@ func validWrite(w PropertyWrite) bool {
 		return w.Plane == PlaneEntra && (w.Kind == WriteUser || w.Op == OpAssignLicense && w.Kind == WriteGroup)
 	case OpSetManager, OpClearManager:
 		return w.Kind == WriteUser
-	case OpMoveOrRename:
+	case OpMoveOrRename, OpDelete:
 		return w.Plane == PlaneAD
 	}
 	return false
@@ -421,6 +422,16 @@ func decide(w PropertyWrite, sc RuleScope, ext map[string]string) []string {
 		}
 	case OpMoveOrRename:
 		if sc.RefuseAll || sc.Properties[prefix+"onpremisesdistinguishedname"] || w.Kind == WriteDevice && sc.Properties["device.organizationalunit"] {
+			return none
+		}
+	case OpDelete:
+		// Deleting a group removes it from every member's memberOf, so a rule that reads membership
+		// (a 'not memberOf' form) can start to match those members by absence (T-1621 R1). Any other
+		// object only leaves a rule's scope. Removing an object that is some other object's manager
+		// clears that object's manager (MS-ADTS 3.1.1.1.6), which is not decided here: the connector
+		// declares it as CLEAR_MANAGER when the live read shows direct reports (T-1632 security
+		// review). A memberOf rule is RefuseAll, so the MemberOf and property tests are belt and braces.
+		if w.Kind == WriteGroup && (sc.RefuseAll || sc.MemberOf || sc.Properties["user.memberof"]) {
 			return none
 		}
 	case OpGroupMembership:
