@@ -1,4 +1,4 @@
--- 0073_fleet_server_ca: the installation-scope server CA of the fleet gateway (T-0735; ADR-0008 item 1,
+-- 0074_fleet_server_ca: the installation-scope server CA of the fleet gateway (T-0735; ADR-0008 item 1,
 -- obligation 7; TM-TB6-T15). Owner: internal/platform/fleet (SQL in fleet/fleetsql). One registered-global
 -- table: no tenant_id and no RLS (ADR-0002 rule 4), because the CA belongs to the installation.
 --
