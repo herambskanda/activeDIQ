@@ -21,11 +21,11 @@ import (
 // object-security | incremental-values, the show-deleted control and nothing else (CC-FEED-23); no
 // parameter can change either, and the OIDs are written only in package scope.
 
-// ObjectState is the lifecycle state of a changed object (DM-19).
-type ObjectState uint8
+// ChangeState is the lifecycle state of a changed object (DM-19).
+type ChangeState uint8
 
 const (
-	StateLive     ObjectState = iota + 1 // isDeleted absent or FALSE
+	StateLive     ChangeState = iota + 1 // isDeleted absent or FALSE
 	StateDeleted                         // isDeleted = TRUE, isRecycled not TRUE: restorable only with the Recycle Bin on
 	StateRecycled                        // isRecycled = TRUE (wins over isDeleted): never restorable. Also what a tombstone
 	// looks like when the Recycle Bin is off (Samba sets both flags); the decoder cannot tell the two apart (T-1270).
@@ -52,7 +52,7 @@ type AttributeChange struct {
 // carries an old value, and a rename or move of a parent does not report its children (DM-19.I5).
 type ObjectChange struct {
 	GUID  guid.GUID
-	State ObjectState
+	State ChangeState
 	DN    string // display only; for a tombstone the CN=…\0ADEL:<guid>,CN=Deleted Objects,… form
 	// Parent is the DC-supplied parentGUID; HasParent is false when the DC did not send one (a
 	// tombstone, an NC head, or a DC that does not supply it).

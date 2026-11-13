@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-ldap/ldap/v3"
 
+	"github.com/skenzeriq/activediq/internal/connector/ad/scope"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 )
 
@@ -204,10 +205,10 @@ func absorbEntry(ent *Entry, pending map[string]int, asked map[string]struct{}, 
 func visibilityControls(opts ReadOptions) []ldap.Control {
 	var c []ldap.Control
 	if opts.showDeleted {
-		c = append(c, showDeleted{})
+		c = append(c, scope.ShowDeleted())
 	}
 	if opts.ShowDeactivatedLink {
-		c = append(c, showDeactivatedLink{})
+		c = append(c, scope.ShowDeactivatedLink())
 	}
 	if opts.ExtendedDN {
 		c = append(c, extendedDN{})
