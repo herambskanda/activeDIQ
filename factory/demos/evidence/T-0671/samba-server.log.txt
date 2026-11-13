@@ -1,0 +1,6 @@
+2026/11/01 16:00:02 INFO server: first-run setup secret issued; read it as the installing administrator with `activediq-server setup show` file=/tmp/tmp.9oeEjgw2w1/tls/setup/setup-secret expires=2026-11-01T17:00:02Z
+2026/11/01 16:00:03 INFO api tag not mounted: no module contributes it tag=connections
+2026/11/01 16:00:03 INFO tenant created by first-run bootstrap tenant_id=bf7a5a9e-9c48-4640-85b5-5c3efbd09c5c
+2026/11/01 16:00:04 INFO server: lab connection active (in-process connector) lab=samba connection_id=ac94e2d2-994c-4140-a4d4-6d88a46631f7 tenant_id=bf7a5a9e-9c48-4640-85b5-5c3efbd09c5c
+2026/11/01 16:00:04 INFO server: api listening (TLS) addr=127.0.0.1:41555 tls_cert_sha256=0E:91:6B:C6:C8:76:10:5A:32:A1:D1:C8:82:CC:E6:22:B3:96:22:73:A1:48:40:37:E5:4F:14:DC:FF:5C:DE:D9
+2026/11/01 16:00:04 INFO server: job worker started

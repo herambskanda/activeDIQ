@@ -23,7 +23,7 @@ export function dispatcherInfo(ctx) {
     alive: age < HEARTBEAT_ALIVE_MS, heartbeat: s.heartbeat, pid: s.pid, active: s.active ?? [],
     backoff_until: s.backoff_until && Date.parse(s.backoff_until) > now.getTime() ? s.backoff_until : null,
     runs_today: { date: today, count: s.runs_today?.date === today ? s.runs_today.count : 0 },
-    last_action: s.last_action,
+    last_action: s.last_action, code_sha: s.code_sha ?? null,
   };
 }
 

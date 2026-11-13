@@ -262,6 +262,18 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 		if reason := r.authoriseTarget(ctx, t, op.Chain, d.Permission, sp.Target, pins, dsas); reason != "" {
 			items[i].blocked = reason
 		}
+		if aa, ok := act.(AlsoAuthorizer); ok && items[i].blocked == "" {
+			for _, x := range aa.AlsoAuthorize(sp) {
+				if x.NC == "" || pins[x.NC] == "" {
+					items[i].blocked = "no_pin" // an extra target in a partition with no pin is never read unpinned
+					break
+				}
+				if reason := r.authoriseTarget(ctx, t, op.Chain, d.Permission, x, pins, dsas); reason != "" {
+					items[i].blocked = reason
+					break
+				}
+			}
+		}
 	}
 	hash := u.planHash
 	var sub Submission

@@ -1,0 +1,7 @@
+=== RUN   TestQAHeapScaling
+    qa_mem_test.go:8: QA   100000 objects: peak heap growth 5.8 MiB, batches 201, largest 500, passes 1
+    qa_mem_test.go:8: QA   400000 objects: peak heap growth 20.8 MiB, batches 801, largest 500, passes 1
+    qa_mem_test.go:8: QA  1000000 objects: peak heap growth 80.5 MiB, batches 2001, largest 500, passes 1
+--- PASS: TestQAHeapScaling (44.74s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/directory/sync	44.774s

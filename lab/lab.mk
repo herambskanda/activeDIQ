@@ -13,6 +13,9 @@ COMPOSE      := docker compose -p $(LAB_PROJECT) -f $(LAB_DIR)/docker-compose.ym
 # snapshot is never reused. It is also tied to the credentials file (a new .lab.env => a new lab).
 LAB_SEED_HASH := $(shell cat $(LAB_DIR)/seed/generate.py $(LAB_DIR)/seed/post-start.sh $(LAB_DIR)/seed/schema-seed.sh $(LAB_DIR)/samba/entrypoint.sh $(LAB_DIR)/samba/Dockerfile 2>/dev/null | shasum -a 256 | cut -c1-12)
 export LAB_TIER
+# One-off `compose run` containers (init/version/restore) survive an interrupted make and hold the
+# project network, so lab-destroy cannot remove it (T-1858). Remove them by compose labels.
+LAB_RUN_CLEAN = docker ps -aq --filter label=com.docker.compose.project=$(LAB_PROJECT) --filter label=com.docker.compose.oneoff=True | xargs -r docker rm -f >/dev/null
 
 .PHONY: lab-up lab-reset lab-rebuild lab-down lab-destroy lab-status lab-logs lab-shell lab-test lab-test-unit lab-test-live lab-test-connector entra-lab-bootstrap entra-lab-verify
 
@@ -22,6 +25,7 @@ lab-up: ## Start the AD lab (provision + seed on first run, ~3-4 min); prints co
 	docker info >/dev/null 2>&1 || { echo "Docker daemon is not running"; exit 1; }; \
 	$(LAB_DIR)/bin/lab-env $(LAB_ENV); \
 	set -a; . $(LAB_ENV); set +a; \
+	$(LAB_RUN_CLEAN); \
 	$(COMPOSE) build $(LAB_BUILD_FLAGS) dc; \
 	want="$(LAB_SEED_HASH)-$(LAB_TIER)-$$LAB_ENV_ID"; \
 	have=$$($(COMPOSE) run --rm --no-deps -T dc version 2>/dev/null | tail -1 | tr -d '\r'); \
@@ -46,8 +50,9 @@ lab-rebuild: lab-destroy lab-up ## Throw the lab away and provision + seed from 
 lab-down: ## Stop the lab (state and snapshot are kept)
 	$(COMPOSE) down
 
-lab-destroy: ## Remove the lab containers, volumes and generated credentials
-	-$(COMPOSE) down -v
+lab-destroy: ## Remove the lab containers (incl. stale one-off dc-run ones), volumes and generated credentials
+	-@$(LAB_RUN_CLEAN)
+	-$(COMPOSE) down -v --remove-orphans
 	rm -f $(LAB_ENV) $(LAB_CA)
 
 lab-status: ## Show lab health and connection details
@@ -62,6 +67,7 @@ lab-shell: ## Shell inside the DC container (samba-tool, ldapsearch…)
 lab-test-unit: ## Seed-generator unit tests (no Docker needed)
 	python3 -m unittest discover -s $(LAB_DIR)/tests -p 'test_*.py' -v
 	$(LAB_DIR)/tests/test_schema_seed.sh && $(LAB_DIR)/tests/test_schema_seed.sh --selftest
+	python3 -I -m unittest discover -s $(LAB_DIR)/proxmox/tests -p 'test_*.py'
 
 lab-test-live: ## Verify the running lab, then prove lab-reset returns it to the seeded state
 	$(LAB_DIR)/tests/verify.sh

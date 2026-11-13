@@ -73,6 +73,10 @@ const (
 	maxCandidate = 3
 )
 
+// IngestBatchSize is how many observations one ingest batch holds: a cycle driver hands Ingest at most this
+// many at a time, one tenant transaction per batch.
+const IngestBatchSize = ingestBatch
+
 // Ingest populates the cycle's observations, then re-evaluates the gate for each Entra tenant the
 // connection feeds or is: an Entra cycle re-judges its own users and groups, an AD cycle re-judges the
 // tenants its domains are linked to (the AD side of a pair changed). Per Entra object it judges every
