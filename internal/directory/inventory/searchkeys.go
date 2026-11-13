@@ -3,6 +3,7 @@ package inventory
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -46,20 +47,70 @@ type keySource struct {
 	dn              string
 	sid             []byte
 	consistencyGUID []byte
-	// mail and dnsHost are the string values of the attributes "mail" and "dNSHostName", "" when absent
-	// or not a string.
-	mail, dnsHost string
+	// The string attributes of the generic bag the keys are built from ("" when absent or not a string):
+	// mail, dNSHostName (T-1095) and the identifiers of T-1129.
+	mail, dnsHost, givenName, sn, title, department, mailNickname, employeeID, employeeNumber string
+	// The multi-valued ones: proxyAddresses, servicePrincipalName and sIDHistory (canonical text). Values
+	// that are not strings are dropped.
+	proxyAddresses, spns, sidHistory []string
+}
+
+// searchBagKeys are the attributes of the bag a key is built from. The backfill selects exactly these.
+var searchBagKeys = []string{"mail", "dNSHostName", "givenName", "sn", "title", "department", "mailNickname",
+	"employeeID", "employeeNumber", "proxyAddresses", "servicePrincipalName", "sIDHistory"}
+
+// readBag fills the bag-derived fields of the source from a stored or observed attribute bag.
+func (s *keySource) readBag(a map[string]any) {
+	str := func(k string) string { v, _ := a[k].(string); return v }
+	list := func(k string) []string {
+		switch vs := a[k].(type) {
+		case []string:
+			return vs
+		case []any:
+			var out []string
+			for _, v := range vs {
+				if t, ok := v.(string); ok {
+					out = append(out, t)
+				}
+			}
+			return out
+		}
+		return nil
+	}
+	s.mail, s.dnsHost, s.givenName, s.sn = str("mail"), str("dNSHostName"), str("givenName"), str("sn")
+	s.title, s.department, s.mailNickname = str("title"), str("department"), str("mailNickname")
+	s.employeeID, s.employeeNumber = str("employeeID"), str("employeeNumber")
+	s.proxyAddresses, s.spns, s.sidHistory = list("proxyAddresses"), list("servicePrincipalName"), list("sIDHistory")
+}
+
+// spnHost is the host part of service/host[:port][/name]: "" when the value has no service part.
+func spnHost(spn string) string {
+	_, rest, ok := strings.Cut(spn, "/")
+	if !ok {
+		return ""
+	}
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		rest = rest[:i]
+	}
+	if i := strings.LastIndexByte(rest, ':'); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
+}
+
+// smtpAddress is the address of a proxyAddresses value of type smtp (SMTP: primary, smtp: alias); "" for
+// any other address type (x400, sip, …).
+func smtpAddress(v string) string {
+	if len(v) > 5 && strings.EqualFold(v[:5], "smtp:") {
+		return v[5:]
+	}
+	return ""
 }
 
 func sourceOf(o *Observation) keySource {
 	s := keySource{object: o.Object, kind: o.Kind, state: o.State, displayName: o.DisplayName, rdn: o.RDN, sam: o.SAMAccountName,
 		upn: o.UPN, dn: o.DN, sid: o.SID, consistencyGUID: o.ConsistencyGUID}
-	if v, ok := o.Attributes["mail"].(string); ok {
-		s.mail = v
-	}
-	if v, ok := o.Attributes["dNSHostName"].(string); ok {
-		s.dnsHost = v
-	}
+	s.readBag(o.Attributes)
 	return s
 }
 
@@ -127,6 +178,11 @@ func searchKeys(s keySource) []searchKeyRow {
 		if key == "" || utf8.RuneCountInString(key) > searchkey.MaxRunes || !utf8.ValidString(key) || strings.IndexByte(key, 0) >= 0 {
 			return
 		}
+		// A value shaped like a BitLocker recovery password is never a key, whatever attribute it came from
+		// (rule 7 refuses the same text as a query, so such a key could not be searched anyway).
+		if _, err := searchkey.Prepare(key); err != nil {
+			return
+		}
 		if seen[k] == nil {
 			seen[k] = map[string]bool{}
 		}
@@ -135,13 +191,22 @@ func searchKeys(s keySource) []searchKeyRow {
 			out = append(out, searchKeyRow{s.object, k, key})
 		}
 	}
+	// usable: the whole value is sound text and not shaped like a recovery password. It is checked on the
+	// value, before it is split into words, so no group of a recovery password becomes a key either.
+	usable := func(v string) bool {
+		if v == "" || !utf8.ValidString(v) || strings.ContainsRune(v, 0) {
+			return false
+		}
+		_, err := searchkey.Prepare(v)
+		return err == nil || err == searchkey.ErrTooManyRunes || err == searchkey.ErrTooLong
+	}
 	ident := func(k searchkey.Kind, v string) {
-		if v != "" && utf8.ValidString(v) && !strings.ContainsRune(v, 0) {
+		if usable(v) {
 			add(k, searchkey.NormIdent(v))
 		}
 	}
 	name := func(v string) {
-		if v == "" || !utf8.ValidString(v) || strings.ContainsRune(v, 0) {
+		if !usable(v) {
 			return
 		}
 		n := searchkey.NormName(v)
@@ -164,8 +229,37 @@ func searchKeys(s keySource) []searchKeyRow {
 		ident(searchkey.KindSAM, strings.TrimSuffix(s.sam, "$"))
 	}
 	ident(searchkey.KindUPN, s.upn)
-	if s.kind == KindContact {
-		ident(searchkey.KindMail, s.mail)
+	ident(searchkey.KindMail, s.mail)
+	for _, v := range s.proxyAddresses {
+		ident(searchkey.KindMail, smtpAddress(v))
+	}
+	ident(searchkey.KindMailNickname, s.mailNickname)
+	ident(searchkey.KindEmployeeID, s.employeeID)
+	ident(searchkey.KindEmployeeID, s.employeeNumber)
+	for _, v := range s.sidHistory {
+		ident(searchkey.KindSIDHistory, v)
+	}
+	for _, v := range s.spns {
+		ident(searchkey.KindSPN, v)
+		ident(searchkey.KindDNSHost, spnHost(v))
+	}
+	// "Priya Raman" is found as "Raman, Priya" and the other way round (ADR-0011 rule 9, free text).
+	if s.givenName != "" && s.sn != "" {
+		name(s.givenName + " " + s.sn)
+		name(s.sn + " " + s.givenName)
+	} else {
+		name(s.givenName)
+		name(s.sn)
+	}
+	for _, v := range []string{s.title, s.department} {
+		if !usable(v) {
+			continue
+		}
+		n := searchkey.NormName(v)
+		add(searchkey.KindOrgText, n)
+		for _, w := range searchkey.Words(n) {
+			add(searchkey.KindOrgText, w)
+		}
 	}
 	if isComputer {
 		ident(searchkey.KindDNSHost, s.dnsHost)
@@ -286,7 +380,7 @@ func backfillPageOf(ctx context.Context, tx store.Tx, afterConn, afterObj string
 	if err := requireTenant(ctx, tx); err != nil {
 		return page, "", "", false, err
 	}
-	rs, err := tx.Query(ctx, backfillObjectsSQL, afterConn, afterObj, backfillPage)
+	rs, err := tx.Query(ctx, backfillObjectsSQL, afterConn, afterObj, backfillPage, searchBagKeys)
 	if err != nil {
 		return page, "", "", false, fmt.Errorf("inventory: backfill read: %w", err)
 	}
@@ -298,11 +392,20 @@ func backfillPageOf(ctx context.Context, tx store.Tx, afterConn, afterObj string
 	for rs.Next() {
 		var o obj
 		var obj_, kind, state string
+		var bag []byte
 		if err := rs.Scan(&o.conn, &obj_, &kind, &state, &o.src.displayName, &o.src.rdn, &o.src.sam, &o.src.upn, &o.src.dn,
-			&o.src.sid, &o.src.consistencyGUID, &o.src.mail, &o.src.dnsHost); err != nil {
+			&o.src.sid, &o.src.consistencyGUID, &bag); err != nil {
 			rs.Close()
 			return page, "", "", false, fmt.Errorf("inventory: backfill scan: %w", err)
 		}
+		var attrs map[string]any
+		if len(bag) > 0 {
+			if err := json.Unmarshal(bag, &attrs); err != nil {
+				rs.Close()
+				return page, "", "", false, fmt.Errorf("inventory: backfill attributes: %w", err)
+			}
+		}
+		o.src.readBag(attrs)
 		o.src.object, o.src.kind, o.src.state = GUID(obj_), Kind(kind), ObjectState(state)
 		objs = append(objs, o)
 	}
@@ -346,12 +449,11 @@ func backfillPageOf(ctx context.Context, tx store.Tx, afterConn, afterObj string
 	return page, last.conn, string(last.src.object), len(objs) < backfillPage, nil
 }
 
-// backfillObjectsSQL reads one page of objects after ($1, $2) in (connection, object) order. The two
-// attributes are taken only when they are JSON strings.
+// backfillObjectsSQL reads one page of objects after ($1, $2) in (connection, object) order, $3 of them. Of
+// the attribute bag only the keys in $4 (searchBagKeys) are read; readBag drops a value of the wrong type.
 const backfillObjectsSQL = `SELECT connection_id::text, object_guid::text, kind, state, COALESCE(display_name, ''), COALESCE(rdn, ''),
 		COALESCE(sam_account_name, ''), COALESCE(upn, ''), COALESCE(dn, ''), sid, consistency_guid,
-		CASE WHEN jsonb_typeof(attributes -> 'mail') = 'string' THEN attributes ->> 'mail' ELSE '' END,
-		CASE WHEN jsonb_typeof(attributes -> 'dNSHostName') = 'string' THEN attributes ->> 'dNSHostName' ELSE '' END
+		COALESCE((SELECT jsonb_object_agg(e.key, e.value) FROM jsonb_each(attributes) e WHERE e.key = ANY($4::text[])), '{}'::jsonb)
 	FROM public.directory_objects
 	WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid
 	AND ($1::text = '' OR (connection_id, object_guid) > ($1::text::uuid, $2::text::uuid))
