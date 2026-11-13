@@ -25,6 +25,13 @@ type fileDef struct {
 	Presets     []filePreset `json:"presets"`
 	Params      []fileParam  `json:"params"`
 	Caveats     []string     `json:"caveats"`
+	PerDC       *filePerDC   `json:"perDC"`
+}
+
+// filePerDC marks a report that reads per-DC attributes live; Scope is "all" (read-only DCs included, the
+// default of spec 6.5) or "writable".
+type filePerDC struct {
+	Scope string `json:"scope"`
 }
 
 type fileSort struct {
@@ -93,6 +100,16 @@ func Decode(data []byte) (report.Definition, error) {
 	var err error
 	if d.Sort, err = sortKeys(f.Sort); err != nil {
 		return report.Definition{}, err
+	}
+	if f.PerDC != nil {
+		switch f.PerDC.Scope {
+		case "all":
+			d.PerDC = &report.PerDCSpec{Scope: report.ScopeAll}
+		case "writable":
+			d.PerDC = &report.PerDCSpec{Scope: report.ScopeWritable}
+		default:
+			return report.Definition{}, errors.New("library: perDC scope is all or writable")
+		}
 	}
 	for _, c := range f.Caveats {
 		d.Caveats = append(d.Caveats, report.CaveatID(c))

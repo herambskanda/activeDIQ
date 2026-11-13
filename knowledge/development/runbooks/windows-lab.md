@@ -719,3 +719,12 @@ is `lab/windows/tests/test_cbt_acceptance.py` (`make lab-test-windows-unit`, no 
 events outside the window do not, a control without 3039 fails, a skipped bind is not a pass, drift of the policy fails.
 2887 is a daily DC summary, so a 2-second window cannot prove it absent by itself; the run log also lists everything the queried ids logged in the
 preceding 26 h. Run log and broken-run proof: `windows-lab-runs/T-0148-cbt-acceptance-20261102.md`. Needs the keytab and gMSA files from `gssapi-lab prepare`.
+
+## 21. userParameters fixtures (T-1890)
+
+`lab/windows/bin/capture-tsprops capture` (under `with-dc1-lock`) creates disabled, password-less users `tspw01..` and probe users in `OU=tspfix` on dc1,
+writes `userParameters` via ADSI `IADsTSUserEx` or a plain LDAP modify, reads each back (raw octets, `WTSQueryUserConfig`, ADSI) and writes
+`testdata/tsprops/windows/captures.json`; `capture-tsprops derive` builds `records.jsonl`/`probes.jsonl` offline. It also makes a throwaway `tspreader`
+user with a per-run random password (never printed) to test the ordinary-user read, and deletes it. Needs `pip install pywinrm requests-ntlm`
+and `WIN_LAB_DC_ADDR`. The fixture users stay on dc1 for ADUC comparison (spec V4); `Remove-ADOrganizationalUnit tspfix -Recursive` clears them. Findings:
+`knowledge/development/domain/userparameters-windows-findings.md`. No new tool; pywinrm/requests-ntlm are already in the licence register.

@@ -1,0 +1,5 @@
+ok  	github.com/skenzeriq/activediq/tools/fitness/search	80.292s
+ok  	github.com/skenzeriq/activediq/internal/platform/searchkey	0.005s
+ok  	github.com/skenzeriq/activediq/internal/platform/store/reportsql	20.988s
+ok  	github.com/skenzeriq/activediq/migrations	34.705s
+unit=0

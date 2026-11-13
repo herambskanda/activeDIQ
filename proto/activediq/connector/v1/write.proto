@@ -59,6 +59,14 @@ enum WriteKind {
   WRITE_KIND_ACCOUNT_ENABLE = 9;
   // Set ACCOUNTDISABLE on a user or computer (tightening; TM-D28 class none).
   WRITE_KIND_ACCOUNT_DISABLE = 10;
+  // Add one member to a group (v1.6, T-1899). `target` is the GROUP, so the server's authorisation
+  // Target, and rbac.GroupReach, name the group whose reach grows (TM-D18). TM-D28 class none.
+  WRITE_KIND_GROUP_MEMBER_ADD = 11;
+  // Remove one member from a group (v1.6, T-1899). `target` is the GROUP. TM-D28 class none.
+  WRITE_KIND_GROUP_MEMBER_REMOVE = 12;
+  // Reset a computer account's password so the machine must rejoin or repair its secure channel
+  // (v1.6, T-1899). Irreversible; TM-D16 step-up; TM-D28 class `reset_computer`.
+  WRITE_KIND_COMPUTER_ACCOUNT_RESET = 13;
 }
 
 // The classes the object kinds work on. `user` includes inetOrgPerson. A kind that does not allow
@@ -169,6 +177,25 @@ message UserUnlock {}
 message AccountEnable {}
 message AccountDisable {}
 
+// Kinds 11 and 12 (contract v1.6, §8.10.3). The request's `target` is the GROUP. The member is a
+// GUID in the group's own domain NC, never a DN (P2); the connector resolves it live.
+// `member_class` is what the Action declared from the permission it holds: USER, COMPUTER or
+// CONTACT under objects.group.add_member, GROUP under objects.group.nest. The live class must
+// equal it, else INVALID_ARGUMENT, rule id "MemberClassMismatch".
+message GroupMemberAdd {
+  Guid member = 1;
+  DirectoryObjectClass member_class = 2;
+}
+
+message GroupMemberRemove {
+  Guid member = 1;
+  DirectoryObjectClass member_class = 2;
+}
+
+// Kind 13. No fields: the new value is generated inside the connector and never leaves it, so
+// `has_secret_input` must be false and there is no secret_input.
+message ComputerAccountReset {}
+
 // A secret in transit from the server to the connector inside Apply, over the mTLS tunnel
 // (ADR-0005 rule 9, "Transit to a remote connector"). The only message of the contract that may
 // hold secret bytes, and it may be used in exactly one place: ApplyRequest.secret_input (fitness
@@ -194,6 +221,9 @@ message WriteChange {
     UserUnlock user_unlock = 8;
     AccountEnable account_enable = 9;
     AccountDisable account_disable = 10;
+    GroupMemberAdd group_member_add = 11;
+    GroupMemberRemove group_member_remove = 12;
+    ComputerAccountReset computer_account_reset = 13;
   }
 }
 
