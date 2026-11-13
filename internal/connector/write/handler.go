@@ -94,6 +94,8 @@ type passed struct {
 	dec        Decision
 	// dc is the bound DC's identity (AD only), verified equal to the pin (Plan) or to precondition.dc (Apply).
 	dc *connectorv1.DcIdentity
+	// removes: the kind deletes its target, which step 9 therefore cannot re-read.
+	removes bool
 }
 
 // Plan implements connectorv1.ConnectorServer.
@@ -201,6 +203,9 @@ func (h *Handler) finish(ev *Event, err error) error {
 			if ev.Stage == "" {
 				ev.Stage = r.stage
 			}
+			if r.reason != "" {
+				ev.Reason, ev.PropertyKind, ev.PropertyOp, ev.PropertyKeys = r.reason, r.propKind, r.propOp, r.propKeys
+			}
 			if d := r.Err.GetTier0Refused(); d != nil {
 				ev.Object = guidText(d.GetObject())
 				for _, b := range d.GetBasis() {
@@ -227,6 +232,9 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	target, err := fromWire(c.target.GetObject())
 	if err != nil {
 		return nil, invalid("1", "TargetRequired", "target.object")
+	}
+	if r := shapeCheck(c); r != nil {
+		return nil, r
 	}
 	if c.name == "apply" && (c.pre == nil || len(c.digest) == 0) {
 		return nil, invalid("1", "PreconditionRequired", "precondition")
@@ -298,11 +306,17 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	var declared []string
 	if w, ok := h.ops[c.kind]; ok && c.kind != connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
 		op = &w
-		if w.Arm != nil && !w.Arm(c.change) && !(c.name == "apply" && w.WantsSecret && !c.secret) {
-			return nil, invalid("4", "WriteChangeArmMismatch", "change")
+		if r := stepFourShape(w, c); r != nil {
+			return nil, r
 		}
-		if c.name == "apply" && c.secret != w.WantsSecret {
-			return nil, invalid("4", "SecretInputMismatch", "secret_input")
+		if w.Vet != nil {
+			var pd ObjectDirectory
+			if wd, ok := h.prov.(writeDirectory); ok {
+				pd = wd.WriteDirectory()
+			}
+			if r := w.Vet(pd, c.change); r != nil {
+				return nil, r
+			}
 		}
 		if r := h.propertyGuard(ctx, w, c, target, ev); r != nil {
 			return nil, r
@@ -317,6 +331,17 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 		ts, err := w.Touched(target, c.change)
 		if err != nil {
 			return nil, invalid("5", "TouchedSet", "change")
+		}
+		if w.TouchedLive != nil {
+			op2, ok := h.prov.(ObjectProvider)
+			if !ok || op2.Objects() == nil {
+				return nil, unsupported()
+			}
+			more, err := w.TouchedLive(ctx, op2.Objects(), target, c.change)
+			if err != nil {
+				return nil, invalid("5", "TouchedSet", "change")
+			}
+			ts = append(ts, more...)
 		}
 		touched = dedupe(target, ts)
 	}
@@ -342,8 +367,30 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 
 	// Step 7: live re-read and classification of every touched object. An error is tier0.
 	designated := unionGUIDs(parseGUIDs(c.t0.GetDesignated()), h.gates.Designated(c.conn.GetConnectionId()))
-	for _, id := range touched {
+	var regrants []Regrant
+	var pdir ObjectDirectory
+	if wd, ok := h.prov.(writeDirectory); ok {
+		pdir = wd.WriteDirectory()
+	}
+	for i, id := range touched {
+		if i == 0 && op != nil && op.DeletedTarget {
+			var np guid.GUID
+			if len(touched) > 1 {
+				np = touched[1]
+			}
+			v, r := h.liveDeleted(ctx, id, np, designated)
+			if r != nil {
+				return nil, r
+			}
+			regrants = v.Regrants
+			continue
+		}
 		if r := h.live(ctx, idx, id, designated); r != nil {
+			// A delete retried after success: the target is shown deleted, so there is nothing to
+			// classify and nothing will be written; the body answers ALREADY_APPLIED.
+			if i == 0 && op != nil && op.TargetGone != nil && op.TargetGone(ctx, pdir, id) {
+				continue
+			}
 			return nil, r
 		}
 	}
@@ -351,7 +398,11 @@ func (h *Handler) guard(ctx context.Context, c *call, ev *Event) (*passed, error
 	if bound != nil {
 		boundDSA, _ = fromWire(bound.GetDsaGuid()) // verified equal to the pin at step 2b
 	}
-	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, prov: h.prov}}}, nil
+	recheck := h.recheckProperty
+	removes := op != nil && op.RemovesTarget
+	return &passed{op: op, touched: touched, designated: designated, dec: dec, dc: bound, removes: removes,
+		auth: Authorised{p: &pass{evaluated: touched, dc: boundDSA, props: declared, dir: pdir, dcID: bound, recheck: recheck, prov: h.prov,
+			objs: h.objects(), regrants: regrants}}}, nil
 }
 
 // Refusal reasons recorded for a property-write refusal that is not a rule verdict.
@@ -360,76 +411,115 @@ const (
 	reasonBadDeclaration   = "property_declaration_invalid"
 )
 
-// propertyGuard is CheckPropertyWrite at step 4. Every outcome but a clean allow refuses: a kind
-// whose PropertyWrite cannot be derived, a guard that cannot be built, a read error (LIVE_REREAD)
-// and a refusal verdict. The reason, the declared op and the key names are set on ev (the
-// audit-ready refusal record); attribute values and guard error text never are.
-func (h *Handler) propertyGuard(ctx context.Context, w WriteOp, c *call, target guid.GUID, ev *Event) *Refusal {
-	pw, err := w.PropertyWrite(c.change)
-	var extra []tier0.PropertyWrite
-	if err == nil && w.AlsoDeclares != nil {
-		// A kind whose attribute feeds rule properties of more than one object class (userAccountControl
-		// feeds user.accountEnabled and device.accountEnabled) declares each; every declaration must pass.
-		extra, err = w.AlsoDeclares(c.change)
+// propertyRefusal is the TIER0_REFUSED of a property-write check with its audit record: the reason,
+// the declared kind and op, and the key names. Never values.
+func propertyRefusal(w tier0.PropertyWrite, target guid.GUID, step, reason string, st connectorv1.Tier0RefusalStage) *Refusal {
+	r := tier0Refusal(toWire(target), []basis{tier0.Designated}, st, step)
+	r.reason, r.propKind, r.propOp, r.propKeys = reason, kindName(w.Kind), w.Op.String(), append([]string(nil), w.Keys...)
+	return r
+}
+
+func kindName(k tier0.WriteKind) string {
+	switch k {
+	case tier0.WriteUser:
+		return "USER"
+	case tier0.WriteDevice:
+		return "DEVICE"
+	case tier0.WriteGroup:
+		return "GROUP"
 	}
-	if err != nil {
-		ev.Reason = reasonBadDeclaration
-		return invalid("4", "PropertyWrite", "change")
-	}
-	if r := h.propertyGuardOne(ctx, pw, target, ev); r != nil {
+	return "UNKNOWN"
+}
+
+// guardProperty is CheckPropertyWrite for one declaration, at step 4 and again in a body that can
+// derive a stricter one (the live class). Every outcome but a clean allow refuses: a guard that
+// cannot be built, a read error (LIVE_REREAD) and a refusal verdict. The refusal carries the reason,
+// the declared kind and op and the key names for the audit record; attribute values and guard error
+// text never are.
+func (h *Handler) guardProperty(ctx context.Context, w tier0.PropertyWrite, alsoDevice bool, target guid.GUID, step string) *Refusal {
+	if r := h.guardPropertyOnce(ctx, w, target, step); r != nil {
 		return r
 	}
-	for _, x := range extra {
-		if r := h.propertyGuardOne(ctx, x, target, ev); r != nil {
-			return r
-		}
+	if alsoDevice && w.Kind != tier0.WriteDevice {
+		dw := w
+		dw.Kind = tier0.WriteDevice
+		return h.guardPropertyOnce(ctx, dw, target, step)
 	}
 	return nil
 }
 
-func (h *Handler) propertyGuardOne(ctx context.Context, pw tier0.PropertyWrite, target guid.GUID, ev *Event) *Refusal {
+// recheckProperty is what a body calls (Authorised.checkProperty) for a declaration only it can derive,
+// such as the live class: one declaration, the step the body is at.
+func (h *Handler) recheckProperty(ctx context.Context, w tier0.PropertyWrite, target guid.GUID, step string) *Refusal {
+	return h.guardProperty(ctx, w, false, target, step)
+}
+
+// guardPropertyOnce is CheckPropertyWrite for exactly one declaration.
+func (h *Handler) guardPropertyOnce(ctx context.Context, w tier0.PropertyWrite, target guid.GUID, step string) *Refusal {
+	g, err := h.prov.PropertyGuard(ctx)
+	if err != nil || g == nil {
+		return propertyRefusal(w, target, step, reasonGuardUnavailable, stLive)
+	}
+	v, err := g.CheckPropertyWrite(ctx, w)
+	if err != nil {
+		return propertyRefusal(w, target, step, reasonGuardUnavailable, stLive)
+	}
+	if !v.Refused {
+		return nil
+	}
+	reason := v.Reason
+	if reason == "" {
+		reason = tier0.ReasonDesignatedDynamicRule
+	}
+	st := stConnectorSet
+	if v.Stage == tier0.StageLiveReread {
+		st = stLive
+	}
+	r := propertyRefusal(w, target, step, reason, st)
+	if v.Op != 0 {
+		r.propOp = v.Op.String()
+	}
+	if v.Keys != nil {
+		r.propKeys = append([]string(nil), v.Keys...)
+	}
+	return r
+}
+
+// propertyGuard is step 4: the declarations the kind makes from the typed change. The kind's own
+// declaration and every AlsoDeclares extra (a directory attribute that feeds rule properties of more than
+// one object class) must pass; a kind that touches objects whose class is only known live (AlsoDevice) has
+// each also checked as a device write.
+func (h *Handler) propertyGuard(ctx context.Context, w WriteOp, c *call, target guid.GUID, ev *Event) *Refusal {
+	pw, err := w.PropertyWrite(c.change)
+	var extra []tier0.PropertyWrite
+	if err == nil && w.AlsoDeclares != nil {
+		extra, err = w.AlsoDeclares(c.change)
+	}
 	plane := tier0.PlaneEntra
 	if h.prov.Kind() == connectorv1.ProviderKind_PROVIDER_KIND_AD {
 		plane = tier0.PlaneAD
 	}
-	if pw.Plane != plane { // a declaration for the other plane is a bug in the kind
+	bad := err != nil || pw.Plane != plane // a declaration for the other plane is a bug in the kind
+	for _, x := range extra {
+		bad = bad || x.Plane != plane
+	}
+	if bad {
 		ev.Reason = reasonBadDeclaration
-		ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)
+		if err == nil {
+			ev.PropertyKind, ev.PropertyOp, ev.PropertyKeys = kindName(pw.Kind), pw.Op.String(), append([]string(nil), pw.Keys...)
+		}
 		return invalid("4", "PropertyWrite", "change")
 	}
-	ev.PropertyOp, ev.PropertyKeys = pw.Op.String(), append([]string(nil), pw.Keys...)
-	refuse := func(reason string, st connectorv1.Tier0RefusalStage) *Refusal {
-		ev.Reason = reason
-		return tier0Refusal(toWire(target), []basis{tier0.Designated}, st, "4")
+	r := h.guardProperty(ctx, pw, w.AlsoDevice, target, "4")
+	if r == nil {
+		ev.PropertyKind, ev.PropertyOp, ev.PropertyKeys = kindName(pw.Kind), pw.Op.String(), append([]string(nil), pw.Keys...)
+		for _, x := range extra {
+			if r = h.guardProperty(ctx, x, w.AlsoDevice, target, "4"); r != nil {
+				break
+			}
+		}
 	}
-	g, err := h.prov.PropertyGuard(ctx)
-	if err != nil || g == nil {
-		return refuse(reasonGuardUnavailable, stLive)
-	}
-	v, err := g.CheckPropertyWrite(ctx, pw)
-	if err != nil {
-		return refuse(reasonGuardUnavailable, stLive)
-	}
-	if v.Refused {
-		if v.Reason != "" {
-			ev.Reason = v.Reason
-		}
-		if v.Op != 0 {
-			ev.PropertyOp = v.Op.String()
-		}
-		if v.Keys != nil {
-			ev.PropertyKeys = append([]string(nil), v.Keys...)
-		}
-		reason := v.Reason
-		if reason == "" {
-			reason = tier0.ReasonDesignatedDynamicRule
-		}
-		if v.Stage == tier0.StageLiveReread {
-			return refuse(reason, stLive)
-		}
-		return refuse(reason, stConnectorSet)
-	}
-	return nil
+	return r
 }
 
 // stmt is the merge of every complete statement about one object (F1).
@@ -578,6 +668,39 @@ func (h *Handler) checkRequest(c *call, idx map[string]*stmt, id guid.GUID, isAD
 	return nil
 }
 
+// objects is the provider's object directory, nil when it has none.
+func (h *Handler) objects() StructureDirectory {
+	if p, ok := h.prov.(ObjectProvider); ok {
+		return p.Objects()
+	}
+	return nil
+}
+
+// liveDeleted is step 7 for the deleted target of a restore (contract §8.10.3 kind 6): the grant
+// check, the one target read and the fixed-read-set classification. A provider that cannot do it
+// refuses (fail closed). A grant that is not proven is INSUFFICIENT_RIGHTS naming the right, and a
+// target that does not exist is OBJECT_NOT_FOUND, both only after the checks that justify them.
+func (h *Handler) liveDeleted(ctx context.Context, id, newParent guid.GUID, designated []guid.GUID) (Verdict, *Refusal) {
+	dc, ok := h.prov.(DeletedClassifier)
+	if !ok || newParent == (guid.GUID{}) {
+		return Verdict{}, tier0Refusal(toWire(id), nil, stLive, "7")
+	}
+	v, err := dc.ClassifyDeleted(ctx, id, newParent, designated)
+	var rights *DeletedRightsError
+	switch {
+	case errors.As(err, &rights):
+		return v, newRefusal(connectorv1.ErrorCode_ERROR_CODE_INSUFFICIENT_RIGHTS, connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_OPERATOR_ACTION, "7",
+			"missing right: List Contents on Deleted Objects of "+rights.Domain)
+	case errors.Is(err, ErrNoRecycleBin):
+		return v, newRefusal(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "7", "AD Recycle Bin is not enabled")
+	case errors.Is(err, ErrDeletedNotFound):
+		return v, newRefusal(connectorv1.ErrorCode_ERROR_CODE_OBJECT_NOT_FOUND, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "7", "deleted object not found")
+	case err != nil || v.Tier0:
+		return v, tier0Refusal(toWire(id), v.Bases, stLive, "7")
+	}
+	return v, nil
+}
+
 // live is step 7 for one object: F4 evidence against the re-read anchors, then the classifier.
 func (h *Handler) live(ctx context.Context, idx map[string]*stmt, id guid.GUID, designated []guid.GUID) *Refusal {
 	if s := idx[id.String()]; s != nil {
@@ -611,7 +734,10 @@ func (h *Handler) afterWrite(ctx context.Context, p *passed, ev *Event) []*conne
 	defer cancel()
 	designated := p.designated
 	var out []*connectorv1.Tier0Member
-	for _, id := range p.touched {
+	for i, id := range p.touched {
+		if i == 0 && p.removes {
+			continue // the target no longer exists; there is nothing left to classify
+		}
 		v, err := h.prov.Classify(ctx, id, designated)
 		switch {
 		case err != nil:
@@ -688,4 +814,68 @@ func unionGUIDs(a, b []guid.GUID) []guid.GUID {
 		}
 	}
 	return out
+}
+
+// armKind is the WriteKind whose arm the change holds (UNSPECIFIED for no arm).
+func armKind(c *connectorv1.WriteChange) connectorv1.WriteKind {
+	switch c.GetChange().(type) {
+	case *connectorv1.WriteChange_ObjectCreate:
+		return connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE
+	case *connectorv1.WriteChange_ObjectUpdate:
+		return connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE
+	case *connectorv1.WriteChange_ObjectDelete:
+		return connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE
+	case *connectorv1.WriteChange_ObjectMove:
+		return connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE
+	case *connectorv1.WriteChange_ObjectRename:
+		return connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME
+	case *connectorv1.WriteChange_ObjectRestore:
+		return connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE
+	case *connectorv1.WriteChange_UserPasswordReset:
+		return connectorv1.WriteKind_WRITE_KIND_USER_PASSWORD_RESET
+	case *connectorv1.WriteChange_UserUnlock:
+		return connectorv1.WriteKind_WRITE_KIND_USER_UNLOCK
+	case *connectorv1.WriteChange_AccountEnable:
+		return connectorv1.WriteKind_WRITE_KIND_ACCOUNT_ENABLE
+	case *connectorv1.WriteChange_AccountDisable:
+		return connectorv1.WriteKind_WRITE_KIND_ACCOUNT_DISABLE
+	}
+	return connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED
+}
+
+// shapeCheck is the part of step 1 that needs no directory: the change arm is the kind's arm
+// (CC-WK-29), and secret_input is present exactly for the two kinds whose Descriptor has
+// SecretInput (contract §8.10.5). It runs before any directory call.
+func shapeCheck(c *call) *Refusal {
+	if c.kind != connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED && armKind(c.change) != c.kind {
+		return invalid("1", "WriteChangeArmMismatch", "change")
+	}
+	if c.name != "apply" {
+		return nil
+	}
+	wants := c.kind == connectorv1.WriteKind_WRITE_KIND_USER_PASSWORD_RESET ||
+		c.kind == connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE &&
+			c.change.GetObjectCreate().GetObjectClass() == connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_USER &&
+			c.change.GetObjectCreate().GetHasSecretInput()
+	if wants != c.secret {
+		return invalid("1", "SecretInputMismatch", "secret_input")
+	}
+	return nil
+}
+
+// stepFourShape is the step-4 check of the arm and the secret for a kind that declares its own Arm (the
+// account kinds). A kind with no Arm (the object kinds) has both rules in shapeCheck at step 1, because
+// whether a create carries a secret depends on its change, not on the kind alone: comparing c.secret
+// with WantsSecret here would refuse every user create that carries a password.
+func stepFourShape(w WriteOp, c *call) *Refusal {
+	if w.Arm == nil {
+		return nil
+	}
+	if !w.Arm(c.change) && !(c.name == "apply" && w.WantsSecret && !c.secret) {
+		return invalid("4", "WriteChangeArmMismatch", "change")
+	}
+	if c.name == "apply" && c.secret != w.WantsSecret {
+		return invalid("4", "SecretInputMismatch", "secret_input")
+	}
+	return nil
 }

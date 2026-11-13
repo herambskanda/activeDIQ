@@ -877,6 +877,20 @@ class of data.
    readable on a deleted object without its live right, withdraws the grant (kind 6 refused) pending a new review; customer
    reports that the ownership procedure blocks adoption go to product-manager as a scope question.
 
+8. **Live references to the target's SID (T-1751, 2026-11-12).** *Threat (STRIDE E):* an attacker with Reanimate-Tombstones (R9, JIT) and
+   child-create restores a deleted account that is still a trustee, by SID, of a root of trust. ACEs and
+   `msDS-AllowedToActOnBehalfOfOtherIdentity` entries stay on their objects after the trustee is deleted, a deleted
+   account has no `tokenGroups`, and the rule 6 checks (retained `memberOf`, `member` of Tier-0 groups) see only group links, so
+   the restored account regains, for example, Replicating Directory Changes All on the domain head while classified non-`tier0`
+   (no memberOf, RID >= 1000, `adminCount` 0). Step 9 would report it after the fact. *Asset:* the domain head, AdminSDHolder,
+   C13/C19 objects, DCs. *Mitigation:* contract §8.10.3 kind 6 step 4a: the target's `objectSid` and every `sIDHistory` value are compared by SID
+   equality with the trustee, owner and RBCD SIDs of the C17, C19, C12 and C13 snapshot, including SIDs that resolve to no live
+   object; a hit is `tier0` with that basis and the evidence; a snapshot that cannot say (unreadable descriptor, `Unknown` ACE,
+   empty DC list) is `tier0`, basis `UNKNOWN`; the check runs again in Apply and takes no input from the server. Replication
+   rights count singly. *Test:* CC-WK-41 to CC-WK-44 (owner: build ticket for directory-engineer). *Residual:* a trustee
+   right that exists only on an object outside the C17/C19/C12/C13 lists (a GPO not linked to Tier-0, C9 "other reach") is
+   not seen, as for every live basis (TM-R16); the restore re-arms only a right the customer already granted to that SID.
+
 Fitness functions: **TM-F-RIGHTS** case (b) is amended to the following (it supersedes the original (b) of TM-D31; owner
 **T-1737**, directory-engineer). No code path writes the container's owner or DACL. The show-deleted control
 (`1.2.840.113556.1.4.417`) is sent by exactly **two connector functions**, both base scope, and by no other code
@@ -1994,10 +2008,37 @@ authority through activeDIQ.
    already "never delegate" in §6.3 R7; `sIDHistory` is C18; `primaryGroupID` changes grants and
    belongs to TM-D18. B3 fails any Action that writes one.
 
+   **Also denied (T-1646): `msDS-AdditionalDnsHostName` and `msDS-AdditionalSamAccountName`.**
+   Decision: denied, not `rename_logon`. Reasons: (1) the schema marks `msDS-AdditionalDnsHostName`
+   System-Only True with "This value is set by the system", at computer rename or `netdom
+   computername` ([schema](https://learn.microsoft.com/en-us/windows/win32/adschema/a-msds-additionaldnshostname));
+   the supported client path is the NetLogon RPC `NetrAddAlternateComputerName`
+   ([MS-NRPC](https://msdn.microsoft.com/en-us/library/0d84af25-9310-4b2e-bcba-b9b085554102)),
+   which is a rename operation, not an attribute edit, so a generic setter has no business with it.
+   (2) It is not a harmless label. MS-ADTS lets a `servicePrincipalName` hostname match
+   `dNSHostName`, the `sAMAccountName`, **any `msDS-AdditionalDnsHostName` value** or any
+   `msDS-AdditionalSamAccountName` value
+   ([MS-ADTS SPN rules](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/28ca4eca-0e0b-4666-9175-a37ccb8edada)),
+   so an extra value widens which SPNs a Validated-SPN writer may add. An actor who can write it can
+   mint SPNs for a hostname of their choice on a computer, which is `set_spn`/`map_credential`
+   power (Kerberos service impersonation) reached without those permissions. (3) `dNSHostName` is
+   already `rename_logon` because spoofing it is a known escalation
+   ([Certifried](https://legacy.thehacker.recipes/~/revisions/X3zcRQTzmPqPbYiycUUx/a-d/movement/ad-cs/certifried));
+   the additional-name attributes are the same identity surface and gain no weaker class.
+   (4) A tenant has a validated write right for it
+   ([validated writes](https://learn.microsoft.com/en-us/windows/win32/adschema/validated-writes)),
+   so the DC's own check is a second line, never the only one. `msDS-AdditionalSamAccountName` is
+   denied with it as its sibling in the same SPN rule; its System-Only flag is `[UNVERIFIED]`
+   (lab G17 reads both flags on Samba and Windows), and the denial does not depend on it.
+   **Reviewed and kept as they are:** `sAMAccountName`, `userPrincipalName`, `dNSHostName`
+   (`rename_logon`); `servicePrincipalName` (`set_spn`); `displayName`, `givenName`, `sn`,
+   `description`, `department` (labels with no sign-in meaning, unguarded). Reversing the decision
+   needs a review that edits this paragraph, the block and connector-contract 8.10.4 together.
+
    **Considered, not guarded (and why).** `scriptPath`, `profilePath`, `homeDirectory`: they run
    code or mount a share at the account's own sign-in; they do not let the actor sign in as it
    (code execution as the user is a different threat, TM-D18 neighbour; left to the OU/GPO
-   guards). `msDS-AdditionalDnsHostName`: no known sign-in effect `[UNVERIFIED]`. `mail`,
+   guards). `mail`,
    `otherMails`, `mobilePhone` in Entra can feed self-service password reset contact data
    `[UNVERIFIED — lab G17, Entra tenant with SSPR]`; until G17 reports, they are written only
    through the same Entra constructor path and are guarded as `reset_password` (conservative).
@@ -2118,7 +2159,7 @@ map_credential: msDS-KeyCredentialLink, altSecurityIdentities, entra:authorizati
 set_spn: servicePrincipalName
 signin_flags: uac.set(PASSWD_NOTREQD 0x0020, ENCRYPTED_TEXT_PWD_ALLOWED 0x0080, DONT_EXPIRE_PASSWORD 0x10000, USE_DES_KEY_ONLY 0x200000, DONT_REQ_PREAUTH 0x400000), uac.clear(SMARTCARD_REQUIRED 0x40000, NOT_DELEGATED 0x100000), msDS-SupportedEncryptionTypes
 signin_limits: accountExpires>now, logonHours (not provably a subset), userWorkstations (widened or cleared)
-denied: msDS-AllowedToActOnBehalfOfOtherIdentity, msDS-AllowedToDelegateTo, uac.set(TRUSTED_FOR_DELEGATION 0x80000, TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000), sIDHistory, primaryGroupID, entra:authenticationMethods, entra:temporaryAccessPass
+denied: msDS-AllowedToActOnBehalfOfOtherIdentity, msDS-AllowedToDelegateTo, uac.set(TRUSTED_FOR_DELEGATION 0x80000, TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000), sIDHistory, primaryGroupID, msDS-AdditionalDnsHostName, msDS-AdditionalSamAccountName, entra:authenticationMethods, entra:temporaryAccessPass
 ```
 
 Hex values are `[UNVERIFIED]` against MS-ADTS until lab G17 reads each bit on Samba and
@@ -3501,9 +3542,13 @@ External, in order of first use:
 92. https://learn.microsoft.com/en-gb/windows/win32/ad/security-properties (T-0388; `logonHours`, `userWorkstations`)
 93. https://learn.microsoft.com/en-us/graph/api/resources/user?view=graph-rest-1.0 (T-0388; not re-read, `[UNVERIFIED]`)
 94. https://thehacker.recipes/ad/movement/kerberos/asreproast (T-0388; not re-read, `[UNVERIFIED]`)
+95. https://learn.microsoft.com/en-us/windows/win32/adschema/a-msds-additionaldnshostname (T-1646; System-Only True, set by the system)
+96. https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/28ca4eca-0e0b-4666-9175-a37ccb8edada (T-1646; SPN hostname rule)
+97. https://learn.microsoft.com/en-us/windows/win32/adschema/validated-writes (T-1646)
 
 ## Changelog
 
+- 2026-11-12 · T-1646. `msDS-AdditionalDnsHostName` and `msDS-AdditionalSamAccountName` are `denied` in §6.9 rule 5 and the `guarded-v1` block (not `rename_logon`), with sources 95 to 97; connector-contract 8.10.4 gains both names in the same change. Reviewed name attributes listed in rule 5.
 - 2026-11-07 · T-1643. New basis C20 (connector's own identity and registered service identities, refused for every write kind), §6.5 step 6 (V7e: the identity must not control itself), DECISION TM-D34 in [connector-own-identity-tm-d34.md](connector-own-identity-tm-d34.md), threats TM-D34-T1..T10. Contract §8.1, §8.10.3, CC-WK-27/28/36-40.
 
 - 2026-11-05 · T-1621 (review of T-1581 write kinds). §7.4 gains the directory password reset row (`USER_PASSWORD_RESET`, TM-D28 `reset_password`), which is the source for `StepUp = true`. `OBJECT_CREATE` of a USER with a password stays outside §7.4 (TM-D28 rule 3). Rulings on delete, restore, `SecretValue` and unlock are in [connector-contract.md](connector-contract.md) §8.10.9.
@@ -3538,6 +3583,7 @@ External, in order of first use:
 - 2026-10-02 · v0.1 (old T-0007 rework after the solution-architect review). New boundaries TB18 (ManageEngine source ↔ migration importer, scanner, comparator; TM-D21) and TB19 (RADIUS; TM-D20, co-location bounded). `fileserver` agent rows TM-TB12-T10…T15 and TM-D13 extended to it; `fpolicy` and `t0-connector` out of scope with an RT-6 trigger. Authentication-plane residual closed by TM-D19 (activeDIQ-held authority factor anchored in the AD plane; TM-TB8-T8, TM-R12). TM-D17 aligned to DM-10.I7 and D-0009: 90 days, optional monitor, DM vocabulary and permissions, old T-0061. §6.3 R9 Deleted Objects finding (TM-Q27). §6.4 C rows reordered. New proofs TM-F-MIGRATE and TM-F-RADIUS; RT-18; TM-R13; TM-Q25 (Exchange leg) to TM-Q28. §18 regenerated (65 URLs).
 - 2026-10-02 · v0 (old T-0007). 17 trust boundaries with STRIDE tables; minimum AD rights R1–R13 and Graph allow and deny lists; the `tier0` set for AD (C1–C16) and Entra (E1–E5), answering DM Q1 and confirming DM-23.I5; the hybrid correlation gate (TM-D17), which confirms DM-20.I4 and tightens it, with (f) attested because Graph has no app-only read; role-granting groups as escalation objects (TM-D18, the DM-36.I2 referral); decisions TM-D1–D18; follow-up tickets old T-0053 to old T-0060. Status `review`.
 - 2026-11-07 · T-1730. §6.3 R15 split: (a) report and listing use stays never-requested (TM-D31 rule 6, amended pointer); (b) DECISION TM-D33: kind 6 restore ships, gated on an optional, customer-applied `LC`+`RC` ACE on `CN=Deleted Objects` to the connection identity only, proven from the container DACL, never inferred; R9 note; TM-F-RIGHTS (b) tightened, cases (e)-(g); §16.1 TM-R28. Evidence: T-1633 lab. Contract §8.10.3 kind 6 and §8.10.9 R2 amended in the same change. Round 2 (solution-architect review): TM-F-RIGHTS (b) restated as (b1) deleted-target read and (b2) container-descriptor read, two base-scope functions with allow-listed callers (step 7; step 7 and VerifyConnection), failing fixtures named; owners T-1737 ((b), (f)), T-1735 ((e), (g)).
+- 2026-11-12 · T-1751. TM-D33 rule 8 and contract §8.10.3 kind 6 step 4a: a deleted restore target is checked by `objectSid` and each `sIDHistory` against the trustee, owner and RBCD SIDs of C17, C19, C12 and C13 (unresolved SIDs included, replication rights singly, fail closed); CC-WK-41..44.
 - 2026-11-04 · T-1125. §6.3 R14 (optional replication-monitoring read for SYS-03) and R15 (Deleted Objects read: never requested), DECISION TM-D31 with fallback behaviour and TM-F-RIGHTS cases; reports-2 §4.1 rule 7b not built in v1. Spec edit ticketed as T-1511 (product-manager); SYS-03 build, RBAC permission and TM-F-RIGHTS cases (a)-(d) as T-1512 (reporting-engineer); lab case T-1510. ID renumbered from TM-D30 (taken by T-0893).
 - 2026-10-24 · T-0235 (answers TM-Q29, ad-expert consult). §6.4: new C19 (control of a C1 or C13 group, `krbtgt`, a DC computer object, the Domain Controllers OU and DC-holding containers, and `tier0` GPOs) and DECISION TM-D27: eleven rules (per-class takeover rights, SDProp not trusted and live DACL read, ownership, ignore list, depth 1, live basis, connector self-check, Samba cannot prove SDProp) and 19 named T0-C19-* / T0-RIGHTS-C19 tests added to TM-F-T0GUARD. New TM-R21 (depth 1) and TM-R22 (SYSVOL ACL) accepted; TM-Q30 opened. Windows-lab items stay `[UNVERIFIED]`.
 - 2026-10-28 · T-0178: §9.2.1 and TM-D29 (rollback of sealed values): no seal counter in the AAD (it rolls back with the blob); per column new-row-on-change plus terminal rows hold no secret (CHECK and trigger), detective or ADR-bounded for key material, TM-R24 accepted for DM-63/82/85. TM-F-SEAL extended.
