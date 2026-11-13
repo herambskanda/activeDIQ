@@ -12,6 +12,13 @@ import (
 // lands they answer 501 not-implemented rather than a made-up body. Each row deletes its methods here.
 type pending struct{}
 
+// ListReportRunPolicyTargets (T-1718) is in the contract ahead of the policy dataset (T-1114, inventory.policies).
+// Until the dataset lands no run holds a policy row, so every policyId is "not a policy row of the run"; the
+// honest answer is 501 rather than a made-up empty page, which a client would read as "no direct targets".
+func (pending) ListReportRunPolicyTargets(context.Context, api.ListReportRunPolicyTargetsInput) (api.ListReportRunPolicyTargetsOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (policy dataset, T-1114)")
+}
+
 var _ api.Handlers = (*Handlers)(nil)
 
 func (pending) GetReportSchedule(context.Context, api.GetReportScheduleInput) (api.GetReportScheduleOutput, error) {

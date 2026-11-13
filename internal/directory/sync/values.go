@@ -23,6 +23,8 @@ const (
 	maxBag        = 60 * 1024 // the store's 64 KiB, less the JSON framing the estimate leaves out
 	maxMembers    = 100000
 	maxMultiValue = 10000
+	// maxDNSHostName is dNSHostName's schema rangeUpper.
+	maxDNSHostName = 2048
 )
 
 // attrSet is the wanted attributes of one entry, by lower-case name. Attributes the Mapper did not
@@ -61,7 +63,9 @@ func cleanText(name, s string, max int) (string, error) {
 	if strings.ContainsRune(s, 0) || !utf8.ValidString(s) {
 		return "", refuse(name, CodeBadText)
 	}
-	if len(s) > max {
+	// max counts characters, as the schema's rangeUpper does (UTF-16 units; a rune is never more), not
+	// bytes: a 256-character sAMAccountName of non-ASCII text is valid in AD and several times 256 bytes.
+	if utf8.RuneCountInString(s) > max {
 		return "", refuse(name, CodeTooLong)
 	}
 	return s, nil

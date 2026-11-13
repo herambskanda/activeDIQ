@@ -319,6 +319,17 @@ func (d *Database) Owner(ctx context.Context) (*pgx.Conn, error) {
 	return d.s.connect(ctx, OwnerRole, d.s.ownerPass, d.Name)
 }
 
+// OwnerForTenant opens an owner connection whose app.tenant_id is a start-up parameter, so that a bulk fixture
+// load can pass FORCE RLS for one tenant without a statement timeout. The caller closes it.
+func (d *Database) OwnerForTenant(ctx context.Context, tenantID string) (*pgx.Conn, error) {
+	cfg, err := pgx.ParseConfig(d.OwnerDSN())
+	if err != nil {
+		return nil, err
+	}
+	cfg.RuntimeParams["app.tenant_id"] = tenantID
+	return pgx.ConnectConfig(ctx, cfg)
+}
+
 func (d *Database) App(ctx context.Context) (*pgx.Conn, error) {
 	return d.s.connect(ctx, RuntimeRole, d.s.appPass, d.Name)
 }
@@ -361,6 +372,11 @@ func (d *Database) Apply(ctx context.Context, fsys fs.FS) error {
 		// statements. The file is repository content, not input.
 		if _, err := c.Exec(ctx, string(b)); err != nil {
 			return fmt.Errorf("migration %s: %w", n, err)
+		}
+		for _, stmt := range migrations.After(string(b)) {
+			if _, err := c.Exec(ctx, stmt); err != nil {
+				return fmt.Errorf("migration %s (after): %w", n, err)
+			}
 		}
 	}
 	return nil

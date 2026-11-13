@@ -238,6 +238,14 @@ func (e *Engine) logDomain(r DomainReport, err error) {
 	for _, k := range keys {
 		attrs = append(attrs, "refused."+k.Attr+"."+string(k.Code), r.RefusedBy[k])
 	}
+	// The first few refused objects by GUID (an identifier, not a directory value); the report has up to
+	// MaxRefusedEntries.
+	for i, re := range r.RefusedEntries {
+		if i == 20 {
+			break
+		}
+		attrs = append(attrs, fmt.Sprintf("refused_object.%d", i), string(re.Object)+" "+re.Attr+"."+string(re.Code))
+	}
 	if err != nil {
 		// Never err.Error(): a store error can carry a database message that repeats a bound value. Log the
 		// phase and a class from a fixed vocabulary.
