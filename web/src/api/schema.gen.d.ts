@@ -121,6 +121,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/step-up": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-verify the second factor of the calling console session (step-up, TM-D16)
+         * @description Lets a signed-in console session obtain the fresh multi-factor check that a step-up operation (operations whose permission is a stepUp row of policy.yaml, TM section 7.4) requires. The caller sends a TOTP code of the session's own account. Success answers 204 with no body: the server moves the session's MFA time forward, and the next step-up operation is judged against that server-side time alone. Nothing in the request or response carries, sets or reports freshness, and no client field can assert it. Only a console session can call this: an API token has no interactive second factor and is refused 401. Needs the CSRF header like any cookie-session mutation.
+         *     Every refusal has one shape, 403 /problems/step-up-refused: a wrong, replayed or paused code, no enrolled factor, an account that is no longer active and an exhausted failure budget are indistinguishable by status, body, headers and timing class. The response and the request name no enrolment, so a caller cannot learn which one matched. A refusal keeps the session's earlier MFA time as it was. A session that is revoked or expired is the ordinary 401 /problems/unauthenticated. The route is a guessing oracle for a stolen session, so it is limited per principal in the secret class, and the server also charges every failure to the account's enrolment budget. Every attempt is audited with the principal and the outcome, never the code.
+         *     Later addition, not in this version: WebAuthn re-verification. Only TOTP re-verifies today (authn.StepUp.Reverify); a WebAuthn variant will be an additive operation or an additive request member, announced in the changelog.
+         */
+        post: operations["reverifyStepUp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connectionId}/takeover-attestation": {
         parameters: {
             query?: never;
@@ -2827,6 +2849,22 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description The step-up re-verification did not succeed. One answer for every cause (wrong, replayed or paused code, no enrolled factor, an account that is no longer active, a spent failure budget), so the response teaches a caller nothing about which enrolment exists or matched (TM-D16, TM-D30). It never carries a detail or an errors member. */
+        StepUpRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 403,
+                 *       "title": "Step-up verification refused",
+                 *       "type": "/problems/step-up-refused"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description A fresh multi-factor check is required */
         StepUpRequired: {
             headers: {
@@ -3113,6 +3151,36 @@ export interface operations {
             };
             400: components["responses"]["Validation"];
             401: components["responses"]["SignInFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            501: components["responses"]["NotImplemented"];
+        };
+    };
+    reverifyStepUp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpCodeRequest"];
+            };
+        };
+        responses: {
+            /** @description The code was right. The session's MFA time is now; there is no body. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["StepUpRefused"];
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             429: components["responses"]["RateLimited"];
