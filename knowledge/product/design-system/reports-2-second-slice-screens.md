@@ -90,6 +90,7 @@ Contrast is computed from the token values in both themes (all pairs used): warn
 ## 9. Open items
 
 - **ad-expert**: confirm the direction table for PSO deltas (lock-out duration "until admin unlocks" as strictest; observation window longer = stricter), and supply the E-S3 wording with sources. Until then ship the deltas; if a direction is unconfirmed, show "differs" (no glyph colour).
+  - **Answered (T-1881):** [pso-delta-directions-and-repl-error-wording.md](../../development/domain/pso-delta-directions-and-repl-error-wording.md). Confirmed: duration (0 = strictest), max age, threshold, length, history, complexity. **Not confirmed → "differs":** observation window, min age between two non-zero values, reversible encryption when PSO is off and domain is on. E-S3 meaning text sourced for 10 codes; no remedy text.
 - **Sample status thresholds** (1 h / 24 h) and the 180 d tombstone lifetime in the preview are the spec's `[PROPOSED]` values.
 - **Unverified in the preview**: nothing on screen is a real ME or AD result. Error texts 1722, 8524 and 8453 are the standard Windows messages used only as sample.
 - The PSO "Applies to" column shows direct targets only; a resultant-policy column is out of scope (spec §7.1.2).
