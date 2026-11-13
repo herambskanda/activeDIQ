@@ -25,7 +25,7 @@ type openAudit func() (auditSink, func(), error)
 
 // runRepin opens the audit sink first, refusing to proceed without it, then repins. actor names the
 // invoking account and host and is part of every message.
-func runRepin(dir, newPin, actor string, open openAudit) int {
+func runRepin(dir, newPin, actor string, open openAudit, opts ...dial.Option) int {
 	audit, closeSink, err := open()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agentsetup: repin refused, the audit log cannot be opened:", err)
@@ -34,13 +34,13 @@ func runRepin(dir, newPin, actor string, open openAudit) int {
 	defer closeSink()
 	return repin(dir, newPin, func(msg string, failed bool) {
 		audit("by "+actor+": "+msg, failed)
-	})
+	}, opts...)
 }
 
 // repin adopts newPin for the enrollment state in dir, keeping the component identity, and reports
 // the outcome through audit exactly once (a parse failure of the state directory is reported too).
 // It returns the process exit code.
-func repin(dir, newPin string, audit auditSink) int {
+func repin(dir, newPin string, audit auditSink, opts ...dial.Option) int {
 	ctx, cancel := context.WithTimeout(context.Background(), repinTimeout)
 	defer cancel()
 	reported := false
@@ -51,7 +51,7 @@ func repin(dir, newPin string, audit auditSink) int {
 			return
 		}
 		audit(fmt.Sprintf("repin from %s to %s succeeded; the component identity was kept", e.OldPin, e.NewPin), false)
-	})
+	}, opts...)
 	if err != nil {
 		if !reported {
 			audit(fmt.Sprintf("repin to %s failed before any change: %v", newPin, err), true)

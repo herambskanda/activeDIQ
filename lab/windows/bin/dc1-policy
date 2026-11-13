@@ -77,9 +77,9 @@ def restore(ps, addr, say=print, svc_password=None):
 
 
 def main(argv):
+    env, _, addr = dc1winrm.load_env("dc1-policy")  # load_env calls labaddr.require_dc_addr: no default DC address (T-1279)
     if len(argv) != 2 or argv[1] not in ("check", "restore"):
         sys.exit(__doc__)
-    env, _, addr = dc1winrm.load_env("dc1-policy")
     ps = dc1winrm.make_ps(env, addr)
     pw = env.get("WIN_LAB_SVC_PASSWORD")
     bad = check(ps, addr, svc_password=pw) if argv[1] == "check" else restore(ps, addr, svc_password=pw)

@@ -1,0 +1,845 @@
+# T-1734 driver sources (lab only; run under lab/windows/bin/with-dc1-lock; needs pywinrm and ldap3; reads credentials from the lab env file, prints none)
+
+# ===== t1734lib.py
+"""T-1734 lab helpers. Run under lab/windows/bin/with-dc1-lock. Never prints passwords (scrubbed)."""
+import os, sys, uuid, secrets, string, base64, ssl, time, json
+REPO = "/home/khushi/AD/activeDIQ"
+sys.path.insert(0, "/tmp/claude-1000/-home-khushi-AD-activeDIQ/f546d9a9-7bfd-4eab-a17d-42105201670f/scratchpad/libs")
+sys.path.insert(0, REPO + "/lab/windows/lib")
+import dc1winrm
+import ldap3
+from ldap3 import Server, Connection, Tls, BASE, LEVEL, SUBTREE, MODIFY_REPLACE
+from ldap3.protocol.microsoft import security_descriptor_control
+
+env, _path, addr = dc1winrm.load_env("t1734")
+dc = dc1winrm.DC(env, addr)
+BASE_DN = "DC=win,DC=activediq,DC=test"
+DOM = "win.activediq.test"
+NB = "WINLAB"
+CONT = "CN=Deleted Objects," + BASE_DN
+WKGUID_DO = "18e2ea80684f11d2b9aa00c04f79f805"
+SHOWDEL = ("1.2.840.113556.1.4.417", True, None)
+D2065 = ("1.2.840.113556.1.4.2065", False, None)
+SYS_SID = "S-1-5-18"
+
+
+def rpw():
+    a = string.ascii_letters + string.digits
+    return "T1734-" + "".join(secrets.choice(a) for _ in range(20)) + "-aA1!"
+
+
+PW = rpw()
+SECRETS = [PW, env["WIN_LAB_ADMIN_PASSWORD"]]
+CANARY = "CANARY-" + "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
+SECRETS.append(CANARY)
+
+
+def scrub(s):
+    for x in SECRETS:
+        s = s.replace(x, "***")
+    return s
+
+
+def out(*a):
+    print(scrub(" ".join(str(x) for x in a)), flush=True)
+
+
+def ps(script, show=False):
+    rc, o = dc.ps(script)
+    o = scrub(o)
+    if show and o.strip():
+        print(o.strip(), flush=True)
+    return rc, o
+
+
+def srv():
+    tls = Tls(validate=ssl.CERT_REQUIRED, ca_certs_file=REPO + "/lab/windows/.win-lab-ca.pem",
+              valid_names=["dc1.win.activediq.test", addr])
+    return Server(addr, port=636, use_ssl=True, tls=tls, get_info=ldap3.NONE)
+
+
+def bind(sam):
+    return Connection(srv(), user=sam + "@" + DOM, password=PW, auto_bind=True)
+
+
+def adminbind():
+    return Connection(srv(), user="Administrator@" + DOM, password=env["WIN_LAB_ADMIN_PASSWORD"], auto_bind=True)
+
+
+def guidhex(g):
+    return uuid.UUID(g).bytes_le.hex()
+
+
+def sdc(flags):
+    return security_descriptor_control(criticality=False, sdflags=flags)
+
+
+def sddl(b):
+    """Decode a binary SD to SDDL on dc1 (RawSecurityDescriptor)."""
+    rc, o = ps("$b=[Convert]::FromBase64String('%s');$s=New-Object Security.AccessControl.RawSecurityDescriptor($b,0);$s.GetSddlForm('All')" % base64.b64encode(b).decode())
+    return o.strip()
+
+
+def read_sd(conn, base, flags=0x7, showdel=True):
+    ctl = ([SHOWDEL] if showdel else []) + sdc(flags)
+    conn.search(base, "(objectClass=*)", search_scope=BASE, attributes=["nTSecurityDescriptor"], controls=ctl)
+    ents = [e for e in conn.response if e.get("type") == "searchResEntry"]
+    if not ents:
+        return conn.result["description"], None
+    v = ents[0]["raw_attributes"].get("nTSecurityDescriptor") or []
+    return conn.result["description"], (v[0] if v else None)
+
+
+def read(conn, base, label, attrs, sd=0x7, showdel=True, link=True, quiet=False):
+    ctl = []
+    if showdel:
+        ctl.append(SHOWDEL)
+    if link:
+        ctl.append(D2065)
+    if sd:
+        ctl += sdc(sd)
+    try:
+        conn.search(base, "(objectClass=*)", search_scope=BASE, attributes=attrs, controls=ctl)
+    except Exception as e:  # noqa
+        out("  %-58s EXC %s" % (label, str(e)[:140])); return None
+    ents = [e for e in conn.response if e.get("type") == "searchResEntry"]
+    got = {}
+    if ents:
+        for k, v in ents[0]["raw_attributes"].items():
+            if v:
+                got[k] = v
+    if not quiet:
+        out("  %-58s rc=%s %s entries=%d attrs=%s" % (label, conn.result["result"], conn.result["description"], len(ents), sorted(got) if ents else "-"))
+    return got if ents else None
+
+
+def baseline_container():
+    a = adminbind()
+    d, b = read_sd(a, CONT, 0x7)
+    a.unbind()
+    return b
+
+
+def set_sd(conn, dn, data, flags):
+    ok = conn.modify(dn, {"nTSecurityDescriptor": [(MODIFY_REPLACE, [data])]}, controls=[SHOWDEL] + security_descriptor_control(criticality=True, sdflags=flags))
+    return ok, conn.result["description"]
+
+
+def transform_sd(cur, rules, owner_sid, strip_trustee_like=None):
+    """Typed edit on dc1: load the binary SD, optionally drop ACEs of listed SIDs, add rules [(sid, 'ListChildren,ReadControl')]
+    with inheritance None, set the owner. Returns (sddl, new binary)."""
+    adds = "\n".join("$r=New-Object System.DirectoryServices.ActiveDirectoryAccessRule([Security.Principal.SecurityIdentifier]'%s',[System.DirectoryServices.ActiveDirectoryRights]'%s','Allow',[System.DirectoryServices.ActiveDirectorySecurityInheritance]'None');$sd.AddAccessRule($r)" % (s, r) for s, r in rules)
+    strip = ""
+    if strip_trustee_like:
+        strip = "$sd.GetAccessRules($true,$false,[Security.Principal.SecurityIdentifier]) | Where-Object { @(%s) -contains $_.IdentityReference.Value } | ForEach-Object { [void]$sd.RemoveAccessRuleSpecific($_) }" % ",".join("'%s'" % s for s in strip_trustee_like)
+    rc, o = ps(r'''
+$b=[Convert]::FromBase64String('%s')
+$sd=New-Object System.DirectoryServices.ActiveDirectorySecurity
+$sd.SetSecurityDescriptorBinaryForm($b)
+%s
+%s
+$sd.SetOwner([Security.Principal.SecurityIdentifier]'%s')
+$sd.GetSecurityDescriptorSddlForm('All')
+[Convert]::ToBase64String($sd.GetSecurityDescriptorBinaryForm())
+''' % (base64.b64encode(cur).decode(), strip, adds, owner_sid))
+    lines = [l for l in o.strip().splitlines() if l.strip()]
+    return lines[-2], base64.b64decode(lines[-1])
+
+
+def sid_of(sam):
+    rc, o = ps("Import-Module ActiveDirectory; (Get-ADObject -Filter \"samAccountName -eq '%s'\" -Properties objectSid).objectSid.Value" % sam)
+    return o.strip().splitlines()[-1].strip()
+
+
+def cleanup_names(ou_dns, users, groups):
+    sc = "Import-Module ActiveDirectory\n"
+    for ou in ou_dns:
+        sc += """$ou='%s'
+if (Get-ADOrganizationalUnit -Filter "distinguishedName -eq '$ou'" -ErrorAction SilentlyContinue) {
+  Get-ADOrganizationalUnit -SearchBase $ou -Filter * | ForEach-Object { Set-ADOrganizationalUnit -Identity $_ -ProtectedFromAccidentalDeletion $false }
+  Remove-ADOrganizationalUnit -Identity $ou -Recursive -Confirm:$false
+}
+""" % ou
+    for u in users:
+        sc += "Get-ADUser -Filter \"samAccountName -eq '%s'\" | Remove-ADUser -Confirm:$false\n" % u
+    for g in groups:
+        sc += "Get-ADGroup -Filter \"samAccountName -eq '%s'\" | Remove-ADGroup -Confirm:$false\n" % g
+    sc += "'cleanup done'"
+    return ps(sc)[1].strip()
+
+
+def owner_only_sd(sid):
+    rc, o = ps("$sd=New-Object System.DirectoryServices.ActiveDirectorySecurity;$sd.SetOwner([Security.Principal.SecurityIdentifier]'%s');[Convert]::ToBase64String($sd.GetSecurityDescriptorBinaryForm())" % sid)
+    return base64.b64decode(o.strip().splitlines()[-1].strip())
+
+
+def takeover(a, da_sid):
+    """Typed owner-only write (SD_FLAGS 0x1) of Domain Admins as owner; falls back to dsacls /takeownership. Returns how it went."""
+    nb = owner_only_sd(da_sid)
+    ok, r = set_sd(a, CONT, nb, 0x1)
+    if ok:
+        return "typed owner-only write 0x1: ok"
+    o = ps('dsacls "%s" /takeownership' % CONT)[1].strip()[-80:]
+    return "typed owner-only write 0x1 REFUSED (%s); dsacls /takeownership: %s" % (r, o)
+
+
+def dsacls_text(extra=""):
+    return ps('dsacls "%s"' % CONT)[1].strip()
+
+
+def guid_of(filt, base=BASE_DN):
+    rc, o = ps("Import-Module ActiveDirectory; (Get-ADObject -Filter \"%s\" -SearchBase '%s').ObjectGUID.ToString()" % (filt, base))
+    return o.strip().splitlines()[-1].strip()
+
+# ===== p0.py
+import sys
+sys.path.insert(0, "/tmp/claude-1000/-home-khushi-AD-activeDIQ/f546d9a9-7bfd-4eab-a17d-42105201670f/scratchpad")
+from t1734lib import *
+out("===== P0 read-only probe", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+rc, o = ps("""Import-Module ActiveDirectory
+$d=Get-ADDomain; $f=Get-ADForest
+"host " + $env:COMPUTERNAME + " os " + (Get-CimInstance Win32_OperatingSystem).Caption + " build " + (Get-CimInstance Win32_OperatingSystem).BuildNumber
+"domain mode " + $d.DomainMode + " forest mode " + $f.ForestMode
+"recycle bin " + [bool](Get-ADOptionalFeature -Filter "name -eq 'Recycle Bin Feature'").EnabledScopes
+"deletedObjectLifetime " + (Get-ADObject 'CN=Directory Service,CN=Windows NT,CN=Services,CN=Configuration,%s' -Properties 'msDS-DeletedObjectLifetime').'msDS-DeletedObjectLifetime'
+"dSHeuristics [" + (Get-ADObject 'CN=Directory Service,CN=Windows NT,CN=Services,CN=Configuration,%s' -Properties dSHeuristics).dSHeuristics + "]"
+"leftover T1734 OU: " + [bool](Get-ADOrganizationalUnit -Filter "name -like 'T1734*'")
+""" % (BASE_DN, BASE_DN, ))
+out(o.strip())
+a = adminbind()
+# schema flags
+for att in ("sIDHistory", "msDS-AllowedToActOnBehalfOfOtherIdentity", "isCriticalSystemObject", "msDS-AllowedToDelegateTo", "msLAPS-Password", "msLAPS-EncryptedPassword", "ms-Mcs-AdmPwd", "msDS-SecondaryKrbTgtNumber", "msDS-LastKnownRDN", "lastKnownParent", "adminCount"):
+    a.search("CN=Schema,CN=Configuration," + BASE_DN, "(&(objectClass=attributeSchema)(lDAPDisplayName=%s))" % att, attributes=["searchFlags", "systemFlags", "systemOnly", "schemaIDGUID"], search_scope=SUBTREE)
+    e = [x for x in a.response if x.get("type") == "searchResEntry"]
+    if not e:
+        out("schema %-44s ABSENT" % att); continue
+    at = e[0]["attributes"]
+    out("schema %-44s searchFlags=%s systemFlags=%s systemOnly=%s" % (att, at.get("searchFlags"), at.get("systemFlags"), at.get("systemOnly")))
+a.unbind()
+
+# ===== p1.py
+"""P1: item 1. Does the LC|RC ACE survive the owner reset to SYSTEM (SD_FLAGS 0x5 write)? Three write orders, then removal; baseline restored.
+Reader after the owner is SYSTEM: the connection identity itself (member of the LC|RC group), through its WKGUID base read."""
+import sys
+sys.path.insert(0, "/tmp/claude-1000/-home-khushi-AD-activeDIQ/f546d9a9-7bfd-4eab-a17d-42105201670f/scratchpad")
+from t1734lib import *
+
+IDOU = "OU=T1734-ID," + BASE_DN
+WK = "<WKGUID=%s,%s>" % (WKGUID_DO, BASE_DN)
+out("===== P1 item 1: ACE vs owner reset", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+cleanup_names([IDOU], ["adq1734-cls"], ["adq1734-grp-lcrc"])
+ps("""Import-Module ActiveDirectory
+$pw = ConvertTo-SecureString '%s' -AsPlainText -Force
+New-ADOrganizationalUnit -Name T1734-ID -Path '%s' -ProtectedFromAccidentalDeletion $false
+New-ADGroup -Name adq1734-grp-lcrc -SamAccountName adq1734-grp-lcrc -GroupScope DomainLocal -Path '%s'
+New-ADUser -Name adq1734-cls -SamAccountName adq1734-cls -UserPrincipalName "adq1734-cls@%s" -Path '%s' -AccountPassword $pw -Enabled $true -PasswordNeverExpires $true
+Add-ADGroupMember -Identity adq1734-grp-lcrc -Members adq1734-cls
+""" % (PW, BASE_DN, IDOU, DOM, IDOU))
+G = sid_of("adq1734-grp-lcrc")
+DA = ps("(Get-ADGroup 'Domain Admins').SID.Value")[1].strip().splitlines()[-1].strip()
+out("trustee group SID", G, "| Domain Admins SID", DA)
+a = adminbind()
+EXPECT_BASE = "O:SYG:SYD:PAI(A;;KA;;;SY)(A;;LCRP;;;BA)"
+
+
+def aces_for(s, sid):
+    return [x for x in s.replace(")(", ")\n(").splitlines() if sid in x]
+
+
+def admin_read(label):
+    d, b = read_sd(a, CONT, 0x7)
+    out("  %-52s admin read: %s, descriptor value returned=%s" % (label, d, b is not None))
+    return b
+
+
+def cls_read(label, flags=0x5):
+    c = bind("adq1734-cls")
+    got = read(c, WK, label, ["nTSecurityDescriptor"], sd=flags, link=False, quiet=True)
+    c.unbind()
+    if got and "nTSecurityDescriptor" in got:
+        s = sddl(got["nTSecurityDescriptor"][0])
+        out("  %-52s cls (LC|RC member) via WKGUID: %s" % (label, s))
+        return s
+    out("  %-52s cls (LC|RC member) via WKGUID: NO descriptor (%s)" % (label, got))
+    return None
+
+
+def peek_after_takeover(label):
+    """Verification read of the container with the owner temporarily Domain Admins, then the owner is put back to SYSTEM (0x1)."""
+    out("  [" + takeover(a, DA) + "]")
+    d, b = read_sd(a, CONT, 0x7)
+    s = sddl(b) if b else "UNREADABLE"
+    out("  %-52s %s" % (label, s))
+    ok, r = set_sd(a, CONT, owner_only_sd(SYS_SID), 0x1)
+    out("  owner put back to SYSTEM (0x1):", ok, r)
+    return s
+
+
+base = None
+base_s = None
+try:
+    out("--- Step 0: what the default descriptor allows")
+    d0 = dsacls_text()
+    out("dsacls as found:\n" + d0)
+    admin_read("as found (owner SYSTEM)")
+    out("--- Step 1: take ownership with a typed owner-only write, read, build baseline bytes")
+    out("  " + takeover(a, DA))
+    d, cur = read_sd(a, CONT, 0x7)
+    out("  admin read after takeover:", d, "bytes", len(cur) if cur else None)
+    tsddl = sddl(cur)
+    out("  after-takeover SDDL:", tsddl)
+    base_s, base = transform_sd(cur, [], SYS_SID)
+    out("  baseline (owner SYSTEM) SDDL:", base_s, "| equals the documented default:", base_s == EXPECT_BASE)
+    ok, r = set_sd(a, CONT, base, 0x5)
+    out("  write baseline back (0x5):", ok, r)
+    admin_read("after owner reset (owner SYSTEM)")
+
+    def removal(label):
+        ok, r = set_sd(a, CONT, base, 0x5)
+        out("  removal: write baseline straight away, no takeover (0x5):", ok, r)
+        if not ok:
+            out("  [" + takeover(a, DA) + "]")
+            ok, r = set_sd(a, CONT, base, 0x5)
+            out("  removal: write baseline after takeover (0x5):", ok, r)
+        s = peek_after_takeover("verify baseline after removal (" + label + ")")
+        s_norm = s.replace("O:" + DA, "O:SY")
+        out("  %s: DACL equals baseline after removal: %s" % (label, s.split("D:", 1)[-1] == base_s.split("D:", 1)[-1]))
+
+    # ---- Variant A: takeover, then ONE write (0x5) carrying ACE + owner SYSTEM  (TM-D33 rule 2 as written)
+    out("--- Variant A: takeover; one 0x5 write = DACL with LC|RC ACE + owner SYSTEM")
+    out("  " + takeover(a, DA))
+    d, cur = read_sd(a, CONT, 0x7)
+    s, nb = transform_sd(cur, [(G, "ListChildren,ReadControl")], SYS_SID)
+    ok, r = set_sd(a, CONT, nb, 0x5)
+    out("  write ACE + owner SYSTEM (0x5):", ok, r)
+    admin_read("admin after the write (owner is SYSTEM now)")
+    sA = cls_read("A: after the single write")
+    out("  A: ACE present:", aces_for(sA or "", G), "| owner SY:", (sA or "").startswith("O:SY"), "| protected flag kept (PAI):", "D:PAI" in (sA or "") or "D:P" in (sA or ""))
+    time.sleep(10)
+    sA2 = cls_read("A: re-read after 10 s")
+    out("  A: ACE still present:", bool(aces_for(sA2 or "", G)))
+    removal("A")
+
+    # ---- Variant B: takeover; DACL write (0x4) with ACE; separate owner-only write (0x1) to SYSTEM
+    out("--- Variant B: takeover; DACL-only write (0x4) with the ACE; then a separate owner-only write (0x1) to SYSTEM")
+    out("  " + takeover(a, DA))
+    d, cur = read_sd(a, CONT, 0x7)
+    s, nb = transform_sd(cur, [(G, "ListChildren,ReadControl")], DA)
+    ok, r = set_sd(a, CONT, nb, 0x4)
+    out("  write ACE only (0x4), owner stays Domain Admins:", ok, r)
+    d, cur = read_sd(a, CONT, 0x7)
+    out("  admin read, owner DA, after DACL write:", sddl(cur) if cur else d)
+    ok, r = set_sd(a, CONT, owner_only_sd(SYS_SID), 0x1)
+    out("  owner-only write to SYSTEM (0x1):", ok, r)
+    sB = cls_read("B: after the separate owner reset")
+    out("  B: ACE present after owner reset:", aces_for(sB or "", G), "| owner SY:", (sB or "").startswith("O:SY"))
+    removal("B")
+
+    # ---- Variant C: the dsacls path (KB 892806, as in T-1633), then owner reset with the typed 0x5 write
+    out("--- Variant C: dsacls /takeownership + /G <group>:LC, then the owner reset with a typed 0x5 write")
+    out("  dsacls takeownership:", ps('dsacls "%s" /takeownership' % CONT)[1].strip()[-60:])
+    out("  dsacls /G LC:", ps('dsacls "%s" /G "%s\\adq1734-grp-lcrc:LC"' % (CONT, NB))[1].strip()[-60:])
+    d, cur = read_sd(a, CONT, 0x7)
+    out("  admin read after dsacls grant (owner DA):", sddl(cur) if cur else d)
+    s, nb = transform_sd(cur, [], SYS_SID)
+    ok, r = set_sd(a, CONT, nb, 0x5)
+    out("  owner reset to SYSTEM via 0x5 (DACL rewritten as read):", ok, r)
+    c = bind("adq1734-cls")
+    got = read(c, WK, "C: cls read", ["nTSecurityDescriptor"], sd=0x5, link=False, quiet=True)
+    c.unbind()
+    sC = sddl(got["nTSecurityDescriptor"][0]) if got and "nTSecurityDescriptor" in got else None
+    out("  C: container as the LC-only grantee sees it (RC not granted: descriptor expected unreadable):", sC)
+    removal("C")
+finally:
+    out("--- finally")
+    try:
+        out("  " + takeover(a, DA))
+        ok, r = set_sd(a, CONT, base, 0x5) if base else (False, "no baseline captured; owner left as Domain Admins, fix by hand")
+        out("  final baseline write:", ok, r)
+    except Exception as e:  # noqa
+        out("  !! final restore exception", e)
+    out("FINAL dsacls:\n" + dsacls_text())
+    a.unbind()
+    out(cleanup_names([IDOU], ["adq1734-cls"], ["adq1734-grp-lcrc"]))
+
+# ===== p2.py
+"""P2: items 2-6 inside one LC|RC grant window on CN=Deleted Objects. Always removes the grant and restores the baseline descriptor."""
+import sys
+sys.path.insert(0, "/tmp/claude-1000/-home-khushi-AD-activeDIQ/f546d9a9-7bfd-4eab-a17d-42105201670f/scratchpad")
+from t1734lib import *
+
+IDOU = "OU=T1734-ID," + BASE_DN
+VOU = "OU=T1734-V," + BASE_DN
+USERS = ["adq1734-cls", "adq1734-clsLC", "adq1734-clsRC", "adq1734-clsCA", "adq1734-cls0", "t1734-u3", "t1734-u4", "t1734-u5a", "t1734-u5b", "t1734-u6"]
+GROUPS = ["adq1734-grp-lcrc", "adq1734-grp-lc", "adq1734-grp-rc", "t1734-g3", "t1734-g3parent"]
+out("===== P2 items 2-6", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+cleanup_names([IDOU, VOU], USERS, GROUPS)
+ps("""Import-Module ActiveDirectory
+$pw = ConvertTo-SecureString '%s' -AsPlainText -Force
+New-ADOrganizationalUnit -Name T1734-ID -Path '%s' -ProtectedFromAccidentalDeletion $false
+New-ADOrganizationalUnit -Name T1734-V -Path '%s' -ProtectedFromAccidentalDeletion $false
+foreach($n in 'adq1734-cls','adq1734-clsLC','adq1734-clsRC','adq1734-clsCA','adq1734-cls0'){
+  New-ADUser -Name $n -SamAccountName $n -UserPrincipalName "$n@%s" -Path '%s' -AccountPassword $pw -Enabled $true -PasswordNeverExpires $true
+}
+foreach($g in 'adq1734-grp-lcrc','adq1734-grp-lc','adq1734-grp-rc'){ New-ADGroup -Name $g -SamAccountName $g -GroupScope DomainLocal -Path '%s' }
+Add-ADGroupMember -Identity adq1734-grp-lcrc -Members adq1734-cls, adq1734-clsCA
+Add-ADGroupMember -Identity adq1734-grp-lc -Members adq1734-clsLC
+Add-ADGroupMember -Identity adq1734-grp-rc -Members adq1734-clsRC
+'identities ready'
+""" % (PW, BASE_DN, BASE_DN, DOM, IDOU, IDOU), show=True)
+G_LCRC, G_LC, G_RC = sid_of("adq1734-grp-lcrc"), sid_of("adq1734-grp-lc"), sid_of("adq1734-grp-rc")
+DA = ps("(Get-ADGroup 'Domain Admins').SID.Value")[1].strip().splitlines()[-1].strip()
+
+a = adminbind()
+EXPECT_BASE = "O:SYG:SYD:PAI(A;;KA;;;SY)(A;;LCRP;;;BA)"
+out("dsacls as found:\n" + dsacls_text())
+out("  " + takeover(a, DA))
+d, cur = read_sd(a, CONT, 0x7)
+out("after takeover, admin read:", d, "bytes", len(cur) if cur else None)
+base_s, base = transform_sd(cur, [], SYS_SID)
+out("baseline (owner SYSTEM) SDDL:", base_s, "| equals documented default:", base_s == EXPECT_BASE)
+base_sddl = base_s
+set_sd(a, CONT, base, 0x5)
+
+
+def grant():
+    out("  " + takeover(a, DA))
+    d, cur = read_sd(a, CONT, 0x7)
+    s, nb = transform_sd(cur, [(G_LCRC, "ListChildren,ReadControl"), (G_LC, "ListChildren"), (G_RC, "ReadControl")], SYS_SID)
+    ok, r = set_sd(a, CONT, nb, 0x5)
+    out("grant applied (takeover, then one 0x5 write with owner SYSTEM):", ok, r)
+
+
+def ungrant():
+    out("  " + takeover(a, DA))
+    ok, r = set_sd(a, CONT, base, 0x5)
+    out("grant removed (baseline written, owner SYSTEM):", ok, r)
+
+
+R2 = ["objectGUID", "isDeleted", "isRecycled", "lastKnownParent", "msDS-LastKnownRDN", "nTSecurityDescriptor", "objectSid", "userAccountControl",
+      "primaryGroupID", "memberOf", "sIDHistory", "adminCount", "msDS-AllowedToDelegateTo", "msDS-AllowedToActOnBehalfOfOtherIdentity",
+      "msDS-SecondaryKrbTgtNumber", "isCriticalSystemObject", "name", "description", "objectClass", "member"]
+MUST_BASE = ["objectGUID", "isDeleted", "lastKnownParent", "msDS-LastKnownRDN", "nTSecurityDescriptor"]
+MUST_BY_CLASS = {"user": MUST_BASE + ["objectSid", "userAccountControl", "primaryGroupID"],
+                 "computer": MUST_BASE + ["objectSid", "userAccountControl", "primaryGroupID"],
+                 "group": MUST_BASE + ["objectSid"], "contact": MUST_BASE, "organizationalUnit": MUST_BASE}
+
+
+def guid_of(dn_or_sam, kind="user"):
+    rc, o = ps("Import-Module ActiveDirectory; (Get-ADObject -Filter \"%s\" -SearchBase '%s').ObjectGUID.ToString()" % (dn_or_sam, BASE_DN))
+    return o.strip().splitlines()[-1].strip()
+
+
+try:
+    grant()
+    # =============== ITEM 2: RC + show-deleted, non-admin reads the container descriptor via WKGUID
+    out("\n===== ITEM 2: container owner+DACL read by a non-admin via WKGUID")
+    WK = "<WKGUID=%s,%s>" % (WKGUID_DO, BASE_DN)
+    for sam, what in (("adq1734-cls", "LC|RC group member"), ("adq1734-clsLC", "LC only (negative control: no RC)"),
+                      ("adq1734-clsRC", "RC only (negative control: no LC)"), ("adq1734-cls0", "no grant (negative control)")):
+        c = bind(sam)
+        out("-- identity %s (%s)" % (sam, what))
+        c.search(BASE_DN, "(objectClass=domainDNS)", search_scope=BASE, attributes=["wellKnownObjects"])
+        wk = [e for e in c.response if e.get("type") == "searchResEntry"]
+        vals = [v.decode(errors="replace") for v in (wk[0]["raw_attributes"].get("wellKnownObjects") or [])] if wk else []
+        out("  domain head wellKnownObjects readable:", c.result["description"], "| DO entry:", [v for v in vals if "18E2EA80684F11D2B9AA00C04F79F805" in v.upper()])
+        for lab, base_dn, showdel, fl in (("WKGUID + show-deleted, SD_FLAGS 0x5", WK, True, 0x5), ("WKGUID + show-deleted, SD_FLAGS 0x7", WK, True, 0x7),
+                                          ("WKGUID, NO show-deleted, 0x5", WK, False, 0x5), ("DN + show-deleted, 0x5", CONT, True, 0x5),
+                                          ("WKGUID + show-deleted, SD_FLAGS 0x8 (SACL)", WK, True, 0x8), ("WKGUID + show-deleted, 0xF (all)", WK, True, 0xF)):
+            got = read(c, base_dn, lab, ["nTSecurityDescriptor", "name", "isDeleted"], sd=fl, showdel=showdel, link=False)
+            if got and "nTSecurityDescriptor" in got and sam == "adq1734-cls" and fl in (0x5, 0x7):
+                out("      SDDL as seen:", sddl(got["nTSecurityDescriptor"][0]))
+        c.unbind()
+
+    # =============== ITEM 3: must-be-present set per class
+    out("\n===== ITEM 3: must-be-present R2 set per class (group, computer, contact, OU; user as control)")
+    ps("""Import-Module ActiveDirectory
+$pw = ConvertTo-SecureString '%s' -AsPlainText -Force
+New-ADGroup -Name t1734-g3parent -SamAccountName t1734-g3parent -GroupScope Global -Path '%s'
+New-ADGroup -Name t1734-g3 -SamAccountName t1734-g3 -GroupScope Global -Path '%s' -Description 'victim'
+Add-ADGroupMember -Identity t1734-g3parent -Members t1734-g3
+New-ADUser -Name t1734-u3 -SamAccountName t1734-u3 -Path '%s' -AccountPassword $pw -Enabled $true -Description 'victim'
+Add-ADGroupMember -Identity t1734-g3parent -Members t1734-u3
+New-ADComputer -Name T1734-C3 -SamAccountName 'T1734-C3$' -Path '%s' -Description 'victim'
+Add-ADGroupMember -Identity t1734-g3parent -Members 'T1734-C3$'
+New-ADObject -Name t1734-ct3 -Type contact -Path '%s' -Description 'victim'
+New-ADOrganizationalUnit -Name t1734-ou3 -Path '%s' -ProtectedFromAccidentalDeletion $false -Description 'victim'
+'victims created'
+""" % (PW, VOU, VOU, VOU, VOU, VOU, VOU), show=True)
+    gd = {"group": guid_of("name -eq 't1734-g3'"), "user": guid_of("name -eq 't1734-u3'"), "computer": guid_of("name -eq 'T1734-C3'"),
+          "contact": guid_of("name -eq 't1734-ct3'"), "organizationalUnit": guid_of("name -eq 't1734-ou3'")}
+    out("victim GUIDs", gd)
+    c = bind("adq1734-cls")
+    live = {}
+    for k, g in gd.items():
+        live[k] = read(c, "<GUID=%s>" % guidhex(g), "LIVE %s read by cls" % k, R2, showdel=False, link=True)
+    c.unbind()
+    ps("""Import-Module ActiveDirectory
+Remove-ADObject -Identity (Get-ADObject -Filter "name -eq 't1734-ct3'" -SearchBase '%(v)s') -Confirm:$false
+Remove-ADComputer -Identity 'T1734-C3$' -Confirm:$false
+Remove-ADUser -Identity t1734-u3 -Confirm:$false
+Remove-ADGroup -Identity t1734-g3 -Confirm:$false
+Remove-ADOrganizationalUnit -Identity 'OU=t1734-ou3,%(v)s' -Confirm:$false
+'victims deleted'""" % dict(v=VOU), show=True)
+    time.sleep(2)
+    for who, c in (("cls (LC|RC)", bind("adq1734-cls")), ("admin", adminbind())):
+        out("-- DELETED, read by", who)
+        for k, g in gd.items():
+            got = read(c, "<GUID=%s>" % guidhex(g), "DELETED %s" % k, R2, link=True)
+            if got is None:
+                out("      -> %s: NOT READABLE" % k); continue
+            miss = [x for x in MUST_BY_CLASS[k] if x not in got]
+            lk = got.get("lastKnownParent", [b""])[0].decode(errors="replace")
+            rdn = got.get("msDS-LastKnownRDN", [b""])[0].decode(errors="replace")
+            oc = [x.decode() for x in got.get("objectClass", [])]
+            uac = got.get("userAccountControl", [b""])[0].decode()
+            out("      -> %-18s must-be-present missing=%s | lastKnownParent=%s RDN=%s UAC=%s memberOf#=%d objectClass=%s" % (k, miss or "none", lk, rdn, uac, len(got.get("memberOf", [])), oc[-1:] ))
+            out("         optional present:", [x for x in ("sIDHistory", "memberOf", "adminCount", "msDS-AllowedToDelegateTo", "msDS-AllowedToActOnBehalfOfOtherIdentity", "msDS-SecondaryKrbTgtNumber", "isCriticalSystemObject") if x in got])
+        c.unbind()
+
+    # =============== ITEM 4: retention of sIDHistory, RBCD, isCriticalSystemObject
+    out("\n===== ITEM 4: retention")
+    rc, o = ps("""Import-Module ActiveDirectory
+$pw = ConvertTo-SecureString '%s' -AsPlainText -Force
+New-ADComputer -Name T1734-C4 -SamAccountName 'T1734-C4$' -Path '%s'
+New-ADUser -Name t1734-u4 -SamAccountName t1734-u4 -Path '%s' -AccountPassword $pw -Enabled $true
+# RBCD: allow adq1734-cls0 to delegate to the computer and to the user
+Set-ADComputer -Identity 'T1734-C4$' -PrincipalsAllowedToDelegateToAccount (Get-ADUser adq1734-cls0)
+Set-ADUser -Identity t1734-u4 -PrincipalsAllowedToDelegateToAccount (Get-ADUser adq1734-cls0)
+"RBCD set on computer: " + [bool](Get-ADComputer 'T1734-C4$' -Properties msDS-AllowedToActOnBehalfOfOtherIdentity).'msDS-AllowedToActOnBehalfOfOtherIdentity'
+"RBCD set on user: " + [bool](Get-ADUser t1734-u4 -Properties msDS-AllowedToActOnBehalfOfOtherIdentity).'msDS-AllowedToActOnBehalfOfOtherIdentity'
+foreach($t in @(@('sIDHistory', 'S-1-5-21-111111111-222222222-333333333-1105'), @('isCriticalSystemObject', $true), @('msDS-SecondaryKrbTgtNumber', 77777))){
+  foreach($obj in 't1734-u4'){
+    try {
+      $v = $t[1]
+      if ($t[0] -eq 'sIDHistory') { $v = (New-Object Security.Principal.SecurityIdentifier $t[1]) }
+      $h=@{}; $h[$t[0]]=$v; Set-ADUser -Identity $obj -Replace $h -ErrorAction Stop
+      "WRITE $($t[0]) on user: ACCEPTED"
+    } catch { "WRITE $($t[0]) on user: REFUSED: " + $_.Exception.Message }
+  }
+}
+""" % (PW, VOU, VOU))
+    out(o.strip())
+    g4c = guid_of("name -eq 'T1734-C4'")
+    g4u = guid_of("name -eq 't1734-u4'")
+    a2 = adminbind()
+    a2.search("<GUID=%s>" % guidhex(g4u), "(objectClass=*)", search_scope=BASE, attributes=["sIDHistory", "isCriticalSystemObject", "msDS-SecondaryKrbTgtNumber", "msDS-AllowedToActOnBehalfOfOtherIdentity"])
+    out("LIVE user attrs after write attempts:", {k: (len(v) if isinstance(v, (list, bytes)) else str(v)[:20]) for k, v in a2.response[0]["raw_attributes"].items() if v} if a2.response else a2.result)
+    a2.unbind()
+    out("-- delete attempts")
+    rc, o = ps("""Import-Module ActiveDirectory
+foreach($x in @(@('computer','T1734-C4$'), @('user','t1734-u4'))){
+  try { if ($x[0] -eq 'computer') { Remove-ADComputer -Identity $x[1] -Confirm:$false -ErrorAction Stop } else { Remove-ADUser -Identity $x[1] -Confirm:$false -ErrorAction Stop }; "DELETE $($x[1]): done" }
+  catch { "DELETE $($x[1]): FAILED: " + $_.Exception.Message }
+}""")
+    out(o.strip())
+    time.sleep(2)
+    for who, c in (("cls (LC|RC)", bind("adq1734-cls")), ("admin", adminbind())):
+        out("-- DELETED, read by", who)
+        for k, g in (("computer(RBCD)", g4c), ("user(RBCD)", g4u)):
+            got = read(c, "<GUID=%s>" % guidhex(g), "DELETED %s" % k, R2, link=True)
+            if got:
+                out("      -> RBCD present:", "msDS-AllowedToActOnBehalfOfOtherIdentity" in got, "len", len(got.get("msDS-AllowedToActOnBehalfOfOtherIdentity", [b""])[0]),
+                    "| sIDHistory present:", "sIDHistory" in got, "| isCriticalSystemObject:", got.get("isCriticalSystemObject"), "| SecondaryKrbTgt:", "msDS-SecondaryKrbTgtNumber" in got)
+        c.unbind()
+
+    # =============== ITEM 5: inherited deny on the OU before deletion
+    out("\n===== ITEM 5: inheritable Deny on the OU, set before the child exists / is deleted")
+    ps("""Import-Module ActiveDirectory
+New-ADOrganizationalUnit -Name t1734-ou5a -Path '%(v)s' -ProtectedFromAccidentalDeletion $false
+New-ADOrganizationalUnit -Name t1734-ou5b -Path '%(v)s' -ProtectedFromAccidentalDeletion $false
+'ou5 created'""" % dict(v=VOU), show=True)
+    OU5A, OU5B = "OU=t1734-ou5a," + VOU, "OU=t1734-ou5b," + VOU
+    out(ps('dsacls "%s" /I:S /D "%s\\adq1734-cls:RPRC"' % (OU5A, NB))[1].strip()[-70:])
+    out(ps('dsacls "%s" /I:S /D "%s\\adq1734-cls:RP;description;user"' % (OU5B, NB))[1].strip()[-70:])
+    for ou in (OU5A, OU5B):
+        d, b = read_sd(a, ou, 0x4, showdel=False)
+        out("  OU DACL (", ou.split(",")[0], ") deny ACEs:", [x for x in sddl(b).replace(")(", ")\n(").splitlines() if x.startswith("(D") or ";;;" in x and "(D;" in x][:4])
+    ps("""Import-Module ActiveDirectory
+$pw = ConvertTo-SecureString '%s' -AsPlainText -Force
+New-ADUser -Name t1734-u5a -SamAccountName t1734-u5a -Path '%s' -AccountPassword $pw -Enabled $true -Description 'victim5a'
+New-ADUser -Name t1734-u5b -SamAccountName t1734-u5b -Path '%s' -AccountPassword $pw -Enabled $true -Description 'victim5b'
+Set-ADUser -Identity t1734-u5a -Replace @{adminCount=1}
+Set-ADUser -Identity t1734-u5b -Replace @{adminCount=1}
+'u5 created'""" % (PW, OU5A, OU5B), show=True)
+    g5a, g5b = guid_of("name -eq 't1734-u5a'"), guid_of("name -eq 't1734-u5b'")
+    out("-- LIVE reads by cls (the deny applies?)")
+    c = bind("adq1734-cls")
+    la = read(c, "<GUID=%s>" % guidhex(g5a), "LIVE u5a (OU deny RP|RC all props)", R2, showdel=False, link=False)
+    lb = read(c, "<GUID=%s>" % guidhex(g5b), "LIVE u5b (OU deny RP on description)", R2, showdel=False, link=False)
+    c.unbind()
+    out("   u5b live description returned:", bool(lb and "description" in lb), "| adminCount returned:", bool(lb and "adminCount" in lb))
+    d5a, b5a = read_sd(a, "<GUID=%s>" % guidhex(g5a), 0x4, showdel=False)
+    d5b, b5b = read_sd(a, "<GUID=%s>" % guidhex(g5b), 0x4, showdel=False)
+    sa_live, sb_live = sddl(b5a), sddl(b5b)
+    out("   u5a live DACL (admin):", sa_live)
+    out("   u5b live DACL (admin):", sb_live)
+    ps("""Import-Module ActiveDirectory
+Remove-ADUser -Identity t1734-u5a -Confirm:$false
+Remove-ADUser -Identity t1734-u5b -Confirm:$false
+'u5 deleted'""", show=True)
+    time.sleep(2)
+    out("-- DELETED reads by cls")
+    c = bind("adq1734-cls")
+    da = read(c, "<GUID=%s>" % guidhex(g5a), "DELETED u5a by cls", R2, link=True)
+    db = read(c, "<GUID=%s>" % guidhex(g5b), "DELETED u5b by cls", R2, link=True)
+    c.unbind()
+    out("   u5a: any attribute returned to cls:", bool(da), "| attrs:", sorted(da) if da else "-", "(live returned:", sorted(la) if la else "none", ")")
+    out("   u5b: description returned to cls:", bool(db and "description" in db), "| adminCount returned:", bool(db and "adminCount" in db), "| live: description", bool(lb and "description" in lb))
+    d5a2, b5a2 = read_sd(a, "<GUID=%s>" % guidhex(g5a), 0x4)
+    d5b2, b5b2 = read_sd(a, "<GUID=%s>" % guidhex(g5b), 0x4)
+    sa_del, sb_del = sddl(b5a2), sddl(b5b2)
+    out("   u5a DELETED DACL (admin):", sa_del)
+    out("   u5b DELETED DACL (admin):", sb_del)
+    out("   retained DACL identical to the live DACL: u5a", sa_del == sa_live, "| u5b", sb_del == sb_live)
+
+    # =============== ITEM 6: confidential attribute (LAPS) on a deleted computer
+    out("\n===== ITEM 6: confidential attribute on a deleted computer")
+    OU6 = "OU=t1734-ou6," + VOU
+    ps("""Import-Module ActiveDirectory
+New-ADOrganizationalUnit -Name t1734-ou6 -Path '%s' -ProtectedFromAccidentalDeletion $false""" % VOU)
+    # clsCA: inheritable Read Property + Control Access on descendants, before the computer exists
+    out(ps('dsacls "%s" /I:S /G "%s\\adq1734-clsCA:RPCA"' % (OU6, NB))[1].strip()[-70:])
+    rc, o = ps("""Import-Module ActiveDirectory
+New-ADComputer -Name T1734-C6 -SamAccountName 'T1734-C6$' -Path '%s' -Description 'victim6'
+$json = '{"n":"Administrator","t":"1d8a0000000000","p":"%s"}'
+try { Set-ADComputer -Identity 'T1734-C6$' -Replace @{ 'msLAPS-Password' = $json }; 'msLAPS-Password written' } catch { 'WRITE msLAPS-Password REFUSED: ' + $_.Exception.Message }
+(Get-ADComputer 'T1734-C6$' -Properties objectGUID).ObjectGUID.ToString()""" % (OU6, CANARY))
+    out(o.strip().replace(CANARY, "***"))
+    g6 = o.strip().splitlines()[-1].strip()
+    LAPS = ["msLAPS-Password", "name", "description", "objectGUID", "nTSecurityDescriptor", "isDeleted"]
+
+    def laps_report(label, c, g, showdel):
+        got = read(c, "<GUID=%s>" % guidhex(g), label, LAPS, link=False, showdel=showdel, quiet=True)
+        if got is None:
+            out("  %-44s NOT READABLE" % label); return
+        v = got.get("msLAPS-Password", [b""])[0].decode(errors="replace")
+        out("  %-44s msLAPS-Password returned=%s (canary matches=%s) | description returned=%s | attrs=%s" % (label, "msLAPS-Password" in got, CANARY in v, "description" in got, sorted(got)))
+
+    out("-- LIVE")
+    for sam in ("adq1734-cls", "adq1734-clsCA"):
+        c = bind(sam); laps_report("LIVE by " + sam, c, g6, False); c.unbind()
+    ad = adminbind(); laps_report("LIVE by admin", ad, g6, False); ad.unbind()
+    d6, b6 = read_sd(a, "<GUID=%s>" % guidhex(g6), 0x4, showdel=False)
+    s6_live = sddl(b6)
+    ps("Import-Module ActiveDirectory; Remove-ADComputer -Identity 'T1734-C6$' -Confirm:$false", show=True)
+    time.sleep(2)
+    out("-- DELETED")
+    for sam in ("adq1734-cls", "adq1734-clsCA"):
+        c = bind(sam); laps_report("DELETED by " + sam, c, g6, True); c.unbind()
+    ad = adminbind(); laps_report("DELETED by admin", ad, g6, True); ad.unbind()
+    d6b, b6b = read_sd(a, "<GUID=%s>" % guidhex(g6), 0x4)
+    out("   retained DACL identical to live:", sddl(b6b) == s6_live)
+finally:
+    out("\n===== cleanup")
+    try:
+        ungrant()
+    finally:
+        out("  " + takeover(a, DA))
+        d, cur = read_sd(a, CONT, 0x7)
+        fin = sddl(cur)
+        set_sd(a, CONT, owner_only_sd(SYS_SID), 0x1)
+        out("FINAL container SDDL (read with owner temporarily DA):", fin)
+        out("FINAL DACL identical to baseline:", fin.split("D:", 1)[-1] == base_sddl.split("D:", 1)[-1])
+        out("FINAL dsacls:\n" + dsacls_text())
+        a.unbind()
+        out(cleanup_names([IDOU, VOU], USERS, GROUPS))
+        out("computer cleanup:", ps("Import-Module ActiveDirectory; Get-ADComputer -Filter \"name -like 'T1734-*'\" | Remove-ADComputer -Confirm:$false; 'ok'")[1].strip())
+
+# ===== p3_body.py
+R2 = ["objectGUID", "isDeleted", "lastKnownParent", "msDS-LastKnownRDN", "nTSecurityDescriptor", "objectSid", "userAccountControl",
+      "primaryGroupID", "memberOf", "adminCount", "name", "description", "objectClass"]
+DENYSET = ["isDeleted", "lastKnownParent", "msDS-LastKnownRDN", "userAccountControl", "adminCount", "memberOf", "description", "objectSid", "primaryGroupID"]
+
+
+def dacl_of(guid, showdel):
+    d, b = read_sd(a, "<GUID=%s>" % guidhex(guid), 0x7, showdel=showdel)
+    return sddl(b) if b else "UNREADABLE(" + d + ")"
+
+
+try:
+    grant()
+    out("\n===== ITEM 5 (redo): inheritable Deny on the OU, ACE in place before the child exists")
+    ps("""Import-Module ActiveDirectory
+foreach($n in 't1734-ou5a','t1734-ou5b','t1734-ou5c'){ New-ADOrganizationalUnit -Name $n -Path '%s' -ProtectedFromAccidentalDeletion $false }
+'ou5 created'""" % VOU, show=True)
+    OU5A, OU5B, OU5C = ["OU=%s,%s" % (n, VOU) for n in ("t1734-ou5a", "t1734-ou5b", "t1734-ou5c")]
+    out(ps('dsacls "%s" /I:S /D "%s\\adq1734-cls:RPRC"' % (OU5A, NB))[1].strip()[-50:])
+    out(ps('dsacls "%s" /I:S /D "%s\\adq1734-cls:RP;userAccountControl;user"' % (OU5B, NB))[1].strip()[-50:])
+    for ou in (OU5A, OU5B, OU5C):
+        d, b = read_sd(a, ou, 0x7, showdel=False)
+        out("  OU DACL", ou.split(",")[0], ":", sddl(b))
+    ps("""Import-Module ActiveDirectory
+$pw = ConvertTo-SecureString '%s' -AsPlainText -Force
+foreach($x in @(@('t1734-u5a','%s'),@('t1734-u5b','%s'),@('t1734-u5c','%s'))){
+  New-ADUser -Name $x[0] -SamAccountName $x[0] -Path $x[1] -AccountPassword $pw -Enabled $true -Description ('victim ' + $x[0])
+  Set-ADUser -Identity $x[0] -Replace @{adminCount=1}
+}
+'u5 created'""" % (PW, OU5A, OU5B, OU5C), show=True)
+    G5 = {k: guid_of("name -eq 't1734-%s'" % k) for k in ("u5a", "u5b", "u5c")}
+    DESC = {"u5a": "inherited Deny RP|RC, all properties (cls)", "u5b": "inherited Deny RP on userAccountControl only (cls)", "u5c": "control: no deny"}
+    live, liveacl = {}, {}
+    c = bind("adq1734-cls")
+    out("-- LIVE reads by cls")
+    for k, g in G5.items():
+        live[k] = read(c, "<GUID=%s>" % guidhex(g), "LIVE %s: %s" % (k, DESC[k]), R2, showdel=False, link=False)
+        liveacl[k] = dacl_of(g, False)
+    c.unbind()
+    for k in G5:
+        out("   %s live DACL (admin, owner+group+DACL): %s" % (k, liveacl[k]))
+    ps("""Import-Module ActiveDirectory
+foreach($n in 't1734-u5a','t1734-u5b','t1734-u5c'){ Remove-ADUser -Identity $n -Confirm:$false }
+'u5 deleted'""", show=True)
+    time.sleep(2)
+    out("-- DELETED reads by cls (LC|RC holder)")
+    c = bind("adq1734-cls")
+    for k, g in G5.items():
+        dl = read(c, "<GUID=%s>" % guidhex(g), "DELETED %s: %s" % (k, DESC[k]), R2, link=True)
+        delacl = dacl_of(g, True)
+        lv = set(live[k] or ()) & set(DENYSET)
+        dv = set(dl or ()) & set(DENYSET)
+        out("   %s: returned live (of the probe set): %s" % (k, sorted(lv)))
+        out("   %s: returned deleted (probe set; isDeleted/lastKnownParent/msDS-LastKnownRDN exist only when deleted): %s" % (k, sorted(dv)))
+        out("   %s: anything returned deleted that the live read did not, other than the deleted-state attributes: %s" % (k, sorted((dv - lv) - {"isDeleted", "lastKnownParent", "msDS-LastKnownRDN"})))
+        out("   %s: retained DACL identical to live DACL: %s" % (k, delacl == liveacl[k]))
+        if delacl != liveacl[k]:
+            out("      deleted DACL:", delacl)
+    c.unbind()
+
+    out("\n===== ITEM 6: confidential attribute on a deleted computer")
+    rc, o = ps("Import-Module ActiveDirectory; foreach($n in 'unixUserPassword','userPassword','msSFU30Password'){ $a=Get-ADObject -SearchBase (Get-ADRootDSE).schemaNamingContext -Filter \"lDAPDisplayName -eq '$n'\" -Properties searchFlags; \"$n searchFlags=\" + $a.searchFlags }")
+    out(o.strip())
+    OU6 = "OU=t1734-ou6," + VOU
+    ps("""Import-Module ActiveDirectory
+New-ADOrganizationalUnit -Name t1734-ou6 -Path '%s' -ProtectedFromAccidentalDeletion $false""" % VOU)
+    out("clsCA grant on OU6 (inheritable RP + Control Access, set before the computers exist):", ps('dsacls "%s" /I:S /G "%s\\adq1734-clsCA:RPCA"' % (OU6, NB))[1].strip()[-40:])
+    d, b = read_sd(a, OU6, 0x7, showdel=False)
+    out("  OU6 DACL:", sddl(b))
+
+    def one(attr, comp, writer):
+        out("--- attribute %s on computer %s" % (attr, comp))
+        rc, o = ps("""Import-Module ActiveDirectory
+New-ADComputer -Name '%s' -SamAccountName '%s$' -Path '%s' -Description 'victim6'
+try { %s; 'WRITE %s: ACCEPTED' } catch { 'WRITE %s REFUSED: ' + $_.Exception.Message }
+(Get-ADComputer '%s$' -Properties objectGUID).ObjectGUID.ToString()""" % (comp, comp, OU6, writer, attr, attr, comp))
+        o = o.replace(CANARY, "***")
+        out(o.strip())
+        g = o.strip().splitlines()[-1].strip()
+        A = [attr, "name", "description", "objectGUID", "nTSecurityDescriptor", "isDeleted", "objectSid", "userAccountControl"]
+
+        def rep(label, c, showdel):
+            got = read(c, "<GUID=%s>" % guidhex(g), label, A, link=False, showdel=showdel, quiet=True)
+            if got is None:
+                out("  %-40s NOT READABLE" % label); return
+            v = got.get(attr, [b""])[0]
+            out("  %-40s %s returned=%s canary-in-value=%s | description returned=%s | objectSid returned=%s" % (label, attr, attr in got, CANARY.encode() in v or CANARY.encode("utf-16le") in v, "description" in got, "objectSid" in got))
+
+        for sam in ("adq1734-cls", "adq1734-clsCA"):
+            c = bind(sam); rep("LIVE by " + sam, c, False); c.unbind()
+        ad = adminbind(); rep("LIVE by admin", ad, False); ad.unbind()
+        lacl = dacl_of(g, False)
+        ps("Import-Module ActiveDirectory; Remove-ADComputer -Identity '%s$' -Confirm:$false" % comp)
+        time.sleep(2)
+        for sam in ("adq1734-cls", "adq1734-clsCA"):
+            c = bind(sam); rep("DELETED by " + sam, c, True); c.unbind()
+        ad = adminbind(); rep("DELETED by admin", ad, True); ad.unbind()
+        out("  retained DACL identical to live:", dacl_of(g, True) == lacl)
+
+    one("unixUserPassword", "T1734-C6A", "Set-ADComputer -Identity 'T1734-C6A$' -Replace @{ unixUserPassword = [Text.Encoding]::ASCII.GetBytes('%s') }" % CANARY)
+
+    out("\n--- Windows LAPS schema")
+    rc, o = ps("""Import-Module ActiveDirectory
+$s=(Get-ADRootDSE).schemaNamingContext
+$have = [bool](Get-ADObject -SearchBase $s -Filter "lDAPDisplayName -eq 'msLAPS-Password'")
+'msLAPS-Password in schema before: ' + $have
+if (-not $have) {
+  try { Import-Module LAPS; Update-LapsADSchema -Confirm:$false -Verbose 4>&1 | Out-String } catch { 'Update-LapsADSchema FAILED: ' + $_.Exception.Message }
+  try { $r=[ADSI]'LDAP://RootDSE'; $r.Put('schemaUpdateNow',1); $r.SetInfo(); 'schemaUpdateNow sent' } catch { 'schemaUpdateNow: ' + $_.Exception.Message }
+  Start-Sleep -Seconds 5
+}
+foreach($n in 'msLAPS-Password','msLAPS-EncryptedPassword','msLAPS-PasswordExpirationTime'){ $a=Get-ADObject -SearchBase $s -Filter "lDAPDisplayName -eq '$n'" -Properties searchFlags; "$n " + $(if($a){'searchFlags=' + $a.searchFlags}else{'ABSENT'}) }""")
+    out(o.strip())
+    if "msLAPS-Password searchFlags" in o:
+        one("msLAPS-Password", "T1734-C6B", """$j = '{"n":"Administrator","t":"1d8a0000000000","p":"%s"}'; Set-ADComputer -Identity 'T1734-C6B$' -Replace @{ 'msLAPS-Password' = $j }""" % CANARY)
+    else:
+        out("msLAPS-Password still absent: item 6 for LAPS not measured")
+finally:
+    out("\n===== cleanup")
+    try:
+        ungrant()
+    finally:
+        out("  " + takeover(a, DA))
+        d, cur = read_sd(a, CONT, 0x7)
+        fin = sddl(cur)
+        set_sd(a, CONT, owner_only_sd(SYS_SID), 0x1)
+        out("FINAL container SDDL (read with owner temporarily DA, then owner put back to SYSTEM):", fin)
+        out("FINAL dsacls (owner SYSTEM, expected 'Insufficient access rights'):\n" + dsacls_text())
+        a.unbind()
+        out(cleanup_names([IDOU, VOU], USERS, GROUPS))
+        out("computer cleanup:", ps("Import-Module ActiveDirectory; Get-ADComputer -Filter \"name -like 'T1734-*'\" | Remove-ADComputer -Confirm:$false; 'ok'")[1].strip())
+
+# ===== p4.py
+"""P4: item 5 evidence: retained descriptor of a deleted child, raw bytes and parsed ACEs. Does not touch the Deleted Objects container."""
+import sys, struct
+sys.path.insert(0, "/tmp/claude-1000/-home-khushi-AD-activeDIQ/f546d9a9-7bfd-4eab-a17d-42105201670f/scratchpad")
+from t1734lib import *
+
+def sid_str(b):
+    rev, n = b[0], b[1]
+    ia = int.from_bytes(b[2:8], "big")
+    subs = struct.unpack("<%dI" % n, b[8:8 + 4 * n])
+    return "S-%d-%d-%s" % (rev, ia, "-".join(str(x) for x in subs)), 8 + 4 * n
+
+def parse_sd(b):
+    rev, _, ctl, oo, og, os_, od = struct.unpack("<BBHIIII", b[:20])
+    r = {"control": hex(ctl), "owner": sid_str(b[oo:])[0] if oo else None, "aces": []}
+    if od:
+        _, _, size, cnt, _ = struct.unpack("<BBHHH", b[od:od + 8])
+        p = od + 8
+        for _ in range(cnt):
+            t, f, sz, mask = struct.unpack("<BBHI", b[p:p + 8])
+            q = p + 8; obj = inh = None
+            if t in (5, 6, 7, 8, 0xB, 0xC, 0xD, 0xE, 0xF, 0x10, 0x11, 0x12, 0x13):  # object-type ACEs
+                oflags = struct.unpack("<I", b[q:q + 4])[0]; q += 4
+                if oflags & 1: obj = str(uuid.UUID(bytes_le=b[q:q + 16])); q += 16
+                if oflags & 2: inh = str(uuid.UUID(bytes_le=b[q:q + 16])); q += 16
+            sid = sid_str(b[q:p + sz])[0]
+            r["aces"].append((t, f, mask, obj, inh, sid))
+            p += sz
+    return r
+
+OU = "OU=t1734-ou7,OU=T1734-V," + BASE_DN
+VOU = "OU=T1734-V," + BASE_DN
+out("===== P4 item 5 evidence", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+cleanup_names([VOU, "OU=T1734-ID," + BASE_DN], ["adq1734-cls", "t1734-u7"], [])
+try:
+    ps("""Import-Module ActiveDirectory
+$pw = ConvertTo-SecureString '%s' -AsPlainText -Force
+New-ADOrganizationalUnit -Name T1734-ID -Path '%s' -ProtectedFromAccidentalDeletion $false
+New-ADUser -Name adq1734-cls -SamAccountName adq1734-cls -Path 'OU=T1734-ID,%s' -AccountPassword $pw -Enabled $true
+New-ADOrganizationalUnit -Name T1734-V -Path '%s' -ProtectedFromAccidentalDeletion $false
+New-ADOrganizationalUnit -Name t1734-ou7 -Path '%s' -ProtectedFromAccidentalDeletion $false
+""" % (PW, BASE_DN, BASE_DN, BASE_DN, VOU))
+    CLS = sid_of("adq1734-cls")
+    out("trustee cls SID", CLS)
+    out(ps('dsacls "%s" /I:S /D "%s\\adq1734-cls:RPRC"' % (OU, NB))[1].strip()[-40:])
+    ps("""Import-Module ActiveDirectory
+$pw = ConvertTo-SecureString '%s' -AsPlainText -Force
+New-ADUser -Name t1734-u7 -SamAccountName t1734-u7 -Path '%s' -AccountPassword $pw -Enabled $true""" % (PW, OU))
+    g = guid_of("name -eq 't1734-u7'")
+    a = adminbind()
+    d, live = read_sd(a, "<GUID=%s>" % guidhex(g), 0x7, showdel=False)
+    out("live SD read by admin:", d, len(live) if live else None)
+    ps("Import-Module ActiveDirectory; Remove-ADUser -Identity t1734-u7 -Confirm:$false"); time.sleep(2)
+    d, dele = read_sd(a, "<GUID=%s>" % guidhex(g), 0x7, showdel=True)
+    out("deleted SD read by admin:", d, len(dele) if dele else None)
+    out("raw descriptor bytes identical live vs deleted:", live == dele)
+    for lab, b in (("LIVE", live), ("DELETED", dele)):
+        p = parse_sd(b)
+        out("%s owner=%s control=%s aces=%d" % (lab, p["owner"], p["control"], len(p["aces"])))
+        for t, f, m, o, i, s in p["aces"]:
+            if s == CLS or t in (1, 6):
+                out("    ACE type=%d flags=0x%02x mask=0x%08x objType=%s inhType=%s trustee=%s%s" % (t, f, m, o, i, s, "  <- cls" if s == CLS else ""))
+    a.unbind()
+finally:
+    out(cleanup_names([VOU, "OU=T1734-ID," + BASE_DN], ["adq1734-cls", "t1734-u7"], []))

@@ -276,6 +276,9 @@ func (u *run) exec(ctx context.Context) (Result, error) {
 		if _, err := u.authorise(ctx, sp.Target); err != nil {
 			return Result{}, err
 		}
+		if err := u.authoriseAlso(ctx, sp); err != nil {
+			return Result{}, err
+		}
 	}
 	// Gate: fails closed.
 	route, err := r.cfg.Gate.Route(ctx, PlanSummary{Action: u.d, Steps: steps, PlanHash: u.planHash, Irreversible: worst(steps) == Irreversible})
@@ -334,6 +337,10 @@ func (u *run) applyOne(ctx context.Context, tx store.Tx, idx int, sp StepPlan) (
 	}
 	if _, err := st.Recheck(ctx, facts); err != nil {
 		return StepResult{}, u.denied("denied", err)
+	}
+	// Rule 7: every further object the step needs authority over is read live now, too.
+	if err := u.authoriseAlso(ctx, sp); err != nil {
+		return StepResult{}, err
 	}
 	out, err := u.act.Apply(ctx, st, sp)
 	if err != nil {
@@ -401,6 +408,22 @@ func (p pinnedReader) Facts(ctx context.Context, q authority.FactsQuery) (author
 	// The read adapter resolves the connection under the tenant and pins the DC by DSA GUID.
 	ctx = authority.WithDSAPins(authority.WithTenant(ctx, p.tenant.String()), maps.Clone(p.dsas))
 	return p.port.Facts(ctx, maps.Clone(p.pins), q)
+}
+
+// authoriseAlso authorises the objects an AlsoAuthorizer Action names besides the step's target.
+func (u *run) authoriseAlso(ctx context.Context, sp StepPlan) error {
+	aa, ok := u.act.(AlsoAuthorizer)
+	if !ok {
+		return nil
+	}
+	for _, x := range aa.AlsoAuthorize(sp) {
+		u.failTgt = x
+		if _, err := u.authorise(ctx, x); err != nil {
+			return err
+		}
+	}
+	u.failTgt = sp.Target
+	return nil
 }
 
 func (u *run) authorise(ctx context.Context, t authority.TargetRef) (authority.Facts, error) {

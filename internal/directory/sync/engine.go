@@ -129,8 +129,8 @@ func (e *Engine) FullCycle(ctx context.Context, tid tenant.ID, id connection.ID,
 
 // connect resolves the connection's connector, checks that every domain to read is a domain NC of this
 // directory, and returns the page size to ask for.
-func (e *Engine) connect(ctx context.Context, id connection.ID, ref *connectorv1.ConnectionRef, domains []Domain) (client.ReadClient, uint32, error) {
-	cc, err := e.Source.Connector(ctx, string(id))
+func (e *Engine) connect(ctx context.Context, id connection.ID, ref *connectorv1.ConnectionRef, domains []Domain) (client.Reader, uint32, error) {
+	cc, err := e.Source.Reader(ctx, string(id))
 	if err != nil {
 		return nil, 0, fmt.Errorf("%w: connector: %w", ErrSource, err)
 	}

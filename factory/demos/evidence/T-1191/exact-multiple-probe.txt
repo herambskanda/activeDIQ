@@ -1,0 +1,22 @@
+=== RUN   TestQAExactMultiples
+=== RUN   TestQAExactMultiples/pg16
+    qa_edge_test.go:31: QA n=500 entries=500 rows=500 passes=1 state=incremental lastFull=true batches=2 biggest=500 lastMore=false
+=== RUN   TestQAExactMultiples/pg18
+    qa_edge_test.go:31: QA n=500 entries=500 rows=500 passes=1 state=incremental lastFull=true batches=2 biggest=500 lastMore=false
+=== RUN   TestQAExactMultiples/pg16#01
+    qa_edge_test.go:31: QA n=1000 entries=1000 rows=1000 passes=1 state=incremental lastFull=true batches=3 biggest=500 lastMore=false
+=== RUN   TestQAExactMultiples/pg18#01
+    qa_edge_test.go:31: QA n=1000 entries=1000 rows=1000 passes=1 state=incremental lastFull=true batches=3 biggest=500 lastMore=false
+=== RUN   TestQAExactMultiples/pg16#02
+    qa_edge_test.go:31: QA n=1500 entries=1500 rows=1500 passes=1 state=incremental lastFull=true batches=4 biggest=500 lastMore=false
+=== RUN   TestQAExactMultiples/pg18#02
+    qa_edge_test.go:31: QA n=1500 entries=1500 rows=1500 passes=1 state=incremental lastFull=true batches=4 biggest=500 lastMore=false
+--- PASS: TestQAExactMultiples (44.35s)
+    --- PASS: TestQAExactMultiples/pg16 (10.27s)
+    --- PASS: TestQAExactMultiples/pg18 (6.08s)
+    --- PASS: TestQAExactMultiples/pg16#01 (7.06s)
+    --- PASS: TestQAExactMultiples/pg18#01 (4.24s)
+    --- PASS: TestQAExactMultiples/pg16#02 (10.02s)
+    --- PASS: TestQAExactMultiples/pg18#02 (6.67s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/directory/sync	46.115s

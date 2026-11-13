@@ -21,7 +21,7 @@
       "enabled": true,
       "argv": ["make", "-k", "ci"],
       "timeout_minutes": 120,
-      "train_size": 4,
+      "train_size": 2,
       "numbering": {
         "dir": "migrations",
         "argv": ["go", "test", "-count=1", "./migrations/", "-run", "^TestMigrationNumbersAreUniqueAndContiguous$"],
@@ -50,23 +50,21 @@
   },
   "models": {
     "allowed": {
-      "opus": [
+      "sonnet": [
         "medium",
         "high"
-      ],
+      ]
+    },
+    "escalation_only": {
       "sonnet": [
         "high"
       ]
     },
-    "escalation_only": {},
     "escalation_roles": [
       "principal-engineer"
     ],
     "effort_ladder": {
       "sonnet": [
-        "high"
-      ],
-      "opus": [
         "medium",
         "high"
       ]

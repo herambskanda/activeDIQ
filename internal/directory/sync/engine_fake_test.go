@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"github.com/skenzeriq/activediq/internal/directory/client"
 	"io"
 	"strings"
 	gosync "sync"
@@ -51,11 +50,10 @@ type searchRec struct {
 	listing bool
 }
 
-// fakeConnector is a client.ReadClient that serves a fake forest through Describe and ScopedSearch and records
+// fakeConnector is a connector client that serves a fake forest through Describe and ScopedSearch and records
 // every call. It is the only part of the engine's world that is not real; directory behaviour is proved
 // against Samba in the lab tests.
 type fakeConnector struct {
-	client.ReadClient
 	mu       gosync.Mutex
 	doms     map[string]*fdom
 	extraNCs map[string]connectorv1.NamingContextKind // configuration/schema NCs Describe also reports

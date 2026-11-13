@@ -55,6 +55,7 @@ ratified ADR disagree, the ADR wins.
 - [Threat model](threat-model.md) and [safe primitives](safe-primitives.md): why the connector is the only path.
 - [Module pages](modules/README.md): one page per feature module.
 - ADRs in `knowledge/development/decisions/`: stack, deployment, module system, API contract, operation pipeline.
+- [Factory merge workflow](factory-merge-workflow.md): stacked branches and merge order (ADR-0012).
 
 ## The console in the server binary (T-0686)
 

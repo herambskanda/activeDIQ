@@ -9,6 +9,49 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
+// Reader is the read-only slice of the connector client that the sync engine's full read uses: Describe
+// and ScopedSearch, never Plan or Apply. The directory write RPC is reachable only through a function that
+// takes a step.Clearance (ADR-0005 rule 2, fitness O2), so a package that only reads is handed this narrow
+// port and not the generated client. TestReaderIsReadOnly fixes its method set.
+type Reader interface {
+	Describe(ctx context.Context, in *connectorv1.DescribeRequest, opts ...grpc.CallOption) (*connectorv1.DescribeResponse, error)
+	ScopedSearch(ctx context.Context, in *connectorv1.ScopedSearchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ScopedSearchResponse], error)
+}
+
+// ReaderSource yields the Reader that serves one connection.
+type ReaderSource interface {
+	Reader(ctx context.Context, connectionID string) (Reader, error)
+}
+
+// NewReaderSource narrows src to read-only access. The returned reader wraps the generated client without
+// embedding it, so Plan and Apply are not in its method set.
+func NewReaderSource(src ConnectorSource) (ReaderSource, error) {
+	if src == nil {
+		return nil, errors.New("client: reader source needs a connector source")
+	}
+	return readerSource{src: src}, nil
+}
+
+type readerSource struct{ src ConnectorSource }
+
+func (r readerSource) Reader(ctx context.Context, connectionID string) (Reader, error) {
+	cc, err := r.src.Connector(ctx, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	return readOnly{cc: cc}, nil
+}
+
+type readOnly struct{ cc connectorv1.ConnectorClient }
+
+func (r readOnly) Describe(ctx context.Context, in *connectorv1.DescribeRequest, opts ...grpc.CallOption) (*connectorv1.DescribeResponse, error) {
+	return r.cc.Describe(ctx, in, opts...)
+}
+
+func (r readOnly) ScopedSearch(ctx context.Context, in *connectorv1.ScopedSearchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ScopedSearchResponse], error) {
+	return r.cc.ScopedSearch(ctx, in, opts...)
+}
+
 // ConnectorSource yields the generated connector client that serves one connection. The component
 // that owns connector endpoints and their mutual-TLS dialling implements it; this package neither
 // dials nor caches.
@@ -81,32 +124,4 @@ func (t GRPCPerDCTransport) ReadPerDC(ctx context.Context, req *connectorv1.Read
 		return nil, err
 	}
 	return cc.ReadPerDC(ctx, req)
-}
-
-// ReadClient is the two read RPCs of the generated connector client that sync uses. It is a narrow
-// interface, not an alias: a holder cannot reach Plan or Apply, so connector writes stay reachable only
-// through Write, which needs a step.Step and a step.Clearance (ADR-0005 rule 2, O2).
-type ReadClient interface {
-	Describe(ctx context.Context, in *connectorv1.DescribeRequest, opts ...grpc.CallOption) (*connectorv1.DescribeResponse, error)
-	ScopedSearch(ctx context.Context, in *connectorv1.ScopedSearchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ScopedSearchResponse], error)
-}
-
-// ReadSource resolves a connection to its read-only connector handle.
-type ReadSource struct{ src ConnectorSource }
-
-// NewReadSource narrows src to the read RPCs of ReadClient.
-func NewReadSource(src ConnectorSource) (ReadSource, error) {
-	if src == nil {
-		return ReadSource{}, errors.New("client: read source needs a connector source")
-	}
-	return ReadSource{src: src}, nil
-}
-
-// Connector returns the read-only handle of the connection's connector.
-func (r ReadSource) Connector(ctx context.Context, connectionID string) (ReadClient, error) {
-	cc, err := r.src.Connector(ctx, connectionID)
-	if err != nil {
-		return nil, err
-	}
-	return cc, nil
 }
