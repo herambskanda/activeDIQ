@@ -6,7 +6,8 @@ import (
 )
 
 // targetWxs is the reference shape T-0688 ruling 4 requires of packaging/windows/agent/Agent.wxs: the
-// privilege and SID type through ServiceConfig, no HKLM\SYSTEM registry values, a private AgentDir, five
+// privilege and SID type through the core ServiceConfig (recovery actions on util:ServiceConfig: the core element
+// has no failure-action attributes, WIX0004 on WiX 5.0.2, T-1249), no HKLM\SYSTEM registry values, a private AgentDir, five
 // pinned custom actions with no arguments.
 const targetWxs = `<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
@@ -21,9 +22,9 @@ const targetWxs = `<?xml version="1.0" encoding="utf-8"?>
           <ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes">
             <RequiredPrivilege Name="SeChangeNotifyPrivilege" />
           </ServiceConfig>
+          <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
         </ServiceInstall>
         <ServiceControl Id="AgentServiceControl" Name="activeDIQAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
-        <util:ServiceConfig ServiceName="activeDIQAgent" FirstFailureActionType="restart" SecondFailureActionType="restart" ThirdFailureActionType="restart" RestartServiceDelayInSeconds="30" ResetPeriodInDays="1" />
       </Component>
       <Component Id="SetupExe" Guid="*"><File Id="SetupExeFile" Source="s.exe" Name="agentsetup.exe" KeyPath="yes" /></Component>
     </ComponentGroup>
@@ -68,10 +69,17 @@ func TestT0688ApprovedActionsArePinned(t *testing.T) {
 func TestT0688PrivilegeBesideServiceInstallIsRead(t *testing.T) {
 	root := t.TempDir()
 	x := strings.Replace(targetWxs, "ACTIONS", targetActions, 1)
-	x = strings.Replace(x, `<ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes">
+	// Move the core ServiceConfig out of ServiceInstall (with a different privilege) and keep the
+	// util:ServiceConfig inside it, the real Agent.wxs shape: the check must still read the privilege.
+	core := `<ServiceConfig ServiceSid="restricted" OnInstall="yes" OnReinstall="yes">
             <RequiredPrivilege Name="SeChangeNotifyPrivilege" />
           </ServiceConfig>
-        </ServiceInstall>`, `</ServiceInstall>
+`
+	if !strings.Contains(x, core) || !strings.Contains(x, "<util:ServiceConfig") {
+		t.Fatal("fixture lost the real Agent.wxs shape (core ServiceConfig + util:ServiceConfig in ServiceInstall)")
+	}
+	x = strings.Replace(x, core, "", 1)
+	x = strings.Replace(x, "</ServiceInstall>", `</ServiceInstall>
         <ServiceConfig ServiceName="activeDIQAgent" ServiceSid="restricted"><RequiredPrivilege Name="SeDebugPrivilege" /></ServiceConfig>`, 1)
 	write(t, root, "packaging/windows/agent/Agent.wxs", x)
 	wantViolation(t, checkInstallerAllow(root, parseAllow(embeddedInstallerAllow)), "RequiredPrivileges")

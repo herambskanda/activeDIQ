@@ -30,6 +30,19 @@ accepted height leak. The rows-examined requirement (exactly equal) and SE5's pl
 unchanged, so no fitness check weakens. The T-1335 test already implements this formula.
 Ratified by factory-director 2026-11-04 (notice D-0028).
 
+E2 (2026-11-04, T-1183, from the T-1096 and T-1100 builds and security-architect's T-1183 note).
+Both parts make a rule stricter or state what was built; no rule or fitness check weakens.
+- **`cursor_requires_type` is confirmed in the contract** (rule 12). A cursor pages one group, and
+  the MAC binds the type facet, so a cursor without `type` could never verify. It gets its own code
+  (rather than `cursor_invalid`) because the client's fix differs: send the type back, not search
+  again. It is a 400 `search-query-invalid` at `/cursor`, refused before anything is read
+  (`Test_cursor_is_bound_and_verified_before_anything_is_read`).
+- **Rule 15 names the cursor and the server-side guarantee.** A cursor holds the lower-cased display
+  name and GUIDs of the last hit (MAC'd, not encrypted), so it is kept out of the URL like refused
+  text, and redacted like `q` if it ever arrives in one. The server records the path only today
+  (apihost has no access-log or trace middleware), and the console sends `Referrer-Policy:
+  no-referrer`. `Test_console_search_query_never_reaches_a_log_line` (apihost) is the SE4 check.
+
 **Revision 2 (2026-10-31, after the T-1093 review).** These are the changes in this revision:
 - **M1:** rule 7 now case-folds before the fold table.
 - **M2, M3 and M4:** rules 12 and 13 replace the silent candidate cap with a work ceiling W. The
@@ -651,8 +664,10 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
     - **The cursor is opaque and bound to its query.** It carries the rank tuple of the last admitted
       hit and an HMAC-SHA256 under a server key. The MAC covers that tuple, the normalised query, the
       class set, the type facet and `ReadScope.Fingerprint()` of every scope passed. A cursor
-      presented with a different query, facet or scope, or with a bad MAC, is 400, and the request
-      reads nothing.
+      presented with a different query, facet or scope, or with a bad MAC, is 400
+      (`cursor_invalid`), and the request reads nothing. A cursor sent without its type facet is 400
+      `cursor_requires_type` at `/cursor`, before anything is read (amendment E2): the MAC binds the
+      facet, and the client's fix is to send the type back, not to search again.
     - **No frozen pages.** Search is not a frozen report run, so ADR-0010 does not apply. A page
       re-runs the statement, so pages may shift if the inventory changes in between.
 13. **The work per query is bounded, whatever the scope's shape (T-0995 class).** The values are
@@ -733,6 +748,15 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
       bar for back, forward and bookmarking. When that page is loaded straight from the server,
       the access log and the traces **redact `q` on every route**. The server records only the rune
       length, the recognised shape and the class set (T-1096).
+    - **Cursor (E2).** A "show all" cursor holds the lower-cased display name and GUIDs of the last
+      hit; it is MAC'd but not encrypted. The API carries it in the `POST` body. The console keeps
+      it in client or history state, **never in the URL**. A cursor that arrives in a URL is
+      redacted exactly like `q`.
+    - **Server today (E2).** apihost has no access-log or trace middleware, and its only request
+      log line (`render.go`, an unexpected error) records `r.URL.Path`, never the query string.
+      Any access log, trace exporter or request logger added later records the path and status
+      only, never `RawQuery`, `RequestURI` or `URL.String()`. The console answers with
+      `Referrer-Policy: no-referrer`, so the `/search` URL does not leave in a `Referer` header.
     - **Handler.** The search handler, its errors and its traces never echo the text. A refused
       query (rule 7) is logged only with its refusal reason.
     - **Browser.** The console never navigates to a URL holding a query the browser has refused
@@ -999,7 +1023,10 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
     another script's digits, with and without dashes, is refused. It does not appear in the logs, in
     the traces or in the access log.
   - **Search text.** `q` on the console's `/search` route appears in no access-log or trace line;
-    only its length does (rule 15).
+    only its length does (rule 15). The same holds for a cursor in that URL, and the console
+    answers with `Referrer-Policy: no-referrer`. Bound test:
+    `Test_console_search_query_never_reaches_a_log_line` in `internal/platform/apihost` (E2;
+    mutation-checked: logging `r.URL.String()` or relaxing the referrer policy fails it).
   - **Folding.** Every row of rule 7's vector table folds the same way for keys and for queries.
     That includes the upper-case and lower-case pairs Ł/ł, Ø/ø and İ/i, and `ẞ`.
   - **`PrefixUpper`.** The U+D7FF and U+10FFFF edges give the bounds rule 8 states.

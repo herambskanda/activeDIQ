@@ -1,7 +1,7 @@
 ---
 title: "ADR-0006: The DC agent runs as a virtual service account with a restricted token and a channel ACE, never LocalSystem"
 date: 2026-10-28
-updated: 2026-11-05
+updated: 2026-11-07
 status: proposed
 owner: solution-architect
 kind: technical
@@ -69,8 +69,10 @@ Negative: the MSI must write an event-log channel ACE, which is host configurati
 | 5 data directory | lab A5-datadir, D1 junction refused, D2 foreign owner refused, callback-ACE refused | holds |
 | 6 pipe | M4, not built | constraints added |
 
-Findings: (1) decision 4 firewall claim was false: amended. (2) Pipe hardening: added for T-0145. (3) Residual, accepted: a customer GPO that resets the Security channel ACL silences the agent, which reports `channel_unreadable` (lab G1); a failed upgrade removes the ACE (lab U2, T-0732 owns the fix). Both fail visibly, not open. (4) Residual, accepted: the agent can write its own anchor and installed policy in the data directory; an attacker who is the agent already owns that agent (TM-TB12-T8).
+Findings: (1) decision 4 firewall claim was false: amended. (2) Pipe hardening: added for T-0145. (3) Residual, accepted: a customer GPO that resets the Security channel ACL silences the agent, which reports `channel_unreadable` (lab G1; **corrected by T-0557**: a real GPO takes effect only at the next Event Log service restart (reboot), and neither the MSI ACE nor `agentsetup grant-channel` beats it; the fix is the service SID in the GPO's SDDL); a failed upgrade removes the ACE (lab U2, T-0732 owns the fix). Both fail visibly, not open. (4) Residual, accepted: the agent can write its own anchor and installed policy in the data directory; an attacker who is the agent already owns that agent (TM-TB12-T8).
 
 ## Verification owed
 
 All three items were run on the Windows DC lab and passed (T-0648: A3, G1, A2-token). The `[UNVERIFIED — lab]` question whether a virtual account can join Event Log Readers on a DC is moot: the mechanism is the channel ACE, and nothing depends on the group route.
+
+**T-0557 (2026-11-07, Windows Server 2025 build 26100, `dc1`)** re-ran these on a real GPO and added what T-0648 left: the channel ACE is readable as `NT SERVICE\activeDIQAgent` (329 654 events); an elevated administrator token is refused with exit 1 naming 25 privileges; a real "Configure log access" GPO applies only after an Event Log service restart, then shadows the ACE and beats `grant-channel`; deleting the GPO also needs a restart; the service SID is name-derived and identical on every host. Spec §5 figures: CPU cap is 5 % of all logical CPUs, the 256 MiB limit is per-process committed memory (not a working set), the sustained rate under the cap is 578 events/s on 4 vCPUs. Specified, not implemented: low I/O priority (T-1756; `Confine()` sets none). Not proven: live collection under load (bug T-1752: the live path collected 321 of 58 822 events), logon latency while collecting. Evidence and caveats: [domain note](../domain/dc-agent-channel-acl-gpo-and-bounds.md).

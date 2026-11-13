@@ -341,6 +341,39 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
   `HOST-SETUP-SECRET-SINGLE-USE` are INACTIVE until their product subject exists. The positive verify-full DSN control needs a TLS
   PostgreSQL and is covered by `store.CheckTransport`'s own tests.
 
+## `fitness-host p2-oci` (T-1462: ADR-0002 P2, OCI half, erratum E-3)
+
+What it enforces: the `P2-oci` row of the `fitness-profiles` activation table runs
+`go run ./tools/fitness/host p2-oci` (`make fitness-p2-oci` runs the same command alone; it is not in `make fitness`
+because `make fitness-profiles` already runs it). For each OCI manifest from `internal/compose/profile` (`linux-oci`,
+`saas`) it:
+
+1. **manifest**: checks the manifest is an `oci` service host, and that only `saas` enables `tenant-provisioning`;
+2. **build**: builds `cmd/server` statically for `linux/amd64` and `linux/arm64` (`-trimpath`, `CGO_ENABLED=0`), checks the
+   ELF machine, builds `packaging/linux-oci/Dockerfile.server` with `--platform` and checks the image's architecture.
+   The Dockerfile has no `RUN`, so the foreign-architecture **build never needs emulation and is never skipped**;
+3. **emulation**: runs the real image with `kek` (prints usage). `exec format error` means the Docker host cannot run that
+   architecture. The **boot** of that architecture is then skipped with a printed `SKIP ... step=boot` line, or fails when
+   `P2_OCI_REQUIRE_BOOT=1` (set it on any CI host that has qemu-user binfmt handlers; install them with
+   `docker run --privileged --rm tonistiigi/binfmt --install arm64`);
+4. for PostgreSQL **16 and 18** (the pinned images of `pgharness`): applies every `migrations/*.sql` under the owner role
+   (**migrations**), provisions the KEK, boots the image with TLS on loopback (**boot**), requires
+   `GET /api/v1/health/ready` to answer `200 {"status":"ok"}` (**health**) and counts `public.tenants` (**tenants**): exactly one for
+   `linux-oci`; exactly one for `saas`, created by the platform provisioning path (`provision.FirstRun`).
+
+A failure prints `P2-oci FAIL profile=<p> arch=<a> postgres=<v> step=<s>: ...` and the run exits 1 after trying every other leg.
+Flags for a fixture run: `-profile`, `-arch`, `-pg`, `-migrations <dir>`.
+
+- **Proof it fails:** `hostcheck/p2oci_test.go` (a 503, a wrong body and a refused connection fail the health step; the error
+  names profile and step; a broken migration fixture, `tools/fitness/host/testdata/p2oci-broken-migrations/`, fails the
+  migrations step against a real PostgreSQL) and `make ci-proof` (`host p2-oci` on the broken fixture must fail with
+  `step=migrations`).
+- **Known limit (follow-up ticket):** the server has no multi-tenant provisioning entry point yet (`provision` holds only
+  `FirstRun`; the comment there says SaaS provisioning "will add its entry point here"), so the `saas` leg proves the
+  composed manifest enables the capability and that the booted install holds one provisioned tenant. When the entry
+  point lands, that leg must provision a second tenant through it.
+- **Runtime cost:** about 10 minutes on a loaded host (four server boots plus two PostgreSQL starts).
+
 ## `fitness-agent-host` (T-0554: ADR-0006 A1/A4, ADR-0007 P1-P8, contract R1-R5, F1)
 
 `make fitness-agent-host` (part of `make fitness` and `make ci`). Run a subset: `go run ./tools/fitness/agenthost -checks A1,P`. It prints one line per check; `inactive (<missing input>)` means the subject does not exist yet and the check did not run (exit 0). **ADR-0006 and ADR-0007 become `accepted` only when no line is inactive** and the lab items in ADR-0006 "Verification owed" are confirmed.
@@ -419,3 +452,13 @@ checkout (a failed `merge --abort`, for example "Unable to write index"). `merge
 that as an error and retries, instead of calling it the next ticket's conflict and reopening it
 (T-0941 was reopened twice that way). Finish or abort that merge by hand (`git -C <root> merge --abort`
 once its index is writable); every pending merge then proceeds on the next pass.
+
+## fitness-merge-order (T-1707, ADR-0012)
+
+`make fitness-merge-order` is part of `make fitness`, so of `make ci` and the pre-merge gate.
+
+- **Checker tests** (`factory/test/fitness-merge-order.test.mjs`): a history where a dependent merged before its dependency fails M5; a clean one, a dependency without a branch (spec/docs) and a fast-forwarded dependency pass; a stacked dependent that carries its dependency's commits but lands first still fails.
+- **M1-M4** are bound tests: subtests titled `M1 …` to `M3 …` in `factory/test/stacking.test.mjs` and `M4 …` in `factory/test/premerge.test.mjs` (T-1706 writes them). Until `max_depth` exists in `factory/lib` they print `pending (not a pass)`; afterwards a missing, failed or skipped one fails the build.
+- **M5** (`factory/bin/fitness-merge-order`) scans `git log --first-parent main` against `depends_on` in `factory/state/tickets/` (found via `FACTORY_STATE_DIR`, this tree, or the primary checkout). Without ticket data it prints `inactive`, not a pass. History up to `GRANDFATHER_UNTIL` (main at ratification, `6cb96d24d`) is not judged: it holds dependents merged before their dependency and reused ticket numbers. `KNOWN_EXCEPTIONS` records the exact (merge, dependency) pairs that landed after that, before T-1706 existed (T-1191 on T-1189, stacked by hand); each is exact and tested, and none is added without an ADR note.
+- **Accepting ADR-0012** needs every line green (no `pending`, no `inactive`) on main; flip the ADR then.
+- A violation line names the ticket, the merge SHA and the dependency; fix by landing the dependency first, never by editing the boundary.
