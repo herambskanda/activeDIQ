@@ -176,3 +176,8 @@ const (
 	nameSQL       = rdnName
 	userOrRdnName = "CASE WHEN {t}.kind IN ('user', 'inetorgperson') THEN COALESCE(NULLIF({t}.display_name, ''), " + rdnName + ") ELSE " + rdnName + " END"
 )
+
+// pwChangeSQL is the stored Cannot Change Password state (T-1472). A row the sync never read a
+// descriptor for (NULL) is not_confirmed, never no_deny_ace: absence of a read is not absence of a
+// deny ACE. The column is the classified state only; no descriptor bytes are stored.
+const pwChangeSQL = "COALESCE({t}.password_change_state, 'not_confirmed')"

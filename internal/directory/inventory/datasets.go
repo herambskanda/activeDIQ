@@ -59,6 +59,7 @@ var enumLabels = map[string]string{
 	"never_account_flag":    "Never expires (account flag)", "not_applicable_smartcard": "Not applicable (smartcard required)",
 	"must_change": "Must change at next logon", "never_policy": "Never expires (policy)", "expired": "Password expired", "expires": "Expires",
 	"not_expired": "Not expired", "never": "Never", "recorded": "Recorded", "none_recorded": "None recorded",
+	"blocked": "Blocked", "blocked_one_ace": "Blocked (one deny ACE only)", "no_deny_ace": "No deny ACE", "not_confirmed": "Not confirmed",
 	"spn_set": "servicePrincipalName set", "none": "None",
 	"uac_not_read": "userAccountControl not read", "lockout_time_not_read": "lockoutTime not read", "pwd_last_set_not_read": "pwdLastSet not read",
 	"account_expires_not_read": "accountExpires not read", "last_logon_not_read": "lastLogonTimestamp not read",
@@ -144,6 +145,8 @@ func usersDataset() report.Dataset {
 		derived("logon_sync_interval_days", "Domain logon time sync interval (days)", report.TypeInt, report.SQL(logonSyncSQL), opsInt),
 		derived("policy_source", "Policy source", report.TypeText, report.SQL(policySourceSQL), opsText),
 		derived("probable_service_account", "Probable service account", report.TypeBool, report.SQL(probableSvcSQL), opsBool),
+		state("password_change_right", "Password change right", report.SQL(pwChangeSQL), "blocked", "blocked_one_ace", "no_deny_ace", "not_confirmed"),
+		attr("descriptor_as_of", "Descriptor as of", report.TypeTime, "password_change_at", opsTime, false),
 		state("probable_service_account_reason", "Service account reason", report.SQL(probableReasonSQL), "spn_set", "none"),
 	)
 	cols = append(cols, userPerDCColumns()...)
