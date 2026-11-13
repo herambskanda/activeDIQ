@@ -7,6 +7,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/replstatus"
 	"github.com/skenzeriq/activediq/internal/connector/write"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
@@ -54,7 +55,17 @@ func (h *Handler) Describe(ctx context.Context, req *connectorv1.DescribeRequest
 		DescribedAt:       timestamppb.New(h.now()),
 		Limits:            &connectorv1.Limits{MaxPageSize: top.Limits.MaxPageSize, MaxValueRange: top.Limits.MaxValueRange},
 	}
-	out.Operations = write.Capabilities()
+	// The bound DC answered live above, so one DC is reachable. A source that cannot tell Samba from
+	// Windows (or fails to) is reported as UNVERIFIED, never SUPPORTED (rule 7).
+	samba := true
+	if p, ok := h.src.(interface {
+		IsSamba(context.Context) (bool, error)
+	}); ok {
+		if v, err := p.IsSamba(ctx); err == nil {
+			samba = v
+		}
+	}
+	out.Operations = append(write.Capabilities(), replstatus.Capability(1, samba))
 	for _, nc := range top.NamingContexts {
 		info := &connectorv1.NamingContextInfo{
 			NcGuid:      write.GUIDToWire(nc.GUID),

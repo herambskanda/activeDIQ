@@ -29,11 +29,12 @@ var _ = [...]connectorv1.Operation{
 
 func TestOperationNumbersAreStable(t *testing.T) {
 	for op, want := range map[connectorv1.Operation]int32{
-		connectorv1.Operation_OPERATION_PLAN:              7,
-		connectorv1.Operation_OPERATION_VERIFY_CONNECTION: 8,
-		connectorv1.Operation_OPERATION_APPLY:             100,
-		connectorv1.Operation_OPERATION_READ_SECRET:       101,
-		connectorv1.Operation_OPERATION_VERIFY_USER:       102,
+		connectorv1.Operation_OPERATION_PLAN:                    7,
+		connectorv1.Operation_OPERATION_VERIFY_CONNECTION:       8,
+		connectorv1.Operation_OPERATION_READ_REPLICATION_STATUS: 9,
+		connectorv1.Operation_OPERATION_APPLY:                   100,
+		connectorv1.Operation_OPERATION_READ_SECRET:             101,
+		connectorv1.Operation_OPERATION_VERIFY_USER:             102,
 	} {
 		if int32(op) != want {
 			t.Errorf("%s = %d, want %d", op, int32(op), want)
@@ -83,7 +84,7 @@ func TestServiceRPCs(t *testing.T) {
 	}
 	want := map[string]bool{
 		"Describe": true, "DescribeSchema": true, "ScopedSearch": true, "Read": true, "ReadPerDC": true, "ChangeFeed": true,
-		"VerifyConnection": true, "Plan": true, "Apply": true,
+		"VerifyConnection": true, "Plan": true, "Apply": true, "ReadReplicationStatus": true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("service has RPCs %v, want exactly %v", got, want)
