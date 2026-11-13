@@ -1,4 +1,4 @@
--- 0074_inventory_object_changes: DM-18 ChangeRecord at object level (T-1109; reports-2-second-slice
+-- 0077_inventory_object_changes: DM-18 ChangeRecord at object level (T-1109; reports-2-second-slice
 -- §4.1 and D10). Owner: internal/directory/inventory.
 --
 --  * One row per observed change of one AD object: created, edited, moved, renamed or deleted. It is
