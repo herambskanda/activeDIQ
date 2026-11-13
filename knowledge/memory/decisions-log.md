@@ -1,6 +1,6 @@
 ---
 title: Decisions log
-updated: 2026-11-07
+updated: 2026-11-12
 budget: 120 lines
 ---
 
@@ -10,6 +10,8 @@ Newest first. `date · who · decision · why/source`. CEO decisions also live o
 architecture decisions as ADRs in knowledge/development/decisions/. Roll entries older than the
 current milestone into archive/ when this file nears its budget.
 
+- 2026-11-11 · CEO · **Off-board M2c: the 2c plan stops at the ticket plan; only the two E2.11 importer reviews (plan keys C-01, C-02) run here before M1 is accepted. Push `m2c-plan` to the public GitHub repo.** Both picks were the recommended options. ADR drafts (C-04, C-07, C-11, C-16, C-22) wait for the server, because they would be written against 11-02 code. The push publishes the specs and their security reviews, consistent with D-0018. Off-board, so no D-id; file at merge (carry-over row 1). Factory call (notice at merge): E2.11's 2c scope is the file and DB-dump routes; discovery, comparator, ownership switch and §8 lifecycle limits are 2d (roadmap 2d row: MIG-14). (knowledge/business/scoping/m2c-plan.md)
+- 2026-11-10 · CEO · **M2c (checkpoint 2c "Hybrid and import") is planned on the second machine and built later on the server.** No board, no Docker or AD lab, and code from 11-02 main here, so this branch (`m2c-plan`) carries documents only: specs for E2.7 hybrid provisioning and the E2.6 report builder, plus a groomed ticket plan. No product code and no ticket IDs: tickets are created on the server board when it is reachable. The 2026-11-02 M1-focus hold on the server stands. Recorded off-board, so there is no D-id; file it on the board at merge. (interactive session 2026-11-10)
 - 2026-11-12 · factory-director · **ADR-0013 ratified (T-1863, notice D-0031): modules wire through Registrar `API`/`Permission`; builders move into modules; no rule 2.5 exemption.** Impl T-1864..T-1869.
 - 2026-11-07 · CEO · **Model policy: Sonnet at medium effort for every role, no exceptions.** Replaces the prior split (Opus high for factory-director/solution-architect/security-architect/principal-engineer, Sonnet high for everyone else). `high` stays on the effort ladder as an escalation-only rung for a stuck ticket; nothing runs above it; never Haiku. Updated: CLAUDE.md rule 2, `factory/config.json` `models`, `.claude/settings.json` effort pins, all 24 `.claude/agents/*.md`. `factory doctor` confirms every agent complies.
 - 2026-11-07 · security-architect · **TM-D33 (T-1730): kind 6 restore ships in v1, gated on an optional, customer-applied List Contents + Read Control ACE on `CN=Deleted Objects` for the connection identity only; without it restore is refused with a named missing right and stays manual.** Why: T-1633 lab found no per-object grant; dropping restore would be a scope cut safety does not require. Residual TM-R28; follow-ups T-1734..T-1736.
