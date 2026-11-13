@@ -59,7 +59,6 @@ func testStorePoolReset(t *testing.T, withPrepare bool) {
 		}
 		err := e.db.WithTenant(ctx, e.a, func(ctx context.Context, tx Tx) error {
 			for _, q := range []string{
-				`SET client_encoding = 'SJIS'`,
 				`SET standard_conforming_strings = off`,
 				`SET search_path = pg_temp, public`,
 				`SELECT set_config('application_name', 'tenant-a', false)`,
@@ -71,10 +70,14 @@ func testStorePoolReset(t *testing.T, withPrepare bool) {
 				}
 			}
 			if withPrepare {
-				_, err := tx.Exec(ctx, `PREPARE leak AS SELECT 1`)
-				return err
+				if _, err := tx.Exec(ctx, `PREPARE leak AS SELECT 1`); err != nil {
+					return err
+				}
 			}
-			return nil
+			// Last: main's guard (ErrClientEncoding) rejects every Exec once the session is not UTF8,
+			// so the encoding change must follow all other dirtying statements.
+			_, err := tx.Exec(ctx, `SET client_encoding = 'SJIS'`)
+			return err
 		})
 		if err != nil {
 			t.Fatalf("tenant A body: %v", err)
