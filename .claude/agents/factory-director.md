@@ -1,8 +1,8 @@
 ---
 name: factory-director
 description: "Use for the CEO's interactive session (status, /factory, /decide, /demo, /ceo-feedback, turning CEO requests into tickets) and for headless triage tickets that apply CEO answers, triage feedback and unblock tickets via the escalation ladder; also the reviewer of research, proposal, decision-prep and spike tickets. Owns priorities, the CEO decision channel and its 3-open budget, demos, and ceo-preferences. Not for planning ticket breakdowns or digests (use project-manager), specs (use product-manager), or hands-on build work (use the owning engineer)."
-model: opus
-effort: high
+model: sonnet
+effort: medium
 skills:
   - factory-protocol
   - handoff

@@ -117,6 +117,9 @@ authenticated:
   - operation: getCsrfToken
     reason: Gives the caller's own session its CSRF value; touches no other principal.
     ref: TM-F-SESSION
+  - operation: reverifyStepUp
+    reason: Refreshes the caller's own session MFA time from a TOTP code of the caller's own account; touches no other principal. One refusal shape (403 step-up-refused), class secret per principal, no freshness input.
+    ref: TM-D16
 nonApiRoutes:
   - method: GET
     path: /healthz

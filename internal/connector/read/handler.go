@@ -3,6 +3,7 @@ package read
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/attr/gentime"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
+	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
@@ -54,20 +56,27 @@ type Source interface {
 type Handler struct {
 	src  Source
 	now  func() time.Time
+	log  *slog.Logger
 	feed feedLimits
 }
 
 // Option configures a Handler.
 type Option func(*Handler)
 
+// WithLog sets the logger that receives fixed-code summaries (counts only, never a directory value).
+func WithLog(l *slog.Logger) Option { return func(h *Handler) { h.log = l } }
+
 // New returns the handler for one source.
 func New(src Source, opts ...Option) (*Handler, error) {
 	if src == nil {
 		return nil, errors.New("read: a source is required")
 	}
-	h := &Handler{src: src, now: time.Now, feed: feedLimits{maxPages: defaultFeedPages, deadline: defaultFeedDeadline}}
+	h := &Handler{src: src, now: time.Now, log: slog.Default(), feed: feedLimits{maxPages: defaultFeedPages, deadline: defaultFeedDeadline}}
 	for _, o := range opts {
 		o(h)
+	}
+	if h.log == nil {
+		h.log = slog.Default()
 	}
 	return h, nil
 }
@@ -270,7 +279,18 @@ func (h *Handler) value(name string, raw []byte) (*connectorv1.AttributeValue, e
 	case ldapfilter.SynString:
 		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Text{Text: string(raw)}}, nil
 	case ldapfilter.SynDN:
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Dn{Dn: &connectorv1.DnValue{DisplayDn: string(raw)}}}, nil
+		lv, err := dn.ParseLinkValue(string(raw))
+		if err != nil {
+			return nil, err
+		}
+		v := &connectorv1.DnValue{DisplayDn: lv.DN}
+		if lv.HasGUID { // only what the DC sent: a plain DN stays without identity
+			v.Guid = write.GUIDToWire(lv.GUID)
+		}
+		if lv.HasSID {
+			v.Sid = &connectorv1.Sid{Value: lv.SID.Bytes()}
+		}
+		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Dn{Dn: v}}, nil
 	case ldapfilter.SynBool:
 		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Boolean{Boolean: string(raw) == "TRUE"}}, nil
 	case ldapfilter.SynInt32:

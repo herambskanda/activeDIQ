@@ -14,6 +14,7 @@ package activediq.connector.v1;
 import "activediq/connector/v1/changefeed.proto";
 import "activediq/connector/v1/describe.proto";
 import "activediq/connector/v1/read.proto";
+import "activediq/connector/v1/replication.proto";
 import "activediq/connector/v1/verify.proto";
 import "activediq/connector/v1/write.proto";
 
@@ -34,6 +35,10 @@ service Connector {
 
   // Non-replicated attributes from every DC of the object's domain, with coverage.
   rpc ReadPerDC(ReadPerDCRequest) returns (stream ReadPerDCResponse);
+
+  // Per-DC replication health from the four msDS-Repl* attributes, XML form only, with coverage
+  // (contract v1.3, §5.6).
+  rpc ReadReplicationStatus(ReadReplicationStatusRequest) returns (stream ReadReplicationStatusResponse);
 
   // DirSync (AD, object-security mode only) or Graph delta (Entra). One call runs until caught up.
   rpc ChangeFeed(ChangeFeedRequest) returns (stream ChangeFeedResponse);

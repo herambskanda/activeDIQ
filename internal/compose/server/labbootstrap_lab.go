@@ -233,6 +233,7 @@ func openLabServer(ctx context.Context, sp labSpec) (*labServer, func(), error) 
 		return nil, nil, err
 	}
 	prov := write.NewADProvider(sess, nil, ident, &labPinStore{})
+	prov.Self = self
 	src, err := read.NewADSource(sess, prov)
 	if err != nil {
 		return nil, nil, errors.New("read source")

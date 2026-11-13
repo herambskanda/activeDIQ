@@ -1,0 +1,244 @@
+#!/usr/bin/env python3
+"""Capture real userParameters blobs from the lab DC dc1 and probe how Windows treats them (T-1890, spec reports-terminal-services V1/V2).
+
+  capture-tsprops capture [--out DIR]   create disabled fixture users in OU=tspfix, write userParameters through ADSI IADsTSUserEx (the API ADUC uses)
+                                        or a plain LDAP modify (the "third-party" path), read each back as raw LDAP octets and through
+                                        WTSQueryUserConfig, run the duplicate / inherit-bit / global-catalog / read-right probes, and write
+                                        DIR/captures.json. Creates no password, no enabled account.
+  capture-tsprops derive [--dir DIR]    offline: turn captures.json into records.jsonl (TSP-W01.., corpus shape) and probes.jsonl
+
+Wrap `capture` in the shared lock:  lab/windows/bin/with-dc1-lock lab/windows/bin/capture-tsprops capture
+Lab DC only (A-0025). Needs: pip install pywinrm requests-ntlm. Credentials come from WIN_LAB_ENV and are never printed or written.
+Runbook: knowledge/development/runbooks/windows-lab.md (section "userParameters fixtures").
+"""
+import argparse, json, os, sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+TS = os.path.join(HERE, "..", "tsprops")
+sys.path.insert(0, os.path.join(HERE, "..", "lib"))
+sys.path.insert(0, TS)
+import blob as B  # noqa: E402
+
+DEFAULT_DIR = os.path.join(HERE, "..", "..", "..", "testdata", "tsprops", "windows")
+RES = {}
+
+
+def psstr(s):
+    """PowerShell expression for s using only ASCII source (PS 5.1 reads a BOM-less -File as ANSI)."""
+    parts, run = [], ""
+    for ch in s:
+        if 0x20 <= ord(ch) < 0x7F and ch != "'":
+            run += ch
+        else:
+            if run: parts.append("'" + run + "'"); run = ""
+            parts.append("[char]::ConvertFromUtf32(%d)" % ord(ch))
+    if run or not parts: parts.append("'" + run + "'")
+    return "(" + " + ".join(parts) + ")"
+
+
+LONG_HOME = "\\\\fs1\\home\\" + "\\".join(["segment%02d_" % i + "x" * 20 for i in range(6)])      # ~ 190 chars
+LONG_PROF = "\\\\fs1\\profiles\\" + "\\".join(["p%02d_" % i + "y" * 22 for i in range(8)])
+NONASCII = "\\\\fs1\\home\\Zo\u00eb-\u7528\u6237-\u00dcn\u00efcode-\u0434\u043e\u043c"
+NONBMP = "\\\\fs1\\home\\emoji-\U0001F600-\U00020BB7"
+CASES = []   # (id, sam, description, [(prop, value)] | None, extra PS)
+
+
+def adsi(i, sam, desc, sets, extra=""):
+    CASES.append(dict(id=i, sam=sam, desc=desc, kind="adsi", sets=sets, extra=extra))
+
+
+adsi("TSP-W01", "tspw01", "allow logon, explicit (ADSI AllowLogon=1)", [("AllowLogon", 1)])
+adsi("TSP-W02", "tspw02", "deny logon (AllowLogon=0)", [("AllowLogon", 0)])
+for lvl in range(5):
+    adsi("TSP-W%02d" % (3 + lvl), "tspw%02d" % (3 + lvl), "remote control level %d (EnableRemoteControl=%d)" % (lvl, lvl), [("EnableRemoteControl", lvl)])
+adsi("TSP-W08", "tspw08", "sessions: connection 90 min, disconnection 7 min, idle 0, reconnect originating-client-only, end broken session",
+     [("MaxConnectionTime", 90), ("MaxDisconnectionTime", 7), ("MaxIdleTime", 0), ("ReconnectionAction", 1), ("BrokenConnectionAction", 1)])
+adsi("TSP-W09", "tspw09", "UNC home folder with drive H: and UNC profile path",
+     [("TerminalServicesHomeDirectory", "\\\\fs1\\home\\tspw09"), ("TerminalServicesHomeDrive", "H:"), ("TerminalServicesProfilePath", "\\\\fs1\\prof\\tspw09")])
+adsi("TSP-W10", "tspw10", "local home folder path, no drive (ADUC 'Local path')", [("TerminalServicesHomeDirectory", "C:\\Users\\tspw10")])
+adsi("TSP-W11", "tspw11", "start-program and working directory set", [("TerminalServicesInitialProgram", "C:\\apps\\tool.exe /s"), ("TerminalServicesWorkDirectory", "C:\\apps")])
+adsi("TSP-W12", "tspw12", "long home and profile paths (%d / %d chars)" % (len(LONG_HOME), len(LONG_PROF)),
+     [("TerminalServicesHomeDirectory", LONG_HOME), ("TerminalServicesHomeDrive", "Z:"), ("TerminalServicesProfilePath", LONG_PROF)])
+adsi("TSP-W13", "tspw13", "non-ASCII BMP characters in home path and start program (Latin-1 supplement, CJK, Cyrillic)",
+     [("TerminalServicesHomeDirectory", NONASCII), ("TerminalServicesHomeDrive", "N:"), ("TerminalServicesInitialProgram", "C:\\apps\\Zo\u00eb\u7528\u6237.exe")])
+adsi("TSP-W14", "tspw14", "non-BMP characters (surrogate pairs) in home path", [("TerminalServicesHomeDirectory", NONBMP), ("TerminalServicesHomeDrive", "E:")])
+adsi("TSP-W15", "tspw15", "dial-in allowed with callback number (msNPAllowDialin, msRADIUSCallbackNumber) plus remote control 1",
+     [("EnableRemoteControl", 1)], extra="Set-ADUser {sam} -Replace @{msNPAllowDialin=$true; msRADIUSCallbackNumber='5551234'}")
+adsi("TSP-W16", "tspw16", "every field set at once",
+     [("AllowLogon", 0), ("EnableRemoteControl", 4), ("MaxConnectionTime", 600), ("MaxDisconnectionTime", 30), ("MaxIdleTime", 45), ("ReconnectionAction", 1), ("BrokenConnectionAction", 1),
+      ("TerminalServicesHomeDirectory", "\\\\fs1\\home\\tspw16"), ("TerminalServicesHomeDrive", "Q:"), ("TerminalServicesProfilePath", "\\\\fs1\\prof\\tspw16"),
+      ("TerminalServicesInitialProgram", "C:\\apps\\all.exe"), ("TerminalServicesWorkDirectory", "C:\\apps\\work")])
+
+
+def raw_case(i, sam, desc, blob_bytes, kind="raw", probe=None):
+    CASES.append(dict(id=i, sam=sam, desc=desc, kind=kind, octets=B.bytes_to_octets(blob_bytes).hex(), blob_hex=blob_bytes.hex(), probe=probe))
+
+
+def asciiprop(name, text, upper=False):
+    return B.prop(name, B.hexval(text.encode("ascii") + b"\x00", upper))
+
+
+def u32prop(name, v, upper=False):
+    return B.prop(name, B.hexval(B.u32(v), upper))
+
+
+GATE = lambda up=False: u32prop("CtxCfgPresent", 0xB00B1E55, up)
+BASE = 0x9020F000   # the CtxCfgFlags1 Windows writes for a fresh user (observed)
+STD = lambda up=False: [GATE(up), u32prop("CtxCfgFlags1", BASE, up)]
+# W17: written by a non-ADUC tool (plain LDAP modify): all-space ReservedData, UPPERCASE hex, ANSI-only text (no *W twin), shuffled order
+raw_case("TSP-W17", "tspw17", "non-ADUC writer (plain LDAP modify): all-space ReservedData, uppercase hex, ANSI-only text, odd property order",
+         B.build([asciiprop("CtxWFProfilePath", "\\\\fs1\\tp\\prof", True), u32prop("CtxShadow", 3, True), GATE(True), u32prop("CtxCfgFlags1", BASE, True), u32prop("CtxMaxIdleTime", 120000, True),
+                  asciiprop("CtxWFHomeDir", "\\\\fs1\\tp\\home", True), asciiprop("CtxWFHomeDirDrive", "T:", True)], reserved=" ".encode("utf-16le") * 48))
+raw_case("TSP-W18", "tspw18", "non-ADUC writer, as TSP-W17 but with all-zero ReservedData (Windows ignores the settings)",
+         B.build([asciiprop("CtxWFProfilePath", "\\\\fs1\\tp\\prof", True), u32prop("CtxShadow", 3, True), GATE(True), u32prop("CtxCfgFlags1", BASE, True),
+                  u32prop("CtxMaxIdleTime", 120000, True), asciiprop("CtxWFHomeDir", "\\\\fs1\\tp\\home", True), asciiprop("CtxWFHomeDirDrive", "T:", True)], reserved=b"\x00" * 96))
+# duplicate-field probes (what does Windows itself do?)
+raw_case("PROBE-DUP1", "tspd1", "CtxShadow twice: 2 then 4", B.build([*STD(), u32prop("CtxShadow", 2), u32prop("CtxShadow", 4)]), "probe", "dup")
+raw_case("PROBE-DUP2", "tspd2", "CtxShadow twice: 4 then 2", B.build([*STD(), u32prop("CtxShadow", 4), u32prop("CtxShadow", 4)]), "probe", "dup")
+raw_case("PROBE-DUP3", "tspd3", "CtxCfgPresent twice: good gate then wrong gate; CtxShadow 4",
+         B.build([*STD(), u32prop("CtxCfgPresent", 0xB00B1E54), u32prop("CtxShadow", 4)]), "probe", "dup")
+raw_case("PROBE-DUP4", "tspd4", "CtxCfgPresent twice: wrong gate first then good gate; CtxShadow 2",
+         B.build([u32prop("CtxCfgPresent", 0xB00B1E54), *STD(), u32prop("CtxShadow", 4)]), "probe", "dup")
+raw_case("PROBE-DUP5", "tspd5", "CtxWFHomeDir twice: \\\\a\\one then \\\\b\\two",
+         B.build([*STD(), asciiprop("CtxWFHomeDir", "\\\\a\\one"), asciiprop("CtxWFHomeDir", "\\\\b\\two")]), "probe", "dup")
+# inherit-bit probes: flags raw
+for tag, flags in [("INH0", BASE & ~0x10000000), ("INH1", BASE | 0x10000000)]:
+    raw_case("PROBE-" + tag + "A", "tsp" + tag.lower() + "a", "flags 0x%08X with CtxInitialProgram present" % flags,
+             B.build([GATE(), u32prop("CtxCfgFlags1", flags), asciiprop("CtxInitialProgram", "C:\\p.exe")]), "probe", "inherit")
+    raw_case("PROBE-" + tag + "B", "tsp" + tag.lower() + "b", "flags 0x%08X, no CtxInitialProgram" % flags,
+             B.build([GATE(), u32prop("CtxCfgFlags1", flags)]), "probe", "inherit")
+for bit, nm, fld in [(0x02000000, "SHADOW", ("CtxShadow", 4)), (0x01000000, "MAXCONN", ("CtxMaxConnectionTime", 600000)),
+                     (0x00800000, "MAXDISC", ("CtxMaxDisconnectionTime", 600000)), (0x00400000, "MAXIDLE", ("CtxMaxIdleTime", 600000))]:
+    for state, fl in [("SET", BASE | bit), ("CLR", BASE & ~bit)]:
+        raw_case("PROBE-INH-%s-%s" % (nm, state), "tspi%s%s" % (nm.lower()[:5], state[0].lower()), "flags 0x%08X, %s=%d" % (fl, fld[0], fld[1]),
+                 B.build([GATE(), u32prop("CtxCfgFlags1", fl), u32prop(*fld)]), "probe", "inherit")
+raw_case("PROBE-NOFLAGS", "tspnoflg", "gate + CtxShadow 4, no CtxCfgFlags1 (lowercase hex)", B.build([GATE(), u32prop("CtxShadow", 4)]), "probe", "gate")
+raw_case("PROBE-UPPERHEX", "tspupper", "gate + flags + CtxShadow 4 written with UPPERCASE hex digits", B.build([*STD(True), u32prop("CtxShadow", 4, True)]), "probe", "gate")
+raw_case("PROBE-LOWERHEX", "tsplower", "gate + flags + CtxShadow 4 written with lowercase hex digits", B.build([*STD(), u32prop("CtxShadow", 4)]), "probe", "gate")
+raw_case("PROBE-ORDER-GATE-SECOND", "tspogs", "CtxShadow 4 first, then gate, then flags", B.build([u32prop("CtxShadow", 4), GATE(), u32prop("CtxCfgFlags1", BASE)]), "probe", "gate")
+raw_case("PROBE-ORDER-FLAGS-FIRST", "tspoff", "flags first, then gate, then CtxShadow 4", B.build([u32prop("CtxCfgFlags1", BASE), GATE(), u32prop("CtxShadow", 4)]), "probe", "gate")
+raw_case("PROBE-RES-ZERO", "tsprzero", "STD + CtxShadow 4 with all-zero ReservedData", B.build([*STD(), u32prop("CtxShadow", 4)], reserved=b"\x00" * 96), "probe", "gate")
+raw_case("PROBE-RES-RAS", "tsprras", "STD + CtxShadow 4 with non-zero binary ReservedData", B.build([*STD(), u32prop("CtxShadow", 4)], reserved=bytes(range(1, 97))), "probe", "gate")
+raw_case("PROBE-ENC-WIDE-ASCII", "tspewasc", "home dir ONLY in CtxWFHomeDirW, ASCII text", B.build([*STD(), B.prop("CtxWFHomeDirW", B.hexval("\\\\fs1\\plain\x00".encode("utf-16le")))]), "probe", "enc")
+raw_case("PROBE-ENC-WIDE-CJK", "tspewcjk", "home dir ONLY in CtxWFHomeDirW, contains CJK", B.build([*STD(), B.prop("CtxWFHomeDirW", B.hexval("\\\\fs1\\\u7528\u6237\x00".encode("utf-16le")))]), "probe", "enc")
+raw_case("PROBE-ENC-WIDE-DRIVE", "tspewdrv", "home dir ONLY in CtxWFHomeDirW plus CtxWFHomeDirDriveW (no ANSI twins)", B.build([*STD(), B.prop("CtxWFHomeDirW", B.hexval("\\\\fs1\\plain\x00".encode("utf-16le"))), B.prop("CtxWFHomeDirDriveW", B.hexval("K:\x00".encode("utf-16le")))]), "probe", "enc")
+raw_case("PROBE-ENC-ANSI-HIGH", "tspeahi", "ANSI text with a high byte and no W twin, ProfilePath", B.build([*STD(), B.prop("CtxWFProfilePath", B.hexval(b"\\\\fs1\\caf\xe9\x00"))]), "probe", "enc")
+raw_case("PROBE-RES-FIRSTBYTE", "tsprfirst", "STD + CtxShadow 4; ReservedData zero except the first byte", B.build([*STD(), u32prop("CtxShadow", 4)], reserved=b"\x01" + b"\x00" * 95), "probe", "gate")
+raw_case("PROBE-RES-LASTBYTE", "tsprlast", "STD + CtxShadow 4; ReservedData zero except the last byte", B.build([*STD(), u32prop("CtxShadow", 4)], reserved=b"\x00" * 95 + b"\x01"), "probe", "gate")
+raw_case("PROBE-RES-SPACES", "tsprspc", "STD + CtxShadow 4; ReservedData all U+0020", B.build([*STD(), u32prop("CtxShadow", 4)], reserved=" ".encode("utf-16le") * 48), "probe", "gate")
+raw_case("PROBE-RES-U0020ONLY", "tsprsp1", "STD + CtxShadow 4; ReservedData is one U+0020 then zeros", B.build([*STD(), u32prop("CtxShadow", 4)], reserved=" ".encode("utf-16le") + b"\x00" * 94), "probe", "gate")
+raw_case("PROBE-RES-U0201ONLY", "tsprsp2", "STD + CtxShadow 4; ReservedData is one U+0201 then zeros", B.build([*STD(), u32prop("CtxShadow", 4)], reserved=b"\x01\x02" + b"\x00" * 94), "probe", "gate")
+raw_case("PROBE-ZERO-ABSENT", "tspzabs", "no session-limit properties at all", B.build([GATE()]), "probe", "zero")
+raw_case("PROBE-ZERO-0", "tspzzero", "all three limits stored as 0", B.build([*STD(), u32prop("CtxMaxConnectionTime", 0), u32prop("CtxMaxDisconnectionTime", 0), u32prop("CtxMaxIdleTime", 0)]), "probe", "zero")
+raw_case("PROBE-ZERO-MAX", "tspzmax", "all three limits stored as 0xFFFFFFFF", B.build([*STD(), u32prop("CtxMaxConnectionTime", 0xFFFFFFFF), u32prop("CtxMaxDisconnectionTime", 0xFFFFFFFF), u32prop("CtxMaxIdleTime", 0xFFFFFFFF)]), "probe", "zero")
+# text encoding probes: ANSI only vs wide only, non-ASCII
+raw_case("PROBE-ENC-ANSI", "tspeansi", "home dir stored ONLY as ANSI bytes with a non-ASCII byte 0xE9", B.build([*STD(), B.prop("CtxWFHomeDir", B.hexval(b"\\\\fs1\\caf\xe9\x00"))]), "probe", "enc")
+raw_case("PROBE-ENC-WIDE", "tspewide", "home dir stored ONLY in CtxWFHomeDirW as UTF-16LE with U+00E9", B.build([*STD(), B.prop("CtxWFHomeDirW", B.hexval("\\\\fs1\\caf\u00e9\x00".encode("utf-16le")))]), "probe", "enc")
+raw_case("PROBE-ENC-DISAGREE", "tspedis", "CtxWFHomeDir says \\\\a\\ansi, CtxWFHomeDirW says \\\\b\\wide",
+         B.build([*STD(), asciiprop("CtxWFHomeDir", "\\\\a\\ansi"), B.prop("CtxWFHomeDirW", B.hexval("\\\\b\\wide\x00".encode("utf-16le")))]), "probe", "enc")
+
+
+def build_script():
+    L = [". C:\\Windows\\Temp\\tsp\\helpers.ps1", "try {"]
+    for c in CASES:
+        L.append("$dn = New-TspUser '%s'" % c["sam"])
+        if c["kind"] == "adsi":
+            for k, v in c["sets"]:
+                L.append("Set-Ts $dn '%s' %s" % (k, psstr(v) if isinstance(v, str) else v))
+            if c["extra"]:
+                L.append(c["extra"].replace("{sam}", c["sam"]))
+        else:
+            L.append("Set-RawOctets $dn ([byte[]]@(%s))" % ",".join(str(b) for b in bytes.fromhex(c["octets"])))
+        L.append("Emit '%s' '%s' $dn" % (c["id"], c["sam"]))
+        if c["id"] == "TSP-W15":
+            L.append("$d = Get-ADUser tspw15 -Properties msNPAllowDialin,msRADIUSCallbackNumber,msNPCallingStationID; 'DIALIN|' + ($d | Select msNPAllowDialin,msRADIUSCallbackNumber,msNPCallingStationID | ConvertTo-Json -Compress)")
+    # ADSI re-write on a duplicated field: which occurrence does Windows touch?
+    L += ["$dn = (Get-ADUser tspd1).DistinguishedName", "Set-Ts $dn 'EnableRemoteControl' 3", "Emit 'PROBE-DUP1-AFTER-ADSI-WRITE' 'tspd1' $dn",
+          "$dn = (Get-ADUser tspd5).DistinguishedName", "Set-Ts $dn 'TerminalServicesHomeDirectory' '\\\\c\\three'", "Emit 'PROBE-DUP5-AFTER-ADSI-WRITE' 'tspd5' $dn"]
+    # how long a path will ADSI accept?
+    L += ["$dn = New-TspUser 'tsplong'"]
+    for n in (230, 255, 256, 257, 300, 520):
+        L.append("try { Set-Ts $dn 'TerminalServicesHomeDirectory' ('\\\\h\\' + ('a' * %d)); 'LONGADSI|%d accepted' } catch { 'LONGADSI|%d rejected: ' + $_.Exception.Message }" % (n, n, n))
+    L += ["Emit 'PROBE-LONG-ADSI' 'tsplong' $dn"]
+    # overflow: minutes beyond the u32 millisecond range
+    L += ["$dn = New-TspUser 'tspovf'", "try { Set-Ts $dn 'MaxIdleTime' 100000; 'OVF|set-accepted' } catch { 'OVF|rejected: ' + $_.Exception.Message }", "Emit 'PROBE-OVERFLOW-100000MIN' 'tspovf' $dn"]
+    # global catalog, schema flags, ACL, read as an ordinary user
+    L.append(r"""
+$schema = (Get-ADRootDSE).schemaNamingContext
+$a = Get-ADObject "CN=User-Parameters,$schema" -Properties searchFlags,attributeSecurityGUID,isMemberOfPartialAttributeSet,systemFlags,rangeUpper,schemaIDGUID,attributeSyntax,oMSyntax
+'SCHEMA|' + (@{searchFlags=$a.searchFlags; attributeSecurityGUID=([guid]$a.attributeSecurityGUID).ToString(); partialSet=$a.isMemberOfPartialAttributeSet; systemFlags=$a.systemFlags; rangeUpper=$a.rangeUpper; attributeSyntax=$a.attributeSyntax; oMSyntax=$a.oMSyntax} | ConvertTo-Json -Compress)
+$gc = New-Object System.DirectoryServices.Protocols.LdapConnection('localhost:3268'); $gc.AuthType='Negotiate'; $gc.Bind()
+$req = New-Object System.DirectoryServices.Protocols.SearchRequest('', '(sAMAccountName=tspw16)', 'Subtree', @('userParameters','distinguishedName'))
+$r = $gc.SendRequest($req)
+'GC|' + (@{entries=$r.Entries.Count; hasUserParameters=($r.Entries.Count -gt 0 -and $r.Entries[0].Attributes.Contains('userParameters')); attrs=@($r.Entries[0].Attributes.AttributeNames)} | ConvertTo-Json -Compress)
+$ds = (Get-ADObject "CN=Person,$schema" -Properties defaultSecurityDescriptor).defaultSecurityDescriptor
+$u = (Get-ADObject "CN=User,$schema" -Properties defaultSecurityDescriptor).defaultSecurityDescriptor
+$g = [guid]$a.attributeSecurityGUID
+$acl = (Get-Acl ("AD:" + (Get-ADUser tspw16).DistinguishedName)).Access | ? { $_.ObjectType -eq $g }
+'ACL|' + (@{userClassDefaultSD_hasPropertySetGuid=($u -match $g.ToString()); aces=@($acl | % { @{who=$_.IdentityReference.ToString(); rights=$_.ActiveDirectoryRights.ToString(); type=$_.AccessControlType.ToString(); inherited=$_.IsInherited} })} | ConvertTo-Json -Compress -Depth 4)
+'ACLU|' + (@{userClassDefaultSD=$u} | ConvertTo-Json -Compress)
+""")
+    L.append(r"""
+$dn16 = (Get-ADUser tspw16).DistinguishedName
+# an ordinary user with a per-run random password (never printed, never stored); removed again below
+$rp = [Convert]::ToBase64String((1..24 | % { Get-Random -Maximum 256 } | % { [byte]$_ })) + 'aA1!'
+if (Get-ADUser -Filter "samAccountName -eq 'tspreader'") { Remove-ADUser tspreader -Confirm:$false }
+New-ADUser -Name tspreader -SamAccountName tspreader -Path $ou -Enabled $true -AccountPassword (ConvertTo-SecureString $rp -AsPlainText -Force)
+try {
+  # ordinary authenticated user (no group membership beyond Domain Users) reading the fixture; cn and sAMAccountName are the positive controls
+  $de = New-Object System.DirectoryServices.DirectoryEntry("LDAP://dc1.win.activediq.test/$dn16", 'WIN\tspreader', $rp)
+  $adm = [adsi]"LDAP://$dn16"
+  'USERREAD|' + (@{reader='WINLAB\tspreader'; memberOf=@((Get-ADUser tspreader -Properties memberOf).memberOf); cn=[string]$de.Properties['cn'].Value; sam=[string]$de.Properties['sAMAccountName'].Value; userParametersValues=$de.Properties['userParameters'].Count; sameAsAdmin=([string]$de.Properties['userParameters'].Value -ceq [string]$adm.Properties['userParameters'].Value)} | ConvertTo-Json -Compress)
+} catch { 'USERREAD|' + (@{error=$_.Exception.Message} | ConvertTo-Json -Compress) }
+finally { Remove-ADUser tspreader -Confirm:$false }
+'PRE2K|' + (@{members=@(Get-ADGroupMember 'Pre-Windows 2000 Compatible Access' | % { $_.Name })} | ConvertTo-Json -Compress)
+""")
+    L.append("'OS|' + (Get-CimInstance Win32_OperatingSystem | % { $_.Caption + ' build ' + $_.BuildNumber + ' ' + $_.Version })")
+    L.append("} catch { 'ERROR: ' + $_.Exception.Message + ' @ ' + $_.InvocationInfo.PositionMessage }")
+    return "\n".join(L) + "\n"
+
+
+def cmd_capture(a):
+    import dc1winrm
+    env, _path, addr = dc1winrm.load_env("capture-tsprops")
+    dc = dc1winrm.DC(env, addr)
+    script = build_script()
+    dc.ps("New-Item -ItemType Directory -Force C:\\Windows\\Temp\\tsp | Out-Null")
+    dc.put(os.path.join(TS, "helpers.ps1"), "C:\\Windows\\Temp\\tsp\\helpers.ps1")
+    dc.put_bytes(script.encode("ascii"), "C:\\Windows\\Temp\\tsp\\case.ps1")
+    try:
+        rc, out = dc.ps("powershell -NoProfile -ExecutionPolicy Bypass -File C:\\Windows\\Temp\\tsp\\case.ps1 2>&1 | Out-String -Width 1000000")
+    finally:
+        dc.ps("Remove-Item C:\\Windows\\Temp\\tsp\\case.ps1 -Force -ErrorAction SilentlyContinue")
+    cap = {"dc": "dc1", "recs": {}, "notes": {}}
+    for line in out.replace("\r", "").splitlines():
+        if line.startswith("REC|"):
+            r = json.loads(line[4:]); cap["recs"][r["label"]] = r
+        elif line.startswith("ERROR"):
+            last = sorted(cap["recs"])[-1] if cap["recs"] else "(none)"
+            sys.exit("capture failed on dc1 after %s: %s" % (last, line))
+        elif "|" in line and line.split("|", 1)[0].isupper():
+            k, v = line.split("|", 1)
+            try: val = json.loads(v)
+            except ValueError: val = v
+            cap["notes"].setdefault(k, []).append(val)
+    cap["cases"] = [{k: v for k, v in c.items() if k in ("id", "sam", "desc", "kind", "sets", "extra", "probe")} for c in CASES]
+    os.makedirs(a.out, exist_ok=True)
+    with open(os.path.join(a.out, "captures.json"), "w") as f:
+        json.dump(cap, f, indent=1, sort_keys=True, ensure_ascii=True)
+    need = {c["id"] for c in CASES}
+    missing = need - set(cap["recs"])
+    print("captured %d of %d cases; notes: %s" % (len(cap["recs"]), len(need), sorted(cap["notes"])))
+    if missing: sys.exit("missing: " + ", ".join(sorted(missing)))
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    c = sub.add_parser("capture"); c.add_argument("--out", default=DEFAULT_DIR); c.set_defaults(fn=cmd_capture)
+    d = sub.add_parser("derive"); d.add_argument("--dir", default=DEFAULT_DIR); d.set_defaults(fn=lambda a: __import__("derive").derive(a.dir))
+    a = ap.parse_args(); a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

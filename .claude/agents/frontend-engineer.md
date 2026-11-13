@@ -2,7 +2,7 @@
 name: frontend-engineer
 description: "Use for application screens — page composition, routing, client state, data fetching from the API, forms and validation, tables over large directories, and empty/error/loading states. Owns turning a design and a spec into a working screen wired to real API data. Not for building or restyling design-system components, motion or visual polish (use component-designer), UX direction and flows (use product-designer), or API contracts (use api-engineer)."
 model: sonnet
-effort: high
+effort: medium
 skills:
   - factory-protocol
   - handoff

@@ -1,0 +1,529 @@
+# T-1734 raw lab output, dc1 (Windows Server 2025 Standard Evaluation build 26100, domain+forest level 2025, Recycle Bin on), 2026-11-07. Throwaway lab accounts only; GUIDs and SIDs are lab values.
+# Client: Python ldap3 over verified LDAPS from the Linux host; admin steps over WinRM (A-0025) under with-dc1-lock. Passwords and the canary secret are scrubbed to *** by the driver.
+# Sections: P0 probe; dbg (first attempt: the container descriptor is unreadable to Domain Admin, found here); P1 item 1; P2 items 2-4 (its item 5 and 6 parts are superseded by P3: dsacls wrote an inherit-only ACE the user inherits as a container ACE only after
+#   explicit allows, the property-level deny was inconclusive, the LAPS schema was absent); P3 items 5-6 redone; P4 raw descriptor comparison for item 5.
+# READ THIS about two comparison lines. "DACL equals baseline ... False" (P1) and "FINAL DACL identical to baseline: False" (P2) are artefacts of the driver: it compared the .NET-rendered SDDL (which lists the two default ACEs as (SY)(BA)) with the order the DC stores (BA)(SY).
+#   The DC's own as-found order after taking ownership is O:DAG:SYD:PAI(A;;LCRP;;;BA)(A;;KA;;;SY); every verify read after a removal prints exactly that, so the removal restored the DACL. Likewise "retained DACL identical" lines in P2/P3 compare two blank
+#   strings (the .NET decoder fails on user descriptors) and prove nothing; P4 replaces them with a byte comparison and a parsed ACE list.
+
+################ p0
+===== P0 read-only probe 2026-11-07T13:24:48Z
+host DC1 os Microsoft Windows Server 2025 Standard Evaluation build 26100
+domain mode Windows2025Domain forest mode Windows2025Forest
+recycle bin True
+deletedObjectLifetime 
+dSHeuristics []
+leftover T1734 OU: False
+schema sIDHistory                                   searchFlags=['1'] systemFlags=['18'] systemOnly=['FALSE']
+schema msDS-AllowedToActOnBehalfOfOtherIdentity     searchFlags=['0'] systemFlags=['16'] systemOnly=['TRUE']
+schema isCriticalSystemObject                       searchFlags=['0'] systemFlags=['16'] systemOnly=['FALSE']
+schema msDS-AllowedToDelegateTo                     searchFlags=['0'] systemFlags=['16'] systemOnly=['FALSE']
+schema msLAPS-Password                              ABSENT
+schema msLAPS-EncryptedPassword                     ABSENT
+schema ms-Mcs-AdmPwd                                ABSENT
+schema msDS-SecondaryKrbTgtNumber                   searchFlags=['1'] systemFlags=['16'] systemOnly=['TRUE']
+schema msDS-LastKnownRDN                            searchFlags=['0'] systemFlags=['16'] systemOnly=['TRUE']
+schema lastKnownParent                              searchFlags=['0'] systemFlags=['16'] systemOnly=['FALSE']
+schema adminCount                                   searchFlags=['0'] systemFlags=['16'] systemOnly=['FALSE']
+
+################ p1
+===== P1 item 1: ACE vs owner reset 2026-11-07T13:24:51Z
+trustee group SID S-1-5-21-3048684280-3061665338-2348266937-1579 | Domain Admins SID S-1-5-21-3048684280-3061665338-2348266937-512
+--- Step 0: what the default descriptor allows
+dsacls as found:
+Insufficient access rights to perform the operation.
+
+
+The command failed to complete successfully.
+  as found (owner SYSTEM)                              admin read: success, descriptor value returned=False
+--- Step 1: take ownership with a typed owner-only write, read, build baseline bytes
+  typed owner-only write 0x1: ok
+  admin read after takeover: success bytes 112
+  after-takeover SDDL: O:DAG:SYD:PAI(A;;LCRP;;;BA)(A;;KA;;;SY)
+  baseline (owner SYSTEM) SDDL: O:SYG:SYD:PAI(A;;KA;;;SY)(A;;LCRP;;;BA) | equals the documented default: True
+  write baseline back (0x5): True success
+  after owner reset (owner SYSTEM)                     admin read: success, descriptor value returned=False
+--- Variant A: takeover; one 0x5 write = DACL with LC|RC ACE + owner SYSTEM
+  typed owner-only write 0x1: ok
+  write ACE + owner SYSTEM (0x5): True success
+  admin after the write (owner is SYSTEM now)          admin read: success, descriptor value returned=False
+  A: after the single write                            cls (LC|RC member) via WKGUID: O:SYD:PAI(A;;LCRC;;;S-1-5-21-3048684280-3061665338-2348266937-1579)(A;;LCRP;;;BA)(A;;KA;;;SY)
+  A: ACE present: ['O:SYD:PAI(A;;LCRC;;;S-1-5-21-3048684280-3061665338-2348266937-1579)'] | owner SY: True | protected flag kept (PAI): True
+  A: re-read after 10 s                                cls (LC|RC member) via WKGUID: O:SYD:PAI(A;;LCRC;;;S-1-5-21-3048684280-3061665338-2348266937-1579)(A;;LCRP;;;BA)(A;;KA;;;SY)
+  A: ACE still present: True
+  removal: write baseline straight away, no takeover (0x5): False insufficientAccessRights
+  [typed owner-only write 0x1: ok]
+  removal: write baseline after takeover (0x5): True success
+  [typed owner-only write 0x1: ok]
+  verify baseline after removal (A)                    O:DAG:SYD:PAI(A;;LCRP;;;BA)(A;;KA;;;SY)
+  owner put back to SYSTEM (0x1): True success
+  A: DACL equals baseline after removal: False
+--- Variant B: takeover; DACL-only write (0x4) with the ACE; then a separate owner-only write (0x1) to SYSTEM
+  typed owner-only write 0x1: ok
+  write ACE only (0x4), owner stays Domain Admins: True success
+  admin read, owner DA, after DACL write: O:DAG:SYD:PAI(A;;LCRC;;;S-1-5-21-3048684280-3061665338-2348266937-1579)(A;;LCRP;;;BA)(A;;KA;;;SY)
+  owner-only write to SYSTEM (0x1): True success
+  B: after the separate owner reset                    cls (LC|RC member) via WKGUID: O:SYD:PAI(A;;LCRC;;;S-1-5-21-3048684280-3061665338-2348266937-1579)(A;;LCRP;;;BA)(A;;KA;;;SY)
+  B: ACE present after owner reset: ['O:SYD:PAI(A;;LCRC;;;S-1-5-21-3048684280-3061665338-2348266937-1579)'] | owner SY: True
+  removal: write baseline straight away, no takeover (0x5): False insufficientAccessRights
+  [typed owner-only write 0x1: ok]
+  removal: write baseline after takeover (0x5): True success
+  [typed owner-only write 0x1: ok]
+  verify baseline after removal (B)                    O:DAG:SYD:PAI(A;;LCRP;;;BA)(A;;KA;;;SY)
+  owner put back to SYSTEM (0x1): True success
+  B: DACL equals baseline after removal: False
+--- Variant C: dsacls /takeownership + /G <group>:LC, then the owner reset with a typed 0x5 write
+  dsacls takeownership:            READ PROPERTY
+
+The command completed successfully
+  dsacls /G LC:            READ PROPERTY
+
+The command completed successfully
+  admin read after dsacls grant (owner DA): O:DAG:SYD:PAI(A;;LC;;;S-1-5-21-3048684280-3061665338-2348266937-1579)(A;;LCRP;;;BA)(A;;KA;;;SY)
+  owner reset to SYSTEM via 0x5 (DACL rewritten as read): True success
+  C: container as the LC-only grantee sees it (RC not granted: descriptor expected unreadable): None
+  removal: write baseline straight away, no takeover (0x5): False insufficientAccessRights
+  [typed owner-only write 0x1: ok]
+  removal: write baseline after takeover (0x5): True success
+  [typed owner-only write 0x1: ok]
+  verify baseline after removal (C)                    O:DAG:SYD:PAI(A;;LCRP;;;BA)(A;;KA;;;SY)
+  owner put back to SYSTEM (0x1): True success
+  C: DACL equals baseline after removal: False
+--- finally
+  typed owner-only write 0x1: ok
+  final baseline write: True success
+FINAL dsacls:
+Insufficient access rights to perform the operation.
+
+
+The command failed to complete successfully.
+cleanup done
+
+################ p2
+===== P2 items 2-6 2026-11-07T13:25:43Z
+identities ready
+dsacls as found:
+Insufficient access rights to perform the operation.
+
+
+The command failed to complete successfully.
+  typed owner-only write 0x1: ok
+after takeover, admin read: success bytes 112
+baseline (owner SYSTEM) SDDL: O:SYG:SYD:PAI(A;;KA;;;SY)(A;;LCRP;;;BA) | equals documented default: True
+  typed owner-only write 0x1: ok
+grant applied (takeover, then one 0x5 write with owner SYSTEM): True success
+
+===== ITEM 2: container owner+DACL read by a non-admin via WKGUID
+-- identity adq1734-cls (LC|RC group member)
+  domain head wellKnownObjects readable: success | DO entry: ['B:32:18E2EA80684F11D2B9AA00C04F79F805:CN=Deleted Objects,DC=win,DC=activediq,DC=test']
+  WKGUID + show-deleted, SD_FLAGS 0x5                        rc=0 success entries=1 attrs=['nTSecurityDescriptor']
+      SDDL as seen: O:SYD:PAI(A;;RC;;;S-1-5-21-3048684280-3061665338-2348266937-1588)(A;;LC;;;S-1-5-21-3048684280-3061665338-2348266937-1587)(A;;LCRC;;;S-1-5-21-3048684280-3061665338-2348266937-1586)(A;;LCRP;;;BA)(A;;KA;;;SY)
+  WKGUID + show-deleted, SD_FLAGS 0x7                        rc=0 success entries=1 attrs=['nTSecurityDescriptor']
+      SDDL as seen: O:SYG:SYD:PAI(A;;RC;;;S-1-5-21-3048684280-3061665338-2348266937-1588)(A;;LC;;;S-1-5-21-3048684280-3061665338-2348266937-1587)(A;;LCRC;;;S-1-5-21-3048684280-3061665338-2348266937-1586)(A;;LCRP;;;BA)(A;;KA;;;SY)
+  WKGUID, NO show-deleted, 0x5                               rc=32 noSuchObject entries=0 attrs=-
+  DN + show-deleted, 0x5                                     rc=0 success entries=1 attrs=['nTSecurityDescriptor']
+      SDDL as seen: O:SYD:PAI(A;;RC;;;S-1-5-21-3048684280-3061665338-2348266937-1588)(A;;LC;;;S-1-5-21-3048684280-3061665338-2348266937-1587)(A;;LCRC;;;S-1-5-21-3048684280-3061665338-2348266937-1586)(A;;LCRP;;;BA)(A;;KA;;;SY)
+  WKGUID + show-deleted, SD_FLAGS 0x8 (SACL)                 rc=0 success entries=1 attrs=[]
+  WKGUID + show-deleted, 0xF (all)                           rc=0 success entries=1 attrs=[]
+-- identity adq1734-clsLC (LC only (negative control: no RC))
+  domain head wellKnownObjects readable: success | DO entry: ['B:32:18E2EA80684F11D2B9AA00C04F79F805:CN=Deleted Objects,DC=win,DC=activediq,DC=test']
+  WKGUID + show-deleted, SD_FLAGS 0x5                        rc=0 success entries=1 attrs=[]
+  WKGUID + show-deleted, SD_FLAGS 0x7                        rc=0 success entries=1 attrs=[]
+  WKGUID, NO show-deleted, 0x5                               rc=32 noSuchObject entries=0 attrs=-
+  DN + show-deleted, 0x5                                     rc=0 success entries=1 attrs=[]
+  WKGUID + show-deleted, SD_FLAGS 0x8 (SACL)                 rc=0 success entries=1 attrs=[]
+  WKGUID + show-deleted, 0xF (all)                           rc=0 success entries=1 attrs=[]
+-- identity adq1734-clsRC (RC only (negative control: no LC))
+  domain head wellKnownObjects readable: success | DO entry: ['B:32:18E2EA80684F11D2B9AA00C04F79F805:CN=Deleted Objects,DC=win,DC=activediq,DC=test']
+  WKGUID + show-deleted, SD_FLAGS 0x5                        rc=0 success entries=1 attrs=['nTSecurityDescriptor']
+  WKGUID + show-deleted, SD_FLAGS 0x7                        rc=0 success entries=1 attrs=['nTSecurityDescriptor']
+  WKGUID, NO show-deleted, 0x5                               rc=32 noSuchObject entries=0 attrs=-
+  DN + show-deleted, 0x5                                     rc=0 success entries=1 attrs=['nTSecurityDescriptor']
+  WKGUID + show-deleted, SD_FLAGS 0x8 (SACL)                 rc=0 success entries=1 attrs=[]
+  WKGUID + show-deleted, 0xF (all)                           rc=0 success entries=1 attrs=[]
+-- identity adq1734-cls0 (no grant (negative control))
+  domain head wellKnownObjects readable: success | DO entry: ['B:32:18E2EA80684F11D2B9AA00C04F79F805:CN=Deleted Objects,DC=win,DC=activediq,DC=test']
+  WKGUID + show-deleted, SD_FLAGS 0x5                        rc=0 success entries=1 attrs=[]
+  WKGUID + show-deleted, SD_FLAGS 0x7                        rc=0 success entries=1 attrs=[]
+  WKGUID, NO show-deleted, 0x5                               rc=32 noSuchObject entries=0 attrs=-
+  DN + show-deleted, 0x5                                     rc=0 success entries=1 attrs=[]
+  WKGUID + show-deleted, SD_FLAGS 0x8 (SACL)                 rc=0 success entries=1 attrs=[]
+  WKGUID + show-deleted, 0xF (all)                           rc=0 success entries=1 attrs=[]
+
+===== ITEM 3: must-be-present R2 set per class (group, computer, contact, OU; user as control)
+victims created
+victim GUIDs {'group': '4f6d72b2-86c7-43e1-b7ab-7e50c26d0039', 'user': 'b2cf6312-1150-4dac-a460-0d7793b9f851', 'computer': '7cc552f6-a658-4eb7-8240-11cf37ff27dd', 'contact': 'f995f30f-7659-4f80-a066-7e1c3f38d571', 'organizationalUnit': 'c0fcdce4-cbb7-469d-90b9-0883f255c34f'}
+  LIVE group read by cls                                     rc=0 success entries=1 attrs=['description', 'memberOf', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid']
+  LIVE user read by cls                                      rc=0 success entries=1 attrs=['description', 'memberOf', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  LIVE computer read by cls                                  rc=0 success entries=1 attrs=['description', 'isCriticalSystemObject', 'memberOf', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  LIVE contact read by cls                                   rc=0 success entries=1 attrs=['description', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID']
+  LIVE organizationalUnit read by cls                        rc=0 success entries=1 attrs=['description', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID']
+victims deleted
+-- DELETED, read by cls (LC|RC)
+  DELETED group                                              rc=0 success entries=1 attrs=['description', 'isDeleted', 'lastKnownParent', 'memberOf', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid']
+      -> group              must-be-present missing=none | lastKnownParent=OU=T1734-V,DC=win,DC=activediq,DC=test RDN=t1734-g3 UAC= memberOf#=1 objectClass=['group']
+         optional present: ['memberOf']
+  DELETED user                                               rc=0 success entries=1 attrs=['description', 'isDeleted', 'lastKnownParent', 'memberOf', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+      -> user               must-be-present missing=none | lastKnownParent=OU=T1734-V,DC=win,DC=activediq,DC=test RDN=t1734-u3 UAC=512 memberOf#=1 objectClass=['user']
+         optional present: ['memberOf']
+  DELETED computer                                           rc=0 success entries=1 attrs=['description', 'isCriticalSystemObject', 'isDeleted', 'lastKnownParent', 'memberOf', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+      -> computer           must-be-present missing=none | lastKnownParent=OU=T1734-V,DC=win,DC=activediq,DC=test RDN=T1734-C3 UAC=4096 memberOf#=1 objectClass=['computer']
+         optional present: ['memberOf', 'isCriticalSystemObject']
+  DELETED contact                                            rc=0 success entries=1 attrs=['description', 'isDeleted', 'lastKnownParent', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID']
+      -> contact            must-be-present missing=none | lastKnownParent=OU=T1734-V,DC=win,DC=activediq,DC=test RDN=t1734-ct3 UAC= memberOf#=0 objectClass=['contact']
+         optional present: []
+  DELETED organizationalUnit                                 rc=0 success entries=1 attrs=['description', 'isDeleted', 'lastKnownParent', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID']
+      -> organizationalUnit must-be-present missing=none | lastKnownParent=OU=T1734-V,DC=win,DC=activediq,DC=test RDN=t1734-ou3 UAC= memberOf#=0 objectClass=['organizationalUnit']
+         optional present: []
+-- DELETED, read by admin
+  DELETED group                                              rc=0 success entries=1 attrs=['description', 'isDeleted', 'lastKnownParent', 'memberOf', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid']
+      -> group              must-be-present missing=none | lastKnownParent=OU=T1734-V,DC=win,DC=activediq,DC=test RDN=t1734-g3 UAC= memberOf#=1 objectClass=['group']
+         optional present: ['memberOf']
+  DELETED user                                               rc=0 success entries=1 attrs=['description', 'isDeleted', 'lastKnownParent', 'memberOf', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+      -> user               must-be-present missing=none | lastKnownParent=OU=T1734-V,DC=win,DC=activediq,DC=test RDN=t1734-u3 UAC=512 memberOf#=1 objectClass=['user']
+         optional present: ['memberOf']
+  DELETED computer                                           rc=0 success entries=1 attrs=['description', 'isCriticalSystemObject', 'isDeleted', 'lastKnownParent', 'memberOf', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+      -> computer           must-be-present missing=none | lastKnownParent=OU=T1734-V,DC=win,DC=activediq,DC=test RDN=T1734-C3 UAC=4096 memberOf#=1 objectClass=['computer']
+         optional present: ['memberOf', 'isCriticalSystemObject']
+  DELETED contact                                            rc=0 success entries=1 attrs=['description', 'isDeleted', 'lastKnownParent', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID']
+      -> contact            must-be-present missing=none | lastKnownParent=OU=T1734-V,DC=win,DC=activediq,DC=test RDN=t1734-ct3 UAC= memberOf#=0 objectClass=['contact']
+         optional present: []
+  DELETED organizationalUnit                                 rc=0 success entries=1 attrs=['description', 'isDeleted', 'lastKnownParent', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID']
+      -> organizationalUnit must-be-present missing=none | lastKnownParent=OU=T1734-V,DC=win,DC=activediq,DC=test RDN=t1734-ou3 UAC= memberOf#=0 objectClass=['organizationalUnit']
+         optional present: []
+
+===== ITEM 4: retention
+RBCD set on computer: True
+RBCD set on user: True
+WRITE sIDHistory on user: REFUSED: Access is denied
+WRITE isCriticalSystemObject on user: REFUSED: Access to the attribute is not permitted because the attribute is owned by the Security Accounts Manager (SAM)
+WRITE msDS-SecondaryKrbTgtNumber on user: REFUSED: The attribute cannot be modified because it is owned by the system
+LIVE user attrs after write attempts: {'msDS-AllowedToActOnBehalfOfOtherIdentity': 1}
+-- delete attempts
+DELETE T1734-C4$: done
+DELETE t1734-u4: done
+-- DELETED, read by cls (LC|RC)
+  DELETED computer(RBCD)                                     rc=0 success entries=1 attrs=['isCriticalSystemObject', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToActOnBehalfOfOtherIdentity', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+      -> RBCD present: True len 80 | sIDHistory present: False | isCriticalSystemObject: [b'FALSE'] | SecondaryKrbTgt: False
+  DELETED user(RBCD)                                         rc=0 success entries=1 attrs=['isDeleted', 'lastKnownParent', 'msDS-AllowedToActOnBehalfOfOtherIdentity', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+      -> RBCD present: True len 80 | sIDHistory present: False | isCriticalSystemObject: None | SecondaryKrbTgt: False
+-- DELETED, read by admin
+  DELETED computer(RBCD)                                     rc=0 success entries=1 attrs=['isCriticalSystemObject', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToActOnBehalfOfOtherIdentity', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+      -> RBCD present: True len 80 | sIDHistory present: False | isCriticalSystemObject: [b'FALSE'] | SecondaryKrbTgt: False
+  DELETED user(RBCD)                                         rc=0 success entries=1 attrs=['isDeleted', 'lastKnownParent', 'msDS-AllowedToActOnBehalfOfOtherIdentity', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+      -> RBCD present: True len 80 | sIDHistory present: False | isCriticalSystemObject: None | SecondaryKrbTgt: False
+
+===== ITEM 5: inheritable Deny on the OU, set before the child exists / is deleted
+ou5 created
+                     WRITE PROPERTY
+The command completed successfully
+                     WRITE PROPERTY
+The command completed successfully
+  OU DACL ( OU=t1734-ou5a ) deny ACEs: ['D:AI(D;CIIO;RPRC;;;S-1-5-21-3048684280-3061665338-2348266937-1581)']
+  OU DACL ( OU=t1734-ou5b ) deny ACEs: []
+u5 created
+-- LIVE reads by cls (the deny applies?)
+  LIVE u5a (OU deny RP|RC all props)                         rc=0 success entries=1 attrs=['description', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID']
+  LIVE u5b (OU deny RP on description)                       rc=0 success entries=1 attrs=['adminCount', 'description', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+   u5b live description returned: True | adminCount returned: True
+   u5a live DACL (admin): 
+   u5b live DACL (admin): 
+u5 deleted
+-- DELETED reads by cls
+  DELETED u5a by cls                                         rc=0 success entries=1 attrs=['description', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID']
+  DELETED u5b by cls                                         rc=0 success entries=1 attrs=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+   u5a: any attribute returned to cls: True | attrs: ['description', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID'] (live returned: ['description', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID'] )
+   u5b: description returned to cls: True | adminCount returned: True | live: description True
+   u5a DELETED DACL (admin): 
+   u5b DELETED DACL (admin): 
+   retained DACL identical to the live DACL: u5a True | u5b True
+
+===== ITEM 6: confidential attribute on a deleted computer
+                     WRITE PROPERTY
+The command completed successfully
+WRITE msLAPS-Password REFUSED: The specified directory service attribute or value does not exist
+Parameter name: msLAPS-Password
+3e24d662-6922-49a7-9719-4e36f06b833c
+-- LIVE
+  LIVE by adq1734-cls                          msLAPS-Password returned=False (canary matches=False) | description returned=True | attrs=['description', 'nTSecurityDescriptor', 'name', 'objectGUID']
+  LIVE by adq1734-clsCA                        msLAPS-Password returned=False (canary matches=False) | description returned=True | attrs=['description', 'nTSecurityDescriptor', 'name', 'objectGUID']
+  LIVE by admin                                msLAPS-Password returned=False (canary matches=False) | description returned=True | attrs=['description', 'nTSecurityDescriptor', 'name', 'objectGUID']
+-- DELETED
+  DELETED by adq1734-cls                       msLAPS-Password returned=False (canary matches=False) | description returned=True | attrs=['description', 'isDeleted', 'nTSecurityDescriptor', 'name', 'objectGUID']
+  DELETED by adq1734-clsCA                     msLAPS-Password returned=False (canary matches=False) | description returned=True | attrs=['description', 'isDeleted', 'nTSecurityDescriptor', 'name', 'objectGUID']
+  DELETED by admin                             msLAPS-Password returned=False (canary matches=False) | description returned=True | attrs=['description', 'isDeleted', 'nTSecurityDescriptor', 'name', 'objectGUID']
+   retained DACL identical to live: True
+
+===== cleanup
+  typed owner-only write 0x1: ok
+grant removed (baseline written, owner SYSTEM): True success
+  typed owner-only write 0x1: ok
+FINAL container SDDL (read with owner temporarily DA): O:DAG:SYD:PAI(A;;LCRP;;;BA)(A;;KA;;;SY)
+FINAL DACL identical to baseline: False
+FINAL dsacls:
+Insufficient access rights to perform the operation.
+
+
+The command failed to complete successfully.
+cleanup done
+computer cleanup: ok
+
+################ p3
+===== P3 items 5 and 6 2026-11-07T13:30:25Z
+identities ready
+dsacls as found:
+Insufficient access rights to perform the operation.
+
+
+The command failed to complete successfully.
+  typed owner-only write 0x1: ok
+after takeover, admin read: success bytes 112
+baseline (owner SYSTEM) SDDL: O:SYG:SYD:PAI(A;;KA;;;SY)(A;;LCRP;;;BA) | equals documented default: True
+  typed owner-only write 0x1: ok
+grant applied (takeover, then one 0x5 write with owner SYSTEM): True success
+
+===== ITEM 5 (redo): inheritable Deny on the OU, ACE in place before the child exists
+ou5 created
+ WRITE PROPERTY
+The command completed successfully
+ WRITE PROPERTY
+The command completed successfully
+  OU DACL OU=t1734-ou5a : O:DAG:DAD:AI(D;CIIO;RPRC;;;S-1-5-21-3048684280-3061665338-2348266937-1598)(OA;;CCDC;4828cc14-1437-45bc-9b07-ad6f015e5f28;;AO)(OA;;CCDC;bf967a86-0de6-11d0-a285-00aa003049e2;;AO)(OA;;CCDC;bf967a9c-0de6-11d0-a285-00aa003049e2;;AO)(OA;;CCDC;bf967aa8-0de6-11d0-a285-00aa003049e2;;PO)(OA;;CCDC;bf967aba-0de6-11d0-a285-00aa003049e2;;AO)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;DA)(A;;LCRPLORC;;;ED)(A;;LCRPLORC;;;AU)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)(OA;CIIOID;RP;4c164200-20c0-11d0-a768-00aa006e0529;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;4c164200-20c0-11d0-a768-00aa006e0529;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;5f202010-79a5-11d0-9020-00c04fc2d4cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;5f202010-79a5-11d0-9020-00c04fc2d4cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;bc0ac240-79a9-11d0-9020-00c04fc2d4cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;bc0ac240-79a9-11d0-9020-00c04fc2d4cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;037088f8-0ae1-11d2-b422-00a0c968f939;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;037088f8-0ae1-11d2-b422-00a0c968f939;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIID;RPWP;5b47d60f-6090-40b2-9f37-2a4de88f3063;;KA)(OA;CIID;RPWP;5b47d60f-6090-40b2-9f37-2a4de88f3063;;S-1-5-21-3048684280-3061665338-2348266937-527)(OA;CIIOID;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;CO)(OA;CIIOID;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;PS)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a86-0de6-11d0-a285-00aa003049e2;ED)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a9c-0de6-11d0-a285-00aa003049e2;ED)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967aba-0de6-11d0-a285-00aa003049e2;ED)(OA;CIIOID;WP;ea1b7b93-5e48-46d5-bc6c-4df4fda78a35;bf967a86-0de6-11d0-a285-00aa003049e2;PS)(OA;CIIOID;LCRPLORC;;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;LCRPLORC;;bf967a9c-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;LCRPLORC;;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;OICIID;RPWP;3f78c3e5-f79a-46bd-a0b8-9d18116ddc79;;PS)(OA;CIID;RPWPCR;91e647de-d96f-4b70-9557-d63ff4f3ccd8;;PS)(A;CIID;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;S-1-5-21-3048684280-3061665338-2348266937-519)(A;CIID;LC;;;RU)(A;CIID;CCLCSWRPWPLOCRSDRCWDWO;;;BA)
+  OU DACL OU=t1734-ou5b : O:DAG:DAD:AI(OD;CIIO;RP;bf967a68-0de6-11d0-a285-00aa003049e2;bf967aba-0de6-11d0-a285-00aa003049e2;S-1-5-21-3048684280-3061665338-2348266937-1598)(OA;;CCDC;4828cc14-1437-45bc-9b07-ad6f015e5f28;;AO)(OA;;CCDC;bf967a86-0de6-11d0-a285-00aa003049e2;;AO)(OA;;CCDC;bf967a9c-0de6-11d0-a285-00aa003049e2;;AO)(OA;;CCDC;bf967aa8-0de6-11d0-a285-00aa003049e2;;PO)(OA;;CCDC;bf967aba-0de6-11d0-a285-00aa003049e2;;AO)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;DA)(A;;LCRPLORC;;;ED)(A;;LCRPLORC;;;AU)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)(OA;CIIOID;RP;4c164200-20c0-11d0-a768-00aa006e0529;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;4c164200-20c0-11d0-a768-00aa006e0529;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;5f202010-79a5-11d0-9020-00c04fc2d4cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;5f202010-79a5-11d0-9020-00c04fc2d4cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;bc0ac240-79a9-11d0-9020-00c04fc2d4cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;bc0ac240-79a9-11d0-9020-00c04fc2d4cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;037088f8-0ae1-11d2-b422-00a0c968f939;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;037088f8-0ae1-11d2-b422-00a0c968f939;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIID;RPWP;5b47d60f-6090-40b2-9f37-2a4de88f3063;;KA)(OA;CIID;RPWP;5b47d60f-6090-40b2-9f37-2a4de88f3063;;S-1-5-21-3048684280-3061665338-2348266937-527)(OA;CIIOID;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;CO)(OA;CIIOID;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;PS)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a86-0de6-11d0-a285-00aa003049e2;ED)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a9c-0de6-11d0-a285-00aa003049e2;ED)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967aba-0de6-11d0-a285-00aa003049e2;ED)(OA;CIIOID;WP;ea1b7b93-5e48-46d5-bc6c-4df4fda78a35;bf967a86-0de6-11d0-a285-00aa003049e2;PS)(OA;CIIOID;LCRPLORC;;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;LCRPLORC;;bf967a9c-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;LCRPLORC;;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;OICIID;RPWP;3f78c3e5-f79a-46bd-a0b8-9d18116ddc79;;PS)(OA;CIID;RPWPCR;91e647de-d96f-4b70-9557-d63ff4f3ccd8;;PS)(A;CIID;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;S-1-5-21-3048684280-3061665338-2348266937-519)(A;CIID;LC;;;RU)(A;CIID;CCLCSWRPWPLOCRSDRCWDWO;;;BA)
+  OU DACL OU=t1734-ou5c : O:DAG:DAD:AI(OA;;CCDC;4828cc14-1437-45bc-9b07-ad6f015e5f28;;AO)(OA;;CCDC;bf967a86-0de6-11d0-a285-00aa003049e2;;AO)(OA;;CCDC;bf967a9c-0de6-11d0-a285-00aa003049e2;;AO)(OA;;CCDC;bf967aa8-0de6-11d0-a285-00aa003049e2;;PO)(OA;;CCDC;bf967aba-0de6-11d0-a285-00aa003049e2;;AO)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;DA)(A;;LCRPLORC;;;ED)(A;;LCRPLORC;;;AU)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)(OA;CIIOID;RP;4c164200-20c0-11d0-a768-00aa006e0529;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;4c164200-20c0-11d0-a768-00aa006e0529;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;5f202010-79a5-11d0-9020-00c04fc2d4cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;5f202010-79a5-11d0-9020-00c04fc2d4cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;bc0ac240-79a9-11d0-9020-00c04fc2d4cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;bc0ac240-79a9-11d0-9020-00c04fc2d4cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;037088f8-0ae1-11d2-b422-00a0c968f939;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;037088f8-0ae1-11d2-b422-00a0c968f939;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIID;RPWP;5b47d60f-6090-40b2-9f37-2a4de88f3063;;KA)(OA;CIID;RPWP;5b47d60f-6090-40b2-9f37-2a4de88f3063;;S-1-5-21-3048684280-3061665338-2348266937-527)(OA;CIIOID;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;CO)(OA;CIIOID;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;PS)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a86-0de6-11d0-a285-00aa003049e2;ED)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a9c-0de6-11d0-a285-00aa003049e2;ED)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967aba-0de6-11d0-a285-00aa003049e2;ED)(OA;CIIOID;WP;ea1b7b93-5e48-46d5-bc6c-4df4fda78a35;bf967a86-0de6-11d0-a285-00aa003049e2;PS)(OA;CIIOID;LCRPLORC;;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;LCRPLORC;;bf967a9c-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;LCRPLORC;;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;OICIID;RPWP;3f78c3e5-f79a-46bd-a0b8-9d18116ddc79;;PS)(OA;CIID;RPWPCR;91e647de-d96f-4b70-9557-d63ff4f3ccd8;;PS)(A;CIID;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;S-1-5-21-3048684280-3061665338-2348266937-519)(A;CIID;LC;;;RU)(A;CIID;CCLCSWRPWPLOCRSDRCWDWO;;;BA)
+u5 created
+-- LIVE reads by cls
+  LIVE u5a: inherited Deny RP|RC, all properties (cls)       rc=0 success entries=1 attrs=['description', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID']
+  LIVE u5b: inherited Deny RP on userAccountControl only (cls) rc=0 success entries=1 attrs=['adminCount', 'description', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID']
+  LIVE u5c: control: no deny                                 rc=0 success entries=1 attrs=['adminCount', 'description', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+   u5a live DACL (admin, owner+group+DACL): 
+   u5b live DACL (admin, owner+group+DACL): 
+   u5c live DACL (admin, owner+group+DACL): 
+u5 deleted
+-- DELETED reads by cls (LC|RC holder)
+  DELETED u5a: inherited Deny RP|RC, all properties (cls)    rc=0 success entries=1 attrs=['description', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID']
+   u5a: returned live (of the probe set): ['description', 'objectSid', 'primaryGroupID']
+   u5a: returned deleted (probe set; isDeleted/lastKnownParent/msDS-LastKnownRDN exist only when deleted): ['description', 'objectSid', 'primaryGroupID']
+   u5a: anything returned deleted that the live read did not, other than the deleted-state attributes: []
+   u5a: retained DACL identical to live DACL: True
+  DELETED u5b: inherited Deny RP on userAccountControl only (cls) rc=0 success entries=1 attrs=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID']
+   u5b: returned live (of the probe set): ['adminCount', 'description', 'objectSid', 'primaryGroupID']
+   u5b: returned deleted (probe set; isDeleted/lastKnownParent/msDS-LastKnownRDN exist only when deleted): ['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-LastKnownRDN', 'objectSid', 'primaryGroupID']
+   u5b: anything returned deleted that the live read did not, other than the deleted-state attributes: []
+   u5b: retained DACL identical to live DACL: True
+  DELETED u5c: control: no deny                              rc=0 success entries=1 attrs=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectClass', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+   u5c: returned live (of the probe set): ['adminCount', 'description', 'objectSid', 'primaryGroupID', 'userAccountControl']
+   u5c: returned deleted (probe set; isDeleted/lastKnownParent/msDS-LastKnownRDN exist only when deleted): ['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-LastKnownRDN', 'objectSid', 'primaryGroupID', 'userAccountControl']
+   u5c: anything returned deleted that the live read did not, other than the deleted-state attributes: []
+   u5c: retained DACL identical to live DACL: True
+
+===== ITEM 6: confidential attribute on a deleted computer
+unixUserPassword searchFlags=128
+userPassword searchFlags=0
+msSFU30Password searchFlags=
+clsCA grant on OU6 (inheritable RP + Control Access, set before the computers exist): PERTY
+The command completed successfully
+  OU6 DACL: O:DAG:DAD:AI(OA;;CCDC;4828cc14-1437-45bc-9b07-ad6f015e5f28;;AO)(OA;;CCDC;bf967a86-0de6-11d0-a285-00aa003049e2;;AO)(OA;;CCDC;bf967a9c-0de6-11d0-a285-00aa003049e2;;AO)(OA;;CCDC;bf967aa8-0de6-11d0-a285-00aa003049e2;;PO)(OA;;CCDC;bf967aba-0de6-11d0-a285-00aa003049e2;;AO)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;DA)(A;CIIO;RPCR;;;S-1-5-21-3048684280-3061665338-2348266937-1601)(A;;LCRPLORC;;;ED)(A;;LCRPLORC;;;AU)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;SY)(OA;CIIOID;RP;4c164200-20c0-11d0-a768-00aa006e0529;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;4c164200-20c0-11d0-a768-00aa006e0529;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;5f202010-79a5-11d0-9020-00c04fc2d4cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;5f202010-79a5-11d0-9020-00c04fc2d4cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;bc0ac240-79a9-11d0-9020-00c04fc2d4cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;bc0ac240-79a9-11d0-9020-00c04fc2d4cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;RP;037088f8-0ae1-11d2-b422-00a0c968f939;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;RP;037088f8-0ae1-11d2-b422-00a0c968f939;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;CIID;RPWP;5b47d60f-6090-40b2-9f37-2a4de88f3063;;KA)(OA;CIID;RPWP;5b47d60f-6090-40b2-9f37-2a4de88f3063;;S-1-5-21-3048684280-3061665338-2348266937-527)(OA;CIIOID;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;CO)(OA;CIIOID;SW;9b026da6-0d3c-465c-8bee-5199d7165cba;bf967a86-0de6-11d0-a285-00aa003049e2;PS)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a86-0de6-11d0-a285-00aa003049e2;ED)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967a9c-0de6-11d0-a285-00aa003049e2;ED)(OA;CIIOID;RP;b7c69e6d-2cc7-11d2-854e-00a0c983f608;bf967aba-0de6-11d0-a285-00aa003049e2;ED)(OA;CIIOID;WP;ea1b7b93-5e48-46d5-bc6c-4df4fda78a35;bf967a86-0de6-11d0-a285-00aa003049e2;PS)(OA;CIIOID;LCRPLORC;;4828cc14-1437-45bc-9b07-ad6f015e5f28;RU)(OA;CIIOID;LCRPLORC;;bf967a9c-0de6-11d0-a285-00aa003049e2;RU)(OA;CIIOID;LCRPLORC;;bf967aba-0de6-11d0-a285-00aa003049e2;RU)(OA;OICIID;RPWP;3f78c3e5-f79a-46bd-a0b8-9d18116ddc79;;PS)(OA;CIID;RPWPCR;91e647de-d96f-4b70-9557-d63ff4f3ccd8;;PS)(A;CIID;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;S-1-5-21-3048684280-3061665338-2348266937-519)(A;CIID;LC;;;RU)(A;CIID;CCLCSWRPWPLOCRSDRCWDWO;;;BA)
+--- attribute unixUserPassword on computer T1734-C6A
+WRITE unixUserPassword: ACCEPTED
+c4ad806a-131b-4f29-93fa-cd57b1167c58
+  LIVE by adq1734-cls                      unixUserPassword returned=False canary-in-value=False | description returned=True | objectSid returned=True
+  LIVE by adq1734-clsCA                    unixUserPassword returned=True canary-in-value=True | description returned=True | objectSid returned=True
+  LIVE by admin                            unixUserPassword returned=True canary-in-value=True | description returned=True | objectSid returned=True
+  DELETED by adq1734-cls                   unixUserPassword returned=False canary-in-value=False | description returned=True | objectSid returned=True
+  DELETED by adq1734-clsCA                 unixUserPassword returned=True canary-in-value=True | description returned=True | objectSid returned=True
+  DELETED by admin                         unixUserPassword returned=True canary-in-value=True | description returned=True | objectSid returned=True
+  retained DACL identical to live: True
+
+--- Windows LAPS schema
+msLAPS-Password in schema before: False
+BeginProcessing started
+Creating LDAP binding to specified domain controller 'localhost'
+Port not specified - will default to 389
+Successfully created LDAP binding
+Verifying that current machine is AD domain-joined
+Success: current machine is domain-joined to 'WINLAB'
+Running on a domain controller - verifying that the current process is elevated
+Success: current process is elevated
+Calling DC-locator to locate a DC in the  domain
+DC-locator succeeded:
+Name:DC1.win.activediq.test Address:\\192.168.1.250 AddressType:1 DomainGuid:418231cb-912c-46cb-992e-4e502ea6acc8 
+DomainDnsName:win.activediq.test ForestDnsName:win.activediq.test Flags:0xe007f3fd DcSiteName:Default-First-Site-Name 
+ClientSiteName:Default-First-Site-Name 
+Binding to domain controller DC1.win.activediq.test
+Bound LDAP connection to schema FSMO DC1.win.activediq.test
+Successfully bound to domain controller:
+ DC: DC1.win.activediq.test
+ DC functional level: 10
+ Domain info:
+   Domain DNS name: win.activediq.test
+   Domain NC: DC=win,DC=activediq,DC=test
+   Domain functional level: 10
+ Forest info:
+   Forest DNS name: win.activediq.test
+   Forest NC: DC=win,DC=activediq,DC=test
+   Config NC: CN=Configuration,DC=win,DC=activediq,DC=test
+   Schema NC: CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test
+   Forest functional level: 10
+BeginProcessing completed
+
+ProcessRecord started
+Invoking schemaUpdateNow on DC
+Successfully invoked schemaUpdateNow on DC
+
+Issuing LDAP search request for 'CN=ms-LAPS-Password,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Did not find the 'CN=ms-LAPS-Password,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test' schema attribute in AD
+Adding the 'ms-LAPS-Password' schema attribute to the AD schema.
+Adding new schema attribute: 'CN=ms-LAPS-Password,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Successfully added new schema attribute: 'CN=ms-LAPS-Password,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+
+Issuing LDAP search request for 
+'CN=ms-LAPS-PasswordExpirationTime,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Did not find the 'CN=ms-LAPS-PasswordExpirationTime,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test' schema 
+attribute in AD
+Adding the 'ms-LAPS-PasswordExpirationTime' schema attribute to the AD schema.
+Adding new schema attribute: 'CN=ms-LAPS-PasswordExpirationTime,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Successfully added new schema attribute: 
+'CN=ms-LAPS-PasswordExpirationTime,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+
+Issuing LDAP search request for 'CN=ms-LAPS-EncryptedPassword,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Did not find the 'CN=ms-LAPS-EncryptedPassword,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test' schema 
+attribute in AD
+Adding the 'ms-LAPS-EncryptedPassword' schema attribute to the AD schema.
+Adding new schema attribute: 'CN=ms-LAPS-EncryptedPassword,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Successfully added new schema attribute: 
+'CN=ms-LAPS-EncryptedPassword,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+
+Issuing LDAP search request for 
+'CN=ms-LAPS-EncryptedPasswordHistory,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Did not find the 'CN=ms-LAPS-EncryptedPasswordHistory,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test' schema 
+attribute in AD
+Adding the 'ms-LAPS-EncryptedPasswordHistory' schema attribute to the AD schema.
+Adding new schema attribute: 
+'CN=ms-LAPS-EncryptedPasswordHistory,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Successfully added new schema attribute: 
+'CN=ms-LAPS-EncryptedPasswordHistory,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+
+Issuing LDAP search request for 
+'CN=ms-LAPS-EncryptedDSRMPassword,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Did not find the 'CN=ms-LAPS-EncryptedDSRMPassword,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test' schema 
+attribute in AD
+Adding the 'ms-LAPS-EncryptedDSRMPassword' schema attribute to the AD schema.
+Adding new schema attribute: 'CN=ms-LAPS-EncryptedDSRMPassword,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Successfully added new schema attribute: 
+'CN=ms-LAPS-EncryptedDSRMPassword,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+
+Issuing LDAP search request for 
+'CN=ms-LAPS-EncryptedDSRMPasswordHistory,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Did not find the 'CN=ms-LAPS-EncryptedDSRMPasswordHistory,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test' 
+schema attribute in AD
+Adding the 'ms-LAPS-EncryptedDSRMPasswordHistory' schema attribute to the AD schema.
+Adding new schema attribute: 
+'CN=ms-LAPS-EncryptedDSRMPasswordHistory,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Successfully added new schema attribute: 
+'CN=ms-LAPS-EncryptedDSRMPasswordHistory,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+
+Issuing LDAP search request for 
+'CN=ms-LAPS-CurrentPasswordVersion,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Did not find the 'CN=ms-LAPS-CurrentPasswordVersion,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test' schema 
+attribute in AD
+Adding the 'ms-LAPS-CurrentPasswordVersion' schema attribute to the AD schema.
+Adding new schema attribute: 'CN=ms-LAPS-CurrentPasswordVersion,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Successfully added new schema attribute: 
+'CN=ms-LAPS-CurrentPasswordVersion,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+
+Issuing LDAP search request for 
+'CN=ms-LAPS-Encrypted-Password-Attributes,CN=Extended-Rights,CN=Configuration,DC=win,DC=activediq,DC=test'
+Did not find 
+'CN=ms-LAPS-Encrypted-Password-Attributes,CN=Extended-Rights,CN=Configuration,DC=win,DC=activediq,DC=test' extended 
+right AD
+Did not find the 
+'CN=ms-LAPS-Encrypted-Password-Attributes,CN=Extended-Rights,CN=Configuration,DC=win,DC=activediq,DC=test' extended 
+right in AD
+Adding the 'ms-LAPS-Encrypted-Password-Attributes' extended right to AD.
+Adding new extended right: 
+'CN=ms-LAPS-Encrypted-Password-Attributes,CN=Extended-Rights,CN=Configuration,DC=win,DC=activediq,DC=test'
+Successfully added new extended right: 
+'CN=ms-LAPS-Encrypted-Password-Attributes,CN=Extended-Rights,CN=Configuration,DC=win,DC=activediq,DC=test'
+
+Invoking schemaUpdateNow on DC
+Successfully invoked schemaUpdateNow on DC
+
+Querying existing mayContain attribute for the 'CN=computer,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test' 
+classSchema
+Issuing LDAP search request for 'CN=computer,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Got LDAP response for 'CN=computer,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+The 'CN=computer,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test' classSchema has the following mayContains:
+  msSFU30Name
+  nisMapName
+  msSFU30NisDomain
+  msSFU30Aliases
+The 'computer' classSchema is missing the following mayContain: msLAPS-PasswordExpirationTime
+The 'computer' classSchema is missing the following mayContain: msLAPS-Password
+The 'computer' classSchema is missing the following mayContain: msLAPS-EncryptedPassword
+The 'computer' classSchema is missing the following mayContain: msLAPS-EncryptedPasswordHistory
+The 'computer' classSchema is missing the following mayContain: msLAPS-EncryptedDSRMPassword
+The 'computer' classSchema is missing the following mayContain: msLAPS-EncryptedDSRMPasswordHistory
+The 'computer' classSchema is missing the following mayContain: msLAPS-CurrentPasswordVersion
+The 'computer' classSchema is missing 7 out of 7 LAPS mayContains
+Updating the mayContain attribute on the 'computer' class schema attribute in the AD schema.
+Modifying mayContain on: 'CN=computer,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+Successfully modified mayContain on: 'CN=computer,CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test'
+
+Invoking schemaUpdateNow on DC
+Successfully invoked schemaUpdateNow on DC
+
+ProcessRecord completed
+
+EndProcessing started
+EndProcessing completed
+
+
+schemaUpdateNow sent
+msLAPS-Password searchFlags=904
+msLAPS-EncryptedPassword searchFlags=904
+msLAPS-PasswordExpirationTime searchFlags=0
+--- attribute msLAPS-Password on computer T1734-C6B
+WRITE msLAPS-Password: ACCEPTED
+2cb478ab-4292-4a0e-85ee-57ccbecf78d7
+  LIVE by adq1734-cls                      msLAPS-Password returned=False canary-in-value=False | description returned=True | objectSid returned=True
+  LIVE by adq1734-clsCA                    msLAPS-Password returned=True canary-in-value=True | description returned=True | objectSid returned=True
+  LIVE by admin                            msLAPS-Password returned=True canary-in-value=True | description returned=True | objectSid returned=True
+  DELETED by adq1734-cls                   msLAPS-Password returned=False canary-in-value=False | description returned=True | objectSid returned=True
+  DELETED by adq1734-clsCA                 msLAPS-Password returned=True canary-in-value=True | description returned=True | objectSid returned=True
+  DELETED by admin                         msLAPS-Password returned=True canary-in-value=True | description returned=True | objectSid returned=True
+  retained DACL identical to live: True
+
+===== cleanup
+  typed owner-only write 0x1: ok
+grant removed (baseline written, owner SYSTEM): True success
+  typed owner-only write 0x1: ok
+FINAL container SDDL (read with owner temporarily DA, then owner put back to SYSTEM): O:DAG:SYD:PAI(A;;LCRP;;;BA)(A;;KA;;;SY)
+FINAL dsacls (owner SYSTEM, expected 'Insufficient access rights'):
+Insufficient access rights to perform the operation.
+
+
+The command failed to complete successfully.
+cleanup done
+computer cleanup: ok
+
+################ p4
+===== P4 item 5 evidence 2026-11-07T13:32:33Z
+trustee cls SID S-1-5-21-3048684280-3061665338-2348266937-1611
+PERTY
+The command completed successfully
+live SD read by admin: success 2436
+deleted SD read by admin: success 2436
+raw descriptor bytes identical live vs deleted: True
+LIVE owner=S-1-5-21-3048684280-3061665338-2348266937-512 control=0x8c04 aces=51
+    ACE type=1 flags=0x12 mask=0x00020010 objType=None inhType=None trustee=S-1-5-21-3048684280-3061665338-2348266937-1611  <- cls
+DELETED owner=S-1-5-21-3048684280-3061665338-2348266937-512 control=0x8c04 aces=51
+    ACE type=1 flags=0x12 mask=0x00020010 objType=None inhType=None trustee=S-1-5-21-3048684280-3061665338-2348266937-1611  <- cls
+cleanup done
+
+################ dbg (first attempt, before takeover; raw)
+showdel+sd7 success [('searchResEntry', {'name': 1, 'nTSecurityDescriptor': 0})]
+sd7 only noSuchObject []
+showdel only success [('searchResEntry', {'name': 1, 'nTSecurityDescriptor': 0})]
+wkguid success [('searchResEntry', {'nTSecurityDescriptor': 0})]
+cleanup done

@@ -223,6 +223,7 @@ The Windows lab is built from local evaluation VMs on KVM (D-0003, free): see `w
 | LDAPS handshake fails with certificate errors | Use `lab/.lab-ca.pem` and connect as `localhost`, `127.0.0.1` or `dc1.lab.activediq.test` (add `127.0.0.1 dc1.lab.activediq.test` to `/etc/hosts` for the last) |
 | `Strong(er) authentication required` on port 389 | Intended: simple bind over plain LDAP is refused like on a hardened DC. Use LDAPS or StartTLS |
 | Container unhealthy | `make lab-logs`; if the state is damaged `make lab-reset`; as a last resort `make lab-rebuild` |
+| `lab-up` stalls at `loading seed offline into sam.ldb`, or `lab-destroy` cannot remove the network (T-1858) | A one-off `…-dc-run-…` container from an interrupted `make lab-up` is still holding the project network. `lab-up` and `lab-destroy` now remove such containers (compose label `oneoff=True`) automatically; re-run `make lab-destroy && make lab-up LAB_TIER=small`. Measured on a quiet 12-core host: `LAB_TIER=small` reaches healthy in ~62 s. With host load >10 (several worktree labs running) the seed load is CPU-bound and is much slower — stop idle labs (`make lab-down` in other worktrees) first |
 | Kerberos from the host | Samba's DNS is not exposed. Add the DC name to `/etc/hosts` and point `krb5.conf` `kdc = 127.0.0.1` (port `LAB_KRB_PORT`) |
 
 CI: the same commands work on a Linux runner with Docker; wiring `make lab-test` into the pipeline

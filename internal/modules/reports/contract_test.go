@@ -19,7 +19,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 )
 
-const wantOperations = 29 // 21 on main (T-0866, T-0891) + 6 preview twins + the undo pair (T-0892, ADR-0004 rule 14)
+const wantOperations = 30 // 21 on main (T-0866, T-0891) + 6 preview twins + the undo pair (T-0892, ADR-0004 rule 14) + listReportRunPolicyTargets (T-1718)
 
 var fivePermissions = map[string]bool{
 	string(reports.RunPermission):               true,

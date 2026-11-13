@@ -98,7 +98,7 @@ func attrOf(c ObjectChange, name string, op ChangeOp) (AttributeChange, bool) {
 // refInventory is the harness's reference applier: an idempotent upsert by GUID that is independent of
 // the order changes arrive in (CC-FEED-16 shape).
 type refObj struct {
-	state   ObjectState
+	state   ChangeState
 	dn      string
 	display string
 	members map[string]struct{}
@@ -188,7 +188,7 @@ func TestLabDirSyncLifecycle(t *testing.T) {
 	adminAdd(t, adm, u, userAttrs("t1193u"+strings.ReplaceAll(stamp, ".", "")))
 	ug := adminGUID(t, adm, u)
 	inv := refInventory{}
-	step := func(label string, cookie []byte, want ObjectState, wantParent *guid.GUID) ([]byte, ObjectChange) {
+	step := func(label string, cookie []byte, want ChangeState, wantParent *guid.GUID) ([]byte, ObjectChange) {
 		cs, last := feedCycle(t, s, cookie, "displayName")
 		c, ok := changeOf(cs, ug)
 		if !ok {

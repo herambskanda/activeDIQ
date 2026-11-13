@@ -143,7 +143,7 @@ func buildDataset(opt Options, src report.Dataset) (*dataset, error) {
 			rowAnchors[a.ID] = true
 		}
 	}
-	env := &fragEnv{tables: tableNames, rowAnchors: rowAnchors, ids: map[string]bool{"t": true}}
+	env := &fragEnv{tables: tableNames, rowAnchors: rowAnchors, ids: map[string]bool{"t": true}, secretKey: opt.SecretKey}
 	dsTables := map[string]bool{string(src.Base.Table): true}
 	for _, t := range src.Tables {
 		dsTables[t] = true

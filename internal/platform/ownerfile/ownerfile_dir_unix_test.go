@@ -184,7 +184,7 @@ func TestDirRefusesUntrustedParent(t *testing.T) {
 			ctl.Close()
 
 			parent := mutate(t, real)
-			for _, open := range []func(string) (*Dir, error){OpenDir, CreateDir} {
+			for _, open := range []func(string, ...DirOption) (*Dir, error){OpenDir, CreateDir} {
 				d, err := open(filepath.Join(parent, "state"))
 				if err == nil {
 					d.Close()
@@ -218,7 +218,7 @@ func TestDirRefusesWiderOrPreexistingDirectory(t *testing.T) {
 	if err := os.Chmod(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, open := range []func(string) (*Dir, error){OpenDir, CreateDir} {
+	for _, open := range []func(string, ...DirOption) (*Dir, error){OpenDir, CreateDir} {
 		if d, err := open(dir); !errors.Is(err, ErrDirUnsafe) {
 			if d != nil {
 				d.Close()
@@ -231,5 +231,11 @@ func TestDirRefusesWiderOrPreexistingDirectory(t *testing.T) {
 	}
 	if _, err := OpenDir(filepath.Join(parent, "none")); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("missing: %v", err)
+	}
+}
+
+func TestForAccountRefusedOnUnix(t *testing.T) {
+	if _, err := CreateDir(filepath.Join(trustedParent(t), "state"), ForAccount("someone")); !errors.Is(err, ErrAccountUnsupported) {
+		t.Fatalf("err = %v, want ErrAccountUnsupported", err)
 	}
 }

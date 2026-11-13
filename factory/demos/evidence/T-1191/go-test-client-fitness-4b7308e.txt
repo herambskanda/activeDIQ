@@ -1,0 +1,3 @@
+ok  	github.com/skenzeriq/activediq/internal/directory/client	0.231s
+ok  	github.com/skenzeriq/activediq/tools/fitness/operation	12.588s
+ok  	github.com/skenzeriq/activediq/tools/fitness/ports	238.251s

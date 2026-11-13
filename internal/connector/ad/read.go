@@ -2,6 +2,7 @@ package ad
 
 import (
 	"context"
+	"github.com/skenzeriq/activediq/internal/connector/ad/scope"
 	"strconv"
 	"strings"
 
@@ -34,6 +35,16 @@ type ReadOptions struct {
 	// MaxValues caps the values returned per attribute; 0 means DefaultMaxValues. A cut attribute is
 	// named in Entry.Truncated.
 	MaxValues int
+	// ShowDeactivatedLink sends the show-deactivated-link control (2065), so link values of deleted
+	// objects (a deleted member of a live group) are returned. It does not show deleted objects.
+	ShowDeactivatedLink bool
+	// showDeleted sends the critical show-deleted control (417). It is unexported on purpose: only
+	// the fixed-shape functions in deletedread.go may set it (TM-D33 rule 3, T-1737 allow-list).
+	showDeleted bool
+	// ExtendedDN asks for extended DNs (<GUID=…>;<SID=…>;dn) in DN-syntax values, on the first
+	// request and on every range follow-up, so member values beyond the first range carry identity
+	// too. Entry.DN stays plain.
+	ExtendedDN bool
 }
 
 // Read reads one object by DN or GUID (base-scope search) and follows ranged attributes to the
@@ -85,6 +96,8 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 		ctrls = append(ctrls, f.control())
 	}
 
+	ctrls = append(ctrls, visibilityControls(opts)...)
+
 	req := make([]string, len(names))
 	for i, n := range names {
 		req[i] = n
@@ -108,7 +121,7 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 	if len(res.Entries) != 1 {
 		return nil, fail(CodeObjectNotFound, "", nil)
 	}
-	ent := newEntry(res.Entries[0].DN)
+	ent := newEntry(plainDN(res.Entries[0].DN))
 	pending := map[string]int{} // base name -> next range start still to fetch
 	asked := make(map[string]struct{}, len(names))
 	for _, n := range names {
@@ -117,6 +130,9 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 	absorb := func(raw *ldap.Entry) { absorbEntry(ent, pending, asked, raw) }
 	absorb(res.Entries[0])
 
+	// A range follow-up of a deleted object needs the same visibility controls as the first request,
+	// or the DC answers noSuchObject / an empty memberOf for the rest of the values.
+	followCtrls := visibilityControls(opts)
 	// Follow ranges to the terminal "*" range, bounded by the value ceiling and a round-trip cap.
 	for round := 0; len(pending) > 0 && round < maxRangeRequests; round++ {
 		var next []string
@@ -132,7 +148,7 @@ func (s *Session) Read(ctx context.Context, ref dn.ObjectRef, attrs []string, op
 			break
 		}
 		clear(pending)
-		r, err := s.searchOnceLocked(ctx, base, ldap.ScopeBaseObject, objectClassPresent, next, nil)
+		r, err := s.searchOnceLocked(ctx, base, ldap.ScopeBaseObject, objectClassPresent, next, followCtrls)
 		if err != nil {
 			return nil, err
 		}
@@ -181,4 +197,21 @@ func absorbEntry(ent *Entry, pending map[string]int, asked map[string]struct{}, 
 			delete(pending, key)
 		}
 	}
+}
+
+// visibilityControls are the controls that decide which objects and link values a read can see:
+// show-deleted (critical, internal only), show-deactivated-link and extended-DN. A range follow-up
+// repeats exactly these.
+func visibilityControls(opts ReadOptions) []ldap.Control {
+	var c []ldap.Control
+	if opts.showDeleted {
+		c = append(c, scope.ShowDeleted())
+	}
+	if opts.ShowDeactivatedLink {
+		c = append(c, showDeactivatedLink{})
+	}
+	if opts.ExtendedDN {
+		c = append(c, extendedDN{})
+	}
+	return c
 }

@@ -196,7 +196,7 @@ func TestDecodeChangeStates(t *testing.T) {
 	notDeleted := ldapEntry("CN=a", rawAttr("objectGUID", g.Bytes()), attr("isDeleted", "FALSE"), attr("isRecycled", "FALSE"))
 	for _, c := range []struct {
 		e    *ldap.Entry
-		want ObjectState
+		want ChangeState
 	}{{live, StateLive}, {del, StateDeleted}, {rec, StateRecycled}, {recFirst, StateRecycled}, {delFirst, StateDeleted}, {notDeleted, StateLive}} {
 		oc, _, err := s.decodeChange(c.e, wantSet())
 		if err != nil || oc.State != c.want || oc.HasParent {

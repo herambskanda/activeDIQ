@@ -33,6 +33,7 @@ const (
 	ProblemTypeSearchUnavailable       = "/problems/search-unavailable"
 	ProblemTypeSetupRefused            = "/problems/setup-refused"
 	ProblemTypeSignInFailed            = "/problems/sign-in-failed"
+	ProblemTypeStepUpRefused           = "/problems/step-up-refused"
 	ProblemTypeStepUpRequired          = "/problems/step-up-required"
 	ProblemTypeUnauthenticated         = "/problems/unauthenticated"
 	ProblemTypeUnsupportedMediaType    = "/problems/unsupported-media-type"
@@ -172,6 +173,11 @@ func SetupRefused(detail string) *Problem {
 // SignInFailed builds a 401 /problems/sign-in-failed problem.
 func SignInFailed(detail string) *Problem {
 	return newProblem(ProblemTypeSignInFailed, "Sign-in failed", 401, detail)
+}
+
+// StepUpRefused builds a 403 /problems/step-up-refused problem.
+func StepUpRefused(detail string) *Problem {
+	return newProblem(ProblemTypeStepUpRefused, "Step-up verification refused", 403, detail)
 }
 
 // StepUpRequired builds a 401 /problems/step-up-required problem.

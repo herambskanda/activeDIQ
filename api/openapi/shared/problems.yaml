@@ -118,6 +118,20 @@ components:
             type: /problems/step-up-required
             title: A fresh multi-factor check is required
             status: 401
+    StepUpRefused:
+      description: >-
+        The step-up re-verification did not succeed. One answer for every cause (wrong, replayed or paused
+        code, no enrolled factor, an account that is no longer active, a spent failure budget), so the
+        response teaches a caller nothing about which enrolment exists or matched (TM-D16, TM-D30). It never
+        carries a detail or an errors member.
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/step-up-refused
+            title: Step-up verification refused
+            status: 403
     SignInFailed:
       description: >-
         The sign-in did not succeed. One answer for every cause (unknown account, wrong secret, non-local
