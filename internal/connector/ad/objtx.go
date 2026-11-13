@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-ldap/ldap/v3"
 
+	"github.com/skenzeriq/activediq/internal/connector/ad/scope"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 )
@@ -82,7 +83,7 @@ func (t *Tx) ReadDeleted(ref dn.ObjectRef, attrs []string) (*Entry, error) {
 		return nil, err
 	}
 	res, err := t.s.searchRaw(t.ctx, base, ldap.ScopeBaseObject, objectClassPresent, names,
-		[]ldap.Control{domainScope{}, ldap.NewControlString(oidShowDeleted, true, "")})
+		[]ldap.Control{domainScope{}, scope.ShowDeleted()})
 	if err != nil {
 		return nil, err
 	}
