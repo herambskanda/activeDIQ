@@ -170,9 +170,29 @@ export interface paths {
         };
         /**
          * List the health of the caller's connections
-         * @description Answers one row per directory connection in the caller's tenant that the caller may read, for the Home "Directory health" and "Needs you" panels. The row set is trimmed to the connections the caller's connections.read grant covers before anything is counted or ordered; a connection outside it is not in the answer and not in any total. Rows are ordered by displayName, then id, so the order is stable. state is synced (last sync inside its expected interval, every DC reachable), lagging (the last successful sync is older than the interval, or some but not all DCs are unreachable), dc_unreachable (no DC is reachable) or suspended (an administrator paused the connection). lastSyncAt is null and lagSeconds is null when the connection has never synced. The rows carry no credential, keytab, bind identity or service-account DN. A caller without connections.read gets 403 and learns nothing about which connections exist.
+         * @description Answers one row per directory connection in the caller's tenant that the caller may read, for the Home "Directory health" and "Needs you" panels. The row set is trimmed to the connections the caller's connections.read grant covers before anything is counted or ordered; a connection outside it is not in the answer and not in any total. Rows are ordered by displayName, then id, so the order is stable. state is synced (last sync inside its expected interval, every DC reachable), lagging (the last successful sync is older than the interval, or some but not all DCs are unreachable), dc_unreachable (no DC is reachable) or suspended (an administrator paused the connection). lastSyncAt is null and lagSeconds is null when the connection has never synced. The rows carry no credential, keytab, bind identity or service-account DN. A tenant with no connection answers 200 with an empty items list. A caller without connections.read gets 403 (never an empty list) and learns nothing about which connections exist; getConnectionSummary is the count any signed-in administrator may read.
          */
         get: operations["listConnectionHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count the tenant's connections (Home first-run)
+         * @description Answers how many directory connections the caller's tenant has, and nothing else, so the console can tell a tenant that has not connected a directory yet (connectionCount 0, the Home first-run state) from one that has. Any signed-in administrator may call it: it needs no connections.read, because the first-run screen must render for an administrator whose grant covers no connection. The count is the whole tenant's, not trimmed to the caller's grant, and carries no name, id, state or other detail; the detail is listConnectionHealth, which needs connections.read. The three outcomes stay distinct: a tenant with no connection answers 200 with connectionCount 0 (never an error and never an empty list), an unauthenticated caller gets 401, and a caller without connections.read who calls listConnectionHealth gets 403 there, not an empty list.
+         */
+        get: operations["getConnectionSummary"];
         put?: never;
         post?: never;
         delete?: never;
@@ -918,6 +938,10 @@ export interface components {
          * @enum {string}
          */
         ConnectionHealthState: "synced" | "lagging" | "dc_unreachable" | "suspended" | (string & {});
+        /** @description How many connections the tenant has. A count only; no connection is identified. */
+        ConnectionSummary: {
+            connectionCount: number;
+        };
         /** @description Which header carries the CSRF value and what it is. Named value, not token, because it is not a credential. */
         CsrfValue: {
             header: string;
@@ -3127,6 +3151,34 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getConnectionSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The number of connections in the tenant */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "connectionCount": 0
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ConnectionSummary"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };

@@ -17,8 +17,9 @@ paths:
         successful sync is older than the interval, or some but not all DCs are unreachable), dc_unreachable
         (no DC is reachable) or suspended (an administrator paused the connection). lastSyncAt is null and
         lagSeconds is null when the connection has never synced. The rows carry no credential, keytab, bind
-        identity or service-account DN. A caller without connections.read gets 403 and learns nothing about
-        which connections exist.
+        identity or service-account DN. A tenant with no connection answers 200 with an empty items list. A caller without connections.read gets 403
+        (never an empty list) and learns nothing about which connections exist; getConnectionSummary is the count
+        any signed-in administrator may read.
       x-permission: connections.read
       x-activediq-stability: preview
       x-activediq-limits:
@@ -44,6 +45,43 @@ paths:
           $ref: shared/problems.yaml#/components/responses/Unauthenticated
         "403":
           $ref: shared/problems.yaml#/components/responses/Forbidden
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
+  /connections/summary:
+    get:
+      tags: [connections]
+      operationId: getConnectionSummary
+      summary: Count the tenant's connections (Home first-run)
+      description: >-
+        Answers how many directory connections the caller's tenant has, and nothing else, so the console can
+        tell a tenant that has not connected a directory yet (connectionCount 0, the Home first-run state) from
+        one that has. Any signed-in administrator may call it: it needs no connections.read, because the
+        first-run screen must render for an administrator whose grant covers no connection. The count is the
+        whole tenant's, not trimmed to the caller's grant, and carries no name, id, state or other detail; the
+        detail is listConnectionHealth, which needs connections.read. The three outcomes stay distinct: a
+        tenant with no connection answers 200 with connectionCount 0 (never an error and never an empty
+        list), an unauthenticated caller gets 401, and a caller without connections.read who calls
+        listConnectionHealth gets 403 there, not an empty list.
+      x-permission: authenticated
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-002]
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: The number of connections in the tenant
+          content:
+            application/json:
+              schema:
+                $ref: modules/connections.yaml#/components/schemas/ConnectionSummary
+              example:
+                connectionCount: 0
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
         "429":
           $ref: shared/problems.yaml#/components/responses/RateLimited
         "500":
@@ -205,6 +243,16 @@ components:
           maxItems: 256
           items:
             $ref: modules/connections.yaml#/components/schemas/ConnectionHealth
+    ConnectionSummary:
+      description: How many connections the tenant has. A count only; no connection is identified.
+      type: object
+      required: [connectionCount]
+      additionalProperties: false
+      properties:
+        connectionCount:
+          type: integer
+          minimum: 0
+          maximum: 256
     ConnectionHealthState:
       description: >-
         synced, lagging (last sync older than its interval, or some DCs unreachable), dc_unreachable (no DC

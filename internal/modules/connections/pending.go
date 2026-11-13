@@ -17,3 +17,9 @@ const ReadPermission authz.Permission = "connections.read"
 func (h *AttestHandlers) ListConnectionHealth(context.Context, api.ListConnectionHealthInput) (api.ListConnectionHealthOutput, error) {
 	return nil, apitypes.NotImplemented("not available yet (connection health read)")
 }
+
+// GetConnectionSummary is in the contract (T-1842) and mounted. It answers 501 until the backend ticket that counts the
+// tenant's connections lands (any signed-in administrator, no connections.read). That ticket deletes this method.
+func (h *AttestHandlers) GetConnectionSummary(context.Context, api.GetConnectionSummaryInput) (api.GetConnectionSummaryOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (connection summary)")
+}

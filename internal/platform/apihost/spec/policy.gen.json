@@ -115,6 +115,11 @@
       "operation": "getCsrfToken",
       "reason": "Gives the caller's own session its CSRF value; touches no other principal.",
       "ref": "TM-F-SESSION"
+    },
+    {
+      "operation": "getConnectionSummary",
+      "reason": "Tenant-wide connection count (a number, no identity) so Home first-run renders for an administrator whose grant covers no connection; it reads no other principal and returns no connection detail.",
+      "ref": "TM-F-SESSION"
     }
   ],
   "largeBodies": [],

@@ -271,6 +271,65 @@ func (v ConnectionHealthState) Valid() bool {
 	return false
 }
 
+// ConnectionSummary: How many connections the tenant has. A count only; no connection is identified.
+type ConnectionSummary struct {
+	ConnectionCount int64 `json:"connectionCount"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ConnectionSummary) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ConnectionSummary{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "connectionCount":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ConnectionCount); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ConnectionSummary) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// connectionCount
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "connectionCount")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "connectionCount")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("connectionCount"), int64(v.ConnectionCount), 0, 256)
+	}
+}
+
 // TakeoverAttestationMaxAge: The new attestation_max_age.
 type TakeoverAttestationMaxAge struct {
 	MaxAgeSeconds int64 `json:"maxAgeSeconds"`
