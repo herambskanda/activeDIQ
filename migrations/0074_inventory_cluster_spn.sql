@@ -1,4 +1,4 @@
--- 0072_inventory_cluster_spn: CMP-02 cluster input and the manager lookup key (T-1477, spec reports-2a 6.4).
+-- 0074_inventory_cluster_spn: CMP-02 cluster input and the manager lookup key (T-1477, spec reports-2a 6.4).
 -- cluster_spn is true when a servicePrincipalName value has the class MSClusterVirtualServer or
 -- MSServerCluster (ad-expert consult, T-1477); NULL = servicePrincipalName was not read. The values
 -- themselves are not stored. Owner: internal/directory/inventory.

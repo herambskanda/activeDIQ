@@ -106,7 +106,7 @@ func TestWindowsDirRefusesUntrustedParent(t *testing.T) {
 			}
 			ctl.Close()
 			widenACL(t, parent, tc.sid, tc.perm)
-			for _, open := range []func(string) (*Dir, error){OpenDir, CreateDir} {
+			for _, open := range []func(string, ...DirOption) (*Dir, error){OpenDir, CreateDir} {
 				d, err := open(filepath.Join(parent, "control"))
 				if err == nil {
 					d.Close()
@@ -278,5 +278,150 @@ func TestWindowsDirAncestorRenameNeverRedirectsIO(t *testing.T) {
 	}
 	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
 		t.Fatalf("something was written under the rebuilt path: %v", ents)
+	}
+}
+
+// T-1249: an administrator writes state for another account. The directory and its files are owned by
+// Administrators and name SYSTEM, Administrators and that account, never the caller's user SID; the
+// account is what OpenDir(ForAccount) then verifies, and the default OpenDir (which would be the
+// service, whose token user is the account) accepts it only with TrustAdministrators.
+func TestWindowsForAccountNamesAccountNotCaller(t *testing.T) {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("not elevated: owning a directory as Administrators needs the enabled group (the lab run is elevated)")
+	}
+	const account = `BUILTIN\Users` // stands for NT SERVICE\activeDIQAgent: any resolvable account that is not the caller
+	acct, _, _, err := windows.LookupSID("", account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(trustedParent(t), "state")
+	d, err := CreateDir(dir, ForAccount(account))
+	if err != nil {
+		t.Fatalf("CreateDir: %v", err)
+	}
+	if err := d.WriteFile("a", []byte("x")); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	d.Close()
+
+	admins, _ := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	user, _, _ := desiredSIDs()
+	for _, p := range []string{dir, filepath.Join(dir, "a")} {
+		sd, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o, _, _ := sd.Owner(); o == nil || !o.Equals(admins) {
+			t.Fatalf("%s owner = %v, want Administrators", filepath.Base(p), o)
+		}
+		acl, _, _ := sd.DACL()
+		var sawAcct bool
+		for i := uint32(0); i < uint32(acl.AceCount); i++ {
+			var ace *windows.ACCESS_ALLOWED_ACE
+			if err := windows.GetAce(acl, i, &ace); err != nil {
+				t.Fatal(err)
+			}
+			sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+			sawAcct = sawAcct || sid.Equals(acct)
+			if sid.Equals(user) && !user.Equals(admins) {
+				t.Fatalf("%s names the invoking user", filepath.Base(p))
+			}
+		}
+		if !sawAcct {
+			t.Fatalf("%s does not name the account", filepath.Base(p))
+		}
+	}
+	// The account's view accepts it; a caller that does not trust Administrators refuses it.
+	o, err := OpenDir(dir, ForAccount(account))
+	if err != nil {
+		t.Fatalf("OpenDir(ForAccount): %v", err)
+	}
+	if b, err := o.ReadFile("a"); err != nil || string(b) != "x" {
+		t.Fatalf("ReadFile = %q, %v", b, err)
+	}
+	o.Close()
+	if _, err := OpenDir(dir); err == nil {
+		t.Fatal("default OpenDir accepted an Administrators-owned directory")
+	}
+}
+
+func TestWindowsForAccountUnknownAccountFailsBeforeWriting(t *testing.T) {
+	dir := filepath.Join(trustedParent(t), "state")
+	if _, err := CreateDir(dir, ForAccount(`NT SERVICE\noSuchServiceT1249`)); err == nil {
+		t.Fatal("CreateDir accepted an account that does not resolve")
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Fatal("the directory was created for an account that does not resolve")
+	}
+}
+
+// T-1249 review: TrustAdministrators widens verification only. A plain write with it must produce the
+// token-user + SYSTEM descriptor (no Administrators ACE) that the default OpenDir accepts.
+func TestWindowsTrustAdministratorsDoesNotWidenWrites(t *testing.T) {
+	dir := filepath.Join(trustedParent(t), "state")
+	d, err := CreateDir(dir, TrustAdministrators())
+	if err != nil {
+		t.Fatalf("CreateDir: %v", err)
+	}
+	if err := d.WriteFile("a", []byte("x")); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	d.Close()
+	admins, _ := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	user, _, _ := desiredSIDs()
+	for _, p := range []string{dir, filepath.Join(dir, "a")} {
+		sd, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if o, _, _ := sd.Owner(); o == nil || (!o.Equals(user) && !o.Equals(admins)) {
+			t.Fatalf("%s owner = %v", filepath.Base(p), o)
+		}
+		acl, _, _ := sd.DACL()
+		for i := uint32(0); i < uint32(acl.AceCount); i++ {
+			var ace *windows.ACCESS_ALLOWED_ACE
+			if err := windows.GetAce(acl, i, &ace); err != nil {
+				t.Fatal(err)
+			}
+			sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+			if sid.Equals(admins) && !user.Equals(admins) {
+				t.Fatalf("%s has an Administrators ACE from a plain write", filepath.Base(p))
+			}
+		}
+	}
+	o, err := OpenDir(dir)
+	if err != nil {
+		t.Fatalf("default OpenDir refused what TrustAdministrators wrote: %v", err)
+	}
+	o.Close()
+}
+
+// The installed layout (T-1249 QA round 3): the MSI's PrepareDataDir grants the service SID full control
+// on the data directory, which is the PARENT of the enrolment directory. Writing state for that account
+// must accept such a parent; a default (token user) open must still refuse it, and a different account
+// with the same right stays refused. BUILTIN\Users stands for NT SERVICE\activeDIQAgent.
+func TestWindowsForAccountTrustsItsOwnParentGrant(t *testing.T) {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("not elevated: owning a directory as Administrators needs the enabled group (the lab run is elevated)")
+	}
+	const account = `BUILTIN\Users`
+	parent := trustedParent(t)
+	widenACL(t, parent, "S-1-5-32-545", "(OI)(CI)(F)")
+	d, err := CreateDir(filepath.Join(parent, "state"), ForAccount(account))
+	if err != nil {
+		t.Fatalf("ForAccount refused its own account's grant on the parent: %v", err)
+	}
+	d.Close()
+	if d, err := CreateDir(filepath.Join(parent, "other")); err == nil {
+		d.Close()
+		t.Fatal("default CreateDir accepted a parent with a write grant for another principal")
+	} else if !errors.Is(err, ErrParentUnsafe) {
+		t.Fatalf("want ErrParentUnsafe, got %v", err)
+	}
+	if d, err := CreateDir(filepath.Join(parent, "third"), ForAccount(`BUILTIN\Guests`)); err == nil {
+		d.Close()
+		t.Fatal("ForAccount(Guests) accepted a parent that grants Users")
+	} else if !errors.Is(err, ErrParentUnsafe) {
+		t.Fatalf("want ErrParentUnsafe, got %v", err)
 	}
 }

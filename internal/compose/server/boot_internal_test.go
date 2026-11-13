@@ -60,7 +60,7 @@ func TestBootReportSealsHost(t *testing.T) {
 		t.Fatalf("no module registers a dataset at 2a, got %v", c.Datasets())
 	}
 	want := []report.DatasetID{inventory.DatasetComputers, inventory.DatasetContacts, inventory.DatasetGroupMembers,
-		inventory.DatasetGroups, inventory.DatasetOUs, inventory.DatasetUsers}
+		inventory.DatasetGroups, inventory.DatasetOUs, inventory.DatasetPrincipals, inventory.DatasetUsers}
 	if got := h.Datasets(); !slices.Equal(got, want) {
 		t.Fatalf("host datasets = %v, want %v", got, want)
 	}
