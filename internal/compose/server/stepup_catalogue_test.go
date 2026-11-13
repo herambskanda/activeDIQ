@@ -40,6 +40,8 @@ var stepUpTable = map[operation.ActionID]string{
 	// notify.settings.update widens the allowed recipient domains and re-points the SMTP relay (TM-D30 SX-7).
 	notify.UpdateSettingsActionID: "Widening allowed recipient domains / re-pointing the SMTP relay (TM-D30 SX-7)",
 	// RBAC changes (§7.4): every role or assignment change is a step-up operation.
+	// Resetting a password is a credential change and needs the OTP-before-reset rule of ENH-09 (TM-D16).
+	"ad.user.resetPassword": "Password reset (TM-D16; ENH-09 OTP-before-reset)",
 	delegation.RoleCreateID: "RBAC change: creating a custom role",
 	delegation.RoleUpdateID: "RBAC change: editing a custom role's permissions",
 	delegation.GrantID:      "RBAC change: granting an assignment",

@@ -850,7 +850,7 @@ export interface components {
         AssignmentRevoke: {
             assignmentId: components["schemas"]["DelegationId"];
         };
-        /** @description One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope. */
+        /** @description One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope; ou_one_level is an include only and its guid is an OU, never the connection. */
         AssignmentRoot: {
             /** Format: uuid */
             connectionId: string;
@@ -863,7 +863,7 @@ export interface components {
          * @description What the root's guid names. The server refuses a kind it does not know.
          * @enum {string}
          */
-        AssignmentRootKind: "naming_context" | "ou_subtree" | "entra_tenant" | "tier0_scope" | "tenant" | (string & {});
+        AssignmentRootKind: "naming_context" | "ou_subtree" | "ou_one_level" | "entra_tenant" | "tier0_scope" | "tenant" | (string & {});
         /** @description Who holds the assignment, by kind. Exactly the members of its kind are accepted. */
         AssignmentSubject: components["schemas"]["SubjectAccount"] | components["schemas"]["SubjectGroup"] | components["schemas"]["SubjectAutomation"];
         /** @description The local break-glass account and its password. */

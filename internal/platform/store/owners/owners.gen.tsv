@@ -57,6 +57,8 @@ nc_sync_passes	inventory	system
 notify_deliveries	notify	system
 notify_settings	notify	config
 notify_syslog_destinations	notify	config
+objects_naming_formats	objects	config
+objects_templates	objects	config
 operation_items	operation	system
 operation_secrets	operation	system
 operation_steps	operation	system
