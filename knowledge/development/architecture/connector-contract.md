@@ -6,7 +6,7 @@ status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect), T-1567 (v1.5, author solution-architect: §5.9 `attr/tsprops` read-only `userParameters` decoder and `TsPropertiesValue`, wire-value identity gate, `NOT_CONFIRMED` readability proof, `not_filterable` schema flag, §8.10.4 OID-resolved deny-list and `AllowedAttr`, §9.4b CC-TS-01..10, fitness TS1-TS8; rounds 2 and 3 after review: shared `wirevalue` builder, as-built T-1623 deny-list and its delta, rights-check token set), T-1643 (§8.1 basis C20, §8.10.3 kinds 7/9/10, CC-WK-27/28/36-40, TM-D34, author security-architect), T-1730 (§8.10.3 kind 6 step-7 read mechanics, §8.10.9 R2 conflict resolved, §8.4 R15 (b) findings, CC-WK-32..35, author security-architect)
+amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect), T-1567 (v1.5, author solution-architect: §5.9 `attr/tsprops` read-only `userParameters` decoder and `TsPropertiesValue`, wire-value identity gate, `NOT_CONFIRMED` readability proof, `not_filterable` schema flag, §8.10.4 OID-resolved deny-list and `AllowedAttr`, §9.4b CC-TS-01..10, fitness TS1-TS8; rounds 2 and 3 after review: shared `wirevalue` builder, as-built T-1623 deny-list and its delta, rights-check token set), T-1643 (§8.1 basis C20, §8.10.3 kinds 7/9/10, CC-WK-27/28/36-40, TM-D34, author security-architect), T-1730 (§8.10.3 kind 6 step-7 read mechanics, §8.10.9 R2 conflict resolved, §8.4 R15 (b) findings, CC-WK-32..35, author security-architect), T-1751 (§8.10.3 kind 6 step 4a, §8.10.9 R2 amendment, CC-WK-41..44, author security-architect), T-1632 (§8.10.9 DELETE as built; security review: delete of a manager also checked as CLEAR_MANAGER; author directory-engineer)
 binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
@@ -1422,7 +1422,7 @@ each per `Plan` and `Apply` (live, step 7); a changed `rule_hash` re-lexes. A re
 | `ASSIGN_LICENSE` | the scope holds `assignedPlans`, `mail` or `proxyAddresses`, or `RefuseAll`. Group-targeted calls too (7e) |
 | `SET_MANAGER`, `CLEAR_MANAGER` | the scope holds `user.manager` (`Direct Reports for`, 7c), or `RefuseAll` |
 | `MOVE_OR_RENAME` (AD) | the scope holds `onPremisesDistinguishedName`, or `RefuseAll` |
-| `DELETE` (AD, T-1621) | `kind` is GROUP and the scope holds `memberOf`, or `RefuseAll`. Any other kind: never refused (a deleted object only leaves a rule's scope; no other object's properties change). `keys` is empty and ignored |
+| `DELETE` (AD, T-1621) | `kind` is GROUP and the scope holds `memberOf`, or `RefuseAll`. Any other kind: never refused as DELETE (a deleted object only leaves a rule's scope). `keys` is empty and ignored. A delete of an object with `directReports` is **also checked as `CLEAR_MANAGER`** by the connector (T-1632 security review), because removing a manager clears its reports' `manager` |
 | `GROUP_MEMBERSHIP` | the scope holds `memberOf`, `assignedPlans`, `mail` or `proxyAddresses`, or `RefuseAll` **for any cause** (7b, 7e; group-based licensing, T-0240). Any target group, either plane |
 
 `RefuseAll` is set by an untokenisable rule, a rule property absent from `ruleprops v1`, an empty
@@ -1470,7 +1470,7 @@ row in the class matrix below, not a new kind.
 | 1 | `OBJECT_CREATE` / `object_create` | `ad.object.create` | user, group, computer, contact, OU | `AddRequest` at parent DN + RDN; entry-exists is the conditional | the parent (`target`) | Reversible (inverse: `OBJECT_DELETE` of the created GUID) | `none` (USER through `guarded.NewUser`) | CC-WK-01..04 |
 | 2 | `OBJECT_UPDATE` / `object_update` | `ad.object.update` | user, group, computer, contact, OU | one `ModifyRequest`, delete-old + add-new per edit | the target | Reversible; Lossy when an edited attribute's before-value is unreadable | derived from the attributes (`rename_logon`, `set_spn` and the others are denied or classed, §8.10.4) | CC-WK-05..08 |
 | 3 | `OBJECT_DELETE` / `object_delete` | `ad.object.delete` | user, group, computer, contact, OU (leaf only) | `DelRequest`; read-compare immediately before | the target | **Irreversible**; Plan: Lossy when the AD Recycle Bin is enabled, else Irreversible | `none` | CC-WK-09..11 |
-| 4 | `OBJECT_MOVE` / `object_move` | `ad.object.move` | user, group, computer, contact, OU | `ModifyDNRequest` (same RDN, `newSuperior`, `deleteoldrdn` false) within one domain NC | the target, its old parent, the new parent | Reversible (inverse: move back) | `move` | CC-WK-12..13 |
+| 4 | `OBJECT_MOVE` / `object_move` | `ad.object.move` | user, group, computer, contact, OU | `ModifyDNRequest` (same RDN, `newSuperior`, `deleteoldrdn` true — Samba refuses false when the RDN is unchanged; the RDN is identical so nothing is removed) within one domain NC | the target, its old parent, the new parent | Reversible (inverse: move back) | `move` | CC-WK-12..13 |
 | 5 | `OBJECT_RENAME` / `object_rename` | `ad.object.rename` | user, group, computer, contact, OU | `ModifyDNRequest` (new RDN, no `newSuperior`, `deleteoldrdn` true) | the target | Reversible | `move` | CC-WK-14..15 |
 | 6 | `OBJECT_RESTORE` / `object_restore` | `ad.object.restore` | user, group, computer, contact, OU | one `ModifyRequest` on the deleted object with the show-deleted control: delete `isDeleted`, replace `distinguishedName` | the deleted target, the new parent | Reversible (inverse: `OBJECT_DELETE`); the restore itself is never Lossy | `move` | CC-WK-16..18 |
 | 7 | `USER_PASSWORD_RESET` / `user_password_reset` | `ad.user.resetPassword` | user | one `ModifyRequest`: replace `unicodePwd` (+ `pwdLastSet` = 0), policy-hints control, LDAPS only | the target | **Irreversible** (Plan: Irreversible) | `reset_password` | CC-WK-19..23, 36..40 |
@@ -1595,7 +1595,9 @@ field is a DN.
   other than the target needs its own `CorrelationStatement` (step 6, F1/F3). A move into or out
   of a Tier-0 container is therefore refused (C3, C6, C7), whatever the identity may do.
 - `ALREADY_APPLIED` when the target's parent GUID already equals `new_parent`.
-- §8.9 `MOVE_OR_RENAME`. TM-D28 class `move`. Moving changes inherited ACEs and GPO scope; Plan
+- §8.9 `MOVE_OR_RENAME`, declared for **both** `kind` USER and DEVICE (the class is only known live, and an OU move changes the DN
+  of every computer below it; refused if either refuses; same for kinds 5 and 6 — `WriteOp.AlsoDevice`, T-1624 security review).
+  TM-D28 class `move`. Moving changes inherited ACEs and GPO scope; Plan
   shows the new parent's DN and warns when the new parent's `gPLink` or inheritance blocking differs
   from the old (display only; the decision is the technician's).
 
@@ -1674,6 +1676,35 @@ field is a DN.
      basis C2, whatever `memberOf` said. A failed or partial read is `tier0`. The rule "drop `member` values under
      `CN=Deleted Objects`" (Samba ghost members, above) applies to ordinary member reads, **not** to this cross-check, where the
      deleted value is the point. Plan's list of re-granted memberships is the union of both sides.
+  4a. **C2 from the SID side: live references to the target's SID (T-1751, TM-D33 rule 8).** An ACE stays on its object by
+     SID after the trustee is deleted, and a restore re-arms it, so the group-link checks above cannot see a deleted account
+     that is a *direct* trustee. Before any `member` or `memberOf` result is used, the target is checked against one
+     **reference set** computed in the same step-7 snapshot, on the pinned DC, from facts read live (not from the connector's
+     set or the request, CC-WRITE-15 rule): the SIDs of
+     (i) **C17**: on each C17 object (§8.1; the domain head of every domain, Configuration head, Schema head, AdminSDHolder)
+     the trustee of every allow ACE that the C17 rule counts (`WRITE_DAC`, `WRITE_OWNER`, `GENERIC_ALL`, `GENERIC_WRITE`,
+     all-properties or `gPLink` `WriteProperty`, all extended rights) **and, for this check only, every allow ACE for
+     DS-Replication-Get-Changes, -Get-Changes-All or -Get-Changes-In-Filtered-Set taken singly** (the live C11 test needs the
+     pair; a restore that re-arms one half is refused, because the other half may be one ACE away), plus the owner SID unless it is a C1
+     principal; (ii) **C19**: the same for each C19 object (§8.1; this covers the DACLs of the C1 and C13 groups, `krbtgt`,
+     DC computer objects, the Domain Controllers OU and each GPO C9 marks) with the TM-D27 rule 2 takeover rights per class
+     and the owner; (iii) **C12**: every trustee SID of every allow ACE in the retained
+     `msDS-AllowedToActOnBehalfOfOtherIdentity` descriptor of each DC in the set's DC list, and **C13**: the C13 pinned group
+     GUIDs' own SIDs (so a deleted C13 group itself is caught by SID, not only by `memberOf`).
+     The target's `objectSid` and **each** `sIDHistory` value (read in 7.2; an unreadable one is `tier0`, basis `UNKNOWN`) are
+     compared to the set by binary SID equality. **Resolution is irrelevant:** a trustee SID that resolves to no live object
+     (the usual case of a deleted account), to a tombstone, or to an object of another domain is compared exactly like any
+     other; the unresolved-SID rule of the live classifier (`UNKNOWN`) is unchanged and is not a substitute for this match. A
+     hit is `tier0` and `TIER0_REFUSED`, with the basis of the list that hit (**C17**, **C19**, **C12**; **C13** for the pinned
+     group SID), every hit listed, plus the evidence (the object, the ACE's access mask and object type, or the owner role;
+     never an SDDL string). Deny ACEs do not clear a hit (the target's token is gone and the allow is what a restore
+     re-arms); a callback ACE counts as unconditional. **Fail closed:** any C17 or C19 object, any DC in the DC list, or any
+     descriptor that cannot be read through the typed primitive, an ACE it flags `Unknown`, an empty or unobtainable DC list,
+     or a snapshot that cannot say, makes the target `tier0`, basis `UNKNOWN`. This runs in `Plan` and again in `Apply`
+     step 7, whatever the target's class (user, computer, group, contact) and whatever `memberOf` said; it needs no
+     container grant beyond the target read. Plan shows the matched reference (object and right) to the technician. Samba
+     can prove the match logic (unit and S fixtures with a deleted trustee SID); the retained-descriptor and
+     deleted-object visibility half is W (CC-WK-41 to CC-WK-44).
   5. **Samba proves none of this.** Its deleted-object visibility differs and it keeps ghost members; steps 1 to 4 are
      tested on Windows (CC-WK-32 to CC-WK-35, W). A Samba pass of CC-WK-17's C2 refusal is not evidence for Windows.
 - Step 7 read set amended by T-1621 (§8.10.9 R2). §8.9 `CREATE` (a restored object matches a dynamic rule by absence). `ALREADY_APPLIED` when the
@@ -1881,7 +1912,7 @@ contains no value, DN or directory response (CC-WRITE-13).
 | Kind | Windows DC | Samba AD | Entra |
 | --- | --- | --- | --- |
 | 1 create, 2 update, 3 delete, 4 move, 5 rename | Supported (W) | Supported (S) | `CAPABILITY_UNSUPPORTED`; Entra provisioning is its own kinds (M2b Entra slice) |
-| 6 restore | Supported with the Recycle Bin (W) | `CAPABILITY_UNSUPPORTED` (T-1628, measured on 4.22.11: controls 417 and 2064 are advertised, but the Recycle Bin cannot be enabled over LDAP (`enableOptionalFeature` is refused to a domain admin; only a system session enables it) and with it on the undelete modify fails on `isRecycled`; with it off a tombstone reanimates without links) | `CAPABILITY_UNSUPPORTED` |
+| 6 restore | Supported with the Recycle Bin (W) | `CAPABILITY_UNSUPPORTED` (T-1628, measured on 4.22.11: controls 417 and 2064 are advertised, but the Recycle Bin cannot be enabled over LDAP (`enableOptionalFeature` is refused to a domain admin; only a system session enables it) and with it on the undelete modify fails on `isRecycled`; with it off a tombstone reanimates without links). Kinds 4-6 are wired (T-1624): the old parent of a move is read live (`WriteOp.TouchedLive`); kind 6 step 7 is `ADProvider.ClassifyDeleted` (`WriteOp.DeletedTarget`) with the TM-D33 mechanics: container grant check, one critical-417 + 2065 + SD 0x7 + extended-DN target read, the must-be-present and optional-proof rules, and the `member` cross-check. Not proven grant is `INSUFFICIENT_RIGHTS`, never `OBJECT_NOT_FOUND`. CC-WK-16, 17, 18 and 32..35 (W) are Windows-lab only | `CAPABILITY_UNSUPPORTED` |
 | 7 reset | Supported (W); policy hints confirmed on Windows Server 2025 (T-0076) | Supported, **hint ignored** (T-1628, measured on 4.22.11): `2239` is not in `supportedControl`, yet a reset carrying it, critical or not, succeeds, and with history 3 and minimum age 1 day the same password was accepted again; so history and minimum age are not enforced on an admin reset on Samba. A Samba pass proves nothing about CC-WK password policy: those cases are W | `CAPABILITY_UNSUPPORTED` (Graph `passwordProfile` is a separate kind, TM-Q14) |
 | 8 unlock | Supported (W) | Supported (T-1628, measured): `replace lockoutTime 0` and delete-old + add-0 both unlock and reset `badPwdCount`; stale old value fails `noSuchAttribute`; a non-zero write is wrongly accepted (see §8.10.3 kind 8) | `CAPABILITY_UNSUPPORTED` |
 | 9, 10 enable, disable | Supported (W, S) | Supported (S) | `CAPABILITY_UNSUPPORTED` (Graph `accountEnabled` is a separate kind) |
@@ -1941,7 +1972,7 @@ unreadable is `tier0` (fail closed, as step 7). Plan lists the retained membersh
 by group, so the technician sees them; a retained group that is `tier0` refuses (C2). Re-granting a
 non-`tier0` membership the object held before deletion is accepted as **residual TM-R-RS1**: the actor
 needs Reanimate-Tombstones (R9, JIT only), which is not an entitlement to add members.
-**Conflict resolved (T-1730, TM-D33, 2026-11-07).** The lab (T-1633, Windows Server 2025) found no per-object grant: the classification read of a deleted target works only with List Contents on `CN=Deleted Objects` of the target's domain, and List Contents alone is enough ([finding](../domain/deleted-object-read-access.md)). Kind 6 ships with that grant as an **optional, customer-applied prerequisite**: one non-inheritable `LC`|`RC` ACE on the container, trustee a dedicated group whose only member is the connection identity (the identity of every step-7 read); never to the Reanimate holder (R9), never Read Property, standing because Plan must classify before approval (TM §6.3 R15 (b), TM-D33 rules 1-2). The connector proves the grant from the container's DACL and answers `INSUFFICIENT_RIGHTS` with the named right when it is missing, never `OBJECT_NOT_FOUND` (TM-D33 rule 4); the read is base scope by GUID only (rule 3). Step 7's read mechanics, control 2065 and the absent-attribute rule are in §8.10.3 kind 6. Without the grant kind 6 is refused and restore stays manual; the build (T-1624) still must not classify on server-supplied attributes. Residual TM-R28. Step 9 stays, but it is detection after the fact, not a gate.
+**Conflict resolved (T-1730, TM-D33, 2026-11-07).** The lab (T-1633, Windows Server 2025) found no per-object grant: the classification read of a deleted target works only with List Contents on `CN=Deleted Objects` of the target's domain, and List Contents alone is enough ([finding](../domain/deleted-object-read-access.md)). Kind 6 ships with that grant as an **optional, customer-applied prerequisite**: one non-inheritable `LC`|`RC` ACE on the container, trustee a dedicated group whose only member is the connection identity (the identity of every step-7 read); never to the Reanimate holder (R9), never Read Property, standing because Plan must classify before approval (TM §6.3 R15 (b), TM-D33 rules 1-2). The connector proves the grant from the container's DACL and answers `INSUFFICIENT_RIGHTS` with the named right when it is missing, never `OBJECT_NOT_FOUND` (TM-D33 rule 4); the read is base scope by GUID only (rule 3). Step 7's read mechanics, control 2065 and the absent-attribute rule are in §8.10.3 kind 6. Without the grant kind 6 is refused and restore stays manual; the build (T-1624) still must not classify on server-supplied attributes. Residual TM-R28. Step 9 stays, but it is detection after the fact, not a gate. **Amended (T-1751, 2026-11-12):** the C2 cross-check of step 4 saw only group links, so a deleted account that was a *direct* trustee of a root of trust (an ACE on the domain head, AdminSDHolder, a GPO linked to Domain Controllers, a C13 group or a DC) or is named in a DC's `msDS-AllowedToActOnBehalfOfOtherIdentity` classified as non-`tier0` (no `memberOf`, RID >= 1000, `adminCount` 0) and the restore re-armed that right, with step 9 reporting only afterwards. Step 4a now checks the target's `objectSid` and each `sIDHistory` value against the trustee, owner and RBCD SIDs of the C17, C19, C12 and C13 snapshot, unresolved SIDs included; a hit is `tier0` with that basis and a snapshot that cannot say is `tier0` (`UNKNOWN`). Residual: a right granted to a SID after the Plan and before the Apply is caught by the Apply step-7 re-read; a right held through a *group* the target will re-join is C2 as before.
 
 **R3. Kind 8 `USER_UNLOCK` wording: approved with a second line.** `Irreversible` with the reason "the
 directory controls this state" is correct and is not a destructive-action warning. The preview must also
@@ -2009,6 +2040,23 @@ keys, attribute names `set:`, `add:`, `del:`, `clr:` and the typed value prefixe
   never a second delete, never a false success) and Verify settles the step. Samba proves both sides
   (`TestWKDelete`, `TestWKDeleteRetryWithoutDeletedObjectsRights`); the rights grant to the connector's
   account is a deployment item for the setup runbook. `isDeleted` joined the read-only default schema.
+- **Delete declares `DELETE`, the body repeats it with the live class (T-1632, CC-WRITE-30).** The typed
+  change names no class, and only a group delete can change another object's properties (§8.9), so step 4
+  declares `{AD, USER, DELETE}` (never refused) and `readForDelete`, the single read shared by `Plan` and
+  `Apply`, calls `deleteRecheck` with the live class (GROUP, DEVICE for a computer, USER otherwise)
+  before the `NotLeaf` check and before anything is sent. A refusal is `TIER0_REFUSED` basis `Designated`
+  at `CONNECTOR_SET`. An object already deleted (`ALREADY_APPLIED`) writes nothing and is not re-checked.
+  **A delete of an object with `directReports` is also checked as `CLEAR_MANAGER` (T-1632 security
+  review):** removing a manager clears every report's `manager` (MS-ADTS 3.1.1.1.6), so the same read
+  fetches `directReports` (any value, a ranged first page included) and `deleteRecheck` asks the guard for
+  `{AD, USER, CLEAR_MANAGER}` whatever the class. A read error refuses. If the bound identity lacks Read on
+  `directReports` the DC omits it and the check sees no reports, so the connector's account needs that
+  Read right (a V8 read-sufficiency concern, as for the other constructed reads). The refusal carries its audit record like step 4's:
+  `Reason` (`designated_dynamic_rule`, or `property_guard_unavailable` at stage `LIVE_REREAD`), the
+  declared kind and op. CC-WRITE-30 pins this: tier0 `TestCCWrite30DeleteGroupUnderMemberOfAndRefuseAll`,
+  the declaration, recheck, body (`TestKind3BodiesRecheckBeforeAnyDelete`, a fake session, no lab) and
+  audit units in `kinds_object_test.go`, and `TestCCWrite30DeleteUnderMemberOfRule` and
+  `TestCCWrite30DeleteOfAManagerUnderRules` on Samba.
 - **Manager edits.** `manager` declares `SET_MANAGER` or `CLEAR_MANAGER` at step 4; the other edits (and
   the computer case) are re-checked in the body against the live class (`editsRecheck`). The live class
   is the last `objectClass` value, so gMSA and MSA objects are `ClassNotAllowed`.
@@ -2305,6 +2353,10 @@ is `TIER0_REFUSED` before the kind's code (CC-WK-28).
 | CC-WK-38 | update, rename, move, delete, restore | the bound principal; a user whose `sIDHistory` holds the bound principal's SID (seeded by directory restore on the lab) | `TIER0_REFUSED` C20 for each kind; no write | S |
 | CC-WK-39 | all account kinds | Who am I fails, returns a `u:` form, a `dn:` form, an ambiguous match, and no match | `u:` and `dn:` resolve to the one object and then CC-WK-36 holds; failure, ambiguity and no match give `TIER0_REFUSED` basis `UNKNOWN` for every account write; reads still work | S, W |
 | CC-WK-40 | VerifyConnection V7e | the identity inside a `managed_root`; outside it with Reset Password, `WRITE_DAC` or an all-properties write on itself; outside it with none; its own object unreadable | Fail (not overridable, an override request is ignored); Warn with fix; Pass; Could not verify | S, W |
+| CC-WK-41 | restore, SID reference (C17) | a deleted user with no group membership, `adminCount` 0, RID >= 1000, holding an explicit allow ACE for DS-Replication-Get-Changes-All (and, separately, only Get-Changes; separately `WRITE_DAC`; separately the owner of AdminSDHolder) on the domain head; Plan and Apply | each `TIER0_REFUSED` basis **C17** naming the object and right, the user not restored; the same user with the ACE removed plans as not `tier0` | W (descriptor retention, SID left unresolved after the delete), S and unit for the match |
+| CC-WK-42 | restore, SID reference (C19, C12, C13) | a deleted user holding an allow ACE with a takeover right on a C13 group, on a DC computer object, on the Domain Controllers OU and on a GPO linked to it (one case each); a deleted user named in a DC's `msDS-AllowedToActOnBehalfOfOtherIdentity`; a deleted C13 group itself | `TIER0_REFUSED` basis C19, C19, C19, C19, C12 and C13 respectively | W, unit for the set builder |
+| CC-WK-43 | restore, `sIDHistory` and unresolved SIDs | a deleted user whose `sIDHistory` holds a SID that is a trustee on the domain head; a trustee SID of a deleted user from another domain that resolves to nothing; a deleted computer; a deleted contact with the same ACE by SID | `TIER0_REFUSED` basis C17 for each by SID equality, resolution never consulted; the contact and computer cases are refused identically | W, unit |
+| CC-WK-44 | restore, fail closed | the domain head DACL unreadable; a callback ACE for the target's SID; a C19 object unreadable; the DC list empty; an `Unknown`-flagged ACE; the C17 ACE added between Plan and Apply | `TIER0_REFUSED` basis `UNKNOWN` for the first, third, fourth and fifth, C17 for the callback case (unconditional), C17 at Apply for the last; never a restore | W, unit for the fail-closed paths |
 
 ## 10. Decisions for review and follow-ups
 

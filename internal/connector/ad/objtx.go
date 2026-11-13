@@ -98,8 +98,6 @@ func (t *Tx) ReadDeleted(ref dn.ObjectRef, attrs []string) (*Entry, error) {
 	return ent, nil
 }
 
-const oidShowDeleted = "1.2.840.113556.1.4.417"
-
 // Exists reports whether an object is at the DN (a base-scope read, live objects only).
 func (t *Tx) Exists(d dn.DN) (bool, error) {
 	_, err := t.Read(dn.DNRef(d), []string{"objectClass"})
@@ -207,6 +205,10 @@ func ParseGeneralizedTime(s string) (time.Time, error) {
 
 // FormatGeneralizedTime is the inverse for a write value.
 func FormatGeneralizedTime(t time.Time) string { return t.UTC().Format("20060102150405.0Z") }
+
+// AttrOID is the schema's attributeID for a resolved ldapDisplayName ("" when unknown); the write
+// deny-list matches on it so a renamed attribute is still refused.
+func (s *Session) AttrOID(name string) string { return s.schema.OID(name) }
 
 // EditableAttr resolves a requested attribute name (descr in any case, or numeric OID) to its
 // schema ldapDisplayName and value syntax for a write. An unknown attribute, one with options, a

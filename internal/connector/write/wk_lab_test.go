@@ -48,10 +48,19 @@ type wkRig struct {
 	guard  PropertyGuard
 }
 
-func newWKRig(t *testing.T) *wkRig { return newWKRigRule(t, false) }
+func newWKRig(t *testing.T) *wkRig { return newWKRigRuleText(t, "") }
 
 // newWKRigRule: withRule designates a dynamic group with a rule on `title` (CC-WRITE-25/27).
 func newWKRigRule(t *testing.T, withRule bool) *wkRig {
+	t.Helper()
+	if withRule {
+		return newWKRigRuleText(t, `user.jobTitle -eq "X"`)
+	}
+	return newWKRigRuleText(t, "")
+}
+
+// newWKRigRuleText: a non-empty rule designates a dynamic group with that membership rule.
+func newWKRigRuleText(t *testing.T, rule string) *wkRig {
 	t.Helper()
 	env := labEnv(t)
 	pem, err := os.ReadFile(filepath.Join("..", "..", "..", "lab", ".lab-ca.pem"))
@@ -95,8 +104,8 @@ func newWKRigRule(t *testing.T, withRule bool) *wkRig {
 	const gA, gD = "77777777-7777-7777-7777-000000000100", "77777777-7777-7777-7777-000000000150"
 	groups := []graph.Group{{ID: gA}}
 	members := map[string][]graph.DirectoryObject{}
-	if withRule {
-		groups = append(groups, graph.Group{ID: gD, GroupTypes: []string{"DynamicMembership"}, MembershipRule: `user.jobTitle -eq "X"`})
+	if rule != "" {
+		groups = append(groups, graph.Group{ID: gD, GroupTypes: []string{"DynamicMembership"}, MembershipRule: rule})
 		members[gA] = []graph.DirectoryObject{{ID: gD, ODataType: "#microsoft.graph.group"}}
 	}
 	cred := graphtest.NewCredential(t)
@@ -690,6 +699,83 @@ func TestWKDelete(t *testing.T) {
 	}
 	// protected from accidental deletion: Deny Delete + DeleteTree for Everyone (Samba may or may not enforce; recorded)
 	t.Log("protected-from-accidental-deletion is exercised by the Windows lab (Samba dsacl cannot set the inherited deny reliably)")
+}
+
+// CC-WRITE-30 (contract §8.9 DELETE, T-1632): a group delete is refused at Plan and at Apply under a
+// closure rule that reads membership (RefuseAll), and the group survives; a user delete under the same
+// closure is not refused; a closure rule that does not read membership refuses neither.
+func TestCCWrite30DeleteUnderMemberOfRule(t *testing.T) {
+	del := connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE
+	r := newWKRigRuleText(t, `-not (user.memberOf -any (group.objectId -in ["77777777-7777-7777-7777-000000000199"]))`)
+	r.rebind("Administrator", r.env["LAB_ADMIN_PASSWORD"])
+	r.adminAdd("CN=wkgrp30,"+r.ou, "group", map[string][]string{"sAMAccountName": {"wkgrp30"}})
+	r.adminAdd("CN=wkusr30,"+r.ou, "user", map[string][]string{"sAMAccountName": {"wkusr30"}})
+	gid, uid := r.guidOf("CN=wkgrp30,"+r.ou), r.guidOf("CN=wkusr30,"+r.ou)
+
+	p := r.planReq(del, gid, deleteChange())
+	_, err := r.plan(p)
+	wantCode(t, "group delete, plan", err, connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED)
+	_, err = r.apply(r.applyFrom(p, &connectorv1.PlanResponse{}, nil))
+	wantCode(t, "group delete, apply", err, connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED)
+	if !r.exists("CN=wkgrp30," + r.ou) {
+		t.Fatal("the group was deleted under a memberOf closure rule")
+	}
+
+	resp, err := r.planApply(del, uid, deleteChange())
+	if err != nil || resp.GetOutcome() != connectorv1.ApplyOutcome_APPLY_OUTCOME_APPLIED {
+		t.Fatalf("user delete under the same closure: %v %v", resp.GetOutcome(), err)
+	}
+	if r.exists("CN=wkusr30," + r.ou) {
+		t.Fatal("the user is still there")
+	}
+
+	// Twin: a rule that does not read membership refuses neither class.
+	r2 := newWKRigRuleText(t, `user.jobTitle -eq "X"`)
+	r2.rebind("Administrator", r2.env["LAB_ADMIN_PASSWORD"])
+	r2.adminAdd("CN=wkgrp30b,"+r2.ou, "group", map[string][]string{"sAMAccountName": {"wkgrp30b"}})
+	resp, err = r2.planApply(del, r2.guidOf("CN=wkgrp30b,"+r2.ou), deleteChange())
+	if err != nil || resp.GetOutcome() != connectorv1.ApplyOutcome_APPLY_OUTCOME_APPLIED {
+		t.Fatalf("twin group delete: %v %v", resp.GetOutcome(), err)
+	}
+}
+
+// T-1632 security review F1 (CC-WRITE-30): deleting an object that is another object's manager clears
+// that object's manager, so under a 'Direct Reports for' closure rule (user.manager) the delete is
+// refused at Plan and Apply and the report keeps its manager; a manager with no reports is deleted.
+// Under the memberOf rule of the AC2 test a user with reports is refused too (RefuseAll covers
+// CLEAR_MANAGER), and one without reports is applied.
+func TestCCWrite30DeleteOfAManagerUnderRules(t *testing.T) {
+	del := connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE
+	for i, rc := range []struct{ name, rule string }{
+		{"direct reports rule", `Direct Reports for "77777777-7777-7777-7777-000000000199"`},
+		{"memberOf rule", `-not (user.memberOf -any (group.objectId -in ["77777777-7777-7777-7777-000000000199"]))`},
+	} {
+		r := newWKRigRuleText(t, rc.rule)
+		sfx := fmt.Sprint(i) // sAMAccountName is unique per domain, the rigs share it
+		r.rebind("Administrator", r.env["LAB_ADMIN_PASSWORD"])
+		r.adminAdd("CN=wkboss30"+sfx+","+r.ou, "user", map[string][]string{"sAMAccountName": {"wkboss30" + sfx}})
+		r.adminAdd("CN=wkemp30"+sfx+","+r.ou, "user", map[string][]string{"sAMAccountName": {"wkemp30" + sfx}})
+		r.adminAdd("CN=wkalone30"+sfx+","+r.ou, "user", map[string][]string{"sAMAccountName": {"wkalone30" + sfx}})
+		mod := ldap.NewModifyRequest("CN=wkemp30"+sfx+","+r.ou, nil)
+		mod.Replace("manager", []string{"CN=wkboss30" + sfx + "," + r.ou})
+		if err := r.admin.Modify(mod); err != nil {
+			t.Fatalf("%s: set manager: %v", rc.name, err)
+		}
+		boss, alone := r.guidOf("CN=wkboss30"+sfx+","+r.ou), r.guidOf("CN=wkalone30"+sfx+","+r.ou)
+
+		p := r.planReq(del, boss, deleteChange())
+		_, err := r.plan(p)
+		wantCode(t, rc.name+": manager delete, plan", err, connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED)
+		_, err = r.apply(r.applyFrom(p, &connectorv1.PlanResponse{}, nil))
+		wantCode(t, rc.name+": manager delete, apply", err, connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED)
+		if !r.exists("CN=wkboss30"+sfx+","+r.ou) || len(r.entry("CN=wkemp30"+sfx+","+r.ou, "manager").GetAttributeValues("manager")) != 1 {
+			t.Fatalf("%s: the manager was deleted or the report lost its manager", rc.name)
+		}
+		resp, err := r.planApply(del, alone, deleteChange())
+		if err != nil || resp.GetOutcome() != connectorv1.ApplyOutcome_APPLY_OUTCOME_APPLIED || r.exists("CN=wkalone30"+sfx+","+r.ou) {
+			t.Fatalf("%s: delete of a user with no reports: %v %v", rc.name, resp.GetOutcome(), err)
+		}
+	}
 }
 
 // CC-WK-28: a Tier-0 target is refused at CONNECTOR_SET before the kind's code, for each kind.
