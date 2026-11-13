@@ -24,6 +24,7 @@ var permitted = map[string]string{
 	"internal/compose/server/tier0.go":               "authority.TenantFrom (set by the runner)",
 	"internal/directory/client/reads_tunnel.go":      "authority context set by the runner",
 	"internal/modules/connections/attest_http.go":    "p.Tenant (session principal)",
+	"internal/modules/agentfleet/actions.go":         "runner payload tenant, set in Plan from app.tenant_id of the runner transaction (tenantFrom); never from a request",
 	"internal/modules/compliance/hold.go":            "app.tenant_id of the runner transaction in Plan; payload tenant set in Plan",
 	"internal/modules/connections/reconfirm.go":      "runner payload tenant, set in Plan from app.tenant_id",
 	"internal/modules/directory/handlers.go":         "p.Tenant (authenticated principal from apihost.PrincipalFrom)",
