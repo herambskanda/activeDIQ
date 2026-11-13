@@ -1,4 +1,4 @@
--- 0073_authz_tenant_owner_agentfleet: the built-in tenant-owner role may also hold the two agentfleet
+-- 0074_authz_tenant_owner_agentfleet: the built-in tenant-owner role may also hold the two agentfleet
 -- permissions (T-0599): agentfleet.policy.edit (sign a new addc password and event policy) and
 -- agentfleet.keyset.rotate (rotate the policy key ahead of schedule, ADR-0007 decision 6). Same
 -- mechanism as migration 0043: the allow-list below and rbac.BuiltInRoles change together and a test
