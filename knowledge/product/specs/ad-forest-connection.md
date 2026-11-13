@@ -236,6 +236,9 @@ Each cause has: what the admin reads, what activeDIQ does by itself, what the ad
 | H12 | A domain NC disappears from the configuration NC | **Domain `<name>` was removed from the forest.** | Marks the NC `gone` (DM-14), keeps its objects until the admin confirms | Confirm removal, or investigate | Its objects flagged |
 | H13 | Schema changed (fingerprint) | Info line in the timeline | Re-reads the schema, then continues | — | None |
 | H14 | Forest deletion settings changed (Recycle Bin, tombstone lifetime) | Info line | Re-reads (DM-10.I6) | — | None |
+| H15 | Read failed, cause not identified: a scoped search ended without its completion marker, or the DC's reply broke the protocol | **Sync failed on `<DC>`: the read did not finish and the cause was not identified.** `<partition>` keeps its data as of `<data_as_of>`. | Discards the partial read (nothing is committed, DM-19.I1), retries at the next cycle with backoff, and after 3 consecutive H15 on one DC tries another DC. Keeps the diagnostic code and DC in the row, never object data | **Check now**; exclude the DC if it repeats | As of last cycle; counts toward Stale ("sync failing > 1 h", §8.1 rule 3) |
+
+**Registry rule.** Every failed cycle the engine can type maps to a registered code, and an unclassified read failure maps to H15, so a failed cycle always writes a DM-26 row and the Health timeline has no silent gap. The one deliberate exception is a **store error** (activeDIQ's own database refused the write): the failed row cannot be written by definition. It is surfaced instead as a product-health alert and in the service log, and the freshness label still ages by `data_as_of`. A new typed failure ships with its registered code and admin line in the same change.
 
 ### 8.4 Required readings of a cycle
 `data_as_of`, `last_change_at`, objects read, objects changed, DC used, duration, and result (complete, partial with the domain that failed, failed with the cause). A **partial** cycle never moves `data_as_of` of the domain that failed.
@@ -253,11 +256,11 @@ Each cause has: what the admin reads, what activeDIQ does by itself, what the ad
 | FR-07 | The credential step MUST offer: on `windows`, the server's gMSA; on `linux-oci`, an AES-only keytab by file reference. It MUST NOT accept a secret value through the console or API (DM-11.I1, I2). It SHOULD show copy-ready commands to prepare the account for the chosen profile, with no secret in them and tested on the lab. | ADM-212, ENH-08 |
 | FR-08 | The credential record MUST show kind, principal, state and last successful use. It MUST NOT show or return any secret, key bytes or keytab content. | DM-11.I1 |
 | FR-09 | **Verify** MUST run V1–V9 in order and show progress per check. A failed run MUST leave the inputs, write no inventory and start no sync, and a re-run MUST keep inputs. | ADM-212 |
-| FR-10 | V7 MUST refuse activation if the identity is, transitively, a member of any Tier-0 group, holds a write or control right on any `tier0` object, or has delegation configured (TM-D1, TM-F-RIGHTS). Membership MUST be evaluated at check time and forest-wide, including universal and enterprise Tier-0 groups held in another domain, foreign-security-principal edges, and groups with more than 1,500 members. If a domain or global catalog needed to decide cannot be reached, the result MUST be Could not verify (FR-11), never a pass. | enhancement (ENH-08) |
+| FR-10 | V7 MUST refuse activation if the identity is, transitively, a member of any Tier-0 group, holds a write or control right on any `tier0` object, or has delegation configured (TM-D1, TM-F-RIGHTS). A right on a `tier0` object that the customer's own ACL gives a broad principal (Everyone, Authenticated Users, Domain Users) is not the identity's right: it is reported as a warn finding `exposure.tier0_broad_principal`, V7 is `warn`, and activation and the write gate proceed (T-0237, T-1245). Membership MUST be evaluated at check time and forest-wide, including universal and enterprise Tier-0 groups held in another domain, foreign-security-principal edges, and groups with more than 1,500 members. If a domain or global catalog needed to decide cannot be reached, the result MUST be Could not verify (FR-11), never a pass. | enhancement (ENH-08) |
 | FR-11 | V7 MUST distinguish "no rights" from "could not compute". An absent or empty answer MUST be accepted as "no rights" only when a control in the same session proves that the directory computes that answer; otherwise the result is Could not verify, which blocks activation. | enhancement |
 | FR-12 | V8 MUST refuse activation if the identity cannot read the R1 and R2 set (TM §6.3) on a domain the admin intends to manage, and MUST NOT allow an override for it. | ADM-212 |
 | FR-13 | An admin with the platform-scope Tier-0-override permission MAY activate despite V7 findings after step-up and a typed acknowledgement. The override records the fingerprints of the findings shown (§11); a *new* finding is any fingerprint not in that set, and needs a new acknowledgement. It MUST NOT apply to V8, to Could not verify, or to a failed bind. | TM-D1 |
-| FR-14 | While an override is in force the console MUST show on every page of that connection "activeDIQ is Tier 0 in this forest", and Health MUST show the same. The banner MUST clear only when a verification passes with no V7 findings. | TM-D1 |
+| FR-14 | While an override is in force the console MUST show on every page of that connection "activeDIQ is Tier 0 in this forest", and Health MUST show the same. The banner MUST clear only when a verification has no blocking V7 finding (V7 `pass` or `warn`). | TM-D1 |
 | FR-15 | Every refusal and failure MUST use a message from §7.2 with its findings, each naming the object, the right or group and the fix. A message MUST NOT contain a secret and MUST NOT read only "insufficient permissions". | enhancement (E1) |
 | FR-16 | Detailed findings (they enumerate Tier-0 exposure) MUST need the verify permission to view. Other viewers see the verdict and the count only. | security |
 | FR-17 | Activation MUST require a passing verification at most 15 minutes old; otherwise it MUST run `draft → verifying → active` inline and proceed only on a pass. Every verification MUST end in `draft` (a pass records `verified_at`). Re-verification of an `active` or `suspended` connection MUST be a job and MUST NOT change the lifecycle state (L11). | DM-10 |
@@ -655,6 +658,18 @@ Given a draft and an active connection
 When the admin opens each
 Then Discard draft is offered on the draft only, and a discarded id never appears in a list or search but still resolves from the audit event
 Evidence: DOM check; API (S)
+
+AC-50  (H15, §8.3 registry rule)
+Given a lab DC that closes a scoped-search stream before its completion marker, and another that returns a malformed reply
+When a cycle runs against each
+Then a failed DM-26 row with cause H15 is written, the timeline shows the H15 line with the DC and partition, `data_as_of` does not move, no partial inventory rows are committed, and after 3 consecutive H15 on one DC the next cycle uses another DC
+Evidence: fault-injection test (2dc lab); timeline DOM; DM-26 rows
+
+AC-51  (§8.3 registry rule)
+Given the sync engine's set of typed failures
+When a CI check enumerates them
+Then each maps to a registered code with an admin line, and a failure with neither fails the build; a store error is the only listed exception
+Evidence: CI check output
 ```
 
 ## 14. Out of scope
@@ -698,5 +713,6 @@ Consult facts tagged `[UNVERIFIED]` here: that an Authenticated User can read th
 
 ## Changelog
 
+- 2026-11-04 · T-1305: H15 (read failed, cause not identified) and the registry rule added to §8.3; store error deliberately has no code; AC-50, AC-51.
 - 2026-10-02 · revision 2 after solution-architect review (T-0068): staleness per check cadence (§8.1 rule 5, AC-46); V7 forest-wide with Could-not-verify on unreachable domains (V7, FR-10, AC-47); V7 method wording per TM §6.5; M-AUTH gMSA wording (AC-48); "Live checklist" renamed "Progress checklist"; lifecycle amended per OQ-5 (L3, L4, L7, L9, new L11, FR-17, FR-19, FR-36, AC-45, AC-49); `Tier0Override` and `ConnectionVerification` folded in (§11, OQ-1, OQ-2); AC-33 and AC-34 nits fixed.
 - 2026-10-02 · created (T-0068). Covers DM-10 L1–L10, DM-11, DM-13, DM-19 transitions, TM-D1 refusal messages, and sync freshness without "live".

@@ -1,0 +1,60 @@
+.diq-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.diq-shell__header {
+  height: var(--diq-topbar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--diq-space-4);
+  padding: 0 var(--diq-space-4);
+  background: var(--diq-surface);
+  border-bottom: 1px solid var(--diq-line);
+}
+
+.diq-shell__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--diq-space-1);
+  text-decoration: none;
+  color: inherit;
+}
+
+.diq-shell__search {
+  flex: 1;
+  max-width: 560px;
+  height: var(--diq-control);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--diq-space-3);
+  background: var(--diq-bg);
+  border: 1px solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-3);
+  color: var(--diq-text-2);
+  font: inherit;
+  font-size: var(--diq-text-ui);
+  cursor: pointer;
+  text-align: left;
+}
+
+.diq-shell__search:hover {
+  border-color: var(--diq-focus);
+}
+
+.diq-shell__search-placeholder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diq-shell__search-kbd {
+  display: flex;
+  gap: var(--diq-space-1);
+}
+
+.diq-shell__content {
+  flex: 1;
+}

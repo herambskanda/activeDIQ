@@ -17,6 +17,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/attr/gentime"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
+	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
@@ -262,7 +263,18 @@ func (h *Handler) value(name string, raw []byte) (*connectorv1.AttributeValue, e
 	case ldapfilter.SynString:
 		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Text{Text: string(raw)}}, nil
 	case ldapfilter.SynDN:
-		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Dn{Dn: &connectorv1.DnValue{DisplayDn: string(raw)}}}, nil
+		lv, err := dn.ParseLinkValue(string(raw))
+		if err != nil {
+			return nil, err
+		}
+		v := &connectorv1.DnValue{DisplayDn: lv.DN}
+		if lv.HasGUID { // only what the DC sent: a plain DN stays without identity
+			v.Guid = write.GUIDToWire(lv.GUID)
+		}
+		if lv.HasSID {
+			v.Sid = &connectorv1.Sid{Value: lv.SID.Bytes()}
+		}
+		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Dn{Dn: v}}, nil
 	case ldapfilter.SynBool:
 		return &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Boolean{Boolean: string(raw) == "TRUE"}}, nil
 	case ldapfilter.SynInt32:

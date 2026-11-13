@@ -29,8 +29,8 @@ func addcContract() (fleet.Contract, error) {
 }
 
 // tunnelLoop serves the contract over the shared tunnel client until ctx is done.
-func tunnelLoop(ctx context.Context, st *dial.State, h *kernel.Host, id fleet.Identity, c fleet.Contract, log *slog.Logger) {
-	tunnelclient.Run(ctx, tunnelclient.Config{State: st, Identity: id, Log: log, Open: tunnelbind.Open,
+func tunnelLoop(ctx context.Context, st *dial.State, h *kernel.Host, id fleet.Identity, c fleet.Contract, log *slog.Logger, burst func() func()) {
+	tunnelclient.Run(ctx, tunnelclient.Config{State: st, Burst: burst, Identity: id, Log: log, Open: tunnelbind.Open,
 		Binding: fleet.Binding{Contract: c, Register: func(_ fleet.Identity, reg grpc.ServiceRegistrar) { h.Register(reg) }},
 		OnConnect: func(conn grpc.ClientConnInterface) func() {
 			h.SetEventClient(agentv1.NewEventIngestClient(conn))

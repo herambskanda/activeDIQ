@@ -10,7 +10,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -158,4 +165,55 @@ func judge(t Test, group string, o *outcome, build string) []Failure {
 		}
 	}
 	return out
+}
+
+// Declared maps each top-level Test function name declared under root to the "./dir" packages
+// declaring it. Directories that hold no product tests (.git, node_modules, testdata, vendor, web,
+// factory, knowledge, worktrees) are skipped below the root. A job uses it to tell a bound test that
+// has not landed from one that landed without its binding being marked.
+func Declared(root string) (map[string][]string, error) {
+	out := map[string][]string{}
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "testdata", "vendor", "web", "factory", "knowledge", ".activeDIQ-worktrees":
+				if p != root {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		f, err := parser.ParseFile(fset, p, src, parser.SkipObjectResolution)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, filepath.Dir(p))
+		if err != nil {
+			return err
+		}
+		dir := "./" + filepath.ToSlash(rel)
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && strings.HasPrefix(fd.Name.Name, "Test") {
+				if !slices.Contains(out[fd.Name.Name], dir) {
+					out[fd.Name.Name] = append(out[fd.Name.Name], dir)
+				}
+			}
+		}
+		return nil
+	})
+	for _, v := range out {
+		sort.Strings(v)
+	}
+	return out, err
 }

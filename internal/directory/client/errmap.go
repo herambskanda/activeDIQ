@@ -1,8 +1,10 @@
 package client
 
 import (
+	"context"
 	"errors"
 
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -15,9 +17,59 @@ type RemoteError struct{ Err *connectorv1.ConnectorError }
 // Error never includes the connector's message text or any detail: only the code.
 func (e *RemoteError) Error() string { return "client: connector error " + e.Err.GetCode().String() }
 
-// FromStatus extracts the ConnectorError detail of a gRPC status error, and returns err unchanged
-// when it carries none.
+// TransportError is a gRPC status error that carried no ConnectorError detail. Its description is
+// free text set by the connector or by Go's net errors on the connector host, and can name a DC, an
+// IP or a DN, so only the gRPC code is kept: the text never reaches Error, %+v, %#v or a wrapped
+// cause. It is not the fixed ErrTransport that write sanitising returns; it is the read-side error.
+type TransportError struct{ Code codes.Code }
+
+// Error names the code only.
+func (e *TransportError) Error() string {
+	return "client: connector transport error " + e.Code.String()
+}
+
+// Retryable is true for the codes where repeating the same call can succeed: the connector or its
+// DC was unavailable, throttled, or the call was aborted. It is a hint, not the connector's advice
+// (a ConnectorError carries that).
+func (e *TransportError) Retryable() bool {
+	switch e.Code {
+	case codes.Unavailable, codes.ResourceExhausted, codes.Aborted:
+		return true
+	}
+	return false
+}
+
+// Is lets a Canceled or DeadlineExceeded status match the context errors, as a cancelled call
+// would if it had not crossed gRPC.
+func (e *TransportError) Is(target error) bool {
+	switch target {
+	case context.Canceled:
+		return e.Code == codes.Canceled
+	case context.DeadlineExceeded:
+		return e.Code == codes.DeadlineExceeded
+	}
+	return false
+}
+
+// FromStatus extracts the ConnectorError detail of a gRPC status error. A status error without one
+// becomes a TransportError carrying only its code; its description is dropped. A context error and
+// an error that is already typed (RemoteError, TransportError) pass through as they are; any other
+// non-status error is returned unchanged.
 func FromStatus(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return context.DeadlineExceeded
+	}
+	var re *RemoteError
+	var te *TransportError
+	if errors.As(err, &re) || errors.As(err, &te) {
+		return err
+	}
 	st, ok := status.FromError(err)
 	if !ok {
 		return err
@@ -27,7 +79,7 @@ func FromStatus(err error) error {
 			return &RemoteError{Err: ce}
 		}
 	}
-	return err
+	return &TransportError{Code: st.Code()}
 }
 
 // OutcomeStatus is how a step ends when its write was not applied.

@@ -1,0 +1,51 @@
+dc1 lock held by pid 394852 for the whole run, waited 0s
+sha256 ff87bc300b5a2da51d5c7245650de1cdea1265fb81a0972b060265831302531e activediq-agent.exe
+sha256 46ed3dcf2e4e48c493f69b25e702836a3b7425c70b9473c582527743a7b16447 agentsetup.exe
+INFO os: Microsoft Windows Server 2025 Standard Evaluation build 26100; logical processors 4; RAM MiB 8171
+INFO Security maxSize before: 536870912; baseline channelAccess: O:BAG:SYD:(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+CASE T0-clean PASS no service-SID ACE and no log-access policy before the run
+CASE I1-install PASS msiexec exit 0; service-SID ACE in Security channelAccess: True
+CASE I2-readable-as-service PASS Security read as NT SERVICE\activeDIQAgent through the agent's event source: readable events=136995
+INFO elevated-admin run output: activediq-agent.exe : agent: agent: process token holds privileges outside the pinned list: SeBackupPrivilege, SeCreateGlobalPrivilege, SeCreatePagefilePrivilege, SeCreateSymbolicLinkPrivilege, SeDebugPrivilege, SeDelegateSessionUserImpersonatePrivilege, SeEnableDelegationPrivilege, SeImpersonatePrivilege, SeIncreaseBasePriorityPrivilege, SeIncreaseQuotaPrivilege, SeIncreaseWorkingSetPrivilege, SeLoadDriverPrivilege, SeMachineAccountPrivilege, SeManageVolumePrivilege, SeProfileSingleProcessPrivilege, SeRemoteShutdownPrivilege, SeRestorePrivilege, SeSecurityPrivilege, SeShutdownPrivilege, SeSystemEnvironmentPrivilege, SeSystemProfilePrivilege, SeSystemtimePrivilege, SeTakeOwnershipPrivilege, SeTimeZonePrivilege, SeUndockPrivilege At C:\lab\build\agent-t0557.ps1:100 char:6 + $o = & $AgentExe 2>&1 | Out-String + ~~~~~~~~~~~~~~~~ + CategoryInfo : NotSpecified: (agent: agent: p...UndockPrivilege:String) [], Remote Exception + FullyQualifiedErrorId : NativeCommandError
+CASE P1-admin-token-refused PASS activediq-agent.exe from an elevated administrator token exited 1
+CASE P2-refusal-names-extras PASS the refusal names the extra privileges
+INFO admin token privileges (for contrast): SeIncreaseQuotaPrivilege SeMachineAccountPrivilege SeSecurityPrivilege SeTakeOwnershipPrivilege SeLoadDriverPrivilege SeSystemProfilePrivilege SeSystemtimePrivilege SeProfileSingleProcessPrivilege SeIncreaseBasePriorityPrivilege SeCreatePagefilePrivilege SeBackupPrivilege SeRestorePrivilege SeShutdownPrivilege SeDebugPrivilege SeSystemEnvironmentPrivilege SeChangeNotifyPrivilege SeRemoteShutdownPrivilege SeUndockPrivilege SeEnableDelegationPrivilege SeManageVolumePrivilege SeImpersonatePrivilege SeCreateGlobalPrivilege SeIncreaseWorkingSetPrivilege SeTimeZonePrivilege SeCreateSymbolicLinkPrivilege SeDelegateSessionUserImpersonatePrivilege
+INFO gpupdate: Updating policy... Computer Policy update has completed successfully.
+INFO after-gpo-without-service-ace policy.ChannelAccess=O:BAG:SYD:(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+INFO after-gpo-without-service-ace wevtutil.channelAccess=O:BAG:SYD:(A;;CC;;;S-1-5-80-3803417868-3083394944-3978303958-4174658546-1200079750)(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+CASE G4-gpo-shadows-ace FAIL real GPO with ChannelAccess lacking the service SID: service identity became unreadable after -1 s (config still has the MSI ACE: True)
+CASE G4-policy-value-written PASS gpupdate wrote the GPO value to the Policies key
+INFO after-gpo-with-service-ace policy.ChannelAccess=O:BAG:SYD:(A;;CC;;;S-1-5-80-3803417868-3083394944-3978303958-4174658546-1200079750)(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+INFO after-gpo-with-service-ace wevtutil.channelAccess=O:BAG:SYD:(A;;CC;;;S-1-5-80-3803417868-3083394944-3978303958-4174658546-1200079750)(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+CASE G5-gpo-naming-service-sid-restores PASS GPO value that includes the service SID: readable again after 9 s
+INFO after-gpo-removed policy.ChannelAccess=<absent>
+INFO after-gpo-removed wevtutil.channelAccess=O:BAG:SYD:(A;;CC;;;S-1-5-80-3803417868-3083394944-3978303958-4174658546-1200079750)(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+CASE G6-gpo-removed-recovers PASS after the GPO is deleted: policy value absent=True; service identity readable after 9 s (config ACE kept: True)
+INFO GPO left behind: 0; policy value present: False
+=== RUN   TestLabJobLimitsReadBack
+LAB priority class=0x4000 below_normal=true
+LAB job limit_flags=0x120 process_memory_limit=true process_memory_limit_mib=256.0 workingset_limit=false
+LAB commit_probe commit_128mib_ok=true commit_300mib_ok=false commit_300mib_err=The paging file is too small for this operation to complete.
+--- PASS: TestLabJobLimitsReadBack (0.00s)
+PASS
+CASE R-TestLabJobLimitsReadBack PASS see LAB lines above
+=== RUN   TestLabCPUCapMeasured
+LAB cpu_cap logical_cpus=4 wall_s=12.1 cpu_s=2.64 pct_of_all_cpus=5.48 pct_of_one_core=21.9
+--- PASS: TestLabCPUCapMeasured (12.06s)
+PASS
+CASE R-TestLabCPUCapMeasured PASS see LAB lines above
+INFO load threads=8 BASELINE (no agent): logons_ok=4988 logons_failed=0 secs=20 logons_per_s=249 lat_mean_ms=32.07 lat_p95_ms=40.24 lat_p99_ms=53.31; security events written 24873
+INFO load threads=8 WITH AGENT: logons_ok=13573 logons_failed=0 secs=60 logons_per_s=226 lat_mean_ms=34.70 lat_p95_ms=44.46 lat_p99_ms=53.52; security events written 67743; catalogue-id events in the log for the window 67738
+--- FAIL: TestLabResourceLoad (0.07s)
+FAIL
+CASE R-load-8 FAIL TestLabResourceLoad with 8 generator threads (numbers above)
+INFO load threads=24 BASELINE (no agent): logons_ok=5019 logons_failed=0 secs=20 logons_per_s=251 lat_mean_ms=51.88 lat_p95_ms=101.21 lat_p99_ms=112.24; security events written 18597
+INFO load threads=24 WITH AGENT: logons_ok=14714 logons_failed=0 secs=60 logons_per_s=245 lat_mean_ms=86.14 lat_p95_ms=117.07 lat_p99_ms=128.84; security events written 61107; catalogue-id events in the log for the window 61106
+--- FAIL: TestLabResourceLoad (0.01s)
+FAIL
+CASE R-load-24 FAIL TestLabResourceLoad with 24 generator threads (numbers above)
+INFO lab user removed: True; Security maxSize restored to maxSize: 536870912
+CASE Z-restored PASS channelAccess back to baseline, no policy value, no agent data
+CASE Z-dc-healthy PASS DC services running
+SUMMARY failures=3
+

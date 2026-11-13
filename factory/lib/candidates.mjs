@@ -119,10 +119,11 @@ export function candidateKey(candidate) {
  * Pick the candidates for the free worker slots, in this order:
  * 1. review, then qa tickets without a running session;
  * 2. in_progress tickets without a running session (handoff continuations first);
- * 3. ready tickets (priority, then age) whose dependencies are done and whose decisions are answered,
+ * 3. ready tickets (priority, then age) whose dependencies are done and on main (`state.unmerged` names
+ *    the done ones whose branch is not) and whose decisions are answered,
  *    competing with the meta tickets the dispatcher would create (triage, grooming, digest).
  *
- * @param {object} state {tickets, decisions, feedback, runs, control, dispatcher, sharedCheckout?, skip?}
+ * @param {object} state {tickets, decisions, feedback, runs, control, dispatcher, sharedCheckout?, skip?, unmerged?}
  * @param {Date} now
  * @param {object} config
  * @returns {Array<{kind: string, ticket: object|null, create?: object, role: string, stage: string, continuation: boolean}>}
@@ -137,6 +138,7 @@ export function selectCandidates(state, now, config) {
   const skip = state.skip ?? new Set();
   const tickets = indexById(state.tickets);
   const decisions = indexById(state.decisions);
+  const unmerged = state.unmerged ?? new Set(); // done tickets whose branch is not on main yet (T-1266)
   const idle = (t) => !busy.has(t.id) && !skip.has(t.id);
   const inflight = (t) => ({ ticket: t, role: currentRole(config, t), stage: t.status, continuation: Boolean(t.handoff?.pending) });
 
@@ -151,11 +153,15 @@ export function selectCandidates(state, now, config) {
     .sort((a, b) => Number(Boolean(b.handoff?.pending)) - Number(Boolean(a.handoff?.pending)) || byPriority(a, b))
     .forEach((t) => ordered.push({ kind: t.handoff?.pending ? 'continuation' : 'resume', ...inflight(t) }));
 
+  // dispatcher.only_milestone (CEO scope lock): only that milestone's ready tickets are launched. Work already
+  // in flight (review, qa, in_progress) finishes either way, and meta tickets (triage, grooming) are unaffected.
+  const only = config.dispatcher.only_milestone ?? null;
   const pool = state.tickets
     .filter((t) => t.status === 'ready' && idle(t))
+    .filter((t) => only === null || t.milestone === only)
     .filter((t) => {
-      const b = claimBlockers(t, tickets, decisions);
-      return b.deps.length === 0 && b.decisions.length === 0;
+      const b = claimBlockers(t, tickets, decisions, unmerged);
+      return b.deps.length === 0 && b.unmerged.length === 0 && b.decisions.length === 0;
     })
     .map((t) => ({ sort: t, candidate: { kind: 'ready', ticket: t, role: t.owner, stage: 'in_progress', continuation: false } }));
   for (const p of metaProposals(state, now, config)) {

@@ -50,7 +50,7 @@ func (cm *ChangeMapper) Plan(ch *connectorv1.ObjectChange) (Planned, error) {
 	if ch == nil {
 		return out, refuse("objectGUID", CodeMissing)
 	}
-	object, err := guidText(ch.GetObjectGuid(), "objectGUID")
+	object, err := entryGUID(ch.GetObjectGuid(), "objectGUID")
 	if err != nil {
 		return out, err
 	}
@@ -108,7 +108,7 @@ func (cm *ChangeMapper) position(pt *inventory.Patch, ch *connectorv1.ObjectChan
 	}
 	switch {
 	case ch.GetParentGuid() != nil:
-		p, err := guidText(ch.ParentGuid, "parentGuid")
+		p, err := entryGUID(ch.ParentGuid, "parentGuid")
 		if err != nil {
 			return err
 		}
@@ -485,7 +485,7 @@ func memberGUIDs(vs []*connectorv1.AttributeValue) (out []inventory.GUID, unreso
 			unresolved++
 			continue
 		}
-		g, err := guidText(d.Dn.Guid, "member")
+		g, err := entryGUID(d.Dn.Guid, "member")
 		if err != nil {
 			return nil, 0, err
 		}
@@ -524,7 +524,7 @@ func (cm *ChangeMapper) carriesCreation(ch *connectorv1.ObjectChange, set attrSe
 	}
 	if ch.GetParentGuid() == nil && ch.GetObjectGuid() != nil {
 		// Only the head of the naming context has no parent.
-		g, err := guidText(ch.ObjectGuid, "objectGUID")
+		g, err := entryGUID(ch.ObjectGuid, "objectGUID")
 		if err != nil || g != cm.nc {
 			return false
 		}
