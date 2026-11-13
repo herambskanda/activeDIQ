@@ -15,6 +15,10 @@ type Refusal struct {
 	Err *connectorv1.ConnectorError
 	// stage is the step of §8.1 that ended the call, for the local record only.
 	stage string
+	// reason, propKind, propOp and propKeys are the audit-ready record of a property-guard refusal,
+	// copied into the Event by finish (contract §8.9). Names only, never values.
+	reason, propKind, propOp string
+	propKeys                 []string
 }
 
 func (r *Refusal) Error() string { return "write: " + r.Err.GetCode().String() }
@@ -107,4 +111,28 @@ func gateRefusal(state connectorv1.WriteGateState, vid *connectorv1.Guid, unack 
 // both transports and both groups end a call the same way. The message must be a fixed text.
 func NewRefusal(code connectorv1.ErrorCode, retry connectorv1.RetryAdvice, msg string) *Refusal {
 	return newRefusal(code, retry, "", msg)
+}
+
+// coded builds a refusal with a fixed text for a code that carries no details.
+func coded(code connectorv1.ErrorCode, retry connectorv1.RetryAdvice, stage, msg string) *Refusal {
+	return newRefusal(code, retry, stage, msg)
+}
+
+var (
+	errReplan   = connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_REPLAN
+	errNever    = connectorv1.RetryAdvice_RETRY_ADVICE_NEVER
+	errOperator = connectorv1.RetryAdvice_RETRY_ADVICE_AFTER_OPERATOR_ACTION
+)
+
+func attrNotAllowed(stage string) *Refusal {
+	return coded(connectorv1.ErrorCode_ERROR_CODE_ATTRIBUTE_NOT_ALLOWED, errNever, stage, "attribute not allowed")
+}
+func limitExceeded(stage string) *Refusal {
+	return coded(connectorv1.ErrorCode_ERROR_CODE_LIMIT_EXCEEDED, errNever, stage, "limit exceeded")
+}
+func targetChanged(stage string) *Refusal {
+	return coded(connectorv1.ErrorCode_ERROR_CODE_TARGET_CHANGED, errReplan, stage, "target changed")
+}
+func transportSecurity(stage string) *Refusal {
+	return coded(connectorv1.ErrorCode_ERROR_CODE_TRANSPORT_SECURITY, errOperator, stage, "channel is not secure")
 }

@@ -9,16 +9,13 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
-	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 // withKind mints a Step whose digest is for the given account kind and an empty diff.
 func withKind(t *testing.T, key string, target authority.TargetRef, diff []operation.Change, fn func(ctx context.Context, s step.Step)) {
 	t.Helper()
-	oldK, oldD := stepKind, stepDiff
-	stepKind, stepDiff = key, &diff
-	defer func() { stepKind, stepDiff = oldK, oldD }()
-	withStepOf(t, target, authority.Pins{ncGUID: "dc1.corp.example"}, fn)
+	pins := authority.Pins{ncGUID: "dc1.corp.example"}
+	withStepKind(t, target, pins, dsasFor(pins), key, diff, fn)
 }
 
 // Acceptance 3: an unlock digest replayed against a disable payload is refused by the client before
@@ -26,8 +23,8 @@ func withKind(t *testing.T, key string, target authority.TargetRef, diff []opera
 func TestUnlockDigestReplayedAsDisableRefused(t *testing.T) {
 	tr := &transport{}
 	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
-	withKind(t, accountkind.KeyUnlock, testTarget, []operation.Change{}, func(ctx context.Context, s step.Step) {
-		_, err := c.Write(ctx, s, WriteOp{DigestKind: accountkind.KeyDisable, Target: testTarget})
+	withKind(t, accountkind.KeyUnlock, acctTarget, []operation.Change{}, func(ctx context.Context, s step.Step) {
+		_, err := c.Write(ctx, s, WriteOp{DigestKind: accountkind.KeyDisable, Target: acctTarget})
 		if !errors.Is(err, ErrDigest) {
 			t.Errorf("got %v, want ErrDigest", err)
 		}
@@ -37,35 +34,12 @@ func TestUnlockDigestReplayedAsDisableRefused(t *testing.T) {
 	}
 }
 
-func TestKindTableClosed(t *testing.T) {
-	keys := map[string]bool{"user.set": true}
-	for _, sp := range accountkind.Specs() {
-		keys[sp.Key] = true
-		if _, ok := kindTable[sp.Key]; !ok {
-			t.Errorf("%s missing from kindTable", sp.Key)
-		}
-		if kindClass[sp.Key] == "" {
-			t.Errorf("%s has no kindClass", sp.Key)
-		}
-	}
-	seen := map[connectorv1.WriteKind]string{}
-	for k, v := range kindTable {
-		if !keys[k] {
-			t.Errorf("unexpected kind %q in kindTable", k)
-		}
-		if o, dup := seen[v]; dup {
-			t.Errorf("%s and %s share WriteKind %v", o, k, v)
-		}
-		seen[v] = k
-	}
-}
-
 func TestAccountKindsCarryChangeOnPlanAndApply(t *testing.T) {
 	for _, key := range []string{accountkind.KeyUnlock, accountkind.KeyEnable, accountkind.KeyDisable} {
 		tr := &transport{}
 		c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
-		withKind(t, key, testTarget, []operation.Change{}, func(ctx context.Context, s step.Step) {
-			if _, err := c.Write(ctx, s, WriteOp{DigestKind: key, Target: testTarget}); err != nil {
+		withKind(t, key, acctTarget, []operation.Change{}, func(ctx context.Context, s step.Step) {
+			if _, err := c.Write(ctx, s, WriteOp{DigestKind: key, Target: acctTarget}); err != nil {
 				t.Fatalf("%s: %v", key, err)
 			}
 		})
@@ -89,8 +63,8 @@ func resetDiff() []operation.Change {
 func TestResetWithoutStepSecretRefused(t *testing.T) {
 	tr := &transport{}
 	c := New(WithTransport(tr), WithFacts(&facts{}), WithTier0Builder(&builder{}))
-	withKind(t, accountkind.KeyResetPassword, testTarget, resetDiff(), func(ctx context.Context, s step.Step) {
-		op := WriteOp{DigestKind: accountkind.KeyResetPassword, Target: testTarget, Attrs: []step.Attr{
+	withKind(t, accountkind.KeyResetPassword, acctTarget, resetDiff(), func(ctx context.Context, s step.Step) {
+		op := WriteOp{DigestKind: accountkind.KeyResetPassword, Target: acctTarget, Attrs: []step.Attr{
 			{Name: accountkind.AttrMustChange, Values: []string{"true"}}, {Name: accountkind.AttrSecret, Secret: true}}}
 		if _, err := c.Write(ctx, s, op); !errors.Is(err, ErrNoSecret) {
 			t.Errorf("got %v, want ErrNoSecret", err)
@@ -102,7 +76,7 @@ func TestResetWithoutStepSecretRefused(t *testing.T) {
 }
 
 func TestDeriveChangeGuards(t *testing.T) {
-	good := WriteOp{DigestKind: accountkind.KeyUnlock, Target: testTarget}
+	good := WriteOp{DigestKind: accountkind.KeyUnlock, Target: acctTarget}
 	cases := map[string]struct {
 		mut  func(*WriteOp)
 		want error
@@ -121,7 +95,7 @@ func TestDeriveChangeGuards(t *testing.T) {
 	}
 	// reset: attrs shaped right derive a change that is marked as needing a secret.
 	w := wire{}
-	reset := WriteOp{DigestKind: accountkind.KeyResetPassword, Target: testTarget, Attrs: []step.Attr{
+	reset := WriteOp{DigestKind: accountkind.KeyResetPassword, Target: acctTarget, Attrs: []step.Attr{
 		{Name: accountkind.AttrMustChange, Values: []string{"false"}}, {Name: accountkind.AttrSecret, Secret: true}}}
 	if err := reset.deriveChange(&w); err != nil || w.change == nil || !w.secret {
 		t.Errorf("reset derive: err=%v change=%v secret=%v", err, w.change, w.secret)

@@ -127,6 +127,9 @@ type Fixture struct {
 	// A Lossy step may leave exactly these different after apply and inverse; anything else it
 	// loses fails the lossy-undeclared clause. A Reversible step may lose nothing.
 	Lost []string
+	// FreshStepUp marks the submission as made after a fresh MFA, which an Action with
+	// Descriptor.StepUp requires before it plans.
+	FreshStepUp bool
 }
 
 // Violation is one clause an Action broke.
@@ -380,7 +383,7 @@ func (h *harness) run(act operation.Action, az operation.Authorizer, in operatio
 	}
 	h.mu.Unlock()
 	res, runErr := r.RunStore(context.Background(), operation.Request{
-		Tenant: tenanttest.NewID(h.t), Actor: h.actor, Action: act.Describe().ID, Input: in, Pins: h.fx.Pins,
+		Tenant: tenanttest.NewID(h.t), Actor: h.actor, Action: act.Describe().ID, Input: in, Pins: h.fx.Pins, FreshStepUp: h.fx.FreshStepUp,
 		Operation: step.OperationID(id),
 	})
 	return runOut{res: res, err: runErr, db: db, sink: rs}, nil
