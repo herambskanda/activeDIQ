@@ -27,6 +27,8 @@ const (
 	rangeWindow = 1500
 	// maxAttributes bounds one request (the contract asks for explicit names; this is a sanity cap).
 	maxAttributes = 64
+	// childCountCap is the most children Read counts (§5.3a): a huge OU costs a bounded read.
+	childCountCap = 1000
 )
 
 // Source is what the handler needs from one AD directory binding. Every method works on the one
@@ -116,7 +118,18 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	if err != nil {
 		return err
 	}
-	e, err := h.src.Read(ctx, id, withInstanceType(attrs), int(req.GetMaxValuesPerAttribute()))
+	var counter ChildCounter
+	if req.GetIncludeChildCount() {
+		var ok bool
+		if counter, ok = h.src.(ChildCounter); !ok {
+			return refuse(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "child count not supported")
+		}
+	}
+	wire := withInstanceType(attrs)
+	if counter != nil {
+		wire = withAttr(wire, "objectClass") // the class gate below; build drops it unless asked
+	}
+	e, err := h.src.Read(ctx, id, wire, int(req.GetMaxValuesPerAttribute()))
 	if err != nil {
 		return mapAD(err, before)
 	}
@@ -132,6 +145,17 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 		return mapAD(err, before)
 	} else if ok {
 		parent = write.GUIDToWire(pg)
+	}
+	var count *connectorv1.ChildCount
+	if counter != nil {
+		if !containerClass(e) {
+			return classNotAllowed()
+		}
+		n, capped, err := counter.CountChildren(ctx, id, childCountCap)
+		if err != nil {
+			return mapAD(err, before)
+		}
+		count = &connectorv1.ChildCount{Count: n, Capped: capped}
 	}
 	var verdict *connectorv1.Tier0Verdict
 	if req.GetIncludeTier0() {
@@ -160,7 +184,7 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	}
 	obs := &connectorv1.Observation{Dc: after, ReceivedAt: timestamppb.New(h.now())}
 	if err := out.Send(&connectorv1.ReadResponse{Event: &connectorv1.ReadResponse_Header{
-		Header: &connectorv1.ReadHeader{Entry: entry, Observed: obs, Tier0: verdict}}}); err != nil {
+		Header: &connectorv1.ReadHeader{Entry: entry, Observed: obs, Tier0: verdict, ChildCount: count}}}); err != nil {
 		return err
 	}
 	for _, c := range tails {
@@ -186,14 +210,27 @@ func (h *Handler) bound(ctx context.Context, pin *connectorv1.Guid) (*connectorv
 
 // withInstanceType adds instanceType to the requested names: the parent decision needs it, and
 // build drops it again unless the caller asked for it.
-func withInstanceType(attrs []string) []string {
+func withInstanceType(attrs []string) []string { return withAttr(attrs, "instanceType") }
+
+func withAttr(attrs []string, name string) []string {
 	out := append([]string(nil), attrs...)
 	for _, a := range out {
-		if strings.EqualFold(a, "instanceType") {
+		if strings.EqualFold(a, name) {
 			return out
 		}
 	}
-	return append(out, "instanceType")
+	return append(out, name)
+}
+
+// containerClass reports whether the object's most specific class (the last objectClass value) is
+// one whose children Read may count: organizationalUnit or container (§5.3a).
+func containerClass(e *ad.Entry) bool {
+	vals := e.Strings("objectClass")
+	if len(vals) == 0 {
+		return false
+	}
+	c := vals[len(vals)-1]
+	return strings.EqualFold(c, "organizationalUnit") || strings.EqualFold(c, "container")
 }
 
 func sortedBasis(in []connectorv1.Tier0Basis) []connectorv1.Tier0Basis {
