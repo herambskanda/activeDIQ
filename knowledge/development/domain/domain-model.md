@@ -710,7 +710,7 @@ I4 A DirSync cookie is reused only on the DC that issued it. On another DC it ma
 return everything, or be rejected with `0000203D`. All three outcomes end in `resync_required`
 ([DirSync](https://learn.microsoft.com/en-us/windows/win32/ad/polling-for-changes-using-the-dirsync-control)).
 I5 DirSync does not report the children of a moved or renamed parent. Their `dn` and `ancestry`
-are re-derived from the parent's new position, not awaited from the feed. I6 A Graph delta token
+are re-derived from the parent's new position, not awaited from the feed. Realised (T-0948, T-0988): on a move the inventory writer rewrites `ancestry`, then each descendant's `dn` (typed `dn.Rebase`, by RDN position, not a text replace) and its dn search key in the same transaction; an unrebasable dn becomes empty (unknown), never stale. I6 A Graph delta token
 expires after 7 days (`syncStateNotFound`), and `410 Gone` also means a full sync
 ([delta query](https://learn.microsoft.com/en-us/graph/delta-query-overview)). The AD reader
 contract (show-deleted control `1.2.840.113556.1.4.417` with DirSync, an `objectClass` filter

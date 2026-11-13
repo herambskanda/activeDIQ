@@ -488,7 +488,7 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		// The row moved (its parent or chain changed) or its completeness changed, or it is new and
 		// descendants may be waiting for it: bring the rows below it up to date in this transaction.
 		if w.moved {
-			if err := rewriteDescendants(ctx, tx, connection, o.Object); err != nil {
+			if err := rewriteDescendants(ctx, tx, connection, o.Object, o.DN); err != nil {
 				return out, err
 			}
 		}
@@ -624,7 +624,12 @@ const upsertObjectSQL = `WITH old AS (
 //
 // Rows are found by ancestry (a grandchild whose parent is not yet synced is still below moved), so
 // this is a scan until the GIN index on ancestry (row B3) lands. It runs only for a row that moved.
-func rewriteDescendants(ctx context.Context, tx store.Tx, connection ConnectionID, moved GUID) error {
+// The dn snapshots of those rows follow in the same transaction (DM-16.I5, rewriteDescendantDNs).
+func rewriteDescendants(ctx context.Context, tx store.Tx, connection ConnectionID, moved GUID, movedDN string) error {
+	// The dn pass reads the chains, so it goes first: a chain too long to store is emptied below.
+	if err := rewriteDescendantDNs(ctx, tx, connection, moved, movedDN); err != nil {
+		return err
+	}
 	_, err := tx.Exec(ctx, `UPDATE public.directory_objects d SET
 			ancestry = CASE WHEN array_position(d.ancestry, $2::uuid) + cardinality(m.ancestry) <= 128
 				THEN d.ancestry[1:array_position(d.ancestry, $2::uuid)] || m.ancestry ELSE '{}' END,
