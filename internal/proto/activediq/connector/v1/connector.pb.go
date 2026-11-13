@@ -34,13 +34,14 @@ var File_activediq_connector_v1_connector_proto protoreflect.FileDescriptor
 
 const file_activediq_connector_v1_connector_proto_rawDesc = "" +
 	"\n" +
-	"&activediq/connector/v1/connector.proto\x12\x16activediq.connector.v1\x1a'activediq/connector/v1/changefeed.proto\x1a%activediq/connector/v1/describe.proto\x1a!activediq/connector/v1/read.proto\x1a#activediq/connector/v1/verify.proto\x1a\"activediq/connector/v1/write.proto2\x8c\a\n" +
+	"&activediq/connector/v1/connector.proto\x12\x16activediq.connector.v1\x1a'activediq/connector/v1/changefeed.proto\x1a%activediq/connector/v1/describe.proto\x1a!activediq/connector/v1/read.proto\x1a(activediq/connector/v1/replication.proto\x1a#activediq/connector/v1/verify.proto\x1a\"activediq/connector/v1/write.proto2\x95\b\n" +
 	"\tConnector\x12]\n" +
 	"\bDescribe\x12'.activediq.connector.v1.DescribeRequest\x1a(.activediq.connector.v1.DescribeResponse\x12q\n" +
 	"\x0eDescribeSchema\x12-.activediq.connector.v1.DescribeSchemaRequest\x1a..activediq.connector.v1.DescribeSchemaResponse0\x01\x12k\n" +
 	"\fScopedSearch\x12+.activediq.connector.v1.ScopedSearchRequest\x1a,.activediq.connector.v1.ScopedSearchResponse0\x01\x12S\n" +
 	"\x04Read\x12#.activediq.connector.v1.ReadRequest\x1a$.activediq.connector.v1.ReadResponse0\x01\x12b\n" +
-	"\tReadPerDC\x12(.activediq.connector.v1.ReadPerDCRequest\x1a).activediq.connector.v1.ReadPerDCResponse0\x01\x12e\n" +
+	"\tReadPerDC\x12(.activediq.connector.v1.ReadPerDCRequest\x1a).activediq.connector.v1.ReadPerDCResponse0\x01\x12\x86\x01\n" +
+	"\x15ReadReplicationStatus\x124.activediq.connector.v1.ReadReplicationStatusRequest\x1a5.activediq.connector.v1.ReadReplicationStatusResponse0\x01\x12e\n" +
 	"\n" +
 	"ChangeFeed\x12).activediq.connector.v1.ChangeFeedRequest\x1a*.activediq.connector.v1.ChangeFeedResponse0\x01\x12w\n" +
 	"\x10VerifyConnection\x12/.activediq.connector.v1.VerifyConnectionRequest\x1a0.activediq.connector.v1.VerifyConnectionResponse0\x01\x12Q\n" +
@@ -48,24 +49,26 @@ const file_activediq_connector_v1_connector_proto_rawDesc = "" +
 	"\x05Apply\x12$.activediq.connector.v1.ApplyRequest\x1a%.activediq.connector.v1.ApplyResponseBRZPgithub.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1b\x06proto3"
 
 var file_activediq_connector_v1_connector_proto_goTypes = []any{
-	(*DescribeRequest)(nil),          // 0: activediq.connector.v1.DescribeRequest
-	(*DescribeSchemaRequest)(nil),    // 1: activediq.connector.v1.DescribeSchemaRequest
-	(*ScopedSearchRequest)(nil),      // 2: activediq.connector.v1.ScopedSearchRequest
-	(*ReadRequest)(nil),              // 3: activediq.connector.v1.ReadRequest
-	(*ReadPerDCRequest)(nil),         // 4: activediq.connector.v1.ReadPerDCRequest
-	(*ChangeFeedRequest)(nil),        // 5: activediq.connector.v1.ChangeFeedRequest
-	(*VerifyConnectionRequest)(nil),  // 6: activediq.connector.v1.VerifyConnectionRequest
-	(*PlanRequest)(nil),              // 7: activediq.connector.v1.PlanRequest
-	(*ApplyRequest)(nil),             // 8: activediq.connector.v1.ApplyRequest
-	(*DescribeResponse)(nil),         // 9: activediq.connector.v1.DescribeResponse
-	(*DescribeSchemaResponse)(nil),   // 10: activediq.connector.v1.DescribeSchemaResponse
-	(*ScopedSearchResponse)(nil),     // 11: activediq.connector.v1.ScopedSearchResponse
-	(*ReadResponse)(nil),             // 12: activediq.connector.v1.ReadResponse
-	(*ReadPerDCResponse)(nil),        // 13: activediq.connector.v1.ReadPerDCResponse
-	(*ChangeFeedResponse)(nil),       // 14: activediq.connector.v1.ChangeFeedResponse
-	(*VerifyConnectionResponse)(nil), // 15: activediq.connector.v1.VerifyConnectionResponse
-	(*PlanResponse)(nil),             // 16: activediq.connector.v1.PlanResponse
-	(*ApplyResponse)(nil),            // 17: activediq.connector.v1.ApplyResponse
+	(*DescribeRequest)(nil),               // 0: activediq.connector.v1.DescribeRequest
+	(*DescribeSchemaRequest)(nil),         // 1: activediq.connector.v1.DescribeSchemaRequest
+	(*ScopedSearchRequest)(nil),           // 2: activediq.connector.v1.ScopedSearchRequest
+	(*ReadRequest)(nil),                   // 3: activediq.connector.v1.ReadRequest
+	(*ReadPerDCRequest)(nil),              // 4: activediq.connector.v1.ReadPerDCRequest
+	(*ReadReplicationStatusRequest)(nil),  // 5: activediq.connector.v1.ReadReplicationStatusRequest
+	(*ChangeFeedRequest)(nil),             // 6: activediq.connector.v1.ChangeFeedRequest
+	(*VerifyConnectionRequest)(nil),       // 7: activediq.connector.v1.VerifyConnectionRequest
+	(*PlanRequest)(nil),                   // 8: activediq.connector.v1.PlanRequest
+	(*ApplyRequest)(nil),                  // 9: activediq.connector.v1.ApplyRequest
+	(*DescribeResponse)(nil),              // 10: activediq.connector.v1.DescribeResponse
+	(*DescribeSchemaResponse)(nil),        // 11: activediq.connector.v1.DescribeSchemaResponse
+	(*ScopedSearchResponse)(nil),          // 12: activediq.connector.v1.ScopedSearchResponse
+	(*ReadResponse)(nil),                  // 13: activediq.connector.v1.ReadResponse
+	(*ReadPerDCResponse)(nil),             // 14: activediq.connector.v1.ReadPerDCResponse
+	(*ReadReplicationStatusResponse)(nil), // 15: activediq.connector.v1.ReadReplicationStatusResponse
+	(*ChangeFeedResponse)(nil),            // 16: activediq.connector.v1.ChangeFeedResponse
+	(*VerifyConnectionResponse)(nil),      // 17: activediq.connector.v1.VerifyConnectionResponse
+	(*PlanResponse)(nil),                  // 18: activediq.connector.v1.PlanResponse
+	(*ApplyResponse)(nil),                 // 19: activediq.connector.v1.ApplyResponse
 }
 var file_activediq_connector_v1_connector_proto_depIdxs = []int32{
 	0,  // 0: activediq.connector.v1.Connector.Describe:input_type -> activediq.connector.v1.DescribeRequest
@@ -73,21 +76,23 @@ var file_activediq_connector_v1_connector_proto_depIdxs = []int32{
 	2,  // 2: activediq.connector.v1.Connector.ScopedSearch:input_type -> activediq.connector.v1.ScopedSearchRequest
 	3,  // 3: activediq.connector.v1.Connector.Read:input_type -> activediq.connector.v1.ReadRequest
 	4,  // 4: activediq.connector.v1.Connector.ReadPerDC:input_type -> activediq.connector.v1.ReadPerDCRequest
-	5,  // 5: activediq.connector.v1.Connector.ChangeFeed:input_type -> activediq.connector.v1.ChangeFeedRequest
-	6,  // 6: activediq.connector.v1.Connector.VerifyConnection:input_type -> activediq.connector.v1.VerifyConnectionRequest
-	7,  // 7: activediq.connector.v1.Connector.Plan:input_type -> activediq.connector.v1.PlanRequest
-	8,  // 8: activediq.connector.v1.Connector.Apply:input_type -> activediq.connector.v1.ApplyRequest
-	9,  // 9: activediq.connector.v1.Connector.Describe:output_type -> activediq.connector.v1.DescribeResponse
-	10, // 10: activediq.connector.v1.Connector.DescribeSchema:output_type -> activediq.connector.v1.DescribeSchemaResponse
-	11, // 11: activediq.connector.v1.Connector.ScopedSearch:output_type -> activediq.connector.v1.ScopedSearchResponse
-	12, // 12: activediq.connector.v1.Connector.Read:output_type -> activediq.connector.v1.ReadResponse
-	13, // 13: activediq.connector.v1.Connector.ReadPerDC:output_type -> activediq.connector.v1.ReadPerDCResponse
-	14, // 14: activediq.connector.v1.Connector.ChangeFeed:output_type -> activediq.connector.v1.ChangeFeedResponse
-	15, // 15: activediq.connector.v1.Connector.VerifyConnection:output_type -> activediq.connector.v1.VerifyConnectionResponse
-	16, // 16: activediq.connector.v1.Connector.Plan:output_type -> activediq.connector.v1.PlanResponse
-	17, // 17: activediq.connector.v1.Connector.Apply:output_type -> activediq.connector.v1.ApplyResponse
-	9,  // [9:18] is the sub-list for method output_type
-	0,  // [0:9] is the sub-list for method input_type
+	5,  // 5: activediq.connector.v1.Connector.ReadReplicationStatus:input_type -> activediq.connector.v1.ReadReplicationStatusRequest
+	6,  // 6: activediq.connector.v1.Connector.ChangeFeed:input_type -> activediq.connector.v1.ChangeFeedRequest
+	7,  // 7: activediq.connector.v1.Connector.VerifyConnection:input_type -> activediq.connector.v1.VerifyConnectionRequest
+	8,  // 8: activediq.connector.v1.Connector.Plan:input_type -> activediq.connector.v1.PlanRequest
+	9,  // 9: activediq.connector.v1.Connector.Apply:input_type -> activediq.connector.v1.ApplyRequest
+	10, // 10: activediq.connector.v1.Connector.Describe:output_type -> activediq.connector.v1.DescribeResponse
+	11, // 11: activediq.connector.v1.Connector.DescribeSchema:output_type -> activediq.connector.v1.DescribeSchemaResponse
+	12, // 12: activediq.connector.v1.Connector.ScopedSearch:output_type -> activediq.connector.v1.ScopedSearchResponse
+	13, // 13: activediq.connector.v1.Connector.Read:output_type -> activediq.connector.v1.ReadResponse
+	14, // 14: activediq.connector.v1.Connector.ReadPerDC:output_type -> activediq.connector.v1.ReadPerDCResponse
+	15, // 15: activediq.connector.v1.Connector.ReadReplicationStatus:output_type -> activediq.connector.v1.ReadReplicationStatusResponse
+	16, // 16: activediq.connector.v1.Connector.ChangeFeed:output_type -> activediq.connector.v1.ChangeFeedResponse
+	17, // 17: activediq.connector.v1.Connector.VerifyConnection:output_type -> activediq.connector.v1.VerifyConnectionResponse
+	18, // 18: activediq.connector.v1.Connector.Plan:output_type -> activediq.connector.v1.PlanResponse
+	19, // 19: activediq.connector.v1.Connector.Apply:output_type -> activediq.connector.v1.ApplyResponse
+	10, // [10:20] is the sub-list for method output_type
+	0,  // [0:10] is the sub-list for method input_type
 	0,  // [0:0] is the sub-list for extension type_name
 	0,  // [0:0] is the sub-list for extension extendee
 	0,  // [0:0] is the sub-list for field type_name
@@ -101,6 +106,7 @@ func file_activediq_connector_v1_connector_proto_init() {
 	file_activediq_connector_v1_changefeed_proto_init()
 	file_activediq_connector_v1_describe_proto_init()
 	file_activediq_connector_v1_read_proto_init()
+	file_activediq_connector_v1_replication_proto_init()
 	file_activediq_connector_v1_verify_proto_init()
 	file_activediq_connector_v1_write_proto_init()
 	type x struct{}

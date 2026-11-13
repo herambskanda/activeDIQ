@@ -1,0 +1,3001 @@
+{
+ "cases": [
+  {
+   "desc": "allow logon, explicit (ADSI AllowLogon=1)",
+   "extra": "",
+   "id": "TSP-W01",
+   "kind": "adsi",
+   "sam": "tspw01",
+   "sets": [
+    [
+     "AllowLogon",
+     1
+    ]
+   ]
+  },
+  {
+   "desc": "deny logon (AllowLogon=0)",
+   "extra": "",
+   "id": "TSP-W02",
+   "kind": "adsi",
+   "sam": "tspw02",
+   "sets": [
+    [
+     "AllowLogon",
+     0
+    ]
+   ]
+  },
+  {
+   "desc": "remote control level 0 (EnableRemoteControl=0)",
+   "extra": "",
+   "id": "TSP-W03",
+   "kind": "adsi",
+   "sam": "tspw03",
+   "sets": [
+    [
+     "EnableRemoteControl",
+     0
+    ]
+   ]
+  },
+  {
+   "desc": "remote control level 1 (EnableRemoteControl=1)",
+   "extra": "",
+   "id": "TSP-W04",
+   "kind": "adsi",
+   "sam": "tspw04",
+   "sets": [
+    [
+     "EnableRemoteControl",
+     1
+    ]
+   ]
+  },
+  {
+   "desc": "remote control level 2 (EnableRemoteControl=2)",
+   "extra": "",
+   "id": "TSP-W05",
+   "kind": "adsi",
+   "sam": "tspw05",
+   "sets": [
+    [
+     "EnableRemoteControl",
+     2
+    ]
+   ]
+  },
+  {
+   "desc": "remote control level 3 (EnableRemoteControl=3)",
+   "extra": "",
+   "id": "TSP-W06",
+   "kind": "adsi",
+   "sam": "tspw06",
+   "sets": [
+    [
+     "EnableRemoteControl",
+     3
+    ]
+   ]
+  },
+  {
+   "desc": "remote control level 4 (EnableRemoteControl=4)",
+   "extra": "",
+   "id": "TSP-W07",
+   "kind": "adsi",
+   "sam": "tspw07",
+   "sets": [
+    [
+     "EnableRemoteControl",
+     4
+    ]
+   ]
+  },
+  {
+   "desc": "sessions: connection 90 min, disconnection 7 min, idle 0, reconnect originating-client-only, end broken session",
+   "extra": "",
+   "id": "TSP-W08",
+   "kind": "adsi",
+   "sam": "tspw08",
+   "sets": [
+    [
+     "MaxConnectionTime",
+     90
+    ],
+    [
+     "MaxDisconnectionTime",
+     7
+    ],
+    [
+     "MaxIdleTime",
+     0
+    ],
+    [
+     "ReconnectionAction",
+     1
+    ],
+    [
+     "BrokenConnectionAction",
+     1
+    ]
+   ]
+  },
+  {
+   "desc": "UNC home folder with drive H: and UNC profile path",
+   "extra": "",
+   "id": "TSP-W09",
+   "kind": "adsi",
+   "sam": "tspw09",
+   "sets": [
+    [
+     "TerminalServicesHomeDirectory",
+     "\\\\fs1\\home\\tspw09"
+    ],
+    [
+     "TerminalServicesHomeDrive",
+     "H:"
+    ],
+    [
+     "TerminalServicesProfilePath",
+     "\\\\fs1\\prof\\tspw09"
+    ]
+   ]
+  },
+  {
+   "desc": "local home folder path, no drive (ADUC 'Local path')",
+   "extra": "",
+   "id": "TSP-W10",
+   "kind": "adsi",
+   "sam": "tspw10",
+   "sets": [
+    [
+     "TerminalServicesHomeDirectory",
+     "C:\\Users\\tspw10"
+    ]
+   ]
+  },
+  {
+   "desc": "start-program and working directory set",
+   "extra": "",
+   "id": "TSP-W11",
+   "kind": "adsi",
+   "sam": "tspw11",
+   "sets": [
+    [
+     "TerminalServicesInitialProgram",
+     "C:\\apps\\tool.exe /s"
+    ],
+    [
+     "TerminalServicesWorkDirectory",
+     "C:\\apps"
+    ]
+   ]
+  },
+  {
+   "desc": "long home and profile paths (196 / 230 chars)",
+   "extra": "",
+   "id": "TSP-W12",
+   "kind": "adsi",
+   "sam": "tspw12",
+   "sets": [
+    [
+     "TerminalServicesHomeDirectory",
+     "\\\\fs1\\home\\segment00_xxxxxxxxxxxxxxxxxxxx\\segment01_xxxxxxxxxxxxxxxxxxxx\\segment02_xxxxxxxxxxxxxxxxxxxx\\segment03_xxxxxxxxxxxxxxxxxxxx\\segment04_xxxxxxxxxxxxxxxxxxxx\\segment05_xxxxxxxxxxxxxxxxxxxx"
+    ],
+    [
+     "TerminalServicesHomeDrive",
+     "Z:"
+    ],
+    [
+     "TerminalServicesProfilePath",
+     "\\\\fs1\\profiles\\p00_yyyyyyyyyyyyyyyyyyyyyy\\p01_yyyyyyyyyyyyyyyyyyyyyy\\p02_yyyyyyyyyyyyyyyyyyyyyy\\p03_yyyyyyyyyyyyyyyyyyyyyy\\p04_yyyyyyyyyyyyyyyyyyyyyy\\p05_yyyyyyyyyyyyyyyyyyyyyy\\p06_yyyyyyyyyyyyyyyyyyyyyy\\p07_yyyyyyyyyyyyyyyyyyyyyy"
+    ]
+   ]
+  },
+  {
+   "desc": "non-ASCII BMP characters in home path and start program (Latin-1 supplement, CJK, Cyrillic)",
+   "extra": "",
+   "id": "TSP-W13",
+   "kind": "adsi",
+   "sam": "tspw13",
+   "sets": [
+    [
+     "TerminalServicesHomeDirectory",
+     "\\\\fs1\\home\\Zo\u00eb-\u7528\u6237-\u00dcn\u00efcode-\u0434\u043e\u043c"
+    ],
+    [
+     "TerminalServicesHomeDrive",
+     "N:"
+    ],
+    [
+     "TerminalServicesInitialProgram",
+     "C:\\apps\\Zo\u00eb\u7528\u6237.exe"
+    ]
+   ]
+  },
+  {
+   "desc": "non-BMP characters (surrogate pairs) in home path",
+   "extra": "",
+   "id": "TSP-W14",
+   "kind": "adsi",
+   "sam": "tspw14",
+   "sets": [
+    [
+     "TerminalServicesHomeDirectory",
+     "\\\\fs1\\home\\emoji-\ud83d\ude00-\ud842\udfb7"
+    ],
+    [
+     "TerminalServicesHomeDrive",
+     "E:"
+    ]
+   ]
+  },
+  {
+   "desc": "dial-in allowed with callback number (msNPAllowDialin, msRADIUSCallbackNumber) plus remote control 1",
+   "extra": "Set-ADUser {sam} -Replace @{msNPAllowDialin=$true; msRADIUSCallbackNumber='5551234'}",
+   "id": "TSP-W15",
+   "kind": "adsi",
+   "sam": "tspw15",
+   "sets": [
+    [
+     "EnableRemoteControl",
+     1
+    ]
+   ]
+  },
+  {
+   "desc": "every field set at once",
+   "extra": "",
+   "id": "TSP-W16",
+   "kind": "adsi",
+   "sam": "tspw16",
+   "sets": [
+    [
+     "AllowLogon",
+     0
+    ],
+    [
+     "EnableRemoteControl",
+     4
+    ],
+    [
+     "MaxConnectionTime",
+     600
+    ],
+    [
+     "MaxDisconnectionTime",
+     30
+    ],
+    [
+     "MaxIdleTime",
+     45
+    ],
+    [
+     "ReconnectionAction",
+     1
+    ],
+    [
+     "BrokenConnectionAction",
+     1
+    ],
+    [
+     "TerminalServicesHomeDirectory",
+     "\\\\fs1\\home\\tspw16"
+    ],
+    [
+     "TerminalServicesHomeDrive",
+     "Q:"
+    ],
+    [
+     "TerminalServicesProfilePath",
+     "\\\\fs1\\prof\\tspw16"
+    ],
+    [
+     "TerminalServicesInitialProgram",
+     "C:\\apps\\all.exe"
+    ],
+    [
+     "TerminalServicesWorkDirectory",
+     "C:\\apps\\work"
+    ]
+   ]
+  },
+  {
+   "desc": "non-ADUC writer (plain LDAP modify): all-space ReservedData, uppercase hex, ANSI-only text, odd property order",
+   "id": "TSP-W17",
+   "kind": "raw",
+   "probe": null,
+   "sam": "tspw17"
+  },
+  {
+   "desc": "non-ADUC writer, as TSP-W17 but with all-zero ReservedData (Windows ignores the settings)",
+   "id": "TSP-W18",
+   "kind": "raw",
+   "probe": null,
+   "sam": "tspw18"
+  },
+  {
+   "desc": "CtxShadow twice: 2 then 4",
+   "id": "PROBE-DUP1",
+   "kind": "probe",
+   "probe": "dup",
+   "sam": "tspd1"
+  },
+  {
+   "desc": "CtxShadow twice: 4 then 2",
+   "id": "PROBE-DUP2",
+   "kind": "probe",
+   "probe": "dup",
+   "sam": "tspd2"
+  },
+  {
+   "desc": "CtxCfgPresent twice: good gate then wrong gate; CtxShadow 4",
+   "id": "PROBE-DUP3",
+   "kind": "probe",
+   "probe": "dup",
+   "sam": "tspd3"
+  },
+  {
+   "desc": "CtxCfgPresent twice: wrong gate first then good gate; CtxShadow 2",
+   "id": "PROBE-DUP4",
+   "kind": "probe",
+   "probe": "dup",
+   "sam": "tspd4"
+  },
+  {
+   "desc": "CtxWFHomeDir twice: \\\\a\\one then \\\\b\\two",
+   "id": "PROBE-DUP5",
+   "kind": "probe",
+   "probe": "dup",
+   "sam": "tspd5"
+  },
+  {
+   "desc": "flags 0x8020F000 with CtxInitialProgram present",
+   "id": "PROBE-INH0A",
+   "kind": "probe",
+   "probe": "inherit",
+   "sam": "tspinh0a"
+  },
+  {
+   "desc": "flags 0x8020F000, no CtxInitialProgram",
+   "id": "PROBE-INH0B",
+   "kind": "probe",
+   "probe": "inherit",
+   "sam": "tspinh0b"
+  },
+  {
+   "desc": "flags 0x9020F000 with CtxInitialProgram present",
+   "id": "PROBE-INH1A",
+   "kind": "probe",
+   "probe": "inherit",
+   "sam": "tspinh1a"
+  },
+  {
+   "desc": "flags 0x9020F000, no CtxInitialProgram",
+   "id": "PROBE-INH1B",
+   "kind": "probe",
+   "probe": "inherit",
+   "sam": "tspinh1b"
+  },
+  {
+   "desc": "flags 0x9220F000, CtxShadow=4",
+   "id": "PROBE-INH-SHADOW-SET",
+   "kind": "probe",
+   "probe": "inherit",
+   "sam": "tspishados"
+  },
+  {
+   "desc": "flags 0x9020F000, CtxShadow=4",
+   "id": "PROBE-INH-SHADOW-CLR",
+   "kind": "probe",
+   "probe": "inherit",
+   "sam": "tspishadoc"
+  },
+  {
+   "desc": "flags 0x9120F000, CtxMaxConnectionTime=600000",
+   "id": "PROBE-INH-MAXCONN-SET",
+   "kind": "probe",
+   "probe": "inherit",
+   "sam": "tspimaxcos"
+  },
+  {
+   "desc": "flags 0x9020F000, CtxMaxConnectionTime=600000",
+   "id": "PROBE-INH-MAXCONN-CLR",
+   "kind": "probe",
+   "probe": "inherit",
+   "sam": "tspimaxcoc"
+  },
+  {
+   "desc": "flags 0x90A0F000, CtxMaxDisconnectionTime=600000",
+   "id": "PROBE-INH-MAXDISC-SET",
+   "kind": "probe",
+   "probe": "inherit",
+   "sam": "tspimaxdis"
+  },
+  {
+   "desc": "flags 0x9020F000, CtxMaxDisconnectionTime=600000",
+   "id": "PROBE-INH-MAXDISC-CLR",
+   "kind": "probe",
+   "probe": "inherit",
+   "sam": "tspimaxdic"
+  },
+  {
+   "desc": "flags 0x9060F000, CtxMaxIdleTime=600000",
+   "id": "PROBE-INH-MAXIDLE-SET",
+   "kind": "probe",
+   "probe": "inherit",
+   "sam": "tspimaxids"
+  },
+  {
+   "desc": "flags 0x9020F000, CtxMaxIdleTime=600000",
+   "id": "PROBE-INH-MAXIDLE-CLR",
+   "kind": "probe",
+   "probe": "inherit",
+   "sam": "tspimaxidc"
+  },
+  {
+   "desc": "gate + CtxShadow 4, no CtxCfgFlags1 (lowercase hex)",
+   "id": "PROBE-NOFLAGS",
+   "kind": "probe",
+   "probe": "gate",
+   "sam": "tspnoflg"
+  },
+  {
+   "desc": "gate + flags + CtxShadow 4 written with UPPERCASE hex digits",
+   "id": "PROBE-UPPERHEX",
+   "kind": "probe",
+   "probe": "gate",
+   "sam": "tspupper"
+  },
+  {
+   "desc": "gate + flags + CtxShadow 4 written with lowercase hex digits",
+   "id": "PROBE-LOWERHEX",
+   "kind": "probe",
+   "probe": "gate",
+   "sam": "tsplower"
+  },
+  {
+   "desc": "CtxShadow 4 first, then gate, then flags",
+   "id": "PROBE-ORDER-GATE-SECOND",
+   "kind": "probe",
+   "probe": "gate",
+   "sam": "tspogs"
+  },
+  {
+   "desc": "flags first, then gate, then CtxShadow 4",
+   "id": "PROBE-ORDER-FLAGS-FIRST",
+   "kind": "probe",
+   "probe": "gate",
+   "sam": "tspoff"
+  },
+  {
+   "desc": "STD + CtxShadow 4 with all-zero ReservedData",
+   "id": "PROBE-RES-ZERO",
+   "kind": "probe",
+   "probe": "gate",
+   "sam": "tsprzero"
+  },
+  {
+   "desc": "STD + CtxShadow 4 with non-zero binary ReservedData",
+   "id": "PROBE-RES-RAS",
+   "kind": "probe",
+   "probe": "gate",
+   "sam": "tsprras"
+  },
+  {
+   "desc": "home dir ONLY in CtxWFHomeDirW, ASCII text",
+   "id": "PROBE-ENC-WIDE-ASCII",
+   "kind": "probe",
+   "probe": "enc",
+   "sam": "tspewasc"
+  },
+  {
+   "desc": "home dir ONLY in CtxWFHomeDirW, contains CJK",
+   "id": "PROBE-ENC-WIDE-CJK",
+   "kind": "probe",
+   "probe": "enc",
+   "sam": "tspewcjk"
+  },
+  {
+   "desc": "home dir ONLY in CtxWFHomeDirW plus CtxWFHomeDirDriveW (no ANSI twins)",
+   "id": "PROBE-ENC-WIDE-DRIVE",
+   "kind": "probe",
+   "probe": "enc",
+   "sam": "tspewdrv"
+  },
+  {
+   "desc": "ANSI text with a high byte and no W twin, ProfilePath",
+   "id": "PROBE-ENC-ANSI-HIGH",
+   "kind": "probe",
+   "probe": "enc",
+   "sam": "tspeahi"
+  },
+  {
+   "desc": "STD + CtxShadow 4; ReservedData zero except the first byte",
+   "id": "PROBE-RES-FIRSTBYTE",
+   "kind": "probe",
+   "probe": "gate",
+   "sam": "tsprfirst"
+  },
+  {
+   "desc": "STD + CtxShadow 4; ReservedData zero except the last byte",
+   "id": "PROBE-RES-LASTBYTE",
+   "kind": "probe",
+   "probe": "gate",
+   "sam": "tsprlast"
+  },
+  {
+   "desc": "STD + CtxShadow 4; ReservedData all U+0020",
+   "id": "PROBE-RES-SPACES",
+   "kind": "probe",
+   "probe": "gate",
+   "sam": "tsprspc"
+  },
+  {
+   "desc": "STD + CtxShadow 4; ReservedData is one U+0020 then zeros",
+   "id": "PROBE-RES-U0020ONLY",
+   "kind": "probe",
+   "probe": "gate",
+   "sam": "tsprsp1"
+  },
+  {
+   "desc": "STD + CtxShadow 4; ReservedData is one U+0201 then zeros",
+   "id": "PROBE-RES-U0201ONLY",
+   "kind": "probe",
+   "probe": "gate",
+   "sam": "tsprsp2"
+  },
+  {
+   "desc": "no session-limit properties at all",
+   "id": "PROBE-ZERO-ABSENT",
+   "kind": "probe",
+   "probe": "zero",
+   "sam": "tspzabs"
+  },
+  {
+   "desc": "all three limits stored as 0",
+   "id": "PROBE-ZERO-0",
+   "kind": "probe",
+   "probe": "zero",
+   "sam": "tspzzero"
+  },
+  {
+   "desc": "all three limits stored as 0xFFFFFFFF",
+   "id": "PROBE-ZERO-MAX",
+   "kind": "probe",
+   "probe": "zero",
+   "sam": "tspzmax"
+  },
+  {
+   "desc": "home dir stored ONLY as ANSI bytes with a non-ASCII byte 0xE9",
+   "id": "PROBE-ENC-ANSI",
+   "kind": "probe",
+   "probe": "enc",
+   "sam": "tspeansi"
+  },
+  {
+   "desc": "home dir stored ONLY in CtxWFHomeDirW as UTF-16LE with U+00E9",
+   "id": "PROBE-ENC-WIDE",
+   "kind": "probe",
+   "probe": "enc",
+   "sam": "tspewide"
+  },
+  {
+   "desc": "CtxWFHomeDir says \\\\a\\ansi, CtxWFHomeDirW says \\\\b\\wide",
+   "id": "PROBE-ENC-DISAGREE",
+   "kind": "probe",
+   "probe": "enc",
+   "sam": "tspedis"
+  }
+ ],
+ "dc": "dc1",
+ "notes": {
+  "ACL": [
+   {
+    "aces": [
+     {
+      "inherited": false,
+      "rights": "ReadProperty",
+      "type": "Allow",
+      "who": "WINLAB\\RAS and IAS Servers"
+     },
+     {
+      "inherited": true,
+      "rights": "ReadProperty",
+      "type": "Allow",
+      "who": "BUILTIN\\Pre-Windows 2000 Compatible Access"
+     },
+     {
+      "inherited": true,
+      "rights": "ReadProperty",
+      "type": "Allow",
+      "who": "BUILTIN\\Pre-Windows 2000 Compatible Access"
+     }
+    ],
+    "userClassDefaultSD_hasPropertySetGuid": true
+   }
+  ],
+  "ACLU": [
+   {
+    "userClassDefaultSD": "D:(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;DA)(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;SY)(A;;RPWPCRCCDCLCLORCWOWDSDDTSW;;;AO)(A;;RPLCLORC;;;PS)(OA;;CR;ab721a53-1e2f-11d0-9819-00aa0040529b;;PS)(OA;;CR;ab721a54-1e2f-11d0-9819-00aa0040529b;;PS)(OA;;CR;ab721a56-1e2f-11d0-9819-00aa0040529b;;PS)(OA;;RPWP;77B5B886-944A-11d1-AEBD-0000F80367C1;;PS)(OA;;RPWP;E45795B2-9455-11d1-AEBD-0000F80367C1;;PS)(OA;;RPWP;E45795B3-9455-11d1-AEBD-0000F80367C1;;PS)(OA;;RP;037088f8-0ae1-11d2-b422-00a0c968f939;;RS)(OA;;RP;4c164200-20c0-11d0-a768-00aa006e0529;;RS)(OA;;RP;bc0ac240-79a9-11d0-9020-00c04fc2d4cf;;RS)(A;;RC;;;AU)(OA;;RP;59ba2f42-79a2-11d0-9020-00c04fc2d3cf;;AU)(OA;;RP;77B5B886-944A-11d1-AEBD-0000F80367C1;;AU)(OA;;RP;E45795B3-9455-11d1-AEBD-0000F80367C1;;AU)(OA;;RP;e48d0154-bcf8-11d1-8702-00c04fb96050;;AU)(OA;;CR;ab721a53-1e2f-11d0-9819-00aa0040529b;;WD)(OA;;RP;5f202010-79a5-11d0-9020-00c04fc2d4cf;;RS)(OA;;RPWP;bf967a7f-0de6-11d0-a285-00aa003049e2;;CA)(OA;;RP;46a9b11d-60ae-405a-b7e8-ff8a58d456d2;;S-1-5-32-560)(OA;;WPRP;6db69a1c-9422-11d1-aebd-0000f80367c1;;S-1-5-32-561)(OA;;WPRP;5805bc62-bdc9-4428-a5e2-856a0f4c185e;;S-1-5-32-561)"
+   }
+  ],
+  "DIALIN": [
+   {
+    "msNPAllowDialin": true,
+    "msNPCallingStationID": [],
+    "msRADIUSCallbackNumber": "5551234"
+   }
+  ],
+  "GC": [
+   {
+    "attrs": [],
+    "entries": 1,
+    "hasUserParameters": false
+   }
+  ],
+  "LONGADSI": [
+   "230 accepted",
+   "255 rejected: Exception calling \"InvokeSet\" with \"2\" argument(s): \"The directory property cannot be found in the cache.",
+   "256 rejected: Exception calling \"InvokeSet\" with \"2\" argument(s): \"The directory property cannot be found in the cache.",
+   "257 rejected: Exception calling \"InvokeSet\" with \"2\" argument(s): \"The directory property cannot be found in the cache.",
+   "300 rejected: Exception calling \"InvokeSet\" with \"2\" argument(s): \"The directory property cannot be found in the cache.",
+   "520 rejected: Exception calling \"InvokeSet\" with \"2\" argument(s): \"The directory property cannot be found in the cache."
+  ],
+  "OS": [
+   "Microsoft Windows Server 2025 Standard Evaluation build 26100 10.0.26100"
+  ],
+  "OVF": [
+   "rejected: Exception calling \"InvokeSet\" with \"2\" argument(s): \"The directory property cannot be found in the cache."
+  ],
+  "PRE2K": [
+   {
+    "members": [
+     "DC1",
+     "Authenticated Users"
+    ]
+   }
+  ],
+  "SCHEMA": [
+   {
+    "attributeSecurityGUID": "4c164200-20c0-11d0-a768-00aa006e0529",
+    "attributeSyntax": "2.5.5.12",
+    "oMSyntax": 64,
+    "partialSet": null,
+    "rangeUpper": 32767,
+    "searchFlags": 0,
+    "systemFlags": 16
+   }
+  ],
+  "USERREAD": [
+   {
+    "cn": "tspw16",
+    "memberOf": [],
+    "reader": "WINLAB\\tspreader",
+    "sam": "tspw16",
+    "sameAsAdmin": true,
+    "userParametersValues": 1
+   }
+  ]
+ },
+ "recs": {
+  "PROBE-DUP1": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 2,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-DUP1",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050041a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e388b0e380b0e380b0e380b0120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tspd1",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "2",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-DUP1-AFTER-ADSI-WRITE": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-DUP1-AFTER-ADSI-WRITE",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050041a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0120801437478536861646f77e38cb0e380b0e380b0e380b0",
+   "sam": "tspd1",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "4",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-DUP2": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-DUP2",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050041a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tspd2",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "4",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-DUP3": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-DUP3",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050041a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b91a080143747843666750726573656e74e390b5e694b1e688b0e381a2120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tspd3",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "4",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-DUP4": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-DUP4",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050041a080143747843666750726573656e74e390b5e694b1e688b0e381a21a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tspd4",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-DUP5": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": "\\\\a\\one",
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-DUP5",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050041a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b91810014374785746486f6d65446972e68cb5e68cb5e384b6e68cb5e698b6e694b6e394b6e380b01810014374785746486f6d65446972e68cb5e68cb5e388b6e68cb5e390b7e39cb7e698b6e380b0",
+   "sam": "tspd5",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "\\\\a\\one",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-DUP5-AFTER-ADSI-WRITE": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": "\\\\b\\two",
+    "TerminalServicesHomeDrive": "Z:",
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-DUP5-AFTER-ADSI-WRITE",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050071a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b91810014374785746486f6d65446972e68cb5e68cb5e388b6e68cb5e390b7e39cb7e698b6e380b02206014374785746486f6d654469724472697665e684b5e684b3e380b0240c014374785746486f6d65446972447269766557e684b5e380b0e684b3e380b0e380b0e380b01814014374785746486f6d65446972e68cb5e68cb5e38cb6e68cb5e390b7e3a0b6e388b7e394b6e394b6e380b01a28014374785746486f6d6544697257e68cb5e380b0e68cb5e380b0e38cb6e380b0e68cb5e380b0e390b7e380b0e3a0b6e380b0e388b7e380b0e394b6e380b0e394b6e380b0e380b0e380b0",
+   "sam": "tspd5",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "\\\\b\\two",
+    "HomeDirDrive": "Z:",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "1",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-ENC-ANSI": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": "\\\\fs1\\caf\ufffd",
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-ENC-ANSI",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b91816014374785746486f6d65446972e68cb5e68cb5e398b6e38cb7e384b3e68cb5e38cb6e384b6e398b6e3a5a5e380b0",
+   "sam": "tspeansi",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "\\\\fs1\\caf\ufffd",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-ENC-ANSI-HIGH": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": "\\\\fs1\\caf\ufffd",
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-ENC-ANSI-HIGH",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9201601437478574650726f66696c6550617468e68cb5e68cb5e398b6e38cb7e384b3e68cb5e38cb6e384b6e398b6e3a5a5e380b0",
+   "sam": "tspeahi",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "\\\\fs1\\caf\ufffd",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-ENC-DISAGREE": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": "\\\\a\\ansi",
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-ENC-DISAGREE",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050041a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b91812014374785746486f6d65446972e68cb5e68cb5e384b6e68cb5e384b6e694b6e38cb7e3a4b6e380b01a24014374785746486f6d6544697257e68cb5e380b0e68cb5e380b0e388b6e380b0e68cb5e380b0e39cb7e380b0e3a4b6e380b0e390b6e380b0e394b6e380b0e380b0e380b0",
+   "sam": "tspedis",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "\\\\a\\ansi",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-ENC-WIDE": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-ENC-WIDE",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b91a2c014374785746486f6d6544697257e68cb5e380b0e68cb5e380b0e398b6e380b0e38cb7e380b0e384b3e380b0e68cb5e380b0e38cb6e380b0e384b6e380b0e398b6e380b0e3a5a5e380b0e380b0e380b0",
+   "sam": "tspewide",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-ENC-WIDE-ASCII": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-ENC-WIDE-ASCII",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b91a30014374785746486f6d6544697257e68cb5e380b0e68cb5e380b0e398b6e380b0e38cb7e380b0e384b3e380b0e68cb5e380b0e380b7e380b0e68cb6e380b0e384b6e380b0e3a4b6e380b0e694b6e380b0e380b0e380b0",
+   "sam": "tspewasc",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-ENC-WIDE-CJK": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": "\\\\fs1\\??",
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-ENC-WIDE-CJK",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b91a24014374785746486f6d6544697257e68cb5e380b0e68cb5e380b0e398b6e380b0e38cb7e380b0e384b3e380b0e68cb5e380b0e3a0b2e394b7e39cb3e388b6e380b0e380b0",
+   "sam": "tspewcjk",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "\\\\fs1\\??",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-ENC-WIDE-DRIVE": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-ENC-WIDE-DRIVE",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050041a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b91a30014374785746486f6d6544697257e68cb5e380b0e68cb5e380b0e398b6e380b0e38cb7e380b0e384b3e380b0e68cb5e380b0e380b7e380b0e68cb6e380b0e384b6e380b0e3a4b6e380b0e694b6e380b0e380b0e380b0240c014374785746486f6d65446972447269766557e688b4e380b0e684b3e380b0e380b0e380b0",
+   "sam": "tspewdrv",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-INH-MAXCONN-CLR": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 10,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-INH-MAXCONN-CLR",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b92808014374784d6178436f6e6e656374696f6e54696d65e381a3e39cb2e3a4b0e380b0",
+   "sam": "tspimaxcoc",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "600000",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-INH-MAXCONN-SET": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 10,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-INH-MAXCONN-SET",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e384b92808014374784d6178436f6e6e656374696f6e54696d65e381a3e39cb2e3a4b0e380b0",
+   "sam": "tspimaxcos",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "600000",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-INH-MAXDISC-CLR": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 10,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-INH-MAXDISC-CLR",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b92e08014374784d6178446973636f6e6e656374696f6e54696d65e381a3e39cb2e3a4b0e380b0",
+   "sam": "tspimaxdic",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "600000",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-INH-MAXDISC-SET": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 10,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-INH-MAXDISC-SET",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e381a1e380b92e08014374784d6178446973636f6e6e656374696f6e54696d65e381a3e39cb2e3a4b0e380b0",
+   "sam": "tspimaxdis",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "600000",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-INH-MAXIDLE-CLR": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 10,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-INH-MAXIDLE-CLR",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b91c08014374784d617849646c6554696d65e381a3e39cb2e3a4b0e380b0",
+   "sam": "tspimaxidc",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "600000",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-INH-MAXIDLE-SET": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 10,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-INH-MAXIDLE-SET",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b6e380b91c08014374784d617849646c6554696d65e381a3e39cb2e3a4b0e380b0",
+   "sam": "tspimaxids",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "600000",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-INH-SHADOW-CLR": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-INH-SHADOW-CLR",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tspishadoc",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "4",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-INH-SHADOW-SET": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-INH-SHADOW-SET",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e388b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tspishados",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "4",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-INH0A": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": "C:\\p.exe",
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-INH0A",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b8221201437478496e697469616c50726f6772616de38cb4e684b3e68cb5e380b7e694b2e394b6e3a0b7e394b6e380b0",
+   "sam": "tspinh0a",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "0",
+    "InitialProgram": "C:\\p.exe",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-INH0B": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-INH0B",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050021a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b8",
+   "sam": "tspinh0b",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "0",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-INH1A": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": "C:\\p.exe",
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-INH1A",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9221201437478496e697469616c50726f6772616de38cb4e684b3e68cb5e380b7e694b2e394b6e3a0b7e394b6e380b0",
+   "sam": "tspinh1a",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "0",
+    "InitialProgram": "C:\\p.exe",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-INH1B": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-INH1B",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050021a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9",
+   "sam": "tspinh1b",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-LONG-ADSI": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": "\\\\h\\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "TerminalServicesHomeDrive": "Z:",
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-LONG-ADSI",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050061a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b92206014374785746486f6d654469724472697665e684b5e684b3e380b0240c014374785746486f6d65446972447269766557e684b5e380b0e684b3e380b0e380b0e380b018c796014374785746486f6d65446972e68cb5e68cb5e3a0b6e68cb5e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e384b6e380b01aceac014374785746486f6d6544697257e68cb5e380b0e68cb5e380b0e3a0b6e380b0e68cb5e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e384b6e380b0e380b0e380b0",
+   "sam": "tsplong",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "\\\\h\\aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "HomeDirDrive": "Z:",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "1",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-LOWERHEX": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-LOWERHEX",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tsplower",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "4",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-NOFLAGS": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-NOFLAGS",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050021a080143747843666750726573656e74e394b5e694b1e688b0e381a2120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tspnoflg",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-ORDER-FLAGS-FIRST": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-ORDER-FLAGS-FIRST",
+   "octets": "43747843666750726573656e7420202020202020202020202020202020202020202020202020202020202020202020205003180801437478436667466c61677331e380b0e381a6e380b2e380b91a080143747843666750726573656e74e394b5e694b1e688b0e381a2120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tspoff",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "4",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-ORDER-GATE-SECOND": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-ORDER-GATE-SECOND",
+   "octets": "43747843666750726573656e7420202020202020202020202020202020202020202020202020202020202020202020205003120801437478536861646f77e390b0e380b0e380b0e380b01a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9",
+   "sam": "tspogs",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "4",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-OVERFLOW-100000MIN": {
+   "adsi": {
+    "AllowLogon": null,
+    "BrokenConnectionAction": null,
+    "EnableRemoteControl": null,
+    "MaxConnectionTime": null,
+    "MaxDisconnectionTime": null,
+    "MaxIdleTime": null,
+    "ReconnectionAction": null,
+    "TerminalServicesHomeDirectory": null,
+    "TerminalServicesHomeDrive": null,
+    "TerminalServicesInitialProgram": null,
+    "TerminalServicesProfilePath": null,
+    "TerminalServicesWorkDirectory": null
+   },
+   "label": "PROBE-OVERFLOW-100000MIN",
+   "octets": "(absent)",
+   "sam": "tspovf",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-RES-FIRSTBYTE": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-RES-FIRSTBYTE",
+   "octets": "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tsprfirst",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-RES-LASTBYTE": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-RES-LASTBYTE",
+   "octets": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c48050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tsprlast",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-RES-RAS": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-RES-RAS",
+   "octets": "c881d083d885e0a087e0a889e0b08be0b88de1808fe18891e19093e19895e1a097e1a899e1b09be1b89de2809fe288a1e290a3e298a5e2a0a7e2a8a9e2b0abe2b8ade380afe388b1e390b3e398b5e3a0b7e3a8b9e3b0bbe3b8bde480bfe48981e49183e49985e4a187e4a989e4b18be4b98de5818fe58991e59193e59995e5a197e5a999e5b19be5b99de6819f50031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tsprras",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "4",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-RES-SPACES": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-RES-SPACES",
+   "octets": "20202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tsprspc",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "4",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-RES-U0020ONLY": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-RES-U0020ONLY",
+   "octets": "20000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tsprsp1",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-RES-U0201ONLY": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-RES-U0201ONLY",
+   "octets": "c881000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tsprsp2",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-RES-ZERO": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-RES-ZERO",
+   "octets": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tsprzero",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-UPPERHEX": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-UPPERHEX",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e494b1e488b0e38182180801437478436667466c61677331e380b0e38186e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tspupper",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "4",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-ZERO-0": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-ZERO-0",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050051a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b92808014374784d6178436f6e6e656374696f6e54696d65e380b0e380b0e380b0e380b02e08014374784d6178446973636f6e6e656374696f6e54696d65e380b0e380b0e380b0e380b01c08014374784d617849646c6554696d65e380b0e380b0e380b0e380b0",
+   "sam": "tspzzero",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-ZERO-ABSENT": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-ZERO-ABSENT",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050011a080143747843666750726573656e74e394b5e694b1e688b0e381a2",
+   "sam": "tspzabs",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "PROBE-ZERO-MAX": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "PROBE-ZERO-MAX",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050051a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b92808014374784d6178436f6e6e656374696f6e54696d65e699a6e699a6e699a6e699a62e08014374784d6178446973636f6e6e656374696f6e54696d65e699a6e699a6e699a6e699a61c08014374784d617849646c6554696d65e699a6e699a6e699a6e699a6",
+   "sam": "tspzmax",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "-1",
+    "MaxDisconnection": "-1",
+    "MaxIdle": "-1",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W01": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W01",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050021a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9",
+   "sam": "tspw01",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W02": {
+   "adsi": {
+    "AllowLogon": 0,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W02",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050021a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e384b2e380b9",
+   "sam": "tspw02",
+   "wts": {
+    "AllowLogon": "0",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W03": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 0,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W03",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e380b0e380b0e380b0e380b0",
+   "sam": "tspw03",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "0",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W04": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W04",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e384b0e380b0e380b0e380b0",
+   "sam": "tspw04",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W05": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 2,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W05",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e388b0e380b0e380b0e380b0",
+   "sam": "tspw05",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "2",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W06": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 3,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W06",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e38cb0e380b0e380b0e380b0",
+   "sam": "tspw06",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "3",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W07": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W07",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e390b0e380b0e380b0e380b0",
+   "sam": "tspw07",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "4",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W08": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 1,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 90,
+    "MaxDisconnectionTime": 7,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 1,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W08",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050051a080143747843666750726573656e74e394b5e694b1e688b0e381a22808014374784d6178436f6e6e656374696f6e54696d65e381a3e394b6e388b5e380b02e08014374784d6178446973636f6e6e656374696f6e54696d65e381a1e3a0b6e398b0e380b01c08014374784d617849646c6554696d65e380b0e380b0e380b0e380b0180801437478436667466c61677331e380b0e381a6e398b2e380b9",
+   "sam": "tspw08",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "1",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "5400000",
+    "MaxDisconnection": "420000",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "1",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W09": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": "\\\\fs1\\home\\tspw09",
+    "TerminalServicesHomeDrive": "H:",
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": "\\\\fs1\\prof\\tspw09",
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W09",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050081a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b91824014374785746486f6d65446972e68cb5e68cb5e398b6e38cb7e384b3e68cb5e3a0b6e698b6e690b6e394b6e68cb5e390b7e38cb7e380b7e39cb7e380b3e3a4b3e380b01a48014374785746486f6d6544697257e68cb5e380b0e68cb5e380b0e398b6e380b0e38cb7e380b0e384b3e380b0e68cb5e380b0e3a0b6e380b0e698b6e380b0e690b6e380b0e394b6e380b0e68cb5e380b0e390b7e380b0e38cb7e380b0e380b7e380b0e39cb7e380b0e380b3e380b0e3a4b3e380b0e380b0e380b02206014374785746486f6d654469724472697665e3a0b4e684b3e380b0240c014374785746486f6d65446972447269766557e3a0b4e380b0e684b3e380b0e380b0e380b0202401437478574650726f66696c6550617468e68cb5e68cb5e398b6e38cb7e384b3e68cb5e380b7e388b7e698b6e398b6e68cb5e390b7e38cb7e380b7e39cb7e380b3e3a4b3e380b0224801437478574650726f66696c655061746857e68cb5e380b0e68cb5e380b0e398b6e380b0e38cb7e380b0e384b3e380b0e68cb5e380b0e380b7e380b0e388b7e380b0e698b6e380b0e398b6e380b0e68cb5e380b0e390b7e380b0e38cb7e380b0e380b7e380b0e39cb7e380b0e380b3e380b0e3a4b3e380b0e380b0e380b0",
+   "sam": "tspw09",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "\\\\fs1\\home\\tspw09",
+    "HomeDirDrive": "H:",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "\\\\fs1\\prof\\tspw09",
+    "Reconnect": "0",
+    "RemoteHomeDir": "1",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W10": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": "C:\\Users\\tspw10",
+    "TerminalServicesHomeDrive": "",
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W10",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050061a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b92202014374785746486f6d654469724472697665e380b02404014374785746486f6d65446972447269766557e380b0e380b01820014374785746486f6d65446972e38cb4e684b3e68cb5e394b5e38cb7e394b6e388b7e38cb7e68cb5e390b7e38cb7e380b7e39cb7e384b3e380b3e380b01a40014374785746486f6d6544697257e38cb4e380b0e684b3e380b0e68cb5e380b0e394b5e380b0e38cb7e380b0e394b6e380b0e388b7e380b0e38cb7e380b0e68cb5e380b0e390b7e380b0e38cb7e380b0e380b7e380b0e39cb7e380b0e384b3e380b0e380b3e380b0e380b0e380b0",
+   "sam": "tspw10",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "C:\\Users\\tspw10",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W11": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": "C:\\apps\\tool.exe /s",
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": "C:\\apps"
+   },
+   "label": "TSP-W11",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050061a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b8222801437478496e697469616c50726f6772616de38cb4e684b3e68cb5e384b6e380b7e380b7e38cb7e68cb5e390b7e698b6e698b6e68cb6e694b2e394b6e3a0b7e394b6e380b2e698b2e38cb7e380b0245001437478496e697469616c50726f6772616d57e38cb4e380b0e684b3e380b0e68cb5e380b0e384b6e380b0e380b7e380b0e380b7e380b0e38cb7e380b0e68cb5e380b0e390b7e380b0e698b6e380b0e698b6e380b0e68cb6e380b0e694b2e380b0e394b6e380b0e3a0b7e380b0e394b6e380b0e380b2e380b0e698b2e380b0e38cb7e380b0e380b0e380b0201001437478576f726b4469726563746f7279e38cb4e684b3e68cb5e384b6e380b7e380b7e38cb7e380b0222001437478576f726b4469726563746f727957e38cb4e380b0e684b3e380b0e68cb5e380b0e384b6e380b0e380b7e380b0e380b7e380b0e38cb7e380b0e380b0e380b0",
+   "sam": "tspw11",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "0",
+    "InitialProgram": "C:\\apps\\tool.exe /s",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": "C:\\apps"
+   }
+  },
+  "TSP-W12": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": "\\\\fs1\\home\\segment00_xxxxxxxxxxxxxxxxxxxx\\segment01_xxxxxxxxxxxxxxxxxxxx\\segment02_xxxxxxxxxxxxxxxxxxxx\\segment03_xxxxxxxxxxxxxxxxxxxx\\segment04_xxxxxxxxxxxxxxxxxxxx\\segment05_xxxxxxxxxxxxxxxxxxxx",
+    "TerminalServicesHomeDrive": "Z:",
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": "\\\\fs1\\profiles\\p00_yyyyyyyyyyyyyyyyyyyyyy\\p01_yyyyyyyyyyyyyyyyyyyyyy\\p02_yyyyyyyyyyyyyyyyyyyyyy\\p03_yyyyyyyyyyyyyyyyyyyyyy\\p04_yyyyyyyyyyyyyyyyyyyyyy\\p05_yyyyyyyyyyyyyyyyyyyyyy\\p06_yyyyyyyyyyyyyyyyyyyyyy\\p07_yyyyyyyyyyyyyyyyyyyyyy",
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W12",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050081a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b918c68a014374785746486f6d65446972e68cb5e68cb5e398b6e38cb7e384b3e68cb5e3a0b6e698b6e690b6e394b6e68cb5e38cb7e394b6e39cb6e690b6e394b6e694b6e390b7e380b3e380b3e698b5e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e68cb5e38cb7e394b6e39cb6e690b6e394b6e694b6e390b7e380b3e384b3e698b5e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e68cb5e38cb7e394b6e39cb6e690b6e394b6e694b6e390b7e380b3e388b3e698b5e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e68cb5e38cb7e394b6e39cb6e690b6e394b6e694b6e390b7e380b3e38cb3e698b5e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e68cb5e38cb7e394b6e39cb6e690b6e394b6e694b6e390b7e380b3e390b3e698b5e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e68cb5e38cb7e394b6e39cb6e690b6e394b6e694b6e390b7e380b3e394b3e698b5e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e3a0b7e380b01acc94014374785746486f6d6544697257e68cb5e380b0e68cb5e380b0e398b6e380b0e38cb7e380b0e384b3e380b0e68cb5e380b0e3a0b6e380b0e698b6e380b0e690b6e380b0e394b6e380b0e68cb5e380b0e38cb7e380b0e394b6e380b0e39cb6e380b0e690b6e380b0e394b6e380b0e694b6e380b0e390b7e380b0e380b3e380b0e380b3e380b0e698b5e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e68cb5e380b0e38cb7e380b0e394b6e380b0e39cb6e380b0e690b6e380b0e394b6e380b0e694b6e380b0e390b7e380b0e380b3e380b0e384b3e380b0e698b5e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e68cb5e380b0e38cb7e380b0e394b6e380b0e39cb6e380b0e690b6e380b0e394b6e380b0e694b6e380b0e390b7e380b0e380b3e380b0e388b3e380b0e698b5e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e68cb5e380b0e38cb7e380b0e394b6e380b0e39cb6e380b0e690b6e380b0e394b6e380b0e694b6e380b0e390b7e380b0e380b3e380b0e38cb3e380b0e698b5e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e68cb5e380b0e38cb7e380b0e394b6e380b0e39cb6e380b0e690b6e380b0e394b6e380b0e694b6e380b0e390b7e380b0e380b3e380b0e390b3e380b0e698b5e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e68cb5e380b0e38cb7e380b0e394b6e380b0e39cb6e380b0e690b6e380b0e394b6e380b0e694b6e380b0e390b7e380b0e380b3e380b0e394b3e380b0e698b5e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e3a0b7e380b0e380b0e380b02206014374785746486f6d654469724472697665e684b5e684b3e380b0240c014374785746486f6d65446972447269766557e684b5e380b0e684b3e380b0e380b0e380b020c78e01437478574650726f66696c6550617468e68cb5e68cb5e398b6e38cb7e384b3e68cb5e380b7e388b7e698b6e398b6e3a4b6e68cb6e394b6e38cb7e68cb5e380b7e380b3e380b3e698b5e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e68cb5e380b7e380b3e384b3e698b5e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e68cb5e380b7e380b3e388b3e698b5e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e68cb5e380b7e380b3e38cb3e698b5e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e68cb5e380b7e380b3e390b3e698b5e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e68cb5e380b7e380b3e394b3e698b5e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e68cb5e380b7e380b3e398b3e698b5e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e68cb5e380b7e380b3e39cb3e698b5e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e3a4b7e380b022ce9c01437478574650726f66696c655061746857e68cb5e380b0e68cb5e380b0e398b6e380b0e38cb7e380b0e384b3e380b0e68cb5e380b0e380b7e380b0e388b7e380b0e698b6e380b0e398b6e380b0e3a4b6e380b0e68cb6e380b0e394b6e380b0e38cb7e380b0e68cb5e380b0e380b7e380b0e380b3e380b0e380b3e380b0e698b5e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e68cb5e380b0e380b7e380b0e380b3e380b0e384b3e380b0e698b5e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e68cb5e380b0e380b7e380b0e380b3e380b0e388b3e380b0e698b5e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e68cb5e380b0e380b7e380b0e380b3e380b0e38cb3e380b0e698b5e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e68cb5e380b0e380b7e380b0e380b3e380b0e390b3e380b0e698b5e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e68cb5e380b0e380b7e380b0e380b3e380b0e394b3e380b0e698b5e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e68cb5e380b0e380b7e380b0e380b3e380b0e398b3e380b0e698b5e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e68cb5e380b0e380b7e380b0e380b3e380b0e39cb3e380b0e698b5e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e3a4b7e380b0e380b0e380b0",
+   "sam": "tspw12",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "\\\\fs1\\home\\segment00_xxxxxxxxxxxxxxxxxxxx\\segment01_xxxxxxxxxxxxxxxxxxxx\\segment02_xxxxxxxxxxxxxxxxxxxx\\segment03_xxxxxxxxxxxxxxxxxxxx\\segment04_xxxxxxxxxxxxxxxxxxxx\\segment05_xxxxxxxxxxxxxxxxxxxx",
+    "HomeDirDrive": "Z:",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "\\\\fs1\\profiles\\p00_yyyyyyyyyyyyyyyyyyyyyy\\p01_yyyyyyyyyyyyyyyyyyyyyy\\p02_yyyyyyyyyyyyyyyyyyyyyy\\p03_yyyyyyyyyyyyyyyyyyyyyy\\p04_yyyyyyyyyyyyyyyyyyyyyy\\p05_yyyyyyyyyyyyyyyyyyyyyy\\p06_yyyyyyyyyyyyyyyyyyyyyy\\p07_yyyyyyyyyyyyyyyyyyyyyy",
+    "Reconnect": "0",
+    "RemoteHomeDir": "1",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W13": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": "\\\\fs1\\home\\Zo\ufffd-??-\ufffdn\ufffdcode-???",
+    "TerminalServicesHomeDrive": "N:",
+    "TerminalServicesInitialProgram": "C:\\apps\\Zo\ufffd??.exe",
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W13",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050061a080143747843666750726573656e74e394b5e694b1e688b0e381a21a78014374785746486f6d6544697257e68cb5e380b0e68cb5e380b0e398b6e380b0e38cb7e380b0e384b3e380b0e68cb5e380b0e3a0b6e380b0e698b6e380b0e690b6e380b0e394b6e380b0e68cb5e380b0e684b5e380b0e698b6e380b0e689a5e380b0e690b2e380b0e3a0b2e394b7e39cb3e388b6e690b2e380b0e68da4e380b0e694b6e380b0e699a5e380b0e38cb6e380b0e698b6e380b0e390b6e380b0e394b6e380b0e690b2e380b0e390b3e390b0e694b3e390b0e68cb3e390b0e380b0e380b02206014374785746486f6d654469724472697665e694b4e684b3e380b0240c014374785746486f6d65446972447269766557e694b4e380b0e684b3e380b0e380b0e380b0180801437478436667466c61677331e380b0e381a6e380b2e380b8244801437478496e697469616c50726f6772616d57e38cb4e380b0e684b3e380b0e68cb5e380b0e384b6e380b0e380b7e380b0e380b7e380b0e38cb7e380b0e68cb5e380b0e684b5e380b0e698b6e380b0e689a5e380b0e3a0b2e394b7e39cb3e388b6e694b2e380b0e394b6e380b0e3a0b7e380b0e394b6e380b0e380b0e380b0",
+   "sam": "tspw13",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "\\\\fs1\\home\\Zo\ufffd-??-\ufffdn\ufffdcode-???",
+    "HomeDirDrive": "N:",
+    "InheritInitialProgram": "0",
+    "InitialProgram": "C:\\apps\\Zo\ufffd??.exe",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "1",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W14": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": "\\\\fs1\\home\\emoji-??-??",
+    "TerminalServicesHomeDrive": "E:",
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W14",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050051a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b91a5c014374785746486f6d6544697257e68cb5e380b0e68cb5e380b0e398b6e380b0e38cb7e380b0e384b3e380b0e68cb5e380b0e3a0b6e380b0e698b6e380b0e690b6e380b0e394b6e380b0e68cb5e380b0e394b6e380b0e690b6e380b0e698b6e380b0e684b6e380b0e3a4b6e380b0e690b2e380b0e690b3e3a1a4e380b0e695a4e690b2e380b0e388b4e3a1a4e39da2e699a4e380b0e380b02206014374785746486f6d654469724472697665e394b4e684b3e380b0240c014374785746486f6d65446972447269766557e394b4e380b0e684b3e380b0e380b0e380b0",
+   "sam": "tspw14",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "\\\\fs1\\home\\emoji-??-??",
+    "HomeDirDrive": "E:",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "1",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W15": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W15",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050031a080143747843666750726573656e74e394b5e694b1e688b0e381a2180801437478436667466c61677331e380b0e381a6e380b2e380b9120801437478536861646f77e384b0e380b0e380b0e380b0",
+   "sam": "tspw15",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W16": {
+   "adsi": {
+    "AllowLogon": 0,
+    "BrokenConnectionAction": 1,
+    "EnableRemoteControl": 4,
+    "MaxConnectionTime": 600,
+    "MaxDisconnectionTime": 30,
+    "MaxIdleTime": 45,
+    "ReconnectionAction": 1,
+    "TerminalServicesHomeDirectory": "\\\\fs1\\home\\tspw16",
+    "TerminalServicesHomeDrive": "Q:",
+    "TerminalServicesInitialProgram": "C:\\apps\\all.exe",
+    "TerminalServicesProfilePath": "\\\\fs1\\prof\\tspw16",
+    "TerminalServicesWorkDirectory": "C:\\apps\\work"
+   },
+   "label": "TSP-W16",
+   "octets": "43747843666750726573656e74202020202020202020202020202020202020202020202020202020202020202020202050101a080143747843666750726573656e74e394b5e694b1e688b0e381a2120801437478536861646f77e390b0e380b0e380b0e380b02808014374784d6178436f6e6e656374696f6e54696d65e380b0e384b5e394b2e388b02e08014374784d6178446973636f6e6e656374696f6e54696d65e380b4e39cb7e688b1e380b01c08014374784d617849646c6554696d65e381a5e388b3e3a4b2e380b01824014374785746486f6d65446972e68cb5e68cb5e398b6e38cb7e384b3e68cb5e3a0b6e698b6e690b6e394b6e68cb5e390b7e38cb7e380b7e39cb7e384b3e398b3e380b01a48014374785746486f6d6544697257e68cb5e380b0e68cb5e380b0e398b6e380b0e38cb7e380b0e384b3e380b0e68cb5e380b0e3a0b6e380b0e698b6e380b0e690b6e380b0e394b6e380b0e68cb5e380b0e390b7e380b0e38cb7e380b0e380b7e380b0e39cb7e380b0e384b3e380b0e398b3e380b0e380b0e380b02206014374785746486f6d654469724472697665e384b5e684b3e380b0240c014374785746486f6d65446972447269766557e384b5e380b0e684b3e380b0e380b0e380b0202401437478574650726f66696c6550617468e68cb5e68cb5e398b6e38cb7e384b3e68cb5e380b7e388b7e698b6e398b6e68cb5e390b7e38cb7e380b7e39cb7e384b3e398b3e380b0224801437478574650726f66696c655061746857e68cb5e380b0e68cb5e380b0e398b6e380b0e38cb7e380b0e384b3e380b0e68cb5e380b0e380b7e380b0e388b7e380b0e698b6e380b0e398b6e380b0e68cb5e380b0e390b7e380b0e38cb7e380b0e380b7e380b0e39cb7e380b0e384b3e380b0e398b3e380b0e380b0e380b0180801437478436667466c61677331e380b0e381a6e39cb2e380b8222001437478496e697469616c50726f6772616de38cb4e684b3e68cb5e384b6e380b7e380b7e38cb7e68cb5e384b6e68cb6e68cb6e694b2e394b6e3a0b7e394b6e380b0244001437478496e697469616c50726f6772616d57e38cb4e380b0e684b3e380b0e68cb5e380b0e384b6e380b0e380b7e380b0e380b7e380b0e38cb7e380b0e68cb5e380b0e384b6e380b0e68cb6e380b0e68cb6e380b0e694b2e380b0e394b6e380b0e3a0b7e380b0e394b6e380b0e380b0e380b0201a01437478576f726b4469726563746f7279e38cb4e684b3e68cb5e384b6e380b7e380b7e38cb7e68cb5e39cb7e698b6e388b7e688b6e380b0223401437478576f726b4469726563746f727957e38cb4e380b0e684b3e380b0e68cb5e380b0e384b6e380b0e380b7e380b0e380b7e380b0e38cb7e380b0e68cb5e380b0e39cb7e380b0e698b6e380b0e388b7e380b0e688b6e380b0e380b0e380b0",
+   "sam": "tspw16",
+   "wts": {
+    "AllowLogon": "0",
+    "BrokenTimeout": "1",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "\\\\fs1\\home\\tspw16",
+    "HomeDirDrive": "Q:",
+    "InheritInitialProgram": "0",
+    "InitialProgram": "C:\\apps\\all.exe",
+    "MaxConnection": "36000000",
+    "MaxDisconnection": "1800000",
+    "MaxIdle": "2700000",
+    "ProfilePath": "\\\\fs1\\prof\\tspw16",
+    "Reconnect": "1",
+    "RemoteHomeDir": "1",
+    "Shadowing": "4",
+    "WorkDirectory": "C:\\apps\\work"
+   }
+  },
+  "TSP-W17": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 3,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 2,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": "\\\\fs1\\tp\\home",
+    "TerminalServicesHomeDrive": "T:",
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": "\\\\fs1\\tp\\prof",
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W17",
+   "octets": "2020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020205007201c01437478574650726f66696c6550617468e48cb5e48cb5e398b6e38cb7e384b3e48cb5e390b7e380b7e48cb5e380b7e388b7e498b6e398b6e380b0120801437478536861646f77e38cb0e380b0e380b0e380b01a080143747843666750726573656e74e394b5e494b1e488b0e38182180801437478436667466c61677331e380b0e38186e380b2e380b91c08014374784d617849646c6554696d65e38183e39184e384b0e380b0181c014374785746486f6d65446972e48cb5e48cb5e398b6e38cb7e384b3e48cb5e390b7e380b7e48cb5e3a0b6e498b6e490b6e394b6e380b02206014374785746486f6d654469724472697665e390b5e484b3e380b0",
+   "sam": "tspw17",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "\\\\fs1\\tp\\home",
+    "HomeDirDrive": "T:",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "120000",
+    "ProfilePath": "\\\\fs1\\tp\\prof",
+    "Reconnect": "0",
+    "RemoteHomeDir": "1",
+    "Shadowing": "3",
+    "WorkDirectory": ""
+   }
+  },
+  "TSP-W18": {
+   "adsi": {
+    "AllowLogon": 1,
+    "BrokenConnectionAction": 0,
+    "EnableRemoteControl": 1,
+    "MaxConnectionTime": 0,
+    "MaxDisconnectionTime": 0,
+    "MaxIdleTime": 0,
+    "ReconnectionAction": 0,
+    "TerminalServicesHomeDirectory": 0,
+    "TerminalServicesHomeDrive": 0,
+    "TerminalServicesInitialProgram": 0,
+    "TerminalServicesProfilePath": 0,
+    "TerminalServicesWorkDirectory": 0
+   },
+   "label": "TSP-W18",
+   "octets": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005007201c01437478574650726f66696c6550617468e48cb5e48cb5e398b6e38cb7e384b3e48cb5e390b7e380b7e48cb5e380b7e388b7e498b6e398b6e380b0120801437478536861646f77e38cb0e380b0e380b0e380b01a080143747843666750726573656e74e394b5e494b1e488b0e38182180801437478436667466c61677331e380b0e38186e380b2e380b91c08014374784d617849646c6554696d65e38183e39184e384b0e380b0181c014374785746486f6d65446972e48cb5e48cb5e398b6e38cb7e384b3e48cb5e390b7e380b7e48cb5e3a0b6e498b6e490b6e394b6e380b02206014374785746486f6d654469724472697665e390b5e484b3e380b0",
+   "sam": "tspw18",
+   "wts": {
+    "AllowLogon": "1",
+    "BrokenTimeout": "0",
+    "ClientDrives": "1",
+    "ClientPrinters": "1",
+    "DefaultPrinter": "1",
+    "HomeDir": "",
+    "HomeDirDrive": "",
+    "InheritInitialProgram": "1",
+    "InitialProgram": "",
+    "MaxConnection": "0",
+    "MaxDisconnection": "0",
+    "MaxIdle": "0",
+    "ProfilePath": "",
+    "Reconnect": "0",
+    "RemoteHomeDir": "0",
+    "Shadowing": "1",
+    "WorkDirectory": ""
+   }
+  }
+ }
+}

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
+	"github.com/skenzeriq/activediq/internal/directory/sd"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 )
@@ -175,6 +177,13 @@ type Observation struct {
 	// not stored.
 	HasSPN     *bool
 	InputsRead InputsRead
+
+	// PasswordChange is the Cannot Change Password state the sync classified from the DACL read path
+	// (sd.ClassifyPasswordChange, never a hand-parsed descriptor), and PasswordChangeAt is when that
+	// read happened. A zero PasswordChangeAt means no read was attempted: the state must then be the
+	// zero value (NotConfirmed). A failed read is recorded as NotConfirmed WITH a time. Users only.
+	PasswordChange   sd.PasswordChange
+	PasswordChangeAt time.Time
 
 	// PrimaryGroup is a user's primaryGroupID resolved to the group (DM-17.I2). Zero: none observed.
 	PrimaryGroup GUID
@@ -446,6 +455,10 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		if len(o.ConsistencyGUID) > 0 {
 			cg = o.ConsistencyGUID
 		}
+		var pwState any
+		if !o.PasswordChangeAt.IsZero() {
+			pwState = o.PasswordChange.String()
+		}
 		var w written
 		err := tx.QueryRow(ctx, upsertObjectSQL,
 			string(connection), string(o.Object), nullGUID(o.NC), string(o.Kind), o.Class,
@@ -453,7 +466,8 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			nullTime(o.LockoutTime), nullTime(o.PwdLastSet), nullTime(o.AccountExpires),
 			cg, string(attrs[i]), nullTime(o.WhenCreated), nullTime(o.WhenChanged), observed.UTC(), o.ObservedDSA, cloud, string(o.State),
 			syncEnabledVal, cloudManagedVal, nilIfEmpty(o.OnPremisesSecurityIdentifier), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID),
-			o.UserAccountControl, o.PrimaryGroupID, nullTime(o.LastLogonTimestamp), o.HasSPN, int16(o.InputsRead)).
+			o.UserAccountControl, o.PrimaryGroupID, nullTime(o.LastLogonTimestamp), o.HasSPN, int16(o.InputsRead),
+			pwState, nullTime(o.PasswordChangeAt)).
 			Scan(&w.inserted, &w.moved, &w.completeChanged)
 		if store.IsNoRows(err) {
 			out.Stale++
@@ -564,7 +578,8 @@ const upsertObjectSQL = `WITH old AS (
 			parent_guid, ancestry, dn, rdn, sid, sam_account_name, upn, display_name, enabled, lockout_time, pwd_last_set, account_expires,
 			consistency_guid, attributes, when_created, when_changed, observed_at, observed_dsa, cloud_seen_at, state,
 			on_prem_sync_enabled, on_prem_cloud_managed, on_prem_sid, on_prem_domain_name, on_prem_immutable_id, ancestry_complete,
-			user_account_control, primary_group_id, last_logon_timestamp, spn_present, inputs_read)
+			user_account_control, primary_group_id, last_logon_timestamp, spn_present, inputs_read,
+			password_change_state, password_change_at)
 		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $4, $5,
 			$6::uuid, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25,
 			$26, $27, $28, $29, $30,
@@ -576,7 +591,8 @@ const upsertObjectSQL = `WITH old AS (
 					WHERE p.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND p.connection_id = $1::uuid
 					AND p.object_guid = $6::uuid), false)
 			END,
-			$31::bigint, $32::bigint, $33::timestamptz, $34::boolean, $35::smallint)
+			$31::bigint, $32::bigint, $33::timestamptz, $34::boolean, $35::smallint,
+			$36::text, $37::timestamptz)
 		ON CONFLICT (tenant_id, connection_id, object_guid) DO UPDATE SET
 			nc_guid = EXCLUDED.nc_guid, kind = EXCLUDED.kind, object_class = EXCLUDED.object_class, parent_guid = EXCLUDED.parent_guid,
 			ancestry = EXCLUDED.ancestry, ancestry_complete = EXCLUDED.ancestry_complete, dn = EXCLUDED.dn, rdn = EXCLUDED.rdn, sid = EXCLUDED.sid,
@@ -590,6 +606,7 @@ const upsertObjectSQL = `WITH old AS (
 			on_prem_immutable_id = EXCLUDED.on_prem_immutable_id,
 			user_account_control = EXCLUDED.user_account_control, primary_group_id = EXCLUDED.primary_group_id,
 			last_logon_timestamp = EXCLUDED.last_logon_timestamp, spn_present = EXCLUDED.spn_present, inputs_read = EXCLUDED.inputs_read,
+			password_change_state = EXCLUDED.password_change_state, password_change_at = EXCLUDED.password_change_at,
 			cloud_seen_at = GREATEST(d.cloud_seen_at, EXCLUDED.cloud_seen_at)
 		WHERE d.observed_at <= EXCLUDED.observed_at
 		RETURNING (xmax = 0) AS inserted, d.parent_guid, d.ancestry, d.ancestry_complete)
@@ -665,6 +682,13 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 	if err := o.checkInputs(); err != nil {
 		return bad(err.Error())
 	}
+	if o.PasswordChangeAt.IsZero() && o.PasswordChange != sd.PasswordChangeNotConfirmed {
+		return bad("password change state without its read time")
+	}
+	if o.PasswordChange > sd.PasswordChangeNoDenyACE ||
+		(!o.PasswordChangeAt.IsZero() && o.Kind != KindUser && o.Kind != KindInetOrgPerson) {
+		return bad("password change state out of range or on a non-user")
+	}
 	if entra {
 		if len(o.OnPremisesSecurityIdentifier) != 0 && (len(o.OnPremisesSecurityIdentifier) < 8 || len(o.OnPremisesSecurityIdentifier) > 68) {
 			return bad("onPremisesSecurityIdentifier")
@@ -733,7 +757,7 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 			return bad("a secret attribute is never stored")
 		}
 	}
-	if len(o.DN) > 4096 || len(o.RDN) > 1024 || len(o.SAMAccountName) > 256 || len(o.UPN) > 1024 || len(o.DisplayName) > 1024 || len(o.ObservedDSA) > 256 {
+	if len(o.DN) > 4096 || utf8.RuneCountInString(o.RDN) > 1024 || utf8.RuneCountInString(o.SAMAccountName) > 256 || utf8.RuneCountInString(o.UPN) > 1024 || utf8.RuneCountInString(o.DisplayName) > 1024 || len(o.ObservedDSA) > 256 {
 		return bad("value too long")
 	}
 	// PostgreSQL text cannot hold NUL; refuse rather than let the database error carry the value.
