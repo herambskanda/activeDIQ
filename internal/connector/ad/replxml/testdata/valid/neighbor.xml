@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DS_REPL_NEIGHBOR>
+<pszNamingContext>DC=corp,DC=example,DC=com</pszNamingContext>
+<pszSourceDsaDN>CN=NTDS Settings,CN=DC02,CN=Servers,CN=Default-First-Site-Name,CN=Sites,CN=Configuration,DC=corp,DC=example,DC=com</pszSourceDsaDN>
+<pszSourceDsaAddress>dc02.corp.example.com</pszSourceDsaAddress>
+<uuidNamingContextObjGuid>4f7a1c2e-0b3d-4c5e-8a9f-1234567890ab</uuidNamingContextObjGuid>
+<uuidSourceDsaObjGuid>a1b2c3d4-e5f6-4708-9a0b-c1d2e3f4a5b6</uuidSourceDsaObjGuid>
+<uuidSourceDsaInvocationID>00112233-4455-6677-8899-aabbccddeeff</uuidSourceDsaInvocationID>
+<usnLastObjChangeSynced>12345</usnLastObjChangeSynced>
+<usnAttributeFilter>12000</usnAttributeFilter>
+<ftimeLastSyncSuccess>2026-10-01T08:30:15Z</ftimeLastSyncSuccess>
+<ftimeLastSyncAttempt>2026-10-01T08:30:15Z</ftimeLastSyncAttempt>
+<dwLastSyncResult>0</dwLastSyncResult>
+<cNumConsecutiveSyncFailures>0</cNumConsecutiveSyncFailures>
+<dwReplicaFlags>2147483664</dwReplicaFlags>
+</DS_REPL_NEIGHBOR>

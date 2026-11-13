@@ -1,0 +1,80 @@
+go run ./tools/fitness/tenancy
+fitness-tenancy: PostgreSQL 16 (postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229)
+  T1 migration 1 creates tenants  ok
+  T2 catalog (74 tables)          ok
+  T3 roles                        ok
+T4   public.authn_accounts: foreign key authn_accounts_tenant_id_directory_connection_id_fkey is registered NULL at insert (a circular reference); its shape is covered by T2
+T4   public.connections: foreign key connections_tenant_id_last_verification_id_fkey is registered NULL at insert (a circular reference); its shape is covered by T2
+T4   public.connector_bindings: foreign key connector_bindings_tenant_id_component_id_fkey is registered NULL at insert (a circular reference); its shape is covered by T2
+T4   public.report_runs: foreign key report_runs_tenant_id_rerun_of_fkey is self-referencing; its shape is covered by T2
+  T4 isolation probes (587)       ok
+fitness-tenancy: PostgreSQL 18 (postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722)
+  T1 migration 1 creates tenants  ok
+  T2 catalog (74 tables)          ok
+  T3 roles                        ok
+T4   public.authn_accounts: foreign key authn_accounts_tenant_id_directory_connection_id_fkey is registered NULL at insert (a circular reference); its shape is covered by T2
+T4   public.connections: foreign key connections_tenant_id_last_verification_id_fkey is registered NULL at insert (a circular reference); its shape is covered by T2
+T4   public.connector_bindings: foreign key connector_bindings_tenant_id_component_id_fkey is registered NULL at insert (a circular reference); its shape is covered by T2
+T4   public.report_runs: foreign key report_runs_tenant_id_rerun_of_fkey is self-referencing; its shape is covered by T2
+  T4 isolation probes (587)       ok
+T4 blob isolation (TM-Q9)          ok
+T5 static (go/analysis, SQL, OpenAPI) ok
+fitness-tenancy: ok (T1,T2,T3,T4,T5)
+go run ./tools/fitness/operation
+fitness-operation O9: kernel import DAG from knowledge/development/decisions/0005-operation-pipeline-and-audit-trail.md (21 packages)
+  existing  audit/canon        internal/platform/audit/canon
+  existing  audit/chain        internal/platform/audit/chain
+  existing  tenant             internal/platform/tenant
+  existing  authority          internal/platform/authority
+  existing  store              internal/platform/store
+  existing  operation/step     internal/platform/operation/step
+  existing  jobs               internal/platform/jobs
+  existing  personal           internal/platform/personal
+  pending   notify             internal/platform/notify
+  existing  audit              internal/platform/audit
+  existing  authz              internal/platform/authz
+  existing  authn              internal/platform/authn
+  existing  operation          internal/platform/operation
+  existing  module             internal/platform/module
+  pending   authz/actions      internal/platform/authz/actions
+  pending   authn/actions      internal/platform/authn/actions
+  existing  authn/throttlejob  internal/platform/authn/throttlejob
+  pending   notify/actions     internal/platform/notify/actions
+  pending   audit/actions      internal/platform/audit/actions
+  pending   personal/actions   internal/platform/personal/actions
+  pending   personal/erasure   internal/platform/personal/erasure
+fitness-operation O9: 14 existing, 7 pending (not yet checked), 239 import edge(s) among the listed packages checked
+fitness-operation O8: 25 manifest clauses, 19 pinned by tests (32 tests ran and passed), 6 pending
+  pending   O8     O8.scope.ad-group: T-0824: rbac does not evaluate group_members roots; real assertions exist, skipped, in TestO8RemovedFromScopeNonAncestryRoots (not yet checked, not a pass)
+  pending   O8     O8.scope.entra-au: T-0824: administrative_unit roots are not evaluated, and the Graph fake behind authority.Facts is added once they are (not yet checked, not a pass)
+  pending   O8     O8.scope.entra-group: T-0824: as O8.scope.entra-au (not yet checked, not a pass)
+  pending   O8     O8.scope.correlated: T-0824: include_correlated roots are not evaluated (not yet checked, not a pass)
+  pending   O8     O8.approver-credential-change: the runner asks Provenance.Tied in both directions (TestApprovals, sock puppet); the production Provenance implementation that answers (e) does not exist on main yet, so only the port contract is pinned — follow-up T-0831 (not yet checked, not a pass)
+  pending   O8     O8.undo-failed-item: the runner has no undo planner on main (only the OriginUndo hold, TestKernelHolds); the undo operation is not implemented, follow-up T-0830 (not yet checked, not a pass)
+  not run   O8     internal/compose/server TestLabO8RemovedFromScopeADOUMovedOut (needs the Samba lab: make lab-up, then -o8-lab; not a pass)
+  not run   O8     internal/compose/server TestLabRule5LiveFactsDecideBackingObject (needs the Samba lab: make lab-up, then -o8-lab; not a pass)
+  pending   O3     configuration writes (write-class column and step.Step config writers) (owner T-0391; not yet checked, not a pass)
+  pending   O5-O7  registry completeness, contract coverage, contract behaviour (operationtest.Contract) (owner T-0392; not yet checked, not a pass)
+fitness-operation: ok (O1, O2, O4 SQL half, O8, O9; pending checks listed above)
+go run ./tools/fitness/search
+  pending   SE1 rbac-table-sql in internal/compose/server/localaccount.go (T-1138 moves its authz_roles count into rbac) (not yet checked, not a pass)
+  pending   SE1 scope-members in internal/directory/client/usersearch.go (T-1127 deletes the live-LDAP user search and with it ReadScope.Admits and .SearchRoots) (not yet checked, not a pass)
+  pending   SE2 internal/modules/search (has not landed: T-1096; the rules apply to it the moment it exists) (not yet checked, not a pass)
+  pending   SE2 pattern-operator in internal/directory/inventory/closure.go (the privileged-group SID test uses a regular expression; the follow-up ticket rewrites it without a pattern) (not yet checked, not a pass)
+  pending   SE3 Test_cursor_is_bound_and_verified_before_anything_is_read (T-1096 has not landed it) (not yet checked, not a pass)
+  pending   SE3 Test_search_template_outer_query_reads_only_hits_and_ceiling_hit (follow-up of T-1126 has not landed it) (not yet checked, not a pass)
+  pending   SE4 Test_a_served_query_is_logged_as_length_and_class_only (T-1096 has not landed it) (not yet checked, not a pass)
+  pending   SE4 Test_recovery_password_shaped_text_is_refused_unechoed_and_unlogged (T-1096 has not landed it) (not yet checked, not a pass)
+  pending   SE4 Test_search_route_logs_no_query_text (follow-up of T-1126 has not landed it) (not yet checked, not a pass)
+  pending   SE6 TestSearchLatency50k (T-1102 has not landed it) (not yet checked, not a pass)
+  pass      SE3 Test_search_scope_matches_read_oracle (./internal/directory/inventory)
+  pass      SE3 Test_search_template_never_outputs_key_id (./internal/platform/store/reportsql)
+  pass      SE4 Test_search_text_is_a_bound_parameter (./internal/directory/inventory)
+  pass      SE4 Test_Prepare_refusals_in_order (./internal/platform/searchkey)
+  pass      SE4 Test_NormName_vectors (./internal/platform/searchkey)
+  pass      SE4 Test_PrefixUpper_edges (./internal/platform/searchkey)
+  pass      SE4 Test_search_stores_no_secret_attribute (./internal/directory/inventory)
+  pass      SE5 Test_search_work_is_bounded (./internal/directory/inventory)
+  note      SE2 set-config-persistent: tools/fitness/tenancy/probes.go is a listed exception (the SQL-14 session-leak probe passes $2 on purpose, to prove the product never does)
+fitness-search: ok (every check listed as pass ran and passed; pending parts are not a pass; SE6 runs in the nightly job; ADR-0011 stays ratified while any of SE1-SE5 is pending or SE6 has not passed once)
+fitness=0

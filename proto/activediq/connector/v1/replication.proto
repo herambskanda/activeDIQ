@@ -1,0 +1,133 @@
+// activediq.connector.v1 — ReadReplicationStatus (contract v1.3, T-1124/T-1723; connector-contract
+// §5.6, spec reports-2-second-slice §7.3, D14).
+//
+// A per-DC, read-only view of the four msDS-Repl* rootDSE attributes in XML form. The request has no
+// string, bytes or DN field: the attribute set is a closed enum, partitions are NC GUIDs, and there
+// is no way to ask for the binary form or for repsFrom/repsTo (rule 3). The XML is parsed only by
+// internal/connector/ad/replxml (§5.7); a value it refuses is DECODE_FAILED with a fixed detail_code.
+syntax = "proto3";
+
+package activediq.connector.v1;
+
+import "activediq/connector/v1/common.proto";
+import "activediq/connector/v1/errors.proto";
+import "activediq/connector/v1/read.proto";
+
+option go_package = "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1";
+
+enum ReplicationAttribute {
+  REPLICATION_ATTRIBUTE_UNSPECIFIED = 0;
+  // msDS-ReplAllInboundNeighbors
+  REPLICATION_ATTRIBUTE_INBOUND_NEIGHBORS = 1;
+  // msDS-ReplPendingOps
+  REPLICATION_ATTRIBUTE_PENDING_OPS = 2;
+  // msDS-ReplConnectionFailures
+  REPLICATION_ATTRIBUTE_CONNECTION_FAILURES = 3;
+  // msDS-ReplLinkFailures
+  REPLICATION_ATTRIBUTE_LINK_FAILURES = 4;
+  // Outbound neighbours and queue statistics exist on the DC and are NOT in the enum: nothing in the
+  // product reads them. A new value is a contract_minor bump and a spec (rule 12).
+}
+
+message ReadReplicationStatusRequest {
+  ConnectionRef connection = 1;
+  // Reused: WRITABLE or ALL (RODCs are included with ALL). Unspecified is INVALID_ARGUMENT.
+  PerDcScope scope = 2;
+  // Empty means all four. UNSPECIFIED or an unknown value is INVALID_ARGUMENT.
+  repeated ReplicationAttribute attributes = 3;
+  // Optional NC GUIDs to restrict to; never a DN (rule 1).
+  repeated Guid partitions = 4;
+  // Lowered, never raised, by the connector's per-DC cap.
+  uint32 max_concurrency = 5;
+}
+
+enum OutcomeKind {
+  OUTCOME_KIND_UNSPECIFIED = 0;
+  RETURNED = 1;
+  // The DC did not return the attribute (Samba, or a reader that cannot see it). Never "healthy".
+  NOT_RETURNED = 2;
+  PERMISSION_DENIED = 3;
+  // The decoder refused a value, or a range never completed. detail_code is fixed text.
+  DECODE_FAILED = 4;
+}
+
+message AttributeOutcome {
+  ReplicationAttribute attribute = 1;
+  OutcomeKind kind = 2;
+  // A fixed code (replxml.Code, or RANGE_INCOMPLETE). Never DC text.
+  string detail_code = 3;
+}
+
+message InboundNeighbor {
+  // NC GUID; partition_display_dn is display only.
+  Guid partition = 1;
+  string partition_display_dn = 2;
+  // Unset if the DC omitted it; never zero-filled (rule 10).
+  Guid source_dsa = 3;
+  // Display only, bounded (§5.7).
+  string source_dns_host = 4;
+  // ZERO sentinel = "never attempted", unset = "not reported".
+  optional TimeValue last_attempt = 5;
+  optional TimeValue last_success = 6;
+  optional uint32 consecutive_failures = 7;
+  // The number is the fact; the text below is the DC's words.
+  optional uint32 last_result_win32 = 8;
+  // Untrusted display string, <= 512 bytes, encoded on output (FF-SP4). Not set by the AD
+  // implementation today: the decoder does not return one.
+  string last_result_text = 9;
+  // DS_REPL_NBR_* bits, decoded by the report, not here.
+  optional uint32 flags = 10;
+}
+
+message PendingOp {
+  optional TimeValue enqueued = 1;
+  optional uint32 serial_number = 2;
+  optional uint32 priority = 3;
+  optional uint32 op_type = 4;
+  optional uint32 options = 5;
+  Guid partition = 6;
+  string partition_display_dn = 7;
+  Guid dsa = 8;
+  string dsa_dns_host = 9;
+}
+
+message ReplFailure {
+  Guid dsa = 1;
+  optional TimeValue first_failure = 2;
+  optional uint32 count = 3;
+  optional uint32 last_result_win32 = 4;
+}
+
+message ReplicationState {
+  // One per requested attribute, always present.
+  repeated AttributeOutcome attributes = 1;
+  repeated InboundNeighbor neighbors = 2;
+  repeated PendingOp pending_ops = 3;
+  repeated ReplFailure connection_failures = 4;
+  repeated ReplFailure link_failures = 5;
+}
+
+// One per DC in scope, streamed as it completes.
+message ReplicationDcResult {
+  DcIdentity dc = 1;
+  Observation observed = 2;
+  oneof outcome {
+    ReplicationState state = 3;
+    // The DC was not read.
+    ConnectorError error = 4;
+  }
+}
+
+message ReplicationSummary {
+  uint32 dcs_in_scope = 1;
+  uint32 dcs_answered = 2;
+  Coverage coverage = 3;
+}
+
+message ReadReplicationStatusResponse {
+  oneof event {
+    ReplicationDcResult result = 1;
+    // Always last (rule 1).
+    ReplicationSummary summary = 2;
+  }
+}
