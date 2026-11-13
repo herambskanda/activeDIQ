@@ -188,6 +188,10 @@ type DomainReport struct {
 	GroupsPartial, MembersUnresolved int
 	// PrimaryGroupUnresolved counts principals whose primaryGroupID named no group of the domain.
 	PrimaryGroupUnresolved int
+	// PasswordChange counts, per outcome, the users whose Cannot Change Password state was read: the
+	// state name (sd.PasswordChange.String()) or "not_confirmed.<cause>" with a fixed cause. Every user
+	// of the domain is in exactly one bucket (T-1551).
+	PasswordChange map[string]int
 }
 
 // Report is the outcome of FullCycle: one entry per managed domain, in the order they were offered.

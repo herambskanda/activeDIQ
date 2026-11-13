@@ -230,6 +230,14 @@ func (e *Engine) logDomain(r DomainReport, err error) {
 	attrs := []any{"nc", string(r.NC), "completed", r.Completed, "skipped", r.Skipped, "entries", r.Entries, "mapped", r.Mapped,
 		"refused", r.Refused, "batches", r.Batches, "ancestry_unresolved", r.AncestryUnresolved,
 		"groups_partial", r.GroupsPartial, "members_unresolved", r.MembersUnresolved}
+	pw := make([]string, 0, len(r.PasswordChange))
+	for k := range r.PasswordChange {
+		pw = append(pw, k)
+	}
+	sort.Strings(pw)
+	for _, k := range pw {
+		attrs = append(attrs, "password_change."+k, r.PasswordChange[k])
+	}
 	keys := make([]RefusalKey, 0, len(r.RefusedBy))
 	for k := range r.RefusedBy {
 		keys = append(keys, k)

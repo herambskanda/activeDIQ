@@ -67,7 +67,7 @@ func (r *readJob) run(ctx context.Context) error {
 	err = func() error {
 		_, err := r.stream(ctx, searchSpec{attrs: mp.Attributes(), pageSize: r.pageSize, pin: pre.pin}, func(en *connectorv1.DirectoryEntry) error {
 			r.rep.Entries++
-			o, ok, err := r.mapEntry(mp, pre, en, dsa)
+			o, ok, err := r.mapEntry(ctx, mp, pre, en, dsa)
 			if err != nil {
 				return err
 			}
@@ -159,7 +159,7 @@ func groupSID(en *connectorv1.DirectoryEntry) []byte {
 
 // mapEntry maps one entry of the main pass. ok is false for an entry that was refused as malformed (counted,
 // and skipped without aborting the batch). Any other error aborts the read.
-func (r *readJob) mapEntry(mp *Mapper, pre *prescan, en *connectorv1.DirectoryEntry, dsa string) (inventory.Observation, bool, error) {
+func (r *readJob) mapEntry(ctx context.Context, mp *Mapper, pre *prescan, en *connectorv1.DirectoryEntry, dsa string) (inventory.Observation, bool, error) {
 	m, err := mp.Map(en)
 	if err != nil {
 		var me *Error
@@ -185,6 +185,11 @@ func (r *readJob) mapEntry(mp *Mapper, pre *prescan, en *connectorv1.DirectoryEn
 			o.Ancestry = chain
 		} else {
 			r.rep.AncestryUnresolved++
+		}
+	}
+	if (o.Kind == inventory.KindUser || o.Kind == inventory.KindInetOrgPerson) && o.State == inventory.ObjLive {
+		if err := r.readPasswordChange(ctx, &o, pre.pin); err != nil {
+			return inventory.Observation{}, false, err
 		}
 	}
 	if o.Kind == inventory.KindGroup && o.State == inventory.ObjLive {
