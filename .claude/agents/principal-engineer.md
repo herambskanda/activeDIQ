@@ -1,8 +1,8 @@
 ---
 name: principal-engineer
 description: "Use only via the escalation ladder — a ticket the owner failed at its default and raised effort, or that the director explicitly assigns as genuinely hard (deep concurrency, protocol, performance, or cross-module defects). Owns root cause and a durable fix for problems nobody else could solve. Not for routine build work at any size (use the owning engineer) or up-front architecture and ADRs (use solution-architect)."
-model: opus
-effort: high
+model: sonnet
+effort: medium
 skills:
   - factory-protocol
   - handoff

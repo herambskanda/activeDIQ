@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/sys/windows"
 )
 
 // widenParent grants BUILTIN\Users create-files/create-subfolders on parent, as the ProgramData
@@ -67,5 +69,37 @@ func TestWindowsStateRefusesJunction(t *testing.T) {
 	}
 	if ents, _ := os.ReadDir(foreign); len(ents) != 5 {
 		t.Fatalf("the target was written to: %d entries", len(ents))
+	}
+}
+
+// T-1249 AC3 on Windows: state written for the loading account through ForAccount loads,
+// and once an Everyone ACE is added Load is ErrUnsafe (and ErrState, not ErrAbsent).
+func TestWindowsLoadRefusesWidenedState(t *testing.T) {
+	if !windows.GetCurrentProcessToken().IsElevated() {
+		t.Skip("not elevated: owning state as Administrators needs the enabled group (the lab run is elevated)")
+	}
+	iss, m, _ := setup(t)
+	dir := filepath.Join(tempParent(t), "state")
+	// The test process stands for the service: state is written for ITS account through ForAccount
+	// (owner Administrators, DACL SYSTEM + Administrators + account), which is what the service loads.
+	tu, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	acct, domain, _, err := tu.User.Sid.LookupAccount("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Enroll(context.Background(), m, dir, iss.exchange, ForAccount(domain+`\`+acct)); err != nil {
+		t.Fatalf("Enroll(ForAccount): %v", err)
+	}
+	if _, err := Load(dir); err != nil {
+		t.Fatalf("positive control: Load of state written for the account = %v", err)
+	}
+	if out, err := exec.Command("icacls", dir, "/grant", "*S-1-1-0:(OI)(CI)(R)").CombinedOutput(); err != nil {
+		t.Fatalf("icacls: %v\n%s", err, out)
+	}
+	if _, err := Load(dir); !errors.Is(err, ErrUnsafe) || !errors.Is(err, ErrState) || errors.Is(err, ErrAbsent) {
+		t.Fatalf("widened state = %v, want ErrUnsafe and ErrState, not ErrAbsent", err)
 	}
 }
