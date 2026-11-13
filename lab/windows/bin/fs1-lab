@@ -9,7 +9,7 @@
 The VM itself is Proxmox VM 181 in the adiq-lab pool; snapshot and rollback are `lab/proxmox/bin/proxmox-lab`, not this tool.
 Wrap every call:  lab/windows/bin/with-dc1-lock -- lab/windows/bin/fs1-lab build   (build touches dc1 for the gMSA)
 Credentials come from WIN_LAB_ENV (WIN_LAB_FS1_ADMIN_PASSWORD, WIN_LAB_FS1_ADDR, WIN_LAB_ADMIN_PASSWORD, WIN_LAB_DC_ADDR) and are never
-printed; the local user's password is generated into the same 0600 file as WIN_LAB_FS1_USER_PASSWORD. Runbook section 21.
+printed; the local user's password is generated into the same 0600 file as WIN_LAB_FS1_USER_PASSWORD. Runbook section 22.
 """
 import os, secrets, string, sys, time
 

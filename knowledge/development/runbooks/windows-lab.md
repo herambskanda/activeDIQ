@@ -196,7 +196,7 @@ every step inside dc2 is done by a human (§20); workers verify the child domain
 authorisation to dc2 is a CEO decision, not a ticket step.
 
 **fs1 exists (T-1328): Proxmox VM 181, a domain-joined member server.** Workers may open WinRM to `fs1` and only to `fs1` and
-`dc1` (extension of A-0025 by D-0022; the same lab-only rule: never a customer host). Build, credentials and rollback: §21.
+`dc1` (extension of A-0025 by D-0022; the same lab-only rule: never a customer host). Build, credentials and rollback: §22.
 
 **dc1 changes that a rollback of dc1 would undo (T-1734, 2026-11-07).** `Update-LapsADSchema` was run on dc1: the lab forest now has the
 Windows LAPS schema (`msLAPS-*` attributes, the `ms-LAPS-Encrypted-Password-Attributes` extended right, `mayContain` on `computer`); it was absent
@@ -308,7 +308,7 @@ The CEO supplied an existing Windows Server 2025 Evaluation VM (first Proxmox VM
 4 cores, 60 GB) as `dc1`, instead of local KVM. The steps below were done once by a human, before WinRM
 existed on it; VM 119 is provisioned (§10 status line), so they matter only for a rebuild. After that
 rebuild, WinRM must be enabled again (`Enable-PSRemoting`, firewall, `AllowUnencrypted` on the lab network
-only, as agent-verify expects) before workers can use it. fs1 is in §21.
+only, as agent-verify expects) before workers can use it. fs1 is in §22.
 
 **Rebuild steps (inside the VM unless stated)**
 
@@ -405,7 +405,7 @@ in `lab/windows/.state/msi/` of the T-0702 worktree (gitignored; rebuild if it i
 **Run on dc1 (Proxmox VM 119, must refuse) and fs1 (control, must install).** The dc1 run is a worker
 step: over WinRM as `Administrator` (§10, A-0025), wrapped in `lab/windows/bin/with-dc1-lock`, using the
 `DC` helper of `lab/windows/bin/agent-verify` for the upload (sha256-checked) and for running the
-PowerShell below elevated. fs1 now exists (§21), so the control run is possible. Copy the MSI plus
+PowerShell below elevated. fs1 now exists (§22), so the control run is possible. Copy the MSI plus
 `packaging/windows/Get-HostObservation.ps1` and `Test-MsiRefusesDc.ps1` to `C:\lab\`
 (same folder; the driver calls the sibling script).
 
@@ -433,7 +433,7 @@ Then add `windows-lab-runs/T-0635-msi-refuses-dc-<date>.md` with both sha256s, b
 `msi.log` line holding the DC message, and the evaluate output. `tools/fitness/host` is on `factory/T-0635`
 until that branch merges. Status: run on dc1 on 2026-10-30 (T-0635): exit 1603, DC message, nothing installed, HOST-DC-REFUSED ok; see
 `windows-lab-runs/T-0635-msi-refuses-dc-20261030.md`. fs1 (the install control) has not been run, so the MSI has
-never installed on a host. Workers reach dc1 over WinRM (A-0025, section 10) under `lab/windows/bin/with-dc1-lock`; fs1 is §21.
+never installed on a host. Workers reach dc1 over WinRM (A-0025, section 10) under `lab/windows/bin/with-dc1-lock`; fs1 is §22.
 
 ## 12. Agent identity harness (T-0613, for T-0557)
 
@@ -718,7 +718,7 @@ events outside the window do not, a control without 3039 fails, a skipped bind i
 2887 is a daily DC summary, so a 2-second window cannot prove it absent by itself; the run log also lists everything the queried ids logged in the
 preceding 26 h. Run log and broken-run proof: `windows-lab-runs/T-0148-cbt-acceptance-20261102.md`. Needs the keytab and gMSA files from `gssapi-lab prepare`.
 
-## 21. fs1: domain-joined member server (Proxmox VM 181) (T-1328, for T-0409 / T-0413)
+## 22. fs1: domain-joined member server (Proxmox VM 181) (T-1328, for T-0409 / T-0413)
 
 **What it is.** Windows Server 2022 Standard Evaluation (AC amended 2026-11-12: 2022 or later), 4 vCPU / 8 GiB / 80 GB, VirtIO NIC on
 `vmbr0` (dc1's bridge), in pool `adiq-lab` (CEO action A-0041). Static `192.168.1.17/24`, gateway `192.168.1.1`, DNS = dc1
@@ -753,3 +753,12 @@ The domain Administrator password is dc1's; the snapshot holds no password in pl
 **Known limits.** The IP is static on the guest but the gateway's DHCP server may still hand `.17` to another device after the old lease expires; ask for a reservation if a clash appears.
 The gMSA's KDS root key is backdated 10 hours (lab shortcut: it is usable immediately; never do this on a customer domain).
 Run logs: `windows-lab-runs/T-1328-fs1-20261112.md`.
+
+## 21. userParameters fixtures (T-1890)
+
+`lab/windows/bin/capture-tsprops capture` (under `with-dc1-lock`) creates disabled, password-less users `tspw01..` and probe users in `OU=tspfix` on dc1,
+writes `userParameters` via ADSI `IADsTSUserEx` or a plain LDAP modify, reads each back (raw octets, `WTSQueryUserConfig`, ADSI) and writes
+`testdata/tsprops/windows/captures.json`; `capture-tsprops derive` builds `records.jsonl`/`probes.jsonl` offline. It also makes a throwaway `tspreader`
+user with a per-run random password (never printed) to test the ordinary-user read, and deletes it. Needs `pip install pywinrm requests-ntlm`
+and `WIN_LAB_DC_ADDR`. The fixture users stay on dc1 for ADUC comparison (spec V4); `Remove-ADOrganizationalUnit tspfix -Recursive` clears them. Findings:
+`knowledge/development/domain/userparameters-windows-findings.md`. No new tool; pywinrm/requests-ntlm are already in the licence register.
