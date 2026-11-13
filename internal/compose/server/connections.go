@@ -22,9 +22,9 @@ type connectionKernel struct {
 // runs. Activation starts the tenant's cadence in its own transaction. A client with no verify
 // transport fails every run closed (client.ErrNoVerifier): the run is recorded as failed and the
 // write gate stays shut, so wiring ahead of the gRPC transport is safe.
-func buildConnections(db *store.DB, sink audit.Sink, c *client.Client, jreg *jobs.Registry) (*connectionKernel, error) {
+func buildConnections(db *store.DB, sink audit.Sink, c *client.Client, jreg *jobs.Registry, opts ...connection.Option) (*connectionKernel, error) {
 	fw := &lateScheduler{}
-	svc, err := connection.NewService(connection.NewRegistry(db), c, sink, connection.WithScheduler(fw))
+	svc, err := connection.NewService(connection.NewRegistry(db), c, sink, append([]connection.Option{connection.WithScheduler(fw)}, opts...)...)
 	if err != nil {
 		return nil, fmt.Errorf("server: connection service: %w", err)
 	}

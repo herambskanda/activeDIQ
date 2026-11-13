@@ -10,6 +10,7 @@ audit_event	audit	system
 audit_forward_cursor	audit	system
 audit_head	audit	system
 authn_accounts	authn	config
+authn_ad_attempts	authn	system
 authn_an8_failure_window	authn	system
 authn_authenticator_enrollments	authn	config
 authn_authority_approvals	authn	config
@@ -50,6 +51,7 @@ inventory_group_members	inventory	system
 inventory_pso_applies	inventory	system
 inventory_psos	inventory	system
 inventory_search_keys	inventory	system
+inventory_search_trigrams	inventory	system
 inventory_servers	invhost	config
 inventory_tier0_revisions	inventory	system
 jobs	jobs	system
@@ -58,6 +60,8 @@ nc_sync_passes	inventory	system
 notify_deliveries	notify	system
 notify_settings	notify	config
 notify_syslog_destinations	notify	config
+objects_naming_formats	objects	config
+objects_templates	objects	config
 operation_items	operation	system
 operation_secrets	operation	system
 operation_steps	operation	system

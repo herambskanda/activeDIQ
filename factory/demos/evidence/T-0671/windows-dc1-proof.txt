@@ -1,0 +1,41 @@
+skeleton-proof-evidence: dc1 192.168.1.250  (read-only)
+
+=== dc1 ===
+2026-11-06T19:20:54.7654037Z
+DC1
+Microsoft Windows Server 2025 Standard Evaluation
+
+=== LDAP policy on dc1 (registry; 2 = required / always) ===
+LDAPServerIntegrity = 2
+LdapEnforceChannelBindingTokens = 2
+
+=== service account svc-activediq: not a Domain Admin ===
+DistinguishedName : CN=svc-activediq,OU=ServiceAccounts,DC=win,DC=activediq,DC=test
+UserPrincipalName : svc-activediq@win.activediq.test
+Enabled           : True
+adminCount        : (not set)
+Direct MemberOf   : (none)
+Token groups      : BUILTIN\Users; WINLAB\Domain Users
+Domain Admin      : NO
+Tier-0 groups held: none
+
+=== the user the console must find: lab-user-01 ===
+DistinguishedName : CN=lab-user-01,OU=Managed,DC=win,DC=activediq,DC=test
+SamAccountName    : lab-user-01
+UserPrincipalName : 
+Enabled           : True
+ObjectGUID        : 1aa89402-2f09-4b3c-a60f-6bb38368bce5
+
+=== Directory Service log since 2026-11-06T19:19:59Z: events 2887/3039/3074/3075 (unsigned/CBT-less binds) must be absent ===
+events found in window: 0
+
+=== nltest /dsgetdc ===
+DC: \\DC1.win.activediq.test
+      Address: \\192.168.1.250
+     Dom Guid: 418231cb-912c-46cb-992e-4e502ea6acc8
+     Dom Name: win.activediq.test
+  Forest Name: win.activediq.test
+ Dc Site Name: Default-First-Site-Name
+Our Site Name: Default-First-Site-Name
+        Flags: PDC GC DS LDAP KDC TIMESERV GTIMESERV WRITABLE DNS_DC DNS_DOMAIN DNS_FOREST CLOSE_SITE FULL_SECRET WS DS_8 DS_9 DS_10 KEYLIST DS_13
+The command completed successfully
