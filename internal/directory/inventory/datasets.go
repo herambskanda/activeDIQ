@@ -146,6 +146,7 @@ func usersDataset() report.Dataset {
 		derived("probable_service_account", "Probable service account", report.TypeBool, report.SQL(probableSvcSQL), opsBool),
 		state("probable_service_account_reason", "Service account reason", report.SQL(probableReasonSQL), "spn_set", "none"),
 	)
+	cols = append(cols, userPerDCColumns()...)
 	return report.Dataset{
 		ID:     DatasetUsers,
 		Base:   report.Relation{Table: "directory_objects", Where: report.SQL("{t}.kind IN ('user', 'inetorgperson') AND {t}.state = 'live'")},
@@ -166,6 +167,26 @@ func usersDataset() report.Dataset {
 		Columns:   cols,
 		Freshness: report.FreshNCWatermark,
 		Tables:    []string{"directory_objects", "links", "inventory_pso_applies", "inventory_psos", "inventory_domain_policies"},
+	}
+}
+
+// userPerDCColumns are the columns filled after the query by a live read of every DC (reports.md §6.5). The
+// replicated lastLogonTimestamp lags by days; lastLogon, badPasswordTime and badPwdCount are per DC and are
+// never summed: a time is the latest over the DCs that answered, a count is the count at the DC of the
+// latest failed logon.
+func userPerDCColumns() []report.Column {
+	perDC := func(id report.ColumnID, label string, t report.ValueType, src report.PerDC, ops []report.Op) report.Column {
+		return report.Column{ID: id, Label: label, Type: t, Source: src, Filter: ops, Sortable: true}
+	}
+	return []report.Column{
+		perDC("real_last_logon", "Real last logon", report.TypeTime, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax}, opsTime),
+		perDC("real_logon_dc", "From DC", report.TypeText, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax, Part: report.PartFromDC}, nil),
+		perDC("days_since_real_logon", "Days since real logon", report.TypeInt, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax, Part: report.PartDaysSince}, opsInt),
+		perDC("dc_coverage", "DC coverage", report.TypeText, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax, Part: report.PartCoverage}, nil),
+		perDC("last_failed_logon", "Last failed logon", report.TypeTime, report.PerDC{Attr: report.PerDCBadPasswordTime, Agg: report.AggMax}, opsTime),
+		perDC("failed_logon_dc", "From DC", report.TypeText, report.PerDC{Attr: report.PerDCBadPasswordTime, Agg: report.AggMax, Part: report.PartFromDC}, nil),
+		perDC("failures_on_dc", "Failures on that DC", report.TypeInt,
+			report.PerDC{Attr: report.PerDCBadPwdCount, Agg: report.AggMax, Part: report.PartAtWinner, Of: report.PerDCBadPasswordTime}, opsInt),
 	}
 }
 

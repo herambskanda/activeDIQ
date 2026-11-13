@@ -1,0 +1,49 @@
+{
+  "id": "usr-04",
+  "version": 1,
+  "category": "users",
+  "title": "Real last logon",
+  "description": "The latest logon of each enabled account over every domain controller, read live from each one, with the DC it came from and how many DCs answered. When a DC does not answer the value is a lower bound, and an account with no logon on the DCs that did answer reads Not confirmed, never Never.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "domain",
+    "dn",
+    "real_last_logon",
+    "real_logon_dc",
+    "dc_coverage",
+    "days_since_real_logon",
+    "enabled"
+  ],
+  "sort": [
+    {
+      "column": "sam_account_name",
+      "dir": "asc"
+    }
+  ],
+  "perDC": {
+    "scope": "all"
+  },
+  "caveats": [
+    "ou_path_is_dn",
+    "per_dc_live_read"
+  ],
+  "presets": [
+    {
+      "id": "real",
+      "names": [
+        "Real Last Logon"
+      ],
+      "where": {
+        "cmp": {
+          "col": "enabled",
+          "op": "eq",
+          "value": {
+            "bool": true
+          }
+        }
+      }
+    }
+  ]
+}

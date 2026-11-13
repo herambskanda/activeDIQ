@@ -2541,6 +2541,19 @@
             "maximum": 100000,
             "minimum": 0,
             "type": "integer"
+          },
+          "label": {
+            "description": "The header text, \"Read from 2 of 3 DCs · 1 unreachable: dc2.example.test: timeout\".",
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "unreachable": {
+            "description": "The DCs that did not answer, each with the fixed code it gave (never driver text). Empty when coverage is complete.",
+            "items": {
+              "$ref": "#/components/schemas/ReportUnreachableDc"
+            },
+            "maxItems": 50,
+            "type": "array"
           }
         },
         "required": [
@@ -4886,6 +4899,25 @@
         "required": [
           "connectionId",
           "guid"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportUnreachableDc": {
+        "description": "A DC that did not answer a per-DC read.",
+        "properties": {
+          "dc": {
+            "maxLength": 255,
+            "type": "string"
+          },
+          "error": {
+            "maxLength": 64,
+            "type": "string"
+          }
+        },
+        "required": [
+          "dc",
+          "error"
         ],
         "type": "object",
         "x-activediq-tag": "reports"
