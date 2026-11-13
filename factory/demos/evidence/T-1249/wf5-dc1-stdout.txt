@@ -1,0 +1,531 @@
+with-dc1-lock: holding dc1 lock /tmp/claude-1000/activediq-dc1.lock (pid 3267671, waited 0s)
+T-0833 agent-unenrolled-verify  commit 00c419623d3438f7c92c60dbbd06f1a317cb1f18  host 192.168.1.5  dc1 192.168.1.250
+dc1 lock held (pid 3267671, waited 0s)
+start 2026-11-05T06:06:12.394202+00:00  dc1 clock: 2026-11-05T06:06:12.9769450Z
+code under test: HEAD @ 00c419623d3438f7c92c60dbbd06f1a317cb1f18 (tree 86965852c88d06271abca558c30eaa456e33bf1f)
+sha256 ae76765d2fb3d863e0f3607deea7404f95fe34d4c7baa5acc0e233a487d50853 activediq-agent.exe
+sha256 8e946dd0d827c95983cf518dcabcfa9e978994c01664e6ecc935338895711ee2 agentsetup.exe
+
+== dc1 BEFORE ==
+service: absent
+uninstall entry: False
+C:\Program Files\skenzeriq: False
+C:\ProgramData\skenzeriq: False
+event source registered: False
+security channel ACE for the service: False
+LDAPServerIntegrity:
+
+== tools on dc1 ==
+wix 5.0.2+aa65968c
+reset done
+
+== AC6: Windows unit tests, elevated, on dc1 ==
+whoami=WINLAB\Administrator
+elevated=True
+== dial.test.exe
+=== RUN   TestEnrollPinsAndPersists
+--- PASS: TestEnrollPinsAndPersists (0.08s)
+=== RUN   TestEnrollRefusesUnpinnedServers
+=== RUN   TestEnrollRefusesUnpinnedServers/different_CA_(MITM)
+=== RUN   TestEnrollRefusesUnpinnedServers/CA_withheld_from_chain
+--- PASS: TestEnrollRefusesUnpinnedServers (0.01s)
+    --- PASS: TestEnrollRefusesUnpinnedServers/different_CA_(MITM) (0.01s)
+    --- PASS: TestEnrollRefusesUnpinnedServers/CA_withheld_from_chain (0.00s)
+=== RUN   TestSelfSignedServerRefused
+--- PASS: TestSelfSignedServerRefused (0.01s)
+=== RUN   TestRetryNeverFallsBack
+--- PASS: TestRetryNeverFallsBack (0.01s)
+=== RUN   TestEnrollRejectsBadResponses
+=== RUN   TestEnrollRejectsBadResponses/bundle_without_pinned_CA
+=== RUN   TestEnrollRejectsBadResponses/leaf_from_another_CA
+=== RUN   TestEnrollRejectsBadResponses/leaf_without_identity
+=== RUN   TestEnrollRejectsBadResponses/leaf_for_a_key_we_do_not_hold
+=== RUN   TestEnrollRejectsBadResponses/no_endpoints
+--- PASS: TestEnrollRejectsBadResponses (0.06s)
+    --- PASS: TestEnrollRejectsBadResponses/bundle_without_pinned_CA (0.01s)
+    --- PASS: TestEnrollRejectsBadResponses/leaf_from_another_CA (0.01s)
+    --- PASS: TestEnrollRejectsBadResponses/leaf_without_identity (0.01s)
+    --- PASS: TestEnrollRejectsBadResponses/leaf_for_a_key_we_do_not_hold (0.01s)
+    --- PASS: TestEnrollRejectsBadResponses/no_endpoints (0.02s)
+=== RUN   TestParseBundleCorpus
+--- PASS: TestParseBundleCorpus (0.00s)
+=== RUN   TestParsePin
+--- PASS: TestParsePin (0.00s)
+=== RUN   TestClientTLSNeverUsesHostRoots
+--- PASS: TestClientTLSNeverUsesHostRoots (0.00s)
+=== RUN   TestLoadRefusesUnsafeState
+    dial_test.go:354: unix permissions
+--- SKIP: TestLoadRefusesUnsafeState (0.00s)
+=== RUN   TestEnrollRefusesSplicedChain
+--- PASS: TestEnrollRefusesSplicedChain (0.01s)
+=== RUN   TestDialOutRefusesUnpinnedServers
+=== RUN   TestDialOutRefusesUnpinnedServers/spliced
+=== RUN   TestDialOutRefusesUnpinnedServers/other_CA
+=== RUN   TestDialOutRefusesUnpinnedServers/self-signed
+--- PASS: TestDialOutRefusesUnpinnedServers (0.02s)
+    --- PASS: TestDialOutRefusesUnpinnedServers/spliced (0.01s)
+    --- PASS: TestDialOutRefusesUnpinnedServers/other_CA (0.00s)
+    --- PASS: TestDialOutRefusesUnpinnedServers/self-signed (0.00s)
+=== RUN   TestLoadReportsExpiredLeaf
+--- PASS: TestLoadReportsExpiredLeaf (0.07s)
+=== RUN   TestLoadClassifiesAbsentApartFromUnusable
+--- PASS: TestLoadClassifiesAbsentApartFromUnusable (0.05s)
+=== RUN   TestLoadClassifiesUnsafeApartFromAbsent
+    dial_test.go:539: the Windows equivalent is TestWindowsLoadRefusesWidenedState
+--- SKIP: TestLoadClassifiesUnsafeApartFromAbsent (0.00s)
+=== RUN   TestForAccountRefusedOffWindows
+    dial_test.go:555: Windows supports ForAccount
+--- SKIP: TestForAccountRefusedOffWindows (0.00s)
+=== RUN   TestTenantSignedServerRefused
+    roles_test.go:57: unix only
+--- SKIP: TestTenantSignedServerRefused (0.00s)
+=== RUN   TestBundleRolesSplit
+--- PASS: TestBundleRolesSplit (0.00s)
+=== RUN   TestPinnedRootMustBeShapedAsServerRoot
+--- PASS: TestPinnedRootMustBeShapedAsServerRoot (0.00s)
+=== RUN   TestRepinKeepsIdentityAndAudits
+--- PASS: TestRepinKeepsIdentityAndAudits (0.12s)
+=== RUN   TestRepinRefusals
+--- PASS: TestRepinRefusals (0.06s)
+=== RUN   TestRepinOversizedTransitionBundleRefusedBeforeAnyWrite
+    roles_test.go:268: unix only
+--- SKIP: TestRepinOversizedTransitionBundleRefusedBeforeAnyWrite (0.00s)
+=== RUN   TestWindowsStateRefusesWritableParent
+--- PASS: TestWindowsStateRefusesWritableParent (0.19s)
+=== RUN   TestWindowsStateRefusesJunction
+--- PASS: TestWindowsStateRefusesJunction (0.08s)
+=== RUN   TestWindowsLoadRefusesWidenedState
+--- PASS: TestWindowsLoadRefusesWidenedState (0.06s)
+PASS
+
+dial exit=0
+== agent.test.exe
+=== RUN   TestWindowsBurstMaxLiftRestoresRealJobWhileWindowOpen
+--- PASS: TestWindowsBurstMaxLiftRestoresRealJobWhileWindowOpen (0.55s)
+=== RUN   TestWindowsBurstLiftsAndRestoresRealJob
+--- PASS: TestWindowsBurstLiftsAndRestoresRealJob (0.00s)
+=== RUN   TestWindowsBurstRestoreFailureIsRepairedOnRealJob
+--- PASS: TestWindowsBurstRestoreFailureIsRepairedOnRealJob (0.06s)
+=== RUN   TestWindowsConfineAndBurstInChild
+--- PASS: TestWindowsConfineAndBurstInChild (6.06s)
+=== RUN   TestCapNotArmedIsNoop
+--- PASS: TestCapNotArmedIsNoop (0.00s)
+=== RUN   TestCapLiftsAndRestoresReferenceCounted
+--- PASS: TestCapLiftsAndRestoresReferenceCounted (0.00s)
+=== RUN   TestCapLiftFailureIsNoopAndStaysCapped
+--- PASS: TestCapLiftFailureIsNoopAndStaysCapped (0.00s)
+=== RUN   TestCapRestoreRetriesImmediately
+--- PASS: TestCapRestoreRetriesImmediately (0.00s)
+=== RUN   TestCapRestoreFailureIsReportedRepairedAndReportedAgain
+--- PASS: TestCapRestoreFailureIsReportedRepairedAndReportedAgain (0.00s)
+=== RUN   TestCapMaxLiftRestoresWhileWindowStillOpen
+--- PASS: TestCapMaxLiftRestoresWhileWindowStillOpen (0.00s)
+=== RUN   TestCapStaleTimerDoesNothing
+--- PASS: TestCapStaleTimerDoesNothing (0.00s)
+=== RUN   TestCapExpiryRestoreFailureIsReportedAndRepaired
+--- PASS: TestCapExpiryRestoreFailureIsReportedAndRepaired (0.00s)
+=== RUN   TestCapPersistentRestoreFailureExits
+--- PASS: TestCapPersistentRestoreFailureExits (0.03s)
+=== RUN   TestCapExitsEvenWithoutReporter
+--- PASS: TestCapExitsEvenWithoutReporter (0.00s)
+PASS
+
+agent exit=0
+== ownerfile.test.exe
+=== RUN   TestWindowsDirCreateWriteRead
+    ownerfile_dir_windows_test.go:89: icacls state dir
+        C:\Users\ADMINI~1\AppData\Local\Temp\TestWindowsDirCreateWriteRead3202047727\001\parent\state WINLAB\Administrator:(OI)(CI)(F)
+                                                                                                      NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+        
+        Successfully processed 1 files; Failed processing 0 files
+--- PASS: TestWindowsDirCreateWriteRead (0.04s)
+=== RUN   TestWindowsDirRefusesUntrustedParent
+=== RUN   TestWindowsDirRefusesUntrustedParent/users-delete-child
+=== RUN   TestWindowsDirRefusesUntrustedParent/everyone-full
+=== RUN   TestWindowsDirRefusesUntrustedParent/users-create-files
+=== RUN   TestWindowsDirRefusesUntrustedParent/users-write
+--- PASS: TestWindowsDirRefusesUntrustedParent (0.09s)
+    --- PASS: TestWindowsDirRefusesUntrustedParent/users-delete-child (0.02s)
+    --- PASS: TestWindowsDirRefusesUntrustedParent/everyone-full (0.03s)
+    --- PASS: TestWindowsDirRefusesUntrustedParent/users-create-files (0.02s)
+    --- PASS: TestWindowsDirRefusesUntrustedParent/users-write (0.02s)
+=== RUN   TestWindowsDirAcceptsReadOnlyForOthers
+--- PASS: TestWindowsDirAcceptsReadOnlyForOthers (0.02s)
+=== RUN   TestWindowsDirRefusesParentJunctionAndForeignOwner
+--- PASS: TestWindowsDirRefusesParentJunctionAndForeignOwner (0.04s)
+=== RUN   TestWindowsDirSwappedForJunctionNeverReadsForeignContents
+    ownerfile_dir_windows_test.go:195: rename of the held directory refused as designed: rename C:\Users\ADMINI~1\AppData\Local\Temp\TestWindowsDirSwappedForJunctionNeverReadsForeignContents2499521972\001\parent\state C:\Users\ADMINI~1\AppData\Local\Temp\TestWindowsDirSwappedForJunctionNeverReadsForeignContents2499521972\001\parent\state.away: The process cannot access the file because it is being used by another process.
+--- PASS: TestWindowsDirSwappedForJunctionNeverReadsForeignContents (0.37s)
+=== RUN   TestWindowsCheckParentACL
+--- PASS: TestWindowsCheckParentACL (0.00s)
+=== RUN   TestWindowsDirAncestorRenameNeverRedirectsIO
+    ownerfile_dir_windows_test.go:263: rename of an ancestor of the held directory refused by the file system: rename C:\Users\ADMINI~1\AppData\Local\Temp\TestWindowsDirAncestorRenameNeverRedirectsIO952283349\001\parent\mid C:\Users\ADMINI~1\AppData\Local\Temp\TestWindowsDirAncestorRenameNeverRedirectsIO952283349\001\parent\mid.away: Access is denied.
+--- PASS: TestWindowsDirAncestorRenameNeverRedirectsIO (0.34s)
+=== RUN   TestWindowsForAccountNamesAccountNotCaller
+--- PASS: TestWindowsForAccountNamesAccountNotCaller (0.35s)
+=== RUN   TestWindowsForAccountUnknownAccountFailsBeforeWriting
+--- PASS: TestWindowsForAccountUnknownAccountFailsBeforeWriting (0.01s)
+=== RUN   TestWindowsTrustAdministratorsDoesNotWidenWrites
+--- PASS: TestWindowsTrustAdministratorsDoesNotWidenWrites (1.55s)
+=== RUN   TestWindowsForAccountTrustsItsOwnParentGrant
+--- PASS: TestWindowsForAccountTrustsItsOwnParentGrant (0.06s)
+=== RUN   TestWindowsEnsureDirAndReadFile
+    ownerfile_read_windows_test.go:43: icacls state dir
+        C:\Users\ADMINI~1\AppData\Local\Temp\TestWindowsEnsureDirAndReadFile2874251437\001\state WINLAB\Administrator:(OI)(CI)(F)
+                                                                                                 NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+        
+        Successfully processed 1 files; Failed processing 0 files
+--- PASS: TestWindowsEnsureDirAndReadFile (0.03s)
+=== RUN   TestWindowsWiderDirRefused
+=== RUN   TestWindowsWiderDirRefused/users-read
+=== RUN   TestWindowsWiderDirRefused/users-modify
+=== RUN   TestWindowsWiderDirRefused/everyone-full
+=== RUN   TestWindowsWiderDirRefused/authenticated-w
+--- PASS: TestWindowsWiderDirRefused (0.44s)
+    --- PASS: TestWindowsWiderDirRefused/users-read (0.36s)
+    --- PASS: TestWindowsWiderDirRefused/users-modify (0.03s)
+    --- PASS: TestWindowsWiderDirRefused/everyone-full (0.03s)
+    --- PASS: TestWindowsWiderDirRefused/authenticated-w (0.02s)
+=== RUN   TestWindowsReadFileCases
+--- PASS: TestWindowsReadFileCases (0.18s)
+=== RUN   TestOpenAppendCreatesOwnerOnly
+--- PASS: TestOpenAppendCreatesOwnerOnly (0.00s)
+=== RUN   TestOpenAppendCorrectsWiderExistingFile
+    ownerfile_test.go:28: covered by TestWindowsDACL
+--- SKIP: TestOpenAppendCorrectsWiderExistingFile (0.00s)
+=== RUN   TestWindowsDACL
+--- PASS: TestWindowsDACL (1.03s)
+=== RUN   TestWindowsCreateTempDACL
+--- PASS: TestWindowsCreateTempDACL (0.00s)
+=== RUN   TestWindowsForeignOwnerRefused
+--- PASS: TestWindowsForeignOwnerRefused (0.00s)
+=== RUN   TestWindowsReparsePointRefused
+--- PASS: TestWindowsReparsePointRefused (0.00s)
+PASS
+
+ownerfile exit=0
+CHECK AC6.TestWindowsForAccountNamesAccountNotCaller PASS TestWindowsForAccountNamesAccountNotCaller PASSED elevated (not skipped)
+CHECK AC6.TestWindowsForAccountUnknownAccountFailsBeforeWriting PASS TestWindowsForAccountUnknownAccountFailsBeforeWriting PASSED elevated (not skipped)
+CHECK AC6.TestWindowsTrustAdministratorsDoesNotWidenWrites PASS TestWindowsTrustAdministratorsDoesNotWidenWrites PASSED elevated (not skipped)
+CHECK AC6.TestWindowsForAccountTrustsItsOwnParentGrant PASS TestWindowsForAccountTrustsItsOwnParentGrant PASSED elevated (not skipped)
+CHECK AC6.TestWindowsLoadRefusesWidenedState PASS TestWindowsLoadRefusesWidenedState PASSED elevated (not skipped)
+CHECK AC6.TestWindowsBurstLiftsAndRestoresRealJob PASS TestWindowsBurstLiftsAndRestoresRealJob PASSED (cap read back with QueryInformationJobObject)
+CHECK AC6.TestWindowsBurstRestoreFailureIsRepairedOnRealJob PASS TestWindowsBurstRestoreFailureIsRepairedOnRealJob PASSED (cap read back with QueryInformationJobObject)
+CHECK AC6.TestWindowsBurstMaxLiftRestoresRealJobWhileWindowOpen PASS TestWindowsBurstMaxLiftRestoresRealJobWhileWindowOpen PASSED (cap read back with QueryInformationJobObject)
+CHECK AC6.TestWindowsConfineAndBurstInChild PASS TestWindowsConfineAndBurstInChild PASSED (cap read back with QueryInformationJobObject)
+CHECK AC6.dial-exit PASS dial.test.exe exit 0
+CHECK AC6.ownerfile-exit PASS ownerfile.test.exe exit 0
+CHECK AC6.agent-exit PASS agent.test.exe exit 0
+CHECK AC6.no-fail PASS no failing test
+
+== AC1: wix build -wx -sw1149 ==
+wix exit=0
+msi exists=True
+msi sha256 DC78818DF7DB7C5F5D7AE46E88A679B9AA6C553FA9DA4CA3260C0FE5E9757587
+CHECK AC1.build PASS wix build -wx -sw1149 of HEAD Agent.wxs succeeds
+CHECK AC1.no-WIX0004 PASS no WIX0004 in the build output
+CHECK AC1.no-WIX1149 PASS no WIX1149 in the build output
+CHECK AC1.no-warnings PASS no warning of any kind (the pipeline treats unsuppressed warnings as errors)
+-- fixture 1: the same Agent.wxs without -sw1149 (the suppression is what silences it; -wx makes it fail)
+C:\lab\build\Agent.wxs(44) : error WIX1149: ServiceConfig functionality is documented in the Windows Installer SDK to "not [work] as expected." Consider replacing ServiceConfig with the WixToolset.Util.wixext ServiceConfig element.
+
+wix exit=1149
+msi exists=False
+CHECK AC1.fixture-1149 PASS without -sw1149 the build fails on WIX1149 (the check can fail)
+-- fixture 2: failure-action attributes on the core ServiceConfig (T-0813's wrong premise)
+C:\lab\build\Agent-core-failure.wxs(44) : error WIX0004: The ServiceConfig element contains an unexpected attribute 'FirstFailureActionType'.
+
+wix exit=4
+msi exists=False
+CHECK AC1.fixture-0004 PASS a failure-action attribute on the core ServiceConfig is WIX0004 (the check can fail)
+
+== AC2: install unenrolled with Start=install ==
+t0 2026-11-05T06:07:35.4670436Z
+msiexec exit=0
+log 1920 lines=0
+after install: state=Running pid=3880 startmode=Auto
+[SC] QueryServiceConfig2 SUCCESS
+
+SERVICE_NAME: activeDIQAgent
+        RESET_PERIOD (in seconds)    : 86400
+        REBOOT_MESSAGE               : 
+        COMMAND_LINE                 : 
+        FAILURE_ACTIONS              : RESTART -- Delay = 30000 milliseconds.
+                                       RESTART -- Delay = 30000 milliseconds.
+                                       RESTART -- Delay = 30000 milliseconds.
+
+after 45 s (past the 30 s recovery delay): state=Running pid=3880
+SCM events about the service since install:
+  7036 The activeDIQ Agent service entered the running state.
+  7045 A service was installed in the system.
+
+Service Name:  activeDIQ Agent
+Service File Name:  "C:\Program Files\skenzeriq\agent\activediq-agent.exe"
+Service Type:  user mode service
+Service Start Type:  auto start
+Service Account:  NT SERVICE\activeDIQAgent
+SCM failure events (7031/7034/7024/7023/7009/7000)=0
+agent events since install: ids 103
+event 101 count=0
+event 103 count=1
+CHECK AC2.install-exit PASS msiexec exit 0
+CHECK AC2.no-1920 PASS install log has no 1920
+CHECK AC2.running PASS service Running after install and after 45 s
+CHECK AC2.same-process PASS same process throughout (pid 3880 -> 3880): no exit, no SCM restart
+CHECK AC2.no-scm-failure PASS no Service Control Manager failure events
+CHECK AC2.no-event-101 PASS no start-refused event 101
+
+== AC3: event 103 ==
+count=70
+level=Warning
+message=[agent is installed but not enrolled; run `activediq-agent.exe enroll <server:port> <pin>` - waiting]
+-- Event Viewer text rendering (wevtutil, as the Event Viewer details pane):
+Event[0]
+  Log Name: Application
+  Source: activeDIQ Agent
+  Date: 2026-11-04T22:07:37.5320000Z
+  Event ID: 103
+  Task: None 
+  Level: Warning 
+  Opcode: Info  
+  Keyword: Classic, 
+  User: N/A
+  User Name: N/A
+  Computer: DC1.win.activediq.test
+  Description: 
+agent is installed but not enrolled; run `activediq-agent.exe enroll <server:port> <pin>` � waiting 
+
+-- registered message file:
+C:\WINDOWS\Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll
+-- fixture: a source registered with NO message file
+fixture message=[]
+fixture wevtutil:
+Event[0]
+  Log Name: Application
+  Source: diq-lab-nomsg-1223075869
+  Date: 2026-11-04T22:08:27.0930000Z
+  Event ID: 103
+  Task: N/A
+  Level: Warning 
+  Opcode: Info  
+  Keyword: Classic, 
+  User: N/A
+  User Name: N/A
+  Computer: DC1.win.activediq.test
+  Description: 
+N/A
+CHECK AC3.event-103-exists PASS event 103 of source 'activeDIQ Agent' is in the Application log
+CHECK AC3.renders PASS Message text present and names 'not enrolled'
+CHECK AC3.fixture-detects PASS the same predicate rejects a source with no message file (the check can fail)
+
+== AC4: enrol while the service is running ==
+
+-- trial 1/3
+unenrolled start: state=Running pid=2032 enrollment_dir=C:\ProgramData\skenzeriq\agent\enrol
+idle watch (20 s, unenrolled):
+idle watch end: state=Running pid=2032
+CHECK AC4.t1.reachable PASS dc1 reaches the lab stub at 192.168.1.5:7443
+activediq-agent.exe : agent: enrolled
+At line:3 char:8
++ $tok | & 'C:\Program Files\skenzeriq\agent\activediq-agent.exe' enrol ...
++        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (agent: enrolled:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+enroll exit=0
+enroll done 2026-11-05T06:09:25.6455763Z
+CHECK AC4.t1.enroll-exit PASS activediq-agent.exe enroll exit 0
+stub 06:08:58.484Z 2026/11/05 06:08:58 INFO: [core] [Server #1] Server created
+stub 06:08:58.484Z 2026/11/05 06:08:58 INFO: [core] [Server #1 ListenSocket #2] ListenSocket created
+stub 06:09:25.185Z 2026/11/05 06:09:25 INFO: [core] [Server #1] grpc: Server.Serve failed to create ServerTransport: connection error: desc = "ServerHandshake(\"192.168.1.250:58125\") failed: remote error: tls: bad certificate"
+stub 06:09:25.195Z 2026/11/05 06:09:25.195763 ENROLL ok component=8b987101-f90a-40db-87e2-30b027a14e73
+stub 06:09:26.399Z 2026/11/05 06:09:26.398901 TUNNEL mTLS client verified component=addc:8b987101-f90a-40db-87e2-30b027a14e73
+after: state=Running pid=2032
+-- enrollment dir ACL (service SID is S-1-5-80-*):
+C:\ProgramData\skenzeriq\agent\enrol NT SERVICE\activeDIQAgent:(OI)(CI)(F)
+                                     NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                                     BUILTIN\Administrators:(OI)(CI)(F)
+
+Successfully processed 1 files; Failed processing 0 files
+file ca-bundle.pem 1162
+file ca-pin.txt 72
+file endpoints.txt 17
+file key.pem 241
+file leaf.pem 769
+-- TCP connections of the service process to the stub:
+  TimeWait owner=0
+  TimeWait owner=0
+-- agent + SCM events since the trial began:
+  app 06:08:30 id=103 agent is installed but not enrolled; run `activediq-agent.exe enroll <server:port> <pin>` - waiting
+  scm 06:08:30 id=7036 The activeDIQ Agent service entered the running state.
+  scm 06:08:29 id=7036 The activeDIQ Agent service entered the stopped state.
+acl enrol owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl ca-bundle.pem owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl ca-pin.txt owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl endpoints.txt owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl key.pem owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl leaf.pem owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+invoker=winlab\administrator
+CHECK AC4.t1.acl-names-service PASS every enrolment path grants NT SERVICE\activeDIQAgent
+CHECK AC4.t1.acl-owner-admins PASS every enrolment path is owned by BUILTIN\Administrators
+CHECK AC4.t1.acl-not-invoker PASS no enrolment path names the enrolling administrator (winlab\administrator)
+CHECK AC4.t1.picked-up PASS the running service connected to the stub with its issued mTLS certificate
+CHECK AC4.t1.within-15s PASS enrol -> first verified mTLS connection: 1.20 s
+CHECK AC4.t1.no-restart PASS same service process (pid 2032 -> 2032), Running
+
+-- trial 2/3
+unenrolled start: state=Running pid=4668 enrollment_dir=C:\ProgramData\skenzeriq\agent\enrol
+idle watch (20 s, unenrolled):
+idle watch end: state=Running pid=4668
+CHECK AC4.t2.reachable PASS dc1 reaches the lab stub at 192.168.1.5:7443
+activediq-agent.exe : agent: enrolled
+At line:3 char:8
++ $tok | & 'C:\Program Files\skenzeriq\agent\activediq-agent.exe' enrol ...
++        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (agent: enrolled:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+enroll exit=0
+enroll done 2026-11-05T06:10:19.1427950Z
+CHECK AC4.t2.enroll-exit PASS activediq-agent.exe enroll exit 0
+stub 06:09:58.700Z 2026/11/05 06:09:58 INFO: [core] [Server #1] Server created
+stub 06:09:58.700Z 2026/11/05 06:09:58 INFO: [core] [Server #1 ListenSocket #2] ListenSocket created
+stub 06:10:19.019Z 2026/11/05 06:10:19 INFO: [core] [Server #1] grpc: Server.Serve failed to create ServerTransport: connection error: desc = "ServerHandshake(\"192.168.1.250:58135\") failed: remote error: tls: bad certificate"
+stub 06:10:19.026Z 2026/11/05 06:10:19.026191 ENROLL ok component=5dae392c-60da-431c-9c5e-c8cf03d24c56
+stub 06:10:20.716Z 2026/11/05 06:10:20.716304 TUNNEL mTLS client verified component=addc:5dae392c-60da-431c-9c5e-c8cf03d24c56
+after: state=Running pid=4668
+-- enrollment dir ACL (service SID is S-1-5-80-*):
+C:\ProgramData\skenzeriq\agent\enrol NT SERVICE\activeDIQAgent:(OI)(CI)(F)
+                                     NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                                     BUILTIN\Administrators:(OI)(CI)(F)
+
+Successfully processed 1 files; Failed processing 0 files
+file ca-bundle.pem 1158
+file ca-pin.txt 72
+file endpoints.txt 17
+file key.pem 241
+file leaf.pem 769
+-- TCP connections of the service process to the stub:
+  TimeWait owner=0
+  TimeWait owner=0
+  TimeWait owner=0
+  TimeWait owner=0
+-- agent + SCM events since the trial began:
+  app 06:09:30 id=103 agent is installed but not enrolled; run `activediq-agent.exe enroll <server:port> <pin>` - waiting
+  scm 06:09:30 id=7036 The activeDIQ Agent service entered the running state.
+  scm 06:09:30 id=7036 The activeDIQ Agent service entered the stopped state.
+acl enrol owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl ca-bundle.pem owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl ca-pin.txt owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl endpoints.txt owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl key.pem owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl leaf.pem owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+invoker=winlab\administrator
+CHECK AC4.t2.acl-names-service PASS every enrolment path grants NT SERVICE\activeDIQAgent
+CHECK AC4.t2.acl-owner-admins PASS every enrolment path is owned by BUILTIN\Administrators
+CHECK AC4.t2.acl-not-invoker PASS no enrolment path names the enrolling administrator (winlab\administrator)
+CHECK AC4.t2.picked-up PASS the running service connected to the stub with its issued mTLS certificate
+CHECK AC4.t2.within-15s PASS enrol -> first verified mTLS connection: 1.69 s
+CHECK AC4.t2.no-restart PASS same service process (pid 4668 -> 4668), Running
+
+-- trial 3/3
+unenrolled start: state=Running pid=7208 enrollment_dir=C:\ProgramData\skenzeriq\agent\enrol
+idle watch (20 s, unenrolled):
+idle watch end: state=Running pid=7208
+CHECK AC4.t3.reachable PASS dc1 reaches the lab stub at 192.168.1.5:7443
+activediq-agent.exe : agent: enrolled
+At line:3 char:8
++ $tok | & 'C:\Program Files\skenzeriq\agent\activediq-agent.exe' enrol ...
++        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (agent: enrolled:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+enroll exit=0
+enroll done 2026-11-05T06:11:15.7617970Z
+CHECK AC4.t3.enroll-exit PASS activediq-agent.exe enroll exit 0
+stub 06:10:53.405Z 2026/11/05 06:10:53 INFO: [core] [Server #1] Server created
+stub 06:10:53.405Z 2026/11/05 06:10:53 INFO: [core] [Server #1 ListenSocket #2] ListenSocket created
+stub 06:11:15.590Z 2026/11/05 06:11:15 INFO: [core] [Server #1] grpc: Server.Serve failed to create ServerTransport: connection error: desc = "ServerHandshake(\"192.168.1.250:58145\") failed: remote error: tls: bad certificate"
+stub 06:11:15.602Z 2026/11/05 06:11:15.602423 ENROLL ok component=43bd9bdc-c2d5-4bd6-a956-95c286e54929
+stub 06:11:20.177Z 2026/11/05 06:11:20.177885 TUNNEL mTLS client verified component=addc:43bd9bdc-c2d5-4bd6-a956-95c286e54929
+after: state=Running pid=7208
+-- enrollment dir ACL (service SID is S-1-5-80-*):
+C:\ProgramData\skenzeriq\agent\enrol NT SERVICE\activeDIQAgent:(OI)(CI)(F)
+                                     NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+                                     BUILTIN\Administrators:(OI)(CI)(F)
+
+Successfully processed 1 files; Failed processing 0 files
+file ca-bundle.pem 1162
+file ca-pin.txt 72
+file endpoints.txt 17
+file key.pem 241
+file leaf.pem 769
+-- TCP connections of the service process to the stub:
+  TimeWait owner=0
+  TimeWait owner=0
+  TimeWait owner=0
+  TimeWait owner=0
+  TimeWait owner=0
+-- agent + SCM events since the trial began:
+  app 06:10:25 id=103 agent is installed but not enrolled; run `activediq-agent.exe enroll <server:port> <pin>` - waiting
+  scm 06:10:25 id=7036 The activeDIQ Agent service entered the running state.
+  scm 06:10:24 id=7036 The activeDIQ Agent service entered the stopped state.
+acl enrol owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl ca-bundle.pem owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl ca-pin.txt owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl endpoints.txt owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl key.pem owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+acl leaf.pem owner=BUILTIN\Administrators access=NT AUTHORITY\SYSTEM;BUILTIN\Administrators;NT SERVICE\activeDIQAgent
+invoker=winlab\administrator
+CHECK AC4.t3.acl-names-service PASS every enrolment path grants NT SERVICE\activeDIQAgent
+CHECK AC4.t3.acl-owner-admins PASS every enrolment path is owned by BUILTIN\Administrators
+CHECK AC4.t3.acl-not-invoker PASS no enrolment path names the enrolling administrator (winlab\administrator)
+CHECK AC4.t3.picked-up PASS the running service connected to the stub with its issued mTLS certificate
+CHECK AC4.t3.within-15s PASS enrol -> first verified mTLS connection: 4.58 s
+CHECK AC4.t3.no-restart PASS same service process (pid 7208 -> 7208), Running
+
+== AC5: enrolment state the service cannot load ==
+enroll exit=0
+start: state=Running pid=2024
+after 20 s: state=Running pid=2024
+event 103 count=0
+event 104 count=1
+event 104 level=Error
+event 104 text=[enrolment state cannot be used (unsafe-permissions); the agent is not connecting. dial: enrollment state has unsafe ownership or permissions (dial: enrollment state is not usable): ownerfile: state directory is not restricted to the service identity: enrol]
+-- wevtutil rendering:
+Event[0]
+  Log Name: Application
+  Source: activeDIQ Agent
+  Date: 2026-11-04T22:11:26.4390000Z
+  Event ID: 104
+  Task: None 
+  Level: Error 
+  Opcode: Info  
+  Keyword: Classic, 
+  User: N/A
+  User Name: N/A
+  Computer: DC1.win.activediq.test
+  Description: 
+enrolment state cannot be used (unsafe-permissions); the agent is not connecting. dial: enrollment state has unsafe ownership or permissions (dial: enrollment state is not usable): ownerfile: state directory is not restricted to the service identity: enrol 
+CHECK AC5.enrolled PASS the state was enrolled before it was widened
+CHECK AC5.event-104 PASS event 104 (error) is in the Application log
+CHECK AC5.names-class PASS the event names the class unsafe-permissions
+CHECK AC5.not-103 PASS event 103 (not enrolled) was NOT written for state that exists
+CHECK AC5.keeps-running PASS the service stays Running, same process
+
+== restore dc1 ==
+reset done
+== dc1 AFTER ==
+service: absent
+uninstall entry: False
+C:\Program Files\skenzeriq: False
+C:\ProgramData\skenzeriq: False
+event source registered: False
+security channel ACE for the service: False
+LDAPServerIntegrity:
+(compare BEFORE and AFTER above: they must match)
+
+SUMMARY failures=0 

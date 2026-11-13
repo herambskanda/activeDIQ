@@ -2,7 +2,7 @@
 name: component-designer
 description: "Use for design-system components and their implementation — tokens, primitives (tables, pickers, forms, dialogs, toasts), variants and states, visual polish, motion, density and accessibility, plus their stories and visual tests. Owns how every reusable piece of UI looks and behaves. Not for application screens, routing or data fetching (use frontend-engineer), or UX flows, IA and design direction (use product-designer)."
 model: sonnet
-effort: high
+effort: medium
 skills:
   - factory-protocol
   - handoff

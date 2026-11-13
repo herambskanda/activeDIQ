@@ -298,3 +298,10 @@ type guidT = guid.GUID
 func ptr[T any](v T) *T { return &v }
 
 func osStat(p string) (os.FileInfo, error) { return os.Stat(p) }
+
+// testChange is the change arm that agrees with the substituted test row at kind 1 (object create, a
+// group, so no secret input is expected): step 1's arm check passes and the row under test runs.
+func testChange() *connectorv1.WriteChange {
+	return &connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectCreate{ObjectCreate: &connectorv1.ObjectCreate{
+		ObjectClass: connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_GROUP}}}
+}

@@ -1,7 +1,7 @@
 ---
 title: "Spec: AD report library, second slice (reports-2a §6.3 'Not at 2a', including ADM-092)"
 date: 2026-10-31
-updated: 2026-10-31
+updated: 2026-11-07
 status: draft
 owner: heramb
 author: product-manager
@@ -35,8 +35,8 @@ ticket T-1014 has not landed, so every ME meaning below that is not in the resea
 `[ME-HELP]` (stated by ME's page, not yet in the research) or `[UNVERIFIED]`.
 
 **Revision 2 (2026-10-31, after the `solution-architect` review).** Recently Deleted now works from
-the feed and our inventory under the default least-privilege rights (§4.1.7, tombstone columns
-conditional on T-1125 in §4.1.7b); GRP-06 has one rule (§6.3); permission and credential changes are
+the feed and our inventory under the default least-privilege rights (§4.1.7; the
+tombstone columns that this revision conditioned on T-1125 were removed in Revision 4); GRP-06 has one rule (§6.3); permission and credential changes are
 their own opt-in change kinds (§4.1.2); `repsFrom` is dropped and `msDS-Repl*` values go through one
 safe decoder (§7.3.1); the Entra cells name a ticket or `n/a` (§12); acceptance criteria AC-S06,
 AC-S07 and AC-S14 are rewritten and AC-S28 to AC-S33 added (33 in all).
@@ -45,6 +45,25 @@ AC-S07 and AC-S14 are rewritten and AC-S28 to AC-S33 added (33 in all).
 complete and split by attribute (§12); AC-S14 seeds user D only where the directory accepts the
 write; AC-S31 asserts the children are listed exactly when their descriptor metadata changed, so it
 passes whatever F1 finds; AC-S28 to AC-S33 now follow AC-S27.
+
+**Revision 6 (2026-11-13, T-1883, amendments flagged by T-1124).** Four gaps decided: the SPN
+duplicate report ships without the colliding value (§6.4, P7, follow-up filed); half-hour-offset zones
+are refused with a stated reason and UTC is offered (§5.1, P8); hidden-group header counts are objects
+and say so (§4.1.2, §4.1.2a, AC-S02 reworded); policy rows for a runner who cannot read the domain head
+are replaced by a scope notice (§7.1 rule 6, P9). AC-S35 to AC-S38 added (38 in all).
+
+**Revision 5 (2026-11-07, T-1722, from the T-1511 review).** §7.3 rule 5 now says DC error text is
+attacker-influenced (a compromised DC controls it, TM-X3) and is escaped by the same encoder; §7.3
+rule 2, §13 and FR-S09 carry TM-D31 rule 4's empty-result label ("No inbound partners reported" only
+when the onboarding check says the right is granted, else "Not reported"); AC-S34 added (34 in all).
+
+**Revision 4 (2026-11-07, T-1511, aligning with DECISION TM-D31 of
+[the threat model](../../development/architecture/threat-model.md) §6.3).** Former rule 7b (an
+optional `CN=Deleted Objects` read and its tombstone columns) is removed and every "if the ruling
+permits" condition with it: rule 7 (feed, inventory, resync diff) is the whole Recently Deleted
+behaviour. AC-S07 now asserts the absence of any such read or option instead of the tombstone
+columns. §13 and the SYS-03 right follow TM-D31 (optional, off by default); open question S6 is
+closed. The amendment to reports-2a §9 is in §9 here and folded into reports-2a §9.
 
 ## 1. Problem and users
 
@@ -81,13 +100,13 @@ this slice with a reason and an unblocker. Every ME name below comes from ME's h
 | Users with Cannot Change Password | **Specced** with the security-descriptor truth, not ME's flag | §4.2, batch 4 |
 | Bitlocker Recovery Keys; Bitlocker Enabled / Disabled Computers | **Out.** Recovery values are secrets and never stored (X4, TM-TB15-T3). Enabled/Disabled in ME is derived from keys held in AD ("computers that do not have BitLocker keys" `[ME-HELP]`), which says escrowed, not enabled, and needs the `msFVE` child objects, not in the synced set. Unblocker: 2b decision on `ReadSecret` and an escrow-only sync | §8 |
 | Photo Based, Dial-in Allow/Deny, Users with/without Logon Script, Skype/Lync Enabled/Disabled, Smart Card Enabled, Logon Hour Based | **Specced** | §5.1 to §5.4, batch 6 |
-| Terminal Services (2) | **Out.** The data is the legacy `userParameters` blob; decoding a shared binary blob in a product that sits in a domain needs a hardened, fuzzed decoder and its own spec. The `msTS*` attributes are rarely populated `[UNVERIFIED]`. Unblocker: follow-up spec (§10 F3) | §8 |
+| Terminal Services (2) | **Out.** The data is the legacy `userParameters` blob; decoding a shared binary blob in a product that sits in a domain needs a hardened, fuzzed decoder and its own spec. The `msTS*` attributes are rarely populated `[UNVERIFIED]`. Unblocker: follow-up spec (§10 F3), now written: [reports-terminal-services.md](reports-terminal-services.md) (decodes `userParameters`; `msTS*` rejected) | §8 |
 | Users with Empty / Duplicate Attributes | **Specced**, over registered columns only | §5.5, batch 6 |
 | All Managers, Manager Based Users | **Specced** | §6.1, batch 7 |
 | Users in More than One Group | **Specced** | §6.2, batch 7 |
 | Users Only Members of Domain Users Group | **Specced** | §6.3, batch 7 |
 | Computers with Duplicate Attributes | **Specced** | §6.4, batch 7 |
-| Managed Computers, Unmanaged Computers | **Specced, gated.** ME's page defines them (`managedBy` set or not) `[ME-HELP]`, but the research does not carry it. Built only if T-1014 confirms; otherwise out and the count drops by 2 | §6.5, batch 9 |
+| Managed Computers, Unmanaged Computers | **Specced, firm.** Gate cleared by T-1014 and T-1132: ME's tests are `managedBy` set / not set (research §K.1 row 3) | §6.5, batch 9 |
 | GPO Linked OUs, GPO Blocked Inheritance OUs (ME titles it "GPO Inheritance Blocked OU") | **Out.** Needs the GPO link model (DM-23, E-008), not report work. Unblocker: the E-008 spec | §8 |
 | Password Policy, Account Lockout Policy (ADM-092) | **Specced** | §7.1, batch 8 |
 | Printer Reports (ADM-092) | **Specced** as "Published printers" | §7.2, batch 10 |
@@ -95,9 +114,8 @@ this slice with a reason and an unblocker. Every ME name below comes from ME's h
 | Lingering Objects (ADM-092) | **Out.** LDAP cannot prove a lingering object; authoritative detection is a DRSUAPI call (`DsReplicaVerifyObjects`, advisory mode) on Windows, and ME's version can delete (a Tier-0 write). The slice ships only a clearly named *risk indicator* inside SYS-03 and no detection claim. Unblocker: follow-up spec (§10 F2) | §7.3, §8 |
 | Exchange, GPO, NTFS/Permissions, M365, Google Workspace families (ADM-088, 090, 091, 094, 095) | **Out.** Matrix priorities P4, P2, P2, P4, P4 ([matrix](../../business/competitive-analysis/feature-parity-matrix.md)) | their milestones |
 
-**Counts.** This slice adds **18 reports** (17 firm, CMP-05 gated) answering **32 ME names** (30
-firm). With the 16 reports and 54 names of reports-2a the library reaches 34 reports (33 firm)
-and 86 names (84 firm). Names kept out: Terminal Services 2, Lingering Objects 1, BitLocker 3, GPO
+**Counts.** This slice adds **18 reports** (all 18 firm; CMP-05 ungated by T-1014/T-1132) answering **32 ME names** (all firm). With the 16 reports and 54 names of reports-2a the library reaches 34 reports (all firm)
+and 86 names (all firm). Names kept out: Terminal Services 2, Lingering Objects 1, BitLocker 3, GPO
 OUs 2. How the PRD's "60+ reports" is counted (definitions, or definitions plus presets) is the
 `project-manager`'s reading; both counts are given so it can be stated honestly.
 
@@ -108,7 +126,7 @@ OUs 2. How the PRD's "60+ reports" is counted (definitions, or definitions plus 
 | ADM-084 | User reports (35) (Std+Pro) | USR-06…USR-09, USR-11…USR-13: 16 ME names (USR-10 is reserved, unassigned: Terminal Services is out) | [user reports help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-user-reports.html) |
 | ADM-085 | Password reports (8) (Std+Pro) | PWD-04: 1 name | [password reports help](https://www.manageengine.com/products/ad-manager/help/reports/active-directory-password-reports.html) |
 | ADM-086 | Group reports (16) (Std+Pro) | GRP-05, GRP-06: 3 names | [group reports help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-group-reports.html) |
-| ADM-087 | Computer reports (18) (Std+Pro) | CMP-03…CMP-05: 5 names (2 gated) | [computer reports help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-computer-reports.html) |
+| ADM-087 | Computer reports (18) (Std+Pro) | CMP-03…CMP-05: 5 names | [computer reports help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-computer-reports.html) |
 | ADM-089 | Contact and OU reports (13) (Std+Pro) | CTC-02, OU-02: 3 names | [contact and OU help](https://www.manageengine.com/products/ad-manager/help/reports/how-to-get-active-directory-contact-and-ou-report.html) |
 | ADM-092 | Other reports (5) (Std+Pro) | SYS-01, SYS-02, SYS-03: 4 of 5 names; Lingering Objects out | [other reports help](https://www.manageengine.com/products/ad-manager/help/reports/active-directory-other-reports.html), matrix row ADM-092 (P1, parity) |
 
@@ -126,7 +144,7 @@ re-cuts if the plan differs):
 | 6 | USR-07, USR-08, USR-09, USR-11 | 11 | T-1112 |
 | 7 | USR-12, USR-13, GRP-06, CMP-04 | 5 | T-1113 |
 | 8 | SYS-01 | 2 | T-1114 |
-| 9 | CMP-05 (gated on T-1014) | 2 | T-1115 |
+| 9 | CMP-05 | 2 | T-1115 |
 | 10 | SYS-02, SYS-03 | 2 | to be filed by T-1118 |
 
 ## 4. Reports that depend on new data: change history and security descriptors
@@ -156,9 +174,8 @@ How ME decides "modified" (the `whenChanged` of one DC, or something else) is `[
 event), Attributes changed (names only),
 Changed at, Basis, Observed at.
 **Default columns (Deleted):** Name, Logon name, Domain, Last known OU path, Deleted at, Basis,
-Observed at, State, Restorable until. Under the default directory rights (rule 7) the values come
-from our last inventory observation and Deleted at is the time we observed the object gone; the
-tombstone-derived values (rule 7b) replace them only when the T-1125 ruling allows the read.
+Observed at, State, Restorable until. The values come from our last inventory observation (rule 7)
+and Deleted at is the time we observed the object gone; no tombstone-derived value is shown.
 **Default filters:** period last 7 days (presets 1, 7, 30, 90, 180, 365 plus custom); Modified
 excludes the noise set and the two opt-in change kinds below; Deleted lists every object whose
 lifecycle state is deleted or purged (DM-16).
@@ -170,7 +187,8 @@ lifecycle state is deleted or purged (DM-16).
    says which ("DC time, originating" or "observed"). Observed time is always also shown (DM-18.I2:
    two changes between two observations show as one, and the report says so in its header).
 2. **Noise is hidden by default; two change kinds are opt-in; each has a count and a switch.**
-   The header reads "3,412 automatic updates hidden · Show".
+   The header reads "3,412 objects with only automatic updates hidden · Show" (the unit is
+   **objects**, see §4.1.2a).
    - **The noise set** (hidden, switchable as one): logon and bad-password state
      (`lastLogonTimestamp`, `lastLogon`, `logonCount`, `badPwdCount`, `badPasswordTime`); lockout and
      housekeeping (`lockoutTime`, `adminCount`, `dSCorePropagationData`); computer-driven updates
@@ -217,22 +235,26 @@ lifecycle state is deleted or purged (DM-16).
    ME's computer page promises "the deleting account" `[ME-HELP]`; that parity gap closes with the
    M3 DC event collectors (reports-2a §6.3 pattern: stated, not hidden). For changes made through
    activeDIQ itself the actor *is* known (DM-18 `source: operation`) and is shown.
-7. **Deleted objects under the default rights (the case that ships).** The connection account is
+7. **Deleted objects (the whole behaviour).** The connection account is
    least-privilege, and **it cannot list or read `CN=Deleted Objects`**: a principal without that
    right gets `noSuchObject`, which means "missing or not permitted" and is never proof that a
-   tombstone expired; activeDIQ does not take ownership of the container by default
-   ([threat model §6.3 R9](../../development/architecture/threat-model.md), confirmed on a Windows
-   Server 2025 lab in [T-0076](../../development/runbooks/windows-lab-runs/T-0076-ad-lab-confirmation-20261028.md);
+   tombstone expired. activeDIQ never requests a right on the container and never takes ownership
+   of it, by default or as an option
+   ([threat model §6.3](../../development/architecture/threat-model.md) R9, R15 and TM-D31 rule 6),
+   as confirmed on a Windows Server 2025 lab in [T-0076](../../development/runbooks/windows-lab-runs/T-0076-ad-lab-confirmation-20261028.md);
    [KB 892806](https://learn.microsoft.com/en-us/troubleshoot/windows-server/active-directory/non-administrators-view-deleted-object-container)).
    So the deletion signal is **the object leaving the feed**: DirSync returning the delete, if the
-   least-privilege account's DirSync does (`[LAB: Windows]`, T-1125), or otherwise the resync diff
+   least-privilege account's DirSync does (`[LAB: Windows]`, T-1510), or otherwise the resync diff
    (DM-19.I3), which turns an object missing from a full read into lifecycle state `deleted` or
    `purged` (DM-16). Nothing else is claimed. The Deleted presets list those objects as follows:
    - **Name, Logon name, Last known OU path** come from the **last inventory observation** of the
      object before it left (stored, scope-trimmed by that stored ancestry). *Basis* reads "last
      seen by activeDIQ"; they are not "Not retained by AD", because we retained them.
    - **Deleted at** is the time activeDIQ **first observed the object gone**, shown as "on or before
-     <time>" with Basis "observed". No DC time is shown for a deletion we did not read.
+     <time>" with Basis "observed". No DC time is shown for a deletion we did not read. If the
+     lab shows that the feed itself delivers the delete with an originating time, that time may be
+     shown with Basis "DC time, originating", because it needs no new right (TM-D31 rule 7);
+     Get-Changes is never requested to obtain it.
    - **State** is "Removed (restore status unknown)" and **Restorable until** is "Unknown". Whether
      the object is still a restorable tombstone, already recycled or purged is exactly what the
      account cannot see; the column does not guess from time elapsed. A hover says why.
@@ -240,22 +262,6 @@ lifecycle state is deleted or purged (DM-16).
      of the domain-model review), and is not listed here.
    - An object deleted before our first observation is not listed; the header states where history
      starts (rule 5).
-
-   **7b. If, and only if, the T-1125 ruling permits an optional tombstone read** (for instance a
-   delegated read of `CN=Deleted Objects`, off by default and named on the connection screen),
-   these columns are replaced for objects the read covers: *Deleted at* from the tombstone's
-   originating time (Basis "DC time, originating"); *State* "Deleted (restorable)", "Recycled
-   (cannot be restored)" or "Purged from the directory (history only)"; *Restorable until* the
-   deleted time plus the domain's `msDS-deletedObjectLifetime` (falling back to `tombstoneLifetime`,
-   default 180 days on forests created from Server 2003 SP1,
-   [tombstoneLifetime](https://learn.microsoft.com/en-us/windows/win32/adschema/a-tombstonelifetime)),
-   labelled "up to". With the Recycle Bin on a deleted object keeps its attributes while
-   `isDeleted`; once `isRecycled` it keeps few; with it off only attributes preserved on delete
-   survive ([Recycle Bin](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/get-started/adac/active-directory-recycle-bin)),
-   so a field that is blank on the tombstone falls back to the last inventory observation, and
-   only when that is also empty is it shown "Not retained by AD". A row is in 7b mode or in
-   rule 7 mode, per object, and *Basis* says which; the two are never mixed inside one cell.
-   Until the ruling lands the build implements rule 7 only.
 8. **Scope.** A deleted object is in the runner's scope only if its stored last-known ancestry is
    in scope. Unknown ancestry grants nothing and is never counted (reports-2a §8.1 fail closed). The
    2a rule that deleted and purged objects appear in no report (§6.1 rule 6) is lifted for the
@@ -307,6 +313,24 @@ from ME's by design.** The comparison belongs to the ADMP check (follow-up F1, T
 **Enhancement E-S1 (v1).** The report tells the truth where ME reads a flag AD ignores, and says
 "Not confirmed" instead of a quiet false. Proof: AC-S04, AC-S05.
 
+#### 4.1.2a Header counts: the unit is always named (T-1883)
+
+The report has one row per object (reports architecture §3.3a d), so a hidden group can only count
+objects, not the changes inside them. Rules:
+1. Every hidden-group header names its unit: "n objects with only automatic updates hidden · Show",
+   "n objects with only credential events hidden", "n objects with only permission changes hidden".
+   The header never says "n automatic updates". A change count (members added or removed, edits in
+   the period) appears only as a column of a listed row and says "changes" there.
+2. The hidden count is taken after scope trimming and after the preset's own filter, so it equals the
+   number of objects the Show switch will add. "Objects checked" = listed + the sum of the hidden counts.
+   Listed + hidden reconciles to the objects the preset matches before hiding; QA checks the sum.
+3. **Correlated counts do not depend on hiding.** Duplicate count (§5.5, §6.4) and direct-report count
+   (§6.1) count every in-scope object, whether or not a row is hidden in some other report or
+   group. Hiding is a display choice, not a scope decision; a hidden in-scope object is still one the
+   runner may read, so counting it discloses nothing. An out-of-scope object is never counted.
+   These reports carry no hidden group; if one is added later, its header must state the unit and
+   this rule applies.
+
 ## 5. User reports over new attributes (batch 6)
 
 All use `inventory.users` extended by the sync-set list in §10 (D11). Every new column is
@@ -320,7 +344,29 @@ account rules do not apply (these are not expiry reports).
 | Dial-in Allow Access | `msNPAllowDialin` is TRUE | Name, Logon name, Domain, OU path, Dial-in access, Status |
 | Dial-in Deny Access | `msNPAllowDialin` is FALSE. **Absent** is a third state, "Controlled by network policy (NPS)", and is **not** listed as Deny; the header reads "n users controlled by NPS not listed · Show" ([attribute](https://learn.microsoft.com/en-us/windows/win32/adschema/a-msnpallowdialin)). ME's treatment of absent is `[UNVERIFIED]` | same |
 | Smart Card Enabled Users | `userAccountControl` flag `SMARTCARD_REQUIRED` (0x40000). The column says "Smart card required": the flag means required, not "has a certificate" `[UNVERIFIED]` that ME means the same by "enabled with smart card login permissions" | Name, Logon name, Domain, OU path, Smart card required, Password state, Status |
-| Logon Hour Based Report | Users with a `logonHours` restriction; parameters: mode (permitted or restricted), days, start and end hour, **time zone** (default the viewer's). `logonHours` is 21 bytes, one bit per hour from Sunday 00:00 **UTC**; absent means unrestricted ([attribute](https://learn.microsoft.com/en-us/windows/win32/adschema/a-logonhours)). The chosen zone is converted before comparing and shown on the report | Name, Logon name, Domain, OU path, Permitted hours (summary, with zone), Status. Default preset (no parameters): users with any restriction |
+| Logon Hour Based Report | Users with a `logonHours` restriction; parameters: mode (permitted or restricted), days, start and end hour, **time zone** (default the viewer's). `logonHours` is 21 bytes, one bit per hour from Sunday 00:00 **UTC**; absent means unrestricted ([attribute](https://learn.microsoft.com/en-us/windows/win32/adschema/a-logonhours)). The chosen zone is converted before comparing and shown on the report. **Zones whose offset is not a whole hour at the run's week** (for example India, Nepal, Lord Howe) are handled by §5.1a | Name, Logon name, Domain, OU path, Permitted hours (summary, with zone), Status. Default preset (no parameters): users with any restriction |
+
+#### 5.1a Half-hour-offset time zones (T-1883)
+
+`logonHours` stores one bit per whole UTC hour, so a local hour in a UTC+05:30 zone covers half of two
+stored hours. Any rounding would report a user as permitted or denied for a window they are not, so
+v1 does not round (house rule: unknown is its own cell, never guessed). Behaviour:
+1. The zone picker lists every zone. A zone with a non-whole-hour offset at the run's week is shown
+   disabled with its reason: "Asia/Kolkata is UTC+05:30. Logon hours are stored per whole UTC hour,
+   so a local hour straddles two stored hours. Choose UTC or a whole-hour zone." One click on
+   "Use UTC" sets it. The picker is never silent and the report never runs on a rounded window.
+2. **The viewer's zone is the default (§5.1) only when it is whole-hour.** For a viewer in a half-hour
+   zone the default is UTC and the picker states why.
+3. The "Permitted hours" summary is rendered in the viewer's zone when whole-hour; otherwise in UTC,
+   labelled "UTC", with the same reason. A zone that is whole-hour in winter and not in summer
+   (Lord Howe) is judged by its offset in the run's week and the header states the offset used.
+4. A scheduled run (reports-2a §8.4) whose stored zone becomes non-aligned at run time fails that
+   run with the reason above, not a silent UTC fallback, and the owner is told.
+5. Through the API, a non-aligned zone returns the error `zone_not_hour_aligned` with the offset;
+   it is never accepted and adjusted.
+Revisit (not v1): a "window fully inside / touches" pair for half-hour zones, if the ADMP comparison
+(F1) shows customers in those zones running this report. Decision logged here; vetoable by the CEO,
+not directional.
 
 ### 5.2 USR-08 Profile settings
 
@@ -403,14 +449,26 @@ operating system is **not** offered (duplicates are meaningless). Same scope-onl
 §5.5. Default: DNS host name. Columns: Name, DNS name, Domain, OU path, the chosen value, Duplicate
 count, Status, Created.
 
-### 6.5 CMP-05 Managed and Unmanaged Computers (gated on T-1014)
+**SPN preset: shipped without the colliding value (T-1883, decision).** The closed AST cannot name
+which SPN collides (no `unnest`, T-1033). For the SPN choice the report therefore shows:
+- "Shares an SPN with n other computers" (n >= 1; this count excludes the row itself, unlike the DNS
+  count, and the column header says so), within the runner's scope;
+- the computer's own SPN list, unchanged, in place of "the chosen value", under the heading
+  "Service principal names (one or more is shared)";
+- a note on the report header: "Which SPN is shared is not shown yet. Compare the lists of the
+  computers listed." No cell implies a specific value is the duplicate.
+Why ship the gap: the report's job is finding Kerberos-faulty computers, and the count plus the
+list finds them; the value is a convenience that needs a new scoped table (a per-SPN edge dataset),
+which is out of proportion before any customer evidence. ME's exact SPN-duplicate output is
+`[UNVERIFIED]` (F1, T-1120). **Follow-up filed (backlog, P3, T-1900): per-SPN edge dataset**, to be built
+only if the ADMP comparison shows the value matters. Parity difference P7.
 
-ME names: Managed Computers · Unmanaged Computers. ME's page: computers that have / have no "an
-assigned manager" `[ME-HELP]`, i.e. `managedBy` set / not set (the same meaning as ME's Managed
+### 6.5 CMP-05 Managed and Unmanaged Computers
+
+ME names: Managed Computers · Unmanaged Computers. ME's tests ([ME research §K.1](../../business/market-research/manageengine-admanager-plus.md) row 3, [computer help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-computer-reports.html)): Managed `(&(objectcategory=computer)(managedBy=*))`, Unmanaged `(&(objectcategory=computer)(!managedBy=*))`, i.e. `managedBy` set / not set (the same meaning as ME's Managed
 Groups, which 2a ships as GRP-01). Columns: Name, DNS name, Domain, OU path, Managed by, Status,
-Created. Needs `managedBy` on `inventory.computers` (D2 does not carry it; D11). **Gate:** this
-report is built only after T-1014 puts the definition in the research. If T-1014 leaves it
-`[UNVERIFIED]`, this row is out and the name counts drop by 2.
+Created. Needs `managedBy` on `inventory.computers` (D2 does not carry it; D11). **Gate cleared (T-1014,
+T-1132):** the definition is sourced, so CMP-05 is firm and the name counts no longer drop by 2.
 
 ## 7. ADM-092: policy, printers, replication (batches 8 and 10)
 
@@ -445,6 +503,19 @@ Rules:
    each PSO value shown with its difference from the domain value ("stricter" / "weaker"). ME's
    page lists the two policies per domain `[ME-HELP]`; whether it shows PSOs is `[UNVERIFIED]`.
 5. Policy read time is the freshness (`as_of` = the policy sync read).
+6. **Policy rows exist only for a runner who can read the domain head (T-1883; security-architect
+   confirms the right in T-1523).** Domain-wide settings are not owned by an OU, so an OU-scoped
+   administrator gets no policy rows. What they see is a **scope notice**, not an empty table:
+   "Account policies apply to the whole domain and are shown to administrators whose scope includes
+   the domain root. Your scope does not include it." No value, count, PSO name or precedence is
+   shown. This is a different case from rule 3: rule 3 says the *connection* could not read the
+   container (a stored fact, row `pso_unreadable`, shown to runners who can read the head);
+   rule 6 says the *runner's scope* does not reach it. The two banners use different words and
+   neither reads "no policies". Per naming context: a runner who can read one domain's head and not
+   another's sees the rows of the first and the notice for the rest, with no count or name of the
+   domains left out. For a runner who can read the head, "Applies to" lists and counts in-scope
+   targets only and is labelled "in your scope". The notice is carried in every export. Columns
+   "stricter / weaker" are not computed for a runner without the head.
 
 ### 7.2 SYS-02 Published printers (batch 10)
 
@@ -482,10 +553,18 @@ ME's report "fetches the replication status of the selected domain controller(s)
    decoder serves `msDS-ReplAttributeMetaData` and `msDS-ReplValueMetaData` for D10. Their
    location (RootDSE or partition head) and the right needed ("Monitor Active Directory
    Replication", the DRS `GetReplInfo` right) are `[UNVERIFIED]` and `[LAB: Windows]`, and the
-   right is T-1125's ruling. Samba is expected to return partial data `[UNVERIFIED]`: a value the DC
+   right is optional and off by default (TM-D31, §13). Samba is expected to return partial data `[UNVERIFIED]`: a value the DC
    does not return is "Not reported", never "healthy".
 2. **Coverage as in reports-2a §6.5**: "Read from 5 of 6 DCs", the unreachable DC and its error
    named, a row for every DC that did not answer. Never "no problems" with partial coverage.
+   **Empty result (TM-D31 rule 4).** A denied read returns an attribute-less entry, not an error,
+   and a single or isolated DC legitimately has no inbound neighbours, so an empty neighbour list
+   is not evidence of health. A DC with no neighbour rows reads **"No inbound partners reported"
+   only when the onboarding check says the replication-monitoring right is *granted*** (the check
+   reads the partition head's DACL; it never infers the right from a successful read). In every
+   other case (right not granted, check not run, check unable to read the DACL) it reads
+   **"Not reported"**. Neither label is ever "Healthy" or "no problems", and the Status and
+   Lingering-object risk cells of that row are "Not reported".
 3. **Status** is derived, not stored: Healthy (last success within the threshold and zero
    failures), Warning, Failing (failures > 0 or last success older than the threshold), Not
    reported. The thresholds are tenant-editable with defaults a `[PROPOSED]` 1 hour warning and 24
@@ -493,8 +572,12 @@ ME's report "fetches the replication status of the selected domain controller(s)
 4. **Lingering-object risk (an indicator, not detection).** "At risk" when a partner's last
    success is older than the forest's tombstone lifetime. The column heading and the AC forbid the
    word "detected". Proving a lingering object needs `DsReplicaVerifyObjects` and is out (§8).
-5. **Last error text** is shown and escaped like any attacker-controlled string (DC messages are
-   not attacker-controlled, but the same encoder applies, FF-SP4).
+5. **Last error text is attacker-influenced.** A compromised DC controls every string it returns
+   (TM-X3; TM-D31 rule 5), so the DC's error text, and any other text taken from a DC response, is
+   escaped on every output (screen, CSV/XLSX/PDF/HTML export, API) by the same encoder as every other
+   attacker-controlled string (FF-SP4), is length-bounded, and is never rendered as markup, a link
+   or a formula. The wording we add ourselves (the E-S3 meaning and remedy, rule 7) is kept visibly
+   separate from the DC's text.
 6. **Cap and cadence.** Reads are per DC and per partition (a handful per DC), not per object, so
    the object-level read cap of §6.5 does not apply. This report has its own bound: one concurrent
    read per DC and a hard limit of 100 DCs per run (`[PROPOSED]`, calibrated in B13). **Amendment
@@ -526,6 +609,9 @@ ME's report "fetches the replication status of the selected domain controller(s)
 | P4 | Users in More than One Group excludes the primary group by default | Otherwise it lists everyone |
 | P5 | Empty/Duplicate Attributes: registered columns only | Custom attributes arrive with the builder |
 | P6 | No actor on Recently Deleted/Modified | DM-18.I3 |
+| P7 | Duplicate SPN report shows the count and the computer's SPN list, not the colliding value | Needs an unbannable per-SPN dataset; shipped as a stated gap (§6.4) |
+| P8 | Logon Hour Based Report refuses half-hour-offset zones and offers UTC | One local hour straddles two stored hours; no rounding (§5.1a) |
+| P9 | A runner without the domain head in scope sees a scope notice, not policy rows | Domain-wide settings are not owned by an OU (§7.1 rule 6) |
 
 Amendments to reports-2a (to be folded into it by its owner, with the version note):
 - **A1 (§6.1 rule 6):** the Deleted presets of §4.1 list objects in lifecycle state deleted or
@@ -533,6 +619,9 @@ Amendments to reports-2a (to be folded into it by its owner, with the version no
 - **A2 (FR-28, §8.4):** the daily floor applies to per-object per-DC reads only; SYS-03 follows the
   1-hour floor.
 - **A3 (§6.3):** the table is superseded by §2 here.
+- **A4 (§9 "Directory privileges"):** "No new directory right is requested" stays true for every
+  report except SYS-03, which has one optional, off-by-default right (§13, TM-D31). Folded into
+  reports-2a §9 by T-1511.
 
 Decisions (logged here, vetoable by the CEO, none directional): the noise default (§4.1.2) and
 the opt-in "credential event" and "permissions changed" kinds; deletion shown from observation
@@ -566,8 +655,8 @@ it, rows show "Not confirmed" `[UNVERIFIED]` for hardened domains.
 - `solution-architect` (T-1124): the `ReadReplicationStatus{DC}` call, the single safe decoder for
   `msDS-Repl*`/`msDS-ReplAttributeMetaData`/`msDS-ReplValueMetaData` XML (no DTD, no entities,
   fuzzed), and the closed-AST fragments above.
-- `security-architect` (T-1125): the replication-monitoring read for SYS-03 and whether an optional
-  `CN=Deleted Objects` read may exist (§4.1.7b, §13). Tags: PWD-04 (T-1019/T-1106/T-1107), D10
+- `security-architect` (T-1125, ruled in TM-D31): the SYS-03 replication-monitoring right is
+  optional and off by default (§13); no `CN=Deleted Objects` read exists in v1. Tags: PWD-04 (T-1019/T-1106/T-1107), D10
   (T-1109), D11 (T-1111), SYS-03 (D14), USR-07 (dial-in, smart card, logon hours).
 - `project-manager` (T-1118): retitle T-1112 to drop "Terminal Services" (kept out, §2); batch 10
   ticket for SYS-02/SYS-03.
@@ -602,7 +691,7 @@ later ([Recycle Bin](https://learn.microsoft.com/en-us/windows-server/identity/a
 | Report | AD on-prem WS2016 to 2025 | Entra cloud-only | Hybrid synced objects | Samba AD (CI lab) | `windows` | `linux-oci` |
 | --- | --- | --- | --- | --- | --- | --- |
 | PWD-04 | ✓ | ✗ → T-1018 | ◐ AD side only | ◐ the DACL read is testable; assert on ACEs, not on the flag (lab note) | ✓ | ✓ |
-| USR-06, GRP-05, CMP-03, CTC-02, OU-02 | ✓ from the feed and inventory under default rights (§4.1.7); the tombstone columns (§4.1.7b) need the Recycle Bin on and the T-1125 ruling | ✗ → T-1018 | ◐ AD side only | ◐ originating-time metadata and show-deleted behaviour `[UNVERIFIED]` | ✓ | ✓ |
+| USR-06, GRP-05, CMP-03, CTC-02, OU-02 | ✓ from the feed and inventory under default rights (§4.1.7); no tombstone read in v1 (TM-D31) | ✗ → T-1018 | ◐ AD side only | ◐ originating-time metadata and show-deleted behaviour `[UNVERIFIED]` | ✓ | ✓ |
 | USR-07 dial-in and logon hours | ✓ | n/a (Entra has no per-user dial-in flag or logon-hours attribute; time-based access is a Conditional Access policy, not a user attribute) | ◐ AD side only | ✓ attributes are plain LDAP | ✓ | ✓ |
 | USR-07 smart card required | ✓ | ✗ → T-1018 (Entra has certificate-based authentication and per-user authentication methods, which are not the `SMARTCARD_REQUIRED` flag; whether to report them is T-1018's question) | ◐ AD side only | ✓ the flag is plain LDAP | ✓ | ✓ |
 | USR-08, USR-11 | ✓ | ✗ → T-1018 (photo and attribute completeness of Entra users) | ◐ AD side only | ✓ attributes are plain LDAP | ✓ | ✓ |
@@ -612,7 +701,7 @@ later ([Recycle Bin](https://learn.microsoft.com/en-us/windows-server/identity/a
 | CMP-04, CMP-05 | ✓ | ✗ → T-1018 (devices) | ◐ AD side only | ✓ | ✓ | ✓ |
 | SYS-01 | ✓ domain row; PSO rows need level 2008+ and the read right | n/a (Entra password policy is tenant-wide and not an AD policy object; PSOs have no equivalent) | ◐ AD side only | ◐ PSO behaviour `[UNVERIFIED]` on Samba, `[LAB: Windows]` | ✓ | ✓ |
 | SYS-02 | ✓ | n/a (no Entra equivalent of published printers) | ◐ AD side only | ✓ if `printQueue` objects are seeded | ✓ | ✓ |
-| SYS-03 | ✓ `[LAB: Windows]` for attribute location and right | n/a (no DCs) | ◐ AD DCs only | ◐ expected partial, rows say "Not reported" | ✓ | ✓ over the same LDAP transport |
+| SYS-03 | ✓ with the optional right granted (TM-D31); without it every DC row says "Not reported" (§13); `[LAB: Windows]` for attribute location and right | n/a (no DCs) | ◐ AD DCs only | ◐ expected partial, rows say "Not reported" | ✓ | ✓ over the same LDAP transport |
 
 Cells that are partial are decisions: Samba results prove the plumbing and the LDAP-readable
 truth; they do not prove the Windows-only behaviour listed, which waits for `[LAB: Windows]`.
@@ -621,15 +710,23 @@ truth; they do not prove the Windows-only behaviour listed, which waits for `[LA
 
 - **Directory rights.** PWD-04 needs read of each user's DACL (default Authenticated Users read
   suffices). SYS-01 PSOs need read of the Password Settings Container (Domain Admins by default; a
-  delegated read otherwise; an unreadable container is stated, never hidden). SYS-03 needs a
-  replication-monitoring read `[UNVERIFIED]`: **this may contradict reports-2a §9's "no new
-  directory right"**, so `security-architect` decides before D14 is built (T-1125). **The Deleted
-  presets request no right on `CN=Deleted Objects`:** under the default least-privilege account
-  that container answers `noSuchObject`
+  delegated read otherwise; an unreadable container is stated, never hidden). SYS-03 has one
+  **optional, off-by-default** right (DECISION TM-D31, [threat model §6.3](../../development/architecture/threat-model.md)
+  R14): the control access right "Monitor Active Directory Replication" on the partition heads in
+  scope, requested only when the tenant enables SYS-03's live read, named on the connection screen
+  with its reason, and generated by the hardening wizard. It is not Get-Changes and not
+  Administrators membership. Its exact attribute location and GUID stay `[UNVERIFIED]` until the
+  Windows lab case (T-1510); if the lab shows more is needed, SYS-03 ships fallback-only. Without
+  the right every DC row is "Not reported" with the reason "connection account lacks the
+  replication-monitoring right (optional, see Connection)" and coverage reads "0 of N DCs
+  reported" (never "Healthy"; an empty result is "Not reported" unless the onboarding check says
+  the right is granted, in which case the label is "No inbound partners reported"; TM-D31 rule 4, §7.3
+  rule 2). SYS-03 needs its own RBAC permission, distinct from `reports.run`. The
+  amendment to reports-2a §9 is A4 in §9. **The Deleted presets request no right on
+  `CN=Deleted Objects`, now or as an option** (TM-D31 rule 6): under the default least-privilege
+  account that container answers `noSuchObject`
   ([threat model §6.3 R9](../../development/architecture/threat-model.md), T-0076), so §4.1 rule 7
-  runs from the feed and our own inventory. An optional tombstone read (§4.1 rule 7b) is built only
-  if T-1125 permits it, as a named, off-by-default choice, and never by taking ownership of the
-  container. No report writes to a directory.
+  runs from the feed and our own inventory and is the whole behaviour. No report writes to a directory.
 - **Disclosure.** USR-06 and the other change reports disclose that an object existed and when it
   was deleted; scope trims by stored ancestry (§4.1.8). Duplicates are counted in scope only (§5.5).
   Photo and logon-script reports return presence and path text, never bytes. PWD-04 and USR-07 name
@@ -637,7 +734,8 @@ truth; they do not prove the Windows-only behaviour listed, which waits for `[LA
   2a reports (reports-2a §9), covered by `reports.run`.
 - **Safe primitives.** Report SQL, scope and export encoders as reports-2a §9. The logon-hours,
   attribute and manager pickers send registry IDs, never text. Attribute values and error strings
-  are escaped on every output (TM-X3). The `userParameters` blob is deliberately not decoded (F3).
+  are escaped on every output (TM-X3); this includes the DC error text of SYS-03, which a
+  compromised DC controls (§7.3 rule 5, TM-D31 rule 5). The `userParameters` blob is deliberately not decoded (F3).
 - **Audit.** Run, export, download and schedule events as reports-2a §8.6. Nothing new is written
   to a directory, so no activeDIQ change event is added.
 
@@ -645,9 +743,9 @@ truth; they do not prove the Windows-only behaviour listed, which waits for `[LA
 
 | ID | Requirement | Parity |
 | --- | --- | --- |
-| FR-S01 | The library MUST add the reports of §4 to §7 (17 firm, plus CMP-05 only when T-1014 confirms) in the category and with the ME names, presets, columns and filters stated there, and each ME name MUST resolve to its report and preset (FR-02) | ADM-084…089, ADM-092 |
+| FR-S01 | The library MUST add the reports of §4 to §7 (all 18, CMP-05 included) in the category and with the ME names, presets, columns and filters stated there, and each ME name MUST resolve to its report and preset (FR-02) | ADM-084…089, ADM-092 |
 | FR-S02 | A change report MUST show "changed at" with its basis, hide the noise set with a count and a switch, show attribute names only, show no actor, state where history starts, and apply the day-one fallback of §4.1.5 | ADM-084, 086, 087, 089 |
-| FR-S03 | Recently Deleted MUST list objects observed leaving the directory within scope, taking Name, Logon name and OU path from the last inventory observation, MUST show Deleted at as the observed time ("on or before") and State "Removed (restore status unknown)" with Restorable until "Unknown" under default rights, MUST NOT request a right on `CN=Deleted Objects`, MUST show the tombstone-derived columns only when the T-1125 ruling allows (§4.1.7b), and MUST NOT list an object whose ancestry is unknown | same |
+| FR-S03 | Recently Deleted MUST list objects observed leaving the directory within scope, taking Name, Logon name and OU path from the last inventory observation, MUST show Deleted at as the observed time ("on or before") and State "Removed (restore status unknown)" with Restorable until "Unknown" under default rights, MUST NOT request a right on `CN=Deleted Objects` or offer an option to, and MUST NOT list an object whose ancestry is unknown | same |
 | FR-S11 | A change report MUST treat password changes and `nTSecurityDescriptor` changes as their own opt-in kinds ("credential event", "permissions changed"), each with a header count and a switch, MUST NOT call a permissions change automatic, and MUST show group membership changes as "Members added n / removed m" with the Basis per value | ADM-084, 086, 087, 089 |
 | FR-S12 | SYS-03 MUST NOT decode `repsFrom`, and every `msDS-Repl*` value MUST pass only the connector's safe decoder (T-1124) | ADM-092 |
 | FR-S04 | PWD-04 MUST use the four-valued stored state of §4.2, MUST NOT read a descriptor at run time, MUST count "Not confirmed" in the header and MUST NOT list it as a match or as "No deny ACE" | ADM-085 |
@@ -655,7 +753,7 @@ truth; they do not prove the Windows-only behaviour listed, which waits for `[LA
 | FR-S06 | Empty/Duplicate Attributes MUST accept only registered columns and count duplicates within the runner's scope | ADM-084, ADM-087 |
 | FR-S07 | Group-derived reports (USR-13, GRP-06) MUST count the primary group as stated in §6.2 and §6.3 and MUST include every edge of a group with more than 1,500 members | ADM-084, ADM-086 |
 | FR-S08 | SYS-01 MUST list the domain policy and every readable PSO with direct targets and MUST state when PSOs were unreadable | ADM-092 |
-| FR-S09 | SYS-03 MUST read each in-scope DC separately, show coverage, show "Not reported" for any unanswered value, and MUST NOT use the word "detected" for the lingering-object indicator | ADM-092 |
+| FR-S09 | SYS-03 MUST read each in-scope DC separately, show coverage, show "Not reported" for any unanswered value, MUST label an empty neighbour result "No inbound partners reported" only when the onboarding check says the right is granted (otherwise "Not reported"), MUST escape DC error text as attacker-influenced on every output, and MUST NOT use the word "detected" for the lingering-object indicator | ADM-092 |
 | FR-S10 | No kept-out item of §8 MAY appear as a dead control, a search hit or a preset | house rule 6 |
 
 ## 15. Acceptance criteria
@@ -678,7 +776,8 @@ Given a lab with a user edited 2 days ago, a user deleted 3 days ago, one edited
   logon-time updates on 50 other users
 When Recently Modified Users runs with the default 7-day period
 Then only the user edited 2 days ago is listed, with the changed attribute names and Basis, the
-  header reads "50 automatic updates hidden", and the switch lists them
+  header reads "50 objects with only automatic updates hidden", and the switch lists those 50 objects
+  (each with its change count shown as "changes")
 Evidence: lab test versus the seeded list
 
 AC-S03 (FR-S02)
@@ -715,16 +814,15 @@ Then the first user is listed with Name, Logon name and Last known OU path from 
 Evidence: lab test against the seeded list and the connector call log; [LAB: Windows] run for
   whether DirSync returns the delete to the least-privilege account, else the resync-diff path
 
-AC-S07 (FR-S03, rule 7b, only if T-1125 permits the optional read)
-Given the optional tombstone read is enabled, one object deleted with the Recycle Bin on
-  (restorable), one recycled, one purged from the directory, and a forest with the Recycle Bin off
-  and a tombstone with no retained name
-When Recently Deleted Users and Computers run
-Then the first three show State "Deleted (restorable)", "Recycled (cannot be restored)" and "Purged
-  from the directory (history only)" with Restorable until as "up to"; the Recycle-Bin-off row falls
-  back to the last inventory name and only when that is empty shows "Not retained by AD", never a
-  blank; and Basis says "DC time, originating" for these cells
-Evidence: [LAB: Windows] test; table test elsewhere. Not built until the T-1125 ruling
+AC-S07 (FR-S03, TM-D31 rule 6)
+Given the connection screen, the hardening wizard output for every feature enabled together, and
+  the connector source
+When they are inspected, and Recently Deleted Users and Computers run
+Then no option, wizard step or ACE requests List, Read or ownership on CN=Deleted Objects, no code
+  path issues a listing with the Show-Deleted control against it or sets an owner or DACL on it,
+  the run record shows no read of it, and no cell reads "Deleted (restorable)", "Recycled" or
+  "Purged from the directory"
+Evidence: wizard output and connector call log; TM-F-RIGHTS case (b) (grep-level plus connector contract test)
 
 AC-S08 (FR-S05)
 Given users with msNPAllowDialin TRUE, FALSE and absent
@@ -792,10 +890,10 @@ When Computers with Duplicate Attributes runs on each
 Then both groups are listed with Duplicate count, within the runner's scope
 Evidence: lab test
 
-AC-S17 (FR-S01, gate)
-Given T-1014 has not confirmed ME's meaning of Managed Computers
-When the library is listed
-Then CMP-05 is absent. Given it has confirmed, Then CMP-05 lists computers with managedBy set or not set
+AC-S17 (FR-S01)
+Given computers with and without managedBy
+When Managed Computers and Unmanaged Computers run
+Then the first lists exactly those with managedBy set and the second those without
 Evidence: library test; lab test versus (&(objectClass=computer)(managedBy=*))
 
 AC-S18 (FR-S08)
@@ -917,18 +1015,67 @@ When the Recently Deleted presets are inspected
 Then no control, column or export offers Restore, and every Restorable until cell shows "Unknown"
   under default rights
 Evidence: UI recording; API response schema check
+
+AC-S34 (FR-S09, FR-S12, TM-D31 rules 4 and 5)
+Given a single-DC lab domain whose DC returns no inbound neighbours, once with the onboarding check
+  reporting the replication-monitoring right "granted" and once with it "not granted" (and once
+  with the check not run), and a DC whose error text contains `<script>`, `=HYPERLINK(...)` and a
+  4,000-character string
+When DC Replication Status runs and is exported to CSV, XLSX, PDF and HTML
+Then the empty DC row reads "No inbound partners reported" only in the "granted" case and
+  "Not reported" in the other two; neither case shows "Healthy" or "no problems", and Status and
+  Lingering-object risk read "Not reported"; the error text is shown escaped and length-bounded on
+  screen and in every export (no markup, no active link, no formula), apart from our own E-S3 text
+Evidence: UI recording; export files inspected; encoder unit test (FF-SP4); TM-F-RIGHTS cases (c)
+  and (d) as ground truth for the label
 ```
+
+AC-S35 (FR-S06, §6.4)
+Given three in-scope computers where A and B share one SPN and C has a unique SPN, and a computer D
+  outside the runner's scope that shares an SPN with C
+When Computers with Duplicate Attributes runs on the SPN choice
+Then A and B are listed, each with "Shares an SPN with 1 other computers" and its own SPN list, C is
+  not listed, D is neither listed nor counted, and no cell names a specific colliding SPN
+Evidence: lab test; API response schema check
+
+AC-S36 (§5.1a)
+Given users with logon-hour restrictions and a viewer whose zone is Asia/Kolkata
+When the Logon Hour Based Report opens, and again when it is run through the API with zone Asia/Kolkata
+Then the picker defaults to UTC with the stated reason, Asia/Kolkata is disabled with the same reason,
+  the API returns `zone_not_hour_aligned` with the offset and no result, and a run in
+  Europe/Berlin returns the same users as the independent reference
+Evidence: UI recording; API test; RP13 reference
+
+AC-S37 (§4.1.2a)
+Given 50 in-scope users with only logon-time updates, 3 with an edit, and 10 out-of-scope users with
+  logon-time updates
+When Recently Modified Users runs, then Show is chosen
+Then the header reads "50 objects with only automatic updates hidden", objects checked = 3 + 50
+  (the 10 out-of-scope users appear nowhere), Show adds exactly 50 rows, and no header or hidden
+  group says "automatic updates" without "objects"
+Evidence: lab test; API `hiddenGroups[]` counts equal the rows added by Show
+
+AC-S38 (FR-S08, §7.1 rule 6)
+Given a domain with a domain policy and two PSOs, an administrator scoped to one OU, and a domain
+  administrator
+When SYS-01 runs for each, and again for the OU administrator after the connection loses read of the
+  Password Settings Container
+Then the OU administrator sees the scope notice and no policy row, value or PSO name, in the screen
+  and in every export; the domain administrator sees all rows; for the domain administrator with the
+  container unreadable the `pso_unreadable` banner shows and the OU administrator still sees only the
+  scope notice; neither view says "no policies"
+Evidence: UI recording; export files inspected; RP15 test
 
 ## 16. Open questions
 
 | # | Question | Owner | Blocks |
 | --- | --- | --- | --- |
 | S1 | Does DirSync return `nTSecurityDescriptor` changes without the object-security flag? | directory-engineer in T-1019 | Freshness label of PWD-04 only |
-| S2 | Location and right for the replication-neighbour attributes; Samba coverage | ad-expert, `[LAB: Windows]` | D14 build; SYS-03 right (security-architect) |
+| S2 | Location of the replication-neighbour attributes and the exact right (ruled optional, off by default: TM-D31); Samba coverage | ad-expert, `[LAB: Windows]` (T-1510) | D14 build; if the lab needs more than Monitor-Topology, SYS-03 ships fallback-only |
 | S3 | ME's meanings marked `[UNVERIFIED]` here (Dial-in absent, Smart Card, multi-group count, Domain-Users-only, printers, modified) | test-engineer, F1 | Nothing; no match claimed |
 | S4 | Replication status thresholds (1 h, 24 h) | ad-expert, reporting-engineer | Defaults apply |
-| S5 | T-1014 confirmation of Managed/Unmanaged | market-analyst | CMP-05 only |
-| S6 | Whether the least-privilege account's DirSync returns deletes, and whether an optional `CN=Deleted Objects` read may exist | security-architect (T-1125), `[LAB: Windows]` | The tombstone columns of §4.1.7b only; rule 7 ships regardless |
+| S5 | *Closed:* T-1014 confirmed Managed/Unmanaged (§K.1 row 3); CMP-05 ungated in T-1132 | market-analyst | None |
+| S6 | *Closed (TM-D31):* no `CN=Deleted Objects` read exists in v1. Still open: whether the least-privilege account's DirSync returns deletes, and with an originating time | directory-engineer, `[LAB: Windows]` (T-1510) | Only whether "DC time, originating" may be shown (§4.1.7); the resync diff ships regardless |
 | S7 | Whether SDProp or inheritance bumps `nTSecurityDescriptor` metadata and at what volume | test-engineer, F1 (T-1120), `[LAB: Windows]` | Nothing; the kind is opt-in |
 
 No question is directional: nothing needs the CEO. The only commercial-looking item, how many

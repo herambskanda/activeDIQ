@@ -176,6 +176,13 @@
       "mintsTenantID": true
     },
     {
+      "package": "internal/modules/objects",
+      "function": "TestTenantIsolationAndNoTenant",
+      "reason": "Test: runs a transaction with no tenant context to prove that the Template and NamingFormat stores refuse it with ErrNoTenant before any SQL (DM-50, DM-51). It is in a _test.go file and ships in no binary.",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
       "package": "internal/platform/audit",
       "function": "TestRetiredKeyIsWipedThroughSecurityDefiner",
       "reason": "Test: proves the registered SECURITY DEFINER audit_wipe_retired_key refuses a call made with no tenant context (SQLSTATE 42501), which needs a transaction under WithPlatform. It is in a _test.go file and ships in no binary (ADR-0005 rule 11, T-0305).",
@@ -302,6 +309,36 @@
       "column": "public.connections.kind",
       "value": "entra_tenant",
       "reason": "CHECK: kind is ad_forest or entra_tenant; entra_tenant needs no transport_security (DM-10)."
+    },
+    {
+      "column": "public.objects_templates.object_kind",
+      "value": "user",
+      "reason": "CHECK: object_kind is user, group, computer, contact or ou (DM-50)."
+    },
+    {
+      "column": "public.objects_templates.state",
+      "value": "draft",
+      "reason": "CHECK: state is draft, published or archived, and published_at is set only when not a draft (objects_templates_published_at, DM-50); the probe row is a draft."
+    },
+    {
+      "column": "public.objects_templates.provider",
+      "value": "ad",
+      "reason": "CHECK: provider is ad, entra or hybrid (DM-50)."
+    },
+    {
+      "column": "public.objects_templates.purpose",
+      "value": "create",
+      "reason": "CHECK: purpose is create or modify (DM-50)."
+    },
+    {
+      "column": "public.objects_naming_formats.state",
+      "value": "draft",
+      "reason": "CHECK: state is draft, active or archived, and published_at is set only when not a draft (objects_naming_formats_published_at, DM-51); the probe row is a draft."
+    },
+    {
+      "column": "public.objects_naming_formats.purpose",
+      "value": "cn",
+      "reason": "CHECK: purpose is sAMAccountName, upnPrefix, cn, displayName or mailAlias (DM-51)."
     },
     {
       "column": "public.components.kind",

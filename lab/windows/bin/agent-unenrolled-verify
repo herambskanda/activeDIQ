@@ -1,0 +1,425 @@
+#!/usr/bin/env python3
+"""Lab proof for T-0813 on the Windows lab DC (dc1, Proxmox VM 119): T-0833.
+
+Checks, on a MSI built from this checkout's packaging/windows/agent/Agent.wxs with WiX 5.0.2:
+  AC1  `wix build -wx -sw1149` succeeds with no WIX0004 and no other warning (-wx turns any unsuppressed warning into
+       an error; WIX1149 is suppressed on purpose, see Agent.wxs). Fixtures: the same file built WITHOUT -sw1149 must
+       fail with WIX1149, and a core ServiceConfig carrying a failure-action attribute must fail with WIX0004 (T-1249)
+  AC2  install with Start=install while UNENROLLED: msiexec exit 0, no error 1920, service Running and the
+       same process after the SCM's 30 s recovery delay, no Service Control Manager crash events, no event 101
+  AC3  event 103 of source "activeDIQ Agent" renders text (and a source with no message file does not: the fixture)
+  AC4  `activediq-agent.exe enroll` against a lab Fleet stub (lab/windows/enrol-stub, on this host): the SAME service
+       process connects to the stub with its new mTLS certificate within 15 s, over --trials trials at different phases;
+       the enrolment directory and files name SYSTEM, Administrators and the service SID, are owned by Administrators
+       and do not name the enrolling administrator (T-1249)
+  AC6  the Windows unit tests of internal/platform/fleet/dial (ForAccount, owner/DACL refusals) and of the CPU cap
+       (Burst lift/restore read back with QueryInformationJobObject, restore-failure repair, real Confine in a child
+       process) run ELEVATED on dc1; the new tests must PASS, not SKIP (T-1249 review)
+  AC5  state the service cannot load (a BUILTIN\\Users ACE on the enrolment directory): the running service reports
+       event 104 naming the class, not event 103, keeps running and does not connect (T-1249)
+
+Holds the dc1 lock for the whole run (T-0839), restores dc1 (agent uninstalled, ProgramData\\skenzeriq gone) and
+records a before and after snapshot. Lab DC only (A-0025). Needs: pip install pywinrm requests-ntlm.
+Runbook: knowledge/development/runbooks/windows-lab.md section 17.
+"""
+import argparse, datetime, hashlib, os, random, re, socket, subprocess, sys, tempfile, threading, time
+
+REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if not os.environ.get("DIQ_DC1_LOCK_HELD"):
+    os.execv(os.path.join(REPO, "lab", "windows", "bin", "with-dc1-lock"),
+             ["with-dc1-lock", "--", sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
+sys.path.insert(0, os.path.join(REPO, "lab", "windows", "lib"))
+from dc1winrm import DC, load_env  # noqa: E402
+
+WIX = "5.0.2"
+B = "C:\\lab\\build"
+SVC = "activeDIQAgent"
+LOG = []
+
+
+def say(line=""):
+    print(line, flush=True)
+    LOG.append(line)
+
+
+FAILS = []
+
+
+def check(cid, ok, detail):
+    if not ok:
+        FAILS.append(cid)
+    say(f"CHECK {cid} {'PASS' if ok else 'FAIL'} {detail}")
+
+
+SNAP = r"""
+$e = Get-Service activeDIQAgent -ErrorAction SilentlyContinue
+"service: " + $(if ($e) { $e.Status } else { 'absent' })
+"uninstall entry: " + [bool](Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object DisplayName -eq 'activeDIQ Agent')
+"C:\Program Files\skenzeriq: " + (Test-Path 'C:\Program Files\skenzeriq')
+"C:\ProgramData\skenzeriq: " + (Test-Path 'C:\ProgramData\skenzeriq')
+"event source registered: " + (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\activeDIQ Agent')
+"security channel ACE for the service: " + [bool]((wevtutil gl Security) -match 'S-1-5-80-')
+"LDAPServerIntegrity: " + (Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters -Name 'LDAP Server Integrity' -ErrorAction SilentlyContinue).'LDAP Server Integrity'
+"""
+
+RESET = r"""
+foreach ($k in Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue | Where-Object DisplayName -eq 'activeDIQ Agent') {
+  Start-Process msiexec -ArgumentList "/x $($k.PSChildName) /qn /l*v C:\lab\build\uninstall.log" -Wait | Out-Null }
+if (Get-Service activeDIQAgent -ErrorAction SilentlyContinue) { sc.exe delete activeDIQAgent | Out-Null }
+if (Test-Path 'C:\Program Files\skenzeriq') { Remove-Item -Recurse -Force 'C:\Program Files\skenzeriq' }
+if (Test-Path C:\ProgramData\skenzeriq) {
+  if ((Get-Item C:\ProgramData\skenzeriq -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { (Get-Item C:\ProgramData\skenzeriq -Force).Delete() }
+  else { Remove-Item -Recurse -Force C:\ProgramData\skenzeriq } }
+'reset done'
+"""
+
+
+def host_ip(target):
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect((target, 5985))
+    ip = s.getsockname()[0]
+    s.close()
+    return ip
+
+
+def sh(*cmd, **kw):
+    return subprocess.check_call(list(cmd), cwd=REPO, **kw)
+
+
+def main():
+    import signal
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))  # a killed run still restores dc1 (finally below)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--log", required=True)
+    ap.add_argument("--version", default="0.0.1")
+    ap.add_argument("--trials", type=int, default=3)
+    ap.add_argument("--ref", default="HEAD", help="git ref holding the agent code and Agent.wxs under test")
+    ap.add_argument("--merge-main", default="", help="merge this ref into --ref first ('' = test --ref as it is)")
+    ap.add_argument("--port", type=int, default=7443)
+    a = ap.parse_args()
+    env, _path, addr = load_env("agent-unenrolled-verify")
+    dc = DC(env, addr)
+    me = host_ip(addr)
+    commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip()
+    say(f"T-0833 agent-unenrolled-verify  commit {commit}  host {me}  dc1 {addr}")
+    say(f"dc1 lock held (pid {os.environ['DIQ_DC1_LOCK_HELD']}, waited {os.environ.get('DIQ_DC1_LOCK_WAITED', '0')}s)")
+    say(f"start {datetime.datetime.now(datetime.timezone.utc).isoformat()}  dc1 clock: " + dc.ps("(Get-Date).ToUniversalTime().ToString('o')")[1].strip())
+
+    work = tempfile.mkdtemp(prefix="agent-unenrolled-")
+    # The code under test is --ref merged with main in a throwaway worktree (nothing of it is committed on this
+    # branch). T-0813 was cut before main's T-0648 fixes to Agent.wxs/agentsetup; `-X ours` resolves the
+    # Agent.wxs conflict in favour of --ref, which is the change under test.
+    src = os.path.join(work, "src")
+    subprocess.check_call(["git", "worktree", "add", "-q", "--detach", src, a.ref], cwd=REPO)
+    try:
+        if a.merge_main:
+            subprocess.check_call(["git", "-c", "user.name=lab", "-c", "user.email=lab@localhost", "merge", "-q", "-X", "ours", "--no-edit", a.merge_main],
+                                  cwd=src, stdout=subprocess.DEVNULL)
+        refc = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=src, text=True).strip()
+        say(f"code under test: {a.ref}" + (f" merged with {a.merge_main}" if a.merge_main else "") + f" @ {refc} (tree {subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=src, text=True).strip()})")
+    except BaseException:
+        subprocess.call(["git", "worktree", "remove", "--force", src], cwd=REPO)
+        raise
+    a.src = src
+    genv = dict(os.environ, GOOS="windows", GOARCH="amd64", CGO_ENABLED="0")
+    for name, pkg in (("activediq-agent.exe", "./cmd/agent"), ("agentsetup.exe", "./cmd/agentsetup")):
+        subprocess.check_call(["go", "build", "-trimpath", "-buildvcs=false", "-o", os.path.join(work, name), pkg], cwd=src, env=genv)
+    for name, pkg in (("dial.test.exe", "./internal/platform/fleet/dial"), ("agent.test.exe", "./internal/platform/agent"), ("ownerfile.test.exe", "./internal/platform/ownerfile")):
+        subprocess.check_call(["go", "test", "-c", "-trimpath", "-buildvcs=false", "-o", os.path.join(work, name), pkg], cwd=src, env=genv)
+    stub_bin = os.path.join(work, "enrol-stub")
+    sh("go", "build", "-trimpath", "-buildvcs=false", "-o", stub_bin, "./lab/windows/enrol-stub")
+    for n in ("activediq-agent.exe", "agentsetup.exe"):
+        say(f"sha256 {hashlib.sha256(open(os.path.join(work, n), 'rb').read()).hexdigest()} {n}")
+
+    say("\n== dc1 BEFORE ==")
+    say(dc.ps(SNAP)[1].strip())
+    try:
+        run(a, dc, me, work, stub_bin)
+    finally:
+        say("\n== restore dc1 ==")
+        say(dc.ps(RESET)[1].strip())
+        dc.ps(r"Remove-Item C:\lab\build\enrol.token -ErrorAction SilentlyContinue")
+        say("== dc1 AFTER ==")
+        say(dc.ps(SNAP)[1].strip())
+        before_after = "(compare BEFORE and AFTER above: they must match)"
+        say(before_after)
+        say(f"\nSUMMARY failures={len(FAILS)} {' '.join(FAILS)}")
+        open(a.log, "w").write("\n".join(LOG) + "\n")
+        subprocess.call(["git", "worktree", "remove", "--force", a.src], cwd=REPO)
+    sys.exit(1 if FAILS else 0)
+
+
+def run(a, dc, me, work, stub_bin):
+    say("\n== tools on dc1 ==")
+    rc, out = dc.ps(f"""
+$ProgressPreference='SilentlyContinue'
+New-Item -ItemType Directory -Force C:\\lab\\tools,C:\\lab\\build,C:\\lab\\out | Out-Null
+if(-not (Test-Path C:\\lab\\tools\\dotnet\\dotnet.exe)){{
+ Invoke-WebRequest https://dot.net/v1/dotnet-install.ps1 -OutFile C:\\lab\\tools\\dotnet-install.ps1 -UseBasicParsing
+ & C:\\lab\\tools\\dotnet-install.ps1 -Channel 8.0 -InstallDir C:\\lab\\tools\\dotnet | Out-Null }}
+$env:DOTNET_ROOT='C:\\lab\\tools\\dotnet'; $env:DOTNET_CLI_TELEMETRY_OPTOUT=1
+if(-not (Test-Path C:\\lab\\tools\\wix\\wix.exe)){{ & C:\\lab\\tools\\dotnet\\dotnet.exe tool install wix --version {WIX} --tool-path C:\\lab\\tools\\wix | Out-Null }}
+& C:\\lab\\tools\\wix\\wix.exe extension add -g WixToolset.Util.wixext/{WIX} 2>&1 | Out-Null
+'wix ' + (& C:\\lab\\tools\\wix\\wix.exe --version)""")
+    say(out.strip())
+    dc.put(os.path.join(work, "activediq-agent.exe"), B + "\\activediq-agent.exe")
+    dc.put(os.path.join(work, "agentsetup.exe"), B + "\\agentsetup.exe")
+    dc.put(os.path.join(a.src, "packaging", "windows", "agent", "Agent.wxs"), B + "\\Agent.wxs")
+    say(dc.ps(RESET)[1].strip())
+    unit_tests(a, dc, work)
+
+    build = lambda wxs, msi, extra="": dc.ps(f"""
+Remove-Item {B}\\{msi} -ErrorAction SilentlyContinue
+$env:DOTNET_ROOT='C:\\lab\\tools\\dotnet'; $env:PATH='C:\\lab\\tools\\dotnet;'+$env:PATH; cd {B}
+$o = (& C:\\lab\\tools\\wix\\wix.exe build {wxs} -ext WixToolset.Util.wixext -d Version={a.version} -d AgentExe={B}\\activediq-agent.exe -d SetupExe={B}\\agentsetup.exe -arch x64 {extra} -o {msi} 2>&1 | Out-String)
+$o; "wix exit=$LASTEXITCODE"; "msi exists=" + (Test-Path {msi}); if (Test-Path {msi}) {{ "msi sha256 " + (Get-FileHash {msi}).Hash }}""")
+
+    say("\n== AC1: wix build -wx -sw1149 ==")
+    flags = "-wx -sw1149"
+    _, out = build("Agent.wxs", f"activediq-agent-{a.version}.msi", flags)
+    say(out.strip())
+    check("AC1.build", "wix exit=0" in out and "msi exists=True" in out, f"wix build {flags} of {a.ref} Agent.wxs succeeds")
+    check("AC1.no-WIX0004", "WIX0004" not in out, "no WIX0004 in the build output")
+    check("AC1.no-WIX1149", "WIX1149" not in out, "no WIX1149 in the build output")
+    check("AC1.no-warnings", not re.search(r"warning WIX\d+", out), "no warning of any kind (the pipeline treats unsuppressed warnings as errors)")
+    say("-- fixture 1: the same Agent.wxs without -sw1149 (the suppression is what silences it; -wx makes it fail)")
+    _, outf = build("Agent.wxs", "nosuppress.msi", "-wx")
+    say(outf.strip())
+    check("AC1.fixture-1149", "WIX1149" in outf and "msi exists=False" in outf, "without -sw1149 the build fails on WIX1149 (the check can fail)")
+    say("-- fixture 2: failure-action attributes on the core ServiceConfig (T-0813's wrong premise)")
+    w = open(os.path.join(a.src, "packaging", "windows", "agent", "Agent.wxs")).read()
+    w2 = w.replace('<ServiceConfig ServiceSid="restricted"', '<ServiceConfig FirstFailureActionType="restart" ServiceSid="restricted"', 1)
+    assert w2 != w
+    dc.put_bytes(w2.encode(), B + "\\Agent-core-failure.wxs")
+    _, outc = build("Agent-core-failure.wxs", "corefail.msi", flags)
+    say(outc.strip())
+    check("AC1.fixture-0004", "WIX0004" in outc, "a failure-action attribute on the core ServiceConfig is WIX0004 (the check can fail)")
+    if "wix exit=0" not in out:
+        return
+    cand = f"activediq-agent-{a.version}.msi"
+
+    say("\n== AC2: install unenrolled with Start=install ==")
+    msi = f"{B}\\{cand}"
+    rc, out = dc.ps(f"""
+$t0 = Get-Date; "t0 " + $t0.ToUniversalTime().ToString('o')
+$p = Start-Process msiexec -ArgumentList "/i {msi} /qn /l*v {B}\\install.log" -Wait -PassThru
+"msiexec exit=" + $p.ExitCode
+"log 1920 lines=" + @(Select-String -Path {B}\\install.log -Pattern '1920').Count
+$s = Get-CimInstance Win32_Service -Filter "Name='activeDIQAgent'"
+"after install: state=" + $s.State + " pid=" + $s.ProcessId + " startmode=" + $s.StartMode
+(sc.exe qfailure activeDIQAgent) -join "`n"
+Start-Sleep 45
+$s = Get-CimInstance Win32_Service -Filter "Name='activeDIQAgent'"
+"after 45 s (past the 30 s recovery delay): state=" + $s.State + " pid=" + $s.ProcessId
+$scm = @(Get-WinEvent -FilterHashtable @{{LogName='System'; ProviderName='Service Control Manager'; StartTime=$t0}} -ErrorAction SilentlyContinue | Where-Object {{ $_.Message -like '*activeDIQ*' }})
+"SCM events about the service since install:"; $scm | ForEach-Object {{ "  " + $_.Id + " " + $_.Message }}
+"SCM failure events (7031/7034/7024/7023/7009/7000)=" + @($scm | Where-Object {{ $_.Id -in 7031,7034,7024,7023,7009,7000 }}).Count
+$app = @(Get-WinEvent -FilterHashtable @{{LogName='Application'; ProviderName='activeDIQ Agent'; StartTime=$t0}} -ErrorAction SilentlyContinue)
+"agent events since install: ids " + (($app | ForEach-Object {{ $_.Id }}) -join ',')
+"event 101 count=" + @($app | Where-Object Id -eq 101).Count
+"event 103 count=" + @($app | Where-Object Id -eq 103).Count""")
+    say(out.strip())
+    if "msiexec exit=0" not in out:
+        say("-- install.log (errors):")
+        say(dc.ps(f"Select-String -Path {B}\\install.log -Pattern 'Return value 3|Error 1[0-9][0-9][0-9]\\.|returned actual error' | ForEach-Object {{ $_.Line.Trim() }}")[1].strip())
+    g = lambda pat: (re.search(pat, out) or [None, None])[1]
+    check("AC2.install-exit", g(r"msiexec exit=(\d+)") == "0", f"msiexec exit {g(r'msiexec exit=(\d+)')}")
+    check("AC2.no-1920", g(r"log 1920 lines=(\d+)") == "0", "install log has no 1920")
+    pid1, pid2 = g(r"after install: state=\w+ pid=(\d+)"), g(r"recovery delay\): state=\w+ pid=(\d+)")
+    check("AC2.running", "after install: state=Running" in out and "recovery delay): state=Running" in out, "service Running after install and after 45 s")
+    check("AC2.same-process", bool(pid1) and pid1 == pid2 and pid1 != "0", f"same process throughout (pid {pid1} -> {pid2}): no exit, no SCM restart")
+    check("AC2.no-scm-failure", g(r"SCM failure events [^=]*=(\d+)") == "0", "no Service Control Manager failure events")
+    check("AC2.no-event-101", g(r"event 101 count=(\d+)") == "0", "no start-refused event 101")
+
+    say("\n== AC3: event 103 ==")
+    rc, out = dc.ps(r"""
+$e = @(Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='activeDIQ Agent'; Id=103} -ErrorAction SilentlyContinue)
+"count=" + $e.Count
+$e | Select-Object -First 1 | ForEach-Object { "level=" + $_.LevelDisplayName; "message=[" + $_.Message + "]" }
+"-- Event Viewer text rendering (wevtutil, as the Event Viewer details pane):"
+wevtutil qe Application /q:"*[System[Provider[@Name='activeDIQ Agent'] and (EventID=103)]]" /c:1 /rd:true /f:text
+"-- registered message file:"
+(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\activeDIQ Agent').EventMessageFile
+"-- fixture: a source registered with NO message file"
+$fs = 'diq-lab-nomsg-' + (Get-Random)
+# New-EventLog would register EventLogMessages.dll; the fixture is a source key with NO message file
+New-Item -Path "HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application\$fs" -Force | Out-Null
+Write-EventLog -LogName Application -Source $fs -EventId 103 -EntryType Warning -Message 'agent is installed but not enrolled'
+Start-Sleep 2
+$f = Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName=$fs} -ErrorAction SilentlyContinue | Select-Object -First 1
+"fixture message=[" + $f.Message + "]"
+"fixture wevtutil:"
+wevtutil qe Application /q:"*[System[Provider[@Name='$fs']]]" /c:1 /rd:true /f:text
+Remove-Item -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\$fs" -Force""")
+    say(out.strip())
+    # What Event Viewer shows is the wevtutil text rendering: "Description:" followed by the text, or, when the
+    # message file does not resolve, "The description for Event ID n from source s cannot be found ...".
+    good = out.split("-- registered message file:")[0].split("Description:")[-1]
+    msg = good
+    renders = lambda m: bool(m.strip()) and "not enrolled" in m and "cannot be found" not in m
+    check("AC3.event-103-exists", (g(r"^count=(\d+)") or "0") != "0", "event 103 of source 'activeDIQ Agent' is in the Application log")
+    check("AC3.renders", renders(msg), "Message text present and names 'not enrolled'")
+    fix = out.split("fixture wevtutil:")[-1].split("Description:")[-1]
+    check("AC3.fixture-detects", not renders(fix), "the same predicate rejects a source with no message file (the check can fail)")
+
+    say("\n== AC4: enrol while the service is running ==")
+    for i in range(1, a.trials + 1):
+        trial(a, dc, me, stub_bin, i)
+    unusable(a, dc, me, stub_bin)
+
+
+def unit_tests(a, dc, work):
+    """AC6 (T-1249 review): the Windows-only unit tests, elevated, on the real DC."""
+    say("\n== AC6: Windows unit tests, elevated, on dc1 ==")
+    dc.put(os.path.join(work, "dial.test.exe"), B + "\\dial.test.exe")
+    dc.put(os.path.join(work, "agent.test.exe"), B + "\\agent.test.exe")
+    dc.put(os.path.join(work, "ownerfile.test.exe"), B + "\\ownerfile.test.exe")
+    rc, out = dc.ps(f"""
+$id = [Security.Principal.WindowsIdentity]::GetCurrent(); "whoami=" + $id.Name
+"elevated=" + ([Security.Principal.WindowsPrincipal]$id).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+cd {B}
+"== dial.test.exe"; $d = (& .\\dial.test.exe '-test.v' '-test.count=1' '-test.skip=^TestNoStoreOrSQL$' 2>&1 | Out-String); $d; "dial exit=$LASTEXITCODE"
+"== agent.test.exe"; $g = (& .\\agent.test.exe '-test.v' '-test.count=1' '-test.run=Cap|TestWindowsBurst|TestWindowsConfine' 2>&1 | Out-String); $g; "agent exit=$LASTEXITCODE"
+"== ownerfile.test.exe"; $o = (& .\\ownerfile.test.exe '-test.v' '-test.count=1' 2>&1 | Out-String); $o; "ownerfile exit=$LASTEXITCODE"
+""")
+    say(out.strip())
+    for t in ("TestWindowsForAccountNamesAccountNotCaller", "TestWindowsForAccountUnknownAccountFailsBeforeWriting", "TestWindowsTrustAdministratorsDoesNotWidenWrites", "TestWindowsForAccountTrustsItsOwnParentGrant", "TestWindowsLoadRefusesWidenedState"):
+        check(f"AC6.{t}", f"--- PASS: {t}" in out, f"{t} PASSED elevated (not skipped)")
+    for t in ("TestWindowsBurstLiftsAndRestoresRealJob", "TestWindowsBurstRestoreFailureIsRepairedOnRealJob", "TestWindowsBurstMaxLiftRestoresRealJobWhileWindowOpen", "TestWindowsConfineAndBurstInChild"):
+        check(f"AC6.{t}", f"--- PASS: {t}" in out, f"{t} PASSED (cap read back with QueryInformationJobObject)")
+    check("AC6.dial-exit", "dial exit=0" in out, "dial.test.exe exit 0")
+    check("AC6.ownerfile-exit", "ownerfile exit=0" in out, "ownerfile.test.exe exit 0")
+    check("AC6.agent-exit", "agent exit=0" in out, "agent.test.exe exit 0")
+    check("AC6.no-fail", "--- FAIL" not in out, "no failing test")
+
+
+def unusable(a, dc, me, stub_bin):
+    """AC5 (T-1249): state the service cannot load is reported as such (event 104 with the class), not as 103."""
+    say("\n== AC5: enrolment state the service cannot load ==")
+    stub = subprocess.Popen([stub_bin, "-listen", f"0.0.0.0:{a.port}", "-host", me], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    info = {}
+    try:
+        for line in stub.stdout:
+            if "=" in line:
+                k, v = line.strip().split("=", 1)
+                info[k] = v
+            if line.startswith("READY"):
+                break
+        dc.put_bytes((info["TOKEN"] + "\n").encode(), B + "\\enrol.token")
+        rc, out = dc.ps(f"""
+Stop-Service {SVC} -ErrorAction SilentlyContinue
+$cfg = Get-Content 'C:\\Program Files\\skenzeriq\\agent\\agent.json' -Raw | ConvertFrom-Json; $d = $cfg.enrollment_dir
+if (Test-Path $d) {{ Remove-Item -Recurse -Force $d }}
+$tok = (Get-Content {B}\\enrol.token -Raw).Trim(); Remove-Item {B}\\enrol.token
+$tok | & 'C:\\Program Files\\skenzeriq\\agent\\activediq-agent.exe' enroll {info["ADDR"]} {info["PIN"]} 2>&1 | Out-Null
+"enroll exit=" + $LASTEXITCODE
+icacls $d /grant 'BUILTIN\\Users:(OI)(CI)(R)' | Out-Null
+$t = (Get-Date).AddSeconds(-1)
+Start-Service {SVC}
+$s = Get-CimInstance Win32_Service -Filter "Name='{SVC}'"; $pid0 = $s.ProcessId; "start: state=" + $s.State + " pid=" + $pid0
+Start-Sleep 20
+$s = Get-CimInstance Win32_Service -Filter "Name='{SVC}'"; "after 20 s: state=" + $s.State + " pid=" + $s.ProcessId
+$app = @(Get-WinEvent -FilterHashtable @{{LogName='Application'; ProviderName='activeDIQ Agent'; StartTime=$t}} -ErrorAction SilentlyContinue)
+"event 103 count=" + @($app | Where-Object Id -eq 103).Count
+"event 104 count=" + @($app | Where-Object Id -eq 104).Count
+$app | Where-Object Id -eq 104 | Select-Object -First 1 | ForEach-Object {{ "event 104 level=" + $_.LevelDisplayName; "event 104 text=[" + $_.Message + "]" }}
+"-- wevtutil rendering:"; wevtutil qe Application /q:"*[System[Provider[@Name='activeDIQ Agent'] and (EventID=104)]]" /c:1 /rd:true /f:text""")
+        say(out.strip())
+        g = lambda pat: (re.search(pat, out) or [None, None])[1]
+        check("AC5.enrolled", g(r"enroll exit=(\d+)") == "0", "the state was enrolled before it was widened")
+        check("AC5.event-104", (g(r"event 104 count=(\d+)") or "0") != "0" and "event 104 level=Error" in out, "event 104 (error) is in the Application log")
+        check("AC5.names-class", "unsafe-permissions" in out.split("event 104 text=")[-1], "the event names the class unsafe-permissions")
+        check("AC5.not-103", g(r"event 103 count=(\d+)") == "0", "event 103 (not enrolled) was NOT written for state that exists")
+        check("AC5.keeps-running", "after 20 s: state=Running" in out and g(r"start: state=\w+ pid=(\d+)") == g(r"after 20 s: state=\w+ pid=(\d+)"), "the service stays Running, same process")
+    finally:
+        stub.kill()
+        stub.wait()
+
+
+def trial(a, dc, me, stub_bin, i):
+    say(f"\n-- trial {i}/{a.trials}")
+    t_trial = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # back to unenrolled, service freshly started: a different phase of the 5 s re-check each trial
+    rc, out = dc.ps(f"""
+Stop-Service {SVC} -ErrorAction SilentlyContinue
+$cfg = Get-Content 'C:\\Program Files\\skenzeriq\\agent\\agent.json' -Raw | ConvertFrom-Json
+if (Test-Path $cfg.enrollment_dir) {{ Remove-Item -Recurse -Force $cfg.enrollment_dir }}
+Start-Service {SVC}
+$s = Get-CimInstance Win32_Service -Filter "Name='{SVC}'"; "unenrolled start: state=" + $s.State + " pid=" + $s.ProcessId + " enrollment_dir=" + $cfg.enrollment_dir
+$pid0 = $s.ProcessId
+"idle watch (20 s, unenrolled):"
+for ($k = 0; $k -lt 20; $k++) {{ Start-Sleep 1; $x = Get-CimInstance Win32_Service -Filter "Name='{SVC}'"; if ($x.State -ne 'Running' -or $x.ProcessId -ne $pid0) {{ "  +" + ($k+1) + "s state=" + $x.State + " pid=" + $x.ProcessId + " exitcode=" + $x.ExitCode; break }} }}
+$x = Get-CimInstance Win32_Service -Filter "Name='{SVC}'"; "idle watch end: state=" + $x.State + " pid=" + $x.ProcessId""")
+    say(out.strip())
+    pid_before = (re.search(r"unenrolled start: state=\w+ pid=(\d+)", out) or [None, "?"])[1]
+    stub = subprocess.Popen([stub_bin, "-listen", f"0.0.0.0:{a.port}", "-host", me], stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, env=dict(os.environ, GRPC_GO_LOG_SEVERITY_LEVEL="info"))
+    info, events = {}, []
+
+    def pump_err():
+        for line in stub.stderr:
+            events.append((time.time(), line.strip()))
+    try:
+        for line in stub.stdout:
+            if "=" in line:
+                k, v = line.strip().split("=", 1)
+                info[k] = v
+            if line.startswith("READY"):
+                break
+        threading.Thread(target=pump_err, daemon=True).start()
+        pin, tok, addr = info["PIN"], info["TOKEN"], info["ADDR"]
+        rc, out = dc.ps(f"(Test-NetConnection {me} -Port {a.port} -WarningAction SilentlyContinue).TcpTestSucceeded")
+        check(f"AC4.t{i}.reachable", "True" in out, f"dc1 reaches the lab stub at {me}:{a.port}")
+        time.sleep(random.uniform(3, 14))  # land the enrolment at a random point of the 5 s re-check cycle
+        dc.put_bytes((tok + "\n").encode(), B + "\\enrol.token")
+        rc, out = dc.ps(f"""
+$tok = (Get-Content {B}\\enrol.token -Raw).Trim(); Remove-Item {B}\\enrol.token
+$tok | & 'C:\\Program Files\\skenzeriq\\agent\\activediq-agent.exe' enroll {addr} {pin} 2>&1 | Out-String
+"enroll exit=" + $LASTEXITCODE; "enroll done " + (Get-Date).ToUniversalTime().ToString('o')""")
+        say(out.strip())
+        check(f"AC4.t{i}.enroll-exit", "enroll exit=0" in out, "activediq-agent.exe enroll exit 0")
+        deadline = time.time() + 40
+        enr = tun = None
+        while time.time() < deadline:
+            enr = next((t for t, l in events if "ENROLL ok" in l), None)
+            tun = next((t for t, l in events if "TUNNEL mTLS client verified" in l), None)
+            if tun:
+                break
+            time.sleep(0.2)
+        for t, l in events:
+            say(f"stub {datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime('%H:%M:%S.%f')[:-3]}Z {l}")
+        rc, out = dc.ps(f"""$s = Get-CimInstance Win32_Service -Filter "Name='{SVC}'"; "after: state=" + $s.State + " pid=" + $s.ProcessId
+$cfg = Get-Content 'C:\\Program Files\\skenzeriq\\agent\\agent.json' -Raw | ConvertFrom-Json
+"-- enrollment dir ACL (service SID is S-1-5-80-*):"; icacls $cfg.enrollment_dir
+Get-ChildItem $cfg.enrollment_dir -Force | ForEach-Object {{ "file " + $_.Name + " " + $_.Length }}
+"-- TCP connections of the service process to the stub:"; Get-NetTCPConnection -RemotePort {a.port} -ErrorAction SilentlyContinue | ForEach-Object {{ "  " + $_.State + " owner=" + $_.OwningProcess }}
+"-- agent + SCM events since the trial began:"
+$t = [datetime]'{t_trial}'
+Get-WinEvent -FilterHashtable @{{LogName='Application'; ProviderName='activeDIQ Agent'; StartTime=$t}} -ErrorAction SilentlyContinue | ForEach-Object {{ "  app " + $_.TimeCreated.ToUniversalTime().ToString('HH:mm:ss') + " id=" + $_.Id + " " + $_.Message }}
+Get-WinEvent -FilterHashtable @{{LogName='System'; ProviderName='Service Control Manager'; StartTime=$t}} -ErrorAction SilentlyContinue | Where-Object {{ $_.Message -like '*activeDIQ*' }} | ForEach-Object {{ "  scm " + $_.TimeCreated.ToUniversalTime().ToString('HH:mm:ss') + " id=" + $_.Id + " " + ($_.Message -split "`n")[0] }}""")
+        say(out.strip())
+        pid_after = (re.search(r"pid=(\d+)", out) or [None, "?"])[1]
+        # T-1249 cause 1: the state must name the SERVICE, not the enrolling administrator.
+        rc, oa = dc.ps(f"""$cfg = Get-Content 'C:\\Program Files\\skenzeriq\\agent\\agent.json' -Raw | ConvertFrom-Json
+$me = whoami
+foreach ($p in @($cfg.enrollment_dir) + @(Get-ChildItem $cfg.enrollment_dir -Force | ForEach-Object {{ $_.FullName }})) {{
+  $acl = Get-Acl $p
+  "acl " + (Split-Path $p -Leaf) + " owner=" + $acl.Owner + " access=" + (($acl.Access | ForEach-Object {{ [string]$_.IdentityReference }}) -join ';') }}
+"invoker=" + $me""")
+        say(oa.strip())
+        acl_lines = [l for l in oa.splitlines() if l.startswith("acl ")]
+        invoker = (re.search(r"invoker=(\S+)", oa) or [None, "?"])[1]
+        check(f"AC4.t{i}.acl-names-service", bool(acl_lines) and all("NT SERVICE\\" + SVC in l for l in acl_lines), "every enrolment path grants NT SERVICE\\activeDIQAgent")
+        check(f"AC4.t{i}.acl-owner-admins", bool(acl_lines) and all("owner=BUILTIN\\Administrators" in l for l in acl_lines), "every enrolment path is owned by BUILTIN\\Administrators")
+        check(f"AC4.t{i}.acl-not-invoker", bool(acl_lines) and not any(invoker.lower() in l.lower() for l in acl_lines), f"no enrolment path names the enrolling administrator ({invoker})")
+        lat = (tun - enr) if (tun and enr) else None
+        check(f"AC4.t{i}.picked-up", lat is not None, "the running service connected to the stub with its issued mTLS certificate")
+        check(f"AC4.t{i}.within-15s", lat is not None and lat <= 15.0,
+              f"enrol -> first verified mTLS connection: {lat:.2f} s" if lat is not None else "no connection within 40 s")
+        check(f"AC4.t{i}.no-restart", pid_before == pid_after and "state=Running" in out, f"same service process (pid {pid_before} -> {pid_after}), Running")
+    finally:
+        stub.kill()
+        stub.wait()
+
+
+main()
