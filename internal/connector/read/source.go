@@ -129,3 +129,16 @@ func (a *ADSource) Topology(ctx context.Context) (*ad.Topology, error) {
 	}
 	return a.sess.Topology(ctx)
 }
+
+// IsSamba reports whether the bound DC's rootDSE names Samba as its vendor; it labels the
+// ReadReplicationStatus capability and gates nothing.
+func (a *ADSource) IsSamba(ctx context.Context) (bool, error) {
+	if !a.ok() {
+		return false, write.ErrNoBoundDC
+	}
+	rd, err := a.sess.RootDSE(ctx)
+	if err != nil {
+		return false, err
+	}
+	return rd.IsSamba(), nil
+}

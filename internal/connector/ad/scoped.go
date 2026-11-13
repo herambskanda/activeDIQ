@@ -59,6 +59,7 @@ type ScopedResult struct {
 	Returned       int // entries passed to fn: after de-duplication and authorisation
 	Denied         int // entries withheld by Authorize
 	RootsCompleted int
+	Unreadable     int // entries listed without objectGUID (or instanceType when parents are resolved): withheld
 }
 
 // ScopedSearch streams the matches under each root to fn. A root that no longer resolves fails the
@@ -89,6 +90,15 @@ func (s *Session) ScopedSearch(ctx context.Context, req ScopedRequest, fn func(*
 			func(page []*Entry) error {
 				keep := page[:0:0]
 				for _, e := range page {
+					if len(e.Raw("objectGUID")) == 0 || (req.ResolveParents && len(e.Raw("instanceType")) == 0) {
+						// The DC listed the entry without its identity (objectGUID) or, when parents are
+						// resolved, without the instanceType that classifies it (the bound account may not
+						// read it, or the DC's own well-known objects are partial: Samba's S-1-5-9 principal).
+						// It is withheld and counted, never delivered without an identity or a decided
+						// ancestry, and never a failure of the whole search.
+						res.Unreadable++
+						continue
+					}
 					g, err := e.GUID()
 					if err != nil {
 						return err
@@ -112,6 +122,10 @@ func (s *Session) ScopedSearch(ctx context.Context, req ScopedRequest, fn func(*
 				for _, e := range keep {
 					if req.ResolveParents {
 						pg, has, _, err := s.parentOf(ctx, e, parents)
+						if isUnplaceable(err) {
+							res.Unreadable++ // its parent is unreadable: withheld, never delivered with a guessed ancestry
+							continue
+						}
 						if err != nil {
 							return err
 						}
