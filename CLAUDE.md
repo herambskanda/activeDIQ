@@ -25,9 +25,10 @@ ADR-0002 (deployment) are ratified.**
 1. **Ask the CEO only directional questions** — scope, brand and taste, commercial, strategic forks,
    money and legal, anything leaving the building, demo acceptance — using the `ceo-decisions`
    skill. Everything else: decide, log it, keep going.
-2. **Model policy:** nothing runs above `high` effort. Opus (high) only for factory-director,
-   solution-architect, security-architect and principal-engineer. Sonnet at high for everything
-   else. Never Haiku. Search with the `Explore` agent (project override on Sonnet).
+2. **Model policy:** Sonnet at medium effort for every role, including factory-director,
+   solution-architect, security-architect and principal-engineer (CEO decision, replaces the prior
+   Opus/high-for-four-roles policy). Nothing runs above `high` effort; `high` is an escalation-only
+   rung for a stuck ticket, not a default. Never Haiku. Search with the `Explore` agent.
 3. **300k context budget** per session. On a checkpoint warning, write a handoff (`handoff` skill).
 4. **Architecture before implementation.** ADRs for real decisions; an ADR is `accepted` only when
    its fitness function runs in CI.

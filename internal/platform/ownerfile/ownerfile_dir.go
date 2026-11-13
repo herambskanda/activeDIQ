@@ -27,12 +27,48 @@ var ErrParentUnsafe = errors.New("ownerfile: parent of the state directory is no
 // directory.
 type Dir struct{ impl *dirImpl }
 
+// DirOption adjusts OpenDir and CreateDir.
+type DirOption func(*dirOptions)
+
+type dirOptions struct {
+	account string // Windows: the account the state is written for, when it is not the caller
+	admins  bool   // Windows: BUILTIN\Administrators may also own the directory and appear in its DACL
+}
+
+// ErrAccountUnsupported: ForAccount was passed on a platform where a directory has a single owner.
+var ErrAccountUnsupported = errors.New("ownerfile: writing for another account is supported on Windows only")
+
+// ForAccount makes the directory, and every file written through it, belong to the named account
+// (Windows, as LookupAccountName resolves it, for example NT SERVICE\activeDIQAgent) instead of the
+// caller: the owner is BUILTIN\Administrators and the DACL grants SYSTEM, Administrators and that
+// account, never the caller's own user SID. It exists so an administrator can enrol on behalf of a
+// service whose token user is different (T-1249): the service would refuse an ACE naming the
+// administrator as "someone else". The account must resolve, so a typo fails before anything is
+// written. It implies TrustAdministrators. Other platforms refuse it (ErrAccountUnsupported).
+func ForAccount(account string) DirOption {
+	return func(o *dirOptions) { o.account, o.admins = account, true }
+}
+
+// TrustAdministrators accepts a directory owned by BUILTIN\Administrators whose DACL also names
+// Administrators, which is what ForAccount produces; it is how the service reads state an
+// administrator wrote for it. Without it only the service identity and SYSTEM are accepted. No effect
+// on Unix.
+func TrustAdministrators() DirOption { return func(o *dirOptions) { o.admins = true } }
+
+func applyDirOptions(opts []DirOption) dirOptions {
+	var o dirOptions
+	for _, f := range opts {
+		f(&o)
+	}
+	return o
+}
+
 // OpenDir verifies and opens an existing state directory: the directory must be a real directory
 // (not a link) owned by the service identity with access for the service identity (and SYSTEM on
 // Windows) only (ErrDirUnsafe), and its parent must be trusted (ErrParentUnsafe). Nothing is created
 // or repaired. A missing directory satisfies errors.Is(err, fs.ErrNotExist).
-func OpenDir(path string) (*Dir, error) {
-	i, err := openDir(path, false)
+func OpenDir(path string, opts ...DirOption) (*Dir, error) {
+	i, err := openDir(path, false, applyDirOptions(opts))
 	if err != nil {
 		return nil, err
 	}
@@ -44,8 +80,8 @@ func OpenDir(path string) (*Dir, error) {
 // The directory is created with its owner-only protection in the same call (Unix: mode 0700; Windows:
 // a PROTECTED DACL passed to CreateDirectory, never inherited). An existing directory is never
 // adopted or repaired: it is accepted only if it already passes OpenDir.
-func CreateDir(path string) (*Dir, error) {
-	i, err := openDir(path, true)
+func CreateDir(path string, opts ...DirOption) (*Dir, error) {
+	i, err := openDir(path, true, applyDirOptions(opts))
 	if err != nil {
 		return nil, err
 	}
