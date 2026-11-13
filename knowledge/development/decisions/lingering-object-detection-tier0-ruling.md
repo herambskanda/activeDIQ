@@ -144,8 +144,11 @@ Required controls (each is a TM-F-LINGER check):
 2. **Source check (L1).** An analyser (AST-level in the helper's language, not a regexp) fails the
    build if the symbol is called anywhere else, with a non-literal, or with any value other than 1.
 3. **Artifact check (L2).** CI inspects the *built, signed* binary's import table and strings: the
-   only `ntdsapi` imports are `DsBindW`/`DsBindWithCredW` family, `DsUnBindW`, `DsReplicaVerifyObjectsW`
-   (and `DsFreeDomainControllerInfo` if needed); no `DsReplica*` other than that one, no
+   only `ntdsapi` imports are exactly `DsBindW`, `DsUnBindW`, `DsReplicaVerifyObjectsW`
+   (and `DsFreeDomainControllerInfo` if needed, added by a ruling amendment, not by the build).
+   `DsBindW` binds in the current security context, i.e. the helper's gMSA via Kerberos. `DsBindWithCredW`
+   (and any `*WithCred*` or `DsBindWithSpn*` variant) is **not** allowed: it takes explicit credentials,
+   which contradicts the no-credential-handling, gMSA/Kerberos-only stance (ruling 1, TM-TB20-T3). No `DsReplica*` other than that one, no
    `DsRemoveDsServer`, no dynamic `LoadLibrary`/`GetProcAddress` by non-literal name. An allowlist
    (exact entries), not a denylist.
 4. **Fake-`ntdsapi` test (L3).** Asserts `ulOptions == 1` on every path, plus a **mutation test**: a
