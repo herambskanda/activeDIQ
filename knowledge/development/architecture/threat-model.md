@@ -2175,7 +2175,8 @@ Deliberately failing fixtures ship with the checker (a bad Action per rule), as 
 (`go test ./tools/fitness/backing/...`), so the checker itself cannot rot into a no-op.
 
 ```guarded-v1
-reset_password: unicodePwd, userPassword, pwdLastSet=-1, entra:passwordProfile, entra:mobilePhone, entra:otherMails
+reset_password: unicodePwd[user], userPassword, pwdLastSet=-1, entra:passwordProfile, entra:mobilePhone, entra:otherMails
+reset_computer: unicodePwd[computer]
 unlock: lockoutTime=0, uac.clear(LOCKOUT 0x0010)
 enable: uac.clear(ACCOUNTDISABLE 0x0002), entra:accountEnabled=true
 rename_logon: userPrincipalName, sAMAccountName, dNSHostName, entra:userPrincipalName
@@ -2186,6 +2187,8 @@ signin_flags: uac.set(PASSWD_NOTREQD 0x0020, ENCRYPTED_TEXT_PWD_ALLOWED 0x0080, 
 signin_limits: accountExpires>now, logonHours (not provably a subset), userWorkstations (widened or cleared)
 denied: msDS-AllowedToActOnBehalfOfOtherIdentity, msDS-AllowedToDelegateTo, uac.set(TRUSTED_FOR_DELEGATION 0x80000, TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000), sIDHistory, primaryGroupID, msDS-AdditionalDnsHostName, msDS-AdditionalSamAccountName, entra:authenticationMethods, entra:temporaryAccessPass
 ```
+
+**`[object class]` suffix (T-1899).** A bare attribute means every target class. `unicodePwd[user]` and `unicodePwd[computer]` are two keys of one attribute, so the class follows the target the constructor names: `guarded.ComputerReset()` is the only constructor of the second and `kindTable` row 13 carries `reset_computer`. B1 compares the key with its suffix; B3 normalises both. The new permission `objects.computer.reset_account` has no default grant and needs step-up (§7.4).
 
 Hex values are `[UNVERIFIED]` against MS-ADTS until lab G17 reads each bit on Samba and
 Windows; B1 pins them so a lab correction changes table and block together.
@@ -2377,6 +2380,7 @@ These operations require a fresh MFA within a short window, whatever the session
 | Designating or un-designating `tier0` objects (§6.4) | Widens or narrows the guard |
 | Report schedule writes (`reports.schedule.create`, `update`, `resume`, and their undo) whose after-state has an **external** recipient; conditional, kernel-enforced (DECISION TM-D30, T-0893) | Opens a standing outbound data channel that outlives the session (TM-TB15-T9) |
 | Notification settings: allowed recipient domains and SMTP relay (`notify.settings.update`, TM-D30 SX-7) | Turns external addresses internal, or re-points every outbound mail (TM-TB15-T10) |
+| Computer account reset: every Action that uses the connector's `COMPUTER_ACCOUNT_RESET` kind (`objects.computer.reset_account`, TM-D28 class `reset_computer`; T-1899, connector-contract §8.10.3 kind 13) | Takes the machine off the domain until it repairs its secure channel or rejoins, and cannot be undone (ADR-0005 rule 1); on a server it is an outage. The new password is generated inside the connector and known to no one, so this is not a credential disclosure, but a technician's session alone does not authorise it |
 | Directory password reset: every Action that uses the connector's `USER_PASSWORD_RESET` kind, helpdesk resets included (`objects.user.reset_password`, TM-D28 class `reset_password`, §6.9a; ADM-136, ADM-162; T-1581 §8.10.5, T-1621) | Hands the actor a credential they know for a sign-in account, and it cannot be undone (ADR-0005 rule 1). On a hybrid-synced account the new password reaches Entra through hash sync or pass-through (C16, TM-R14). Same class as a LAPS reveal: a credential that outlives the session. A technician's session alone, however fresh the login, does not authorise it |
 
 **Secret-reveal harvesting.** A technician (X4) may reveal secrets one by one within scope. Each
@@ -3575,6 +3579,7 @@ External, in order of first use:
 
 ## Changelog
 
+- 2026-11-13 · T-1899. TM-D28 `guarded-v1` gains `reset_computer: unicodePwd[computer]` (key is attribute plus target class; `reset_password` is `unicodePwd[user]`) and §7.4 gains the computer account reset row, for connector-contract §8.10 kinds 11 to 13. Kinds 11 and 12 are class `none` and are guarded by TM-D18 on the group; the deny-group removal residual R-GM-1 is routed to security-architect (T-1918).
 - 2026-11-13 · T-1907 (T-1892 nits). TM-F-LINGER row added to the §15 fitness table with owners by build-order step; ruling 3 control 3 pins the `ntdsapi` allowlist to exact symbols (`DsBindWithCredW` removed); TM-D35 stub in §6.2.
 - 2026-11-13 · T-1892 (Tier-0 review of T-1121 §9). New boundary TB20 (§5.20, rows TM-TB20-T1 to T14: lingering-object verify helper, its gMSA, `DsReplicaVerifyObjects`, Directory Service log read); §6.3 R16 (optional, off by default, write-capable right, own identity); DECISION TM-D35 ([lingering-object-detection-tier0-ruling.md](../decisions/lingering-object-detection-tier0-ruling.md)); TM-R29; proof TM-F-LINGER (L1 to L8). Ephemeral Domain Admin rejected; on-DC agent and native RPC rejected. Follow-ups: product-manager (reports-2a §9 A4 wording), solution-architect (helper contract).
 - 2026-11-12 · T-1646. `msDS-AdditionalDnsHostName` and `msDS-AdditionalSamAccountName` are `denied` in §6.9 rule 5 and the `guarded-v1` block (not `rename_logon`), with sources 95 to 97; connector-contract 8.10.4 gains both names in the same change. Reviewed name attributes listed in rule 5.

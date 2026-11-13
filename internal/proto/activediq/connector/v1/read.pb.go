@@ -655,9 +655,14 @@ type ReadRequest struct {
 	MaxValuesPerAttribute uint32 `protobuf:"varint,6,opt,name=max_values_per_attribute,json=maxValuesPerAttribute,proto3" json:"max_values_per_attribute,omitempty"`
 	// Ask for the connector classifier's Tier-0 verdict (ReadHeader.tier0), computed on the DC that
 	// serves this read (T-0433). Unset: no verdict is computed and the header carries none.
-	IncludeTier0  bool `protobuf:"varint,7,opt,name=include_tier0,json=includeTier0,proto3" json:"include_tier0,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	IncludeTier0 bool `protobuf:"varint,7,opt,name=include_tier0,json=includeTier0,proto3" json:"include_tier0,omitempty"`
+	// Also compute ReadHeader.child_count: the number of immediate children of this object
+	// (connector-contract.md §5.3a, T-1899). Only for a container class (organizationalUnit,
+	// container); any other class is INVALID_ARGUMENT. For the blocked-with-count preview of an
+	// OBJECT_DELETE of an OU and for nothing else (no screen shows it as a statistic, LF-39).
+	IncludeChildCount bool `protobuf:"varint,16,opt,name=include_child_count,json=includeChildCount,proto3" json:"include_child_count,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *ReadRequest) Reset() {
@@ -739,6 +744,13 @@ func (x *ReadRequest) GetIncludeTier0() bool {
 	return false
 }
 
+func (x *ReadRequest) GetIncludeChildCount() bool {
+	if x != nil {
+		return x.IncludeChildCount
+	}
+	return false
+}
+
 // The object with every attribute that fit in one DC response. A ranged attribute carries its
 // first range here with complete = false, and the rest follows as ValueChunk messages.
 type ReadHeader struct {
@@ -748,7 +760,9 @@ type ReadHeader struct {
 	// Present exactly when the request set include_tier0. Computed by the connector classifier on
 	// the DC named in `observed`; a classification that cannot be decided fails the call rather than
 	// arriving as tier0 = false (true or error).
-	Tier0         *Tier0Verdict `protobuf:"bytes,3,opt,name=tier0,proto3" json:"tier0,omitempty"`
+	Tier0 *Tier0Verdict `protobuf:"bytes,3,opt,name=tier0,proto3" json:"tier0,omitempty"`
+	// Present exactly when the request set include_child_count (§5.3a).
+	ChildCount    *ChildCount `protobuf:"bytes,4,opt,name=child_count,json=childCount,proto3" json:"child_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -804,6 +818,69 @@ func (x *ReadHeader) GetTier0() *Tier0Verdict {
 	return nil
 }
 
+func (x *ReadHeader) GetChildCount() *ChildCount {
+	if x != nil {
+		return x.ChildCount
+	}
+	return nil
+}
+
+// Immediate children of one container, counted by the connector with a one-level search that asks
+// for no attribute but the GUID. `count` stops at the connector's cap (1,000); `capped` says so.
+// It counts what the connector's identity can see; the DC alone decides whether the object is a
+// leaf (OBJECT_DELETE answers NotLeaf from the DC, not from this number).
+type ChildCount struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Count         uint32                 `protobuf:"varint,1,opt,name=count,proto3" json:"count,omitempty"`
+	Capped        bool                   `protobuf:"varint,2,opt,name=capped,proto3" json:"capped,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChildCount) Reset() {
+	*x = ChildCount{}
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChildCount) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChildCount) ProtoMessage() {}
+
+func (x *ChildCount) ProtoReflect() protoreflect.Message {
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChildCount.ProtoReflect.Descriptor instead.
+func (*ChildCount) Descriptor() ([]byte, []int) {
+	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ChildCount) GetCount() uint32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *ChildCount) GetCapped() bool {
+	if x != nil {
+		return x.Capped
+	}
+	return false
+}
+
 // The connector's own Tier-0 answer for one object (threat-model §6.4), without the server-held
 // additions (designations, cross-directory correlation), which only ever add to it.
 type Tier0Verdict struct {
@@ -817,7 +894,7 @@ type Tier0Verdict struct {
 
 func (x *Tier0Verdict) Reset() {
 	*x = Tier0Verdict{}
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[8]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -829,7 +906,7 @@ func (x *Tier0Verdict) String() string {
 func (*Tier0Verdict) ProtoMessage() {}
 
 func (x *Tier0Verdict) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[8]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -842,7 +919,7 @@ func (x *Tier0Verdict) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Tier0Verdict.ProtoReflect.Descriptor instead.
 func (*Tier0Verdict) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{8}
+	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Tier0Verdict) GetTier0() bool {
@@ -873,7 +950,7 @@ type ValueChunk struct {
 
 func (x *ValueChunk) Reset() {
 	*x = ValueChunk{}
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[9]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -885,7 +962,7 @@ func (x *ValueChunk) String() string {
 func (*ValueChunk) ProtoMessage() {}
 
 func (x *ValueChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[9]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -898,7 +975,7 @@ func (x *ValueChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValueChunk.ProtoReflect.Descriptor instead.
 func (*ValueChunk) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{9}
+	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ValueChunk) GetAttribute() string {
@@ -932,7 +1009,7 @@ type ReadCompleted struct {
 
 func (x *ReadCompleted) Reset() {
 	*x = ReadCompleted{}
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[10]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -944,7 +1021,7 @@ func (x *ReadCompleted) String() string {
 func (*ReadCompleted) ProtoMessage() {}
 
 func (x *ReadCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[10]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -957,7 +1034,7 @@ func (x *ReadCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadCompleted.ProtoReflect.Descriptor instead.
 func (*ReadCompleted) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{10}
+	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ReadCompleted) GetTruncatedAttributes() []string {
@@ -981,7 +1058,7 @@ type ReadResponse struct {
 
 func (x *ReadResponse) Reset() {
 	*x = ReadResponse{}
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[11]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -993,7 +1070,7 @@ func (x *ReadResponse) String() string {
 func (*ReadResponse) ProtoMessage() {}
 
 func (x *ReadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[11]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1006,7 +1083,7 @@ func (x *ReadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadResponse.ProtoReflect.Descriptor instead.
 func (*ReadResponse) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{11}
+	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ReadResponse) GetEvent() isReadResponse_Event {
@@ -1081,7 +1158,7 @@ type ReadPerDCRequest struct {
 
 func (x *ReadPerDCRequest) Reset() {
 	*x = ReadPerDCRequest{}
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[12]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1093,7 +1170,7 @@ func (x *ReadPerDCRequest) String() string {
 func (*ReadPerDCRequest) ProtoMessage() {}
 
 func (x *ReadPerDCRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[12]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1106,7 +1183,7 @@ func (x *ReadPerDCRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadPerDCRequest.ProtoReflect.Descriptor instead.
 func (*ReadPerDCRequest) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{12}
+	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ReadPerDCRequest) GetConnection() *ConnectionRef {
@@ -1165,7 +1242,7 @@ type PerDcValue struct {
 
 func (x *PerDcValue) Reset() {
 	*x = PerDcValue{}
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[13]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1177,7 +1254,7 @@ func (x *PerDcValue) String() string {
 func (*PerDcValue) ProtoMessage() {}
 
 func (x *PerDcValue) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[13]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1190,7 +1267,7 @@ func (x *PerDcValue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PerDcValue.ProtoReflect.Descriptor instead.
 func (*PerDcValue) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{13}
+	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *PerDcValue) GetAttribute() PerDcAttribute {
@@ -1256,7 +1333,7 @@ type PerDcResult struct {
 
 func (x *PerDcResult) Reset() {
 	*x = PerDcResult{}
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[14]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1268,7 +1345,7 @@ func (x *PerDcResult) String() string {
 func (*PerDcResult) ProtoMessage() {}
 
 func (x *PerDcResult) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[14]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1281,7 +1358,7 @@ func (x *PerDcResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PerDcResult.ProtoReflect.Descriptor instead.
 func (*PerDcResult) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{14}
+	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *PerDcResult) GetDc() *DcIdentity {
@@ -1349,7 +1426,7 @@ type PerDcValues struct {
 
 func (x *PerDcValues) Reset() {
 	*x = PerDcValues{}
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[15]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1361,7 +1438,7 @@ func (x *PerDcValues) String() string {
 func (*PerDcValues) ProtoMessage() {}
 
 func (x *PerDcValues) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[15]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1374,7 +1451,7 @@ func (x *PerDcValues) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PerDcValues.ProtoReflect.Descriptor instead.
 func (*PerDcValues) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{15}
+	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *PerDcValues) GetValues() []*PerDcValue {
@@ -1396,7 +1473,7 @@ type PerDcSummary struct {
 
 func (x *PerDcSummary) Reset() {
 	*x = PerDcSummary{}
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[16]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1408,7 +1485,7 @@ func (x *PerDcSummary) String() string {
 func (*PerDcSummary) ProtoMessage() {}
 
 func (x *PerDcSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[16]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1421,7 +1498,7 @@ func (x *PerDcSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PerDcSummary.ProtoReflect.Descriptor instead.
 func (*PerDcSummary) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{16}
+	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *PerDcSummary) GetDcsInScope() uint32 {
@@ -1458,7 +1535,7 @@ type ReadPerDCResponse struct {
 
 func (x *ReadPerDCResponse) Reset() {
 	*x = ReadPerDCResponse{}
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[17]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1470,7 +1547,7 @@ func (x *ReadPerDCResponse) String() string {
 func (*ReadPerDCResponse) ProtoMessage() {}
 
 func (x *ReadPerDCResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_activediq_connector_v1_read_proto_msgTypes[17]
+	mi := &file_activediq_connector_v1_read_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1483,7 +1560,7 @@ func (x *ReadPerDCResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReadPerDCResponse.ProtoReflect.Descriptor instead.
 func (*ReadPerDCResponse) Descriptor() ([]byte, []int) {
-	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{17}
+	return file_activediq_connector_v1_read_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ReadPerDCResponse) GetEvent() isReadPerDCResponse_Event {
@@ -1559,7 +1636,7 @@ const file_activediq_connector_v1_read_proto_rawDesc = "" +
 	"\x05batch\x18\x01 \x01(\v2#.activediq.connector.v1.SearchBatchH\x00R\x05batch\x12N\n" +
 	"\x0eroot_completed\x18\x02 \x01(\v2%.activediq.connector.v1.RootCompletedH\x00R\rrootCompleted\x12G\n" +
 	"\tcompleted\x18\x03 \x01(\v2'.activediq.connector.v1.SearchCompletedH\x00R\tcompletedB\a\n" +
-	"\x05event\"\xf6\x02\n" +
+	"\x05event\"\xa6\x03\n" +
 	"\vReadRequest\x12E\n" +
 	"\n" +
 	"connection\x18\x01 \x01(\v2%.activediq.connector.v1.ConnectionRefR\n" +
@@ -1571,12 +1648,19 @@ const file_activediq_connector_v1_read_proto_rawDesc = "" +
 	"attributes\x123\n" +
 	"\x02dc\x18\x05 \x01(\v2#.activediq.connector.v1.DcSelectionR\x02dc\x127\n" +
 	"\x18max_values_per_attribute\x18\x06 \x01(\rR\x15maxValuesPerAttribute\x12#\n" +
-	"\rinclude_tier0\x18\a \x01(\bR\fincludeTier0J\x04\b\b\x10\x10\"\xc7\x01\n" +
+	"\rinclude_tier0\x18\a \x01(\bR\fincludeTier0\x12.\n" +
+	"\x13include_child_count\x18\x10 \x01(\bR\x11includeChildCountJ\x04\b\b\x10\x10\"\x8c\x02\n" +
 	"\n" +
 	"ReadHeader\x12<\n" +
 	"\x05entry\x18\x01 \x01(\v2&.activediq.connector.v1.DirectoryEntryR\x05entry\x12?\n" +
 	"\bobserved\x18\x02 \x01(\v2#.activediq.connector.v1.ObservationR\bobserved\x12:\n" +
-	"\x05tier0\x18\x03 \x01(\v2$.activediq.connector.v1.Tier0VerdictR\x05tier0\"^\n" +
+	"\x05tier0\x18\x03 \x01(\v2$.activediq.connector.v1.Tier0VerdictR\x05tier0\x12C\n" +
+	"\vchild_count\x18\x04 \x01(\v2\".activediq.connector.v1.ChildCountR\n" +
+	"childCount\":\n" +
+	"\n" +
+	"ChildCount\x12\x14\n" +
+	"\x05count\x18\x01 \x01(\rR\x05count\x12\x16\n" +
+	"\x06capped\x18\x02 \x01(\bR\x06capped\"^\n" +
 	"\fTier0Verdict\x12\x14\n" +
 	"\x05tier0\x18\x01 \x01(\bR\x05tier0\x128\n" +
 	"\x05basis\x18\x02 \x03(\x0e2\".activediq.connector.v1.Tier0BasisR\x05basis\"\xa4\x01\n" +
@@ -1660,7 +1744,7 @@ func file_activediq_connector_v1_read_proto_rawDescGZIP() []byte {
 }
 
 var file_activediq_connector_v1_read_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_activediq_connector_v1_read_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_activediq_connector_v1_read_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
 var file_activediq_connector_v1_read_proto_goTypes = []any{
 	(SearchDepth)(0),             // 0: activediq.connector.v1.SearchDepth
 	(PerDcAttribute)(0),          // 1: activediq.connector.v1.PerDcAttribute
@@ -1674,77 +1758,79 @@ var file_activediq_connector_v1_read_proto_goTypes = []any{
 	(*ScopedSearchResponse)(nil), // 9: activediq.connector.v1.ScopedSearchResponse
 	(*ReadRequest)(nil),          // 10: activediq.connector.v1.ReadRequest
 	(*ReadHeader)(nil),           // 11: activediq.connector.v1.ReadHeader
-	(*Tier0Verdict)(nil),         // 12: activediq.connector.v1.Tier0Verdict
-	(*ValueChunk)(nil),           // 13: activediq.connector.v1.ValueChunk
-	(*ReadCompleted)(nil),        // 14: activediq.connector.v1.ReadCompleted
-	(*ReadResponse)(nil),         // 15: activediq.connector.v1.ReadResponse
-	(*ReadPerDCRequest)(nil),     // 16: activediq.connector.v1.ReadPerDCRequest
-	(*PerDcValue)(nil),           // 17: activediq.connector.v1.PerDcValue
-	(*PerDcResult)(nil),          // 18: activediq.connector.v1.PerDcResult
-	(*PerDcValues)(nil),          // 19: activediq.connector.v1.PerDcValues
-	(*PerDcSummary)(nil),         // 20: activediq.connector.v1.PerDcSummary
-	(*ReadPerDCResponse)(nil),    // 21: activediq.connector.v1.ReadPerDCResponse
-	(*Guid)(nil),                 // 22: activediq.connector.v1.Guid
-	(*ConnectionRef)(nil),        // 23: activediq.connector.v1.ConnectionRef
-	(*Filter)(nil),               // 24: activediq.connector.v1.Filter
-	(*DcSelection)(nil),          // 25: activediq.connector.v1.DcSelection
-	(*DirectoryEntry)(nil),       // 26: activediq.connector.v1.DirectoryEntry
-	(*Observation)(nil),          // 27: activediq.connector.v1.Observation
-	(Tier0Basis)(0),              // 28: activediq.connector.v1.Tier0Basis
-	(*AttributeValue)(nil),       // 29: activediq.connector.v1.AttributeValue
-	(*ValueRange)(nil),           // 30: activediq.connector.v1.ValueRange
-	(*TimeValue)(nil),            // 31: activediq.connector.v1.TimeValue
-	(*DcIdentity)(nil),           // 32: activediq.connector.v1.DcIdentity
-	(*ConnectorError)(nil),       // 33: activediq.connector.v1.ConnectorError
+	(*ChildCount)(nil),           // 12: activediq.connector.v1.ChildCount
+	(*Tier0Verdict)(nil),         // 13: activediq.connector.v1.Tier0Verdict
+	(*ValueChunk)(nil),           // 14: activediq.connector.v1.ValueChunk
+	(*ReadCompleted)(nil),        // 15: activediq.connector.v1.ReadCompleted
+	(*ReadResponse)(nil),         // 16: activediq.connector.v1.ReadResponse
+	(*ReadPerDCRequest)(nil),     // 17: activediq.connector.v1.ReadPerDCRequest
+	(*PerDcValue)(nil),           // 18: activediq.connector.v1.PerDcValue
+	(*PerDcResult)(nil),          // 19: activediq.connector.v1.PerDcResult
+	(*PerDcValues)(nil),          // 20: activediq.connector.v1.PerDcValues
+	(*PerDcSummary)(nil),         // 21: activediq.connector.v1.PerDcSummary
+	(*ReadPerDCResponse)(nil),    // 22: activediq.connector.v1.ReadPerDCResponse
+	(*Guid)(nil),                 // 23: activediq.connector.v1.Guid
+	(*ConnectionRef)(nil),        // 24: activediq.connector.v1.ConnectionRef
+	(*Filter)(nil),               // 25: activediq.connector.v1.Filter
+	(*DcSelection)(nil),          // 26: activediq.connector.v1.DcSelection
+	(*DirectoryEntry)(nil),       // 27: activediq.connector.v1.DirectoryEntry
+	(*Observation)(nil),          // 28: activediq.connector.v1.Observation
+	(Tier0Basis)(0),              // 29: activediq.connector.v1.Tier0Basis
+	(*AttributeValue)(nil),       // 30: activediq.connector.v1.AttributeValue
+	(*ValueRange)(nil),           // 31: activediq.connector.v1.ValueRange
+	(*TimeValue)(nil),            // 32: activediq.connector.v1.TimeValue
+	(*DcIdentity)(nil),           // 33: activediq.connector.v1.DcIdentity
+	(*ConnectorError)(nil),       // 34: activediq.connector.v1.ConnectorError
 }
 var file_activediq_connector_v1_read_proto_depIdxs = []int32{
-	22, // 0: activediq.connector.v1.SearchRoot.guid:type_name -> activediq.connector.v1.Guid
-	22, // 1: activediq.connector.v1.SearchRoot.nc_guid:type_name -> activediq.connector.v1.Guid
-	23, // 2: activediq.connector.v1.ScopedSearchRequest.connection:type_name -> activediq.connector.v1.ConnectionRef
+	23, // 0: activediq.connector.v1.SearchRoot.guid:type_name -> activediq.connector.v1.Guid
+	23, // 1: activediq.connector.v1.SearchRoot.nc_guid:type_name -> activediq.connector.v1.Guid
+	24, // 2: activediq.connector.v1.ScopedSearchRequest.connection:type_name -> activediq.connector.v1.ConnectionRef
 	4,  // 3: activediq.connector.v1.ScopedSearchRequest.roots:type_name -> activediq.connector.v1.SearchRoot
 	0,  // 4: activediq.connector.v1.ScopedSearchRequest.depth:type_name -> activediq.connector.v1.SearchDepth
-	24, // 5: activediq.connector.v1.ScopedSearchRequest.filter:type_name -> activediq.connector.v1.Filter
-	25, // 6: activediq.connector.v1.ScopedSearchRequest.dc:type_name -> activediq.connector.v1.DcSelection
-	26, // 7: activediq.connector.v1.SearchBatch.entries:type_name -> activediq.connector.v1.DirectoryEntry
-	27, // 8: activediq.connector.v1.SearchBatch.observed:type_name -> activediq.connector.v1.Observation
-	22, // 9: activediq.connector.v1.RootCompleted.root:type_name -> activediq.connector.v1.Guid
-	27, // 10: activediq.connector.v1.SearchCompleted.observed:type_name -> activediq.connector.v1.Observation
+	25, // 5: activediq.connector.v1.ScopedSearchRequest.filter:type_name -> activediq.connector.v1.Filter
+	26, // 6: activediq.connector.v1.ScopedSearchRequest.dc:type_name -> activediq.connector.v1.DcSelection
+	27, // 7: activediq.connector.v1.SearchBatch.entries:type_name -> activediq.connector.v1.DirectoryEntry
+	28, // 8: activediq.connector.v1.SearchBatch.observed:type_name -> activediq.connector.v1.Observation
+	23, // 9: activediq.connector.v1.RootCompleted.root:type_name -> activediq.connector.v1.Guid
+	28, // 10: activediq.connector.v1.SearchCompleted.observed:type_name -> activediq.connector.v1.Observation
 	6,  // 11: activediq.connector.v1.ScopedSearchResponse.batch:type_name -> activediq.connector.v1.SearchBatch
 	7,  // 12: activediq.connector.v1.ScopedSearchResponse.root_completed:type_name -> activediq.connector.v1.RootCompleted
 	8,  // 13: activediq.connector.v1.ScopedSearchResponse.completed:type_name -> activediq.connector.v1.SearchCompleted
-	23, // 14: activediq.connector.v1.ReadRequest.connection:type_name -> activediq.connector.v1.ConnectionRef
-	22, // 15: activediq.connector.v1.ReadRequest.guid:type_name -> activediq.connector.v1.Guid
-	22, // 16: activediq.connector.v1.ReadRequest.nc_guid:type_name -> activediq.connector.v1.Guid
-	25, // 17: activediq.connector.v1.ReadRequest.dc:type_name -> activediq.connector.v1.DcSelection
-	26, // 18: activediq.connector.v1.ReadHeader.entry:type_name -> activediq.connector.v1.DirectoryEntry
-	27, // 19: activediq.connector.v1.ReadHeader.observed:type_name -> activediq.connector.v1.Observation
-	12, // 20: activediq.connector.v1.ReadHeader.tier0:type_name -> activediq.connector.v1.Tier0Verdict
-	28, // 21: activediq.connector.v1.Tier0Verdict.basis:type_name -> activediq.connector.v1.Tier0Basis
-	29, // 22: activediq.connector.v1.ValueChunk.values:type_name -> activediq.connector.v1.AttributeValue
-	30, // 23: activediq.connector.v1.ValueChunk.range:type_name -> activediq.connector.v1.ValueRange
-	11, // 24: activediq.connector.v1.ReadResponse.header:type_name -> activediq.connector.v1.ReadHeader
-	13, // 25: activediq.connector.v1.ReadResponse.chunk:type_name -> activediq.connector.v1.ValueChunk
-	14, // 26: activediq.connector.v1.ReadResponse.completed:type_name -> activediq.connector.v1.ReadCompleted
-	23, // 27: activediq.connector.v1.ReadPerDCRequest.connection:type_name -> activediq.connector.v1.ConnectionRef
-	22, // 28: activediq.connector.v1.ReadPerDCRequest.guid:type_name -> activediq.connector.v1.Guid
-	22, // 29: activediq.connector.v1.ReadPerDCRequest.nc_guid:type_name -> activediq.connector.v1.Guid
-	1,  // 30: activediq.connector.v1.ReadPerDCRequest.attributes:type_name -> activediq.connector.v1.PerDcAttribute
-	2,  // 31: activediq.connector.v1.ReadPerDCRequest.scope:type_name -> activediq.connector.v1.PerDcScope
-	1,  // 32: activediq.connector.v1.PerDcValue.attribute:type_name -> activediq.connector.v1.PerDcAttribute
-	31, // 33: activediq.connector.v1.PerDcValue.time:type_name -> activediq.connector.v1.TimeValue
-	32, // 34: activediq.connector.v1.PerDcResult.dc:type_name -> activediq.connector.v1.DcIdentity
-	27, // 35: activediq.connector.v1.PerDcResult.observed:type_name -> activediq.connector.v1.Observation
-	19, // 36: activediq.connector.v1.PerDcResult.values:type_name -> activediq.connector.v1.PerDcValues
-	33, // 37: activediq.connector.v1.PerDcResult.error:type_name -> activediq.connector.v1.ConnectorError
-	17, // 38: activediq.connector.v1.PerDcValues.values:type_name -> activediq.connector.v1.PerDcValue
-	3,  // 39: activediq.connector.v1.PerDcSummary.coverage:type_name -> activediq.connector.v1.Coverage
-	18, // 40: activediq.connector.v1.ReadPerDCResponse.result:type_name -> activediq.connector.v1.PerDcResult
-	20, // 41: activediq.connector.v1.ReadPerDCResponse.summary:type_name -> activediq.connector.v1.PerDcSummary
-	42, // [42:42] is the sub-list for method output_type
-	42, // [42:42] is the sub-list for method input_type
-	42, // [42:42] is the sub-list for extension type_name
-	42, // [42:42] is the sub-list for extension extendee
-	0,  // [0:42] is the sub-list for field type_name
+	24, // 14: activediq.connector.v1.ReadRequest.connection:type_name -> activediq.connector.v1.ConnectionRef
+	23, // 15: activediq.connector.v1.ReadRequest.guid:type_name -> activediq.connector.v1.Guid
+	23, // 16: activediq.connector.v1.ReadRequest.nc_guid:type_name -> activediq.connector.v1.Guid
+	26, // 17: activediq.connector.v1.ReadRequest.dc:type_name -> activediq.connector.v1.DcSelection
+	27, // 18: activediq.connector.v1.ReadHeader.entry:type_name -> activediq.connector.v1.DirectoryEntry
+	28, // 19: activediq.connector.v1.ReadHeader.observed:type_name -> activediq.connector.v1.Observation
+	13, // 20: activediq.connector.v1.ReadHeader.tier0:type_name -> activediq.connector.v1.Tier0Verdict
+	12, // 21: activediq.connector.v1.ReadHeader.child_count:type_name -> activediq.connector.v1.ChildCount
+	29, // 22: activediq.connector.v1.Tier0Verdict.basis:type_name -> activediq.connector.v1.Tier0Basis
+	30, // 23: activediq.connector.v1.ValueChunk.values:type_name -> activediq.connector.v1.AttributeValue
+	31, // 24: activediq.connector.v1.ValueChunk.range:type_name -> activediq.connector.v1.ValueRange
+	11, // 25: activediq.connector.v1.ReadResponse.header:type_name -> activediq.connector.v1.ReadHeader
+	14, // 26: activediq.connector.v1.ReadResponse.chunk:type_name -> activediq.connector.v1.ValueChunk
+	15, // 27: activediq.connector.v1.ReadResponse.completed:type_name -> activediq.connector.v1.ReadCompleted
+	24, // 28: activediq.connector.v1.ReadPerDCRequest.connection:type_name -> activediq.connector.v1.ConnectionRef
+	23, // 29: activediq.connector.v1.ReadPerDCRequest.guid:type_name -> activediq.connector.v1.Guid
+	23, // 30: activediq.connector.v1.ReadPerDCRequest.nc_guid:type_name -> activediq.connector.v1.Guid
+	1,  // 31: activediq.connector.v1.ReadPerDCRequest.attributes:type_name -> activediq.connector.v1.PerDcAttribute
+	2,  // 32: activediq.connector.v1.ReadPerDCRequest.scope:type_name -> activediq.connector.v1.PerDcScope
+	1,  // 33: activediq.connector.v1.PerDcValue.attribute:type_name -> activediq.connector.v1.PerDcAttribute
+	32, // 34: activediq.connector.v1.PerDcValue.time:type_name -> activediq.connector.v1.TimeValue
+	33, // 35: activediq.connector.v1.PerDcResult.dc:type_name -> activediq.connector.v1.DcIdentity
+	28, // 36: activediq.connector.v1.PerDcResult.observed:type_name -> activediq.connector.v1.Observation
+	20, // 37: activediq.connector.v1.PerDcResult.values:type_name -> activediq.connector.v1.PerDcValues
+	34, // 38: activediq.connector.v1.PerDcResult.error:type_name -> activediq.connector.v1.ConnectorError
+	18, // 39: activediq.connector.v1.PerDcValues.values:type_name -> activediq.connector.v1.PerDcValue
+	3,  // 40: activediq.connector.v1.PerDcSummary.coverage:type_name -> activediq.connector.v1.Coverage
+	19, // 41: activediq.connector.v1.ReadPerDCResponse.result:type_name -> activediq.connector.v1.PerDcResult
+	21, // 42: activediq.connector.v1.ReadPerDCResponse.summary:type_name -> activediq.connector.v1.PerDcSummary
+	43, // [43:43] is the sub-list for method output_type
+	43, // [43:43] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_activediq_connector_v1_read_proto_init() }
@@ -1761,20 +1847,20 @@ func file_activediq_connector_v1_read_proto_init() {
 		(*ScopedSearchResponse_RootCompleted)(nil),
 		(*ScopedSearchResponse_Completed)(nil),
 	}
-	file_activediq_connector_v1_read_proto_msgTypes[11].OneofWrappers = []any{
+	file_activediq_connector_v1_read_proto_msgTypes[12].OneofWrappers = []any{
 		(*ReadResponse_Header)(nil),
 		(*ReadResponse_Chunk)(nil),
 		(*ReadResponse_Completed)(nil),
 	}
-	file_activediq_connector_v1_read_proto_msgTypes[13].OneofWrappers = []any{
+	file_activediq_connector_v1_read_proto_msgTypes[14].OneofWrappers = []any{
 		(*PerDcValue_Time)(nil),
 		(*PerDcValue_Integer)(nil),
 	}
-	file_activediq_connector_v1_read_proto_msgTypes[14].OneofWrappers = []any{
+	file_activediq_connector_v1_read_proto_msgTypes[15].OneofWrappers = []any{
 		(*PerDcResult_Values)(nil),
 		(*PerDcResult_Error)(nil),
 	}
-	file_activediq_connector_v1_read_proto_msgTypes[17].OneofWrappers = []any{
+	file_activediq_connector_v1_read_proto_msgTypes[18].OneofWrappers = []any{
 		(*ReadPerDCResponse_Result)(nil),
 		(*ReadPerDCResponse_Summary)(nil),
 	}
@@ -1784,7 +1870,7 @@ func file_activediq_connector_v1_read_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_activediq_connector_v1_read_proto_rawDesc), len(file_activediq_connector_v1_read_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   18,
+			NumMessages:   19,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
