@@ -35,7 +35,7 @@ func TestLabChildCount(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		l.add(t, fmt.Sprintf("CN=c%d,%s", i, three), map[string][]string{"objectClass": {"top", "container"}})
 	}
-	l.add(t, "OU=nested,CN=c0,"+three, ou) // a grandchild: not counted
+	l.add(t, "CN=nested,CN=c0,"+three, map[string][]string{"objectClass": {"top", "container"}}) // a grandchild: not counted
 	for i := 0; i < 1200; i++ {
 		l.add(t, fmt.Sprintf("CN=c%04d,%s", i, big), map[string][]string{"objectClass": {"top", "container"}})
 	}
