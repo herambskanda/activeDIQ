@@ -268,7 +268,7 @@ func Test_Classify_fuzzy_class_is_bounded_to_32_runes(t *testing.T) {
 	}
 }
 
-// The kinds with trigram postings are exactly name and sam (migration 0073 names the same two).
+// The kinds with trigram postings are exactly name and sam (migration 0074 names the same two).
 func Test_FuzzyEligible_is_name_and_sam(t *testing.T) {
 	for _, k := range searchkey.AllKinds {
 		want := k == searchkey.KindName || k == searchkey.KindSAM
