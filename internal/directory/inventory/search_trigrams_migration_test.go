@@ -39,7 +39,7 @@ func migrationsFS(t *testing.T, keep func(name string) bool) fs.FS {
 // the structure is as the ADR says, and the privileges are the runtime role's.
 func Test_migration_0073_builds_the_postings_over_a_populated_database(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		const mig = "0073_inventory_search_trigrams.sql"
+		const mig = "0075_inventory_search_trigrams.sql"
 		e := setupFS(t, s, migrationsFS(t, func(n string) bool { return n < mig }))
 		e.hStructure(t, e.adA)
 		if _, err := e.populate(t, e.adA, hBase, sSrchUser(1, "praman", "Priya Raman"), sSrchUser(2, "jdoe", "Jóhn Döe")); err != nil {
