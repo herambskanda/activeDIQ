@@ -92,7 +92,7 @@ may supply some; not read here). The Win32 error-code pages give the decimal, he
 | 8444 (0x20FC) | `ERROR_DS_DRA_CONNECTION_FAILED` | The server specified for this replication operation could not be contacted. | same |
 | 8452 (0x2104) | `ERROR_DS_DRA_NO_REPLICA` | The naming context is in the process of being removed or is not replicated from the specified server. | same |
 | 8418 (0x20E2) | `ERROR_DS_DRA_SCHEMA_MISMATCH` | The replication operation failed because of a schema mismatch between the servers involved. | same |
-| 8606 (0x219E) | `ERROR_DS_INSUFF_ATTRS_TO_CREATE` `[symbol UNVERIFIED]` | Insufficient attributes were given to create an object. This object may not exist because it may have been deleted and already garbage collected. | same |
+| 8606 (0x219E) | `ERROR_DS_INSUFFICIENT_ATTR_TO_CREATE_OBJECT` | Insufficient attributes were given to create an object. This object may not exist because it may have been deleted and already garbage collected. | same |
 
 Notes for the consumer:
 
