@@ -332,6 +332,11 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 		lo = "ARRAY[]::text[]"
 	}
 	t := func(col string) string { return "t." + col }
+	// The hits join probes directory_objects once per candidate (LATERAL ... LIMIT 1, as the fuzzy recheck
+	// does), so the plan is a nested loop of index probes by (tenant_id, connection, object) at every W.
+	// A plain join lets the planner, expecting ~3W candidate rows, hash-join them onto a Seq Scan of the
+	// table, which reads other tenants' rows (ADR-0011 rule 16). The scope is evaluated inside the probe.
+	objCols := strings.Join([]string{"t." + src.objects.conn, "t." + src.objects.obj, "t." + src.kind, "t." + src.state, "t." + src.enabled, "t." + src.display}, ", ")
 	live := "(" + t(src.state) + " IN ('live', 'active'))"
 	grp := "CASE WHEN " + t(src.kind) + " IN ('user', 'inetorgperson') THEN 1 WHEN " + t(src.kind) + " = 'group' THEN 2 WHEN " + t(src.kind) + " IN ('computer', 'gmsa') THEN 3 ELSE 4 END"
 	sb.WriteString(" hits AS (SELECT DISTINCT ON (t." + src.objects.conn + ", t." + src.objects.obj + ") t." + src.objects.conn + " AS connection_id, t." + src.objects.obj + " AS object_guid, " +
@@ -340,8 +345,8 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 		"CASE WHEN c.cls = 2 AND c.key = ANY(" + lo + ") THEN 0 ELSE 1 END AS whole, CASE WHEN c.cls = 2 THEN char_length(c.key) ELSE 0 END AS klen, " +
 		"CASE WHEN c.cls = 3 THEN 1000 - round((" + sim + ")::numeric * 1000)::int ELSE 0 END AS simr, " +
 		"(lower(COALESCE(" + t(src.display) + ", '')) COLLATE \"C\") AS nm, (" + sim + ")::real AS sim " +
-		"FROM cand c JOIN public." + src.objects.table + " t ON t." + "tenant_id" + " = " + tenantExpr + " AND t." + src.objects.conn + " = c.connection_id AND t." + src.objects.obj + " = c.object_guid " +
-		"WHERE " + t(src.kind) + " = ANY(" + b.bindList("text[]", kinds) + ") AND (" + scopeWhere + ") " +
+		"FROM cand c CROSS JOIN LATERAL (SELECT " + objCols + " FROM public." + src.objects.table + " t WHERE t.tenant_id = " + tenantExpr + " AND t." + src.objects.conn + " = c.connection_id AND t." + src.objects.obj + " = c.object_guid " +
+		"AND " + t(src.kind) + " = ANY(" + b.bindList("text[]", kinds) + ") AND (" + scopeWhere + ") LIMIT 1) t " +
 		"ORDER BY t." + src.objects.conn + ", t." + src.objects.obj + ", c.cls, CASE WHEN c.cls = 3 THEN -(" + sim + ") ELSE 0 END, CASE WHEN c.cls = 2 AND c.key = ANY(" + lo + ") THEN 0 ELSE 1 END, char_length(c.key)),")
 	rank := "cls, dead, dis, whole, klen, simr, nm, connection_id, object_guid"
 	sb.WriteString(" visible AS (SELECT h.*, count(*) OVER (PARTITION BY grp) AS grp_n FROM hits h),")
