@@ -161,6 +161,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connections/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the health of the caller's connections
+         * @description Answers one row per directory connection in the caller's tenant that the caller may read, for the Home "Directory health" and "Needs you" panels. The row set is trimmed to the connections the caller's connections.read grant covers before anything is counted or ordered; a connection outside it is not in the answer and not in any total. Rows are ordered by displayName, then id, so the order is stable. state is synced (last sync inside its expected interval, every DC reachable), lagging (the last successful sync is older than the interval, or some but not all DCs are unreachable), dc_unreachable (no DC is reachable) or suspended (an administrator paused the connection). lastSyncAt is null and lagSeconds is null when the connection has never synced. The rows carry no credential, keytab, bind identity or service-account DN. A caller without connections.read gets 403 and learns nothing about which connections exist.
+         */
+        get: operations["listConnectionHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/takeover-attestation/callback": {
         parameters: {
             query?: never;
@@ -871,6 +891,33 @@ export interface components {
             password: components["schemas"]["SecretInput"];
             username: string;
         };
+        /** @description The health of one connection. Nothing here is a credential or an identity the connection binds as. */
+        ConnectionHealth: {
+            /** @description Domain controllers that answered the last probe. */
+            dcReachable: number;
+            /** @description Domain controllers known for the connection. */
+            dcTotal: number;
+            displayName: string;
+            /** Format: uuid */
+            id: string;
+            /** @description Seconds since the last successful sync, at the time of the answer. Null when it has never synced. */
+            lagSeconds: number | null;
+            /**
+             * Format: date-time
+             * @description The last successful sync, UTC. Null when the connection has never synced.
+             */
+            lastSyncAt: string | null;
+            state: components["schemas"]["ConnectionHealthState"];
+        };
+        /** @description One row per readable connection. Not paged, because a tenant has few connections; at most 256. */
+        ConnectionHealthList: {
+            items: components["schemas"]["ConnectionHealth"][];
+        };
+        /**
+         * @description synced, lagging (last sync older than its interval, or some DCs unreachable), dc_unreachable (no DC reachable) or suspended (paused by an administrator).
+         * @enum {string}
+         */
+        ConnectionHealthState: "synced" | "lagging" | "dc_unreachable" | "suspended" | (string & {});
         /** @description Which header carries the CSRF value and what it is. Named value, not token, because it is not a credential. */
         CsrfValue: {
             header: string;
@@ -3041,6 +3088,45 @@ export interface operations {
             404: components["responses"]["NotFound"];
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listConnectionHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One health row per readable connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "dcReachable": 2,
+                     *           "dcTotal": 3,
+                     *           "displayName": "corp.example.com",
+                     *           "id": "3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10",
+                     *           "lagSeconds": 1260,
+                     *           "lastSyncAt": "2026-11-12T08:14:03Z",
+                     *           "state": "lagging"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ConnectionHealthList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };
