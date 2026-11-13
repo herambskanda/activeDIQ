@@ -341,6 +341,39 @@ What it enforces: a booted install is judged on eight named cases (threat-model 
   `HOST-SETUP-SECRET-SINGLE-USE` are INACTIVE until their product subject exists. The positive verify-full DSN control needs a TLS
   PostgreSQL and is covered by `store.CheckTransport`'s own tests.
 
+## `fitness-host p2-oci` (T-1462: ADR-0002 P2, OCI half, erratum E-3)
+
+What it enforces: the `P2-oci` row of the `fitness-profiles` activation table runs
+`go run ./tools/fitness/host p2-oci` (`make fitness-p2-oci` runs the same command alone; it is not in `make fitness`
+because `make fitness-profiles` already runs it). For each OCI manifest from `internal/compose/profile` (`linux-oci`,
+`saas`) it:
+
+1. **manifest**: checks the manifest is an `oci` service host, and that only `saas` enables `tenant-provisioning`;
+2. **build**: builds `cmd/server` statically for `linux/amd64` and `linux/arm64` (`-trimpath`, `CGO_ENABLED=0`), checks the
+   ELF machine, builds `packaging/linux-oci/Dockerfile.server` with `--platform` and checks the image's architecture.
+   The Dockerfile has no `RUN`, so the foreign-architecture **build never needs emulation and is never skipped**;
+3. **emulation**: runs the real image with `kek` (prints usage). `exec format error` means the Docker host cannot run that
+   architecture. The **boot** of that architecture is then skipped with a printed `SKIP ... step=boot` line, or fails when
+   `P2_OCI_REQUIRE_BOOT=1` (set it on any CI host that has qemu-user binfmt handlers; install them with
+   `docker run --privileged --rm tonistiigi/binfmt --install arm64`);
+4. for PostgreSQL **16 and 18** (the pinned images of `pgharness`): applies every `migrations/*.sql` under the owner role
+   (**migrations**), provisions the KEK, boots the image with TLS on loopback (**boot**), requires
+   `GET /api/v1/health/ready` to answer `200 {"status":"ok"}` (**health**) and counts `public.tenants` (**tenants**): exactly one for
+   `linux-oci`; exactly one for `saas`, created by the platform provisioning path (`provision.FirstRun`).
+
+A failure prints `P2-oci FAIL profile=<p> arch=<a> postgres=<v> step=<s>: ...` and the run exits 1 after trying every other leg.
+Flags for a fixture run: `-profile`, `-arch`, `-pg`, `-migrations <dir>`.
+
+- **Proof it fails:** `hostcheck/p2oci_test.go` (a 503, a wrong body and a refused connection fail the health step; the error
+  names profile and step; a broken migration fixture, `tools/fitness/host/testdata/p2oci-broken-migrations/`, fails the
+  migrations step against a real PostgreSQL) and `make ci-proof` (`host p2-oci` on the broken fixture must fail with
+  `step=migrations`).
+- **Known limit (follow-up ticket):** the server has no multi-tenant provisioning entry point yet (`provision` holds only
+  `FirstRun`; the comment there says SaaS provisioning "will add its entry point here"), so the `saas` leg proves the
+  composed manifest enables the capability and that the booted install holds one provisioned tenant. When the entry
+  point lands, that leg must provision a second tenant through it.
+- **Runtime cost:** about 10 minutes on a loaded host (four server boots plus two PostgreSQL starts).
+
 ## `fitness-agent-host` (T-0554: ADR-0006 A1/A4, ADR-0007 P1-P8, contract R1-R5, F1)
 
 `make fitness-agent-host` (part of `make fitness` and `make ci`). Run a subset: `go run ./tools/fitness/agenthost -checks A1,P`. It prints one line per check; `inactive (<missing input>)` means the subject does not exist yet and the check did not run (exit 0). **ADR-0006 and ADR-0007 become `accepted` only when no line is inactive** and the lab items in ADR-0006 "Verification owed" are confirmed.

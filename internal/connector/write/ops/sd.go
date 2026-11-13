@@ -15,3 +15,17 @@ func ReplaceSD(m ad.Modifier, dn string, value []byte, controls []ldap.Control) 
 	req.Replace("nTSecurityDescriptor", []string{string(value)})
 	return m.Modify(req)
 }
+
+// ModifyDN sends one ModifyDN built from the session's rendered parts.
+func ModifyDN(m ad.ObjectConn, c ad.DNChange) error {
+	return m.ModifyDN(ldap.NewModifyDNRequest(c.Entry, c.NewRDN, c.DeleteOldRDN, c.NewSuperior))
+}
+
+// Restore sends the one Modify that restores a deleted object: delete isDeleted, replace
+// distinguishedName, with the show-deleted control the session supplies.
+func Restore(m ad.ObjectConn, c ad.RestoreChange) error {
+	req := ldap.NewModifyRequest(c.Entry, c.Controls)
+	req.Delete("isDeleted", nil)
+	req.Replace("distinguishedName", []string{c.NewDN})
+	return m.Modify(req)
+}
