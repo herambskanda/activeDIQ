@@ -27,6 +27,13 @@ type Toucher interface {
 	Touched(p StepPlan) []authority.TargetRef
 }
 
+// AlsoAuthorizer is implemented by an Action whose step needs authority over objects besides its
+// target (a move's destination parent). The runner authorises each one live at Plan and again
+// immediately before Apply, with the step's own permission. Actions made by Define implement it.
+type AlsoAuthorizer interface {
+	AlsoAuthorize(p StepPlan) []authority.TargetRef
+}
+
 // tier0Report is one tier0_after_write finding: what, from which source, on which DC.
 type tier0Report struct {
 	findings []step.Tier0Finding

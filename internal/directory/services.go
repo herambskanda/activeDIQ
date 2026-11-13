@@ -21,4 +21,7 @@ type Services struct {
 	// Plan and Apply instead of running without the directory.
 	AccountReader client.AccountReader
 	AccountWriter client.AccountWriter
+	// ObjectReader is the live object read of the user lifecycle Actions (ad module); the writes go
+	// through AccountWriter. Nil until wired, and the Actions then refuse every Plan.
+	ObjectReader client.ObjectReader
 }

@@ -59,3 +59,37 @@ submission (rule 9), never an input member: an unknown member is refused at Plan
 `directory.Services.AccountReader` and `.AccountWriter` (`directory/client`). Nil until the composition
 root wires a connector transport and a live account reader; the Actions then refuse every Plan and
 Apply (`directory_unavailable`) rather than run without the directory.
+
+## User lifecycle Actions (T-1585)
+
+`lifecycle.go`: six Actions from one generic builder (`buildLife`) and a spec row each, over
+`LifecyclePorts{Reader client.ObjectReader, Writer, Definitions}`. Parity: ADM-008 create, ADM-033 modify,
+ADM-038 restore.
+
+| Action | Permission | Descriptor class | Step class | Digest kind |
+| --- | --- | --- | --- | --- |
+| `ad.user.create` (secret input: the initial password) | `objects.user.create` | Lossy | Reversible (delete undoes it until the account joins a group) | `ad.object.create` |
+| `ad.user.update` | `objects.user.update` | Reversible | Reversible | `ad.object.update` |
+| `ad.user.delete` | `objects.user.delete` | Irreversible | Lossy with the Recycle Bin, else Irreversible | `ad.object.delete` |
+| `ad.user.move` | `objects.user.move` | Reversible | Reversible (inverse: move back) | `ad.object.move` |
+| `ad.user.rename` | `objects.user.move` (a modifyDN, TM-D19) | Reversible | Reversible (inverse: rename back) | `ad.object.rename` |
+| `ad.user.restore` | `objects.user.restore` | Lossy | Lossy iff a retained link value stays dormant, else Reversible | `ad.object.restore` |
+
+- **Create** validates the pinned Template (published, user, create, AD/hybrid, container allowed), applies
+  `CheckInput`/`Effective`, renders the pinned NamingFormats (sAMAccountName, cn, displayName, UPN prefix +
+  `upnSuffix`), reads the parent (a container, not Tier-0) and builds the digest attributes with
+  `writechange.CreateAttrs`. Diff names are the digest names (`set:givenName`, `~rdn`, ...).
+- **Update/create attributes** are an allow-list (`profileAttrs`); sign-in attributes (UAC, UPN/sAM on update,
+  passwords, group links, SDs) are refused.
+- **Move/restore** declare the destination parent through the kernel's new `Typed.AlsoAuthorize`
+  (`operation.AlsoAuthorizer`): the runner authorises it live at Plan and again immediately before Apply, with
+  the step's permission (ADR-0005 rule 7: source parent via the target's own ancestry, destination via this).
+  Source and destination parents are also `Touched` for the Tier-0 re-read.
+- **Restore class.** The ticket said Lossy because link values are not restorable; ad-expert (T-1585) and
+  connector contract §8.10.3 kind 6 say a Recycle-Bin restore re-grants retained links, except links whose other
+  end is itself still deleted. Plan lists each ("re-granted" / "will not return") from the show-deactivated-link
+  read, and is Lossy exactly when one is dormant. Without the Recycle Bin restore is refused.
+- **Inverse.** Move and rename return their own shape. Create/delete/restore pair with other Actions
+  (delete/restore/delete) and return `ErrIrreversible` from `Inverse` until the undo layer exists.
+- `directory.Services.ObjectReader` has no connector-backed implementation yet (see the follow-up ticket):
+  nil makes every lifecycle Plan refuse `directory_unavailable`.

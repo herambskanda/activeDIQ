@@ -206,6 +206,10 @@ func ParseGeneralizedTime(s string) (time.Time, error) {
 // FormatGeneralizedTime is the inverse for a write value.
 func FormatGeneralizedTime(t time.Time) string { return t.UTC().Format("20060102150405.0Z") }
 
+// AttrOID is the schema's attributeID for a resolved ldapDisplayName ("" when unknown); the write
+// deny-list matches on it so a renamed attribute is still refused.
+func (s *Session) AttrOID(name string) string { return s.schema.OID(name) }
+
 // EditableAttr resolves a requested attribute name (descr in any case, or numeric OID) to its
 // schema ldapDisplayName and value syntax for a write. An unknown attribute, one with options, a
 // secret one and a constructed one are refused: a write is never blind about what it edits.

@@ -21,12 +21,15 @@ import (
 const ModuleID module.ID = "ad"
 
 // Module is the ad module.
-type Module struct{ ports ports }
+type Module struct {
+	ports ports
+	life  LifecyclePorts
+}
 
 // New builds the module. Every module constructor receives the same two values (ADR-0003 rule 4).
 func New(deps platform.Deps, dir directory.Services) *Module {
 	_ = deps
-	return &Module{ports: ports{reader: dir.AccountReader, writer: dir.AccountWriter}}
+	return &Module{ports: ports{reader: dir.AccountReader, writer: dir.AccountWriter}, life: LifecyclePorts{Reader: dir.ObjectReader, Writer: dir.AccountWriter}}
 }
 
 // ID implements module.Module.
@@ -42,6 +45,11 @@ func (m *Module) Register(r *module.Registrar) error {
 	if err != nil {
 		return err
 	}
+	ls, err := LifecycleActions(m.life)
+	if err != nil {
+		return err
+	}
+	as = append(as, ls...)
 	for _, a := range as {
 		if err := r.Action(a); err != nil {
 			return err

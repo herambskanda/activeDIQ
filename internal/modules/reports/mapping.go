@@ -245,7 +245,7 @@ var failureMessages = map[run.FailureReason]string{
 	run.FailRunnerInactive:        "The account that started this run is no longer active.",
 	run.FailTokenRefused:          "The token that started this run was refused.",
 	run.FailRowCapExceeded:        "The result is over the row limit for a stored run. Narrow the filters or the scope and run it again.",
-	run.FailPerDCReadCapExceeded:  "Too many domain controllers were needed for this run.",
+	run.FailPerDCReadCapExceeded:  "This run would read too many accounts from too many domain controllers. Narrow the scope or the filters, or leave out read-only DCs, and run it again.",
 	run.FailScopeTooLarge:         "The scope is too large to run as one report. Narrow it and run it again.",
 	run.FailQueryTimeout:          "The run took too long and was stopped. Narrow the scope or the filters and run it again.",
 	run.FailConnectionUnavailable: "A directory connection this run needs is not available.",
@@ -262,6 +262,12 @@ func failure(r run.Run) *api.ReportFailure {
 	if r.Failure == run.FailRowCapExceeded {
 		if rows, ok := r.ScopeApplied.Detail["rows"]; ok {
 			msg = fmt.Sprintf("The result has %d rows; a stored run holds at most %d. Narrow the filters or the scope and run it again.", rows, r.ScopeApplied.Detail["cap"])
+		}
+	}
+	if r.Failure == run.FailPerDCReadCapExceeded {
+		if d := r.ScopeApplied.Detail; d["candidates"] > 0 {
+			msg = fmt.Sprintf("This run would read %s accounts from %d DCs (%s reads); a run may make at most %s. Narrow the scope or the filters, or leave out read-only DCs, and run it again.",
+				thousands(d["candidates"]), d["dcs"], thousands(d["reads"]), thousands(d["cap"]))
 		}
 	}
 	return &api.ReportFailure{Reason: api.ReportFailureReason(r.Failure), Message: msg}
@@ -384,9 +390,41 @@ func hiddenView(hs []run.HiddenGroup) []api.ReportHiddenGroup {
 	return out
 }
 
-func progress(s run.State) api.ReportRunProgress {
+// thousands writes n with a comma every three digits ("41,200").
+func thousands(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		if s[i-1] != '-' {
+			s = s[:i] + "," + s[i:]
+		}
+	}
+	return s
+}
+
+// coverage is the DC coverage of a succeeded per-DC run (spec 6.5); nil for every other run.
+func coverage(r run.Run) *api.ReportDcCoverage {
+	p := r.PerDC
+	if p == nil || p.Stage != "" {
+		return nil
+	}
+	un := make([]api.ReportUnreachableDc, 0, len(p.Unreachable))
+	for _, u := range p.Unreachable {
+		un = append(un, api.ReportUnreachableDc{Dc: u.DC, Error: u.Error})
+	}
+	return &api.ReportDcCoverage{DcsInScope: int64(p.DCsInScope), DcsAnswered: int64(p.DCsAnswered), Complete: p.Complete,
+		Label: strp(p.CoverageText()), Unreachable: un}
+}
+
+func progress(r run.Run, s run.State) api.ReportRunProgress {
 	switch s {
 	case run.StateRunning:
+		if p := r.PerDC; p != nil && p.Stage == "reading_dcs" {
+			pct := 0
+			if p.Total > 0 {
+				pct = int(min(p.Read*100/p.Total, 99))
+			}
+			return api.ReportRunProgress{Stage: api.ReportRunStageReadingDcs, Percent: int64(pct)}
+		}
 		return api.ReportRunProgress{Stage: api.ReportRunStageReadingDirectory}
 	case run.StateSucceeded:
 		return api.ReportRunProgress{Stage: api.ReportRunStageDone, Percent: 100}
@@ -421,7 +459,7 @@ func runView(r run.Run, hidden []run.HiddenGroup, now time.Time) api.ReportRun {
 	}
 	return api.ReportRun{
 		ID: uuid(r.ID.String()), DefinitionID: r.DefinitionID, DefinitionVersion: int64(r.DefinitionVer), PresetID: strp(r.Preset),
-		State: api.ReportRunState(st), Progress: progress(st), CreatedBy: created, CreatedAt: ts(r.CreatedAt),
+		State: api.ReportRunState(st), Progress: progress(r, st), Coverage: coverage(r), CreatedBy: created, CreatedAt: ts(r.CreatedAt),
 		StartedAt: tsp(r.StartedAt), FinishedAt: tsp(r.FinishedAt), ExpiresAt: tsp(r.ExpiresAt), AsOf: tsp(r.AsOf),
 		Freshness: freshness(r), SkippedConnections: skipped(r), HiddenGroups: hiddenView(hidden), RowCount: r.RowCount, ObjectsChecked: r.ObjectsChecked,
 		Digest: digestHex(r.Digest), ScopeApplied: sa, EmptyReason: emptyReason(r), Failure: failure(r), RerunOf: idp(r.RerunOf),
