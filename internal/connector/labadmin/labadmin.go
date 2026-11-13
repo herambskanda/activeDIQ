@@ -132,3 +132,40 @@ func indexUnescapedComma(dn string) int {
 	}
 	return len(dn)
 }
+
+// Partitions is a direct administrator read of the DC's naming contexts, for tests that compare a
+// connector's Describe against the directory itself.
+type Partitions struct {
+	DomainDN, ConfigDN, SchemaDN string
+	// RootDomainGUID is the raw objectGUID of the forest root domain head.
+	RootDomainGUID []byte
+	// Heads are the nCName DNs of every enabled crossRef in CN=Partitions.
+	Heads []string
+}
+
+// ReadPartitions reads the rootDSE and the enabled crossRefs under CN=Partitions. Failure fails the test.
+func (a *Admin) ReadPartitions() Partitions {
+	a.tb.Helper()
+	search := func(base string, scope int, filter string, attrs ...string) []*ldap.Entry {
+		a.tb.Helper()
+		r, err := a.conn.Search(ldap.NewSearchRequest(base, scope, ldap.NeverDerefAliases, 0, 0, false, filter, attrs, nil))
+		if err != nil {
+			a.tb.Fatalf("direct read %s: %v", base, err)
+		}
+		return r.Entries
+	}
+	root := search("", ldap.ScopeBaseObject, "(objectClass=*)", "defaultNamingContext", "configurationNamingContext", "schemaNamingContext", "rootDomainNamingContext")
+	if len(root) != 1 {
+		a.tb.Fatalf("rootDSE: %d entries", len(root))
+	}
+	p := Partitions{
+		DomainDN: root[0].GetAttributeValue("defaultNamingContext"),
+		ConfigDN: root[0].GetAttributeValue("configurationNamingContext"),
+		SchemaDN: root[0].GetAttributeValue("schemaNamingContext"),
+	}
+	p.RootDomainGUID = a.ObjectGUID(root[0].GetAttributeValue("rootDomainNamingContext"))
+	for _, x := range search("CN=Partitions,"+p.ConfigDN, ldap.ScopeSingleLevel, "(&(objectClass=crossRef)(!(enabled=FALSE)))", "nCName") {
+		p.Heads = append(p.Heads, x.GetAttributeValue("nCName"))
+	}
+	return p
+}

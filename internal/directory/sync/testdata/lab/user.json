@@ -1,0 +1,149 @@
+{
+  "objectGuid":  {
+    "value":  "8Br1ieXbTeOaTf1+aXcBJQ=="
+  },
+  "dn":  {
+    "displayDn":  "CN=Ramán\\, Priya 66339810,OU=syncmap-66339810,DC=lab,DC=activediq,DC=test"
+  },
+  "parentGuid":  {
+    "value":  "Js8dolmYRde8hiTz271q9Q=="
+  },
+  "attributes":  [
+    {
+      "name":  "accountexpires",
+      "values":  [
+        {
+          "time":  {
+            "sentinel":  "TIME_SENTINEL_MAX"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "displayname",
+      "values":  [
+        {
+          "text":  "Ramán, Priya"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "mail",
+      "values":  [
+        {
+          "text":  "priya@lab.activediq.test"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectclass",
+      "values":  [
+        {
+          "text":  "top"
+        },
+        {
+          "text":  "person"
+        },
+        {
+          "text":  "organizationalPerson"
+        },
+        {
+          "text":  "user"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "objectsid",
+      "values":  [
+        {
+          "sid":  {
+            "value":  "AQUAAAAAAAUVAAAAKiXVBoYZFFRm18iPjB4AAA=="
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "primarygroupid",
+      "values":  [
+        {
+          "int32Value":  513
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "pwdlastset",
+      "values":  [
+        {
+          "time":  {
+            "sentinel":  "TIME_SENTINEL_ZERO"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "samaccountname",
+      "values":  [
+        {
+          "text":  "pr66339810"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "serviceprincipalname",
+      "values":  [
+        {
+          "text":  "HTTP/syncmap-66339810"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "useraccountcontrol",
+      "values":  [
+        {
+          "int32Value":  546
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "userprincipalname",
+      "values":  [
+        {
+          "text":  "pr66339810@lab.activediq.test"
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whenchanged",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-01T06:37:34Z"
+          }
+        }
+      ],
+      "complete":  true
+    },
+    {
+      "name":  "whencreated",
+      "values":  [
+        {
+          "time":  {
+            "at":  "2026-11-01T06:37:34Z"
+          }
+        }
+      ],
+      "complete":  true
+    }
+  ]
+}
