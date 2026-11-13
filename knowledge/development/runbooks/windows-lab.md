@@ -199,6 +199,13 @@ authorisation to dc2 is a CEO decision, not a ticket step.
 describe the local-KVM mode, which was dropped. A human creates fs1 (A-0028; tickets T-0409, T-0413).
 Until then no worker step may assume `fs1`, and proofs that need a member server stay blocked on A-0028.
 
+**dc1 changes that a rollback of dc1 would undo (T-1734, 2026-11-07).** `Update-LapsADSchema` was run on dc1: the lab forest now has the
+Windows LAPS schema (`msLAPS-*` attributes, the `ms-LAPS-Encrypted-Password-Attributes` extended right, `mayContain` on `computer`); it was absent
+before, although the forest is level 2025. A schema extension cannot be removed; a rollback to an older snapshot removes it, and a LAPS test written
+against dc1 should call `Update-LapsADSchema` (idempotent) first. The `t1734-*` objects the run deleted stay in `CN=Deleted Objects` until they expire.
+`CN=Deleted Objects` is back to its default descriptor (owner SYSTEM): by default not even a Domain Admin can read it, see
+`knowledge/development/domain/deleted-object-read-access.md`.
+
 ### Proxmox lab pool (D-0022)
 
 **Decision.** The CEO answered D-0022 (a) on 2026-11-02: workers get a Proxmox API token that can reach only
@@ -486,6 +493,11 @@ lab/windows/bin/agent-verify --log knowledge/development/runbooks/windows-lab-ru
   `HKLM\SYSTEM\CurrentControlSet\Services\activeDIQAgent\ImagePath` is the quoted `activediq-agent.exe` path.
 - If a run leaves the DC odd, re-run (the script is idempotent) or clean up over WinRM; `qm rollback <vmid> clean`
   needs the Proxmox host (no worker access: raise an `action new`).
+- **T-0557 variant** `agent-verify --guest agent-t0557.ps1 [--mode gpo-restart]`: same build, then a real GPO
+  (`New-GPO`/`New-GPLink` on the Domain Controllers OU, removed at the end), refusal of an elevated administrator
+  token, job-limit read-back, CPU-cap measurement, a logon-load run and a 10-minute backlog read. About 35 minutes;
+  `--mode gpo-restart` restarts the Event Log service (a real GPO takes effect only then). Results:
+  [domain note](../domain/dc-agent-channel-acl-gpo-and-bounds.md). Re-run `dc1-policy check` afterwards (section 18).
 - Not covered (needs an enrolled agent talking to a server; T-0814): killing the server connection,
   filling the data disk, and the U+0001 `Data` value reaching the server.
 
@@ -716,3 +728,12 @@ rootDSE / the three heads / dc1's NTDS Settings as Administrator, `svc-activediq
 Everything is removed in a `finally`; the run fails (exit 3) if a head's DACL hash differs afterwards, the OU remains, a throwaway principal is privileged, or the no-right read is an error. It prints `INCONCLUSIVE`
 when the Administrator control returns none of the four attributes (a DC with no replication partner: empty cannot be told from denied). Judge: `lib/replrights.py`; offline proof `tests/test_repl_rights.py`.
 First record, with the single-DC limitation and the DirSync result: `windows-lab-runs/T-1510-repl-rights-20261107.md`.
+
+## 22. userParameters fixtures (T-1890)
+
+`lab/windows/bin/capture-tsprops capture` (under `with-dc1-lock`) creates disabled, password-less users `tspw01..` and probe users in `OU=tspfix` on dc1,
+writes `userParameters` via ADSI `IADsTSUserEx` or a plain LDAP modify, reads each back (raw octets, `WTSQueryUserConfig`, ADSI) and writes
+`testdata/tsprops/windows/captures.json`; `capture-tsprops derive` builds `records.jsonl`/`probes.jsonl` offline. It also makes a throwaway `tspreader`
+user with a per-run random password (never printed) to test the ordinary-user read, and deletes it. Needs `pip install pywinrm requests-ntlm`
+and `WIN_LAB_DC_ADDR`. The fixture users stay on dc1 for ADUC comparison (spec V4); `Remove-ADOrganizationalUnit tspfix -Recursive` clears them. Findings:
+`knowledge/development/domain/userparameters-windows-findings.md`. No new tool; pywinrm/requests-ntlm are already in the licence register.

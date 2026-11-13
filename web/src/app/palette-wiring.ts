@@ -1,0 +1,269 @@
+import type { components } from "../api/schema.gen";
+import type { PaletteChip, PaletteGroup, PaletteItem } from "../ds/components";
+import { matchRoute, type PaletteEntry, type RouteSpec } from "./modules";
+
+export type DirectorySearchHit = components["schemas"]["DirectorySearchHit"];
+export type DirectorySearchResult = components["schemas"]["DirectorySearchResult"];
+export type DirectorySearchChip = components["schemas"]["DirectorySearchChip"];
+
+/** IA §5.2 message when a 48-digit BitLocker recovery password is typed. */
+export const RECOVERY_PASSWORD_MESSAGE =
+  "That looks like a recovery password. Search by the 8-character key ID instead.";
+
+/** 5 minutes TTL for the last query before resetting on palette open (AC 1). */
+export const QUERY_TTL_MS = 5 * 60 * 1000;
+
+/** Debounce interval before sending directory search request (AC 2). */
+export const SEARCH_DEBOUNCE_MS = 250;
+
+/**
+ * Recognises a 48-digit recovery password (BitLocker) per IA §5.2 and ADR-0011 rule 7 / T-1096 AC5.
+ * Normalises with NFKC, removes whitespace and dashes (\p{Pd}), then checks for 48+ decimal digits (\p{Nd}).
+ */
+export function isRecoveryPassword(raw: string): boolean {
+  const norm = raw.normalize("NFKC");
+  const stripped = norm.replace(/[\s\p{Pd}]/gu, "");
+  return /\p{Nd}{48}/u.test(stripped);
+}
+
+/**
+ * Browser-only guard for a recovery password still being typed. {@link isRecoveryPassword} is the
+ * exact mirror of the server rule and only fires once all 48 digits are present; with a debounced
+ * search every earlier prefix would already have been sent (42 of 48 digits, block by block). So
+ * the browser also refuses the *shape* of a prefix: the text is only decimal digits, whitespace
+ * and dashes (after NFKC) and either has a complete 6-digit block followed by a separator, or
+ * nine or more digits in total. An 8-character, all-digit BitLocker key ID (IA §5.1) stays
+ * searchable: it has eight digits and no separator after a 6-digit run.
+ */
+export function looksLikeRecoveryPasswordPrefix(raw: string): boolean {
+  const norm = raw.normalize("NFKC");
+  if (!/^[\p{Nd}\s\p{Pd}]+$/u.test(norm)) return false;
+  if (/(?<!\p{Nd})\p{Nd}{6}(?=[\s\p{Pd}])/u.test(norm)) return true;
+  return (norm.match(/\p{Nd}/gu) ?? []).length >= 9;
+}
+
+/** True when the browser must refuse the query: a full recovery password or the start of one. */
+export function isRefusedQuery(raw: string): boolean {
+  return isRecoveryPassword(raw) || looksLikeRecoveryPasswordPrefix(raw);
+}
+
+/**
+ * Where "Show all N" opens: universal search for the query, narrowed to the group's type. Never a
+ * URL holding a refused query (ADR-0011 rule 15), so a refused query yields no destination.
+ */
+export function showAllHref(rawQuery: string, groupId: string): string | undefined {
+  if (isRefusedQuery(rawQuery)) return undefined;
+  const q = encodeURIComponent(rawQuery.trim());
+  return groupId === "exact"
+    ? `/search?q=${q}`
+    : `/search?q=${q}&type=${encodeURIComponent(groupId)}`;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+export function formatTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const hh = String(d.getUTCHours()).padStart(2, "0");
+    const mm = String(d.getUTCMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  } catch {
+    return "";
+  }
+}
+
+export function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+  } catch {
+    return "";
+  }
+}
+
+export function mapStatusChip(chip: DirectorySearchChip): PaletteChip | undefined {
+  switch (chip.kind) {
+    case "locked":
+      return { tone: "warn", label: chip.at ? `Locked ${formatTime(chip.at)}` : "Locked" };
+    case "disabled":
+      return { tone: "muted", label: "Disabled" };
+    case "passwordExpired":
+      return { tone: "crit", label: "Password expired" };
+    case "passwordExpiresInDays":
+      return {
+        tone: "warn",
+        label:
+          chip.days === 1
+            ? "Password expires in 1 day"
+            : `Password expires in ${chip.days ?? 0} days`,
+      };
+    case "accountExpires":
+      return {
+        tone: "warn",
+        label: chip.at ? `Expires ${formatDate(chip.at)}` : "Account expires",
+      };
+    case "deleted":
+      return { tone: "muted", label: chip.at ? `Deleted ${formatDate(chip.at)}` : "Deleted" };
+    case "tier0":
+      return { tone: "crit", label: "TIER 0" };
+    case "cloudOnly":
+      return { tone: "muted", label: "Cloud only" };
+    default:
+      return undefined;
+  }
+}
+
+export function mapHitToPaletteItem(hit: DirectorySearchHit): PaletteItem {
+  const typeTag =
+    hit.type === "users"
+      ? "User"
+      : hit.type === "groups"
+        ? "Group"
+        : hit.type === "computers"
+          ? "Computer"
+          : hit.type === "contacts"
+            ? "Contact"
+            : hit.type;
+
+  let identifier: string | undefined;
+  if (hit.type === "users") {
+    const upnOrMail = hit.userPrincipalName || hit.mail;
+    identifier =
+      hit.samAccountName && upnOrMail
+        ? `${hit.samAccountName} · ${upnOrMail}`
+        : hit.samAccountName || upnOrMail;
+  } else {
+    identifier = hit.samAccountName || hit.mail;
+  }
+
+  let disambiguator: string | undefined;
+  if (hit.disambiguator) {
+    const parts = [
+      hit.disambiguator.title,
+      hit.disambiguator.office,
+      hit.disambiguator.department,
+    ].filter(Boolean);
+    if (parts.length > 0) {
+      disambiguator = parts.join(" · ");
+    }
+  }
+
+  const chips = hit.status
+    ? hit.status.map(mapStatusChip).filter((c): c is PaletteChip => c !== undefined)
+    : undefined;
+
+  const item: PaletteItem = {
+    id: hit.objectId,
+    typeTag,
+    name: hit.displayName,
+    ...(identifier ? { identifier } : {}),
+    ...(disambiguator ? { disambiguator } : {}),
+    ...(hit.distinguishedName ? { dn: hit.distinguishedName } : {}),
+    ...(hit.domain ? { domain: hit.domain } : {}),
+    ...(chips && chips.length > 0 ? { chips } : {}),
+  };
+  return item;
+}
+
+/** The hits behind a result, by the id of the palette row they render as. */
+export function indexHits(result: DirectorySearchResult): Map<string, DirectorySearchHit> {
+  const byId = new Map<string, DirectorySearchHit>();
+  for (const g of result.groups ?? []) {
+    for (const h of g.items ?? []) byId.set(h.objectId, h);
+  }
+  return byId;
+}
+
+/**
+ * Where a hit opens: a user in the Users screen, everything else in universal search. The search
+ * term is the hit's own identifier (sAMAccountName, then UPN, then mail, then display name).
+ */
+export function hitHref(hit: DirectorySearchHit): string {
+  const term = hit.samAccountName || hit.userPrincipalName || hit.mail || hit.displayName;
+  const q = encodeURIComponent(term);
+  return hit.type === "users" ? `/directory/users?q=${q}` : `/search?q=${q}`;
+}
+
+export function matchPages(
+  registeredPalette: readonly PaletteEntry[],
+  routes: readonly RouteSpec[],
+  query: string,
+): PaletteItem[] {
+  const q = query.trim().toLowerCase();
+  if (q === "") return [];
+
+  const matched: PaletteItem[] = [];
+  for (const entry of registeredPalette) {
+    const routeExists = matchRoute(routes, entry.route) !== undefined;
+    if (!routeExists) continue;
+
+    const matchesLabel = entry.label.toLowerCase().includes(q);
+    const matchesKeyword = entry.keywords.some((k) => k.toLowerCase().includes(q));
+    if (matchesLabel || matchesKeyword) {
+      matched.push({
+        id: `page:${entry.id}`,
+        typeTag: "Page",
+        name: entry.label,
+      });
+    }
+  }
+  return matched;
+}
+
+export function buildPaletteGroups(
+  result: DirectorySearchResult,
+  registeredPalette: readonly PaletteEntry[],
+  routes: readonly RouteSpec[],
+  query: string,
+): PaletteGroup[] {
+  const groups: PaletteGroup[] = [];
+
+  // 1. Exact matches first (across all object types)
+  const exactHits: DirectorySearchHit[] = [];
+  for (const g of result.groups ?? []) {
+    for (const h of g.items ?? []) {
+      if (h.matchClass === "exact") exactHits.push(h);
+    }
+  }
+  if (exactHits.length > 0) {
+    groups.push({
+      id: "exact",
+      label: "Exact",
+      items: exactHits.slice(0, 5).map(mapHitToPaletteItem),
+    });
+  }
+
+  // 2. Object types: Users, Groups, Computers, Contacts (up to 5 each)
+  const types = ["users", "groups", "computers", "contacts"] as const;
+  for (const type of types) {
+    const g = result.groups?.find((grp) => grp.type === type);
+    if (!g || !g.items || g.items.length === 0) continue;
+
+    // Filter out items that already appear in the Exact group
+    const items = g.items.filter((h) => h.matchClass !== "exact");
+    if (items.length > 0) {
+      const total = g.count ?? (g.more ? items.length + 1 : undefined);
+      groups.push({
+        id: type,
+        label: type.charAt(0).toUpperCase() + type.slice(1),
+        items: items.slice(0, 5).map(mapHitToPaletteItem),
+        ...(total !== undefined ? { total } : {}),
+      });
+    }
+  }
+
+  // 3. Registered Pages matching query
+  const pages = matchPages(registeredPalette, routes, query);
+  if (pages.length > 0) {
+    groups.push({
+      id: "pages",
+      label: "Pages",
+      items: pages.slice(0, 5),
+    });
+  }
+
+  // Note: per AC 3, no actions group exists at 2a.
+  return groups;
+}
