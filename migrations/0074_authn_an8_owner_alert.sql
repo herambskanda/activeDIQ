@@ -1,4 +1,4 @@
--- 0072_authn_an8_owner_alert: the AN-8 owner alert outbox (T-1544; RULING AN8-A1, threat model §7.6 rules 3-4).
+-- 0074_authn_an8_owner_alert: the AN-8 owner alert outbox (T-1544; RULING AN8-A1, threat model §7.6 rules 3-4).
 -- Owner: internal/platform/authn.
 --
 -- authn_authority_notices gains two events written by the break-glass password step in the transaction that
