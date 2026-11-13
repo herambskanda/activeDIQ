@@ -1,6 +1,6 @@
 ---
 name: amplification-lessons
-description: T-1528 TM-D32 gaps — PSO applies cap (migration 0072), ancestry rewrite budget, test runtime traps
+description: T-1528 TM-D32 gaps — PSO applies cap (migration 0077), ancestry rewrite budget, test runtime traps
 metadata:
   type: project
 ---

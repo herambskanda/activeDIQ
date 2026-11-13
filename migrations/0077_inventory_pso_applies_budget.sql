@@ -1,4 +1,4 @@
--- 0072_inventory_pso_applies_budget: row budget of inventory_pso_applies (T-1528; threat-model §5.4a, TM-D32).
+-- 0077_inventory_pso_applies_budget: row budget of inventory_pso_applies (T-1528; threat-model §5.4a, TM-D32).
 -- Owner: internal/directory/inventory.
 --
 --  * applies_count: the active msDS-PSOAppliesTo rows stored for the PSO, kept by PolicyWriter so a write
