@@ -95,7 +95,7 @@ func (e *env) fillRange(t *testing.T, tid tenant.ID, from, to int) {
 }
 
 // vacuumSearch brings the visibility maps and statistics of the search tables up to date, as the runner does
-// after migration 0073 and an operator does after a bulk load.
+// after migration 0074 and an operator does after a bulk load.
 func (e *env) vacuumSearch(t *testing.T) {
 	t.Helper()
 	// Twice: the first pass cannot mark a page all-visible past a row whose inserting transaction is still
