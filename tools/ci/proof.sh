@@ -1878,5 +1878,40 @@ must_fail_with "fitness-sso on a corpus record with no subtest" 'subtest-missing
 sed -i 's/"S-6"/"S-5"/; s/t.Run(id, func(t \*testing.T) {})/t.Run(id, func(t *testing.T) { if id == "S-3" { t.Skip("x") } })/' "$ss/b/internal/platform/authn/sso/saml/c_test.go"
 must_fail_with "fitness-sso on a skipped corpus subtest" 'TestCorpus/S-3 .*subtest-skip' sso -root "$ss/b"
 
+# --- fitness-group-member (connector-contract §8.10.8 GM1-GM4, T-1916), the real CLI on throw-away trees ----
+gmbin="$tmp/fitness-group-member"; go build -o "$gmbin" ./tools/fitness/groupmember
+gm="$tmp/gm"
+for f in knowledge/development/architecture/connector-contract.md knowledge/development/architecture/threat-model.md \
+         internal/proto/activediq/connector/v1/reserved_test.go internal/directory/client/write_test.go internal/directory/client/write.go; do
+  mkdir -p "$gm/$(dirname "$f")"; cp "$f" "$gm/$f"
+done
+must_pass "fitness-group-member (clean tree)" "$gmbin" -root "$gm"
+cp "$gm/internal/directory/client/write_test.go" "$tmp/gm-write_test.go"
+sed -i 's/"ad.computer.resetAccount": true/"ad.bogus.kind": true/' "$gm/internal/directory/client/write_test.go"
+must_fail_with "fitness-group-member GM2 on a closed list that is not the thirteen keys" 'GM2: TestKindTableClosed accepts "ad.bogus.kind"' "$gmbin" -root "$gm"
+cp "$tmp/gm-write_test.go" "$gm/internal/directory/client/write_test.go"
+sed -i '/WRITE_KIND_GROUP_MEMBER_REMOVE: /d' "$gm/internal/proto/activediq/connector/v1/reserved_test.go"
+must_fail_with "fitness-group-member GM4 on a kind list that differs from section 8.10.1" 'GM4: TestWriteKindList lacks GROUP_MEMBER_REMOVE' "$gmbin" -root "$gm"
+git show HEAD:internal/proto/activediq/connector/v1/reserved_test.go >"$gm/internal/proto/activediq/connector/v1/reserved_test.go"
+sed -i 's/^reset_computer: unicodePwd\[computer\]$/reset_computer: unicodePwd/' "$gm/knowledge/development/architecture/threat-model.md"
+must_fail_with "fitness-group-member GM3 on a guarded block without the computer key" 'GM3: guarded-v1: reset_computer must be exactly unicodePwd\[computer\]' "$gmbin" -root "$gm"
+cp knowledge/development/architecture/threat-model.md "$gm/knowledge/development/architecture/threat-model.md"
+mkdir -p "$gm/internal/modules/ad"
+cat >"$gm/internal/modules/ad/g.go" <<'GO'
+package ad
+
+var d = operation.Descriptor{ID: "ad.group.addMember", Permission: "objects.group.add_member"}
+
+func plan() {
+	_ = step.Plan{Target: memberRef, Kind: "ad.group.addMember", Reversibility: 1}
+	_ = client.WriteOp{DigestKind: "ad.group.addMember", Target: memberRef}
+}
+GO
+must_fail_with "fitness-group-member GM1 on an Action whose authz Target is the member" 'GM1: authz Target "memberRef" names the member' "$gmbin" -root "$gm"
+sed -i 's/Permission: "objects.group.add_member"/Permission: "objects.user.update"/; s/memberRef/groupRef/g' "$gm/internal/modules/ad/g.go"
+must_fail_with "fitness-group-member GM1 on an Action declaring a non-group permission" 'GM1: Descriptor Permission "objects.user.update" is outside' "$gmbin" -root "$gm"
+sed -i 's/Permission: "objects.user.update"/Permission: "objects.group.nest"/' "$gm/internal/modules/ad/g.go"
+must_pass "fitness-group-member (group Action with the group permission and the group Target)" "$gmbin" -root "$gm"
+
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"
