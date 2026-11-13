@@ -366,3 +366,17 @@ func TestGroupKindsRefuseWhenGroupOrMemberIsTier0(t *testing.T) {
 		}
 	}
 }
+
+// A contact has no objectSid (found by the lab, T-1913): it is a valid member and the digest still works.
+func TestGroupContactMemberWithoutObjectSid(t *testing.T) {
+	f := newGroupFix(t, nil, "")
+	f.d.objs[f.member] = ad.NewEntry("CN=Ct,OU=Contacts,DC=lab,DC=test", map[string][][]byte{
+		"objectGUID": {f.member.Bytes()}, "objectClass": {[]byte("top"), []byte("person"), []byte("organizationalPerson"), []byte("contact")}})
+	rd, r := readMembership(f.d, true, f.group, f.member, connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_CONTACT)
+	if r != nil || rd == nil || len(rd.dig) == 0 {
+		t.Fatalf("refused: %v", rule(r))
+	}
+	if _, r := readMembership(f.d, true, f.group, f.member, clsUser); rule(r) != "MemberClassMismatch" {
+		t.Fatalf("got %q", rule(r))
+	}
+}

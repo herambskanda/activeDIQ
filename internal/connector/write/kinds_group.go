@@ -136,6 +136,14 @@ func dcSuffix(d dn.DN) string {
 	return strings.Join(parts, ",")
 }
 
+// sidText is the SID's text form, or "" for the zero SID (a contact has none).
+func sidText(s sid.SID) string {
+	if len(s.Bytes()) <= 8 {
+		return ""
+	}
+	return s.String()
+}
+
 func sidOf(e *ad.Entry) (sid.SID, bool) {
 	s, err := e.SIDs("objectSid")
 	if err != nil || len(s) != 1 {
@@ -187,7 +195,8 @@ func readMembership(tx groupTx, add bool, group, member guid.GUID, declared conn
 	}
 	gsid, gok := sidOf(ge)
 	msid, mok := sidOf(me)
-	if !gok || !mok {
+	// A contact has no objectSid; every other member class has one (the loop check and the digest use it).
+	if !gok || (!mok && live != connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_CONTACT) {
 		return nil, invalid("5", "UnreadableAttribute", "target")
 	}
 	if add && live == connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_GROUP {
@@ -236,7 +245,7 @@ func membershipDigest(ge, me *ad.Entry, gsid, msid sid.SID, cls connectorv1.Dire
 		return string(bytes.Join(v, []byte{0}))
 	}
 	return hashParts("adq-group-member/1", gsid.String(), raw(ge, "groupType"), raw(ge, "adminCount"),
-		msid.String(), cls.String(), strings.ToLower(mdn.Parent().CanonicalString()), raw(me, "adminCount"))
+		sidText(msid), cls.String(), strings.ToLower(mdn.Parent().CanonicalString()), raw(me, "adminCount"))
 }
 
 func memberEntry(rd *memberRead, member guid.GUID, group *ad.Entry) *connectorv1.DirectoryEntry {
