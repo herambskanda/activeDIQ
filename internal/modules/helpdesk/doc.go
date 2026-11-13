@@ -8,7 +8,7 @@
 // Verifier (verifier.go) is the engine: Issue sends on a user act only, Verify charges every attempt
 // before it looks at the code, Authorise consumes a verified challenge once for one operation, and the
 // Grant it returns binds to an operation.Request (grant.go). Every limit lives in PostgreSQL (migration
-// 0073), never in memory, so all nodes share it. The module owns helpdesk_caller_verifications and
+// 0074), never in memory, so all nodes share it. The module owns helpdesk_caller_verifications and
 // nothing else; it reads the caller's destination and the technician's authority through ports
 // (ports.go) and never builds an LDAP filter, DN or message string from caller input.
 //
