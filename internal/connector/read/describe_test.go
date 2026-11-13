@@ -3,6 +3,7 @@ package read_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
@@ -51,6 +52,25 @@ func TestDescribeServesNamingContextsAndLimits(t *testing.T) {
 	}
 	if resp.GetContract() != "activediq.connector.v1" || resp.GetProviderKind() != connectorv1.ProviderKind_PROVIDER_KIND_AD {
 		t.Errorf("contract/provider = %q / %v", resp.GetContract(), resp.GetProviderKind())
+	}
+	// T-1583 AC1: APPLY and PLAN are SUPPORTED through Describe, naming the four account kinds.
+	var seen int
+	for _, o := range resp.GetOperations() {
+		if o.GetOperation() != connectorv1.Operation_OPERATION_PLAN && o.GetOperation() != connectorv1.Operation_OPERATION_APPLY {
+			continue
+		}
+		seen++
+		if o.GetState() != connectorv1.SupportState_SUPPORT_STATE_SUPPORTED {
+			t.Errorf("%v = %v", o.GetOperation(), o.GetState())
+		}
+		for _, k := range []string{"USER_PASSWORD_RESET", "USER_UNLOCK", "ACCOUNT_ENABLE", "ACCOUNT_DISABLE"} {
+			if !strings.Contains(o.GetReason(), k) {
+				t.Errorf("%v reason %q lacks %s", o.GetOperation(), o.GetReason(), k)
+			}
+		}
+	}
+	if seen != 2 {
+		t.Errorf("operations = %v", resp.GetOperations())
 	}
 	if resp.GetLimits().GetMaxPageSize() != 1000 || resp.GetLimits().GetMaxValueRange() != 1500 {
 		t.Errorf("limits = %v", resp.GetLimits())

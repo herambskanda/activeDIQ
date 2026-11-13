@@ -276,11 +276,13 @@ func TestPropertyWriteMalformedIsRefused(t *testing.T) {
 		{Plane: 0, Kind: U, Op: tier0.OpUpdate, Keys: []string{"x"}},
 		{Plane: E, Kind: 0, Op: tier0.OpUpdate},
 		{Plane: E, Kind: U, Op: 0},
-		{Plane: E, Kind: U, Op: tier0.OpMoveOrRename},    // AD only
-		{Plane: A, Kind: U, Op: tier0.OpInvite},          // Entra only
-		{Plane: E, Kind: D, Op: tier0.OpAssignLicense},   // devices hold no licence
-		{Plane: E, Kind: U, Op: tier0.OpGroupMembership}, // groups only
-		{Plane: E, Kind: D, Op: tier0.OpSetManager},      // users only
+		{Plane: E, Kind: U, Op: tier0.OpMoveOrRename},                                              // AD only
+		{Plane: A, Kind: U, Op: tier0.OpInvite},                                                    // Entra only
+		{Plane: E, Kind: D, Op: tier0.OpAssignLicense},                                             // devices hold no licence
+		{Plane: E, Kind: U, Op: tier0.OpGroupMembership},                                           // groups only
+		{Plane: E, Kind: D, Op: tier0.OpSetManager},                                                // users only
+		{Plane: E, Kind: tier0.WriteGroup, Op: tier0.OpDelete},                                     // AD only (T-1621)
+		{Plane: A, Kind: tier0.WriteGroup, Op: tier0.OpDelete, Keys: []string{"member;range=0-1"}}, // keys still canonical
 	} {
 		expect(t, "malformed", set, pw, true)
 	}
@@ -289,6 +291,9 @@ func TestPropertyWriteMalformedIsRefused(t *testing.T) {
 		t.Fatal("nil set must refuse")
 	}
 	if !strings.Contains(tier0.OpMoveOrRename.String(), "MOVE") {
+		t.Fatal("op name")
+	}
+	if tier0.OpDelete.String() != "DELETE" {
 		t.Fatal("op name")
 	}
 }
@@ -335,4 +340,37 @@ func TestT0DynMapPreferredLanguageDeviceOS(t *testing.T) {
 	set, _ = snap(t, tn, des)
 	expect(t, "os", set, w(A, D, tier0.OpUpdate, "operatingSystem"), true)
 	expect(t, "os twin", set, w(A, D, tier0.OpUpdate, "description"), false)
+}
+
+// CC-WRITE-30 (contract §8.9 DELETE, T-1621 R1): a group delete removes the group from every
+// member's memberOf, so under a closure rule that reads membership (RefuseAll) it is refused; a
+// user, device or any other delete only leaves a rule's scope and is never refused.
+func TestCCWrite30DeleteGroupUnderMemberOfAndRefuseAll(t *testing.T) {
+	G := tier0.WriteGroup
+	rules := map[string]string{
+		"memberOf":          `user.memberOf -any (group.objectId -in ["` + g(9) + `"])`,
+		"not memberOf":      `-not (user.memberOf -any (group.objectId -in ["` + g(9) + `"]))`,
+		"unknown property":  `user.fooBar -eq "x"`,
+		"unlexable":         `user.department -eq "unterminated`,
+		"unrecognised form": `True -eq True`,
+	}
+	for name, rule := range rules {
+		tn, des := nested(rule, 1, true)
+		set, _ := snap(t, tn, des)
+		r := check(t, set, w(A, G, tier0.OpDelete))
+		if !r.Refused || r.Op != tier0.OpDelete || r.Reason != tier0.ReasonDesignatedDynamicRule {
+			t.Errorf("%s: refusal %+v", name, r)
+		}
+		// Acceptance 2: the same closure does not refuse a user, a computer or an OU/contact.
+		expect(t, name+" user", set, w(A, U, tier0.OpDelete), false)
+		expect(t, name+" device", set, w(A, D, tier0.OpDelete), false)
+	}
+	// Twin: a closure rule that does not read membership does not refuse a group delete either.
+	tn, des := nested(`user.department -eq "x"`, 1, true)
+	set, _ := snap(t, tn, des)
+	expect(t, "twin group", set, w(A, G, tier0.OpDelete), false)
+	expect(t, "twin user", set, w(A, U, tier0.OpDelete), false)
+	// No closure dynamic group: nothing to refuse.
+	set, _ = snap(t, tenant(), nil)
+	expect(t, "no closure group", set, w(A, G, tier0.OpDelete), false)
 }

@@ -6,7 +6,7 @@ status: review
 owner: heramb
 author: directory-engineer
 ticket: T-0064
-amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect), T-1567 (v1.5, author solution-architect: §5.9 `attr/tsprops` read-only `userParameters` decoder and `TsPropertiesValue`, wire-value identity gate, `NOT_CONFIRMED` readability proof, `not_filterable` schema flag, §8.10.4 OID-resolved deny-list and `AllowedAttr`, §9.4b CC-TS-01..10, fitness TS1-TS8; rounds 2 and 3 after review: shared `wirevalue` builder, as-built T-1623 deny-list and its delta, rights-check token set), T-1730 (§8.10.3 kind 6 step-7 read mechanics, §8.10.9 R2 conflict resolved, §8.4 R15 (b) findings, CC-WK-32..35, author security-architect)
+amended_by: T-0236 (§8.1 C17/C18 live rows, CC-WRITE-15, author solution-architect), T-0091 (v1.1, author solution-architect), T-0122 (v1.2, author solution-architect: TM-D23 rules 7-11), T-0230 (§8.9, author security-architect: TM-D25 rule 7 guard input), T-0240 (§8.9, author security-architect: group-based licensing, canonical keys), T-1124 (v1.3, author solution-architect: §5.6 `ReadReplicationStatus`, §5.7 replication-metadata decoder, §9.4a), T-1581 (v1.4, author solution-architect: §8.10 the first ten `WriteKind` values, `SecretValue`, CC-WK-01..31), T-1621 (§8.9 `DELETE` op, §8.10.9 security review, author security-architect), T-1567 (v1.5, author solution-architect: §5.9 `attr/tsprops` read-only `userParameters` decoder and `TsPropertiesValue`, wire-value identity gate, `NOT_CONFIRMED` readability proof, `not_filterable` schema flag, §8.10.4 OID-resolved deny-list and `AllowedAttr`, §9.4b CC-TS-01..10, fitness TS1-TS8; rounds 2 and 3 after review: shared `wirevalue` builder, as-built T-1623 deny-list and its delta, rights-check token set), T-1643 (§8.1 basis C20, §8.10.3 kinds 7/9/10, CC-WK-27/28/36-40, TM-D34, author security-architect), T-1730 (§8.10.3 kind 6 step-7 read mechanics, §8.10.9 R2 conflict resolved, §8.4 R15 (b) findings, CC-WK-32..35, author security-architect), T-1751 (§8.10.3 kind 6 step 4a, §8.10.9 R2 amendment, CC-WK-41..44, author security-architect), T-1632 (§8.10.9 DELETE as built; security review: delete of a manager also checked as CLEAR_MANAGER; author directory-engineer)
 binding_sources: blueprint §7.1-7.2, safe-primitives §3.6-3.7, domain-model DM-10, DM-13..DM-20, DM-24, DM-25, threat-model §6.2-§6.6 (TM-D1, TM-D2, TM-D4, TM-D5, TM-D23), §16.1 TM-R14..R17, §6.3 R1/R2 and TM-TB3-*, ADR-0005 rules 2, 4, 5, 7
 ---
 
@@ -133,8 +133,9 @@ and SID; the kind is the configuration/schema NC by DN, a domain by `systemFlags
 application; a `crossRef` with `enabled = FALSE` is not listed; `functional_level` is set only for the
 DC's own domain (rootDSE `domainFunctionality`). `max_page_size` is the DC's `lDAPAdminLimits`
 `MaxPageSize` (the NTDS Settings `queryPolicyObject`, else `Default Query Policy`; AD's documented 1000
-when absent) capped at the session's own page ceiling of 1000, never 0. The operations, features, DC
-list, forest settings and health sections are still unset (CC-DESC-01, 03, 05, 06 stay open).
+when absent) capped at the session's own page ceiling of 1000, never 0. `operations` carries the write group's PLAN and APPLY rows (`write.Capabilities`, SUPPORTED with the
+wired kinds named in `reason`, since `OperationSupport` has no per-kind field); the read rows, features,
+DC list, forest settings and health sections are still unset (CC-DESC-01, 03, 05, 06 stay open).
 
 `DescribeSchema` streams the schema the server-side filter builder needs for its allowlist
 (safe-primitives §3.3 rule 1): per attribute its syntax, value kind, single or multi, constructed,
@@ -400,7 +401,7 @@ structs or a `*DecodeError{Code}` whose code is fixed text. Nobody else in the m
 | --- | --- |
 | X1 | **Standard library only** (`encoding/xml`; no new dependency, nothing to add to the licence register). Go's decoder does not resolve DTD-declared entities `[UNVERIFIED]`; the decoder does not rely on that: it drives `xml.Decoder.Token()` itself and **refuses** any `xml.Directive` token (`<!DOCTYPE`, `<!ENTITY`), any processing instruction other than the leading `<?xml … ?>` declaration, and any declared encoding other than UTF-8 (`CharsetReader` is nil). `Strict` stays true and `Entity` nil, so an undeclared entity such as `&xxe;` is an error. Comments are skipped. CDATA is accepted as text |
 | X2 | **Bounded input.** At most 64 KiB per value and 8 MiB per DC per call; a value over it is `too_large` before parsing. Reading is `io.LimitReader`-capped, not trusted from a length field |
-| X3 | **Bounded structure.** Depth <= 8; <= 20,000 elements per value; attributes per element <= 16; text node <= 1,024 bytes except `last_result_text` (<= 512 after truncation on a rune boundary). NUL, invalid UTF-8 and C0 controls except TAB/LF/CR are `bad_text` |
+| X3 | **Bounded structure.** Depth <= 8; <= 20,000 elements per value; attributes per element <= 16; text node <= 1,024 bytes except `last_result_text` (<= 512 after truncation on a rune boundary). NUL, invalid UTF-8 and C0 controls except TAB/LF/CR are `bad_text`. **Implementation note (T-1721):** `encoding/xml` allocates about 200 bytes per element, so the 8 x input bound of X6 cannot hold at 20,000 elements in 64 KiB; the effective element cap is `min(20,000, (8 x len + 8 KiB) / 256)`, and a value past it is `too_many_elements`. Attributes are charged to the same budget (about 128 bytes each: `encoding/xml` allocates them inside the one call that returns the start tag), so a raw-byte pre-scan counts start tags and attributes before the XML decoder runs and refuses an over-budget value as `too_many_attrs`. A real `DS_REPL_*` value averages tens of bytes per element and is far below it |
 | X4 | **Closed element names.** The document root and the field names are an allowlist per structure (the `DS_REPL_*` names of [MS-DRSR](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-drsr/0597aff6-0177-4d52-99f2-14a5441bc3c1)). An unknown element is skipped with its subtree **under the same depth and count limits** and counted; it is not an error, so a newer Windows build does not break the report (the report shows nothing for a field it does not know, rule 10). The exact names and value formats are `[UNVERIFIED]` `[LAB: Windows]` until the fixtures of CC-REPLXML-01 are captured |
 | X5 | **Typed fields, parsed once.** Counts are `uint32`, times are `TimeValue` (the XML time format is parsed strictly; anything else is `bad_time`, never "now" and never zero), GUIDs are `Guid` (RFC 4122 order, rule 9), Win32 results are `uint32`. A missing field is unset. Only `source_dns_host`, `partition_display_dn`, `last_result_text` and attribute names remain text; they are bounded (X3), valid UTF-8, and go out as display strings that every output encoder escapes (FF-SP4) |
 | X6 | **Pure.** The package imports nothing that can do I/O: no `net`, `os`, `net/http`, `io/ioutil`, `os/exec`, `plugin`, `unsafe`, `reflect`. It allocates at most 8 x input size. It logs nothing derived from the input |
@@ -963,6 +964,7 @@ the request's context only; it is the residual R-T0SET-1 below.
 | C17 (TM-D26 rules 1-5, 8) | X's `objectSid`, `tokenGroups` and every `sIDHistory` SID; then, on each C17 object in the connector's set (the domain head of every domain, the Configuration head, the Schema head, `CN=AdminSDHolder,CN=System`), the **head DACL and owner** (SD-flags control, OWNER and DACL, through the typed security-descriptor primitive, T-0149, with the same effective-rights helper as the classifier). X is `tier0`, basis C17, when its token holds an allow ACE with `WRITE_DAC`, `WRITE_OWNER`, `GENERIC_ALL` or `GENERIC_WRITE` (generic and mapped bits), an all-properties or `gPLink` `WriteProperty`, or all extended rights (any one is enough); when X's token contains the owner SID of a C17 object and that owner is not a C1 principal (OWNER RIGHTS and `dSHeuristics` character 29 are ignored); or when X is a group that is a trustee of such an ACE and the walk reaches X's members. Callback allow ACEs (0x09, 0x0B) count as unconditional, deny callbacks (0x0A, 0x0C) are ignored. An ACE trustee SID that is not on the explicit ignore list and does not resolve, a callback ACE or ACE the primitive flags `Unknown`, an unreadable owner or DACL, or a C17 object that cannot be read counts as `tier0`, basis `UNKNOWN` | **live**; the list of C17 objects is **set** (C7, C3) |
 | C18 (TM-D26 rules 6-8) | X's `sIDHistory`, read live. X is `tier0`, basis C18, when a value is privileged **by RID alone**, whatever the domain prefix (500, 502, 512, 516-519, 521, 525-527 and the C1 built-in S-1-5-32 groups), or resolves through the Global Catalog to an object that is `tier0` by another basis (an object of another domain of the forest that the GC resolves is `tier0`: the GC cannot clear it; a customer designation counts here too). When X is a group, its `sIDHistory` is checked the same way, and a member or owner of such a group is `tier0` through C2. An unresolvable value with RID 1000 or more is not `tier0`. An unreadable `sIDHistory` or a failed Global Catalog lookup counts as `tier0`, basis `UNKNOWN` | **live**; the privileged-RID list is code, the designated closure is **context** |
 | C19 (TM-D27 rules 1-8) | On each C19 object (C1 and C13 groups, C1 accounts and every `krbtgt`, DC computer objects from the primary-group edge and `nTDSDSA`, the Domain Controllers OU and the container directly holding each DC, each GPO C9 marks), the **own DACL and owner**, read live. X is `tier0`, basis C19, when its token holds an allow ACE with a takeover right for that class (TM-D27 rule 2 table; GUIDs read from the schema and `CN=Extended-Rights` at snapshot, property sets included), when X owns the object and is not C1, or, for a group, holds the Self-Membership validated write and is not already `tier0`. Depth 1: C19 does not iterate. Trustee handling, ignore list and fail-closed as C17 | **live**; the object list is **set** (C1, C4, C5, C9, C13) |
+| C20 (TM-D34, T-1643) | X is the connector's **own bound principal**: X's `objectGUID` or `objectSid` equals it, or X's `objectSid` or any `sIDHistory` SID equals its SID; X is the bound gMSA or a principal in its `msDS-GroupMSAMembership`; or X is in the request's `ACTIVEDIQ_SERVICE` designations (registered service identities). The principal comes from LDAP Who am I on the bound session, resolved to exactly one object by the filter builder, the same function V7 uses; never from config text or the request. A principal that does not resolve to one object, or any failed read, counts as `tier0`, basis `UNKNOWN`, for every account write. Refused for every kind, Plan and Apply, no override | **live** for the principal, gMSA and `sIDHistory`; **context** for the registered service identities |
 | C15 | When X is a site: one subtree search under X for a `server` object with a `serverReference` | **live** |
 | C16, E5 | The request's statement (§8.3), whose evidence F4 checks against X as re-read | context |
 | E1, E4 (roles) | Role assignments and eligibility schedules with `principalId` = X, directly and through its role-assignable groups | **live** |
@@ -1420,7 +1422,7 @@ each per `Plan` and `Apply` (live, step 7); a changed `rule_hash` re-lexes. A re
 | `ASSIGN_LICENSE` | the scope holds `assignedPlans`, `mail` or `proxyAddresses`, or `RefuseAll`. Group-targeted calls too (7e) |
 | `SET_MANAGER`, `CLEAR_MANAGER` | the scope holds `user.manager` (`Direct Reports for`, 7c), or `RefuseAll` |
 | `MOVE_OR_RENAME` (AD) | the scope holds `onPremisesDistinguishedName`, or `RefuseAll` |
-| `DELETE` (AD, T-1621) | `kind` is GROUP and the scope holds `memberOf`, or `RefuseAll`. Any other kind: never refused (a deleted object only leaves a rule's scope; no other object's properties change). `keys` is empty and ignored |
+| `DELETE` (AD, T-1621) | `kind` is GROUP and the scope holds `memberOf`, or `RefuseAll`. Any other kind: never refused as DELETE (a deleted object only leaves a rule's scope). `keys` is empty and ignored. A delete of an object with `directReports` is **also checked as `CLEAR_MANAGER`** by the connector (T-1632 security review), because removing a manager clears its reports' `manager` |
 | `GROUP_MEMBERSHIP` | the scope holds `memberOf`, `assignedPlans`, `mail` or `proxyAddresses`, or `RefuseAll` **for any cause** (7b, 7e; group-based licensing, T-0240). Any target group, either plane |
 
 `RefuseAll` is set by an untokenisable rule, a rule property absent from `ruleprops v1`, an empty
@@ -1448,9 +1450,11 @@ live rule edit. The Samba lab covers LDAP semantics; Entra Connect flows are `[U
 
 This section is the concrete `WriteKind` list for the M2b write-parity slice (ADM-008, ADM-033,
 ADM-038) and the amendment of §8.1's "envelope only" rule. The proto is the source
-(`write.proto`); if the two disagree the proto wins and this section is the bug. **Nothing here
-wires a kind.** `Describe` keeps `PLAN` and `APPLY` `UNSUPPORTED` and `kindTable` stays empty until
-a build ticket registers a kind with its operation-table row (`internal/connector/write.operations`)
+(`write.proto`); if the two disagree the proto wins and this section is the bug. **T-1581 wired
+no kind; T-1583 wired the first four** (`USER_PASSWORD_RESET`, `USER_UNLOCK`, `ACCOUNT_ENABLE`,
+`ACCOUNT_DISABLE`, see "Wired kinds" below), so `Describe` reports `PLAN` and `APPLY` `SUPPORTED`
+while the operation table is non-empty. Every other kind stays unwired until a build ticket
+registers it with its operation-table row (`internal/connector/write.operations`)
 and its `kindTable` row together. Every kind goes through §8.1 steps 1 to 9 unchanged: the Tier-0
 guard, the write gate and the property guard (§8.9) run before the kind's own code.
 
@@ -1466,13 +1470,13 @@ row in the class matrix below, not a new kind.
 | 1 | `OBJECT_CREATE` / `object_create` | `ad.object.create` | user, group, computer, contact, OU | `AddRequest` at parent DN + RDN; entry-exists is the conditional | the parent (`target`) | Reversible (inverse: `OBJECT_DELETE` of the created GUID) | `none` (USER through `guarded.NewUser`) | CC-WK-01..04 |
 | 2 | `OBJECT_UPDATE` / `object_update` | `ad.object.update` | user, group, computer, contact, OU | one `ModifyRequest`, delete-old + add-new per edit | the target | Reversible; Lossy when an edited attribute's before-value is unreadable | derived from the attributes (`rename_logon`, `set_spn` and the others are denied or classed, §8.10.4) | CC-WK-05..08 |
 | 3 | `OBJECT_DELETE` / `object_delete` | `ad.object.delete` | user, group, computer, contact, OU (leaf only) | `DelRequest`; read-compare immediately before | the target | **Irreversible**; Plan: Lossy when the AD Recycle Bin is enabled, else Irreversible | `none` | CC-WK-09..11 |
-| 4 | `OBJECT_MOVE` / `object_move` | `ad.object.move` | user, group, computer, contact, OU | `ModifyDNRequest` (same RDN, `newSuperior`, `deleteoldrdn` false) within one domain NC | the target, its old parent, the new parent | Reversible (inverse: move back) | `move` | CC-WK-12..13 |
+| 4 | `OBJECT_MOVE` / `object_move` | `ad.object.move` | user, group, computer, contact, OU | `ModifyDNRequest` (same RDN, `newSuperior`, `deleteoldrdn` true — Samba refuses false when the RDN is unchanged; the RDN is identical so nothing is removed) within one domain NC | the target, its old parent, the new parent | Reversible (inverse: move back) | `move` | CC-WK-12..13 |
 | 5 | `OBJECT_RENAME` / `object_rename` | `ad.object.rename` | user, group, computer, contact, OU | `ModifyDNRequest` (new RDN, no `newSuperior`, `deleteoldrdn` true) | the target | Reversible | `move` | CC-WK-14..15 |
 | 6 | `OBJECT_RESTORE` / `object_restore` | `ad.object.restore` | user, group, computer, contact, OU | one `ModifyRequest` on the deleted object with the show-deleted control: delete `isDeleted`, replace `distinguishedName` | the deleted target, the new parent | Reversible (inverse: `OBJECT_DELETE`); the restore itself is never Lossy | `move` | CC-WK-16..18 |
-| 7 | `USER_PASSWORD_RESET` / `user_password_reset` | `ad.user.resetPassword` | user | one `ModifyRequest`: replace `unicodePwd` (+ `pwdLastSet` = 0), policy-hints control, LDAPS only | the target | **Irreversible** (Plan: Irreversible) | `reset_password` | CC-WK-19..23 |
+| 7 | `USER_PASSWORD_RESET` / `user_password_reset` | `ad.user.resetPassword` | user | one `ModifyRequest`: replace `unicodePwd` (+ `pwdLastSet` = 0), policy-hints control, LDAPS only | the target | **Irreversible** (Plan: Irreversible) | `reset_password` | CC-WK-19..23, 36..40 |
 | 8 | `USER_UNLOCK` / `user_unlock` | `ad.user.unlock` | user | read-compare, then `ModifyRequest` replace `lockoutTime` = 0 | the target | **Irreversible** (no inverse: the DC owns the lockout state) | `unlock` | CC-WK-24..25 |
 | 9 | `ACCOUNT_ENABLE` / `account_enable` | `ad.account.enable` | user, computer | one `ModifyRequest`: delete old `userAccountControl`, add old with `ACCOUNTDISABLE` cleared | the target | Reversible (inverse: `ACCOUNT_DISABLE`) | `enable` | CC-WK-26 |
-| 10 | `ACCOUNT_DISABLE` / `account_disable` | `ad.account.disable` | user, computer | the same with `ACCOUNTDISABLE` set | the target | Reversible (inverse: `ACCOUNT_ENABLE`) | `none` (tightening) | CC-WK-27 |
+| 10 | `ACCOUNT_DISABLE` / `account_disable` | `ad.account.disable` | user, computer | the same with `ACCOUNTDISABLE` set | the target | Reversible (inverse: `ACCOUNT_ENABLE`) | `none` (tightening) | CC-WK-27, 36..40 |
 
 Reversibility is ADR-0005 rule 1's: the Descriptor of an Action using a kind states the worst case
 across everything the Action can plan; Plan states the class per step, and an Action whose
@@ -1490,7 +1494,7 @@ container) answers `ClassNotAllowed`: "not in this slice" is a refusal, not a be
 
 #### 8.10.2 `kindTable`: digest keys map one to one (acceptance 3)
 
-`internal/directory/client.kindTable` (today `map[string]connectorv1.WriteKind{}`) is the only map
+`internal/directory/client.kindTable` (filled for the four account kinds from `internal/directory/accountkind.Specs()`, with a `kindClass` row each) is the only map
 from a plan-digest kind to a `WriteKind`. The rules:
 
 1. **Exactly the ten keys of §8.10.1**, each to its own `WriteKind`. The map is injective (no two
@@ -1591,7 +1595,9 @@ field is a DN.
   other than the target needs its own `CorrelationStatement` (step 6, F1/F3). A move into or out
   of a Tier-0 container is therefore refused (C3, C6, C7), whatever the identity may do.
 - `ALREADY_APPLIED` when the target's parent GUID already equals `new_parent`.
-- §8.9 `MOVE_OR_RENAME`. TM-D28 class `move`. Moving changes inherited ACEs and GPO scope; Plan
+- §8.9 `MOVE_OR_RENAME`, declared for **both** `kind` USER and DEVICE (the class is only known live, and an OU move changes the DN
+  of every computer below it; refused if either refuses; same for kinds 5 and 6 — `WriteOp.AlsoDevice`, T-1624 security review).
+  TM-D28 class `move`. Moving changes inherited ACEs and GPO scope; Plan
   shows the new parent's DN and warns when the new parent's `gPLink` or inheritance blocking differs
   from the old (display only; the decision is the technician's).
 
@@ -1670,6 +1676,35 @@ field is a DN.
      basis C2, whatever `memberOf` said. A failed or partial read is `tier0`. The rule "drop `member` values under
      `CN=Deleted Objects`" (Samba ghost members, above) applies to ordinary member reads, **not** to this cross-check, where the
      deleted value is the point. Plan's list of re-granted memberships is the union of both sides.
+  4a. **C2 from the SID side: live references to the target's SID (T-1751, TM-D33 rule 8).** An ACE stays on its object by
+     SID after the trustee is deleted, and a restore re-arms it, so the group-link checks above cannot see a deleted account
+     that is a *direct* trustee. Before any `member` or `memberOf` result is used, the target is checked against one
+     **reference set** computed in the same step-7 snapshot, on the pinned DC, from facts read live (not from the connector's
+     set or the request, CC-WRITE-15 rule): the SIDs of
+     (i) **C17**: on each C17 object (§8.1; the domain head of every domain, Configuration head, Schema head, AdminSDHolder)
+     the trustee of every allow ACE that the C17 rule counts (`WRITE_DAC`, `WRITE_OWNER`, `GENERIC_ALL`, `GENERIC_WRITE`,
+     all-properties or `gPLink` `WriteProperty`, all extended rights) **and, for this check only, every allow ACE for
+     DS-Replication-Get-Changes, -Get-Changes-All or -Get-Changes-In-Filtered-Set taken singly** (the live C11 test needs the
+     pair; a restore that re-arms one half is refused, because the other half may be one ACE away), plus the owner SID unless it is a C1
+     principal; (ii) **C19**: the same for each C19 object (§8.1; this covers the DACLs of the C1 and C13 groups, `krbtgt`,
+     DC computer objects, the Domain Controllers OU and each GPO C9 marks) with the TM-D27 rule 2 takeover rights per class
+     and the owner; (iii) **C12**: every trustee SID of every allow ACE in the retained
+     `msDS-AllowedToActOnBehalfOfOtherIdentity` descriptor of each DC in the set's DC list, and **C13**: the C13 pinned group
+     GUIDs' own SIDs (so a deleted C13 group itself is caught by SID, not only by `memberOf`).
+     The target's `objectSid` and **each** `sIDHistory` value (read in 7.2; an unreadable one is `tier0`, basis `UNKNOWN`) are
+     compared to the set by binary SID equality. **Resolution is irrelevant:** a trustee SID that resolves to no live object
+     (the usual case of a deleted account), to a tombstone, or to an object of another domain is compared exactly like any
+     other; the unresolved-SID rule of the live classifier (`UNKNOWN`) is unchanged and is not a substitute for this match. A
+     hit is `tier0` and `TIER0_REFUSED`, with the basis of the list that hit (**C17**, **C19**, **C12**; **C13** for the pinned
+     group SID), every hit listed, plus the evidence (the object, the ACE's access mask and object type, or the owner role;
+     never an SDDL string). Deny ACEs do not clear a hit (the target's token is gone and the allow is what a restore
+     re-arms); a callback ACE counts as unconditional. **Fail closed:** any C17 or C19 object, any DC in the DC list, or any
+     descriptor that cannot be read through the typed primitive, an ACE it flags `Unknown`, an empty or unobtainable DC list,
+     or a snapshot that cannot say, makes the target `tier0`, basis `UNKNOWN`. This runs in `Plan` and again in `Apply`
+     step 7, whatever the target's class (user, computer, group, contact) and whatever `memberOf` said; it needs no
+     container grant beyond the target read. Plan shows the matched reference (object and right) to the technician. Samba
+     can prove the match logic (unit and S fixtures with a deleted trustee SID); the retained-descriptor and
+     deleted-object visibility half is W (CC-WK-41 to CC-WK-44).
   5. **Samba proves none of this.** Its deleted-object visibility differs and it keeps ghost members; steps 1 to 4 are
      tested on Windows (CC-WK-32 to CC-WK-35, W). A Samba pass of CC-WK-17's C2 refusal is not evidence for Windows.
 - Step 7 read set amended by T-1621 (§8.10.9 R2). §8.9 `CREATE` (a restored object matches a dynamic rule by absence). `ALREADY_APPLIED` when the
@@ -1718,6 +1753,7 @@ channel that is not TLS (`TRANSPORT_SECURITY`).
 - §8.9 `UPDATE`, keys `unicodePwd`, `pwdLastSet`. TM-D28 class `reset_password`, permission
   `objects.user.reset_password`, also C16: a user with any DM-20 correlation to an Entra `tier0` principal is
   refused from the statement (TM-R14 residual stays).
+- **Own identity (TM-D34, T-1643).** A reset of the connector's bound principal, of the bound gMSA or its retrieval-list computer accounts, or of a registered activeDIQ service identity is `TIER0_REFUSED` basis C20 (§8.1), before any directory call and before `ClassNotAllowed`. Without it an operator with `reset_password` could set a known password on the account the connector binds as and gain TM-A1 outside our RBAC and audit. Detail: [connector-own-identity-tm-d34.md](connector-own-identity-tm-d34.md).
 
 **8 `USER_UNLOCK`.** Plan reads `lockoutTime`; `ALREADY_APPLIED` at Apply when it is absent or 0.
 Otherwise the connector compares `uSNChanged` and `lockoutTime` on the pinned DC and sends
@@ -1748,6 +1784,7 @@ compare. Allowed classes: user and computer. A group, contact or OU is `ClassNot
 `userAccountControl`). `ALREADY_APPLIED` when the bit is already in the requested state. Enable is class
 `enable` (it re-opens an account); disable is a tightening and has no class. Both are Reversible, the
 inverse being the other. UAC semantics: [KB 305144](https://support.microsoft.com/kb/305144).
+**C20 applies to both (TM-D34).** Disable of the connector's own identity or its host computer account is a total outage, and enable re-opens a service account the customer disabled on purpose; both answer `TIER0_REFUSED` basis C20 before any directory call, whether or not the identity is Tier-0 by another basis. "Disable is a tightening" does not exempt it: the tightening exemption covers the *attribute class*, not the *object*.
 
 #### 8.10.4 The attribute deny-list for `OBJECT_UPDATE` and `OBJECT_CREATE.initial`
 
@@ -1794,7 +1831,7 @@ Denied in v1.4 and v1.5:
 (rename), `isDeleted`, `isCriticalSystemObject`, `groupType` (create only), `sAMAccountType`,
 `primaryGroupID`, `member`, `memberOf` (membership kinds, a later spec), `msDS-KeyCredentialLink`,
 `altSecurityIdentities`, `servicePrincipalName`, `msDS-AllowedToDelegateTo`,
-`msDS-AllowedToActOnBehalfOfOtherIdentity`, `msDS-SupportedEncryptionTypes`, `accountExpires`,
+`msDS-AllowedToActOnBehalfOfOtherIdentity`, `msDS-AdditionalDnsHostName` and `msDS-AdditionalSamAccountName` (T-1646, TM-D28 `denied`: System-Only, set by rename, and they widen the SPN hostname rule; threat-model §6.9 rule 5), `msDS-SupportedEncryptionTypes`, `accountExpires`,
 `logonHours`, `userWorkstations`, `gPLink`, `gPOptions`, `userParameters` (v1.5,
 1.2.840.113556.1.4.138: read-only by design, §5.9 T2; no kind will ever return it, a writer needs its
 own spec). Every constructed attribute of the schema snapshot is refused as well, at step 3. The
@@ -1875,7 +1912,7 @@ contains no value, DN or directory response (CC-WRITE-13).
 | Kind | Windows DC | Samba AD | Entra |
 | --- | --- | --- | --- |
 | 1 create, 2 update, 3 delete, 4 move, 5 rename | Supported (W) | Supported (S) | `CAPABILITY_UNSUPPORTED`; Entra provisioning is its own kinds (M2b Entra slice) |
-| 6 restore | Supported with the Recycle Bin (W) | `CAPABILITY_UNSUPPORTED` (T-1628, measured on 4.22.11: controls 417 and 2064 are advertised, but the Recycle Bin cannot be enabled over LDAP (`enableOptionalFeature` is refused to a domain admin; only a system session enables it) and with it on the undelete modify fails on `isRecycled`; with it off a tombstone reanimates without links) | `CAPABILITY_UNSUPPORTED` |
+| 6 restore | Supported with the Recycle Bin (W) | `CAPABILITY_UNSUPPORTED` (T-1628, measured on 4.22.11: controls 417 and 2064 are advertised, but the Recycle Bin cannot be enabled over LDAP (`enableOptionalFeature` is refused to a domain admin; only a system session enables it) and with it on the undelete modify fails on `isRecycled`; with it off a tombstone reanimates without links). Kinds 4-6 are wired (T-1624): the old parent of a move is read live (`WriteOp.TouchedLive`); kind 6 step 7 is `ADProvider.ClassifyDeleted` (`WriteOp.DeletedTarget`) with the TM-D33 mechanics: container grant check, one critical-417 + 2065 + SD 0x7 + extended-DN target read, the must-be-present and optional-proof rules, and the `member` cross-check. Not proven grant is `INSUFFICIENT_RIGHTS`, never `OBJECT_NOT_FOUND`. CC-WK-16, 17, 18 and 32..35 (W) are Windows-lab only | `CAPABILITY_UNSUPPORTED` |
 | 7 reset | Supported (W); policy hints confirmed on Windows Server 2025 (T-0076) | Supported, **hint ignored** (T-1628, measured on 4.22.11): `2239` is not in `supportedControl`, yet a reset carrying it, critical or not, succeeds, and with history 3 and minimum age 1 day the same password was accepted again; so history and minimum age are not enforced on an admin reset on Samba. A Samba pass proves nothing about CC-WK password policy: those cases are W | `CAPABILITY_UNSUPPORTED` (Graph `passwordProfile` is a separate kind, TM-Q14) |
 | 8 unlock | Supported (W) | Supported (T-1628, measured): `replace lockoutTime 0` and delete-old + add-0 both unlock and reset `badPwdCount`; stale old value fails `noSuchAttribute`; a non-zero write is wrongly accepted (see §8.10.3 kind 8) | `CAPABILITY_UNSUPPORTED` |
 | 9, 10 enable, disable | Supported (W, S) | Supported (S) | `CAPABILITY_UNSUPPORTED` (Graph `accountEnabled` is a separate kind) |
@@ -1935,7 +1972,7 @@ unreadable is `tier0` (fail closed, as step 7). Plan lists the retained membersh
 by group, so the technician sees them; a retained group that is `tier0` refuses (C2). Re-granting a
 non-`tier0` membership the object held before deletion is accepted as **residual TM-R-RS1**: the actor
 needs Reanimate-Tombstones (R9, JIT only), which is not an entitlement to add members.
-**Conflict resolved (T-1730, TM-D33, 2026-11-07).** The lab (T-1633, Windows Server 2025) found no per-object grant: the classification read of a deleted target works only with List Contents on `CN=Deleted Objects` of the target's domain, and List Contents alone is enough ([finding](../domain/deleted-object-read-access.md)). Kind 6 ships with that grant as an **optional, customer-applied prerequisite**: one non-inheritable `LC`|`RC` ACE on the container, trustee a dedicated group whose only member is the connection identity (the identity of every step-7 read); never to the Reanimate holder (R9), never Read Property, standing because Plan must classify before approval (TM §6.3 R15 (b), TM-D33 rules 1-2). The connector proves the grant from the container's DACL and answers `INSUFFICIENT_RIGHTS` with the named right when it is missing, never `OBJECT_NOT_FOUND` (TM-D33 rule 4); the read is base scope by GUID only (rule 3). Step 7's read mechanics, control 2065 and the absent-attribute rule are in §8.10.3 kind 6. Without the grant kind 6 is refused and restore stays manual; the build (T-1624) still must not classify on server-supplied attributes. Residual TM-R28. Step 9 stays, but it is detection after the fact, not a gate.
+**Conflict resolved (T-1730, TM-D33, 2026-11-07).** The lab (T-1633, Windows Server 2025) found no per-object grant: the classification read of a deleted target works only with List Contents on `CN=Deleted Objects` of the target's domain, and List Contents alone is enough ([finding](../domain/deleted-object-read-access.md)). Kind 6 ships with that grant as an **optional, customer-applied prerequisite**: one non-inheritable `LC`|`RC` ACE on the container, trustee a dedicated group whose only member is the connection identity (the identity of every step-7 read); never to the Reanimate holder (R9), never Read Property, standing because Plan must classify before approval (TM §6.3 R15 (b), TM-D33 rules 1-2). The connector proves the grant from the container's DACL and answers `INSUFFICIENT_RIGHTS` with the named right when it is missing, never `OBJECT_NOT_FOUND` (TM-D33 rule 4); the read is base scope by GUID only (rule 3). Step 7's read mechanics, control 2065 and the absent-attribute rule are in §8.10.3 kind 6. Without the grant kind 6 is refused and restore stays manual; the build (T-1624) still must not classify on server-supplied attributes. Residual TM-R28. Step 9 stays, but it is detection after the fact, not a gate. **Amended (T-1751, 2026-11-12):** the C2 cross-check of step 4 saw only group links, so a deleted account that was a *direct* trustee of a root of trust (an ACE on the domain head, AdminSDHolder, a GPO linked to Domain Controllers, a C13 group or a DC) or is named in a DC's `msDS-AllowedToActOnBehalfOfOtherIdentity` classified as non-`tier0` (no `memberOf`, RID >= 1000, `adminCount` 0) and the restore re-armed that right, with step 9 reporting only afterwards. Step 4a now checks the target's `objectSid` and each `sIDHistory` value against the trustee, owner and RBCD SIDs of the C17, C19, C12 and C13 snapshot, unresolved SIDs included; a hit is `tier0` with that basis and a snapshot that cannot say is `tier0` (`UNKNOWN`). Residual: a right granted to a SID after the Plan and before the Apply is caught by the Apply step-7 re-read; a right held through a *group* the target will re-join is C2 as before.
 
 **R3. Kind 8 `USER_UNLOCK` wording: approved with a second line.** `Irreversible` with the reason "the
 directory controls this state" is correct and is not a destructive-action warning. The preview must also
@@ -1947,6 +1984,24 @@ delete-old + add-0 form is not an alternative until CC-WK-24 passes on the Windo
 `adminCount = 1` target is refused by the guard before the kind runs, so a help-desk role cannot unlock
 a protected account. `[product-manager to confirm the final copy; the second line is required]`.
 
+#### 8.10.10 Wired kinds (T-1583)
+
+`internal/directory/accountkind` is the one definition of the four account kinds: digest keys
+(`ad.user.resetPassword`, `ad.user.unlock`, `ad.account.enable`, `ad.account.disable`), the typed
+change derived from the digested attributes (server, `ChangeFromAttrs`) and the attributes recomputed
+from the typed change (connector, `AttrsOf`). The connector recomputes the plan digest with the leaf
+package `internal/platform/operation/digest` (the connector binary must not link `store`) and
+refuses a mismatch before any directory call, so an unlock digest replayed against a disable payload
+fails in `client.Write` (`ErrDigest`) and, if it reached the connector, in the guard. The only LDAP
+request builders are `internal/connector/write/ops/account.go`; they run through
+`ad.Session.ModifyAccount` (fresh read on the bound DC, precondition check, modify by objectGUID).
+Unlock replaces `lockoutTime` with 0; enable/disable delete the old and add the new
+`userAccountControl` (compare-and-set); reset sets `unicodePwd` over a verified TLS session only,
+plus `pwdLastSet` 0 when must-change is set, with the non-critical policy-hints control. Entra is not
+an `AccountProvider`, so these kinds are `CAPABILITY_UNSUPPORTED` there. Samba cannot prove the
+policy-hints control, the `lockoutTime` and `userAccountControl` modify forms or Windows reset
+semantics; those are `[UNVERIFIED]` until the Windows-lab ticket for CC-WK-19, 21, 24 and 26 runs.
+
 #### 8.10.8 Follow-ups this section creates
 
 Registered as tickets: (A, T-1621) security-architect: **done** (§7.4 row, `SecretValue` review, §8.9 `DELETE` op, restore read set, unlock wording; §8.10.9); (B, T-1622) devops-engineer: fitness P9 and
@@ -1954,6 +2009,69 @@ Registered as tickets: (A, T-1621) security-architect: **done** (§7.4 row, `Sec
 row and `kindTable` row together: object create/update/delete, move/rename/restore, account
 enable/disable/unlock, password reset; (D, T-1627) test-engineer: the CC-WK cases of §9.8; (E, T-1628) ad-expert: clear
 the `[UNVERIFIED]` items (unlock compare-and-set form, restore controls, Samba behaviour). **Done (T-1628, ad-expert, 2026-11-05):** restore controls, OIDs, link retention, Samba restore, policy hints and Samba `lockoutTime` are now sourced or measured; what remains is Windows-only and is carried by CC-WK-16, CC-WK-18 and CC-WK-24 (W): the delete-old unlock form, the exact attribute loss on a deleted object, and the restored user's `userAccountControl`. **T-1730 (security-architect, 2026-11-07):** R2 conflict resolved by TM-D33; follow-ups T-1734 (ad-expert, Windows lab: ACE after owner reset, Read Control descriptor read, per-class retention and readability), T-1735 (directory-engineer: §8.4 R15 (b) findings and the hardening-wizard plan), T-1736 (test-engineer: CC-WK-32..35); T-1624 builds steps 1-4 of the kind 6 step-7 mechanics.
+
+#### 8.10.9 As built for kinds 1 to 3 (T-1623)
+
+Amendments the implementation fixed; the connector (`internal/connector/write/kinds_object.go`,
+`kinds_create.go`, `denylist.go`) and the client (`internal/directory/client/write.go`) agree on them
+through `internal/directory/writechange`, which owns the digest codec (`ad.object.create|update|delete`
+keys, attribute names `set:`, `add:`, `del:`, `clr:` and the typed value prefixes).
+
+- **Class is not in the digest for kinds 2 and 3.** The target class is read live; `WriteOp.Target.Class`
+  must be empty for them (the client refuses otherwise). Kind 1 digests class, parent (lower-case
+  target GUID), RDN and NC.
+- **Step 1 shape checks.** `WriteChangeArmMismatch` (kind and arm disagree, or an arm with a
+  non-matching kind) and `SecretInputMismatch` (a secret iff `create` of a USER with `has_secret_input`,
+  or kind 7) run first, before any directory call (CC-WK-29). A second arm is not expressible (`oneof`).
+- **Vet runs before the property guard.** Deny-list, limits and shape of the edits are checked from the
+  typed change alone (`WriteOp.Vet`), so a denied attribute is `ATTRIBUTE_NOT_ALLOWED` and never a
+  Tier-0 or rule refusal that would disclose designation state. Attribute names must be
+  ldapDisplayNames of the schema snapshot: a numeric OID or an option (`;binary`) is
+  `ATTRIBUTE_NOT_ALLOWED`.
+- **No `isSingleValued` in the schema snapshot,** so `NotMultiValued` is the DC's refusal and surfaces
+  as `INVALID_ARGUMENT` `DirectoryRefused`, not as a connector pre-check.
+- **Kind 3 and the guard.** The target is removed by the write, so step 9 (re-evaluation after the
+  write) skips it; step 7 has a `TargetGone` exemption: a delete retried after success finds the object
+  deleted by the show-deleted read and answers `ALREADY_APPLIED` instead of a live-classification
+  failure. Delete addresses the live DN read in the same transaction; update addresses `<GUID=...>`.
+- **Delete retry needs Deleted Objects rights.** The `ALREADY_APPLIED` answer of a retried delete rests
+  on a show-deleted read by GUID, which the DC allows only to accounts that can read
+  `CN=Deleted Objects`. Without that right the retry is refused fail-closed (`TIER0_REFUSED`, step 7;
+  never a second delete, never a false success) and Verify settles the step. Samba proves both sides
+  (`TestWKDelete`, `TestWKDeleteRetryWithoutDeletedObjectsRights`); the rights grant to the connector's
+  account is a deployment item for the setup runbook. `isDeleted` joined the read-only default schema.
+- **Delete declares `DELETE`, the body repeats it with the live class (T-1632, CC-WRITE-30).** The typed
+  change names no class, and only a group delete can change another object's properties (§8.9), so step 4
+  declares `{AD, USER, DELETE}` (never refused) and `readForDelete`, the single read shared by `Plan` and
+  `Apply`, calls `deleteRecheck` with the live class (GROUP, DEVICE for a computer, USER otherwise)
+  before the `NotLeaf` check and before anything is sent. A refusal is `TIER0_REFUSED` basis `Designated`
+  at `CONNECTOR_SET`. An object already deleted (`ALREADY_APPLIED`) writes nothing and is not re-checked.
+  **A delete of an object with `directReports` is also checked as `CLEAR_MANAGER` (T-1632 security
+  review):** removing a manager clears every report's `manager` (MS-ADTS 3.1.1.1.6), so the same read
+  fetches `directReports` (any value, a ranged first page included) and `deleteRecheck` asks the guard for
+  `{AD, USER, CLEAR_MANAGER}` whatever the class. A read error refuses. If the bound identity lacks Read on
+  `directReports` the DC omits it and the check sees no reports, so the connector's account needs that
+  Read right (a V8 read-sufficiency concern, as for the other constructed reads). The refusal carries its audit record like step 4's:
+  `Reason` (`designated_dynamic_rule`, or `property_guard_unavailable` at stage `LIVE_REREAD`), the
+  declared kind and op. CC-WRITE-30 pins this: tier0 `TestCCWrite30DeleteGroupUnderMemberOfAndRefuseAll`,
+  the declaration, recheck, body (`TestKind3BodiesRecheckBeforeAnyDelete`, a fake session, no lab) and
+  audit units in `kinds_object_test.go`, and `TestCCWrite30DeleteUnderMemberOfRule` and
+  `TestCCWrite30DeleteOfAManagerUnderRules` on Samba.
+- **Manager edits.** `manager` declares `SET_MANAGER` or `CLEAR_MANAGER` at step 4; the other edits (and
+  the computer case) are re-checked in the body against the live class (`editsRecheck`). The live class
+  is the last `objectClass` value, so gMSA and MSA objects are `ClassNotAllowed`.
+- **Create secret.** The password is encoded as `unicodePwd` (UTF-16LE of the quoted value) in the same
+  `AddRequest`; a non-sealed channel is `TRANSPORT_SECURITY`. Strings handed to the LDAP library cannot
+  be zeroed; the connector clears its own copies and records this as a residual.
+- **Rule ids added** (all `INVALID_ARGUMENT`): `DuplicateAttribute`, `EditShape`, `ValueSyntax`,
+  `RdnRequired`, `RdnInvalid`, `CreateFields`, `TargetRequired`.
+- **Not carried yet:** `PlanResponse` has no reversibility or class field, so the Lossy or Irreversible
+  class of kind 3 (CC-WK-11, Recycle Bin on or off) is not reported by Plan. Follow-up ticket filed
+  below (G).
+
+Follow-ups: (F, T-1641) Windows-lab run of the W cases (CC-WK-01, 03, 05, 09, 10 on a Windows DC);
+(G, T-1642) proto minor revision for the Plan class of kind 3 plus the Recycle Bin read
+(`msDS-EnabledFeatureBL` on `CN=Recycle Bin Feature,CN=Optional Features,CN=Directory Service,CN=Windows NT,CN=Services,<configNC>`).
 
 ## 9. Provider conformance suite
 
@@ -1976,7 +2094,7 @@ disabled, expired and locked accounts.
 
 | ID | Case | Expectation | Lab |
 | --- | --- | --- | --- |
-| CC-DESC-01 | `Describe` on the lab | `provider_kind = AD`, contract `activediq.connector.v1`, `contract_minor` ≥ 1, directory identity equals the lab forest root GUID and SID; the six read operations `SUPPORTED`; `READ_SECRET` `VERIFY_USER` `RESERVED`; `VERIFY_CONNECTION` `SUPPORTED` once T-0096 lands; `PLAN` and `APPLY` `UNSUPPORTED` until the first `WriteKind` is wired (T-1581 defines the kinds, §8.10; a build ticket wires them) | S |
+| CC-DESC-01 | `Describe` on the lab | `provider_kind = AD`, contract `activediq.connector.v1`, `contract_minor` ≥ 1, directory identity equals the lab forest root GUID and SID; the six read operations `SUPPORTED`; `READ_SECRET` `VERIFY_USER` `RESERVED`; `VERIFY_CONNECTION` `SUPPORTED` once T-0096 lands; `PLAN` and `APPLY` `SUPPORTED` (the four account kinds wired by T-1583, §8.10.10) | S |
 | CC-DESC-02 | Topology | domain, configuration and schema NCs with GUIDs and the domain SID; `forest_settings` reflects what is read, with an absent `tombstoneLifetime` left **unset** (no default applied) | S |
 | CC-DESC-03 | DC facts | the lab DC has `dsa_guid`, `invocation_id` equal to its NTDS Settings object, site, `is_pdc_emulator = TRUE` after the `validFSMOs` cross-check; every fact Samba does not expose is `UNKNOWN`, never `FALSE` or `0` | S |
 | CC-DESC-04 | Wrong directory identity | `DIRECTORY_IDENTITY_MISMATCH`; no read was issued | S |
@@ -2221,8 +2339,8 @@ is `TIER0_REFUSED` before the kind's code (CC-WK-28).
 | CC-WK-24 | unlock | a locked-out user after bad passwords; already unlocked; delete-old + add-0 compare-and-set accepted or not | `lockoutTime` 0; `ALREADY_APPLIED`; the outcome fixes §8.10.3 kind 8 | W, S |
 | CC-WK-25 | unlock | a computer, a Tier-0 user | `ClassNotAllowed`; `TIER0_REFUSED` | S |
 | CC-WK-26 | enable | a disabled user and computer; other `userAccountControl` bits changed by a second writer between Plan and Apply; a group | `ACCOUNTDISABLE` cleared and no other bit changed; `TARGET_CHANGED`; `ClassNotAllowed` | S, W |
-| CC-WK-27 | disable | an enabled user and computer; retried after success; the connector's own identity | disabled; `ALREADY_APPLIED`; `TIER0_REFUSED` if the identity is Tier-0 | S |
-| CC-WK-28 | all | for each of the ten kinds, a Tier-0 target (Domain Admins member, DC computer object) with the server guard off | `TIER0_REFUSED` stage `CONNECTOR_SET`, the proxy shows no write | S |
+| CC-WK-27 | disable | an enabled user and computer; retried after success; the connector's own identity | disabled; `ALREADY_APPLIED`; `TIER0_REFUSED` basis C20 **always** (not only when the identity is Tier-0 by another basis), no write | S |
+| CC-WK-28 | all | for each of the ten kinds, a Tier-0 target (Domain Admins member, DC computer object) with the server guard off | `TIER0_REFUSED` stage `CONNECTOR_SET`, the proxy shows no write | S | **TM-F-SELFID (T-1643):** the same loop also targets the bound principal, a gMSA retrieval-list computer account and a context-designated service identity, each `TIER0_REFUSED` basis C20 with zero writes on the proxy |
 | CC-WK-29 | all | `kind` and `change` arm disagree; a second arm set; no arm; `secret_input` on every kind but the two | `INVALID_ARGUMENT` `WriteChangeArmMismatch` or `SecretInputMismatch` before any directory call | S |
 | CC-WK-30 | all | `Describe` before any kind is wired and after the first | `PLAN`/`APPLY` `UNSUPPORTED`, then `SUPPORTED` (CC-DESC-10 holds); the kinds not wired answer `CAPABILITY_UNSUPPORTED` | S |
 | CC-WK-31 | `kindTable` | a digest naming `"ad.object.createUser"`, `"AD.object.create"`, a listed key not yet registered, and an empty key | `client.Write` returns `ErrUnknownKind` before any transport call; the empty table of T-0098 behaves the same | unit, every merge |
@@ -2230,6 +2348,15 @@ is `TIER0_REFUSED` before the kind's code (CC-WK-28).
 | CC-WK-33 | restore, absent attributes | before deletion, a Deny Read Property for the connection identity on, in turn, each optional R2 attribute (`sIDHistory`, `memberOf`, `adminCount`, the two delegation attributes, `msDS-SecondaryKrbTgtNumber`, `isCriticalSystemObject`), then Deny RP+RC on the object; and an untouched user with none of them set | each denied case: `TIER0_REFUSED` basis `UNKNOWN`; the untouched user plans as not `tier0` (absent and proven readable = not set) | W, unit for the effective-rights evaluation |
 | CC-WK-34 | restore, C2 | a user in a C1 group deleted; Plan with control 2065 on the target read, then with the target's `memberOf` denied before deletion | both `TIER0_REFUSED` basis C2: the first from `memberOf`, the second from the group-side `member` cross-check; a test build that drops 2065 must fail the first case (proves the control is sent) | W |
 | CC-WK-35 | restore, classes and retention | a group, a computer, a contact and an OU deleted; a user with `sIDHistory`, `msDS-AllowedToActOnBehalfOfOtherIdentity` and `isCriticalSystemObject` set; an OU with an inheritable deny for the identity set before a child's deletion; a computer with a LAPS password | the must-be-present set holds for each class (a missing one refuses); each optional value is retained and read; the deleted child is no more readable than it was live; the LAPS attribute is not returned without its live right. A failure of the last two triggers TM-D33 rule 7 | W |
+| CC-WK-36 | reset, enable, disable | the connector's bound principal (a `user` placed in a delegated OU with Reset Password inherited onto it), as Plan and as Apply | `TIER0_REFUSED` basis C20, stage `CONNECTOR_SET` or `LIVE_REREAD`; the proxy shows no write; fixed text carries no identity name; the OU delegation is proved effective by a control account that the same OU lets reset | S, W |
+| CC-WK-37 | all account kinds | a computer account in the gMSA's `msDS-GroupMSAMembership`; a principal designated `ACTIVEDIQ_SERVICE` in the context; the same context with the designation missing | C20; C20; the third is not refused by the connector (R-T0CTX-1) and is refused by the server guard (server test) | S, W |
+| CC-WK-38 | update, rename, move, delete, restore | the bound principal; a user whose `sIDHistory` holds the bound principal's SID (seeded by directory restore on the lab) | `TIER0_REFUSED` C20 for each kind; no write | S |
+| CC-WK-39 | all account kinds | Who am I fails, returns a `u:` form, a `dn:` form, an ambiguous match, and no match | `u:` and `dn:` resolve to the one object and then CC-WK-36 holds; failure, ambiguity and no match give `TIER0_REFUSED` basis `UNKNOWN` for every account write; reads still work | S, W |
+| CC-WK-40 | VerifyConnection V7e | the identity inside a `managed_root`; outside it with Reset Password, `WRITE_DAC` or an all-properties write on itself; outside it with none; its own object unreadable | Fail (not overridable, an override request is ignored); Warn with fix; Pass; Could not verify | S, W |
+| CC-WK-41 | restore, SID reference (C17) | a deleted user with no group membership, `adminCount` 0, RID >= 1000, holding an explicit allow ACE for DS-Replication-Get-Changes-All (and, separately, only Get-Changes; separately `WRITE_DAC`; separately the owner of AdminSDHolder) on the domain head; Plan and Apply | each `TIER0_REFUSED` basis **C17** naming the object and right, the user not restored; the same user with the ACE removed plans as not `tier0` | W (descriptor retention, SID left unresolved after the delete), S and unit for the match |
+| CC-WK-42 | restore, SID reference (C19, C12, C13) | a deleted user holding an allow ACE with a takeover right on a C13 group, on a DC computer object, on the Domain Controllers OU and on a GPO linked to it (one case each); a deleted user named in a DC's `msDS-AllowedToActOnBehalfOfOtherIdentity`; a deleted C13 group itself | `TIER0_REFUSED` basis C19, C19, C19, C19, C12 and C13 respectively | W, unit for the set builder |
+| CC-WK-43 | restore, `sIDHistory` and unresolved SIDs | a deleted user whose `sIDHistory` holds a SID that is a trustee on the domain head; a trustee SID of a deleted user from another domain that resolves to nothing; a deleted computer; a deleted contact with the same ACE by SID | `TIER0_REFUSED` basis C17 for each by SID equality, resolution never consulted; the contact and computer cases are refused identically | W, unit |
+| CC-WK-44 | restore, fail closed | the domain head DACL unreadable; a callback ACE for the target's SID; a C19 object unreadable; the DC list empty; an `Unknown`-flagged ACE; the C17 ACE added between Plan and Apply | `TIER0_REFUSED` basis `UNKNOWN` for the first, third, fourth and fifth, C17 for the callback case (unconditional), C17 at Apply for the last; never a restore | W, unit for the fail-closed paths |
 
 ## 10. Decisions for review and follow-ups
 
