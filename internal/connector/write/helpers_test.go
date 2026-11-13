@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/skenzeriq/activediq/internal/connector/provider"
+	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	"net"
 	"os"
 	"sync"
@@ -322,4 +323,20 @@ func (m *memPins) PinC13(_ context.Context, g []guid.GUID) error {
 // adKey is the op-table key of write kind k on the AD provider.
 func adKey(k connectorv1.WriteKind) opKey {
 	return opKey{connectorv1.ProviderKind_PROVIDER_KIND_AD, k}
+}
+
+// testChange is the change arm that agrees with the substituted test row at kind 1 (object create, a
+// group, so no secret input is expected): step 1's arm check passes and the row under test runs.
+func testChange() *connectorv1.WriteChange {
+	return &connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectCreate{ObjectCreate: &connectorv1.ObjectCreate{
+		ObjectClass: connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_GROUP}}}
+}
+
+func sidBytes(t *testing.T, s string) []byte {
+	t.Helper()
+	v, err := sid.Parse(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v.Bytes()
 }

@@ -64,7 +64,8 @@ func New(p provider.Provider, d Deps) (*Service, error) {
 	if err != nil {
 		return nil, errors.New("service: verify handler")
 	}
-	rh, err := read.New(p)
+	var svc *Service
+	rh, err := read.New(p, read.WithLog(d.Log), read.WithOperations(func() []*connectorv1.OperationSupport { return svc.Capabilities() }))
 	if err != nil {
 		return nil, errors.New("service: read handler")
 	}
@@ -72,8 +73,9 @@ func New(p provider.Provider, d Deps) (*Service, error) {
 	if err != nil {
 		return nil, errors.New("service: write handler")
 	}
-	return &Service{p: p, verify: vh, read: rh, write: wh,
-		srv: &server{verify: rights.NewServer(vh), read: read.NewServer(rh), write: write.NewServer(wh)}}, nil
+	svc = &Service{p: p, verify: vh, read: rh, write: wh,
+		srv: &server{verify: rights.NewServer(vh), read: read.NewServer(rh), write: write.NewServer(wh)}}
+	return svc, nil
 }
 
 // Server is the one composite ConnectorServer. Each group's Register would register the whole
@@ -114,6 +116,10 @@ func (s *server) Read(req *connectorv1.ReadRequest, st grpc.ServerStreamingServe
 
 func (s *server) ScopedSearch(req *connectorv1.ScopedSearchRequest, st grpc.ServerStreamingServer[connectorv1.ScopedSearchResponse]) error {
 	return s.read.ScopedSearch(req, st)
+}
+
+func (s *server) Describe(ctx context.Context, req *connectorv1.DescribeRequest) (*connectorv1.DescribeResponse, error) {
+	return s.read.Describe(ctx, req)
 }
 
 func (s *server) Plan(ctx context.Context, req *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {

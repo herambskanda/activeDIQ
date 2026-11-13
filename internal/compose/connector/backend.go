@@ -120,6 +120,7 @@ func openBackend(ctx context.Context, loc Local, log *slog.Logger) (*backend, er
 	}
 
 	prov := adprov.NewADProvider(sess, nil, ident, &filePins{path: filepath.Join(loc.DataDir, pinsFile)})
+	prov.Self = self
 	gate, err := newGate(filepath.Join(loc.DataDir, ratchetFile), log)
 	if err != nil {
 		return nil, errors.New("connector: write gate")

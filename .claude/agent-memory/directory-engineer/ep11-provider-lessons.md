@@ -9,3 +9,5 @@ metadata:
 - Lab on a loaded host (load >10): run lab packages one at a time with `-timeout 9m -run`; a whole-package run times out (rights Refusals ~215 s, read 1600-user seeding test can exceed 9 min).
 - Lab tests fail in 0.00s with "lab CA missing" when `make lab-up` was killed early; rerun it and wait for lab/.lab-ca.pem.
 - compose/server lab tests hang in storetest Postgres cleanup when many containers run; not caused by the connector.
+- Merging main into the extraction: methods main adds on a type that moved (ADProvider) cannot stay in the old package. write/ops may be imported only by `write`, so AD write-side extensions live in write/side.go (adSide) over `provider.SessionBacked`; tests that swap the provider must set `h.ext`, not `h.prov`.
+- Describe operation rows reach read via `read.WithOperations` (service supplies provider.Supports + write.Capabilities); read must not import write.

@@ -245,7 +245,9 @@ func openLabServer(ctx context.Context, sp labSpec) (connectorv1.ConnectorServer
 	}
 	epoch := rights.NewEpochState(rights.FileBaselineStore{Path: filepath.Join(dir, "baseline.json")},
 		rights.FileRecordSink{Path: filepath.Join(dir, "records.log")}, nil)
-	svc, err := service.New(adprov.NewADProvider(sess, nil, ident, &labPinStore{}), service.Deps{Gate: gate, Epoch: epoch, Self: self})
+	prov := adprov.NewADProvider(sess, nil, ident, &labPinStore{})
+	prov.Self = self
+	svc, err := service.New(prov, service.Deps{Gate: gate, Epoch: epoch, Self: self})
 	if err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, nil, errors.New("connector service")

@@ -1,15 +1,18 @@
 package read_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"github.com/skenzeriq/activediq/internal/connector/provider"
 	"io"
+	"log/slog"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
+	"github.com/skenzeriq/activediq/internal/connector/provider"
+	"github.com/skenzeriq/activediq/internal/connector/read"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
@@ -24,6 +27,7 @@ type ssrc struct {
 	filtErr error
 	// parentless names the DNs reported as naming-context heads.
 	parentless map[string]bool
+	unreadable int // reported in ScopedResult.Unreadable
 }
 
 func (s *ssrc) ParseFilter(f *connectorv1.Filter) (ldapfilter.Filter, error) {
@@ -45,7 +49,7 @@ func (s *ssrc) ScopedSearch(_ context.Context, r ad.ScopedRequest, fn func(*ad.E
 			return ad.ScopedResult{}, err
 		}
 	}
-	return ad.ScopedResult{Returned: len(s.entries)}, s.err
+	return ad.ScopedResult{Returned: len(s.entries), Unreadable: s.unreadable}, s.err
 }
 
 func sreq() *connectorv1.ScopedSearchRequest {
@@ -265,4 +269,28 @@ func (u *unresolvedSrc) ScopedSearch(_ context.Context, _ ad.ScopedRequest, fn f
 		}
 	}
 	return ad.ScopedResult{}, nil
+}
+
+// Entries the connector withheld are never silent: the completed search logs the fixed count (the
+// proto cannot carry it yet), and a clean search logs nothing.
+func TestScopedSearchLogsWithheldCount(t *testing.T) {
+	for _, tc := range []struct {
+		unreadable int
+		want       bool
+	}{{0, false}, {3, true}} {
+		var buf bytes.Buffer
+		lg := slog.New(slog.NewTextHandler(&buf, nil))
+		s := &ssrc{src: &src{dsa: dsaA}, unreadable: tc.unreadable}
+		s.entries = append(s.entries, mk(1))
+		if _, err := searchAll(start(t, s, read.WithLog(lg)), sreq()); err != nil {
+			t.Fatal(err)
+		}
+		out := buf.String()
+		if got := strings.Contains(out, "withheld=3"); got != tc.want {
+			t.Fatalf("unreadable=%d log=%q", tc.unreadable, out)
+		}
+		if strings.Contains(out, "CN=") {
+			t.Fatalf("log carries a directory value: %q", out)
+		}
+	}
 }

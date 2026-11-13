@@ -34,13 +34,18 @@ func (d SessionDC) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error)
 // sess, so the DC whose identity rule 5 checks is the DC the reads and
 // writes reach. A binder on another session would re-open the TOCTOU rule 5 closes.
 func NewADProvider(sess *adconn.Session, gc *adconn.GCResolver, id *connectorv1.DirectoryIdentity, pins provider.PinStore) *ADProvider {
-	return &ADProvider{
+	p := &ADProvider{
 		Dir:   tier0.SessionDirectory{S: sess, GC: gc},
 		ID:    id,
 		Pins:  pins,
 		Bound: SessionDC{S: sess},
 		sess:  sess,
 	}
+	if sess != nil {
+		p.Accounts = sess
+		p.Writes = sess
+	}
+	return p
 }
 
 // sameSession is false when Dir and Bound are both session-backed but over different sessions.
@@ -112,13 +117,54 @@ type ADProvider struct {
 	Dynamic provider.PropertyGuard
 	// Bound reports the DC the connector is bound to (rule 5). Nil refuses every write.
 	Bound provider.DCBound
+	// Writes runs the object writes (kinds 1 to 3). It must be over the same session as Dir and Bound.
+	Writes provider.ObjectDirectory
+	// Accounts is the session the account kinds read and write on: the same session as Dir and Bound,
+	// so the DC whose identity rule 5 checks is the DC the write reaches. Nil: those kinds answer
+	// CAPABILITY_UNSUPPORTED.
+	Accounts provider.AccountSession
+	// Self is the connector's own account (the identity of every step-7 read), by GUID or DN. Kind 6
+	// proves List Contents on Deleted Objects for this identity's token; unset, restore is refused
+	// with INSUFFICIENT_RIGHTS (TM-D33 rule 4).
+	Self dn.ObjectRef
 	// sess is the session NewADProvider built every part over; the object-reading and rights facets
 	// use it, and only while the provider is still over it (see sessionOK). It is unexported, so a
 	// struct literal has no facets: the zero value fails every Read at the DC-identity step.
 	sess *adconn.Session
 }
 
-var _ provider.Provider = (*ADProvider)(nil)
+var (
+	_ provider.Provider      = (*ADProvider)(nil)
+	_ provider.SessionBacked = (*ADProvider)(nil)
+)
+
+// Directory implements provider.SessionBacked.
+func (p *ADProvider) Directory() tier0.ADDirectory { return p.Dir }
+
+// PinStore implements provider.SessionBacked.
+func (p *ADProvider) PinStore() provider.PinStore { return p.Pins }
+
+// SelfRef implements provider.SessionBacked.
+func (p *ADProvider) SelfRef() dn.ObjectRef { return p.Self }
+
+// WriteDirectory implements provider.SessionBacked.
+func (p *ADProvider) WriteDirectory() provider.ObjectDirectory { return p.Writes }
+
+// AccountSession implements provider.SessionBacked.
+func (p *ADProvider) AccountSession() provider.AccountSession {
+	if p == nil || p.Accounts == nil {
+		return nil
+	}
+	return p.Accounts
+}
+
+// OneSession implements provider.SessionBacked: the session when Dir and Bound are both over it.
+func (p *ADProvider) OneSession() *adconn.Session {
+	if !p.sessionOK() {
+		return nil
+	}
+	return p.sess
+}
 
 func (p *ADProvider) Kind() connectorv1.ProviderKind {
 	return connectorv1.ProviderKind_PROVIDER_KIND_AD

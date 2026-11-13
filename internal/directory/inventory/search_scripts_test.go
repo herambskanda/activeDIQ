@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
-	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/searchkey"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/reportsql"
@@ -23,27 +22,30 @@ func (e *env) catalog(t *testing.T) reportsql.Schema {
 	return sc
 }
 
-// migration 0069's partial trigram index carries the literal kind list; the statement's fuzzy branch
-// draws the same list from the same table, so the planner can prove the index (ADR-0011 rule 5).
-func Test_search_fuzzy_kind_list_matches_the_migration_index(t *testing.T) {
-	if got := reportsql.FuzzyKindPredicate(); got != "1, 2, 3, 4, 5" {
-		t.Fatalf("FuzzyKindPredicate = %q, migration 0069 says 1, 2, 3, 4, 5", got)
+// migration 0073's trigger function builds postings for the kinds in its literal list; the statement's fuzzy
+// branch draws its kind list from searchkey.Kind.FuzzyEligible. The kind enum, the template and the trigger
+// must agree on {name, sam} (ADR-0011 rule 9).
+func Test_search_fuzzy_kind_list_matches_the_trigger(t *testing.T) {
+	if got := reportsql.FuzzyKindPredicate(); got != "1, 3" {
+		t.Fatalf("FuzzyKindPredicate = %q, migration 0073 says 1, 3", got)
 	}
-	var fuzzy []int
+	var fuzzy []searchkey.Kind
 	for _, k := range searchkey.AllKinds {
 		if k.FuzzyEligible() {
-			fuzzy = append(fuzzy, int(k))
+			fuzzy = append(fuzzy, k)
 		}
 	}
-	if len(fuzzy) != 5 {
-		t.Fatalf("fuzzy-eligible kinds %v", fuzzy)
+	if len(fuzzy) != 2 || fuzzy[0] != searchkey.KindName || fuzzy[1] != searchkey.KindSAM {
+		t.Fatalf("fuzzy-eligible kinds %v, want name and sam", fuzzy)
 	}
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
-		def := e.strings(t, `SELECT pg_get_indexdef(indexrelid) FROM pg_index WHERE indexrelid = 'public.inventory_search_keys_fuzzy'::regclass`)
-		t.Logf("fuzzy index: %v", def)
-		if len(def) != 1 || !strings.Contains(def[0], "gin_trgm_ops") || !strings.Contains(def[0], "key_kind") {
-			t.Errorf("fuzzy index definition: %v", def)
+		def := e.strings(t, `SELECT prosrc FROM pg_proc WHERE oid = 'public.inventory_search_trigrams_sync()'::regprocedure`)
+		if len(def) != 1 {
+			t.Fatalf("trigger function: %v", def)
+		}
+		if n := strings.Count(def[0], "key_kind IN ("); n != strings.Count(def[0], "key_kind IN ("+reportsql.FuzzyKindPredicate()+")") || n == 0 {
+			t.Errorf("the trigger function's kind lists are not all (%s):\n%s", reportsql.FuzzyKindPredicate(), def[0])
 		}
 	})
 }
@@ -115,11 +117,15 @@ func explain(ctx context.Context, tx store.Tx, sql string, args []any) (string, 
 	return strings.Join(plan, "\n"), rs.Err()
 }
 
-// The exact and prefix probes read the B-tree. The fuzzy probe's partial GIN index is provable from the
-// statement's kind list (shown with row security off, as the owner), but under row security the planner
-// cannot use it: pg_trgm's operators are not leakproof, and a non-leakproof clause is not promoted into
-// an index condition on a table with policy quals. The second half pins that known limit (follow-up
-// ticket); when a fix lands, it flips to requiring the index.
+// planCeiling is W for the plan tests, as in SE5. The production default (10,000) makes the planner expect up to 30,003
+// candidate rows and, on PostgreSQL 18, hash-join them with a Seq Scan of directory_objects whatever the
+// scope: that is a property of the hits join at the default W, not of the fuzzy probe, and it is filed apart
+// (T-1335 note); the plan of the fuzzy probe is asserted here at a ceiling where the join is planned per row.
+const planCeiling = 100
+
+// The exact and prefix probes read the B-tree of the key table; the fuzzy probe reads the tenant-led posting
+// B-tree and rechecks each candidate through a correlated lookup (ADR-0011 rule 5a, T-1335). Under FORCE row
+// security, as the runtime role, with no Seq Scan on the key, posting or object table.
 func Test_search_plan_uses_the_indexes(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
@@ -131,27 +137,13 @@ func Test_search_plan_uses_the_indexes(t *testing.T) {
 		if _, err := e.populate(t, e.adA, hBase, obs...); err != nil {
 			t.Fatal(err)
 		}
-		syl := `(array['ka','ri','mo','sha','pri','ya','ram','an','ji','lo','ve','na','du','te','ba','ho','la','sen','ko','mi','ar','el','os','un','ti','ger','man','dov','ska','wen','fi','zu','qui','bra','lin','cha','dre','sol','pet','nik'])[1 + floor(random() * 40)::int]`
-		if err := e.exec(e.a, `INSERT INTO public.inventory_search_keys (tenant_id, connection_id, object_guid, key_kind, key, norm_version)
-			SELECT o.tenant_id, o.connection_id, o.object_guid, 1 + (g % 2),
-			(SELECT string_agg(`+syl+`, '') FROM generate_series(1, 2 + (g % 3))) || ' ' || (SELECT string_agg(`+syl+`, '') FROM generate_series(1, 2 + (g % 2))) || g::text, 1
-			FROM (SELECT * FROM public.directory_objects WHERE kind = 'user') o CROSS JOIN generate_series(1, 3000) g`); err != nil {
-			t.Fatal(err)
-		}
-		if err := e.d.ExecOwner(context.Background(), `ANALYZE public.inventory_search_keys`); err != nil {
-			t.Fatal(err)
-		}
-		src, err := reportsql.NewSearchSource(e.catalog(t), "inventory_search_keys", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
-			Project: []report.Ident{"object_guid"}, Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid",
-			Ancestry: "ancestry", Complete: "ancestry_complete"}, "kind", "state", "enabled", "display_name")
-		if err != nil {
-			t.Fatal(err)
-		}
+		e.fillKeys(t, e.a, 21000)
+		e.vacuumSearch(t)
 		p, err := searchkey.Classify("plan person")
 		if err != nil {
 			t.Fatal(err)
 		}
-		cq, err := reportsql.CompileSearch(src, reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, GroupLimit: 5, Ceiling: 10000, Threshold: 0.3},
+		cq, err := reportsql.CompileSearch(e.seSource(t), reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, GroupLimit: 5, Ceiling: planCeiling, Threshold: 0.3},
 			reportsql.SearchScopes{"directory.read": e.scopeNC(e.adA)})
 		if err != nil {
 			t.Fatal(err)
@@ -164,44 +156,10 @@ func Test_search_plan_uses_the_indexes(t *testing.T) {
 		if !strings.Contains(plan, "Index Scan using inventory_search_keys_by_key") {
 			t.Errorf("the prefix probe reads the B-tree:\n%s", plan)
 		}
-		if strings.Contains(plan, "inventory_search_keys_fuzzy") {
-			t.Errorf("under row security the planner now uses the trigram index: make this test require it (follow-up closed?):\n%s", plan)
-		}
-		// Row security off and every other index dropped, as the owner, inside a transaction that is rolled
-		// back: the statement proves the partial index's kind list and reads the GIN. (Which index the
-		// planner prefers on its own depends on the LIMIT and its flat estimate; eligibility is the point.)
-		ctx := context.Background()
-		c, err := e.d.Owner(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer c.Close(ctx)
-		for _, ddl := range []string{`BEGIN`, `DROP INDEX public.inventory_search_keys_by_version, public.inventory_search_keys_by_key`,
-			`ALTER TABLE public.inventory_search_keys DROP CONSTRAINT inventory_search_keys_pkey`,
-			`ALTER TABLE public.inventory_search_keys DISABLE ROW LEVEL SECURITY`} {
-			if _, err := c.Exec(ctx, ddl); err != nil {
-				t.Fatalf("%s: %v", ddl, err)
-			}
-		}
-		// The tenant setting stays unset: EXPLAIN plans the statement and runs nothing.
-		rs, err := c.Query(ctx, "EXPLAIN (COSTS OFF) "+sql, args...)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var lines []string
-		for rs.Next() {
-			var l string
-			if err := rs.Scan(&l); err != nil {
-				t.Fatal(err)
-			}
-			lines = append(lines, l)
-		}
-		rs.Close()
-		if _, err := c.Exec(ctx, `ROLLBACK`); err != nil {
-			t.Fatal(err)
-		}
-		if all := strings.Join(lines, "\n"); !strings.Contains(all, "inventory_search_keys_fuzzy") {
-			t.Errorf("without row security the fuzzy probe uses the partial GIN index:\n%s", all)
+		fp := e.analyze(t, e.scopeNC(e.adA), "plan persn", planCeiling, true)
+		assertFuzzyPlan(t, fp)
+		if t.Failed() {
+			t.Logf("plan of the compiled statement:\n%s", plan)
 		}
 	})
 }

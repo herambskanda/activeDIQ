@@ -1,0 +1,30 @@
+dc1 lock held by pid 642858 for the whole run, waited 499s
+sha256 ff87bc300b5a2da51d5c7245650de1cdea1265fb81a0972b060265831302531e activediq-agent.exe
+sha256 46ed3dcf2e4e48c493f69b25e702836a3b7425c70b9473c582527743a7b16447 agentsetup.exe
+INFO os: Microsoft Windows Server 2025 Standard Evaluation build 26100; logical processors 4; RAM MiB 8171
+INFO Security maxSize before: 536870912; baseline channelAccess: O:BAG:SYD:(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+CASE T0-clean PASS no service-SID ACE and no log-access policy before the run
+CASE I1-install PASS msiexec exit 0; service-SID ACE in Security channelAccess: True
+CASE I2-readable-as-service PASS Security read as NT SERVICE\activeDIQAgent through the agent's event source: readable events=329243
+INFO elevated-admin run output: activediq-agent.exe : agent: agent: process token holds privileges outside the pinned list: SeBackupPrivilege, SeCreateGlobalPrivilege, SeCreatePagefilePrivilege, SeCreateSymbolicLinkPrivilege, SeDebugPrivilege, SeDelegateSessionUserImpersonatePrivilege, SeEnableDelegationPrivilege, SeImpersonatePrivilege, SeIncreaseBasePriorityPrivilege, SeIncreaseQuotaPrivilege, SeIncreaseWorkingSetPrivilege, SeLoadDriverPrivilege, SeMachineAccountPrivilege, SeManageVolumePrivilege, SeProfileSingleProcessPrivilege, SeRemoteShutdownPrivilege, SeRestorePrivilege, SeSecurityPrivilege, SeShutdownPrivilege, SeSystemEnvironmentPrivilege, SeSystemProfilePrivilege, SeSystemtimePrivilege, SeTakeOwnershipPrivilege, SeTimeZonePrivilege, SeUndockPrivilege At C:\lab\build\agent-t0557.ps1:100 char:6 + $o = & $AgentExe 2>&1 | Out-String + ~~~~~~~~~~~~~~~~ + CategoryInfo : NotSpecified: (agent: agent: p...UndockPrivilege:String) [], Remote Exception + FullyQualifiedErrorId : NativeCommandError
+CASE P1-admin-token-refused PASS activediq-agent.exe from an elevated administrator token exited 1
+CASE P2-refusal-names-extras PASS the refusal names the extra privileges
+INFO admin token privileges (for contrast): SeIncreaseQuotaPrivilege SeMachineAccountPrivilege SeSecurityPrivilege SeTakeOwnershipPrivilege SeLoadDriverPrivilege SeSystemProfilePrivilege SeSystemtimePrivilege SeProfileSingleProcessPrivilege SeIncreaseBasePriorityPrivilege SeCreatePagefilePrivilege SeBackupPrivilege SeRestorePrivilege SeShutdownPrivilege SeDebugPrivilege SeSystemEnvironmentPrivilege SeChangeNotifyPrivilege SeRemoteShutdownPrivilege SeUndockPrivilege SeEnableDelegationPrivilege SeManageVolumePrivilege SeImpersonatePrivilege SeCreateGlobalPrivilege SeIncreaseWorkingSetPrivilege SeTimeZonePrivilege SeCreateSymbolicLinkPrivilege SeDelegateSessionUserImpersonatePrivilege
+INFO before the Event Log service restarts, with the GPO applied: service identity read = readable events=329328
+INFO running dependents of EventLog: 
+Waiting for service 'Windows Event Log (EventLog)' to start...
+Waiting for service 'Windows Event Log (EventLog)' to start...
+INFO after-eventlog-restart-with-gpo-lacking-sid policy.ChannelAccess=O:BAG:SYD:(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+INFO after-eventlog-restart-with-gpo-lacking-sid wevtutil.channelAccess=O:BAG:SYD:(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+CASE G7-restart-applies-policy PASS after the Event Log service restarts with the GPO in force: service identity read = unreadable (before the restart: readable events=329328); config ACE kept: False
+CASE G7-nonadmin-sd-is-the-policy PASS wevtutil gl Security now reports the policy SDDL, not the MSI one
+CASE G8-regrant-does-not-beat-policy PASS agentsetup grant-channel exit 0 with the policy in force: service identity read = unreadable (grant writes the configuration; the policy still wins)
+INFO GPO removed and gpupdate run, no restart yet: service identity read = unreadable; policy value present: False
+INFO running dependents of EventLog: 
+INFO after-gpo-removed-and-eventlog-restart policy.ChannelAccess=<absent>
+INFO after-gpo-removed-and-eventlog-restart wevtutil.channelAccess=O:BAG:SYD:(A;;CC;;;S-1-5-80-3803417868-3083394944-3978303958-4174658546-1200079750)(A;;CCLCSDRCWDWO;;;SY)(A;;CCLC;;;BA)(A;;CC;;;ER)
+CASE G9-removal-plus-restart-recovers PASS GPO removed + Event Log service restarted: service identity read = readable events=329389
+INFO GPO left behind: 0; policy value present: False
+CASE Z-dc-healthy PASS DC services running (NTDS Netlogon KDC DFSR ADWS)
+SUMMARY failures=0
+

@@ -18,6 +18,10 @@ type Refusal struct {
 	Err *connectorv1.ConnectorError
 	// Stage is the step of the write guard (§8.1) that ended the call, for the local record only.
 	Stage string
+	// Reason, PropKind, PropOp and PropKeys are the audit-ready record of a property-guard refusal,
+	// copied into the write Event (contract §8.9). Names only, never values.
+	Reason, PropKind, PropOp string
+	PropKeys                 []string
 }
 
 func (r *Refusal) Error() string { return "connector: " + r.Err.GetCode().String() }

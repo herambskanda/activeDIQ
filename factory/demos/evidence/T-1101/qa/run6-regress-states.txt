@@ -1,0 +1,36 @@
+AC5 429: Too many searches | Wait a moment, then retry. | Trace ID tr-429 | Try again | ↑ ↓ move | ↵ open | Esc close
+AC5 500: The search failed | The server could not answer. Retry; if it keeps failing, quote the trace ID to your administrator. | Trace ID tr-500 | Try again | ↑ ↓ move | ↵ open | Esc close
+AC5 500 retry button count: 1
+AC5 403: Search forbidden | You don't have permission to search the directory. | Trace ID tr-403 | ↑ ↓ move | ↵ open | Esc close
+AC5 empty: No objects match “zzz” in your scope | If you expected a result, your scope may not cover it: ask activeDIQ administrators. | index as of 06:00 | ↑ ↓ move | ↵ open | Esc close | No results
+AC5 unreachable: Can't reach the server | Check your connection, then retry. | Try again | ↑ ↓ move | ↵ open | Esc close
+AC5 after retry: EXACT | USER | Ada | ada | index as of 06:00 | ↑ ↓ move | ↵ open | Esc close
+reqs: ["ada","ada"]
+loading state: ↑ ↓ move | ↵ open | Esc close
+AC5 pwd paste: Recovery password refused | That looks like a recovery password. Search by the 8-character key ID instead. | ↑ ↓ move | ↵ open | Esc close
+AC5 pwd paste requests: []
+AC5 variants requests: []
+url: http://127.0.0.1:4190/
+storage: [{},{}]
+AC5 pwd retained after reopen: ""
+hostile "*)(cn=*": No objects match “*)(cn=*” in your scope | If you expected a result, your scope may not co
+hostile "<script>alert(1)</script>": No objects match “<script>alert(1)</script>” in your scope | If you expected a result, you
+hostile "\"'`; DROP--": No objects match “"'`; DROP--” in your scope | If you expected a result, your scope may no
+hostile "a\\00b": No objects match “a\00b” in your scope | If you expected a result, your scope may not cove
+hostile "%00": No objects match “%00” in your scope | If you expected a result, your scope may not cover 
+hostile reqs: ["*)(cn=*","<script>alert(1)</script>","\"'`; DROP--","a\\00b","%00"]
+alert fired: false
+layout dark-1280: {"sw":1280,"cw":1280}
+axe dark-1280: []
+layout narrow-360: {"sw":456,"cw":360}
+axe narrow-360: []
+layout light-1920: {"sw":1920,"cw":1920}
+axe light-1920: []
+tab sequence: ["INPUT|Search|inPal=true","INPUT|Search|inPal=true","INPUT|Search|inPal=true","INPUT|Search|inPal=true","INPUT|Search|inPal=true","INPUT|Search|inPal=true"]
+'/' on /reports opens palette: 1
+Ctrl+K on /reports opens palette: 1
+'/' in page input -> value: "/"
+palette opened: 0
+Ctrl+K inside field opens: 1
+stale test body: USERS | 1 | USER | FRESH TWO | fresh | index as of | ↑ ↓ move | ↵ open | Esc close | 1 result, 1 group
+reqs: ["first","second"]

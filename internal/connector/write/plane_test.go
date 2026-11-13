@@ -40,7 +40,7 @@ func TestOpTableKeyedByProviderKind(t *testing.T) {
 	id := mk(10)
 	plan := func() error {
 		q := planReq(id, ctxFor(id))
-		q.Kind = 1
+		q.Kind, q.Change = 1, testChange()
 		_, err := rr.h.Plan(context.Background(), q)
 		return err
 	}
@@ -54,7 +54,7 @@ func TestOpTableKeyedByProviderKind(t *testing.T) {
 		t.Fatalf("Plan reached an Entra row from an AD provider: %v", err)
 	}
 	a := applyReq(id, ctxFor(id))
-	a.Kind = 1
+	a.Kind, a.Change = 1, testChange()
 	if _, err := rr.h.Apply(context.Background(), a); connErr(t, err).GetCode() != connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED {
 		t.Fatalf("Apply reached an Entra row from an AD provider: %v", err)
 	}

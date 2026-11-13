@@ -1,7 +1,7 @@
 ---
 title: "Spec: Canned reports at checkpoint 2a: library slice, run, scope, export, schedule"
 date: 2026-10-02
-updated: 2026-11-04
+updated: 2026-11-07
 status: draft
 owner: heramb
 author: product-manager
@@ -212,7 +212,7 @@ time zone with the zone label. Names in the "ME names" column are exact as liste
 | --- | --- | --- | --- | --- | --- |
 | PWD-01 | Password status | Password Expired Users · Soon-to-expire User Passwords · Users with Password Never Expires · Users with Change Password at Next Logon | `inventory.users` | Name, Logon name, Domain, OU path, Password last set, Password expires, Password state, Policy source, Status, Probable service account | Default preset: expired. Soon: expires in the next 14 days. Never expires: state is either "never (account flag)" or "never (policy)". Must change: state is "must change at next logon". Probable service accounts hidden on expired and soon |
 | PWD-02 | Password age | Password Changed Users · Password Unchanged Users | `inventory.users` | Name, Logon name, Domain, OU path, Password last set, Days since, Status | Changed: last 30 days. Unchanged: not changed in 90 days. Enabled accounts only on Unchanged |
-| PWD-03 | Recent logon failures | Recent Logon Failures. ME's list also has "Recently bad logged users", whose equivalence is `[UNVERIFIED]` (research ticket, §12) | `inventory.users` + per-DC read | Name, Logon name, Domain, OU path, Last failed logon, From DC, Failures on that DC, DC coverage | Failed in the last 7 days. The count is per DC because `badPwdCount` is per DC (connector-contract §5.5). It is never summed |
+| PWD-03 | Recent logon failures | **Recently Bad Logged on Users** (ME's help-page name; the public list also shows "Recent Logon Failures", so we answer both names with this one preset; that they are one ME report is `[UNVERIFIED]`, [ME research §K.1](../../business/market-research/manageengine-admanager-plus.md) row 6) | `inventory.users` + per-DC read | Name, Logon name, Domain, OU path, Last failed logon, From DC, Failures on that DC, DC coverage | ME's test is `badPasswordTime` >= the chosen time, with an admin-chosen window (today, yesterday, last N days, this week, custom). Ours: a period parameter, default last 7 days. The per-DC reading, the count per DC and "never summed" are **activeDIQ design, not documented ME behaviour** (ME does not say which DC supplies the value or how it merges them `[UNVERIFIED]`). The count is per DC because `badPwdCount` is per DC (connector-contract §5.5). It is never summed |
 
 **Groups (ADM-086)**
 
@@ -221,13 +221,13 @@ time zone with the zone label. Names in the "ME names" column are exact as liste
 | GRP-01 | Groups | All Groups · Security Groups · Distribution Groups · Group Type and Scope · Groups Without Members · Managed Groups · Unmanaged Groups · Top N Big Groups · Recently Created Groups | `inventory.groups` | Name, Domain, OU path, Type, Scope, Direct members, Effective members, Managed by, Created | None. Presets: type; no members, counting primary-group members (§6.6); managed-by set / not set; Top N = sort by effective members descending, N = 25; created in the last 30 days |
 | GRP-02 | Group members | Group Members · Detailed Group Members · Users in Groups | `inventory.group_members` | Group, Member, Member type, Domain, OU path, Status, Membership kind, Via | **Requires one or more groups.** Group Members: direct members. Detailed Group Members: effective members with the Via path. Users in Groups: effective, users only. A switch "Exclude nested groups" is ME's wording and equals direct |
 | GRP-03 | Groups for users | Groups for Users | `inventory.group_members` | User, Group, Group type, Group scope, Membership kind, Via | **Requires one or more users.** Effective, including the primary group |
-| GRP-04 | Not in any group | Users Not in Groups · Computers Not in Groups | `inventory.principals` (users and computers; one dataset because a preset cannot switch dataset, T-0962) | Name, Domain, OU path, Primary group, Status, Created, Last logon (replicated) | Preset chooses users or computers. Definition and domain coverage in §6.6 |
+| GRP-04 | Not in selected groups (ME) and Not in any group (ours) | **ME names:** Users Not in Groups · Computers Not in Groups. **activeDIQ presets (ours, not ME's):** Users in No Group · Computers in No Group | `inventory.principals` (users and computers; one dataset because a preset cannot switch dataset, T-0962) | Name, Domain, OU path, Primary group, Status, Created, Last logon (replicated) | **ME-named presets require a group picker** (one or more groups, any domain inventoried) and list users (or computers) that are **not** members of the selected groups. ME tests `memberOf` against the selected groups ([group help](https://www.manageengine.com/products/ad-manager/help/reports/viewing-active-directory-group-reports.html)); whether several groups mean "none of them" or "not all of them" is `[UNVERIFIED]` (T-1117). **Decision:** "not a member of any selected group" (none of them), shown in the header; direct membership as ME's `memberOf`, with a switch "Include nested groups" that is ours. The primary group counts as membership of that group when it is selected. The "in no group" presets need no picker and use the definition in §6.6; they are labelled "activeDIQ" in the library and are not claimed as ME names |
 
 **Computers (ADM-087)**
 
 | ID | Report | ME names (presets) | Dataset | Default columns | Default filters |
 | --- | --- | --- | --- | --- | --- |
-| CMP-01 | Computers | All computers · Enabled Computers · Disabled Computers · Workstation Computers · Domain Controllers · Computers Trusted for Delegation · OS based computers · Recently Created Computers | `inventory.computers` | Name, DNS name, Domain, OU path, Type, Operating system, OS version, Status, Delegation, Created | None. Presets: status; type = workstation (OS name has no "Server" and not a DC; `[UNVERIFIED]` that ME means this); type = domain controller (`SERVER_TRUST_ACCOUNT`, read-only DCs labelled); delegation is not "none"; OS filter by name (shipped as "has an operating system": there is no text parameter kind yet); created in the last 30 days |
+| CMP-01 | Computers | All computers · Enabled Computers · Disabled Computers · Workstation Computers · Domain Controllers · Computers Trusted for Delegation · OS based computers · Recently Created Computers. **activeDIQ presets (ours, not ME's):** Workstations Excluding Servers · Any Delegation | `inventory.computers` | Name, DNS name, Domain, OU path, Type, Operating system, OS version, Status, Delegation, Created | None. Presets: status; **Workstation Computers (ME)** = `userAccountControl` has `WORKSTATION_TRUST_ACCOUNT` (0x1000) set, which **includes member servers**, as ME's report list says ("all computers including member servers") ([ME research §K.1](../../business/market-research/manageengine-admanager-plus.md) row 1). Domain controllers are excluded, per ME's "all computers except domain controllers". How ME treats read-only DCs, whose accounts may carry the workstation flag, is `[UNVERIFIED]` (T-1117); ours excludes any DC, read-only included, and `ad-expert` confirms. **Workstations Excluding Servers (ours)** = the ME test and the operating system name has no "Server"; labelled "activeDIQ"; type = domain controller (`SERVER_TRUST_ACCOUNT`, read-only DCs labelled); **Computers Trusted for Delegation (ME)** = `TRUSTED_FOR_DELEGATION` (0x80000) set, the unconstrained flag only; constrained delegation (`msDS-AllowedToDelegateTo`) and protocol transition (0x1000000) are not tested ([ME research §K.1](../../business/market-research/manageengine-admanager-plus.md) row 2). Domain controllers carry this flag by default; whether ME lists them is `[UNVERIFIED]`; ours lists them, with the Type column showing "Domain controller" so the admin can filter. **Any Delegation (ours)** = unconstrained, constrained or protocol-transition, labelled "activeDIQ" (the Delegation column shows which kind); OS filter by name (shipped as "has an operating system": there is no text parameter kind yet); created in the last 30 days |
 | CMP-02 | Computer activity | Inactive computers · Active Computers | `inventory.computers` | Name, DNS name, Domain, OU path, Operating system, Last activity, Activity source, Days since, Status, Created | Default preset: Inactive 90 days, enabled only. gMSA and cluster objects are excluded and counted in the header (§6.4). Active: activity in the last 30 days |
 
 **Contacts and OUs (ADM-089)**
@@ -235,7 +235,7 @@ time zone with the zone label. Names in the "ME names" column are exact as liste
 | ID | Report | ME names (presets) | Dataset | Default columns | Default filters |
 | --- | --- | --- | --- | --- | --- |
 | OU-01 | Organizational units | All OUs · Empty OUs · Users-Only OUs · Computers-Only OUs · Recently Created OUs | `inventory.ous` | Name, Domain, Path, Users, Computers, Groups, Other objects, Objects in subtree, Created | Empty: no objects other than OUs in the subtree. Users-only: the subtree holds at least one user and nothing else but OUs. Computers-only: likewise. Recently created: last 30 days |
-| CTC-01 | Contacts | All Contacts · Mail Enabled Contacts · Recently Created Contacts | `inventory.contacts` | Name, E-mail, Domain, OU path, Created | None. Mail enabled = the `mail` attribute has a value (`[UNVERIFIED]` against ME's meaning) |
+| CTC-01 | Contacts | All Contacts · Mail Enabled Contacts · Recently Created Contacts. **activeDIQ preset (ours):** Contacts With an E-mail Address | `inventory.contacts` | Name, E-mail, Domain, OU path, Created | None. **Mail Enabled Contacts (ME)** = `objectClass=contact` with both `mailNickname` **and** `targetAddress` set ([contact help](https://www.manageengine.com/products/ad-manager/help/reports/how-to-get-active-directory-contact-and-ou-report.html), [ME research §K.1](../../business/market-research/manageengine-admanager-plus.md) row 5). A contact with only `mail` is not listed. **Contacts With an E-mail Address (ours)** = `mail` has a value, labelled "activeDIQ". The dataset therefore carries `mailNickname` and `targetAddress` presence (D-row for contacts) |
 
 The 16 reports above answer **54** ME names: USR 14, PWD 7, GRP 15, CMP 10, OU 5, CTC 3.
 
@@ -300,7 +300,7 @@ DC's own password-expired bit, which is set for `pwdLastSet = 0`: the counts rec
 
 **Evaluated in the query, not after it.** `locked_out`, `password_state`, `password_expires_at` and
 `account_expired` are **dataset columns of `inventory.users`, evaluated inside the compiled query**,
-with `now` and the resolved policy values bound as arguments. They are never a post-filter or a
+with only `now` and the run's filters bound as arguments. The effective policy is resolved in the same query from the D4 tables (below), not bound, because a per-user policy cannot be an argument once PSOs apply (modules/reports.md §14 item 3). They are never a post-filter or a
 loop in application code. This is what makes filter, sort, total count and paging (FR-12) and the
 post-trim counts (LF-39) correct: a "Locked-out Users: 37" count is the count of rows the
 predicate selects. The registered-column contract is `solution-architect`'s, specified in [modules/reports.md §3.3](../../development/architecture/modules/reports.md) and built in B3 (RP8),
@@ -310,7 +310,26 @@ and the build tickets cite it.
 state is **Unknown (input missing)** with the reason on hover. A report never infers "not locked" or
 "not expired", and never silently falls back to the domain policy when the PSO is unresolvable.
 
-**Policy source** shows "Domain policy" or the PSO's name. A PSO can change without any write to
+**PSO resolution** (the rules FR-09 and AC-49a test; contract in modules/reports.md §14 item 3):
+1. Only normal user accounts resolve a PSO. Computer, trust and `krbtgt` accounts resolve none.
+2. Candidates are the PSOs linked to the user directly (`msDS-PSOAppliesTo` on the PSO naming the user)
+   and those linked to a group the user belongs to. Membership comes from the group closure
+   (`inventory_group_members`, nested groups and the primary group included). Only **global security
+   groups** count as link targets; whether a PSO linked to another group type applies is confirmed on
+   the Windows lab (AC-49a) and, until then, recorded as a lab finding, not assumed.
+3. A **direct** link beats every group-linked PSO.
+4. Within the same tier, the lowest `msDS-PasswordSettingsPrecedence` wins.
+5. Equal precedence is broken by the **lowest PSO `objectGUID`, compared as its 16 raw wire bytes**
+   (not the text form), so the choice is deterministic and testable.
+6. No candidate means the domain policy of the user's naming context. A candidate with no readable
+   PSO row or no precedence, or a domain whose PSO set was never read, leaves the policy unresolved:
+   the states are Unknown (input missing) and never fall back to the domain policy.
+
+**Policy source** shows "Domain policy" or the PSO's name. When the resolved PSO is **outside the
+runner's read scope**, it shows **"(policy outside your scope)"** instead of the name, and the PSO's
+name appears nowhere else in rows, counts or exports (modules/reports.md §3.3 and §14 item 4). The
+values still apply while the name is masked: the state is computed from the PSO's real settings,
+because reading an in-scope user's expiry is the read being granted, not the PSO's identity. A PSO can change without any write to
 the user (a group membership change or a PSO edit), so the effective policy is **resolved at run
 time from the synced policy objects**, and no per-user cached PSO decides a report (§7 requirement
 D4).
@@ -391,7 +410,7 @@ walk:
   covered domains";
 - **Groups Without Members** counts members through `member` and through `primaryGroupID`, so a
   group whose only members are primary-group users is not reported as empty;
-- **Not in any group** means: the object is a member of no group other than its primary group,
+- **Not in any group** (the activeDIQ presets "Users in No Group" and "Computers in No Group"; ME's "Users Not in Groups" is the picker-based report of GRP-04) means: the object is a member of no group other than its primary group,
   across every domain inventoried. A user whose primary group is not "Domain Users" shows that
   group in the Primary group column. The header lists the domains covered, because a per-domain
   `memberOf` can miss a cross-domain universal group
@@ -420,7 +439,7 @@ row marked **new** is not yet in their scope and is sent to them as a note.
 | --- | --- | --- | --- | --- | --- |
 | D1 | `inventory.users` | user and inetOrgPerson objects, state `live` | GUID, connection, domain, `dn` snapshot, OU path, `sAMAccountName`, UPN, display name, `userAccountControl` flags decoded, manager (GUID + display), `whenCreated`, `lockoutTime`, `pwdLastSet`, `accountExpires`, `lastLogonTimestamp`, `servicePrincipalName` present, `primaryGroupID`, effective-policy inputs (D4), `observed_at` | `ancestry` | NC sync watermark |
 | D2 | `inventory.computers` | computer objects (gMSA identified by class) | GUID, domain, name, DNS hostname, OS name, OS version, `userAccountControl` flags, delegation inputs (unconstrained flag, `msDS-AllowedToDelegateTo` present), `lastLogonTimestamp`, `pwdLastSet`, `whenCreated`, `primaryGroupID`, `observed_at` | `ancestry` | NC sync watermark |
-| D3 | `inventory.groups`, `inventory.group_members`, `inventory.ous`, `inventory.contacts` | groups, edges derived from DM-17 plus primary-group edges, OUs with per-kind child counts, contacts | Group type and scope from `groupType`, `managedBy`, direct and effective counts, edge kind and path, OU subtree counts per class, contact `mail` | `ancestry` of the owner object | NC sync watermark |
+| D3 | `inventory.groups`, `inventory.group_members`, `inventory.ous`, `inventory.contacts` | groups, edges derived from DM-17 plus primary-group edges, OUs with per-kind child counts, contacts | Group type and scope from `groupType`, `managedBy`, direct and effective counts, edge kind and path, OU subtree counts per class, contact `mail`, `mailNickname` and `targetAddress` (presence) | `ancestry` of the owner object | NC sync watermark |
 | D4 | Policy inputs (**new**) | domain password and lockout policy, PSOs, PSO links | `maxPwdAge`, `lockoutDuration`, `msDS-LogonTimeSyncInterval` per domain; PSO values and `msDS-PSOAppliesTo`; precedence rules. Resolved at run time, so a PSO edit or a group change is reflected without any write to the user | n/a | Policy read time |
 | D5 | Per-DC read (**not a stored dataset**) | `ReadPerDC` result for a GUID set | per DC: `lastLogon`, `badPwdCount`, `badPasswordTime`, `Observation` | n/a | Read time, per DC |
 
@@ -666,8 +685,15 @@ quoted in §8.4). Values are still never recorded.
 ## 9. Security and audit considerations
 
 - **Directory privileges.** Reports read the inventory and, for USR-04 and PWD-03, call
-  `ReadPerDC` under the connector's existing read rights. No new directory right is requested.
-  No report writes to a directory.
+  `ReadPerDC` under the connector's existing read rights. No new directory right is requested,
+  **with one exception: SYS-03 (DC replication status, reports-2 second slice §7.3)** has an
+  optional, off-by-default right, the control access right "Monitor Active Directory Replication"
+  on the head of each partition the report covers (DECISION TM-D31,
+  [threat model §6.3](../../development/architecture/threat-model.md) R14). It is requested only
+  when the tenant enables SYS-03's live read, is named on the connection screen with its reason,
+  and is generated by the hardening wizard; it is not Get-Changes and not Administrators
+  membership. Without it SYS-03 shows every DC as "Not reported". No report requests any right on
+  `CN=Deleted Objects`. No report writes to a directory.
 - **Tier-0.** Reports may list Tier-0 objects (Domain Admins and similar), since `tier0` limits
   writes only (DM-35.I5). GRP-02 on a privileged group is the expected audit use.
 - **Safe primitives.** Report SQL comes only from `store/reportsql` with registry identifiers and
@@ -764,7 +790,7 @@ agents are `n/a` for every FR: reports have no behaviour on them at 2a.
 No question here is directional: nothing needs the CEO.
 
 Follow-ups filed from this spec (`backlog`, not scope creep): T-1014 (research), T-1015 (second slice), T-1016 (DM-16), T-1017 (ADM-100/101 remainders), T-1018 (Entra reports). The security-descriptor read path the second slice needs is T-1019. The FR-09 wording revision is T-1023.
-1. research · `market-analyst` — confirm ME semantics for Workstation Computers, Computers Trusted for
+1. research · `market-analyst` — *done in T-1014; specs corrected in T-1132* — confirm ME semantics for Workstation Computers, Computers Trusted for
    Delegation, Managed/Unmanaged Computers and Groups, Users Not in Groups, Mail Enabled Contacts,
    Recent Logon Failures versus "Recently bad logged users", and ME's export password protection.
 2. spec · `product-manager` — second slice of the AD report library (§6.3), including ADM-092.
@@ -799,7 +825,7 @@ Each FR names a parity ID or `enhancement`. Others cite them as `reports-2a#FR-n
 | FR-06 | The run MUST support scope by domain (multi-select, default all permitted), OU include/exclude, period presets and custom range, typed per-column filters and adding or removing registered columns | ADM-099 |
 | FR-07 | Every run MUST apply the runner's scope inside the query. Counts and pages MUST be computed after trimming. A scope kind the 2a evaluator does not support MUST grant nothing | ADM-099, DM-71.I1 |
 | FR-08 | Every run MUST store and show `as_of` and a freshness label per §8.2, and MUST NOT say "live" except for per-DC reads | enhancement (E1), DM-72.I1 |
-| FR-09 | Locked-out, password-expired, password-expires-at and account-expired states MUST be computed at run time by the rules of §6.4, **as columns evaluated inside the compiled query (now and resolved policy bound as arguments), never a post-filter in application code** (modules/reports.md §3.3, B3), and MUST show "Unknown (input missing)" rather than infer | ADM-084, ADM-085 |
+| FR-09 | Locked-out, password-expired, password-expires-at and account-expired states MUST be computed at run time by the rules of §6.4, **as columns evaluated inside the compiled query, never a post-filter in application code** (modules/reports.md §3.3, B3). `now` is bound once per run as an argument. The **effective password and lockout policy is resolved inside the same query** from the synced policy tables (D4: domain policy per NC, PSOs, PSO links), in the same snapshot as the user row, because a per-user policy cannot be bound as an argument once PSOs apply (modules/reports.md §14 item 3). Resolution follows the PSO rules of §6.4: a direct PSO link wins over a group-linked one, then lowest precedence, then lowest `objectGUID` by raw wire bytes; computer, trust and krbtgt accounts never resolve a PSO. A PSO that cannot be resolved makes the dependent states Unknown and is never replaced by the domain policy, and MUST show "Unknown (input missing)" rather than infer | ADM-084, ADM-085 |
 | FR-10 | USR-04 and PWD-03 MUST follow §6.5: per-DC coverage shown, partial coverage labelled a lower bound with no "never", a read cap that refuses before reading | ADM-084, ADM-085 |
 | FR-11 | A run MUST be a job with the states of §8.1, visible progress and cancel, a typed failure reason and retry. A change of preset, filter, period, scope or columns MUST create a new run. Paging and sorting MUST read the same run | DM-72 |
 | FR-12 | Paging, sorting and filtering MUST be server-side and total counts MUST not load every row | ADM-099 |
@@ -968,9 +994,27 @@ Evidence: UI test
 
 AC-19
 Given a lab with a user whose primary group is not Domain Users and a group whose only members are primary-group users
-When Users Not in Groups and Groups Without Members run
+When Users in No Group and Groups Without Members run
 Then the first user appears with its primary group named, and the group is not reported as empty
 Evidence: lab test against LDAP ground truth
+
+AC-19a (T-1132, ME-named presets)
+Given a lab with a member server, a workstation, a DC, a read-only DC, a computer with only constrained delegation, a computer with unconstrained delegation, a contact with only `mail` and a contact with `mailNickname` and `targetAddress`
+When Workstation Computers, Computers Trusted for Delegation and Mail Enabled Contacts run
+Then Workstation Computers lists the member server and the workstation and no DC; Trusted for Delegation lists the unconstrained computer and not the constrained-only one; Mail Enabled Contacts lists only the two-attribute contact. Given the activeDIQ presets Workstations Excluding Servers, Any Delegation and Contacts With an E-mail Address, Then each shows the broader or narrower set and is labelled "activeDIQ" in the library
+Evidence: lab test against the LDAP filters in ME research §K.1
+
+AC-19b (T-1132, picker)
+Given users in groups A, B and neither
+When Users Not in Groups runs with no group selected
+Then the run is refused with "Choose at least one group". Given A and B selected, Then only users in neither are listed, the header names the groups and says "direct members", and Computers Not in Groups behaves the same for computers
+Evidence: UI test; lab test against LDAP ground truth
+
+AC-19c (T-1132, PWD-03)
+Given a user with failed logons on two DCs, 3 days ago
+When Recently Bad Logged on Users runs for "last 7 days", and the library is searched for "Recent Logon Failures"
+Then the user is listed with per-DC counts not summed, and the search resolves to the same preset
+Evidence: lab test; library test
 
 AC-20 (E3)
 Given a group nested three levels deep with a cycle, a foreign security principal and a disabled member
@@ -1217,14 +1261,35 @@ Then paging and sorting return rows of R with unchanged as_of, the first export'
   export are its own
 Evidence: API test comparing run ids, as_of, row sets and digests
 
-AC-49 (FR-09, modules/reports.md §3.3)
-Given a lab with 40 users of whom 37 are currently locked out by the §6.4 rule and more than one page
-  of other users
+AC-49 (FR-09, modules/reports.md §3.3 and §14 item 3)
+Given a lab with 40 users of whom 37 are currently locked out by the §6.4 rule, including at least
+  one user whose lockout duration comes from a PSO that differs from the domain's, and more than one
+  page of other users
 When Locked-out Users is filtered, sorted by "Lockout ends" and paged
-Then the total is 37, pages contain only locked-out users in the sorted order, and the compiled
-  query contains the lockout predicate with now and the policy bound as arguments, with no
-  application-side filtering
-Evidence: API test; query-plan or compiled-SQL assertion; table-driven cases
+Then the total is 37, pages contain only locked-out users in the sorted order, "Lockout ends" for
+  the PSO user uses the PSO's duration, and the compiled query contains the lockout predicate and
+  the policy resolution (reading the D4 tables) with only `now` and the user's filters bound as
+  arguments, with no per-user policy value bound and no application-side filtering
+Evidence: API test; compiled-SQL assertion via `reportsql.Query.Statement()`; table-driven cases
+
+AC-49a (FR-09, modules/reports.md §3.3 and §14 item 3)
+Given users resolving a PSO in each case: a direct PSO link over a group-linked PSO, two group-linked
+  PSOs with different precedence, equal precedence (lowest `objectGUID` by raw wire bytes wins), a PSO linked to a group the user reaches only through nesting or as primary group, a user with no PSO, a
+  computer and krbtgt account, and a stored PSO that has no readable row or precedence, or a domain
+  whose PSO set was never read
+When Locked-out Users and Password status run
+Then each user's lockout and password state use the PSO the §6.4 rules choose, and in the equal-precedence case the PSO with the lowest raw-byte `objectGUID` (not the lowest GUID text) is the one used; the no-PSO user uses the
+  domain policy; computer and krbtgt use none; and each unresolvable case shows "Unknown (input
+  missing)" with its reason and is never shown with the domain policy
+Evidence: table-driven test against the independent reference; fault-injection test; [LAB: Windows]
+  for group-linked PSO precedence and global-security-group filtering
+
+AC-49b (FR-09, §6.4, modules/reports.md §3.3)
+Given a PSO that is outside the runner's read scope but applies to an in-scope user
+When Password status runs as that runner
+Then the user's state uses the PSO's real values (same state an unscoped runner sees), "Policy source"
+  reads "(policy outside your scope)" as defined in §6.4, and the PSO's name appears nowhere in the rows, counts or export
+Evidence: API test with a scoped runner; RP11 scope-leak check
 
 AC-50 (§8.3 canonical form)
 Given a run and its exported CSV, XLSX and (once shipped) PDF and HTML files, and a test that
@@ -1252,9 +1317,9 @@ Evidence: platform/export canonical-form test vectors (B9)
 | P5 | FR-10; AC-39, AC-40 |
 | B1 | FR-03 (version fields), FR-05; AC-05 |
 | B2 | FR-05, FR-07, FR-12; AC-05, AC-06, AC-07 |
-| B3 | FR-09, FR-14, FR-21; AC-12, AC-13, AC-14, AC-15, AC-29, AC-49 |
+| B3 | FR-09, FR-14, FR-21; AC-12, AC-13, AC-14, AC-15, AC-29, AC-49, AC-49a, AC-49b |
 | B4 | FR-06, FR-07, FR-08, FR-11, FR-12, FR-13 (server-side sort and filter), FR-22 (run), FR-30, FR-31; AC-06–AC-11, AC-42, AC-48 |
-| B5 | FR-01, FR-02, FR-03, FR-04, FR-06, FR-09, FR-14; AC-01–AC-04, AC-12, AC-16, AC-17, AC-18, AC-49 |
+| B5 | FR-01, FR-02, FR-03, FR-04, FR-06, FR-09, FR-14; AC-01–AC-04, AC-12, AC-16, AC-17, AC-18, AC-49, AC-49a, AC-49b |
 | B6 | FR-15, FR-06; AC-19, AC-20, AC-21 |
 | B7 | FR-01, FR-02, FR-09, FR-14, FR-15; AC-13, AC-19, AC-20, AC-22, AC-23 |
 | B8 | FR-10; AC-39, AC-40, AC-41 |
@@ -1283,4 +1348,6 @@ cited in §6.4–§6.6 and §10. Items the consult could not source carry `[UNVE
 - 2026-10-02 · revised after the solution-architect review: schedule writes are `reports.schedule.*` Actions (ADR-0005 rule 10, §8.4, FR-29, Q5 dropped); run-time checks of every permission and external recipient (FR-25); one delivery-link rule (FR-24); run and snapshot semantics (§8.1, FR-11, FR-17); derived states evaluated in the query (§6.4, FR-09); canonical digest form (§8.3); per-DC wording mechanism-neutral (§6.5, Q2). Added AC-45 to AC-50
 - 2026-10-30 · T-0914 · traceability only, no scope, FR or AC change: placeholder tickets replaced by the modules/reports.md §12 rows; D9 names `authz.ReadScope` and `rbac.ReadScopes`; Q2 and Q3 marked decided (modules/reports.md §14 items 1 and 2); §14 table equals the contract's FR/AC column
 - 2026-10-31 · T-1016 · domain corrections only, no scope, FR or AC change: §6.4 lockout is inclusive, a stored 0 max age is Unknown, the DC's expired bit includes must-change; D7 points to DM-16 and the lab rows
+- 2026-11-04 · T-1023 · FR-09 and AC-49 revised to match modules/reports.md §14 item 3 (policy resolved in the query from the D4 tables; only `now` is bound); added AC-49a (PSO precedence and unresolvable cases) and AC-49b (PSO outside read scope). Review fixes: §6.4 no longer says policy is bound; PSO resolution rules and tie-break named; out-of-scope label defined. No scope change
 - 2026-11-04 · T-0981 · aligned with DECISION TM-D30 ([review](../../development/architecture/reports-schedules-security-review.md) §2): external-delivery step-up (SX-1, SX-2, SX-4), account-address classification (SX-5), confirmed-external at fire (SX-6, narrows §8.4 check 3), `manage_all` is see/pause/reassign only (R1, R2), resume confirms every external recipient (R5), SX-8 audit fields, empty allowed-domains state; added FR-26a–FR-26d and AC-51–AC-57
+- 2026-11-07 · T-1511 · §9 "Directory privileges" amended for SYS-03's optional, off-by-default replication-monitoring right (TM-D31); no FR or AC change

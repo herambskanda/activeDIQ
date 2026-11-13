@@ -16,6 +16,7 @@ var (
 	_ provider.ObjectReader = (*ADProvider)(nil)
 	_ provider.Searcher     = (*ADProvider)(nil)
 	_ provider.RightsSource = (*ADProvider)(nil)
+	_ provider.Describer    = (*ADProvider)(nil)
 )
 
 // sessionOK is true only when the provider's directory and bound-DC binder are still both over the
@@ -29,7 +30,7 @@ func (p *ADProvider) Read(ctx context.Context, id guid.GUID, attrs []string, max
 	if !p.sessionOK() {
 		return nil, provider.ErrNoBoundDC
 	}
-	return p.sess.Read(ctx, dn.GUIDRef(id), attrs, adconn.ReadOptions{MaxValues: maxValues})
+	return p.sess.Read(ctx, dn.GUIDRef(id), attrs, adconn.ReadOptions{MaxValues: maxValues, ExtendedDN: true})
 }
 
 // Parent returns the parent's objectGUID. ok is false only for a naming-context head, which the
@@ -71,5 +72,28 @@ func (p *ADProvider) ScopedSearch(ctx context.Context, req adconn.ScopedRequest,
 	if !p.sessionOK() {
 		return adconn.ScopedResult{}, provider.ErrNoBoundDC
 	}
+	req.ExtendedDN = true // DN-valued attributes carry the target's GUID and SID (T-1202)
 	return p.sess.ScopedSearch(ctx, req, fn)
+}
+
+// Topology implements provider.Describer: the forest's naming contexts and the bound DC's paging
+// limits, read on the one session.
+func (p *ADProvider) Topology(ctx context.Context) (*adconn.Topology, error) {
+	if !p.sessionOK() {
+		return nil, provider.ErrNoBoundDC
+	}
+	return p.sess.Topology(ctx)
+}
+
+// IsSamba reports whether the bound DC's rootDSE names Samba as its vendor; it labels the
+// ReadReplicationStatus capability and gates nothing.
+func (p *ADProvider) IsSamba(ctx context.Context) (bool, error) {
+	if !p.sessionOK() {
+		return false, provider.ErrNoBoundDC
+	}
+	rd, err := p.sess.RootDSE(ctx)
+	if err != nil {
+		return false, err
+	}
+	return rd.IsSamba(), nil
 }
