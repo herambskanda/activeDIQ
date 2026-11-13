@@ -2,6 +2,8 @@ export { Banner, type BannerTone } from "./banner";
 export { Button, type ButtonProps } from "./button";
 export { Checkbox, type CheckboxProps } from "./checkbox";
 export { Chip, type ChipTone } from "./chip";
+export { DeltaCell, type DeltaCellProps, type DeltaDirection } from "./delta-cell";
+export { DetailDock, DockLayout, type DetailDockProps } from "./detail-dock";
 export { DataGrid, type DataGridColumn, type DataGridProps, type DataGridSort } from "./data-grid";
 export { Kbd } from "./kbd";
 export { Link, type LinkProps } from "./link";
@@ -12,6 +14,7 @@ export {
   type PickerAnswer,
   type PickerObject,
 } from "./object-picker";
+export { PinnedBand, type PinnedBandProps, type PinnedBandTone } from "./pinned-band";
 export { Progress } from "./progress";
 export { RadioCardGroup, type RadioCardGroupProps } from "./radio-card";
 export type { ChoiceOption } from "./radio-group";

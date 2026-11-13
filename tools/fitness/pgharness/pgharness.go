@@ -23,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/skenzeriq/activediq/internal/testlab/harnessdocker"
+	"github.com/skenzeriq/activediq/migrations"
 )
 
 // Role names of the bootstrap contract. The installer (T-0037) creates the same two roles; the job
@@ -378,6 +379,12 @@ func Apply(ctx context.Context, d *Database, ms []Migration) (failed, msg string
 		// statements. There is nothing to bind, and the file is repository content, not input.
 		if _, err := c.Exec(ctx, m.SQL); err != nil {
 			return m.Name, strings.TrimSpace(err.Error()), nil
+		}
+		// Statements that cannot run in the file's transaction (VACUUM) follow it, as the runner does.
+		for _, stmt := range migrations.After(m.SQL) {
+			if _, err := c.Exec(ctx, stmt); err != nil {
+				return m.Name, strings.TrimSpace(err.Error()), nil
+			}
 		}
 	}
 	return "", "", nil
