@@ -104,7 +104,7 @@ func (c *Ctx) checkActivation() ([]Row, []Violation) {
 		// exists, and a failure is a violation whether or not the other half is deferred.
 		if len(a.Static) > 0 {
 			rows[last].StaticRan = true
-			if c.runCheck(a, a.Static, subject, "static half", add) {
+			if c.runCheck(a, a.Static, subject, "static half ", add) {
 				rows[last].StaticPass = true
 			}
 		}
@@ -116,7 +116,7 @@ func (c *Ctx) checkActivation() ([]Row, []Violation) {
 			add(a.Check, fmt.Sprintf("%s exists, which activates %s (%s), but the check is not implemented: the row has no command. A subject cannot merge without its check; implement %s and register its command in %s", subject, a.Check, a.Subject, a.Check, "tools/fitness/profiles/manifest.json"))
 			continue
 		}
-		if c.runCheck(a, a.Command, subject, "check", add) {
+		if c.runCheck(a, a.Command, subject, "", add) {
 			rows[last].Passed = true
 		}
 	}
@@ -132,7 +132,7 @@ func (c *Ctx) checkActivation() ([]Row, []Violation) {
 // that cannot run, or fails, is added as a violation.
 func (c *Ctx) runCheck(a Activation, argv []string, subject, what string, add func(check, msg string)) bool {
 	if msg := c.commandProblem(argv); msg != "" {
-		add(a.Check, fmt.Sprintf("%s activates %s, but its %s command %q cannot run: %s", subject, a.Check, what, strings.Join(argv, " "), msg))
+		add(a.Check, fmt.Sprintf("%s activates %s, but its %scommand %q cannot run: %s", subject, a.Check, what, strings.Join(argv, " "), msg))
 		return false
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
@@ -140,7 +140,7 @@ func (c *Ctx) runCheck(a Activation, argv []string, subject, what string, add fu
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	if err := cmd.Run(); err != nil {
-		add(a.Check, fmt.Sprintf("%s activates %s and its %s %q fails: %v\n%s", subject, a.Check, what, strings.Join(argv, " "), err, tail(out.String(), 20)))
+		add(a.Check, fmt.Sprintf("%s activates %s and its %scheck %q fails: %v\n%s", subject, a.Check, what, strings.Join(argv, " "), err, tail(out.String(), 20)))
 		return false
 	}
 	return true

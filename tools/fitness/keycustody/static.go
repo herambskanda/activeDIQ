@@ -167,14 +167,14 @@ var (
 	// unset, so the operator has to choose.
 	requiredForm = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*:?\?[^}]*\}`)
 	valueToken   = regexp.MustCompile(`^[^\s;&|#,}\]\\]+`)
-	// providerRead is a read of the provider variable itself, `${ACTIVEDIQ_KEK_PROVIDER<op><body>}`, as in a
-	// launcher guard `: "${ACTIVEDIQ_KEK_PROVIDER:?must choose}"`. It is not an assignment: the ?-forms and an
+	// providerRead is a read of the provider variable itself, `${<KEK prefix>PROVIDER<op><body>}`, as in a
+	// launcher guard `: "${<KEK prefix>PROVIDER:?must choose}"`. It is not an assignment: the ?-forms and an
 	// empty `${NAME:-}` (a test for "unset") are the operator-must-choose shapes; `${NAME:-x}`, `${NAME:=x}`
 	// and `${NAME-x}` hand the model a default, so a non-empty body is a violation.
 	providerRead = regexp.MustCompile(`\$\{` + kekPrefix + `PROVIDER(:?[-=+?])([^}]*)\}`)
 )
 
-// providerDefault is true when the line gives ACTIVEDIQ_KEK_PROVIDER a value other than "operator must
+// providerDefault is true when the line gives <KEK prefix>PROVIDER a value other than "operator must
 // supply it". Empty (`NAME=`, `NAME:`), a YAML comment and the required-without-default expansion pass;
 // everything else is a shipped default, whether literal, a $VAR / ${VAR} reference, a ${VAR:-x} /
 // ${VAR-x} / ${VAR:=x} / ${VAR:+x} expansion, or command substitution: a variable defined by an ARG, a
@@ -267,7 +267,7 @@ var (
 
 // providerMultiToken finds the provider setting given a value where the name and the value are separate
 // tokens, which the per-line providerDefault cannot see (T-1764): an XML element whose name-like attribute
-// (Name, Key, Id) is ACTIVEDIQ_KEK_PROVIDER and whose Value attribute is non-empty — WiX <Environment
+// (Name, Key, Id) is <KEK prefix>PROVIDER and whose Value attribute is non-empty — WiX <Environment
 // Name=".." Value=".."/> in any attribute order or across lines — and a name followed by its value as the next
 // call argument or word (SetEnvironmentVariable("NAME","v"), setx NAME v). It returns the 1-based lines of the
 // offending names, which the caller dedupes against the per-line pass.

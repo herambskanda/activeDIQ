@@ -20,7 +20,10 @@ type Owners struct{}
 // advisory lock: it is held until tx ends, and every writer that can remove an owner (account
 // disable/delete, and in time assignment revoke) takes it first, so two concurrent removals are
 // serialised and the second one sees the first's committed result. tx must be a tenant transaction at
-// READ COMMITTED, so the read after the lock sees fresh data.
+// READ COMMITTED, so the read after the lock sees fresh data. The window is judged against clock_timestamp(),
+// not now(): now() is the start of this transaction, and an owner granted by a transaction that started
+// after this one began, and committed while this one waited for the lock, has valid_from after this
+// transaction's now() and would be invisible, so two concurrent first-owner claims could both succeed.
 //
 // Whether an account is itself active is the account store's to say; this returns holders only.
 func (Owners) TenantOwners(ctx context.Context, tx store.Tx, t tenant.ID) ([]string, error) {
@@ -34,7 +37,7 @@ func (Owners) TenantOwners(ctx context.Context, tx store.Tx, t tenant.ID) ([]str
 FROM public.authz_assignments a
 JOIN public.authz_roles r ON r.tenant_id = a.tenant_id AND r.id = a.role_id
 WHERE a.tenant_id = $1::uuid AND r.role_name = $2 AND r.built_in
-  AND a.assignment_state = 'active' AND a.valid_from <= now() AND (a.valid_until IS NULL OR a.valid_until > now())`,
+  AND a.assignment_state = 'active' AND a.valid_from <= clock_timestamp() AND (a.valid_until IS NULL OR a.valid_until > clock_timestamp())`,
 		t.String(), TenantOwnerRole)
 	if err != nil {
 		return nil, fmt.Errorf("rbac: reading tenant owners: %w", err)
