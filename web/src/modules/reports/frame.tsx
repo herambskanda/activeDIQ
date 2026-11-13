@@ -15,7 +15,7 @@ export function ReportsFrame({
   readonly children: ReactNode;
 }) {
   return (
-    <main className="diq-page rp-page">
+    <div className="diq-page rp-page">
       <header className="rp-head">
         <h1 className="diq-page__title rp-head__title">
           <Link to="/reports">Reports</Link>
@@ -23,6 +23,6 @@ export function ReportsFrame({
         <ReportSearch client={client} />
       </header>
       {children}
-    </main>
+    </div>
   );
 }
