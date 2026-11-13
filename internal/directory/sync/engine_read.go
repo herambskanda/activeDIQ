@@ -167,7 +167,14 @@ func (r *readJob) mapEntry(mp *Mapper, pre *prescan, en *connectorv1.DirectoryEn
 			return inventory.Observation{}, false, err
 		}
 		r.rep.Refused++
-		r.rep.RefusedBy[RefusalKey{Attr: me.Attr, Code: me.Code}]++
+		k := RefusalKey{Attr: me.Attr, Code: me.Code}
+		r.rep.RefusedBy[k]++
+		if len(r.rep.RefusedEntries) < MaxRefusedEntries {
+			id, _ := entryGUID(en.GetObjectGuid(), "objectGUID") // "" when the GUID itself is the fault
+			r.rep.RefusedEntries = append(r.rep.RefusedEntries, RefusedEntry{Object: id, RefusalKey: k})
+		} else {
+			r.rep.RefusedOmitted++
+		}
 		return inventory.Observation{}, false, nil
 	}
 	o := m.Observation

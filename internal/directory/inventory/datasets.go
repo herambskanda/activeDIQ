@@ -59,14 +59,16 @@ var enumLabels = map[string]string{
 	"never_account_flag":    "Never expires (account flag)", "not_applicable_smartcard": "Not applicable (smartcard required)",
 	"must_change": "Must change at next logon", "never_policy": "Never expires (policy)", "expired": "Password expired", "expires": "Expires",
 	"not_expired": "Not expired", "never": "Never", "recorded": "Recorded", "none_recorded": "None recorded",
+	"blocked": "Blocked", "blocked_one_ace": "Blocked (one deny ACE only)", "no_deny_ace": "No deny ACE", "not_confirmed": "Not confirmed",
 	"spn_set": "servicePrincipalName set", "none": "None",
 	"uac_not_read": "userAccountControl not read", "lockout_time_not_read": "lockoutTime not read", "pwd_last_set_not_read": "pwdLastSet not read",
 	"account_expires_not_read": "accountExpires not read", "last_logon_not_read": "lastLogonTimestamp not read",
 	"activity_inputs_not_read": "pwdLastSet and lastLogonTimestamp not read", "domain_policy_not_read": "Domain password policy not read",
 	"pso_set_not_read": "Password settings objects not read for this domain", "pso_not_read": "A password settings object that applies was not read",
 	"pso_precedence_not_read": "A password settings object has no precedence", "pso_interval_not_read": "The password settings object's interval was not read",
-	"account_inputs_not_read": "Account attributes that select the policy (userAccountControl, SID, logon name) not read",
-	"workstation":             "Workstation", "server": "Server", "domain_controller": "Domain controller", "read_only_dc": "Read-only domain controller",
+	"account_inputs_not_read":  "Account attributes that select the policy (userAccountControl, SID, logon name) not read",
+	"group_closure_incomplete": "Group membership closure not current or over budget, so a group-linked policy could not be ruled out",
+	"workstation":              "Workstation", "server": "Server", "domain_controller": "Domain controller", "read_only_dc": "Read-only domain controller",
 	"managed_account": "Group managed service account", "unconstrained": "Unconstrained", "constrained": "Constrained",
 	"protocol_transition": "Constrained with protocol transition",
 	"logon":               "Replicated logon", "password_set": "Password last set", "created": "Created",
@@ -144,8 +146,11 @@ func usersDataset() report.Dataset {
 		derived("logon_sync_interval_days", "Domain logon time sync interval (days)", report.TypeInt, report.SQL(logonSyncSQL), opsInt),
 		derived("policy_source", "Policy source", report.TypeText, report.SQL(policySourceSQL), opsText),
 		derived("probable_service_account", "Probable service account", report.TypeBool, report.SQL(probableSvcSQL), opsBool),
+		state("password_change_right", "Password change right", report.SQL(pwChangeSQL), "blocked", "blocked_one_ace", "no_deny_ace", "not_confirmed"),
+		attr("descriptor_as_of", "Descriptor as of", report.TypeTime, "password_change_at", opsTime, false),
 		state("probable_service_account_reason", "Service account reason", report.SQL(probableReasonSQL), "spn_set", "none"),
 	)
+	cols = append(cols, userPerDCColumns()...)
 	return report.Dataset{
 		ID:     DatasetUsers,
 		Base:   report.Relation{Table: "directory_objects", Where: report.SQL("{t}.kind IN ('user', 'inetorgperson') AND {t}.state = 'live'")},
@@ -156,6 +161,8 @@ func usersDataset() report.Dataset {
 		Rels: []report.Rel{
 			{ID: "memb", Kind: report.RelEdge, Table: "links", Project: idents("connection_id", "source_guid", "target_guid", "link_attr"),
 				Where: report.SQL("state = 'active'")},
+			{ID: "clo", Kind: report.RelEdge, Table: "inventory_group_members", Project: idents("connection_id", "group_guid", "member_guid", "edge_kind", "cut")},
+			{ID: "dirty", Kind: report.RelEdge, Table: "inventory_group_closure_dirty", Project: idents("connection_id")},
 			{ID: "applies", Kind: report.RelEdge, Table: "inventory_pso_applies", Project: idents("connection_id", "pso_guid", "target_guid"),
 				Where: report.SQL("state = 'active'")},
 			{ID: "psoval", Kind: report.RelInput, Table: "inventory_psos",
@@ -165,14 +172,34 @@ func usersDataset() report.Dataset {
 		},
 		Columns:   cols,
 		Freshness: report.FreshNCWatermark,
-		Tables:    []string{"directory_objects", "links", "inventory_pso_applies", "inventory_psos", "inventory_domain_policies"},
+		Tables:    []string{"directory_objects", "links", "inventory_group_members", "inventory_group_closure_dirty", "inventory_pso_applies", "inventory_psos", "inventory_domain_policies"},
+	}
+}
+
+// userPerDCColumns are the columns filled after the query by a live read of every DC (reports.md §6.5). The
+// replicated lastLogonTimestamp lags by days; lastLogon, badPasswordTime and badPwdCount are per DC and are
+// never summed: a time is the latest over the DCs that answered, a count is the count at the DC of the
+// latest failed logon.
+func userPerDCColumns() []report.Column {
+	perDC := func(id report.ColumnID, label string, t report.ValueType, src report.PerDC, ops []report.Op) report.Column {
+		return report.Column{ID: id, Label: label, Type: t, Source: src, Filter: ops, Sortable: true}
+	}
+	return []report.Column{
+		perDC("real_last_logon", "Real last logon", report.TypeTime, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax}, opsTime),
+		perDC("real_logon_dc", "From DC", report.TypeText, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax, Part: report.PartFromDC}, nil),
+		perDC("days_since_real_logon", "Days since real logon", report.TypeInt, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax, Part: report.PartDaysSince}, opsInt),
+		perDC("dc_coverage", "DC coverage", report.TypeText, report.PerDC{Attr: report.PerDCLastLogon, Agg: report.AggMax, Part: report.PartCoverage}, nil),
+		perDC("last_failed_logon", "Last failed logon", report.TypeTime, report.PerDC{Attr: report.PerDCBadPasswordTime, Agg: report.AggMax}, opsTime),
+		perDC("failed_logon_dc", "From DC", report.TypeText, report.PerDC{Attr: report.PerDCBadPasswordTime, Agg: report.AggMax, Part: report.PartFromDC}, nil),
+		perDC("failures_on_dc", "Failures on that DC", report.TypeInt,
+			report.PerDC{Attr: report.PerDCBadPwdCount, Agg: report.AggMax, Part: report.PartAtWinner, Of: report.PerDCBadPasswordTime}, opsInt),
 	}
 }
 
 // reasonValues are the causes of an unknown policy-dependent state, led by the account's own input.
 func reasonValues(own string) []string {
 	return []string{"none", "uac_not_read", own, "domain_policy_not_read", "pso_set_not_read", "pso_not_read",
-		"pso_precedence_not_read", "pso_interval_not_read", "account_inputs_not_read"}
+		"pso_precedence_not_read", "pso_interval_not_read", "account_inputs_not_read", "group_closure_incomplete"}
 }
 
 func withUnknown(c report.Column, state report.ColumnID) report.Column {

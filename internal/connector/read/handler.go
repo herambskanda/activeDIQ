@@ -3,6 +3,7 @@ package read
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -55,14 +56,28 @@ type Source interface {
 type Handler struct {
 	src Source
 	now func() time.Time
+	log *slog.Logger
 }
 
+// Option configures a Handler.
+type Option func(*Handler)
+
+// WithLog sets the logger that receives fixed-code summaries (counts only, never a directory value).
+func WithLog(l *slog.Logger) Option { return func(h *Handler) { h.log = l } }
+
 // New returns the handler for one source.
-func New(src Source) (*Handler, error) {
+func New(src Source, opts ...Option) (*Handler, error) {
 	if src == nil {
 		return nil, errors.New("read: a source is required")
 	}
-	return &Handler{src: src, now: time.Now}, nil
+	h := &Handler{src: src, now: time.Now, log: slog.Default()}
+	for _, o := range opts {
+		o(h)
+	}
+	if h.log == nil {
+		h.log = slog.Default()
+	}
+	return h, nil
 }
 
 // Sender is the sending side of the Read stream (grpc.ServerStreamingServer satisfies it).
