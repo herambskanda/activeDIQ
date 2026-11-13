@@ -117,10 +117,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if method == "GET" and p == "/access/permissions":
             return self._send(200, {k: {x: 1 for x in sorted(v)} for k, v in eff.items()})
-        if method == "GET" and p == "/cluster/resources":   # filtered by VM.Audit; each VM carries its pool
-            return self._send(200, [dict(v, id=f"qemu/{v['vmid']}", **({"pool": pool_of[v["vmid"]]} if v["vmid"] in pool_of else {}))
-                                    for v in visible])
-        if method == "GET" and p == "/pools":                # a pool is listed only with Pool.Audit on it
+        if method == "GET" and p == "/cluster/resources":   # filtered by VM.Audit; the real host sends no `pool` field (T-1327)
+            return self._send(200, [dict(v, id=f"qemu/{v['vmid']}") for v in visible])
+        if method == "GET" and p == "/pools":
+            # real host (T-1327): without poolid a pool is listed only with Pool.Audit; with poolid=X the members the
+            # token holds VM.Audit on are returned
+            if "poolid" in params:
+                q = params["poolid"]; pl = st["pools"].get(q)
+                if pl is None or not (allow(f"/pool/{q}", "Pool.Audit") or visible): return self._send(200, [])
+                return self._send(200, [{"poolid": q, "members": [dict(v, id=f"qemu/{v['vmid']}") for v in visible
+                                                                    if v["vmid"] in pl["members"]]}])
             return self._send(200, [{"poolid": q} for q in st["pools"] if allow(f"/pool/{q}", "Pool.Audit")])
         if method == "GET" and (m := re.fullmatch(r"/pools/([\w-]+)", p)):
             if not allow(f"/pool/{m.group(1)}", "Pool.Audit"): return deny(f"/pool/{m.group(1)}", "Pool.Audit")

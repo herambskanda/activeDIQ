@@ -1,7 +1,7 @@
 ---
 title: "ADR-0011: Universal search runs over the inventory with pg_trgm, and is trimmed in the same SQL statement by the one ReadScope renderer in store/reportsql"
 date: 2026-10-31
-updated: 2026-11-02
+updated: 2026-11-04
 status: ratified
 ratified_on: 2026-10-31
 ratified_by: factory-director
@@ -19,6 +19,29 @@ fitness: fitness-search SE1–SE5 (in make ci) and SE6 (nightly); T-1126 builds 
 confirmed rules 12, 13 and 16 in the re-review. Revision 3 ratified 2026-11-02 by factory-director
 (notice D-0025, T-1314 review), after security-architect's AC2 review and one rework. `accepted` when `fitness-search` SE1–SE5 run green
 in `make ci` and SE6 has passed once in the nightly job (T-1126).
+
+**Amendments:** E1 (2026-11-04, T-1483, from the T-1335 review). Rule 16 said blocks read must be
+"equal within 2 blocks per loop of each index-scan node. That allows one extra B-tree level and a page
+shared with B at the edge of A's key range, but not any B-proportional read." Measured at 50,000
+objects with B at 10×, the shared tenant-led B-tree gains a level, every probed trigram descends it
+once, and the planner may flip scan form, so 2 per loop does not cover one extra level. The sentence
+was false as a factual claim about what 2 per loop allows. Rule 16 now states the formula and the
+accepted height leak. The rows-examined requirement (exactly equal) and SE5's plan-shape check are
+unchanged, so no fitness check weakens. The T-1335 test already implements this formula.
+Ratified by factory-director 2026-11-04 (notice D-0028).
+
+E2 (2026-11-04, T-1183, from the T-1096 and T-1100 builds and security-architect's T-1183 note).
+Both parts make a rule stricter or state what was built; no rule or fitness check weakens.
+- **`cursor_requires_type` is confirmed in the contract** (rule 12). A cursor pages one group, and
+  the MAC binds the type facet, so a cursor without `type` could never verify. It gets its own code
+  (rather than `cursor_invalid`) because the client's fix differs: send the type back, not search
+  again. It is a 400 `search-query-invalid` at `/cursor`, refused before anything is read
+  (`Test_cursor_is_bound_and_verified_before_anything_is_read`).
+- **Rule 15 names the cursor and the server-side guarantee.** A cursor holds the lower-cased display
+  name and GUIDs of the last hit (MAC'd, not encrypted), so it is kept out of the URL like refused
+  text, and redacted like `q` if it ever arrives in one. The server records the path only today
+  (apihost has no access-log or trace middleware), and the console sends `Referrer-Policy:
+  no-referrer`. `Test_console_search_query_never_reaches_a_log_line` (apihost) is the SE4 check.
 
 **Revision 2 (2026-10-31, after the T-1093 review).** These are the changes in this revision:
 - **M1:** rule 7 now case-folds before the fold table.
@@ -641,8 +664,10 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
     - **The cursor is opaque and bound to its query.** It carries the rank tuple of the last admitted
       hit and an HMAC-SHA256 under a server key. The MAC covers that tuple, the normalised query, the
       class set, the type facet and `ReadScope.Fingerprint()` of every scope passed. A cursor
-      presented with a different query, facet or scope, or with a bad MAC, is 400, and the request
-      reads nothing.
+      presented with a different query, facet or scope, or with a bad MAC, is 400
+      (`cursor_invalid`), and the request reads nothing. A cursor sent without its type facet is 400
+      `cursor_requires_type` at `/cursor`, before anything is read (amendment E2): the MAC binds the
+      facet, and the client's fix is to send the type back, not to search again.
     - **No frozen pages.** Search is not a frozen report run, so ADR-0010 does not apply. A page
       re-runs the statement, so pages may shift if the inventory changes in between.
 13. **The work per query is bounded, whatever the scope's shape (T-0995 class).** The values are
@@ -723,6 +748,15 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
       bar for back, forward and bookmarking. When that page is loaded straight from the server,
       the access log and the traces **redact `q` on every route**. The server records only the rune
       length, the recognised shape and the class set (T-1096).
+    - **Cursor (E2).** A "show all" cursor holds the lower-cased display name and GUIDs of the last
+      hit; it is MAC'd but not encrypted. The API carries it in the `POST` body. The console keeps
+      it in client or history state, **never in the URL**. A cursor that arrives in a URL is
+      redacted exactly like `q`.
+    - **Server today (E2).** apihost has no access-log or trace middleware, and its only request
+      log line (`render.go`, an unexpected error) records `r.URL.Path`, never the query string.
+      Any access log, trace exporter or request logger added later records the path and status
+      only, never `RawQuery`, `RequestURI` or `URL.String()`. The console answers with
+      `Referrer-Policy: no-referrer`, so the `/search` URL does not leave in a `Referer` header.
     - **Handler.** The search handler, its errors and its traces never echo the text. A refused
       query (rule 7) is logged only with its refusal reason.
     - **Browser.** The console never navigates to a URL holding a query the browser has refused
@@ -750,9 +784,22 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
         relation (`inventory_search_trigrams`, `inventory_search_keys`, `directory_objects`), it
         must be **exactly equal** in all three loads. Summing per relation keeps the check valid
         when the planner picks a bitmap form in one load and an Index Only Scan in another.
-      - **Blocks read** (shared hit + read) per relation must be equal within 2 blocks per loop of
-        each index-scan node. That allows one extra B-tree level and a page shared with B at the
-        edge of A's key range, but not any B-proportional read.
+      - **Blocks read** (shared hit + read) per relation, A with B loaded against A with B empty,
+        must differ by at most `tol = 2 × max(loops_empty, loops_loaded) + 3 × F + Δh × n × [r = postings]`
+        (erratum E1). `loops` are the loops of the relation's index-scan nodes. `F` is 1 if the
+        planner chose a different scan form for that relation (Bitmap Index Scan against Index
+        Only Scan, about 3 blocks apart), else 0. `Δh` is the height of the
+        `inventory_search_trigrams` primary-key B-tree with B loaded minus its height with B empty
+        (read with `bt_metap`/`pageinspect`, or equivalent, by the test). `n` is
+        `cardinality(show_trgm(q))`, at most 48, because each of the query's trigrams descends the
+        tree once. Only the postings relation gets the `Δh × n` term. The 2 per loop covers a page
+        shared with B at the edge of A's key range.
+      - **The leak that is accepted:** the shared tree's height, which depends on the whole table
+        and so on B's size, moves A's block count by `Δh × n`. Height reveals only a coarse
+        order of magnitude of the database's posting volume (a level is a factor of hundreds), never
+        B's keys, trigrams, rows or counts. It is the residual (3) of TM-TB17-T9. Any difference
+        beyond this formula, and every difference in rows examined (which stay **exactly** equal),
+        fails the test as a B-proportional read.
       - Every scan node in all three loads must have SE5's plan shape. A `Seq Scan` fails the test
         whatever the counts say.
     - **No start-up gate is built** (T-1136 AC3 is dropped). ADR-0002 gives self-hosted profiles
@@ -976,7 +1023,10 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
     another script's digits, with and without dashes, is refused. It does not appear in the logs, in
     the traces or in the access log.
   - **Search text.** `q` on the console's `/search` route appears in no access-log or trace line;
-    only its length does (rule 15).
+    only its length does (rule 15). The same holds for a cursor in that URL, and the console
+    answers with `Referrer-Policy: no-referrer`. Bound test:
+    `Test_console_search_query_never_reaches_a_log_line` in `internal/platform/apihost` (E2;
+    mutation-checked: logging `r.URL.String()` or relaxing the referrer policy fails it).
   - **Folding.** Every row of rule 7's vector table folds the same way for keys and for queries.
     That includes the upper-case and lower-case pairs Ł/ł, Ø/ø and İ/i, and `ẞ`.
   - **`PrefixUpper`.** The U+D7FF and U+10FFFF edges give the bounds rule 8 states.

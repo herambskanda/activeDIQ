@@ -2,7 +2,7 @@
 name: qa-verifier
 description: "Use for the QA stage of build and bug tickets — verifying every acceptance criterion against the running product with evidence, clicking every control on changed screens, tracing every displayed number to the API, UI/UX and accessibility checks with screenshots, and filing bugs; also verifies milestone demos before the CEO sees them. Owns the proof that a change does what the spec says for a real admin. Not for code review (use code-reviewer), writing automated test suites (use test-engineer), or fixing defects (the owner fixes after you reject)."
 model: sonnet
-effort: high
+effort: medium
 disallowedTools: Edit, NotebookEdit
 skills:
   - factory-protocol

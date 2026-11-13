@@ -236,6 +236,9 @@ Each cause has: what the admin reads, what activeDIQ does by itself, what the ad
 | H12 | A domain NC disappears from the configuration NC | **Domain `<name>` was removed from the forest.** | Marks the NC `gone` (DM-14), keeps its objects until the admin confirms | Confirm removal, or investigate | Its objects flagged |
 | H13 | Schema changed (fingerprint) | Info line in the timeline | Re-reads the schema, then continues | — | None |
 | H14 | Forest deletion settings changed (Recycle Bin, tombstone lifetime) | Info line | Re-reads (DM-10.I6) | — | None |
+| H15 | Read failed, cause not identified: a scoped search ended without its completion marker, or the DC's reply broke the protocol | **Sync failed on `<DC>`: the read did not finish and the cause was not identified.** `<partition>` keeps its data as of `<data_as_of>`. | Discards the partial read (nothing is committed, DM-19.I1), retries at the next cycle with backoff, and after 3 consecutive H15 on one DC tries another DC. Keeps the diagnostic code and DC in the row, never object data | **Check now**; exclude the DC if it repeats | As of last cycle; counts toward Stale ("sync failing > 1 h", §8.1 rule 3) |
+
+**Registry rule.** Every failed cycle the engine can type maps to a registered code, and an unclassified read failure maps to H15, so a failed cycle always writes a DM-26 row and the Health timeline has no silent gap. The one deliberate exception is a **store error** (activeDIQ's own database refused the write): the failed row cannot be written by definition. It is surfaced instead as a product-health alert and in the service log, and the freshness label still ages by `data_as_of`. A new typed failure ships with its registered code and admin line in the same change.
 
 ### 8.4 Required readings of a cycle
 `data_as_of`, `last_change_at`, objects read, objects changed, DC used, duration, and result (complete, partial with the domain that failed, failed with the cause). A **partial** cycle never moves `data_as_of` of the domain that failed.
@@ -655,6 +658,18 @@ Given a draft and an active connection
 When the admin opens each
 Then Discard draft is offered on the draft only, and a discarded id never appears in a list or search but still resolves from the audit event
 Evidence: DOM check; API (S)
+
+AC-50  (H15, §8.3 registry rule)
+Given a lab DC that closes a scoped-search stream before its completion marker, and another that returns a malformed reply
+When a cycle runs against each
+Then a failed DM-26 row with cause H15 is written, the timeline shows the H15 line with the DC and partition, `data_as_of` does not move, no partial inventory rows are committed, and after 3 consecutive H15 on one DC the next cycle uses another DC
+Evidence: fault-injection test (2dc lab); timeline DOM; DM-26 rows
+
+AC-51  (§8.3 registry rule)
+Given the sync engine's set of typed failures
+When a CI check enumerates them
+Then each maps to a registered code with an admin line, and a failure with neither fails the build; a store error is the only listed exception
+Evidence: CI check output
 ```
 
 ## 14. Out of scope
@@ -698,5 +713,6 @@ Consult facts tagged `[UNVERIFIED]` here: that an Authenticated User can read th
 
 ## Changelog
 
+- 2026-11-04 · T-1305: H15 (read failed, cause not identified) and the registry rule added to §8.3; store error deliberately has no code; AC-50, AC-51.
 - 2026-10-02 · revision 2 after solution-architect review (T-0068): staleness per check cadence (§8.1 rule 5, AC-46); V7 forest-wide with Could-not-verify on unreachable domains (V7, FR-10, AC-47); V7 method wording per TM §6.5; M-AUTH gMSA wording (AC-48); "Live checklist" renamed "Progress checklist"; lifecycle amended per OQ-5 (L3, L4, L7, L9, new L11, FR-17, FR-19, FR-36, AC-45, AC-49); `Tier0Override` and `ConnectionVerification` folded in (§11, OQ-1, OQ-2); AC-33 and AC-34 nits fixed.
 - 2026-10-02 · created (T-0068). Covers DM-10 L1–L10, DM-11, DM-13, DM-19 transitions, TM-D1 refusal messages, and sync freshness without "live".
