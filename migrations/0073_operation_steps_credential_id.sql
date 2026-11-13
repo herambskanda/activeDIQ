@@ -1,4 +1,4 @@
--- 0072_operation_steps_credential_id: the DM-11 credential a directory-write step was transported by (T-1629).
+-- 0073_operation_steps_credential_id: the DM-11 credential a directory-write step was transported by (T-1629).
 -- Owner: internal/platform/operation.
 --
 -- The runner resolves the connection's credential once, at claim time and BEFORE the write, and stores its
