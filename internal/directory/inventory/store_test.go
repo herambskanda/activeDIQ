@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"reflect"
 	"testing"
@@ -59,10 +60,18 @@ func (e *env) exec(tid tenant.ID, sql string, args ...any) error {
 	})
 }
 
-func setup(t *testing.T, s *storetest.Server) *env {
+func setup(t *testing.T, s *storetest.Server) *env { return setupFS(t, s, nil) }
+
+// setupFS is setup over the migrations of fsys, or all of them when fsys is nil: a test that must see the
+// database before a migration (a backfill over existing rows) applies the earlier files only.
+func setupFS(t *testing.T, s *storetest.Server, fsys fs.FS) *env {
 	t.Helper()
 	d := s.NewDatabase(t)
-	d.Migrate(t)
+	if fsys == nil {
+		d.Migrate(t)
+	} else if err := d.Apply(context.Background(), fsys); err != nil {
+		t.Fatal(err)
+	}
 	e := &env{d: d, groups: inventory.NewFake()}
 	e.a = tenanttest.Seed(t, d.ExecOwner, "A")
 	e.b = tenanttest.Seed(t, d.ExecOwner, "B")

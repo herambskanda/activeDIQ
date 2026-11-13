@@ -48,6 +48,18 @@ var specRows = []specRow{
 		columns: []string{"display_name", "sam_account_name", "domain", "dn", "last_logon_timestamp", "days_since_logon", "when_created", "enabled",
 			"probable_service_account", "probable_service_account_reason"},
 		deviations: []string{"OU path is shown by the dn column (T-1041)", "adds the service-account reason column (spec 6.7: every flagged row shows its reason)"}},
+	{id: "usr-04", title: "Real last logon", category: report.CategoryUsers, dataset: "inventory.users",
+		presets: map[string][]string{"real": {"Real Last Logon"}},
+		// Name, Logon name, Domain, OU path, Real last logon, From DC, DC coverage, Days since, Status
+		columns:    []string{"display_name", "sam_account_name", "domain", "dn", "real_last_logon", "real_logon_dc", "dc_coverage", "days_since_real_logon", "enabled"},
+		filters:    map[string][]string{"real": {"enabled"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "read live from every DC (T-0971): a partial answer is labelled and the value is a lower bound"}},
+	{id: "pwd-03", title: "Recent logon failures", category: report.CategoryPasswords, dataset: "inventory.users",
+		presets: map[string][]string{"recent": {"Recent Logon Failures"}},
+		// Name, Logon name, Domain, OU path, Last failed logon, From DC, Failures on that DC, DC coverage
+		columns:    []string{"display_name", "sam_account_name", "domain", "dn", "last_failed_logon", "failed_logon_dc", "failures_on_dc", "dc_coverage"},
+		filters:    map[string][]string{"recent": {"last_failed_logon"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "badPwdCount is per DC: the count at the DC of the latest failure, never a sum"}},
 	{id: "usr-05", title: "Locked-out users", category: report.CategoryUsers, dataset: "inventory.users",
 		presets: map[string][]string{"locked_out": {"Locked-out Users"}},
 		// Name, Logon name, Domain, OU path, Locked out since, Lockout ends, Policy source, Data as of
@@ -135,7 +147,7 @@ var specRows = []specRow{
 func Test_reports_library_matches_spec(t *testing.T) {
 	l := shipped(t)
 	items := l.List()
-	// 16 reports in the spec; USR-04 and PWD-03 are the per-DC pair (B8, T-0963).
+	// 16 reports in the spec; USR-04 and PWD-03 are the per-DC pair (B8, T-0971).
 	if len(items) != len(specRows) {
 		t.Fatalf("library lists %d reports, want %d", len(items), len(specRows))
 	}
@@ -292,9 +304,9 @@ func Test_reports_search_by_me_name(t *testing.T) {
 	if h := l.Search("logon act", 5); len(h) == 0 || h[0].Report != "usr-03" || h[0].Name != "" || h[0].Preset != "inactive" {
 		t.Errorf("title search: %+v", h)
 	}
-	// Names of reports that ship later still answer, honestly.
-	if m, ok := l.Resolve("Real Last Logon"); !ok || m.Report != "usr-04" || m.Available || m.Preset != "" {
-		t.Errorf("unshipped: %+v", m)
+	// Names of reports that ship later still answer, honestly (USR-04 shipped with T-0971).
+	if m, ok := l.Resolve("Real Last Logon"); !ok || m.Report != "usr-04" || !m.Available || m.Preset != "real" {
+		t.Errorf("per-DC report: %+v", m)
 	}
 	// A shipped report whose preset waits for data says why.
 	if m, ok := l.Resolve("Users Without Managers"); !ok || m.Report != "usr-01" || m.Available || !strings.Contains(m.Pending, "T-1041") {
@@ -405,7 +417,7 @@ func Test_reports_library_crosswalk_must_match_presets(t *testing.T) {
 		"unknown preset":                     "Locked-out Users\tusr-05\tLocked-out users\tnope\t\n",
 		"wrong title":                        "Locked-out Users\tusr-05\tLocked Out\tlocked_out\t\n",
 		"duplicate name":                     "Locked-out Users\tusr-05\tLocked-out users\tlocked_out\t\nLocked-Out Users\tusr-05\tLocked-out users\tlocked_out\t\n",
-		"unshipped with a preset":            "Locked-out Users\tusr-05\tLocked-out users\tlocked_out\t\nReal Last Logon\tusr-04\tReal last logon\treal\t\n",
+		"unshipped with a preset":            "Locked-out Users\tusr-05\tLocked-out users\tlocked_out\t\nSome Name\tusr-99\tSome title\tsome\t\n",
 	} {
 		m := fstest.MapFS{"usr-05.v1.json": {Data: good}, "LOCK": {Data: []byte(lock)}, "crosswalk.tsv": {Data: []byte(tsv)}}
 		if _, err := library.Load(m, library.Options{Datasets: inventory.Datasets(), Registry: registry(t)}); err == nil {
