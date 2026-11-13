@@ -773,7 +773,7 @@
       },
       "AssignmentRoot": {
         "additionalProperties": false,
-        "description": "One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope.",
+        "description": "One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope; ou_one_level is an include only and its guid is an OU, never the connection.",
         "properties": {
           "connectionId": {
             "format": "uuid",
@@ -803,6 +803,7 @@
         "enum": [
           "naming_context",
           "ou_subtree",
+          "ou_one_level",
           "entra_tenant",
           "tier0_scope",
           "tenant"

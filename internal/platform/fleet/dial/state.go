@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"strconv"
 	"strings"
@@ -25,6 +26,30 @@ const (
 
 // ErrState: the state directory is missing, incomplete or unsafe. It names the problem, never content.
 var ErrState = errors.New("dial: enrollment state is not usable")
+
+// ErrAbsent: there is no enrolment yet (the directory, or one of its files, does not exist). It is the
+// only Load failure that means "not enrolled"; every other failure is state that exists and cannot be
+// used, which an operator has to hear about (T-1249). An ErrAbsent is also an ErrState.
+var ErrAbsent = errors.New("dial: not enrolled")
+
+// ErrIncomplete: some of the state files exist and others do not, which is what a reader sees while
+// `enroll` is still writing (the leaf is written last) or after a crash midway. It is also an
+// ErrAbsent (not enrolled yet) and an ErrState; a caller that polls can re-check soon instead of
+// waiting a full interval.
+var ErrIncomplete = errors.New("dial: enrollment is incomplete")
+
+// ErrUnsafe: the state exists but its owner, DACL/mode or file type is not one this component accepts
+// (squatted, widened, planted, or written for another identity). An ErrUnsafe is also an ErrState.
+var ErrUnsafe = errors.New("dial: enrollment state has unsafe ownership or permissions")
+
+// stateErr classifies a failure of the ownerfile checks: a missing path is ErrAbsent, anything else is
+// ErrUnsafe. Both also match ErrState. The underlying text names a path component, never content.
+func stateErr(err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%w (%w): %v", ErrAbsent, ErrState, err)
+	}
+	return fmt.Errorf("%w (%w): %v", ErrUnsafe, ErrState, err)
+}
 
 // ErrExpired: the component certificate (or the CA) is outside its validity period. Distinct from
 // ErrState so a caller can start renewal instead of reporting corruption.
@@ -52,8 +77,8 @@ type State struct {
 // inherited ACL, so the key is never in a file anyone else can read. The directory's parent is
 // verified before anything is written. The leaf is written last, so a crash midway leaves a directory
 // Load refuses rather than a half-enrolled component.
-func save(dir string, pin Pin, bundlePEM []byte, leafDER []byte, keyDER []byte, eps []Endpoint) error {
-	d, err := ownerfile.CreateDir(dir)
+func save(dir string, pin Pin, bundlePEM []byte, leafDER []byte, keyDER []byte, eps []Endpoint, opts ...ownerfile.DirOption) error {
+	d, err := ownerfile.CreateDir(dir, opts...)
 	if err != nil {
 		return err
 	}
@@ -87,22 +112,41 @@ func save(dir string, pin Pin, bundlePEM []byte, leafDER []byte, keyDER []byte, 
 // The directory is opened once, with its parent verified (ownerfile.OpenDir), and every file is read
 // through that handle (T-1315): nothing is checked by path and then used by path, so a directory
 // swapped for a junction or symlink after the check cannot supply the pin, bundle, key or leaf.
+//
+// Failures are classified (T-1249): ErrAbsent (nothing there; ErrIncomplete if enrolment is partly
+// written), ErrUnsafe (present but owned or permissioned wrongly, for example written for another
+// identity), ErrExpired, and plain ErrState (present but unparsable or inconsistent). Only ErrAbsent
+// means "not enrolled". State an administrator wrote for the service (ForAccount) is accepted: the
+// directory may be owned by BUILTIN\Administrators and name them.
 func Load(dir string) (*State, error) {
-	d, err := ownerfile.OpenDir(dir)
+	d, err := ownerfile.OpenDir(dir, ownerfile.TrustAdministrators())
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrState, err)
+		return nil, stateErr(err)
 	}
 	defer d.Close()
 	return load(d)
 }
 
+var stateFiles = []string{CAFile, PinFile, EndpointsFile, KeyFile, LeafFile}
+
 func load(d *ownerfile.Dir) (*State, error) {
 	read := func(name string) ([]byte, error) {
 		b, err := d.ReadFile(name)
-		if err != nil {
-			return nil, fmt.Errorf("%w: %w", ErrState, err)
+		if err == nil {
+			return b, nil
 		}
-		return b, nil
+		if errors.Is(err, fs.ErrNotExist) {
+			// A missing file while others exist is `enroll` mid-write (or a crash): say so.
+			for _, other := range stateFiles {
+				if other == name {
+					continue
+				}
+				if _, oerr := d.ReadFile(other); oerr == nil || !errors.Is(oerr, fs.ErrNotExist) {
+					return nil, fmt.Errorf("%w (%w): %v", ErrIncomplete, errors.Join(ErrAbsent, ErrState), err)
+				}
+			}
+		}
+		return nil, stateErr(err)
 	}
 	pinB, err := read(PinFile)
 	if err != nil {
