@@ -60,3 +60,4 @@ Gotchas that cost time. Newest first. `date · lesson · source`.
 - 2026-08-12 · An extension interface that is not the only on-ramp from day one becomes decoration.
 - 2026-08-12 · Security-relevant strings built with string formatting recur as a bug class — use shared safe primitives and lint against raw construction.
 - 2026-08-12 · Fabricated UI data and dead buttons slipped through — QA traces every number to the API and clicks every control.
+- 2026-11-12 · An interrupted `make lab-up` leaves a `dc-run` one-off container that pins the lab network and defeats `lab-destroy`; lab targets must clean one-off containers by compose label, and idle per-worktree labs pile up CPU load (T-1858).
