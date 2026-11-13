@@ -592,7 +592,7 @@ Each is in review under §3.3's own rule ("a dataset that needs another function
   (ticket filed). Option rejected: a per-SPN edge dataset (one row per computer and SPN), which gives the
   value but costs a new table with scope columns; revisit if ADMP shows it matters.
 - **Cost.** A correlated count is O(n) per row against an indexed column; RP12 measures the 200,000-user
-  case and fails above the calibrated bound (`[PROPOSED]` 5 s for the first page, row B13).
+  case and fails above the calibrated bound (5 s for the first page, row B13). **Calibrated (T-0972):** the first 50 rows and the count of a 100,000-object run return in 0.09 s on PG16 and PG18; the 5 s bound stays (it is a ceiling for the synthetic harness dataset, not a prediction for the correlated count, which RP12 still has to measure on the lab).
 
 **(b) Direct-report count and manager filter: USR-12.**
 
@@ -1198,7 +1198,7 @@ func Count(ctx context.Context, tx store.Tx, q Query) (int64, error)
   per-DC path uses it for its estimate. Totals shown to users are never `COUNT(*)` (ADR-0010
   rule 3).
 - `Exec` sets nothing: `WithTenant` already set `app.tenant_id` and `statement_timeout` (P5 rule 11).
-  The run job's `statement_timeout` is the `[PROPOSED]` 15 minutes; on expiry the run fails with
+  The run job's `statement_timeout` is the `[PROPOSED]` 15 minutes (T-0972: the longest measured run, 1M stored rows, copies in 7 to 18 s per 100k objects on PG16/PG18; 15 minutes keeps ample headroom; still `[PROPOSED]` until the lab run with real data); on expiry the run fails with
   `query_timeout` (SQL-22).
 - **Errors** are typed and carry no SQL or values: `ErrUnknownColumn`, `ErrBadOperator`,
   `ErrBadSortDirection`, `ErrTooManyValues`, `ErrScopeTooLarge`, `ErrNulInText`,
@@ -1483,7 +1483,7 @@ implementation could replace it later without touching the module.
 
 **Stages:**
 1. **Candidates.** T2 as in §6.3, with the run still `running`.
-2. **Read cap.** `candidates × DCs in scope > 250,000` (`[PROPOSED]`) fails the run with
+2. **Read cap.** `candidates × DCs in scope > 250,000` (**confirmed by T-0972**: a run exactly at the cap, 50,000 candidates × 5 DCs, completes in 93 s on PG16 and PG18 with a zero-latency reader, in 250 reader calls of 200 objects; real DC latency adds to that and is not yet measured) fails the run with
    `per_dc_read_cap_exceeded {candidates, dcs, cap}` **before any read** (AC-41).
 3. **Reads.** These happen outside any transaction (ModeManagedTx, ADR-0005 rule 6), in batches
    of 200 objects. After each batch, a short transaction locks the run row, checks it is still
