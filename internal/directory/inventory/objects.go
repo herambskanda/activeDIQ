@@ -426,6 +426,17 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		attrs[i] = b
 	}
 
+	// History is recorded for AD only, and only once the connection has a completed pass: the first full
+	// pass is the baseline, not a flood of "created" rows (directory_object_changes).
+	record := false
+	if !entra {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM public.nc_sync_passes
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND last_pass_at IS NOT NULL)`,
+			string(connection)).Scan(&record); err != nil {
+			return out, writeErr("history baseline", err)
+		}
+	}
+
 	// The search keys of the objects this call wrote, replaced in this transaction after the loop.
 	keyed := map[GUID][]searchKeyRow{}
 	var keyOrder []GUID
@@ -467,7 +478,7 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			cg, string(attrs[i]), nullTime(o.WhenCreated), nullTime(o.WhenChanged), observed.UTC(), o.ObservedDSA, cloud, string(o.State),
 			syncEnabledVal, cloudManagedVal, nilIfEmpty(o.OnPremisesSecurityIdentifier), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID),
 			o.UserAccountControl, o.PrimaryGroupID, nullTime(o.LastLogonTimestamp), o.HasSPN, int16(o.InputsRead),
-			pwState, nullTime(o.PasswordChangeAt)).
+			pwState, nullTime(o.PasswordChangeAt), record, noiseAttributes).
 			Scan(&w.inserted, &w.moved, &w.completeChanged)
 		if store.IsNoRows(err) {
 			out.Stale++
@@ -551,6 +562,15 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 	return out, nil
 }
 
+// noiseAttributes is the automatic-update set of reports-2-second-slice §4.1 rule 2: logon and
+// bad-password state, lockout and housekeeping, computer-driven updates. A change is automatic only
+// when every attribute it touched is listed (names are those of the stored attributes bag and typed
+// columns). Credential events (pwdLastSet) and security descriptors are deliberately not here.
+var noiseAttributes = []string{"lastLogonTimestamp", "lastLogon", "logonCount", "badPwdCount", "badPasswordTime",
+	"lockoutTime", "adminCount", "dSCorePropagationData", "operatingSystem", "operatingSystemVersion",
+	"operatingSystemServicePack", "operatingSystemHotfix", "dNSHostName", "servicePrincipalName",
+	"msDS-SupportedEncryptionTypes", "msDS-KeyVersionNumber"}
+
 // written is what one upsert reports about the row it wrote.
 type written struct {
 	inserted bool
@@ -571,7 +591,9 @@ type written struct {
 // A row with no parent and no NC (Entra) has no chain to be complete about, and is false. A stale
 // observation matches no row and returns no rows.
 const upsertObjectSQL = `WITH old AS (
-		SELECT parent_guid, ancestry, ancestry_complete FROM public.directory_objects
+		SELECT true AS present, parent_guid, ancestry, ancestry_complete, state, rdn, dn, sam_account_name, upn, display_name, enabled,
+			user_account_control, primary_group_id, lockout_time, pwd_last_set, account_expires, last_logon_timestamp, spn_present, attributes
+		FROM public.directory_objects
 		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND object_guid = $2::uuid),
 	ins AS (
 		INSERT INTO public.directory_objects AS d (tenant_id, connection_id, object_guid, nc_guid, kind, object_class,
@@ -609,7 +631,46 @@ const upsertObjectSQL = `WITH old AS (
 			password_change_state = EXCLUDED.password_change_state, password_change_at = EXCLUDED.password_change_at,
 			cloud_seen_at = GREATEST(d.cloud_seen_at, EXCLUDED.cloud_seen_at)
 		WHERE d.observed_at <= EXCLUDED.observed_at
-		RETURNING (xmax = 0) AS inserted, d.parent_guid, d.ancestry, d.ancestry_complete)
+		RETURNING (xmax = 0) AS inserted, d.parent_guid, d.ancestry, d.ancestry_complete),
+	chg AS (
+		INSERT INTO public.directory_object_changes (tenant_id, connection_id, object_guid, change_kind, object_kind, attributes_changed,
+			automatic_only, name, sam_account_name, dn, observed_at)
+		SELECT NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, c.kind, $4::text, c.attrs,
+			c.kind = 'edited' AND cardinality(c.attrs) > 0 AND c.attrs <@ $39::text[],
+			COALESCE(NULLIF(c.sam, ''), NULLIF(c.disp, ''), c.rdn, ''), COALESCE(c.sam, ''), COALESCE(c.dn, ''), $22::timestamptz
+		FROM ins
+		LEFT JOIN old ON true
+		CROSS JOIN LATERAL (SELECT COALESCE(old.present, false) AS had, $25::text IN ('deleted', 'recycled', 'purged') AS gone,
+			COALESCE(old.state, '') IN ('deleted', 'recycled', 'purged') AS was_gone) st
+		CROSS JOIN LATERAL (SELECT ARRAY(SELECT DISTINCT k FROM unnest(
+				ARRAY(SELECT k FROM (SELECT jsonb_object_keys(old.attributes) AS k UNION SELECT jsonb_object_keys($19::jsonb)) s
+					WHERE (old.attributes -> k) IS DISTINCT FROM ($19::jsonb -> k))
+				|| array_remove(ARRAY[
+					CASE WHEN old.sam_account_name IS DISTINCT FROM $11::text THEN 'sAMAccountName' END,
+					CASE WHEN old.upn IS DISTINCT FROM $12::text THEN 'userPrincipalName' END,
+					CASE WHEN old.display_name IS DISTINCT FROM $13::text THEN 'displayName' END,
+					CASE WHEN old.user_account_control IS DISTINCT FROM $31::bigint THEN 'userAccountControl' END,
+					CASE WHEN old.primary_group_id IS DISTINCT FROM $32::bigint THEN 'primaryGroupID' END,
+					CASE WHEN old.lockout_time IS DISTINCT FROM $15::timestamptz THEN 'lockoutTime' END,
+					CASE WHEN old.pwd_last_set IS DISTINCT FROM $16::timestamptz THEN 'pwdLastSet' END,
+					CASE WHEN old.account_expires IS DISTINCT FROM $17::timestamptz THEN 'accountExpires' END,
+					CASE WHEN old.last_logon_timestamp IS DISTINCT FROM $33::timestamptz THEN 'lastLogonTimestamp' END,
+					CASE WHEN old.spn_present IS DISTINCT FROM $34::boolean THEN 'servicePrincipalName' END
+				], NULL)) AS k ORDER BY k) AS attrs) d
+		CROSS JOIN LATERAL (SELECT CASE
+				WHEN NOT st.had THEN CASE WHEN NOT st.gone THEN 'created' END
+				WHEN st.gone THEN CASE WHEN NOT st.was_gone THEN 'deleted' END
+				WHEN st.was_gone THEN NULL
+				WHEN old.parent_guid IS DISTINCT FROM $6::uuid THEN 'moved'
+				WHEN old.rdn IS DISTINCT FROM $9::text THEN 'renamed'
+				WHEN cardinality(d.attrs) > 0 THEN 'edited' END AS kind) k0
+		CROSS JOIN LATERAL (SELECT k0.kind,
+				CASE WHEN k0.kind = 'deleted' THEN '{}'::text[] WHEN k0.kind = 'created' THEN '{}'::text[] ELSE d.attrs END AS attrs,
+				CASE WHEN k0.kind = 'deleted' THEN old.sam_account_name ELSE $11::text END AS sam,
+				CASE WHEN k0.kind = 'deleted' THEN old.display_name ELSE $13::text END AS disp,
+				CASE WHEN k0.kind = 'deleted' THEN old.rdn ELSE $9::text END AS rdn,
+				CASE WHEN k0.kind = 'deleted' THEN old.dn ELSE $8::text END AS dn) c
+		WHERE $38::boolean AND c.kind IS NOT NULL)
 	SELECT ins.inserted,
 		COALESCE((SELECT o.parent_guid IS DISTINCT FROM ins.parent_guid OR o.ancestry <> ins.ancestry FROM old o), false),
 		COALESCE((SELECT o.ancestry_complete <> ins.ancestry_complete FROM old o), false)

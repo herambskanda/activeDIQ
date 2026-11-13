@@ -39,6 +39,7 @@ connections	connection	config
 connector_bindings	connection	config
 correlation_evaluations	inventory	system
 correlations	inventory	config
+directory_object_changes	inventory	system
 directory_objects	inventory	system
 enrollment_tokens	fleet	config
 fleet_ca	fleet	system
