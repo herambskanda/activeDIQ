@@ -103,14 +103,14 @@ func TestAC2RefusedAtStep4OnBothRPCsAndTransportsOverrideDoesNotAdmit(t *testing
 		r.prov.guard = c.g
 		for tname, tr := range transports(t, r.h) {
 			p := planReq(tgt, ctxFor(tgt))
-			p.Kind, p.Tier0Override = 1, c.ov
+			p.Kind, p.Change, p.Tier0Override = 1, testChange(), c.ov
 			_, err := tr.Plan(context.Background(), p)
 			d := wantTier0(t, err, c.stage)
 			if len(d.GetBasis()) != 1 || d.GetBasis()[0] != tier0.Designated {
 				t.Errorf("%s/%s plan basis %v", c.name, tname, d.GetBasis())
 			}
 			a := applyReq(tgt, ctxFor(tgt))
-			a.Kind, a.Tier0Override = 1, c.ov
+			a.Kind, a.Change, a.Tier0Override = 1, testChange(), c.ov
 			_, err = tr.Apply(context.Background(), a)
 			wantTier0(t, err, c.stage)
 		}
@@ -139,7 +139,7 @@ func TestPropertyGuardAllowsAndPassesTheDeclaration(t *testing.T) {
 	g := &stubGuard{}
 	r, rec := armed(t, g, declare(adUpdateTitle, nil), passRun(nil))
 	p := planReq(tgt, ctxFor(tgt))
-	p.Kind = 1
+	p.Kind, p.Change = 1, testChange()
 	if _, err := r.h.Plan(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +158,7 @@ func TestPropertyGuardFailsClosedOnBadDeclarationOrNoSnapshot(t *testing.T) {
 	} {
 		r, rec := armed(t, &stubGuard{}, pw, passRun(nil))
 		p := planReq(tgt, ctxFor(tgt))
-		p.Kind = 1
+		p.Kind, p.Change = 1, testChange()
 		_, err := r.h.Plan(context.Background(), p)
 		if c := connErr(t, err).GetCode(); c != connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT || rec.plan != 0 {
 			t.Errorf("%s: %s plan=%d", name, c, rec.plan)
@@ -167,7 +167,7 @@ func TestPropertyGuardFailsClosedOnBadDeclarationOrNoSnapshot(t *testing.T) {
 	// No snapshot (the provider's default guard): every property write is refused.
 	r, rec := armed(t, nil, declare(adUpdateTitle, nil), passRun(nil))
 	p := planReq(tgt, ctxFor(tgt))
-	p.Kind = 1
+	p.Kind, p.Change = 1, testChange()
 	_, err := r.h.Plan(context.Background(), p)
 	wantTier0(t, err, stConnectorSet)
 	if rec.plan != 0 {
@@ -228,7 +228,7 @@ func TestK0RealSnapshotThroughTheHandler(t *testing.T) {
 	for _, row := range rows {
 		r, rec := armed(t, set, declare(row.pw, nil), passRun(nil))
 		a := applyReq(tgt, ctxFor(tgt))
-		a.Kind = 1
+		a.Kind, a.Change = 1, testChange()
 		_, err := r.h.Apply(context.Background(), a)
 		if row.refused {
 			if connErr(t, err).GetCode() != connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED || rec.apply != 0 {
@@ -254,7 +254,7 @@ func TestPropertyRefusalRecordNeverCarriesValues(t *testing.T) {
 		r, _ := armed(t, g, declare(adUpdateTitle, nil), passRun(nil))
 		for tname, tr := range transports(t, r.h) {
 			p := planReq(tgt, ctxFor(tgt))
-			p.Kind = 1
+			p.Kind, p.Change = 1, testChange()
 			_, err := tr.Plan(context.Background(), p)
 			if err == nil || strings.Contains(err.Error(), canary) {
 				t.Errorf("%s/%s: error %v", name, tname, err)
@@ -273,11 +273,74 @@ func TestWrongPlaneDeclarationHasItsOwnReason(t *testing.T) {
 	bad.Plane = tier0.PlaneEntra
 	r, _ := armed(t, &stubGuard{}, declare(bad, nil), passRun(nil))
 	p := planReq(tgt, ctxFor(tgt))
-	p.Kind = 1
+	p.Kind, p.Change = 1, testChange()
 	if _, err := r.h.Plan(context.Background(), p); err == nil {
 		t.Fatal("wrong plane admitted")
 	}
 	if ev := r.rec.last(); ev.Reason != reasonBadDeclaration {
 		t.Errorf("reason %q", ev.Reason)
+	}
+}
+
+// kindRefuser refuses a declaration of one object class and allows the others.
+type kindRefuser struct {
+	kind  tier0.WriteKind
+	calls []tier0.WriteKind
+}
+
+func (g *kindRefuser) CheckPropertyWrite(_ context.Context, w tier0.PropertyWrite) (tier0.DynamicRuleRefusal, error) {
+	g.calls = append(g.calls, w.Kind)
+	if w.Kind == g.kind {
+		return tier0.DynamicRuleRefusal{Refused: true, Reason: tier0.ReasonDesignatedDynamicRule, Stage: tier0.StageConnectorSet}, nil
+	}
+	return tier0.DynamicRuleRefusal{}, nil
+}
+
+// A kind that touches objects whose class is only known live (AlsoDevice, kinds 4-6) has its declaration
+// checked a second time as a device write; the refusal carries the declared variant that refused, with the
+// kind, op and key names for the audit record. Without AlsoDevice the device variant is never asked.
+func TestGuardPropertyAlsoDeviceRecordsTheDeviceVariant(t *testing.T) {
+	r := newRig(t, nil)
+	target := mk(41)
+	decl := tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: tier0.WriteUser, Op: tier0.OpUpdate, Keys: []string{"title"}}
+
+	g := &kindRefuser{kind: tier0.WriteDevice}
+	r.prov.guard = g
+	ref := r.h.guardProperty(context.Background(), decl, true, target, "4")
+	if ref == nil {
+		t.Fatal("a device-refused declaration was accepted with AlsoDevice")
+	}
+	if ref.propKind != "DEVICE" || ref.propOp != "UPDATE" || len(ref.propKeys) != 1 || ref.propKeys[0] != "title" ||
+		ref.reason != tier0.ReasonDesignatedDynamicRule || ref.stage != "4" {
+		t.Errorf("audit record kind %q op %q keys %v reason %q stage %q", ref.propKind, ref.propOp, ref.propKeys, ref.reason, ref.stage)
+	}
+	if len(g.calls) != 2 || g.calls[0] != tier0.WriteUser || g.calls[1] != tier0.WriteDevice {
+		t.Errorf("guard asked %v, want user then device", g.calls)
+	}
+
+	g = &kindRefuser{kind: tier0.WriteDevice}
+	r.prov.guard = g
+	if ref := r.h.guardProperty(context.Background(), decl, false, target, "4"); ref != nil {
+		t.Errorf("the device variant was checked without AlsoDevice: %+v", ref)
+	}
+	if len(g.calls) != 1 {
+		t.Errorf("guard asked %v, want the declaration only", g.calls)
+	}
+
+	// A declaration that is already a device write is not checked twice.
+	g = &kindRefuser{kind: tier0.WriteGroup}
+	r.prov.guard = g
+	dev := decl
+	dev.Kind = tier0.WriteDevice
+	if ref := r.h.guardProperty(context.Background(), dev, true, target, "4"); ref != nil || len(g.calls) != 1 {
+		t.Errorf("a device declaration was checked %d times (%v)", len(g.calls), ref)
+	}
+
+	// The user-variant refusal is reported as the user declaration, and the device variant is not reached.
+	g = &kindRefuser{kind: tier0.WriteUser}
+	r.prov.guard = g
+	ref = r.h.guardProperty(context.Background(), decl, true, target, "4")
+	if ref == nil || ref.propKind != "USER" || len(g.calls) != 1 {
+		t.Errorf("user refusal: %+v calls %v", ref, g.calls)
 	}
 }

@@ -1,0 +1,17 @@
+click #0 [USER | Ada Lovelace | alovelace | C] -> /directory/users?q=alovelace heading="Users" notFound=0 err=0
+click #1 [USER | Adam 0 | adam0 | CN=Adam 0,O] -> /directory/users?q=adam0 heading="Users" notFound=0 err=0
+click #2 [USER | Adam 1 | adam1 | CN=Adam 1,O] -> /directory/users?q=adam1 heading="Users" notFound=0 err=0
+click #3 [USER | Adam 2 | adam2 | CN=Adam 2,O] -> /directory/users?q=adam2 heading="Users" notFound=0 err=0
+click #4 [USER | Adam 3 | adam3 | CN=Adam 3,O] -> /directory/users?q=adam3 heading="Users" notFound=0 err=0
+click #5 [USER | Adam 4 | adam4 | CN=Adam 4,O] -> /directory/users?q=adam4 heading="Users" notFound=0 err=0
+click #6 [Show all 12 | Users] -> /search?q=ada&type=users heading="Search" notFound=0 err=0
+click #7 [GROUP | Admins Group 0 | adminsgrou] -> /search?q=adminsgroup0 heading="Search" notFound=0 err=0
+click #8 [GROUP | Admins Group 1 | adminsgrou] -> /search?q=adminsgroup1 heading="Search" notFound=0 err=0
+click #9 [GROUP | Admins Group 2 | adminsgrou] -> /search?q=adminsgroup2 heading="Search" notFound=0 err=0
+click #10 [COMPUTER | ADA-PC 0 | adapc0 | CN=A] -> /search?q=adapc0 heading="Search" notFound=0 err=0
+click #11 [COMPUTER | ADA-PC 1 | adapc1 | CN=A] -> /search?q=adapc1 heading="Search" notFound=0 err=0
+click #12 [COMPUTER | ADA-PC 2 | adapc2 | CN=A] -> /search?q=adapc2 heading="Search" notFound=0 err=0
+click #13 [COMPUTER | ADA-PC 3 | adapc3 | CN=A] -> /search?q=adapc3 heading="Search" notFound=0 err=0
+click #14 [COMPUTER | ADA-PC 4 | adapc4 | CN=A] -> /search?q=adapc4 heading="Search" notFound=0 err=0
+click #15 [Show all 9 | Computers] -> /search?q=ada&type=computers heading="Search" notFound=0 err=0
+click #16 [CONTACT | Zoë 山田 O'Brien | z@x.test] -> /search?q=z%40x.test heading="Search" notFound=0 err=0

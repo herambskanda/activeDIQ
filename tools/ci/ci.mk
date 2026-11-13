@@ -2,7 +2,7 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order
+.PHONY: fitness-p2-oci gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order
 
 ci: lint gen-check gen-modules-check gen-api-check lint-api test fitness workflows-check build secrets-scan vuln-scan fuzz-saml lab-test-unit lab-test-windows-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto, table ownership map and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
 	@echo "make ci: passed"
@@ -121,6 +121,9 @@ fitness-packaging: ## T-0104, TM-TB16-T3: the Windows ACL script (Administrators
 
 fitness-host: ## T-0136, TM-F-HOST: build cmd/server into packaging/linux-oci/Dockerfile.server, boot it against PostgreSQL 16 and judge the named cases (needs Docker); the Windows half is packaging/windows/Get-HostObservation.ps1 judged by `go run ./tools/fitness/host evaluate`. Known gaps are listed in tools/fitness/host/known-gaps.json
 	go run ./tools/fitness/host oci
+
+fitness-p2-oci: ## T-1462, ADR-0002 P2 (OCI half): build the server image of linux-oci and saas for linux/amd64 and linux/arm64, boot each against PostgreSQL 16 and 18 and prove migrations, health and tenant count (needs Docker; the arm64 boot needs qemu-user binfmt, else it is skipped with a printed reason; P2_OCI_REQUIRE_BOOT=1 forbids the skip). Not in `fitness`: `make fitness-profiles` runs it as the P2-oci activation row
+	go run ./tools/fitness/host p2-oci
 
 BUILT_MSI ?= dist/*.msi
 

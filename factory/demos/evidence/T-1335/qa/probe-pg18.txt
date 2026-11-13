@@ -1,0 +1,23 @@
+T-1335 AC6 probe · PostgreSQL 18 · 50001 objects seeded and vacuumed in 32s · runtime role, FORCE RLS, one tenant
+keys 100009 · postings 1591632 · tenant postings 4627 distinct trigrams · keys table total 34 MB · postings table total 208 MB (heap 91 MB, pkey 117 MB)
+top trigrams: [  e=12320   l=12256   i=12224   a=12210   c=12188   p=12127   h=12094   f=12084]
+exact    W=10000 "lthcrtpad despp"                  median    89.1 ms  max   129.3 ms · posting rows read 31678 · keys rows 3 · objects rows 50004
+exact    W=100   "lthcrtpad despp"                  median    20.2 ms  max    25.5 ms · posting rows read 31678 · keys rows 3 · objects rows 3
+prefix   W=10000 "lthcrtp"                          median    72.2 ms  max   111.5 ms · posting rows read 15800 · keys rows 83.78 · objects rows 50004
+prefix   W=100   "lthcrtp"                          median    12.4 ms  max    24.1 ms · posting rows read 15800 · keys rows 83.78 · objects rows 84
+fuzzy1   W=10000 "lthrtpad despp"                   median    84.9 ms  max   117.8 ms · posting rows read 31495 · keys rows 2 · objects rows 50004
+fuzzy1   W=100   "lthrtpad despp"                   median    18.6 ms  max    22.0 ms · posting rows read 31495 · keys rows 2 · objects rows 2
+nomatch  W=10000 "zx0946z"                          median     0.4 ms  max     0.5 ms · posting rows read 0 · keys rows 0 · objects rows 0
+nomatch  W=100   "zx0946z"                          median     0.5 ms  max     0.8 ms · posting rows read 0 · keys rows 0 · objects rows 0
+worst32  W=10000 "ine see rot rnr cil rir sef cia"  median    41.0 ms  max    63.9 ms · posting rows read 65840 · keys rows 0 · objects rows 0
+  plan shape:
+  m_prefix   Index Scan         inventory_search_keys        inventory_search_keys_by_key rows 0 x 1, removed 0, recheck 0, heap 0, blocks 3+0
+  m_fuzzy    Index Only Scan    inventory_search_trigrams    inventory_search_trigrams_pkey rows 62173 x 1, removed 0, recheck 0, heap 3667, blocks 3415+0
+  m_fuzzy    Index Scan         inventory_search_keys        inventory_search_keys_tenant_key_id_key rows 0 x 0, removed 0, recheck 0, heap 0, blocks 0+0
+             Seq Scan           directory_objects                                       rows 0 x 0, removed 0, recheck 0, heap 0, blocks 0+0
+worst32  W=100   "ine see rot rnr cil rir sef cia"  median    42.1 ms  max    54.5 ms · posting rows read 65840 · keys rows 0 · objects rows 0
+  plan shape:
+  m_prefix   Index Scan         inventory_search_keys        inventory_search_keys_by_key rows 0 x 1, removed 0, recheck 0, heap 0, blocks 3+0
+  m_fuzzy    Index Only Scan    inventory_search_trigrams    inventory_search_trigrams_pkey rows 62173 x 1, removed 0, recheck 0, heap 3667, blocks 3415+0
+  m_fuzzy    Index Scan         inventory_search_keys        inventory_search_keys_tenant_key_id_key rows 0 x 0, removed 0, recheck 0, heap 0, blocks 0+0
+             Index Scan         directory_objects            directory_objects_by_guid  rows 0 x 0, removed 0, recheck 0, heap 0, blocks 0+0

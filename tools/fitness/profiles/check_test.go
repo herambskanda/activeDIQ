@@ -138,7 +138,35 @@ func shippedWithoutDeferrals(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return deferralLine.ReplaceAllString(string(b), "")
+	// P2-oci's check is implemented now (T-1462); the cases below model a row whose check is missing, so
+	// they blank its command as well. TestShippedP2OCIRowHasCommandAndNoDeferral pins the shipped row.
+	out := deferralLine.ReplaceAllString(string(b), "")
+	return strings.Replace(out, `"command": ["go", "run", "./tools/fitness/host", "p2-oci"],`, `"command": [],`, 1)
+}
+
+// The shipped P2-oci row names its command and carries no deferral: the check is implemented, so ADR-0002
+// E-3 no longer excuses it (T-1462).
+func TestShippedP2OCIRowHasCommandAndNoDeferral(t *testing.T) {
+	b, err := os.ReadFile("manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Activation []Activation `json:"activation"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range m.Activation {
+		if a.Check != "P2-oci" {
+			continue
+		}
+		if strings.Join(a.Command, " ") != "go run ./tools/fitness/host p2-oci" || a.Deferral != nil {
+			t.Fatalf("P2-oci row: command %v deferral %v", a.Command, a.Deferral)
+		}
+		return
+	}
+	t.Fatal("no P2-oci row")
 }
 
 // copyReal brings in the real manifest and denylist, so the tests exercise what `make ci` runs.
@@ -806,8 +834,8 @@ func TestShippedDeferralsMatchADRTable(t *testing.T) {
 			t.Errorf("%s: %s", a.Check, strings.Join(ps, "; "))
 		}
 	}
-	if n != 7 {
-		t.Errorf("manifest carries %d deferrals, ADR-0002 lists seven", n)
+	if n != 6 { // P2-oci left the table when its check landed (T-1462)
+		t.Errorf("manifest carries %d deferrals, ADR-0002 lists six", n)
 	}
 }
 

@@ -117,10 +117,15 @@ type JSONAttr struct {
 // Derived is evaluated in the query from constant SQL with slots.
 type Derived struct{ SQL Fragment }
 
-// PerDC is filled after the query from a live per-DC read, never from SQL (contract §6.5).
+// PerDC is filled after the query from a live per-DC read, never from SQL (contract §6.5). Part says
+// which part of the read the column shows; the zero value is the aggregate itself.
 type PerDC struct {
 	Attr PerDCAttr
 	Agg  PerDCAgg
+	Part PerDCPart
+	// Of is the attribute whose aggregate picks the DC for PartAtWinner (the failure count on the DC of the
+	// latest failed logon); it is unused by every other part.
+	Of PerDCAttr
 }
 
 func (Attr) columnSource()     {}
@@ -378,8 +383,8 @@ func (d Dataset) validateColumns(checkFrag func(string, Fragment) error) error {
 				return err
 			}
 		case PerDC:
-			if !s.Attr.Valid() || !s.Agg.Valid() {
-				return bad(p, "column %q: invalid per-DC source", c.ID)
+			if err := s.check(c.Type); err != nil {
+				return bad(p, "column %q: %v", c.ID, err)
 			}
 		default:
 			return bad(p, "column %q has no source", c.ID)
