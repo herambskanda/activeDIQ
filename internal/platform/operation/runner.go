@@ -13,6 +13,7 @@ import (
 	"maps"
 	"math/rand/v2"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -446,6 +447,22 @@ func (u *run) authorise(ctx context.Context, t authority.TargetRef) (authority.F
 	return f, nil
 }
 
+// diffAttrName is the directory attribute a Diff label names. The write-change digest labels an edit
+// "<op>:<attribute>" (set, clear, add, remove) and a create's control fields "~<name>"
+// (internal/directory/writechange); the attribute is the part after the prefix. Anything else is the
+// label itself, so a spelled-out alias such as an OID or ";binary" still fails the plain-name check.
+func diffAttrName(label string) string {
+	if rest, ok := strings.CutPrefix(label, "~"); ok {
+		return rest
+	}
+	for _, p := range []string{"set:", "clear:", "add:", "remove:"} {
+		if rest, ok := strings.CutPrefix(label, p); ok {
+			return rest
+		}
+	}
+	return label
+}
+
 // checkPlan enforces the contract on what Plan returned and computes the plan hash.
 func (u *run) checkPlan(steps []StepPlan) error {
 	for i := range steps {
@@ -459,12 +476,13 @@ func (u *run) checkPlan(steps []StepPlan) error {
 		for j := range sp.Diff {
 			// The directory accepts aliases of one attribute (its OID, "name;binary", padded names), so the
 			// list check below is only sound for a plain name. Refuse every other spelling, Secret or not.
-			if !secret.IsPlainAttrName(sp.Diff[j].Attribute) {
+			attr := diffAttrName(sp.Diff[j].Attribute)
+			if !secret.IsPlainAttrName(attr) {
 				return fmt.Errorf("%w: step %d of %q plans a change to attribute %q, which is not a plain attribute name", ErrInvalid, i, u.d.ID, sp.Diff[j].Attribute)
 			}
 			// Fail closed: a known secret attribute must be declared Secret by the Action author. Redacting
 			// it silently here would hide the mistake and leave the next code path to leak the value.
-			if !sp.Diff[j].Secret && u.r.cfg.SecretAttr(sp.Diff[j].Attribute) {
+			if !sp.Diff[j].Secret && u.r.cfg.SecretAttr(attr) {
 				return fmt.Errorf("%w: step %d of %q plans a change to secret attribute %q without Secret set", ErrInvalid, i, u.d.ID, sp.Diff[j].Attribute)
 			}
 			if sp.Diff[j].Secret { // a secret value is never held in a plan, diff or event
