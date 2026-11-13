@@ -189,7 +189,7 @@ func grantConsoleRole(ctx context.Context, d localAccountDeps, t tenant.ID, acco
 		}
 		if n == 0 {
 			if err := g.CreateRole(ctx, tx, cliActor, rid, role.Name, rbac.Tier2, role.Perms); err != nil {
-				return fmt.Errorf("server: create role %s: %w", role.Name, err)
+				return fmt.Errorf("server: creating the console role %q failed: %w", role.Name, err)
 			}
 		}
 		var aid string
@@ -215,7 +215,7 @@ func grantConsoleRole(ctx context.Context, d localAccountDeps, t tenant.ID, acco
 				ID: aid, RoleID: rid, Subject: rbac.SubjectRef{Kind: rbac.SubjectAccount, Account: account},
 				Roots: []rbac.Root{{Kind: rbac.NamingContext, Connection: string(c.ID), GUID: string(c.DirectoryIdentity)}},
 			}); err != nil {
-				return fmt.Errorf("server: grant role %s on connection %s: %w", role.Name, c.ID, err)
+				return fmt.Errorf("server: granting the console role %q on connection %s failed: %w", role.Name, c.ID, err)
 			}
 		}
 		return nil
