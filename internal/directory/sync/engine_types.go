@@ -149,6 +149,15 @@ type RefusalKey struct {
 	Code Code
 }
 
+// MaxRefusedEntries bounds DomainReport.RefusedEntries.
+const MaxRefusedEntries = 1000
+
+// RefusedEntry is one entry refused as malformed: who and why, never what.
+type RefusedEntry struct {
+	Object inventory.GUID
+	RefusalKey
+}
+
 // DomainReport is what the engine did for one managed domain.
 type DomainReport struct {
 	NC inventory.GUID
@@ -160,6 +169,11 @@ type DomainReport struct {
 	// Refused how many were refused as malformed and skipped (RefusedBy has the breakdown).
 	Entries, Mapped, Refused int
 	RefusedBy                map[RefusalKey]int
+	// RefusedEntries identifies the refused entries by objectGUID and reason (no value), so an object that
+	// does not reach the inventory is named, not only counted. It holds at most MaxRefusedEntries; the rest
+	// are in RefusedOmitted. Object is empty when the entry's own GUID was the malformed part.
+	RefusedEntries []RefusedEntry
+	RefusedOmitted int
 	// Batches is how many ingest transactions committed.
 	Batches                  int
 	Inserted, Updated, Stale int
