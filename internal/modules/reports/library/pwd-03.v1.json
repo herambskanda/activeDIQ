@@ -1,0 +1,57 @@
+{
+  "id": "pwd-03",
+  "version": 1,
+  "category": "passwords",
+  "title": "Recent logon failures",
+  "description": "Accounts with a failed logon in the period, read live from every domain controller: the latest failed logon, the DC it happened on and the failure count on that DC. badPwdCount is per DC and is never summed. When a DC does not answer, accounts whose only failures were there are not listed, and the coverage says so.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "domain",
+    "dn",
+    "last_failed_logon",
+    "failed_logon_dc",
+    "failures_on_dc",
+    "dc_coverage"
+  ],
+  "sort": [
+    {
+      "column": "sam_account_name",
+      "dir": "asc"
+    }
+  ],
+  "params": [
+    {
+      "name": "days",
+      "kind": "days",
+      "default": {
+        "days": 7
+      },
+      "min": 1,
+      "max": 30
+    }
+  ],
+  "perDC": {
+    "scope": "all"
+  },
+  "caveats": [
+    "ou_path_is_dn",
+    "per_dc_live_read"
+  ],
+  "presets": [
+    {
+      "id": "recent",
+      "names": [
+        "Recent Logon Failures"
+      ],
+      "where": {
+        "cmp": {
+          "col": "last_failed_logon",
+          "op": "within_last_days",
+          "param": "days"
+        }
+      }
+    }
+  ]
+}

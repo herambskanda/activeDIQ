@@ -141,8 +141,9 @@ func (s *Service) execute(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, 
 	if !ok || def.SHA256 != r.DefinitionSHA256 {
 		return &runFailure{reason: FailDefinitionRetired}
 	}
-	if def.Def.PerDC != nil {
-		return &runFailure{reason: FailInternal} // per-DC runs are row B8's
+	perDC := def.Def.PerDC != nil
+	if perDC && (s.PerDC == nil || s.PerDCDCs == nil) {
+		return &runFailure{reason: FailConnectionUnavailable} // no way to read the DCs is wired
 	}
 	rp, err := s.Codec.Decode(r.Params, def.Def)
 	if err != nil {
@@ -152,7 +153,7 @@ func (s *Service) execute(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, 
 	if err != nil {
 		return err
 	}
-	if q.Hash() != r.QueryHash || q.PerDCWhere != nil {
+	if q.Hash() != r.QueryHash || (q.PerDCWhere != nil && !perDC) {
 		return &runFailure{reason: FailInternal}
 	}
 	cols := make([]report.Column, len(q.Columns))
@@ -161,7 +162,7 @@ func (s *Service) execute(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, 
 		if !ok {
 			return &runFailure{reason: FailInternal}
 		}
-		if _, perDC := c.Source.(report.PerDC); perDC {
+		if c.IsPerDC() && !perDC {
 			return &runFailure{reason: FailInternal}
 		}
 		cols[i] = c
@@ -190,14 +191,25 @@ func (s *Service) execute(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, 
 		if err != nil {
 			return err
 		}
-		err = s.store(ctx, jt, tid, r, attempt, def, q, cols, colIDs, fp0, fr, now, rowCap)
+		var pd *perDCStage
+		sq := q
+		if perDC {
+			if pd, sq, err = newPerDCStage(def, q); err != nil {
+				return err
+			}
+			pd.cap = s.perDCCap()
+		}
+		err = s.store(ctx, jt, tid, r, attempt, def, sq, cols, colIDs, fp0, fr, now, rowCap, pd)
 		if errors.Is(err, errScopeMoved) && try < 2 {
 			continue
 		}
 		if errors.Is(err, errScopeMoved) {
 			return &runFailure{reason: FailInternal}
 		}
-		return err
+		if err != nil || pd == nil {
+			return err
+		}
+		return s.readDCs(ctx, jt, r, attempt, def, q, cols, colIDs, pd, fr)
 	}
 }
 
@@ -224,8 +236,10 @@ func (s *Service) covered(scope authz.ReadScope, narrowed []authz.ObjectID) []au
 }
 
 // store is T2: one transaction holds the snapshot, the rows and the final state.
+//
+// A per-DC run (pd set) stops after the candidates are stored and leaves the run running: reports.md §6.5 stage 1.
 func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r Run, attempt int, def Definition, q report.Query,
-	cols []report.Column, colIDs []string, fp0 [32]byte, fr FreshnessRecord, now time.Time, rowCap int) error {
+	cols []report.Column, colIDs []string, fp0 [32]byte, fr FreshnessRecord, now time.Time, rowCap int, pd *perDCStage) error {
 	return jt.Run(ctx, func(ctx context.Context, t store.Tx) error {
 		// 2.1 the scope, now
 		scope, err := s.scopeOf(ctx, t, tid, r.Chain)
@@ -274,7 +288,12 @@ func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r 
 					hiddenN++
 					continue
 				}
-				cj, err := jsonv2.Marshal(row.Cells)
+				if pd != nil {
+					if err := pd.candidate(row, len(cols)); err != nil {
+						return err
+					}
+				}
+				cj, err := jsonv2.Marshal(row.Cells[:len(cols)])
 				if err != nil {
 					return err
 				}
@@ -291,7 +310,7 @@ func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r 
 				keys, ords, cells, sorts = append(keys, row.Key), append(ords, ordinal), append(cells, string(cj)), append(sorts, string(sj))
 				ordinal++
 				stored++
-				dig.Row(typed(row.Cells))
+				dig.Row(typed(row.Cells[:len(cols)]))
 			}
 			return flush(ctx)
 		})
@@ -314,13 +333,18 @@ func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r 
 			}
 			return &runFailure{reason: FailRowCapExceeded, detail: map[string]int64{"cap": int64(rowCap), "rows": total}}
 		}
-		// 2.7 finish in the same transaction
-		hj, _ := jsonv2.Marshal(hidden)
-		fj, _ := jsonv2.Marshal(fr)
 		sa := ScopeApplied{Summary: scope.Summary(), Reasons: cq.ScopeReasons()}
 		if stored == 0 {
 			sa.EmptyReason = emptyReason(cq.ScopeReasons())
 		}
+		if pd != nil {
+			// A per-DC run commits its candidates here and reads the DCs next (§6.5).
+			pd.hidden, pd.hiddenN, pd.stored, pd.sa, pd.fp, pd.scope = hidden, hiddenN, stored, sa, fp, scope
+			return nil
+		}
+		// 2.7 finish in the same transaction
+		hj, _ := jsonv2.Marshal(hidden)
+		fj, _ := jsonv2.Marshal(fr)
 		saj, _ := jsonv2.Marshal(sa)
 		asOf := now
 		if fr.AsOf != nil {
@@ -334,18 +358,23 @@ func (s *Service) store(ctx context.Context, jt jobs.TenantTx, tid tenant.ID, r 
 		if tag.RowsAffected() != 1 {
 			return errStopped
 		}
-		return s.Audit.Append(ctx, t, audit.Event{ID: "run:" + r.ID.String() + ":completed", Kind: KindCompleted, At: now, Actor: r.Chain,
-			Target: authority.TargetRef{GUID: r.ID.String(), Class: "report_run"}, Component: Component, Outcome: audit.Success,
-			Details: sortDetails([]chain.Detail{
-				{Key: "definition", Value: r.DefinitionID + "@" + strconv.Itoa(r.DefinitionVer)},
-				{Key: "digest", Value: hexOf(sum[:])},
-				{Key: "preset", Value: r.Preset},
-				{Key: "query_hash", Value: hexOf(r.QueryHash[:])},
-				{Key: "row_count", Value: strconv.FormatInt(stored, 10)},
-				{Key: "run_id", Value: r.ID.String()},
-				{Key: "scope_fingerprint", Value: hexOf(fp[:])},
-			})})
+		return s.appendCompleted(ctx, t, r, now, sum, stored, fp)
 	})
+}
+
+// appendCompleted is the completed event of a run (reports.md §10); extra details are per-DC coverage.
+func (s *Service) appendCompleted(ctx context.Context, t store.Tx, r Run, now time.Time, sum [32]byte, rows int64, fp [32]byte, extra ...chain.Detail) error {
+	return s.Audit.Append(ctx, t, audit.Event{ID: "run:" + r.ID.String() + ":completed", Kind: KindCompleted, At: now, Actor: r.Chain,
+		Target: authority.TargetRef{GUID: r.ID.String(), Class: "report_run"}, Component: Component, Outcome: audit.Success,
+		Details: sortDetails(append([]chain.Detail{
+			{Key: "definition", Value: r.DefinitionID + "@" + strconv.Itoa(r.DefinitionVer)},
+			{Key: "digest", Value: hexOf(sum[:])},
+			{Key: "preset", Value: r.Preset},
+			{Key: "query_hash", Value: hexOf(r.QueryHash[:])},
+			{Key: "row_count", Value: strconv.FormatInt(rows, 10)},
+			{Key: "run_id", Value: r.ID.String()},
+			{Key: "scope_fingerprint", Value: hexOf(fp[:])},
+		}, extra...))})
 }
 
 func firstHidden(h []bool) int {

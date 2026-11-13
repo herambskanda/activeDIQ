@@ -681,13 +681,25 @@ func TestFullCycleSkipsMalformedEntries(t *testing.T) {
 		if n := e.count(t, `SELECT count(*) FROM public.directory_objects WHERE connection_id = $1::uuid`, string(e.conn)); n != 497 {
 			t.Fatalf("rows = %d, want 497", n)
 		}
+		// T-1250: the refused objects are named by GUID and reason, not only counted.
+		if len(dr.RefusedEntries) != 3 || dr.RefusedOmitted != 0 {
+			t.Fatalf("refused entries = %+v", dr.RefusedEntries)
+		}
+		seen := map[inventory.GUID]bool{}
+		for _, re := range dr.RefusedEntries {
+			if re.Object == "" || seen[re.Object] || re.Attr != "userAccountControl" || re.Code != dsync.CodeType {
+				t.Fatalf("refused entry = %+v", re)
+			}
+			seen[re.Object] = true
+		}
 		out := r.logs.String()
 		for _, leak := range []string{"BADUSER-SECRET", "not-a-number", "user0", "DC=d"} {
 			if strings.Contains(out, leak) {
 				t.Fatalf("the log carries a directory value %q:\n%s", leak, out)
 			}
 		}
-		if !strings.Contains(out, `"refused":3`) || !strings.Contains(out, "refused.userAccountControl.type") {
+		if !strings.Contains(out, "refused_object.2") || !strings.Contains(out, "userAccountControl.type") ||
+			!strings.Contains(out, `"refused":3`) || !strings.Contains(out, "refused.userAccountControl.type") {
 			t.Fatalf("the log does not carry the refusal counts:\n%s", out)
 		}
 	})

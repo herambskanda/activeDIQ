@@ -48,6 +48,7 @@ No API operation yet: the HTTP operation, its OpenAPI schema and the `policy.yam
 | `mail` | `Sender.Send` over `egress`: STARTTLS required (no downgrade), implicit TLS, plaintext only with opt-in, one recipient per SMTP transaction, typed `*mail.Error` |
 | `mailtest` | in-process SMTP catcher for tests (plain, STARTTLS, implicit TLS, stripped STARTTLS, rejections, down) |
 | `delivery` | DM-84: `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue` (lease claim; each Delivery re-reads the settings and renews its lease just before its send and is skipped if another worker took it; `Lease` must exceed the sender timeout by `LeaseSlack`; per-recipient outcome, backoff 1m/5m/30m/2h, `given_up` with a reason), audit `notify.delivery.queued|sent|given_up` |
+| `dispatchjob` | T-1004: job kind `notify.dispatch` (ModeManagedTx, 4 min timeout, below the 5 min lease so a stalled run is cancelled before a Delivery is re-claimed). Runs `Dispatcher.DispatchDue` per tenant, 50 per batch, at most 10 batches per run, self-rescheduling every 30 s (interval-bucket unique key, like `authn/throttlejob`). The caller supplies the `Dispatcher` with its `Renderers` per purpose and `Accounts`; a purpose without a Renderer is given up `no_renderer`. **Not yet registered by `compose/server`** (needs the SMTP egress policy and B11's renderers) |
 
 ## Dependencies
 
