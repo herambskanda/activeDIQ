@@ -229,11 +229,15 @@ func searchKeys(s keySource) []searchKeyRow {
 		ident(searchkey.KindSAM, strings.TrimSuffix(s.sam, "$"))
 	}
 	ident(searchkey.KindUPN, s.upn)
-	ident(searchkey.KindMail, s.mail)
-	for _, v := range s.proxyAddresses {
-		ident(searchkey.KindMail, smtpAddress(v))
+	// Mail attributes belong to people, groups and contacts; a computer has none, so a "mail" on one is
+	// not trusted as an identifier.
+	if !isComputer {
+		ident(searchkey.KindMail, s.mail)
+		for _, v := range s.proxyAddresses {
+			ident(searchkey.KindMail, smtpAddress(v))
+		}
+		ident(searchkey.KindMailNickname, s.mailNickname)
 	}
-	ident(searchkey.KindMailNickname, s.mailNickname)
 	ident(searchkey.KindEmployeeID, s.employeeID)
 	ident(searchkey.KindEmployeeID, s.employeeNumber)
 	for _, v := range s.sidHistory {
