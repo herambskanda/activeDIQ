@@ -254,3 +254,15 @@ WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND item_no = $3 AND step
 	}
 	return tag.RowsAffected() == 1, nil
 }
+
+// setStepsUndone is the verified -> undone edge for every step of an operation an undo reverted.
+func setStepsUndone(ctx context.Context, tx store.Tx, t tenant.ID, op string) error {
+	if err := Transition(KindStep, string(StepVerified), string(StepUndone)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE public.operation_steps SET state = 'undone', updated_at = now()
+WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND state = 'verified'`, t.String(), op); err != nil {
+		return fmt.Errorf("operation: undone steps: %w", err)
+	}
+	return nil
+}

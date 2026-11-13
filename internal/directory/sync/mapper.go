@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
@@ -339,7 +340,7 @@ func (m *Mapper) place(o *inventory.Observation, e *connectorv1.DirectoryEntry, 
 	}
 	o.DN = parsed.String()
 	o.RDN = rdnOf(parsed)
-	if len(o.RDN) > maxRDN {
+	if utf8.RuneCountInString(o.RDN) > maxRDN {
 		return refuse("dn", CodeTooLong)
 	}
 
@@ -526,7 +527,8 @@ func (m *Mapper) group(out *Mapped, set attrSet) error {
 func (m *Mapper) bag(o *inventory.Observation, set attrSet) error {
 	bag := map[string]any{}
 	for _, name := range []string{"mail", "company", "dNSHostName", "operatingSystem", "operatingSystemVersion"} {
-		if s, present, err := text(set, name, 1024); err != nil {
+		// dNSHostName's rangeUpper is 2048 (a computer's creator writes it); the others are at most 256.
+		if s, present, err := text(set, name, maxDNSHostName); err != nil {
 			return err
 		} else if present && s != "" {
 			bag[name] = s

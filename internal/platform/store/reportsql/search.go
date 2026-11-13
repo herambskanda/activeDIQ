@@ -20,25 +20,34 @@ import (
 // parameter, an identifier was checked against the schema and quoted once at registration, and the key
 // kinds, classes and groups are integer or string constants of this file.
 
-// SearchSource names the key table and the directory_objects anchor. inventory registers it once, as it
+// SearchSource names the key table, its trigram posting table and the directory_objects anchor. inventory registers it once, as it
 // registers datasets.
 type SearchSource struct {
-	keys    string
-	objects *anchor
+	keys, trigrams string
+	objects        *anchor
 	// quoted object columns the result reads
 	kind, state, enabled, display string
 }
 
 // NewSearchSource checks every identifier against the schema and quotes it once.
-func NewSearchSource(sch Schema, keyTable report.Ident, objects report.Anchor, kind, state, enabled, display report.Ident) (SearchSource, error) {
+func NewSearchSource(sch Schema, keyTable, trigramTable report.Ident, objects report.Anchor, kind, state, enabled, display report.Ident) (SearchSource, error) {
 	var s SearchSource
 	for _, c := range []struct {
 		col  string
 		want ColKind
-	}{{"tenant_id", KindGUID}, {"connection_id", KindGUID}, {"object_guid", KindGUID}, {"key_kind", KindInt}, {"key", KindText}, {"norm_version", KindInt}} {
+	}{{"tenant_id", KindGUID}, {"connection_id", KindGUID}, {"object_guid", KindGUID}, {"key_kind", KindInt}, {"key", KindText}, {"norm_version", KindInt}, {"key_id", KindInt}} {
 		k, ok := sch.Column(string(keyTable), c.col)
 		if !ok || k != c.want {
 			return s, fmt.Errorf("reportsql: search key table %q: column %q missing or not %s", keyTable, c.col, c.want)
+		}
+	}
+	for _, c := range []struct {
+		col  string
+		want ColKind
+	}{{"tenant_id", KindGUID}, {"trgm", KindText}, {"key_id", KindInt}} {
+		k, ok := sch.Column(string(trigramTable), c.col)
+		if !ok || k != c.want {
+			return s, fmt.Errorf("reportsql: search trigram table %q: column %q missing or not %s", trigramTable, c.col, c.want)
 		}
 	}
 	a, err := buildAnchor(sch, objects)
@@ -54,7 +63,7 @@ func NewSearchSource(sch Schema, keyTable report.Ident, objects report.Anchor, k
 		}
 		*c.dst = quote(c.col)
 	}
-	s.keys, s.objects = quote(keyTable), a
+	s.keys, s.trigrams, s.objects = quote(keyTable), quote(trigramTable), a
 	return s, nil
 }
 
@@ -139,7 +148,8 @@ type SearchQuery struct {
 // no entry (or an empty scope) is not searched at all.
 type SearchScopes map[authz.Permission]authz.ReadScope
 
-// fuzzyKinds is the partial trigram index's predicate; migration 0069 repeats it.
+// fuzzyKindList is the call's kinds that have trigram postings (searchkey.Kind.FuzzyEligible). Migration
+// 0073's trigger function builds postings for the same list.
 func fuzzyKindList(kinds []searchkey.Kind) string {
 	var parts []string
 	for _, k := range kinds {
@@ -150,7 +160,7 @@ func fuzzyKindList(kinds []searchkey.Kind) string {
 	return strings.Join(parts, ", ")
 }
 
-// FuzzyKindPredicate is the literal list the migration's partial index must carry.
+// FuzzyKindPredicate is the literal list the migration's trigger function must carry.
 func FuzzyKindPredicate() string { return fuzzyKindList(searchkey.AllKinds) }
 
 const tenantExpr = `NULLIF(current_setting('app.tenant_id', true), '')::uuid`
@@ -250,9 +260,21 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 			}
 		}
 		if list := fuzzyKindList(ks); list != "" {
-			// The list is a subset of the index predicate, so the planner can prove the partial index.
-			fuzzy = append(fuzzy, "(SELECT "+keyCols+" FROM public."+src.keys+" k WHERE k.tenant_id = "+tenantExpr+" AND k.key_kind IN ("+list+
-				") AND "+b.bind("text", q.Fuzzy)+" <% k.key LIMIT "+w1()+")")
+			// ADR-0011 rule 5a. Candidates: the key_ids holding at least the share t of the query's n
+			// trigrams, from the tenant-led posting B-tree. The share is pg_trgm's own GIN consistency rule
+			// for <%, a float4 division compared with the double threshold, so the set is a superset of the
+			// matches (never a ceil(t*n) in double, which is tighter at some thresholds). Recheck: one
+			// correlated lookup of the key per candidate, by (tenant_id, key_id), then <% as an ordinary
+			// filter over rows the policy admitted. A plain join could become a hash join over a Seq Scan
+			// of the key table; the LATERAL loop cannot.
+			qt := b.bind("text", q.Fuzzy)
+			thr := b.bind("float8", store.TrigramThresholdValue(float64(q.Threshold)))
+			cands := "SELECT p.key_id FROM public." + src.trigrams + " p WHERE p.tenant_id = " + tenantExpr +
+				" AND p.trgm = ANY (public.show_trgm(" + qt + ")) GROUP BY p.key_id" +
+				" HAVING count(*)::real / NULLIF(cardinality(public.show_trgm(" + qt + ")), 0)::real >= " + thr
+			fuzzy = append(fuzzy, "(SELECT r.connection_id, r.object_guid, r.key_kind, r.key FROM ("+cands+") c CROSS JOIN LATERAL (SELECT "+keyCols+
+				" FROM public."+src.keys+" k WHERE k.tenant_id = "+tenantExpr+" AND k.key_id = c.key_id AND k.key_kind IN ("+list+
+				") AND "+qt+" <% k.key LIMIT 1) r LIMIT "+w1()+")")
 		}
 	}
 	if q.Fuzzy == "" {

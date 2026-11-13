@@ -153,8 +153,12 @@ export function selectCandidates(state, now, config) {
     .sort((a, b) => Number(Boolean(b.handoff?.pending)) - Number(Boolean(a.handoff?.pending)) || byPriority(a, b))
     .forEach((t) => ordered.push({ kind: t.handoff?.pending ? 'continuation' : 'resume', ...inflight(t) }));
 
+  // dispatcher.only_milestone (CEO scope lock): only that milestone's ready tickets are launched. Work already
+  // in flight (review, qa, in_progress) finishes either way, and meta tickets (triage, grooming) are unaffected.
+  const only = config.dispatcher.only_milestone ?? null;
   const pool = state.tickets
     .filter((t) => t.status === 'ready' && idle(t))
+    .filter((t) => only === null || t.milestone === only)
     .filter((t) => {
       const b = claimBlockers(t, tickets, decisions, unmerged);
       return b.deps.length === 0 && b.unmerged.length === 0 && b.decisions.length === 0;
