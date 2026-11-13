@@ -40,6 +40,7 @@ type Service struct {
 	sink   audit.Sink
 	now    func() time.Time
 	sched  Scheduler
+	onAct  ActivationHook
 }
 
 // NewService binds the registry, the connector client and the audit sink. All three are required: a
@@ -84,6 +85,9 @@ func (s *Service) Activate(ctx context.Context, tid tenant.ID, id ID, actor auth
 			}
 		}
 		if err := s.sink.Append(ctx, tx, s.activatedEvent(actor, c, fast.Verification.ID, audit.Success, "")); err != nil {
+			return err
+		}
+		if err := s.activated(ctx, tx, tid, c); err != nil {
 			return err
 		}
 		return s.schedule(ctx, tx, tid)
@@ -427,6 +431,9 @@ func (s *Service) record(ctx context.Context, tx store.Tx, tid tenant.ID, conn C
 			if err := s.sink.Append(ctx, tx, s.activatedEvent(actor, c, v.ID, audit.Success, "")); err != nil {
 				return err
 			}
+			if err := s.activated(ctx, tx, tid, c); err != nil {
+				return err
+			}
 			return s.schedule(ctx, tx, tid)
 		case errors.As(aerr, &ae):
 			// The run is kept; the connection goes back to draft (DM-10.I10) and the refusal is audited.
@@ -448,6 +455,14 @@ func (s *Service) record(ctx context.Context, tx store.Tx, tid tenant.ID, conn C
 		out.Connection = c
 	}
 	return nil
+}
+
+// activated tells the activation hook, in the activation's transaction, that c became active.
+func (s *Service) activated(ctx context.Context, tx store.Tx, tid tenant.ID, c Connection) error {
+	if s.onAct == nil {
+		return nil
+	}
+	return s.onAct.ConnectionActivated(ctx, tx, tid, c)
 }
 
 // schedule starts the tenant's scheduled check with the activation, in its transaction.

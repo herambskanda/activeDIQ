@@ -136,3 +136,12 @@ type Option func(*Service)
 
 // WithScheduler makes activation start the tenant's scheduled check, in the activation transaction.
 func WithScheduler(s Scheduler) Option { return func(sv *Service) { sv.sched = s } }
+
+// ActivationHook is told, in the activation's own transaction, that a connection became active. A failure
+// rolls the activation back, so a hook enqueues work (a job row) and does not call out.
+type ActivationHook interface {
+	ConnectionActivated(ctx context.Context, tx store.Tx, tid tenant.ID, c Connection) error
+}
+
+// WithActivationHook makes activation tell h (the first sync of the connection starts from it).
+func WithActivationHook(h ActivationHook) Option { return func(sv *Service) { sv.onAct = h } }
