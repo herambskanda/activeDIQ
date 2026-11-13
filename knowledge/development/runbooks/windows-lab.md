@@ -728,3 +728,11 @@ writes `userParameters` via ADSI `IADsTSUserEx` or a plain LDAP modify, reads ea
 user with a per-run random password (never printed) to test the ordinary-user read, and deletes it. Needs `pip install pywinrm requests-ntlm`
 and `WIN_LAB_DC_ADDR`. The fixture users stay on dc1 for ADUC comparison (spec V4); `Remove-ADOrganizationalUnit tspfix -Recursive` clears them. Findings:
 `knowledge/development/domain/userparameters-windows-findings.md`. No new tool; pywinrm/requests-ntlm are already in the licence register.
+
+## 22. Schema rangeUpper and unpaired-surrogate evidence (T-1880)
+
+`lab/windows/bin/with-dc1-lock -- make lab-test-sync-windows` (needs `WIN_LAB_DC_ADDR`, `WIN_LAB_ENV`, `WIN_LAB_CA`; pywinrm). Reads
+`rangeUpper` from dc1's schema NC, then creates a throwaway non-admin `t1880creator` and, as it, a MachineAccountQuota computer `T1880PC`
+(both deleted at the end and before the run), writes lone surrogates over raw LDAPS, ADSI and SAMR (`lab/windows/bin/t1880-surrogate-write`
+over WinRM; the password goes in `T1880_CREATOR_PW`, never argv) and runs the sync mapper on what LDAP returns. Findings and the verdict for
+T-1713: `knowledge/development/domain/sync-refusal-bounds.md`.
