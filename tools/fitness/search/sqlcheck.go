@@ -45,6 +45,9 @@ type sqlOpts struct {
 	format bool
 	// trgmSetting is true where set_config('pg_trgm.…', $n, true) may appear (the search transaction).
 	trgmSetting bool
+	// showTrgm is true for the two migration statements that may call show_trgm( outside the template: the
+	// body of inventory_search_trigrams_sync and the INSERT that backfills the postings (ADR-0011 SE2).
+	showTrgm bool
 }
 
 // checkSE2 applies the SE2 bans to one statement.
@@ -75,7 +78,7 @@ func checkSE2(stmt []tok, o sqlOpts) []finding {
 			if t.text == "set" {
 				seenSet = true
 			}
-			if next.is(tPunct, "(") && trigramFuncs[t.text] && o.scope != scopeTemplate {
+			if next.is(tPunct, "(") && trigramFuncs[t.text] && o.scope != scopeTemplate && !(t.text == "show_trgm" && o.showTrgm) {
 				add("trigram-function", t.line, t.text+"( appears outside the reportsql search template (ADR-0011 SE2)")
 			}
 			if o.scope != scopeRepo {
@@ -414,8 +417,13 @@ func checkMigration(stmts [][]tok, attached map[string]bool, extraRBAC []string)
 			}
 			break
 		}
-		if line, names := namesInside(s, keyTable); names {
-			out = append(out, finding{"SE1", "key-table-derived-object", line, d.kind + " " + d.name + " names " + keyTable + ": no migration defines a view or function over the search key table; only the reportsql search template reads it (ADR-0011 SE1)"})
+		for _, tbl := range []string{keyTable, postingTable} {
+			if line, names := namesInside(s, tbl); names {
+				if tbl == postingTable && d.kind == "function" && d.name == syncFunc {
+					continue // the one listed function; checkSearchTables judges its shape
+				}
+				out = append(out, finding{"SE1", "key-table-derived-object", line, d.kind + " " + d.name + " names " + tbl + ": no migration defines a view or function over the search key or trigram table; only the reportsql search template reads them, and " + syncFunc + " is the one listed trigger function (ADR-0011 SE1)"})
+			}
 		}
 	}
 	return out
