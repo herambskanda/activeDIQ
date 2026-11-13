@@ -6,6 +6,7 @@ import (
 
 	"context"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/apihost/apihosttest"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/module"
@@ -29,7 +30,7 @@ func contribute(tags []apihost.TagHandlers, perms ...authz.Permission) func(*mod
 }
 
 func TestAPIAndPermissionAreContributed(t *testing.T) {
-	m := &fake{id: "fake", register: contribute([]apihost.TagHandlers{moduletest.Tag("fake", "fake.thing.read", "authenticated")}, "fake.thing.read")}
+	m := &fake{id: "fake", register: contribute([]apihost.TagHandlers{apihosttest.Tag("fake", "fake.thing.read", "authenticated")}, "fake.thing.read")}
 	c, err := moduletest.Register(m)
 	if err != nil {
 		t.Fatal(err)
@@ -47,12 +48,12 @@ func TestBootRejectsBadAPIAndPermission(t *testing.T) {
 		reg  func(*module.Registrar) error
 		want error
 	}{
-		"tag is not the module ID":      {contribute([]apihost.TagHandlers{moduletest.Tag("other")}), module.ErrNamespace},
+		"tag is not the module ID":      {contribute([]apihost.TagHandlers{apihosttest.Tag("other")}), module.ErrNamespace},
 		"permission outside module":     {contribute(nil, "other.thing.read"), module.ErrNamespace},
 		"permission bare namespace":     {contribute(nil, "fake."), module.ErrNamespace},
 		"duplicate permission":          {contribute(nil, "fake.a", "fake.a"), module.ErrDuplicate},
-		"duplicate tag":                 {contribute([]apihost.TagHandlers{moduletest.Tag("fake"), moduletest.Tag("fake")}), module.ErrDuplicate},
-		"x-permission not in catalogue": {contribute([]apihost.TagHandlers{moduletest.Tag("fake", "fake.missing")}, "fake.a"), module.ErrUnknownPermission},
+		"duplicate tag":                 {contribute([]apihost.TagHandlers{apihosttest.Tag("fake"), apihosttest.Tag("fake")}), module.ErrDuplicate},
+		"x-permission not in catalogue": {contribute([]apihost.TagHandlers{apihosttest.Tag("fake", "fake.missing")}, "fake.a"), module.ErrUnknownPermission},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -65,7 +66,7 @@ func TestBootRejectsBadAPIAndPermission(t *testing.T) {
 }
 
 func TestKernelPermissionSatisfiesXPermission(t *testing.T) {
-	m := &fake{id: "fake", register: contribute([]apihost.TagHandlers{moduletest.Tag("fake", "operation.approve")})}
+	m := &fake{id: "fake", register: contribute([]apihost.TagHandlers{apihosttest.Tag("fake", "operation.approve")})}
 	if _, err := moduletest.Register(m); !errors.Is(err, module.ErrUnknownPermission) {
 		t.Fatalf("without kernel permissions: %v", err)
 	}
@@ -76,8 +77,8 @@ func TestKernelPermissionSatisfiesXPermission(t *testing.T) {
 }
 
 func TestBootRejectsSameTagFromTwoModules(t *testing.T) {
-	a := &fake{id: "fake", register: contribute([]apihost.TagHandlers{moduletest.Tag("fake")})}
-	b := &fake{id: "fake2", register: contribute([]apihost.TagHandlers{moduletest.Tag("fake")})}
+	a := &fake{id: "fake", register: contribute([]apihost.TagHandlers{apihosttest.Tag("fake")})}
+	b := &fake{id: "fake2", register: contribute([]apihost.TagHandlers{apihosttest.Tag("fake")})}
 	_, err := module.Boot(context.Background(),
 		[]module.Entry{{ID: "fake", Module: a}, {ID: "fake2", Module: b}}, capability.NewSet())
 	if !errors.Is(err, module.ErrNamespace) {
@@ -87,7 +88,7 @@ func TestBootRejectsSameTagFromTwoModules(t *testing.T) {
 
 func TestZeroRegistrarRefusesAPIAndPermission(t *testing.T) {
 	var r module.Registrar
-	if err := r.API(moduletest.Tag("fake")); !errors.Is(err, module.ErrClosed) {
+	if err := r.API(apihosttest.Tag("fake")); !errors.Is(err, module.ErrClosed) {
 		t.Fatalf("API: %v", err)
 	}
 	if err := r.Permission("fake.x"); !errors.Is(err, module.ErrClosed) {
