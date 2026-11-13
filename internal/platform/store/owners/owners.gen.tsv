@@ -10,6 +10,7 @@ audit_event	audit	system
 audit_forward_cursor	audit	system
 audit_head	audit	system
 authn_accounts	authn	config
+authn_ad_attempts	authn	system
 authn_authenticator_enrollments	authn	config
 authn_authority_approvals	authn	config
 authn_authority_challenges	authn	system
