@@ -1554,7 +1554,7 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - **Run record.** `report_runs.per_dc` (progress while running; `complete`, `dcs_in_scope`, `dcs_answered`, `unreachable[{dc,error}]`, `read_at` when
   done). `Run.ColumnLabel` appends " (at least)" to value columns of a partial run; the API `coverage` has `label` and `unreachable`; the export
   header uses the same label and the About block gains a "DC coverage" line.
-- **Migration 0072** lets `report_run_rows` rows be deleted while the run is `running` (per-DC filtering removes rows).
+- **Migration 0073** lets `report_run_rows` rows be deleted while the run is `running` (per-DC filtering removes rows).
 - **Not wired yet.** `Service.PerDC` and `Service.PerDCDCs` are nil in `compose/server`; until the follow-ups land a per-DC run fails
   `connection_unavailable`. Needed: a `DCsInScope` on `client.ConnectorPerDC` and the wiring (directory-engineer), calibration of the cap and a
   500k-candidate timing (B13), the coverage label and "(at least)" header on screen (B12).
@@ -2025,4 +2025,4 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 - 2026-11-01 · T-0964 · row B10 built: `platform/export/pdf` (+ `pdftest`), `platform/htmlx`, PDF and HTML formats with
   caps of 5,000 and 20,000 rows, per-format `HardCap`, `FormatsFor`, `exportFormats` served by the API. As built:
   §7.1b. Follow-ups: the owner's time zone on a run; an embedded font for CJK in the PDF.
-- 2026-11-04 · T-0971 · row B8 built: per-DC run stages, read cap, coverage labels, `EvalPerDC`, USR-04 and PWD-03 (§6.5 "As built"); `DCCounter` port; migration 0072.
+- 2026-11-04 · T-0971 · row B8 built: per-DC run stages, read cap, coverage labels, `EvalPerDC`, USR-04 and PWD-03 (§6.5 "As built"); `DCCounter` port; migration 0073.

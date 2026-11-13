@@ -1,4 +1,4 @@
--- 0072_reports_per_dc_row_delete: a per-DC run may delete candidate rows while it is running (T-0971; reports.md
+-- 0073_reports_per_dc_row_delete: a per-DC run may delete candidate rows while it is running (T-0971; reports.md
 -- §6.5 stage 3). Owner: internal/modules/reports (run subpackage).
 --
 -- A per-DC report (USR-04, PWD-03) stores its candidates first and reads the DCs afterwards. The part of its filter
