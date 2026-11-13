@@ -49,6 +49,7 @@ inventory_group_members	inventory	system
 inventory_pso_applies	inventory	system
 inventory_psos	inventory	system
 inventory_search_keys	inventory	system
+inventory_search_trigrams	inventory	system
 inventory_servers	invhost	config
 inventory_tier0_revisions	inventory	system
 jobs	jobs	system

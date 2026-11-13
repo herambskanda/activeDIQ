@@ -1101,8 +1101,14 @@ in memory** rather than filter through inventory.
   consistency GUID; `mail` for contacts and `dNSHostName` for computers, only when they are JSON strings):
   keys are built from named columns, never from the attribute bag, so a secret attribute cannot reach the
   index. Purged objects have no keys; deleted and out-of-scope objects keep theirs and rank after live ones.
-  Table `inventory_search_keys` (migration 0069): B-tree `(tenant_id, key_kind, key)`, partial GIN on kinds
-  1-5, RLS + FORCE.
+  Table `inventory_search_keys` (migration 0069): B-tree `(tenant_id, key_kind, key)`, RLS + FORCE; migration 0072
+  (T-1335) adds `key_id` (identity, `UNIQUE (tenant_id, key_id)`, never leaves a statement) and drops the GIN.
+  Table `inventory_search_trigrams` (migration 0073, `-- write-class: system`): `(tenant_id, trgm, key_id)`,
+  primary key in that order, RLS + FORCE, no UPDATE or TRUNCATE for the runtime role. It holds the `show_trgm`
+  postings of the name (1) and sam (3) keys only (`searchkey.Kind.FuzzyEligible`), kept equal to the keys by
+  `inventory_search_trigrams_sync()` through three statement-level triggers (AFTER INSERT, DELETE, UPDATE with
+  transition tables), so every writer of the keys is covered. The runner runs the `-- after:` line of a
+  migration (`VACUUM (ANALYZE)` of the postings) outside the migration transaction (`migrations.After`).
 - **Backfill.** `Reader.Backfill(ctx, tenant, progress)` walks `directory_objects` in `(connection, object)`
   pages of 500 and never reads the key table; it rewrites rows of an older `norm_version`, and a second run
   changes nothing. Entra objects are indexed but admitted by no 2a scope kind (T-1131), so they are
@@ -1111,13 +1117,17 @@ in memory** rather than filter through inventory.
   holds no NetBIOS or DNS name.
 - **Statement.** `reportsql.CompileSearch(src, SearchQuery, SearchScopes)` and `ExecSearch`: `m_exact`,
   `m_prefix`, `m_fuzzy` (MATERIALIZED, `LIMIT W+1`), `ceil`, `cand`, `hits` (scope by `scopeSQL` per
-  permission, `DISTINCT ON` object), `visible`, `paged`. Key kinds are integer literals so the partial
-  index predicate is provable. `inventory.Searcher.Search(ctx, tx, tenant, scopes, SearchRequest)` is the
+  permission, `DISTINCT ON` object), `visible`, `paged`. `m_fuzzy` (queries of 3 to 32 runes) reads the
+  tenant's postings for the query's trigrams, keeps the `key_id`s whose count `c` satisfies
+  `c::real / n::real >= t` (pg_trgm's own float4 rule, so nothing a `<%` would accept is lost), then rechecks each
+  candidate through `CROSS JOIN LATERAL` over `(tenant_id, key_id)` with `$q <% key`. `inventory.Searcher.Search(ctx, tx, tenant, scopes, SearchRequest)` is the
   port; counts only from three characters and never in the refine state. The fuzzy threshold is
   transaction-local, 0.3 (0.5 cannot find the 'Pryia Ramn' vector, whose word similarity is 0.333).
-- **Known limit.** Under FORCE RLS the planner cannot use the trigram GIN (pg_trgm's operators are not
-  leakproof): the fuzzy probe filters the tenant's kind 1-5 rows. `Test_search_plan_uses_the_indexes` pins
-  it; T-1180 decides the fix. The per-script vectors (Latin with diacritics, Cyrillic, Greek, CJK) all
+- **Fuzzy under row security (T-1335).** pg_trgm's operators are not leakproof, so under FORCE RLS the planner
+  never uses a trigram GIN; that is why the fuzzy probe reads a tenant-led B-tree of postings instead (ADR-0011
+  rule 5a). `Test_search_plan_uses_the_indexes` and SE5 assert the plan, and
+  `Test_search_fuzzy_reads_only_the_tenants_own_postings` proves that another tenant's size changes no row
+  examined. The hits join at the default W (10,000) is a separate plan question (T-1344). The per-script vectors (Latin with diacritics, Cyrillic, Greek, CJK) all
   match fuzzily on the bundled pg16 and pg18 images.
 
 ## 5. The compiler: `store/reportsql`
