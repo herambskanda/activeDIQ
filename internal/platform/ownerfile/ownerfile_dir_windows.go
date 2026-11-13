@@ -25,6 +25,7 @@ import (
 
 type dirImpl struct {
 	h     windows.Handle
+	p     principals
 	final string // final path of the state directory, as GetFinalPathNameByHandle returns it (\\?\C:\...)
 }
 
@@ -50,7 +51,11 @@ const (
 	aceInheritOnly = 0x08 // INHERIT_ONLY_ACE: does not apply to the object itself
 )
 
-func openDir(path string, create bool) (*dirImpl, error) {
+func openDir(path string, create bool, o dirOptions) (*dirImpl, error) {
+	pr, err := resolvePrincipals(o)
+	if err != nil {
+		return nil, err
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -66,12 +71,12 @@ func openDir(path string, create bool) (*dirImpl, error) {
 		return nil, err
 	}
 	defer windows.CloseHandle(ph)
-	if err := verifyParentHandle(ph); err != nil {
+	if err := verifyParentHandle(ph, pr); err != nil {
 		return nil, err
 	}
 	// 2. Create (only after the parent is trusted) with the protected descriptor, or open what is there.
 	if create {
-		sd, err := stateDirSD()
+		sd, err := stateDirSD(pr)
 		if err != nil {
 			return nil, err
 		}
@@ -94,7 +99,7 @@ func openDir(path string, create bool) (*dirImpl, error) {
 		return nil, err
 	}
 	bad := fmt.Errorf("%w: %s", ErrDirUnsafe, base)
-	if err := verifyHandle(h, true, bad); err != nil {
+	if err := verifyHandle(h, true, bad, pr); err != nil {
 		windows.CloseHandle(h)
 		return nil, err
 	}
@@ -110,7 +115,7 @@ func openDir(path string, create bool) (*dirImpl, error) {
 		windows.CloseHandle(h)
 		return nil, fmt.Errorf("%w: %s", ErrParentUnsafe, filepath.Base(parentPath))
 	}
-	return &dirImpl{h: h, final: final}, nil
+	return &dirImpl{h: h, p: pr, final: final}, nil
 }
 
 // finalPath returns the normalized final path of the object h refers to.
@@ -131,7 +136,7 @@ func finalPath(h windows.Handle) (string, error) {
 // verifyParentHandle accepts a real directory (not a reparse point) owned by the service identity,
 // SYSTEM or BUILTIN\Administrators whose DACL is present and gives no write, delete-child, create,
 // delete or change-permissions right to anyone else.
-func verifyParentHandle(h windows.Handle) error {
+func verifyParentHandle(h windows.Handle, pr principals) error {
 	bad := ErrParentUnsafe
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
@@ -160,15 +165,21 @@ func verifyParentHandle(h windows.Handle) error {
 	if err != nil || acl == nil { // a NULL DACL grants everyone everything
 		return bad
 	}
-	user, system, err := desiredSIDs()
-	if err != nil {
-		return err
-	}
+	// The principal set is the resolved one (T-1249): for state written for a service account that is
+	// the service SID, which the MSI's PrepareDataDir legitimately grants full control on the data
+	// directory (the parent of the enrolment directory); the invoking administrator's own SID is not
+	// needed, Administrators is trusted anyway. Everyone else with a write right still refuses.
 	admins, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
 	if err != nil {
 		return err
 	}
-	return checkParentACL(acl, []*windows.SID{user, system, admins}, bad)
+	// The caller's own token user stays trusted too (it was before): a parent the caller owns is the
+	// caller's to grant on.
+	user, _, err := desiredSIDs()
+	if err != nil {
+		return err
+	}
+	return checkParentACL(acl, []*windows.SID{user, pr.user, pr.system, admins}, bad)
 }
 
 // checkParentACL walks the DACL. Deny ACEs only narrow access and are skipped; an allow ACE of a kind
@@ -233,7 +244,7 @@ func (d *dirImpl) readFile(name string) ([]byte, error) {
 	}
 	f := os.NewFile(uintptr(h), name) // owns h from here
 	defer f.Close()
-	if err := verifyHandle(h, false, refuse(name, nil)); err != nil {
+	if err := verifyHandle(h, false, refuse(name, nil), d.p); err != nil {
 		return nil, err
 	}
 	// The object opened must be this directory's child of that name (a hard link elsewhere or a path
@@ -259,7 +270,7 @@ func (d *dirImpl) writeFile(name string, data []byte) (err error) {
 		return err
 	}
 	// createTemp gives the file an explicit protected descriptor in the CreateFile call itself.
-	f, err := createTemp(d.final, ".tmp-*")
+	f, err := createTempFor(d.final, ".tmp-*", d.p)
 	if err != nil {
 		return err
 	}

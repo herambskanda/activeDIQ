@@ -202,3 +202,9 @@ func (h Handlers) GetSession(ctx context.Context, _ api.GetSessionInput) (api.Ge
 	}
 	return api.GetSession200{Body: api.SessionInfo{Permissions: names}}, nil
 }
+
+// ReverifyStepUp is the step-up re-verification (TM-D16). Its handler is T-0437; until then it answers 501
+// so no behaviour is faked. Request.FreshStepUp comes only from StepUp.Fresh, never from the request.
+func (Handlers) ReverifyStepUp(context.Context, api.ReverifyStepUpInput) (api.ReverifyStepUpOutput, error) {
+	return nil, apitypes.NotImplemented("")
+}

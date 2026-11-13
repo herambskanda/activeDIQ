@@ -56,7 +56,7 @@ class Scope(DriverBase):
             self.assertIn("not a member of pool adiq-lab", r.stderr)
             self.assertEqual(self.touched(args[1]), [], f"{args} addressed the VM before the pool check")
             # the only call allowed is the pool-membership read itself
-            self.assertEqual({q["path"] for q in self.api.requests[n:]}, {"/api2/json/cluster/resources"})
+            self.assertEqual({q["path"] for q in self.api.requests[n:]}, {"/api2/json/pools"})
 
     def test_malformed_vmids_are_refused_without_any_request(self):
         self.start()
@@ -147,11 +147,12 @@ class Privileges(DriverBase):
             else: self.assertEqual(r.returncode, 2); self.assertIn("not a member of pool", r.stderr)
 
     def test_the_driver_never_needs_a_pool_privilege(self):
-        """GET /pools[/id] needs Pool.Audit, which the lab role must not hold; the driver must not call it."""
+        """GET /pools/{id} needs Pool.Audit, which the lab role must not hold; the driver must not call it
+        (GET /pools?poolid=... is the membership read and needs only VM.Audit on the members)."""
         self.start()
         for args in (("list",), ("start", "119"), ("verify-scope",), ("create", "--name", "n", "--vmid", "310")):
             self.run_drv(*args)
-        self.assertEqual([q["path"] for q in self.api.requests if "/pools" in q["path"]], [])
+        self.assertEqual([q["path"] for q in self.api.requests if "/pools/" in q["path"]], [])
         self.assertFalse([p for p in P.WORKER_PRIVS if p.startswith("Pool.")])
         r = self.run_drv("verify-scope"); self.assertEqual(r.returncode, 0, r.stderr)
 

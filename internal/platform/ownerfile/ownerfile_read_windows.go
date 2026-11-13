@@ -22,15 +22,8 @@ import (
 // stateDirSD is the descriptor for the state directory: owner = service identity, PROTECTED DACL,
 // FILE_ALL_ACCESS for the service identity and SYSTEM, inherited by files and subdirectories so a
 // file created inside starts restricted. Built with the typed ACL API, never an SDDL string.
-func stateDirSD() (*windows.SECURITY_DESCRIPTOR, error) {
-	user, system, err := desiredSIDs()
-	if err != nil {
-		return nil, err
-	}
-	sids := []*windows.SID{user}
-	if !user.Equals(system) {
-		sids = append(sids, system)
-	}
+func stateDirSD(p principals) (*windows.SECURITY_DESCRIPTOR, error) {
+	sids := p.sids()
 	var entries []windows.EXPLICIT_ACCESS
 	for _, s := range sids {
 		entries = append(entries, windows.EXPLICIT_ACCESS{
@@ -52,7 +45,7 @@ func stateDirSD() (*windows.SECURITY_DESCRIPTOR, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := sd.SetOwner(user, false); err != nil {
+	if err := sd.SetOwner(p.owner(), false); err != nil {
 		return nil, err
 	}
 	if err := sd.SetDACL(acl, true, false); err != nil {
@@ -65,7 +58,11 @@ func stateDirSD() (*windows.SECURITY_DESCRIPTOR, error) {
 }
 
 func ensureDir(path string) error {
-	sd, err := stateDirSD()
+	pr, err := defaultPrincipals()
+	if err != nil {
+		return err
+	}
+	sd, err := stateDirSD(pr)
 	if err != nil {
 		return err
 	}
@@ -87,7 +84,11 @@ func checkDir(path string) error {
 		return err
 	}
 	defer windows.CloseHandle(h)
-	return verifyHandle(h, true, bad)
+	p, err := defaultPrincipals()
+	if err != nil {
+		return err
+	}
+	return verifyHandle(h, true, bad, p)
 }
 
 func readFile(path string) ([]byte, error) {
@@ -97,7 +98,11 @@ func readFile(path string) ([]byte, error) {
 	}
 	f := os.NewFile(uintptr(h), path) // owns h from here
 	defer f.Close()
-	if err := verifyHandle(h, false, refuse(path, nil)); err != nil {
+	p, err := defaultPrincipals()
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyHandle(h, false, refuse(path, nil), p); err != nil {
 		return nil, err
 	}
 	b, err := io.ReadAll(io.LimitReader(f, MaxReadSize+1))
@@ -139,7 +144,7 @@ func openNoFollowShare(path string, access uint32, dir bool, share uint32) (wind
 // verifyHandle checks an open handle: not a reparse point, the expected kind, and owner and DACL.
 // bad is returned for every refusal. A file's owner may be the token user, SYSTEM or
 // BUILTIN\Administrators (trustedOwner, as OpenAppend); the directory's owner must be the token user.
-func verifyHandle(h windows.Handle, dir bool, bad error) error {
+func verifyHandle(h windows.Handle, dir bool, bad error, p principals) error {
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
 		return err
@@ -156,26 +161,22 @@ func verifyHandle(h windows.Handle, dir bool, bad error) error {
 	if err != nil {
 		return err
 	}
-	return verifySD(sd, dir, bad)
+	return verifySD(sd, dir, bad, p)
 }
 
 // verifySD accepts only a PROTECTED DACL of allow ACEs for the service identity and SYSTEM, with an
 // acceptable owner. A NULL DACL (everyone), a deny, object or callback ACE, or any other SID is bad.
-func verifySD(sd *windows.SECURITY_DESCRIPTOR, dir bool, bad error) error {
-	user, system, err := desiredSIDs()
-	if err != nil {
-		return err
-	}
+func verifySD(sd *windows.SECURITY_DESCRIPTOR, dir bool, bad error, p principals) error {
 	owner, _, err := sd.Owner()
 	if err != nil {
 		return err
 	}
 	if dir {
-		if owner == nil || !owner.Equals(user) {
+		if owner == nil || !(owner.Equals(p.user) || (p.admins != nil && owner.Equals(p.admins))) {
 			return bad
 		}
 	} else {
-		ok, err := trustedOwner(owner)
+		ok, err := p.trustedOwner(owner)
 		if err != nil {
 			return err
 		}
@@ -205,7 +206,7 @@ func verifySD(sd *windows.SECURITY_DESCRIPTOR, dir bool, bad error) error {
 			return bad
 		}
 		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-		if !sid.Equals(user) && !sid.Equals(system) {
+		if !p.has(sid) {
 			return bad
 		}
 	}

@@ -231,7 +231,7 @@ func (v *AssignmentRevoke) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 	}
 }
 
-// AssignmentRoot: One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope.
+// AssignmentRoot: One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope; ou_one_level is an include only and its guid is an OU, never the connection.
 type AssignmentRoot struct {
 	ConnectionID apitypes.UUID      `json:"connectionId"`
 	Exclude      *bool              `json:"exclude,omitzero"`
@@ -354,6 +354,7 @@ type AssignmentRootKind string
 const (
 	AssignmentRootKindNamingContext AssignmentRootKind = "naming_context"
 	AssignmentRootKindOUSubtree     AssignmentRootKind = "ou_subtree"
+	AssignmentRootKindOUOneLevel    AssignmentRootKind = "ou_one_level"
 	AssignmentRootKindEntraTenant   AssignmentRootKind = "entra_tenant"
 	AssignmentRootKindTier0Scope    AssignmentRootKind = "tier0_scope"
 	AssignmentRootKindTenant        AssignmentRootKind = "tenant"
@@ -363,7 +364,7 @@ const (
 // (the enum is open), so no generated code rejects an unknown value.
 func (v AssignmentRootKind) Valid() bool {
 	switch v {
-	case AssignmentRootKindNamingContext, AssignmentRootKindOUSubtree, AssignmentRootKindEntraTenant, AssignmentRootKindTier0Scope, AssignmentRootKindTenant:
+	case AssignmentRootKindNamingContext, AssignmentRootKindOUSubtree, AssignmentRootKindOUOneLevel, AssignmentRootKindEntraTenant, AssignmentRootKindTier0Scope, AssignmentRootKindTenant:
 		return true
 	}
 	return false
