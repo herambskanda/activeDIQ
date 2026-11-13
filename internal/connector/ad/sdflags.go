@@ -77,6 +77,14 @@ func (f SDFlags) control() ldap.Control {
 // berPacket aliases the BER packet type so control files share one import.
 type berPacket = ber.Packet
 
+// encodeCriticalValuelessControl is encodeValuelessControl with the criticality flag set: a DC that
+// does not support the control fails the request instead of silently ignoring it.
+func encodeCriticalValuelessControl(oid string) *ber.Packet {
+	p := encodeValuelessControl(oid)
+	p.AppendChild(ber.NewBoolean(ber.ClassUniversal, ber.TypePrimitive, ber.TagBoolean, true, "Criticality"))
+	return p
+}
+
 func encodeValuelessControl(oid string) *ber.Packet {
 	p := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "Control")
 	p.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, oid, "Control Type"))

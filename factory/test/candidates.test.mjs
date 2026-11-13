@@ -9,7 +9,7 @@ import path from 'node:path';
 // The real config, with the dispatcher tuning these tests are written against pinned, so raising
 // slots or the grooming floor in production does not break the selection-mechanism tests.
 const config = JSON.parse(fs.readFileSync(path.join(REAL_FACTORY, 'config.json'), 'utf8'));
-Object.assign(config.dispatcher, { max_parallel: 2, grooming_min_ready: 3 });
+Object.assign(config.dispatcher, { max_parallel: 2, grooming_min_ready: 3, only_milestone: null });
 const NOW = new Date(2026, 9, 2, 10, 0, 0); // local 10:00: before the digest hour
 const EVENING = new Date(2026, 9, 2, 19, 0, 0);
 
@@ -258,4 +258,19 @@ test('real work is not starved by auto-created grooming and digest', () => {
   const t = [ticket({ id: 'T-0001', priority: 'P0' }), ticket({ id: 'T-0070', status: 'backlog' })];
   const wide = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 3 } };
   assert.deepEqual(ids(pick(state({ tickets: t }), EVENING, wide)), ['T-0001', 'meta:digest', 'meta:grooming']);
+});
+
+test('only_milestone launches just that milestone\'s ready tickets but still resumes work in flight', () => {
+  const t = [
+    ticket({ id: 'T-0020', milestone: 'M2b', priority: 'P0' }),
+    ticket({ id: 'T-0021', milestone: 'M2a', priority: 'P2' }),
+    ticket({ id: 'T-0022', milestone: 'M2b', status: 'in_progress', priority: 'P2' }),
+    ...filler(),
+  ];
+  const locked = { ...config, dispatcher: { ...config.dispatcher, only_milestone: 'M2a', max_parallel: 5 } };
+  const got = ids(pick(state({ tickets: t }), NOW, locked));
+  assert.ok(got.includes('T-0021') && got.includes('T-0022'));
+  assert.ok(!got.includes('T-0020'), 'an M2b ready ticket is not launched');
+  const open = ids(pick(state({ tickets: t }), NOW, { ...locked, dispatcher: { ...locked.dispatcher, only_milestone: null } }));
+  assert.ok(open.includes('T-0020'));
 });

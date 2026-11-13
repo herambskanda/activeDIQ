@@ -1,0 +1,11 @@
+=== RUN   Test_search_fuzzy_reads_only_the_tenants_own_postings
+=== RUN   Test_search_fuzzy_reads_only_the_tenants_own_postings/pg16
+    search_trigrams_isolation_test.go:199: A holds 50000 objects; proof queries ["aacn sertind" "dffeht htcmsaeh" "hfdheh immou" "ltcrtpad despp"]
+    search_trigrams_isolation_test.go:249: B equal to A: the posting index has 0 more level(s) than with B empty
+    search_trigrams_isolation_test.go:275: B equal to A: A's rows examined unchanged; map[directory_objects:6 inventory_search_keys:30 inventory_search_trigrams:29322]
+    search_trigrams_isolation_test.go:249: B ten times A: the posting index has 1 more level(s) than with B empty
+    search_trigrams_isolation_test.go:275: B ten times A: A's rows examined unchanged; map[directory_objects:6 inventory_search_keys:30 inventory_search_trigrams:29322]
+--- PASS: Test_search_fuzzy_reads_only_the_tenants_own_postings (1582.40s)
+    --- PASS: Test_search_fuzzy_reads_only_the_tenants_own_postings/pg16 (1582.40s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/directory/inventory	1597.359s

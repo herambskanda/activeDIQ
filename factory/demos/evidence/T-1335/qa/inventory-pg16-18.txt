@@ -1,0 +1,103 @@
+=== RUN   Test_search_work_is_bounded
+=== RUN   Test_search_work_is_bounded/pg16
+=== RUN   Test_search_work_is_bounded/pg16/H=0
+=== RUN   Test_search_work_is_bounded/pg16/H=90
+=== RUN   Test_search_work_is_bounded/pg16/H=110
+=== RUN   Test_search_work_is_bounded/pg16/H=20000
+=== RUN   Test_search_work_is_bounded/pg16/fuzzy_plan
+=== RUN   Test_search_work_is_bounded/pg16/fuzzy_longest
+    search_bounded_test.go:287: longest fuzzy query: 183ms wall, 40000 posting rows read
+=== RUN   Test_search_work_is_bounded/pg18
+=== RUN   Test_search_work_is_bounded/pg18/H=0
+=== RUN   Test_search_work_is_bounded/pg18/H=90
+=== RUN   Test_search_work_is_bounded/pg18/H=110
+=== RUN   Test_search_work_is_bounded/pg18/H=20000
+=== RUN   Test_search_work_is_bounded/pg18/fuzzy_plan
+=== RUN   Test_search_work_is_bounded/pg18/fuzzy_longest
+    search_bounded_test.go:287: longest fuzzy query: 131ms wall, 40000 posting rows read
+--- PASS: Test_search_work_is_bounded (73.90s)
+    --- PASS: Test_search_work_is_bounded/pg16 (50.12s)
+        --- PASS: Test_search_work_is_bounded/pg16/H=0 (0.76s)
+        --- PASS: Test_search_work_is_bounded/pg16/H=90 (0.92s)
+        --- PASS: Test_search_work_is_bounded/pg16/H=110 (0.87s)
+        --- PASS: Test_search_work_is_bounded/pg16/H=20000 (16.17s)
+        --- PASS: Test_search_work_is_bounded/pg16/fuzzy_plan (0.39s)
+        --- PASS: Test_search_work_is_bounded/pg16/fuzzy_longest (0.18s)
+    --- PASS: Test_search_work_is_bounded/pg18 (23.78s)
+        --- PASS: Test_search_work_is_bounded/pg18/H=0 (0.68s)
+        --- PASS: Test_search_work_is_bounded/pg18/H=90 (0.69s)
+        --- PASS: Test_search_work_is_bounded/pg18/H=110 (0.68s)
+        --- PASS: Test_search_work_is_bounded/pg18/H=20000 (6.95s)
+        --- PASS: Test_search_work_is_bounded/pg18/fuzzy_plan (0.24s)
+        --- PASS: Test_search_work_is_bounded/pg18/fuzzy_longest (0.13s)
+=== RUN   Test_search_fuzzy_kind_list_matches_the_trigger
+=== RUN   Test_search_fuzzy_kind_list_matches_the_trigger/pg16
+=== RUN   Test_search_fuzzy_kind_list_matches_the_trigger/pg18
+--- PASS: Test_search_fuzzy_kind_list_matches_the_trigger (1.86s)
+    --- PASS: Test_search_fuzzy_kind_list_matches_the_trigger/pg16 (1.23s)
+    --- PASS: Test_search_fuzzy_kind_list_matches_the_trigger/pg18 (0.63s)
+=== RUN   Test_search_fuzzy_per_script
+=== RUN   Test_search_fuzzy_per_script/pg16
+    search_scripts_test.go:86: script latin            "Pryia Ramn" -> found=true class=fuzzy sim=0.333 hits=1
+    search_scripts_test.go:86: script latin_diacritics "Zoe Muler Angstrom" -> found=true class=fuzzy sim=0.857 hits=1
+    search_scripts_test.go:86: script cyrillic         "Алексндр Петров" -> found=true class=fuzzy sim=0.737 hits=1
+    search_scripts_test.go:86: script greek            "Αλεξανδρος Παπαδοπολος" -> found=true class=fuzzy sim=0.864 hits=1
+    search_scripts_test.go:86: script cjk              "田中太朗" -> found=true class=fuzzy sim=0.600 hits=1
+=== RUN   Test_search_fuzzy_per_script/pg18
+    search_scripts_test.go:86: script latin            "Pryia Ramn" -> found=true class=fuzzy sim=0.333 hits=1
+    search_scripts_test.go:86: script latin_diacritics "Zoe Muler Angstrom" -> found=true class=fuzzy sim=0.857 hits=1
+    search_scripts_test.go:86: script cyrillic         "Алексндр Петров" -> found=true class=fuzzy sim=0.737 hits=1
+    search_scripts_test.go:86: script greek            "Αλεξανδρος Παπαδοπολος" -> found=true class=fuzzy sim=0.864 hits=1
+    search_scripts_test.go:86: script cjk              "田中太朗" -> found=true class=fuzzy sim=0.600 hits=1
+--- PASS: Test_search_fuzzy_per_script (2.49s)
+    --- PASS: Test_search_fuzzy_per_script/pg16 (1.71s)
+    --- PASS: Test_search_fuzzy_per_script/pg18 (0.78s)
+=== RUN   Test_search_plan_uses_the_indexes
+=== RUN   Test_search_plan_uses_the_indexes/pg16
+=== RUN   Test_search_plan_uses_the_indexes/pg18
+--- PASS: Test_search_plan_uses_the_indexes (40.81s)
+    --- PASS: Test_search_plan_uses_the_indexes/pg16 (29.83s)
+    --- PASS: Test_search_plan_uses_the_indexes/pg18 (10.97s)
+=== RUN   Test_search_fuzzy_reads_only_the_tenants_own_postings
+=== RUN   Test_search_fuzzy_reads_only_the_tenants_own_postings/pg16
+    search_trigrams_isolation_test.go:199: A holds 2000 objects; proof queries ["adrc craiss" "dltm hmnuadm" "hirfs tfosefins" "lucthoe uerocci"]
+    search_trigrams_isolation_test.go:249: B equal to A: the posting index has 0 more level(s) than with B empty
+    search_trigrams_isolation_test.go:275: B equal to A: A's rows examined unchanged; map[directory_objects:2 inventory_search_keys:2 inventory_search_trigrams:1132]
+    search_trigrams_isolation_test.go:249: B ten times A: the posting index has 0 more level(s) than with B empty
+    search_trigrams_isolation_test.go:275: B ten times A: A's rows examined unchanged; map[directory_objects:2 inventory_search_keys:2 inventory_search_trigrams:1132]
+=== RUN   Test_search_fuzzy_reads_only_the_tenants_own_postings/pg18
+    search_trigrams_isolation_test.go:199: A holds 2000 objects; proof queries ["adrc craiss" "dltm hmnuadm" "hirfs tfosefins" "lucthoe uerocci"]
+    search_trigrams_isolation_test.go:249: B equal to A: the posting index has 0 more level(s) than with B empty
+    search_trigrams_isolation_test.go:275: B equal to A: A's rows examined unchanged; map[directory_objects:2 inventory_search_keys:2 inventory_search_trigrams:1132]
+    search_trigrams_isolation_test.go:249: B ten times A: the posting index has 0 more level(s) than with B empty
+    search_trigrams_isolation_test.go:275: B ten times A: A's rows examined unchanged; map[directory_objects:2 inventory_search_keys:2 inventory_search_trigrams:1132]
+--- PASS: Test_search_fuzzy_reads_only_the_tenants_own_postings (77.39s)
+    --- PASS: Test_search_fuzzy_reads_only_the_tenants_own_postings/pg16 (52.95s)
+    --- PASS: Test_search_fuzzy_reads_only_the_tenants_own_postings/pg18 (24.44s)
+=== RUN   Test_migration_0070_builds_the_postings_over_a_populated_database
+=== RUN   Test_migration_0070_builds_the_postings_over_a_populated_database/pg16
+    search_trigrams_migration_test.go:162: 69 postings over two tenants
+=== RUN   Test_migration_0070_builds_the_postings_over_a_populated_database/pg18
+    search_trigrams_migration_test.go:162: 69 postings over two tenants
+--- PASS: Test_migration_0070_builds_the_postings_over_a_populated_database (2.79s)
+    --- PASS: Test_migration_0070_builds_the_postings_over_a_populated_database/pg16 (1.85s)
+    --- PASS: Test_migration_0070_builds_the_postings_over_a_populated_database/pg18 (0.94s)
+=== RUN   Test_search_trigrams_follow_every_writer
+=== RUN   Test_search_trigrams_follow_every_writer/pg16
+=== RUN   Test_search_trigrams_follow_every_writer/pg18
+--- PASS: Test_search_trigrams_follow_every_writer (3.10s)
+    --- PASS: Test_search_trigrams_follow_every_writer/pg16 (1.98s)
+    --- PASS: Test_search_trigrams_follow_every_writer/pg18 (1.12s)
+=== RUN   Test_search_fuzzy_candidates_lose_nothing
+=== RUN   Test_search_fuzzy_candidates_lose_nothing/pg16
+    search_trigrams_test.go:432: 119 queries compared with the index-free oracle, 77 of them with matches
+    search_trigrams_test.go:451: largest n of the 32-rune shapes tried: 33 (the ADR bound is 48)
+=== RUN   Test_search_fuzzy_candidates_lose_nothing/pg18
+    search_trigrams_test.go:432: 119 queries compared with the index-free oracle, 77 of them with matches
+    search_trigrams_test.go:451: largest n of the 32-rune shapes tried: 33 (the ADR bound is 48)
+--- PASS: Test_search_fuzzy_candidates_lose_nothing (46.05s)
+    --- PASS: Test_search_fuzzy_candidates_lose_nothing/pg16 (27.87s)
+    --- PASS: Test_search_fuzzy_candidates_lose_nothing/pg18 (18.18s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/directory/inventory	251.710s
+exit=0

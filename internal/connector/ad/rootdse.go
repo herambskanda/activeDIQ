@@ -3,6 +3,7 @@ package ad
 import (
 	"context"
 	"strconv"
+	"strings"
 
 	"github.com/go-ldap/ldap/v3"
 )
@@ -25,6 +26,9 @@ type RootDSE struct {
 	HighestCommittedUSN           int64
 	IsSynchronized                bool
 	IsGlobalCatalogReady          bool
+	// VendorName is set by Samba ("Samba Team (https://www.samba.org)") and not by Windows [UNVERIFIED:
+	// confirm on the Windows lab]; it only labels a capability, nothing is gated on it.
+	VendorName string
 }
 
 // SupportsControl reports whether the DC advertises the control OID.
@@ -42,6 +46,7 @@ var rootDSEAttrs = []string{
 	"configurationNamingContext", "schemaNamingContext", "namingContexts", "supportedControl",
 	"supportedCapabilities", "domainFunctionality", "forestFunctionality",
 	"domainControllerFunctionality", "highestCommittedUSN", "isSynchronized", "isGlobalCatalogReady",
+	"vendorName",
 }
 
 // RootDSE reads the rootDSE of the bound DC (anonymous-readable, but read on the bound session so
@@ -75,5 +80,9 @@ func (s *Session) RootDSE(ctx context.Context) (*RootDSE, error) {
 		HighestCommittedUSN:           usn,
 		IsSynchronized:                one("isSynchronized") == "TRUE",
 		IsGlobalCatalogReady:          one("isGlobalCatalogReady") == "TRUE",
+		VendorName:                    one("vendorName"),
 	}, nil
 }
+
+// IsSamba reports whether the rootDSE names Samba as its vendor.
+func (r RootDSE) IsSamba() bool { return strings.Contains(strings.ToLower(r.VendorName), "samba") }

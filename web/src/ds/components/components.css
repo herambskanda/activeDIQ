@@ -394,6 +394,20 @@
 .diq-grid__resize:hover {
   background: var(--diq-line-strong);
 }
+/* Scrolled sideways: a rule on the name column's inline end shows content tucked behind it. */
+.diq-grid[data-scrolled-x="true"] .diq-grid__rh {
+  border-inline-end: var(--diq-border) solid var(--diq-line-strong);
+}
+/* The row a detail pane shows: a bar on the first cell and the selected tint, apart from checkbox selection. */
+.diq-grid tbody tr.diq-grid__row--current {
+  --diq-grid-bg: var(--diq-signal-soft);
+}
+.diq-grid tbody tr.diq-grid__row--current > :first-child {
+  box-shadow: inset var(--diq-space-1) 0 0 var(--diq-signal);
+}
+.diq-grid tbody tr.diq-grid__row--current > :first-child:dir(rtl) {
+  box-shadow: inset calc(-1 * var(--diq-space-1)) 0 0 var(--diq-signal);
+}
 .diq-grid__spacer {
   height: auto;
   padding: 0;
@@ -1240,4 +1254,211 @@ legend.diq-field__label {
   flex-wrap: wrap;
   gap: var(--diq-space-1) var(--diq-space-3);
   margin-inline-start: auto;
+}
+
+/* ---- DeltaCell ----------------------------------------------------------- */
+.diq-delta {
+  display: inline-flex;
+  gap: var(--diq-space-2);
+  align-items: baseline;
+  max-width: 100%;
+}
+.diq-delta__value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diq-delta__mark {
+  flex: none;
+  font-weight: var(--diq-weight-medium);
+}
+.diq-delta__mark--stricter {
+  color: var(--diq-text);
+}
+.diq-delta__mark--same,
+.diq-delta__mark--differs {
+  color: var(--diq-text-2);
+}
+/* Weaker is the only coloured direction. */
+.diq-delta__mark--weaker {
+  color: var(--diq-warn);
+}
+
+/* ---- PinnedBand ---------------------------------------------------------- */
+.diq-pinned {
+  margin-block: var(--diq-space-2);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-inline-start-width: var(--diq-space-1);
+  border-radius: var(--diq-radius-2);
+}
+.diq-pinned--crit {
+  background: var(--diq-crit-bg);
+  border-color: var(--diq-crit);
+}
+.diq-pinned--warn {
+  background: var(--diq-warn-bg);
+  border-color: var(--diq-warn);
+}
+.diq-pinned--info {
+  background: var(--diq-signal-soft);
+  border-color: var(--diq-signal);
+}
+.diq-pinned__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--diq-space-1) var(--diq-space-2);
+  align-items: baseline;
+  padding: var(--diq-space-1) var(--diq-space-3);
+}
+.diq-pinned__glyph,
+.diq-pinned__label {
+  font-size: var(--diq-text-cap);
+  font-weight: var(--diq-weight-semibold);
+}
+.diq-pinned--crit .diq-pinned__glyph,
+.diq-pinned--crit .diq-pinned__label {
+  color: var(--diq-crit);
+}
+.diq-pinned--warn .diq-pinned__glyph,
+.diq-pinned--warn .diq-pinned__label {
+  color: var(--diq-warn);
+}
+.diq-pinned__note {
+  min-width: 0;
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}
+.diq-pinned__list {
+  max-height: calc(var(--diq-row) * 8);
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.diq-pinned__item {
+  display: flex;
+  gap: var(--diq-space-3);
+  align-items: baseline;
+  min-width: 0;
+  min-height: var(--diq-row);
+  padding: var(--diq-space-1) var(--diq-space-3);
+  border-top: var(--diq-border) solid var(--diq-line);
+  font-size: var(--diq-text-table);
+  overflow-wrap: anywhere;
+}
+.diq-pinned__more {
+  min-height: var(--diq-control);
+  margin: var(--diq-space-1) var(--diq-space-3);
+  padding: 0;
+  color: var(--diq-signal-text);
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: var(--diq-text-cap);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ---- DetailDock ---------------------------------------------------------- */
+.diq-dock-layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  min-width: 0;
+}
+/* The grid takes what is left; below half a dock's width the dock wraps underneath instead. */
+.diq-dock-layout__main {
+  flex: 1 1 calc(var(--diq-sheet-w) / 2);
+  min-width: 0;
+}
+.diq-dock {
+  position: sticky;
+  inset-block-start: 0;
+  display: flex;
+  flex: 0 0 var(--diq-sheet-w);
+  flex-direction: column;
+  max-width: 100%;
+  max-height: 100dvh;
+  min-height: 0;
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border-inline-start: var(--diq-border) solid var(--diq-line-strong);
+  animation: diq-fade var(--diq-dur) var(--diq-ease);
+}
+.diq-dock__head {
+  display: flex;
+  flex: none;
+  gap: var(--diq-space-3);
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: var(--diq-space-3) var(--diq-space-4);
+  border-bottom: var(--diq-border) solid var(--diq-line);
+}
+.diq-dock__titles {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.diq-dock__title {
+  margin: 0;
+  font-size: var(--diq-text-section);
+  font-weight: var(--diq-weight-semibold);
+  line-height: var(--diq-leading-tight);
+}
+.diq-dock__desc {
+  margin: var(--diq-space-1) 0 0;
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+}
+.diq-dock__step {
+  display: flex;
+  flex: none;
+  gap: var(--diq-space-2);
+  align-items: center;
+  padding: var(--diq-space-2) var(--diq-space-4);
+  border-bottom: var(--diq-border) solid var(--diq-line);
+}
+.diq-dock__pos {
+  margin-inline-start: auto;
+  color: var(--diq-text-2);
+  font-size: var(--diq-text-cap);
+  font-variant-numeric: tabular-nums;
+}
+.diq-dock__btn {
+  flex: none;
+  min-height: var(--diq-control);
+  padding: 0 var(--diq-space-3);
+  color: var(--diq-text);
+  background: var(--diq-surface);
+  border: var(--diq-border) solid var(--diq-line-strong);
+  border-radius: var(--diq-radius-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background var(--diq-dur-fast) var(--diq-ease);
+}
+.diq-dock__btn:hover {
+  background: var(--diq-surface-2);
+}
+.diq-dock__btn[aria-disabled="true"] {
+  color: var(--diq-text-2);
+  background: var(--diq-surface-2);
+  cursor: not-allowed;
+}
+.diq-dock__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--diq-space-4);
+  min-height: 0;
+  padding: var(--diq-space-3) var(--diq-space-4);
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.diq-dock__foot {
+  flex: none;
+  padding: var(--diq-space-2) var(--diq-space-4);
+  color: var(--diq-text-2);
+  border-top: var(--diq-border) solid var(--diq-line);
+  font-size: var(--diq-text-cap);
 }

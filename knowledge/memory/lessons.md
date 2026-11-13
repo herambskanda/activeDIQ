@@ -54,9 +54,11 @@ Gotchas that cost time. Newest first. `date · lesson · source`.
 - 2026-10-02 · Samba returns all values of a >1500-value attribute unranged on a plain read, where Windows ranges it, so a connector that forgets to page passes on the Samba lab and fails on Windows. Request `member;range=…` explicitly and loop. Source: T-0012 (measured), runbook §5
 - 2026-10-02 · A reset/restore proof needs its baseline digest taken before any check that binds: binds change `lastLogon`, `logonCount`, `badPwdCount`, and the reset rightly undoes them. Source: T-0012 `lab/tests/verify.sh`
 - 2026-10-30 · A rule written in an ADR is not enforced until something runs it at the merge: the "dispatcher pre-merge gate" was named in two ADRs under a ticket id that was later reused, so for weeks nothing ran `make ci` on merge results and a red `fitness-profiles` grew from 6 to 90 findings. A branch's own green run is not the merge result's. The gate (`factory/lib/premerge.mjs`) now refuses any new finding even while `main` is red. Source: T-0941, `standards/ci-gates.md`
+- 2026-11-02 · A rows/blocks isolation proof over EXPLAIN (ANALYZE, BUFFERS) needs: the second run (the first reads ~3 blocks more), index-scan nodes only (the planner flips bitmap/index-only as other tenants grow), VACUUM until Heap Fetches is 0, and loops not rows on PG16 (JSON Actual Rows is a rounded per-loop average before PG18). Test world size steers the plan: a 2k-row table Seq Scans on PG18 (T-1335).
 
 ## From PatchIQ (see ../UEM/knowledge/development/legacy/patchiq-postmortem.md §11)
 - 2026-08-12 · Blind AI iteration destroys comprehension: document architecture before code; keep the architecture map current.
 - 2026-08-12 · An extension interface that is not the only on-ramp from day one becomes decoration.
 - 2026-08-12 · Security-relevant strings built with string formatting recur as a bug class — use shared safe primitives and lint against raw construction.
 - 2026-08-12 · Fabricated UI data and dead buttons slipped through — QA traces every number to the API and clicks every control.
+- 2026-11-12 · An interrupted `make lab-up` leaves a `dc-run` one-off container that pins the lab network and defeats `lab-destroy`; lab targets must clean one-off containers by compose label, and idle per-worktree labs pile up CPU load (T-1858).

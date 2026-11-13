@@ -76,7 +76,7 @@ type SubjectInput struct {
 
 // RootInput is one scope root of an assignment (DM-35).
 type RootInput struct {
-	Kind         string `json:"kind"` // naming_context | ou_subtree | entra_tenant | tier0_scope | tenant
+	Kind         string `json:"kind"` // naming_context | ou_subtree | ou_one_level | entra_tenant | tier0_scope | tenant
 	ConnectionID string `json:"connectionId"`
 	GUID         string `json:"guid"`
 	Exclude      bool   `json:"exclude,omitempty"`

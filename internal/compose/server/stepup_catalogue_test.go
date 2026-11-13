@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory"
@@ -12,6 +13,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/modules/inventory"
 	"github.com/skenzeriq/activediq/internal/modules/notify"
 	"github.com/skenzeriq/activediq/internal/platform"
+	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/module/moduletest"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
@@ -40,6 +42,8 @@ var stepUpTable = map[operation.ActionID]string{
 	// notify.settings.update widens the allowed recipient domains and re-points the SMTP relay (TM-D30 SX-7).
 	notify.UpdateSettingsActionID: "Widening allowed recipient domains / re-pointing the SMTP relay (TM-D30 SX-7)",
 	// RBAC changes (§7.4): every role or assignment change is a step-up operation.
+	// Resetting a password is a credential change and needs the OTP-before-reset rule of ENH-09 (TM-D16).
+	"ad.user.resetPassword": "Password reset (TM-D16; ENH-09 OTP-before-reset)",
 	delegation.RoleCreateID: "RBAC change: creating a custom role",
 	delegation.RoleUpdateID: "RBAC change: editing a custom role's permissions",
 	delegation.GrantID:      "RBAC change: granting an assignment",
@@ -177,5 +181,70 @@ func Test_every_action_plan_refuses_unknown_input_member(t *testing.T) {
 		if !errors.Is(err, operation.ErrInvalid) {
 			t.Errorf("%s: Plan with an unknown input member returned %v, want ErrInvalid", id, err)
 		}
+	}
+}
+
+// stepUpPolicyGaps lists the StepUp Actions whose permission is declared (x-permission) by an operation
+// of the contract document but has no stepUp row. The routed set comes from the document itself, never
+// from a hand-kept list: a route may declare any built-in role permission. An Action whose permission no
+// operation declares yet cannot have a row (fitness-api A13 fails a row naming nothing); its row enters
+// with its route.
+func stepUpPolicyGaps(cat []operation.Descriptor, rows []string, doc apihost.Document) []string {
+	var routed []string
+	for _, op := range doc.Operations() {
+		routed = append(routed, op.Permission)
+	}
+	var bad []string
+	for _, d := range cat {
+		p := string(d.Permission)
+		if d.StepUp && slices.Contains(routed, p) && !slices.Contains(rows, p) {
+			bad = append(bad, string(d.ID))
+		}
+	}
+	return bad
+}
+
+// A permission of a StepUp Action that has an HTTP route must be a stepUp row of policy.yaml: apihost
+// asks that list, and a route whose permission is missing from it would run on a stale session
+// (T-0199 carried requirement; test step_up_permissions_all_in_policy).
+func Test_step_up_permissions_all_in_policy(t *testing.T) {
+	pol, err := apihost.LoadPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := apihost.LoadDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bad := stepUpPolicyGaps(catalogue(t), pol.StepUp, doc); len(bad) > 0 {
+		t.Errorf("StepUp Actions with a routed permission and no stepUp row in api/openapi/policy.yaml: %v", bad)
+	}
+}
+
+// The check bites on a fixture document: a routed StepUp permission without a row is reported, including
+// one that is not in moduleOperationPermissions (a built-in role permission); an unrouted one is not.
+func Test_step_up_policy_gap_check_bites(t *testing.T) {
+	const fixture = `{"paths":{
+	 "/a":{"post":{"operationId":"a","tags":["t"],"x-permission":"a.do"}},
+	 "/c":{"post":{"operationId":"c","tags":["t"],"x-permission":"c.do"}},
+	 "/d":{"get":{"operationId":"d","tags":["t"],"x-permission":"d.do"}},
+	 "/t0":{"post":{"operationId":"t0","tags":["t"],"x-permission":"inventory.tier0_designation.manage"}}}}`
+	doc, err := apihost.ParseDocument([]byte(fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(moduleOperationPermissions, "inventory.tier0_designation.manage") {
+		t.Fatal("fixture premise broken: the Tier-0 permission is now in moduleOperationPermissions")
+	}
+	cat := []operation.Descriptor{
+		{ID: "a.routed", Permission: "a.do", StepUp: true},
+		{ID: "b.unrouted", Permission: "b.do", StepUp: true},
+		{ID: "c.rowed", Permission: "c.do", StepUp: true},
+		{ID: "d.plain", Permission: "d.do"},
+		{ID: "t0.routed", Permission: "inventory.tier0_designation.manage", StepUp: true},
+	}
+	got := stepUpPolicyGaps(cat, []string{"c.do"}, doc)
+	if len(got) != 2 || got[0] != "a.routed" || got[1] != "t0.routed" {
+		t.Fatalf("got %v", got)
 	}
 }

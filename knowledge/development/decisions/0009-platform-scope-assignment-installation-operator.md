@@ -1,8 +1,11 @@
 ---
 title: "ADR-0009: Platform scope is a separate principal kind (the installation operator); permissions declare a scope class"
 date: 2026-10-29
-updated: 2026-10-29
-status: proposed
+updated: 2026-11-06
+status: ratified
+ratified_on: 2026-11-06
+ratified_by: factory-director
+decision: D-0029
 owner: security-architect
 kind: technical
 ticket: T-0794
@@ -11,7 +14,7 @@ fitness: fitness-platform-scope (`make fitness-platform-scope`; a build ticket a
 
 # ADR-0009: Platform scope is a separate principal kind (the installation operator); permissions declare a scope class
 
-**Status:** proposed. Ratified by factory-director after solution-architect review; `accepted` when `fitness-platform-scope` runs green in CI. **Kind:** technical (no CEO fork: it changes no price, packaging or platform strategy; SaaS shape is a constraint recorded here, decided at SaaS launch). **Ticket:** T-0794. Builds on T-0250, ADR-0002 "Configuration scope", threat model TM-D1, §7.4 (step-up, TM-D16), AN-8 (break-glass), TM-D19 (authority factor), ADR-0008 (installation scope).
+**Status:** ratified 2026-11-06 by factory-director after solution-architect review on T-0794 (notice D-0029; sign-off recorded late, T-1149); `accepted` when `fitness-platform-scope` runs green in CI. **Kind:** technical (no CEO fork: it changes no price, packaging or platform strategy; SaaS shape is a constraint recorded here, decided at SaaS launch). **Ticket:** T-0794. Builds on T-0250, ADR-0002 "Configuration scope", threat model TM-D1, §7.4 (step-up, TM-D16), AN-8 (break-glass), TM-D19 (authority factor), ADR-0008 (installation scope).
 
 ## Context
 

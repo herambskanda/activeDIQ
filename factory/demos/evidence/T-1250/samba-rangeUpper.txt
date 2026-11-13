@@ -1,0 +1,10 @@
+rangeUpper: 256 lDAPDisplayName: sAMAccountName 
+rangeUpper: 1024 lDAPDisplayName: userPrincipalName 
+rangeUpper: 256 lDAPDisplayName: displayName 
+rangeUpper: 256 lDAPDisplayName: mail 
+rangeUpper: 64 lDAPDisplayName: company 
+rangeUpper: 1024 lDAPDisplayName: description 
+rangeUpper: 2048 lDAPDisplayName: dNSHostName 
+lDAPDisplayName: operatingSystem 
+lDAPDisplayName: operatingSystemVersion 
+lDAPDisplayName: managedBy 
