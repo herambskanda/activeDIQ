@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/tier0"
+	"github.com/skenzeriq/activediq/internal/directory/accountkind"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/sd"
@@ -87,13 +88,37 @@ func TestNonTier0IsUnsupported(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("%v", got)
 	}
+	// T-1624 wired kinds 4 to 6, so Describe reports PLAN and APPLY SUPPORTED (CC-WK-30); the
+	// unspecified kind used above is still not in the table.
 	for _, c := range got {
-		if c.GetState() != connectorv1.SupportState_SUPPORT_STATE_UNSUPPORTED {
+		// CC-WK-30: SUPPORTED once the first kinds are wired (T-1583); a kind with no row, and
+		// WRITE_KIND_UNSPECIFIED above, still answers CAPABILITY_UNSUPPORTED.
+		if c.GetState() != connectorv1.SupportState_SUPPORT_STATE_SUPPORTED {
 			t.Errorf("%s reported %s", c.GetOperation(), c.GetState())
 		}
 	}
-	if len(operations) != 0 {
-		t.Fatal("the operation table must be empty until a kind ticket adds a row")
+	// Kinds 1-3 (object create, update, delete; T-1623), kinds 4-6 (object move, rename, restore; T-1624) and
+	// the four account kinds (T-1583) are the registered rows; a new kind ticket adds its own.
+	want := map[connectorv1.WriteKind]bool{
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE: true, connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE: true,
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE: true, connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE: true,
+		connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME: true, connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE: true,
+	}
+	for _, sp := range accountkind.Specs() {
+		want[sp.Kind] = true
+	}
+	if len(operations) != len(want) || len(want) != 10 {
+		t.Fatalf("operation table holds %d kinds, want 10 (kinds 1-6 and the four account kinds)", len(operations))
+	}
+	for k := range operations {
+		if !want[k] {
+			t.Errorf("unexpected kind %s in the operation table", k)
+		}
+	}
+	for k := range want {
+		if _, ok := operations[k]; !ok {
+			t.Errorf("kind %s has no operation row", k)
+		}
 	}
 }
 
@@ -475,7 +500,7 @@ func TestKnownKindTouchedSetAndStep9(t *testing.T) {
 	tgt, second := mk(40), mk(41)
 	mkReq := func(c *connectorv1.Tier0Context) *connectorv1.ApplyRequest {
 		q := applyReq(tgt, c)
-		q.Kind = 1
+		q.Kind, q.Change = 1, testChange()
 		return q
 	}
 	// second touched object has no statement: CONTEXT_MISSING at step 6, op never reached.
@@ -523,7 +548,7 @@ func TestStep9ReportsBasis(t *testing.T) {
 	tgt := mk(43)
 	withTestOp(r)
 	q := applyReq(tgt, ctxFor(tgt))
-	q.Kind = 1
+	q.Kind, q.Change = 1, testChange()
 	// Replace the fake's behaviour after the write: tier0 with C2, no error.
 	r.h.ops[1] = func() WriteOp {
 		w := r.h.ops[1]
@@ -550,7 +575,7 @@ func TestPlanThroughKnownKind(t *testing.T) {
 	rec := withTestOp(r)
 	tgt := mk(42)
 	q := planReq(tgt, ctxFor(tgt))
-	q.Kind = 1
+	q.Kind, q.Change = 1, testChange()
 	resp, err := r.h.Plan(context.Background(), q)
 	if err != nil || rec.plan != 1 || len(resp.GetTier0().GetEvaluated()) != 1 || resp.GetTier0().GetVerificationId() == nil {
 		t.Fatalf("%v %v %d", resp, err, rec.plan)
@@ -608,7 +633,7 @@ func TestStep9UsesDesignatedSet(t *testing.T) {
 	r := newRig(t, &run)
 	withTestOp(r)
 	q := applyReq(tgt, ctxFor(tgt))
-	q.Kind = 1
+	q.Kind, q.Change = 1, testChange()
 	w := r.h.ops[1]
 	inner := w.Apply
 	w.Apply = func(ctx context.Context, a Authorised, req *connectorv1.ApplyRequest) (*connectorv1.ApplyResponse, error) {

@@ -121,6 +121,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/step-up": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-verify the second factor of the calling console session (step-up, TM-D16)
+         * @description Lets a signed-in console session obtain the fresh multi-factor check that a step-up operation (operations whose permission is a stepUp row of policy.yaml, TM section 7.4) requires. The caller sends a TOTP code of the session's own account. Success answers 204 with no body: the server moves the session's MFA time forward, and the next step-up operation is judged against that server-side time alone. Nothing in the request or response carries, sets or reports freshness, and no client field can assert it. Only a console session can call this: an API token has no interactive second factor and is refused 401. Needs the CSRF header like any cookie-session mutation.
+         *     Every refusal has one shape, 403 /problems/step-up-refused: a wrong, replayed or paused code, no enrolled factor, an account that is no longer active and an exhausted failure budget are indistinguishable by status, body, headers and timing class. The response and the request name no enrolment, so a caller cannot learn which one matched. A refusal keeps the session's earlier MFA time as it was. A session that is revoked or expired is the ordinary 401 /problems/unauthenticated. The route is a guessing oracle for a stolen session, so it is limited per principal in the secret class, and the server also charges every failure to the account's enrolment budget. Every attempt is audited with the principal and the outcome, never the code.
+         *     Later addition, not in this version: WebAuthn re-verification. Only TOTP re-verifies today (authn.StepUp.Reverify); a WebAuthn variant will be an additive operation or an additive request member, announced in the changelog.
+         */
+        post: operations["reverifyStepUp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connectionId}/takeover-attestation": {
         parameters: {
             query?: never;
@@ -473,6 +495,26 @@ export interface paths {
          * @description Serialises the run's stored result (never a fresh query) into a file as an asynchronous job: the columns of the run, its filters, and all rows up to the format's cap (spec 8.3). Needs reports.export, bound as this operation's permission, and also reports.run, checked inside the operation before the run is looked up (403 if either is missing; modules/reports.md 6.6 check 1 and 7.1). Run-read gate (6.6, run.ReadAccess), in order: runner account equals the caller, otherwise 404; the caller's current read scope fingerprint equals the one stored with the run, otherwise 409 with errors[].code scope_changed_rerun (create a new run); the run has succeeded, otherwise 409 with run_not_ready or run_failed. An expired run is not refused here (see below). The three 409 codes are separate. Rows over a format's cap are refused with report-row-cap-exceeded, never truncated. A format this installation cannot produce is a 400 with code format_unavailable. If the run's result has expired, a new run is created first and the export says so (rerun true, rerunOfRunId); its file carries the new run's as_of. A run whose scope grants nothing or uses an unsupported kind is exported as a record of what was found, not refused (only schedules refuse such a scope). Exports and runs count together toward the tenant job limit: with 4 not yet finished the answer is 429 with errors[].code too_many_report_jobs. Exports are audited with actor and row count; an export is not an Action.
          */
         post: operations["createReportExport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/{runId}/policies/{policyId}/targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page the direct targets of one policy row of a run
+         * @description Reads a page of the objects one policy row of a stored policy run (SYS-01) applies to directly: for a fine-grained policy (PSO) the users and global security groups in its msDS-PSOAppliesTo, in scope. policyId is the rowKey of the policy row in the run's rows (the PSO's objectGUID, or the domain head's objectGUID for a domain policy). These are the direct targets, not the resultant set: which policy wins for one user is resolved per user (the Policy source column of the user reports) and is never answered here, and a target group is one entry, never its members. basis says so on every page. count is the number of direct targets in the caller's scope, the same number as the policy row's applies_to_count cell, and is never a count over the page. A domain policy has no direct targets (it governs every account of its domain unless a PSO overrides it): it answers 200 with count 0 and no targets. Order is by name, then objectGUID, stable; the cursor is bound to this run and policy. The result is stored and frozen with the run (ADR-0010 rule 3). The run-read gate is that of listReportRunRows, in the same order: runner equals the caller, otherwise 404; not expired, otherwise 410 report-result-expired; scope fingerprint unchanged, otherwise 409 with errors[].code scope_changed_rerun; succeeded, otherwise 409 with errors[].code run_not_ready or run_failed. A policyId that is not a policy row of the run (or whose run is not a policy report) is a 404.
+         */
+        get: operations["listReportRunPolicyTargets"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -850,7 +892,7 @@ export interface components {
         AssignmentRevoke: {
             assignmentId: components["schemas"]["DelegationId"];
         };
-        /** @description One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope. */
+        /** @description One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope; ou_one_level is an include only and its guid is an OU, never the connection. */
         AssignmentRoot: {
             /** Format: uuid */
             connectionId: string;
@@ -863,7 +905,7 @@ export interface components {
          * @description What the root's guid names. The server refuses a kind it does not know.
          * @enum {string}
          */
-        AssignmentRootKind: "naming_context" | "ou_subtree" | "entra_tenant" | "tier0_scope" | "tenant" | (string & {});
+        AssignmentRootKind: "naming_context" | "ou_subtree" | "ou_one_level" | "entra_tenant" | "tier0_scope" | "tenant" | (string & {});
         /** @description Who holds the assignment, by kind. Exactly the members of its kind are accepted. */
         AssignmentSubject: components["schemas"]["SubjectAccount"] | components["schemas"]["SubjectGroup"] | components["schemas"]["SubjectAutomation"];
         /** @description The local break-glass account and its password. */
@@ -1317,7 +1359,7 @@ export interface components {
             kind: "ReportCellInteger";
             value: string;
         };
-        /** @description The value can never exist for this object, as distinct from absent (not yet set). */
+        /** @description The value can never exist for this object, as distinct from absent (not yet set). In the SYS-01 policy columns it is the policy's own no-limit setting, read from 0 or the minimum signed 64-bit value by the 2a codec: in max_age it is "Never expires", in lockout_threshold "Never locks", in lockout_duration "Until an administrator unlocks". The column says which; no other policy column carries it. For a client that compares policies, such a cell is the loosest value of its column, not the smallest number: it is never an integer 0 and must not be ordered as one. */
         ReportCellNever: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -1357,11 +1399,11 @@ export interface components {
             label: string;
         };
         /**
-         * @description A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8).
+         * @description A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8). Policy columns (SYS-01, one row per policy, rowKey the policy GUID): policy_name (text); policy_kind (enum domain or pso, the ReportPolicyKindValue); precedence (integer, count; absent on the domain row); applies_to_count (integer, count of direct targets in the runner's scope, 0 for a PSO with none, absent on the domain row); applies_to_first (textList, the first two target names by name order, empty when none; the full list is listReportRunPolicyTargets); min_length, history_length, lockout_threshold (integer, count); max_age, min_age, lockout_duration, lockout_window (integer, seconds; max_age, lockout_threshold and lockout_duration are a never cell when the policy sets no limit, see ReportCellNever); complexity and reversible_encryption (boolean). A value that was not read is an unknown cell, never 0 or false. Deltas against the domain row are computed by the client from these typed cells (the unit is on the column); the server sends no delta text.
          * @enum {string}
          */
-        ReportColumnId: "name" | "logon_name" | "upn" | "status" | "domain" | "ou_path" | "manager" | "created" | "account_expires" | "days_to_expiry" | "last_logon" | "days_since" | "probable_service_account" | "real_last_logon" | "from_dc" | "dc_coverage" | "locked_out_since" | "lockout_ends" | "policy_source" | "data_as_of" | "password_last_set" | "password_expires" | "password_state" | "last_failed_logon" | "failures_on_dc" | "group_type" | "group_scope" | "direct_members" | "effective_members" | "managed_by" | "group" | "member" | "member_type" | "membership_kind" | "via" | "user" | "primary_group" | "dns_name" | "computer_type" | "operating_system" | "os_version" | "delegation" | "last_activity" | "activity_source" | "path" | "users" | "computers" | "groups" | "other_objects" | "objects_in_subtree" | "email";
-        /** @description A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes. */
+        ReportColumnId: "name" | "logon_name" | "upn" | "status" | "domain" | "ou_path" | "manager" | "created" | "account_expires" | "days_to_expiry" | "last_logon" | "days_since" | "probable_service_account" | "real_last_logon" | "from_dc" | "dc_coverage" | "locked_out_since" | "lockout_ends" | "policy_source" | "data_as_of" | "password_last_set" | "password_expires" | "password_state" | "last_failed_logon" | "failures_on_dc" | "group_type" | "group_scope" | "direct_members" | "effective_members" | "managed_by" | "group" | "member" | "member_type" | "membership_kind" | "via" | "user" | "primary_group" | "dns_name" | "computer_type" | "operating_system" | "os_version" | "delegation" | "last_activity" | "activity_source" | "path" | "users" | "computers" | "groups" | "other_objects" | "objects_in_subtree" | "email" | "policy_name" | "policy_kind" | "precedence" | "applies_to_count" | "applies_to_first" | "min_length" | "history_length" | "max_age" | "min_age" | "complexity" | "reversible_encryption" | "lockout_threshold" | "lockout_duration" | "lockout_window";
+        /** @description A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes. unit is present on an integer column that measures something, so a client can compare and format its cells without parsing text. */
         ReportColumnInfo: {
             choices: components["schemas"]["ReportChoice"][];
             defaultVisible: boolean;
@@ -1371,12 +1413,18 @@ export interface components {
             label: string;
             sortable: boolean;
             type: components["schemas"]["ReportColumnTypeValue"];
+            unit?: components["schemas"]["ReportColumnUnitValue"];
         };
         /**
          * @description What a column holds, which decides the operators it takes.
          * @enum {string}
          */
         ReportColumnTypeValue: "text" | "integer" | "boolean" | "time" | "enum" | (string & {});
+        /**
+         * @description What an integer column counts. count: a number of things (characters, remembered passwords, failed attempts, targets) or a rank (precedence). seconds: a length of time in whole seconds (maximum and minimum password age, lockout duration and observation window); the cell is the exact value, the console formats it.
+         * @enum {string}
+         */
+        ReportColumnUnitValue: "count" | "seconds" | (string & {});
         /**
          * @description A comparison of one column with one typed value. contains and starts_with are literal text matches: no wildcard or pattern character has a meaning.
          * @enum {string}
@@ -1387,6 +1435,10 @@ export interface components {
             complete: boolean;
             dcsAnswered: number;
             dcsInScope: number;
+            /** @description The header text, "Read from 2 of 3 DCs · 1 unreachable: dc2.example.test: timeout". */
+            label?: string;
+            /** @description The DCs that did not answer, each with the fixed code it gave (never driver text). Empty when coverage is complete. */
+            unreachable?: components["schemas"]["ReportUnreachableDc"][];
         };
         /** @description A report definition: an immutable AST over one registered dataset (FR-03, FR-05), shown as its presets, crosswalk and columns. exportFormats are the formats this installation can produce, and the console offers no others. subjectKind says whether the report requires groups or users (GRP-02, GRP-03). minScheduleIntervalHours is 24 for per-DC reports. */
         ReportDefinition: {
@@ -1672,6 +1724,104 @@ export interface components {
             /** Format: date-time */
             to: string;
         };
+        /** @description The container was read and holds no fine-grained policy: a real zero, true at readAt. Only the domain policy row exists for this domain. It is never sent for a container that could not be read. */
+        ReportPolicyDomainNoneExist: {
+            /** Format: uuid */
+            domainId: string;
+            domainName: string;
+            /** Format: uuid */
+            domainPolicyRowKey: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "none_exist";
+            /** Format: date-time */
+            readAt: string;
+        };
+        /** @description The read of one domain's Password Settings Container. Three kinds, never collapsed: readable (the container was read and holds at least one policy), none_exist (the container was read and is empty: a real zero) and unreadable (it could not be read, so how many policies exist is not known). */
+        ReportPolicyDomainRead: components["schemas"]["ReportPolicyDomainReadable"] | components["schemas"]["ReportPolicyDomainNoneExist"] | components["schemas"]["ReportPolicyDomainUnreadable"];
+        /** @description The container was read. psoCount is the number of fine-grained policies in it that the runner's scope shows, at least 1; the rows hold each of them. readAt is the policy sync read time. */
+        ReportPolicyDomainReadable: {
+            /** Format: uuid */
+            domainId: string;
+            domainName: string;
+            /** Format: uuid */
+            domainPolicyRowKey: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "readable";
+            psoCount: number;
+            /** Format: date-time */
+            readAt: string;
+        };
+        /** @description The container could not be read, so whether this domain has fine-grained policies is not known. containerName is the container as the console names it (Password Settings Container) and reason says why. readAt is when the attempt was made, absent when none was (reason not_read). The domain policy row is still present and is the only policy shown for this domain. */
+        ReportPolicyDomainUnreadable: {
+            containerName: string;
+            /** Format: uuid */
+            domainId: string;
+            domainName: string;
+            /** Format: uuid */
+            domainPolicyRowKey: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "unreadable";
+            /** Format: date-time */
+            readAt?: string;
+            reason: components["schemas"]["ReportPolicyUnreadableReasonValue"];
+        };
+        /**
+         * @description What a policy row is. domain: the domain's own policy, the baseline. pso: a fine-grained policy.
+         * @enum {string}
+         */
+        ReportPolicyKindValue: "domain" | "pso" | (string & {});
+        /** @description What a policy report (SYS-01) could read of the Password Settings Container, one entry per domain in the runner's scope, stored with the run and frozen. It exists so that a container that could not be read is never shown as a container that holds no policies (spec 7.1 rule 3, AC-S19): each domain is exactly one of three kinds, readable, none_exist or unreadable, and a client branches on kind and never infers one from another or from a missing row. domainsInScope is the number of entries; domainsReadable is the number of entries of kind readable or none_exist (the read succeeded); complete is true when every domain was read. When complete is false the rows hold the domain policy of every domain and the fine-grained policies of the readable ones only, and users of an unreadable domain may be governed by policies not shown. */
+        ReportPolicyReads: {
+            complete: boolean;
+            domains: components["schemas"]["ReportPolicyDomainRead"][];
+            domainsInScope: number;
+            domainsReadable: number;
+        };
+        /** @description One direct target of a policy: a user or a global security group, addressed by objectGUID. A group is one entry; its members are never listed here. */
+        ReportPolicyTarget: {
+            domain: string;
+            name: string;
+            /** Format: uuid */
+            objectGuid: string;
+            targetClass: components["schemas"]["ReportPolicyTargetClassValue"];
+        };
+        /**
+         * @description What a list of policy targets is. direct_targets: the objects the policy is applied to; never the resultant set.
+         * @enum {string}
+         */
+        ReportPolicyTargetBasisValue: "direct_targets" | (string & {});
+        /**
+         * @description The kind of object a PSO is applied to.
+         * @enum {string}
+         */
+        ReportPolicyTargetClassValue: "user" | "group" | (string & {});
+        /** @description A page of the direct targets of one policy row. basis is always direct_targets: the list is what the policy is applied to, not the resultant set, and says nothing about which policy governs a given user. count is the direct targets in the caller's scope, not the length of the page. policyName and kind repeat the policy row so the page stands alone. */
+        ReportPolicyTargetPage: {
+            basis: components["schemas"]["ReportPolicyTargetBasisValue"];
+            count: number;
+            kind: components["schemas"]["ReportPolicyKindValue"];
+            page: components["schemas"]["PageInfo"];
+            /** Format: uuid */
+            policyId: string;
+            policyName: string;
+            /** Format: uuid */
+            runId: string;
+            targets: components["schemas"]["ReportPolicyTarget"][];
+        };
+        /**
+         * @description Why a Password Settings Container could not be read. permission_denied: the connection account lacks the read right (Domain Admins hold it by default). container_absent: the container is not there, such as a domain below functional level 2008, and the report cannot tell it from an unreadable one. not_read: no read was attempted, such as a connection that was skipped.
+         * @enum {string}
+         */
+        ReportPolicyUnreadableReasonValue: "permission_denied" | "container_absent" | "not_read" | (string & {});
         /**
          * @description Whether a column has a value.
          * @enum {string}
@@ -1875,6 +2025,7 @@ export interface components {
             id: string;
             objectsChecked: number | null;
             parameters: components["schemas"]["ReportParametersView"];
+            policyReads?: components["schemas"]["ReportPolicyReads"];
             presetId: string | null;
             progress: components["schemas"]["ReportRunProgress"];
             /** Format: uuid */
@@ -2060,6 +2211,11 @@ export interface components {
             connectionId: string;
             /** Format: uuid */
             guid: string;
+        };
+        /** @description A DC that did not answer a per-DC read. */
+        ReportUnreachableDc: {
+            dc: string;
+            error: string;
         };
         /** @description A typed filter value. Never an expression. */
         ReportValue: components["schemas"]["ReportValueText"] | components["schemas"]["ReportValueInteger"] | components["schemas"]["ReportValueBoolean"] | components["schemas"]["ReportValueTime"] | components["schemas"]["ReportValueEnum"];
@@ -2693,6 +2849,22 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description The step-up re-verification did not succeed. One answer for every cause (wrong, replayed or paused code, no enrolled factor, an account that is no longer active, a spent failure budget), so the response teaches a caller nothing about which enrolment exists or matched (TM-D16, TM-D30). It never carries a detail or an errors member. */
+        StepUpRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 403,
+                 *       "title": "Step-up verification refused",
+                 *       "type": "/problems/step-up-refused"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description A fresh multi-factor check is required */
         StepUpRequired: {
             headers: {
@@ -2783,6 +2955,8 @@ export interface components {
         PageCursor: components["schemas"]["Cursor"];
         /** @description The page size. */
         PageLimit: number;
+        /** @description The rowKey of a policy row of the run (a GUID). */
+        PolicyId: string;
         /** @description The request ID. It names the audit events of the change and makes a retry of a create safe. */
         RequiredIdempotencyKey: string;
         /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
@@ -2977,6 +3151,36 @@ export interface operations {
             };
             400: components["responses"]["Validation"];
             401: components["responses"]["SignInFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            501: components["responses"]["NotImplemented"];
+        };
+    };
+    reverifyStepUp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpCodeRequest"];
+            };
+        };
+        responses: {
+            /** @description The code was right. The session's MFA time is now; there is no body. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["StepUpRefused"];
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             429: components["responses"]["RateLimited"];
@@ -3616,6 +3820,44 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ReportRowCapExceeded"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listReportRunPolicyTargets: {
+        parameters: {
+            query?: {
+                /** @description The nextCursor of the previous page. */
+                cursor?: components["parameters"]["PageCursor"];
+                /** @description The page size. */
+                limit?: components["parameters"]["PageLimit"];
+            };
+            header?: never;
+            path: {
+                /** @description The rowKey of a policy row of the run (a GUID). */
+                policyId: components["parameters"]["PolicyId"];
+                /** @description The run. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the policy's direct targets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportPolicyTargetPage"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["ReportResultExpired"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };

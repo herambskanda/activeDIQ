@@ -19,7 +19,7 @@ var ErrMount = errors.New("connector: mount needs a verify handler, a read handl
 
 // TunnelBinding is the connector's side of the "connector" contract (TB6, TM-TB6-T10): the server
 // opens every Connector method over the tunnel the connector dialled out, and this binding serves
-// the VerifyConnection, Read, ScopedSearch, ReadPerDC, Plan and Apply groups (the rest stay Unimplemented). It mounts one
+// the VerifyConnection, Read, ScopedSearch, ReadPerDC, Describe, Plan and Apply groups (the rest stay Unimplemented). It mounts one
 // ConnectorServer on the per-tunnel registrar, which is never a process grpc.Server; the connector
 // opens no listener. The peer is authenticated by the tunnel's pinned-server mTLS (fleet/dial), the
 // registrar refuses any method outside the contract, and the tunnel belongs to one tenant: a
@@ -72,6 +72,10 @@ func (s *tunnelServer) ScopedSearch(req *connectorv1.ScopedSearchRequest, st grp
 
 func (s *tunnelServer) ReadPerDC(req *connectorv1.ReadPerDCRequest, st grpc.ServerStreamingServer[connectorv1.ReadPerDCResponse]) error {
 	return s.read.ReadPerDC(req, st)
+}
+
+func (s *tunnelServer) Describe(ctx context.Context, req *connectorv1.DescribeRequest) (*connectorv1.DescribeResponse, error) {
+	return s.read.Describe(ctx, req)
 }
 
 func (s *tunnelServer) Plan(ctx context.Context, req *connectorv1.PlanRequest) (*connectorv1.PlanResponse, error) {

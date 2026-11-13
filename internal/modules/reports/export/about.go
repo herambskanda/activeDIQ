@@ -27,6 +27,10 @@ func (s *Service) about(r run.Run, def run.Definition, q report.Query, e Export)
 		fresh = r.Freshness.Label
 	}
 	lines = append(lines, pexport.AboutLine{Label: "Freshness", Value: fresh})
+	if r.PerDC != nil && r.PerDC.Stage == "" {
+		// An export of a per-DC run says how many DCs answered, so a lower bound is never taken for an exact value.
+		lines = append(lines, pexport.AboutLine{Label: "DC coverage", Value: r.PerDC.CoverageText()})
+	}
 	if r.AsOf != nil {
 		lines = append(lines, pexport.AboutLine{Label: "Data as of (UTC)", Value: r.AsOf.UTC().Format(time.RFC3339)})
 	}

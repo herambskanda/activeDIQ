@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -35,12 +36,16 @@ type fakeConnector struct {
 	tier0    map[string]bool                               // verdict served when the request asks for one
 	noT0     bool                                          // leave the verdict out although asked
 	servedBy []byte                                        // DSA of the DC the header names; default: the pin
+	failWith error                                         // returned by Read before anything else
 }
 
 func guidOf(s string) *connectorv1.Guid { b, _ := parseUUID(s); return &connectorv1.Guid{Value: b} }
 
 func (f *fakeConnector) Read(req *connectorv1.ReadRequest, s grpc.ServerStreamingServer[connectorv1.ReadResponse]) error {
 	f.got = append(f.got, req)
+	if f.failWith != nil {
+		return f.failWith
+	}
 	// Like read.Handler: a read without the served directory's identity is refused.
 	if want := guidOf(tNC).GetValue(); string(req.GetConnection().GetDirectoryIdentity().GetAdForest().GetForestRootNcGuid().GetValue()) != string(want) {
 		return status.Error(3, "directory identity")
@@ -273,5 +278,21 @@ func TestUnverifiedConnectionReadIsRefusedBeforeTheConnector(t *testing.T) {
 	}
 	if len(f.got) != 0 {
 		t.Fatal("connector reached")
+	}
+}
+
+// T-1261: a read that fails with a bare status keeps the code and none of the connector's text.
+func TestReadFailureCarriesNoStatusDescription(t *testing.T) {
+	const desc = "dial tcp 10.20.30.40:636: dc1.corp.example CN=Admin,DC=corp,DC=example"
+	r := setup(t, &fakeConnector{failWith: status.Error(14, desc)})
+	_, err := r.Object(ctxFor(tTenant, nil), nil, tgt, tUser, false)
+	var te *TransportError
+	if err == nil || !errors.As(err, &te) || te.Code != 14 {
+		t.Fatalf("got %#v, want a TransportError with the code", err)
+	}
+	for _, s := range []string{"dc1", "10.20.30.40", "CN=Admin", "corp.example"} {
+		if strings.Contains(err.Error(), s) {
+			t.Fatalf("error %q contains %q", err, s)
+		}
 	}
 }
