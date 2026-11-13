@@ -31,13 +31,29 @@ import (
 // The first local console account (T-0783). First-run setup creates an owner with no credentials, and a
 // console session needs a password (AN-8) and an enrolled TOTP (AN-10), so `activediq-server account
 // init-local` creates one account on the host: a local account with a password, a confirmed TOTP
-// enrolment, the role "console-directory-reader" (directory.read over the tenant store) and, when the
+// enrolment, the roles "console-directory-reader" (directory.read) and "console-report-runner" (reports.run), each over the tenant store and, when the
 // tenant has no owner yet, the tenant-owner role. It runs as the service account with the same database
 // and key settings as the server, so it is an administrator action on the host, not a network route.
 
 // directoryReaderRole is the custom role the account holds. Its ID is derived from the tenant so a second
 // run finds the first one's role.
 const directoryReaderRole = "console-directory-reader"
+
+// reportRunnerRole is the second custom role (T-1928): reports.run over the same roots as the reader, so
+// the run path's read scope (rbac.ReadScopes) is the account's own naming-context assignments. It does not
+// carry reports.export, reports.schedule or reports.deliver: those stay an administrator's grant.
+const reportRunnerRole = "console-report-runner"
+
+// consoleRole names a role the account holds and the permissions it carries.
+type consoleRole struct {
+	Name  string
+	Perms []authz.Permission
+}
+
+var consoleRoles = []consoleRole{
+	{directoryReaderRole, []authz.Permission{"directory.read"}},
+	{reportRunnerRole, []authz.Permission{"reports.run"}},
+}
 
 var cliActor = authority.Chain{Requester: authority.Principal{ID: rbac.BootstrapPrincipal, Kind: authority.System}}
 
@@ -61,8 +77,8 @@ type LocalAccount struct {
 	Seed   secret.Secret // base32; shown once
 }
 
-func roleID(t tenant.ID) string {
-	h := sha256.Sum256([]byte("activediq/role/" + directoryReaderRole + "/" + t.String()))
+func roleID(name string, t tenant.ID) string {
+	h := sha256.Sum256([]byte("activediq/role/" + name + "/" + t.String()))
 	b := h[:16]
 	b[6] = b[6]&0x0f | 0x50
 	b[8] = b[8]&0x3f | 0x80
@@ -129,8 +145,10 @@ func createLocalAccount(ctx context.Context, d localAccountDeps, spec LocalAccou
 	if err != nil {
 		return LocalAccount{}, mapInitErr(err)
 	}
-	if err := grantDirectoryReader(ctx, d, t, out.ID); err != nil {
-		return LocalAccount{}, err
+	for _, r := range consoleRoles {
+		if err := grantConsoleRole(ctx, d, t, out.ID, r); err != nil {
+			return LocalAccount{}, err
+		}
 	}
 	return out, nil
 }
@@ -145,7 +163,7 @@ func mapInitErr(err error) error {
 	return fmt.Errorf("server: create local account: %w", err)
 }
 
-func grantDirectoryReader(ctx context.Context, d localAccountDeps, t tenant.ID, account string) error {
+func grantConsoleRole(ctx context.Context, d localAccountDeps, t tenant.ID, account string, role consoleRole) error {
 	src, err := rbac.NewStore(d.DB)
 	if err != nil {
 		return err
@@ -162,7 +180,7 @@ func grantDirectoryReader(ctx context.Context, d localAccountDeps, t tenant.ID, 
 	if err != nil {
 		return err
 	}
-	rid := roleID(t)
+	rid := roleID(role.Name, t)
 	return d.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
 		// The role is created in its own savepoint-free step: an existing role (a second account) is fine.
 		var n int
@@ -170,8 +188,8 @@ func grantDirectoryReader(ctx context.Context, d localAccountDeps, t tenant.ID, 
 			return err
 		}
 		if n == 0 {
-			if err := g.CreateRole(ctx, tx, cliActor, rid, directoryReaderRole, rbac.Tier2, []authz.Permission{"directory.read"}); err != nil {
-				return fmt.Errorf("server: create the reader role: %w", err)
+			if err := g.CreateRole(ctx, tx, cliActor, rid, role.Name, rbac.Tier2, role.Perms); err != nil {
+				return fmt.Errorf("server: create role %s: %w", role.Name, err)
 			}
 		}
 		var aid string
@@ -197,7 +215,7 @@ func grantDirectoryReader(ctx context.Context, d localAccountDeps, t tenant.ID, 
 				ID: aid, RoleID: rid, Subject: rbac.SubjectRef{Kind: rbac.SubjectAccount, Account: account},
 				Roots: []rbac.Root{{Kind: rbac.NamingContext, Connection: string(c.ID), GUID: string(c.DirectoryIdentity)}},
 			}); err != nil {
-				return fmt.Errorf("server: grant directory read on connection %s: %w", c.ID, err)
+				return fmt.Errorf("server: grant role %s on connection %s: %w", role.Name, c.ID, err)
 			}
 		}
 		return nil
