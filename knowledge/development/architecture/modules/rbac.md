@@ -132,7 +132,7 @@ Actions with the runner; the group-member Actions that declare `GroupMembershipP
 
 ## Assignment constraints: Templates and sites (T-1600, ADM-132, ADM-133)
 
-Two additive constraints ride on an assignment (`migrations/0074`, tables `authz_assignment_templates` and
+Two additive constraints ride on an assignment (`migrations/0077`, tables `authz_assignment_templates` and
 `authz_assignment_sites`, owner `authz`). They are not scope root kinds, and no row means no constraint.
 `GrantInput.Templates` and `.Sites` write them in the Grant transaction (`constraints.go`).
 
