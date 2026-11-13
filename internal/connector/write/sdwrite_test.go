@@ -254,7 +254,7 @@ func TestApplyDACLTokenBindsDeclaredProperty(t *testing.T) {
 			r.h.ops[connectorv1.WriteKind(1)] = op
 			tgt := mk(40)
 			q := applyReq(tgt, ctxFor(tgt))
-			q.Kind = 1
+			q.Kind, q.Change = 1, testChange()
 			if _, err := r.h.Apply(context.Background(), q); err != nil {
 				t.Fatal(err)
 			}

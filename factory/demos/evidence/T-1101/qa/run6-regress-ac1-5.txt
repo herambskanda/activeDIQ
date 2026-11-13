@@ -1,0 +1,58 @@
+AC1 Control+KeyK open+focused: true
+AC1 Control+KeyK Esc closes: true
+AC1 Meta+KeyK open+focused: true
+AC1 Meta+KeyK Esc closes: true
+AC1 / open+focused: true
+AC1 / Esc closes: true
+AC1 Enter on top-bar button opens: true
+AC1 focus returns to top bar button: top-bar-search
+AC1 '/' in field types: x/
+AC1 query retained after reopen: "x/"
+backdrop click closes: true
+TTL 4min retained: "ada"
+TTL 6min since last typing cleared: ""
+AC2 requests for 'ada' typed: ["ada"]
+AC2 group headings: ["Exact","Users12","Groups3","Computers9","Contacts1"]
+AC2 option count: 17
+AC2 show-all rows: ["Show all 12 Users","Show all 9 Computers"]
+AC2 mark/highlight els: 21
+AC3 'users' headings (empty hits): ["Pages"]
+AC3 click Pages entry -> url: http://127.0.0.1:4190/directory/users
+AC3 keyword 'find' + Enter -> url: http://127.0.0.1:4190/directory/users
+AC3 'reports' headings: []
+AC3 'reports' body text: No objects match “reports” in your scope | If you expected a result, your scope may not cover it: ask activeDIQ administrators. | index as of 06:00 | ↑ ↓ move | ↵ open | Esc close | No results
+AC4 options: 17
+AC4 click: #0 [USER | Ada Lovelace | alovelace · alovelace@corp.test | CN=A] -> /directory/users?q=alovelace paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Users Search users "
+AC4 click: #1 [USER | Adam 0 | adam0 | CN=Adam 0,OU=X,DC=corp,DC=test | cor] -> /directory/users?q=adam0 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Users Search users "
+AC4 click: #2 [USER | Adam 1 | adam1 | CN=Adam 1,OU=X,DC=corp,DC=test | cor] -> /directory/users?q=adam1 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Users Search users "
+AC4 click: #3 [USER | Adam 2 | adam2 | CN=Adam 2,OU=X,DC=corp,DC=test | cor] -> /directory/users?q=adam2 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Users Search users "
+AC4 click: #4 [USER | Adam 3 | adam3 | CN=Adam 3,OU=X,DC=corp,DC=test | cor] -> /directory/users?q=adam3 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Users Search users "
+AC4 click: #5 [USER | Adam 4 | adam4 | CN=Adam 4,OU=X,DC=corp,DC=test | cor] -> /directory/users?q=adam4 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Users Search users "
+AC4 click: #6 [Show all 12 | Users] -> /search?q=ada&type=users paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Page not found Go "
+AC4 click: #7 [GROUP | Admins Group 0 | adminsgroup0 | CN=Admins Group 0,OU] -> /search?q=adminsgroup0 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Page not found Go "
+AC4 click: #8 [GROUP | Admins Group 1 | adminsgroup1 | CN=Admins Group 1,OU] -> /search?q=adminsgroup1 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Page not found Go "
+AC4 click: #9 [GROUP | Admins Group 2 | adminsgroup2 | CN=Admins Group 2,OU] -> /search?q=adminsgroup2 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Page not found Go "
+AC4 click: #10 [COMPUTER | ADA-PC 0 | adapc0 | CN=ADA-PC 0,OU=X,DC=corp,DC=t] -> /search?q=adapc0 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Page not found Go "
+AC4 click: #11 [COMPUTER | ADA-PC 1 | adapc1 | CN=ADA-PC 1,OU=X,DC=corp,DC=t] -> /search?q=adapc1 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Page not found Go "
+AC4 click: #12 [COMPUTER | ADA-PC 2 | adapc2 | CN=ADA-PC 2,OU=X,DC=corp,DC=t] -> /search?q=adapc2 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Page not found Go "
+AC4 click: #13 [COMPUTER | ADA-PC 3 | adapc3 | CN=ADA-PC 3,OU=X,DC=corp,DC=t] -> /search?q=adapc3 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Page not found Go "
+AC4 click: #14 [COMPUTER | ADA-PC 4 | adapc4 | CN=ADA-PC 4,OU=X,DC=corp,DC=t] -> /search?q=adapc4 paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Page not found Go "
+AC4 click: #15 [Show all 9 | Computers] -> /search?q=ada&type=computers paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Page not found Go "
+AC4 click: #16 [CONTACT | Zoë 山田 O'Brien <script> | z@x.test | CN=Zoë 山田 O'B] -> /search?q=z%40x.test paletteOpen=false body="active DIQ Search people, groups, computers and pages Ctrl K Page not found Go "
+AC4 kbd #0 (initial selected=1): /directory/users?q=alovelace
+AC4 kbd #1 (initial selected=1): /directory/users?q=adam0
+AC4 kbd #2 (initial selected=1): /directory/users?q=adam1
+AC4 kbd #3 (initial selected=1): /directory/users?q=adam2
+AC4 kbd #4 (initial selected=1): /directory/users?q=adam3
+AC4 kbd #5 (initial selected=1): /directory/users?q=adam4
+AC4 kbd #6 (initial selected=1): /search?q=ada&type=users
+AC4 kbd #7 (initial selected=1): /search?q=adminsgroup0
+AC4 kbd #8 (initial selected=1): /search?q=adminsgroup1
+AC4 kbd #9 (initial selected=1): /search?q=adminsgroup2
+AC4 kbd #10 (initial selected=1): /search?q=adapc0
+AC4 kbd #11 (initial selected=1): /search?q=adapc1
+AC4 kbd #12 (initial selected=1): /search?q=adapc2
+AC4 kbd #13 (initial selected=1): /search?q=adapc3
+AC4 kbd #14 (initial selected=1): /search?q=adapc4
+AC4 kbd #15 (initial selected=1): /search?q=ada&type=computers
+AC4 kbd #16 (initial selected=1): /search?q=z%40x.test

@@ -95,3 +95,13 @@ func TestTier0AndMissingAndBrokenChains(t *testing.T) {
 		t.Error("a read error must surface, not become empty facts")
 	}
 }
+
+// A create target has no GUID: its facts are its planned parent's, never a read of the empty GUID.
+func TestCreateTargetIsJudgedOnItsPlannedParent(t *testing.T) {
+	r := &readsFake{objs: map[string]ObjectRead{"ou": {Exists: true, Tier0: true, Parent: "nc"}, "nc": {Exists: true}}}
+	got, err := NewConnectorFacts(r).Facts(context.Background(), pins, authority.FactsQuery{
+		Target: authority.TargetRef{Connection: "c1", Class: "user", Parent: "ou", RDN: "X"}, Tier0: true, Ancestry: true})
+	if err != nil || !got.Exists || !got.Tier0 || len(got.Ancestors) != 1 || got.Ancestors[0] != "nc" || !got.AncestorsComplete {
+		t.Fatalf("%+v, %v", got, err)
+	}
+}

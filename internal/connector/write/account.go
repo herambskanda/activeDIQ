@@ -185,8 +185,11 @@ func adRefusal(err error) error {
 	return newRefusal(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "8", "directory call failed")
 }
 
-// classOf reads the live class: computer first (a computer is also a user), then user. A managed
-// service account, which is a computer subclass, and everything else is not in the slice.
+// classOf reads the live class: computer first (a computer is also a user), then user. Every
+// objectClass value must be in the known chain (top, person, organizationalPerson, inetOrgPerson, user,
+// computer): LDAP gives the values as an unordered set (RFC 4511 §4.1.7), so a class outside the chain
+// refuses the target wherever it sits in the list (T-1803). That covers the managed service accounts,
+// which are a computer subclass, and anything else, which is not in the slice.
 func classOf(st ad.AccountState) string {
 	var user, computer, other bool
 	for _, c := range st.Classes {
@@ -195,7 +198,8 @@ func classOf(st ad.AccountState) string {
 			computer = true
 		case "user":
 			user = true
-		case "msds-groupmanagedserviceaccount", "msds-managedserviceaccount", "msds-delegatedmanagedserviceaccount":
+		case "top", "person", "organizationalperson", "inetorgperson":
+		default:
 			other = true
 		}
 	}
