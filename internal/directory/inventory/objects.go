@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
@@ -733,7 +734,7 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 			return bad("a secret attribute is never stored")
 		}
 	}
-	if len(o.DN) > 4096 || len(o.RDN) > 1024 || len(o.SAMAccountName) > 256 || len(o.UPN) > 1024 || len(o.DisplayName) > 1024 || len(o.ObservedDSA) > 256 {
+	if len(o.DN) > 4096 || utf8.RuneCountInString(o.RDN) > 1024 || utf8.RuneCountInString(o.SAMAccountName) > 256 || utf8.RuneCountInString(o.UPN) > 1024 || utf8.RuneCountInString(o.DisplayName) > 1024 || len(o.ObservedDSA) > 256 {
 		return bad("value too long")
 	}
 	// PostgreSQL text cannot hold NUL; refuse rather than let the database error carry the value.
