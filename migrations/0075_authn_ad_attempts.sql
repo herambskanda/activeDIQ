@@ -1,4 +1,4 @@
--- 0073_authn_ad_attempts: the shared per-account AD-password attempt counter (T-0197; threat model
+-- 0075_authn_ad_attempts: the shared per-account AD-password attempt counter (T-0197; threat model
 -- TM-TB1-T9, §7.2). Owner: internal/platform/authn.
 --
 -- Before an AD password goes to a domain controller (the AN-5 enrolment page, AD-identity sign-in), the
