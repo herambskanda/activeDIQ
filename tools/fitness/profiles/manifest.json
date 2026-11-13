@@ -59,8 +59,7 @@
       "check": "P2-oci",
       "subject": "multi-arch (amd64, arm64) OCI server images and the boot smoke of linux-oci and saas (with TM-F-HOST and TM-F-PORTS from threat-model §15)",
       "paths": ["packaging/linux-oci/"],
-      "command": [],
-      "deferral": {"ticket": "T-0927", "expires": "2026-12-15", "adr": "0002-deployment-model.md"},
+      "command": ["go", "run", "./tools/fitness/host", "p2-oci"],
       "reason": "ADR-0002 erratum E-3: packaging/linux-oci/ holds the Dockerfiles and Compose files; the first of them is the first OCI artefact a profile must build and boot"
     },
     {
