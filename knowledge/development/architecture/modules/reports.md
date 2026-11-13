@@ -42,7 +42,7 @@ scope decision, not a platform asymmetry.
 | Console screens (`web/src/modules/reports`) | **Built (T-0966, row B12 part 1; export and schedule are B12b, T-0902).** Routes `/reports` (library) and `/reports/<id>`; the run starts when the report opens and the grid reads `listReportRunRows` (500 a page, server sort, windowed DataGrid). Client state is the URL plus `use-definitions.ts` and `use-report-run.ts` (start, poll `getReportRun`, cancel, retry). The stale banner and header chip render `ReportFreshness.stale[]` (connection name, cause, age) and the hidden-group banner renders `ReportRun.hiddenGroups[]` (count, `locked` removes Show), all from the API (T-1074); the console derives neither. Open gaps: no report+object composite hit (T-1075), subject reports need an object picker (T-1076), live-stack check (T-1077) | §6, row B12 |
 | `platform/export` | CSV, XLSX and PDF encoders (HTML is `platform/htmlx`), `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150), the canonical `Digest`/`Digester` and `Unknown()`. **Built (T-0963, row B9):** `modules/reports/export` (service, `reports.export` job, About block), migration 0065, RP5 landed. **PDF and HTML built (T-0964, row B10)**, §7.1b | §7, rows B9, B10 |
 | `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
-| `platform/notify` | **Built (T-0950).** `notify/mailaddr` (strict address parser), `notify/settings` (allowed recipient domains, SMTP relay; migration 0062), `notify/mail` (SMTP over egress), `notify/mailtest`, `notify/delivery` (DM-84 `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue`), the `notify.settings.update` Action in `modules/notify`. **Not yet wired:** nothing calls `DispatchDue` (needs the DM-44 schedule, row P4, or a notify job), no `Renderer` per purpose, no SMTP AUTH credentials. Terminal failure state is `given_up` | §7.2, §8, row P3 |
+| `platform/notify` | **Built (T-0950).** `notify/mailaddr` (strict address parser), `notify/settings` (allowed recipient domains, SMTP relay; migration 0062), `notify/mail` (SMTP over egress), `notify/mailtest`, `notify/delivery` (DM-84 `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue`), the `notify.settings.update` Action in `modules/notify`. **T-1004:** `notify/dispatchjob` (`notify.dispatch` job) runs `DispatchDue` per tenant; `compose/server` does not register it yet. **Not yet wired:** no `Renderer` per purpose (B11), no SMTP AUTH credentials. Terminal failure state is `given_up` | §7.2, §8, row P3 |
 | Per-DC read | **Built (T-0970, row P5).** `client.ConnectorPerDC` (`directory/client/perdc.go`) implements `report.PerDCReader` over the connector's `ReadPerDC` (`GRPCPerDCTransport`): one call per object, at most `PerDCConfig.InFlight` (default 8, max 64) in flight **per tenant** across every `Read`, `FanOut` (default 4) as `max_concurrency`, `Reads()` counter. Attributes and scope are the closed enums (an undefined value is refused before any RPC). The batch summary is the weakest object's (largest `DCsInScope`, smallest `DCsAnswered`, COMPLETE only if all were). Coverage is derived from the answers accepted: a DC whose values are missing, mistyped or out of range becomes an errored result (`incomplete_values`, `invalid_value`), and a stream that deviates from results-then-one-summary is `ErrReadProtocol`. Per-DC `Err` is the lower-case connector code, never its message. A stream-level `OBJECT_NOT_FOUND` is an object with no answers and PARTIAL. **The connector has no `ReadPerDC` handler yet** (`internal/connector/read` serves `Read` and `ScopedSearch` only), so the client is proved over a real gRPC hop against a scripted server, not Samba | §6.5, row P5 |
 | `platform/store` | Entry points `WithTenant`, `WithTenantSeparate` and `WithPlatform`. `store.Tx` exposes `Exec`, `Query` and `QueryRow` | §6.3 uses them as they are |
 
@@ -401,8 +401,11 @@ equals a pure-Go reference function `inventory.DeriveUserState(inputs, now)`. Th
   refuses a time that is set without its bit. The D4 tables hold whole seconds: NULL is "not read", 0 is
   forever (the lockout "until an admin unlocks", max age "never"). `PolicyWriter` (policy.go) takes
   `*filetime.Interval` from the one codec and ignores an observation older than the stored one.
-- **Policy resolution is in SQL**, as a per-row recursive CTE (`resInner`): direct `msDS-PSOAppliesTo` edges
-  win over every group-linked PSO (transitive `member` links plus the primary-group edge); the lowest
+- **Policy resolution is in SQL**, per row (`resInner`, no recursion): direct `msDS-PSOAppliesTo` edges
+  win over every group-linked PSO, whose groups are read from the materialised closure
+  `inventory_group_members` (one indexed lookup by member; direct, primary-group and nested edges). If the
+  closure is behind the links (a row in `inventory_group_closure_dirty`) or a PSO-linked group is
+  `over_budget`, or any closure row of the connection is flagged `cut` (nesting beyond 128 levels hides members), and no direct PSO exists, the policy is unresolved with reason `group_closure_incomplete`; the lowest
   precedence wins, then the lowest GUID compared as the 16 raw wire bytes (not the text); only
   NORMAL_ACCOUNT users that are not krbtgt resolve a PSO. A candidate with no stored PSO row or no
   precedence, or a domain whose PSO set was never read (`psos_read_at` NULL) leaves the policy
@@ -701,6 +704,19 @@ Each is in review under §3.3's own rule ("a dataset that needs another function
   direction of "stricter" per field written once in the fragment (ad-expert confirms the direction
   table). A value that was not read, or a `0` that means "never" (max age) or "until unlocked"
   (duration) is handled through the 2a codec states, never as a number.
+- **API surface (T-1718, `api/openapi/modules/reports.yaml`, additive within `/api/v1`).** Columns `policy_name`,
+  `policy_kind` (`domain`|`pso`), `precedence`, `applies_to_count`, `applies_to_first`, `min_length`, `history_length`,
+  `max_age`, `min_age`, `complexity`, `reversible_encryption`, `lockout_threshold`, `lockout_duration`,
+  `lockout_window` are in `ReportColumnId`; numbers are `integer` cells and `ReportColumnInfo.unit` (`count`|`seconds`)
+  says what they count, so the console computes deltas from typed cells and the server sends no delta text (the
+  `*_vs_domain` enums above stay a dataset option for exports, not a contract member). The 2a codec's no-limit values
+  (max age 0, threshold 0, duration "until unlocked") arrive as a `never` cell and are the loosest value of their
+  column. The stored `pso_unreadable` fact and the container reads surface as `ReportRun.policyReads`: one entry
+  per domain in scope, `kind` = `readable` (psoCount, readAt) | `none_exist` (a real zero, readAt) | `unreadable`
+  (containerName, reason, optional readAt), each with `domainPolicyRowKey` (its baseline row); `complete` is false
+  and `domainsReadable < domainsInScope` for partial coverage. `GET /reports/runs/{runId}/policies/{policyId}/targets`
+  pages one policy row's direct targets (`basis: direct_targets`, `count` in scope, name order) behind the
+  `listReportRunRows` run-read gate. Until T-1114 lands the dataset it answers 501 (`pending.go`).
 - A PSO row's own name is its own identity (row anchor `dom` makes the row visible); a PSO is **not** a
   `MaskAnchor` identity here because the row is the PSO. The `policy_source` masking of `inventory.users`
   (§3.3) is unchanged.
@@ -1101,8 +1117,14 @@ in memory** rather than filter through inventory.
   consistency GUID; `mail` for contacts and `dNSHostName` for computers, only when they are JSON strings):
   keys are built from named columns, never from the attribute bag, so a secret attribute cannot reach the
   index. Purged objects have no keys; deleted and out-of-scope objects keep theirs and rank after live ones.
-  Table `inventory_search_keys` (migration 0069): B-tree `(tenant_id, key_kind, key)`, partial GIN on kinds
-  1-5, RLS + FORCE.
+  Table `inventory_search_keys` (migration 0069): B-tree `(tenant_id, key_kind, key)`, RLS + FORCE; migration 0072
+  (T-1335) adds `key_id` (identity, `UNIQUE (tenant_id, key_id)`, never leaves a statement) and drops the GIN.
+  Table `inventory_search_trigrams` (migration 0073, `-- write-class: system`): `(tenant_id, trgm, key_id)`,
+  primary key in that order, RLS + FORCE, no UPDATE or TRUNCATE for the runtime role. It holds the `show_trgm`
+  postings of the name (1) and sam (3) keys only (`searchkey.Kind.FuzzyEligible`), kept equal to the keys by
+  `inventory_search_trigrams_sync()` through three statement-level triggers (AFTER INSERT, DELETE, UPDATE with
+  transition tables), so every writer of the keys is covered. The runner runs the `-- after:` line of a
+  migration (`VACUUM (ANALYZE)` of the postings) outside the migration transaction (`migrations.After`).
 - **Backfill.** `Reader.Backfill(ctx, tenant, progress)` walks `directory_objects` in `(connection, object)`
   pages of 500 and never reads the key table; it rewrites rows of an older `norm_version`, and a second run
   changes nothing. Entra objects are indexed but admitted by no 2a scope kind (T-1131), so they are
@@ -1111,13 +1133,17 @@ in memory** rather than filter through inventory.
   holds no NetBIOS or DNS name.
 - **Statement.** `reportsql.CompileSearch(src, SearchQuery, SearchScopes)` and `ExecSearch`: `m_exact`,
   `m_prefix`, `m_fuzzy` (MATERIALIZED, `LIMIT W+1`), `ceil`, `cand`, `hits` (scope by `scopeSQL` per
-  permission, `DISTINCT ON` object), `visible`, `paged`. Key kinds are integer literals so the partial
-  index predicate is provable. `inventory.Searcher.Search(ctx, tx, tenant, scopes, SearchRequest)` is the
+  permission, `DISTINCT ON` object), `visible`, `paged`. `m_fuzzy` (queries of 3 to 32 runes) reads the
+  tenant's postings for the query's trigrams, keeps the `key_id`s whose count `c` satisfies
+  `c::real / n::real >= t` (pg_trgm's own float4 rule, so nothing a `<%` would accept is lost), then rechecks each
+  candidate through `CROSS JOIN LATERAL` over `(tenant_id, key_id)` with `$q <% key`. `inventory.Searcher.Search(ctx, tx, tenant, scopes, SearchRequest)` is the
   port; counts only from three characters and never in the refine state. The fuzzy threshold is
   transaction-local, 0.3 (0.5 cannot find the 'Pryia Ramn' vector, whose word similarity is 0.333).
-- **Known limit.** Under FORCE RLS the planner cannot use the trigram GIN (pg_trgm's operators are not
-  leakproof): the fuzzy probe filters the tenant's kind 1-5 rows. `Test_search_plan_uses_the_indexes` pins
-  it; T-1180 decides the fix. The per-script vectors (Latin with diacritics, Cyrillic, Greek, CJK) all
+- **Fuzzy under row security (T-1335).** pg_trgm's operators are not leakproof, so under FORCE RLS the planner
+  never uses a trigram GIN; that is why the fuzzy probe reads a tenant-led B-tree of postings instead (ADR-0011
+  rule 5a). `Test_search_plan_uses_the_indexes` and SE5 assert the plan, and
+  `Test_search_fuzzy_reads_only_the_tenants_own_postings` proves that another tenant's size changes no row
+  examined. The hits join at the default W (10,000) is a separate plan question (T-1344). The per-script vectors (Latin with diacritics, Cyrillic, Greek, CJK) all
   match fuzzily on the bundled pg16 and pg18 images.
 
 ## 5. The compiler: `store/reportsql`
@@ -1536,6 +1562,32 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - a sink that fails on the append leaves an error-level log record and the caller still gets the refusal
   (`Test_read_denied_append_failure_is_logged`).
 
+#### As built (T-0971, row B8)
+
+- **Files.** `platform/report/perdc_eval.go` (fold, cells, `EvalPerDC`, tally, `DCCounter`, `DefaultPerDCReadCap` 250 000, `PerDCBatchSize` 200),
+  `modules/reports/run/perdc.go` (stages 2 to 4), `job.go` (`execute` routes a definition with `PerDC` and stops stage 1 after storing the
+  candidates), `record.go` (`Run.PerDC`, `ColumnLabel`).
+- **Stages.** 1 candidates (T2, run left `running`; `connection_id` and `domain` ride along as unstored helper columns; SQL sort keys and
+  `PerDCWhere` on per-DC columns are taken out of the compiled query). 2 cap: `DCCounter.DCsInScope` per (connection, NC), candidates × DCs
+  against `Service.PerDCReadCap`; over it the run fails `per_dc_read_cap_exceeded` with `candidates`, `dcs`, `reads`, `cap` in the detail,
+  rows deleted, **zero reads made** (AC-41). 3 reads: one `PerDCReader.Read` in flight at a time, at most 200 objects per call, outside any
+  transaction; after each batch a short transaction locks the run, checks it is still this attempt's, writes the per-DC cells and sort keys,
+  deletes rows `PerDCWhere` rejects and updates `report_runs.per_dc` progress. Cancel stops the next read (the batch transaction finds the run
+  no longer running). 4 finalise: order by stored sort keys (a cell with no key sorts last), renumber ordinals, digest in that order, succeed.
+- **Cells.** `PerDCFold` takes the maximum (or minimum) over the DCs that answered, never a sum; a count column shows the count at the DC of the
+  latest failed logon (`PartAtWinner`). Row coverage reads "2 of 3 DCs". With a DC silent, a time with no value reads "Not confirmed" (text cell,
+  Unknown to filters, never "never"); with every DC answering, unset is `Never`.
+- **Run record.** `report_runs.per_dc` (progress while running; `complete`, `dcs_in_scope`, `dcs_answered`, `unreachable[{dc,error}]`, `read_at` when
+  done). `Run.ColumnLabel` appends " (at least)" to value columns of a partial run; the API `coverage` has `label` and `unreachable`; the export
+  header uses the same label and the About block gains a "DC coverage" line.
+- **Migration 0073** lets `report_run_rows` rows be deleted while the run is `running` (per-DC filtering removes rows).
+- **Not wired yet.** `Service.PerDC` and `Service.PerDCDCs` are nil in `compose/server`; until the follow-ups land a per-DC run fails
+  `connection_unavailable`. Needed: a `DCsInScope` on `client.ConnectorPerDC` and the wiring (directory-engineer), calibration of the cap and a
+  500k-candidate timing (B13), the coverage label and "(at least)" header on screen (B12).
+- **Tests.** `run/perdc_pg_test.go`: `TestPerDCRunTakesTheMaximumOverDCsAndNamesTheDC` (AC-39), `TestPerDCRunWithADCDownIsLabelledPartial` (AC-40),
+  `TestPerDCRunOverTheReadCapIsRefusedBeforeAnyRead` (AC-41), `TestPerDCRunReadsInBoundedBatchesAndShowsProgress`, `TestPerDCRunCancelStopsReading`,
+  `TestPerDCRunFiltersAndSortsOnPerDCColumns`, `TestPerDCRunWithoutAReaderFailsConnectionUnavailable`; unit tests in `platform/report/perdc_eval_test.go`.
+
 ## 7. Export (spec §8.3, FR-16 to FR-22)
 
 ### 7.1 Creating and downloading an export
@@ -1850,7 +1902,7 @@ with the same owners. Existing tickets are named by ID. "AC" means reports-2a §
 | **B5** (built, T-0960; §3.6 "As built") | Library batch 1: loader, `LOCK`, crosswalk search index, USR-01, USR-02, USR-03, USR-05 with presets and hidden groups, sync-interval-0 narrowing | reporting-engineer | B3, B4 | FR-01, FR-02, FR-03, FR-04, FR-06, FR-09, FR-14; AC-01–AC-04, AC-12, AC-16, AC-17, AC-18, AC-49 |
 | **B6** (built, T-0961; §3.3 "As built (T-0961)") | inventory: `inventory.groups`, `.group_members` (`grp` and `mbr` row anchors, primary-group edges, effective closure, cycle findings, FSP rows, `Via` hop as `MaskAnchor`), `.ous` (in-scope subtree counts over a `FilterAnchor`), `.contacts`, **RP11** for its datasets | directory-engineer | B1, B2, P2 | FR-15, FR-06; AC-19, AC-20, AC-21 |
 | **B7** (built, T-0962) | Library batch 2: PWD-01, PWD-02, GRP-01–GRP-04, CMP-01, CMP-02, OU-01, CTC-01 | reporting-engineer | B5, B6 | FR-01, FR-02, FR-09, FR-14, FR-15; AC-13, AC-19, AC-20, AC-22, AC-23 |
-| **B8** | Per-DC runs: the §6.5 stages, read cap, coverage labels, `EvalPerDC`; USR-04, PWD-03 | reporting-engineer | B4, B5, P5 | FR-10; AC-39, AC-40, AC-41 |
+| **B8** (built, T-0971; §6.5 "As built") | Per-DC runs: the §6.5 stages, read cap, coverage labels, `EvalPerDC`; USR-04, PWD-03 | reporting-engineer | B4, B5, P5 | FR-10; AC-39, AC-40, AC-41 |
 | **B9** | Export: `export.Digest` (canonical form and vectors, `u` tag included), `export.Unknown()`, `run.StoredSource`, About block, CSV and XLSX export jobs, `report_exports`, creator download through `run.ReadAccess` (§7.1), 410, delete, caps, export audit kinds, **RP5** | reporting-engineer | B4 | FR-16, FR-17, FR-18, FR-19, FR-20, FR-21, FR-22 (export), FR-31; AC-24–AC-28, AC-50 |
 | **B10** | PDF and HTML encoders and export formats (before M2 exit). **Built (T-0964), §7.1b** | reporting-engineer | B9 | FR-16, FR-19 |
 | **B11** | Schedules: DM-73 tables, `reports.schedule.*` Actions, fire job, owner-authority checks, delivery links authorised by the Delivery row (§7.2), ZIP, notify-only-if-data, `manage_all` metadata view, delivery audit kinds, **RP10** | reporting-engineer (backend-engineer reviews) | B4, B9, P3, P4 | FR-22 (delivery), FR-23–FR-29, FR-26a–FR-26d, FR-31; AC-30–AC-38, AC-45, AC-46, AC-47, AC-51–AC-57 |
@@ -1999,3 +2051,4 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 - 2026-11-01 · T-0964 · row B10 built: `platform/export/pdf` (+ `pdftest`), `platform/htmlx`, PDF and HTML formats with
   caps of 5,000 and 20,000 rows, per-format `HardCap`, `FormatsFor`, `exportFormats` served by the API. As built:
   §7.1b. Follow-ups: the owner's time zone on a run; an embedded font for CJK in the PDF.
+- 2026-11-04 · T-0971 · row B8 built: per-DC run stages, read cap, coverage labels, `EvalPerDC`, USR-04 and PWD-03 (§6.5 "As built"); `DCCounter` port; migration 0073.
