@@ -141,6 +141,12 @@ func (s *Schema) Syntax(name string) (Syntax, bool) {
 	return a.Syntax, ok
 }
 
+// OID returns the attributeID registered for a schema attribute ("" when none was given).
+func (s *Schema) OID(name string) string {
+	a, _ := s.lookup(name)
+	return a.OID
+}
+
 func (s *Schema) lookup(name string) (AttrInfo, bool) {
 	if s == nil {
 		return AttrInfo{}, false

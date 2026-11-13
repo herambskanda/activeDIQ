@@ -12,7 +12,6 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
-	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	dirsync "github.com/skenzeriq/activediq/internal/directory/sync"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
@@ -24,7 +23,7 @@ import (
 //	make lab-up && go test -tags lab ./internal/connector/read -run TestLabSyncMapping
 //	SYNC_CAPTURE_DIR=$PWD/internal/directory/sync/testdata/lab go test -tags lab ./internal/connector/read -run TestLabSyncMapping
 func TestLabSyncMapping(t *testing.T) {
-	l := newSearchLabSchema(t, syncExtraAttrs())
+	l := newSearchLab(t)
 	ou := "OU=syncmap-" + l.stamp + "," + labDom
 	l.add(t, ou, map[string][]string{"objectClass": {"organizationalUnit"}, "description": {"sync mapping lab"}})
 	t.Cleanup(func() { l.delTree(ou) })
@@ -121,19 +120,4 @@ func guidText(t *testing.T, g *connectorv1.Guid) string {
 		t.Fatal("guid")
 	}
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
-
-// syncExtraAttrs are the closed-list attributes ad.DefaultSchema (the connector's request allowlist) does not
-// carry today. The product allowlist is deliberately not widened by this ticket; the lab test widens its own
-// session so the mapping is proven on real DC output (follow-up: wire the list into the connector allowlist).
-func syncExtraAttrs() []ldapfilter.AttrInfo {
-	s, i64 := ldapfilter.SynString, ldapfilter.SynInt64
-	return []ldapfilter.AttrInfo{
-		{Name: "mail", Syntax: s}, {Name: "company", Syntax: s}, {Name: "operatingSystem", Syntax: s},
-		{Name: "managedBy", Syntax: ldapfilter.SynDN}, {Name: "lastKnownParent", Syntax: ldapfilter.SynDN},
-		{Name: "mS-DS-ConsistencyGuid", Syntax: ldapfilter.SynOctet},
-		{Name: "lockoutTime", Syntax: i64}, {Name: "pwdLastSet", Syntax: i64},
-		{Name: "accountExpires", Syntax: i64}, {Name: "lastLogonTimestamp", Syntax: i64},
-		{Name: "isDeleted", Syntax: ldapfilter.SynBool}, {Name: "isRecycled", Syntax: ldapfilter.SynBool},
-	}
 }
