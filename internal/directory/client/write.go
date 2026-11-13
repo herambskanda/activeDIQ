@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/skenzeriq/activediq/internal/directory/accountkind"
+	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/secret"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -27,6 +30,10 @@ var (
 	ErrDCMismatch     = errors.New("client: plan precondition names a DC other than the pinned one; apply refused")
 	ErrNoDSAPin       = errors.New("client: step pins no DSA GUID for the naming context; write refused")
 	ErrTransport      = errors.New("client: connector call failed")
+	ErrKindAttrs      = errors.New("client: operation attributes are not the kind's; write refused")
+	ErrKindClass      = errors.New("client: target class is not one the kind allows; write refused")
+	ErrNoSecret       = errors.New("client: the step carries no secret input for this kind; write refused")
+	ErrNotCanonical   = errors.New("client: target or naming context is not canonical lower-case UUID text; write refused")
 )
 
 // WriteOp is one planned directory write, as the Action's Apply hands it over. The Step authorises
@@ -34,24 +41,93 @@ var (
 // Attrs and refuses a mismatch. Everything that goes on the wire is derived from these fields: the
 // connection from Target.Connection, the object from Target.GUID (the planned parent for a create),
 // the naming context from the Step (Target.NC, digest-covered), the
-// WriteKind from DigestKind through kindTable. No wire field is caller-supplied, so none can differ from what the digest covers. WriteChange has no arm until a
-// kind ticket adds one with a constructor deriving it from Attrs; until then Change is never sent.
+// WriteKind from DigestKind through kindTable. No wire field is caller-supplied, so none can differ from what the digest covers. The WriteChange is derived from Attrs by one constructor per
+// kind (objectchange.go), never filled in by the caller.
 type WriteOp struct {
 	// DigestKind names the operation in the plan digest ("user.setAttribute").
 	DigestKind string
 	Target     authority.TargetRef
 	Attrs      []step.Attr
+	// SecretInput is the password of an OBJECT_CREATE of a USER whose Attrs carry "~secret" (presence
+	// only). It must be non-empty exactly then, goes into ApplyRequest.secret_input only, is never in
+	// the digest and is zeroed after the send.
+	SecretInput secret.Secret
 }
 
-// kindTable maps a plan-digest kind to the connector's WriteKind. Each kind ticket adds its row;
-// until one does, every write is refused as an unknown kind.
-var kindTable = map[string]connectorv1.WriteKind{}
+// The plan-digest keys of the wired kinds (contract §8.10.1). Compile-time constants; the connector
+// holds the same strings (write.DigestObject*) and a test pins the two.
+const (
+	DigestObjectMove    = "ad.object.move"
+	DigestObjectRename  = "ad.object.rename"
+	DigestObjectRestore = "ad.object.restore"
+)
+
+// The attribute names the object kinds' digests cover (contract §8.10.2 rule 5).
+const (
+	AttrNewParent   = "newParent"
+	AttrNewParentNC = "newParentNC"
+	AttrNewRDN      = "newRDN"
+	AttrRDN         = "rdn"
+)
+
+// ClassMove is the TM-D28 class of the object move, rename and restore kinds.
+const ClassMove = "move"
+
+// kindRow is one registered kind: the connector WriteKind and its TM-D28 class ("none" when the kind
+// is outside every class). A row without a class is refused by TestKindTableClosed.
+
+// structureKind is true for the object move, rename and restore digest kinds (T-1624): their change comes from
+// op.change, not from writechange or accountkind.
+func structureKind(k string) bool {
+	return k == DigestObjectMove || k == DigestObjectRename || k == DigestObjectRestore
+}
+
+type kindRow struct {
+	Kind  connectorv1.WriteKind
+	Class string
+}
+
+// kindTable maps a plan-digest kind to the connector's WriteKind (contract §8.10.2). Each kind ticket
+// adds its row together with its writechange codec and its operation-table row; every key not in the
+// table is refused as an unknown kind before any transport call.
+var kindTable = map[string]kindRow{
+	writechange.KeyObjectCreate: {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE, Class: "none"},
+	writechange.KeyObjectUpdate: {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_UPDATE, Class: "attributes"},
+	writechange.KeyObjectDelete: {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_DELETE, Class: "none"},
+	DigestObjectMove:            {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE, Class: ClassMove},
+	DigestObjectRename:          {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME, Class: ClassMove},
+	DigestObjectRestore:         {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE, Class: ClassMove},
+}
+
+// kindClass is the TM-D28 class of each registered kind ("none" for a tightening, contract §8.10.1).
+// A kind in kindTable without a class here is refused at init (TM §6.9 rule 4).
+var kindClass = map[string]string{
+	accountkind.KeyResetPassword: "reset_password",
+	accountkind.KeyUnlock:        "unlock",
+	accountkind.KeyEnable:        "enable",
+	accountkind.KeyDisable:       "none",
+}
+
+func init() {
+	for _, sp := range accountkind.Specs() {
+		if _, ok := kindClass[sp.Key]; !ok {
+			panic("client: kind registered without a TM-D28 class: " + sp.Key)
+		}
+		kindTable[sp.Key] = kindRow{Kind: sp.Kind, Class: kindClass[sp.Key]}
+	}
+}
 
 // wire is the request material derived from a validated WriteOp.
 type wire struct {
 	conn   *connectorv1.ConnectionRef
 	target *connectorv1.WriteTarget
 	kind   connectorv1.WriteKind
+	// change is the typed change derived from the digested Attrs; nil for a kind with no arm yet.
+	change *connectorv1.WriteChange
+	// secret is set for a kind whose Apply carries secret_input (reset password).
+	secret bool
+	// hasSecret is set for a create that carries the new account's password in op.SecretInput.
+	hasSecret bool
 }
 
 // Result is what a completed Write returns.
@@ -132,6 +208,7 @@ func (c *Client) Facts(ctx context.Context, pins authority.Pins, q authority.Fac
 // facts the Step names, runs the Step's authorisation re-check, and sends only with the Clearance
 // that issues.
 func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, error) {
+	defer op.SecretInput.Destroy() // on every exit, a refused op included
 	if err := s.Valid(); err != nil {
 		return Result{}, err
 	}
@@ -141,6 +218,9 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 	}
 	if step.Compute(op.DigestKind, op.Target, op.Attrs) != s.Digest() || op.Target.NC != s.NC() {
 		return Result{}, ErrDigest
+	}
+	if err := op.deriveChange(&w); err != nil {
+		return Result{}, err
 	}
 	// The NC comes from the Step, not the caller. Every write needs one until an Entra kind declares
 	// itself (no such kind exists); an empty NC never falls back to an unpinned write.
@@ -200,7 +280,7 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 		return Result{}, err
 	}
 	plan, err := c.sendPlan(ctx, clr, s, &connectorv1.PlanRequest{
-		Connection: w.conn, Step: key, Target: w.target, Kind: w.kind,
+		Connection: w.conn, Step: key, Target: w.target, Kind: w.kind, Change: w.change,
 		Tier0: t0.Context, Tier0Override: t0.Override, ActingPrincipal: acting,
 		Dc: &connectorv1.DcSelection{PinnedDsaGuid: &connectorv1.Guid{Value: dsaID}},
 	})
@@ -222,11 +302,28 @@ func (c *Client) Write(ctx context.Context, s step.Step, op WriteOp) (Result, er
 		return Result{}, err
 	}
 	d := s.Digest()
-	resp, err := c.sendApply(ctx, clr, s, &connectorv1.ApplyRequest{
+	areq := &connectorv1.ApplyRequest{
 		Connection: w.conn, Step: key, Attempt: uint32(s.Attempt()), Target: w.target,
-		Kind: w.kind, Tier0: t0.Context, Precondition: plan.GetPrecondition(),
+		Kind: w.kind, Change: w.change, Tier0: t0.Context, Precondition: plan.GetPrecondition(),
 		Tier0Override: t0.Override, ActingPrincipal: acting, PlanDigest: d[:],
-	})
+	}
+	if w.secret {
+		sv, err := secretInput(s)
+		if err != nil {
+			return Result{}, err
+		}
+		areq.SecretInput = sv
+		defer clear(sv.Material) // the copy this call made; the step's own secret is the runner's to destroy
+	}
+	if w.hasSecret {
+		var sec *connectorv1.SecretValue
+		op.SecretInput.Expose(func(b []byte) { sec = &connectorv1.SecretValue{Material: append([]byte(nil), b...)} })
+		if sec != nil {
+			areq.SecretInput = sec
+			defer clear(sec.Material) // wipe the wire copy on every exit path
+		}
+	}
+	resp, err := c.sendApply(ctx, clr, s, areq)
 	if err != nil {
 		return Result{}, err
 	}
@@ -237,9 +334,55 @@ func (op WriteOp) derive() (wire, error) {
 	if op.DigestKind == "" || op.Target.Connection == "" {
 		return wire{}, ErrInvalidOp
 	}
-	kind, ok := kindTable[op.DigestKind]
-	if !ok || kind == connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
+	row, ok := kindTable[op.DigestKind]
+	if !ok || row.Kind == connectorv1.WriteKind_WRITE_KIND_UNSPECIFIED {
 		return wire{}, ErrUnknownKind
+	}
+	kind := row.Kind
+	var change *connectorv1.WriteChange
+	hasSecret := false
+	_, account := accountkind.ByKey(op.DigestKind)
+	switch {
+	case account:
+		// The account kinds (T-1583) have their own change codec, class label and secret rule, applied by
+		// deriveChange. A reset takes its secret from the step, so op.SecretInput is never theirs.
+		if !op.SecretInput.IsEmpty() {
+			return wire{}, fmt.Errorf("%w: secret input", ErrInvalidOp)
+		}
+	case structureKind(op.DigestKind):
+		// Kinds 4-6 (T-1624): the change comes from op.change; the connector reads the class live. They
+		// carry no secret: one passed here is refused, not dropped.
+		if !op.SecretInput.IsEmpty() {
+			return wire{}, fmt.Errorf("%w: secret input", ErrInvalidOp)
+		}
+		var err error
+		change, err = op.change(kind)
+		if err != nil {
+			return wire{}, err
+		}
+	default:
+		// The object create, update and delete kinds (T-1623) are decoded here.
+		var err error
+		change, err = writechange.Decode(op.DigestKind, op.Attrs)
+		if err != nil {
+			return wire{}, fmt.Errorf("%w: change", ErrInvalidOp)
+		}
+		// Canonical (lower-case) identifiers only: the connector recomputes the digest from the wire
+		// fields, so a different spelling of the same GUID would never match.
+		for _, id := range []string{op.Target.GUID, op.Target.Parent, string(op.Target.NC)} {
+			if id != strings.ToLower(id) {
+				return wire{}, fmt.Errorf("%w: identifier is not canonical", ErrInvalidOp)
+			}
+		}
+		if kind != connectorv1.WriteKind_WRITE_KIND_OBJECT_CREATE && op.Target.Class != "" {
+			return wire{}, fmt.Errorf("%w: class is read live", ErrInvalidOp)
+		}
+		if cc := change.GetObjectCreate(); cc != nil {
+			hasSecret = cc.GetHasSecretInput()
+		}
+		if hasSecret == op.SecretInput.IsEmpty() {
+			return wire{}, fmt.Errorf("%w: secret input", ErrInvalidOp)
+		}
 	}
 	obj := op.Target.GUID
 	if obj == "" {
@@ -250,7 +393,43 @@ func (op WriteOp) derive() (wire, error) {
 		return wire{}, fmt.Errorf("%w: target object", ErrInvalidOp)
 	}
 	wt := &connectorv1.WriteTarget{Object: &connectorv1.Guid{Value: id}}
-	return wire{conn: &connectorv1.ConnectionRef{ConnectionId: op.Target.Connection}, target: wt, kind: kind}, nil
+	return wire{conn: &connectorv1.ConnectionRef{ConnectionId: op.Target.Connection}, target: wt, kind: kind, change: change, hasSecret: hasSecret}, nil
+}
+
+// deriveChange fills the typed change of a kind that has an arm (the account kinds). The change comes
+// from the digested Attrs by accountkind.ChangeFromAttrs, which the connector inverts, and the class
+// label and UUID texts must be the forms the connector recomputes the digest with: an op the
+// connector could not verify is refused here, before any transport call.
+func (op WriteOp) deriveChange(w *wire) error {
+	sp, ok := accountkind.ByKey(op.DigestKind)
+	if !ok {
+		return nil
+	}
+	if !sp.AllowsClass(op.Target.Class) {
+		return ErrKindClass
+	}
+	if !accountkind.Canonical(op.Target.GUID) || !accountkind.Canonical(string(op.Target.NC)) || op.Target.Parent != "" || op.Target.RDN != "" {
+		return ErrNotCanonical
+	}
+	ch, err := accountkind.ChangeFromAttrs(op.DigestKind, op.Attrs)
+	if err != nil {
+		return ErrKindAttrs
+	}
+	w.change = ch
+	w.secret = op.DigestKind == accountkind.KeyResetPassword
+	return nil
+}
+
+// secretInput copies the step's transient secret into the wire message. It is never logged, and the
+// caller zeroes the copy once the call returns.
+func secretInput(s step.Step) (*connectorv1.SecretValue, error) {
+	sec := s.Secret()
+	if sec.IsEmpty() {
+		return nil, ErrNoSecret
+	}
+	var b []byte
+	sec.Expose(func(x []byte) { b = append([]byte(nil), x...) })
+	return &connectorv1.SecretValue{Material: b}, nil
 }
 
 func (c *Client) buildTier0(ctx context.Context, st Stage, op WriteOp) (Tier0, error) {

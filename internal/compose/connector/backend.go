@@ -120,6 +120,7 @@ func openBackend(ctx context.Context, loc Local, log *slog.Logger) (*backend, er
 	}
 
 	prov := write.NewADProvider(sess, nil, ident, &filePins{path: filepath.Join(loc.DataDir, pinsFile)})
+	prov.Self = self
 	src, err := read.NewADSource(sess, prov)
 	if err != nil {
 		return nil, errors.New("connector: read source")

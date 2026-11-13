@@ -1,0 +1,140 @@
+# T-1633 raw lab output, dc1 (Windows Server 2025, forest/domain level 2025, Recycle Bin on), 2026-11-07. Throwaway lab accounts only; GUIDs are lab values.
+# Client: Python ldap3 over verified LDAPS from the Linux host; admin steps over WinRM (A-0025), all under with-dc1-lock. NetBIOS domain is WINLAB.
+# Runs 1-3 had a bug (NetBIOS name WIN instead of WINLAB: every dsacls /G failed silently), so only their default-rights parts are kept (section A). Section B is the corrected run 4; section C is run 5.
+
+===== A. default rights only (run 3, before any grant; valid): group-side read and memberOf
+GROUP-SIDE read of G1633 `member` by adq1633-cls
+  no controls                    rc=success members=[]
+  show-deactivated-link 2065     rc=success members=['CN=t1633-v5\\0ADEL:a328f2a1-e2bd-4a78-ba08-50d351a92e1b,CN=Deleted Obje', 'CN=t1633-v4\\0ADEL:2c1745e1-5d5b-48f8-95f7-a6191ea2bad6,CN=Deleted Obje', 'CN=t1633-v3\\0ADEL:99f48c11-8e94-480b-b117-d6b3fef8e17b,CN=Deleted Obje', 'CN=t1633-v2\\0ADEL:0b22abe6-eb41-477c-9916-fa6eeb2f
+  show-deleted + 2065            rc=success members=['CN=t1633-v5\\0ADEL:a328f2a1-e2bd-4a78-ba08-50d351a92e1b,CN=Deleted Obje', 'CN=t1633-v4\\0ADEL:2c1745e1-5d5b-48f8-95f7-a6191ea2bad6,CN=Deleted Obje', 'CN=t1633-v3\\0ADEL:99f48c11-8e94-480b-b117-d6b3fef8e17b,CN=Deleted Obje', 'CN=t1633-v2\\0ADEL:0b22abe6-eb41-477c-9916-fa6eeb2f
+ADMIN memberOf of deleted v1 with/without 2065:
+  show-deleted           []
+  show-deleted+2065      ['CN=G1633,OU=T1633,DC=win,DC=activediq,DC=test']
+
+===== B. run 4 (corrected): pre-delete grants, deleted-object reads, container variants
+OU=T1633,DC=win,DC=activediq,DC=test
+reanimate ACE added
+victims {'v1': '8e24ca08-e58d-4935-8255-71bf04146f43', 'v2': '21adcc67-de78-4f87-a192-6d661d2bb60e', 'v3': '1c273b6e-4022-44e6-9456-a82a8c9d06d6', 'v4': 'ecf38be9-4fbb-4e8e-addb-8da32976073c'}
+OU ACL check: ['Allow WINLAB\\adq1633-cls2             SPECIAL ACCESS', 'Allow WINLAB\\adq1633-cls3             SPECIAL ACCESS']
+LIVE read by adq1633-cls
+  live v1 R2 set                                       rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'memberOf', 'msDS-AllowedToDelegateTo', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  live v4 R2 set (deny for cls2)                       rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'memberOf', 'msDS-AllowedToDelegateTo', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+LIVE read by adq1633-cls2
+  live v1 R2 set                                       rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'memberOf', 'msDS-AllowedToDelegateTo', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  live v4 R2 set (deny for cls2)                       rc=0 success entries=1 attrs_returned=[]
+LIVE read by adq1633-cls3
+  live v1 R2 set                                       rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'memberOf', 'msDS-AllowedToDelegateTo', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  live v4 R2 set (deny for cls2)                       rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'memberOf', 'msDS-AllowedToDelegateTo', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+=== DELETED, no container grant (pre-delete grants only)
+  cls v1 base-by-GUID R2 set                           rc=32 noSuchObject entries=0 attrs_returned=-
+  cls v3 base-by-GUID R2 set                           rc=32 noSuchObject entries=0 attrs_returned=-
+  cls v4 base-by-GUID R2 set                           rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v1 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v3 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v4 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls3 v1 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls3 v3 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls3 v4 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v3 minimal attrs [objectSid]                    rc=32 noSuchObject entries=0 attrs_returned=-
+Owner: WINLAB\Domain Admins
+Group: NT AUTHORITY\SYSTEM
+
+Access list:
+{This object is protected from inheriting permissions from the parent}
+Allow BUILTIN\Administrators  SPECIAL ACCESS
+               
+=== container grant LC (verified applied)
+  cls v1 base-by-GUID R2 set                           rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls v3 base-by-GUID R2 set                           rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls v4 base-by-GUID R2 set                           rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls2 v1 base-by-GUID R2 set                          rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls2 v3 base-by-GUID R2 set                          rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls2 v4 base-by-GUID R2 set                          rc=0 success entries=1 attrs_returned=[]
+  cls3 v1 base-by-GUID R2 set                          rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls3 v3 base-by-GUID R2 set                          rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls3 v4 base-by-GUID R2 set                          rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls one-level list of container: sizeLimitExceeded entries=1000
+=== container grant RP (verified applied)
+  cls v1 base-by-GUID R2 set                           rc=32 noSuchObject entries=0 attrs_returned=-
+  cls v3 base-by-GUID R2 set                           rc=32 noSuchObject entries=0 attrs_returned=-
+  cls v4 base-by-GUID R2 set                           rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v1 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v3 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v4 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls3 v1 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls3 v3 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls3 v4 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls one-level list of container: success entries=0
+=== container grant LCRP (verified applied)
+  cls v1 base-by-GUID R2 set                           rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls v3 base-by-GUID R2 set                           rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls v4 base-by-GUID R2 set                           rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls2 v1 base-by-GUID R2 set                          rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls2 v3 base-by-GUID R2 set                          rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls2 v4 base-by-GUID R2 set                          rc=0 success entries=1 attrs_returned=[]
+  cls3 v1 base-by-GUID R2 set                          rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls3 v3 base-by-GUID R2 set                          rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls3 v4 base-by-GUID R2 set                          rc=0 success entries=1 attrs_returned=['adminCount', 'description', 'isDeleted', 'lastKnownParent', 'msDS-AllowedToDelegateTo', 'msDS-LastKnownRDN', 'nTSecurityDescriptor', 'name', 'objectGUID', 'objectSid', 'primaryGroupID', 'userAccountControl']
+  cls one-level list of container: sizeLimitExceeded entries=1000
+reanimate ACE removed
+CONTAINER ACL AFTER:
+ Owner: WINLAB\Domain Admins
+Group: NT AUTHORITY\SYSTEM
+
+Access list:
+{This object is protected from inheriting permissions from the parent}
+Allow BUILTIN\Administrators  SPECIAL ACCESS
+                              LIST CONTENTS
+                              READ PROPERTY
+Allow NT AUTHORITY\SYSTEM     SPECIAL ACCESS
+                              DELETE
+                              READ PERMISSONS
+                              WRITE PERMISSIONS
+                              CHANGE OWNERSHIP
+                              CREATE CHILD
+                              DELETE CHILD
+                              LIST CONTENTS
+                              WRITE SELF
+                              WRI
+
+===== C. run 5: classifier holding only List Contents on CN=Deleted Objects (transcribed from console)
+cls(LC) v1 show-deleted           {'userAccountControl': ['512'], 'lastKnownParent': ['OU=T1633,DC=win,DC=activediq,DC=test'], 'msDS-LastKnownRDN': ['t1633-v1'], 'memberOf': [], 'isRecycled': []}
+cls(LC) v1 show-deleted + 2065    {'memberOf': ['CN=G1633,OU=T1633,DC=win,DC=activediq,DC=test'], 'userAccountControl': ['512'], 'lastKnownParent': ['OU=T1633,DC=win,DC=activediq,DC=test'], 'msDS-LastKnownRDN': ['t1633-v1'], 'isRecycled': []}
+cls(LC) v1 nTSecurityDescriptor owner+group+dacl bytes: 2472
+cls(LC) v1 SACL flag read: success 0   (no SACL value returned)
+cls(LC) v1 WITHOUT show-deleted: noSuchObject
+cls(LC) G1633 member+2065 count: 4
+restore target SDDL: O:SYG:SYD:PAI(A;;KA;;;SY)(A;;LCRP;;;BA)
+restore modify: True success
+(dsacls on the container afterwards: "Insufficient access rights", as before the run)
+
+===== D. container restore after run 4 and cleanup
+SDDL written back (owner+DACL, SD_FLAGS 0x05) by an Administrator after dsacls /takeownership: O:SYG:SYD:PAI(A;;KA;;;SY)(A;;LCRP;;;BA)   -> modify success
+cleanup: OU present: False / adq1633 users left: 0 / root ACEs mentioning adq1633 or orphan SIDs: 0 / scheduled tasks left: 0
+
+===== E. run 6: dSHeuristics List Object mode (3rd char = 1) as a per-object route; reverted afterwards
+dSHeuristics before: ORIG[]
+=== DELETED, List Object mode OFF (dSHeuristics as found), no container grant
+  cls v1 base-by-GUID R2 set                           rc=32 noSuchObject entries=0 attrs_returned=-
+  cls v3 base-by-GUID R2 set                           rc=32 noSuchObject entries=0 attrs_returned=-
+  cls v4 base-by-GUID R2 set                           rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v1 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v3 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v4 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls3 v1 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls3 v3 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls3 v4 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+setting dSHeuristics to '001'
+=== DELETED, List Object mode ON (dSHeuristics 3rd char = 1), no container grant
+  cls v1 base-by-GUID R2 set                           rc=32 noSuchObject entries=0 attrs_returned=-
+  cls v3 base-by-GUID R2 set                           rc=32 noSuchObject entries=0 attrs_returned=-
+  cls v4 base-by-GUID R2 set                           rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v1 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v3 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls2 v4 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls3 v1 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls3 v3 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+  cls3 v4 base-by-GUID R2 set                          rc=32 noSuchObject entries=0 attrs_returned=-
+dSHeuristics after: AFTER[]
+reanimate ACE removed
+cleanup: OU present False

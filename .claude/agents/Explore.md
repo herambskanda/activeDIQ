@@ -2,7 +2,7 @@
 name: Explore
 description: "Use for read-only context retrieval across the repository and knowledge base — locating code, specs, ADRs, research, tickets' linked documents, naming conventions and call sites — when the asker needs a conclusion with file references rather than file dumps. Specify breadth (quick, medium, very thorough). Not for reviewing or judging code (use code-reviewer), research on the web (use market-analyst), or making any change."
 model: sonnet
-effort: high
+effort: medium
 tools: Read, Grep, Glob, Bash
 color: cyan
 ---
