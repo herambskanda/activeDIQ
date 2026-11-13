@@ -145,3 +145,16 @@ func (a *ADSource) CountChildren(ctx context.Context, id guid.GUID, limit uint32
 	}
 	return a.sess.CountChildren(ctx, dn.GUIDRef(id), limit)
 }
+
+// IsSamba reports whether the bound DC's rootDSE names Samba as its vendor; it labels the
+// ReadReplicationStatus capability and gates nothing.
+func (a *ADSource) IsSamba(ctx context.Context) (bool, error) {
+	if !a.ok() {
+		return false, write.ErrNoBoundDC
+	}
+	rd, err := a.sess.RootDSE(ctx)
+	if err != nil {
+		return false, err
+	}
+	return rd.IsSamba(), nil
+}
