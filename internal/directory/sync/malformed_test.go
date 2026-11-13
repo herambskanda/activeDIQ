@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	dirsync "github.com/skenzeriq/activediq/internal/directory/sync"
@@ -146,11 +147,38 @@ func Fuzz_map_never_panics_and_respects_store_bounds(f *testing.F) {
 			return
 		}
 		o := got.Observation
-		if len(o.DN) > 4096 || len(o.RDN) > 1024 || len(o.SAMAccountName) > 256 || len(o.Class) > 100 || strings.ContainsRune(o.DN+o.RDN+o.SAMAccountName+o.Class, 0) {
+		if len(o.DN) > 4096 || utf8.RuneCountInString(o.RDN) > 1024 || utf8.RuneCountInString(o.SAMAccountName) > 256 || len(o.Class) > 100 || strings.ContainsRune(o.DN+o.RDN+o.SAMAccountName+o.Class, 0) {
 			t.Fatalf("observation outside the store's bounds")
 		}
 		if o.Kind != inventory.KindGroup && (len(o.Members) > 0 || o.MembersComplete) {
 			t.Fatalf("members on a non-group")
 		}
 	})
+}
+
+// T-1250: a bound is the schema's rangeUpper in characters, not bytes. A value at the rangeUpper that a
+// non-admin may write (a computer's creator writes sAMAccountName and dNSHostName) must map; one over it is
+// refused.
+func Test_bounds_are_the_schema_range_upper_in_characters(t *testing.T) {
+	m := mapper(dirsync.Config{})
+	comp := func(a attrs) *connectorv1.DirectoryEntry {
+		return entry(90, "CN=PC1,OU=Staff,DC=lab,DC=test", gid(ouGUID), a.classes("top", "computer"))
+	}
+	for _, tc := range []struct {
+		name, attr string
+		ok, over   string
+	}{
+		{"sAMAccountName 256 chars", "sAMAccountName", strings.Repeat("é", 256), strings.Repeat("é", 257)},
+		{"userPrincipalName 1024 chars", "userPrincipalName", strings.Repeat("é", 1024), strings.Repeat("é", 1025)},
+		{"displayName 256 chars", "displayName", strings.Repeat("é", 256), strings.Repeat("é", 1025)},
+		{"dNSHostName 2048 chars", "dNSHostName", strings.Repeat("a", 2048), strings.Repeat("a", 2049)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := m.Map(comp(attrs(nil).with(tc.attr, txt(tc.ok)))); err != nil {
+				t.Fatalf("at the rangeUpper: %v", err)
+			}
+			_, err := m.Map(comp(attrs(nil).with(tc.attr, txt(tc.over))))
+			wantMalformed(t, err, tc.attr, dirsync.CodeTooLong)
+		})
+	}
 }

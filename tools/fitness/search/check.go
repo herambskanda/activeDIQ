@@ -269,6 +269,9 @@ func checkSQLText(root string, st *staticResult, ex []*exception) (*sqlResult, e
 		if sc.File == templateFile {
 			continue
 		}
+		if line, ok := namesInside(toks, postingTable); ok && looksSQL(toks) {
+			add("SE1", "posting-table-sql", sc.File, line, "Go code names "+postingTable+": only the reportsql search template reads the trigram postings and the migration triggers are the only writer (ADR-0011 SE1, rule 5a)")
+		}
 		for _, stmt := range splitStatements(toks) {
 			for _, at := range keyTableReads(stmt) {
 				if under(sc.File, inventoryDir) && backfillProjection(stmt, at) {
@@ -348,6 +351,15 @@ func checkSQLText(root string, st *staticResult, ex []*exception) (*sqlResult, e
 		}
 	}
 	attached := triggerAttachments(migrations)
+	var migFiles []migStmts
+	for _, f := range files {
+		if under(f.rel, "migrations") {
+			migFiles = append(migFiles, migStmts{f.rel, f.stmts})
+		}
+	}
+	for _, fi := range checkSearchTables(migFiles) {
+		add(fi.Check, fi.Rule, fi.file, fi.Line, fi.Msg)
+	}
 	for _, f := range files {
 		scope, _ := scopeFor(f.rel)
 		isMigration := under(f.rel, "migrations")
@@ -355,7 +367,8 @@ func checkSQLText(root string, st *staticResult, ex []*exception) (*sqlResult, e
 			scope = scopeSearch
 		}
 		for _, stmt := range f.stmts {
-			for _, fi := range checkSE2(stmt, sqlOpts{scope: scope}) {
+			showOK := isMigration && (definesFunction(stmt, syncFunc) || insertsPostings(stmt))
+			for _, fi := range checkSE2(stmt, sqlOpts{scope: scope, showTrgm: showOK}) {
 				add(fi.Check, fi.Rule, f.rel, fi.Line, fi.Msg)
 			}
 			if isMigration {
@@ -368,6 +381,9 @@ func checkSQLText(root string, st *staticResult, ex []*exception) (*sqlResult, e
 						break
 					}
 				}
+			}
+			if line, ok := namesInside(stmt, postingTable); ok {
+				add("SE1", "posting-table-sql", f.rel, line, "a query file names "+postingTable+": only the reportsql search template reads the trigram postings (ADR-0011 SE1, rule 5a)")
 			}
 			for _, at := range keyTableReads(stmt) {
 				if under(f.rel, inventoryDir) && backfillProjection(stmt, at) {

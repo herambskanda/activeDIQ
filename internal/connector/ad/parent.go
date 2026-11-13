@@ -2,6 +2,7 @@ package ad
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
@@ -18,6 +19,19 @@ const instanceTypeNCHead = 0x1
 func (s *Session) Parent(ctx context.Context, e *Entry) (g guid.GUID, hasParent bool, err error) {
 	g, hasParent, _, err = s.parentOf(ctx, e, nil)
 	return g, hasParent, err
+}
+
+// The details of the two parent failures that mean "this entry cannot be placed" (its parent is listed
+// but unreadable, or gone), as opposed to a failure of the directory session.
+const (
+	detailParentNotFound    = "parent not found"
+	detailParentUndecodable = "parent GUID does not decode"
+)
+
+// isUnplaceable reports whether err is a parentOf failure about this one entry's parent, not the session.
+func isUnplaceable(err error) bool {
+	var e *Error
+	return errors.As(err, &e) && e.Code == CodeProtocol && (e.Detail == detailParentNotFound || e.Detail == detailParentUndecodable)
 }
 
 // parentOf is Parent with a cache keyed by the parent's normalised DN. reads reports whether a
@@ -49,13 +63,13 @@ func (s *Session) parentOf(ctx context.Context, e *Entry, cache map[string]guid.
 	pe, err := s.Read(ctx, dn.DNRef(pd), []string{"objectGUID"}, ReadOptions{})
 	if err != nil {
 		if CodeOf(err) == CodeObjectNotFound { // the entry exists; a missing parent is not a missing root
-			err = fail(CodeProtocol, "parent not found", err)
+			err = fail(CodeProtocol, detailParentNotFound, err)
 		}
 		return guid.GUID{}, false, true, err
 	}
 	g, err = pe.GUID()
 	if err != nil {
-		return guid.GUID{}, false, true, fail(CodeProtocol, "parent GUID does not decode", err)
+		return guid.GUID{}, false, true, fail(CodeProtocol, detailParentUndecodable, err)
 	}
 	if cache != nil {
 		cache[key] = g

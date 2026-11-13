@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
@@ -371,7 +372,7 @@ func parseDisplayDN(d string) (full, rdn string, err error) {
 		return "", "", refuse("dn", CodeBadDN)
 	}
 	rdn = rdnOf(parsed)
-	if len(rdn) > maxRDN {
+	if utf8.RuneCountInString(rdn) > maxRDN {
 		return "", "", refuse("dn", CodeTooLong)
 	}
 	return parsed.String(), rdn, nil
@@ -533,7 +534,8 @@ func (m *Mapper) group(out *Mapped, set attrSet) error {
 func (m *Mapper) bag(o *inventory.Observation, set attrSet) error {
 	bag := map[string]any{}
 	for _, name := range []string{"mail", "company", "dNSHostName", "operatingSystem", "operatingSystemVersion"} {
-		if s, present, err := text(set, name, 1024); err != nil {
+		// dNSHostName's rangeUpper is 2048 (a computer's creator writes it); the others are at most 256.
+		if s, present, err := text(set, name, maxDNSHostName); err != nil {
 			return err
 		} else if present && s != "" {
 			bag[name] = s

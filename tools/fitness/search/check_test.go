@@ -26,6 +26,44 @@ func write(t *testing.T, root string, files map[string]string) {
 	}
 }
 
+// goodTrigrams is the shape of migration 0073 that every SE1/SE2 rule accepts.
+const goodTrigrams = `ALTER TABLE public.inventory_search_keys ADD COLUMN key_id bigint GENERATED ALWAYS AS IDENTITY;
+ALTER TABLE public.inventory_search_keys ADD CONSTRAINT inventory_search_keys_tenant_key_id_key UNIQUE (tenant_id, key_id);
+CREATE TABLE public.inventory_search_trigrams (
+  tenant_id uuid NOT NULL,
+  trgm text NOT NULL,
+  key_id bigint NOT NULL,
+  PRIMARY KEY (tenant_id, trgm, key_id)
+);
+CREATE FUNCTION public.inventory_search_trigrams_sync() RETURNS trigger
+LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog, public AS $sync$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO public.inventory_search_trigrams (tenant_id, trgm, key_id)
+    SELECT n.tenant_id, g.trgm, n.key_id FROM new_keys n CROSS JOIN LATERAL unnest(public.show_trgm(n.key)) AS g(trgm) WHERE n.key_kind IN (1, 3);
+  ELSIF TG_OP = 'DELETE' THEN
+    DELETE FROM public.inventory_search_trigrams p
+    USING (SELECT o.tenant_id, g.trgm, o.key_id FROM old_keys o CROSS JOIN LATERAL unnest(public.show_trgm(o.key)) AS g(trgm) WHERE o.key_kind IN (1, 3)) d
+    WHERE p.tenant_id = d.tenant_id AND p.trgm = d.trgm AND p.key_id = d.key_id;
+  ELSIF TG_OP = 'UPDATE' THEN
+    INSERT INTO public.inventory_search_trigrams (tenant_id, trgm, key_id)
+    SELECT n.tenant_id, g.trgm, n.key_id FROM new_keys n JOIN old_keys o ON o.key_id = n.key_id
+    CROSS JOIN LATERAL unnest(public.show_trgm(n.key)) AS g(trgm) WHERE n.key_kind IN (1, 3) AND o.key IS DISTINCT FROM n.key;
+  END IF;
+  RETURN NULL;
+END
+$sync$;
+INSERT INTO public.inventory_search_trigrams (tenant_id, trgm, key_id)
+SELECT k.tenant_id, g.trgm, k.key_id FROM public.inventory_search_keys k CROSS JOIN LATERAL unnest(public.show_trgm(k.key)) AS g(trgm) WHERE k.key_kind IN (1, 3);
+CREATE TRIGGER inventory_search_keys_trgm_insert AFTER INSERT ON public.inventory_search_keys
+  REFERENCING NEW TABLE AS new_keys FOR EACH STATEMENT EXECUTE FUNCTION public.inventory_search_trigrams_sync();
+CREATE TRIGGER inventory_search_keys_trgm_delete AFTER DELETE ON public.inventory_search_keys
+  REFERENCING OLD TABLE AS old_keys FOR EACH STATEMENT EXECUTE FUNCTION public.inventory_search_trigrams_sync();
+CREATE TRIGGER inventory_search_keys_trgm_update AFTER UPDATE ON public.inventory_search_keys
+  REFERENCING OLD TABLE AS old_keys NEW TABLE AS new_keys FOR EACH STATEMENT EXECUTE FUNCTION public.inventory_search_trigrams_sync();
+DROP INDEX public.k_trgm;
+`
+
 // base is a small repository that has the search packages and obeys every rule.
 func base() map[string]string {
 	return map[string]string{
@@ -90,8 +128,9 @@ import "` + mod + `/internal/platform/authz"
 func Fresh(s authz.ReadScope) int { return len(s.Connections()) }
 `,
 		"internal/platform/store/owners/owners.gen.tsv": "# generated\nauthz_roles\tauthz\tconfig\nauthz_assignments\tauthz\tconfig\n",
+		"migrations/0002_trigrams.sql":                  goodTrigrams,
 		"migrations/0001_base.sql": `CREATE TABLE public.authz_roles (id int);
-CREATE TABLE public.inventory_search_keys (key text, key_kind int);
+CREATE TABLE public.inventory_search_keys (tenant_id uuid, key text, key_kind int, PRIMARY KEY (tenant_id, key_kind, key));
 CREATE INDEX k_trgm ON public.inventory_search_keys USING gin (key gin_trgm_ops);
 CREATE FUNCTION public.authz_tier2_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -337,6 +376,145 @@ func TestSE1MigrationsDefineNoObjectOverTheKeyTable(t *testing.T) {
 			expect(t, r, "SE1", "key-table-derived-object", "migrations/0002_bad.sql:1", "inventory_search_keys")
 		})
 	}
+}
+
+// ---- the trigram postings (ADR-0011 rule 5a, T-1335) ----
+
+func TestPostingsFixtureIsClean(t *testing.T) { none(t, run(t, tree(t, nil), Options{})) }
+
+func TestSE1OnlyTheTemplateReadsThePostings(t *testing.T) {
+	for name, q := range map[string]string{
+		"from":     "SELECT key_id FROM public.inventory_search_trigrams WHERE trgm = $1",
+		"join":     "SELECT k.key FROM objects k JOIN inventory_search_trigrams p ON p.key_id = k.id",
+		"delete":   "DELETE FROM public.inventory_search_trigrams WHERE tenant_id = $1",
+		"insert":   "INSERT INTO public.inventory_search_trigrams (tenant_id, trgm, key_id) VALUES ($1, $2, $3)",
+		"in a sub": "SELECT id FROM objects WHERE id IN (SELECT key_id FROM inventory_search_trigrams)",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := run(t, tree(t, map[string]string{"internal/modules/x/x.go": "package x\n\nconst q = `" + q + "`\n"}), Options{})
+			expect(t, r, "SE1", "posting-table-sql", "internal/modules/x/x.go:3", "inventory_search_trigrams")
+		})
+	}
+	r := run(t, tree(t, map[string]string{"internal/modules/x/q.sql": "SELECT key_id\nFROM inventory_search_trigrams;\n"}), Options{})
+	expect(t, r, "SE1", "posting-table-sql", "internal/modules/x/q.sql:2", "inventory_search_trigrams")
+	// naming the table as a plain string (the search source registers it by name) is not SQL
+	none(t, run(t, tree(t, map[string]string{"internal/directory/inventory/n.go": "package inventory\n\nconst postings = \"inventory_search_trigrams\"\n"}), Options{}))
+	// the template names it
+	none(t, run(t, tree(t, map[string]string{"internal/platform/store/reportsql/search.go": strings.Replace(base()["internal/platform/store/reportsql/search.go"], "FROM inventory_search_keys k", "FROM inventory_search_trigrams k", 1)}), Options{}))
+}
+
+func TestSE1NoOtherObjectOverThePostings(t *testing.T) {
+	for name, sql := range map[string]string{
+		"view":     "CREATE VIEW v AS SELECT key_id FROM inventory_search_trigrams;",
+		"function": "CREATE FUNCTION f() RETURNS bigint LANGUAGE sql AS $$ SELECT count(*) FROM public.inventory_search_trigrams $$;",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := run(t, tree(t, map[string]string{"migrations/0003_bad.sql": sql}), Options{})
+			expect(t, r, "SE1", "key-table-derived-object", "migrations/0003_bad.sql:1", "inventory_search_trigrams")
+		})
+	}
+}
+
+func TestSE1SyncFunctionShape(t *testing.T) {
+	mut := func(from, to string) map[string]string {
+		if !strings.Contains(goodTrigrams, from) {
+			t.Fatalf("fixture lacks %q", from)
+		}
+		return map[string]string{"migrations/0002_trigrams.sql": strings.Replace(goodTrigrams, from, to, 1)}
+	}
+	for name, c := range map[string]struct {
+		files map[string]string
+		msg   string
+	}{
+		"security definer":       {mut("SECURITY INVOKER", "SECURITY DEFINER"), "SECURITY INVOKER"},
+		"no security clause":     {mut("SECURITY INVOKER ", ""), "SECURITY INVOKER"},
+		"no search_path":         {mut("SET search_path = pg_catalog, public ", ""), "search_path"},
+		"search_path public":     {mut("pg_catalog, public", "public"), "search_path"},
+		"show_trgm unqualified":  {mut("unnest(public.show_trgm(n.key)) AS g(trgm) WHERE n.key_kind IN (1, 3);\n  ELSIF TG_OP = 'DELETE'", "unnest(show_trgm(n.key)) AS g(trgm) WHERE n.key_kind IN (1, 3);\n  ELSIF TG_OP = 'DELETE'"), "schema"},
+		"reads another table":    {mut("FROM new_keys n CROSS JOIN LATERAL unnest(public.show_trgm(n.key)) AS g(trgm) WHERE n.key_kind IN (1, 3);\n  ELSIF", "FROM new_keys n JOIN public.directory_objects d ON d.id = n.key_id CROSS JOIN LATERAL unnest(public.show_trgm(n.key)) AS g(trgm) WHERE n.key_kind IN (1, 3);\n  ELSIF"), "directory_objects"},
+		"writes another table":   {mut("    DELETE FROM public.inventory_search_trigrams p\n    USING", "    DELETE FROM public.other p\n    USING"), "writes other"},
+		"no update trigger":      {mut("CREATE TRIGGER inventory_search_keys_trgm_update AFTER UPDATE ON public.inventory_search_keys\n  REFERENCING OLD TABLE AS old_keys NEW TABLE AS new_keys FOR EACH STATEMENT EXECUTE FUNCTION public.inventory_search_trigrams_sync();\n", ""), "exactly one AFTER UPDATE"},
+		"two insert triggers":    {mut("DROP INDEX", "CREATE TRIGGER again AFTER INSERT ON public.inventory_search_keys REFERENCING NEW TABLE AS new_keys FOR EACH STATEMENT EXECUTE FUNCTION public.inventory_search_trigrams_sync();\nDROP INDEX"), "exactly one AFTER INSERT"},
+		"row trigger":            {mut("AFTER DELETE ON public.inventory_search_keys\n  REFERENCING OLD TABLE AS old_keys FOR EACH STATEMENT", "AFTER DELETE ON public.inventory_search_keys\n  REFERENCING OLD TABLE AS old_keys FOR EACH ROW"), "FOR EACH STATEMENT"},
+		"update of column list":  {mut("AFTER UPDATE ON", "AFTER UPDATE OF key ON"), "no column list"},
+		"before trigger":         {mut("AFTER INSERT ON", "BEFORE INSERT ON"), "AFTER"},
+		"attached to elsewhere":  {mut("DROP INDEX", "CREATE TRIGGER elsewhere AFTER INSERT ON public.directory_objects REFERENCING NEW TABLE AS new_keys FOR EACH STATEMENT EXECUTE FUNCTION public.inventory_search_trigrams_sync();\nDROP INDEX"), "directory_objects"},
+		"function not a trigger": {mut("RETURNS trigger", "RETURNS bigint"), "RETURN trigger"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := run(t, tree(t, c.files), Options{})
+			expect(t, r, "SE1", "trigram-sync-", "migrations/0002_trigrams.sql", c.msg)
+		})
+	}
+	// triggers that run a function no migration defines
+	r := run(t, tree(t, map[string]string{"migrations/0002_trigrams.sql": "CREATE TRIGGER t AFTER INSERT ON public.inventory_search_keys REFERENCING NEW TABLE AS new_keys FOR EACH STATEMENT EXECUTE FUNCTION public.inventory_search_trigrams_sync();\n"}), Options{})
+	expect(t, r, "SE1", "trigram-sync-trigger", "migrations/0002_trigrams.sql:1", "which no migration defines")
+}
+
+func TestSE1EveryIndexOfTheSearchTablesLeadsWithTenant(t *testing.T) {
+	for name, sql := range map[string]string{
+		"index on key":             "CREATE INDEX i ON public.inventory_search_keys (key);",
+		"index on trgm":            "CREATE INDEX i ON public.inventory_search_trigrams (trgm, tenant_id);",
+		"unique index":             "CREATE UNIQUE INDEX i ON public.inventory_search_trigrams (key_id);",
+		"expression":               "CREATE INDEX i ON public.inventory_search_keys (lower(key), tenant_id);",
+		"hash":                     "CREATE INDEX i ON public.inventory_search_keys USING hash (key);",
+		"gin":                      "CREATE INDEX i ON public.inventory_search_keys USING gin (key, tenant_id);",
+		"unique constraint":        "ALTER TABLE public.inventory_search_trigrams ADD CONSTRAINT u UNIQUE (key_id, tenant_id);",
+		"primary key":              "ALTER TABLE public.inventory_search_keys ADD PRIMARY KEY (key_id);",
+		"inline unique column":     "ALTER TABLE public.inventory_search_keys ADD COLUMN other bigint UNIQUE;",
+		"exclusion":                "ALTER TABLE public.inventory_search_keys ADD CONSTRAINT x EXCLUDE USING gist (key WITH =);",
+		"create table primary key": "CREATE TABLE public.inventory_search_trigrams (tenant_id uuid, trgm text, key_id bigint, PRIMARY KEY (trgm, tenant_id));",
+		"create table inline":      "CREATE TABLE public.inventory_search_trigrams (key_id bigint PRIMARY KEY, tenant_id uuid);",
+		"create table unique":      "CREATE TABLE public.inventory_search_keys (tenant_id uuid, key text, CONSTRAINT u UNIQUE (key));",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := run(t, tree(t, map[string]string{"migrations/0003_bad.sql": sql}), Options{})
+			expect(t, r, "SE1", "index-leads-with-tenant", "migrations/0003_bad.sql:1", "tenant_id")
+		})
+	}
+	// a leading tenant_id passes, and so does a bad index that a later migration drops
+	ok := "CREATE INDEX i ON public.inventory_search_keys (tenant_id, key);\nCREATE UNIQUE INDEX j ON public.inventory_search_trigrams (tenant_id, key_id);\nCREATE INDEX elsewhere ON public.other (key);"
+	none(t, run(t, tree(t, map[string]string{"migrations/0003_ok.sql": ok}), Options{}))
+	dropped := map[string]string{"migrations/0003_bad.sql": "CREATE INDEX i ON public.inventory_search_keys (key);", "migrations/0004_fix.sql": "DROP INDEX public.i;"}
+	none(t, run(t, tree(t, dropped), Options{}))
+	droppedC := map[string]string{"migrations/0003_bad.sql": "ALTER TABLE public.inventory_search_keys ADD CONSTRAINT u UNIQUE (key);", "migrations/0004_fix.sql": "ALTER TABLE public.inventory_search_keys DROP CONSTRAINT u;"}
+	none(t, run(t, tree(t, droppedC), Options{}))
+}
+
+func TestSE2ShowTrgmOnlyInTheSyncFunctionAndTheBackfill(t *testing.T) {
+	for name, c := range map[string]struct{ file, text string }{
+		"another function":    {"migrations/0003_bad.sql", "CREATE FUNCTION public.other() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM public.show_trgm('a'); RETURN NULL; END $$;"},
+		"a select":            {"migrations/0003_bad.sql", "SELECT public.show_trgm(key) FROM public.inventory_search_keys;"},
+		"an insert elsewhere": {"migrations/0003_bad.sql", "INSERT INTO public.other SELECT public.show_trgm('a');"},
+		"a query file":        {"internal/modules/x/q.sql", "SELECT show_trgm('a');"},
+		"go":                  {"internal/modules/x/x.go", "package x\n\nconst q = `INSERT INTO other SELECT show_trgm('a') FROM t`\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := run(t, tree(t, map[string]string{c.file: c.text}), Options{})
+			expect(t, r, "SE2", "trigram-function", c.file, "show_trgm(")
+		})
+	}
+	// the sync function and the statement that backfills the postings are in the fixture and pass
+	none(t, run(t, tree(t, nil), Options{}))
+	// ... and the allowance does not cover another trigram function inside them
+	bad := strings.Replace(goodTrigrams, "unnest(public.show_trgm(n.key)) AS g(trgm) WHERE n.key_kind IN (1, 3);\n  ELSIF TG_OP = 'DELETE'", "unnest(public.show_trgm(n.key)) AS g(trgm) WHERE public.word_similarity('a', n.key) > 0;\n  ELSIF TG_OP = 'DELETE'", 1)
+	expect(t, run(t, tree(t, map[string]string{"migrations/0002_trigrams.sql": bad}), Options{}), "SE2", "trigram-function", "migrations/0002_trigrams.sql", "word_similarity(")
+}
+
+func TestSE2NoTrigramOperatorClassSurvives(t *testing.T) {
+	for name, sql := range map[string]string{
+		"gin":  "CREATE INDEX i ON public.inventory_search_keys USING gin (key gin_trgm_ops);",
+		"gist": "CREATE INDEX i ON public.inventory_search_keys USING gist (key gist_trgm_ops);",
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := run(t, tree(t, map[string]string{"migrations/0003_bad.sql": sql}), Options{})
+			expect(t, r, "SE2", "trigram-opclass", "migrations/0003_bad.sql:1", "operator class")
+		})
+	}
+	// the historical index of the fixture's 0001 is fine because 0002 drops it
+	none(t, run(t, tree(t, nil), Options{}))
+	r := run(t, tree(t, nil, "migrations/0002_trigrams.sql"), Options{})
+	expect(t, r, "SE2", "trigram-opclass", "migrations/0001_base.sql", "k_trgm")
 }
 
 // ---- SE2 ----

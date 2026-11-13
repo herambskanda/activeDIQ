@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 
 import tokens from "../tokens.css?raw";
-import { FALLBACK_ROW_PX } from "./data-grid";
+import { FALLBACK_ROW_PX, inlineShift } from "./data-grid";
 import { DataGrid, type DataGridColumn, type DataGridSort } from "./index";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -319,6 +319,136 @@ describe("DataGrid column sizing", () => {
     h.focus();
     key(h, "ArrowRight", { shiftKey: true });
     expect(document.activeElement).toBe(cell(host, 0, 1));
+  });
+});
+
+describe("DataGrid beside a detail pane", () => {
+  it("marks the current row (aria-current) and only that row", () => {
+    const host = render(
+      <DataGrid
+        caption="P"
+        columns={COLS}
+        rows={people(5)}
+        rowKey={(p) => p.id}
+        currentRowKey="u2"
+      />,
+    );
+    const cur = all(host, 'tr[aria-current="true"]');
+    expect(cur).toHaveLength(1);
+    expect(cur[0]?.getAttribute("data-row")).toBe("3");
+    expect(cur[0]?.className).toContain("diq-grid__row--current");
+  });
+  it("reports each newly focused data row once, by keyboard and by Tab-in, never the header", () => {
+    const seen: string[] = [];
+    const host = render(
+      <DataGrid
+        caption="P"
+        columns={COLS}
+        rows={people(5)}
+        rowKey={(p) => p.id}
+        onActiveRowChange={(p) => seen.push(p.id)}
+      />,
+    );
+    const h = cell(host, 0, 0);
+    h.focus();
+    expect(seen).toEqual([]);
+    key(h, "ArrowDown");
+    key(document.activeElement as HTMLElement, "ArrowRight"); // same row: not reported again
+    key(document.activeElement as HTMLElement, "ArrowDown");
+    expect(seen).toEqual(["u0", "u1"]);
+    key(document.activeElement as HTMLElement, "ArrowUp");
+    expect(seen).toEqual(["u0", "u1", "u0"]);
+  });
+  it("reports a row again when focus leaves the grid and comes back to the same row", () => {
+    const seen: string[] = [];
+    const host = render(
+      <div>
+        <button type="button">outside</button>
+        <DataGrid
+          caption="P"
+          columns={COLS}
+          rows={people(5)}
+          rowKey={(p) => p.id}
+          onActiveRowChange={(p) => seen.push(p.id)}
+        />
+      </div>,
+    );
+    const outside = host.querySelector("button") as HTMLElement;
+    cell(host, 2, 0).focus();
+    outside.focus(); // e.g. the dock's Next button
+    cell(host, 2, 0).focus();
+    expect(seen).toEqual(["u1", "u1"]);
+  });
+  it("calls onEscape for Escape on a cell, and not from a widget inside a cell (that returns to the cell)", () => {
+    const onEscape = vi.fn();
+    const host = render(
+      <DataGrid
+        caption="P"
+        columns={[
+          { key: "n", header: "N", rowHeader: true, cell: (p: Person) => p.name },
+          { key: "l", header: "L", cell: (p: Person) => <a href={`#${p.id}`}>open</a> },
+        ]}
+        rows={people(2)}
+        rowKey={(p) => p.id}
+        onEscape={onEscape}
+      />,
+    );
+    const c = cell(host, 1, 1);
+    c.focus();
+    key(c, "Enter"); // into the link
+    key(document.activeElement as HTMLElement, "Escape");
+    expect(onEscape).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(c);
+    key(c, "Escape");
+    expect(onEscape).toHaveBeenCalledTimes(1);
+  });
+  it("shows the sticky-edge cue only while scrolled sideways", () => {
+    const host = render(
+      <DataGrid caption="P" columns={COLS} rows={people(3)} rowKey={(p) => p.id} />,
+    );
+    const box = q(host, ".diq-grid");
+    expect(box.getAttribute("data-scrolled-x")).toBeNull();
+    Object.defineProperty(box, "scrollLeft", { value: 40, configurable: true });
+    act(() => {
+      box.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(box.getAttribute("data-scrolled-x")).toBe("true");
+    Object.defineProperty(box, "scrollLeft", { value: 0, configurable: true });
+    act(() => {
+      box.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(box.getAttribute("data-scrolled-x")).toBeNull();
+  });
+  it("keeps the name column the row header (th scope=row), sticky by class", () => {
+    const host = render(
+      <DataGrid caption="P" columns={COLS} rows={people(2)} rowKey={(p) => p.id} />,
+    );
+    const th = q(host, 'tbody th[scope="row"]');
+    expect(th.className).toContain("diq-grid__rh");
+    expect(q(host, "thead .diq-grid__rh").textContent).toContain("Name");
+  });
+});
+
+describe("inlineShift (sideways reveal behind the sticky name column)", () => {
+  const view = { left: 100, right: 600 };
+  it("does nothing for a cell fully in the free area", () => {
+    expect(inlineShift({ left: 400, right: 480 }, view, 160, false)).toBe(0);
+  });
+  it("moves a cell hidden behind the sticky column back into view (LTR)", () => {
+    // sticky covers 100..260; the cell starts at 200, so content must move right by 60
+    expect(inlineShift({ left: 200, right: 300 }, view, 160, false)).toBe(60);
+  });
+  it("moves a cell past the far edge into view (LTR)", () => {
+    expect(inlineShift({ left: 560, right: 700 }, view, 160, false)).toBe(-100);
+  });
+  it("mirrors in RTL: the sticky column is at the right", () => {
+    // sticky covers 440..600; a cell ending at 500 is under it, content must move left by 60
+    expect(inlineShift({ left: 400, right: 500 }, view, 160, true)).toBe(-60);
+    expect(inlineShift({ left: 60, right: 200 }, view, 160, true)).toBe(40);
+  });
+  it("a cell wider than the free area lines up with the inline start", () => {
+    expect(inlineShift({ left: 150, right: 900 }, view, 160, false)).toBe(110);
+    expect(inlineShift({ left: -300, right: 560 }, view, 160, true)).toBe(-120); // RTL: free area 100..440, right edges line up
   });
 });
 

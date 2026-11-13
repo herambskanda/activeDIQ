@@ -16,6 +16,7 @@ import (
 )
 
 var _ = tablekind.Declare(tablekind.Table{Name: "public.inventory_search_keys", Entity: "DM-16", Kind: tablekind.Directory})
+var _ = tablekind.Declare(tablekind.Table{Name: "public.inventory_search_trigrams", Entity: "DM-16", Kind: tablekind.Directory})
 
 // The search index (ADR-0011 rules 5, 6, 9; migration 0069). The sync writer writes an object's keys in
 // the same transaction as its directory_objects row (Populate), so a reader sees both or neither, and a

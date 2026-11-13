@@ -29,15 +29,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Connector_Describe_FullMethodName         = "/activediq.connector.v1.Connector/Describe"
-	Connector_DescribeSchema_FullMethodName   = "/activediq.connector.v1.Connector/DescribeSchema"
-	Connector_ScopedSearch_FullMethodName     = "/activediq.connector.v1.Connector/ScopedSearch"
-	Connector_Read_FullMethodName             = "/activediq.connector.v1.Connector/Read"
-	Connector_ReadPerDC_FullMethodName        = "/activediq.connector.v1.Connector/ReadPerDC"
-	Connector_ChangeFeed_FullMethodName       = "/activediq.connector.v1.Connector/ChangeFeed"
-	Connector_VerifyConnection_FullMethodName = "/activediq.connector.v1.Connector/VerifyConnection"
-	Connector_Plan_FullMethodName             = "/activediq.connector.v1.Connector/Plan"
-	Connector_Apply_FullMethodName            = "/activediq.connector.v1.Connector/Apply"
+	Connector_Describe_FullMethodName              = "/activediq.connector.v1.Connector/Describe"
+	Connector_DescribeSchema_FullMethodName        = "/activediq.connector.v1.Connector/DescribeSchema"
+	Connector_ScopedSearch_FullMethodName          = "/activediq.connector.v1.Connector/ScopedSearch"
+	Connector_Read_FullMethodName                  = "/activediq.connector.v1.Connector/Read"
+	Connector_ReadPerDC_FullMethodName             = "/activediq.connector.v1.Connector/ReadPerDC"
+	Connector_ReadReplicationStatus_FullMethodName = "/activediq.connector.v1.Connector/ReadReplicationStatus"
+	Connector_ChangeFeed_FullMethodName            = "/activediq.connector.v1.Connector/ChangeFeed"
+	Connector_VerifyConnection_FullMethodName      = "/activediq.connector.v1.Connector/VerifyConnection"
+	Connector_Plan_FullMethodName                  = "/activediq.connector.v1.Connector/Plan"
+	Connector_Apply_FullMethodName                 = "/activediq.connector.v1.Connector/Apply"
 )
 
 // ConnectorClient is the client API for Connector service.
@@ -54,6 +55,9 @@ type ConnectorClient interface {
 	Read(ctx context.Context, in *ReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadResponse], error)
 	// Non-replicated attributes from every DC of the object's domain, with coverage.
 	ReadPerDC(ctx context.Context, in *ReadPerDCRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadPerDCResponse], error)
+	// Per-DC replication health from the four msDS-Repl* attributes, XML form only, with coverage
+	// (contract v1.3, §5.6).
+	ReadReplicationStatus(ctx context.Context, in *ReadReplicationStatusRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadReplicationStatusResponse], error)
 	// DirSync (AD, object-security mode only) or Graph delta (Entra). One call runs until caught up.
 	ChangeFeed(ctx context.Context, in *ChangeFeedRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ChangeFeedResponse], error)
 	// The connector's own rights check as its identity (TM §6.5, §6.6). Source of its write gate and
@@ -159,9 +163,28 @@ func (c *connectorClient) ReadPerDC(ctx context.Context, in *ReadPerDCRequest, o
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Connector_ReadPerDCClient = grpc.ServerStreamingClient[ReadPerDCResponse]
 
+func (c *connectorClient) ReadReplicationStatus(ctx context.Context, in *ReadReplicationStatusRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReadReplicationStatusResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Connector_ServiceDesc.Streams[4], Connector_ReadReplicationStatus_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ReadReplicationStatusRequest, ReadReplicationStatusResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Connector_ReadReplicationStatusClient = grpc.ServerStreamingClient[ReadReplicationStatusResponse]
+
 func (c *connectorClient) ChangeFeed(ctx context.Context, in *ChangeFeedRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ChangeFeedResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Connector_ServiceDesc.Streams[4], Connector_ChangeFeed_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Connector_ServiceDesc.Streams[5], Connector_ChangeFeed_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +203,7 @@ type Connector_ChangeFeedClient = grpc.ServerStreamingClient[ChangeFeedResponse]
 
 func (c *connectorClient) VerifyConnection(ctx context.Context, in *VerifyConnectionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[VerifyConnectionResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Connector_ServiceDesc.Streams[5], Connector_VerifyConnection_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Connector_ServiceDesc.Streams[6], Connector_VerifyConnection_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -231,6 +254,9 @@ type ConnectorServer interface {
 	Read(*ReadRequest, grpc.ServerStreamingServer[ReadResponse]) error
 	// Non-replicated attributes from every DC of the object's domain, with coverage.
 	ReadPerDC(*ReadPerDCRequest, grpc.ServerStreamingServer[ReadPerDCResponse]) error
+	// Per-DC replication health from the four msDS-Repl* attributes, XML form only, with coverage
+	// (contract v1.3, §5.6).
+	ReadReplicationStatus(*ReadReplicationStatusRequest, grpc.ServerStreamingServer[ReadReplicationStatusResponse]) error
 	// DirSync (AD, object-security mode only) or Graph delta (Entra). One call runs until caught up.
 	ChangeFeed(*ChangeFeedRequest, grpc.ServerStreamingServer[ChangeFeedResponse]) error
 	// The connector's own rights check as its identity (TM §6.5, §6.6). Source of its write gate and
@@ -264,6 +290,9 @@ func (UnimplementedConnectorServer) Read(*ReadRequest, grpc.ServerStreamingServe
 }
 func (UnimplementedConnectorServer) ReadPerDC(*ReadPerDCRequest, grpc.ServerStreamingServer[ReadPerDCResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method ReadPerDC not implemented")
+}
+func (UnimplementedConnectorServer) ReadReplicationStatus(*ReadReplicationStatusRequest, grpc.ServerStreamingServer[ReadReplicationStatusResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method ReadReplicationStatus not implemented")
 }
 func (UnimplementedConnectorServer) ChangeFeed(*ChangeFeedRequest, grpc.ServerStreamingServer[ChangeFeedResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method ChangeFeed not implemented")
@@ -359,6 +388,17 @@ func _Connector_ReadPerDC_Handler(srv interface{}, stream grpc.ServerStream) err
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Connector_ReadPerDCServer = grpc.ServerStreamingServer[ReadPerDCResponse]
+
+func _Connector_ReadReplicationStatus_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ReadReplicationStatusRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ConnectorServer).ReadReplicationStatus(m, &grpc.GenericServerStream[ReadReplicationStatusRequest, ReadReplicationStatusResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Connector_ReadReplicationStatusServer = grpc.ServerStreamingServer[ReadReplicationStatusResponse]
 
 func _Connector_ChangeFeed_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(ChangeFeedRequest)
@@ -457,6 +497,11 @@ var Connector_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ReadPerDC",
 			Handler:       _Connector_ReadPerDC_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ReadReplicationStatus",
+			Handler:       _Connector_ReadReplicationStatus_Handler,
 			ServerStreams: true,
 		},
 		{
