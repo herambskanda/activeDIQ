@@ -168,6 +168,8 @@ func Test_dataset_reveals_nothing_outside_scope(t *testing.T) {
 					rpContacts(t, e, reg, c, cols, now, at)
 				case inventory.DatasetPrincipals:
 					rpPrincipals(t, e, reg, c, cols, now, at)
+				case inventory.DatasetObjectChanges:
+					rpObjectChanges(t, e, reg, c, cols, now, at)
 				default:
 					t.Fatalf("no RP11 world for %s", src.ID)
 				}

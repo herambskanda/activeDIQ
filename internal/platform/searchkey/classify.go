@@ -21,6 +21,13 @@ const (
 	KindGUID            Kind = 8  // objectGUID canonical text
 	KindConsistencyGUID Kind = 9  // ms-DS-ConsistencyGuid as a GUID, and as base64
 	KindDN              Kind = 10 // dn snapshot
+	// Added by T-1129 (migration 0074). The BitLocker key ID is not here: it is gated by a permission the
+	// catalogue does not define yet (ADR-0011 rule 9), so it has no kind until that ticket adds both.
+	KindMailNickname Kind = 11 // mailNickname
+	KindEmployeeID   Kind = 12 // employeeID and employeeNumber, NormIdent form (leading zeros kept)
+	KindSIDHistory   Kind = 13 // sIDHistory values, canonical S-1-5-… text
+	KindSPN          Kind = 14 // a whole servicePrincipalName, NormIdent form (the host part is also a dns_host key)
+	KindOrgText      Kind = 15 // title and department: NormName of the whole value, and its words
 )
 
 // DirectoryRead is the permission every 2a kind is read under. A gated kind (the BitLocker key ID,
@@ -28,14 +35,14 @@ const (
 const DirectoryRead = "directory.read"
 
 // AllKinds lists the kinds in key order.
-var AllKinds = []Kind{KindName, KindNameWord, KindSAM, KindUPN, KindMail, KindDNSHost, KindSID, KindGUID, KindConsistencyGUID, KindDN}
+var AllKinds = []Kind{KindName, KindNameWord, KindSAM, KindUPN, KindMail, KindDNSHost, KindSID, KindGUID, KindConsistencyGUID, KindDN, KindMailNickname, KindEmployeeID, KindSIDHistory, KindSPN, KindOrgText}
 
 // Valid reports whether k is a known kind.
-func (k Kind) Valid() bool { return k >= KindName && k <= KindDN }
+func (k Kind) Valid() bool { return k >= KindName && k <= KindOrgText }
 
 // FuzzyEligible kinds have trigram postings (ADR-0011 rule 5a): name and sam. A name_word is redundant
 // for word_similarity against the whole name; upn and mail carry a domain suffix that multiplies the
-// postings and adds nothing to name matching. migration 0073's trigger function names the same list.
+// postings and adds nothing to name matching. migration 0074's trigger function names the same list.
 func (k Kind) FuzzyEligible() bool {
 	switch k {
 	case KindName, KindSAM:
@@ -64,6 +71,8 @@ const (
 	ShapeSID
 	ShapeGUID
 	ShapeDN
+	ShapeDigits // digits only: an employeeID or employeeNumber (also tried as text)
+	ShapeSPN    // service/host[:port][/name]
 )
 
 // Probe is one exact lookup: the key of Kind equals Key.
@@ -147,6 +156,7 @@ func Classify(raw string) (Parsed, error) {
 	case sidRE.MatchString(ident):
 		p.Shapes = append(p.Shapes, ShapeSID)
 		addExact(KindSID, ident)
+		addExact(KindSIDHistory, ident)
 	case dnStartR.MatchString(ident) && strings.Contains(ident, ","):
 		p.Shapes = append(p.Shapes, ShapeDN)
 		addExact(KindDN, NormDN(s))
@@ -165,8 +175,22 @@ func Classify(raw string) (Parsed, error) {
 		addExact(KindSAM, local)
 		addPrefix(KindUPN, ident)
 		addPrefix(KindMail, ident)
+	case noSpace && strings.Contains(ident, "/") && !strings.Contains(ident, "=") && !strings.HasPrefix(ident, "/"):
+		p.Shapes = append(p.Shapes, ShapeSPN)
+		addExact(KindSPN, ident)
+		addPrefix(KindSPN, ident)
 	case noSpace && hostRE.MatchString(ident):
 		p.Shapes = append(p.Shapes, ShapeSAM, ShapeHost)
+		if allDigits(ident) {
+			p.Shapes = append(p.Shapes, ShapeDigits)
+		}
+		// A token with no dot may also be an employeeID or a mail alias.
+		if !strings.ContainsAny(ident, ".$") {
+			addExact(KindEmployeeID, ident)
+			addExact(KindMailNickname, ident)
+			addPrefix(KindEmployeeID, ident)
+			addPrefix(KindMailNickname, ident)
+		}
 		addExact(KindSAM, ident)
 		addExact(KindDNSHost, ident)
 		addExact(KindName, p.Name)
@@ -183,6 +207,7 @@ func Classify(raw string) (Parsed, error) {
 
 	// Name matching always runs: "jsmith" also prefix-matches "jsmith2" and "pri" finds "Priya Raman".
 	addPrefix(KindName, p.Name)
+	addPrefix(KindOrgText, p.Name)
 	if p.Name != "" && !strings.Contains(p.Name, " ") {
 		addPrefix(KindNameWord, p.Name)
 	}
@@ -197,4 +222,16 @@ func Classify(raw string) (Parsed, error) {
 		p.Fuzzy = p.Name
 	}
 	return p, nil
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

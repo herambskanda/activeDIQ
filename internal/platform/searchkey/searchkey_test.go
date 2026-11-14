@@ -2,6 +2,7 @@ package searchkey_test
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -139,7 +140,10 @@ func Test_Classify_shapes(t *testing.T) {
 	}{
 		{"guid", "{AAAAAAAA-1111-4222-8333-444444444444}", searchkey.ShapeGUID,
 			[]searchkey.Probe{{searchkey.KindGUID, "aaaaaaaa-1111-4222-8333-444444444444"}, {searchkey.KindConsistencyGUID, "aaaaaaaa-1111-4222-8333-444444444444"}}, ""},
-		{"sid", "S-1-5-21-1-2-3-1105", searchkey.ShapeSID, []searchkey.Probe{{searchkey.KindSID, "s-1-5-21-1-2-3-1105"}}, ""},
+		{"sid", "S-1-5-21-1-2-3-1105", searchkey.ShapeSID, []searchkey.Probe{{searchkey.KindSID, "s-1-5-21-1-2-3-1105"}, {searchkey.KindSIDHistory, "s-1-5-21-1-2-3-1105"}}, ""},
+		{"employee id", "004211", searchkey.ShapeSAM,
+			[]searchkey.Probe{{searchkey.KindEmployeeID, "004211"}, {searchkey.KindMailNickname, "004211"}, {searchkey.KindSAM, "004211"}, {searchkey.KindDNSHost, "004211"}, {searchkey.KindName, "004211"}}, ""},
+		{"spn", "MSSQLSvc/DB01.corp.local:1433", searchkey.ShapeSPN, []searchkey.Probe{{searchkey.KindSPN, "mssqlsvc/db01.corp.local:1433"}}, ""},
 		{"dn", "CN=Priya Raman, OU=People,DC=corp,DC=local", searchkey.ShapeDN, []searchkey.Probe{{searchkey.KindDN, "cn=priya raman,ou=people,dc=corp,dc=local"}}, ""},
 		{"domain sam", `CORP\JSmith`, searchkey.ShapeDomainSAM, []searchkey.Probe{{searchkey.KindSAM, "jsmith"}}, "corp"},
 		{"upn", "JSmith@Corp.Local", searchkey.ShapeEmail,
@@ -264,12 +268,32 @@ func Test_Classify_fuzzy_class_is_bounded_to_32_runes(t *testing.T) {
 	}
 }
 
-// The kinds with trigram postings are exactly name and sam (migration 0073 names the same two).
+// The kinds with trigram postings are exactly name and sam (migration 0074 names the same two).
 func Test_FuzzyEligible_is_name_and_sam(t *testing.T) {
 	for _, k := range searchkey.AllKinds {
 		want := k == searchkey.KindName || k == searchkey.KindSAM
 		if k.FuzzyEligible() != want {
 			t.Fatalf("kind %v: FuzzyEligible %v, want %v", k, k.FuzzyEligible(), want)
+		}
+	}
+}
+
+func Test_Classify_digits_shape_and_spn_prefix(t *testing.T) {
+	p, err := searchkey.Classify("004211")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(p.Shapes, searchkey.ShapeDigits) {
+		t.Errorf("shapes %v lack digits", p.Shapes)
+	}
+	p, _ = searchkey.Classify("HTTP/web")
+	if len(p.Prefix) == 0 || p.Prefix[0].Kind != searchkey.KindSPN || p.Prefix[0].Lo != "http/web" {
+		t.Errorf("spn prefix: %+v", p.Prefix)
+	}
+	// every kind is valid and none but directory.read is gated yet
+	for _, k := range searchkey.AllKinds {
+		if !k.Valid() || k.Permission() != searchkey.DirectoryRead {
+			t.Errorf("kind %d", k)
 		}
 	}
 }

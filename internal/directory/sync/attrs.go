@@ -18,7 +18,7 @@ import (
 //     lastKnownParent.
 //
 // objectGUID is not here: a DirectoryEntry carries it as its identity. A later ticket that needs
-// another attribute (T-1071, T-1111, T-1129) adds it here and to the mapping, in one change.
+// another attribute (T-1071, T-1111) adds it here and to the mapping, in one change.
 //
 // No member of this list is a secret (secretattr.Static, or anything the connector's schema flags
 // with searchFlags 0x80, 0x200 or 0x1000), and nTSecurityDescriptor, which the ScopedSearch handler
@@ -52,6 +52,18 @@ var attributes = []string{
 	"isDeleted",
 	"isRecycled",
 	"lastKnownParent",
+	// The search identifiers (T-1129, ADR-0011 rule 9). None is a secret. The BitLocker recovery key ID is
+	// not read here: it lives on child objects and is gated by a permission the catalogue lacks.
+	"givenName",
+	"sn",
+	"title",
+	"department",
+	"physicalDeliveryOfficeName",
+	"proxyAddresses",
+	"mailNickname",
+	"employeeID",
+	"employeeNumber",
+	"sIDHistory",
 }
 
 // Attributes returns a copy of the closed attribute list.

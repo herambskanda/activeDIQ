@@ -8,35 +8,23 @@ package server
 // object. The report call goes through the real apihost router.
 
 import (
-	"bytes"
 	"context"
-	jsonv2 "encoding/json/v2"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 	dsync "github.com/skenzeriq/activediq/internal/directory/sync"
-	"github.com/skenzeriq/activediq/internal/platform/apihost"
-	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
-	"github.com/skenzeriq/activediq/internal/platform/capability"
-	"github.com/skenzeriq/activediq/internal/platform/jobs"
-	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
-	"github.com/skenzeriq/activediq/internal/platform/store/owners"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	"github.com/skenzeriq/activediq/internal/testlab"
@@ -105,127 +93,12 @@ func ldapCount(t *testing.T, sess *ad.Session, base dn.ObjectRef, f ldapfilter.F
 
 func TestLabFirstSyncFillsInventoryAndReportsRunOnIt(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		le := testlab.Load(t)
-		d := s.NewDatabase(t)
-		d.Migrate(t)
-		db, err := store.Open(context.Background(), store.Config{DSN: d.AppDSN()})
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(db.Close)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		t.Cleanup(cancel)
-
-		env := envOf(map[string]string{"LAB_LDAPS_PORT": le.Port, "LAB_SVC_PASSWORD": le.Values["LAB_SVC_PASSWORD"], "LAB_CA": le.CAPath})
-		conns := connection.NewRegistry(db)
-		var next client.ConnectorSource
-		src, seed, closeFn, err := labBootstrap(ctx, env, next)
-		if err != nil {
-			t.Fatalf("labBootstrap: %v", err)
-		}
-		t.Cleanup(closeFn)
-		kek, err := keys.NewLocalProvider("test-kek", secret.FromBytes(bytes.Repeat([]byte{7}, 32)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		ch := audit.NewChainer(db)
-		jreg := jobs.NewRegistry()
-		tid, err := bootstrapTenant(ctx, config.Config{InstanceID: "node-1"}, db, ch, kek, jreg)
-		if err != nil {
-			t.Fatal(err)
-		}
-		vopts, err := verifyOptions(src)
-		if err != nil {
-			t.Fatal(err)
-		}
-		// The composition under test: sync.full over the lab's in-process connector, queued by the
-		// activation hook of the connection service.
-		sk, err := buildSync(db, conns, src, jreg, "node-1", time.Hour, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		svc, err := connection.NewService(conns, client.New(vopts...), ch, connection.WithActivationHook(sk.Jobs))
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// Reports over the real router, scoped to the lab connection's domain NC.
-		var scope authz.ReadScope
-		_, host, err := bootReport(ctx, capability.NewSet(), directoryServices(db), owners.Lookup)
-		if err != nil {
-			t.Fatal(err)
-		}
-		runs, tag, err := buildReports(ctx, db, host, jreg, ch, inventory.NewReader(db, nil), lazyScope{func() authz.ReadScope { return scope }}, nil, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		doc, err := apihost.LoadDocument()
-		if err != nil {
-			t.Fatal(err)
-		}
-		pol, err := apihost.LoadPolicy()
-		if err != nil {
-			t.Fatal(err)
-		}
-		door := rptDoor{}
-		srv, err := apihost.Build(doc, []apihost.TagHandlers{tag}, pol, apihost.Permissions{"reports.run", "reports.export", "reports.schedule",
-			"reports.schedule.manage_all", "reports.deliver.external", "directory.read", "connections.takeover.attest", "siem.destination.manage",
-			"siem.destination.read"}, apihost.Ports{Authn: door, Authz: door, Limits: door, StepUp: door})
-		if err != nil {
-			t.Fatal(err)
-		}
-		do := func(method, target, body string) (int, map[string]any) {
-			r := httptest.NewRequest(method, target, strings.NewReader(body))
-			r.Header.Set("X-Who", "00000000-0000-4000-8000-0000000000a1")
-			r.Header.Set("X-Tenant", tid.String())
-			if body != "" {
-				r.Header.Set("Content-Type", "application/json")
-			}
-			r.RemoteAddr = "203.0.113.7:4444"
-			w := httptest.NewRecorder()
-			srv.ServeHTTP(w, r)
-			var out map[string]any
-			_ = jsonv2.Unmarshal(w.Body.Bytes(), &out)
-			return w.Code, out
-		}
-		// runKinds executes every queued job of the given kinds, like the worker does.
-		runKinds := func(kinds ...string) {
-			t.Helper()
-			var offered []jobs.KindLease
-			for _, kl := range jreg.TenantLeases() {
-				for _, k := range kinds {
-					if kl.Kind == k {
-						offered = append(offered, kl)
-					}
-				}
-			}
-			cl, err := jobs.Claim(ctx, db, offered, 20)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, c := range cl {
-				if res, err := jobs.NewRunner(db, jreg).Execute(ctx, c); err != nil || res != jobs.Completed {
-					t.Fatalf("job %s: %v %v", c.Kind, res, err)
-				}
-			}
-		}
-		report := func() map[string]any {
-			t.Helper()
-			code, created := do("POST", "/api/v1/reports/runs", `{"definitionId":"usr-01"}`)
-			if code != http.StatusAccepted {
-				t.Fatalf("create usr-01: %d %v", code, created)
-			}
-			id, _ := created["id"].(string)
-			runKinds(runs.Kind().Name)
-			code, got := do("GET", "/api/v1/reports/runs/"+id, "")
-			if code != http.StatusOK || got["state"] != "succeeded" {
-				t.Fatalf("get run: %d %v", code, got)
-			}
-			return got
-		}
-
+		r := newReportsRig(t, s)
+		le, d, db, ctx, conns, tid := r.le, r.d, r.db, r.ctx, r.conns, r.tid
+		seed, runKinds := r.seed, r.runKinds
+		report := func() map[string]any { return r.report("usr-01", "") }
 		// The lab seed activates the connection through the real activation path; the hook queues the sync.
-		if err := seed(ctx, conns, svc, tid); err != nil {
+		if err := seed(ctx, conns, r.svc, tid); err != nil {
 			t.Fatalf("seed: %v", err)
 		}
 		all, err := conns.List(ctx, tid, false)
@@ -235,7 +108,7 @@ func TestLabFirstSyncFillsInventoryAndReportsRunOnIt(t *testing.T) {
 		cid := inventory.ConnectionID(all[0].ID)
 		connID, _ := authz.ParseObjectID(string(cid))
 		ncID, _ := authz.ParseObjectID(strings.ToLower(string(all[0].DirectoryIdentity)))
-		scope = authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermNamingContext, Connection: connID, Root: ncID}}})
+		r.scope = authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermNamingContext, Connection: connID, Root: ncID}}})
 		queued, err := d.OwnerStrings(ctx, `SELECT count(*)::text FROM public.jobs WHERE kind = $1 AND state = 'available'`, dsync.JobFull)
 		if err != nil || len(queued) != 1 || queued[0] != "1" {
 			t.Fatalf("the activation must have queued exactly one sync.full: %v %v", queued, err)
@@ -301,7 +174,9 @@ func TestLabFirstSyncFillsInventoryAndReportsRunOnIt(t *testing.T) {
 		t.Logf("freshness: state=%s data_as_of=%s watermarks=%d", res.Label.State, res.Label.AsOf.Format(time.RFC3339), len(res.Watermarks))
 
 		// Acceptance 2, after: the users report has the lab users as rows.
-		after := report()
+		// The run path reuses an identical run created in the last 60 s (spec 6.1), which would hand back the
+		// 'not synced yet' run above: naming the connection makes this second request a different one.
+		after := r.reportBody(`{"definitionId":"usr-01","parameters":{"connectionIds":["` + string(cid) + `"]}}`)
 		fr, _ = after["freshness"].(map[string]any)
 		if fr["state"] != "synced" || after["rowCount"] != float64(got["user"]) {
 			t.Fatalf("after the sync: freshness %v rowCount %v, want synced and %d", fr, after["rowCount"], got["user"])
