@@ -2,12 +2,12 @@ package ad
 
 import (
 	"context"
-	"github.com/skenzeriq/activediq/internal/connector/ad/scope"
 	"strconv"
 	"strings"
 
 	"github.com/go-ldap/ldap/v3"
 
+	"github.com/skenzeriq/activediq/internal/connector/ad/scope"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 )
 
@@ -208,7 +208,7 @@ func visibilityControls(opts ReadOptions) []ldap.Control {
 		c = append(c, scope.ShowDeleted())
 	}
 	if opts.ShowDeactivatedLink {
-		c = append(c, showDeactivatedLink{})
+		c = append(c, scope.ShowDeactivatedLink())
 	}
 	if opts.ExtendedDN {
 		c = append(c, extendedDN{})

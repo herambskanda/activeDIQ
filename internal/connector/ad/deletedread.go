@@ -2,12 +2,12 @@ package ad
 
 import (
 	"context"
-	"github.com/skenzeriq/activediq/internal/connector/ad/scope"
 	"strconv"
 	"strings"
 
 	"github.com/go-ldap/ldap/v3"
 
+	"github.com/skenzeriq/activediq/internal/connector/ad/scope"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 )

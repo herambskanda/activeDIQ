@@ -3,12 +3,12 @@ package ad
 import (
 	"context"
 	"errors"
-	"github.com/skenzeriq/activediq/internal/connector/ad/scope"
 	"strings"
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
 
+	"github.com/skenzeriq/activediq/internal/connector/ad/scope"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 )

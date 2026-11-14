@@ -23,11 +23,11 @@
 - [per-DC read lessons](perdc-lessons.md) — T-0970: no connector ReadPerDC handler (T-1143), coverage derived not trusted, per-tenant semaphore
 - [closure decision lessons](closure-decision-lessons.md) — T-0961: decide the budget from the whole graph each refresh, oracle test after every refresh
 - [search index lessons](search-index-lessons.md) — T-1095: pg_trgm GIN unusable under RLS (T-1180), threshold 0.3, bind-typing and FORCE-RLS fixture traps
+- [DirSync lessons](dirsync-lessons.md) — T-1193: Samba tombstones need admin, flags 4-byte encoding, searchRaw not domain-scope, capture proxy
 - [search trigram lessons](search-trigrams-lessons.md) — T-1335: rows/blocks proof traps (cold run, plan flip, heap fetches), fixtures, fitness rules
 - [sync mapper lessons](sync-mapper-lessons.md) — T-1189: allowlist gap, no DnValue.guid today, Samba UAC 546, capture recipe
 - [T-1203 schema lessons](lessons-t1203.md) — sync-list coverage test is offline, name-only entries, lab-up address-pool exhaustion
 - [extended-DN lessons](extdn-lessons.md) — T-1202: Samba extends entry name too, opt-in control, ParseLinkValue, slow bulk lab test
-- [DirSync lessons](dirsync-lessons.md) — T-1193: Samba tombstones need admin, flags 4-byte encoding, searchRaw not domain-scope, capture proxy
 - [ChangeFeed lessons](feed-lessons.md) — T-1194: Samba omits cn in DirSync, LDAP result 200 = unreachable, Feeder golden-list trap
 - [search meta lessons](search-meta-lessons.md) — T-1097: chips via users dataset + ExecAll, derivation fixture traps, Entra cloud-only rule
 - [sync cursor lessons](sync-cursor-lessons.md) — T-1190: fitness traps (tenant_id guard, SQL const, platform_leases), fencing limits
@@ -36,7 +36,6 @@
 - [object write lessons](object-write-lessons.md) — T-1624: Samba ModifyDN deleteoldrdn, no Recycle Bin, stubGuard in lab tests
 - [write kinds lessons](write-kinds-lessons.md) — T-1623: writechange codec, h.ops test substitution needs testChange(), schema allow-list, sync tests hang
 - [account kinds lessons](account-kinds-lessons.md) — T-1583: leaf digest pkg, accountkind single definition, test-kind collision, T-1638 Windows lab
-- [sync mapper lessons](sync-mapper-lessons.md) — T-1189: allowlist gap, no DnValue.guid today, Samba UAC 546, capture recipe
-- [sync engine lessons](sync-engine-lessons.md) — T-1191: RLS owner-update trap, lease release in rigs, per-NC lease, CompleteScan no cookie
 - [replxml lessons](replxml-lessons.md) — T-1721: xml alloc per element vs 8x bound, RX2 assignment trap, one value per call, unverified names
 - [replstatus lessons](replstatus-lessons.md) — T-1723: protoc-less pb.go recipe, no-control read, RX6 comment trap, DC enumeration seam
+- [object changes lessons](object-changes-lessons.md) — T-1109: chg CTE in upsert, baseline rule, RowAnchor on current object, pre-existing red

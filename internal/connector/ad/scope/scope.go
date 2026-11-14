@@ -17,6 +17,8 @@ import (
 const (
 	oidDirSync     = "1.2.840.113556.1.4.841"
 	oidShowDeleted = "1.2.840.113556.1.4.417"
+	// oidShowDeactivatedLink is LDAP_SERVER_SHOW_DEACTIVATED_LINK_OID (MS-ADTS 3.1.1.3.4.1.25).
+	oidShowDeactivatedLink = "1.2.840.113556.1.4.2065"
 )
 
 // The DirSync flags are a constant of this package, not a parameter of anything: object-security
@@ -104,5 +106,21 @@ func (showDeleted) Encode() *ber.Packet {
 	p := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "Control")
 	p.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, oidShowDeleted, "Control Type (Show Deleted)"))
 	p.AppendChild(ber.NewLDAPBoolean(ber.ClassUniversal, ber.TypePrimitive, ber.TagBoolean, true, "Criticality"))
+	return p
+}
+
+// ShowDeactivatedLink returns the non-critical show-deactivated-link control: without it, link values
+// (memberOf) stored on a deleted object are not returned, so a deleted Domain Admin would read as a
+// member of nothing. It is only meaningful together with ShowDeleted.
+func ShowDeactivatedLink() ldap.Control { return showDeactivatedLink{} }
+
+type showDeactivatedLink struct{}
+
+func (showDeactivatedLink) GetControlType() string { return oidShowDeactivatedLink }
+func (showDeactivatedLink) String() string         { return "Show deactivated link control" }
+
+func (showDeactivatedLink) Encode() *ber.Packet {
+	p := ber.Encode(ber.ClassUniversal, ber.TypeConstructed, ber.TagSequence, nil, "Control")
+	p.AppendChild(ber.NewString(ber.ClassUniversal, ber.TypePrimitive, ber.TagOctetString, oidShowDeactivatedLink, "Control Type"))
 	return p
 }

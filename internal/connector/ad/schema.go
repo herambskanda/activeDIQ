@@ -109,6 +109,15 @@ func DefaultSchema() *ldapfilter.Schema {
 			// closed until the per-forest schema supplies verified OIDs. Test_DefaultSchema_covers_sync_list
 			// fails if a name is added to that list without an entry here.
 			ldapfilter.AttrInfo{Name: "mail", Syntax: s},
+			ldapfilter.AttrInfo{Name: "givenName", Syntax: s},
+			ldapfilter.AttrInfo{Name: "sn", Syntax: s},
+			ldapfilter.AttrInfo{Name: "title", Syntax: s},
+			ldapfilter.AttrInfo{Name: "department", Syntax: s},
+			ldapfilter.AttrInfo{Name: "physicalDeliveryOfficeName", Syntax: s},
+			ldapfilter.AttrInfo{Name: "proxyAddresses", Syntax: s},
+			ldapfilter.AttrInfo{Name: "mailNickname", Syntax: s},
+			ldapfilter.AttrInfo{Name: "employeeID", Syntax: s},
+			ldapfilter.AttrInfo{Name: "employeeNumber", Syntax: s},
 			ldapfilter.AttrInfo{Name: "company", Syntax: s},
 			ldapfilter.AttrInfo{Name: "operatingSystem", Syntax: s},
 			ldapfilter.AttrInfo{Name: "managedBy", Syntax: ldapfilter.SynDN},

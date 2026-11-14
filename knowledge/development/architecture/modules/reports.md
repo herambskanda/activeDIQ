@@ -1117,9 +1117,9 @@ in memory** rather than filter through inventory.
   consistency GUID; `mail` for contacts and `dNSHostName` for computers, only when they are JSON strings):
   keys are built from named columns, never from the attribute bag, so a secret attribute cannot reach the
   index. Purged objects have no keys; deleted and out-of-scope objects keep theirs and rank after live ones.
-  Table `inventory_search_keys` (migration 0069): B-tree `(tenant_id, key_kind, key)`, RLS + FORCE; migration 0072
+  Table `inventory_search_keys` (migration 0069): B-tree `(tenant_id, key_kind, key)`, RLS + FORCE; migration 0074
   (T-1335) adds `key_id` (identity, `UNIQUE (tenant_id, key_id)`, never leaves a statement) and drops the GIN.
-  Table `inventory_search_trigrams` (migration 0073, `-- write-class: system`): `(tenant_id, trgm, key_id)`,
+  Table `inventory_search_trigrams` (migration 0074, `-- write-class: system`): `(tenant_id, trgm, key_id)`,
   primary key in that order, RLS + FORCE, no UPDATE or TRUNCATE for the runtime role. It holds the `show_trgm`
   postings of the name (1) and sam (3) keys only (`searchkey.Kind.FuzzyEligible`), kept equal to the keys by
   `inventory_search_trigrams_sync()` through three statement-level triggers (AFTER INSERT, DELETE, UPDATE with
@@ -1580,7 +1580,7 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - **Run record.** `report_runs.per_dc` (progress while running; `complete`, `dcs_in_scope`, `dcs_answered`, `unreachable[{dc,error}]`, `read_at` when
   done). `Run.ColumnLabel` appends " (at least)" to value columns of a partial run; the API `coverage` has `label` and `unreachable`; the export
   header uses the same label and the About block gains a "DC coverage" line.
-- **Migration 0073** lets `report_run_rows` rows be deleted while the run is `running` (per-DC filtering removes rows).
+- **Migration 0076** lets `report_run_rows` rows be deleted while the run is `running` (per-DC filtering removes rows).
 - **Not wired yet.** `Service.PerDC` and `Service.PerDCDCs` are nil in `compose/server`; until the follow-ups land a per-DC run fails
   `connection_unavailable`. Needed: a `DCsInScope` on `client.ConnectorPerDC` and the wiring (directory-engineer), calibration of the cap and a
   500k-candidate timing (B13), the coverage label and "(at least)" header on screen (B12).
@@ -2051,4 +2051,4 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 - 2026-11-01 · T-0964 · row B10 built: `platform/export/pdf` (+ `pdftest`), `platform/htmlx`, PDF and HTML formats with
   caps of 5,000 and 20,000 rows, per-format `HardCap`, `FormatsFor`, `exportFormats` served by the API. As built:
   §7.1b. Follow-ups: the owner's time zone on a run; an embedded font for CJK in the PDF.
-- 2026-11-04 · T-0971 · row B8 built: per-DC run stages, read cap, coverage labels, `EvalPerDC`, USR-04 and PWD-03 (§6.5 "As built"); `DCCounter` port; migration 0073.
+- 2026-11-04 · T-0971 · row B8 built: per-DC run stages, read cap, coverage labels, `EvalPerDC`, USR-04 and PWD-03 (§6.5 "As built"); `DCCounter` port; migration 0076.
