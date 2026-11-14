@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	jsonv2 "encoding/json/v2"
+	"github.com/skenzeriq/activediq/internal/directory"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -104,7 +105,7 @@ func newReportsRig(t *testing.T, s *storetest.Server) *reportsRig {
 	}
 
 	// Reports over the real router, scoped to the lab connection's domain NC (set after the seed).
-	_, host, err := bootReport(ctx, capability.NewSet(), directoryServices(db), owners.Lookup)
+	_, host, err := bootReport(ctx, capability.NewSet(), directory.Services{Connection: connection.NewRegistry(db)}, owners.Lookup)
 	if err != nil {
 		t.Fatal(err)
 	}

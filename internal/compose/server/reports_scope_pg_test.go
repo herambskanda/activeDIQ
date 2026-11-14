@@ -8,6 +8,8 @@ package server
 import (
 	"context"
 	jsonv2 "encoding/json/v2"
+	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -73,7 +75,7 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 			e.ten.String(), scpRunner, string(rbac.NamingContext), e.ad, scpDomA)
 
 		// The composition under test: the booted contributions, the authorizer, buildReadScopes, buildReports.
-		contrib, host, err := bootReport(ctx, capability.NewSet(capability.DirectoryAD, capability.DirectoryEntra, capability.TenantProvisioning), directoryServices(e.db), owners.Lookup)
+		contrib, host, err := bootReport(ctx, capability.NewSet(capability.DirectoryAD, capability.DirectoryEntra, capability.TenantProvisioning), directory.Services{Connection: connection.NewRegistry(e.db)}, owners.Lookup)
 		if err != nil {
 			t.Fatalf("bootReport: %v", err)
 		}

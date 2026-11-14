@@ -24,4 +24,9 @@ type Services struct {
 	// ObjectReader is the live object read of the user lifecycle Actions (ad module); the writes go
 	// through AccountWriter. Nil until wired, and the Actions then refuse every Plan.
 	ObjectReader client.ObjectReader
+	// Source is the connector endpoint source and Reads the live object read over it (directory module:
+	// user search). Nil until the composition root wires a connector transport; the module then mounts no
+	// routes.
+	Source client.ConnectorSource
+	Reads  client.Reads
 }

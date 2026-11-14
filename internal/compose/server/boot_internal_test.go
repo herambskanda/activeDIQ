@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"slices"
 	"testing"
 
@@ -33,7 +34,7 @@ func TestBootGeneratedList(t *testing.T) {
 func TestDirectoryServicesConnection(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
-		svc := directoryServices(e.db)
+		svc := directory.Services{Connection: connection.NewRegistry(e.db)}
 		if svc.Connection == nil {
 			t.Fatal("Services.Connection is nil")
 		}

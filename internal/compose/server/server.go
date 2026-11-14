@@ -30,6 +30,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/limiter"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/owners"
@@ -67,12 +68,6 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return fmt.Errorf("server: open store: %w", err)
 	}
 	defer db.Close()
-	// Capabilities come from the deployment profile once config selects one; no module requires
-	// one yet. The directory services are built from the store, so boot follows the open.
-	contrib, reportHost, err := bootReport(ctx, capability.NewSet(), directoryServices(db), owners.Lookup)
-	if err != nil {
-		return fmt.Errorf("server: boot modules: %w", err)
-	}
 	// The per-principal rate store and the limiter over it, mounted as the API's Limits port. A bad
 	// store/node combination, budget or contract fails startup here, before the listener opens.
 	ps, err := principalStore(cfg, db)
@@ -181,19 +176,25 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, setupTags...)
-	// directory.users.search: the connection registry for the active connection and its service-account
-	// gate, the connector source for the ScopedSearch RPC (over the tunnel the connector dialled).
-	// The read-scope producer search and reports share (T-0916): rbac.ReadScopes over the authorizer and
-	// the EP-6 evaluators the booted modules contributed.
+	// The modules boot here: they need the connection registry and the connector source (directory
+	// services) and the store, and build their services in Register (ADR-0013). Capabilities come from the
+	// deployment profile once config selects one; no module requires one yet. The read-scope producer
+	// search and reports share (T-0916) is rbac.ReadScopes over the authorizer and the EP-6 evaluators the
+	// booted modules contribute, so modules hold the unbound TxReadScopes and it is bound after boot.
+	txScopes := rbac.NewTxReadScopes(db)
+	contrib, reportHost, err := bootReport(ctx, capability.NewSet(),
+		directory.Services{Connection: conns, Source: csrc, Reads: reads}, owners.Lookup,
+		func(d *platform.Deps) { d.DB, d.ReadScopes = db, txScopes })
+	if err != nil {
+		return fmt.Errorf("server: boot modules: %w", err)
+	}
 	readScopes, err := buildReadScopes(authzr, contrib)
 	if err != nil {
 		return err
 	}
-	dirTag, err := buildDirectory(ctx, db, conns, csrc, reads, txReadScopes{db: db, rs: readScopes})
-	if err != nil {
-		return err
+	if err := txScopes.Bind(readScopes); err != nil {
+		return fmt.Errorf("server: %w", err)
 	}
-	tags = append(tags, dirTag)
 	// The report run path (T-0959): the run service, its job kinds and its API. The job registry exists
 	// before the API is built so the kinds register with the handlers; the retention cadence is seeded
 	// once the tenant exists.
@@ -207,8 +208,8 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// set), which is the only way a console session is created.
 	tags = append(tags, console.Tags())
 	cat := permissionCatalogue(contrib)
-	// Routes modules registered through Registrar.API are mounted alongside the hand-built ones
-	// until each builder moves into its module (ADR-0013 decision 3).
+	// Routes modules registered through Registrar.API (EP-2) are mounted alongside the kernel's own
+	// until the remaining builders move into their modules (ADR-0013 decision 3).
 	tags = append(tags, contrib.API()...)
 	if err := checkCatalogue(cat); err != nil {
 		return err
@@ -382,12 +383,6 @@ func runWorker(ctx context.Context, db *store.DB, reg *jobs.Registry, wcfg jobs.
 	return nil
 }
 
-// directoryServices builds the directory services handed to every module: the connection registry,
-// the only writer of connections, backed by the store.
-func directoryServices(db *store.DB) directory.Services {
-	return directory.Services{Connection: connection.NewRegistry(db)}
-}
-
 // inventoryOwner is the owner key of the datasets internal/directory/inventory exports (row B3).
 const inventoryOwner = "inventory"
 
@@ -396,12 +391,16 @@ const inventoryOwner = "inventory"
 // those datasets under their module's owner key and seals the host. Datasets that directory packages
 // export (inventory.Datasets(), row B3) are added to the host here too, under their package's key,
 // before the modules boot, and are checked by the same function.
-func bootReport(ctx context.Context, enabled capability.Set, dir directory.Services, ownerOf report.TableOwners) (*module.Contributions, *report.Host, error) {
+func bootReport(ctx context.Context, enabled capability.Set, dir directory.Services, ownerOf report.TableOwners, with ...func(*platform.Deps)) (*module.Contributions, *report.Host, error) {
 	host := report.NewHost(ownerOf)
 	if err := host.Add(inventoryOwner, inventory.Datasets()...); err != nil {
 		return nil, nil, fmt.Errorf("server: report datasets: %w", err)
 	}
-	c, err := module.Boot(ctx, generatedModules(platform.Deps{Report: host}, dir), enabled, module.WithTableOwners(ownerOf), module.WithKernelPermissions(kernelPermissions()))
+	deps := platform.Deps{Report: host}
+	for _, w := range with {
+		w(&deps)
+	}
+	c, err := module.Boot(ctx, generatedModules(deps, dir), enabled, module.WithTableOwners(ownerOf), module.WithKernelPermissions(kernelPermissions()))
 	if err != nil {
 		return nil, nil, err
 	}

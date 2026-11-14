@@ -6,6 +6,7 @@ package platform
 import (
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
+	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
 // Deps is the set of kernel services handed to every server module: operation, audit, authz, jobs,
@@ -23,4 +24,11 @@ type Deps struct {
 	// with the datasets directory packages export and the ones modules register, then seals it.
 	// Nil until wired; Host methods on a nil host find no dataset.
 	Report *report.Host
+	// DB is the store. A module that owns no table reads and writes through the packages that do; one that
+	// serves reads needs the handle for their tenant transactions. Nil in module unit tests.
+	DB *store.DB
+	// ReadScopes is the one producer of directory read scopes search and reports share (T-0916). It
+	// exists before the modules boot and is bound to rbac.ReadScopes after Boot (the producer needs the
+	// evaluators the modules contribute); until then it refuses every call. Nil in module unit tests.
+	ReadScopes *rbac.TxReadScopes
 }

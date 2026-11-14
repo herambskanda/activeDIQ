@@ -2,7 +2,7 @@ package server
 
 // T-0987: the first console account reads the directory through a naming_context assignment on each active
 // AD connection (the tenant-store root grants nothing to directory data), proved through the real
-// rbac.ReadScopes producer and the txReadScopes adapter buildDirectory is given.
+// rbac.ReadScopes producer and the rbac.TxReadScopes the modules are given.
 
 import (
 	"context"
@@ -89,7 +89,7 @@ func TestInitLocalAccountReadsActiveADConnections(t *testing.T) {
 			t.Fatal(err)
 		}
 		chain := authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID(la.ID), Kind: authority.Human}}
-		got, err := txReadScopes{db: db, rs: rs}.ReadScope(ctx, ten, chain, "directory.read")
+		got, err := boundScopes(t, db, rs).ReadScope(ctx, ten, chain, "directory.read")
 		if err != nil {
 			t.Fatal(err)
 		}
