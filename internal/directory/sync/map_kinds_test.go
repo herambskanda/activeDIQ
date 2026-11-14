@@ -200,8 +200,9 @@ func Test_time_inputs_are_tri_state(t *testing.T) {
 		if o.HasSPN == nil || !*o.HasSPN {
 			t.Errorf("HasSPN = %v, want true", o.HasSPN)
 		}
-		if _, leaked := o.Attributes["servicePrincipalName"]; leaked {
-			t.Error("SPN values are not stored")
+		// T-1129: the values are stored for search, bounded (the first 64).
+		if got, _ := o.Attributes["servicePrincipalName"].([]string); len(got) != 2 || got[0] != "HTTP/a" {
+			t.Errorf("SPN values = %v", o.Attributes["servicePrincipalName"])
 		}
 	})
 }

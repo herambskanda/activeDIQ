@@ -173,7 +173,7 @@ func (s *Service) queryError(err error) error {
 
 var shapeNames = map[searchkey.Shape]string{
 	searchkey.ShapeText: "text", searchkey.ShapeSAM: "sam", searchkey.ShapeDomainSAM: "domain_sam", searchkey.ShapeEmail: "email",
-	searchkey.ShapeHost: "host", searchkey.ShapeSID: "sid", searchkey.ShapeGUID: "guid", searchkey.ShapeDN: "dn",
+	searchkey.ShapeHost: "host", searchkey.ShapeSID: "sid", searchkey.ShapeGUID: "guid", searchkey.ShapeDN: "dn", searchkey.ShapeDigits: "digits", searchkey.ShapeSPN: "spn",
 }
 
 // scopes asks the producer for the read scope of every permission the key kinds are read under. A failure of

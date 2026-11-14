@@ -534,6 +534,9 @@ func (m *Mapper) bag(o *inventory.Observation, set attrSet) error {
 			bag[name] = s
 		}
 	}
+	if err := searchIdentifiers(bag, set); err != nil {
+		return err
+	}
 	if s, present, err := firstText(set, "description", 4096); err != nil {
 		return err
 	} else if present && s != "" {
@@ -575,5 +578,71 @@ func (m *Mapper) bag(o *inventory.Observation, set attrSet) error {
 		return refuse("attributes", CodeAttributesSize)
 	}
 	o.Attributes = bag
+	return nil
+}
+
+// The search identifiers (T-1129, ADR-0011 rule 9). Single-valued text attributes and their schema
+// rangeUpper (title 128, department 64, physicalDeliveryOfficeName 128, givenName 64, sn 64,
+// employeeID 16, employeeNumber 512, mailNickname 64; the mapper allows a little more than the schema,
+// and bounds the stored size, not the schema).
+var searchTextAttrs = []struct {
+	name string
+	max  int
+}{
+	{"givenName", 256}, {"sn", 256}, {"title", 256}, {"department", 256}, {"physicalDeliveryOfficeName", 256},
+	{"employeeID", 256}, {"employeeNumber", 512}, {"mailNickname", 256},
+}
+
+// maxSearchValues bounds how many values of a multi-valued search attribute are kept (proxyAddresses,
+// servicePrincipalName, sIDHistory). The first values are kept; the rest are not searchable, so one
+// object with thousands of SPNs cannot push its attribute bag over the store's size limit.
+const maxSearchValues = 64
+
+// searchIdentifiers adds the attributes universal search keys are built from to the bag. An attribute the
+// entry does not carry adds nothing (not read), and a present-but-empty one adds nothing either.
+// No secret or confidential attribute is read here (Test_closed_list_* pin the list).
+func searchIdentifiers(bag map[string]any, set attrSet) error {
+	for _, a := range searchTextAttrs {
+		if s, present, err := firstText(set, a.name, a.max); err != nil {
+			return err
+		} else if present && s != "" {
+			bag[a.name] = s
+		}
+	}
+	for _, name := range []string{"proxyAddresses", "servicePrincipalName"} {
+		list, present, err := texts(set, name, 1024)
+		if err != nil {
+			return err
+		}
+		list = slices.DeleteFunc(list, func(v string) bool { return v == "" })
+		if present && len(list) > 0 {
+			bag[name] = list[:min(len(list), maxSearchValues)]
+		}
+	}
+	if a, ok := set.get("sIDHistory"); ok {
+		vs, err := values(a, "sIDHistory")
+		if err != nil {
+			return err
+		}
+		var list []string
+		for _, v := range vs {
+			t, isSID := v.GetValue().(*connectorv1.AttributeValue_Sid)
+			if !isSID {
+				return refuse("sIDHistory", CodeType)
+			}
+			b, err := sidBytes(t.Sid, "sIDHistory")
+			if err != nil {
+				return err
+			}
+			parsed, err := sid.FromBytes(b)
+			if err != nil {
+				return refuse("sIDHistory", CodeBadSID)
+			}
+			list = append(list, parsed.String())
+		}
+		if len(list) > 0 {
+			bag["sIDHistory"] = list[:min(len(list), maxSearchValues)]
+		}
+	}
 	return nil
 }
