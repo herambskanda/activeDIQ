@@ -21,7 +21,7 @@ import (
 
 // The incremental cycle (T-1198) against the real database and ingester, with the fake connector for the full
 // read and a scripted feed for the change feed. Directory behaviour (what DirSync really sends, a stale cookie
-// from a real DC) is proved on Samba in engine_incremental_lab_test.go; Windows is T-1282.
+// from a real DC) is proved on Samba in internal/compose/server/incremental_lab_test.go (-tags lab); Windows is T-1282.
 
 // feedCall is one Read of the scripted feed: what it asked and how it answers.
 type feedCall struct {
