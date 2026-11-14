@@ -547,15 +547,15 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
 
    | IA §5.2 shape | Served at 2a from | Key kinds (class) | Not served at 2a → follow-up |
    |---|---|---|---|
-   | Free text | `display_name`; `rdn` (cn) | `name` (prefix, fuzzy), `name_word` (prefix; rev 3: no longer fuzzy, §3a) | `givenName` + `sn` in both orders, `title`, `department` → **T-1129** (until then "Raman, Priya" matches a displayName or cn written in either order, through the comma swap and trigram order-insensitivity) |
+   | Free text | `display_name`; `rdn` (cn) | `name` (prefix, fuzzy), `name_word` (prefix; rev 3: no longer fuzzy, §3a) | Served since T-1129: `givenName` + `sn` in both orders (`name`, `name_word` keys), `title` and `department` (`org_text`, prefix, whole value and words) |
    | `sam`, `DOMAIN\sam`, `sam@dnsdomain` | `sam_account_name`; computers also without the trailing `$` | `sam` (exact, prefix, fuzzy) | The `DOMAIN\` and `@dnsdomain` parts narrow to the connection whose NetBIOS or DNS domain name matches, **if** the connection record holds that name (T-1095 confirms). Otherwise the domain part is dropped and `sam` matches in every connection. It is never an error |
-   | `x@y` | `upn`; contact `mail` (D3) | `upn`, `mail` (exact, prefix; rev 3: no longer fuzzy, §3a. A misspelt address finds its object through the `name` or `sam` key) | user `mail`, `proxyAddresses`, `mailNickname` → **T-1129** |
-   | Digits | none | | `employeeID`, `employeeNumber` → **T-1129**. Until then digits are matched as free text |
-   | `S-1-5-…` | `sid` (canonical string form) | `sid` (exact) | `sIDHistory` → **T-1129** |
+   | `x@y` | `upn`; contact `mail` (D3) | `upn`, `mail` (exact, prefix; rev 3: no longer fuzzy, §3a. A misspelt address finds its object through the `name` or `sam` key) | Served since T-1129: user `mail` (any kind), `proxyAddresses` of type smtp (`mail` key), `mailNickname` (`mail_nickname`, exact, prefix) |
+   | Digits | none | | T-1129: `employeeID`, `employeeNumber` (`employee_id`, exact, prefix; leading zeros kept) |
+   | `S-1-5-…` | `sid` (canonical string form) | `sid` (exact) | T-1129: `sIDHistory` (`sid_history`, exact) |
    | GUID, with or without braces | `object_guid`; `consistency_guid` (as a GUID and as base64) | `guid`, `consistency_guid` (exact) | The Entra object ID is indexed, but Entra objects are **admitted by no 2a scope kind**: they carry no `nc_guid`, and the 2a kinds are AD-only. They become findable when an Entra read-scope root kind exists → **T-1131** |
    | `CN=…,DC=…` | `dn` snapshot | `dn` (exact) | Descendants of a moved OU have stale `dn` keys until T-0988 lands. Rule 5 requires T-0988 to rewrite their keys too |
-   | Host name or FQDN | computer `rdn`/`sam` without `$`; `dNSHostName` | `name`, `dns_host` (exact, prefix) | `servicePrincipalName` values → **T-1129** |
-   | 8 hex characters (BitLocker key ID) | none | | `msFVE-RecoveryInformation` child CN only, **never** the recovery password; Entra-escrowed keys come from Graph → **T-1129**. **Gated by the BitLocker read permission, not `directory.read`** (below) |
+   | Host name or FQDN | computer `rdn`/`sam` without `$`; `dNSHostName` | `name`, `dns_host` (exact, prefix) | T-1129: `servicePrincipalName` values (`spn`, exact, prefix; the host part is also a `dns_host` key). At most 64 values per object are kept |
+   | 8 hex characters (BitLocker key ID) | none | | `msFVE-RecoveryInformation` child CN only, **never** the recovery password; Entra-escrowed keys come from Graph → **T-1931** (split from T-1129: the catalogue has no BitLocker permission yet, so the kind is not indexed). **Gated by the BitLocker read permission, not `directory.read`** (below) |
    | 48-digit recovery password | **refused**: 400, never echoed or logged (T-1096 AC5). It is recognised on the NFKC form (rule 7), so full-width digits and other scripts' digits are refused too. The browser also refuses it (IA §5.2) and never puts it in a URL | | |
 
    The shape is recognised in `searchkey.Classify` and is never passed through to SQL as a string
