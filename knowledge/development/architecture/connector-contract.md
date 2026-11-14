@@ -1853,7 +1853,7 @@ by the member's class (parameterise, don't clone): there is no `NEST` kind and n
   (security or distribution, any scope) is a valid target; the DC's scope rules (a global group may
   hold only global groups of its domain; a domain-local group is not a member of a global one) are
   enforced by the DC and surface as `INVALID_ARGUMENT` `GroupScopeRule` with fixed text
-  (`unwillingToPerform`, `[UNVERIFIED Windows]` for the exact result code; CC-WK-51 S proves it on Samba).
+  (`unwillingToPerform`, `[UNVERIFIED Windows]` for the exact result code; Samba accepts the add (measured, T-1919), so only CC-WK-51 on Windows proves the DC refusal).
 - **Tier-0, the group basis (§8.1 step 6, TM-D2).** Two touched objects, each needing its own
   `CorrelationStatement`: the **group** and the **member**. Either `tier0` is `TIER0_REFUSED` before any
   directory call, add or remove alike. The group is `tier0` by C1 or C13 identity (Domain Admins,
@@ -1886,7 +1886,7 @@ by the member's class (parameterise, don't clone): there is no `NEST` kind and n
 
 | Rule id (`INVALID_ARGUMENT`) | When | Why |
 | --- | --- | --- |
-| `SelfMembership` | the member is the group (kind 11) | AD refuses a group as its own member; refused before the DC is asked |
+| `SelfMembership` | the member is the group (kind 11) | product-side refusal, before the DC is asked; Samba accepts a group as its own member (measured, T-1919) and the docs do not show AD refusing it, so whether Windows refuses is `[UNVERIFIED Windows]` |
 | `NestingCycle` | kind 11 with `member_class` GROUP and the member's SID is in the group's `tokenGroups` (the group already sits below the member) | closes a loop that would make every member of either a member of both, and make the C2 read of §8.1 step 7 ambiguous for a Tier-0 group. **Samba accepts a loop and a group as its own member (measured, T-1919, [findings](../domain/group-membership-and-computer-reset-findings.md))**, so this and `SelfMembership` are product-side refusals that Samba tests prove; whether Windows accepts a loop is `[UNVERIFIED Windows]`. Refusing is our decision, not an AD limit |
 | `PrimaryGroupMember` | kind 12 and the member's `primaryGroupID` equals the group's RID | the membership is not in `member`; there is nothing to delete. Changing a primary group is `primaryGroupID`, which TM-D28 `denied` forbids in this slice (§8.10.4); the preview says "this is the account's primary group" |
 | `MemberClassMismatch` | `member_class` differs from the live class | binds the permission to the class, above |
