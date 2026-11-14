@@ -168,7 +168,7 @@ fitness-fuzz-nightly: ## T-0034: FF-SP5 nightly: every declared fuzz target for 
 	@mkdir -p $(SAFEPRIM_REPORTS)
 	go run ./tools/fitness/corpus -fuzz -nightly -parallel 4 -log $(SAFEPRIM_REPORTS)/fuzz.log
 
-fitness-nightly: fitness-fuzz-nightly fitness-oracles-lab fitness-search-nightly ## T-0034: the nightly job: FF-SP5 long fuzz, FF-SP6 Samba lab; the Windows rows are fitness-oracles-windows on the Windows lab (runbook safe-primitives-fitness.md)
+fitness-nightly: fitness-fuzz-nightly fitness-oracles-lab fitness-search-nightly test-scale ## T-0034, T-2008: the nightly job: FF-SP5 long fuzz, FF-SP6 Samba lab, the inventory scale tests (test-scale); the Windows rows are fitness-oracles-windows on the Windows lab (runbook safe-primitives-fitness.md)
 
 SAML_FUZZ_TIME ?= 60s
 

@@ -469,5 +469,5 @@ once its index is writable); every pending merge then proceeds on the next pass.
 `internal/directory/inventory` runs about 93 database tests on PostgreSQL 16 and 18; with the three scale tests it hit the 600 s
 test timeout. `Test_group_member_counts_at_scale`, `Test_group_closure_fanout_is_bounded` and `Test_reports_library_batch2_at_scale`
 skip unless `ADIQ_SCALE_FULL=1` (`requireScaleFull` in `scale_gate_test.go`). `make ci` does not set it; the package must stay
-under 400 s there. Run the scale job with `make test-scale` (own timeout, `SCALE_TIMEOUT`); schedule it nightly or before a release
+under 400 s there. Run the scale job with `make test-scale` (own timeout, `SCALE_TIMEOUT`); it is a prerequisite of `make fitness-nightly`, so the nightly job runs it (run it by hand before a release too)
 on the runner that has Docker or the embedded PostgreSQL. A new test that loads more than a few thousand objects calls `requireScaleFull`.
