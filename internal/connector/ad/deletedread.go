@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-ldap/ldap/v3"
 
+	"github.com/skenzeriq/activediq/internal/connector/ad/scope"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 )
@@ -89,7 +90,7 @@ func (s *Session) DeletedContainerDescriptor(ctx context.Context, domain dn.DN) 
 	stop := s.watch(ctx, s.conn)
 	defer stop()
 	res, err := s.searchOnceLocked(ctx, container.String(), ldap.ScopeBaseObject, objectClassPresent,
-		[]string{"nTSecurityDescriptor"}, []ldap.Control{flags.control(), showDeleted{}})
+		[]string{"nTSecurityDescriptor"}, []ldap.Control{flags.control(), scope.ShowDeleted()})
 	if err != nil {
 		return dn.DN{}, nil, err
 	}
@@ -144,7 +145,7 @@ func (s *Session) DeletedObjectState(ctx context.Context, id guid.GUID) (ObjectS
 // readDeletedLocked is the show-deleted read inside the restore write, under the held session lock,
 // that re-checks the object is still deleted immediately before the one Modify.
 func (s *Session) readDeletedLocked(ctx context.Context, id guid.GUID) (lockedObject, error) {
-	return s.lockedRead(ctx, dn.GUIDRef(id), []ldap.Control{showDeleted{}})
+	return s.lockedRead(ctx, dn.GUIDRef(id), []ldap.Control{scope.ShowDeleted()})
 }
 
 // groupMemberOptions is the read of a live group's member values: show-deactivated-link (so a
