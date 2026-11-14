@@ -84,6 +84,8 @@ counts that `make lab-test-live` asserts against the live directory.
 
 The lockout, PSO and expiry cases the report engine must match, with expected results and which run on Samba, are the LAB-LK, LAB-PS, LAB-PW and LAB-AX rows of [`domain/account-state-lab-rows.md`](../domain/account-state-lab-rows.md) (T-1016). They are specified, not yet seeded or run.
 
+**Reports ground truth (T-1480, spec reports-2a AC-23):** `go test -tags lab ./internal/compose/server -run TestLabReportsMatchLDAPGroundTruth` syncs the lab through the real `sync.full` job, runs every USR-01/02/03/05 preset through the reports router, and compares each run's object GUIDs with a direct LDAP query of the lab (filters over `lastLogonTimestamp`, `accountExpires`, `userAccountControl`, `servicePrincipalName`, `whenCreated`; lockout from the DC's own `msDS-User-Account-Control-Computed`). It adds SPNs to three seeded users for the run (the seed has none) and removes them after. A mismatch prints GUIDs only. Samba logon behaviour it pins: the first successful bind writes `lastLogonTimestamp` at once and leaves `lastLogon` 0; a second bind seconds later changes neither. Presets blocked by a filed product bug (`knownBugs` in the test) are expected to differ and fail the run the moment they start matching.
+
 Ages ("stale", "expiring") are relative to the day the lab was **built** (`manifest.json` → `now`).
 A snapshot ages like a real directory: after about a month the "expiring" users have expired. Run
 `make lab-rebuild` to refresh, or write your own timestamps in tests. Set `LAB_SEED_NOW=<unix>` for a
