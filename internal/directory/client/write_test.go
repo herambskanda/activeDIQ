@@ -576,7 +576,8 @@ func TestDSAPinMutatedAfterMintDoesNotRepointStep(t *testing.T) {
 func TestKindTableClosed(t *testing.T) {
 	allowed := map[string]bool{"ad.object.create": true, "ad.object.update": true, "ad.object.delete": true, "ad.object.move": true,
 		"ad.object.rename": true, "ad.object.restore": true, "ad.user.resetPassword": true, "ad.user.unlock": true,
-		"ad.account.enable": true, "ad.account.disable": true}
+		"ad.account.enable": true, "ad.account.disable": true,
+		"ad.group.addMember": true, "ad.group.removeMember": true, "ad.computer.resetAccount": true}
 	for _, sp := range accountkind.Specs() {
 		if _, ok := kindTable[sp.Key]; !ok {
 			t.Errorf("%s missing from kindTable", sp.Key)

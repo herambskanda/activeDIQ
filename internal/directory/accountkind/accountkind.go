@@ -21,6 +21,9 @@ const (
 	KeyUnlock        = "ad.user.unlock"
 	KeyEnable        = "ad.account.enable"
 	KeyDisable       = "ad.account.disable"
+	// KeyComputerReset is kind 13 (v1.6): reset a computer's machine password to a value generated
+	// inside the connector. It has no attribute and no secret input.
+	KeyComputerReset = "ad.computer.resetAccount"
 )
 
 // Attribute names in the digest's Attrs.
@@ -58,9 +61,10 @@ var specs = []Spec{
 	{KeyUnlock, connectorv1.WriteKind_WRITE_KIND_USER_UNLOCK, []string{ClassUser}, []connectorv1.RightsFamily{r4}},
 	{KeyEnable, connectorv1.WriteKind_WRITE_KIND_ACCOUNT_ENABLE, []string{ClassUser, ClassComputer}, []connectorv1.RightsFamily{r4}},
 	{KeyDisable, connectorv1.WriteKind_WRITE_KIND_ACCOUNT_DISABLE, []string{ClassUser, ClassComputer}, []connectorv1.RightsFamily{r4}},
+	{KeyComputerReset, connectorv1.WriteKind_WRITE_KIND_COMPUTER_ACCOUNT_RESET, []string{ClassComputer}, []connectorv1.RightsFamily{r5, r4}},
 }
 
-// Specs returns the four rows.
+// Specs returns the rows: the four account kinds and kind 13.
 func Specs() []Spec { return append([]Spec(nil), specs...) }
 
 // ByKey finds a kind by its digest key.
@@ -139,6 +143,11 @@ func ChangeFromAttrs(key string, attrs []digest.Attr) (*connectorv1.WriteChange,
 			return nil, ErrAttrs
 		}
 		return &connectorv1.WriteChange{Change: &connectorv1.WriteChange_AccountDisable{AccountDisable: &connectorv1.AccountDisable{}}}, nil
+	case KeyComputerReset:
+		if len(attrs) != 0 {
+			return nil, ErrAttrs
+		}
+		return &connectorv1.WriteChange{Change: &connectorv1.WriteChange_ComputerAccountReset{ComputerAccountReset: &connectorv1.ComputerAccountReset{}}}, nil
 	}
 	return nil, ErrAttrs
 }
@@ -167,6 +176,12 @@ func AttrsOf(key string, ch *connectorv1.WriteChange, hasSecret bool) ([]digest.
 		}
 	case KeyDisable:
 		if ch.GetAccountDisable() == nil || hasSecret {
+			return nil, ErrAttrs
+		}
+	case KeyComputerReset:
+		// The value is generated in the connector: a request that carries secret input is refused
+		// (contract §8.10.3 kind 13, SecretInputMismatch), so it is not a SecretValue user.
+		if ch.GetComputerAccountReset() == nil || hasSecret {
 			return nil, ErrAttrs
 		}
 	default:

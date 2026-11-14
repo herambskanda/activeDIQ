@@ -106,10 +106,21 @@ var kindClass = map[string]string{
 	accountkind.KeyUnlock:        "unlock",
 	accountkind.KeyEnable:        "enable",
 	accountkind.KeyDisable:       "none",
+	// Kinds 11 to 13 (contract v1.6). The group kinds are guarded by TM-D18 on the Action's
+	// permission, not by a TM-D28 attribute class; kind 13 is the new reset_computer class.
+	accountkind.KeyGroupMemberAdd:    "none",
+	accountkind.KeyGroupMemberRemove: "none",
+	accountkind.KeyComputerReset:     "reset_computer",
 }
 
 func init() {
 	for _, sp := range accountkind.Specs() {
+		if _, ok := kindClass[sp.Key]; !ok {
+			panic("client: kind registered without a TM-D28 class: " + sp.Key)
+		}
+		kindTable[sp.Key] = kindRow{Kind: sp.Kind, Class: kindClass[sp.Key]}
+	}
+	for _, sp := range accountkind.GroupSpecs() {
 		if _, ok := kindClass[sp.Key]; !ok {
 			panic("client: kind registered without a TM-D28 class: " + sp.Key)
 		}
@@ -342,6 +353,7 @@ func (op WriteOp) derive() (wire, error) {
 	var change *connectorv1.WriteChange
 	hasSecret := false
 	_, account := accountkind.ByKey(op.DigestKind)
+	account = account || accountkind.IsGroupKey(op.DigestKind)
 	switch {
 	case account:
 		// The account kinds (T-1583) have their own change codec, class label and secret rule, applied by
@@ -401,6 +413,21 @@ func (op WriteOp) derive() (wire, error) {
 // label and UUID texts must be the forms the connector recomputes the digest with: an op the
 // connector could not verify is refused here, before any transport call.
 func (op WriteOp) deriveChange(w *wire) error {
+	if accountkind.IsGroupKey(op.DigestKind) {
+		// Kinds 11 and 12: the target is the group, the member is in the digested Attrs by GUID.
+		if op.Target.Class != accountkind.ClassGroup {
+			return ErrKindClass
+		}
+		if !accountkind.Canonical(op.Target.GUID) || !accountkind.Canonical(string(op.Target.NC)) || op.Target.Parent != "" || op.Target.RDN != "" {
+			return ErrNotCanonical
+		}
+		ch, err := accountkind.GroupChangeFromAttrs(op.DigestKind, op.Attrs)
+		if err != nil {
+			return ErrKindAttrs
+		}
+		w.change = ch
+		return nil
+	}
 	sp, ok := accountkind.ByKey(op.DigestKind)
 	if !ok {
 		return nil
