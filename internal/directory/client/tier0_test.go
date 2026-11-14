@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/skenzeriq/activediq/internal/directory/accountkind"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -532,5 +533,21 @@ func TestNonTier0PeerWithoutFactsAsOfIsStale(t *testing.T) {
 	r.corr.links = []inventory.Link{l}
 	if _, err := r.builder(t).Build(context.Background(), StagePlan, adOp()); !isReason(err, ReasonStaleFacts) {
 		t.Fatalf("zero GateCheckedAt: %v", err)
+	}
+}
+
+// Kinds 11 and 12 touch the group and the member: both get a correlation statement (contract §8.10.3).
+func TestTouchedGroupKindsIncludeMember(t *testing.T) {
+	const grp, mem = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
+	op := WriteOp{DigestKind: accountkind.KeyGroupMemberAdd,
+		Target: authority.TargetRef{Connection: "33333333-3333-3333-3333-333333333333", GUID: grp, Class: "group"},
+		Attrs:  []step.Attr{{Name: accountkind.AttrMember, Values: []string{mem}}, {Name: accountkind.AttrMemberClass, Values: []string{"user"}}}}
+	_, objs, err := touched(op)
+	if err != nil || len(objs) != 2 || string(objs[0]) != grp || string(objs[1]) != mem {
+		t.Fatalf("%v %v", objs, err)
+	}
+	op.Attrs = nil
+	if _, _, err := touched(op); err == nil {
+		t.Fatal("a group kind without a member GUID was accepted")
 	}
 }
