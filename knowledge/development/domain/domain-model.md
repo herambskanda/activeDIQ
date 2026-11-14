@@ -2036,6 +2036,25 @@ collection.
 payload names them (S1). I2 `(tenant_id, component_id, agent_seq)` is unique, so redelivery of an identical record is
 idempotent; the same seq with a different `content_sha256` is a divergence (alert, stored row kept). I3 `reported_dc_guid` is data to cross-check, never identity.
 
+### DM-90 MigrationProject · T · owner `modules/migration`
+**Definition.** One ManageEngine-to-activeDIQ migration effort of a tenant: the container its import jobs
+sit in. Created by an admin holding `migration.import` through the Action `migration.project.create`.
+**Key attributes:** `project_id` · `name` · `created_by` · `created_at` · `closed_at`.
+**Invariants.** I1 only the Action creates one; the runtime role cannot delete. I2 `created_by` is the
+real human requester of the chain, never the token that carried it.
+
+### DM-91 MigrationJob · T · owner `modules/migration`
+**Definition.** One intake of one source (a file upload; spec e2-11 §6.1) in a project. It records who
+submitted it, the source kind, the SHA-256 of the source, the ADMP build and the size, and starts in
+`quarantined`: nothing is parsed until a later stage releases it. A source over its size limit (spec §7)
+is recorded as `rejected` with the limit hit, having never been read.
+**Key attributes:** `job_id` · `project_id` · `actor` · `source_kind` · `source_sha256` · `admp_build` ·
+`size_bytes` · `state` · `limit_hit` · `created_at` · `finished_at`.
+**Invariants.** I1 `actor`, `source_kind`, `source_sha256`, `admp_build` and `size_bytes` never change
+after insert (trigger). I2 at most 3 active jobs (`quarantined`, `running`) per tenant and 1 per actor,
+checked under a per-tenant advisory lock. I3 `limit_hit` is set exactly when `state = rejected`, and a
+rejected job has no SHA-256 (nothing was read).
+
 ---
 
 ## 9. ManageEngine concepts → activeDIQ entities
