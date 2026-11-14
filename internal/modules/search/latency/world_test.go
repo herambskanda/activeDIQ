@@ -62,7 +62,7 @@ type world struct {
 	seed  *Seed
 	byID  map[string]int // object GUID -> index into seed.Objs
 	// keys[k] are the key rows of kind k, sorted by key in byte order (the column is COLLATE "C").
-	keys  [11][]keyRow
+	keys  [16][]keyRow
 	nKey  int
 	src   reportsql.SearchSource
 	srcOK bool
@@ -306,7 +306,7 @@ func (w *world) fuzzyOracle(m *matched) {
 			return err
 		}
 		defer restore()
-		rs, err := tx.Query(ctx, `SELECT object_guid::text FROM public.inventory_search_keys WHERE key_kind IN (1, 2, 3, 4, 5) AND $1::text <% key`, m.parsed.Fuzzy)
+		rs, err := tx.Query(ctx, `SELECT object_guid::text FROM public.inventory_search_keys WHERE key_kind IN (1, 3) AND $1::text <% key`, m.parsed.Fuzzy)
 		if err != nil {
 			return err
 		}
