@@ -21,7 +21,7 @@ type SearchRef struct{ Connection, Object string }
 
 // SearchMeta is what a hit row shows beyond the statement's own columns: display snapshots of the stored
 // row (DM-16.I2), never keys. Mail, Title, Office and Department are string attributes of the stored row; an
-// attribute the sync never read is "" (T-1129 syncs title, office and department; until then they are "").
+// attribute the sync never read is "" (T-1129 syncs title, office and department).
 type SearchMeta struct {
 	DN, SAMAccountName, UserPrincipalName, Mail string
 	Title, Office, Department                   string

@@ -81,6 +81,15 @@ var specRows = []specRow{
 		columns:    []string{"display_name", "sam_account_name", "domain", "dn", "pwd_last_set", "days_since_password_set", "enabled"},
 		filters:    map[string][]string{"changed": {"pwd_last_set"}, "unchanged": {"enabled", "pwd_last_set", "pwd_set_recorded", "when_created"}},
 		deviations: []string{"OU path is shown by the dn column (T-1041)", "Unchanged also lists enabled accounts whose pwdLastSet is 0 and that were created before the threshold (never changed)"}},
+	// ---- batch 4 (T-1107)
+	{id: "pwd-04", title: "Password change blocked", category: report.CategoryPasswords, dataset: "inventory.users",
+		presets: map[string][]string{"blocked": {"Users with Cannot Change Password"}},
+		// Name, Logon name, Domain, OU path, Password change right, Status, Password state, Probable service account, Descriptor as of
+		columns: []string{"display_name", "sam_account_name", "domain", "dn", "password_change_right", "enabled", "password_state",
+			"probable_service_account", "probable_service_account_reason", "descriptor_as_of"},
+		filters: map[string][]string{"blocked": {"password_change_right"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "adds the service-account reason column (spec 6.7: every flagged row shows its reason)",
+			"the preset also selects Not confirmed users so the locked not_confirmed group counts them in the header; they are never listed"}},
 	{id: "grp-01", title: "Groups", category: report.CategoryGroups, dataset: "inventory.groups",
 		presets: map[string][]string{"all": {"All Groups"}, "security": {"Security Groups"}, "distribution": {"Distribution Groups"}, "type_scope": {"Group Type and Scope"},
 			"no_members": {"Groups Without Members"}, "managed": {"Managed Groups"}, "unmanaged": {"Unmanaged Groups"}, "top": {"Top N Big Groups"},
@@ -196,8 +205,8 @@ func Test_reports_library_matches_spec(t *testing.T) {
 		}
 	}
 	// The crosswalk answers every ME name of 6.2: 54.
-	if n := len(l.Names()); n != 54 {
-		t.Errorf("crosswalk lists %d names, spec 6.2 says 54", n)
+	if n := len(l.Names()); n != 55 {
+		t.Errorf("crosswalk lists %d names, spec 6.2 says 54 plus Cannot Change Password from the second slice", n)
 	}
 }
 
@@ -422,6 +431,32 @@ func Test_reports_library_crosswalk_must_match_presets(t *testing.T) {
 		m := fstest.MapFS{"usr-05.v1.json": {Data: good}, "LOCK": {Data: []byte(lock)}, "crosswalk.tsv": {Data: []byte(tsv)}}
 		if _, err := library.Load(m, library.Options{Datasets: inventory.Datasets(), Registry: registry(t)}); err == nil {
 			t.Errorf("%s: loaded", name)
+		}
+	}
+}
+
+// AC-S05 (T-1107): PWD-04 filters on the stored inventory.users state only. It has no per-DC stage, so no
+// descriptor is read when it runs, and the filter reads nothing but password_change_right.
+func Test_reports_library_pwd04_reads_the_stored_state_only(t *testing.T) {
+	d, ok := shipped(t).Definition("pwd-04", 0)
+	if !ok {
+		t.Fatal("pwd-04 is not in the library")
+	}
+	if d.Def.PerDC != nil {
+		t.Error("pwd-04 has a per-DC stage: a descriptor would be read at run time")
+	}
+	for _, p := range d.Def.Presets {
+		if got := filterColumns(p.Where); !slices.Equal(got, []string{"password_change_right"}) {
+			t.Errorf("preset %s filters on %v, want only password_change_right", p.ID, got)
+		}
+		var nc *report.HiddenGroup
+		for i := range p.Hidden {
+			if p.Hidden[i].ID == "not_confirmed" {
+				nc = &p.Hidden[i]
+			}
+		}
+		if nc == nil || !nc.Locked {
+			t.Errorf("preset %s has no locked not_confirmed group: unreadable users would not be counted", p.ID)
 		}
 	}
 }
