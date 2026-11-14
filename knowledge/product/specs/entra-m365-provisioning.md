@@ -78,16 +78,16 @@ Measured against the [top-admin-tasks benchmark](top-admin-tasks-benchmark.md) (
 | T14 Assign one licence to a found user | 12 interactions, ≈26 s (M365 tab) | **≤ 6 interactions, ≤ 19 s** (benchmark target) |
 | T07 Joiner with licence and groups (AD + cloud in one operation) | 13 interactions, 26.7 s | **≤ 6 interactions, ≤ 18 s** (benchmark target) |
 | T09 Leaver, cloud half included (block, revoke sessions, remove licence) | 17 interactions, 31.3 s | **≤ 17 s** (benchmark target) |
-| Onboard a tenant (consent path) | not benchmarked `[UNVERIFIED]` | ≤ 8 interactions and ≤ 5 min from "Add tenant" to the first synced users; **0** values copied by hand in the consent path |
+| Onboard a tenant (consent path) | not benchmarked `[UNVERIFIED]` | ≤ 8 interactions and ≤ 5 min from "Add tenant" to the first synced users; **2** values typed (tenant ID, application ID); everything else is generated or copied with one click; ≤ 8 interactions |
 | Swap licence SKU for 500 users from a CSV | per-user CSV by ObjectId or UPN ([ME help](https://www.manageengine.com/products/ad-manager/help/office365/management/license-management.html)) | one upload, one preview showing seat shortfall and every skip with its reason, one confirm; ≤ 8 interactions |
 
 The admin never has to: write an OData `$filter` or a Graph URL; look up a SKU GUID or service-plan GUID; know whether a user is synced before choosing a tool; copy a client secret (there is none; certificate only); open a second console for cloud work.
 
 ## 5. Onboarding an Entra tenant (ADM-159, I360-003)
 
-**Path A — guided consent (default).** Admin enters nothing but the tenant name or domain. The server shows the permission checklist derived from the features switched on (§9), then sends the admin to Microsoft's consent page. Consent is performed by a Global Administrator signing in at Microsoft; activeDIQ never sees that admin's credentials or token beyond the consent callback. The customer's own app registration holds a **certificate** credential (ADR-0002 rules 3, 8); no client secret exists, no Entra directory role is held (TM-O1).
+**Path A — scripted registration into the customer's own app (default).** ADR-0002 rule 8 decides this: activeDIQ publishes **no** multi-tenant app; every connection uses the customer's own app registration with certificate authentication. activeDIQ generates the key pair on the server (the private key stays encrypted in its database) and a public certificate. The server shows the permission checklist derived from the features switched on (§9) and offers either **(a)** a product-generated `az` / PowerShell script, or **(b)** a copy-ready Entra-portal checklist. Either one creates the app registration, uploads the public certificate, grants only the switched-on application permissions, and registers a **public-client redirect URI for the delegated attestation sign-in** (§8; same app, no second registration). A Global Administrator (or Application Administrator plus Privileged Role Administrator for consent) runs it in the customer's own tenant; **activeDIQ never sees that admin's credentials or token**. The admin then pastes **two values: tenant ID and application ID**; no client secret exists and no Entra directory role is held by the app (TM-O1).
 
-**Path B — manual registration** for customers who forbid automatic app creation: the product shows copy-ready steps, the certificate (public part) to upload, the permission list, and accepts tenant ID and application ID. The private key never leaves the server's credential store. Which of A or B the platform can ship first (does path A require a multi-tenant activeDIQ app, which a self-hosted product does not have?) is open: §13 Q1.
+**Path B — fully manual registration** for customers who forbid running any script: the same checklist as A(b) with every portal step spelled out and no generated script. Both paths end in the same two pasted values and the same verification. Whether a multi-tenant app is used is closed: it is not (ADR-0002 rule 8, §15 Q1). Build tickets for the consent and script flow MUST reference ADR-0002 rule 8.
 
 Verification (reuses the ad-forest-connection pattern, [spec](ad-forest-connection.md) §7): identity (tenant ID fixed at first verification, DM-10.I1/I2), certificate auth works, **granted permissions read back and compared** with the allow list and deny list (TM-D5, D-0007), Tier-0 guard reads (§9). Refusals are named; **a failure that is not a pass is never shown as one**.
 
@@ -146,6 +146,8 @@ Base rule is in [DM-10.I7](../../development/domain/domain-model.md): `takeover_
    - If now − last complete read > **6 days** (the 7-day Free window minus a day, because the tenant's edition is not assumed), or the permission was removed after having been present, state becomes **`stale`** until the next complete read covers the gap **and** a new attestation is made. Fail closed: we cannot prove no sync-feature change happened.
    - Without `AuditLog.Read.All` the gap rule does not run; age is the only trigger and health says change monitoring is off (DM-10.I7(d)).
 3. **Visible consequence.** The Cloud users list and the connection page show: state, last complete read, next expiry date, and a one-click **Re-attest** (starts the delegated Global Administrator flow, step-up required).
+4. **Which app signs in for attestation.** Attestation and Re-attest use a delegated Global Administrator sign-in through the **customer's own app registration** from §5 (public-client redirect URI registered by the same script, delegated `OnPremDirectorySynchronization.Read.All` only). No skenzeriq-published app takes part (ADR-0002 rule 8). The token is used for one read and discarded; it is never stored.
+5. **Ratified by solution-architect 2026-11-14:** 24 h degraded, 6 days stale, fail closed, new attestation required. Subject to `security-architect`'s second review.
 
 ## 9. Permissions and write-path scope (Graph least privilege)
 
@@ -155,7 +157,7 @@ Allow list and deny list are decided in [threat model §6.6 (TM-D5)](../../devel
 | --- | --- | --- |
 | Tenant facts (ADM-159) | `GET /organization` | `Organization.Read.All` |
 | Read SKUs (ADM-161, M365-005) | `GET /subscribedSkus` | `LicenseAssignment.Read.All` |
-| Assign/remove licences, users and groups (ADM-161, M365-005) | `POST …/assignLicense` | `LicenseAssignment.ReadWrite.All` ([user](https://learn.microsoft.com/en-us/graph/api/user-assignlicense?view=graph-rest-1.0)) |
+| Assign/remove licences, users and groups (ADM-161, M365-005) | `POST …/assignLicense` | `LicenseAssignment.ReadWrite.All` ([user](https://learn.microsoft.com/en-us/graph/api/user-assignlicense?view=graph-rest-1.0)); for **groups** (`POST /groups/{id}/assignLicense`) the permission page lists `Group.ReadWrite.All`, so whether `LicenseAssignment.ReadWrite.All` is accepted is `[lab]` (AC-40) and group licensing fails closed until confirmed |
 | Create cloud users (ADM-009, 160, 027) | `POST /users` | `User.Create` |
 | Invite guests (ADM-160) | `POST /invitations` | `User.Invite.All` |
 | Update properties, UPN (ADM-160, 162) | `PATCH /users/{id}` | `User.ReadUpdate.All` (UPN coverage `[lab]`) |
@@ -170,7 +172,7 @@ Allow list and deny list are decided in [threat model §6.6 (TM-D5)](../../devel
 | Hybrid view and delta (ADM-169, I360-003) | `GET /users`, `/users/delta`, `/groups/delta` | `User.Read.All`; `GroupMember.Read.All` |
 | Tier-0 guard (required for any write feature) | memberOf, role assignments, PIM-for-Groups schedules | `Directory.Read.All`, `RoleManagement.Read.Directory`, `PrivilegedEligibilitySchedule.Read.AzureADGroup`, `PrivilegedAssignmentSchedule.Read.AzureADGroup` |
 | Change monitor (optional, recommended) | `GET /auditLogs/directoryAudits` | `AuditLog.Read.All` |
-| Attestation | `GET /directory/onPremisesSynchronization` | **delegated** `OnPremDirectorySynchronization.Read.All` inside a Global Administrator's sign-in; no app-only form |
+| Attestation | `GET /directory/onPremisesSynchronization` | **delegated** `OnPremDirectorySynchronization.Read.All` inside a Global Administrator's sign-in through the customer's own app registration (public-client redirect URI, §8.4); no app-only form |
 
 Refused at onboarding (EV3, D-0007 and TM-D5 deny list): `Directory.ReadWrite.All`, role-management writes, `Application.ReadWrite.*`, `UserAuthenticationMethod.ReadWrite.All`, `User-OnPremisesSyncBehavior.ReadWrite.All` and the rest. **A write feature whose permission is missing is greyed with the missing permission named; no feature is silently disabled.**
 
@@ -182,7 +184,7 @@ Each FR is observable in the UI or API. "Pipeline" = Plan → gate → Apply →
 
 **Onboarding (ADM-159, I360-003)**
 
-- FR-01 The system MUST create an Entra connection by guided consent (Path A) or manual registration (Path B), with certificate authentication only. It MUST NOT accept or store a client secret.
+- FR-01 The system MUST create an Entra connection through a scripted registration into the customer's own app (Path A) or full manual registration (Path B), with certificate authentication only and no skenzeriq-published app (ADR-0002 rule 8). It MUST NOT accept or store a client secret.
 - FR-02 It MUST fix the tenant ID at first verification and refuse a second connection to the same tenant (DM-10.I1/I2).
 - FR-03 It MUST read the service principal's granted application roles and compare them with the allow and deny lists, showing missing, excess and denied permissions by name.
 - FR-04 It MUST refuse activation when a deny-list permission is granted; the override is the existing audited TM-D1 override with a permanent banner.
@@ -283,7 +285,7 @@ Each is verifiable by `qa-verifier` against the running product (or API) with ev
 
 **Onboarding**
 
-- AC-01 *Given* an Entra tenant with no connection, *When* a Global Administrator completes Path A, *Then* the connection verifies, shows tenant ID, granted-vs-required permissions, and syncs; no client secret field exists anywhere in the UI or API. *Evidence:* screenshots; API schema has no secret property.
+- AC-01 *Given* an Entra tenant with no connection, *When* an admin runs the generated registration script and pastes tenant ID and application ID (2 values, ≤ 8 interactions), *Then* the connection verifies, shows tenant ID, granted-vs-required permissions, and syncs; no client secret field exists anywhere in the UI or API. *Evidence:* screenshots; API schema has no secret property.
 - AC-02 *Given* the registration carries `Directory.ReadWrite.All`, *When* the admin presses Verify, *Then* activation is refused naming that permission; the TM-D1 override needs step-up and leaves a permanent banner and an audit event.
 - AC-03 *Given* the admin switches on Licences only, *When* the checklist shows, *Then* only the licence-related permissions plus the Tier-0 guard reads are requested, and group-write permissions are absent.
 - AC-04 *Given* the Tier-0 guard reads fail (permission revoked), *When* any Entra write is planned, *Then* it is refused with "guard could not read `<what>`" and nothing is sent to Graph.
@@ -304,7 +306,7 @@ Each is verifiable by `qa-verifier` against the running product (or API) with ev
 - AC-13 *Given* a user with usage location unset and a SKU chosen, *When* planned, *Then* Plan refuses the item for usage location and offers to set it; accepting sets it then assigns.
 - AC-14 *Given* 100 seats are free and 500 users are selected, *When* planned, *Then* Plan shows "400 short", lets the admin proceed with the first 100 or stop, and Apply never sends the 400.
 - AC-15 *Given* a user holds SKU A directly and B through group G, *When* the admin removes B directly, *Then* Plan says "Still licensed through G" and the verified result shows B still present.
-- AC-16 *Given* Replace A→B, *When* applied, *Then* a single Graph call carries both lists and the user is never observed without both A and B-or-A.
+- AC-16 *Given* Replace A→B, *When* applied, *Then* a single Graph call carries both lists and the user is never observed with neither A nor B.
 - AC-17 *Given* a group licence change on a group of 5,000 members, *When* planned, *Then* the member count is shown, and after Apply the per-user error states (if any) are listed.
 - AC-18 *Given* a CSV by ObjectId and a CSV by UPN, *When* each is uploaded, *Then* both resolve and the preview shows the same users; an unknown key is listed, not dropped.
 - AC-19 *Given* a licence filter "AD domain `X`, OU `Y`", *When* applied with a `matched` correlation set, *Then* exactly the users correlated to objects under that OU are selected; with the takeover state `stale`, the filter says "authority unconfirmed" and selects none.
@@ -334,16 +336,16 @@ Each is verifiable by `qa-verifier` against the running product (or API) with ev
 - AC-34 *Given* the same edit arrives from CSV or API, *Then* the row is refused with the same reason code; **the Graph error, if ever reached, maps to the same message**.
 - AC-35 *Given* a synced user with no AD match, *Then* the badge reads "Synced, no AD match" and the refusal message says no AD object was found.
 - AC-36 *Given* a user whose SOA was moved to Entra, *Then* the badge reads Cloud, edits are allowed, and no control moves authority.
-- AC-37 *Given* the connection is `attested` with expiry in 14 days, *Then* health warns and every holder of `connections.takeover.attest` is notified; at 7, 3, 1 days again; at expiry, correlations become `candidate`, the banner shows and Re-attest works.
+- AC-37 *Given* the connection is `attested` with expiry in 14 days, *Then* health warns and every holder of `connections.takeover.attest` is notified; at 7, 3, 1 days again; at expiry, correlations become `candidate`, the banner shows and Re-attest works through the customer's own app registration (§8.4).
 - AC-38 *Given* `AuditLog.Read.All` is granted and the monitor has no complete read for 25 h, *Then* health shows "change monitoring degraded"; at 6 days 1 h, state is `stale`; a complete read alone does **not** return it to `attested`, a new attestation does.
 - AC-39 *Given* `AuditLog.Read.All` is revoked after being present, *Then* state becomes `stale` and health says why; *Given* it was never granted, *Then* health says "change monitoring is off" and only age applies.
-- AC-40 *Given* a synced user in the lab, *When* each property in the `soa v1` table is edited, *Then* the recorded outcome (accepted/refused) matches the table, and a drift test fails when it does not. *Evidence:* lab log (this closes the `[UNVERIFIED — lab]` items).
+- AC-40 *Given* a synced user in the lab, *When* each property in the `soa v1` table is edited, *Then* the recorded outcome (accepted/refused) matches the table, and a drift test fails when it does not; the lab also confirms `LicenseAssignment.ReadWrite.All` is accepted for `POST /groups/{id}/assignLicense` (§9) and the result is recorded. *Evidence:* lab log (this closes the `[UNVERIFIED — lab]` items).
 
 ## 15. Open questions
 
 Directional ones become decisions via `ceo-decisions`; the rest are answered by the owner named.
 
-1. **Path A consent needs an application that is the customer's own registration or a multi-tenant app that activeDIQ publishes.** A self-hosted product has no publisher app; "Global-admin consent creates the app automatically" (ME) implies the vendor's. Does v1 ship Path A as a **scripted registration** (the product shows a one-click Microsoft consent for a template, or a copy-ready `az`/PowerShell script) and call that guided? *Owner:* `solution-architect` with `security-architect`; becomes a CEO decision only if it implies activeDIQ publishes a multi-tenant app (leaving the building, commercial).
+1. **CLOSED 2026-11-14** (solution-architect review): ADR-0002 rule 8 already decides it; Path A is a scripted registration into the customer's own app, no multi-tenant app, not a CEO question. Original question, kept for the record: **Path A consent needs an application that is the customer's own registration or a multi-tenant app that activeDIQ publishes.** A self-hosted product has no publisher app; "Global-admin consent creates the app automatically" (ME) implies the vendor's. Does v1 ship Path A as a **scripted registration** (the product shows a one-click Microsoft consent for a template, or a copy-ready `az`/PowerShell script) and call that guided? *Owner:* `solution-architect` with `security-architect`; becomes a CEO decision only if it implies activeDIQ publishes a multi-tenant app (leaving the building, commercial).
 2. Gap-rule values (24 h degraded, 6 days stale) are proposals. *Owner:* `solution-architect` with `security-architect`.
 3. Per-property `soa v1` results, Cloud Sync differences and usage-location and group-licence error behaviour: lab T-0075 (the CEO deferred the sandbox tenant until after M1; AC-40 cannot pass before it exists).
 4. Sovereign clouds: PM decision is **not in v1**; a backlog ticket records the demand-driven follow-up (§11).
