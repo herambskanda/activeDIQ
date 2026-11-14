@@ -52,6 +52,9 @@ SQL
   kek_provider="${ADIQ_E2E_KEK_PROVIDER:-passphrase}"
   openssl rand -hex 24 > "$dir/kek.pass"; chmod 600 "$dir/kek.pass"
   apiport="$(node -e 'const s=require("net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
+  # The lab harness provisions a passphrase keystore (kek.pass above), so it names that provider itself, per boot.
+  # It is a harness choice, not a default of the product (keys-custody-design: no default custody model).
+  kek_provider=passphrase
   cat > "$dir/env" <<ENV
 export ACTIVEDIQ_DATABASE_DSN='postgres://activediq_app:$apppass@127.0.0.1:$port/activediq?sslmode=disable'
 export ACTIVEDIQ_KEK_PROVIDER=$kek_provider

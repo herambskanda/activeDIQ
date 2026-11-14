@@ -1,4 +1,4 @@
--- 0072_objects_templates_naming: Template (DM-50) and NamingFormat (DM-51) definitions (T-1582).
+-- 0073_objects_templates_naming: Template (DM-50) and NamingFormat (DM-51) definitions (T-1582).
 -- Owner: internal/modules/objects. Two tenant tables; a row is one VERSION of a definition.
 --
 -- Lifecycle (domain-model.md DM-50/DM-51):
