@@ -3,7 +3,7 @@ package migration
 import (
 	"context"
 	"crypto/rand"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 
@@ -38,7 +38,7 @@ func newUUID() (string, error) {
 }
 
 func (s *Service) req(t tenant.ID, actor authority.Chain, id operation.ActionID, in any) (operation.Request, error) {
-	raw, err := json.Marshal(in)
+	raw, err := jsonv2.Marshal(in)
 	if err != nil {
 		return operation.Request{}, err
 	}
@@ -56,15 +56,18 @@ func (s *Service) CreateProject(ctx context.Context, t tenant.ID, actor authorit
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.Runner.RunStore(ctx, rq); err != nil {
+	res, err := s.Runner.RunStore(ctx, rq)
+	if err != nil {
 		return "", err
 	}
-	var id string
-	err = s.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
-		return tx.QueryRow(ctx, `SELECT project_id::text FROM public.migration_projects
-			WHERE created_by = $1 AND name = $2 ORDER BY created_at DESC LIMIT 1`, string(actor.Requester.ID), name).Scan(&id)
-	})
-	return id, err
+	if len(res.Steps) != 1 {
+		return "", errors.New("migration: project create returned no outcome")
+	}
+	var out ProjectOutcome
+	if err := jsonv2.Unmarshal(res.Steps[0].Outcome.Payload, &out); err != nil || out.ProjectID == "" {
+		return "", errors.New("migration: project create outcome unreadable")
+	}
+	return out.ProjectID, nil
 }
 
 // SubmitJob records the intake of one source. The size gate runs on in.SizeBytes alone, before the
