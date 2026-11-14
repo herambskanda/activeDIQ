@@ -27,8 +27,8 @@ registration, Actions, racing-create lab test).
 
 | Table | Entity | Migration | Retention |
 | --- | --- | --- | --- |
-| `objects_templates` | DM-50 | 0072 | Tenant-keyed, RLS. One row per version; no runtime DELETE. |
-| `objects_naming_formats` | DM-51 | 0072 | Same. |
+| `objects_templates` | DM-50 | 0073 | Tenant-keyed, RLS. One row per version; no runtime DELETE. |
+| `objects_naming_formats` | DM-51 | 0073 | Same. |
 
 Lifecycle: template `draft -> published -> archived`; naming format `draft -> active -> archived`. At most
 one draft per definition; saving replaces its body; the next save after publish opens version n+1. A DB
