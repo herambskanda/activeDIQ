@@ -60,7 +60,7 @@ on any host (T-1180), not contention.
 | Callers | `admin`: both naming contexts whole. `scoped`: one OU subtree of connection 0 minus a large excluded sub-OU. |
 | Oracle | `Seed.Visible` (own implementation of both scopes) plus sorted per-kind key slices for exact and prefix, and a PostgreSQL sequential scan with indexes off for the fuzzy class. Every timed answer is checked for hidden objects; a sample per class is compared for refine state, counts and hit sets. |
 | Plan probes | `EXPLAIN (ANALYZE)` of the handler's statement: one-letter key rows read are at most W+1 and identical for both callers (the hidden set is not scanned); no sequential scans; fuzzy rows read and `Rows Removed by Index Recheck` recorded. |
-| W sweep | the ceiling-sized class re-measured at W = 5,000, 10,000, 20,000, 40,000 (informational) to choose `MaxSearchMatches`. |
+| W sweep | the ceiling-sized class re-measured at W = 5,000 to 10,000 in steps of 1,000, then 20,000 and 40,000. The default W (`inventory.DefaultSearchCeiling`) is set from this sweep: the largest W whose ceiling-class p95 is under 200 ms for both callers on pg16 and pg18 (7,000, T-1303). |
 
 ## Rules for changing it
 

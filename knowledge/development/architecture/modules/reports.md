@@ -1143,7 +1143,7 @@ in memory** rather than filter through inventory.
   never uses a trigram GIN; that is why the fuzzy probe reads a tenant-led B-tree of postings instead (ADR-0011
   rule 5a). `Test_search_plan_uses_the_indexes` and SE5 assert the plan, and
   `Test_search_fuzzy_reads_only_the_tenants_own_postings` proves that another tenant's size changes no row
-  examined. The hits join probes `directory_objects` once per candidate (`cand c CROSS JOIN LATERAL (… WHERE tenant_id, connection_id, object_guid … LIMIT 1)`, T-1345), so at the default W (10,000) it is a nested loop of primary-key probes, not a hash join over a Seq Scan of every tenant's rows (PostgreSQL 18 chose that before); the plan tests and the isolation test run at both W=100 and the default, with tenant B ten times A. The per-script vectors (Latin with diacritics, Cyrillic, Greek, CJK) all
+  examined. The hits join probes `directory_objects` once per candidate (`cand c CROSS JOIN LATERAL (… WHERE tenant_id, connection_id, object_guid … LIMIT 1)`, T-1345), so at the default W (`inventory.DefaultSearchCeiling`) it is a nested loop of primary-key probes, not a hash join over a Seq Scan of every tenant's rows (PostgreSQL 18 chose that before); the plan tests and the isolation test run at both W=100 and the default, with tenant B ten times A. The per-script vectors (Latin with diacritics, Cyrillic, Greek, CJK) all
   match fuzzily on the bundled pg16 and pg18 images.
 
 ## 5. The compiler: `store/reportsql`
