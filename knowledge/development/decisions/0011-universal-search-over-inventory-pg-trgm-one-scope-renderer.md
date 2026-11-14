@@ -5,7 +5,7 @@ updated: 2026-11-14
 status: ratified
 ratified_on: 2026-10-31
 ratified_by: factory-director
-decision: D-0014, D-0025
+decision: D-0014, D-0025, D-0034
 owner: heramb
 author: solution-architect
 kind: technical
@@ -128,6 +128,7 @@ weakens.
   Explorer-side mirror and the two must agree. The blueprint, runbook and `ci-gates.md` rows are
   updated with this amendment.
 Reworked 2026-11-14 after security-architect's AC2 review (closed set asserted, single emitter, port ancestry, `Connections()` decided). Revised again for the second review (mechanical deny-list, named oracle tests, named fixtures). Ratification waits on security-architect re-confirmation; `accepted` waits on the SE1 fixtures covering additions 1 to 5 and the two oracle tests (T-2094, T-2089).
+Ratified by factory-director 2026-11-14 (notice D-0034) after security-architect's AC2 confirmation (aacab51d4). E3 becomes `accepted` when T-2094's SE1 checks and fixtures run in `make ci`.
 
 **Revision 2 (2026-10-31, after the T-1093 review).** These are the changes in this revision:
 - **M1:** rule 7 now case-folds before the fold table.
