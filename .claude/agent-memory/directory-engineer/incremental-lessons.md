@@ -10,6 +10,7 @@ metadata:
 - `readJob.deferFinish` leaves pass and cursor alone so establish can reconcile and then complete in one tx.
 - `PassMarker` already exists in job.go; new ports are separate Engine fields because `memCursors` only implements `Cursors`.
 - Two `each()` test envs have different tenant/connection ids: normalise dumps before comparing; pipe failing dumps through `cut -c1-300 | head`.
-- T-0988 wired descendant dn rewrite only into Populate; the patch path (inventory/patch.go) leaves children's dn stale (T-2039).
-- A `NeedsRead` batch writes RequireResync in the same tx instead of Advance: no crash window. No lab test yet (T-2041).
+- Patch path now rewrites descendants' dn when a row's dn changes (d77c222e7); T-2039 cancelled.
+- A `NeedsRead` batch writes RequireResync in the same tx instead of Advance: no crash window.
 **Why/How to apply:** read before touching sync cycles or the finish transaction.
+- Lab test (internal/compose/server/incremental_lab_test.go): Samba DirSync gives tombstones/link removals only to admin and member values carry no GUID (T-2056), so deletion arrives via the stale-cookie resync in lab; labadmin AddMember undo by DN fails after rename/delete -> use AddMemberDN. One lab test run is ~10 min; run in background.
