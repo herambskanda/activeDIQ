@@ -119,6 +119,35 @@ test('a second copy of a known finding counts as new', async () => {
   } finally { f.cleanup(); }
 });
 
+test('fast_argv is off by default: the verdict carries no fastLane field', async () => {
+  const f = setup({ main: [] });
+  try {
+    const v = await runPreMergeGate(f.ctx, await branchWith(f, 'T-0001', []));
+    assert.equal(v.status, 'pass');
+    assert.equal('fastLane' in v, false);
+  } finally { f.cleanup(); }
+});
+
+test('fast_argv runs alongside the real gate and is only logged: it never changes the merge verdict, agreeing or not', async () => {
+  const agree = setup({ main: [], gate: { fast_argv: ['node', '-e', 'process.exit(0)'] } });
+  try {
+    const v = await runPreMergeGate(agree.ctx, await branchWith(agree, 'T-0001', []));
+    assert.equal(v.status, 'pass', 'fast_argv never blocks a merge the real gate would pass');
+    assert.deepEqual(v.fastLane.argv, ['node', '-e', 'process.exit(0)']);
+    assert.equal(v.fastLane.ok, true);
+    assert.equal(v.fastLane.code, 0);
+    assert.equal(v.fastLane.agreed, true, 'both passed');
+  } finally { agree.cleanup(); }
+
+  const disagree = setup({ main: [], gate: { fast_argv: ['node', '-e', 'process.exit(1)'] } });
+  try {
+    const v = await runPreMergeGate(disagree.ctx, await branchWith(disagree, 'T-0002', []));
+    assert.equal(v.status, 'pass', 'the real gate still passed; fast_argv failing does not block it');
+    assert.equal(v.fastLane.code, 1);
+    assert.equal(v.fastLane.agreed, false, 'fast lane failed where the real gate passed');
+  } finally { disagree.cleanup(); }
+});
+
 test('main green: a branch that adds a finding is refused; a clean one passes untouched', async () => {
   const f = setup();
   try {
