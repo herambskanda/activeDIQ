@@ -307,7 +307,7 @@ func (w *world) explain(scope authz.ReadScope, text string, ceil int) planFacts 
 			if err != nil {
 				return err
 			}
-			w.src, err = reportsql.NewSearchSource(sc, "inventory_search_keys", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
+			w.src, err = reportsql.NewSearchSource(sc, "inventory_search_keys", "inventory_search_trigrams", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
 				Project: []report.Ident{"object_guid"}, Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid",
 				Ancestry: "ancestry", Complete: "ancestry_complete"}, "kind", "state", "enabled", "display_name")
 			w.srcOK = err == nil
