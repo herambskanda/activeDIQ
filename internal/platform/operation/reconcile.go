@@ -90,7 +90,7 @@ ORDER BY claimed_until LIMIT $2 FOR UPDATE SKIP LOCKED`, t.String(), limit)
 
 func (r *Runner) reconcileOne(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
 	// A step whose credential_id is stored has not been named yet if it is empty: either it never reached
-	// its write, or it was left applying before the id was stored (a deployment of migration 0074). The
+	// its write, or it was left applying before the id was stored (a deployment of migration 0079). The
 	// two cannot be told apart, so when the credential cannot be resolved the target is observed first
 	// and a write that landed is recorded as applied, without dc or credential_id on its event.
 	unresolved := false

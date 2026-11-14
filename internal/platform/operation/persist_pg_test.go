@@ -788,7 +788,7 @@ func TestReconcileLapsedClaim(t *testing.T) {
 	}
 }
 
-// A step left applying with no stored credential_id (deployed before migration 0074) whose credential can
+// A step left applying with no stored credential_id (deployed before migration 0079) whose credential can
 // no longer be resolved: a write that landed is recorded as applied, not as "never written" (T-1629).
 func TestReconcileUnresolvedCredentialObservesBeforeRecording(t *testing.T) {
 	cases := []struct {
