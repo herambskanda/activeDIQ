@@ -286,3 +286,22 @@ func TestM7CatalogueRows(t *testing.T) {
 		}
 	})
 }
+
+// M11 (ADR-0013 decision 5): an exempt.json entry targeting rule 2.5 or M3 (or any other rule that
+// admits no exemption) fails, however it is spelled; an incomplete or expired entry fails too.
+func TestM11RefusesNoExemptionRules(t *testing.T) {
+	entry := func(rule string) map[string]string {
+		return with(map[string]string{exemptPath: `[{"rule":"` + rule + `","subject":"x","reason":"r","ticket":"T-1","expires":"2999-01-01"}]`})
+	}
+	for _, rule := range []string{"2.5", "§2.5", "rule 2.5", "M3", "m3", "M1", "M2", "M6", "M9"} {
+		expect(t, entry(rule), "M11", "admits no exemption")
+	}
+	expectClean(t, entry("M4")) // a rule that does admit one, fully filled in
+}
+
+func TestM11IncompleteOrExpiredEntry(t *testing.T) {
+	files := with(map[string]string{exemptPath: `[{"rule":"M4","subject":"x","reason":"","ticket":"","expires":"2001-01-01"}]`})
+	expect(t, files, "M11", "no reason")
+	expect(t, files, "M11", "no ticket")
+	expect(t, files, "M11", "expired")
+}

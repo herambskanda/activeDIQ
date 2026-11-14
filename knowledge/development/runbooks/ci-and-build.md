@@ -462,3 +462,7 @@ once its index is writable); every pending merge then proceeds on the next pass.
 - **M5** (`factory/bin/fitness-merge-order`) scans `git log --first-parent main` against `depends_on` in `factory/state/tickets/` (found via `FACTORY_STATE_DIR`, this tree, or the primary checkout). Without ticket data it prints `inactive`, not a pass. History up to `GRANDFATHER_UNTIL` (main at ratification, `6cb96d24d`) is not judged: it holds dependents merged before their dependency and reused ticket numbers. `KNOWN_EXCEPTIONS` records the exact (merge, dependency) pairs that landed after that, before T-1706 existed (T-1191 on T-1189, stacked by hand); each is exact and tested, and none is added without an ADR note.
 - **Accepting ADR-0012** needs every line green (no `pending`, no `inactive`) on main; flip the ADR then.
 - A violation line names the ticket, the merge SHA and the dependency; fix by landing the dependency first, never by editing the boundary.
+
+## fitness-modules (T-1869, ADR-0013)
+
+`make fitness-modules` is its own target and the first prerequisite of `make ci` and `make fitness`, so a failing earlier gate cannot hide it. It runs the import-rule checker (M3 rule 2.5, M7, and M11: an `exempt.json` entry targeting 2.5, M1, M2, M3, M6 or M9 fails, as does one without reason, ticket or a future expiry) and the M14 Boot test `Test_M14_*` in `internal/compose/server`. M14's `m14Pending` map lists the tags whose builder move (T-1865, T-1866, T-1867) has not landed; delete each entry in the move's change (a stale entry fails).
