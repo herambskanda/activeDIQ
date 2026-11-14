@@ -206,6 +206,12 @@ type Engine struct {
 	Cursors  Cursors
 	// Reconciler is the write side of Reconcile; Reconcile needs it, FullCycle does not.
 	Reconciler Reconciler
+	// Feed, Applier, FeedCursors and Passes are what IncrementalCycle needs on top of the above; FullCycle
+	// and Reconcile do not.
+	Feed        Feed
+	Applier     *Applier
+	FeedCursors FeedCursors
+	Passes      PassMarker
 	// Clock is the time source; nil is time.Now.
 	Clock func() time.Time
 	// Log receives one summary line per domain: counts and fixed codes, never a directory value. Nil
