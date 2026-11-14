@@ -487,7 +487,7 @@ func TestIncrementalMovedOUChildrenFollow(t *testing.T) {
 		r.feed.script = []feedCall{prime("p"), delivers("c")}
 		r.mustCycle(t)
 		moved := uint64(ncA + 3) // OU=L3, under L2; below it L4 and their users
-		r.feed.script = []feedCall{delivers("d", []*connectorv1.ObjectChange{live(moved, "OU=L3,DC=d,DC=test", ncA, classes("top", "organizationalUnit"))})}
+		r.feed.script = []feedCall{delivers("d", []*connectorv1.ObjectChange{live(moved, "OU=L3,"+fmt.Sprintf("DC=d%d,DC=test", ncA), ncA, classes("top", "organizationalUnit"))})}
 		rep := r.mustCycle(t)
 		if rep.Changes != 1 {
 			t.Fatalf("report = %+v", rep)
@@ -515,6 +515,9 @@ func TestIncrementalMovedOUChildrenFollow(t *testing.T) {
 				t.Fatalf("ancestry of %s = %v, want %v", gtext(n), got, r.fo.chain(n))
 			}
 		}
+		// The descendants' dn is NOT asserted: T-0988's rewriteDescendantDNs is wired into Populate's move path only,
+		// not into the patch path (inventory/patch.go settleChain), so a feed-reported OU move leaves the
+		// children's dn stale. That gap is a follow-up ticket (see the T-1198 advance note).
 		if below < 50 {
 			t.Fatalf("only %d descendants below the moved OU", below)
 		}
