@@ -21,17 +21,14 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	dsync "github.com/skenzeriq/activediq/internal/directory/sync"
-	"github.com/skenzeriq/activediq/internal/modules/reports/run"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
-	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
-	"github.com/skenzeriq/activediq/internal/platform/store/owners"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	"github.com/skenzeriq/activediq/internal/testlab"
@@ -47,7 +44,6 @@ type reportsRig struct {
 	svc   *connection.Service
 	tid   tenant.ID
 	jreg  *jobs.Registry
-	runs  *run.Service
 	seed  labSeeder
 	scope authz.ReadScope
 	srv   http.Handler
@@ -104,12 +100,7 @@ func newReportsRig(t *testing.T, s *storetest.Server) *reportsRig {
 	}
 
 	// Reports over the real router, scoped to the lab connection's domain NC (set after the seed).
-	_, host, err := bootReport(ctx, capability.NewSet(), directoryServices(db), owners.Lookup)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var tag apihost.TagHandlers
-	r.runs, tag, err = buildReports(ctx, db, host, r.jreg, ch, inventory.NewReader(db, nil), lazyScope{func() authz.ReadScope { return r.scope }}, nil, "")
+	tag, err := bootReportsForTest(ctx, db, r.jreg, ch, lazyScope{func() authz.ReadScope { return r.scope }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +180,7 @@ func (r *reportsRig) reportBody(body string) map[string]any {
 		r.t.Fatalf("create %s: %d %v", body, code, created)
 	}
 	id, _ := created["id"].(string)
-	r.runKinds(r.runs.Kind().Name)
+	r.runKinds(reportRunKind)
 	code, got := r.do("GET", "/api/v1/reports/runs/"+id, "")
 	if code != http.StatusOK || got["state"] != "succeeded" {
 		r.t.Fatalf("get run %s: %d %v", body, code, got)
