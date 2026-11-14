@@ -1,4 +1,4 @@
--- 0074_helpdesk_caller_verification: the help-desk caller-verification challenge (T-1602; ENH-09 spec T-0192
+-- 0079_helpdesk_caller_verification: the help-desk caller-verification challenge (T-1602; ENH-09 spec T-0192
 -- §4 and §4a, DM-38). Owner: internal/modules/helpdesk.
 --
 -- One row per challenge a technician issues to prove a caller is the target user before a reset or unlock.
