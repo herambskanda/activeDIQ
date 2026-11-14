@@ -148,14 +148,14 @@ func pwdBytes(pw string) string {
 	return string(b)
 }
 
-type variant struct {
+type surrogateVariant struct {
 	name  string
 	units []uint16 // UTF-16 code units as AD stores them
 	raw   string   // the bytes a raw LDAP client sends (UTF-8, or CESU-8 for a lone surrogate)
 	lone  bool
 }
 
-var variants = []variant{
+var variants = []surrogateVariant{
 	{"lone_high_D800", []uint16{0xD800}, "\xed\xa0\x80", true},
 	{"lone_low_DC00", []uint16{0xDC00}, "\xed\xb0\x80", true},
 	{"valid_pair_D83D_DE00", []uint16{0xD83D, 0xDE00}, "\U0001F600", false}, // control: must store and map
@@ -246,7 +246,7 @@ func Test_windowslab_unpaired_surrogate_hiding_path(t *testing.T) {
 		m.Replace(attr, nil)
 		_ = admin.Modify(m)
 	}
-	judge := func(path string, v variant, attr, writeErr string) {
+	judge := func(path string, v surrogateVariant, attr, writeErr string) {
 		got := readBack(attr)
 		stored := got != nil
 		code, merr := mapRead(got, attr)
