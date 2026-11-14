@@ -1545,6 +1545,18 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
   `ReadScopes.For` call per request and sets each item's `scopeCurrent` to "fingerprint equals the
   stored one" (check 4 as data, not as a 409). Where it is false the item's `rowCount` is null. No
   refusal here, so no `read_denied` event.
+- **Latest run** (`GET /reports/runs/latest`, `getLatestReportRun`, T-2083, home-report-widgets §3.2) is
+  `run.Service.Latest`. It selects `WHERE runner_account = chain.Requester AND definition_id AND preset`
+  (never another account, so a schedule owned by someone else that delivers to the caller is never a
+  candidate: `never_run`), prefers the latest succeeded run over a newer failed one, and reports a newer
+  queued or running run as `inFlight`. Header only (`rows=0`) it does one `ReadScopes.For` call and compares the
+  fingerprint like the history list (`scope_changed`: no count, no rows). With `rows=10` the first page goes through
+  `Service.Page` and so through `ReadAccess` (checks 1 to 5): no second gate. The page is trimmed to the
+  definition's **widget profile** (`report.WidgetProfile`: `views`, at most 5 `tableColumns`, optional `widget` member of
+  the definition file, validated against the definition's own columns; no profile means count only and
+  `rows=10` is a 400 `no_table_view`). `stale_data` is a current run whose freshness state is `stale`.
+  The response carries `asOf` and `freshness` (with `stale[]`), never the digest, parameters or scope text.
+  The shipped definitions get their profiles in the shipped-library change (LOCK-hashed files).
 - **Retry** (`POST /reports/runs/{id}/retry`, `retryReportRun`, T-0891) passes checks 1 and 2 only. It
   is not blocked by 3 or 4, which is its purpose. It resolves the stored `definition_id`, version,
   preset and `params` again under the caller's current scope, then takes the §6.1 create path
@@ -1959,6 +1971,7 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 
 ## Changelog
 
+- 2026-11-14 · T-2083 · §6.6 latest-run read (`getLatestReportRun`) and the definition widget profile (home-report-widgets §3).
 - 2026-11-04 · T-1124 · §3.3a second-slice fragments (duplicates, direct reports, logon hours in a zone, noise-filtered change aggregation, policy rows), slot `{arg}`, `HourMask`, RP12 to RP16, decisions 12 and 13. No AST change.
 - 2026-11-04 · T-0981 · §8 aligned with TM-D30 and spec reports-2a §8.4–§8.6: owner-only update, delete and resume with `not_owner` (was `owner_only`), run now 404 to every non-owner, resume `confirmedExternal` (R5), SX-1/SX-2 step-up, SX-5 and SX-6 in the fire checks, SX-8 audit fields. Proof: spec AC-51–AC-57 (B11).
 
