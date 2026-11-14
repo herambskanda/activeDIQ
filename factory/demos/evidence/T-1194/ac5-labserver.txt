@@ -1,0 +1,12 @@
+=== RUN   TestLabServerServesChangeFeed
+=== RUN   TestLabServerServesChangeFeed/pg16
+2026/11/02 08:11:44 INFO tenant created by first-run bootstrap tenant_id=c2ccbee2-ded3-4ae5-b6e6-27fd679b16dc
+2026/11/02 08:11:45 INFO server: lab connection active (in-process connector) lab=samba connection_id=913e35b7-fe05-44d0-bb9a-101ee5a2683e tenant_id=c2ccbee2-ded3-4ae5-b6e6-27fd679b16dc
+=== RUN   TestLabServerServesChangeFeed/pg18
+2026/11/02 08:11:51 INFO tenant created by first-run bootstrap tenant_id=fdbb7e40-1e98-4b68-a627-0e4eec343ad6
+2026/11/02 08:11:52 INFO server: lab connection active (in-process connector) lab=samba connection_id=87679c79-b2c7-4ffd-b3e5-4caca567ad3e tenant_id=fdbb7e40-1e98-4b68-a627-0e4eec343ad6
+--- PASS: TestLabServerServesChangeFeed (20.82s)
+    --- PASS: TestLabServerServesChangeFeed/pg16 (13.84s)
+    --- PASS: TestLabServerServesChangeFeed/pg18 (6.97s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/compose/server	22.359s

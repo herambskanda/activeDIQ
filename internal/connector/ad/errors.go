@@ -21,13 +21,16 @@ const (
 	CodeSecretNotSet        Code = "SECRET_NOT_SET"
 	CodeProtocol            Code = "PROTOCOL_ERROR"
 	CodeCanceled            Code = "CANCELED"
-	CodeEntryExists         Code = "ENTRY_EXISTS"   // an object already has that name (entryAlreadyExists)
-	CodeNotLeaf             Code = "NOT_LEAF"       // notAllowedOnNonLeaf
-	CodeConflict            Code = "WRITE_CONFLICT" // noSuchAttribute / attributeOrValueExists: a compare-and-set lost
-	CodeConstraint          Code = "CONSTRAINT"     // constraint, schema or policy violation the DC refused
-	CodePasswordPolicy      Code = "PASSWORD_POLICY"
-	CodeInsecure            Code = "TRANSPORT_SECURITY"
-	CodeStaleValue          Code = "STALE_VALUE"
+	// CodeCookieRejected: the DC refused the DirSync cookie it was sent (protocolError or
+	// unsupportedCriticalExtension on a request that carried one). Classified on the result code.
+	CodeCookieRejected Code = "COOKIE_REJECTED"
+	CodeEntryExists    Code = "ENTRY_EXISTS"   // an object already has that name (entryAlreadyExists)
+	CodeNotLeaf        Code = "NOT_LEAF"       // notAllowedOnNonLeaf
+	CodeConflict       Code = "WRITE_CONFLICT" // noSuchAttribute / attributeOrValueExists: a compare-and-set lost
+	CodeConstraint     Code = "CONSTRAINT"     // constraint, schema or policy violation the DC refused
+	CodePasswordPolicy Code = "PASSWORD_POLICY"
+	CodeInsecure       Code = "TRANSPORT_SECURITY"
+	CodeStaleValue     Code = "STALE_VALUE"
 )
 
 // Error is the package's error type.
@@ -35,6 +38,7 @@ type Error struct {
 	Code   Code
 	Detail string // fixed text, e.g. a rule id or an LDAP result code number; never a value
 	cause  error
+	result int // LDAP result code of a failed search, 0 when not known (never text)
 }
 
 func (e *Error) Error() string {

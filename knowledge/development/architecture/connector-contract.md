@@ -195,7 +195,7 @@ again. The fingerprint in `Describe` tells a caller when to re-fetch.
   reloads the durable baseline, then dials out with `platform/fleet/tunnelclient` (contract-agnostic; the `activediq.fleet.v1` stream and frame binding is `compose/tunnelbind`, passed as `Config.Open`) and serves ONE composite
   `ConnectorServer` (`compose/connector.TunnelBinding`) on the RoleComponent mux. `rights.Register` and
   `write.Register` each register the whole Connector service, so the composite is registered once per
-  tunnel registrar. It serves `VerifyConnection`, `Read`, `ScopedSearch`, `Plan` and `Apply`; every
+  tunnel registrar. It serves `VerifyConnection`, `Read`, `ScopedSearch`, `ChangeFeed` (T-1194), `Plan` and `Apply`; every
   other method is Unimplemented until its group is mounted, and a golden-list test pins the served set.
   The binary opens no listener (`TestNoListenerInConnectorComposition`).
 - **Connection binding (T-0665).** `VerifyConfig.ConnectionID` is the connection the config names;

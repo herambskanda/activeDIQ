@@ -1,0 +1,13 @@
+dn:
+defaultNamingContext: DC=lab,DC=activediq,DC=test
+dsServiceName: CN=NTDS Settings,CN=DC1,CN=Servers,CN=Default-First-Site-Name,C
+ N=Sites,CN=Configuration,DC=lab,DC=activediq,DC=test
+highestCommittedUSN: 22906
+
+Invalid DN syntax (34)
+Additional information: 00002032: ldb_search: invalid basedn '(null)'
+dn: CN=NTDS Settings,CN=DC1,CN=Servers,CN=Default-First-Site-Name,CN=Sites,CN=
+ Configuration,DC=lab,DC=activediq,DC=test
+invocationId (b64): PlBWpmMqr0Wa4Yay2D0xvw==
+objectGUID (b64): b5m1VhayNkmJ+buxbYC2Zw==
+

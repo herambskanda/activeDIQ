@@ -43,8 +43,10 @@ func grpcCode(c connectorv1.ErrorCode) codes.Code {
 		return codes.Unimplemented
 	case connectorv1.ErrorCode_ERROR_CODE_TIER0_REFUSED:
 		return codes.PermissionDenied
-	case connectorv1.ErrorCode_ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED:
+	case connectorv1.ErrorCode_ERROR_CODE_ACTIVATION_REFUSED_OVERPRIVILEGED, connectorv1.ErrorCode_ERROR_CODE_STALE_COOKIE:
 		return codes.FailedPrecondition
+	case connectorv1.ErrorCode_ERROR_CODE_LIMIT_EXCEEDED:
+		return codes.ResourceExhausted
 	case connectorv1.ErrorCode_ERROR_CODE_UNREACHABLE_DC:
 		return codes.Unavailable
 	case connectorv1.ErrorCode_ERROR_CODE_TARGET_CHANGED:

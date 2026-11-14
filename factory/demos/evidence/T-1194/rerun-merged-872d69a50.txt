@@ -1,0 +1,79 @@
+BUILD-OK
+0
+?   	github.com/skenzeriq/activediq/internal/connector	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/connector/ad	2.747s
+ok  	github.com/skenzeriq/activediq/internal/connector/ad/gssapi	1.030s
+ok  	github.com/skenzeriq/activediq/internal/connector/ad/replxml	2.710s
+ok  	github.com/skenzeriq/activediq/internal/connector/ad/scope	1.026s
+ok  	github.com/skenzeriq/activediq/internal/connector/graph	14.493s
+?   	github.com/skenzeriq/activediq/internal/connector/graph/graphtest	[no test files]
+?   	github.com/skenzeriq/activediq/internal/connector/labadmin	[no test files]
+ok  	github.com/skenzeriq/activediq/internal/connector/read	1.889s
+ok  	github.com/skenzeriq/activediq/internal/connector/replstatus	1.227s
+ok  	github.com/skenzeriq/activediq/internal/connector/rights	30.002s
+ok  	github.com/skenzeriq/activediq/internal/connector/tier0	73.726s
+ok  	github.com/skenzeriq/activediq/internal/connector/write	7.358s
+ok  	github.com/skenzeriq/activediq/internal/connector/write/ops	1.053s
+ok  	github.com/skenzeriq/activediq/internal/compose/agent	4.755s
+ok  	github.com/skenzeriq/activediq/internal/compose/config	1.033s
+ok  	github.com/skenzeriq/activediq/internal/compose/connector	2.729s
+ok  	github.com/skenzeriq/activediq/internal/compose/edge	1.029s
+ok  	github.com/skenzeriq/activediq/internal/compose/fleetproof	35.576s
+ok  	github.com/skenzeriq/activediq/internal/compose/profile	1.035s
+ok  	github.com/skenzeriq/activediq/internal/compose/server	205.341s
+ok  	github.com/skenzeriq/activediq/internal/compose/server/entra	1.139s
+ok  	github.com/skenzeriq/activediq/internal/compose/tunnelbind	1.033s
+=== RUN   TestLabFeedPrimeAndTheCookiePreChecks
+    feed_lab_test.go:163: LDAP Result Code 200 "Network Error": dial tcp [::1]:23432: connect: connection refused
+--- FAIL: TestLabFeedPrimeAndTheCookiePreChecks (0.03s)
+=== RUN   TestLabFeedRefusalsAndTheMandatorySet
+    feed_lab_test.go:250: LDAP Result Code 200 "Network Error": dial tcp [::1]:23432: connect: connection refused
+--- FAIL: TestLabFeedRefusalsAndTheMandatorySet (0.00s)
+=== RUN   TestLabFeedIssuerDownIsUnreachableNeverStale
+    feed_lab_test.go:488: LDAP Result Code 200 "Network Error": dial tcp [::1]:23432: connect: connection refused
+--- FAIL: TestLabFeedIssuerDownIsUnreachableNeverStale (0.00s)
+=== RUN   TestLabFeedStuckDCIsBounded
+    feed_lab_test.go:511: LDAP Result Code 200 "Network Error": dial tcp [::1]:23432: connect: connection refused
+--- FAIL: TestLabFeedStuckDCIsBounded (0.00s)
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/connector/read	0.063s
+FAIL
+=== RUN   TestLabServerServesChangeFeed
+=== RUN   TestLabServerServesChangeFeed/pg16
+    feed_lab_test.go:53: lab DC not reachable on 127.0.0.1:23432: dial tcp 127.0.0.1:23432: connect: connection refused: run `make lab-up` in this worktree first (lab tests fail, not skip, when the lab is missing)
+=== RUN   TestLabServerServesChangeFeed/pg18
+    feed_lab_test.go:53: lab DC not reachable on 127.0.0.1:23432: dial tcp 127.0.0.1:23432: connect: connection refused: run `make lab-up` in this worktree first (lab tests fail, not skip, when the lab is missing)
+--- FAIL: TestLabServerServesChangeFeed (14.72s)
+    --- FAIL: TestLabServerServesChangeFeed/pg16 (10.75s)
+    --- FAIL: TestLabServerServesChangeFeed/pg18 (3.98s)
+FAIL
+FAIL	github.com/skenzeriq/activediq/internal/compose/server	17.180s
+FAIL
+=== LAB RERUN (lab up) ===
+=== RUN   TestLabFeedPrimeAndTheCookiePreChecks
+    feed_lab_test.go:206: deletion lifetime 4320h0m0s, boundary 3888h0m0s
+--- PASS: TestLabFeedPrimeAndTheCookiePreChecks (2.66s)
+=== RUN   TestLabFeedRefusalsAndTheMandatorySet
+    feed_lab_test.go:312: live change attributes: map[name:true objectclass:true samaccountname:true] (cn sent: false)
+    feed_lab_test.go:312: deleted change attributes: map[lastknownparent:true name:true objectclass:true samaccountname:true] (cn sent: false)
+    feed_lab_test.go:333: tombstone state OBJECT_STATE_RECYCLED, lastKnownParent present: true
+--- PASS: TestLabFeedRefusalsAndTheMandatorySet (2.20s)
+=== RUN   TestLabFeedIssuerDownIsUnreachableNeverStale
+--- PASS: TestLabFeedIssuerDownIsUnreachableNeverStale (2.04s)
+=== RUN   TestLabFeedStuckDCIsBounded
+    feed_lab_test.go:529: stopped after 25 responses in 314.414267ms
+--- PASS: TestLabFeedStuckDCIsBounded (4.13s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/read	11.056s
+=== RUN   TestLabServerServesChangeFeed
+=== RUN   TestLabServerServesChangeFeed/pg16
+2026/11/13 13:05:59 INFO tenant created by first-run bootstrap tenant_id=2a58bd85-735d-415d-912e-2a69dfd28c30
+2026/11/13 13:06:01 INFO server: lab connection active (in-process connector) lab=samba connection_id=cd343623-d579-4602-9296-aa1b567d7772 tenant_id=2a58bd85-735d-415d-912e-2a69dfd28c30
+=== RUN   TestLabServerServesChangeFeed/pg18
+2026/11/13 13:06:16 INFO tenant created by first-run bootstrap tenant_id=a78fe57c-b6d0-49b0-9378-e22ed89174ad
+2026/11/13 13:06:17 INFO server: lab connection active (in-process connector) lab=samba connection_id=3806477a-f22f-4edd-82dc-b38b797984b5 tenant_id=a78fe57c-b6d0-49b0-9378-e22ed89174ad
+--- PASS: TestLabServerServesChangeFeed (40.08s)
+    --- PASS: TestLabServerServesChangeFeed/pg16 (23.55s)
+    --- PASS: TestLabServerServesChangeFeed/pg18 (16.52s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/compose/server	41.273s
