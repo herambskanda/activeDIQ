@@ -64,6 +64,17 @@ func NewConnectorReads(conns ConnectionSource, tr ReadTransport) (*ConnectorRead
 // container for scope-root ancestry) the DcSelection is left unset and the connector picks one DC for
 // the call. Every failure returns an error, which the caller treats as "refuse".
 func (r *ConnectorReads) Object(ctx context.Context, pins authority.Pins, target authority.TargetRef, guid string, needTier0 bool) (ObjectRead, error) {
+	return r.object(ctx, pins, target, guid, needTier0, false)
+}
+
+// ObjectWithChildCount is Object plus the connector's bounded direct-child count (contract §5.3a), for
+// the OU delete preview only. The target must be an OU or container: the connector refuses any other
+// class (ClassNotAllowed). The count is released to the delete Action's Plan, never to a screen.
+func (r *ConnectorReads) ObjectWithChildCount(ctx context.Context, pins authority.Pins, target authority.TargetRef, guid string) (ObjectRead, error) {
+	return r.object(ctx, pins, target, guid, false, true)
+}
+
+func (r *ConnectorReads) object(ctx context.Context, pins authority.Pins, target authority.TargetRef, guid string, needTier0, needChildren bool) (ObjectRead, error) {
 	tidText, ok := authority.TenantFrom(ctx)
 	if !ok {
 		return ObjectRead{}, ErrReadTenant
@@ -88,10 +99,11 @@ func (r *ConnectorReads) Object(ctx context.Context, pins authority.Pins, target
 		return ObjectRead{}, ErrReadDirectory
 	}
 	req := &connectorv1.ReadRequest{
-		Connection:   &connectorv1.ConnectionRef{ConnectionId: target.Connection, DirectoryIdentity: ident},
-		Guid:         &connectorv1.Guid{Value: id},
-		Attributes:   []string{"objectClass"},
-		IncludeTier0: needTier0,
+		Connection:        &connectorv1.ConnectionRef{ConnectionId: target.Connection, DirectoryIdentity: ident},
+		Guid:              &connectorv1.Guid{Value: id},
+		Attributes:        []string{"objectClass"},
+		IncludeTier0:      needTier0,
+		IncludeChildCount: needChildren,
 	}
 	var dsa []byte
 	if nc := string(target.NC); nc != "" {
@@ -112,12 +124,12 @@ func (r *ConnectorReads) Object(ctx context.Context, pins authority.Pins, target
 		req.Dc = &connectorv1.DcSelection{PinnedDsaGuid: &connectorv1.Guid{Value: dsa}}
 	}
 
-	return r.read(ctx, req, id, needTier0, dsa)
+	return r.read(ctx, req, id, needTier0, needChildren, dsa)
 }
 
 // read folds the Read stream: exactly one header, then chunks, then one completed; anything else is
 // a protocol error. OBJECT_NOT_FOUND is an answer (Exists false); every other error is an error.
-func (r *ConnectorReads) read(ctx context.Context, req *connectorv1.ReadRequest, want []byte, needTier0 bool, pin []byte) (ObjectRead, error) {
+func (r *ConnectorReads) read(ctx context.Context, req *connectorv1.ReadRequest, want []byte, needTier0, needChildren bool, pin []byte) (ObjectRead, error) {
 	st, err := r.tr.Read(ctx, req)
 	if err != nil {
 		return notFoundOr(err)
@@ -162,6 +174,15 @@ func (r *ConnectorReads) read(ctx context.Context, req *connectorv1.ReadRequest,
 				}
 				out.Tier0 = ev.Header.GetTier0().GetTier0()
 			} else if ev.Header.GetTier0() != nil {
+				return ObjectRead{}, ErrReadProtocol
+			}
+			// The count is present exactly when asked for; a missing one is an error, never zero.
+			if cc := ev.Header.GetChildCount(); needChildren {
+				if cc == nil {
+					return ObjectRead{}, ErrReadProtocol
+				}
+				out.ChildCount = &ChildCount{Count: cc.GetCount(), Capped: cc.GetCapped()}
+			} else if cc != nil {
 				return ObjectRead{}, ErrReadProtocol
 			}
 			header = true

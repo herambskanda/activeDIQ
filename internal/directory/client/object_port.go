@@ -36,6 +36,9 @@ type ObjectState struct {
 	Deleted         bool
 	LastKnownParent string
 	LastKnownRDN    string
+	// ChildCount is the OU/container's direct-child count, set only when the read asked for it
+	//: the OU delete preview. nil otherwise.
+	ChildCount *ChildCount
 	// Links are the deactivated link values the object held when it was deleted.
 	Links []LinkValue
 }
