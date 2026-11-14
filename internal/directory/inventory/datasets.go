@@ -83,6 +83,11 @@ func jsonText(id report.ColumnID, label, key string) report.Column {
 		Filter: opsText, Sortable: true}
 }
 
+func jsonBool(id report.ColumnID, label, key string) report.Column {
+	return report.Column{ID: id, Label: label, Type: report.TypeBool, Source: report.JSONAttr{Col: "attributes", Key: key, As: report.TypeBool},
+		Filter: opsBool, Sortable: true}
+}
+
 func derived(id report.ColumnID, label string, t report.ValueType, sql report.Fragment, ops []report.Op) report.Column {
 	return report.Column{ID: id, Label: label, Type: t, Source: report.Derived{SQL: sql}, Filter: ops, Sortable: true}
 }
@@ -150,6 +155,7 @@ func usersDataset() report.Dataset {
 		attr("descriptor_as_of", "Descriptor as of", report.TypeTime, "password_change_at", opsTime, false),
 		state("probable_service_account_reason", "Service account reason", report.SQL(probableReasonSQL), "spn_set", "none"),
 	)
+	cols = append(cols, userAttributeColumns()...)
 	cols = append(cols, userPerDCColumns()...)
 	return report.Dataset{
 		ID:     DatasetUsers,
@@ -215,6 +221,8 @@ func computersDataset() report.Dataset {
 		state("delegation", "Delegation", report.SQL(delegationSQL), "none", "unconstrained", "constrained", "protocol_transition", report.UnknownInputMissing),
 		withUnknown(derived("days_since_activity", "Days since last activity", report.TypeInt, report.SQL(daysSinceActivitySQL), opsInt), "activity_source"),
 		jsonText("dns_host_name", "DNS host name", "dNSHostName"),
+		jsonText("managed_by", "Managed by", "managedBy"),
+		jsonText("description", "Description", "description"),
 		jsonText("operating_system", "Operating system", "operatingSystem"),
 		jsonText("operating_system_version", "Operating system version", "operatingSystemVersion"),
 		uacFlag("trusted_to_auth_for_delegation", "Trusted to authenticate for delegation (protocol transition)", report.SQL("("+uac+" & 16777216) <> 0")),
@@ -264,5 +272,33 @@ func principalsDataset() report.Dataset {
 		Columns:   cols,
 		Freshness: report.FreshNCWatermark,
 		Tables:    []string{"directory_objects", "links"},
+	}
+}
+
+// userAttributeColumns are the registered columns of the user-attribute reports (T-1111, D11). Every one
+// reads a key the mapper wrote; a photo is a flag, never its bytes. A cell is empty when the attribute has
+// no value (or was not read): AD does not tell the two apart on a read.
+func userAttributeColumns() []report.Column {
+	photo := func(id report.ColumnID, label, key string) report.Column {
+		return derived(id, label, report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> '"+key+"')::boolean, false)"), opsBool)
+	}
+	return []report.Column{
+		jsonText("mail", "Email", "mail"),
+		jsonText("employee_id", "Employee ID", "employeeID"),
+		jsonText("department", "Department", "department"),
+		jsonText("title", "Title", "title"),
+		jsonText("company", "Company", "company"),
+		jsonText("telephone_number", "Telephone number", "telephoneNumber"),
+		jsonText("mobile", "Mobile", "mobile"),
+		jsonText("description", "Description", "description"),
+		jsonText("manager", "Manager (distinguished name)", "manager"),
+		jsonText("logon_script", "Logon script", "scriptPath"),
+		jsonBool("dialin_allowed", "Dial-in: allow access", "msNPAllowDialin"),
+		jsonBool("skype_enabled", "Skype/Lync enabled", "msRTCSIP-UserEnabled"),
+		jsonText("logon_hours", "Logon hours (168 bits, Sunday 00:00 UTC first)", "logonHours"),
+		derived("logon_hours_restricted", "Logon hours restricted", report.TypeBool,
+			report.SQL("CASE WHEN {t}.attributes ->> 'logonHours' IS NULL THEN NULL ELSE position('0' in {t}.attributes ->> 'logonHours') > 0 END"), opsBool),
+		photo("has_thumbnail_photo", "Has thumbnail photo", "hasThumbnailPhoto"),
+		photo("has_jpeg_photo", "Has JPEG photo", "hasJpegPhoto"),
 	}
 }
