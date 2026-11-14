@@ -11,11 +11,12 @@ import (
 	"github.com/skenzeriq/activediq/tools/analyzers/nestedtx"
 	"github.com/skenzeriq/activediq/tools/analyzers/odataname"
 	"github.com/skenzeriq/activediq/tools/analyzers/secretjson"
+	"github.com/skenzeriq/activediq/tools/analyzers/showdeleted"
 	"github.com/skenzeriq/activediq/tools/analyzers/sqlconst"
 	"github.com/skenzeriq/activediq/tools/analyzers/tmplconst"
 )
 
-// All returns dnstring, sqlconst, secretjson, tmplconst, constdisp, odataname, graphurl and nestedtx.
+// All returns dnstring, sqlconst, secretjson, tmplconst, constdisp, odataname, graphurl, nestedtx and showdeleted.
 func All() []*analysis.Analyzer {
-	return []*analysis.Analyzer{dnstring.Analyzer, sqlconst.Analyzer, secretjson.Analyzer, tmplconst.Analyzer, constdisp.Analyzer, odataname.Analyzer, graphurl.Analyzer, nestedtx.Analyzer}
+	return []*analysis.Analyzer{dnstring.Analyzer, sqlconst.Analyzer, secretjson.Analyzer, tmplconst.Analyzer, constdisp.Analyzer, odataname.Analyzer, graphurl.Analyzer, nestedtx.Analyzer, showdeleted.Analyzer}
 }

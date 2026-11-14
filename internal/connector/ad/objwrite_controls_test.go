@@ -43,3 +43,39 @@ func TestExportedReadOptionsNeverShowDeleted(t *testing.T) {
 		t.Fatal("exported ReadOptions produced show-deleted")
 	}
 }
+
+// TM-F-RIGHTS (b): the show-deleted analyser (tools/analyzers/showdeleted) pins the shape of the
+// deleted reads; the values it cannot see are pinned here. A change to either list is a security
+// change: the (b1) list is the fixed R2 set (T-1757 added sAMAccountName), the (b3) list is the
+// restore-state set, and both reads send owner+group+DACL only (0x7), never the SACL.
+func TestDeletedReadFixedLists(t *testing.T) {
+	wantB1 := []string{"objectSid", "userAccountControl", "primaryGroupID", "isRecycled",
+		"objectGUID", "objectClass", "isDeleted", "lastKnownParent", "msDS-LastKnownRDN", "nTSecurityDescriptor",
+		"sIDHistory", "memberOf", "adminCount", "msDS-AllowedToDelegateTo",
+		"msDS-AllowedToActOnBehalfOfOtherIdentity", "msDS-SecondaryKrbTgtNumber", "isCriticalSystemObject"}
+	if got := deletedTargetAttrs; len(got) != len(wantB1) {
+		t.Fatalf("(b1) attribute list: %v", got)
+	} else {
+		for i := range got {
+			if got[i] != wantB1[i] {
+				t.Fatalf("(b1) attribute %d: %q, want %q", i, got[i], wantB1[i])
+			}
+		}
+	}
+	wantB3 := []string{"objectGUID", "objectClass", "distinguishedName", "isDeleted", "instanceType", "uSNChanged"}
+	if len(stateAttrs) != len(wantB3) {
+		t.Fatalf("(b3) attribute list: %v", stateAttrs)
+	}
+	for i := range wantB3 {
+		if stateAttrs[i] != wantB3[i] {
+			t.Fatalf("(b3) attribute %d: %q, want %q", i, stateAttrs[i], wantB3[i])
+		}
+	}
+	if v := DefaultSDFlags().Value(); v != 0x7 {
+		t.Fatalf("(b1) SD_FLAGS %#x, want 0x7", v)
+	}
+	f, err := NewSDFlags(SDOwner, SDDACL)
+	if err != nil || f.Value() != 0x5 {
+		t.Fatalf("(b2) SD_FLAGS %v %v, want 0x5", f, err)
+	}
+}
