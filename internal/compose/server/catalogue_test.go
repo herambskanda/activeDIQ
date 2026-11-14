@@ -6,14 +6,17 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
+	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/capability"
+	"github.com/skenzeriq/activediq/internal/platform/store/owners"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // Every permission a built-in role holds and every module-declared one is in the catalogue, sorted and unique.
 func TestPermissionCatalogueIsComplete(t *testing.T) {
-	c := permissionCatalogue()
-	for _, p := range append([]string{"directory.read", "siem.destination.read", "operation.approve", "objects.user.delete"}, moduleOperationPermissions...) {
+	c := bootedCatalogue()
+	for _, p := range append([]string{"directory.read", "siem.destination.read", "operation.approve", "objects.user.delete"}, "connections.takeover.attest", "reports.run", "reports.export", "reports.schedule", "reports.schedule.manage_all", "reports.deliver.external") {
 		if !c.Has(p) {
 			t.Errorf("catalogue lacks %q", p)
 		}
@@ -39,7 +42,7 @@ func TestBuildRefusesOperationWithPermissionMissingFromCatalogue(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cat apihost.Permissions
-	for _, s := range permissionCatalogue() {
+	for _, s := range bootedCatalogue() {
 		if s != "directory.read" {
 			cat = append(cat, s)
 		}
@@ -68,11 +71,21 @@ func TestMalformedPolicyFailsClosed(t *testing.T) {
 func TestConsoleAuthzDeniesUnlistedPermission(t *testing.T) {
 	ra := &recAuthz{}
 	p := apihost.Principal{ID: tenant.New().String(), Tenant: tenant.New().String(), Kind: apihost.KindSession}
-	a := consoleAuthz{ra, permissionCatalogue()}
+	a := consoleAuthz{ra, bootedCatalogue()}
 	if ok, err := a.Allow(context.Background(), p, "made.up.permission", "tenant"); ok || err != nil || ra.called {
 		t.Fatalf("unlisted: ok=%v err=%v consulted=%v", ok, err, ra.called)
 	}
 	if ok, err := a.Allow(context.Background(), p, "directory.read", "tenant"); !ok || err != nil {
 		t.Fatalf("listed: ok=%v err=%v", ok, err)
 	}
+}
+
+// bootedCatalogue is the catalogue over the permissions the generated modules register. It boots
+// the module list without a database, as the cross-module boot tests do.
+func bootedCatalogue() apihost.Permissions {
+	c, _, err := bootReport(context.Background(), capability.NewSet(), directory.Services{}, owners.Lookup)
+	if err != nil {
+		panic(err)
+	}
+	return permissionCatalogue(c)
 }

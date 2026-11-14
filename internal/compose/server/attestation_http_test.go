@@ -268,7 +268,7 @@ func newAttHTTPEnv(t *testing.T, s *storetest.Server, gate connections.CallbackG
 		t.Fatal(err)
 	}
 	sp := attHTTPPorts{p: apihost.Principal{ID: "admin", Tenant: e.tid.String(), Kind: apihost.KindSession, SessionID: "sess"}}
-	srv, err := apihost.Build(doc, []apihost.TagHandlers{h.Bind()}, pol, permissionCatalogue(),
+	srv, err := apihost.Build(doc, []apihost.TagHandlers{h.Bind()}, pol, bootedCatalogue(),
 		apihost.Ports{Authn: sp, Authz: sp, Limits: sp, StepUp: sp})
 	if err != nil {
 		t.Fatal(err)

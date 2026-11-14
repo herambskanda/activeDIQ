@@ -206,7 +206,10 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	// The sign-in plane: AN-8 for a local account, then AN-10 (TOTP, and WebAuthn when the public URL is
 	// set), which is the only way a console session is created.
 	tags = append(tags, console.Tags())
-	cat := permissionCatalogue()
+	cat := permissionCatalogue(contrib)
+	// Routes modules registered through Registrar.API are mounted alongside the hand-built ones
+	// until each builder moves into its module (ADR-0013 decision 3).
+	tags = append(tags, contrib.API()...)
 	if err := checkCatalogue(cat); err != nil {
 		return err
 	}
@@ -398,7 +401,7 @@ func bootReport(ctx context.Context, enabled capability.Set, dir directory.Servi
 	if err := host.Add(inventoryOwner, inventory.Datasets()...); err != nil {
 		return nil, nil, fmt.Errorf("server: report datasets: %w", err)
 	}
-	c, err := module.Boot(ctx, generatedModules(platform.Deps{Report: host}, dir), enabled, module.WithTableOwners(ownerOf))
+	c, err := module.Boot(ctx, generatedModules(platform.Deps{Report: host}, dir), enabled, module.WithTableOwners(ownerOf), module.WithKernelPermissions(kernelPermissions()))
 	if err != nil {
 		return nil, nil, err
 	}
