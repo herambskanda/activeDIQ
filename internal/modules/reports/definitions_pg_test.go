@@ -142,7 +142,7 @@ func TestListReportDefinitionsEveryShippedDefinitionOnceInStableOrder(t *testing
 		// The order is the category order, then the title: users (Account expiry, Locked-out users, Logon
 		// activity, Users), passwords (Password changes, Password expiry), groups (Group members, Groups,
 		// Groups for users, Not in any group), computers (Computer inactivity, Computers), contacts, OUs.
-		want := []string{"usr-02", "usr-05", "usr-03", "usr-04", "usr-01", "pwd-02", "pwd-01", "pwd-03", "grp-02", "grp-01", "grp-03", "grp-04", "cmp-02", "cmp-01", "ctc-01", "ou-01"}
+		want := []string{"usr-02", "usr-05", "usr-03", "usr-04", "usr-01", "pwd-02", "pwd-04", "pwd-01", "pwd-03", "grp-02", "grp-01", "grp-03", "grp-04", "cmp-02", "cmp-01", "ctc-01", "ou-01"}
 		if got := ids(all); !slices.Equal(got, want) {
 			t.Fatalf("ids = %v, want %v", got, want)
 		}
