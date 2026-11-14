@@ -298,7 +298,7 @@ tests, and cannot prove Windows-only classes (stated, not hidden).
 
 | ID | Fails the build when |
 | --- | --- |
-| EX1 | any package other than `internal/directory/inventory` calls `reportsql.CompileTree`; `modules/explorer` contains SQL, calls `ReadScope.Admits`/`.Terms`/`.Token`, or defines a second scope function (go/types: exported `reportsql` funcs reaching `planScope`/`scopeSQL` are exactly `Compile`, `CompileCount`, `CompileSearch`, `CompileTree`; definitions count one each; no scope fragment emitted outside them); inventory Explorer files or `modules/explorer` hold SQL naming `ancestry`, `parent_guid` or `directory_objects`; `inventory.Explorer` or its result types expose ancestry or an unadmitted ancestor GUID (ADR-0011 E3) |
+| EX1 | any package other than `internal/directory/inventory` calls `reportsql.CompileTree`; `modules/explorer` contains SQL, calls `ReadScope.Admits`/`.Terms`/`.Token`, or defines a second scope function (go/types: exported `reportsql` funcs reaching `planScope`/`scopeSQL` are exactly `Compile`, `CompileCount`, `CompileSearch`, `CompileTree`; definitions count one each; no scope fragment emitted outside them); inventory Explorer files or `modules/explorer` hold SQL naming `ancestry`, `parent_guid` or `directory_objects`; `inventory.Explorer` or its result types expose ancestry or an unadmitted ancestor GUID by the ADR-0011 E3 deny-list (names, uuid slice shapes, `ExplorerPathItem` built only in `scanPathItem`) |
 | EX2 | the oracle property test fails: for random forests and scopes (subtree, one-level, naming context, exclusions) a walk from `roots` through `children` reaches exactly the live, admitted, container-reachable objects `AuthorizeRead` admits, and `view=all` pages union to the admitted children, with no duplicates and none missing |
 | EX3 | the OpenAPI Explorer schemas contain a `dn` property, a non-uuid path identifier, or a cursor that decodes to a DN |
 | EX4 | the move-in-flight test fails: a move between pages 1 and 2 yields a row under the wrong parent, a child under both parents, or a descendant displaying a stale name path; after repair the subtree is under the new parent only |
@@ -306,6 +306,7 @@ tests, and cannot prove Windows-only classes (stated, not hidden).
 | EX6 | the plan test fails: `EXPLAIN` of children/roots/node shows a Seq Scan on `directory_objects`, an index not led by `tenant_id`, or rows examined > W_e + L + 1 with H hidden siblings in {0, W_e−10, W_e+10, 20,000} |
 | EX7 | an object with no classifier result or no as-of is returned with `tier0 = false` |
 | EX8 | a hidden GUID and a nonexistent GUID answer different status, body or headers |
+| EX10 | `Test_explorer_hidden_ancestor_never_disclosed` (subtests `roots`, `node`, `path`, `children`, `pg16`/`pg18`) or `Test_explorer_out_of_scope_child_never_returned` (subtests `node`, `children`, `path`) is missing, skipped or failing: a hidden ancestor's GUID, name or DN appears anywhere in a response or log, or an out-of-scope child of an admitted node is returned, counted or cursor-addressable (ADR-0011 E3; also bound in `fitness-search` SE3) |
 | EX9 | `modules/explorer` or the inventory explorer files import `internal/directory/client`, `internal/connector/…` or an LDAP package (depguard) |
 
 ## 11. Ticket cuts (all under E-007; created with this spec)
@@ -315,6 +316,6 @@ tests, and cannot prove Windows-only classes (stated, not hidden).
 | T-2086 | solution-architect | ADR-0011 amendment E3: SE1 widens to `CompileTree`; one renderer, three statements (search, report, tree) |
 | T-2087 | api-engineer | OpenAPI for the three operations, schemas, generated client, contract tests (EX3) |
 | T-2088 | reporting-engineer | `reportsql.CompileTree` over the same `planScope`/`scopeSQL`, `sqlconst`/RP1 apply, security-architect reviews (EX1, EX6 parts) |
-| T-2089 | backend-engineer | migration (index), `inventory.Explorer` port, `modules/explorer` and its registrar wiring, cursor, Q5 and one-level answers, move-in-flight and deleted handling (EX2, EX4, EX5, EX7, EX8) |
+| T-2089 | backend-engineer | migration (index), `inventory.Explorer` port, `modules/explorer` and its registrar wiring, cursor, Q5 and one-level answers, move-in-flight and deleted handling (EX2, EX4, EX5, EX7, EX8, EX10: the two oracle tests) |
 | T-2090 | frontend-engineer | the screen of §7 over the generated client, all states, keyboard and a11y, no fake data |
-| T-2091 | devops-engineer | `fitness-explorer` EX1–EX9 in `make ci`; test-engineer supplies the oracle generator and the Samba AD fixtures |
+| T-2091 | devops-engineer | `fitness-explorer` EX1–EX10 in `make ci`; test-engineer supplies the oracle generator and the Samba AD fixtures |

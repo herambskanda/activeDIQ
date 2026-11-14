@@ -60,7 +60,7 @@ weakens.
   `inventory.Search`, and the port takes the scope and returns trimmed rows, never ancestry to trim
   with. The Go-level list is closed: a future statement entry (a third caller) needs its own
   amendment and is not admitted by this one.
-- **Four additions to SE1**, all mechanical and typed (go/types plus SQL tokenising), none prose-only:
+- **Five additions to SE1**, all mechanical and typed (go/types plus SQL tokenising), none prose-only:
   1. **Closed entry set, asserted.** SE1 computes, with go/types, the exported functions of
      `store/reportsql` that can reach `planScope` or `scopeSQL` through the call graph; the set must
      equal exactly `{Compile, CompileCount, CompileSearch, CompileTree}`. A fifth entry, or one of the four
@@ -74,13 +74,40 @@ weakens.
      unnest/join and the roots test live only in the `CompileTree` template.
   3. **The tree template reads `directory_objects` only.** It may not read `inventory_search_keys` or
      `inventory_search_trigrams`, which stay readable only by the search template.
-  4. **The port leaks no ancestry.** SE1 checks with go/types that `inventory.Explorer` and every type
-     in its signatures expose no field, method or result carrying ancestry, an ancestor list, or the
-     GUID of an unadmitted ancestor, and that `ExplorerPathItem` is built only from rows the statement
-     admitted. Behaviourally, EX2/EX8 gain two oracle tests (SE-fixture cases, T-2094/T-2091): a
-     hidden ancestor's GUID, name and DN are absent from every response (roots, node, path, children),
-     and an out-of-scope child of an admitted node is never returned. The spec's root test (X4) never
-     returns a non-admitted parent's GUID; it only decides "this admitted row is a root".
+  4. **The port leaks no ancestry (mechanical definition).** go/types cannot see admission, so SE1
+     enforces a *shape* deny-list over `inventory.Explorer` and the transitive closure of every type in
+     its method signatures (fields, methods, named types, embedded types):
+     (a) **Names.** No field, method or type whose name, case-folded with `_` removed, contains
+     `ancest`, `parentguid`, `parentid`, `lineage`, `trail` or `pathguids`.
+     (b) **Shapes.** No field, result or parameter of type `[]uuid.UUID`, `[]GUID`, `[N]uuid.UUID`,
+     `map[...]uuid.UUID` or a slice of a struct that carries a `uuid.UUID`, **except** the single field
+     `Path []ExplorerPathItem`.
+     (c) **Sole carrier.** `ExplorerPathItem` is the only type allowed to appear as a slice element and
+     carry a GUID; it is constructed (composite literal or `new`) in exactly one function,
+     `scanPathItem`, in `internal/directory/inventory`, whose only inputs are a `pgx.Rows` scan of the
+     `CompileTree` statement's output columns (the statement already trims, so every row is admitted).
+     Anything else constructing it fails.
+     The go/types check proves the port *cannot carry* an ancestor list; the oracle tests below carry the
+     behavioural proof that nothing unadmitted is returned. Named, in `fitness-explorer` EX10 and bound in
+     `fitness-search` SE3 (a missing, skipped or failing test fails the build, as for every bound test):
+     - `Test_explorer_hidden_ancestor_never_disclosed` (`./internal/directory/inventory`; subtests
+       `roots`, `node`, `path`, `children`, each on `pg16`/`pg18`): with an admitted subtree whose
+       parent chain is not admitted, the hidden ancestors' GUID, display name and DN are absent from the
+       whole serialised response and from logs of every one of the four operations. Fails on any
+       occurrence of the three strings.
+     - `Test_explorer_out_of_scope_child_never_returned` (same package and subtests `node`, `children`,
+       `path`): an out-of-scope child of an admitted node is not returned, not counted and not
+       cursor-addressable; asking for it by GUID answers exactly as a nonexistent one (EX8).
+     The spec's root test (X4) never returns a non-admitted parent's GUID; it only decides "this
+     admitted row is a root".
+  5. **Every addition has a failing self-test fixture** (runbook convention for static checks, T-1126),
+     named in `tools/fitness/search/check_test.go` and run by `make ci-proof`:
+     `closed_entry_set_fifth` (a `CompileFoo` reaching `scopeSQL`), `closed_entry_set_missing`,
+     `scope_second_emitter` (`scopeSQL2` and an inline `ancestry && ARRAY[...]`),
+     `explorer_sql_names_ancestry`, `tree_template_reads_search_keys`,
+     `port_leaks_ancestry_name`, `port_leaks_uuid_slice`, `pathitem_built_elsewhere`,
+     `compiletree_called_outside_inventory`, `connections_outside_allowlist`. Each must produce its own
+     finding; a fixture that passes fails the proof.
 - **`Connections()` allow-list, decided.** Spec §9 computes `asOf` as `inventory.Freshness` over
   `ReadScope.Connections()`, so `internal/directory/inventory` is **added** to the allow-list, which
   becomes `authz`, `reportsql`, `reports`, `reports/run`, `modules/search` and
@@ -100,7 +127,7 @@ weakens.
   change and fixtures are ticketed to devops-engineer; EX1 in `fitness-explorer` (T-2091) is the
   Explorer-side mirror and the two must agree. The blueprint, runbook and `ci-gates.md` rows are
   updated with this amendment.
-Reworked 2026-11-14 after security-architect's AC2 review (closed set asserted, single emitter, port ancestry, `Connections()` decided). Ratification waits on security-architect re-confirmation; `accepted` waits on the SE1 fixtures covering additions 1 to 4 (T-2094).
+Reworked 2026-11-14 after security-architect's AC2 review (closed set asserted, single emitter, port ancestry, `Connections()` decided). Revised again for the second review (mechanical deny-list, named oracle tests, named fixtures). Ratification waits on security-architect re-confirmation; `accepted` waits on the SE1 fixtures covering additions 1 to 5 and the two oracle tests (T-2094, T-2089).
 
 **Revision 2 (2026-10-31, after the T-1093 review).** These are the changes in this revision:
 - **M1:** rule 7 now case-folds before the fold table.
@@ -1003,7 +1030,7 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
     those four entries (go/types); `planScope` and `scopeSQL` are each defined exactly once, in
     `store/reportsql`, and only code reachable from the four entries emits scope fragments. The
     `CompileTree` template reads `directory_objects` only. Explorer files hold no SQL naming
-    ancestry, `parent_guid` or `directory_objects`. `inventory.Explorer` and its result types expose no ancestry.
+    ancestry, `parent_guid` or `directory_objects`. `inventory.Explorer` and its result types pass the ancestry deny-list (names, uuid-slice shapes, `ExplorerPathItem` built only in `scanPathItem`), and the two oracle tests below are bound.
   - **Go code that names the RBAC tables.** These tables are `authz_assignments`,
     `authz_assignment_roots`, `authz_roles` and `authz_role_permissions`, plus any later
     `authz_*` table that the owners map assigns to `rbac`. No non-test Go SQL text names them
