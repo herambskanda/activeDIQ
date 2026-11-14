@@ -3,6 +3,7 @@ package operation
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"runtime"
@@ -19,7 +20,11 @@ import (
 
 // chunkedDir adds ChunkPlanner to the Postgres fixture's directory Action by planning a slice of the
 // input's items through the Action's own Plan.
-type chunkedDir struct{ Action }
+type chunkedDir struct {
+	Action
+	// mix, when set, overrides the reversibility of item i's steps (to build a mixed-class plan).
+	mix func(item int) Reversibility
+}
 
 // The optional interfaces the runner looks for are forwarded to the wrapped Action.
 func (c chunkedDir) Observe(ctx context.Context, pins authority.Pins, p StepPlan, at time.Time) (Observation, error) {
@@ -41,7 +46,13 @@ func (c chunkedDir) PlanChunk(ctx context.Context, pc PlanContext, in Input, fir
 	}
 	d.Items = d.Items[first:min(first+n, len(d.Items))]
 	b, _ := json.Marshal(d)
-	return c.Plan(ctx, pc, Input(b))
+	steps, err := c.Plan(ctx, pc, Input(b))
+	if c.mix != nil {
+		for i := range steps {
+			steps[i].Reversibility = c.mix(first + i)
+		}
+	}
+	return steps, err
 }
 
 func (p *prig) bulkReq(n int) Request {
@@ -291,5 +302,85 @@ func TestChunkedPlanMemoryBounded(t *testing.T) {
 		if largeT > 3*smallT+50*time.Millisecond {
 			t.Fatalf("per-chunk time grew with row count: %v vs %v", smallT, largeT)
 		}
+	})
+}
+
+// recGate records the PlanSummary routing hands the gate, and holds the operation for approval.
+type recGate struct{ got *PlanSummary }
+
+func (recGate) ID() GateID { return "rec-gate" }
+func (g recGate) Route(_ context.Context, p PlanSummary) (Route, error) {
+	*g.got = p
+	return Route{Kind: RouteHold}, nil
+}
+
+// The bounded summary of a chunked plan drives the irreversible hold and the approver step-up, so its
+// aggregate must see the worst class among 250 steps, not just the sample the gate is shown.
+func TestChunkedPlanSummaryDrivesHoldAndStepUp(t *testing.T) {
+	const n = 250
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		run := func(t *testing.T, mix func(int) Reversibility) (*prig, Submission, *PlanSummary) {
+			got := new(PlanSummary)
+			p := newPRig(t, s, rigOpt{chunked: true, gate: recGate{got: got}, irrev: true, class: Irreversible, mix: mix})
+			sub, err := p.r.SubmitDirectory(context.Background(), p.bulkReq(n))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, a := range p.planJobs() {
+				p.planChunk(sub.Operation, a)
+			}
+			return p, sub, got
+		}
+		// One irreversible step far past the sample, a few lossy ones, the rest reversible.
+		mixed := func(i int) Reversibility {
+			switch {
+			case i == 240:
+				return Irreversible
+			case i%50 == 7:
+				return Lossy
+			}
+			return Reversible
+		}
+		t.Run("irreversible beyond the sample holds and needs step-up", func(t *testing.T) {
+			p, sub, got := run(t, mixed)
+			if got.Items != n || !got.Irreversible || !got.StepsTruncated || len(got.Steps) != gateSampleSteps {
+				t.Fatalf("summary: items=%d irreversible=%t truncated=%t sample=%d", got.Items, got.Irreversible, got.StepsTruncated, len(got.Steps))
+			}
+			if got.HoldReason != HoldIrreversible {
+				t.Fatalf("hold reason %q, want %q", got.HoldReason, HoldIrreversible)
+			}
+			if st := p.opState(sub.Operation); st != "awaiting_approval" {
+				t.Fatalf("state %s, want awaiting_approval", st)
+			}
+			ctx := context.Background()
+			plan := p.owner(`SELECT plan_hash FROM public.operations WHERE id = $1::uuid`, string(sub.Operation))[0]
+			if _, err := p.r.Approve(ctx, p.tn, string(sub.Operation), plan, Approval{Principal: bob, Interactive: true}); !errors.Is(err, ErrStepUpRequired) {
+				t.Fatalf("approve without step-up: %v, want ErrStepUpRequired", err)
+			}
+			if _, err := p.r.Approve(ctx, p.tn, string(sub.Operation), plan, Approval{Principal: bob, Interactive: true, FreshStepUp: true}); err != nil {
+				t.Fatalf("approve with step-up: %v", err)
+			}
+		})
+		t.Run("lossy only is not irreversible", func(t *testing.T) {
+			p, sub, got := run(t, func(i int) Reversibility {
+				if i == 240 {
+					return Lossy
+				}
+				return Reversible
+			})
+			if got.Items != n || got.Irreversible || got.HoldReason == HoldIrreversible {
+				t.Fatalf("summary: items=%d irreversible=%t hold=%q", got.Items, got.Irreversible, got.HoldReason)
+			}
+			var sum stepSummary
+			if err := p.db.WithTenant(context.Background(), p.tn, func(ctx context.Context, tx store.Tx) (err error) {
+				sum, err = summariseSteps(ctx, tx, p.tn, string(sub.Operation))
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if sum.Worst != Lossy || sum.Items != n || len(sum.Sample) != gateSampleSteps || !sum.Truncated {
+				t.Fatalf("summariseSteps: worst=%s items=%d sample=%d truncated=%t", sum.Worst, sum.Items, len(sum.Sample), sum.Truncated)
+			}
+		})
 	})
 }
