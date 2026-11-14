@@ -142,3 +142,35 @@ func (a *ADSource) IsSamba(ctx context.Context) (bool, error) {
 	}
 	return rd.IsSamba(), nil
 }
+
+var _ ChildCounter = (*ADSource)(nil)
+
+// CountChildren counts id's direct children: one paged ONE_LEVEL search, objectGUID only, stopped at limit.
+// An entry listed without objectGUID is not counted (it is not readable by this identity, §5.3a).
+func (a *ADSource) CountChildren(ctx context.Context, id guid.GUID, limit int) (int, bool, error) {
+	if !a.ok() {
+		return 0, false, write.ErrNoBoundDC
+	}
+	oc, err := ldapfilter.ParseAttrName("objectClass", a.sess.FilterSchema())
+	if err != nil {
+		return 0, false, err
+	}
+	n, capped := 0, false
+	stop := errors.New("child count cap reached")
+	_, err = a.sess.ScopedSearch(ctx, ad.ScopedRequest{
+		Roots:  []dn.ObjectRef{dn.GUIDRef(id)},
+		Depth:  ad.ScopeOneLevel,
+		Filter: ldapfilter.Present(oc),
+	}, func(*ad.Entry) error {
+		if n >= limit {
+			capped = true
+			return stop
+		}
+		n++
+		return nil
+	})
+	if err != nil && !(capped && errors.Is(err, stop)) {
+		return 0, false, err
+	}
+	return n, capped, nil
+}

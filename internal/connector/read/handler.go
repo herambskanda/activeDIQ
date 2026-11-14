@@ -48,6 +48,17 @@ type Source interface {
 	Classify(ctx context.Context, id guid.GUID) (write.Verdict, error)
 }
 
+// ChildCountCap is the most children Read counts (§5.3a): a huge OU costs a bounded read.
+const ChildCountCap = 1000
+
+// ChildCounter is the optional child-count half of a Source. A Source without it answers a
+// ReadRequest.include_child_count with CAPABILITY_UNSUPPORTED.
+type ChildCounter interface {
+	// CountChildren counts the direct children of id with one paged ONE_LEVEL search that asks only
+	// objectGUID, on the same session. It stops after limit and reports capped.
+	CountChildren(ctx context.Context, id guid.GUID, limit int) (count int, capped bool, err error)
+}
+
 // Handler serves Read.
 type Handler struct {
 	src Source
@@ -127,7 +138,18 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	if err != nil {
 		return err
 	}
-	e, err := h.src.Read(ctx, id, withInstanceType(attrs), int(req.GetMaxValuesPerAttribute()))
+	var counter ChildCounter
+	if req.GetIncludeChildCount() {
+		var ok bool
+		if counter, ok = h.src.(ChildCounter); !ok {
+			return refuse(connectorv1.ErrorCode_ERROR_CODE_CAPABILITY_UNSUPPORTED, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "child count not supported")
+		}
+	}
+	askAttrs := withInstanceType(attrs)
+	if counter != nil {
+		askAttrs = withAttr(askAttrs, "objectClass") // the container check; build drops it unless asked for
+	}
+	e, err := h.src.Read(ctx, id, askAttrs, int(req.GetMaxValuesPerAttribute()))
 	if err != nil {
 		return mapAD(err, before)
 	}
@@ -156,6 +178,19 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 			verdict.Basis = nil
 		}
 	}
+	var children *connectorv1.ChildCount
+	if counter != nil {
+		if !isContainer(e) {
+			r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
+			r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: "ClassNotAllowed", Field: "include_child_count"}}
+			return r
+		}
+		n, capped, err := counter.CountChildren(ctx, id, ChildCountCap)
+		if err != nil {
+			return mapAD(err, before)
+		}
+		children = &connectorv1.ChildCount{Count: uint32(n), Capped: capped}
+	}
 	// The DC after the read and the classification must be the DC before them (and the pin).
 	after, err := h.bound(ctx, pin)
 	if err != nil {
@@ -171,7 +206,7 @@ func (h *Handler) Read(ctx context.Context, req *connectorv1.ReadRequest, out Se
 	}
 	obs := &connectorv1.Observation{Dc: after, ReceivedAt: timestamppb.New(h.now())}
 	if err := out.Send(&connectorv1.ReadResponse{Event: &connectorv1.ReadResponse_Header{
-		Header: &connectorv1.ReadHeader{Entry: entry, Observed: obs, Tier0: verdict}}}); err != nil {
+		Header: &connectorv1.ReadHeader{Entry: entry, Observed: obs, Tier0: verdict, ChildCount: children}}}); err != nil {
 		return err
 	}
 	for _, c := range tails {
@@ -197,14 +232,26 @@ func (h *Handler) bound(ctx context.Context, pin *connectorv1.Guid) (*connectorv
 
 // withInstanceType adds instanceType to the requested names: the parent decision needs it, and
 // build drops it again unless the caller asked for it.
-func withInstanceType(attrs []string) []string {
+func withInstanceType(attrs []string) []string { return withAttr(attrs, "instanceType") }
+
+func withAttr(attrs []string, name string) []string {
 	out := append([]string(nil), attrs...)
 	for _, a := range out {
-		if strings.EqualFold(a, "instanceType") {
+		if strings.EqualFold(a, name) {
 			return out
 		}
 	}
-	return append(out, "instanceType")
+	return append(out, name)
+}
+
+// isContainer: the live class (the last objectClass value, the most specific) is an OU or a container.
+func isContainer(e *ad.Entry) bool {
+	cls := e.Strings("objectClass")
+	if len(cls) == 0 {
+		return false
+	}
+	c := strings.ToLower(cls[len(cls)-1])
+	return c == "organizationalunit" || c == "container"
 }
 
 func sortedBasis(in []connectorv1.Tier0Basis) []connectorv1.Tier0Basis {
