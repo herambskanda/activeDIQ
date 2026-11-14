@@ -803,6 +803,14 @@ are the third outcome in DM-19.I4 and cannot be detected; the pre-checks exist s
 reachable by a DNS change that the `dsa_guid` check missed. The margin is provisional (the larger of
 one day and 10 % of the lifetime) `[OPEN → T-0065]`.
 
+**The caller (T-1198).** `sync.Engine.IncrementalCycle` is the DM-19 caller for one AD naming context. It stores the
+whole marshalled `FeedCookie` (not only `provider_state`) with the SyncCursor; per batch it commits the lease claim,
+the applied patches and the cursor advance in one transaction (I1); and it treats any `ResyncRequired` error, a
+`SERVER_REJECTED` or unreadable stored cookie, and a batch the applier could not apply in full (`NeedsRead`) as I3:
+`resync_required` is written first, then prime, full read, forest-wide reconcile and cookie store happen in one
+re-establish step. `UNREACHABLE_DC`, `THROTTLED` and an incomplete feed are retryable and leave cookie and cursor
+untouched. A suspended connection pauses the NC and resumes as a resync. Not yet wired to a job (follow-up).
+
 ### 6.4 The batch
 
 `ObjectChange{object_guid, state, dn, parent_guid, attributes[]}` is **final state since the cookie,
