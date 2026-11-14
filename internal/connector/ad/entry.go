@@ -120,7 +120,7 @@ func (e *Entry) Int32(name string) (int32, bool, error) {
 // splitRange splits "member;range=0-1499" into ("member", 0, 1499, false) and
 // "member;range=1500-*" into ("member", 1500, 0, true). ok is false for a name without a range option.
 func splitRange(name string) (base string, lo, hi int, star, ok bool) {
-	i := strings.Index(strings.ToLower(name), ";range=")
+	i := indexRangeOption(name)
 	if i < 0 {
 		return name, 0, 0, false, false
 	}
@@ -140,4 +140,34 @@ func splitRange(name string) (base string, lo, hi int, star, ok bool) {
 		return name, 0, 0, false, false
 	}
 	return base, lo, hi, false, true
+}
+
+// indexRangeOption returns the byte offset of ";range=" in name, matched ASCII-case-insensitively, or
+// -1. It never rewrites the string: strings.ToLower replaces each invalid UTF-8 byte with a 3-byte
+// U+FFFD, so an index found in the lowered copy is not an index into the original (T-1264).
+func indexRangeOption(name string) int {
+	const opt = ";range="
+	for i := 0; i+len(opt) <= len(name); i++ {
+		if asciiFoldEqual(name[i:i+len(opt)], opt) {
+			return i
+		}
+	}
+	return -1
+}
+
+// asciiFoldEqual compares byte by byte, folding only ASCII A-Z; b must be lower case.
+func asciiFoldEqual(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		c := a[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != b[i] {
+			return false
+		}
+	}
+	return true
 }
