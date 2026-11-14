@@ -45,7 +45,7 @@ browsing the Deleted Objects container (a different feature, see §6.2); counts 
 | X1 | **Source is the inventory only.** Table read: `directory_objects` (RLS, `tenant_id` first), nothing else. No LDAP, no connector call, no `client` import. | Same as ADR-0011 rule 1: two sources of "who is in my scope" disagree. |
 | X2 | **Keys are GUIDs.** Path and body identity is `objectGuid` (uuid). The API never returns or accepts a DN, and no DN is inside a cursor. | DM-16.I1/I2. A descendant's display `dn` is not yet re-derived on a parent rename (domain model "Realised so far", T-1197); a DN-built path would be a stale parent. |
 | X3 | **Trim = the one renderer.** A new exported entry `reportsql.CompileTree` beside `CompileSearch` fills its scope position with the existing `planScope`/`scopeSQL`. The producer is `rbac.ReadScopes.For(…, directory.read)`. No per-row `ReadScope.Admits`, no scope copied into a column, no second renderer. | ADR-0011 rules 10 and 11. Needs ADR-0011 amendment E3 (SE1 widened to `CompileTree`), ticket T-2086. |
-| X4 | **Roots are computed, not configured.** A root is a live container row the scope admits whose parent is the NC's absence (`parent_guid IS NULL`) or a live row the scope does **not** admit. Same renderer applied to the row and to its parent in one statement. | "A scoped technician's tree starts at their scope roots" without ever naming a hidden ancestor. |
+| X4 | **Roots are computed, not configured.** A root is a live container row the scope admits whose parent is the NC's absence (`parent_guid IS NULL`) or a live row the scope does **not** admit. Same renderer applied to the row and to its parent in one statement. The test only decides "this admitted row is a root"; it never returns, names or logs a non-admitted parent's GUID, name or DN. | "A scoped technician's tree starts at their scope roots" without ever naming a hidden ancestor. |
 | X5 | **Hidden = absent.** A GUID that does not exist, is not live, or is not admitted answers the same `404 not_found`, same body. Never 403 for an object. | No existence oracle for hidden OUs. |
 | X6 | **Explorer returns `state = 'live'` rows of AD connections only** (`nc_guid IS NOT NULL`). | §6.2. |
 | X7 | **Lazy and keyset-paged.** Tree nodes load one level at a time; every list is a keyset page; no OFFSET. | §4. |
@@ -106,7 +106,7 @@ ExplorerChildren:{ items: [ExplorerEntry], nextCursor: string|null, more: boolea
 ```
 
 `asOf` (per connection; the response carries the oldest) is `inventory.Freshness` over `ReadScope.Connections()` (the only `ReadScope` method a
-caller outside `authz`/`reportsql` may use, ADR-0011 rule 10).
+caller outside `authz`/`reportsql` may use, ADR-0011 rule 10). It is computed inside `internal/directory/inventory`, which E3 adds to the `Connections()` allow-list; `modules/explorer` only receives `asOf` from the port.
 No total count is returned. A count is exposed only if it is computed after trimming (LF-39) and is
 capped; v1 shows none.
 
@@ -298,7 +298,7 @@ tests, and cannot prove Windows-only classes (stated, not hidden).
 
 | ID | Fails the build when |
 | --- | --- |
-| EX1 | any package other than `internal/directory/inventory` calls `reportsql.CompileTree`; `modules/explorer` contains SQL, calls `ReadScope.Admits`/`.Terms`/`.Token`, or defines a second scope function (grep for `planScope`/`scopeSQL` definitions count is exactly one each) |
+| EX1 | any package other than `internal/directory/inventory` calls `reportsql.CompileTree`; `modules/explorer` contains SQL, calls `ReadScope.Admits`/`.Terms`/`.Token`, or defines a second scope function (go/types: exported `reportsql` funcs reaching `planScope`/`scopeSQL` are exactly `Compile`, `CompileCount`, `CompileSearch`, `CompileTree`; definitions count one each; no scope fragment emitted outside them); inventory Explorer files or `modules/explorer` hold SQL naming `ancestry`, `parent_guid` or `directory_objects`; `inventory.Explorer` or its result types expose ancestry or an unadmitted ancestor GUID (ADR-0011 E3) |
 | EX2 | the oracle property test fails: for random forests and scopes (subtree, one-level, naming context, exclusions) a walk from `roots` through `children` reaches exactly the live, admitted, container-reachable objects `AuthorizeRead` admits, and `view=all` pages union to the admitted children, with no duplicates and none missing |
 | EX3 | the OpenAPI Explorer schemas contain a `dn` property, a non-uuid path identifier, or a cursor that decodes to a DN |
 | EX4 | the move-in-flight test fails: a move between pages 1 and 2 yields a row under the wrong parent, a child under both parents, or a descendant displaying a stale name path; after repair the subtree is under the new parent only |
