@@ -1,4 +1,4 @@
--- 0078_sync_user_attribute_resync (T-1111; reports-2-second-slice D11): the sync set gained the
+-- 0079_sync_user_attribute_resync (T-1111; reports-2-second-slice D11): the sync set gained the
 -- user-attribute report attributes (msNPAllowDialin, msRTCSIP-UserEnabled, logonHours, scriptPath,
 -- telephoneNumber, mobile, manager, and the presence of thumbnailPhoto and jpegPhoto). An incremental
 -- feed delivers only what changed, so an object that never changes would never gain them. Every cursor

@@ -6,7 +6,7 @@ metadata:
 ---
 
 - Sync-set growth = three edits: `connector/ad/schema.go` (name-only entries), `sync/attrs.go`, mapper `userAttributes`; columns in `inventory/datasets.go` (`userAttributeColumns`). Bag is JSONB, so no column migration.
-- Existing objects only gain new keys via a full read: migration 0078 sets incremental `sync_cursors` to resync_required. Migration owner sees zero rows under FORCE RLS; lift with `NO FORCE` for the one statement (as 0021/0047/0074).
+- Existing objects only gain new keys via a full read: migration 0079 sets incremental `sync_cursors` to resync_required. Migration owner sees zero rows under FORCE RLS; lift with `NO FORCE` for the one statement (as 0021/0047/0074).
 - Photos: mapper keeps only `hasThumbnailPhoto/hasJpegPhoto` true; bytes are still transferred by the connector (no presence-only mode).
 - Hazard filed as T-2018: new bag keys on resync make `chg` CTE write 'edited' rows. T-2019 direct reports, T-2020 Windows lab Lync.
 - Samba: no msRTCSIP-UserEnabled schema. TestLabSyncMapping/group is red on main (T-1202 resolves members now).
