@@ -52,7 +52,7 @@ unrecorded chunks of a stalled plan. Plans of one chunk or fewer, and secret-inp
 
 Limits, by design: a chunked re-plan never keeps an earlier approval; a chunk whose DC pin differs from one a
 sibling already stored fails transiently and plans again against the stored pin (one DC per naming context,
-rule 5); the input itself is held per job. `route` still loads every step for the gate (follow-up).
+rule 5); the input itself is held per job. `route` and `approve` read a chunked plan through `summariseSteps` (stepsummary.go): count and worst reversibility by aggregate query, and at most 100 sample steps for the gate (`PlanSummary.Items`, `StepsTruncated`), so routing memory does not grow with row count. `approve` still reads every item target for the scope check (follow-up). `TestChunkedPlanMemoryBounded` asserts the 5k vs 20k live-heap peak.
 
 ## Approval scope (security review fixes)
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"math/rand/v2"
+	"runtime"
 	"slices"
 	"testing"
 	"time"
@@ -244,6 +245,51 @@ func TestSmallPlanStaysInline(t *testing.T) {
 		}
 		if sub.State == OpPlanning || len(p.takeJobs(JobPlan)) != 0 {
 			t.Fatalf("a one-chunk plan went through plan jobs: %+v", sub)
+		}
+	})
+}
+
+// AC3: planning, finalising and routing a bulk operation is bounded by the chunk size, not the row count.
+// It plans 5,000 rows (BULK2's CSV bound) and 20,000, samples the live heap after every chunk (and after
+// the last chunk, which finalises and routes), and requires the 20k peak to stay within a constant of the
+// 5k peak. A routing step that loaded every step would add roughly the plan size per 15,000 more rows.
+func TestChunkedPlanMemoryBounded(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		peakOf := func(n int) (peak uint64, perChunk time.Duration) {
+			p := newPRig(t, s, rigOpt{chunked: true})
+			sub, err := p.r.SubmitDirectory(context.Background(), p.bulkReq(n))
+			if err != nil {
+				t.Fatal(err)
+			}
+			js := p.planJobs()
+			var ms runtime.MemStats
+			runtime.GC()
+			runtime.ReadMemStats(&ms)
+			base := ms.HeapAlloc
+			start := time.Now()
+			for _, a := range js {
+				p.planChunk(sub.Operation, a)
+				runtime.GC()
+				runtime.ReadMemStats(&ms)
+				if ms.HeapAlloc > base && ms.HeapAlloc-base > peak {
+					peak = ms.HeapAlloc - base
+				}
+			}
+			if st := p.opState(sub.Operation); st == "planning" {
+				t.Fatalf("%d rows: plan not finalised", n)
+			}
+			return peak, time.Since(start) / time.Duration(len(js))
+		}
+		small, smallT := peakOf(5000)
+		large, largeT := peakOf(20000)
+		t.Logf("5000 rows: peak live heap +%d KiB, %v per chunk; 20000 rows: peak +%d KiB, %v per chunk",
+			small>>10, smallT, large>>10, largeT)
+		const slack = 4 << 20
+		if large > small+slack {
+			t.Fatalf("peak live heap grew with row count: 5000 rows +%d KiB, 20000 rows +%d KiB (slack %d KiB)", small>>10, large>>10, slack>>10)
+		}
+		if largeT > 3*smallT+50*time.Millisecond {
+			t.Fatalf("per-chunk time grew with row count: %v vs %v", smallT, largeT)
 		}
 	})
 }

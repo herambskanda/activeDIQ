@@ -625,12 +625,12 @@ WHERE tenant_id = $1::uuid AND operation_id = $2::uuid ORDER BY item_no, step_no
 // approved, queues it.
 func (r *Runner) route(ctx context.Context, t tenant.ID, opID string) (Submission, error) {
 	var op opRecord
-	var rows []stepRow
+	var sum stepSummary
 	err := r.cfg.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) (err error) {
 		if op, err = loadOp(ctx, tx, t, opID, false); err != nil {
 			return err
 		}
-		rows, err = loadSteps(ctx, tx, t, opID)
+		sum, err = summariseSteps(ctx, tx, t, opID)
 		return err
 	})
 	if err != nil {
@@ -642,10 +642,6 @@ func (r *Runner) route(ctx context.Context, t tenant.ID, opID string) (Submissio
 	}
 	act, _ := r.cfg.Registry.Lookup(op.Action)
 	d := act.Describe()
-	steps := make([]StepPlan, len(rows))
-	for i, sr := range rows {
-		steps[i] = sr.Plan
-	}
 	irrev := false
 	if r.cfg.Settings != nil {
 		if irrev, err = r.cfg.Settings.ApprovalForIrreversible(ctx); err != nil {
@@ -653,10 +649,10 @@ func (r *Runner) route(ctx context.Context, t tenant.ID, opID string) (Submissio
 		}
 	}
 	hold := kernelHold(holdInput{d: d, req: Request{Actor: op.Chain, Origin: op.Origin, MaxObjects: op.MaxObjects,
-		FreshStepUp: op.StepUpFresh, UndoNeededApproval: op.Hold == HoldUndoNeededAppr}, items: len(rows),
-		worst: worst(steps), irrevSetting: irrev})
-	route, gerr := r.cfg.Gate.Route(ctx, PlanSummary{Action: d, Steps: steps, PlanHash: op.PlanHash,
-		Irreversible: worst(steps) == Irreversible, HoldReason: hold, Origin: op.Origin, Requester: op.Chain.Requester})
+		FreshStepUp: op.StepUpFresh, UndoNeededApproval: op.Hold == HoldUndoNeededAppr}, items: sum.Items,
+		worst: sum.Worst, irrevSetting: irrev})
+	route, gerr := r.cfg.Gate.Route(ctx, PlanSummary{Action: d, Steps: sum.Sample, Items: sum.Items, StepsTruncated: sum.Truncated, PlanHash: op.PlanHash,
+		Irreversible: sum.Worst == Irreversible, HoldReason: hold, Origin: op.Origin, Requester: op.Chain.Requester})
 	if gerr != nil || (route.Kind != RouteAllow && route.Kind != RouteHold && route.Kind != RouteDeny) {
 		r.alert(ctx, Alert{Severity: "high", Reason: "gate_error", Operation: opID})
 		return sub, errors.Join(ErrGate, gerr)

@@ -4,7 +4,7 @@
 -- A bulk operation plans in chunk jobs of operations.chunk_size items. A chunk's rows (items, steps, this
 -- record) commit in one transaction, so the primary key (operation, plan_revision, chunk_no) makes a
 -- re-driven chunk a no-op once it is recorded, and a chunk planned for a superseded revision never counts.
--- chain_hash is the chunk's hash chained onto the previous chunk's; the last chunk's value is the
+-- chunk_hash is the chunk's hash chained onto the previous chunk's; the last chunk's value is the
 -- operation's plan hash.
 
 -- write-class: operation_plan_chunks system
