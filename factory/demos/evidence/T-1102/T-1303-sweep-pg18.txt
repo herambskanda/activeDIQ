@@ -71,3 +71,18 @@ sweep W=20000, ceiling-sized prefix texts [b p t m] holding [17847 16523 15832 1
   scoped  n  150  p50   256.9  p95   296.0  p99   335.8  max   351.6  OVER BUDGET
 
 sweep W=40000, ceiling-sized prefix texts [s] holding [33504] key rows (ms):
+  admin   n  150  p50   476.5  p95   544.8  p99   616.0  max   981.0  OVER BUDGET
+  scoped  n  150  p50   371.0  p95   432.6  p99   460.3  max   462.4  OVER BUDGET
+
+pg18 admin   exact      p95   349.0ms  OVER BUDGET
+pg18 admin   prefix     p95   356.4ms  OVER BUDGET
+pg18 admin   fuzzy1     p95   171.0ms  ok
+pg18 admin   nomatch    p95   123.3ms  ok
+pg18 admin   oneletter  p95   139.9ms  ok
+pg18 admin   ceiling    p95   179.7ms  ok
+pg18 scoped  exact      p95   263.5ms  OVER BUDGET
+pg18 scoped  prefix     p95   268.6ms  OVER BUDGET
+pg18 scoped  fuzzy1     p95   178.2ms  ok
+pg18 scoped  nomatch    p95   117.9ms  ok
+pg18 scoped  oneletter  p95   120.3ms  ok
+pg18 scoped  ceiling    p95   145.9ms  ok
