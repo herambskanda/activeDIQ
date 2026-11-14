@@ -25,9 +25,7 @@ import (
 )
 
 func Test_reports_library_batch2_at_scale(t *testing.T) {
-	if testing.Short() {
-		t.Skip("loads 25,000 objects")
-	}
+	requireScaleFull(t) // loads 25,000 objects
 	users, comps, groups, ous := 20000, 5000, 1000, 100
 	if n, err := strconv.Atoi(os.Getenv("ADIQ_SCALE_USERS")); err == nil && n > 0 { // a smaller load to read plans quickly
 		users, comps = n, n/4

@@ -2,7 +2,7 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: fitness-p2-oci gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order
+.PHONY: test-scale fitness-p2-oci gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order
 
 ci: lint gen-check gen-modules-check gen-api-check lint-api test fitness workflows-check build secrets-scan vuln-scan fuzz-saml lab-test-unit lab-test-windows-unit ci-proof ## Everything a merge needs: lint, generated-code freshness (connector proto, table ownership map and the API contract), API lint, tests, fitness functions (incl. the ADR-0001 build matrix), web build, secret scan, dependency vulnerability scan, gate proofs
 	@echo "make ci: passed"
@@ -43,6 +43,11 @@ test: test-go test-web ## Go and web unit tests
 
 test-go: web-install ## Go tests; package parallelism bounded (-p 3) because PG-backed packages each start an embedded PostgreSQL and starve under full parallelism (T-0550)
 	go test -count=1 -p 3 -timeout 30m ./...
+
+SCALE_TIMEOUT ?= 45m
+
+test-scale: ## T-2008: the opt-in scale job (ADIQ_SCALE_FULL=1): group_member_counts, closure fan-out budget and batch-2 reports at 25,000 objects on PostgreSQL 16 and 18, with its own timeout ($(SCALE_TIMEOUT)); not part of `make ci`, whose inventory run must stay under 400 s
+	ADIQ_SCALE_FULL=1 go test -count=1 -timeout $(SCALE_TIMEOUT) ./internal/directory/inventory -run 'Test_group_member_counts_at_scale|Test_group_closure_fanout_is_bounded|Test_reports_library_batch2_at_scale' -v
 
 test-web: web-install
 	npm --prefix web run --silent test
