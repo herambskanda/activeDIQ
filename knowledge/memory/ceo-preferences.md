@@ -45,3 +45,4 @@ CEO unless they state otherwise.
 
 ## Research and claims
 - 2026-08-12 · External claims carry inline source URLs; unverified claims tagged [UNVERIFIED]; never guess competitor features. (../UEM/CLAUDE.md)
+- 2026-11-13 · Brand: the CEO overrode the Ledger recommendation and chose Harbor Teal (D-0032), superseding D-0012 and the earlier 'no cards / no soft shadows' stance for the brand look. Their kept UI work (A-0042) was deliberate: when they keep work that conflicts with a ratified decision, assume it is intentional and ask once, not twice. Do not defend Ledger further.

@@ -496,6 +496,15 @@ export class Dispatcher {
       throw err;
     }
     for (const id of ids) this.gateRetryAt.delete(id);
+    if (verdict.fastLane) {
+      const fl = verdict.fastLane;
+      const result = fl.ok ? (fl.code === 0 ? 'passed' : `failed (exit ${fl.code})`) : 'could not complete';
+      const agreement = fl.agreed === null ? 'nothing to compare' : fl.agreed ? 'agreed with the full gate' : 'DISAGREED with the full gate';
+      appendEvent(ctx, {
+        actor: 'dispatcher', kind: 'dispatcher',
+        text: `fast lane (${fl.argv.join(' ')}) on ${ids.join(', ')} ${result} in ${fl.seconds}s — ${agreement}. Logging only; does not affect this merge. Log: ${fl.log}`,
+      });
+    }
     const conflicts = verdict.conflicts ?? [];
     const memberIds = verdict.members ?? ids;
     for (const c of conflicts) {

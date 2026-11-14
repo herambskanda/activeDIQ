@@ -222,7 +222,7 @@ func Test_step_up_permissions_all_in_policy(t *testing.T) {
 }
 
 // The check bites on a fixture document: a routed StepUp permission without a row is reported, including
-// one that is not in moduleOperationPermissions (a built-in role permission); an unrouted one is not.
+// one that is a built-in role permission rather than a module contribution; an unrouted one is not.
 func Test_step_up_policy_gap_check_bites(t *testing.T) {
 	const fixture = `{"paths":{
 	 "/a":{"post":{"operationId":"a","tags":["t"],"x-permission":"a.do"}},
@@ -233,8 +233,8 @@ func Test_step_up_policy_gap_check_bites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(moduleOperationPermissions, "inventory.tier0_designation.manage") {
-		t.Fatal("fixture premise broken: the Tier-0 permission is now in moduleOperationPermissions")
+	if !slices.Contains(kernelPermissions(), "inventory.tier0_designation.manage") {
+		t.Fatal("fixture premise broken: the Tier-0 permission is no longer a built-in role permission")
 	}
 	cat := []operation.Descriptor{
 		{ID: "a.routed", Permission: "a.do", StepUp: true},
