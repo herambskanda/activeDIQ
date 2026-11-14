@@ -16,6 +16,7 @@ import (
 )
 
 var _ = tablekind.Declare(tablekind.Table{Name: "public.directory_objects", Entity: "DM-16", Kind: tablekind.Directory})
+var _ = tablekind.Declare(tablekind.Table{Name: "public.directory_object_changes", Entity: "DM-18", Kind: tablekind.Directory, AppendOnly: true})
 
 // Kind is DM-16 `kind`.
 type Kind string
