@@ -37,10 +37,14 @@ func migrationsFS(t *testing.T, keep func(name string) bool) fs.FS {
 // AC1: migration 0074 over a populated database. Two tenants with name, sam and other-kind keys exist before
 // the migration; afterwards the postings equal what show_trgm gives over the name and sam keys (non-zero),
 // the structure is as the ADR says, and the privileges are the runtime role's.
+// objectChangesMig is the T-1109 history table the object upsert writes to; it does not depend on the postings,
+// so the pre-0074 schema carries it and the populate step works.
+const objectChangesMig = "0077_inventory_object_changes.sql"
+
 func Test_migration_0074_builds_the_postings_over_a_populated_database(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		const mig = "0074_inventory_search_trigrams.sql"
-		e := setupFS(t, s, migrationsFS(t, func(n string) bool { return n < mig }))
+		e := setupFS(t, s, migrationsFS(t, func(n string) bool { return n < mig || n == objectChangesMig }))
 		e.hStructure(t, e.adA)
 		if _, err := e.populate(t, e.adA, hBase, sSrchUser(1, "praman", "Priya Raman"), sSrchUser(2, "jdoe", "Jóhn Döe")); err != nil {
 			t.Fatal(err)
