@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"io"
 	"log/slog"
 	"sort"
@@ -79,44 +80,18 @@ func (e *Engine) FullCycle(ctx context.Context, tid tenant.ID, id connection.ID,
 	}
 
 	// Claim every cursor before the first connector call, so a deposed holder reads nothing.
-	type target struct {
-		d     Domain
-		key   Key
-		lease jobs.Lease
-		skip  bool
+	claims, err := e.claimAll(ctx, tid, id, domains, lease)
+	if err != nil {
+		return rep, err
 	}
-	targets := make([]target, len(domains))
-	for i, d := range domains {
-		part, err := NCPartition(string(d.NC))
-		if err != nil {
-			return rep, fmt.Errorf("%w: naming context", ErrNotDomainNC)
-		}
-		key := Key{Connection: inventory.ConnectionID(id), Partition: part}
-		name, err := LeaseName(key)
-		if err != nil {
-			return rep, err
-		}
-		l, err := lease(ctx, name)
-		if err != nil {
-			return rep, fmt.Errorf("%w: lease: %w", ErrSource, err)
-		}
-		var cur Cursor
-		if err := e.Tenants.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
-			var err error
-			cur, err = e.Cursors.Claim(ctx, tx, key, l)
-			return err
-		}); err != nil {
-			return rep, err
-		}
-		t := target{d: d, key: key, lease: l}
-		switch cur.State {
-		case StatePaused:
-			return rep, fmt.Errorf("%w", ErrPaused)
-		case StateIncremental:
-			t.skip = true
-		}
-		targets[i] = t
-		rep.Domains = append(rep.Domains, DomainReport{NC: d.NC, Skipped: t.skip})
+	type target struct {
+		claim
+		skip bool
+	}
+	targets := make([]target, len(claims))
+	for i, c := range claims {
+		targets[i] = target{claim: c, skip: c.state == StateIncremental}
+		rep.Domains = append(rep.Domains, DomainReport{NC: c.d.NC, Skipped: targets[i].skip})
 	}
 	todo := false
 	for _, t := range targets {
@@ -126,21 +101,10 @@ func (e *Engine) FullCycle(ctx context.Context, tid tenant.ID, id connection.ID,
 		return rep, nil
 	}
 
-	cc, err := e.Source.Reader(ctx, string(id))
+	cc, pageSize, err := e.connect(ctx, id, ref, domains)
 	if err != nil {
-		return rep, fmt.Errorf("%w: connector: %w", ErrSource, err)
-	}
-	desc, err := cc.Describe(ctx, &connectorv1.DescribeRequest{Connection: ref})
-	if err != nil {
-		if ctx.Err() != nil {
-			return rep, ctx.Err()
-		}
-		return rep, &ConnectorError{Code: status.Code(err)}
-	}
-	if err := confirmDomains(desc, domains); err != nil {
 		return rep, err
 	}
-	pageSize := min(desc.GetLimits().GetMaxPageSize(), maxPageSize)
 
 	var failed []error
 	for i, t := range targets {
@@ -161,6 +125,68 @@ func (e *Engine) FullCycle(ctx context.Context, tid tenant.ID, id connection.ID,
 		return rep, err
 	}
 	return rep, errors.Join(failed...)
+}
+
+// connect resolves the connection's connector, checks that every domain to read is a domain NC of this
+// directory, and returns the page size to ask for.
+func (e *Engine) connect(ctx context.Context, id connection.ID, ref *connectorv1.ConnectionRef, domains []Domain) (client.Reader, uint32, error) {
+	cc, err := e.Source.Reader(ctx, string(id))
+	if err != nil {
+		return nil, 0, fmt.Errorf("%w: connector: %w", ErrSource, err)
+	}
+	desc, err := cc.Describe(ctx, &connectorv1.DescribeRequest{Connection: ref})
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, 0, ctx.Err()
+		}
+		return nil, 0, &ConnectorError{Code: status.Code(err)}
+	}
+	if err := confirmDomains(desc, domains); err != nil {
+		return nil, 0, err
+	}
+	return cc, min(desc.GetLimits().GetMaxPageSize(), maxPageSize), nil
+}
+
+// claim is a managed domain whose partition cursor this holder has claimed under its lease.
+type claim struct {
+	d     Domain
+	key   Key
+	lease jobs.Lease
+	state State
+}
+
+// claimAll claims the cursor of every domain under its lease, in order, before anything is read from the
+// connector: a lease behind the stored fencing token is ErrFenced, and a paused partition is ErrPaused.
+func (e *Engine) claimAll(ctx context.Context, tid tenant.ID, id connection.ID, domains []Domain, lease LeaseFunc) ([]claim, error) {
+	out := make([]claim, 0, len(domains))
+	for _, d := range domains {
+		part, err := NCPartition(string(d.NC))
+		if err != nil {
+			return nil, fmt.Errorf("%w: naming context", ErrNotDomainNC)
+		}
+		key := Key{Connection: inventory.ConnectionID(id), Partition: part}
+		name, err := LeaseName(key)
+		if err != nil {
+			return nil, err
+		}
+		l, err := lease(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("%w: lease: %w", ErrSource, err)
+		}
+		var cur Cursor
+		if err := e.Tenants.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+			var err error
+			cur, err = e.Cursors.Claim(ctx, tx, key, l)
+			return err
+		}); err != nil {
+			return nil, err
+		}
+		if cur.State == StatePaused {
+			return nil, fmt.Errorf("%w", ErrPaused)
+		}
+		out = append(out, claim{d: d, key: key, lease: l, state: cur.State})
+	}
+	return out, nil
 }
 
 // refuse is the gate before anything is read: an active, unretired AD forest connection with a verified
@@ -381,6 +407,8 @@ func errClass(err error) (phase, class string) {
 		return phase, "connector:" + ce.Code.String()
 	case errors.As(err, &rf):
 		return phase, "refused:" + string(rf.Reason)
+	case errors.Is(err, inventory.ErrMassDelete):
+		return phase, "mass_delete_refused"
 	case errors.Is(err, ErrFenced):
 		return phase, "fenced"
 	case errors.Is(err, ErrPaused):
