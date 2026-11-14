@@ -41,3 +41,4 @@
 - [replxml lessons](replxml-lessons.md) — T-1721: xml alloc per element vs 8x bound, RX2 assignment trap, one value per call, unverified names
 - [replstatus lessons](replstatus-lessons.md) — T-1723: protoc-less pb.go recipe, no-control read, RX6 comment trap, DC enumeration seam
 - [object changes lessons](object-changes-lessons.md) — T-1109: chg CTE in upsert, baseline rule, RowAnchor on current object, pre-existing red
+- [member kinds lessons](member-kinds-lessons.md) — T-1586: kinds 11-13 layout, test-helper clashes, spec items not built
