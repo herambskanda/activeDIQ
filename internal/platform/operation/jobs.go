@@ -16,6 +16,15 @@ import (
 // in the operation_steps rows, so a lost job is re-driven by the sweeper and a duplicate is harmless.
 func (r *Runner) registerJobs(reg *jobs.Registry) error {
 	kinds := []jobs.Kind{
+		{Name: JobPlan, Timeout: 10 * time.Minute, Mode: jobs.ModeManagedTx,
+			ValidateArgs: func(a jsontext.Value) error { return decodeArgs(a, &planArgs{}) },
+			RunManaged: func(ctx context.Context, run jobs.TenantTx, c jobs.Claimed) error {
+				var a planArgs
+				if err := decodeArgs(c.Args, &a); err != nil {
+					return &jobs.Failure{Code: "bad_args", Permanent: true, Err: err}
+				}
+				return r.PlanChunk(ctx, c.Tenant, run.Run, a)
+			}},
 		{Name: JobApply, Timeout: 30 * time.Minute, Mode: jobs.ModeManagedTx,
 			ValidateArgs: func(a jsontext.Value) error { return decodeArgs(a, &chunkArgs{}) },
 			RunManaged: func(ctx context.Context, run jobs.TenantTx, c jobs.Claimed) error {

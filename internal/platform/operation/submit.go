@@ -209,6 +209,15 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 		return Submission{}, fmt.Errorf("%w: %q", ErrUnknown, op.Action)
 	}
 	d := act.Describe()
+	if cp, ok := act.(ChunkPlanner); ok && !d.SecretInput && len(secrets) == 0 {
+		n, err := cp.PlanItems(input)
+		if err != nil {
+			return r.failPlan(ctx, t, op, err)
+		}
+		if n > op.ChunkSize {
+			return r.startChunkedPlan(ctx, t, op, n)
+		}
+	}
 	u := &run{r: r, req: Request{Tenant: t, Actor: op.Chain, Action: op.Action, Operation: step.OperationID(opID)}, act: act, d: d, eventID: r.cfg.NewID()}
 
 	var steps []StepPlan
@@ -226,54 +235,9 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 	if perr != nil {
 		return r.failPlan(ctx, t, op, perr)
 	}
-	// Pin one DC per naming context (rule 5), keeping an earlier pin while it is healthy.
-	pins := authority.Pins{}
-	for k, v := range op.Pins {
-		pins[k] = v
-	}
-	dsas := authority.DSAPins{}
-	for k, v := range op.DSAs {
-		dsas[k] = v
-	}
-	items := make([]planItem, len(steps))
-	for i, sp := range steps {
-		items[i] = planItem{sp: sp, skipped: len(sp.Diff) == 0}
-		if items[i].skipped {
-			continue
-		}
-		if d.Target == TargetAD {
-			if sp.Target.NC == "" {
-				items[i].blocked = "no_pin" // an AD target without a naming context is never read or written unpinned
-				continue
-			}
-			if r.cfg.Pinner == nil {
-				return r.failPlan(ctx, t, op, fmt.Errorf("%w: no DC pinner wired", ErrInvalid))
-			}
-			// The operation's own tenant always wins over whatever the caller's ctx carries.
-			pin, err := r.cfg.Pinner.Pin(authority.WithTenant(ctx, t.String()), sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC])
-			if err != nil {
-				return r.failPlan(ctx, t, op, fmt.Errorf("pinning a DC: %w", err))
-			}
-			if pin.Host == "" || !validDSAGUID(pin.DSAGUID) {
-				return r.failPlan(ctx, t, op, fmt.Errorf("pinning a DC: %w: pin lacks a host or a valid DSA GUID", ErrInvalid))
-			}
-			pins[sp.Target.NC], dsas[sp.Target.NC] = pin.Host, pin.DSAGUID
-		}
-		if reason := r.authoriseTarget(ctx, t, op.Chain, d.Permission, sp.Target, pins, dsas); reason != "" {
-			items[i].blocked = reason
-		}
-		if aa, ok := act.(AlsoAuthorizer); ok && items[i].blocked == "" {
-			for _, x := range aa.AlsoAuthorize(sp) {
-				if x.NC == "" || pins[x.NC] == "" {
-					items[i].blocked = "no_pin" // an extra target in a partition with no pin is never read unpinned
-					break
-				}
-				if reason := r.authoriseTarget(ctx, t, op.Chain, d.Permission, x, pins, dsas); reason != "" {
-					items[i].blocked = reason
-					break
-				}
-			}
-		}
+	items, pins, dsas, err := r.evaluateItems(ctx, t, op, act, d, steps)
+	if err != nil {
+		return r.failPlan(ctx, t, op, err)
 	}
 	hash := u.planHash
 	var sub Submission
@@ -299,9 +263,72 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 	return routed, err
 }
 
+// evaluateItems turns planned steps into plan items: it pins one DC per naming context and authorises
+// every target (rules 5 and 7). It starts from op.Pins and returns the pins it used, so a chunked plan
+// can merge them. It writes nothing.
+func (r *Runner) evaluateItems(ctx context.Context, t tenant.ID, op opRecord, act Action, d Descriptor, steps []StepPlan) ([]planItem, authority.Pins, authority.DSAPins, error) {
+	// Pin one DC per naming context (rule 5), keeping an earlier pin while it is healthy.
+	pins := authority.Pins{}
+	for k, v := range op.Pins {
+		pins[k] = v
+	}
+	dsas := authority.DSAPins{}
+	for k, v := range op.DSAs {
+		dsas[k] = v
+	}
+	items := make([]planItem, len(steps))
+	for i, sp := range steps {
+		items[i] = planItem{sp: sp, skipped: len(sp.Diff) == 0}
+		if items[i].skipped {
+			continue
+		}
+		if d.Target == TargetAD {
+			if sp.Target.NC == "" {
+				items[i].blocked = "no_pin" // an AD target without a naming context is never read or written unpinned
+				continue
+			}
+			if r.cfg.Pinner == nil {
+				return nil, nil, nil, fmt.Errorf("%w: no DC pinner wired", ErrInvalid)
+			}
+			// The operation's own tenant always wins over whatever the caller's ctx carries.
+			pin, err := r.cfg.Pinner.Pin(authority.WithTenant(ctx, t.String()), sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC])
+			if err != nil {
+				return nil, nil, nil, fmt.Errorf("pinning a DC: %w", err)
+			}
+			if pin.Host == "" || !validDSAGUID(pin.DSAGUID) {
+				return nil, nil, nil, fmt.Errorf("pinning a DC: %w: pin lacks a host or a valid DSA GUID", ErrInvalid)
+			}
+			pins[sp.Target.NC], dsas[sp.Target.NC] = pin.Host, pin.DSAGUID
+		}
+		if reason := r.authoriseTarget(ctx, t, op.Chain, d.Permission, sp.Target, pins, dsas); reason != "" {
+			items[i].blocked = reason
+		}
+		if aa, ok := act.(AlsoAuthorizer); ok && items[i].blocked == "" {
+			for _, x := range aa.AlsoAuthorize(sp) {
+				if x.NC == "" || pins[x.NC] == "" {
+					items[i].blocked = "no_pin" // an extra target in a partition with no pin is never read unpinned
+					break
+				}
+				if reason := r.authoriseTarget(ctx, t, op.Chain, d.Permission, x, pins, dsas); reason != "" {
+					items[i].blocked = reason
+					break
+				}
+			}
+		}
+	}
+	return items, pins, dsas, nil
+}
+
 // failPlan records planning -> plan_failed with the failure event.
 func (r *Runner) failPlan(ctx context.Context, t tenant.ID, op opRecord, cause error) (Submission, error) {
 	err := r.cfg.DB.WithTenant(ctx, t, func(ctx context.Context, tx store.Tx) error {
+		cur, err := loadOp(ctx, tx, t, op.ID, true)
+		if err != nil {
+			return err
+		}
+		if cur.State != OpPlanning || cur.Revision != op.Revision {
+			return ErrConflict // cancelled or re-planned meanwhile: a late failure does not land (rule 6)
+		}
 		if err := setOperationState(ctx, tx, t, op.ID, OpPlanning, OpPlanFailed); err != nil {
 			return err
 		}
@@ -324,26 +351,38 @@ func (r *Runner) failPlan(ctx context.Context, t tenant.ID, op opRecord, cause e
 // item then reaches the audit trail through its own operation.refused event with its own reason. Any technical block (facts_unavailable, no_pin, anything else) keeps it a failure
 // with reason plan_failed, so a SIEM rule can tell a refusal from an outage.
 func planRefusal(items []planItem) (audit.Outcome, string, authority.TargetRef) {
-	var reason string
-	var tgt authority.TargetRef
+	var f refusalFold
 	for _, it := range items {
-		if it.blocked == "" {
-			continue
-		}
-		if it.blocked != blockTier0 && it.blocked != blockDenied {
-			return audit.Failure, "plan_failed", authority.TargetRef{}
-		}
-		switch {
-		case reason == "":
-			reason, tgt = it.blocked, it.sp.Target
-		case reason != it.blocked:
-			reason, tgt = blockDenied, authority.TargetRef{}
-		}
+		f.add(it.blocked, it.sp.Target)
 	}
-	if reason == "" {
+	return f.result()
+}
+
+// refusalFold is planRefusal's rule applied one blocked item at a time, so a chunked plan can classify
+// without holding every item.
+type refusalFold struct {
+	reason    string
+	tgt       authority.TargetRef
+	technical bool
+}
+
+func (f *refusalFold) add(blocked string, target authority.TargetRef) {
+	switch {
+	case blocked == "" || f.technical:
+	case blocked != blockTier0 && blocked != blockDenied:
+		f.technical = true
+	case f.reason == "":
+		f.reason, f.tgt = blocked, target
+	case f.reason != blocked:
+		f.reason, f.tgt = blockDenied, authority.TargetRef{}
+	}
+}
+
+func (f *refusalFold) result() (audit.Outcome, string, authority.TargetRef) {
+	if f.technical || f.reason == "" {
 		return audit.Failure, "plan_failed", authority.TargetRef{}
 	}
-	return audit.Denied, reason, tgt
+	return audit.Denied, f.reason, f.tgt
 }
 
 // Block reasons that are authorisation refusals, as opposed to technical ones.
@@ -411,54 +450,12 @@ WHERE tenant_id = $1::uuid AND operation_id = $2::uuid AND state = 'blocked' ORD
 	if _, err := tx.Exec(ctx, `DELETE FROM public.operation_items WHERE tenant_id = $1::uuid AND operation_id = $2::uuid`, t.String(), opID); err != nil {
 		return sub, err
 	}
-	for i, it := range items {
-		target, _ := json.Marshal(it.sp.Target, json.Deterministic(true))
-		if _, err := tx.Exec(ctx, `INSERT INTO public.operation_items (tenant_id, operation_id, item_no, state, phase, target)
-VALUES ($1::uuid, $2::uuid, $3, 'pending', $4, $5::jsonb)`, t.String(), opID, i, it.sp.Phase, string(target)); err != nil {
-			return sub, fmt.Errorf("operation: inserting item: %w", err)
-		}
-		switch {
-		case it.blocked != "":
-			sub.Blocked++
-			if err := setItemState(ctx, tx, t, opID, i, ItemPending, ItemBlocked, it.blocked); err != nil {
-				return sub, err
-			}
-		case it.skipped:
-			sub.Skipped++
-			if err := setItemState(ctx, tx, t, opID, i, ItemPending, ItemSkipped, ""); err != nil {
-				return sub, err
-			}
-		default:
-			sub.Planned++
-			plan, err := json.Marshal(it.sp, json.Deterministic(true))
-			if err != nil {
-				return sub, fmt.Errorf("%w: plan does not encode", ErrInvalid)
-			}
-			dg := stepDigest(it.sp)
-			if _, err := tx.Exec(ctx, `INSERT INTO public.operation_steps (tenant_id, operation_id, item_no, step_no, state, plan, digest,
-  connection_id, dc_host, naming_context, credential)
-VALUES ($1::uuid, $2::uuid, $3, 0, 'planned', $4::jsonb, $5, $6, $7, $8, $9)`, t.String(), opID, i, string(plan), dg[:],
-				it.sp.Target.Connection, pins[it.sp.Target.NC], string(it.sp.Target.NC), it.sp.Credential); err != nil {
-				return sub, fmt.Errorf("operation: inserting step: %w", err)
-			}
-			if sec, ok := secrets[i]; ok {
-				if err := r.putSecret(ctx, tx, t, step.Key{Operation: step.OperationID(opID), Item: i}, sec, ttl); err != nil {
-					return sub, err
-				}
-			}
-			if err := setItemState(ctx, tx, t, opID, i, ItemPending, ItemPlanned, ""); err != nil {
-				return sub, err
-			}
-		}
+	counts, err := r.insertItems(ctx, tx, t, opID, 0, items, pins, secrets, ttl)
+	if err != nil {
+		return sub, err
 	}
-	next := OpPlanned
-	result := ""
-	switch {
-	case sub.Planned == 0 && sub.Blocked > 0:
-		next, result = OpPlanFailed, "plan_failed"
-	case sub.Planned == 0:
-		next, result = OpNoChange, "no_change"
-	}
+	sub.Planned, sub.Skipped, sub.Blocked = counts.planned, counts.skipped, counts.blocked
+	next, result := nextPlanState(sub.Planned, sub.Blocked)
 	pinsJSON, _ := json.Marshal(pins, json.Deterministic(true))
 	dsasJSON, _ := json.Marshal(dsas, json.Deterministic(true))
 	keep := cur.ApprovedHash == hash && slices.Equal(priorBlocked, nowBlocked)
@@ -482,7 +479,102 @@ WHERE tenant_id = $1::uuid AND id = $2::uuid`, t.String(), opID, hash, string(pi
 			covered = tgt
 		}
 	}
-	for i, it := range items {
+	if err := r.emitRefused(ctx, tx, cur, 0, items, hash, covered); err != nil {
+		return sub, err
+	}
+	if result != "" {
+		out, reason, tgt := audit.Success, result, authority.TargetRef{}
+		if result == "plan_failed" {
+			out, reason, tgt = planRefusal(items)
+		}
+		if err := r.completePlan(ctx, tx, t, cur, hash, result, out, reason, tgt, sub.Blocked, sub.Skipped); err != nil {
+			return sub, err
+		}
+	}
+	return sub, nil
+}
+
+// nextPlanState is the state a plan with these counts moves to, and the result it completes with when
+// it does not go on to routing.
+func nextPlanState(planned, blocked int) (OperationState, string) {
+	switch {
+	case planned == 0 && blocked > 0:
+		return OpPlanFailed, "plan_failed"
+	case planned == 0:
+		return OpNoChange, "no_change"
+	}
+	return OpPlanned, ""
+}
+
+// completePlan finishes a plan that will not run (no_change, plan_failed): it deletes the operation's
+// secrets and writes the operation.completed event.
+func (r *Runner) completePlan(ctx context.Context, tx store.Tx, t tenant.ID, cur opRecord, hash, result string, out audit.Outcome, reason string, tgt authority.TargetRef, blocked, skipped int) error {
+	if err := deleteOperationSecrets(ctx, tx, t, cur.ID); err != nil {
+		return err
+	}
+	return r.emit(ctx, tx, audit.Event{ID: "op-" + cur.ID + "-" + result, Kind: KindOperationCompleted, Actor: cur.Chain,
+		Key: step.Key{Operation: step.OperationID(cur.ID)}, Target: tgt, Outcome: out, Reason: reason, PlanHash: hash,
+		Details: detail("blocked", blocked, "result", result, "skipped", skipped)})
+}
+
+// itemCounts is what insertItems wrote, by outcome.
+type itemCounts struct{ planned, skipped, blocked int }
+
+// insertItems inserts the items and steps of one plan or plan chunk, numbering them from first, and
+// sets each item's state. The caller's transaction commits them with whatever records them as planned.
+func (r *Runner) insertItems(ctx context.Context, tx store.Tx, t tenant.ID, opID string, first int, items []planItem, pins authority.Pins, secrets map[int]secret.Secret, ttl time.Duration) (itemCounts, error) {
+	var c itemCounts
+	for k, it := range items {
+		i := first + k
+		target, _ := json.Marshal(it.sp.Target, json.Deterministic(true))
+		if _, err := tx.Exec(ctx, `INSERT INTO public.operation_items (tenant_id, operation_id, item_no, state, phase, target)
+VALUES ($1::uuid, $2::uuid, $3, 'pending', $4, $5::jsonb)`, t.String(), opID, i, it.sp.Phase, string(target)); err != nil {
+			return c, fmt.Errorf("operation: inserting item: %w", err)
+		}
+		switch {
+		case it.blocked != "":
+			c.blocked++
+			if err := setItemState(ctx, tx, t, opID, i, ItemPending, ItemBlocked, it.blocked); err != nil {
+				return c, err
+			}
+		case it.skipped:
+			c.skipped++
+			if err := setItemState(ctx, tx, t, opID, i, ItemPending, ItemSkipped, ""); err != nil {
+				return c, err
+			}
+		default:
+			c.planned++
+			plan, err := json.Marshal(it.sp, json.Deterministic(true))
+			if err != nil {
+				return c, fmt.Errorf("%w: plan does not encode", ErrInvalid)
+			}
+			dg := stepDigest(it.sp)
+			if _, err := tx.Exec(ctx, `INSERT INTO public.operation_steps (tenant_id, operation_id, item_no, step_no, state, plan, digest,
+  connection_id, dc_host, naming_context, credential)
+VALUES ($1::uuid, $2::uuid, $3, 0, 'planned', $4::jsonb, $5, $6, $7, $8, $9)`, t.String(), opID, i, string(plan), dg[:],
+				it.sp.Target.Connection, pins[it.sp.Target.NC], string(it.sp.Target.NC), it.sp.Credential); err != nil {
+				return c, fmt.Errorf("operation: inserting step: %w", err)
+			}
+			if sec, ok := secrets[i]; ok {
+				if err := r.putSecret(ctx, tx, t, step.Key{Operation: step.OperationID(opID), Item: i}, sec, ttl); err != nil {
+					return c, err
+				}
+			}
+			if err := setItemState(ctx, tx, t, opID, i, ItemPending, ItemPlanned, ""); err != nil {
+				return c, err
+			}
+		}
+	}
+	return c, nil
+}
+
+// emitRefused records one operation.refused event for each item of a plan or chunk that authorisation
+// refused, numbering from first. The block reason on operation_items is mutable and outside the hash
+// chain, so the audit event is the record.
+func (r *Runner) emitRefused(ctx context.Context, tx store.Tx, cur opRecord, first int, items []planItem, hash string, covered authority.TargetRef) error {
+	opID := cur.ID
+	for k, it := range items {
+		i := first + k
 		if it.blocked != blockTier0 && it.blocked != blockDenied {
 			continue
 		}
@@ -493,24 +585,10 @@ WHERE tenant_id = $1::uuid AND id = $2::uuid`, t.String(), opID, hash, string(pi
 		if err := r.emit(ctx, tx, audit.Event{ID: fmt.Sprintf("op-%s-refused-%d-%d", opID, cur.Revision, i), Kind: KindOperationRefused,
 			Actor: cur.Chain, Key: step.Key{Operation: step.OperationID(opID), Item: i}, Target: it.sp.Target,
 			Outcome: audit.Denied, Reason: it.blocked, PlanHash: hash, Details: detail("phase", "plan")}); err != nil {
-			return sub, err
+			return err
 		}
 	}
-	if result != "" {
-		out, reason, tgt := audit.Success, result, authority.TargetRef{}
-		if result == "plan_failed" {
-			out, reason, tgt = planRefusal(items)
-		}
-		if err := deleteOperationSecrets(ctx, tx, t, opID); err != nil {
-			return sub, err
-		}
-		if err := r.emit(ctx, tx, audit.Event{ID: "op-" + opID + "-" + result, Kind: KindOperationCompleted, Actor: cur.Chain,
-			Key: step.Key{Operation: step.OperationID(opID)}, Target: tgt, Outcome: out, Reason: reason, PlanHash: hash,
-			Details: detail("blocked", sub.Blocked, "result", result, "skipped", sub.Skipped)}); err != nil {
-			return sub, err
-		}
-	}
-	return sub, nil
+	return nil
 }
 
 type stepRow struct {
@@ -818,6 +896,7 @@ func newUUID() string {
 
 // Job kinds of the persisted path (rule 6).
 const (
+	JobPlan      = "operation.plan"
 	JobApply     = "operation.apply"
 	JobVerify    = "operation.verify"
 	JobReconcile = "operation.reconcile"

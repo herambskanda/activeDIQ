@@ -296,6 +296,7 @@ type rigOpt struct {
 	class    Reversibility
 	pinner   Pinner // overrides pinFake
 	ref      string // Request reference the hold gate returns
+	chunked  bool   // the Action plans in chunks (ChunkPlanner)
 }
 
 func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
@@ -318,7 +319,11 @@ func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
 	if o.class == "" {
 		o.class = Reversible
 	}
-	reg, err := NewRegistry(p.dir.action(t, "ad.user.set", o.stepUp, o.secretIn, o.class))
+	act := p.dir.action(t, "ad.user.set", o.stepUp, o.secretIn, o.class)
+	if o.chunked {
+		act = chunkedDir{Action: act}
+	}
+	reg, err := NewRegistry(act)
 	if err != nil {
 		t.Fatal(err)
 	}
