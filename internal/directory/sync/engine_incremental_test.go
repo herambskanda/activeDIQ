@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
+	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	dsync "github.com/skenzeriq/activediq/internal/directory/sync"
 	"github.com/skenzeriq/activediq/internal/platform/store"
@@ -480,13 +482,23 @@ func TestIncrementalFailsClosedAndResyncsOnAnUnappliedChange(t *testing.T) {
 }
 
 // TestIncrementalMovedOUChildrenFollow is acceptance 5: the feed reports the moved OU only, and every
-// descendant's ancestry in inventory follows it.
+// descendant's ancestry and dn in inventory follow it.
 func TestIncrementalMovedOUChildrenFollow(t *testing.T) {
 	each(t, func(t *testing.T, e *env) {
 		r := e.incRig(t, 300)
 		r.feed.script = []feedCall{prime("p"), delivers("c")}
 		r.mustCycle(t)
 		moved := uint64(ncA + 3) // OU=L3, under L2; below it L4 and their users
+		before := map[uint64]string{}
+		for n := range r.fo.nodes {
+			var d string
+			if err := e.tx(e.a, func(ctx context.Context, tx store.Tx) error {
+				return tx.QueryRow(ctx, `SELECT dn FROM public.directory_objects WHERE connection_id = $1::uuid AND object_guid = $2::uuid`, string(e.conn), gtext(n)).Scan(&d)
+			}); err != nil && !store.IsNoRows(err) {
+				t.Fatal(err)
+			}
+			before[n] = d
+		}
 		r.feed.script = []feedCall{delivers("d", []*connectorv1.ObjectChange{live(moved, "OU=L3,"+fmt.Sprintf("DC=d%d,DC=test", ncA), ncA, classes("top", "organizationalUnit"))})}
 		rep := r.mustCycle(t)
 		if rep.Changes != 1 {
@@ -514,10 +526,31 @@ func TestIncrementalMovedOUChildrenFollow(t *testing.T) {
 			if strings.Join(got, ",") != strings.Join(r.fo.chain(n), ",") {
 				t.Fatalf("ancestry of %s = %v, want %v", gtext(n), got, r.fo.chain(n))
 			}
+			// DM-19.I5: the feed did not report the descendants, yet their dn follows the new position.
+			if n == moved {
+				continue
+			}
+			head := fmt.Sprintf("DC=d%d,DC=test", ncA)
+			hops := 0 // how far moved sits above n: the descendant keeps that many leaf RDNs of its own
+			for i, c := range r.fo.chain(n) {
+				if c == gtext(moved) {
+					hops = i + 1
+				}
+			}
+			var gotDN string
+			if err := e.tx(e.a, func(ctx context.Context, tx store.Tx) error {
+				return tx.QueryRow(ctx, `SELECT dn FROM public.directory_objects WHERE connection_id = $1::uuid AND object_guid = $2::uuid`, string(e.conn), gtext(n)).Scan(&gotDN)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			gd, err1 := dn.Parse(gotDN, dn.Strict)
+			bd, err2 := dn.Parse(before[n], dn.Strict)
+			nd, err3 := dn.Parse("OU=L3,"+head, dn.Strict)
+			if err1 != nil || err2 != nil || err3 != nil || hops == 0 || gd.Len() != hops+nd.Len() || !gd.IsDescendantOf(nd) ||
+				!reflect.DeepEqual(gd.RDNs()[:hops], bd.RDNs()[:hops]) {
+				t.Fatalf("dn of %s = %q (was %q), want its %d leaf RDNs under OU=L3,%s", gtext(n), gotDN, before[n], hops, head)
+			}
 		}
-		// The descendants' dn is NOT asserted: T-0988's rewriteDescendantDNs is wired into Populate's move path only,
-		// not into the patch path (inventory/patch.go settleChain), so a feed-reported OU move leaves the
-		// children's dn stale. That gap is a follow-up ticket (see the T-1198 advance note).
 		if below < 50 {
 			t.Fatalf("only %d descendants below the moved OU", below)
 		}

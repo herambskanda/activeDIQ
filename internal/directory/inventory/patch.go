@@ -283,6 +283,16 @@ func (p Populator) applyPatches(ctx context.Context, tx store.Tx, c PatchCycle) 
 		touched = append(touched, pt.Object)
 	}
 
+	// A row whose dn changed (a move or a rename) takes its descendants' dn snapshots with it: the feed does
+	// not report them (DM-19.I5, DM-16.I5). This reads the chains, so it runs before they are re-derived.
+	for _, pt := range updates {
+		if pt.DN.Set {
+			if err := rewriteDescendantDNs(ctx, tx, c.Connection, pt.Object, pt.DN.Value); err != nil {
+				return out, err
+			}
+		}
+	}
+
 	// The chain of every row written, and of every row below one whose chain changed.
 	for _, o := range touched {
 		if err := settleChain(ctx, tx, c.Connection, o); err != nil {
