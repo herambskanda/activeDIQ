@@ -56,3 +56,4 @@ Recently Created OUs	ou-01	Organizational units	recently_created
 All Contacts	ctc-01	Contacts	all	
 Mail Enabled Contacts	ctc-01	Contacts	mail_enabled	
 Recently Created Contacts	ctc-01	Contacts	recently_created	
+Users with Cannot Change Password	pwd-04	Password change blocked	blocked	

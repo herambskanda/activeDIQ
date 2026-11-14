@@ -73,6 +73,27 @@ test('finding keys drop positions, durations and the worktree path, and ignore p
   }
 });
 
+// T-2xxx: three fitness-tools pass lines that read as findings every run (none matched the existing
+// quiet patterns, so they inflated every baseline and every candidate by the same fixed amount,
+// worthless noise that was never a regression). Each tool's real failure line, right next to it, must
+// still be reported.
+test('fitness-stack F2 cross-build and fitness-update-offline pass lines are quiet; their failure siblings are not', () => {
+  const key = (l) => findingKey(l);
+  for (const quiet of [
+    'fitness-stack: F2 CGO_ENABLED=0 go build ./... ok for linux/amd64 (.)',
+    'fitness-stack: F2 CGO_ENABLED=0 go build -tags lab ./... ok for windows/arm64 (tools/apitools)',
+    'fitness-update-offline: container has no network (connection refused, as required)',
+    'fitness-sso: FIT-SSO-2 static half ok',
+  ]) assert.equal(key(quiet), null, quiet);
+
+  // F2's actual failure wording ("fails for", via the Violation.String() format) is a different
+  // shape entirely and must still be reported.
+  assert.equal(key('go.mod: F2 (ADR-0001 rule 2): CGO_ENABLED=0 go build ./... fails for linux/amd64: exit status 1'),
+    'go.mod: F2 (ADR-0001 rule 2): CGO_ENABLED=0 go build ./... fails for linux/amd64: exit status 1');
+  // fitness-update-offline failing for a real reason (not the expected network refusal) must still show.
+  assert.equal(key('fitness-update-offline: artefact landed outside quarantine'), 'fitness-update-offline: artefact landed outside quarantine');
+});
+
 test('newFindings is a multiset difference', () => {
   const base = extractFindings('a.go:1: m\na.go:2: m\nb.go:3: n\n');
   assert.deepEqual(newFindings(base, extractFindings('a.go:9: m\na.go:8: m\nb.go:1: n\n')), []);
@@ -117,6 +138,35 @@ test('a second copy of a known finding counts as new', async () => {
     assert.equal(v.status, 'blocked');
     assert.match(v.findings[0], /\(1 more than the 1 on main\)/);
   } finally { f.cleanup(); }
+});
+
+test('fast_argv is off by default: the verdict carries no fastLane field', async () => {
+  const f = setup({ main: [] });
+  try {
+    const v = await runPreMergeGate(f.ctx, await branchWith(f, 'T-0001', []));
+    assert.equal(v.status, 'pass');
+    assert.equal('fastLane' in v, false);
+  } finally { f.cleanup(); }
+});
+
+test('fast_argv runs alongside the real gate and is only logged: it never changes the merge verdict, agreeing or not', async () => {
+  const agree = setup({ main: [], gate: { fast_argv: ['node', '-e', 'process.exit(0)'] } });
+  try {
+    const v = await runPreMergeGate(agree.ctx, await branchWith(agree, 'T-0001', []));
+    assert.equal(v.status, 'pass', 'fast_argv never blocks a merge the real gate would pass');
+    assert.deepEqual(v.fastLane.argv, ['node', '-e', 'process.exit(0)']);
+    assert.equal(v.fastLane.ok, true);
+    assert.equal(v.fastLane.code, 0);
+    assert.equal(v.fastLane.agreed, true, 'both passed');
+  } finally { agree.cleanup(); }
+
+  const disagree = setup({ main: [], gate: { fast_argv: ['node', '-e', 'process.exit(1)'] } });
+  try {
+    const v = await runPreMergeGate(disagree.ctx, await branchWith(disagree, 'T-0002', []));
+    assert.equal(v.status, 'pass', 'the real gate still passed; fast_argv failing does not block it');
+    assert.equal(v.fastLane.code, 1);
+    assert.equal(v.fastLane.agreed, false, 'fast lane failed where the real gate passed');
+  } finally { disagree.cleanup(); }
 });
 
 test('main green: a branch that adds a finding is refused; a clean one passes untouched', async () => {

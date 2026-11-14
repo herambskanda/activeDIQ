@@ -28,3 +28,4 @@
 - [RLS index/table ADR checks](rls-index-adr-review-checks.md) — run spec DDL on 16/18; no-read proofs count removed rows; float4 bounds; backfill under FORCE
 - [Hand-landing factory fixes](hand-landing-factory-fixes.md) — scoped premerge argv keeps exit codes (no tail pipe); reuse baselines; dispatcher restart = CEO action
 - [Off-board planning](off-board-planning.md) — fresh clone/no board: docs-only branch, carry-over file, hand-run review rounds
+- [Done but never merged](triage-done-not-merged-needs-ticket.md) — add dep to waiter, --to-ready, file devops ticket; don't re-queue 'obsolete' tickets

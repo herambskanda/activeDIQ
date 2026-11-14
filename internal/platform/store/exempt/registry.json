@@ -266,6 +266,11 @@
       "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 \u00a75); the probe row is a pending enrolment."
     },
     {
+      "column": "public.authn_ad_attempts.key_hash",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: key_hash is exactly 32 bytes (authn_ad_attempts_key_hash_check, an HMAC-SHA256 digest, T-0197); the probe row carries a 32-byte placeholder, not a real HMAC."
+    },
+    {
       "column": "public.correlations.match",
       "value": "sid",
       "reason": "CHECK: match is anchor or sid; the probe row has no anchor, so sid, which needs only ad_sid (DM-20.I1)."
@@ -946,6 +951,16 @@
       "column": "public.nc_sync_passes.state",
       "value": "paused",
       "reason": "CHECK: nc_sync_passes_state_check restricts the feed state, and state 'ok' needs last_pass_at; the probe row is a paused feed (T-0949's table, unblocked here by T-0959)."
+    },
+    {
+      "column": "public.directory_object_changes.change_kind",
+      "value": "edited",
+      "reason": "CHECK: directory_object_changes_change_kind_check restricts the change kind to a fixed set; the probe row carries one valid kind (T-1109)."
+    },
+    {
+      "column": "public.directory_object_changes.object_kind",
+      "value": "user",
+      "reason": "CHECK: directory_object_changes_object_kind_check restricts the object kind to the DM-16 set; the probe row carries one valid kind (T-1109)."
     }
   ]
 }

@@ -195,7 +195,7 @@ again. The fingerprint in `Describe` tells a caller when to re-fetch.
   reloads the durable baseline, then dials out with `platform/fleet/tunnelclient` (contract-agnostic; the `activediq.fleet.v1` stream and frame binding is `compose/tunnelbind`, passed as `Config.Open`) and serves ONE composite
   `ConnectorServer` (`compose/connector.TunnelBinding`) on the RoleComponent mux. `rights.Register` and
   `write.Register` each register the whole Connector service, so the composite is registered once per
-  tunnel registrar. It serves `VerifyConnection`, `Read`, `ScopedSearch`, `Plan` and `Apply`; every
+  tunnel registrar. It serves `VerifyConnection`, `Read`, `ScopedSearch`, `ChangeFeed` (T-1194), `Plan` and `Apply`; every
   other method is Unimplemented until its group is mounted, and a golden-list test pins the served set.
   The binary opens no listener (`TestNoListenerInConnectorComposition`).
 - **Connection binding (T-0665).** `VerifyConfig.ConnectionID` is the connection the config names;
@@ -1846,14 +1846,14 @@ by the member's class (parameterise, don't clone): there is no `NEST` kind and n
   an ordinary object permission scoped to the group; it is not in `GroupMembershipPermissions` because
   removal cannot grow anyone's reach. **Residual for security-architect (R-GM-1):** removal widens access
   where the group is used in a *deny* ACE, a deny GPO filter or a "deny logon" right; the connector cannot
-  see where a group is referenced. Default here: not guarded; the call is TM §6.9, route T-1918.
+  see where a group is referenced. **Ruled (T-1918, TM-D36, [threat model §6.9a](threat-model.md)):** class `none`, no new permission; removal from a built-in restrictive group (Protected Users, Denied RODC Password Replication, by RID) or a tenant-designated one needs conditional step-up decided on the server; the preview carries the fixed deny-rule warning; the audit event carries `restrictive`.
 - **Class matrix.** Target: `group` only (any other live class, `ClassNotAllowed`). Member: `user`
   (including `inetOrgPerson`), `computer`, `contact`, `group`. A `foreignSecurityPrincipal`, a
   `msDS-ManagedServiceAccount` and a container are `ClassNotAllowed`. A group of any `groupType`
   (security or distribution, any scope) is a valid target; the DC's scope rules (a global group may
   hold only global groups of its domain; a domain-local group is not a member of a global one) are
   enforced by the DC and surface as `INVALID_ARGUMENT` `GroupScopeRule` with fixed text
-  (`unwillingToPerform`, `[UNVERIFIED Windows]` for the exact result code; CC-WK-51 S proves it on Samba).
+  (`unwillingToPerform`, `[UNVERIFIED Windows]` for the exact result code; Samba accepts the add (measured, T-1919), so only CC-WK-51 on Windows proves the DC refusal).
 - **Tier-0, the group basis (§8.1 step 6, TM-D2).** Two touched objects, each needing its own
   `CorrelationStatement`: the **group** and the **member**. Either `tier0` is `TIER0_REFUSED` before any
   directory call, add or remove alike. The group is `tier0` by C1 or C13 identity (Domain Admins,
@@ -1886,12 +1886,12 @@ by the member's class (parameterise, don't clone): there is no `NEST` kind and n
 
 | Rule id (`INVALID_ARGUMENT`) | When | Why |
 | --- | --- | --- |
-| `SelfMembership` | the member is the group (kind 11) | AD refuses a group as its own member; refused before the DC is asked |
-| `NestingCycle` | kind 11 with `member_class` GROUP and the member's SID is in the group's `tokenGroups` (the group already sits below the member) | closes a loop that would make every member of either a member of both, and make the C2 read of §8.1 step 7 ambiguous for a Tier-0 group `[UNVERIFIED Windows]` whether AD itself accepts the loop; refusing is our decision, not an AD limit |
+| `SelfMembership` | the member is the group (kind 11) | product-side refusal, before the DC is asked; Samba accepts a group as its own member (measured, T-1919) and the docs do not show AD refusing it, so whether Windows refuses is `[UNVERIFIED Windows]` |
+| `NestingCycle` | kind 11 with `member_class` GROUP and the member's SID is in the group's `tokenGroups` (the group already sits below the member) | closes a loop that would make every member of either a member of both, and make the C2 read of §8.1 step 7 ambiguous for a Tier-0 group. **Samba accepts a loop and a group as its own member (measured, T-1919, [findings](../domain/group-membership-and-computer-reset-findings.md))**, so this and `SelfMembership` are product-side refusals that Samba tests prove; whether Windows accepts a loop is `[UNVERIFIED Windows]`. Refusing is our decision, not an AD limit |
 | `PrimaryGroupMember` | kind 12 and the member's `primaryGroupID` equals the group's RID | the membership is not in `member`; there is nothing to delete. Changing a primary group is `primaryGroupID`, which TM-D28 `denied` forbids in this slice (§8.10.4); the preview says "this is the account's primary group" |
 | `MemberClassMismatch` | `member_class` differs from the live class | binds the permission to the class, above |
 | `CrossDomainMemberUnsupported` | the member is not in the group's domain NC | later kind |
-| `GroupScopeRule` | the DC refuses the scope combination (`unwillingToPerform`) | fixed text, no DN |
+| `GroupScopeRule` | the DC refuses the scope combination (`unwillingToPerform` expected; the Win32 detail is 8514-8520 `ERROR_DS_GLOBAL_CANT_HAVE_LOCAL_MEMBER` and kin, [WinError](https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--8200-8999-); the LDAP result code is `[UNVERIFIED Windows]`). **Samba never refuses (measured): a Samba pass cannot prove this rule** | fixed text, no DN |
 | `ClassNotAllowed` | target not a group; member class outside the matrix | |
 
   `OBJECT_NOT_FOUND` for a member or group GUID that is not live. A member that is a ghost (a deleted
@@ -1899,7 +1899,7 @@ by the member's class (parameterise, don't clone): there is no `NEST` kind and n
   is not live, so the call is `OBJECT_NOT_FOUND` and a "clean dead members" kind is a later spec.
 - **Compare-and-set and the precondition.** The value-level `add` and `delete` of one `member` value in one
   `ModifyRequest` is the compare-and-set: the DC fails an `add` of a present value
-  (`attributeOrValueExists`) and a `delete` of an absent one (`noSuchAttribute`), mapped to
+  (`attributeOrValueExists`) and a `delete` of an absent one (`noSuchAttribute` per the spec reading; **Samba returns `unwillingToPerform` 53, measured T-1919**, so accept either and resolve by the member-side read), mapped to
   `ALREADY_APPLIED` when the member's side confirms the target state on the pinned DC and to
   `TARGET_CHANGED` otherwise. **`state_digest` does not cover the group's `uSNChanged` or its `member`
   list**: every other membership change on a busy group moves them, and a two-technician race on
@@ -1926,7 +1926,7 @@ There is **one directory operation**; "password" and "trust relationship" are tw
 kinds or a mode. Machine-side repair is outside the connector: the account is made valid for a rejoin
 (the object, its SID, group memberships and OU stay), but the machine must `Reset-ComputerMachinePassword`,
 `Test-ComputerSecureChannel -Repair` or rejoin with credentials that have Reset Password on the object
-`[UNVERIFIED Windows]`. Running that on the machine is a later kind on the agent tier [M3], not an LDAP write.
+(Microsoft documents `-Credential` only as "a user account that has permission", [Reset-ComputerMachinePassword](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/reset-computermachinepassword); the exact ACE stays `[UNVERIFIED Windows]`, T-1919). Running that on the machine is a later kind on the agent tier [M3], not an LDAP write.
 - **No known value.** ADUC's *Reset Account* sets the password to the computer name
   ([Active Directory Cookbook, "Resetting a Computer"](https://www.oreilly.com/library/view/active-directory-cookbook/0596004648/ch08s08.html);
   the exact format is `[UNVERIFIED]`). A password derived from the account name is a credential anyone can
@@ -1944,7 +1944,7 @@ kinds or a mode. Machine-side repair is outside the connector: the account is ma
   connector's host computer account and the bound gMSA's retrieval-list computers before `ClassNotAllowed`.
   A failover-cluster name object (CNO) or virtual computer object (VCO) is `INVALID_ARGUMENT`
   `ClusterObject`: resetting it takes the cluster offline. Detection is the cluster SPN class
-  `MSServerClusterMgmtAPI` or `MSClusterVirtualServer` on the object `[UNVERIFIED Windows]`; CC-WK-59 is W.
+  `MSClusterVirtualServer` (Microsoft's own marker for CNO and VCO, [source](https://thewindowsupdate.com/2019/10/07/identifying-stale-cluster-computer-objects/)), `MSServerClusterMgmtAPI` or `MSServerCluster` on the object; which class sits on CNO vs VCO is `[UNVERIFIED Windows]`. A **prestaged, disabled** cluster account has no SPN yet and is not detected (the Plan says so). The filter is testable on Samba with hand-made SPNs; CC-WK-59 is W only for a real cluster ([findings](../domain/group-membership-and-computer-reset-findings.md)).
 - **Plan** reads and shows `pwdLastSet`, `lastLogonTimestamp`, `userAccountControl` and the computer's
   `operatingSystem`; a computer seen in the last 14 days is shown with a warning that its sign-ins and
   services will fail until it repairs (display only; the decision is the technician's). A disabled
@@ -2050,7 +2050,8 @@ can mean" limits of safe-primitives §5.6 apply to the connector's copies as to 
 | `USER_PASSWORD_RESET` | **true** | **true** | **Irreversible** | A reset gives the actor (or whoever they hand it to) a known credential for a sign-in account; safe-primitives §5.6 and ADR-0005 rule 1 name "setting a password" as the Irreversible example. `StepUp`: see below |
 | `OBJECT_CREATE` (USER) | false | true when `has_secret_input` | Reversible (the inverse deletes the new account) | A new account backs no one yet (TM-D28 rule 3: create is outside the classes) |
 | `COMPUTER_ACCOUNT_RESET` | **true** | false (the value is generated in the connector; no `secret_input`) | **Irreversible** | The old machine password cannot be restored and the machine falls off the domain until it repairs or rejoins (outage of a server or a workstation). No credential is handed to the actor, so this is not the §7.4 password-reset row; it has its own (below) |
-| `GROUP_MEMBER_ADD`, `GROUP_MEMBER_REMOVE` | false | false | Reversible | Authorised by the TM-D18 permission on the group, not by step-up (R-GM-1) |
+| `GROUP_MEMBER_ADD` | false | false | Reversible | Authorised by the TM-D18 permission on the group, not by step-up |
+| `GROUP_MEMBER_REMOVE` | **conditional** (true when the group is restrictive, TM-D36) | false | Reversible | Removal widens access where a group denies (R-GM-1, T-1918); the server decides `restrictive`, never the caller |
 | all others | false | false | per §8.10.1 | |
 
 **StepUp and TM-D16.** [Threat model §7.4](threat-model.md) (TM-D16 part 1) is a closed list of operations
@@ -2099,7 +2100,7 @@ contains no value, DN or directory response (CC-WRITE-13).
 | 8 unlock | Supported (W) | Supported (T-1628, measured): `replace lockoutTime 0` and delete-old + add-0 both unlock and reset `badPwdCount`; stale old value fails `noSuchAttribute`; a non-zero write is wrongly accepted (see §8.10.3 kind 8) | `CAPABILITY_UNSUPPORTED` |
 | 9, 10 enable, disable | Supported (W, S) | Supported (S) | `CAPABILITY_UNSUPPORTED` (Graph `accountEnabled` is a separate kind) |
 | 11, 12 group member add, remove | Supported (W, S) | Supported (S); a Samba pass proves the LDAP shape, not Windows scope rules or result codes (`GroupScopeRule` is `[UNVERIFIED Windows]`) | `CAPABILITY_UNSUPPORTED` (Graph group members is an Entra-slice kind) |
-| 13 computer account reset | Supported (W) | Supported (S); whether Samba applies the same machine-password semantics is `[UNVERIFIED]`, CC-WK-57 measures it | `CAPABILITY_UNSUPPORTED` |
+| 13 computer account reset | Supported (W) | Supported (S); Samba measured (T-1919): `replace unicodePwd` works, `pwdLastSet` advances, the old password stops binding, no complexity rule on a workstation account ([findings](../domain/group-membership-and-computer-reset-findings.md)) | `CAPABILITY_UNSUPPORTED` |
 
 Asymmetry is a decision: Samba is a CI lab, not a customer target of v1, so a Samba gap is recorded
 here and in `Describe`, not hidden. A provider reports `PLAN` and `APPLY` `SUPPORTED` once at least
@@ -2558,7 +2559,7 @@ is `TIER0_REFUSED` before the kind's code (CC-WK-28).
 | CC-WK-48 | group member add, Tier-0 member | the member is a C1 user, a DC computer, and the connector's own bound principal; the group is ordinary | `TIER0_REFUSED` basis C1, C4, C20; no write | S |
 | CC-WK-49 | group member add, `ALREADY_APPLIED` | the member is already in the group; the member's `primaryGroupID` is the group's RID (Domain Users); the member is added by another technician between Plan and Apply | `no_op` at Plan; `ALREADY_APPLIED` with `read_back`; `ALREADY_APPLIED` at Apply, never `TARGET_CHANGED` | S |
 | CC-WK-50 | group member add, refusals | the group as its own member; a group whose `tokenGroups` holds the member (loop); a member in another domain; a `foreignSecurityPrincipal`, a gMSA and an OU as member; a user as the target | `SelfMembership`; `NestingCycle`; `CrossDomainMemberUnsupported`; `ClassNotAllowed` for the next three; `ClassNotAllowed` for the target; nothing sent | S |
-| CC-WK-51 | group member add, DC scope rule | a domain-local group added to a global group | `GroupScopeRule` with fixed text, no DN or DC message in the response, audit event or log. The result code is `[UNVERIFIED Windows]`: the Windows run records it | S, W |
+| CC-WK-51 | group member add, DC scope rule | a domain-local group added to a global group | `GroupScopeRule` with fixed text, no DN or DC message in the response, audit event or log. The result code is `[UNVERIFIED Windows]`: the Windows run records it. **Samba accepts the add (measured), so the S column proves only the product-side path; W is the real proof** | S, W |
 | CC-WK-52 | group member add, large group | add to `GG-Big` (3,000 members) and to an empty group | both succeed; the proxy log shows no `member` read and no ranged read of the group; `state_digest` is equal across an unrelated membership change on `GG-Big` between Plan and Apply (no `TARGET_CHANGED`) | S, FI |
 | CC-WK-53 | group member remove (12) | remove a user, a computer and a nested group; then the inverse `GROUP_MEMBER_ADD` | one `delete member` request; the member's `memberOf` loses the group; the inverse restores it | S, W |
 | CC-WK-54 | group member remove, `ALREADY_APPLIED` and primary | the member is not in the group; the group is the member's primary group | `ALREADY_APPLIED` (`no_op`); `PrimaryGroupMember`, nothing sent | S |
@@ -2566,7 +2567,7 @@ is `TIER0_REFUSED` before the kind's code (CC-WK-28).
 | CC-WK-56 | group member remove, race | the member removed by another technician between Plan and Apply; the group becomes nested under Domain Admins between Plan and Apply; a ghost member (deleted object still listed) | `ALREADY_APPLIED`; `TIER0_REFUSED` basis C2 at Apply; `OBJECT_NOT_FOUND`, nothing removed | S, FI (W for the ghost) |
 | CC-WK-57 | computer account reset (13) | a domain-joined lab computer; Plan then Apply with step-up | `unicodePwd` replaced over LDAPS; `pwdLastSet` advances; a secure-channel bind with the old machine password now fails; the value sent is not derivable from `sAMAccountName` (two resets differ; assert on length and entropy of the encoded value in the proxy); the response, audit event and connector log hold no value (canary, CC-WRITE-13) | S, W |
 | CC-WK-58 | computer account reset, class and Tier-0 | a user, a contact and a gMSA as target; a DC, an RODC, a C12 computer and a computer in the Domain Controllers OU; the connector host's computer account and a gMSA retrieval-list computer | `ClassNotAllowed` ×3; `TIER0_REFUSED` basis C4, C4, C12, C3; C20 ×2 before `ClassNotAllowed`; no write | S, W |
-| CC-WK-59 | computer account reset, cluster object | a CNO and a VCO of a lab failover cluster; a plain computer with a lookalike name | `ClusterObject` for the first two; the plain computer is reset. Detection by SPN class is `[UNVERIFIED Windows]` | W |
+| CC-WK-59 | computer account reset, cluster object | a CNO and a VCO of a lab failover cluster; a plain computer with a lookalike name | `ClusterObject` for the first two; the plain computer is reset. Detection by SPN class: the filter is S-testable with hand-made SPNs; a real CNO/VCO's SPN set is `[UNVERIFIED Windows]` | S, W |
 | CC-WK-60 | computer account reset, input and transport | `has_secret_input` true; a `secret_input` present; a non-TLS channel | `SecretInputMismatch` twice; `TRANSPORT_SECURITY` before any value is generated (assert no `crypto/rand` call in the test build) | S |
 | CC-WK-61 | computer account reset, retry and Descriptor | the same step retried after a lost reply; an Action for kind 13 declaring `objects.user.reset_password`; the Descriptor of the Action | `TARGET_CHANGED` with Verify reading `pwdLastSet` (no `ALREADY_APPLIED`); `ErrGuardedUndeclared`; `StepUp = true`, `SecretInput = false`, `Irreversible` (`TestDescriptorStepUpMatrix`) | S, unit |
 | CC-WK-62 | kinds 11 and 12, dynamic-group guard | a designated dynamic closure whose scope holds `memberOf`, then `mail`, then `RefuseAll`; a closure whose scope holds only `department` | kinds 11 and 12 refused `designated_dynamic_rule` for any target group in the first three (either plane); not refused in the fourth. Not skippable by the override (D11) | S |

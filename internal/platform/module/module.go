@@ -7,8 +7,8 @@
 // per module, calls Register once, closes it and returns the validated Contributions. Only
 // internal/compose/server calls Boot. Module unit tests use module/moduletest.
 //
-// Registrar methods for the other contribution kinds (API, Job, Permission,
-// AuditKind, Sink, AuthMethod, ApprovalGate) are added by the ticket that builds the
+// API (EP-2) and Permission (EP-6) are built (ADR-0013). Registrar methods for the other
+// contribution kinds (Job, AuditKind, Sink, AuthMethod, ApprovalGate) are added by the ticket that builds the
 // extension point they hook into (EP-2 to EP-10), so the Registrar never names a type that does
 // not exist yet. Each new method attributes, namespaces and de-duplicates its contribution here.
 package module
@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
@@ -64,6 +65,9 @@ var (
 	ErrDuplicate = errors.New("module: duplicate")
 	// ErrInvalid is returned for a malformed module entry or contribution.
 	ErrInvalid = errors.New("module: invalid")
+	// ErrUnknownPermission is returned by Boot when a contributed route's x-permission is neither
+	// a registered module permission nor one of the kernel's (WithKernelPermissions).
+	ErrUnknownPermission = errors.New("module: x-permission not in the permission catalogue")
 )
 
 // Registrar receives one module's contributions during Boot. It is append-only and closed once
@@ -75,6 +79,8 @@ type Registrar struct {
 	actions []operation.Action
 	scopes  []scopeEntry
 	sets    []report.Dataset
+	tags    []apihost.TagHandlers
+	perms   []authz.Permission
 	seen    map[string]struct{}
 }
 
@@ -128,6 +134,39 @@ func (r *Registrar) Dataset(d report.Dataset) error {
 	return nil
 }
 
+// API registers the module's route handlers (EP-2). The tag must equal the module ID and a module
+// registers its tag once. A module that is not configured for its routes registers nothing.
+func (r *Registrar) API(t apihost.TagHandlers) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.open {
+		return fmt.Errorf("%w: api tag %q", ErrClosed, t.Tag())
+	}
+	if t.Tag() != string(r.owner) {
+		return fmt.Errorf("%w: module %q registered API tag %q; the tag must equal the module ID",
+			ErrNamespace, r.owner, t.Tag())
+	}
+	key := "api\x00" + t.Tag()
+	if _, dup := r.seen[key]; dup {
+		return fmt.Errorf("%w: module %q registered API tag %q twice", ErrDuplicate, r.owner, t.Tag())
+	}
+	r.seen[key] = struct{}{}
+	r.tags = append(r.tags, t)
+	return nil
+}
+
+// Permission registers a permission ID (EP-6) in the catalogue. It must start with "<moduleID>."
+// and be unique. Boot checks every mounted route's x-permission against the catalogue.
+func (r *Registrar) Permission(p authz.Permission) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.claim("permission", string(p)); err != nil {
+		return err
+	}
+	r.perms = append(r.perms, p)
+	return nil
+}
+
 // Action registers an Action (EP-3). Its ID must start with "<moduleID>." and be unique.
 func (r *Registrar) Action(a operation.Action) error {
 	if a == nil {
@@ -176,6 +215,20 @@ type Contributions struct {
 	scopes  map[string]authz.ScopeEvaluator
 	scopeBy map[string]ID
 	sets    []report.OwnedDatasets
+	tags    []apihost.TagHandlers
+	perms   []authz.Permission
+}
+
+// API lists the route handlers modules registered, in boot order. compose/server mounts them on
+// the API host.
+func (c *Contributions) API() []apihost.TagHandlers {
+	return append([]apihost.TagHandlers(nil), c.tags...)
+}
+
+// Permissions lists the permissions modules registered, in boot order. compose/server adds the
+// kernel's own to build the catalogue.
+func (c *Contributions) Permissions() []authz.Permission {
+	return append([]authz.Permission(nil), c.perms...)
 }
 
 // Datasets lists the datasets modules registered, grouped by the module that owns them, in boot
@@ -210,7 +263,17 @@ func (c *Contributions) Actions() []operation.Action {
 // BootOption configures Boot.
 type BootOption func(*bootConfig)
 
-type bootConfig struct{ tableOwners report.TableOwners }
+type bootConfig struct {
+	tableOwners report.TableOwners
+	kernelPerms []string
+}
+
+// WithKernelPermissions lists the permissions that exist outside any module (built-in roles,
+// platform packages). Boot accepts a route's x-permission that is one of these, "authenticated" or
+// "anonymous", or a module-registered permission; anything else fails with ErrUnknownPermission.
+func WithKernelPermissions(p []string) BootOption {
+	return func(c *bootConfig) { c.kernelPerms = append([]string(nil), p...) }
+}
 
 // WithTableOwners replaces the ownership map the dataset table check reads. Tests use it; the
 // server uses the default, store/owners.Lookup.
@@ -264,6 +327,8 @@ func Boot(ctx context.Context, mods []Entry, enabled capability.Set, opts ...Boo
 		}
 		out.loaded = append(out.loaded, e.ID)
 		out.actions = append(out.actions, r.actions...)
+		out.tags = append(out.tags, r.tags...)
+		out.perms = append(out.perms, r.perms...)
 		if len(r.sets) > 0 {
 			out.sets = append(out.sets, report.OwnedDatasets{Owner: string(e.ID), Datasets: slices.Clone(r.sets)})
 		}
@@ -277,7 +342,30 @@ func Boot(ctx context.Context, mods []Entry, enabled capability.Set, opts ...Boo
 			out.scopeBy[kind] = e.ID
 		}
 	}
+	if err := checkRoutePermissions(out, cfg.kernelPerms); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// checkRoutePermissions fails when a contributed route names a permission that is in no catalogue.
+func checkRoutePermissions(c *Contributions, kernel []string) error {
+	known := map[string]struct{}{"authenticated": {}, "anonymous": {}}
+	for _, k := range kernel {
+		known[k] = struct{}{}
+	}
+	for _, p := range c.perms {
+		known[string(p)] = struct{}{}
+	}
+	for _, t := range c.tags {
+		for _, rt := range t.Routes() {
+			m := rt.Meta()
+			if _, ok := known[m.Permission]; !ok {
+				return fmt.Errorf("%w: tag %q operation %q names x-permission %q", ErrUnknownPermission, t.Tag(), m.OperationID, m.Permission)
+			}
+		}
+	}
+	return nil
 }
 
 func satisfied(required []capability.ID, enabled capability.Set) bool {
