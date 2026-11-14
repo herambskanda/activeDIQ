@@ -1,0 +1,71 @@
+{
+  "id": "pwd-04",
+  "version": 1,
+  "category": "passwords",
+  "title": "Password change blocked",
+  "description": "Users whose stored access-control state blocks changing the password: both deny ACEs for User-Change-Password (Everyone and SELF), or only one of them. Read from the descriptor state the sync stored, not from the userAccountControl flag, which Active Directory does not honour. No descriptor is read when the report runs. Users whose descriptor was unreadable are counted in the header as not confirmed and are never listed.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "domain",
+    "dn",
+    "password_change_right",
+    "enabled",
+    "password_state",
+    "probable_service_account",
+    "probable_service_account_reason",
+    "descriptor_as_of"
+  ],
+  "sort": [
+    {
+      "column": "sam_account_name",
+      "dir": "asc"
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn",
+    "password_change_is_stored_dacl_state"
+  ],
+  "presets": [
+    {
+      "id": "blocked",
+      "names": [
+        "Users with Cannot Change Password"
+      ],
+      "where": {
+        "cmp": {
+          "col": "password_change_right",
+          "op": "in",
+          "values": [
+            {
+              "enum": "blocked"
+            },
+            {
+              "enum": "blocked_one_ace"
+            },
+            {
+              "enum": "not_confirmed"
+            }
+          ]
+        }
+      },
+      "hidden": [
+        {
+          "id": "not_confirmed",
+          "label": "users whose descriptor was unreadable or not yet read (not confirmed)",
+          "locked": true,
+          "where": {
+            "cmp": {
+              "col": "password_change_right",
+              "op": "eq",
+              "value": {
+                "enum": "not_confirmed"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
