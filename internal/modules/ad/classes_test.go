@@ -9,7 +9,10 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/accountkind"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/modules/ad"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
+	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest"
 )
 
 const (
@@ -271,5 +274,47 @@ func TestComputerResetSendsNoAttributesAndVerifiesPwdLastSet(t *testing.T) {
 	a.class = "user"
 	if err := planErr(act, input(t, ad.AccountInput{Target: target()})); !errors.Is(err, operation.ErrInvalid) || !strings.Contains(err.Error(), ad.ReasonNotComputer) {
 		t.Fatalf("user target: %v", err)
+	}
+}
+
+// Membership Actions run end to end through the runner against the fake directory: the write goes to
+// the group, Verify reads the direct membership back, and the opposite Action undoes the change.
+func TestMemberAddNestRemoveApplyAndVerify(t *testing.T) {
+	d := classDir()
+	as := memberActions(t, d)
+	reg, err := operation.NewRegistry(storeFace{as[ad.AddMemberID]}, storeFace{as[ad.NestGroupID]}, storeFace{as[ad.RemoveMemberID]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := operation.NewRunner(operation.Config{DB: fakeDB{}, Audit: &sink{}, Authz: &scopeAuthz{}, Registry: reg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	do := func(id operation.ActionID, in ad.MemberInput, opID string) {
+		t.Helper()
+		res, err := r.RunStore(context.Background(), operation.Request{
+			Tenant: tenanttest.NewID(t), Action: id, Input: input(t, in), Pins: pins(), Operation: step.OperationID(opID),
+			Actor: authority.Chain{Requester: authority.Principal{ID: "tech", Kind: authority.Human}}, FreshStepUp: true,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", id, err)
+		}
+		_ = res
+	}
+	user := ad.MemberInput{ConnectionID: conn, NamingContext: nc, GroupGuid: grp, MemberGuid: obj, MemberClass: "user"}
+	nested := ad.MemberInput{ConnectionID: conn, NamingContext: nc, GroupGuid: grp, MemberGuid: grp2, MemberClass: "group"}
+	do(ad.AddMemberID, user, "op-m-1")
+	do(ad.NestGroupID, nested, "op-m-2")
+	if !d.members[grp+"/"+obj] || !d.members[grp+"/"+grp2] || len(d.writes) != 2 {
+		t.Fatalf("after add/nest: %v, %d writes", d.members, len(d.writes))
+	}
+	for _, w := range d.writes {
+		if w.Target.GUID != grp || w.Target.Class != "group" {
+			t.Fatalf("write must target the group: %+v", w.Target)
+		}
+	}
+	do(ad.RemoveMemberID, user, "op-m-3")
+	if d.members[grp+"/"+obj] || !d.members[grp+"/"+grp2] {
+		t.Fatalf("after remove: %v", d.members)
 	}
 }
