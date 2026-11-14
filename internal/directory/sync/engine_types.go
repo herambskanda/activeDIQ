@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"log/slog"
 	"time"
 
 	"google.golang.org/grpc/codes"
 
-	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
@@ -204,6 +204,8 @@ type Engine struct {
 	Source   ConnectorSource
 	Ingester Ingest
 	Cursors  Cursors
+	// Reconciler is the write side of Reconcile; Reconcile needs it, FullCycle does not.
+	Reconciler Reconciler
 	// Clock is the time source; nil is time.Now.
 	Clock func() time.Time
 	// Log receives one summary line per domain: counts and fixed codes, never a directory value. Nil

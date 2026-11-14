@@ -729,6 +729,7 @@ a Go matrix (`sync.CanTransition`) and the same matrix in a trigger; `paused` is
 `ResumeConnection` always sets `resync_required` and drops the cookie. The cookie is `sync.Cookie`, which prints as a
 placeholder under every fmt verb, slog and JSON; the `Cursor` view returned by `Get`/`List` has no cookie field. The DirSync
 cookie itself is first used by the DirSync ticket; slice 2 of T-1188 uses `state` and `last_full_sync_at`.
+**Realised so far (T-1196, I3).** The reconcile (`sync.Engine.Reconcile`, `inventory.Ingester.Reconcile`) lists every managed domain NC by `objectGUID` and diffs the union against `directory_objects` by GUID, so a cross-domain move is never a delete (DM-16.I1). Live rows no listing holds become `deleted`, never `purged` (a live search cannot see tombstones); a tombstone still absent after the caller's `PurgeAfter` becomes `purged`. The edges that end at them are removed and the closure follows in the same transaction. An incomplete listing writes nothing; a listing that does not hold its own NC head (an empty one included) is not authoritative and is refused; and a diff over 20 % of the live objects, of the forest or of any one naming context, is refused whole (`ErrMassDelete`).
 
 ### DM-20 Correlation · D · owner `directory/inventory`
 **Definition.** It asserts that an AD object and an Entra object are the same identity. Only a
