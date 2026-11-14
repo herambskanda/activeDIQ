@@ -107,8 +107,8 @@ func TestNonTier0IsUnsupported(t *testing.T) {
 	for _, sp := range accountkind.Specs() {
 		want[sp.Kind] = true
 	}
-	if len(operations) != len(want) || len(want) != 10 {
-		t.Fatalf("operation table holds %d kinds, want 10 (kinds 1-6 and the four account kinds)", len(operations))
+	if len(operations) != len(want) || len(want) != 11 {
+		t.Fatalf("operation table holds %d kinds, want 11 (kinds 1-6, the four account kinds and kind 13)", len(operations))
 	}
 	for k := range operations {
 		if !want[k] {

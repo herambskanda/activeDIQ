@@ -64,6 +64,7 @@ func accountDecl(sp accountkind.Spec, k tier0.WriteKind) tier0.PropertyWrite {
 		accountkind.KeyUnlock:        {"lockoutTime"},
 		accountkind.KeyEnable:        {"userAccountControl"},
 		accountkind.KeyDisable:       {"userAccountControl"},
+		accountkind.KeyComputerReset: {"unicodePwd"},
 	}[sp.Key]
 	return tier0.PropertyWrite{Plane: tier0.PlaneAD, Kind: k, Op: tier0.OpUpdate, Keys: keys}
 }
@@ -79,11 +80,17 @@ func accountOp(sp accountkind.Spec) WriteOp {
 			return []guid.GUID{target}, nil
 		},
 		PropertyWrite: func(c *connectorv1.WriteChange) (tier0.PropertyWrite, error) {
+			if sp.Key == accountkind.KeyComputerReset {
+				return accountDecl(sp, tier0.WriteDevice), nil
+			}
 			return accountDecl(sp, tier0.WriteUser), nil
 		},
 		// The object's class is read live later and userAccountControl feeds device.accountEnabled
 		// as well as user.accountEnabled, so the device declaration must pass too.
 		AlsoDeclares: func(c *connectorv1.WriteChange) ([]tier0.PropertyWrite, error) {
+			if sp.Key == accountkind.KeyComputerReset {
+				return nil, nil
+			}
 			return []tier0.PropertyWrite{accountDecl(sp, tier0.WriteDevice)}, nil
 		},
 		Digest: func(req *connectorv1.ApplyRequest) ([]byte, error) { return accountDigest(sp, req) },
@@ -221,7 +228,23 @@ func classCheck(sp accountkind.Spec, st ad.AccountState) error {
 	if !st.HasUAC && sp.Key != accountkind.KeyUnlock {
 		return invalid("5", "UnreadableAttribute", "target")
 	}
+	if sp.Key == accountkind.KeyComputerReset && clusterObject(st) {
+		return invalid("5", "ClusterObject", "target")
+	}
 	return nil
+}
+
+// clusterObject reports a failover-cluster name object or virtual computer object by its cluster SPN
+// class (contract §8.10.3 kind 13). Resetting one takes the cluster offline. [UNVERIFIED Windows]: the
+// detection by SPN class; CC-WK-59 is a Windows test.
+func clusterObject(st ad.AccountState) bool {
+	for _, spn := range st.SPNs {
+		class, _, _ := strings.Cut(spn, "/")
+		if strings.EqualFold(class, "MSServerClusterMgmtAPI") || strings.EqualFold(class, "MSClusterVirtualServer") {
+			return true
+		}
+	}
+	return false
 }
 
 var errAlready = errors.New("write: already in the requested state")
@@ -263,6 +286,12 @@ func stateDigest(sp accountkind.Spec, st ad.AccountState) []byte {
 		i(int64(st.UAC))
 		i(st.LockoutTime)
 		put(hex.EncodeToString(st.SID))
+	case accountkind.KeyComputerReset:
+		// {uSNChanged, pwdLastSet, userAccountControl, objectSid} (contract §8.10.3 kind 13).
+		put(strconv.FormatUint(st.USN, 10))
+		i(st.PwdLastSet)
+		i(int64(st.UAC))
+		put(hex.EncodeToString(st.SID))
 	case accountkind.KeyUnlock:
 		put(strconv.FormatUint(st.USN, 10))
 		i(st.LockoutTime)
@@ -278,8 +307,16 @@ func attrEntry(st ad.AccountState, sp accountkind.Spec) *connectorv1.DirectoryEn
 		e.Attributes = append(e.Attributes, &connectorv1.Attribute{Name: name, Values: []*connectorv1.AttributeValue{v}, Complete: true})
 	}
 	switch sp.Key {
-	case accountkind.KeyResetPassword:
+	case accountkind.KeyResetPassword, accountkind.KeyComputerReset:
 		add("pwdLastSet", &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int64Value{Int64Value: st.PwdLastSet}})
+		if sp.Key == accountkind.KeyComputerReset {
+			// Shown in the preview (display only): a computer seen recently will lose its sign-ins.
+			add("userAccountControl", &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int32Value{Int32Value: st.UAC}})
+			add("lastLogonTimestamp", &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int64Value{Int64Value: st.LastLogonTimestamp}})
+			if st.OperatingSystem != "" {
+				add("operatingSystem", &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Text{Text: st.OperatingSystem}})
+			}
+		}
 	case accountkind.KeyUnlock:
 		add("lockoutTime", &connectorv1.AttributeValue{Value: &connectorv1.AttributeValue_Int64Value{Int64Value: st.LockoutTime}})
 	default:
@@ -377,6 +414,10 @@ func applyAccount(ctx context.Context, sp accountkind.Spec, a Authorised, req *c
 			}
 			return ops.ReplaceUAC(seen.UAC, next)(m, d, sc)
 		}
+	case accountkind.KeyComputerReset:
+		// The value is generated inside the sender, after the verified-TLS proof; nothing here knows it.
+		secure = true
+		send = ops.ResetComputerPassword()
 	case accountkind.KeyResetPassword:
 		secure = true
 		pw := secret.FromBytes(req.GetSecretInput().GetMaterial()) // copies; the deferred clear wipes the request buffer
@@ -396,7 +437,7 @@ func applyAccount(ctx context.Context, sp accountkind.Spec, a Authorised, req *c
 		return nil, adRefusal(err)
 	}
 	usn := after.USN
-	if sp.Key != accountkind.KeyResetPassword && !satisfied(sp, after) {
+	if sp.Key != accountkind.KeyResetPassword && sp.Key != accountkind.KeyComputerReset && !satisfied(sp, after) {
 		return nil, newRefusal(connectorv1.ErrorCode_ERROR_CODE_PROVIDER_FAILURE, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "8", "write not visible on the bound domain controller")
 	}
 	return &connectorv1.ApplyResponse{Outcome: connectorv1.ApplyOutcome_APPLY_OUTCOME_APPLIED,
