@@ -7,30 +7,10 @@ import (
 
 	"github.com/go-ldap/ldap/v3"
 
+	"github.com/skenzeriq/activediq/internal/connector/ad/scope"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 )
-
-// oidShowDeleted is LDAP_SERVER_SHOW_DELETED_OID, the control that makes deleted objects visible
-// (MS-ADTS 3.1.1.3.4.1.14).
-const oidShowDeleted = "1.2.840.113556.1.4.417"
-
-// oidShowDeactivatedLink is LDAP_SERVER_SHOW_DEACTIVATED_LINK_OID: without it, link values (memberOf)
-// stored on a deleted object are not returned (MS-ADTS 3.1.1.3.4.1.25), so a deleted Domain Admin
-// would read as a member of nothing.
-const oidShowDeactivatedLink = "1.2.840.113556.1.4.2065"
-
-type showDeactivatedLink struct{}
-
-func (showDeactivatedLink) GetControlType() string { return oidShowDeactivatedLink }
-func (showDeactivatedLink) Encode() *berPacket     { return encodeValuelessControl(oidShowDeactivatedLink) }
-func (showDeactivatedLink) String() string         { return "Show deactivated link control" }
-
-type showDeleted struct{}
-
-func (showDeleted) GetControlType() string { return oidShowDeleted }
-func (showDeleted) Encode() *berPacket     { return encodeCriticalValuelessControl(oidShowDeleted) }
-func (showDeleted) String() string         { return "Show deleted control" }
 
 // Additional codes of the object write operations.
 const (
@@ -209,7 +189,7 @@ func (s *Session) RestoreObject(ctx context.Context, r RestoreRequest, send Rest
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
 		return mapWriteErr(ctx, send(conn, RestoreChange{Entry: r.Object.ObjectRef(), NewDN: nd.String(),
-			Controls: []ldap.Control{showDeleted{}}}))
+			Controls: []ldap.Control{scope.ShowDeleted()}}))
 	})
 }
 
