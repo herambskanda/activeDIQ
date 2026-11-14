@@ -21,7 +21,7 @@ func SecretKey(key string) bool { return secretKey(key) }
 // Datasets returns the datasets this package registers. compose/server hands them to report.NewHost
 // with the owner key "inventory" (boot refuses them until the table-owner map lists their tables).
 func Datasets() []report.Dataset {
-	return []report.Dataset{usersDataset(), computersDataset(), groupsDataset(), groupMembersDataset(), ousDataset(), contactsDataset(), principalsDataset()}
+	return []report.Dataset{usersDataset(), computersDataset(), groupsDataset(), groupMembersDataset(), ousDataset(), contactsDataset(), principalsDataset(), objectChangesDataset()}
 }
 
 func idents(s ...string) []report.Ident {

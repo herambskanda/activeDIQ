@@ -946,6 +946,16 @@
       "column": "public.nc_sync_passes.state",
       "value": "paused",
       "reason": "CHECK: nc_sync_passes_state_check restricts the feed state, and state 'ok' needs last_pass_at; the probe row is a paused feed (T-0949's table, unblocked here by T-0959)."
+    },
+    {
+      "column": "public.directory_object_changes.change_kind",
+      "value": "edited",
+      "reason": "CHECK: directory_object_changes_change_kind_check restricts the change kind to a fixed set; the probe row carries one valid kind (T-1109)."
+    },
+    {
+      "column": "public.directory_object_changes.object_kind",
+      "value": "user",
+      "reason": "CHECK: directory_object_changes_object_kind_check restricts the object kind to the DM-16 set; the probe row carries one valid kind (T-1109)."
     }
   ]
 }
