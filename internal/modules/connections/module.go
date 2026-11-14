@@ -16,12 +16,12 @@ import (
 const ModuleID module.ID = "connections"
 
 // Module is the connections module.
-type Module struct{}
+type Module struct{ deps platform.Deps }
 
 // New builds the module. Every module constructor receives the same two values (ADR-0003 rule 4).
 func New(deps platform.Deps, dir directory.Services) *Module {
-	_, _ = deps, dir
-	return &Module{}
+	_ = dir
+	return &Module{deps: deps}
 }
 
 // ID implements module.Module.
@@ -31,11 +31,20 @@ func (*Module) ID() module.ID { return ModuleID }
 func (*Module) Requires() []capability.ID { return nil }
 
 // Register implements module.Module.
-func (*Module) Register(r *module.Registrar) error {
-	// The permission of the TM-D17 attestation route (EP-6); the route itself is mounted by
-	// compose/server until the attestation builder moves into this module (ADR-0013).
+func (m *Module) Register(r *module.Registrar) error {
+	// The permission of the TM-D17 attestation route (EP-6) and, when the install configured an
+	// attestation app registration, its routes (EP-2). Unconfigured, no route is registered.
 	if err := r.Permission(TakeoverAttestPermission); err != nil {
 		return err
+	}
+	tag, ok, err := attestationTag(m.deps)
+	if err != nil {
+		return err
+	}
+	if ok {
+		if err := r.API(tag); err != nil {
+			return err
+		}
 	}
 	a, err := Tier0OverrideAcknowledge()
 	if err != nil {

@@ -67,12 +67,6 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return fmt.Errorf("server: open store: %w", err)
 	}
 	defer db.Close()
-	// Capabilities come from the deployment profile once config selects one; no module requires
-	// one yet. The directory services are built from the store, so boot follows the open.
-	contrib, reportHost, err := bootReport(ctx, capability.NewSet(), directoryServices(db), owners.Lookup)
-	if err != nil {
-		return fmt.Errorf("server: boot modules: %w", err)
-	}
 	// The per-principal rate store and the limiter over it, mounted as the API's Limits port. A bad
 	// store/node combination, budget or contract fails startup here, before the listener opens.
 	ps, err := principalStore(cfg, db)
@@ -160,12 +154,20 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	// The TM-D17 attestation routes, when the install is configured for them. Built after the
-	// authorizer, which they share with the operation runner.
-	tags, err := buildAttestation(cfg, db, ok.Chainer, authzr, sessionStepUp{console.StepUp})
+	// Boot the modules now that the ports they build their services from exist (the store, the audit
+	// chainer, the shared authorizer, the step-up check). Capabilities come from the deployment profile
+	// once config selects one; no module requires one yet. A module that is not configured for a route
+	// (attestation without ACTIVEDIQ_ATTEST_CLIENT_ID) registers nothing for it (ADR-0013).
+	attest, err := attestationConfig(cfg)
 	if err != nil {
 		return err
 	}
+	contrib, reportHost, err := bootReportWith(ctx, platform.Deps{DB: db, Audit: ok.Chainer, Authz: authzr, StepUp: console.StepUp, Attestation: attest},
+		capability.NewSet(), directoryServices(db), owners.Lookup)
+	if err != nil {
+		return fmt.Errorf("server: boot modules: %w", err)
+	}
+	var tags []apihost.TagHandlers
 	// The SIEM destination routes (siem.destination.manage). The audit chainer is the store's sink.
 	siem, err := syslog.NewStore(db, ok.Chainer)
 	if err != nil {
@@ -397,11 +399,17 @@ const inventoryOwner = "inventory"
 // export (inventory.Datasets(), row B3) are added to the host here too, under their package's key,
 // before the modules boot, and are checked by the same function.
 func bootReport(ctx context.Context, enabled capability.Set, dir directory.Services, ownerOf report.TableOwners) (*module.Contributions, *report.Host, error) {
+	return bootReportWith(ctx, platform.Deps{}, enabled, dir, ownerOf)
+}
+
+// bootReportWith is bootReport with the kernel ports the modules build their services from. Deps.Report
+// is set here.
+func bootReportWith(ctx context.Context, deps platform.Deps, enabled capability.Set, dir directory.Services, ownerOf report.TableOwners) (*module.Contributions, *report.Host, error) {
 	host := report.NewHost(ownerOf)
 	if err := host.Add(inventoryOwner, inventory.Datasets()...); err != nil {
 		return nil, nil, fmt.Errorf("server: report datasets: %w", err)
 	}
-	c, err := module.Boot(ctx, generatedModules(platform.Deps{Report: host}, dir), enabled, module.WithTableOwners(ownerOf), module.WithKernelPermissions(kernelPermissions()))
+	c, err := module.Boot(ctx, generatedModules(withReport(deps, host), dir), enabled, module.WithTableOwners(ownerOf), module.WithKernelPermissions(kernelPermissions()))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -412,4 +420,23 @@ func bootReport(ctx context.Context, enabled capability.Set, dir directory.Servi
 	}
 	host.Seal()
 	return c, host, nil
+}
+
+func withReport(d platform.Deps, h *report.Host) platform.Deps {
+	d.Report = h
+	return d
+}
+
+// attestationConfig turns the install's attestation settings into the kernel value modules read. With no
+// app registration it is zero and the connections module mounts no attestation route; with one, the public
+// URL must be a valid origin (the redirect URI is built on it).
+func attestationConfig(cfg config.Config) (platform.Attestation, error) {
+	if cfg.AttestClientID == "" {
+		return platform.Attestation{}, nil
+	}
+	po, err := config.ParsePublicURL(cfg.PublicURL)
+	if err != nil {
+		return platform.Attestation{}, fmt.Errorf("server: attestation redirect URI: %w", err)
+	}
+	return platform.Attestation{ClientID: cfg.AttestClientID, Origin: po.Origin}, nil
 }

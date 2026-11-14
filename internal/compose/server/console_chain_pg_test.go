@@ -12,13 +12,17 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
+	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
+	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
+	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/httpx/authnhttp"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/store/owners"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	"github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest"
@@ -42,7 +46,7 @@ type chainEnv struct {
 }
 
 // chainSetup is a real database, a real session store and account, and an active Entra connection. The
-// handler under test is composed exactly as Run composes it: buildConsole, buildAttestation (the real
+// handler under test is composed exactly as Run composes it: buildConsole, the booted connections module (the real
 // Entra adapters, which Start never calls) and buildAPIPorts over console.ports.
 func chainSetup(t *testing.T, s *storetest.Server) *chainEnv {
 	t.Helper()
@@ -115,9 +119,18 @@ func chainSetup(t *testing.T, s *storetest.Server) *chainEnv {
 			t.Fatal(err)
 		}
 		cfg := config.Config{APIBodyBudget: config.DefaultAPIBodyBudget, AttestClientID: "app-client", PublicURL: chainOrigin}
-		tags, err := buildAttestation(cfg, db, nopSink{}, az, sessionStepUp{console.StepUp})
-		if err != nil || len(tags) != 1 {
-			t.Fatalf("attestation: %d tags, %v", len(tags), err)
+		att, err := attestationConfig(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contrib, _, err := bootReportWith(context.Background(), platform.Deps{DB: db, Audit: nopSink{}, Authz: az, StepUp: console.StepUp, Attestation: att},
+			capability.NewSet(), directory.Services{}, owners.Lookup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tags := contrib.API()
+		if len(tags) != 1 {
+			t.Fatalf("attestation: %d tags", len(tags))
 		}
 		h, err := buildAPIPorts(cfg, bootedCatalogue(), console.ports(testLimiter(t), az, bootedCatalogue()), append(tags, console.Tags())...)
 		if err != nil {

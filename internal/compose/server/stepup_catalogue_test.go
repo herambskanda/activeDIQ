@@ -8,7 +8,6 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/modules/compliance"
-	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/modules/delegation"
 	"github.com/skenzeriq/activediq/internal/modules/inventory"
 	"github.com/skenzeriq/activediq/internal/modules/notify"
@@ -26,15 +25,15 @@ import (
 // and connection changes, IdP configuration, audit export and retention, break-glass use, authority
 // factor approval) are not listed, and each of those tickets adds its row and sets Descriptor.StepUp.
 var stepUpTable = map[operation.ActionID]string{
-	connections.Tier0OverrideActionID:     "The Tier-0 override acknowledgement (TM-D1)",
-	connections.HybridLinkConfirmActionID: "HybridLink confirmation (connections.hybrid_link.confirm)",
+	"connections.tier0_override.acknowledge": "The Tier-0 override acknowledgement (TM-D1)",
+	"connections.hybrid_link.confirm":        "HybridLink confirmation (connections.hybrid_link.confirm)",
 	// Declare writes a confirmed link directly, skipping proposed: the same cross-directory authority
 	// path as confirm, so it carries the same flag.
-	connections.HybridLinkDeclareActionID: "HybridLink declaration confirms without a proposal; same path as confirm",
+	"connections.hybrid_link.declare": "HybridLink declaration confirms without a proposal; same path as confirm",
 	// Re-confirming a correlation held for reconfirm_required (TM-D17 rule 4 (g)) is an irreversible
 	// cross-directory authority decision; it also requires a current tenant-owner.
-	connections.ReconfirmActionID:    "Correlation re-confirmation (TM-D17 rule 4 (g))",
-	inventory.SetDesignationActionID: "Designating or un-designating tier0 objects (§6.4)",
+	"connections.correlation.reconfirm": "Correlation re-confirmation (TM-D17 rule 4 (g))",
+	inventory.SetDesignationActionID:    "Designating or un-designating tier0 objects (§6.4)",
 	// Legal holds (T-0605): lifting one lets the next retention purge destroy evidence, and placing one
 	// withholds data from erasure; both are a compliance officer's act and need a fresh MFA.
 	compliance.SetHoldActionID:     "Placing a legal hold on a personal subject",

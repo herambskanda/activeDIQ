@@ -3,11 +3,11 @@ package server
 import (
 	"context"
 	"errors"
+	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"slices"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory/client"
-	"github.com/skenzeriq/activediq/internal/modules/connections"
 	"github.com/skenzeriq/activediq/internal/modules/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
@@ -80,9 +80,13 @@ func TestDirectoryReadsIsNilWithoutAConnectorSource(t *testing.T) {
 // in no role below it.
 func TestTenantOwnerCatalogueGrantsTheReconfirmPermission(t *testing.T) {
 	for _, r := range rbac.BuiltInRoles() {
-		has := slices.Contains(r.Permissions, connections.ReconfirmPermission)
+		has := slices.Contains(r.Permissions, reconfirmPermission)
 		if want := r.Name == rbac.TenantOwnerRole; has != want {
-			t.Errorf("role %q holds %s = %v, want %v", r.Name, connections.ReconfirmPermission, has, want)
+			t.Errorf("role %q holds %s = %v, want %v", r.Name, reconfirmPermission, has, want)
 		}
 	}
 }
+
+// reconfirmPermission is the ID the connections module registers for its correlation re-confirmation. The
+// module's own tests pin the constant; compose names no module (ADR-0013).
+const reconfirmPermission authz.Permission = "connections.correlation.reconfirm"
