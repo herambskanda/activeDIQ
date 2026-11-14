@@ -47,9 +47,6 @@ SQL
   port="$(docker port "$cid" 5432/tcp | head -1 | sed 's/.*://')"
   # 4. The installation KEK (passphrase provider) and the server settings.
   mkdir -p "$dir/kek" "$dir/tls"; chmod 700 "$dir/kek" "$dir/tls"
-  # The lab chooses its custody model explicitly (ADIQ_E2E_KEK_PROVIDER); the env file below carries no
-  # literal provider value, so no shipped-config default exists (FF-KEY-3). Only the passphrase adapter is built.
-  kek_provider="${ADIQ_E2E_KEK_PROVIDER:-passphrase}"
   openssl rand -hex 24 > "$dir/kek.pass"; chmod 600 "$dir/kek.pass"
   apiport="$(node -e 'const s=require("net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
   # The lab harness provisions a passphrase keystore (kek.pass above), so it names that provider itself, per boot.
