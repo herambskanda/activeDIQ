@@ -37,6 +37,7 @@
 - [write kinds lessons](write-kinds-lessons.md) — T-1623: writechange codec, h.ops test substitution needs testChange(), schema allow-list, sync tests hang
 - [account kinds lessons](account-kinds-lessons.md) — T-1583: leaf digest pkg, accountkind single definition, test-kind collision, T-1638 Windows lab
 - [reconcile lessons](reconcile-lessons.md) — T-1196: no CREATE TEMP for runtime role, fake listing flag, mutation checks, unmerged deps
+- [patch-apply lessons](patch-apply-lessons.md) — T-1197: link edge direction, permutation test cost/shape, mutation recipe
 - [replxml lessons](replxml-lessons.md) — T-1721: xml alloc per element vs 8x bound, RX2 assignment trap, one value per call, unverified names
 - [replstatus lessons](replstatus-lessons.md) — T-1723: protoc-less pb.go recipe, no-control read, RX6 comment trap, DC enumeration seam
 - [object changes lessons](object-changes-lessons.md) — T-1109: chg CTE in upsert, baseline rule, RowAnchor on current object, pre-existing red
