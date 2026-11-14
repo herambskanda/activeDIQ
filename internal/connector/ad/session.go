@@ -74,6 +74,10 @@ type Session struct {
 	schema   *ldapfilter.Schema
 	server   string
 	pageSize uint32
+
+	binMu    sync.Mutex // guards the cached Recycle Bin status (RecycleBin)
+	binKnown bool
+	binOn    bool
 }
 
 // Open connects to the first reachable server in cfg.Servers and binds. It never downgrades: a

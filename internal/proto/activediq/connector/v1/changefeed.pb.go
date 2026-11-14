@@ -86,10 +86,14 @@ const (
 	ObjectState_OBJECT_STATE_UNSPECIFIED ObjectState = 0
 	// Live (isDeleted absent or false).
 	ObjectState_OBJECT_STATE_LIVE ObjectState = 1
-	// isDeleted = TRUE: a tombstone or a Recycle Bin deleted object. Restorable while the forest
-	// keeps it.
+	// isDeleted = TRUE with the forest Recycle Bin ON and isRecycled not TRUE: a deleted object,
+	// restorable while the forest keeps it. With the Recycle Bin OFF a deleted object is a plain
+	// tombstone, never restorable (the connector labels it TOMBSTONE; the wire enum has no value for
+	// it yet, see T-1270 follow-up) and is never reported as DELETED.
 	ObjectState_OBJECT_STATE_DELETED ObjectState = 2
-	// isRecycled = TRUE: past the deleted-object lifetime, no longer restorable, awaiting purge.
+	// isRecycled = TRUE with the Recycle Bin ON: past the deleted-object lifetime, no longer
+	// restorable, awaiting purge. Not a tombstone of a Recycle-Bin-off forest (Samba sets isRecycled
+	// on every tombstone), which is never labelled RECYCLED.
 	ObjectState_OBJECT_STATE_RECYCLED ObjectState = 3
 )
 

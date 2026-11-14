@@ -25,10 +25,10 @@ import (
 type ChangeState uint8
 
 const (
-	StateLive     ChangeState = iota + 1 // isDeleted absent or FALSE
-	StateDeleted                         // isDeleted = TRUE, isRecycled not TRUE: restorable only with the Recycle Bin on
-	StateRecycled                        // isRecycled = TRUE (wins over isDeleted): never restorable. Also what a tombstone
-	// looks like when the Recycle Bin is off (Samba sets both flags); the decoder cannot tell the two apart (T-1270).
+	StateLive      ChangeState = iota + 1 // isDeleted absent or FALSE
+	StateDeleted                          // Recycle Bin on, isDeleted = TRUE, isRecycled not TRUE: restorable
+	StateRecycled                         // Recycle Bin on, isRecycled = TRUE: past the deleted-object lifetime, never restorable
+	StateTombstone                        // Recycle Bin off, isDeleted or isRecycled = TRUE: a plain tombstone, never restorable (T-1270)
 )
 
 // ChangeOp is how an attribute changed.
@@ -108,7 +108,11 @@ func (s *Session) DirSync(ctx context.Context, req DirSyncRequest) (DirSyncPage,
 	if err != nil {
 		return DirSyncPage{}, err
 	}
-	return s.dirSyncOnce(ctx, base, req.Cookie, attrs, want)
+	bin, err := s.RecycleBin(ctx)
+	if err != nil {
+		return DirSyncPage{}, err
+	}
+	return s.dirSyncOnce(ctx, base, req.Cookie, attrs, want, bin)
 }
 
 // DirSyncCycle runs DirSync responses from req.Cookie until the DC reports no more results and hands
@@ -124,12 +128,16 @@ func (s *Session) DirSyncCycle(ctx context.Context, req DirSyncRequest, fn func(
 	if err != nil {
 		return DirSyncPage{}, err
 	}
+	bin, err := s.RecycleBin(ctx)
+	if err != nil {
+		return DirSyncPage{}, err
+	}
 	cookie := req.Cookie
 	for {
 		if err := ctx.Err(); err != nil {
 			return DirSyncPage{}, fail(CodeCanceled, "", err)
 		}
-		page, err := s.dirSyncOnce(ctx, base, cookie, attrs, want)
+		page, err := s.dirSyncOnce(ctx, base, cookie, attrs, want, bin)
 		if err != nil {
 			return DirSyncPage{}, err
 		}
@@ -200,7 +208,7 @@ func dirSyncControls(cookie []byte) []ldap.Control {
 	return []ldap.Control{scope.DirSync(cookie), scope.ShowDeleted()}
 }
 
-func (s *Session) dirSyncOnce(ctx context.Context, base string, cookie []byte, attrs []string, want map[string]struct{}) (DirSyncPage, error) {
+func (s *Session) dirSyncOnce(ctx context.Context, base string, cookie []byte, attrs []string, want map[string]struct{}, bin bool) (DirSyncPage, error) {
 	s.mu.Lock()
 	if s.conn == nil {
 		s.mu.Unlock()
@@ -221,7 +229,7 @@ func (s *Session) dirSyncOnce(ctx context.Context, base string, cookie []byte, a
 	}
 	page := DirSyncPage{Cookie: resp.Cookie, More: resp.MoreResults, Changes: make([]ObjectChange, 0, len(res.Entries))}
 	for _, e := range res.Entries {
-		c, dropped, err := s.decodeChange(e, want)
+		c, dropped, err := s.decodeChange(e, want, bin)
 		if err != nil {
 			return DirSyncPage{}, err
 		}
@@ -232,8 +240,11 @@ func (s *Session) dirSyncOnce(ctx context.Context, base string, cookie []byte, a
 }
 
 // decodeChange turns one DirSync entry into an ObjectChange. SecretAttrs members are dropped and
-// counted before anything else is looked at; attributes that were not requested are ignored.
-func (s *Session) decodeChange(e *ldap.Entry, want map[string]struct{}) (ObjectChange, int, error) {
+// counted before anything else is looked at; attributes that were not requested are ignored. bin is
+// the forest's Recycle Bin status: with it off a deleted object is a tombstone whatever flags it
+// carries (Samba sets isRecycled on every tombstone; Windows is [UNVERIFIED], T-1257), so it is never
+// labelled RECYCLED, and it is never restorable either way.
+func (s *Session) decodeChange(e *ldap.Entry, want map[string]struct{}, bin bool) (ObjectChange, int, error) {
 	var (
 		oc       = ObjectChange{DN: e.DN, State: StateLive}
 		dropped  int
@@ -291,6 +302,8 @@ func (s *Session) decodeChange(e *ldap.Entry, want map[string]struct{}) (ObjectC
 	// The state is decided after the loop: LDAP does not fix attribute order, and a recycled object
 	// (isRecycled, usually with isDeleted) must never be reported as the restorable DELETED.
 	switch {
+	case (recycled || deleted) && !bin:
+		oc.State = StateTombstone
 	case recycled:
 		oc.State = StateRecycled
 	case deleted:

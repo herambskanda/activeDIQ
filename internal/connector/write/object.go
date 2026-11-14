@@ -97,40 +97,10 @@ func (o SessionObjects) Restore(ctx context.Context, r ad.RestoreRequest) error 
 	return o.S.RestoreObject(ctx, r, ops.Restore)
 }
 
-// RecycleBin reads msDS-EnabledFeature on CN=Partitions and looks for the Recycle Bin Feature. A
-// directory that cannot answer (an attribute the schema lacks, an unreadable object) is "no": the
-// restore is then CAPABILITY_UNSUPPORTED, never an attempt to reanimate a tombstone.
-func (o SessionObjects) RecycleBin(ctx context.Context) (bool, error) {
-	rd, err := o.S.RootDSE(ctx)
-	if err != nil {
-		return false, err
-	}
-	cfg, err := dn.Parse(rd.ConfigurationNamingContext, dn.Strict)
-	if err != nil {
-		return false, nil
-	}
-	parts, err := dn.Child(cfg, dn.CN, "Partitions")
-	if err != nil {
-		return false, nil
-	}
-	e, err := o.S.Read(ctx, dn.DNRef(parts), []string{"msDS-EnabledFeature"}, ad.ReadOptions{})
-	if err != nil {
-		if ad.CodeOf(err) == ad.CodeInvalidArgument || ad.CodeOf(err) == ad.CodeObjectNotFound {
-			return false, nil
-		}
-		return false, err
-	}
-	for _, v := range e.Strings("msDS-EnabledFeature") {
-		fd, err := dn.Parse(v, dn.Strict)
-		if err != nil || fd.Len() == 0 {
-			continue // a value that does not parse is not the feature
-		}
-		if r := fd.RDNs()[0]; r.Type() == dn.CN && strings.EqualFold(r.Value(), "Recycle Bin Feature") {
-			return true, nil
-		}
-	}
-	return false, nil
-}
+// RecycleBin delegates to the session's cached forest Recycle Bin status (ad.Session.RecycleBin). A
+// directory that cannot answer for lack of the attribute or object is "no": the restore is then
+// CAPABILITY_UNSUPPORTED, never an attempt to reanimate a tombstone.
+func (o SessionObjects) RecycleBin(ctx context.Context) (bool, error) { return o.S.RecycleBin(ctx) }
 
 // Objects implements ObjectProvider when the directory and the bound DC are one session.
 func (p *ADProvider) Objects() StructureDirectory {
