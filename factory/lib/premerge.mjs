@@ -133,6 +133,17 @@ export function findingKey(raw, roots = []) {
 const FITNESS_QUIET = [
   /:\s*ok\b/,
   /\bok \(/,
+  // A line that just ends in the bare word "ok" (no trailing "(" or following text), e.g. a
+  // sub-check's own pass summary ("fitness-sso: FIT-SSO-2 static half ok"). `/:\s*ok\b/` and
+  // `/\bok \(/` only catch "ok" right after a colon or right before "("; this catches it anywhere
+  // else in the line, as long as nothing (but optional trailing whitespace) follows it.
+  /\bok\s*$/,
+  // fitness-stack's F2 cross-build matrix (-v): "... ok for linux/amd64 (tools/apitools)". Matches
+  // the shape, not a hardcoded platform/dir list, so a new matrix entry needs no edit here.
+  /\bok for \S+ \(/,
+  // fitness-update-offline's own pass line: refusing a network call inside a --network none
+  // container is the success case, not a finding.
+  /container has no network \(connection refused, as required\)$/,
   /^fitness-[\w-]+:\s+activation table \(/,
   /\b\d+ (?:violation|problem|record)/,
   /^fitness-[\w-]+:\s+(?:inactive|pending)\b/,
