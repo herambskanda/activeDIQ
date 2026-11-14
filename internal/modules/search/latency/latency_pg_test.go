@@ -99,7 +99,7 @@ func TestSearchLatency50k(t *testing.T) {
 	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(4))
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		limitContainer(t, s)
-		runBench(t, s, benchCfg{n: 50000, ceil: 10000, per: 1000, warm: 200, verify: 25, enforce: true, plans: true, sweep: []int{5000, 6000, 7000, 8000, 9000, 10000, 20000, 40000}})
+		runBench(t, s, benchCfg{n: 50000, ceil: inventory.DefaultSearchCeiling, per: 1000, warm: 200, verify: 25, enforce: true, plans: true, sweep: []int{5000, 6000, 7000, 8000, 9000, 10000, 20000, 40000}})
 	})
 }
 
