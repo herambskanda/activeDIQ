@@ -203,7 +203,7 @@ design system's; the fields are fixed here):
   list with the current `revision`. Home reads the preference once, then resolves each widget. The
   frontend pins nothing silently: no default widgets are created, and a fresh account's Home shows
   **no reports block** until the first pin (no sample data, IA §4.2 "Optional").
-- The Home block lives in the `home` web module (T-1832's module). It imports the reports and
+- The Home block lives in the `home` web module (T-1844's module; T-1832 was cancelled). It imports the reports and
   uiprefs clients only through the generated API client (ADR-0004 rule 12), never another
   module's screen code (ESLint module boundary).
 - The pin list is validated against `reports.run` when read: widgets whose definition the viewer can
