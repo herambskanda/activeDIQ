@@ -177,7 +177,8 @@ func (p *ADProvider) principal(ctx context.Context) (sd.Principal, error) {
 // Not proven, or an unreadable descriptor, is a DeletedRightsError; only a lost DC or a cancelled
 // context is a plain error.
 func (p *ADProvider) proveListContents(ctx context.Context, objs StructureDirectory, domain dn.DN) (sd.Principal, dn.DN, error) {
-	denied := &DeletedRightsError{Domain: domain.String()}
+	shown, _ := dn.DNRef(domain).ForRequest() // display only; an unrequestable domain DN shows empty
+	denied := &DeletedRightsError{Domain: shown}
 	pr, err := p.principal(ctx)
 	if err != nil {
 		if isTransportErr(ctx, err) {

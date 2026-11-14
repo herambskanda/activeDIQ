@@ -133,8 +133,32 @@ func (s *Session) MoveObject(ctx context.Context, r MoveRequest, send ModifyDNFu
 		if err != nil {
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
-		return mapWriteErr(ctx, send(conn, DNChange{Entry: cur.dn.String(), NewRDN: leaf.String(), DeleteOldRDN: true, NewSuperior: np.dn.String()}))
+		ch, err := requestDNChange(cur.dn, leaf, np.dn)
+		if err != nil {
+			return err
+		}
+		return mapWriteErr(ctx, send(conn, ch))
 	})
+}
+
+// requestDNChange renders one ModifyDN through ObjectRef.ForRequest, which refuses a DN that is
+// not requestable (opaque RDN) or longer than MaxDNLen. A zero superior leaves the parent as is.
+func requestDNChange(entry, leaf, superior dn.DN) (DNChange, error) {
+	e, err := dn.DNRef(entry).ForRequest()
+	if err != nil {
+		return DNChange{}, fail(CodeInvalidArgument, "entry dn", err)
+	}
+	l, err := dn.DNRef(leaf).ForRequest()
+	if err != nil {
+		return DNChange{}, fail(CodeInvalidArgument, "rdn", err)
+	}
+	ch := DNChange{Entry: e, NewRDN: l, DeleteOldRDN: true}
+	if superior.Len() > 0 {
+		if ch.NewSuperior, err = dn.DNRef(superior).ForRequest(); err != nil {
+			return DNChange{}, fail(CodeInvalidArgument, "new parent dn", err)
+		}
+	}
+	return ch, nil
 }
 
 // RenameRequest renames Object to the RDN value NewValue, keeping its RDN type (deleteoldrdn true).
@@ -156,7 +180,11 @@ func (s *Session) RenameObject(ctx context.Context, r RenameRequest, send Modify
 		if err != nil {
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
-		return mapWriteErr(ctx, send(conn, DNChange{Entry: cur.dn.String(), NewRDN: leaf.String(), DeleteOldRDN: true}))
+		ch, err := requestDNChange(cur.dn, leaf, dn.DN{})
+		if err != nil {
+			return err
+		}
+		return mapWriteErr(ctx, send(conn, ch))
 	})
 }
 
@@ -188,7 +216,11 @@ func (s *Session) RestoreObject(ctx context.Context, r RestoreRequest, send Rest
 		if err != nil {
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
-		return mapWriteErr(ctx, send(conn, RestoreChange{Entry: r.Object.ObjectRef(), NewDN: nd.String(),
+		newDN, err := dn.DNRef(nd).ForRequest()
+		if err != nil {
+			return fail(CodeInvalidArgument, "new dn", err)
+		}
+		return mapWriteErr(ctx, send(conn, RestoreChange{Entry: r.Object.ObjectRef(), NewDN: newDN,
 			Controls: []ldap.Control{scope.ShowDeleted()}}))
 	})
 }

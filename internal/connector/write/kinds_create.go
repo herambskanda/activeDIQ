@@ -223,7 +223,11 @@ func planCreate(ctx context.Context, a Authorised, req *connectorv1.PlanRequest)
 		if c.existing != nil { // Plan never adopts: anything at the name is NameInUse
 			return invalid("5", "NameInUse", "change.rdn_value")
 		}
-		resp = &connectorv1.PlanResponse{Observed: c.obs, TargetDn: &connectorv1.DnValue{DisplayDn: c.child.String()},
+		target, terr := dn.DNRef(c.child).ForRequest() // the same bounded, requestable text Apply will send
+		if terr != nil {
+			return invalid("5", "RdnValue", "change.rdn_value")
+		}
+		resp = &connectorv1.PlanResponse{Observed: c.obs, TargetDn: &connectorv1.DnValue{DisplayDn: target},
 			Precondition: &connectorv1.TargetPrecondition{StateDigest: c.digest, PlanObservedAt: timestamppb.New(c.dct)}}
 		return nil
 	})
