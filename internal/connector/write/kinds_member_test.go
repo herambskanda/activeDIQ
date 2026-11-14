@@ -2,6 +2,7 @@ package write
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -29,9 +30,17 @@ type memberFake struct {
 
 func (f *memberFake) DCTime() (time.Time, error) { return time.Unix(1700000000, 0), nil }
 func (f *memberFake) Read(ref dn.ObjectRef, _ []string) (*ad.Entry, error) {
-	g, _ := ref.GUID()
-	if e, ok := f.byGUID[g]; ok {
-		return e, nil
+	if g, ok := ref.GUID(); ok {
+		if e, ok := f.byGUID[g]; ok {
+			return e, nil
+		}
+	}
+	if d, ok := ref.DN(); ok {
+		for _, e := range f.byGUID {
+			if ed, err := dn.Parse(e.DN, dn.Strict); err == nil && ed.Equal(d) {
+				return e, nil
+			}
+		}
 	}
 	return nil, ad.NewError(ad.CodeObjectNotFound)
 }
@@ -87,7 +96,7 @@ const (
 	clsGroup = connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_GROUP
 )
 
-func wantRule(t *testing.T, r *Refusal, rule string) {
+func wantRefusalRule(t *testing.T, r *Refusal, rule string) {
 	t.Helper()
 	if r == nil {
 		t.Fatalf("want %s, got success", rule)
@@ -149,36 +158,36 @@ func TestMemberAlreadyApplied(t *testing.T) {
 		t.Fatalf("primary group add: %v", r)
 	}
 	_, r = planMemberIn(Authorised{}, f2, false, g2, u2, clsUser)
-	wantRule(t, r, "PrimaryGroupMember")
+	wantRefusalRule(t, r, "PrimaryGroupMember")
 }
 
 func TestMemberRefusals(t *testing.T) {
 	f, gid, uid := rig11()
 	_, r := planMemberIn(Authorised{}, f, true, gid, gid, clsGroup)
-	wantRule(t, r, "SelfMembership")
+	wantRefusalRule(t, r, "SelfMembership")
 	_, r = planMemberIn(Authorised{}, f, true, gid, uid, clsGroup)
-	wantRule(t, r, "MemberClassMismatch")
+	wantRefusalRule(t, r, "MemberClassMismatch")
 	// A user is not a group target.
 	_, r = planMemberIn(Authorised{}, f, true, uid, gid, clsGroup)
-	wantRule(t, r, "ClassNotAllowed")
+	wantRefusalRule(t, r, "ClassNotAllowed")
 	// An OU and a foreignSecurityPrincipal are not members.
 	ou, fsp := mk(92), mk(93)
 	f.byGUID[ou] = mkEntry("OU=X,DC=lab,DC=example", []string{"top", "organizationalUnit"}, 30, nil)
 	f.byGUID[fsp] = mkEntry("CN=S-1-5-4,CN=ForeignSecurityPrincipals,DC=lab,DC=example", []string{"top", "foreignSecurityPrincipal"}, 31, nil)
 	for _, id := range []guid.GUID{ou, fsp} {
 		_, r = planMemberIn(Authorised{}, f, true, gid, id, clsUser)
-		wantRule(t, r, "ClassNotAllowed")
+		wantRefusalRule(t, r, "ClassNotAllowed")
 	}
 	// A managed service account's chain contains computer; its most specific class is not allowed.
 	msa := mk(94)
 	f.byGUID[msa] = mkEntry("CN=svc,DC=lab,DC=example", []string{"top", "person", "organizationalPerson", "user", "computer", "msDS-GroupManagedServiceAccount"}, 32, nil)
 	_, r = planMemberIn(Authorised{}, f, true, gid, msa, connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_COMPUTER)
-	wantRule(t, r, "ClassNotAllowed")
+	wantRefusalRule(t, r, "ClassNotAllowed")
 	// Another domain.
 	far := mk(95)
 	f.byGUID[far] = mkEntry("CN=Bob,DC=other,DC=example", []string{"top", "person", "organizationalPerson", "user"}, 33, nil)
 	_, r = planMemberIn(Authorised{}, f, true, gid, far, clsUser)
-	wantRule(t, r, "CrossDomainMemberUnsupported")
+	wantRefusalRule(t, r, "CrossDomainMemberUnsupported")
 	// A member that is not live.
 	_, r = planMemberIn(Authorised{}, f, true, gid, mk(99), clsUser)
 	if r == nil || r.Err.GetCode() != connectorv1.ErrorCode_ERROR_CODE_OBJECT_NOT_FOUND {
@@ -190,12 +199,14 @@ func TestMemberNestingCycle(t *testing.T) {
 	f, gid, _ := rig11()
 	child := mk(96)
 	f.byGUID[child] = mkEntry("CN=Child,OU=Groups,DC=lab,DC=example", []string{"top", "group"}, 40, map[string][][]byte{"groupType": {[]byte("-2147483646")}})
-	// The group Staff already sits below Child: Staff's tokenGroups carries Child's SID.
-	f.byGUID[gid].Raw("objectSid")
+	// The group Staff already sits below Child, two levels up: Staff is in Mid, Mid is in Child.
+	mid := mk(97)
+	f.byGUID[mid] = mkEntry("CN=Mid,OU=Groups,DC=lab,DC=example", []string{"top", "group"}, 41, map[string][][]byte{
+		"groupType": {[]byte("-2147483646")}, "memberOf": {[]byte("CN=Child,OU=Groups,DC=lab,DC=example")}})
 	f.byGUID[gid] = mkEntry(memGrpDN, []string{"top", "group"}, 10, map[string][][]byte{
-		"groupType": {[]byte("-2147483646")}, "tokenGroups": {memSID(40)}})
+		"groupType": {[]byte("-2147483646")}, "memberOf": {[]byte("CN=Mid,OU=Groups,DC=lab,DC=example")}})
 	_, r := planMemberIn(Authorised{}, f, true, gid, child, clsGroup)
-	wantRule(t, r, "NestingCycle")
+	wantRefusalRule(t, r, "NestingCycle")
 	// Removal of the nested group is allowed.
 	if _, r := planMemberIn(Authorised{}, f, false, gid, child, clsGroup); r != nil {
 		t.Fatalf("remove refused: %v", r)
@@ -235,7 +246,7 @@ func TestMemberStateChangedAndConflict(t *testing.T) {
 	plan, _ = planMemberIn(Authorised{}, f, true, gid, uid, clsUser)
 	f.sendErr = ad.NewError(ad.CodeConstraint)
 	_, r = applyMemberIn(Authorised{}, f, true, gid, uid, clsUser, plan.GetPrecondition())
-	wantRule(t, r, "GroupScopeRule")
+	wantRefusalRule(t, r, "GroupScopeRule")
 }
 
 func TestMemberRemove(t *testing.T) {
@@ -268,4 +279,36 @@ func TestMemberOpsRegisteredAndValid(t *testing.T) {
 			t.Fatalf("%s declares %v", k, pw)
 		}
 	}
+}
+
+// A contact has no objectSid: it can be added and removed, identified by its GUID in the digest.
+func TestMemberContactWithoutSID(t *testing.T) {
+	f, gid, _ := rig11()
+	c := mk(98)
+	f.byGUID[c] = ad.NewEntry("CN=Pat,OU=People,DC=lab,DC=example", map[string][][]byte{"objectClass": {[]byte("top"), []byte("person"), []byte("organizationalPerson"), []byte("contact")}})
+	resp, r := planMemberIn(Authorised{}, f, true, gid, c, connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_CONTACT)
+	if r != nil || resp.GetNoOp() {
+		t.Fatalf("plan: %v %v", r, resp.GetNoOp())
+	}
+}
+
+// A walk past the bound refuses instead of guessing: Staff sits under a chain of more than
+// nestingWalkLimit groups, none of which is the member.
+func TestMemberNestingWalkBounded(t *testing.T) {
+	f, gid, _ := rig11()
+	child := mk(99)
+	f.byGUID[child] = mkEntry("CN=Child,OU=Groups,DC=lab,DC=example", []string{"top", "group"}, 40, map[string][][]byte{"groupType": {[]byte("-2147483646")}})
+	n := nestingWalkLimit + 5
+	for i := 0; i < n; i++ {
+		extra := map[string][][]byte{"groupType": {[]byte("-2147483646")}}
+		if i+1 < n {
+			extra["memberOf"] = [][]byte{[]byte(fmt.Sprintf("CN=P%d,OU=Groups,DC=lab,DC=example", i+1))}
+		}
+		var id guid.GUID
+		id[0], id[1], id[15] = byte(i), byte(i>>8), 0xAB
+		f.byGUID[id] = mkEntry(fmt.Sprintf("CN=P%d,OU=Groups,DC=lab,DC=example", i), []string{"top", "group"}, 50, extra)
+	}
+	f.byGUID[gid] = mkEntry(memGrpDN, []string{"top", "group"}, 10, map[string][][]byte{"groupType": {[]byte("-2147483646")}, "memberOf": {[]byte("CN=P0,OU=Groups,DC=lab,DC=example")}})
+	_, r := planMemberIn(Authorised{}, f, true, gid, child, clsGroup)
+	wantRefusalRule(t, r, "UnreadableAttribute")
 }

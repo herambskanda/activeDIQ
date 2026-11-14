@@ -151,7 +151,7 @@ type memberRead struct {
 }
 
 var (
-	groupAttrs  = []string{"objectClass", "objectSid", "groupType", "tokenGroups"}
+	groupAttrs  = []string{"objectClass", "objectSid", "groupType", "memberOf"}
 	memberAttrs = []string{"objectClass", "objectSid", "primaryGroupID", "memberOf"}
 )
 
@@ -202,9 +202,18 @@ func readMember(tx memberTx, add bool, target, member guid.GUID, declared connec
 		return nil, invalid("5", "CrossDomainMemberUnsupported", "change")
 	}
 	gs, serr := sidOf(g)
-	ms, merr2 := sidOf(m)
-	if serr != nil || merr2 != nil {
+	if serr != nil {
 		return nil, invalid("5", "UnreadableAttribute", "target")
+	}
+	// A contact has no objectSid (it is no security principal): it is identified by its GUID in the digest.
+	var ms sid.SID
+	msBytes := member[:]
+	if live != connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_CONTACT {
+		var merr2 error
+		if ms, merr2 = sidOf(m); merr2 != nil {
+			return nil, invalid("5", "UnreadableAttribute", "target")
+		}
+		msBytes = ms.Bytes()
 	}
 	grid, ok := gs.RID()
 	if !ok {
@@ -216,10 +225,12 @@ func readMember(tx memberTx, add bool, target, member guid.GUID, declared connec
 	}
 	if add && live == connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_GROUP {
 		// The group already sits below the member: adding the member would close a loop.
-		for _, tg := range g.Raw("tokenGroups") {
-			if bytes.Equal(tg, ms.Bytes()) {
-				return nil, invalid("5", "NestingCycle", "change")
-			}
+		below, r := groupBelow(tx, g, md)
+		if r != nil {
+			return nil, r
+		}
+		if below {
+			return nil, invalid("5", "NestingCycle", "change")
 		}
 	}
 	if !add && primary {
@@ -234,7 +245,7 @@ func readMember(tx memberTx, add bool, target, member guid.GUID, declared connec
 	}
 	in := listed || primary
 	h := sha256.New()
-	for _, p := range [][]byte{[]byte("adq-group-member/1"), gs.Bytes(), firstRaw(g, "groupType"), ms.Bytes(), []byte(strings.ToLower(declaredLabel(declared))),
+	for _, p := range [][]byte{[]byte("adq-group-member/1"), gs.Bytes(), firstRaw(g, "groupType"), msBytes, []byte(strings.ToLower(declaredLabel(declared))),
 		[]byte(strings.ToLower(md.Parent().String()))} {
 		var n [8]byte
 		for i := 0; i < 8; i++ {
@@ -244,6 +255,45 @@ func readMember(tx memberTx, add bool, target, member guid.GUID, declared connec
 		h.Write(p)
 	}
 	return &memberRead{group: g, member: m, groupDN: gd, memberDN: md, groupSID: gs, memberSID: ms, in: in, digest: h.Sum(nil)}, nil
+}
+
+// nestingWalkLimit bounds the groups read to decide a nesting loop; past it the answer is unknown and the
+// write is refused (UnreadableAttribute), never guessed.
+const nestingWalkLimit = 256
+
+// groupBelow reports whether the group sits (transitively) below the group named by member: it walks the
+// group's memberOf upward, one read per distinct group, and stops at nestingWalkLimit. tokenGroups is not
+// used: Samba does not compute it for group objects and Windows behaviour is unverified.
+func groupBelow(tx memberTx, g *ad.Entry, member dn.DN) (bool, *Refusal) {
+	seen := map[string]bool{}
+	queue := []*ad.Entry{g}
+	for len(queue) > 0 {
+		e := queue[0]
+		queue = queue[1:]
+		for _, v := range e.Raw("memberOf") {
+			pd, err := dn.Parse(string(v), dn.Strict)
+			if err != nil {
+				return false, invalid("5", "UnreadableAttribute", "target")
+			}
+			if pd.Equal(member) {
+				return true, nil
+			}
+			key := strings.ToLower(pd.String())
+			if seen[key] {
+				continue
+			}
+			if len(seen) >= nestingWalkLimit {
+				return false, invalid("5", "UnreadableAttribute", "target")
+			}
+			seen[key] = true
+			pe, err := tx.Read(dn.DNRef(pd), []string{"memberOf"})
+			if err != nil {
+				return false, fromDir(err)
+			}
+			queue = append(queue, pe)
+		}
+	}
+	return false, nil
 }
 
 func declaredLabel(c connectorv1.DirectoryObjectClass) string { return accountkind.MemberClassLabel(c) }

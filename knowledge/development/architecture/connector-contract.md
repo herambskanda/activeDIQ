@@ -285,6 +285,14 @@ reserved for the SD flags) asks for `ReadHeader.child_count`, a `ChildCount{coun
   Deleting a non-empty OU is a different, later kind (subtree delete, every descendant a touched object),
   not a bigger count here.
 
+**As built (T-1586).** `read.ChildCounter` is an optional half of `Source` (`ADSource.CountChildren`); a
+Source without it answers `CAPABILITY_UNSUPPORTED`. `client.ConnectorReads.ObjectWithChildCount` treats a
+count that is present when not asked, or absent when asked, as `ErrReadProtocol`. The Action
+(`ad.ou.delete`, `modules/ad.md`) turns children into a Plan refusal naming the count; cascade is refused.
+Kinds 11/12 digest the group as target class `group` with the member GUID and class as digested attributes
+(not the member's DN); the Plan-time `member` write-property probe and the C20 refusals are not built;
+kind 13's cluster-object refusal is the connector's SPN check, proven on Windows only (CC-WK-59). `NestingCycle` walks the group's `memberOf` upward (bounded at 256 groups, then `UnreadableAttribute`) instead of reading `tokenGroups`: Samba does not return `tokenGroups` on group objects. A contact has no `objectSid`; the digest identifies it by GUID.
+
 ### 5.4 Typed values
 
 The connector's codecs (P3) decode, so no caller sees raw bytes of a known syntax.
