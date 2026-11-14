@@ -1846,7 +1846,7 @@ by the member's class (parameterise, don't clone): there is no `NEST` kind and n
   an ordinary object permission scoped to the group; it is not in `GroupMembershipPermissions` because
   removal cannot grow anyone's reach. **Residual for security-architect (R-GM-1):** removal widens access
   where the group is used in a *deny* ACE, a deny GPO filter or a "deny logon" right; the connector cannot
-  see where a group is referenced. Default here: not guarded; the call is TM §6.9, route T-1918.
+  see where a group is referenced. **Ruled (T-1918, TM-D36, [threat model §6.9a](threat-model.md)):** class `none`, no new permission; removal from a built-in restrictive group (Protected Users, Denied RODC Password Replication, by RID) or a tenant-designated one needs conditional step-up decided on the server; the preview carries the fixed deny-rule warning; the audit event carries `restrictive`.
 - **Class matrix.** Target: `group` only (any other live class, `ClassNotAllowed`). Member: `user`
   (including `inetOrgPerson`), `computer`, `contact`, `group`. A `foreignSecurityPrincipal`, a
   `msDS-ManagedServiceAccount` and a container are `ClassNotAllowed`. A group of any `groupType`
@@ -2050,7 +2050,8 @@ can mean" limits of safe-primitives §5.6 apply to the connector's copies as to 
 | `USER_PASSWORD_RESET` | **true** | **true** | **Irreversible** | A reset gives the actor (or whoever they hand it to) a known credential for a sign-in account; safe-primitives §5.6 and ADR-0005 rule 1 name "setting a password" as the Irreversible example. `StepUp`: see below |
 | `OBJECT_CREATE` (USER) | false | true when `has_secret_input` | Reversible (the inverse deletes the new account) | A new account backs no one yet (TM-D28 rule 3: create is outside the classes) |
 | `COMPUTER_ACCOUNT_RESET` | **true** | false (the value is generated in the connector; no `secret_input`) | **Irreversible** | The old machine password cannot be restored and the machine falls off the domain until it repairs or rejoins (outage of a server or a workstation). No credential is handed to the actor, so this is not the §7.4 password-reset row; it has its own (below) |
-| `GROUP_MEMBER_ADD`, `GROUP_MEMBER_REMOVE` | false | false | Reversible | Authorised by the TM-D18 permission on the group, not by step-up (R-GM-1) |
+| `GROUP_MEMBER_ADD` | false | false | Reversible | Authorised by the TM-D18 permission on the group, not by step-up |
+| `GROUP_MEMBER_REMOVE` | **conditional** (true when the group is restrictive, TM-D36) | false | Reversible | Removal widens access where a group denies (R-GM-1, T-1918); the server decides `restrictive`, never the caller |
 | all others | false | false | per §8.10.1 | |
 
 **StepUp and TM-D16.** [Threat model §7.4](threat-model.md) (TM-D16 part 1) is a closed list of operations
