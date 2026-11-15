@@ -87,8 +87,7 @@ library choice, the concrete lint tools and which tiers implement what. Package 
 builder `internal/connector/wirevalue`, [connector-contract §5.9.1](connector-contract.md); §5.7),
 `internal/platform/secret`, `internal/connector/ad` (raw search, the closed general-search control set, scoped
 search and GC resolution: `search.go`, `scoped.go`, `gc.go`), `internal/directory/attr/unicodepwd` (`SecureConn`),
-`internal/connector/ad/scope` (**planned**: the escape-control named-operation table only, created by the first
-named operation that sets one, ADM-038 `RestoreDeleted`), `internal/connector/psx`, `internal/platform/pslit`, `internal/platform/proc`, and
+`internal/connector/ad/scope` (the escape-control named-operation table: it currently holds show-deleted and show-deactivated-link; further named operations, such as ADM-038 `RestoreDeleted`, are added there), `internal/connector/psx`, `internal/platform/pslit`, `internal/platform/proc`, and
 `internal/platform/store` (with `store/exempt` and `store/reportsql`). Short names below (`dn`, `store`) mean these packages; `scope` means the scoped-search layer of
 `internal/connector/ad` (`scoped.go`), not the planned escape-control table package. API sketches use neutral pseudo-signatures; Go, C#
 and TypeScript names illustrate the ratified stack. §10 lists what changes if ADR-0001 is amended.

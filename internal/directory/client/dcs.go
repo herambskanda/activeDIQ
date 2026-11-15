@@ -26,6 +26,8 @@ var (
 type WritableDC struct {
 	Host    string
 	DSAGUID string
+	// Site is the AD site the DC reported (DcIdentity.site); empty when it reported none.
+	Site string
 }
 
 // DCDirectory lists a connection's writable DCs, live (Describe with refresh), so a DC rebuilt under
@@ -109,7 +111,7 @@ func writableDCsOf(resp *connectorv1.DescribeResponse, nc []byte) ([]WritableDC,
 		if host == "" || len(dc.GetIdentity().GetDsaGuid().GetValue()) != guid.Size || err != nil {
 			return nil, ErrDCIdentity
 		}
-		out = append(out, WritableDC{Host: host, DSAGUID: g.String()})
+		out = append(out, WritableDC{Host: host, DSAGUID: g.String(), Site: dc.GetIdentity().GetSite()})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Host < out[j].Host })
 	return out, nil

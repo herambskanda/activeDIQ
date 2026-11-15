@@ -26,9 +26,12 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
+	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/report"
+	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/owners"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // ID is a module's stable identifier. It is also its OpenAPI tag and its web module ID.
@@ -81,7 +84,45 @@ type Registrar struct {
 	sets    []report.Dataset
 	tags    []apihost.TagHandlers
 	perms   []authz.Permission
+	jobs    []Job
+	ready   []func(context.Context) error
 	seen    map[string]struct{}
+}
+
+// Job is one job kind a module contributes (EP-5). Kind.Name must start with "<moduleID>.". Seed, when
+// set, is called by the composition root once per boot for the install tenant, in that tenant's
+// transaction, after the tenant exists; it must be idempotent (a keyed enqueue). The module starts no
+// goroutine: the kernel's worker runs the kind and the kernel calls Seed.
+type Job struct {
+	Kind jobs.Kind
+	Seed func(ctx context.Context, tx store.Tx, tid tenant.ID) error
+}
+
+// Job registers a job kind (EP-5) in the module's namespace.
+func (r *Registrar) Job(j Job) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.claim("job", j.Kind.Name); err != nil {
+		return err
+	}
+	r.jobs = append(r.jobs, j)
+	return nil
+}
+
+// Ready registers a check that runs once after every module has registered and the report host is
+// sealed (Contributions.Ready). Use it for what needs the other contributions, such as the report
+// library resolving its definitions against the sealed datasets; an error stops start-up.
+func (r *Registrar) Ready(fn func(context.Context) error) error {
+	if fn == nil {
+		return fmt.Errorf("%w: nil ready hook", ErrInvalid)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.open {
+		return fmt.Errorf("%w: ready hook", ErrClosed)
+	}
+	r.ready = append(r.ready, fn)
+	return nil
 }
 
 // scopeEntry pins the kind read once at registration, so an evaluator cannot answer differently later.
@@ -217,6 +258,23 @@ type Contributions struct {
 	sets    []report.OwnedDatasets
 	tags    []apihost.TagHandlers
 	perms   []authz.Permission
+	jobs    []Job
+	ready   []func(context.Context) error
+}
+
+// Jobs lists the job kinds modules registered, in boot order. compose/server registers them on the
+// job registry and runs each Seed for the install tenant.
+func (c *Contributions) Jobs() []Job { return append([]Job(nil), c.jobs...) }
+
+// Ready runs the modules' ready hooks in boot order and stops at the first error. compose/server calls
+// it after the report host is sealed.
+func (c *Contributions) Ready(ctx context.Context) error {
+	for _, fn := range c.ready {
+		if err := fn(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // API lists the route handlers modules registered, in boot order. compose/server mounts them on
@@ -329,6 +387,8 @@ func Boot(ctx context.Context, mods []Entry, enabled capability.Set, opts ...Boo
 		out.actions = append(out.actions, r.actions...)
 		out.tags = append(out.tags, r.tags...)
 		out.perms = append(out.perms, r.perms...)
+		out.jobs = append(out.jobs, r.jobs...)
+		out.ready = append(out.ready, r.ready...)
 		if len(r.sets) > 0 {
 			out.sets = append(out.sets, report.OwnedDatasets{Owner: string(e.ID), Datasets: slices.Clone(r.sets)})
 		}
