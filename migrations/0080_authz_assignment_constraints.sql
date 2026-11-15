@@ -1,4 +1,4 @@
--- 0079_authz_assignment_constraints: additive constraints on a role assignment (T-1600, ADM-132, ADM-133).
+-- 0080_authz_assignment_constraints: additive constraints on a role assignment (T-1600, ADM-132, ADM-133).
 -- Owner: internal/platform/rbac (authz). Both tables narrow or order what an assignment already grants;
 -- neither adds a scope root kind, and a missing row means "no constraint".
 --
