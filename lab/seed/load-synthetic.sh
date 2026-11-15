@@ -12,11 +12,17 @@ case "$n" in ''|*[!0-9]*) echo "n must be a number" >&2; exit 2;; esac
 for u in "$1" "$2" "$3"; do
   printf '%s' "$u" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || { echo "not a lower-case uuid: $u" >&2; exit 2; }
 done
-case "$ACTIVEDIQ_LAB_DSN" in
-  *localhost*|*127.0.0.1*|*@lab*|*@postgres*|*@db*) ;;
-  *) [ "${LAB_SYNTH_ALLOW_HOST:-}" = 1 ] || { echo "refusing: DSN host does not look like a lab database (LAB_SYNTH_ALLOW_HOST=1 to override)" >&2; exit 2; };;
+printf '%s' "$seed" | grep -Eq '^[a-z0-9]{1,16}$' || { echo "seed must match ^[a-z0-9]{1,16}$" >&2; exit 2; }
+# Host is parsed out of the DSN (scheme, userinfo, port and path stripped) and compared exactly.
+host=${ACTIVEDIQ_LAB_DSN#*://}; host=${host##*@}; host=${host%%/*}; host=${host%%\?*}
+case "$host" in \[*) host=${host%%]*}; host=${host#[};; *) host=${host%%:*};; esac
+case "$host" in
+  localhost|127.0.0.1|::1|lab|postgres|db) ;;
+  *) [ "${LAB_SYNTH_ALLOW_HOST:-}" = 1 ] || { echo "refusing: DSN host '$host' is not a known lab host (LAB_SYNTH_ALLOW_HOST=1 to override)" >&2; exit 2; };;
 esac
 t0=$(date +%s)
 psql "$ACTIVEDIQ_LAB_DSN" -v ON_ERROR_STOP=1 -q -f "$here/synth-candidates.sql"
-rows=$(psql "$ACTIVEDIQ_LAB_DSN" -v ON_ERROR_STOP=1 -At -c "SELECT lab_synth.load_users('$1','$2','$3',$n,'$seed')")
+# Values go in as psql variables and are quoted by psql (:'x'); -c does not interpolate, so feed stdin.
+rows=$(printf '%s\n' "SELECT lab_synth.load_users(:'t',:'c',:'nc',:'n'::bigint,:'seed');" |
+  psql "$ACTIVEDIQ_LAB_DSN" -v ON_ERROR_STOP=1 -At -v t="$1" -v c="$2" -v nc="$3" -v n="$n" -v seed="$seed")
 echo "synthetic users inserted: $rows (requested $n, seed $seed) in $(( $(date +%s) - t0 ))s"

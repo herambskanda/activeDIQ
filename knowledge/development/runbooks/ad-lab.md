@@ -244,6 +244,8 @@ lab/seed/load-synthetic.sh <tenant-uuid> <connection-uuid> <nc-uuid> 500000 a
 # -> synthetic users inserted: 500000 (requested 500000, seed a) in <n>s
 ```
 
+* Guards: the seed must match `^[a-z0-9]{1,16}$`; the DSN host must be exactly `localhost`, `127.0.0.1`, `::1`, `lab`, `postgres` or `db` (else `LAB_SYNTH_ALLOW_HOST=1`); all values reach psql as quoted variables. Proof: `sh lab/seed/load-synthetic_test.sh`.
+
 * Rows: `sam synth<seed>-<i>`, `@lab.activediq.test`, `OU=Synthetic,<nc dn>`, 4% disabled, `observed_dsa='lab-synthetic'`
   (use that to find or sweep them; the runtime role cannot delete, the owner can). GUIDs derive from (seed, i), so a
   rerun inserts nothing; a different seed adds a disjoint set. The lab DC does **not** hold these objects.
