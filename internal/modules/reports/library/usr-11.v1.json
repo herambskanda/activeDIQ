@@ -1,0 +1,192 @@
+{
+  "id": "usr-11",
+  "version": 1,
+  "category": "users",
+  "title": "Attribute completeness",
+  "description": "Users with no value in a chosen attribute. The attribute is chosen from a closed list of registered columns, one preset each. An attribute the directory did not return reads as empty: Active Directory does not tell an empty attribute from one the sync account could not read.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "domain",
+    "dn",
+    "mail",
+    "enabled"
+  ],
+  "sort": [
+    {
+      "column": "sam_account_name",
+      "dir": "asc"
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn",
+    "user_attribute_absent_or_unread"
+  ],
+  "presets": [
+    {
+      "id": "empty_mail",
+      "names": [
+        "Users With Empty Attributes"
+      ],
+      "where": {
+        "cmp": {
+          "col": "mail",
+          "op": "absent"
+        }
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "mail",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_employee_id",
+      "names": [],
+      "where": {
+        "cmp": {
+          "col": "employee_id",
+          "op": "absent"
+        }
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "employee_id",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_department",
+      "names": [],
+      "where": {
+        "cmp": {
+          "col": "department",
+          "op": "absent"
+        }
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "department",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_title",
+      "names": [],
+      "where": {
+        "cmp": {
+          "col": "title",
+          "op": "absent"
+        }
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "title",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_company",
+      "names": [],
+      "where": {
+        "cmp": {
+          "col": "company",
+          "op": "absent"
+        }
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "company",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_telephone_number",
+      "names": [],
+      "where": {
+        "cmp": {
+          "col": "telephone_number",
+          "op": "absent"
+        }
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "telephone_number",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_mobile",
+      "names": [],
+      "where": {
+        "cmp": {
+          "col": "mobile",
+          "op": "absent"
+        }
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "mobile",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_description",
+      "names": [],
+      "where": {
+        "cmp": {
+          "col": "description",
+          "op": "absent"
+        }
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "description",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_manager",
+      "names": [],
+      "where": {
+        "cmp": {
+          "col": "manager",
+          "op": "absent"
+        }
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "manager",
+        "enabled"
+      ]
+    }
+  ]
+}

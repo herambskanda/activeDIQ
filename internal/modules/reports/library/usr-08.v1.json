@@ -1,0 +1,97 @@
+{
+  "id": "usr-08",
+  "version": 1,
+  "category": "users",
+  "title": "Profile settings",
+  "description": "Whether users have a photo (thumbnailPhoto or jpegPhoto) and the logon script assigned on the account (scriptPath). Photo presence only: the image is neither stored nor returned. Scripts assigned through Group Policy are not visible here.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "domain",
+    "dn",
+    "has_photo",
+    "enabled"
+  ],
+  "sort": [
+    {
+      "column": "sam_account_name",
+      "dir": "asc"
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn",
+    "user_attribute_absent_or_unread",
+    "group_policy_scripts_not_visible"
+  ],
+  "presets": [
+    {
+      "id": "photo_with",
+      "names": [
+        "Photo Based Reports"
+      ],
+      "where": {
+        "cmp": {
+          "col": "has_photo",
+          "op": "eq",
+          "value": {
+            "bool": true
+          }
+        }
+      }
+    },
+    {
+      "id": "photo_without",
+      "names": [],
+      "where": {
+        "cmp": {
+          "col": "has_photo",
+          "op": "eq",
+          "value": {
+            "bool": false
+          }
+        }
+      }
+    },
+    {
+      "id": "script_with",
+      "names": [
+        "Users With Logon Script"
+      ],
+      "where": {
+        "cmp": {
+          "col": "logon_script",
+          "op": "present"
+        }
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "logon_script",
+        "enabled"
+      ]
+    },
+    {
+      "id": "script_without",
+      "names": [
+        "Users Without Logon Script"
+      ],
+      "where": {
+        "cmp": {
+          "col": "logon_script",
+          "op": "absent"
+        }
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "logon_script",
+        "enabled"
+      ]
+    }
+  ]
+}
