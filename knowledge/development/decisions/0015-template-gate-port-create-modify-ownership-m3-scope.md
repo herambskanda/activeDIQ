@@ -50,7 +50,7 @@ paths (`submit.go`, `runner.go`) build `PlanContext.Templates` as a closure over
 request's tenant context, exactly as `pinnedReader` binds pins: **a Plan cannot name the chain**. A nil
 `TemplateAuthz` yields a gate that **denies** (fail closed). A refusal is returned as `*PlanRefusal{Code:
 "template_not_permitted"}`, so a preview shows a blocked entry and a submit audits the denied attempt (rule 4).
-`compose/server/operation.go` wires `rbacAuthorizer` into `Config.TemplateAuthz`; no module imports `rbac`.
+`compose/server/operation.go` wires `rbacAuthorizer` into `Config.TemplateAuthz`; no **Template-consuming** module imports `rbac` (see TG3 scope).
 Order inside a Plan is fixed: **TemplateGate, then CheckInput, then Render, then the first read**.
 
 **D2. `ad` keeps the create/modify Actions; `objects` does not get a second set.**
@@ -91,7 +91,7 @@ exactly one Apply succeeds and the other fails `name_in_use`; never a retry, nev
 
 ## Consequences
 
-Plans stay read-only and cannot choose the chain. Every Template-using Action has one line to call and a
+Plans stay read-only and cannot choose the chain. TG3 is scoped to Template consumers with a named allowlist (existing rbac-wiring modules), so it passes on day one. Every Template-using Action has one line to call and a
 fitness check that it does. `objects.md` loses its "T-1631 will add Actions" note and states the rule in D2.
 Tests that build a `PlanContext` by hand leave `Templates` nil; the test helper supplies an allow/deny fake.
 
@@ -102,7 +102,13 @@ Tests that build a `PlanContext` by hand leave `Templates` nil; the test helper 
 - **TG2** (`tools/fitness/modules`, new rule): any `Plan` in `internal/modules/**` that references
   `objects.Template`/`TemplateRef` must call `Templates.CheckTemplate` before the call to `CheckInput` or the first `Facts`.
   Failing fixture included.
-- **TG3** (import rule): `internal/modules/**` must not import `internal/platform/rbac`.
+- **TG3** (import rule), **scoped**: `internal/modules/ad` and `internal/modules/objects` (the Template
+  consumers/owners) must not import `internal/platform/rbac`; nor may any module that imports
+  `internal/modules/objects`. Explicit allowlist, with rationale: `delegation`, `connections`, `directory`,
+  `reports`, `search` import `rbac` today (non-test) because they implement or wire rbac itself (delegation
+  grants, tier-0 override, read scopes, report/search scoping) and do not consume Templates. The allowlist lives
+  in the rule's config file; adding a module to it needs an ADR amendment. A new module that imports `objects`
+  is under TG3 automatically. (Narrowing the wider "modules never import rbac" goal is a separate decision.)
 - **OW1**: an Action whose `Descriptor.Target != TargetStore` and whose ID prefix is `objects.` fails the build.
 - **M3a / M3b**: as D3.
 - **NU1**: a table test: rule-5 `NameInUse` and `CodeNameInUse` map to `client.ErrNameInUse`; the lab test
