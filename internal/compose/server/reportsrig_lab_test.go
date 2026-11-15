@@ -49,6 +49,7 @@ type reportsRig struct {
 	jreg  *jobs.Registry
 	runs  *run.Service
 	seed  labSeeder
+	src   client.ConnectorSource
 	scope authz.ReadScope
 	srv   http.Handler
 }
@@ -76,7 +77,7 @@ func newReportsRig(t *testing.T, s *storetest.Server) *reportsRig {
 	if err != nil {
 		t.Fatalf("labBootstrap: %v", err)
 	}
-	r.seed = seed
+	r.seed, r.src = seed, src
 	t.Cleanup(closeFn)
 	kek, err := keys.NewLocalProvider("test-kek", secret.FromBytes(bytes.Repeat([]byte{7}, 32)))
 	if err != nil {
