@@ -86,3 +86,4 @@ lab/windows/.win-lab-gmsa.json
 
 # Go build output from a bare `go build ./pkg`
 /operation
+.search-latency.lock

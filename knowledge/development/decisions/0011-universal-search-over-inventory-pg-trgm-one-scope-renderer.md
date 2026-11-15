@@ -757,12 +757,17 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
       facet, and the client's fix is to send the type back, not to search again.
     - **No frozen pages.** Search is not a frozen report run, so ADR-0010 does not apply. A page
       re-runs the statement, so pages may shift if the inventory changes in between.
-13. **The work per query is bounded, whatever the scope's shape (T-0995 class).** The values are
-    `[PROPOSED]`, and T-1102 measures and sets them:
+13. **The work per query is bounded, whatever the scope's shape (T-0995 class).** The work ceiling is
+    measured (T-1303); the other values are `[PROPOSED]`, and T-1102 measures and sets them:
     - **One statement.** At most one search statement per request, plus at most one batched metadata
       read keyed by the admitted GUIDs (T-1097). There are no per-hit queries.
-    - **The work ceiling W** (`MaxSearchMatches`). `[PROPOSED]` 10,000 matched key rows per class.
-      T-1102 sets it to the largest value at which a ceiling-sized class still meets rule 14's p95.
+    - **The work ceiling W** (`MaxSearchMatches`). 7,000 matched key rows per class.
+      It is the largest swept value at which a ceiling-sized class meets rule 14's p95 for both
+      callers on both versions in both T-1303 sweeps (50,000 objects, evidence
+      `factory/demos/evidence/T-1102/`). pg16 admin, the binding case: 188.1 ms and 193.1 ms at
+      7,000; 199.0 ms and 216.4 ms at 8,000; 196.2 ms and 225.1 ms at 9,000. pg18 passes up to
+      10,000. The margin at 7,000 on pg16 admin is 7 ms, so a re-measure after any
+      search-statement change must confirm it.
       W is a property of the tenant's data. It is not a cap on what a caller sees: below W every
       answer is complete, and above W every caller gets the refine state.
     - **Exact and prefix: rows examined ≤ W + 1 per class.** The B-tree is tenant-led and is read in
