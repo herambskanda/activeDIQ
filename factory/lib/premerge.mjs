@@ -485,29 +485,97 @@ export function planRenumber(mainNames, addedNames) {
 }
 
 /**
- * Run the numbering check on the merge result in `dir`. Returns a `blocked` verdict when it fails
- * (naming the number to renumber to), or null when it passes. A check that cannot run throws.
+ * Apply a renumber plan to the working tree in `dir` (git-mv each colliding migration to its free
+ * number) and rewrite every reference to the old file's stem in the files this merge touched
+ * (`mainSha`..HEAD), so a test or comment naming the migration does not go stale — the same two
+ * steps the blocked note (`blockedNote`) has always told a human to do by hand. Pure mechanical
+ * step: does not commit. Returns false (nothing staged) when the plan is empty or a `git mv` fails.
+ * @param {string} dir
+ * @param {{from: string, to: string}[]} plan
+ * @param {string} migrationsDir
+ * @param {string} mainSha
+ * @returns {Promise<boolean>}
+ */
+export async function applyMigrationRenumber(dir, plan, migrationsDir, mainSha) {
+  if (!plan.length) return false;
+  const stem = (name) => name.replace(/\.sql$/, '');
+  const touched = (await git(dir, ['diff', '--name-only', mainSha, 'HEAD'])).stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+  for (const { from, to } of plan) {
+    const fromPath = `${migrationsDir}/${from}`;
+    const toPath = `${migrationsDir}/${to}`;
+    const mv = await git(dir, ['mv', fromPath, toPath]);
+    if (mv.code !== 0) return false;
+    const fromStem = stem(from);
+    const toStem = stem(to);
+    for (const file of touched) {
+      if (file === fromPath) continue; // already moved
+      const abs = path.join(dir, file);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+      let text;
+      try { text = fs.readFileSync(abs, 'utf8'); } catch { continue; } // binary or unreadable: leave it
+      if (!text.includes(fromStem)) continue;
+      fs.writeFileSync(abs, text.split(fromStem).join(toStem));
+      const add = await git(dir, ['add', '--', file]);
+      if (add.code !== 0) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Run the numbering check on the merge result in `dir`. On failure, try the one-shot fix the
+ * blocked note has always described (renumber the clashing file, fix references, re-run): two
+ * parallel branches racing for the same next migration number is the expected case (T-1067's own
+ * comment), not a defect in either branch, so there is nothing for a human to design — just apply
+ * the plan `planRenumber` already computes and check the result is still green. Returns a `blocked`
+ * verdict when it fails and the fix did not clear it (naming the number to renumber to), or
+ * `{seconds, renumbered}` when it passes (`renumbered` is the plan actually applied, or null when
+ * none was needed). A check that cannot run throws.
  */
 async function checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { signal, run }) {
   const cfg = settings.numbering;
   const log = path.join(gateDir(ctx), `${subject.id}-${mainSha.slice(0, 12)}-${run}-numbering.log`);
   const started = Date.now();
-  const ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal });
-  const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  let ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal });
   if (ran.timedOut) throw new FactoryError(`pre-merge: the migration-numbering check on ${subject.label} timed out after ${cfg.timeout_seconds} s (${log})`);
   if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${subject.label} was stopped (${log})`);
-  if (ran.code === 0) { fs.appendFileSync(log, `\n# migration-numbering check passed in ${seconds} s\n`); return { seconds: Number(seconds) }; }
 
   const names = async (ref) => (await git(dir, ['ls-tree', '--name-only', ref, `${cfg.dir}/`])).stdout.split('\n').map((l) => path.basename(l.trim())).filter((n) => n.endsWith('.sql'));
-  const added = (await git(dir, ['diff', '--name-only', '--diff-filter=A', mainSha, 'HEAD', '--', `${cfg.dir}/`])).stdout
+  const added = async () => (await git(dir, ['diff', '--name-only', '--diff-filter=A', mainSha, 'HEAD', '--', `${cfg.dir}/`])).stdout
     .split('\n').map((l) => path.basename(l.trim())).filter((n) => n.endsWith('.sql'));
-  const plan = planRenumber(await names(mainSha), added);
-  const findings = plan.map((r) => `renumber ${cfg.dir}/${r.from} to ${r.to}`);
+  let plan = [];
+  let renumbered = null;
+  if (ran.code !== 0) {
+    plan = planRenumber(await names(mainSha), await added());
+    if (plan.length && await applyMigrationRenumber(dir, plan, cfg.dir, mainSha)) {
+      const commit = await git(dir, ['commit', '-m', `chore: migrations: auto-renumber ${plan.map((r) => `${r.from} -> ${r.to}`).join(', ')} (pre-merge gate, T-1067)`]);
+      if (commit.code === 0) {
+        // A fresh log file: `runLogged` truncates `log`, which would erase the first (failing) run's
+        // own output that the blocked note below may still need to quote.
+        const retryLog = log.replace(/\.log$/, '-retry.log');
+        ran = await runLogged(cfg.argv, dir, retryLog, { timeoutMs: cfg.timeout_seconds * 1000, signal });
+        if (ran.timedOut) throw new FactoryError(`pre-merge: the migration-numbering check on ${subject.label} timed out after ${cfg.timeout_seconds} s (${retryLog})`);
+        if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${subject.label} was stopped (${retryLog})`);
+        fs.appendFileSync(log, `\n# migration-numbering check failed; auto-renumbered ${plan.map((r) => `${r.from} -> ${r.to}`).join(', ')} and retried (${retryLog}, exit ${ran.code})\n`);
+        if (ran.code === 0) renumbered = plan;
+      }
+    }
+  }
+  const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  if (ran.code === 0) {
+    fs.appendFileSync(log, `\n# migration-numbering check passed in ${seconds} s${renumbered ? ' (after auto-renumber)' : ''}\n`);
+    return { seconds: Number(seconds), renumbered };
+  }
+
+  // Either the fix did not apply (a `git mv` failed, no commit) or the retry is still red: recompute
+  // the plan against whatever `dir` looks like now so the blocked note always names the real gap.
+  const finalPlan = renumbered ? plan : planRenumber(await names(mainSha), await added());
+  const findings = finalPlan.map((r) => `renumber ${cfg.dir}/${r.from} to ${r.to}`);
   const branch = subject.branches;
   return {
-    refused: true, status: 'blocked', mode: 'migration-numbering', findings, renumber: plan, log, seconds,
-    summary: plan.length
-      ? `${branch} adds migration number(s) that ${ctx.config.dispatcher.main_branch} already uses (or that now leave a gap): ${plan.map((r) => `${r.from} → ${r.to}`).join(', ')}`
+    refused: true, status: 'blocked', mode: 'migration-numbering', findings, renumber: finalPlan, log, seconds,
+    summary: finalPlan.length
+      ? `${branch} adds migration number(s) that ${ctx.config.dispatcher.main_branch} already uses (or that now leave a gap): ${finalPlan.map((r) => `${r.from} → ${r.to}`).join(', ')} (auto-renumber attempted and still red; read the log)`
       : `the migration-numbering check fails on the merge of ${branch} into ${ctx.config.dispatcher.main_branch} but the branch adds no clashing file; read the log (a gap or a changed file name?)`,
   };
 }
@@ -540,13 +608,17 @@ export async function runPreMergeGate(ctx, ticket, opts = {}) {
  * next train). The verdict is for the tickets in `members` only. `blocked` does not say which member
  * is at fault: the caller splits the train (`splitTrain`) and gates the halves.
  *
- * Statuses and throwing are as for `runPreMergeGate`; `conflict` means no member merged at all.
+ * Statuses and throwing are as for `runPreMergeGate`; `conflict` means no member merged at all. A
+ * `pass` carries `renumber` (T-1067) when the numbering check only passed after this run
+ * auto-renumbered a colliding migration in its own scratch worktree: the caller must re-apply that
+ * same plan (`applyMigrationRenumber`) to the real merge, which redoes the merge from scratch and
+ * would otherwise reproduce the exact collision this run just fixed.
  *
  * @param {object} ctx
  * @param {{id: string, title: string}[]} tickets in merge order
  * @param {{signal?: AbortSignal, argv?: string[]}} [opts]
  * @returns {Promise<{status: 'pass'|'blocked'|'conflict', mode?: string, findings: string[], summary: string, log?: string, baseLog?: string,
- *   members: string[], conflicts: {id: string, detail: string, withMain: boolean}[]}>}
+ *   members: string[], conflicts: {id: string, detail: string, withMain: boolean}[], renumber?: {from: string, to: string}[]}>}
  */
 export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
   if (!tickets.length) throw new FactoryError('pre-merge: a train needs at least one ticket');
@@ -583,11 +655,17 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
 
     const subject = { id: name, label, branches: members.map(branchName).join(', ') };
     let numberingSeconds = null;
+    let renumber = null;
     if (settings.numbering) {
       const checked = await checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { signal, run });
       if (checked.refused) { const { refused, ...verdict } = checked; return { ...verdict, ...outcome }; }
       numberingSeconds = checked.seconds;
+      renumber = checked.renumbered;
     }
+    // Only this dry run's own worktree is auto-fixed above: the real merge (`mergeTicket`) redoes the
+    // merge from scratch on the real branches, so it reproduces the same collision unless the caller
+    // applies this identical, already-validated plan to the real checkout too (T-1067).
+    const withRenumber = (verdict) => (renumber ? { ...verdict, renumber } : verdict);
     const withTiming = (text) => (numberingSeconds === null ? text : `${text}; migration numbering checked in ${numberingSeconds} s`);
     const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
     if (ran.timedOut) throw new FactoryError(`pre-merge: ${settings.argv.join(' ')} on ${label} timed out after ${settings.timeout_minutes} minutes (${log})`);
@@ -596,7 +674,7 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
     const headTree = (await git(dir, ['rev-parse', '--verify', '-q', 'HEAD^{tree}'])).stdout.trim() || null;
     if (ran.code === 0) {
       await recordBaseline(ctx, settings, headTree, { code: 0, findings: new Map(), log }, name);
-      return { status: 'pass', mode: 'green', findings: [], summary: withTiming(`${settings.argv.join(' ')} passed on the merge result`), log, ...outcome };
+      return withRenumber({ status: 'pass', mode: 'green', findings: [], summary: withTiming(`${settings.argv.join(' ')} passed on the merge result`), log, ...outcome });
     }
 
     const head = extractFindings(readLog(log), [fs.realpathSync(dir), dir]);
@@ -631,10 +709,10 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
       };
     }
     await recordBaseline(ctx, settings, headTree, { code: ran.code, findings: head, log }, name);
-    return {
+    return withRenumber({
       status: 'pass', mode: 'ratchet', findings: [], log, baseLog: base.log, ...outcome,
       summary: withTiming(`${main} is red (${total(base.findings)} known findings); the merge result adds none (${total(head)} findings, all already on ${main})${reuse}`),
-    };
+    });
   } finally {
     await dropWorktree(ctx, dir);
   }

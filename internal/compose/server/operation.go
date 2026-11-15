@@ -42,7 +42,11 @@ func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveF
 		return nil, ErrNoFacts
 	}
 	ch := audit.NewChainer(db)
-	r, err := operation.NewRunner(operation.Config{DB: db, Audit: ch, Authz: authzr, Registry: reg, Facts: facts, Pinner: pinner, Credentials: creds, Component: "server"})
+	cfg := operation.Config{DB: db, Audit: ch, Authz: authzr, Registry: reg, Facts: facts, Pinner: pinner, Credentials: creds, Component: "server"}
+	if sh, ok := authzr.(operation.SiteHints); ok { // the rbac authorizer reads the assignments' site preferences (ADM-133)
+		cfg.Sites = sh
+	}
+	r, err := operation.NewRunner(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("server: operation runner: %w", err)
 	}
@@ -116,3 +120,5 @@ func (c connectionCredentials) CredentialOf(ctx context.Context, t tenant.ID, id
 	}
 	return string(cn.CredentialID), nil
 }
+
+var _ operation.SiteHints = (*rbac.Authorizer)(nil)

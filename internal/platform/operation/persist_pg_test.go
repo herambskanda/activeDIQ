@@ -328,7 +328,8 @@ type rigOpt struct {
 	stepUp   bool
 	secretIn bool
 	class    Reversibility
-	pinner   Pinner           // overrides pinFake
+	pinner   Pinner // overrides pinFake
+	sites    SiteHints
 	ref      string           // Request reference the hold gate returns
 	cred     CredentialSource // overrides credFake
 }
@@ -358,7 +359,7 @@ func newPRig(t *testing.T, s *storetest.Server, o rigOpt) *prig {
 		t.Fatal(err)
 	}
 	cfg := Config{DB: db, Audit: ch, Authz: &authzFake{}, Registry: reg, Facts: factsFake{}, Gate: o.gate, Jobs: jobs.NewRegistry(),
-		Keys: keySrc{}, Pinner: cmpPinner(o.pinner), Credentials: cmpCreds(o.cred), Settings: settingsFake{irreversible: o.irrev}, Provenance: p.prov, Alerts: p.alerts,
+		Keys: keySrc{}, Pinner: cmpPinner(o.pinner), Credentials: cmpCreds(o.cred), Sites: o.sites, Settings: settingsFake{irreversible: o.irrev}, Provenance: p.prov, Alerts: p.alerts,
 		Attempts: o.attempts, Slots: o.slots, Backoff: time.Millisecond, Lease: time.Minute}
 	if p.r, err = NewRunner(cfg); err != nil {
 		t.Fatal(err)
@@ -1619,6 +1620,75 @@ func TestPinnerReceivesOperationTenant(t *testing.T) {
 		}
 		if tp.got != p.tn.String() {
 			t.Fatalf("pinner saw tenant %q, want the operation's %q", tp.got, p.tn.String())
+		}
+	})
+}
+
+type siteHints struct {
+	sites []string
+	err   error
+	calls int
+}
+
+func (h *siteHints) PreferredSites(context.Context, authority.Chain) ([]string, error) {
+	h.calls++
+	return h.sites, h.err
+}
+
+// sitePin implements SitePinner and records what it was asked; plain Pin must not be used when a hint exists.
+type sitePin struct {
+	pinFake
+	got   []string
+	plain int
+}
+
+func (s *sitePin) Pin(ctx context.Context, c string, nc authority.NamingContextID, prev string) (DCPin, error) {
+	s.plain++
+	return s.pinFake.Pin(ctx, c, nc, prev)
+}
+
+func (s *sitePin) PinPreferring(ctx context.Context, c string, nc authority.NamingContextID, prev string, sites []string) (DCPin, error) {
+	s.got = sites
+	return s.pinFake.Pin(ctx, c, nc, prev)
+}
+
+// ADM-133: the requester's site preference reaches the pinner, once per plan, and a plan with no
+// preference pins exactly as before.
+func TestSitePreferenceReachesPinner(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		sp, h := &sitePin{}, &siteHints{sites: []string{"Branch", "HQ"}}
+		p := newPRig(t, s, rigOpt{pinner: sp, sites: h})
+		p.dir.set("g1", "old")
+		p.dir.set("g2", "old")
+		if _, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g1", Want: "new"}, itemIn{GUID: "g2", Want: "new"})); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(sp.got, []string{"Branch", "HQ"}) || sp.plain != 0 || h.calls != 1 {
+			t.Fatalf("pinner got %v (plain Pin %d times), hint read %d times", sp.got, sp.plain, h.calls)
+		}
+		none, h2 := &sitePin{}, &siteHints{}
+		p2 := newPRig(t, s, rigOpt{pinner: none, sites: h2})
+		p2.dir.set("g1", "old")
+		if _, err := p2.r.SubmitDirectory(context.Background(), p2.req(itemIn{GUID: "g1", Want: "new"})); err != nil {
+			t.Fatal(err)
+		}
+		if none.got != nil || none.plain != 1 {
+			t.Fatalf("no preference: PinPreferring got %v, plain Pin %d times", none.got, none.plain)
+		}
+	})
+}
+
+// A hint that cannot be read fails the plan: the setting is not silently dropped.
+func TestSitePreferenceReadFailureFailsPlan(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		p := newPRig(t, s, rigOpt{sites: &siteHints{err: errors.New("db down")}})
+		p.dir.set("g1", "old")
+		sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g1", Want: "new"}))
+		if err == nil {
+			t.Fatal("want an error")
+		}
+		if st := p.opState(sub.Operation); st != "plan_failed" {
+			t.Fatalf("state = %s, want plan_failed", st)
 		}
 	})
 }

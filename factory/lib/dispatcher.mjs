@@ -26,7 +26,7 @@ import {
 import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
 import { EMBARGO_TAG, orderDoneQueue } from './mergequeue.mjs';
-import { blockedNote, preMergeSettings, runPreMergeTrain, splitTrain } from './premerge.mjs';
+import { applyMigrationRenumber, blockedNote, preMergeSettings, runPreMergeTrain, splitTrain } from './premerge.mjs';
 import { postMergeVerifySettings, readKnownFindings, runPostMergeVerify } from './postmerge.mjs';
 import { git } from './git.mjs';
 import {
@@ -584,12 +584,43 @@ export class Dispatcher {
       if (!this.stopping) await this.gateGroup(second);
       return;
     }
+    // Captured before any real merge of this group: `applyRenumberToMain` needs the same base the
+    // gate's dry run used, to find exactly the files this group's merges touched.
+    const mainShaBeforeGroup = verdict.renumber?.length ? (await git(ctx.root, ['rev-parse', 'HEAD'])).stdout.trim() : null;
     for (const ticket of members) {
       if (verdict.status === 'pass') {
         appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} pre-merge gate passed (${verdict.mode})${train}: ${verdict.summary}` });
       }
       await this.mergeOne(ticket);
     }
+    if (mainShaBeforeGroup) await this.applyRenumberToMain(verdict.renumber, memberIds, mainShaBeforeGroup);
+  }
+
+  /**
+   * Re-apply, on the real `main`, a migration renumber the pre-merge gate already validated in its
+   * own scratch worktree (T-1067): `mergeOne` redoes the merge for real from the raw ticket branches,
+   * so without this the exact collision the gate just fixed reappears on `main` itself. Alert-only
+   * on a mismatch (never reverts a merge that already landed): a human fixes it from the note.
+   */
+  async applyRenumberToMain(plan, ids, mainShaBeforeGroup) {
+    const { ctx } = this;
+    const main = ctx.config.dispatcher.main_branch;
+    const cfg = preMergeSettings(ctx.config).numbering;
+    const named = plan.map((r) => `${r.from} -> ${r.to}`).join(', ');
+    if (!cfg) { // numbering turned off between the gate run and here (config reload mid-tick): nothing to redo
+      appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `WARNING: ${ids.join(', ')} merged, but the gate's auto-renumber (${named}) could not be re-applied to ${main}: migration numbering is no longer configured. Fix ${main} by hand.` });
+      return;
+    }
+    const applied = await applyMigrationRenumber(ctx.root, plan, cfg.dir, mainShaBeforeGroup);
+    const commit = applied ? await git(ctx.root, ['commit', '-m', `chore: migrations: auto-renumber ${named} (pre-merge gate, T-1067)`]) : null;
+    if (!commit || commit.code !== 0) {
+      appendEvent(ctx, {
+        actor: 'dispatcher', kind: 'dispatcher',
+        text: `WARNING: ${ids.join(', ')} merged into ${main}, but re-applying the gate's auto-renumber (${named}) failed${commit ? ` (commit: ${commit.stderr.trim()})` : ''}; ${main} may now fail the migration-numbering check. Fix by hand: renumber ${cfg.dir}/${plan.map((r) => r.from).join(', ')}.`,
+      });
+      return;
+    }
+    appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `${ids.join(', ')}: re-applied the pre-merge gate's auto-renumber (${named}) on ${main} to avoid a migration-number collision (T-1067)` });
   }
 
   /**

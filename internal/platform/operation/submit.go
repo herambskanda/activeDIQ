@@ -40,6 +40,20 @@ type FallbackPinner interface {
 	PinOther(ctx context.Context, connection string, nc authority.NamingContextID, exclude DCPin) (DCPin, error)
 }
 
+// SitePinner is an optional Pinner capability (ADM-133): Pin with a site preference. Writable DCs of the
+// first site are tried first, then the next; a DC of no listed site is still pinned when none of the
+// listed sites has a healthy DC. The preference never overrides previous (rule 5: a re-plan keeps a healthy
+// pin) and never makes the pin fail.
+type SitePinner interface {
+	PinPreferring(ctx context.Context, connection string, nc authority.NamingContextID, previous string, sites []string) (DCPin, error)
+}
+
+// SiteHints supplies the AD sites to try first for the requester's operations (ADM-133). It is a hint
+// read from the requester's assignments. An error fails the plan rather than silently ignoring the setting.
+type SiteHints interface {
+	PreferredSites(ctx context.Context, chain authority.Chain) ([]string, error)
+}
+
 // DCPin is one pinned DC: its host and its DSA GUID (the NTDS Settings objectGUID in canonical form).
 type DCPin struct {
 	Host    string
@@ -241,6 +255,8 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 	for k, v := range op.DSAs {
 		dsas[k] = v
 	}
+	var sites []string // ADM-133 hint, read once per plan, on the first step that needs a pin
+	sitesRead := false
 	items := make([]planItem, len(steps))
 	for i, sp := range steps {
 		items[i] = planItem{sp: sp, skipped: len(sp.Diff) == 0}
@@ -256,7 +272,21 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 				return r.failPlan(ctx, t, op, fmt.Errorf("%w: no DC pinner wired", ErrInvalid))
 			}
 			// The operation's own tenant always wins over whatever the caller's ctx carries.
-			pin, err := r.cfg.Pinner.Pin(authority.WithTenant(ctx, t.String()), sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC])
+			pctx := authority.WithTenant(ctx, t.String())
+			if !sitesRead && r.cfg.Sites != nil {
+				var herr error
+				if sites, herr = r.cfg.Sites.PreferredSites(pctx, op.Chain); herr != nil {
+					return r.failPlan(ctx, t, op, fmt.Errorf("reading site preferences: %w", herr))
+				}
+				sitesRead = true
+			}
+			var pin DCPin
+			var err error
+			if sp2, ok := r.cfg.Pinner.(SitePinner); ok && len(sites) > 0 {
+				pin, err = sp2.PinPreferring(pctx, sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC], sites)
+			} else {
+				pin, err = r.cfg.Pinner.Pin(pctx, sp.Target.Connection, sp.Target.NC, pins[sp.Target.NC])
+			}
 			if err != nil {
 				return r.failPlan(ctx, t, op, fmt.Errorf("pinning a DC: %w", err))
 			}

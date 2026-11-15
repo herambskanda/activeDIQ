@@ -73,6 +73,7 @@ type Config struct {
 	Keys        DEKSource        // seals transient secrets
 	Credentials CredentialSource // names the DM-11 credential of a connection for step audit events; required with Pinner
 	Pinner      Pinner           // pins one writable DC per naming context (rule 5)
+	Sites       SiteHints        // optional: AD sites to prefer when pinning (ADM-133); nil: none
 	Settings    Settings         // tenant settings read by the kernel hold rules
 	Provenance  Provenance       // the sock-puppet check of rule 8
 	Alerts      Alerter
