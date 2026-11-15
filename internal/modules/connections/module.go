@@ -6,6 +6,7 @@ package connections
 
 import (
 	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/modules/connections/api"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/module"
@@ -37,12 +38,12 @@ func (m *Module) Register(r *module.Registrar) error {
 	if err := r.Permission(TakeoverAttestPermission); err != nil {
 		return err
 	}
-	tag, ok, err := attestationTag(m.deps)
+	h, ok, err := attestationHandlers(m.deps)
 	if err != nil {
 		return err
 	}
 	if ok {
-		if err := r.API(tag); err != nil {
+		if err := r.API(api.Bind(h)); err != nil {
 			return err
 		}
 	}

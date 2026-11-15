@@ -10,8 +10,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/odata"
 	gs "github.com/skenzeriq/activediq/internal/directory/odata/graphschema"
 	"github.com/skenzeriq/activediq/internal/modules/connections/idp"
-	"io"
-	"net/http"
+	"github.com/skenzeriq/activediq/internal/platform/egress"
 	"net/url"
 	"strings"
 	"time"
@@ -19,9 +18,7 @@ import (
 
 // HTTPDoer is the outbound client the adapters use: *egress.Client in production (threat model §5.9),
 // an httptest client in tests. The adapters never build a transport of their own (FF-SP2).
-type HTTPDoer interface {
-	Do(req *http.Request) (*http.Response, error)
-}
+type HTTPDoer = egress.Doer
 
 // maxIdPBody caps what the adapters read from the token endpoint or idp.Graph.
 const maxIdPBody = 1 << 20
@@ -74,24 +71,19 @@ func (i *OIDCIdP) Exchange(ctx context.Context, req idp.ExchangeRequest) (idp.Gr
 	form.Set("redirect_uri", req.RedirectURI)
 	form.Set("scope", strings.Join(req.Scopes, " "))
 	endpoint := strings.TrimRight(i.Authority, "/") + "/" + url.PathEscape(req.TenantID) + "/oauth2/v2.0/token"
-	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return idp.Grant{}, ErrIdPExchange
+	resp, err := egress.Fetch(ctx, i.HTTP, egress.Request{Method: "POST", URL: endpoint,
+		Header: map[string]string{"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+		Body:   []byte(form.Encode())}, maxIdPBody)
+	if errors.Is(err, egress.ErrBody) {
+		return idp.Grant{}, ErrIdPResponse
 	}
-	hr.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	hr.Header.Set("Accept", "application/json")
-	resp, err := i.HTTP.Do(hr)
 	if err != nil {
 		return idp.Grant{}, ErrIdPExchange // the transport error is dropped: it can quote the URL
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxIdPBody+1))
-	if err != nil || len(body) > maxIdPBody {
-		return idp.Grant{}, ErrIdPResponse
-	}
-	if resp.StatusCode != http.StatusOK {
+	if resp.Status != 200 {
 		return idp.Grant{}, ErrIdPExchange // the error body names the cause and may echo input; not kept
 	}
+	body := resp.Body
 	var tr tokenResponse
 	if err := json.Unmarshal(body, &tr); err != nil {
 		return idp.Grant{}, ErrIdPResponse
@@ -227,24 +219,18 @@ func (g *GraphReader) ReadSyncFeatures(ctx context.Context, token idp.Bearer) (i
 		if err != nil {
 			return ErrGraphRefused
 		}
-		hr, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-		if err != nil {
-			return ErrGraphRefused
-		}
-		hr.Header.Set("Authorization", "Bearer "+string(b))
-		hr.Header.Set("Accept", "application/json")
-		resp, err := g.HTTP.Do(hr)
-		if err != nil {
-			return ErrGraphRefused
-		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(io.LimitReader(resp.Body, maxIdPBody+1))
-		if err != nil || len(body) > maxIdPBody {
+		resp, err := egress.Fetch(ctx, g.HTTP, egress.Request{Method: "GET", URL: u.String(),
+			Header: map[string]string{"Authorization": "Bearer " + string(b), "Accept": "application/json"}}, maxIdPBody)
+		if errors.Is(err, egress.ErrBody) {
 			return ErrGraphAnswer
 		}
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("%w: status %d", ErrGraphRefused, resp.StatusCode)
+		if err != nil {
+			return ErrGraphRefused
 		}
+		if resp.Status != 200 {
+			return fmt.Errorf("%w: status %d", ErrGraphRefused, resp.Status)
+		}
+		body := resp.Body
 		var a syncAnswer
 		if json.Unmarshal(body, &a) != nil || len(a.Value) != 1 ||
 			a.Value[0].Features.HardMatch == nil || a.Value[0].Features.SoftMatch == nil {

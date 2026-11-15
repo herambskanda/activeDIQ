@@ -6,7 +6,6 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/modules/connections/entra"
 	"github.com/skenzeriq/activediq/internal/platform"
-	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
@@ -24,19 +23,19 @@ const (
 	attestCallbackPath = "/api/v1/connections/takeover-attestation/callback"
 )
 
-// attestationTag wires the TM-D17 attestation: the real token-exchange and Graph adapters over the
+// attestationHandlers wires the TM-D17 attestation: the real token-exchange and Graph adapters over the
 // egress client, the shared authorizer, and the callback gate. It returns false when the install has not
 // configured an attestation app registration, so the module registers no route for it.
-func attestationTag(deps platform.Deps) (apihost.TagHandlers, bool, error) {
+func attestationHandlers(deps platform.Deps) (*AttestHandlers, bool, error) {
 	if deps.Attestation.ClientID == "" {
-		return apihost.TagHandlers{}, false, nil
+		return nil, false, nil
 	}
 	hc, err := egress.New(egress.Config{})
 	if err != nil {
-		return apihost.TagHandlers{}, false, fmt.Errorf("connections: attestation egress: %w", err)
+		return nil, false, fmt.Errorf("connections: attestation egress: %w", err)
 	}
 	if deps.Attestation.Origin == "" {
-		return apihost.TagHandlers{}, false, fmt.Errorf("connections: attestation needs the public origin for its redirect URI")
+		return nil, false, fmt.Errorf("connections: attestation needs the public origin for its redirect URI")
 	}
 	at, err := NewAttester(AttestConfig{
 		DB: deps.DB, Audit: deps.Audit, Authz: connectionAuthorizer{deps.Authz}, StepUp: sessionStepUp{deps.StepUp},
@@ -46,10 +45,9 @@ func attestationTag(deps platform.Deps) (apihost.TagHandlers, bool, error) {
 		Component: "connections",
 	})
 	if err != nil {
-		return apihost.TagHandlers{}, false, fmt.Errorf("connections: attester: %w", err)
+		return nil, false, fmt.Errorf("connections: attester: %w", err)
 	}
-	h := &AttestHandlers{Attester: at, Gate: &WindowGate{}}
-	return h.Bind(), true, nil
+	return &AttestHandlers{Attester: at, Gate: &WindowGate{}}, true, nil
 }
 
 // connectionAuthorizer adapts the operation Authorizer's two-step question to the single call the
