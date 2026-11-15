@@ -124,7 +124,7 @@ func newReportsRig(t *testing.T, s *storetest.Server) *reportsRig {
 	door := rptDoor{}
 	r.srv, err = apihost.Build(doc, []apihost.TagHandlers{tag}, pol, apihost.Permissions{"reports.run", "reports.export", "reports.schedule",
 		"reports.schedule.manage_all", "reports.deliver.external", "directory.read", "connections.takeover.attest", "siem.destination.manage",
-		"siem.destination.read"}, apihost.Ports{Authn: door, Authz: door, Limits: door, StepUp: door})
+		"siem.destination.read", "helpdesk.caller.verify"}, apihost.Ports{Authn: door, Authz: door, Limits: door, StepUp: door})
 	if err != nil {
 		t.Fatal(err)
 	}
