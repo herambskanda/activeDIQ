@@ -171,7 +171,7 @@ func Test_migration_0074_builds_the_postings_over_a_populated_database(t *testin
 // cookie, other states are untouched, and no inventory row changes, so the datasets keep serving.
 func Test_migration_0080_requires_a_resync_and_leaves_inventory_alone(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
-		const mig = "0080_sync_user_attribute_resync.sql"
+		const mig = "0081_sync_user_attribute_resync.sql"
 		e := setupFS(t, s, migrationsFS(t, func(n string) bool { return n < mig }))
 		e.hStructure(t, e.adA)
 		if _, err := e.populate(t, e.adA, hBase, sSrchUser(1, "praman", "Priya Raman")); err != nil {
