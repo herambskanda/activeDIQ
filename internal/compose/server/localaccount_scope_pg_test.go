@@ -2,7 +2,7 @@ package server
 
 // T-0987: the first console account reads the directory through a naming_context assignment on each active
 // AD connection (the tenant-store root grants nothing to directory data), proved through the real
-// rbac.ReadScopes producer and the rbac.TxReadScopes the modules are given.
+// rbac.ReadScopes producer and the the directory module's transaction adapter the modules are given.
 
 import (
 	"context"

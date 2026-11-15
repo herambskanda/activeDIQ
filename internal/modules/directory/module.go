@@ -11,9 +11,11 @@ import (
 	"github.com/skenzeriq/activediq/internal/modules/directory/api"
 	"github.com/skenzeriq/activediq/internal/modules/search"
 	"github.com/skenzeriq/activediq/internal/platform"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/module"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/reportsql"
@@ -74,14 +76,38 @@ func (m *Module) handlers() (Handlers, error) {
 	if err != nil {
 		return Handlers{}, fmt.Errorf("directory: user search: %w", err)
 	}
-	ss, err := buildSearch(m.deps.DB, m.deps.ReadScopes)
+	scopes := txScopes{db: m.deps.DB, rs: m.deps.ReadScopes}
+	ss, err := buildSearch(m.deps.DB, scopes)
 	if err != nil {
 		return Handlers{}, err
 	}
 	// The TM-D17 classification of each hybrid-synced user: the stored correlation (DM-20) and the
 	// Entra connection's takeover protection (DM-10.I7), read live per request.
 	hy := Classifier{Corr: inventory.NewReader(m.deps.DB, nil), Takeovers: m.dir.Connection}
-	return Handlers{Connections: m.dir.Connection, Search: us, Scopes: m.deps.ReadScopes, Hybrid: hy, Searcher: ss}, nil
+	return Handlers{Connections: m.dir.Connection, Search: us, Scopes: scopes, Hybrid: hy, Searcher: ss}, nil
+}
+
+// txScopes adapts the shared read-scope producer, which reads in a caller's transaction, to the
+// ReadScopes port the handlers and search hold: it opens the tenant transaction the producer needs.
+// The producer is bound after Boot; until then every call is refused (fail closed), never unscoped.
+type txScopes struct {
+	db *store.DB
+	rs rbac.ReadScopeProducer
+}
+
+var _ ReadScopes = txScopes{}
+
+// ReadScope implements ReadScopes.
+func (s txScopes) ReadScope(ctx context.Context, tid tenant.ID, chain authority.Chain, perm authz.Permission) (authz.ReadScope, error) {
+	var out authz.ReadScope
+	err := s.db.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) (err error) {
+		out, err = s.rs.For(ctx, tx, tid, chain, perm)
+		return err
+	})
+	if err != nil {
+		return authz.ReadScope{}, err
+	}
+	return out, nil
 }
 
 // buildSearch composes universal search (ADR-0011): the inventory index registered against the live schema,

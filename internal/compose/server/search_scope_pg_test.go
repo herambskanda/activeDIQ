@@ -1,7 +1,7 @@
 package server
 
 // T-1096 AC2: universal search in the composed server takes its scope from the one producer, rbac.ReadScopes.For
-// through the rbac.TxReadScopes the composition root binds after Boot — the same value the directory module
+// through the the directory module's transaction adapter the composition root binds after Boot — the same value the directory module
 // holds as Deps.ReadScopes.
 // Proved against the real producer, store and inventory: an account with the naming_context assignment finds an
 // object of the connection, an account without one finds nothing, a dead owner is refused, and a service

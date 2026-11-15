@@ -14,10 +14,13 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
+	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/owners"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // bootDirectoryRoutes boots the generated module list the way Run does (ADR-0013): the modules build their
@@ -26,10 +29,9 @@ import (
 // routes reads what the modules registered.
 func bootDirectoryRoutes(ctx context.Context, t *testing.T, db *store.DB, conns *connection.Registry, src client.ConnectorSource, reads client.Reads, az *rbac.Authorizer) []apihost.TagHandlers {
 	t.Helper()
-	txScopes := rbac.NewTxReadScopes(db)
-	c, _, err := bootReport(ctx, capability.NewSet(capability.DirectoryAD, capability.DirectoryEntra, capability.TenantProvisioning),
-		directory.Services{Connection: conns, Source: src, Reads: reads}, owners.Lookup,
-		func(d *platform.Deps) { d.DB, d.ReadScopes = db, txScopes })
+	txScopes := &rbac.LateReadScopes{}
+	c, _, err := bootModules(ctx, platform.Deps{DB: db, Jobs: jobs.NewRegistry(), ReadScopes: txScopes}, capability.NewSet(capability.DirectoryAD, capability.DirectoryEntra, capability.TenantProvisioning),
+		directory.Services{Connection: conns, Source: src, Reads: reads}, owners.Lookup)
 	if err != nil {
 		t.Fatalf("boot: %v", err)
 	}
@@ -57,14 +59,24 @@ func (stubReads) Object(context.Context, authority.Pins, authority.TargetRef, st
 	return client.ObjectRead{}, errors.New("no directory in this test")
 }
 
-// boundScopes is the producer the composed server hands the modules: rbac.TxReadScopes bound to rs.
-func boundScopes(t *testing.T, db *store.DB, rs *rbac.ReadScopes) *rbac.TxReadScopes {
+// txBound is a read-scope producer that opens the tenant transaction rbac.ReadScopes needs; the tests
+// that call it directly use it the way the directory module's own adapter does.
+type txBound struct {
+	db *store.DB
+	rs *rbac.ReadScopes
+}
+
+func (b txBound) ReadScope(ctx context.Context, tid tenant.ID, chain authority.Chain, perm authz.Permission) (out authz.ReadScope, err error) {
+	err = b.db.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) (err error) {
+		out, err = b.rs.For(ctx, tx, tid, chain, perm)
+		return err
+	})
+	return out, err
+}
+
+func boundScopes(t *testing.T, db *store.DB, rs *rbac.ReadScopes) txBound {
 	t.Helper()
-	tx := rbac.NewTxReadScopes(db)
-	if err := tx.Bind(rs); err != nil {
-		t.Fatal(err)
-	}
-	return tx
+	return txBound{db: db, rs: rs}
 }
 
 // openPorts authenticates every request as the session principal account names in the install's tenant
