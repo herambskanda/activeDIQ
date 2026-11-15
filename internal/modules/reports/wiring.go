@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
+	"github.com/skenzeriq/activediq/internal/modules/reports/api"
 	"github.com/skenzeriq/activediq/internal/modules/reports/export"
 	"github.com/skenzeriq/activediq/internal/modules/reports/library"
 	"github.com/skenzeriq/activediq/internal/modules/reports/run"
@@ -36,10 +37,10 @@ var ErrNoReadScopes = errors.New("reports: the module needs the read-scope produ
 // One port has no production implementation yet, and it fails closed rather than guess: the blob store
 // when Deps.BlobDir is empty, so an export answers 503 not-ready rather than keep a file elsewhere.
 type wiring struct {
-	runs    *run.Service
-	exports *export.Service
-	cat     *lateLibrary
-	handler apihost.TagHandlers
+	runs     *run.Service
+	exports  *export.Service
+	cat      *lateLibrary
+	handlers *Handlers
 }
 
 // build wires the services from the kernel ports. A nil store means the module is not configured for
@@ -67,14 +68,14 @@ func (m *Module) build() (*wiring, error) {
 		exports.Blob = bs
 	}
 	return &wiring{runs: svc, exports: exports, cat: cat,
-		handler: (&Handlers{Runs: svc, Exports: exports, Library: cat}).Bind()}, nil
+		handlers: &Handlers{Runs: svc, Exports: exports, Library: cat}}, nil
 }
 
 // register contributes the routes, the job kinds and the ready hook. The retention cadence is seeded by
 // the kernel for the install tenant (Job.Seed); the job reschedules itself and the seed is keyed by day,
 // so seeding on every boot, or on several nodes, leaves one cadence.
 func (w *wiring) register(r *module.Registrar, m *Module) error {
-	if err := r.API(w.handler); err != nil {
+	if err := r.API(api.Bind(w.handlers)); err != nil {
 		return err
 	}
 	for _, j := range []module.Job{
