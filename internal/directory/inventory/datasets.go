@@ -279,9 +279,6 @@ func principalsDataset() report.Dataset {
 // reads a key the mapper wrote; a photo is a flag, never its bytes. A cell is empty when the attribute has
 // no value (or was not read): AD does not tell the two apart on a read.
 func userAttributeColumns() []report.Column {
-	photo := func(id report.ColumnID, label, key string) report.Column {
-		return derived(id, label, report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> '"+key+"')::boolean, false)"), opsBool)
-	}
 	return []report.Column{
 		jsonText("mail", "Email", "mail"),
 		jsonText("employee_id", "Employee ID", "employeeID"),
@@ -298,7 +295,7 @@ func userAttributeColumns() []report.Column {
 		jsonText("logon_hours", "Logon hours (168 bits, Sunday 00:00 UTC first)", "logonHours"),
 		derived("logon_hours_restricted", "Logon hours restricted", report.TypeBool,
 			report.SQL("CASE WHEN {t}.attributes ->> 'logonHours' IS NULL THEN NULL ELSE position('0' in {t}.attributes ->> 'logonHours') > 0 END"), opsBool),
-		photo("has_thumbnail_photo", "Has thumbnail photo", "hasThumbnailPhoto"),
-		photo("has_jpeg_photo", "Has JPEG photo", "hasJpegPhoto"),
+		derived("has_thumbnail_photo", "Has thumbnail photo", report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> 'hasThumbnailPhoto')::boolean, false)"), opsBool),
+		derived("has_jpeg_photo", "Has JPEG photo", report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> 'hasJpegPhoto')::boolean, false)"), opsBool),
 	}
 }
