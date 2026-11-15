@@ -935,7 +935,7 @@ replicated-logon thresholds (spec §6.4) is `Min: 30` on USR-03's `days` paramet
     `exportFormats` is `[]` until B9 lands; `subjectKind` is `none`, `group` or `user` when a preset requires subjects and names their kind (GRP-02, GRP-03), or `object` when it names none; `freshnessKind` is `nc_watermark`, `policy_read` or `per_dc` from the dataset.
   - Test: `definitions_pg_test.go` (whole HTTP stack, response conformance on, both PostgreSQL versions).
 - **Wired in production (T-1104):** `compose/server.bootReport` adds `inventory.Datasets()` to the host under owner key
-  `inventory` (checked by `report.CheckTables` against `store/owners`); `buildReports` compiles the host's datasets with
+  `inventory` (checked by `report.CheckTables` against `store/owners`); the reports module (`wiring.go`, ready hook after the host is sealed) compiles the host's datasets with
   `reportsql.NewRegistry` over the live schema catalogue (`reportSchema`, a registered platform path: it runs before the
   install tenant exists) and passes `library.Load(library.Shipped(), …)` as `run.Catalog`. The placeholder catalogue that knew no definition is deleted.
 - **Tests.** `library/library_test.go` (`Test_reports_library_matches_spec`, `Test_reports_search_by_me_name`,
@@ -2083,7 +2083,7 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   - Cancel is audited as `reports.run.failed` with Reason `cancelled`. Token principals (a Via chain) are
     refused at 2a (403). `too_many_report_jobs` is `errors[].code` on a 429.
   - Production wiring: compose passes the composed `*rbac.ReadScopes` (T-0916, the producer search shares)
-    to `buildReports`, which refuses to start without it; `noScopes` and its 503 `not-ready` fallback are gone
+    to the reports module, whose `Register` refuses to start without it (`ErrNoReadScopes`); `noScopes` and its 503 `not-ready` fallback are gone
     (T-1151). The handler still maps `run.ErrScopesUnavailable` to 503 for any other host that builds the
     service without a producer. The catalogue is the shipped library since T-1104 (an unknown id is 404
     `definition_not_found`).
