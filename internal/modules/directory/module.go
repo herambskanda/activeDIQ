@@ -8,6 +8,7 @@ import (
 	dirsvc "github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
+	"github.com/skenzeriq/activediq/internal/modules/directory/api"
 	"github.com/skenzeriq/activediq/internal/modules/search"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
@@ -56,7 +57,7 @@ func (m *Module) Register(r *module.Registrar) error {
 	if err != nil {
 		return err
 	}
-	return r.API(h.Bind())
+	return r.API(api.Bind(h))
 }
 
 // handlers builds the service behind the routes: the registry (active connection and the

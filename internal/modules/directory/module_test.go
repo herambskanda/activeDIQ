@@ -2,15 +2,14 @@ package directory
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/module"
-	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
 func boot(t *testing.T, deps platform.Deps, dir directory.Services) (*module.Contributions, error) {
@@ -46,8 +45,5 @@ func TestConfiguredModuleWithoutProducerFailsBoot(t *testing.T) {
 	}
 }
 
-type nopSource struct{}
-
-func (nopSource) Connector(context.Context, string) (connectorv1.ConnectorClient, error) {
-	return nil, errors.New("no connector")
-}
+// nopSource is a configured connector source that is never called: the boot fails before any use.
+type nopSource struct{ client.ConnectorSource }
