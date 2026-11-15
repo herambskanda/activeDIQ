@@ -28,15 +28,8 @@ type ObjectRead struct {
 	// Parent is the objectGUID of the parent container; empty when the object is the head of its
 	// naming context (it has no parent in the connection).
 	Parent string
-	// ChildCount is set only by ObjectWithChildCount.
-	ChildCount *ChildCount
-}
-
-// ChildCount is the connector's bounded count of an OU's direct children (contract §5.3a): exact up
-// to the cap, then Capped. It is what the identity can read, so Count 0 does not prove a leaf.
-type ChildCount struct {
-	Count  uint32
-	Capped bool
+	// Children is set only by ConnectorReads.ChildCount (the delete preview); facts never ask.
+	Children ChildCount
 }
 
 // Reads is the connector's read half as the facts reader needs it: one object, live, on the pins.

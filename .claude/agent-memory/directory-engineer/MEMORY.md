@@ -43,3 +43,5 @@
 - [object changes lessons](object-changes-lessons.md) — T-1109: chg CTE in upsert, baseline rule, RowAnchor on current object, pre-existing red
 - [member kinds lessons](member-kinds-lessons.md) — T-1586: kinds 11-13 layout, test-helper clashes, spec items not built
 - [member kinds lessons 2](member-kinds-lessons-2.md) — T-1586 part 2: lab-tag helper clash, NestingCycle, runner test recipe
+- [descendant dn lessons](descendant-dn-lessons.md) — T-0988: dn pass before ancestry UPDATE, key delete/insert trap, dn.Rebase
+- [incremental cycle lessons](incremental-lessons.md) — T-1198: Reconcile moves fencing token, whole FeedCookie stored, deferFinish, patch-path dn gap

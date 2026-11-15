@@ -191,47 +191,9 @@ func (a *ADSource) Topology(ctx context.Context) (*ad.Topology, error) {
 	return a.sess.Topology(ctx)
 }
 
-// IsSamba reports whether the bound DC's rootDSE names Samba as its vendor; it labels the
-// ReadReplicationStatus capability and gates nothing.
-func (a *ADSource) IsSamba(ctx context.Context) (bool, error) {
-	if !a.ok() {
-		return false, write.ErrNoBoundDC
-	}
-	rd, err := a.sess.RootDSE(ctx)
-	if err != nil {
-		return false, err
-	}
-	return rd.IsSamba(), nil
-}
-
-var _ ChildCounter = (*ADSource)(nil)
-
-// CountChildren counts id's direct children: one paged ONE_LEVEL search, objectGUID only, stopped at limit.
-// An entry listed without objectGUID is not counted (it is not readable by this identity, §5.3a).
-func (a *ADSource) CountChildren(ctx context.Context, id guid.GUID, limit int) (int, bool, error) {
-	if !a.ok() {
-		return 0, false, write.ErrNoBoundDC
-	}
-	oc, err := ldapfilter.ParseAttrName("objectClass", a.sess.FilterSchema())
-	if err != nil {
-		return 0, false, err
-	}
-	n, capped := 0, false
-	stop := errors.New("child count cap reached")
-	_, err = a.sess.ScopedSearch(ctx, ad.ScopedRequest{
-		Roots:  []dn.ObjectRef{dn.GUIDRef(id)},
-		Depth:  ad.ScopeOneLevel,
-		Filter: ldapfilter.Present(oc),
-	}, func(*ad.Entry) error {
-		if n >= limit {
-			capped = true
-			return stop
-		}
-		n++
-		return nil
-	})
-	if err != nil && !(capped && errors.Is(err, stop)) {
-		return 0, false, err
-	}
-	return n, capped, nil
+// ChildCounter is the optional child-count half of a Source (§5.3a). A Source without it answers a
+// request with include_child_count with CAPABILITY_UNSUPPORTED.
+type ChildCounter interface {
+	// CountChildren counts the immediate children of the object, at most limit (ad.Session.CountChildren).
+	CountChildren(ctx context.Context, id guid.GUID, limit uint32) (n uint32, capped bool, err error)
 }

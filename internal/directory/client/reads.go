@@ -22,7 +22,18 @@ var (
 	ErrReadProtocol    = errors.New("client: read stream violates the contract")
 	ErrReadIdentity    = errors.New("client: read returned a different object than asked")
 	ErrReadDirectory   = errors.New("client: connection has no verified directory identity")
+	ErrReadNotFound    = errors.New("client: object to count children of does not exist")
 )
+
+// childCountCap is the most children the connector counts (§5.3a); a larger count is a violation.
+const childCountCap = 1000
+
+// ChildCount is the connector's one-level child count of a container: exact up to the cap, then
+// Count is the cap and Capped is true. It is released to the delete preview only (§5.3a).
+type ChildCount struct {
+	Count  uint32
+	Capped bool
+}
 
 // ReadStream is the receiving side of the Read RPC. The generated grpc.ServerStreamingClient
 // satisfies it.
@@ -64,72 +75,91 @@ func NewConnectorReads(conns ConnectionSource, tr ReadTransport) (*ConnectorRead
 // container for scope-root ancestry) the DcSelection is left unset and the connector picks one DC for
 // the call. Every failure returns an error, which the caller treats as "refuse".
 func (r *ConnectorReads) Object(ctx context.Context, pins authority.Pins, target authority.TargetRef, guid string, needTier0 bool) (ObjectRead, error) {
-	return r.object(ctx, pins, target, guid, needTier0, false)
+	req, id, dsa, err := r.request(ctx, pins, target, guid)
+	if err != nil {
+		return ObjectRead{}, err
+	}
+	req.IncludeTier0 = needTier0
+	return r.read(ctx, req, id, needTier0, false, dsa)
 }
 
-// ObjectWithChildCount is Object plus the connector's bounded direct-child count (contract §5.3a), for
-// the OU delete preview only. The target must be an OU or container: the connector refuses any other
-// class (ClassNotAllowed). The count is released to the delete Action's Plan, never to a screen.
-func (r *ConnectorReads) ObjectWithChildCount(ctx context.Context, pins authority.Pins, target authority.TargetRef, guid string) (ObjectRead, error) {
-	return r.object(ctx, pins, target, guid, false, true)
+// ChildCount reads the number of immediate children of the container target (connector-contract
+// §5.3a), capped by the connector at 1,000. It exists for the delete Action's blocked-with-count
+// preview of an OU and nothing else (no screen shows it as a statistic, LF-39); it is a separate
+// method so that no facts read can ask for it. The count is what the connector's identity sees: it
+// never proves a leaf, the DC decides at delete time. A class other than organizationalUnit or
+// container is an error.
+func (r *ConnectorReads) ChildCount(ctx context.Context, pins authority.Pins, target authority.TargetRef, guid string) (ChildCount, error) {
+	req, id, dsa, err := r.request(ctx, pins, target, guid)
+	if err != nil {
+		return ChildCount{}, err
+	}
+	req.IncludeChildCount = true
+	o, err := r.read(ctx, req, id, false, true, dsa)
+	if err != nil {
+		return ChildCount{}, err
+	}
+	if !o.Exists {
+		return ChildCount{}, ErrReadNotFound
+	}
+	return o.Children, nil
 }
 
-func (r *ConnectorReads) object(ctx context.Context, pins authority.Pins, target authority.TargetRef, guid string, needTier0, needChildren bool) (ObjectRead, error) {
+// request builds the ReadRequest of one object, resolving the connection and the pin.
+func (r *ConnectorReads) request(ctx context.Context, pins authority.Pins, target authority.TargetRef, guid string) (*connectorv1.ReadRequest, []byte, []byte, error) {
 	tidText, ok := authority.TenantFrom(ctx)
 	if !ok {
-		return ObjectRead{}, ErrReadTenant
+		return nil, nil, nil, ErrReadTenant
 	}
 	tid, err := tenant.Parse(tidText)
 	if err != nil {
-		return ObjectRead{}, ErrReadTenant
+		return nil, nil, nil, ErrReadTenant
 	}
 	id, err := parseUUID(guid)
 	if err != nil {
-		return ObjectRead{}, fmt.Errorf("%w: object GUID", ErrInvalidOp)
+		return nil, nil, nil, fmt.Errorf("%w: object GUID", ErrInvalidOp)
 	}
 	conn, err := r.conns.Get(ctx, tid, connection.ID(target.Connection))
 	if err != nil || string(conn.ID) != target.Connection || conn.RetiredAt != nil {
-		return ObjectRead{}, ErrReadConnection
+		return nil, nil, nil, ErrReadConnection
 	}
 
 	// The connector refuses a read whose directory identity is not the one it serves; the identity is
 	// the connection record's. An unverified connection has none and the read is refused here.
 	ident := directoryOf(conn)
 	if ident == nil {
-		return ObjectRead{}, ErrReadDirectory
+		return nil, nil, nil, ErrReadDirectory
 	}
 	req := &connectorv1.ReadRequest{
-		Connection:        &connectorv1.ConnectionRef{ConnectionId: target.Connection, DirectoryIdentity: ident},
-		Guid:              &connectorv1.Guid{Value: id},
-		Attributes:        []string{"objectClass"},
-		IncludeTier0:      needTier0,
-		IncludeChildCount: needChildren,
+		Connection: &connectorv1.ConnectionRef{ConnectionId: target.Connection, DirectoryIdentity: ident},
+		Guid:       &connectorv1.Guid{Value: id},
+		Attributes: []string{"objectClass"},
 	}
 	var dsa []byte
 	if nc := string(target.NC); nc != "" {
 		ncb, err := parseUUID(nc)
 		if err != nil {
-			return ObjectRead{}, fmt.Errorf("%w: naming context", ErrInvalidOp)
+			return nil, nil, nil, fmt.Errorf("%w: naming context", ErrInvalidOp)
 		}
 		req.NcGuid = &connectorv1.Guid{Value: ncb}
 	}
 	if len(pins) > 0 {
 		if target.NC == "" || pins[target.NC] == "" {
-			return ObjectRead{}, ErrReadPin
+			return nil, nil, nil, ErrReadPin
 		}
 		dsa, err = parseUUID(authority.DSAPinsFrom(ctx)[target.NC])
 		if err != nil || allZero(dsa) {
-			return ObjectRead{}, ErrReadPin
+			return nil, nil, nil, ErrReadPin
 		}
 		req.Dc = &connectorv1.DcSelection{PinnedDsaGuid: &connectorv1.Guid{Value: dsa}}
 	}
 
-	return r.read(ctx, req, id, needTier0, needChildren, dsa)
+	return req, id, dsa, nil
 }
 
 // read folds the Read stream: exactly one header, then chunks, then one completed; anything else is
 // a protocol error. OBJECT_NOT_FOUND is an answer (Exists false); every other error is an error.
-func (r *ConnectorReads) read(ctx context.Context, req *connectorv1.ReadRequest, want []byte, needTier0, needChildren bool, pin []byte) (ObjectRead, error) {
+func (r *ConnectorReads) read(ctx context.Context, req *connectorv1.ReadRequest, want []byte, needTier0, needCount bool, pin []byte) (ObjectRead, error) {
 	st, err := r.tr.Read(ctx, req)
 	if err != nil {
 		return notFoundOr(err)
@@ -176,13 +206,17 @@ func (r *ConnectorReads) read(ctx context.Context, req *connectorv1.ReadRequest,
 			} else if ev.Header.GetTier0() != nil {
 				return ObjectRead{}, ErrReadProtocol
 			}
-			// The count is present exactly when asked for; a missing one is an error, never zero.
-			if cc := ev.Header.GetChildCount(); needChildren {
-				if cc == nil {
+			// Likewise the count: present exactly when asked for, and never zero-by-absence.
+			if needCount {
+				c := ev.Header.GetChildCount()
+				if c == nil {
 					return ObjectRead{}, ErrReadProtocol
 				}
-				out.ChildCount = &ChildCount{Count: cc.GetCount(), Capped: cc.GetCapped()}
-			} else if cc != nil {
+				if c.GetCount() > childCountCap || (c.GetCapped() && c.GetCount() != childCountCap) {
+					return ObjectRead{}, ErrReadProtocol
+				}
+				out.Children = ChildCount{Count: c.GetCount(), Capped: c.GetCapped()}
+			} else if ev.Header.GetChildCount() != nil {
 				return ObjectRead{}, ErrReadProtocol
 			}
 			header = true
