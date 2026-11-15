@@ -93,6 +93,20 @@ must_fail_with "fitness-modules M7 on a platform package whose only row is in §
 bpdoc "$(bprow '`other` (+`kernel`)')" "$(bprow '`directory`')" >"$bp/blueprint.md"
 must_fail_with "fitness-modules M7 does not count a (+sub) mention" 'internal/platform/kernel has no row in blueprint §5.1' go run ./tools/fitness/modules -root "$fit"
 bpdoc "$(bprow '`kernel`')" "$(bprow '`directory`')" >"$bp/blueprint.md"
+# M3a (ADR-0015 D3): module lists and module pages, end to end through the CLI.
+mkdir -p "$fit/internal/modules/foo" "$fit/internal/compose/server" "$bp/modules" "$fit/migrations" "$fit/internal/platform/store/owners"
+printf 'package foo\n\nconst ModuleID = "foo"\n' >"$fit/internal/modules/foo/id.go"
+must_fail_with "fitness-modules M3a on a module with no generated list" "the module list is missing" go run ./tools/fitness/modules -root "$fit"
+go run ./tools/gen/modules -root "$fit" >/dev/null 2>&1 || true
+must_fail_with "fitness-modules M3a on a module with no architecture page" "has no architecture page" go run ./tools/fitness/modules -root "$fit"
+printf '# foo\n' >"$bp/modules/foo.md"
+must_pass "fitness-modules M3a on a module with a list and a page" go run ./tools/fitness/modules -root "$fit"
+printf '// edited\n' >>"$fit/internal/compose/server/modules.gen.go"
+must_fail_with "fitness-modules M3a on a hand-edited module list" "stale or hand-edited" go run ./tools/fitness/modules -root "$fit"
+go run ./tools/gen/modules -root "$fit" >/dev/null 2>&1 || true
+printf '# ghost\n' >"$bp/modules/ghost.md"
+must_fail_with "fitness-modules M3a on a page with no module" "has no module" go run ./tools/fitness/modules -root "$fit"
+rm -f "$bp/modules/ghost.md"
 
 # --- fitness-api (ADR-0004 A1, A3, A5, A7 static, A8, A10, A11, A12, A13, self-test, inactive reporting), the real CLI
 # The per-rule proofs are the tool's own tests (go test ./tools/fitness/api); this is the command line.
