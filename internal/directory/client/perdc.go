@@ -546,38 +546,20 @@ func (p *ConnectorPerDC) DCsInScope(ctx context.Context, conn, nc authz.ObjectID
 	if ident == nil {
 		return 0, ErrReadDirectory
 	}
-	cc, err := p.desc.Connector(ctx, connID)
+	resp, err := describeDCs(ctx, p.desc, connID, ident, "DC count")
 	if err != nil {
-		return 0, fmt.Errorf("client: connector for DC count: %w", err)
-	}
-	resp, err := cc.Describe(ctx, &connectorv1.DescribeRequest{
-		Connection: &connectorv1.ConnectionRef{ConnectionId: connID, DirectoryIdentity: ident},
-		Refresh:    true,
-	})
-	if err != nil {
-		if re := (&RemoteError{}); errors.As(FromStatus(err), &re) {
-			return 0, fmt.Errorf("client: connector describe: %w", re)
-		}
-		return 0, ErrDescribeFailed
+		return 0, err
 	}
 	return countDCs(resp, wireGUID(nc).Value, scope)
 }
 
 func countDCs(resp *connectorv1.DescribeResponse, nc []byte, scope report.PerDCScope) (int, error) {
-	var kind connectorv1.NamingContextKind
-	for _, n := range resp.GetNamingContexts() {
-		if string(n.GetNcGuid().GetValue()) == string(nc) {
-			kind = n.GetKind()
-		}
-	}
-	if kind == connectorv1.NamingContextKind_NAMING_CONTEXT_KIND_UNSPECIFIED {
-		return 0, ErrDCNC
+	dcs, err := dcsOfNC(resp, nc)
+	if err != nil {
+		return 0, err
 	}
 	n := 0
-	for _, dc := range resp.GetDomainControllers() {
-		if kind == connectorv1.NamingContextKind_NAMING_CONTEXT_KIND_DOMAIN && string(dc.GetDomainNcGuid().GetValue()) != string(nc) {
-			continue
-		}
+	for _, dc := range dcs {
 		if scope == report.ScopeWritable && dc.GetIsRodc() == connectorv1.TriState_TRI_STATE_TRUE {
 			continue
 		}
