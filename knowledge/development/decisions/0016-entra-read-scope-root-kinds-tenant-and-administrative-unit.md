@@ -2,7 +2,10 @@
 title: "ADR-0016: Entra read scopes are two root kinds, `entra_tenant` and `administrative_unit`, rendered as per-term SQL over `directory_objects` and `links`"
 date: 2026-11-15
 updated: 2026-11-15
-status: proposed
+status: ratified
+ratified_on: 2026-11-15
+ratified_by: factory-director
+decision: D-0037
 reviews: security-architect and ad-expert, 2026-11-15, changes folded in (provider predicate, dedicated freshness columns, NULL-negation rule, hidden membership)
 owner: heramb
 author: solution-architect
@@ -14,8 +17,7 @@ fitness: RP6 (extended), SE3 (extended), RP12 (new) — none in CI yet, so not `
 
 # ADR-0016: Entra read scopes are two root kinds, `entra_tenant` and `administrative_unit`, rendered as per-term SQL over `directory_objects` and `links`
 
-**Status:** proposed. Needs security-architect's review (Tier-0 and AU semantics) and ad-expert's
-review (AU membership) before factory-director ratifies. `accepted` when RP6, SE3 and RP12 (below) run
+**Status:** ratified 2026-11-15 (notice D-0037) after security-architect and ad-expert review. `accepted` when RP6, SE3 and RP12 (below) run
 green in `make ci`.
 **Kind:** technical. **Ticket:** T-1131 (E-002, parity ADM-003). **Unblocks:** E2.6 FB-4, E2.7a FR-38, E2.7 FR-30/32/33.
 
@@ -53,7 +55,7 @@ Facts this decision rests on:
    group.
 3. **`group_members` stays unsupported** (`scope_kind_unsupported:group_members`, fail closed). Entra groups
    have no closure (reports.md §3.3 `group_members`) and an AD one needs the closure join; that is its own
-   design. Ticket T-1131a below. Specs that cite T-1131 for `group_members` (e2-6 FB-4, e2-7a §6) are
+   design. Ticket T-2176. Specs that cite T-1131 for `group_members` (e2-6 FB-4, e2-7a §6) are
    re-pointed to that ticket.
 4. **Why both:** `entra_tenant` alone gives the platform administrator and tenant-wide technician their
    reach; AUs are how Entra customers delegate (ADM-131, ADM-003) and rbac already stores them. Shipping
@@ -202,7 +204,7 @@ the inventory-based `AdminUnits` is only for reads and for the oracle. Both must
 ## Consequences
 
 - Entra users and groups become findable and reportable for exactly the accounts whose assignments admit them.
-  E2.6 FB-4 and E2.7a AC-43/AC-57 can proceed for the two kinds; `group_members` waits for T-1131a.
+  E2.6 FB-4 and E2.7a AC-43/AC-57 can proceed for the two kinds; `group_members` waits for T-2176.
 - `reports.md` §4.2/§4.3/§4.6 and ADR-0011 rule 9 are amended (map update ticket, below).
 - AU scopes are only as fresh as the last AU member read. An include under-admits when stale; an exclude is guarded
   by `members_synced`. The report freshness label (§6.4) names the Entra connection's sync age.
@@ -218,4 +220,4 @@ RP6 extended, SE3 extended, RP12 new (§6). The ADR becomes `accepted` when all 
 Created from this ADR (ids in the ticket note). A evaluators and kinds (backend-engineer); B oracle
 (`Target.AdminUnits`, `covers`) (backend-engineer); C renderer terms, `a.tenant` anchor, per-term guard, RP6 + RP12
 (reporting-engineer); D AU member sync, `links` migration for `au_member` and `members_synced` (directory-engineer);
-E SE3 extension (test-engineer); F map and ADR-0011/reports amendments (solution-architect); T-1131a `group_members` read root (solution-architect).
+E SE3 extension (test-engineer); F map and ADR-0011/reports amendments (solution-architect); T-2176 `group_members` read root (solution-architect).
