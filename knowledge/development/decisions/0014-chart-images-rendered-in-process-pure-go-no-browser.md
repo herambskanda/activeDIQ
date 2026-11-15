@@ -2,7 +2,10 @@
 title: "ADR-0014: Chart images are drawn in-process by one pure-Go renderer (own scene + x/image rasteriser); no browser, no JS runtime, no sidecar"
 date: 2026-11-15
 updated: 2026-11-15
-status: proposed
+status: ratified
+ratified_on: 2026-11-15
+ratified_by: factory-director
+decision: D-0035
 owner: heramb
 author: solution-architect
 kind: technical
@@ -12,7 +15,7 @@ fitness: fitness-chartimg CI1–CI5 (to be built; follow-up tickets below)
 
 # ADR-0014: Chart images are drawn in-process by one pure-Go renderer
 
-**Status:** **proposed 2026-11-15.** The factory-director ratifies it at the T-2108 review. It becomes
+**Status:** **ratified 2026-11-15** on the T-2108 review (notice D-0035). It becomes
 `accepted` when `fitness-chartimg` (CI1–CI5) runs in `make ci` on both profiles.
 **Kind:** technical (no change to price, packaging, deployment or platform strategy).
 **Deciders:** solution-architect (author), factory-director (ratifier). **Ticket:** T-2108.
