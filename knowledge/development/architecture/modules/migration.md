@@ -14,7 +14,7 @@ tier: server
 **Purpose.** The base every ManageEngine importer sits on (spec [e2-11](../../../product/specs/e2-11-migration-importer.md) §6.1, §7, §9): the migration project, the import job that starts `quarantined`, the size gate that decides before any byte is read, and the quotas. No format parser, proposal or UI yet.
 **Capabilities required:** none (importers need no directory access, spec §9). **Permission:** `migration.import` (not control-plane; the tenant may delegate it).
 
-## Owned tables (migration 0079, both tenant tables with forced RLS, `config` write class)
+## Owned tables (migration 0080, both tenant tables with forced RLS, `config` write class)
 
 - `migration_projects` (DM-90): name, creator (the real human requester), `closed_at`. No DELETE for the runtime role.
 - `migration_jobs` (DM-91): actor, source kind (`csv`, `xlsx`, `html`, `db_dump`), SHA-256, ADMP build, declared size, state, limit hit. A guard trigger fixes identity at insert and makes a finished state final. A `rejected` job has a `limit_hit` and no SHA-256 (CHECKs), because it was never read.
