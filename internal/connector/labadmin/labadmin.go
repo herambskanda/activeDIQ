@@ -76,6 +76,24 @@ func (a *Admin) add(dn string, attrs map[string][]string) string {
 	return dn
 }
 
+// CreateGroup adds the global security group CN=cn,parent and deletes it when the test ends. It returns the DN.
+func (a *Admin) CreateGroup(cn, parent string) string {
+	a.tb.Helper()
+	return a.add("CN="+cn+","+parent, map[string][]string{"objectClass": {"top", "group"}, "sAMAccountName": {cn}, "groupType": {"-2147483646"}})
+}
+
+// AddMemberDN adds memberDN to the member attribute of groupDN, with no undo: for a group the test created itself,
+// whose deletion at the end of the test drops the membership (a per-member undo by DN fails once a member is
+// renamed or deleted). Failure fails the test.
+func (a *Admin) AddMemberDN(groupDN, memberDN string) {
+	a.tb.Helper()
+	mod := ldap.NewModifyRequest(groupDN, nil)
+	mod.Add("member", []string{memberDN})
+	if err := a.conn.Modify(mod); err != nil {
+		a.tb.Fatal(err)
+	}
+}
+
 // AddMember makes the account with sAMAccountName sam a member of the group at groupDN, and removes
 // the membership when the test ends, so a test that puts the service account in a Tier-0 group
 // leaves the shared lab as it found it. Failure fails the test.
@@ -122,6 +140,64 @@ func (a *Admin) Move(dn, newParent string) string {
 	newDN := rdn + "," + newParent
 	a.tb.Cleanup(func() { _ = a.conn.Del(ldap.NewDelRequest(newDN, nil)) })
 	return newDN
+}
+
+// Rename changes the RDN of dn in place (an LDAP ModifyDN under the same parent, old RDN removed) and
+// deletes the object at its new DN when the test ends. The objectGUID is unchanged. It returns the new DN.
+func (a *Admin) Rename(dn, newRDN string) string {
+	a.tb.Helper()
+	i := indexUnescapedComma(dn)
+	if i >= len(dn) {
+		a.tb.Fatalf("rename %s: no parent", dn)
+	}
+	if err := a.conn.ModifyDN(ldap.NewModifyDNRequest(dn, newRDN, true, "")); err != nil {
+		a.tb.Fatal(err)
+	}
+	newDN := newRDN + dn[i:]
+	a.tb.Cleanup(func() { _ = a.conn.Del(ldap.NewDelRequest(newDN, nil)) })
+	return newDN
+}
+
+// Delete removes the object at dn now. Failure fails the test.
+func (a *Admin) Delete(dn string) {
+	a.tb.Helper()
+	if err := a.conn.Del(ldap.NewDelRequest(dn, nil)); err != nil {
+		a.tb.Fatal(err)
+	}
+}
+
+// RemoveMember removes the member at memberDN from the group at groupDN now. Failure fails the test.
+func (a *Admin) RemoveMember(groupDN, memberDN string) {
+	a.tb.Helper()
+	mod := ldap.NewModifyRequest(groupDN, nil)
+	mod.Delete("member", []string{memberDN})
+	if err := a.conn.Modify(mod); err != nil {
+		a.tb.Fatal(err)
+	}
+}
+
+// Exists reports whether an object is at dn (an administrator base search).
+func (a *Admin) Exists(dn string) bool {
+	a.tb.Helper()
+	_, err := a.conn.Search(ldap.NewSearchRequest(dn, ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 0, false, "(objectClass=*)", []string{"objectGUID"}, nil))
+	if err == nil {
+		return true
+	}
+	if ldap.IsErrorWithCode(err, ldap.LDAPResultNoSuchObject) {
+		return false
+	}
+	a.tb.Fatalf("exists %s: %v", dn, err)
+	return false
+}
+
+// Members returns the member DNs of the group at groupDN, by a direct read.
+func (a *Admin) Members(groupDN string) []string {
+	a.tb.Helper()
+	r, err := a.conn.Search(ldap.NewSearchRequest(groupDN, ldap.ScopeBaseObject, ldap.NeverDerefAliases, 0, 0, false, "(objectClass=*)", []string{"member"}, nil))
+	if err != nil || len(r.Entries) != 1 {
+		a.tb.Fatalf("members of %s: %v", groupDN, err)
+	}
+	return r.Entries[0].GetAttributeValues("member")
 }
 
 // indexUnescapedComma is the offset of the first comma of dn not preceded by a backslash.

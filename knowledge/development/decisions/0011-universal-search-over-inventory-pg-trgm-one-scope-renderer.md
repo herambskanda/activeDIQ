@@ -1,11 +1,11 @@
 ---
 title: "ADR-0011: Universal search runs over the inventory with pg_trgm, and is trimmed in the same SQL statement by the one ReadScope renderer in store/reportsql"
 date: 2026-10-31
-updated: 2026-11-04
+updated: 2026-11-14
 status: ratified
 ratified_on: 2026-10-31
 ratified_by: factory-director
-decision: D-0014, D-0025
+decision: D-0014, D-0025, D-0034
 owner: heramb
 author: solution-architect
 kind: technical
@@ -42,6 +42,93 @@ Both parts make a rule stricter or state what was built; no rule or fitness chec
   text, and redacted like `q` if it ever arrives in one. The server records the path only today
   (apihost has no access-log or trace middleware), and the console sends `Referrer-Policy:
   no-referrer`. `Test_console_search_query_never_reaches_a_log_line` (apihost) is the SE4 check.
+
+E3 (2026-11-14, T-2086, from the AD Explorer read API spec, `product/specs/ad-explorer-read-api.md` X3).
+Explorer (E-007) trims a directory tree with the same scope, so SE1's "one renderer" is widened from
+one entry point to a named set. This makes the check **stricter in the one place it widens**; nothing
+weakens.
+- **Decision.** `store/reportsql` gains a second exported statement entry, `CompileTree`, beside
+  `CompileSearch`. There is one renderer and three statements: report (`Compile`, `CompileCount`),
+  search (`CompileSearch`) and tree (`CompileTree`). All three fill the scope position with the
+  existing `planScope` and `scopeSQL` over the `directory_objects` anchor, so `ancestry_complete`,
+  the fail-closed rules, the 512-term cap (`ErrScopeTooLarge`) and `ScopeReasons` carry over unchanged
+  (rule 11). The producer is `rbac.ReadScopes.For(…, directory.read)`. No per-row `Admits`, no scope
+  copied into a column, no second renderer.
+- **SE1 now reads:** `reportsql.CompileSearch` **and** `reportsql.CompileTree` are called only from
+  `internal/directory/inventory`. `modules/explorer` reaches the tree statement through the
+  `inventory.Explorer` port, exactly as `modules/search` reaches `CompileSearch` through
+  `inventory.Search`, and the port takes the scope and returns trimmed rows, never ancestry to trim
+  with. The Go-level list is closed: a future statement entry (a third caller) needs its own
+  amendment and is not admitted by this one.
+- **Five additions to SE1**, all mechanical and typed (go/types plus SQL tokenising), none prose-only:
+  1. **Closed entry set, asserted.** SE1 computes, with go/types, the exported functions of
+     `store/reportsql` that can reach `planScope` or `scopeSQL` through the call graph; the set must
+     equal exactly `{Compile, CompileCount, CompileSearch, CompileTree}`. A fifth entry, or one of the four
+     missing, fails. Adding a statement is a new amendment that edits this list.
+  2. **Scope fragments have one emitter.** `planScope` and `scopeSQL` are each defined exactly once, in
+     `store/reportsql`; and only code reachable from those four entries may emit a scope fragment (a
+     function that writes the scope's term SQL, `ancestry` array overlap or `&&`, or calls the term
+     renderers, outside that call graph fails). This closes `scopeSQL2` and an inline
+     `ancestry && ARRAY[...]`. Files of `internal/directory/inventory` Explorer code and
+     `modules/explorer` hold no SQL text naming `ancestry`, `parent_guid` or `directory_objects`: the path
+     unnest/join and the roots test live only in the `CompileTree` template.
+  3. **The tree template reads `directory_objects` only.** It may not read `inventory_search_keys` or
+     `inventory_search_trigrams`, which stay readable only by the search template.
+  4. **The port leaks no ancestry (mechanical definition).** go/types cannot see admission, so SE1
+     enforces a *shape* deny-list over `inventory.Explorer` and the transitive closure of every type in
+     its method signatures (fields, methods, named types, embedded types):
+     (a) **Names.** No field, method or type whose name, case-folded with `_` removed, contains
+     `ancest`, `parentguid`, `parentid`, `lineage`, `trail` or `pathguids`.
+     (b) **Shapes.** No field, result or parameter of type `[]uuid.UUID`, `[]GUID`, `[N]uuid.UUID`,
+     `map[...]uuid.UUID` or a slice of a struct that carries a `uuid.UUID`, **except** the single field
+     `Path []ExplorerPathItem`.
+     (c) **Sole carrier.** `ExplorerPathItem` is the only type allowed to appear as a slice element and
+     carry a GUID; it is constructed (composite literal or `new`) in exactly one function,
+     `scanPathItem`, in `internal/directory/inventory`, whose only inputs are a `pgx.Rows` scan of the
+     `CompileTree` statement's output columns (the statement already trims, so every row is admitted).
+     Anything else constructing it fails.
+     The go/types check proves the port *cannot carry* an ancestor list; the oracle tests below carry the
+     behavioural proof that nothing unadmitted is returned. Named, in `fitness-explorer` EX10 and bound in
+     `fitness-search` SE3 (a missing, skipped or failing test fails the build, as for every bound test):
+     - `Test_explorer_hidden_ancestor_never_disclosed` (`./internal/directory/inventory`; subtests
+       `roots`, `node`, `path`, `children`, each on `pg16`/`pg18`): with an admitted subtree whose
+       parent chain is not admitted, the hidden ancestors' GUID, display name and DN are absent from the
+       whole serialised response and from logs of every one of the four operations. Fails on any
+       occurrence of the three strings.
+     - `Test_explorer_out_of_scope_child_never_returned` (same package and subtests `node`, `children`,
+       `path`): an out-of-scope child of an admitted node is not returned, not counted and not
+       cursor-addressable; asking for it by GUID answers exactly as a nonexistent one (EX8).
+     The spec's root test (X4) never returns a non-admitted parent's GUID; it only decides "this
+     admitted row is a root".
+  5. **Every addition has a failing self-test fixture** (runbook convention for static checks, T-1126),
+     named in `tools/fitness/search/check_test.go` and run by `make ci-proof`:
+     `closed_entry_set_fifth` (a `CompileFoo` reaching `scopeSQL`), `closed_entry_set_missing`,
+     `scope_second_emitter` (`scopeSQL2` and an inline `ancestry && ARRAY[...]`),
+     `explorer_sql_names_ancestry`, `tree_template_reads_search_keys`,
+     `port_leaks_ancestry_name`, `port_leaks_uuid_slice`, `pathitem_built_elsewhere`,
+     `compiletree_called_outside_inventory`, `connections_outside_allowlist`. Each must produce its own
+     finding; a fixture that passes fails the proof.
+- **`Connections()` allow-list, decided.** Spec §9 computes `asOf` as `inventory.Freshness` over
+  `ReadScope.Connections()`, so `internal/directory/inventory` is **added** to the allow-list, which
+  becomes `authz`, `reportsql`, `reports`, `reports/run`, `modules/search` and
+  `internal/directory/inventory`. `modules/explorer` is not added: it receives `asOf` from the port.
+  (The alternative, `CompileTree` returning the connection set in its `reportsql.Query`, was rejected:
+  it widens the statement's result for one label, when inventory already owns `Freshness`.)
+- **What does not change.** The `Terms`/`Token` rule, the RBAC-table and migration rules, SE2 to SE6,
+  `sqlconst` and RP1 (the statement is a `reportsql.Query` only that package can build). Rules 12 and
+  13 (work ceiling, refine state) govern search only; Explorer's own row-examined bound is EX6 of
+  `fitness-explorer`.
+- **Alternatives rejected.** (a) A tree renderer inside `inventory` or `modules/explorer`: a second
+  scope renderer, the PatchIQ clone failure. (b) Per-row `ReadScope.Admits`: N+1 and a second
+  evaluator that can drift from the SQL. (c) Generalising `CompileSearch` to take a tree mode: the
+  search statement's work ceiling and candidate stages are search-specific, and a mode switch hides a
+  second statement behind one name, which SE1 could not tell apart.
+- **Follow-ups.** T-2088 builds `CompileTree` (security-architect reviews). The `fitness-search` SE1
+  change and fixtures are ticketed to devops-engineer; EX1 in `fitness-explorer` (T-2091) is the
+  Explorer-side mirror and the two must agree. The blueprint, runbook and `ci-gates.md` rows are
+  updated with this amendment.
+Reworked 2026-11-14 after security-architect's AC2 review (closed set asserted, single emitter, port ancestry, `Connections()` decided). Revised again for the second review (mechanical deny-list, named oracle tests, named fixtures). Ratification waits on security-architect re-confirmation; `accepted` waits on the SE1 fixtures covering additions 1 to 5 and the two oracle tests (T-2094, T-2089).
+Ratified by factory-director 2026-11-14 (notice D-0034) after security-architect's AC2 confirmation (aacab51d4). E3 becomes `accepted` when T-2094's SE1 checks and fixtures run in `make ci`.
 
 **Revision 2 (2026-10-31, after the T-1093 review).** These are the changes in this revision:
 - **M1:** rule 7 now case-folds before the fold table.
@@ -935,11 +1022,16 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
     in `internal/platform/store/reportsql`. Method values, method expressions and embedding count,
     as RP2 already checks.
   - **Who may use `Connections()`.** Outside `authz` and `reportsql`, `ReadScope.Connections()` is
-    allowed only in `internal/modules/reports/run` and `internal/modules/search`, where it labels
-    freshness.
+    allowed only in `internal/modules/reports/run`, `internal/modules/search` and
+    `internal/directory/inventory` (E3), where it labels freshness.
   - **`Admits` and `SearchRoots`** are called nowhere outside `authz`. Until T-1127 deletes them,
     `internal/directory/client/usersearch.go` is the one listed exception, reported as `pending`.
-  - **`reportsql.CompileSearch`** is called only from `internal/directory/inventory`.
+  - **`reportsql.CompileSearch` and `reportsql.CompileTree`** (E3) are called only from
+    `internal/directory/inventory`. The set of exported `reportsql` functions reaching `planScope`/`scopeSQL` equals exactly
+    those four entries (go/types); `planScope` and `scopeSQL` are each defined exactly once, in
+    `store/reportsql`, and only code reachable from the four entries emits scope fragments. The
+    `CompileTree` template reads `directory_objects` only. Explorer files hold no SQL naming
+    ancestry, `parent_guid` or `directory_objects`. `inventory.Explorer` and its result types pass the ancestry deny-list (names, uuid-slice shapes, `ExplorerPathItem` built only in `scanPathItem`), and the two oracle tests below are bound.
   - **Go code that names the RBAC tables.** These tables are `authz_assignments`,
     `authz_assignment_roots`, `authz_roles` and `authz_role_permissions`, plus any later
     `authz_*` table that the owners map assigns to `rbac`. No non-test Go SQL text names them
