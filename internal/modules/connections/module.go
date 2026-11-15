@@ -7,6 +7,7 @@ package connections
 import (
 	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/platform"
+	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
@@ -37,8 +38,10 @@ func (*Module) Register(r *module.Registrar) error {
 	if err := r.Permission(TakeoverAttestPermission); err != nil {
 		return err
 	}
-	if err := r.Permission(ReadPermission); err != nil {
-		return err
+	for _, p := range []authz.Permission{ReadPermission, ManagePermission, VerifyPermission} {
+		if err := r.Permission(p); err != nil {
+			return err
+		}
 	}
 	a, err := Tier0OverrideAcknowledge()
 	if err != nil {
