@@ -1,6 +1,6 @@
 ---
 title: Decisions log
-updated: 2026-11-07
+updated: 2026-11-12
 budget: 120 lines
 ---
 
@@ -12,6 +12,8 @@ current milestone into archive/ when this file nears its budget.
 
 - 2026-11-15 · factory-director · **ADR-0015 ratified (T-2162, notice D-0036): TemplateGate port on PlanContext; `ad` keeps create/modify Actions (objects owns only store Actions); fitness-modules M3 in two cuts; typed ErrNameInUse.** TG3 scoped to ad/objects/importers with allowlist delegation, connections, directory, reports, search. Impl T-2163..T-2166, T-2142 narrowed.
 - 2026-11-15 · factory-director · **ADR-0014 ratified (T-2108, notice D-0035): chart images are drawn in-process by pure-Go `platform/chartimg` (x/image + embedded Plex TTF); no browser.** Windows vs Linux amd64 byte-identical; arm64 ≤2/255 on ≤0.1% px, max 16/255 (proposed, calibrate; never loosen without amendment). Accepted when `fitness-chartimg` CI1–CI5 runs in `make ci` (T-2134); build T-2135, spec/map T-2136.
+- 2026-11-11 · CEO · **Off-board M2c: the 2c plan stops at the ticket plan; only the two E2.11 importer reviews (plan keys C-01, C-02) run here before M1 is accepted. Push `m2c-plan` to the public GitHub repo.** Both picks were the recommended options. ADR drafts (C-04, C-07, C-11, C-16, C-22) wait for the server, because they would be written against 11-02 code. The push publishes the specs and their security reviews, consistent with D-0018. Off-board, so no D-id; file at merge (carry-over row 1). Factory call (notice at merge): E2.11's 2c scope is the file and DB-dump routes; discovery, comparator, ownership switch and §8 lifecycle limits are 2d (roadmap 2d row: MIG-14). (knowledge/business/scoping/m2c-plan.md)
+- 2026-11-10 · CEO · **M2c (checkpoint 2c "Hybrid and import") is planned on the second machine and built later on the server.** No board, no Docker or AD lab, and code from 11-02 main here, so this branch (`m2c-plan`) carries documents only: specs for E2.7 hybrid provisioning and the E2.6 report builder, plus a groomed ticket plan. No product code and no ticket IDs: tickets are created on the server board when it is reachable. The 2026-11-02 M1-focus hold on the server stands. Recorded off-board, so there is no D-id; file it on the board at merge. (interactive session 2026-11-10)
 - 2026-11-14 · factory · **ADR-0011 amendment E3 ratified (T-2086, notice D-0034): SE1 widens to the closed set {Compile, CompileCount, CompileSearch, CompileTree}; Explorer tree uses the one scope renderer; inventory joins the Connections() allow-list.** Accepted waits on T-2094 (SE1 code+fixtures).
 - 2026-11-12 · factory-director · **ADR-0013 ratified (T-1863, notice D-0031): modules wire through Registrar `API`/`Permission`; builders move into modules; no rule 2.5 exemption.** Impl T-1864..T-1869.
 - 2026-11-13 · CEO · **Brand: Harbor Teal replaces Ledger (D-0032, supersedes D-0012).** Teal, cool slate, 8/12 px radii, soft shadows, from activeDIQ-mockup / T-1421. Chosen over the recommended Ledger. Tokens are CSS variables; Ledger-based previews, docs and tickets are reworked by T-1421 and its follow-up.
