@@ -41,21 +41,13 @@ func TestTemplateGateIsBoundToTheOperationChainAndTenant(t *testing.T) {
 	}
 }
 
-// AC1 (submit path): the same binding when Submit plans with the stored operation's chain.
-func TestTemplateGateBindingSubmitPath(t *testing.T) {
+// A tenant on the caller's context is overridden by the operation's own.
+func TestTemplateGateOverridesCallerTenant(t *testing.T) {
 	ta := &tmplAuthz{}
 	tn := tenant.New()
-	chain := authority.Chain{Requester: authority.Principal{ID: "bob", Kind: authority.Human}}
-	g := templateGate{authz: ta, chain: chain, tenant: tn}
-	if err := g.CheckTemplate(context.Background(), "p", "tpl-2"); err != nil {
-		t.Fatal(err)
-	}
-	if ta.chain.Requester.ID != "bob" || ta.tenant != tn.String() {
-		t.Fatalf("chain=%+v tenant=%q", ta.chain, ta.tenant)
-	}
-	// A tenant on the caller's context is overridden by the operation's.
-	if err := g.CheckTemplate(authority.WithTenant(context.Background(), "other"), "p", "tpl-2"); err != nil || ta.tenant != tn.String() {
-		t.Fatalf("err=%v tenant=%q", err, ta.tenant)
+	g := templateGate{authz: ta, chain: authority.Chain{Requester: authority.Principal{ID: "bob", Kind: authority.Human}}, tenant: tn}
+	if err := g.CheckTemplate(authority.WithTenant(context.Background(), "other"), "p", "tpl-2"); err != nil || ta.tenant != tn.String() || ta.chain.Requester.ID != "bob" {
+		t.Fatalf("err=%v tenant=%q chain=%+v", err, ta.tenant, ta.chain)
 	}
 }
 

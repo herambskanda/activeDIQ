@@ -264,3 +264,8 @@ type Action interface {
 	// Inverse returns the input that undoes this step, or ErrIrreversible.
 	Inverse(p StepPlan, o Outcome) (Input, error)
 }
+
+// templateGate is the one place a Plan's TemplateGate is built, so both Runner paths bind the same way.
+func (r *Runner) templateGate(chain authority.Chain, t tenant.ID) templateGate {
+	return templateGate{authz: r.cfg.TemplateAuthz, chain: chain, tenant: t}
+}
