@@ -26,6 +26,10 @@ const MAX_LOG_BYTES = 256 * 1024 * 1024;
 export const PRE_MERGE_DEFAULTS = Object.freeze({
   enabled: false,
   argv: ['make', '-k', 'ci'],
+  // A cheaper subset of `argv` (lint + unit tests, no fitness/build/scan/fuzz/lab) that does not yet
+  // gate the merge: it runs alongside the real gate and its verdict is only logged against the real
+  // one, to find out how often they'd agree before trusting it to merge on its own. `null` = off.
+  fast_argv: null,
   timeout_minutes: 120,
   // T-1067: a cheap check that runs on the merge result BEFORE the full command. Each branch passes
   // the migration-numbering test on its own; two parallel branches that both add 00NN only collide
@@ -50,6 +54,10 @@ export function preMergeSettings(config) {
   const s = { ...PRE_MERGE_DEFAULTS, ...(config.dispatcher?.pre_merge ?? {}) };
   if (!Array.isArray(s.argv) || !s.argv.length || s.argv.some((a) => typeof a !== 'string')) {
     throw new FactoryError('dispatcher.pre_merge.argv must be a non-empty array of strings');
+  }
+  if (s.fast_argv !== null && s.fast_argv !== undefined
+    && (!Array.isArray(s.fast_argv) || !s.fast_argv.length || s.fast_argv.some((a) => typeof a !== 'string'))) {
+    throw new FactoryError('dispatcher.pre_merge.fast_argv must be null or a non-empty array of strings');
   }
   if (!Number.isInteger(s.train_size) || s.train_size < 1) {
     throw new FactoryError('dispatcher.pre_merge.train_size must be a whole number of at least 1');
@@ -125,6 +133,17 @@ export function findingKey(raw, roots = []) {
 const FITNESS_QUIET = [
   /:\s*ok\b/,
   /\bok \(/,
+  // A line that just ends in the bare word "ok" (no trailing "(" or following text), e.g. a
+  // sub-check's own pass summary ("fitness-sso: FIT-SSO-2 static half ok"). `/:\s*ok\b/` and
+  // `/\bok \(/` only catch "ok" right after a colon or right before "("; this catches it anywhere
+  // else in the line, as long as nothing (but optional trailing whitespace) follows it.
+  /\bok\s*$/,
+  // fitness-stack's F2 cross-build matrix (-v): "... ok for linux/amd64 (tools/apitools)". Matches
+  // the shape, not a hardcoded platform/dir list, so a new matrix entry needs no edit here.
+  /\bok for \S+ \(/,
+  // fitness-update-offline's own pass line: refusing a network call inside a --network none
+  // container is the success case, not a finding.
+  /container has no network \(connection refused, as required\)$/,
   /^fitness-[\w-]+:\s+activation table \(/,
   /\b\d+ (?:violation|problem|record)/,
   /^fitness-[\w-]+:\s+(?:inactive|pending)\b/,
@@ -502,6 +521,48 @@ async function checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { s
 }
 
 /**
+ * Run `settings.fast_argv` on the merge result in `dir`, next to the real gate command, purely to
+ * measure it: how long it takes and whether it agrees with the real gate's raw exit code. Never
+ * throws and never changes the merge outcome — a fast-lane run that fails to start or times out is
+ * recorded as `ok: false` and the real gate proceeds exactly as if `fast_argv` were unset.
+ * @param {object} ctx
+ * @param {object} settings
+ * @param {string} dir the candidate worktree (already holds the merge result)
+ * @param {{id: string}} subject
+ * @param {{signal?: AbortSignal, run: string}} opts
+ * @returns {Promise<{argv: string[], ok: boolean, code: number|null, seconds: number, log: string}|null>} null when `fast_argv` is unset
+ */
+async function runFastLane(ctx, settings, dir, subject, { signal, run }) {
+  if (!settings.fast_argv) return null;
+  const log = path.join(gateDir(ctx), `${subject.id}-${run}-fastlane.log`);
+  const started = Date.now();
+  try {
+    const ran = await runLogged(settings.fast_argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
+    const seconds = Number(((Date.now() - started) / 1000).toFixed(1));
+    if (ran.aborted) return { argv: settings.fast_argv, ok: false, code: null, seconds, log };
+    if (ran.timedOut) { fs.appendFileSync(log, '\n# fast lane timed out\n'); return { argv: settings.fast_argv, ok: false, code: null, seconds, log }; }
+    return { argv: settings.fast_argv, ok: true, code: ran.code, seconds, log };
+  } catch (err) {
+    const seconds = Number(((Date.now() - started) / 1000).toFixed(1));
+    try { fs.appendFileSync(log, `\n# fast lane could not run: ${err.message}\n`); } catch { /* log unwritable: not the real gate's problem */ }
+    return { argv: settings.fast_argv, ok: false, code: null, seconds, log };
+  }
+}
+
+/**
+ * Whether the fast lane's verdict (pass/fail) matches the real gate's raw command exit code on the
+ * same merge result. `null` when the fast lane did not run or could not complete, so there is
+ * nothing to compare yet.
+ * @param {{ok: boolean, code: number|null}|null} fastLane
+ * @param {number} fullCode the real gate command's exit code (before the red-main ratchet)
+ * @returns {boolean|null}
+ */
+export function fastLaneAgreed(fastLane, fullCode) {
+  if (!fastLane?.ok || fastLane.code === null) return null;
+  return (fastLane.code === 0) === (fullCode === 0);
+}
+
+/**
  * Run the gate for a finished ticket. A train of one (see `runPreMergeTrain`).
  *
  * Statuses: `pass` (merge may proceed), `blocked` (the branch adds a finding or breaks a green
@@ -582,10 +643,12 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
     if (ran.timedOut) throw new FactoryError(`pre-merge: ${settings.argv.join(' ')} on ${label} timed out after ${settings.timeout_minutes} minutes (${log})`);
     if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${label} was stopped (${log})`);
     assertTreeIntact(dir, identity, log);
+    const fastLane = await runFastLane(ctx, settings, dir, subject, { signal, run });
+    const withFastLane = (verdict) => (fastLane ? { ...verdict, fastLane: { ...fastLane, agreed: fastLaneAgreed(fastLane, ran.code) } } : verdict);
     const headTree = (await git(dir, ['rev-parse', '--verify', '-q', 'HEAD^{tree}'])).stdout.trim() || null;
     if (ran.code === 0) {
       await recordBaseline(ctx, settings, headTree, { code: 0, findings: new Map(), log }, name);
-      return { status: 'pass', mode: 'green', findings: [], summary: withTiming(`${settings.argv.join(' ')} passed on the merge result`), log, ...outcome };
+      return withFastLane({ status: 'pass', mode: 'green', findings: [], summary: withTiming(`${settings.argv.join(' ')} passed on the merge result`), log, ...outcome });
     }
 
     const head = extractFindings(readLog(log), [fs.realpathSync(dir), dir]);
@@ -602,28 +665,28 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
     const total = (m) => [...m.values()].reduce((a, b) => a + b, 0);
     const lines = fresh.map((f) => (f.known ? `${f.key}  (${f.extra} more than the ${f.known} on ${main})` : f.extra > 1 ? `${f.key}  (${f.extra} times)` : f.key));
     if (base.code === 0) {
-      return {
+      return withFastLane({
         status: 'blocked', mode: 'main-green', findings: lines, log, baseLog: base.log, ...outcome,
         summary: `${main} is green and ${settings.argv.join(' ')} fails on the merge result${lines.length ? '' : ' with no recognisable finding line; read the log'}${reuse}`,
-      };
+      });
     }
     if (!head.size) {
-      return {
+      return withFastLane({
         status: 'blocked', mode: 'unrecognised', findings: [], log, baseLog: base.log, ...outcome,
         summary: `${settings.argv.join(' ')} fails on the merge result and the log has no recognisable finding line, so it cannot be compared with the red ${main}; read the log${reuse}`,
-      };
+      });
     }
     if (fresh.length) {
-      return {
+      return withFastLane({
         status: 'blocked', mode: 'new-findings', findings: lines, log, baseLog: base.log, ...outcome,
         summary: `${main} is red (${total(base.findings)} known findings) and the merge result adds ${lines.length} that ${main} does not have${reuse}`,
-      };
+      });
     }
     await recordBaseline(ctx, settings, headTree, { code: ran.code, findings: head, log }, name);
-    return {
+    return withFastLane({
       status: 'pass', mode: 'ratchet', findings: [], log, baseLog: base.log, ...outcome,
       summary: withTiming(`${main} is red (${total(base.findings)} known findings); the merge result adds none (${total(head)} findings, all already on ${main})${reuse}`),
-    };
+    });
   } finally {
     await dropWorktree(ctx, dir);
   }

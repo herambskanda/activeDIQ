@@ -3,6 +3,7 @@ package reports
 import (
 	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/platform"
+	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 )
@@ -28,4 +29,13 @@ func (*Module) ID() module.ID { return ModuleID }
 func (*Module) Requires() []capability.ID { return nil }
 
 // Register implements module.Module.
-func (*Module) Register(*module.Registrar) error { return nil }
+func (*Module) Register(r *module.Registrar) error {
+	// The permissions of the report operations (EP-6); the routes themselves are mounted by
+	// compose/server until buildReports moves into this module (ADR-0013).
+	for _, p := range []authz.Permission{RunPermission, ExportPermission, SchedulePermission, ScheduleManageAllPermission, DeliverExternalPermission} {
+		if err := r.Permission(p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
