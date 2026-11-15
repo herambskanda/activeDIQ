@@ -61,9 +61,10 @@ type ChildCounter interface {
 
 // Handler serves Read.
 type Handler struct {
-	src Source
-	now func() time.Time
-	log *slog.Logger
+	src  Source
+	now  func() time.Time
+	log  *slog.Logger
+	feed feedLimits
 }
 
 // Option configures a Handler.
@@ -77,7 +78,7 @@ func New(src Source, opts ...Option) (*Handler, error) {
 	if src == nil {
 		return nil, errors.New("read: a source is required")
 	}
-	h := &Handler{src: src, now: time.Now, log: slog.Default()}
+	h := &Handler{src: src, now: time.Now, log: slog.Default(), feed: feedLimits{maxPages: defaultFeedPages, deadline: defaultFeedDeadline}}
 	for _, o := range opts {
 		o(h)
 	}

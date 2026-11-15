@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"github.com/skenzeriq/activediq/internal/directory/accountkind"
+	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"strings"
 	"time"
 
@@ -155,12 +155,12 @@ func touched(op WriteOp) (inventory.ConnectionID, []inventory.GUID, error) {
 		return "", nil, ctxErr(ReasonBadRef, nil)
 	}
 	objs := []inventory.GUID{ref.Object}
-	if accountkind.IsGroupKey(op.DigestKind) {
+	if op.DigestKind == writechange.KeyGroupMemberAdd || op.DigestKind == writechange.KeyGroupMemberRemove {
 		// Kinds 11 and 12 touch the group (the target) and the member: each needs its own correlation
 		// statement and Tier-0 verdict (contract §8.10.3). The member's GUID is a digested attribute.
 		var member string
 		for _, a := range op.Attrs {
-			if a.Name == accountkind.AttrMember && len(a.Values) == 1 {
+			if a.Name == writechange.AttrMember && len(a.Values) == 1 {
 				member = strings.ToLower(a.Values[0])
 			}
 		}

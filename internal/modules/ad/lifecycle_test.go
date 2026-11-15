@@ -90,7 +90,7 @@ func (d *dirFake) Write(_ context.Context, s step.Step, op client.WriteOp) (clie
 		if d.members == nil {
 			d.members = map[string]bool{}
 		}
-		d.members[op.Target.GUID+"/"+attr("member")] = op.DigestKind == "ad.group.addMember"
+		d.members[op.Target.GUID+"/"+attr("~member")] = op.DigestKind == "ad.group.addMember"
 		return client.Result{}, nil
 	case client.DigestObjectMove:
 		st.Parent = attr(client.AttrNewParent)

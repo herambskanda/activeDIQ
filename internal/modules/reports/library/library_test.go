@@ -90,6 +90,37 @@ var specRows = []specRow{
 		filters: map[string][]string{"blocked": {"password_change_right"}},
 		deviations: []string{"OU path is shown by the dn column (T-1041)", "adds the service-account reason column (spec 6.7: every flagged row shows its reason)",
 			"the preset also selects Not confirmed users so the locked not_confirmed group counts them in the header; they are never listed"}},
+	// ---- batch 5 (T-1110)
+	{id: "usr-06", title: "User changes", category: report.CategoryUsers, dataset: "inventory.object_changes",
+		presets: map[string][]string{"modified": {"Recently Modified Users"}, "deleted": {"Recently Deleted Users"}},
+		columns: []string{"name", "sam_account_name", "domain", "dn", "change_kind", "attributes_changed", "observed_at", "basis"},
+		filters: map[string][]string{"modified": {"change_kind", "object_kind", "observed_at"}, "deleted": {"change_kind", "object_kind", "observed_at"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "Changed at and Deleted at are the observed time (Basis: observed): the dataset has no originating time yet",
+			"credential-event, permissions-changed and membership change kinds, Restorable until and the Observed-at-versus-Changed-at pair wait for the DM-18 metadata ingest"}},
+	{id: "grp-05", title: "Group changes", category: report.CategoryGroups, dataset: "inventory.object_changes",
+		presets: map[string][]string{"modified": {"Recently Modified Groups"}, "deleted": {"Recently Deleted Groups"}},
+		columns: []string{"name", "domain", "dn", "change_kind", "attributes_changed", "observed_at", "basis"},
+		filters: map[string][]string{"modified": {"change_kind", "object_kind", "observed_at"}, "deleted": {"change_kind", "object_kind", "observed_at"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "Changed at and Deleted at are the observed time (Basis: observed): the dataset has no originating time yet",
+			"credential-event, permissions-changed and membership change kinds, Restorable until and the Observed-at-versus-Changed-at pair wait for the DM-18 metadata ingest"}},
+	{id: "cmp-03", title: "Computer changes", category: report.CategoryComputers, dataset: "inventory.object_changes",
+		presets: map[string][]string{"modified": {"Recently Modified Computers"}, "deleted": {"Recently Deleted Computers"}},
+		columns: []string{"name", "sam_account_name", "domain", "dn", "change_kind", "attributes_changed", "observed_at", "basis"},
+		filters: map[string][]string{"modified": {"change_kind", "object_kind", "observed_at"}, "deleted": {"change_kind", "object_kind", "observed_at"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "Changed at and Deleted at are the observed time (Basis: observed): the dataset has no originating time yet",
+			"credential-event, permissions-changed and membership change kinds, Restorable until and the Observed-at-versus-Changed-at pair wait for the DM-18 metadata ingest"}},
+	{id: "ctc-02", title: "Contact changes", category: report.CategoryContacts, dataset: "inventory.object_changes",
+		presets: map[string][]string{"modified": {"Recently Modified Contacts"}, "deleted": {"Recently Deleted Contacts"}},
+		columns: []string{"name", "domain", "dn", "change_kind", "attributes_changed", "observed_at", "basis"},
+		filters: map[string][]string{"modified": {"change_kind", "object_kind", "observed_at"}, "deleted": {"change_kind", "object_kind", "observed_at"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "Changed at and Deleted at are the observed time (Basis: observed): the dataset has no originating time yet",
+			"credential-event, permissions-changed and membership change kinds, Restorable until and the Observed-at-versus-Changed-at pair wait for the DM-18 metadata ingest"}},
+	{id: "ou-02", title: "OU changes", category: report.CategoryOUs, dataset: "inventory.object_changes",
+		presets: map[string][]string{"modified": {"Recently Modified OUs"}, "deleted": {}},
+		columns: []string{"name", "domain", "dn", "change_kind", "attributes_changed", "observed_at", "basis"},
+		filters: map[string][]string{"modified": {"change_kind", "object_kind", "observed_at"}, "deleted": {"change_kind", "object_kind", "observed_at"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "Changed at and Deleted at are the observed time (Basis: observed): the dataset has no originating time yet",
+			"credential-event, permissions-changed and membership change kinds, Restorable until and the Observed-at-versus-Changed-at pair wait for the DM-18 metadata ingest"}},
 	{id: "grp-01", title: "Groups", category: report.CategoryGroups, dataset: "inventory.groups",
 		presets: map[string][]string{"all": {"All Groups"}, "security": {"Security Groups"}, "distribution": {"Distribution Groups"}, "type_scope": {"Group Type and Scope"},
 			"no_members": {"Groups Without Members"}, "managed": {"Managed Groups"}, "unmanaged": {"Unmanaged Groups"}, "top": {"Top N Big Groups"},
@@ -205,8 +236,8 @@ func Test_reports_library_matches_spec(t *testing.T) {
 		}
 	}
 	// The crosswalk answers every ME name of 6.2: 54.
-	if n := len(l.Names()); n != 55 {
-		t.Errorf("crosswalk lists %d names, spec 6.2 says 54 plus Cannot Change Password from the second slice", n)
+	if n := len(l.Names()); n != 64 {
+		t.Errorf("crosswalk lists %d names, spec 6.2 says 54 plus the second slice (1 PWD-04, 9 batch 5)", n)
 	}
 }
 

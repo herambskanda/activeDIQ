@@ -125,6 +125,17 @@ export function findingKey(raw, roots = []) {
 const FITNESS_QUIET = [
   /:\s*ok\b/,
   /\bok \(/,
+  // A line that just ends in the bare word "ok" (no trailing "(" or following text), e.g. a
+  // sub-check's own pass summary ("fitness-sso: FIT-SSO-2 static half ok"). `/:\s*ok\b/` and
+  // `/\bok \(/` only catch "ok" right after a colon or right before "("; this catches it anywhere
+  // else in the line, as long as nothing (but optional trailing whitespace) follows it.
+  /\bok\s*$/,
+  // fitness-stack's F2 cross-build matrix (-v): "... ok for linux/amd64 (tools/apitools)". Matches
+  // the shape, not a hardcoded platform/dir list, so a new matrix entry needs no edit here.
+  /\bok for \S+ \(/,
+  // fitness-update-offline's own pass line: refusing a network call inside a --network none
+  // container is the success case, not a finding.
+  /container has no network \(connection refused, as required\)$/,
   /^fitness-[\w-]+:\s+activation table \(/,
   /\b\d+ (?:violation|problem|record)/,
   /^fitness-[\w-]+:\s+(?:inactive|pending)\b/,
@@ -220,7 +231,7 @@ export function runLogged(argv, cwd, logFile, { timeoutMs, signal, env = process
   });
 }
 
-function readLog(file) {
+export function readLog(file) {
   const size = fs.statSync(file).size;
   if (size <= MAX_LOG_BYTES) return fs.readFileSync(file, 'utf8');
   const fd = fs.openSync(file, 'r');
@@ -231,7 +242,7 @@ function readLog(file) {
   } finally { fs.closeSync(fd); }
 }
 
-function gateDir(ctx) { return path.join(ctx.stateDir, 'premerge'); }
+export function gateDir(ctx) { return path.join(ctx.stateDir, 'premerge'); }
 export function scratchRoot(ctx) { return path.resolve(ctx.root, ctx.config.dispatcher.worktree_root, '.premerge'); }
 
 /**
@@ -240,10 +251,10 @@ export function scratchRoot(ctx) { return path.resolve(ctx.root, ctx.config.disp
  * dry run, or an orphaned `make` left by a killed run — deleted each other's tree mid-run, and the
  * truncated output was judged and cached as main's baseline.
  */
-function runTag() { return `${process.pid}-${crypto.randomBytes(4).toString('hex')}`; }
+export function runTag() { return `${process.pid}-${crypto.randomBytes(4).toString('hex')}`; }
 
 /** @returns {Promise<string>} the identity (device:inode) of the new tree, for {@link assertTreeIntact} */
-async function addDetached(ctx, dir, ref) {
+export async function addDetached(ctx, dir, ref) {
   fs.rmSync(dir, { recursive: true, force: true });
   await git(ctx.root, ['worktree', 'prune']);
   fs.mkdirSync(path.dirname(dir), { recursive: true });
@@ -257,13 +268,13 @@ function treeIdentity(dir) {
 }
 
 /** A run whose tree was removed or replaced while it ran says nothing about the code: refuse to judge it. */
-function assertTreeIntact(dir, identity, log) {
+export function assertTreeIntact(dir, identity, log) {
   if (treeIdentity(dir) !== identity) {
     throw new FactoryError(`pre-merge: the scratch worktree ${dir} was removed or replaced while the command ran, so its output is not a verdict (${log})`);
   }
 }
 
-async function dropWorktree(ctx, dir) {
+export async function dropWorktree(ctx, dir) {
   await git(ctx.root, ['worktree', 'remove', '--force', dir]);
   fs.rmSync(dir, { recursive: true, force: true });
   await git(ctx.root, ['worktree', 'prune']);

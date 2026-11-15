@@ -7,11 +7,18 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/accountkind"
 	"github.com/skenzeriq/activediq/internal/directory/client"
+	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+)
+
+// Digest class labels of the member classes that accountkind does not name (writechange spells them the same).
+const (
+	classGroup   = "group"
+	classContact = "contact"
 )
 
 // The group membership Actions (T-1586, connector contract §8.10.3 kinds 11 and 12). The authorisation
@@ -76,12 +83,12 @@ type memberSpec struct {
 }
 
 var memberSpecs = []memberSpec{
-	{id: AddMemberID, key: accountkind.KeyGroupMemberAdd, perm: PermAddMember, audit: AuditMemberAdded, add: true,
-		classes: []string{accountkind.ClassUser, accountkind.ClassComputer, accountkind.ClassContact}},
-	{id: NestGroupID, key: accountkind.KeyGroupMemberAdd, perm: PermNestGroup, audit: AuditGroupNested, add: true, groups: true,
-		classes: []string{accountkind.ClassGroup}},
-	{id: RemoveMemberID, key: accountkind.KeyGroupMemberRemove, perm: PermRemoveMember, audit: AuditMemberRemoved,
-		classes: []string{accountkind.ClassUser, accountkind.ClassComputer, accountkind.ClassContact, accountkind.ClassGroup}},
+	{id: AddMemberID, key: writechange.KeyGroupMemberAdd, perm: PermAddMember, audit: AuditMemberAdded, add: true,
+		classes: []string{accountkind.ClassUser, accountkind.ClassComputer, classContact}},
+	{id: NestGroupID, key: writechange.KeyGroupMemberAdd, perm: PermNestGroup, audit: AuditGroupNested, add: true, groups: true,
+		classes: []string{classGroup}},
+	{id: RemoveMemberID, key: writechange.KeyGroupMemberRemove, perm: PermRemoveMember, audit: AuditMemberRemoved,
+		classes: []string{accountkind.ClassUser, accountkind.ClassComputer, classContact, classGroup}},
 }
 
 // MemberInverse pairs a membership Action with the one that undoes it. A Typed Action's Inverse returns an
@@ -91,7 +98,7 @@ func MemberInverse(id operation.ActionID, memberClass string) (operation.ActionI
 	case AddMemberID, NestGroupID:
 		return RemoveMemberID, true
 	case RemoveMemberID:
-		if memberClass == accountkind.ClassGroup {
+		if memberClass == classGroup {
 			return NestGroupID, true
 		}
 		return AddMemberID, true
@@ -113,7 +120,7 @@ func MemberActions(p LifecyclePorts) ([]operation.Action, error) {
 }
 
 func (in MemberInput) groupRef() authority.TargetRef {
-	return accountkind.Target(in.ConnectionID, in.GroupGuid, accountkind.ClassGroup, in.NamingContext)
+	return accountkind.Target(in.ConnectionID, in.GroupGuid, classGroup, in.NamingContext)
 }
 
 func (in MemberInput) memberRef() authority.TargetRef {
@@ -129,17 +136,17 @@ func (in MemberInput) validate(sp memberSpec) error {
 			return nil
 		}
 	}
-	if in.MemberClass == accountkind.ClassGroup && sp.add && !sp.groups {
+	if in.MemberClass == classGroup && sp.add && !sp.groups {
 		return fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonUseNest)
 	}
 	return fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonMemberClass)
 }
 
-// attrs are the digest attributes of kinds 11 and 12 (accountkind.GroupAttrsOf is their inverse).
+// attrs are the digest attributes of kinds 11 and 12 (writechange decodes them).
 func (in MemberInput) attrs() []step.Attr {
 	return []step.Attr{
-		{Name: accountkind.AttrMember, Values: []string{in.MemberGuid}},
-		{Name: accountkind.AttrMemberClass, Values: []string{in.MemberClass}},
+		{Name: writechange.AttrMember, Values: []string{in.MemberGuid}},
+		{Name: writechange.AttrMemberClass, Values: []string{in.MemberClass}},
 	}
 }
 
@@ -147,7 +154,7 @@ func buildMember(p LifecyclePorts, sp memberSpec) (operation.Action, error) {
 	return operation.Define(operation.Typed[MemberInput, memberPayload, MemberOutcome]{
 		Descriptor: operation.Descriptor{
 			ID: sp.id, Version: 1, Permission: sp.perm, Input: "#/components/schemas/AdGroupMember",
-			Target: operation.TargetAD, TargetClass: accountkind.ClassGroup, Reversibility: operation.Reversible, AuditKind: sp.audit,
+			Target: operation.TargetAD, TargetClass: classGroup, Reversibility: operation.Reversible, AuditKind: sp.audit,
 		},
 		Plan: func(ctx context.Context, pc operation.PlanContext, in MemberInput) ([]operation.TypedStep[memberPayload], error) {
 			if err := in.validate(sp); err != nil {
@@ -166,7 +173,7 @@ func buildMember(p LifecyclePorts, sp memberSpec) (operation.Action, error) {
 			switch {
 			case !g.Exists:
 				return nil, fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonNotFound)
-			case g.Class != accountkind.ClassGroup:
+			case g.Class != classGroup:
 				return nil, fmt.Errorf("%w: %s", operation.ErrInvalid, ReasonNotAGroup)
 			case g.Tier0:
 				return nil, fmt.Errorf("%w: %s", operation.ErrDenied, ReasonTier0)
@@ -190,7 +197,7 @@ func buildMember(p LifecyclePorts, sp memberSpec) (operation.Action, error) {
 			if direct == sp.add {
 				return nil, nil // already in the requested state: nothing to plan
 			}
-			diff := []operation.Change{{Attribute: accountkind.AttrMember, After: []string{in.MemberGuid}}, {Attribute: accountkind.AttrMemberClass, After: []string{in.MemberClass}}}
+			diff := []operation.Change{{Attribute: writechange.AttrMember, After: []string{in.MemberGuid}}, {Attribute: writechange.AttrMemberClass, After: []string{in.MemberClass}}}
 			verb, pre := "removes", "removing a member can widen access where the group is used in a deny entry; the directory does not say where it is used"
 			if sp.add {
 				verb, pre = "adds", "adding a member widens who the group's grants reach; the group and every group it is nested in are checked live against the actor's rights"

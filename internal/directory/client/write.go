@@ -97,6 +97,9 @@ var kindTable = map[string]kindRow{
 	DigestObjectMove:            {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE, Class: ClassMove},
 	DigestObjectRename:          {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME, Class: ClassMove},
 	DigestObjectRestore:         {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE, Class: ClassMove},
+	// Kinds 11 and 12 (T-1913): outside every TM-D28 attribute class; guarded by TM-D18 on the group.
+	writechange.KeyGroupMemberAdd:    {Kind: connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_ADD, Class: "none"},
+	writechange.KeyGroupMemberRemove: {Kind: connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_REMOVE, Class: "none"},
 }
 
 // kindClass is the TM-D28 class of each registered kind ("none" for a tightening, contract §8.10.1).
@@ -106,21 +109,12 @@ var kindClass = map[string]string{
 	accountkind.KeyUnlock:        "unlock",
 	accountkind.KeyEnable:        "enable",
 	accountkind.KeyDisable:       "none",
-	// Kinds 11 to 13 (contract v1.6). The group kinds are guarded by TM-D18 on the Action's
-	// permission, not by a TM-D28 attribute class; kind 13 is the new reset_computer class.
-	accountkind.KeyGroupMemberAdd:    "none",
-	accountkind.KeyGroupMemberRemove: "none",
-	accountkind.KeyComputerReset:     "reset_computer",
+	// Kind 13 (T-1913): TM-D28 class reset_computer, the guarded key unicodePwd[computer].
+	accountkind.KeyComputerReset: "reset_computer",
 }
 
 func init() {
 	for _, sp := range accountkind.Specs() {
-		if _, ok := kindClass[sp.Key]; !ok {
-			panic("client: kind registered without a TM-D28 class: " + sp.Key)
-		}
-		kindTable[sp.Key] = kindRow{Kind: sp.Kind, Class: kindClass[sp.Key]}
-	}
-	for _, sp := range accountkind.GroupSpecs() {
 		if _, ok := kindClass[sp.Key]; !ok {
 			panic("client: kind registered without a TM-D28 class: " + sp.Key)
 		}
@@ -353,7 +347,6 @@ func (op WriteOp) derive() (wire, error) {
 	var change *connectorv1.WriteChange
 	hasSecret := false
 	_, account := accountkind.ByKey(op.DigestKind)
-	account = account || accountkind.IsGroupKey(op.DigestKind)
 	switch {
 	case account:
 		// The account kinds (T-1583) have their own change codec, class label and secret rule, applied by
@@ -413,21 +406,6 @@ func (op WriteOp) derive() (wire, error) {
 // label and UUID texts must be the forms the connector recomputes the digest with: an op the
 // connector could not verify is refused here, before any transport call.
 func (op WriteOp) deriveChange(w *wire) error {
-	if accountkind.IsGroupKey(op.DigestKind) {
-		// Kinds 11 and 12: the target is the group, the member is in the digested Attrs by GUID.
-		if op.Target.Class != accountkind.ClassGroup {
-			return ErrKindClass
-		}
-		if !accountkind.Canonical(op.Target.GUID) || !accountkind.Canonical(string(op.Target.NC)) || op.Target.Parent != "" || op.Target.RDN != "" {
-			return ErrNotCanonical
-		}
-		ch, err := accountkind.GroupChangeFromAttrs(op.DigestKind, op.Attrs)
-		if err != nil {
-			return ErrKindAttrs
-		}
-		w.change = ch
-		return nil
-	}
 	sp, ok := accountkind.ByKey(op.DigestKind)
 	if !ok {
 		return nil

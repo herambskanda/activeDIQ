@@ -8,6 +8,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/accountkind"
 	"github.com/skenzeriq/activediq/internal/directory/client"
+	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"github.com/skenzeriq/activediq/internal/modules/ad"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
@@ -175,8 +176,8 @@ func TestMemberActionsTargetTheGroup(t *testing.T) {
 		kind  string
 		class string
 	}{
-		{ad.AddMemberID, "objects.group.add_member", ad.MemberInput{ConnectionID: conn, NamingContext: nc, GroupGuid: grp, MemberGuid: obj, MemberClass: "user"}, accountkind.KeyGroupMemberAdd, "user"},
-		{ad.NestGroupID, "objects.group.nest", ad.MemberInput{ConnectionID: conn, NamingContext: nc, GroupGuid: grp, MemberGuid: grp2, MemberClass: "group"}, accountkind.KeyGroupMemberAdd, "group"},
+		{ad.AddMemberID, "objects.group.add_member", ad.MemberInput{ConnectionID: conn, NamingContext: nc, GroupGuid: grp, MemberGuid: obj, MemberClass: "user"}, writechange.KeyGroupMemberAdd, "user"},
+		{ad.NestGroupID, "objects.group.nest", ad.MemberInput{ConnectionID: conn, NamingContext: nc, GroupGuid: grp, MemberGuid: grp2, MemberClass: "group"}, writechange.KeyGroupMemberAdd, "group"},
 	}
 	for _, c := range cases {
 		a := as[c.id]
@@ -189,7 +190,7 @@ func TestMemberActionsTargetTheGroup(t *testing.T) {
 			t.Fatalf("%s: the step must target the group: %+v", c.id, sp.Target)
 		}
 		for _, ch := range sp.Diff {
-			if ch.Attribute == accountkind.AttrMember && ch.After[0] != c.in.MemberGuid {
+			if ch.Attribute == writechange.AttrMember && ch.After[0] != c.in.MemberGuid {
 				t.Fatalf("member attribute %+v", ch)
 			}
 		}

@@ -18,7 +18,6 @@ import (
 // accountAttrs is the fixed read set of an account write (connector-contract §8.10.3 kinds 7 to 10).
 // It is a constant of this package, never caller input, so it does not pass the filter schema.
 var accountAttrs = []string{"objectGUID", "objectClass", "objectSid", "userAccountControl", "lockoutTime", "pwdLastSet", "uSNChanged",
-	// Kind 13 only (computer account reset): shown in Plan, and the SPNs identify a cluster object.
 	"lastLogonTimestamp", "operatingSystem", "servicePrincipalName"}
 
 // AccountState is the live state of a user or computer as an account write needs it, read from the
@@ -33,12 +32,12 @@ type AccountState struct {
 	LockoutTime int64
 	PwdLastSet  int64
 	USN         uint64
-	// LastLogonTimestamp is the FILETIME of the replicated last logon (0 when absent), OperatingSystem
-	// the operatingSystem text and SPNs the servicePrincipalName values. Kind 13 shows the first two
-	// and refuses a cluster object by the third.
-	LastLogonTimestamp int64
-	OperatingSystem    string
-	SPNs               []string
+	// LastLogonTS, OperatingSystem and SPNs are read for the computer account reset (kind 13): the
+	// Plan preview and the cluster-object test. lastLogonTimestamp is replicated lazily (about 14
+	// days), so it is a hint, never a gate.
+	LastLogonTS     int64
+	OperatingSystem string
+	SPNs            []string
 }
 
 // AccountCheck runs under the session lock on a fresh read. A non-nil error sends nothing.
@@ -106,11 +105,11 @@ func (s *Session) readAccountLocked(ctx context.Context, base string) (AccountSt
 	if st.PwdLastSet, err = int64Attr(ent, "pwdLastSet"); err != nil {
 		return AccountState{}, err
 	}
-	if st.LastLogonTimestamp, err = int64Attr(ent, "lastLogonTimestamp"); err != nil {
+	if st.LastLogonTS, err = int64Attr(ent, "lastLogonTimestamp"); err != nil {
 		return AccountState{}, err
 	}
-	if os := ent.Strings("operatingSystem"); len(os) == 1 {
-		st.OperatingSystem = os[0]
+	if v := ent.Strings("operatingSystem"); len(v) == 1 {
+		st.OperatingSystem = v[0]
 	}
 	st.SPNs = ent.Strings("servicePrincipalName")
 	usn, err := int64Attr(ent, "uSNChanged")

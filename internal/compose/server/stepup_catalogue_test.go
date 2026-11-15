@@ -46,10 +46,10 @@ var stepUpTable = map[operation.ActionID]string{
 	"ad.user.resetPassword": "Password reset (TM-D16; ENH-09 OTP-before-reset)",
 	// A computer account reset takes the machine off the domain and cannot be undone (TM-D28 class reset_computer, §7.4).
 	"ad.computer.resetAccount": "Computer account reset (TM-D28 reset_computer; no default grant)",
-	delegation.RoleCreateID: "RBAC change: creating a custom role",
-	delegation.RoleUpdateID: "RBAC change: editing a custom role's permissions",
-	delegation.GrantID:      "RBAC change: granting an assignment",
-	delegation.RevokeID:     "RBAC change: revoking an assignment",
+	delegation.RoleCreateID:    "RBAC change: creating a custom role",
+	delegation.RoleUpdateID:    "RBAC change: editing a custom role's permissions",
+	delegation.GrantID:         "RBAC change: granting an assignment",
+	delegation.RevokeID:        "RBAC change: revoking an assignment",
 }
 
 func catalogue(t *testing.T) []operation.Descriptor {
@@ -245,7 +245,7 @@ func Test_step_up_permissions_all_in_policy(t *testing.T) {
 }
 
 // The check bites on a fixture document: a routed StepUp permission without a row is reported, including
-// one that is not in moduleOperationPermissions (a built-in role permission); an unrouted one is not.
+// one that is a built-in role permission rather than a module contribution; an unrouted one is not.
 func Test_step_up_policy_gap_check_bites(t *testing.T) {
 	const fixture = `{"paths":{
 	 "/a":{"post":{"operationId":"a","tags":["t"],"x-permission":"a.do"}},
@@ -256,8 +256,8 @@ func Test_step_up_policy_gap_check_bites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(moduleOperationPermissions, "inventory.tier0_designation.manage") {
-		t.Fatal("fixture premise broken: the Tier-0 permission is now in moduleOperationPermissions")
+	if !slices.Contains(kernelPermissions(), "inventory.tier0_designation.manage") {
+		t.Fatal("fixture premise broken: the Tier-0 permission is no longer a built-in role permission")
 	}
 	cat := []operation.Descriptor{
 		{ID: "a.routed", Permission: "a.do", StepUp: true},
