@@ -174,10 +174,14 @@ func (p *ADProvider) principal(ctx context.Context) (sd.Principal, error) {
 
 // proveListContents is step 1: List Contents for the connection identity's token, proven from the
 // owner and DACL of CN=Deleted Objects (TM-D33 rule 4). Never decided by trying the target read.
-// Not proven, or an unreadable descriptor, is a DeletedRightsError; only a lost DC or a cancelled
-// context is a plain error.
+// Not proven, or an unreadable descriptor, is a DeletedRightsError; a lost DC, a cancelled context,
+// or a domain head ForRequest refuses (FF-SP2 §4.6: an opaque RDN, or over MaxDNLen) is a plain error.
 func (p *ADProvider) proveListContents(ctx context.Context, objs StructureDirectory, domain dn.DN) (sd.Principal, dn.DN, error) {
-	denied := &DeletedRightsError{Domain: domain.CanonicalString()}
+	domainText, err := dn.DNRef(domain).ForRequest()
+	if err != nil {
+		return sd.Principal{}, dn.DN{}, err
+	}
+	denied := &DeletedRightsError{Domain: domainText}
 	pr, err := p.principal(ctx)
 	if err != nil {
 		if isTransportErr(ctx, err) {

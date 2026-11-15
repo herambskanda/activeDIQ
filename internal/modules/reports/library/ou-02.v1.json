@@ -1,0 +1,141 @@
+{
+  "id": "ou-02",
+  "version": 1,
+  "category": "ous",
+  "title": "OU changes",
+  "description": "OUs that activeDIQ observed changing or leaving the directory. Times are the time activeDIQ observed the change, not a domain controller's whenChanged; two changes between two observations show as one. History starts when activeDIQ first synced each domain. Attribute names are shown, never values, and no actor is recorded. Deleted objects are those seen leaving the directory (restore status unknown); their name and last known path come from the last observation.",
+  "dataset": "inventory.object_changes",
+  "columns": [
+    "name",
+    "domain",
+    "dn",
+    "change_kind",
+    "attributes_changed",
+    "observed_at",
+    "basis"
+  ],
+  "sort": [
+    {
+      "column": "observed_at",
+      "dir": "desc"
+    }
+  ],
+  "params": [
+    {
+      "name": "days",
+      "kind": "days",
+      "default": {
+        "days": 7
+      },
+      "min": 1,
+      "max": 365
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn"
+  ],
+  "presets": [
+    {
+      "id": "modified",
+      "names": [
+        "Recently Modified OUs"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "object_kind",
+              "op": "eq",
+              "value": {
+                "enum": "ou"
+              }
+            }
+          },
+          {
+            "not": {
+              "cmp": {
+                "col": "change_kind",
+                "op": "eq",
+                "value": {
+                  "enum": "deleted"
+                }
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "observed_at",
+              "op": "within_last_days",
+              "param": "days"
+            }
+          }
+        ]
+      },
+      "columns": [
+        "name",
+        "domain",
+        "dn",
+        "change_kind",
+        "attributes_changed",
+        "observed_at",
+        "basis"
+      ],
+      "hidden": [
+        {
+          "id": "automatic_updates",
+          "label": "objects with only automatic updates hidden",
+          "where": {
+            "cmp": {
+              "col": "automatic_only",
+              "op": "eq",
+              "value": {
+                "bool": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "deleted",
+      "names": [],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "object_kind",
+              "op": "eq",
+              "value": {
+                "enum": "ou"
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "change_kind",
+              "op": "eq",
+              "value": {
+                "enum": "deleted"
+              }
+            }
+          },
+          {
+            "cmp": {
+              "col": "observed_at",
+              "op": "within_last_days",
+              "param": "days"
+            }
+          }
+        ]
+      },
+      "columns": [
+        "name",
+        "domain",
+        "dn",
+        "observed_at",
+        "basis",
+        "change_kind"
+      ]
+    }
+  ]
+}

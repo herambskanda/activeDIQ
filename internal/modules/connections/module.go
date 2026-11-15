@@ -32,6 +32,11 @@ func (*Module) Requires() []capability.ID { return nil }
 
 // Register implements module.Module.
 func (*Module) Register(r *module.Registrar) error {
+	// The permission of the TM-D17 attestation route (EP-6); the route itself is mounted by
+	// compose/server until the attestation builder moves into this module (ADR-0013).
+	if err := r.Permission(TakeoverAttestPermission); err != nil {
+		return err
+	}
 	a, err := Tier0OverrideAcknowledge()
 	if err != nil {
 		return err

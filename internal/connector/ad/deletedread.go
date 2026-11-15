@@ -87,12 +87,12 @@ func (s *Session) DeletedContainerDescriptor(ctx context.Context, domain dn.DN) 
 	if s.conn == nil {
 		return dn.DN{}, nil, fail(CodeUnreachable, "session closed", nil)
 	}
-	stop := s.watch(ctx, s.conn)
-	defer stop()
-	base, err := requestDN(container)
+	base, err := dn.DNRef(container).ForRequest()
 	if err != nil {
 		return dn.DN{}, nil, err
 	}
+	stop := s.watch(ctx, s.conn)
+	defer stop()
 	res, err := s.searchOnceLocked(ctx, base, ldap.ScopeBaseObject, objectClassPresent,
 		[]string{"nTSecurityDescriptor"}, []ldap.Control{flags.control(), scope.ShowDeleted()})
 	if err != nil {

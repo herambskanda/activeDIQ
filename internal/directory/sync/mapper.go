@@ -327,21 +327,9 @@ func kindOf(classes []string) inventory.Kind {
 // object sits in the Deleted Objects container, which is not where it belongs: its parent is its
 // lastKnownParent, or none.
 func (m *Mapper) place(o *inventory.Observation, e *connectorv1.DirectoryEntry, set attrSet) error {
-	d := e.GetDn().GetDisplayDn()
-	if d == "" {
-		return refuse("dn", CodeMissing)
-	}
-	if len(d) > maxDN {
-		return refuse("dn", CodeTooLong)
-	}
-	parsed, err := dn.Parse(d, dn.Strict)
-	if err != nil {
-		return refuse("dn", CodeBadDN)
-	}
-	o.DN = parsed.String()
-	o.RDN = rdnOf(parsed)
-	if utf8.RuneCountInString(o.RDN) > maxRDN {
-		return refuse("dn", CodeTooLong)
+	var err error
+	if o.DN, o.RDN, err = parseDisplayDN(e.GetDn().GetDisplayDn()); err != nil {
+		return err
 	}
 
 	if o.State != inventory.ObjLive {
@@ -369,6 +357,25 @@ func (m *Mapper) place(o *inventory.Observation, e *connectorv1.DirectoryEntry, 
 		o.Ancestry = []inventory.GUID{m.nc}
 	}
 	return nil
+}
+
+// parseDisplayDN validates a display DN (strict RFC 4514) and returns it rendered with its first RDN.
+func parseDisplayDN(d string) (full, rdn string, err error) {
+	if d == "" {
+		return "", "", refuse("dn", CodeMissing)
+	}
+	if len(d) > maxDN {
+		return "", "", refuse("dn", CodeTooLong)
+	}
+	parsed, perr := dn.Parse(d, dn.Strict)
+	if perr != nil {
+		return "", "", refuse("dn", CodeBadDN)
+	}
+	rdn = rdnOf(parsed)
+	if utf8.RuneCountInString(rdn) > maxRDN {
+		return "", "", refuse("dn", CodeTooLong)
+	}
+	return parsed.String(), rdn, nil
 }
 
 // rdnOf is the first RDN of a parsed DN, rendered: the whole DN less its parent.
@@ -534,6 +541,9 @@ func (m *Mapper) bag(o *inventory.Observation, set attrSet) error {
 			bag[name] = s
 		}
 	}
+	if err := searchIdentifiers(bag, set); err != nil {
+		return err
+	}
 	if s, present, err := firstText(set, "description", 4096); err != nil {
 		return err
 	} else if present && s != "" {
@@ -575,5 +585,71 @@ func (m *Mapper) bag(o *inventory.Observation, set attrSet) error {
 		return refuse("attributes", CodeAttributesSize)
 	}
 	o.Attributes = bag
+	return nil
+}
+
+// The search identifiers (T-1129, ADR-0011 rule 9). Single-valued text attributes and their schema
+// rangeUpper (title 128, department 64, physicalDeliveryOfficeName 128, givenName 64, sn 64,
+// employeeID 16, employeeNumber 512, mailNickname 64; the mapper allows a little more than the schema,
+// and bounds the stored size, not the schema).
+var searchTextAttrs = []struct {
+	name string
+	max  int
+}{
+	{"givenName", 256}, {"sn", 256}, {"title", 256}, {"department", 256}, {"physicalDeliveryOfficeName", 256},
+	{"employeeID", 256}, {"employeeNumber", 512}, {"mailNickname", 256},
+}
+
+// maxSearchValues bounds how many values of a multi-valued search attribute are kept (proxyAddresses,
+// servicePrincipalName, sIDHistory). The first values are kept; the rest are not searchable, so one
+// object with thousands of SPNs cannot push its attribute bag over the store's size limit.
+const maxSearchValues = 64
+
+// searchIdentifiers adds the attributes universal search keys are built from to the bag. An attribute the
+// entry does not carry adds nothing (not read), and a present-but-empty one adds nothing either.
+// No secret or confidential attribute is read here (Test_closed_list_* pin the list).
+func searchIdentifiers(bag map[string]any, set attrSet) error {
+	for _, a := range searchTextAttrs {
+		if s, present, err := firstText(set, a.name, a.max); err != nil {
+			return err
+		} else if present && s != "" {
+			bag[a.name] = s
+		}
+	}
+	for _, name := range []string{"proxyAddresses", "servicePrincipalName"} {
+		list, present, err := texts(set, name, 1024)
+		if err != nil {
+			return err
+		}
+		list = slices.DeleteFunc(list, func(v string) bool { return v == "" })
+		if present && len(list) > 0 {
+			bag[name] = list[:min(len(list), maxSearchValues)]
+		}
+	}
+	if a, ok := set.get("sIDHistory"); ok {
+		vs, err := values(a, "sIDHistory")
+		if err != nil {
+			return err
+		}
+		var list []string
+		for _, v := range vs {
+			t, isSID := v.GetValue().(*connectorv1.AttributeValue_Sid)
+			if !isSID {
+				return refuse("sIDHistory", CodeType)
+			}
+			b, err := sidBytes(t.Sid, "sIDHistory")
+			if err != nil {
+				return err
+			}
+			parsed, err := sid.FromBytes(b)
+			if err != nil {
+				return refuse("sIDHistory", CodeBadSID)
+			}
+			list = append(list, parsed.String())
+		}
+		if len(list) > 0 {
+			bag["sIDHistory"] = list[:min(len(list), maxSearchValues)]
+		}
+	}
 	return nil
 }

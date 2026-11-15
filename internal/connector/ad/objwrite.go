@@ -12,16 +12,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 )
 
-// requestDN is the text of a DN sent in a request, through ObjectRef.ForRequest so NotRequestable
-// and MaxDNLen are enforced (§4.6).
-func requestDN(d dn.DN) (string, error) {
-	t, err := dn.DNRef(d).ForRequest()
-	if err != nil {
-		return "", fail(CodeInvalidArgument, "dn", err)
-	}
-	return t, nil
-}
-
 // Additional codes of the object write operations.
 const (
 	CodeTargetChanged Code = "TARGET_CHANGED" // the object is no longer the one the plan was made on
@@ -143,19 +133,19 @@ func (s *Session) MoveObject(ctx context.Context, r MoveRequest, send ModifyDNFu
 		if err != nil {
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
-		entry, err := requestDN(cur.dn)
+		entry, err := dn.DNRef(cur.dn).ForRequest()
 		if err != nil {
 			return err
 		}
-		newRDN, err := requestDN(leaf)
+		newRDN, err := dn.DNRef(leaf).ForRequest()
 		if err != nil {
 			return err
 		}
-		newSup, err := requestDN(np.dn)
+		newSuperior, err := dn.DNRef(np.dn).ForRequest()
 		if err != nil {
 			return err
 		}
-		return mapWriteErr(ctx, send(conn, DNChange{Entry: entry, NewRDN: newRDN, DeleteOldRDN: true, NewSuperior: newSup}))
+		return mapWriteErr(ctx, send(conn, DNChange{Entry: entry, NewRDN: newRDN, DeleteOldRDN: true, NewSuperior: newSuperior}))
 	})
 }
 
@@ -178,11 +168,11 @@ func (s *Session) RenameObject(ctx context.Context, r RenameRequest, send Modify
 		if err != nil {
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
-		entry, err := requestDN(cur.dn)
+		entry, err := dn.DNRef(cur.dn).ForRequest()
 		if err != nil {
 			return err
 		}
-		newRDN, err := requestDN(leaf)
+		newRDN, err := dn.DNRef(leaf).ForRequest()
 		if err != nil {
 			return err
 		}
@@ -218,7 +208,7 @@ func (s *Session) RestoreObject(ctx context.Context, r RestoreRequest, send Rest
 		if err != nil {
 			return fail(CodeInvalidArgument, "rdn", err)
 		}
-		newDN, err := requestDN(nd)
+		newDN, err := dn.DNRef(nd).ForRequest()
 		if err != nil {
 			return err
 		}

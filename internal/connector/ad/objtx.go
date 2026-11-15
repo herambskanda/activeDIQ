@@ -71,7 +71,7 @@ func (t *Tx) Read(ref dn.ObjectRef, attrs []string) (*Entry, error) {
 	return ent, nil
 }
 
-// ReadDeleted is Read with the show-deleted control (1.2.840.113556.1.4.417), so an object that is
+// ReadDeleted is Read with the show-deleted control, so an object that is
 // a tombstone or in the Recycle Bin can be found by GUID. A live object is returned as well.
 func (t *Tx) ReadDeleted(ref dn.ObjectRef, attrs []string) (*Entry, error) {
 	base, err := ref.ForRequest()

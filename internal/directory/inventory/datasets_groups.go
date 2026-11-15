@@ -250,20 +250,20 @@ func contactsDataset() report.Dataset {
 	}
 }
 
-// viaHop1SQL and viaHopNSQL name the group at position 1 and at position hop.i + 1 of the row's via
-// array. Both are compile-time constants (RP1): the same text with the index spelled out.
+// viaHop1SQL and viaHopNextSQL name the group at via-array position 1 and at the recursive walk's
+// current position, the only two positions this fragment ever names (RP1: report.SQL takes a
+// compile-time constant, so the two instances are spelled out rather than built by a shared
+// function — a function call is never a Go constant expression).
 const (
 	viaHop1SQL = "COALESCE((SELECT CASE WHEN {in_scope.via} THEN via.sam_account_name ELSE " + outsideGroup + " END FROM {rel.via}" +
 		" WHERE via.connection_id = {t}.connection_id AND via.object_guid = {t}.via[1]), " + outsideGroup + ")"
-	viaHopNSQL = "COALESCE((SELECT CASE WHEN {in_scope.via} THEN via.sam_account_name ELSE " + outsideGroup + " END FROM {rel.via}" +
+	viaHopNextSQL = "COALESCE((SELECT CASE WHEN {in_scope.via} THEN via.sam_account_name ELSE " + outsideGroup + " END FROM {rel.via}" +
 		" WHERE via.connection_id = {t}.connection_id AND via.object_guid = {t}.via[hop.i + 1]), " + outsideGroup + ")"
-)
 
-const (
 	// The hops between group and member, by name: a hop outside the scope is named only as such. A fragment
 	// may not call unnest or string_agg, so the path is built by a recursive walk down the via array.
 	viaPathSQL = "(WITH RECURSIVE hop(i, path) AS (SELECT 1, " + viaHop1SQL + " WHERE cardinality({t}.via) > 0" +
-		" UNION ALL SELECT hop.i + 1, hop.path || ' → ' || " + viaHopNSQL + " FROM hop WHERE hop.i < cardinality({t}.via))" +
+		" UNION ALL SELECT hop.i + 1, hop.path || ' → ' || " + viaHopNextSQL + " FROM hop WHERE hop.i < cardinality({t}.via))" +
 		" SELECT hop.path FROM hop WHERE hop.i = cardinality({t}.via))"
 	findingSQL = "CASE WHEN {t}.edge_kind = 'cycle' THEN 'Circular nesting: ' || {rel.grp}.sam_account_name || COALESCE(' → ' || (" + viaPathSQL + "), '') || ' → ' || {rel.grp}.sam_account_name" +
 		" WHEN {t}.edge_kind = 'over_budget' THEN 'Membership too large to list: the members of ' || {rel.grp}.sam_account_name || ' are not expanded'" +
