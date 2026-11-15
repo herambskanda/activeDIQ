@@ -207,7 +207,7 @@ test('a gate that cannot judge merges nothing, and every member waits ten minute
   } finally { f.cleanup(); }
 });
 
-test('two members that add the same migration number: the numbering refusal bisects, the first merges, the second is told the free number', async () => {
+test('two members that add the same migration number: the train auto-renumbers the collision itself and merges whole, with no bisection needed (T-1067)', async () => {
   const f = setup();
   try {
     fs.writeFileSync(path.join(f.root, 'numbering.mjs'), `import fs from 'node:fs';
@@ -224,10 +224,15 @@ process.exit(bad ? 1 : 0);
     const second = await finished(f, 'second', { 'migrations/0002_second.sql': '-- second\n' });
     await pass(dispatcher(f));
     const out = byId(f);
-    assert.ok(out[first.id].links.merged);
-    assert.equal(out[second.id].status, 'in_progress');
-    assert.match(out[second.id].notes.at(-1).text, /Renumber to 0003: git mv migrations\/0002_second\.sql migrations\/0003_second\.sql/);
-    assert.deepEqual(f.runs(), [`cand-${first.id}`], 'the full command ran only for the half that passed the numbering check');
+    assert.ok(out[first.id].links.merged, 'the first half merged');
+    assert.ok(out[second.id].links.merged, 'the second half merged too: the gate renumbered it itself instead of bouncing it back');
+    assert.equal(out[second.id].status, 'done');
+    assert.deepEqual(
+      fs.readdirSync(path.join(f.root, 'migrations')).sort(),
+      ['0001_init.sql', '0002_first.sql', '0003_second.sql'],
+      'both migrations landed, contiguous, with no human renumber step',
+    );
+    assert.deepEqual(f.runs(), [`cand-train-${first.id}+${second.id}`], 'the fix is applied before the full command runs, in the same gate call: the train never needed to bisect at all');
   } finally { f.cleanup(); }
 });
 

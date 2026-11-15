@@ -97,6 +97,9 @@ var kindTable = map[string]kindRow{
 	DigestObjectMove:            {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_MOVE, Class: ClassMove},
 	DigestObjectRename:          {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_RENAME, Class: ClassMove},
 	DigestObjectRestore:         {Kind: connectorv1.WriteKind_WRITE_KIND_OBJECT_RESTORE, Class: ClassMove},
+	// Kinds 11 and 12 (T-1913): outside every TM-D28 attribute class; guarded by TM-D18 on the group.
+	writechange.KeyGroupMemberAdd:    {Kind: connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_ADD, Class: "none"},
+	writechange.KeyGroupMemberRemove: {Kind: connectorv1.WriteKind_WRITE_KIND_GROUP_MEMBER_REMOVE, Class: "none"},
 }
 
 // kindClass is the TM-D28 class of each registered kind ("none" for a tightening, contract §8.10.1).
@@ -106,6 +109,8 @@ var kindClass = map[string]string{
 	accountkind.KeyUnlock:        "unlock",
 	accountkind.KeyEnable:        "enable",
 	accountkind.KeyDisable:       "none",
+	// Kind 13 (T-1913): TM-D28 class reset_computer, the guarded key unicodePwd[computer].
+	accountkind.KeyComputerReset: "reset_computer",
 }
 
 func init() {

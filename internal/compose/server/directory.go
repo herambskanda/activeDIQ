@@ -14,6 +14,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/store/reportsql"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
@@ -77,4 +78,22 @@ func (f searchFreshness) AsOf(ctx context.Context, tid tenant.ID, cs []authz.Obj
 		return time.Time{}, err
 	}
 	return res.Label.AsOf, nil
+}
+
+// reportSchema reads the public schema catalogue once at start-up, before the install tenant exists.
+// The catalogue is the same for every tenant and holds no tenant data, so the read runs in platform
+// scope (registered platform path, exemption registry). It moves with buildDirectory (ADR-0013).
+func reportSchema(ctx context.Context, db *store.DB) (reportsql.Schema, error) {
+	var sc reportsql.Schema
+	rctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	err := db.WithPlatform(rctx, "server: read the schema catalogue to compile the report datasets", func(ctx context.Context, tx store.Tx) error {
+		var err error
+		sc, err = reportsql.CatalogSchema(ctx, tx)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("server: report schema: %w", err)
+	}
+	return sc, nil
 }

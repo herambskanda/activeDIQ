@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-ldap/ldap/v3"
 
+	"github.com/skenzeriq/activediq/internal/connector/ad/scope"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/ldapfilter"
 )
@@ -70,7 +71,7 @@ func (t *Tx) Read(ref dn.ObjectRef, attrs []string) (*Entry, error) {
 	return ent, nil
 }
 
-// ReadDeleted is Read with the show-deleted control (1.2.840.113556.1.4.417), so an object that is
+// ReadDeleted is Read with the show-deleted control, so an object that is
 // a tombstone or in the Recycle Bin can be found by GUID. A live object is returned as well.
 func (t *Tx) ReadDeleted(ref dn.ObjectRef, attrs []string) (*Entry, error) {
 	base, err := ref.ForRequest()
@@ -82,7 +83,7 @@ func (t *Tx) ReadDeleted(ref dn.ObjectRef, attrs []string) (*Entry, error) {
 		return nil, err
 	}
 	res, err := t.s.searchRaw(t.ctx, base, ldap.ScopeBaseObject, objectClassPresent, names,
-		[]ldap.Control{domainScope{}, ldap.NewControlString(oidShowDeleted, true, "")})
+		[]ldap.Control{domainScope{}, scope.ShowDeleted()})
 	if err != nil {
 		return nil, err
 	}

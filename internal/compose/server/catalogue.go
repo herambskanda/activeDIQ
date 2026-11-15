@@ -4,39 +4,34 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/skenzeriq/activediq/internal/modules/connections"
-	"github.com/skenzeriq/activediq/internal/modules/directory"
-	"github.com/skenzeriq/activediq/internal/modules/reports"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
+	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/notify/syslog"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 )
 
-// moduleOperationPermissions are the permissions modules and platform packages declare for the
-// operations they mount on the API. They are named by the owners' own constants, so a rename there
-// changes the catalogue and a contract still carrying the old name fails Build.
-var moduleOperationPermissions = []string{
-	string(connections.TakeoverAttestPermission),
-	string(directory.ReadPermission),
-	string(reports.DeliverExternalPermission),
-	string(reports.ExportPermission),
-	string(reports.RunPermission),
-	string(reports.ScheduleManageAllPermission),
-	string(reports.SchedulePermission),
-	syslog.ManagePermission,
-	syslog.ReadPermission,
-}
-
-// permissionCatalogue is the one set of permissions that exist: every permission a built-in role
-// holds plus every permission a module declares for a mounted operation. apihost.Build refuses an
-// operation whose x-permission is not in it, and the API's RBAC port denies a permission that is not
-// in it, so neither a typo in the contract nor a request for an unlisted permission is served.
-func permissionCatalogue() apihost.Permissions {
-	set := slices.Clone(moduleOperationPermissions)
+// kernelPermissions are the permissions that exist outside any module: every permission a built-in
+// role holds plus the platform packages' own operation permissions. Module permissions arrive through
+// Registrar.Permission (EP-6), so the catalogue cannot drift from the code that checks them.
+func kernelPermissions() []string {
+	set := []string{syslog.ManagePermission, syslog.ReadPermission}
 	for _, r := range rbac.BuiltInRoles() {
 		for _, p := range r.Permissions {
 			set = append(set, string(p))
 		}
+	}
+	slices.Sort(set)
+	return slices.Compact(set)
+}
+
+// permissionCatalogue is the one set of permissions that exist: the kernel's plus every permission
+// the booted modules registered. apihost.Build refuses an operation whose x-permission is not in it,
+// and the API's RBAC port denies a permission that is not in it, so neither a typo in the contract
+// nor a request for an unlisted permission is served.
+func permissionCatalogue(c *module.Contributions) apihost.Permissions {
+	set := kernelPermissions()
+	for _, p := range c.Permissions() {
+		set = append(set, string(p))
 	}
 	slices.Sort(set)
 	return apihost.Permissions(slices.Compact(set))

@@ -22,12 +22,12 @@ func (e *env) catalog(t *testing.T) reportsql.Schema {
 	return sc
 }
 
-// migration 0073's trigger function builds postings for the kinds in its literal list; the statement's fuzzy
+// migration 0074's trigger function builds postings for the kinds in its literal list; the statement's fuzzy
 // branch draws its kind list from searchkey.Kind.FuzzyEligible. The kind enum, the template and the trigger
 // must agree on {name, sam} (ADR-0011 rule 9).
 func Test_search_fuzzy_kind_list_matches_the_trigger(t *testing.T) {
 	if got := reportsql.FuzzyKindPredicate(); got != "1, 3" {
-		t.Fatalf("FuzzyKindPredicate = %q, migration 0073 says 1, 3", got)
+		t.Fatalf("FuzzyKindPredicate = %q, migration 0074 says 1, 3", got)
 	}
 	var fuzzy []searchkey.Kind
 	for _, k := range searchkey.AllKinds {
@@ -117,15 +117,16 @@ func explain(ctx context.Context, tx store.Tx, sql string, args []any) (string, 
 	return strings.Join(plan, "\n"), rs.Err()
 }
 
-// planCeiling is W for the plan tests, as in SE5. The production default (10,000) makes the planner expect up to 30,003
-// candidate rows and, on PostgreSQL 18, hash-join them with a Seq Scan of directory_objects whatever the
-// scope: that is a property of the hits join at the default W, not of the fuzzy probe, and it is filed apart
-// (T-1335 note); the plan of the fuzzy probe is asserted here at a ceiling where the join is planned per row.
-const planCeiling = 100
+// The plan tests run the statement at two ceilings: the small W the bound tests inject, and the production
+// default (inventory.DefaultSearchCeiling), where the planner expects up to 3W+3 candidate rows and, before
+// the hits join probed directory_objects per candidate (T-1345), hash-joined them onto a Seq Scan of every
+// tenant's rows on PostgreSQL 18.
+const smallCeiling = 100
 
 // The exact and prefix probes read the B-tree of the key table; the fuzzy probe reads the tenant-led posting
-// B-tree and rechecks each candidate through a correlated lookup (ADR-0011 rule 5a, T-1335). Under FORCE row
-// security, as the runtime role, with no Seq Scan on the key, posting or object table.
+// B-tree and rechecks each candidate through a correlated lookup (ADR-0011 rule 5a, T-1335); the hits join
+// probes directory_objects once per candidate by (tenant_id, connection, object) (rule 16, T-1345). Under FORCE
+// row security, as the runtime role, with tenant B ten times the size of tenant A.
 func Test_search_plan_uses_the_indexes(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		e := setup(t, s)
@@ -137,29 +138,46 @@ func Test_search_plan_uses_the_indexes(t *testing.T) {
 		if _, err := e.populate(t, e.adA, hBase, obs...); err != nil {
 			t.Fatal(err)
 		}
-		e.fillKeys(t, e.a, 21000)
+		e.seedTenantB(t)
+		e.fillKeys(t, e.a, 2000)
+		e.fillRange(t, e.b, 1, 20000)
 		e.vacuumSearch(t)
 		p, err := searchkey.Classify("plan person")
 		if err != nil {
 			t.Fatal(err)
 		}
-		cq, err := reportsql.CompileSearch(e.seSource(t), reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, GroupLimit: 5, Ceiling: planCeiling, Threshold: 0.3},
-			reportsql.SearchScopes{"directory.read": e.scopeNC(e.adA)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		sql, args := cq.Statement()
-		var plan string
-		if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) (err error) { plan, err = explain(ctx, tx, sql, args); return }); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(plan, "Index Scan using inventory_search_keys_by_key") {
-			t.Errorf("the prefix probe reads the B-tree:\n%s", plan)
-		}
-		fp := e.analyze(t, e.scopeNC(e.adA), "plan persn", planCeiling, true)
-		assertFuzzyPlan(t, fp)
-		if t.Failed() {
-			t.Logf("plan of the compiled statement:\n%s", plan)
+		for _, w := range []struct {
+			name string
+			w    int
+		}{{"small_w", smallCeiling}, {"default_w", inventory.DefaultSearchCeiling}} {
+			t.Run(w.name, func(t *testing.T) {
+				cq, err := reportsql.CompileSearch(e.seSource(t), reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, GroupLimit: 5, Ceiling: w.w, Threshold: 0.3},
+					reportsql.SearchScopes{"directory.read": e.scopeNC(e.adA)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				sql, args := cq.Statement()
+				var plan string
+				if err := e.tx(t, e.a, func(ctx context.Context, tx store.Tx) (err error) { plan, err = explain(ctx, tx, sql, args); return }); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(plan, "Index Scan using inventory_search_keys_by_key") {
+					t.Errorf("the prefix probe reads the B-tree:\n%s", plan)
+				}
+				// A one-letter, a prefix, an exact and a fuzzy query.
+				for _, q := range []string{"p", "plan pers", "plan person 7", "plan persn"} {
+					pl := e.analyze(t, e.scopeNC(e.adA), q, w.w, true)
+					if v := hitsJoinViolations(pl); len(v) > 0 {
+						t.Errorf("%q at W=%d: %s\nscans:%s", q, w.w, strings.Join(v, "; "), describe(pl))
+					}
+					if q == "plan persn" {
+						assertFuzzyPlan(t, pl)
+					}
+				}
+				if t.Failed() {
+					t.Logf("plan of the compiled statement:\n%s", plan)
+				}
+			})
 		}
 	})
 }
