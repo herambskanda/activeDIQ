@@ -47,6 +47,9 @@ func (m *Module) Register(r *module.Registrar) error {
 			return err
 		}
 	}
+	if err := r.Permission(ReadPermission); err != nil {
+		return err
+	}
 	a, err := Tier0OverrideAcknowledge()
 	if err != nil {
 		return err

@@ -3,12 +3,10 @@ package server
 import (
 	"context"
 	"errors"
-	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"slices"
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory/client"
-	"github.com/skenzeriq/activediq/internal/modules/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
@@ -41,7 +39,7 @@ func TestRealMinterIsHeld(t *testing.T) {
 func TestDirectoryFactsIsConnectorBacked(t *testing.T) {
 	f := directoryFacts(nil)
 	got, err := f.Facts(context.Background(), nil, authority.FactsQuery{
-		Target: authority.TargetRef{Connection: "c1", GUID: "c1", Class: inventory.TargetClassScope}})
+		Target: authority.TargetRef{Connection: "c1", GUID: "c1", Class: "tier0_scope"}})
 	if err != nil || !got.Exists || got.Tier0 {
 		t.Fatalf("scope facts = %+v, %v", got, err)
 	}
@@ -51,19 +49,19 @@ func TestDirectoryFactsIsConnectorBacked(t *testing.T) {
 	}
 }
 
-// The class and permission the rbac package keys on are the inventory module's.
+// The class and permission the rbac package keys on are the spec's (the inventory module pins its own constants to rbac in its package).
 func TestRBACAgreesWithTheDesignationAction(t *testing.T) {
-	if rbac.TargetClassTier0Scope != inventory.TargetClassScope || client.TargetClassTier0Scope != inventory.TargetClassScope {
-		t.Fatal("tier0_scope class differs from inventory.TargetClassScope")
+	if rbac.TargetClassTier0Scope != "tier0_scope" || client.TargetClassTier0Scope != "tier0_scope" {
+		t.Fatal("tier0_scope class differs between rbac, client and the spec")
 	}
-	if !slices.Contains(rbac.Tier0ScopePermissions, inventory.DesignationPermission) {
-		t.Fatal("rbac does not treat inventory.DesignationPermission as a Tier-0 scope permission")
+	if !slices.Contains(rbac.Tier0ScopePermissions, "inventory.tier0_designation.manage") {
+		t.Fatal("rbac does not treat inventory.tier0_designation.manage as a Tier-0 scope permission")
 	}
 	for _, r := range rbac.BuiltInRoles() {
 		if r.Tier == rbac.Tier0 {
 			continue
 		}
-		if slices.Contains(r.Permissions, inventory.DesignationPermission) {
+		if slices.Contains(r.Permissions, "inventory.tier0_designation.manage") {
 			t.Fatalf("role %q holds the designation permission", r.Name)
 		}
 	}
@@ -80,13 +78,9 @@ func TestDirectoryReadsIsNilWithoutAConnectorSource(t *testing.T) {
 // in no role below it.
 func TestTenantOwnerCatalogueGrantsTheReconfirmPermission(t *testing.T) {
 	for _, r := range rbac.BuiltInRoles() {
-		has := slices.Contains(r.Permissions, reconfirmPermission)
+		has := slices.Contains(r.Permissions, "connections.correlation.reconfirm")
 		if want := r.Name == rbac.TenantOwnerRole; has != want {
-			t.Errorf("role %q holds %s = %v, want %v", r.Name, reconfirmPermission, has, want)
+			t.Errorf("role %q holds %s = %v, want %v", r.Name, "connections.correlation.reconfirm", has, want)
 		}
 	}
 }
-
-// reconfirmPermission is the ID the connections module registers for its correlation re-confirmation. The
-// module's own tests pin the constant; compose names no module (ADR-0013).
-const reconfirmPermission authz.Permission = "connections.correlation.reconfirm"

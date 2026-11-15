@@ -31,6 +31,9 @@ type readJob struct {
 
 	// observed is the as-of of the read: the start of the main pass.
 	observed time.Time
+	// deferFinish leaves the domain's pass and cursor alone, even on the last batch: the caller finishes the
+	// read in a transaction of its own after it has reconciled (IncrementalCycle).
+	deferFinish bool
 }
 
 // prescan is what the first pass learns about a domain: the parent link of every object and the groups' SIDs.
@@ -92,10 +95,10 @@ func (r *readJob) run(ctx context.Context) error {
 	if err != nil {
 		return r.wrap(err, "read")
 	}
-	if err := r.flush(ctx, buf, true); err != nil {
+	if err := r.flush(ctx, buf, !r.deferFinish); err != nil {
 		return err
 	}
-	r.rep.Completed = true
+	r.rep.Completed = !r.deferFinish
 	return nil
 }
 
