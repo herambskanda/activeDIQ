@@ -103,6 +103,70 @@ func (o CompleteTakeoverAttestation303) ResponseHeaders() map[string]string {
 }
 func (CompleteTakeoverAttestation303) isCompleteTakeoverAttestationOutput() {}
 
+// GetConnectionSummaryInput is the decoded input of getConnectionSummary: path, query and header parameters, then the body.
+type GetConnectionSummaryInput struct {
+}
+
+func (in *GetConnectionSummaryInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+}
+
+func (in *GetConnectionSummaryInput) BodyTarget() any { return nil }
+
+func (in *GetConnectionSummaryInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+}
+
+func (in *GetConnectionSummaryInput) DestroySecrets() {}
+
+// GetConnectionSummaryOutput is one of the responses getConnectionSummary declares. Errors are returned as the error value.
+type GetConnectionSummaryOutput interface {
+	apihost.Response
+	isGetConnectionSummaryOutput()
+}
+
+// GetConnectionSummary200 is the 200 response.
+type GetConnectionSummary200 struct {
+	Body ConnectionSummary
+}
+
+func (GetConnectionSummary200) StatusCode() int                    { return 200 }
+func (o GetConnectionSummary200) ResponseBody() any                { return o.Body }
+func (GetConnectionSummary200) ResponseHeaders() map[string]string { return nil }
+func (GetConnectionSummary200) isGetConnectionSummaryOutput()      {}
+
+// ListConnectionHealthInput is the decoded input of listConnectionHealth: path, query and header parameters, then the body.
+type ListConnectionHealthInput struct {
+}
+
+func (in *ListConnectionHealthInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+}
+
+func (in *ListConnectionHealthInput) BodyTarget() any { return nil }
+
+func (in *ListConnectionHealthInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+}
+
+func (in *ListConnectionHealthInput) DestroySecrets() {}
+
+// ListConnectionHealthOutput is one of the responses listConnectionHealth declares. Errors are returned as the error value.
+type ListConnectionHealthOutput interface {
+	apihost.Response
+	isListConnectionHealthOutput()
+}
+
+// ListConnectionHealth200 is the 200 response.
+type ListConnectionHealth200 struct {
+	Body ConnectionHealthList
+}
+
+func (ListConnectionHealth200) StatusCode() int                    { return 200 }
+func (o ListConnectionHealth200) ResponseBody() any                { return o.Body }
+func (ListConnectionHealth200) ResponseHeaders() map[string]string { return nil }
+func (ListConnectionHealth200) isListConnectionHealthOutput()      {}
+
 // SetTakeoverAttestationMaxAgeInput is the decoded input of setTakeoverAttestationMaxAge: path, query and header parameters, then the body.
 type SetTakeoverAttestationMaxAgeInput struct {
 	ConnectionID apitypes.UUID // path "connectionId"
@@ -206,6 +270,8 @@ func (StartTakeoverAttestation200) isStartTakeoverAttestationOutput()  {}
 // *http.Request, http.ResponseWriter or the raw body (ADR-0004 rule 5).
 type Handlers interface {
 	CompleteTakeoverAttestation(ctx context.Context, in CompleteTakeoverAttestationInput) (CompleteTakeoverAttestationOutput, error)
+	GetConnectionSummary(ctx context.Context, in GetConnectionSummaryInput) (GetConnectionSummaryOutput, error)
+	ListConnectionHealth(ctx context.Context, in ListConnectionHealthInput) (ListConnectionHealthOutput, error)
 	SetTakeoverAttestationMaxAge(ctx context.Context, in SetTakeoverAttestationMaxAgeInput) (SetTakeoverAttestationMaxAgeOutput, error)
 	StartTakeoverAttestation(ctx context.Context, in StartTakeoverAttestationInput) (StartTakeoverAttestationOutput, error)
 }
@@ -227,6 +293,38 @@ func Bind(h Handlers) apihost.TagHandlers {
 				}
 				if out == nil {
 					return nil, fmt.Errorf("CompleteTakeoverAttestation returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "getConnectionSummary", Tag: "connections", Method: "GET", Path: "/connections/summary",
+			Permission: "authenticated", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(GetConnectionSummaryInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.GetConnectionSummary(ctx, *in.(*GetConnectionSummaryInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("GetConnectionSummary returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "listConnectionHealth", Tag: "connections", Method: "GET", Path: "/connections/health",
+			Permission: "connections.read", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(ListConnectionHealthInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.ListConnectionHealth(ctx, *in.(*ListConnectionHealthInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("ListConnectionHealth returned no output and no error")
 				}
 				return out, nil
 			}),
