@@ -27,6 +27,8 @@ import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
 import { EMBARGO_TAG, orderDoneQueue } from './mergequeue.mjs';
 import { blockedNote, preMergeSettings, runPreMergeTrain, splitTrain } from './premerge.mjs';
+import { postMergeVerifySettings, readKnownFindings, runPostMergeVerify } from './postmerge.mjs';
+import { git } from './git.mjs';
 import {
   awaitPredecessor, awaitSuccessor, factoryChange, mainSha, shortSha, spawnSuccessor, stopStaleGateChildren,
 } from './reload.mjs';
@@ -126,6 +128,9 @@ export class Dispatcher {
     this.gateAbort = null;
     this.gateRetryAt = new Map(); // ticket id → ms before which a gate that could not judge is not retried
     this.runGate = runPreMergeTrain; // (ctx, tickets[], {signal}) → verdict; replaceable in tests
+    this.verifyRun = null; // post-merge ci-full check in flight (never blocks a merge)
+    this.verifyAbort = null;
+    this.nextVerifyAt = 0; // ms; the cooldown between verify runs
   }
 
   // ---- bookkeeping ------------------------------------------------------------------------
@@ -189,6 +194,7 @@ export class Dispatcher {
       });
       await this.guard('security advisory poll', () => this.advisoryPoll());
       if (!this.stopping) await this.guard('merge', () => this.mergePass());
+      if (!this.stopping) await this.guard('post-merge verify', () => this.maybeVerifyMain());
       if (!this.stopping) await this.guard('launch', () => this.fill());
       if (this.daemon) this.heartbeat();
     } finally {
@@ -459,6 +465,56 @@ export class Dispatcher {
   }
 
   /**
+   * Start a post-merge `ci-full` check when `main` has moved since the last one and none is already
+   * running — never more than one at a time, and never while this dispatcher is stopping. It does
+   * not wait for the result: `tick` keeps merging and launching while it runs in the background.
+   */
+  async maybeVerifyMain() {
+    const { ctx } = this;
+    const settings = postMergeVerifySettings(ctx.config);
+    if (!settings.enabled || this.verifyRun || this.stopping) return;
+    if (this.#nowMs() < this.nextVerifyAt) return;
+    const sha = await mainSha(ctx);
+    if (!sha) return;
+    const known = readKnownFindings(ctx);
+    if (known?.sha === sha) return; // nothing has landed since the last check
+    this.verifyAbort = new AbortController();
+    this.verifyRun = this.guard('post-merge verify', () => this.runVerify(settings, sha, known?.sha ?? null))
+      .finally(() => {
+        this.verifyRun = null; this.verifyAbort = null;
+        this.nextVerifyAt = this.#nowMs() + settings.cooldown_minutes * 60_000;
+      });
+  }
+
+  /** Wait for a post-merge verify in flight (tests, shutdown). */
+  async verifyIdle() {
+    while (this.verifyRun) await this.verifyRun;
+  }
+
+  /**
+   * Run the post-merge check and, only when it finds something `ci-full` did not already have,
+   * post one loud, informational event naming the new findings and what landed since the last
+   * check. Never blocks a merge, never reverts one — this is a notice, not a gate.
+   */
+  async runVerify(settings, sha, previousSha) {
+    const { ctx } = this;
+    const result = await runPostMergeVerify(ctx, settings, sha, { signal: this.verifyAbort?.signal });
+    if (!result.newFindings.length) return;
+    let mergedSince = [];
+    if (previousSha) {
+      const log = await git(ctx.root, ['log', '--oneline', `${previousSha}..${sha}`]);
+      if (log.code === 0) mergedSince = log.stdout.trim().split('\n').filter(Boolean);
+    }
+    const shown = result.newFindings.slice(0, 10);
+    appendEvent(ctx, {
+      actor: 'dispatcher', kind: 'dispatcher',
+      text: `⚠ post-merge: ${settings.argv.join(' ')} on ${ctx.config.dispatcher.main_branch} at ${shortSha(sha)} found ${result.newFindings.length} finding(s) it did not have${previousSha ? ` at ${shortSha(previousSha)}` : ''}: ${shown.join('; ')}${result.newFindings.length > shown.length ? '; …' : ''}.`
+        + (mergedSince.length ? ` Landed since the last check: ${mergedSince.join(' | ')}.` : '')
+        + ` Logging only — no auto-revert, nothing is blocked. Log: ${result.log}`,
+    });
+  }
+
+  /**
    * Security-disclosure runbook §6: the repo is public, so a ticket tagged `embargoed` is never
    * merged until the tag is removed (fix day). Records the reason once (link + event); the board
    * shows it as held.
@@ -711,7 +767,7 @@ export class Dispatcher {
     if (!this.daemon || this.stopping || this.reloaded) return false;
     const restart = this.restartRequested;
     if (!restart && ctx.config.dispatcher.auto_reload === false) return false;
-    if (this.gateRun && !restart) return false; // the next tick after the gate ends looks again
+    if ((this.gateRun || this.verifyRun) && !restart) return false; // the next tick after it ends looks again
     const target = await mainSha(ctx);
     let reason = 'factory restart requested';
     if (!restart) {
@@ -733,6 +789,10 @@ export class Dispatcher {
     if (this.gateRun) { // restart only
       this.gateAbort?.abort();
       await this.gateIdle();
+    }
+    if (this.verifyRun) { // restart only; a verify belongs to this process the same way a gate does
+      this.verifyAbort?.abort();
+      await this.verifyIdle();
     }
     const stale = await stopStaleGateChildren(ctx);
     const from = this.codeSha;
@@ -770,6 +830,7 @@ export class Dispatcher {
     if (this.stopping) this.forceStop = true;
     this.stopping = true;
     this.gateAbort?.abort();
+    this.verifyAbort?.abort();
     this.wake?.();
   }
 
@@ -859,6 +920,7 @@ export class Dispatcher {
     }
     for (const run of [...this.active.values()]) await this.reap(run, { code: null, signal: 'SIGKILL' });
     await this.gateIdle();
+    await this.verifyIdle();
   }
 }
 

@@ -321,9 +321,7 @@ regardless of the importer.
 
 ## 12. Open questions and hand-offs
 
-- **Q1 (solution-architect):** does the 2a closed vocabulary carry NOT and nested AND/OR nodes? If
-  not, reports.md §3.2 needs the amendment named there ("The 2c builder adds grouping with an
-  amendment to this page"). Blocks AC-RB-12 and the NOT row of §7.
+- **Q1 (solution-architect), ANSWERED 2026-11-14:** yes. The 2a `report.Expr` is a sealed union of `And`, `Or`, `Not` and `Cmp` (reports.md §3.6/Definition block: And/Or ≤ 32 terms, depth ≤ 8), so no compiler amendment is needed for NOT or nesting. FR-RB-12, AC-RB-12 and the NOT row of §7 are claimed at 2c; the §5.2 limits (depth 4, 40 conditions) sit inside the engine's. The amendment reports.md §3.2 foresees is only for grouping (EB-5, T-2072). Note: with DN-valued clauses always rejected, the "object you cannot read" path in §7 and AC-RB-25 is only reachable if DN support is added later; today both inputs get the same DN-valued rejection.
 - **Q2 (security-architect, ad-expert):** which registry columns need a read permission beyond
   `reports.run` (for example `pwdLastSet`, `lockoutTime`, `lastLogonTimestamp` are widely visible in
   AD; confirm none are sensitive). The default decision here: none is gated, since reports-2a

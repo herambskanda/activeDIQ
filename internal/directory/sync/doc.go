@@ -18,7 +18,15 @@
 // so a change that cannot be applied in full fails closed: a removal (or a whole set) naming a member without a
 // GUID, and any change the mapper refuses whose object GUID parsed, put that object in NeedsRead and end a stored
 // group's active member edges until the engine's read names them again. The write itself is the inventory
-// writer's patch mode (inventory.Ingester.ApplyPatches); the engine that reads the feed is a later brick.
+// writer's patch mode (inventory.Ingester.ApplyPatches).
+//
+// Engine.IncrementalCycle runs the feed per naming context: the first cycle (or any resync) primes the feed, reads the
+// NC in full, reconciles on a resync and stores the prime cookie with the SyncCursor in one transaction; later
+// cycles resume from the stored cookie, one transaction per batch (lease claim, Applier.Apply, cursor advance), and
+// record the pass when the feed reports cycle_complete. A stale cookie (client.ResyncRequired), a cookie the
+// connector rejects or cannot decode, or a batch with ApplyReport.NeedsRead sets resync_required and re-establishes
+// from a full read. An unreachable or throttled DC or an incomplete feed is a *RetryableError that leaves the cursor
+// and cookie alone; a suspended connection pauses the NC and resumes as a resync.
 //
 // The rules the mapping holds to:
 //

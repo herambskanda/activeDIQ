@@ -1,0 +1,24 @@
+3f93e61a9
+ internal/modules/helpdesk/doc.go                 |  17 +
+ internal/modules/helpdesk/grant.go               |  85 +++++
+ internal/modules/helpdesk/message.go             |  18 +
+ internal/modules/helpdesk/ports.go               |  71 ++++
+ internal/modules/helpdesk/verifier.go            | 425 ++++++++++++++++++++++
+ internal/modules/helpdesk/verifier_test.go       | 440 +++++++++++++++++++++++
+ internal/platform/store/owners/owners.gen.tsv    |   1 +
+ knowledge/development/architecture/blueprint.md  |   2 +
+ migrations/0073_helpdesk_caller_verification.sql | 118 ++++++
+ 9 files changed, 1177 insertions(+)
+--- PASS: Test_issue_only_on_explicit_action_and_reopen_reuses (96.37s)
+--- PASS: Test_verified_caller_satisfies_stepup (2.51s)
+--- PASS: Test_attempt_cap_is_indistinguishable (4.32s)
+--- PASS: Test_parallel_guesses_are_bounded (5.21s)
+--- PASS: Test_lifetime (2.51s)
+--- PASS: Test_verified_window (2.42s)
+--- PASS: Test_quota (3.79s)
+--- PASS: Test_technician_pause (3.70s)
+--- PASS: Test_refusals_send_nothing (6.83s)
+--- PASS: Test_code_never_stored_or_audited (2.30s)
+ok  	github.com/skenzeriq/activediq/internal/modules/helpdesk	130.019s
+
+[exited with code 0]
