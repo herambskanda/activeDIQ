@@ -717,6 +717,14 @@ Each is in review under §3.3's own rule ("a dataset that needs another function
   and `domainsReadable < domainsInScope` for partial coverage. `GET /reports/runs/{runId}/policies/{policyId}/targets`
   pages one policy row's direct targets (`basis: direct_targets`, `count` in scope, name order) behind the
   `listReportRunRows` run-read gate. Until T-1114 lands the dataset it answers 501 (`pending.go`).
+- **Change-history row detail (T-1717, additive within `/api/v1`).** `GET /reports/runs/{runId}/rows/{rowKey}/detail`
+  (`getReportRunRowDetail`, `reports.run`, the `listReportRunRows` run-read gate) answers `ReportRowDetail`, one of
+  `edited` (attributes: name, originating time, version; `valuesRecorded` false), `membership` (added/removed counts,
+  out-of-scope counts, one page of in-scope names per `side`), `credential`, `permissions` (`descriptorRead` false) and
+  `removed` (Deleted presets: `deletedAt` on or before, `state` `removed_restore_unknown`, `restorableUntil` always
+  typed unknown with its reason). Every kind carries `when`, `object` (logon name, domain, OU path, DN as attributes)
+  and `actor` (`notRecorded`, or `activediq` with principal and `operationId`). Unknowns are typed cells, never
+  empty or zero. The read behind it is T-2117; until then it answers 501 (`pending.go`).
 - A PSO row's own name is its own identity (row anchor `dom` makes the row visible); a PSO is **not** a
   `MaskAnchor` identity here because the row is the PSO. The `policy_source` masking of `inventory.users`
   (§3.3) is unchanged.
