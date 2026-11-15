@@ -73,6 +73,27 @@ test('finding keys drop positions, durations and the worktree path, and ignore p
   }
 });
 
+// T-2xxx: three fitness-tools pass lines that read as findings every run (none matched the existing
+// quiet patterns, so they inflated every baseline and every candidate by the same fixed amount,
+// worthless noise that was never a regression). Each tool's real failure line, right next to it, must
+// still be reported.
+test('fitness-stack F2 cross-build and fitness-update-offline pass lines are quiet; their failure siblings are not', () => {
+  const key = (l) => findingKey(l);
+  for (const quiet of [
+    'fitness-stack: F2 CGO_ENABLED=0 go build ./... ok for linux/amd64 (.)',
+    'fitness-stack: F2 CGO_ENABLED=0 go build -tags lab ./... ok for windows/arm64 (tools/apitools)',
+    'fitness-update-offline: container has no network (connection refused, as required)',
+    'fitness-sso: FIT-SSO-2 static half ok',
+  ]) assert.equal(key(quiet), null, quiet);
+
+  // F2's actual failure wording ("fails for", via the Violation.String() format) is a different
+  // shape entirely and must still be reported.
+  assert.equal(key('go.mod: F2 (ADR-0001 rule 2): CGO_ENABLED=0 go build ./... fails for linux/amd64: exit status 1'),
+    'go.mod: F2 (ADR-0001 rule 2): CGO_ENABLED=0 go build ./... fails for linux/amd64: exit status 1');
+  // fitness-update-offline failing for a real reason (not the expected network refusal) must still show.
+  assert.equal(key('fitness-update-offline: artefact landed outside quarantine'), 'fitness-update-offline: artefact landed outside quarantine');
+});
+
 test('newFindings is a multiset difference', () => {
   const base = extractFindings('a.go:1: m\na.go:2: m\nb.go:3: n\n');
   assert.deepEqual(newFindings(base, extractFindings('a.go:9: m\na.go:8: m\nb.go:1: n\n')), []);

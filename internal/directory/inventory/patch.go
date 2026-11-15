@@ -746,17 +746,23 @@ func rewriteKeysOf(ctx context.Context, tx store.Tx, connection ConnectionID, ob
 	return err
 }
 
-// ridBytes is the little-endian 4 bytes of a relative ID, as the last sub-authority of a binary SID.
-const ridBytes = `set_byte(set_byte(set_byte(set_byte('\x00000000'::bytea, 0, (%[1]s & 255)::int), 1, ((%[1]s >> 8) & 255)::int),
-	2, ((%[1]s >> 16) & 255)::int), 3, ((%[1]s >> 24) & 255)::int)`
+// ridBytesU and ridBytesC are the little-endian 4 bytes of u's and c's relative ID, as the last
+// sub-authority of a binary SID (RP1: report.SQL and tx.Exec take a compile-time constant, so the
+// two instances are spelled out rather than built by fmt.Sprintf — a function call is never a Go
+// constant expression).
+const (
+	ridBytesU = `set_byte(set_byte(set_byte(set_byte('\x00000000'::bytea, 0, (u.primary_group_id & 255)::int), 1, ((u.primary_group_id >> 8) & 255)::int),
+	2, ((u.primary_group_id >> 16) & 255)::int), 3, ((u.primary_group_id >> 24) & 255)::int)`
+	ridBytesC = `set_byte(set_byte(set_byte(set_byte('\x00000000'::bytea, 0, (c.primary_group_id & 255)::int), 1, ((c.primary_group_id >> 8) & 255)::int),
+	2, ((c.primary_group_id >> 16) & 255)::int), 3, ((c.primary_group_id >> 24) & 255)::int)`
 
-// patchPrimaryGroupSQL: $1 connection, $2 the objects a patch wrote, $3 the as-of. The primary group of a principal
-// is the group of its domain whose SID is the principal's with the last sub-authority replaced by
-// primaryGroupID (DM-17.I2). It is derived from stored rows on both sides, so it is the same whether the user
-// or its group was written first: the candidates are the principals written and the principals of the domain
-// that name a group written. A principal with no such group keeps no primary-group edge. It returns the edges
-// it removed.
-var patchPrimaryGroupSQL = fmt.Sprintf(`WITH ob AS (
+	// patchPrimaryGroupSQL: $1 connection, $2 the objects a patch wrote, $3 the as-of. The primary group of a principal
+	// is the group of its domain whose SID is the principal's with the last sub-authority replaced by
+	// primaryGroupID (DM-17.I2). It is derived from stored rows on both sides, so it is the same whether the user
+	// or its group was written first: the candidates are the principals written and the principals of the domain
+	// that name a group written. A principal with no such group keeps no primary-group edge. It returns the edges
+	// it removed.
+	patchPrimaryGroupSQL = `WITH ob AS (
 		SELECT object_guid, nc_guid, kind, sid, primary_group_id, state FROM public.directory_objects
 		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND object_guid = ANY($2::uuid[])),
 	cand AS (
@@ -766,12 +772,12 @@ var patchPrimaryGroupSQL = fmt.Sprintf(`WITH ob AS (
 		AND u.primary_group_id IS NOT NULL
 		AND (u.object_guid IN (SELECT object_guid FROM ob)
 			OR EXISTS (SELECT 1 FROM ob g WHERE g.kind = 'group' AND g.sid IS NOT NULL AND g.nc_guid = u.nc_guid
-				AND g.sid = substring(u.sid from 1 for length(u.sid) - 4) || %s))),
+				AND g.sid = substring(u.sid from 1 for length(u.sid) - 4) || ` + ridBytesU + `))),
 	want AS (
 		SELECT c.object_guid AS member, g.object_guid AS grp FROM cand c
 		JOIN public.directory_objects g ON g.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND g.connection_id = $1::uuid
 			AND g.kind = 'group' AND g.state = 'live' AND g.nc_guid = c.nc_guid AND g.object_guid <> c.object_guid
-			AND g.sid = substring(c.sid from 1 for length(c.sid) - 4) || %s),
+			AND g.sid = substring(c.sid from 1 for length(c.sid) - 4) || ` + ridBytesC + `),
 	setg AS (
 		INSERT INTO public.links (tenant_id, connection_id, source_guid, link_attr, target_guid, state, observed_at)
 		SELECT NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, w.grp, 'primary_group', w.member, 'active', $3 FROM want w
@@ -786,8 +792,8 @@ var patchPrimaryGroupSQL = fmt.Sprintf(`WITH ob AS (
 		RETURNING l.source_guid)
 	INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
 	SELECT NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, x.source_guid FROM (
-		SELECT source_guid FROM setg UNION SELECT source_guid FROM drop) x ON CONFLICT DO NOTHING`,
-	fmt.Sprintf(ridBytes, "u.primary_group_id"), fmt.Sprintf(ridBytes, "c.primary_group_id"))
+		SELECT source_guid FROM setg UNION SELECT source_guid FROM drop) x ON CONFLICT DO NOTHING`
+)
 
 // followPrimaryGroups brings the primary-group edges of the principals among objects, and of the principals that
 // name a group among objects, to what the stored rows say (see patchPrimaryGroupSQL).
