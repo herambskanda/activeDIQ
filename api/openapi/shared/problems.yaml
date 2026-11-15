@@ -279,6 +279,55 @@ components:
             type: /problems/idempotency-key-reuse
             title: The idempotency key was used with a different request
             status: 422
+    CallerVerificationUnavailable:
+      description: >-
+        The caller cannot be verified. One answer for an unknown, disabled, out-of-scope, protected or own target and for a target with no held destination; it never says which.
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/caller-verification-unavailable
+            title: This caller cannot be verified
+            status: 422
+    CallerVerificationRefused:
+      description: >-
+        The verification was refused. One answer for a wrong code, used-up attempts, an expired, superseded, unknown or foreign challenge; it never says which and never repeats the code.
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/caller-verification-refused
+            title: The verification was refused
+            status: 422
+    CallerVerificationLimit:
+      description: >-
+        A caller-verification limit was reached. errors[].code is quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges).
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/caller-verification-limit
+            title: The verification limit was reached
+            status: 429
+            errors:
+              - in: body
+                pointer: /
+                code: quota
+                detail: The hourly limit of codes for this caller or technician is reached.
+    CallerVerificationDeliveryFailed:
+      description: >-
+        The code could not be delivered. No code exists, none is shown and the issue does not count against the limits.
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/caller-verification-delivery-failed
+            title: The code could not be delivered
+            status: 502
     PreconditionRequired:
       description: A precondition header is required
       content:
