@@ -118,6 +118,17 @@ func DefaultSchema() *ldapfilter.Schema {
 			ldapfilter.AttrInfo{Name: "mailNickname", Syntax: s},
 			ldapfilter.AttrInfo{Name: "employeeID", Syntax: s},
 			ldapfilter.AttrInfo{Name: "employeeNumber", Syntax: s},
+			// The user-attribute reports (T-1111, reports-2-second-slice D11). Name-only: no OID is verified
+			// in-repo. thumbnailPhoto, jpegPhoto and logonHours are binary; the sync reads only whether the
+			// photos have a value and the 21-byte logon schedule.
+			ldapfilter.AttrInfo{Name: "msNPAllowDialin", Syntax: ldapfilter.SynBool},
+			ldapfilter.AttrInfo{Name: "msRTCSIP-UserEnabled", Syntax: ldapfilter.SynBool},
+			ldapfilter.AttrInfo{Name: "logonHours", Syntax: ldapfilter.SynOctet},
+			ldapfilter.AttrInfo{Name: "thumbnailPhoto", Syntax: ldapfilter.SynOctet},
+			ldapfilter.AttrInfo{Name: "jpegPhoto", Syntax: ldapfilter.SynOctet},
+			ldapfilter.AttrInfo{Name: "telephoneNumber", Syntax: s},
+			ldapfilter.AttrInfo{Name: "mobile", Syntax: s},
+			ldapfilter.AttrInfo{Name: "manager", Syntax: ldapfilter.SynDN},
 			ldapfilter.AttrInfo{Name: "company", Syntax: s},
 			ldapfilter.AttrInfo{Name: "operatingSystem", Syntax: s},
 			ldapfilter.AttrInfo{Name: "managedBy", Syntax: ldapfilter.SynDN},
