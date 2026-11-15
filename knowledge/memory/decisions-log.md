@@ -10,6 +10,7 @@ Newest first. `date · who · decision · why/source`. CEO decisions also live o
 architecture decisions as ADRs in knowledge/development/decisions/. Roll entries older than the
 current milestone into archive/ when this file nears its budget.
 
+- 2026-11-15 · factory-director · **ADR-0015 ratified (T-2162, notice D-0036): TemplateGate port on PlanContext; `ad` keeps create/modify Actions (objects owns only store Actions); fitness-modules M3 in two cuts; typed ErrNameInUse.** TG3 scoped to ad/objects/importers with allowlist delegation, connections, directory, reports, search. Impl T-2163..T-2166, T-2142 narrowed.
 - 2026-11-15 · factory-director · **ADR-0014 ratified (T-2108, notice D-0035): chart images are drawn in-process by pure-Go `platform/chartimg` (x/image + embedded Plex TTF); no browser.** Windows vs Linux amd64 byte-identical; arm64 ≤2/255 on ≤0.1% px, max 16/255 (proposed, calibrate; never loosen without amendment). Accepted when `fitness-chartimg` CI1–CI5 runs in `make ci` (T-2134); build T-2135, spec/map T-2136.
 - 2026-11-14 · factory · **ADR-0011 amendment E3 ratified (T-2086, notice D-0034): SE1 widens to the closed set {Compile, CompileCount, CompileSearch, CompileTree}; Explorer tree uses the one scope renderer; inventory joins the Connections() allow-list.** Accepted waits on T-2094 (SE1 code+fixtures).
 - 2026-11-12 · factory-director · **ADR-0013 ratified (T-1863, notice D-0031): modules wire through Registrar `API`/`Permission`; builders move into modules; no rule 2.5 exemption.** Impl T-1864..T-1869.

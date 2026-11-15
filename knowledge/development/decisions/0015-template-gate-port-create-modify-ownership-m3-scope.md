@@ -2,7 +2,10 @@
 title: "ADR-0015: TemplateGate is a kernel port on PlanContext; `ad` keeps the create/modify Actions; fitness-modules M3 is built in two cuts; ErrNameInUse is typed"
 date: 2026-11-15
 updated: 2026-11-15
-status: proposed
+status: ratified
+ratified_on: 2026-11-15
+ratified_by: factory-director
+decision: D-0036
 owner: heramb
 author: solution-architect
 kind: technical
@@ -12,7 +15,7 @@ fitness: TG1–TG3 (template-gate), OW1 (ownership), M3a/M3b (fitness-modules), 
 
 # ADR-0015: TemplateGate port, create/modify ownership, M3 scope, typed ErrNameInUse
 
-**Status:** proposed 2026-11-15, for factory-director review of T-2162. `accepted` only when TG1–TG3,
+**Status:** **ratified 2026-11-15** on the T-2162 review (notice D-0036). It becomes `accepted` only when TG1–TG3,
 OW1, M3a/M3b and NU1 run green in `make ci` on `main`.
 **Kind:** technical (no price, packaging, deployment or platform change).
 **Builds on / amends:** ADR-0003 (extension points; M3 text), ADR-0005 (operation pipeline, rules 2, 4, 5),
