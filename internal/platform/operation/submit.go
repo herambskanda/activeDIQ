@@ -231,7 +231,7 @@ func (r *Runner) planAndRoute(ctx context.Context, t tenant.ID, opID string, inp
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var err error
-		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, store: d.Target == TargetStore, pins: maps.Clone(op.Pins), dsas: maps.Clone(op.DSAs), tenant: t}, Pins: op.Pins}, input)
+		steps, err = act.Plan(ctx, PlanContext{Tx: tx, Facts: pinnedReader{port: r.cfg.Facts, ad: d.Target == TargetAD, store: d.Target == TargetStore, pins: maps.Clone(op.Pins), dsas: maps.Clone(op.DSAs), tenant: t}, Pins: op.Pins, Templates: templateGate{authz: r.cfg.TemplateAuthz, chain: op.Chain, tenant: t}}, input)
 		return err
 	})
 	if perr == nil {

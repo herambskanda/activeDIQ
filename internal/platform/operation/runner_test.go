@@ -110,6 +110,7 @@ type behaviour struct {
 	plan     func() []TypedStep[payload]
 	class    Reversibility
 	onPlan   func(PlanContext)
+	template string // when set, Plan asks pc.Templates about it first and returns the refusal
 }
 
 func (b behaviour) action(t *testing.T, db *fakeDB) Action {
@@ -119,9 +120,14 @@ func (b behaviour) action(t *testing.T, db *fakeDB) Action {
 	a, err := Define(Typed[in, payload, out]{
 		Descriptor: Descriptor{ID: "settings.thing.set", Version: 1, Permission: "settings.thing.set",
 			Input: "#/components/schemas/Thing", Target: TargetStore, Reversibility: Irreversible, AuditKind: "settings.thing.changed"},
-		Plan: func(_ context.Context, pc PlanContext, i in) ([]TypedStep[payload], error) {
+		Plan: func(ctx context.Context, pc PlanContext, i in) ([]TypedStep[payload], error) {
 			if b.onPlan != nil {
 				b.onPlan(pc)
+			}
+			if b.template != "" {
+				if err := pc.Templates.CheckTemplate(ctx, "settings.thing.set", b.template); err != nil {
+					return nil, err
+				}
 			}
 			if b.plan != nil {
 				return b.plan(), nil

@@ -56,15 +56,17 @@ type Authorizer interface {
 
 // Config wires a Runner. Every field except Facts, Gate, Now, NewID and Component is required.
 type Config struct {
-	DB        TxRunner
-	Audit     audit.Sink
-	Authz     Authorizer
-	Registry  *Registry
-	Facts     LiveFacts // nil: authorisation reads no directory facts (Store Actions)
-	Gate      Gate      // nil: the kernel default, PermissionOnly
-	Now       func() time.Time
-	NewID     func() string
-	Component string
+	DB       TxRunner
+	Audit    audit.Sink
+	Authz    Authorizer
+	Registry *Registry
+	Facts    LiveFacts // nil: authorisation reads no directory facts (Store Actions)
+	// TemplateAuthz backs PlanContext.Templates (ADR-0015 D1). nil: every Template check is refused.
+	TemplateAuthz TemplateAuthz
+	Gate          Gate // nil: the kernel default, PermissionOnly
+	Now           func() time.Time
+	NewID         func() string
+	Component     string
 
 	// The fields below are used by the persisted Directory path. SubmitDirectory needs Jobs, Keys and
 	// Pinner (when an Action writes to AD); the others are optional.
@@ -362,7 +364,7 @@ func (u *run) planSteps(ctx context.Context) ([]StepPlan, error) {
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var perr error
-		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: u.pinnedFacts(), Pins: maps.Clone(u.req.Pins)}, u.req.Input)
+		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: u.pinnedFacts(), Pins: maps.Clone(u.req.Pins), Templates: templateGate{authz: u.r.cfg.TemplateAuthz, chain: u.req.Actor, tenant: u.req.Tenant}}, u.req.Input)
 		return perr
 	})
 	if err != nil {

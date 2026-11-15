@@ -15,6 +15,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // ActionID names an Action, "<owner>.<noun>.<verb>", for example "objects.user.create". It is stable
@@ -198,6 +199,44 @@ type PlanContext struct {
 	Tx    store.Tx    // the runner opens it READ ONLY; Plan has no way to commit or roll it back
 	Facts PinnedFacts // reads on a clone of the request's pins; Plan cannot choose a DC (rule 5)
 	Pins  authority.Pins
+	// Templates refuses a Template the requester's authority does not permit (ADM-132). The Runner binds
+	// it to the operation's own chain and tenant, so a Plan cannot name either. Order inside a Plan:
+	// Templates, then Template.CheckInput, then Render, then the first read (ADR-0015 D1). A hand-built
+	// PlanContext leaves it nil; use operationtest.AllowTemplates / DenyTemplates, or any TemplateGate.
+	Templates TemplateGate
+}
+
+// TemplateGate is the requester-bound form of the Template check (ADR-0015 D1). A nil error permits.
+// Any error is a refusal: the Runner's gate returns *PlanRefusal{Code: "template_not_permitted"}, which
+// a preview shows as a blocked entry and a submit audits as a denied attempt (rule 4).
+type TemplateGate interface {
+	CheckTemplate(ctx context.Context, perm authz.Permission, template string) error
+}
+
+// TemplateAuthz is the unbound form of the check: it takes the chain. *rbac.Authorizer satisfies it
+// structurally. Only the Runner holds it, so only the Runner chooses the chain.
+type TemplateAuthz interface {
+	CheckTemplate(ctx context.Context, chain authority.Chain, perm authz.Permission, template string) error
+}
+
+const refusalTemplateNotPermitted = "template_not_permitted"
+
+// templateGate binds a TemplateAuthz to one operation's chain and tenant. A nil authz denies.
+type templateGate struct {
+	authz  TemplateAuthz
+	chain  authority.Chain
+	tenant tenant.ID
+}
+
+func (g templateGate) CheckTemplate(ctx context.Context, perm authz.Permission, template string) error {
+	refuse := &PlanRefusal{Code: refusalTemplateNotPermitted}
+	if g.authz == nil {
+		return refuse // fail closed
+	}
+	if err := g.authz.CheckTemplate(authority.WithTenant(ctx, g.tenant.String()), g.chain, perm, template); err != nil {
+		return refuse // an error that is not a refusal means the check could not be made: also a refusal
+	}
+	return nil
 }
 
 // PinnedFacts reads live facts on the operation's pins. It has no pins parameter, so a Plan cannot
