@@ -231,6 +231,30 @@ The Windows lab is built from local evaluation VMs on KVM (D-0003, free): see `w
 CI: the same commands work on a Linux runner with Docker; wiring `make lab-test` into the pipeline
 belongs to the CI ticket (T-0015).
 
+## 7a. Large tier: 500k synthetic candidates for per-DC read calibration (T-2195)
+
+The `standard` tier (5,000 users) cannot reach the 250k per-DC read cap. For USR-04 / PWD-03 calibration (T-1500)
+the candidates are loaded **DB-side**: the run's stage 1 reads `public.directory_objects`, so 500k synthetic `user`
+rows go straight into Postgres. Lab/CI only; never a migration, never shipped.
+
+```bash
+# the tenant, the connection (ad_forest) and the naming-context GUID must exist; DSN = table-owner login of the LAB database
+export ACTIVEDIQ_LAB_DSN='postgres://<owner>@localhost:5432/<db>'     # never commit it
+lab/seed/load-synthetic.sh <tenant-uuid> <connection-uuid> <nc-uuid> 500000 a
+# -> synthetic users inserted: 500000 (requested 500000, seed a) in <n>s
+```
+
+* Rows: `sam synth<seed>-<i>`, `@lab.activediq.test`, `OU=Synthetic,<nc dn>`, 4% disabled, `observed_dsa='lab-synthetic'`
+  (use that to find or sweep them; the runtime role cannot delete, the owner can). GUIDs derive from (seed, i), so a
+  rerun inserts nothing; a different seed adds a disjoint set. The lab DC does **not** hold these objects.
+* **Measured** (`ACTIVEDIQ_LAB_SYNTH_ROWS=500000 go test ./internal/directory/inventory -run TestLabSyntheticLoaderTiming -v`,
+  Docker Postgres, all migrations applied, 2026-11-15): 500,000 rows in **28.7 s (PG 18)** and **70.4 s (PG 16,
+  cold image/volume)**. Expect tens of seconds, not minutes.
+* Proof it works: `go test ./internal/directory/inventory -run TestLabSyntheticLoader` (idempotent, disjoint seeds,
+  refuses bad n/seed); removing `ON CONFLICT` from the SQL makes it fail.
+* **Not done here:** the bufconn connector with a measured per-read latency from the lab DC. It needs the `ReadPerDC`
+  handler (T-1143, unmerged), so it is a follow-up ticket; T-1500 times stage 1/3/4 with this load plus that reader.
+
 ## 8. Known limits and follow-ups
 
 - Samba is the Debian 13 package (4.22.x). The feasibility doc names 4.25 as latest stable; newer
