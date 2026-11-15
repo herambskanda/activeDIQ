@@ -327,21 +327,9 @@ func kindOf(classes []string) inventory.Kind {
 // object sits in the Deleted Objects container, which is not where it belongs: its parent is its
 // lastKnownParent, or none.
 func (m *Mapper) place(o *inventory.Observation, e *connectorv1.DirectoryEntry, set attrSet) error {
-	d := e.GetDn().GetDisplayDn()
-	if d == "" {
-		return refuse("dn", CodeMissing)
-	}
-	if len(d) > maxDN {
-		return refuse("dn", CodeTooLong)
-	}
-	parsed, err := dn.Parse(d, dn.Strict)
-	if err != nil {
-		return refuse("dn", CodeBadDN)
-	}
-	o.DN = parsed.String()
-	o.RDN = rdnOf(parsed)
-	if utf8.RuneCountInString(o.RDN) > maxRDN {
-		return refuse("dn", CodeTooLong)
+	var err error
+	if o.DN, o.RDN, err = parseDisplayDN(e.GetDn().GetDisplayDn()); err != nil {
+		return err
 	}
 
 	if o.State != inventory.ObjLive {
@@ -369,6 +357,25 @@ func (m *Mapper) place(o *inventory.Observation, e *connectorv1.DirectoryEntry, 
 		o.Ancestry = []inventory.GUID{m.nc}
 	}
 	return nil
+}
+
+// parseDisplayDN validates a display DN (strict RFC 4514) and returns it rendered with its first RDN.
+func parseDisplayDN(d string) (full, rdn string, err error) {
+	if d == "" {
+		return "", "", refuse("dn", CodeMissing)
+	}
+	if len(d) > maxDN {
+		return "", "", refuse("dn", CodeTooLong)
+	}
+	parsed, perr := dn.Parse(d, dn.Strict)
+	if perr != nil {
+		return "", "", refuse("dn", CodeBadDN)
+	}
+	rdn = rdnOf(parsed)
+	if utf8.RuneCountInString(rdn) > maxRDN {
+		return "", "", refuse("dn", CodeTooLong)
+	}
+	return parsed.String(), rdn, nil
 }
 
 // rdnOf is the first RDN of a parsed DN, rendered: the whole DN less its parent.

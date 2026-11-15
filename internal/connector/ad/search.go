@@ -259,8 +259,13 @@ func (s *Session) searchRaw(ctx context.Context, base string, scope int, filter 
 				return nil, fail(CodeInsufficientRights, "", nil)
 			case ldap.LDAPResultReferral:
 				return nil, fail(CodeUnexpectedReferral, "", nil)
+			case ldap.ErrorNetwork, ldap.LDAPResultUnavailable:
+				// 200 is go-ldap's own code for a dead or closed connection; it is not a server reply.
+				return nil, fail(CodeUnreachable, ldapCode(err), nil)
 			}
-			return nil, fail(CodeProtocol, ldapCode(err), nil)
+			f := fail(CodeProtocol, ldapCode(err), nil)
+			f.(*Error).result = int(le.ResultCode)
+			return nil, f
 		}
 		return nil, fail(CodeUnreachable, ldapCode(err), nil)
 	}

@@ -241,6 +241,14 @@ test('train_size is validated and splitTrain halves in order', () => {
   assert.deepEqual(splitTrain([1, 2]), [[1], [2]]);
 });
 
+test('fast_argv is optional and validated the same way as argv', () => {
+  assert.equal(preMergeSettings({ dispatcher: {} }).fast_argv, null, 'off by default');
+  const s = (fast_argv) => preMergeSettings({ dispatcher: { pre_merge: { fast_argv } } });
+  assert.deepEqual(s(['make', 'ci-fast']).fast_argv, ['make', 'ci-fast']);
+  assert.equal(s(null).fast_argv, null, 'null stays off');
+  for (const bad of [[], [1], 'make', 0]) assert.throws(() => s(bad), /fast_argv must be null or a non-empty array of strings/, String(bad));
+});
+
 test('T-1353: a done ticket whose branch is already on main is recorded as merged without a gate run, and the rest still go', async () => {
   const f = setup();
   try {
