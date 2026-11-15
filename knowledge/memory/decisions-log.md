@@ -10,6 +10,7 @@ Newest first. `date · who · decision · why/source`. CEO decisions also live o
 architecture decisions as ADRs in knowledge/development/decisions/. Roll entries older than the
 current milestone into archive/ when this file nears its budget.
 
+- 2026-11-15 · factory-director · **ADR-0014 ratified (T-2108, notice D-0035): chart images are drawn in-process by pure-Go `platform/chartimg` (x/image + embedded Plex TTF); no browser.** Windows vs Linux amd64 byte-identical; arm64 ≤2/255 on ≤0.1% px, max 16/255 (proposed, calibrate; never loosen without amendment). Accepted when `fitness-chartimg` CI1–CI5 runs in `make ci` (T-2134); build T-2135, spec/map T-2136.
 - 2026-11-14 · factory · **ADR-0011 amendment E3 ratified (T-2086, notice D-0034): SE1 widens to the closed set {Compile, CompileCount, CompileSearch, CompileTree}; Explorer tree uses the one scope renderer; inventory joins the Connections() allow-list.** Accepted waits on T-2094 (SE1 code+fixtures).
 - 2026-11-12 · factory-director · **ADR-0013 ratified (T-1863, notice D-0031): modules wire through Registrar `API`/`Permission`; builders move into modules; no rule 2.5 exemption.** Impl T-1864..T-1869.
 - 2026-11-13 · CEO · **Brand: Harbor Teal replaces Ledger (D-0032, supersedes D-0012).** Teal, cool slate, 8/12 px radii, soft shadows, from activeDIQ-mockup / T-1421. Chosen over the recommended Ledger. Tokens are CSS variables; Ledger-based previews, docs and tickets are reworked by T-1421 and its follow-up.

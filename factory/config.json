@@ -19,15 +19,20 @@
     "main_branch": "main",
     "pre_merge": {
       "enabled": true,
-      "argv": ["make", "-k", "ci"],
-      "fast_argv": ["make", "-k", "ci-fast"],
-      "timeout_minutes": 120,
+      "argv": ["make", "-k", "ci-fast"],
+      "timeout_minutes": 60,
       "train_size": 4,
       "numbering": {
         "dir": "migrations",
         "argv": ["go", "test", "-count=1", "./migrations/", "-run", "^TestMigrationNumbersAreUniqueAndContiguous$"],
         "timeout_seconds": 120
       }
+    },
+    "post_merge_verify": {
+      "enabled": true,
+      "argv": ["make", "-k", "ci-full"],
+      "timeout_minutes": 150,
+      "cooldown_minutes": 15
     },
     "permission_mode": "auto",
     "rate_limit_backoff_minutes": 15,

@@ -268,6 +268,18 @@ func gm2(root string, kinds []docKind) ([]Violation, error) {
 		}
 		return true
 	})
+	// Kind 13 gets its row from the init loop over accountkind.Specs(); its TM-D28 class is the
+	// kindClass entry keyed accountkind.KeyComputerReset, so a non-empty class there is the row's class.
+	ast.Inspect(tf, func(n ast.Node) bool {
+		if kv, ok := n.(*ast.KeyValueExpr); ok {
+			if sel, ok := kv.Key.(*ast.SelectorExpr); ok && sel.Sel.Name == "KeyComputerReset" {
+				if l, ok := kv.Value.(*ast.BasicLit); ok && l.Value != `""` {
+					rows["WriteKind_WRITE_KIND_COMPUTER_ACCOUNT_RESET"] = true
+				}
+			}
+		}
+		return true
+	})
 	for _, w := range wiredKinds {
 		switch {
 		case noClass[w.Const]:
@@ -520,6 +532,27 @@ func gm1(root string) ([]Violation, []string, error) {
 			return true
 		})
 		if !has {
+			return
+		}
+		// Only a file that registers an Action (an operation Descriptor or a WriteOp) is an Action
+		// registration; the writechange codec and the like merely mention the keys.
+		registers := false
+		ast.Inspect(f, func(n ast.Node) bool {
+			if cl, ok := n.(*ast.CompositeLit); ok {
+				if strings.HasSuffix(exprText(cl.Type), "Descriptor") {
+					registers = true
+				}
+				for _, e := range cl.Elts {
+					if kv, ok := e.(*ast.KeyValueExpr); ok {
+						if id, ok := kv.Key.(*ast.Ident); ok && id.Name == "DigestKind" {
+							registers = true
+						}
+					}
+				}
+			}
+			return true
+		})
+		if !registers {
 			return
 		}
 		seen = true
