@@ -1,7 +1,7 @@
 ---
 title: "Module: reports — contract for the definition AST, dataset registry, compiler and run record"
 date: 2026-10-30
-updated: 2026-11-04
+updated: 2026-11-15
 status: draft
 owner: heramb
 author: solution-architect
@@ -159,6 +159,7 @@ type Column struct {
     Sortable bool
     Default  bool            // shown when a definition names no columns (definitions normally do)
     Count    bool            // Derived only: counts other objects (member, subtree counts); RP11 compares it
+    Groupable, Numeric, Multi bool // grouping registry flags, rules in §3.2
     UnknownWhen ColumnID     // Derived non-enum only: the state column whose unknown_input_missing makes this cell "u" (§3.3, §6.2)
 }
 
@@ -210,9 +211,63 @@ type Value struct{ /* unexported: one typed value; constructors TextV, IntV, Boo
 - Relative-time operators take whole days. A definition parameter can set a floor (§3.5), for
   example 30 days on replicated logon.
 
-There is **no function, aggregate or grouping node at 2a**. Top N is a sort plus `Query.Top`. The
-2c builder adds grouping with an amendment to this page, so the type never names something that
-does not exist.
+There is **no function, aggregate or free-expression node**. Top N is a sort plus `Query.Top`. The one
+grouping construct is the closed `Group` node below (amended 2026-11-15, T-2107, for EB-5; spec
+[reports-eb5-grouping-charts](../../../product/specs/reports-eb5-grouping-charts.md) §3, Q1 confirmed).
+
+**The `Group` node (closed).** A `Query` carries at most one `*Group`, applied after `Where` and scope
+trimming (§4.3) and before sort. Everything in it is a registered ID or a typed constant; no field is text
+that reaches SQL.
+
+```go
+type Group struct {
+    Keys     []GroupKey     // 1..2 (ErrTooManyGroupKeys)
+    Measures []Measure      // 0..4 beyond the implicit count (ErrTooManyMeasures); count is always present
+    Having   *GroupFilter   // optional: one measure, Op in Eq/Ne/Lt/Le/Gt/Ge, typed Value
+    Sort     SortKey        // a key or a measure ID; the compiler appends the key tuple as tie-break
+}
+type GroupKey struct{ Column ColumnID; Bucket Bucket }   // Bucket only for TypeTime: BucketDay|Week|Month|Quarter|Year; else BucketNone
+type Measure  struct{ ID string; Fn MeasureFn; Column ColumnID } // Fn: FnCount (no Column), FnCountDistinct, FnMin, FnMax, FnSum, FnAvg
+type GroupFilter struct{ Measure string; Op Op; Value Value }
+```
+
+- **Key rules.** A key column must have `Groupable` (below), type enum, bool, text, GUID or time, and must not be
+  `Multi`. A `PerDC` column or a secret `JSONAttr` is never groupable (registry build refuses it). Bucketing
+  is `date_trunc` over a fixed enum keyword with the run's UTC time zone; the bucket never comes from text.
+- **Measure rules.** `FnMin`/`FnMax` accept `Numeric` or time columns; `FnSum`/`FnAvg` accept `Numeric` only;
+  `FnCountDistinct` accepts any `Groupable` column. `Measure.ID` is a generated `m1..m4`, never admin text.
+- **`(none)` key.** A NULL key value forms its own group; it is never dropped or merged. The compiler groups by
+  the raw key (so NULL is one group) and the group carries `KeyNone[i] = true` for the cell kind `none`; the label
+  "(none)" is presentation, not a stored value, so a real value spelled "(none)" cannot collide.
+- **1,000-group cut-off, N by window.** The compiler emits `count(*) OVER () AS group_total` over the grouped
+  relation, orders by `Group.Sort`, and applies `LIMIT 1000` (the run path passes the cap through
+  `Inputs.Limit`). `N` is read from `group_total` of the first row; the run header records `group_count = N`
+  and `groups_shown = min(N, 1000)`. The cut-off is never silent (spec FR-GC-05). `group_total` is computed
+  after `Having`, so N equals the groups the admin would see uncut.
+- **Output.** A grouped run's columns are the key columns, the measures, `_group_size`, in that order. Rows are
+  groups, not objects; digest, export and paging use the stored run as for any run (§6).
+- **Registry flags on `Column`** (added to the struct above):
+
+```go
+    Groupable bool   // may be a Group key or count_distinct target; false by default
+    Numeric   bool   // TypeInt (or a registered numeric derived/JSON column) usable by sum/avg/min/max
+    Multi     bool   // multi-valued (TypeTextList or a member-expanded column): never Groupable
+```
+
+  `NewRegistry` additionally refuses: `Groupable` with `Multi`; `Groupable` on `PerDC`, on a secret key, or on
+  a `Derived` column that carries `UnknownWhen` (an unknown cell cannot be a group value; revisit if the
+  spec needs it); `Numeric` on a type other than `TypeInt`; `Multi` on a non-`TypeTextList` column. `Count`
+  columns are `Numeric` and not `Groupable`.
+- **Compile-time checks** (`ErrBadGroup*`): unknown column, non-`Groupable` key, `Bucket` on a non-time key, a
+  measure function the column's flags do not allow, `Having` naming an absent measure, and a `Group` on a
+  dataset whose preset has `PerDCWhere` (per-DC columns are filled after the query, §6.5, so they cannot be
+  grouped).
+- **Drill-through (spec §3.4).** `report.DrillFilter(def, group)` returns a `Where` extension, never query
+  text: for each key, a non-NULL value yields `Cmp{Column, OpEq, Value}` (for a bucketed time key, a `>=`
+  and `<` pair over the bucket bounds); a **`(none)` key yields `Cmp{Column, OpAbsent}`, which compiles to
+  `IS NULL`** (and to the empty-string/zero sentinel check only where the registry declares one for that
+  column). The extension is ANDed to the definition's `Where` and run as a new ungrouped run under the same
+  scope.
 
 ### 3.3 Derived columns and fragments (spec §6.4, FR-09)
 
@@ -346,6 +401,14 @@ parent RDNs are not an exception to the masking rules; they are part of the obje
    disclosure rule above), or when any numeric aggregate column differs
    from the same aggregate computed with the out-of-scope objects deleted. Aggregate columns are
    those declared `Column.Count`.
+4. **Grouped runs (T-2107).** For every `Groupable` column and every `Numeric` column (and each bucket for a
+   time key), run the grouped query under the same `ReadScope`: a count, `count_distinct`, `min`, `max`, `sum`
+   and `avg` measure over each, with that column as a key (and one 2-key run per dataset). Fail when any
+   group key value or label holds a sentinel; when the set of groups, any group's `_group_size`, any measure,
+   `group_total` (N) or `object_count` differs from the same grouped query run with the out-of-scope
+   objects deleted; or when the `(none)` group's count differs the same way. A drill-through of every shown group
+   (including `(none)`, as `IS NULL`) must return exactly `_group_size` rows. Subtest name:
+   `<dataset>/grouped`.
 
 **The derived columns of `inventory.users` (row B3).** Each one is evaluated in the query. Each
 state column has a companion `<column>_reason` enum, which the UI shows on hover:
@@ -1143,7 +1206,7 @@ in memory** rather than filter through inventory.
   never uses a trigram GIN; that is why the fuzzy probe reads a tenant-led B-tree of postings instead (ADR-0011
   rule 5a). `Test_search_plan_uses_the_indexes` and SE5 assert the plan, and
   `Test_search_fuzzy_reads_only_the_tenants_own_postings` proves that another tenant's size changes no row
-  examined. The hits join at the default W (10,000) is a separate plan question (T-1344). The per-script vectors (Latin with diacritics, Cyrillic, Greek, CJK) all
+  examined. The hits join probes `directory_objects` once per candidate (`cand c CROSS JOIN LATERAL (… WHERE tenant_id, connection_id, object_guid … LIMIT 1)`, T-1345), so at the default W (10,000) it is a nested loop of primary-key probes, not a hash join over a Seq Scan of every tenant's rows (PostgreSQL 18 chose that before); the plan tests and the isolation test run at both W=100 and the default, with tenant B ten times A. The per-script vectors (Latin with diacritics, Cyrillic, Greek, CJK) all
   match fuzzily on the bundled pg16 and pg18 images.
 
 ## 5. The compiler: `store/reportsql`
@@ -2052,3 +2115,4 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   caps of 5,000 and 20,000 rows, per-format `HardCap`, `FormatsFor`, `exportFormats` served by the API. As built:
   §7.1b. Follow-ups: the owner's time zone on a run; an embedded font for CJK in the PDF.
 - 2026-11-04 · T-0971 · row B8 built: per-DC run stages, read cap, coverage labels, `EvalPerDC`, USR-04 and PWD-03 (§6.5 "As built"); `DCCounter` port; migration 0076.
+- 2026-11-15 · T-2107 · §3.2 amended for EB-5: closed `Group` node, `Column.Groupable/Numeric/Multi`, 1,000-group cut-off with N by window count, `(none)` as `IS NULL` drill-through, RP11 extended to grouped runs. Follow-ups: build and fitness tickets (see T-2107 note).
