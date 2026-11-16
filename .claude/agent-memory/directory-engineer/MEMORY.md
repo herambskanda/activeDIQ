@@ -44,3 +44,4 @@
 - [user attrs lessons](user-attrs-lessons.md) — T-1111: FORCE RLS lift in migration, change-history flood hazard, photo flags only
 - [descendant dn lessons](descendant-dn-lessons.md) — T-0988: dn pass before ancestry UPDATE, key delete/insert trap, dn.Rebase
 - [incremental cycle lessons](incremental-lessons.md) — T-1198: Reconcile moves fencing token, whole FeedCookie stored, deferFinish, patch-path dn gap
+- [read marker lessons](read-marker-lessons.md) — T-2216: observed/not_observed only, enumLabels trap, inventory test timeout
