@@ -13,8 +13,7 @@ import (
 	"github.com/go-ldap/ldap/v3"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
-	"github.com/skenzeriq/activediq/internal/connector/write"
-	"github.com/skenzeriq/activediq/internal/connector/write/ops"
+	"github.com/skenzeriq/activediq/internal/connector/wirevalue"
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/sid"
 	"github.com/skenzeriq/activediq/internal/directory/dn"
@@ -103,7 +102,7 @@ func TestLabPasswordChangeVerdict(t *testing.T) {
 		if err != nil {
 			t.Fatalf("plan %s: %v", u.name, err)
 		}
-		if err := admSess.WriteDACL(ctx, u.ref, w, ops.ReplaceSD); err != nil {
+		if err := admSess.WriteDACL(ctx, u.ref, w, labReplaceSD); err != nil {
 			t.Fatalf("write %s: %v", u.name, err)
 		}
 	}
@@ -134,13 +133,13 @@ func TestLabPasswordChangeVerdict(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", u.name, err)
 		}
-		v := verdict(write.GUIDToWire(u.g))
+		v := verdict(wirevalue.GUIDToWire(u.g))
 		if v.GetState() != wire[want] || !guidEq(v.GetObjectGuid(), u.g) || v.GetErrorCode() != connectorv1.ErrorCode_ERROR_CODE_UNSPECIFIED {
 			t.Errorf("%s: verdict %v, want %v", u.name, v, wire[want])
 		}
 	}
 	// The three differ, so a constant answer cannot pass.
-	if a, b, c := verdict(write.GUIDToWire(users[0].g)).GetState(), verdict(write.GUIDToWire(users[1].g)).GetState(), verdict(write.GUIDToWire(users[2].g)).GetState(); a == b || b == c || a == c {
+	if a, b, c := verdict(wirevalue.GUIDToWire(users[0].g)).GetState(), verdict(wirevalue.GUIDToWire(users[1].g)).GetState(), verdict(wirevalue.GUIDToWire(users[2].g)).GetState(); a == b || b == c || a == c {
 		t.Fatalf("states not distinct: %v %v %v", a, b, c)
 	}
 	// A user that is gone is NOT_CONFIRMED... or OBJECT_NOT_FOUND from the base read: never a state.
@@ -158,7 +157,7 @@ func TestLabPasswordChangeVerdict(t *testing.T) {
 }
 
 func guidEq(w *connectorv1.Guid, g guid.GUID) bool {
-	return string(w.GetValue()) == string(write.GUIDToWire(g).GetValue())
+	return string(w.GetValue()) == string(wirevalue.GUIDToWire(g).GetValue())
 }
 
 func (l *searchLab) sidOf(t *testing.T, d string) sid.SID {
@@ -186,4 +185,12 @@ func (l *searchLab) rawGUID(t *testing.T, d string) guid.GUID {
 		t.Fatal(err)
 	}
 	return g
+}
+
+// labReplaceSD is the lab's own single replace of nTSecurityDescriptor: the operation bodies in
+// connector/write/ops are importable only by the guard's package.
+func labReplaceSD(m ad.Modifier, dn string, value []byte, controls []ldap.Control) error {
+	req := ldap.NewModifyRequest(dn, controls)
+	req.Replace("nTSecurityDescriptor", []string{string(value)})
+	return m.Modify(req)
 }
