@@ -72,3 +72,20 @@ func UpdateAttrs(in []Edit) ([]step.Attr, error) {
 	_, attrs, err := Encode(&connectorv1.WriteChange{Change: &connectorv1.WriteChange_ObjectUpdate{ObjectUpdate: &connectorv1.ObjectUpdate{Edits: ed}}})
 	return attrs, err
 }
+
+// GroupMemberAttrs returns the digest attributes of kinds 11 and 12: the member's objectGUID (canonical
+// lower-case text) and the class the Action declared ("user", "computer", "contact" or "group"). It goes
+// through Encode, so the list is the one the connector's Decode round-trips.
+func GroupMemberAttrs(member, class string) ([]step.Attr, error) {
+	g, err := guidFromText(member)
+	if err != nil {
+		return nil, err
+	}
+	c, ok := ClassOf(class)
+	if !ok {
+		return nil, ErrEncoding
+	}
+	_, attrs, err := Encode(&connectorv1.WriteChange{Change: &connectorv1.WriteChange_GroupMemberAdd{
+		GroupMemberAdd: &connectorv1.GroupMemberAdd{Member: g, MemberClass: c}}})
+	return attrs, err
+}

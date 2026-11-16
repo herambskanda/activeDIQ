@@ -33,6 +33,16 @@ const (
 	KeyObjectCreate = "ad.object.create"
 	KeyObjectUpdate = "ad.object.update"
 	KeyObjectDelete = "ad.object.delete"
+	// Kinds 11 and 12 (contract §8.10.3, v1.6): the target is the group; the member is a GUID.
+	KeyGroupMemberAdd    = "ad.group.addMember"
+	KeyGroupMemberRemove = "ad.group.removeMember"
+)
+
+// The digest attribute names of kinds 11 and 12. "~member" is the member's objectGUID as canonical
+// lower-case 8-4-4-4-12 text; "~memberClass" is the class the Action declared.
+const (
+	AttrMember      = "~member"
+	AttrMemberClass = "~memberClass"
 )
 
 // ErrEncoding is returned for an Attrs list or a change that does not round-trip. It carries no value.
@@ -116,8 +126,88 @@ func Encode(c *connectorv1.WriteChange) (key string, attrs []step.Attr, err erro
 		return KeyObjectUpdate, attrs, nil
 	case *connectorv1.WriteChange_ObjectDelete:
 		return KeyObjectDelete, nil, nil
+	case *connectorv1.WriteChange_GroupMemberAdd:
+		attrs, err = memberAttrs(x.GroupMemberAdd.GetMember(), x.GroupMemberAdd.GetMemberClass())
+		return KeyGroupMemberAdd, attrs, err
+	case *connectorv1.WriteChange_GroupMemberRemove:
+		attrs, err = memberAttrs(x.GroupMemberRemove.GetMember(), x.GroupMemberRemove.GetMemberClass())
+		return KeyGroupMemberRemove, attrs, err
 	}
 	return "", nil, ErrEncoding
+}
+
+// GUIDText is the canonical lower-case 8-4-4-4-12 text of a wire Guid, the form the digest covers.
+func GUIDText(g *connectorv1.Guid) (string, error) {
+	b := g.GetValue()
+	if len(b) != 16 {
+		return "", ErrEncoding
+	}
+	h := hex.EncodeToString(b)
+	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:], nil
+}
+
+func guidFromText(s string) (*connectorv1.Guid, error) {
+	if len(s) != 36 || s != strings.ToLower(s) || s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
+		return nil, ErrEncoding
+	}
+	b, err := hex.DecodeString(s[:8] + s[9:13] + s[14:18] + s[19:23] + s[24:])
+	if err != nil || len(b) != 16 {
+		return nil, ErrEncoding
+	}
+	return &connectorv1.Guid{Value: b}, nil
+}
+
+// memberClasses are the classes a member may have (the class matrix of kinds 11 and 12).
+func memberClassOK(c connectorv1.DirectoryObjectClass) bool {
+	switch c {
+	case connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_USER, connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_COMPUTER,
+		connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_CONTACT, connectorv1.DirectoryObjectClass_DIRECTORY_OBJECT_CLASS_GROUP:
+		return true
+	}
+	return false
+}
+
+func memberAttrs(g *connectorv1.Guid, c connectorv1.DirectoryObjectClass) ([]step.Attr, error) {
+	t, err := GUIDText(g)
+	if err != nil || !memberClassOK(c) {
+		return nil, ErrEncoding
+	}
+	return []step.Attr{one(AttrMember, t), one(AttrMemberClass, classNames[c])}, nil
+}
+
+func decodeMember(attrs []step.Attr) (*connectorv1.Guid, connectorv1.DirectoryObjectClass, error) {
+	var g *connectorv1.Guid
+	var c connectorv1.DirectoryObjectClass
+	for _, a := range attrs {
+		if a.Secret || len(a.Values) != 1 {
+			return nil, 0, ErrEncoding
+		}
+		switch a.Name {
+		case AttrMember:
+			if g != nil {
+				return nil, 0, ErrEncoding
+			}
+			var err error
+			if g, err = guidFromText(a.Values[0]); err != nil {
+				return nil, 0, err
+			}
+		case AttrMemberClass:
+			if c != 0 {
+				return nil, 0, ErrEncoding
+			}
+			cc, ok := ClassOf(a.Values[0])
+			if !ok || !memberClassOK(cc) {
+				return nil, 0, ErrEncoding
+			}
+			c = cc
+		default:
+			return nil, 0, ErrEncoding
+		}
+	}
+	if g == nil || c == 0 {
+		return nil, 0, ErrEncoding
+	}
+	return g, c, nil
 }
 
 // Decode derives the typed change for a digest key from its attributes. It is Encode's inverse and
@@ -125,6 +215,18 @@ func Encode(c *connectorv1.WriteChange) (key string, attrs []step.Attr, err erro
 // unparsable value), so a caller cannot smuggle a field the digest does not pin.
 func Decode(key string, attrs []step.Attr) (*connectorv1.WriteChange, error) {
 	switch key {
+	case KeyGroupMemberAdd:
+		g, c, err := decodeMember(attrs)
+		if err != nil {
+			return nil, err
+		}
+		return &connectorv1.WriteChange{Change: &connectorv1.WriteChange_GroupMemberAdd{GroupMemberAdd: &connectorv1.GroupMemberAdd{Member: g, MemberClass: c}}}, nil
+	case KeyGroupMemberRemove:
+		g, c, err := decodeMember(attrs)
+		if err != nil {
+			return nil, err
+		}
+		return &connectorv1.WriteChange{Change: &connectorv1.WriteChange_GroupMemberRemove{GroupMemberRemove: &connectorv1.GroupMemberRemove{Member: g, MemberClass: c}}}, nil
 	case KeyObjectDelete:
 		if len(attrs) != 0 {
 			return nil, ErrEncoding

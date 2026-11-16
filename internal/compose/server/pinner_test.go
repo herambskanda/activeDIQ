@@ -107,3 +107,42 @@ func TestPinOtherExcludesPinnedDC(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// ADM-133: the preferred site's DC is tried first; when it is unhealthy (absent from the reachable list)
+// the next site, then any DC, is pinned and the pin still succeeds; a kept previous pin still wins.
+func TestPinPreferringSite(t *testing.T) {
+	hq := client.WritableDC{Host: "dc1.example.test", DSAGUID: dsaA, Site: "HQ"}
+	br := client.WritableDC{Host: "dc2.example.test", DSAGUID: dsaB, Site: "Branch"}
+	ctx := context.Background()
+	pref := []string{"branch", "HQ"}
+
+	p := pinnerOver(t, &fakeDCs{list: []client.WritableDC{hq, br}})
+	if pin, err := p.PinPreferring(ctx, "c1", "nc1", "", pref); err != nil || pin.Host != br.Host {
+		t.Fatalf("both healthy: pin = %+v, %v; want the Branch DC", pin, err)
+	}
+	// The Branch DC is unhealthy, so it is not listed: HQ is the next preference.
+	p = pinnerOver(t, &fakeDCs{list: []client.WritableDC{hq}})
+	if pin, err := p.PinPreferring(ctx, "c1", "nc1", "", pref); err != nil || pin.Host != hq.Host {
+		t.Fatalf("preferred site down: pin = %+v, %v; want the HQ DC", pin, err)
+	}
+	// No DC of any preferred site: any writable DC is pinned rather than failing.
+	other := client.WritableDC{Host: "dc3.example.test", DSAGUID: dsaA2, Site: "Elsewhere"}
+	p = pinnerOver(t, &fakeDCs{list: []client.WritableDC{other}})
+	if pin, err := p.PinPreferring(ctx, "c1", "nc1", "", pref); err != nil || pin.Host != other.Host {
+		t.Fatalf("no preferred site: pin = %+v, %v; want %s", pin, err, other.Host)
+	}
+	// A healthy previous pin is kept even though it is not in a preferred site (rule 5).
+	p = pinnerOver(t, &fakeDCs{list: []client.WritableDC{hq, br, other}})
+	if pin, err := p.PinPreferring(ctx, "c1", "nc1", other.Host, pref); err != nil || pin.Host != other.Host {
+		t.Fatalf("previous: pin = %+v, %v; want the kept %s", pin, err, other.Host)
+	}
+	// Pin without a preference is unchanged, and the input list is not reordered.
+	list := []client.WritableDC{hq, br}
+	p = pinnerOver(t, &fakeDCs{list: list})
+	if pin, _ := p.Pin(ctx, "c1", "nc1", ""); pin.Host != hq.Host {
+		t.Fatalf("Pin = %+v; want the first listed DC", pin)
+	}
+	if _, err := p.PinPreferring(ctx, "c1", "nc1", "", pref); err != nil || list[0].Host != hq.Host {
+		t.Fatalf("the DC list was reordered: %+v (%v)", list, err)
+	}
+}

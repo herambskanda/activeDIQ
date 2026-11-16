@@ -26,10 +26,6 @@ const MAX_LOG_BYTES = 256 * 1024 * 1024;
 export const PRE_MERGE_DEFAULTS = Object.freeze({
   enabled: false,
   argv: ['make', '-k', 'ci'],
-  // A cheaper subset of `argv` (lint + unit tests, no fitness/build/scan/fuzz/lab) that does not yet
-  // gate the merge: it runs alongside the real gate and its verdict is only logged against the real
-  // one, to find out how often they'd agree before trusting it to merge on its own. `null` = off.
-  fast_argv: null,
   timeout_minutes: 120,
   // T-1067: a cheap check that runs on the merge result BEFORE the full command. Each branch passes
   // the migration-numbering test on its own; two parallel branches that both add 00NN only collide
@@ -39,6 +35,15 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // T-1297: how many done tickets one gate run judges together (the merge train). 1 = one ticket
   // per run, as before the train.
   train_size: 4,
+  // T-2210: how many gate runs (each its own scratch worktree, train and real-merge sequence) may
+  // be in flight at once. 1 = the original single lane. Safe to raise once the gate command itself
+  // is fast: each lane's test run is fully isolated (its own worktree, its own throwaway Postgres
+  // container), and the real-merge step detects and refuses a stale verdict rather than landing a
+  // combination that was never actually tested (see `gateGroup`'s staleness check).
+  concurrency: 1,
+  // T-xxxx: how many times in a row the gate may refuse a ticket before the dispatcher stops
+  // reopening it to its owner and opens a CEO decision instead. 1 = escalate on the first refusal.
+  max_gate_failures: 2,
   // T-1378: reuse a cached run of the gate command on `main` when the tree differs from the one now
   // only in files under these top-level directories that no gate file mentions (computed from the
   // tree, see `readSurface`). They hold no gate code: knowledge base, agent memory, factory runtime
@@ -55,12 +60,14 @@ export function preMergeSettings(config) {
   if (!Array.isArray(s.argv) || !s.argv.length || s.argv.some((a) => typeof a !== 'string')) {
     throw new FactoryError('dispatcher.pre_merge.argv must be a non-empty array of strings');
   }
-  if (s.fast_argv !== null && s.fast_argv !== undefined
-    && (!Array.isArray(s.fast_argv) || !s.fast_argv.length || s.fast_argv.some((a) => typeof a !== 'string'))) {
-    throw new FactoryError('dispatcher.pre_merge.fast_argv must be null or a non-empty array of strings');
-  }
   if (!Number.isInteger(s.train_size) || s.train_size < 1) {
     throw new FactoryError('dispatcher.pre_merge.train_size must be a whole number of at least 1');
+  }
+  if (!Number.isInteger(s.concurrency) || s.concurrency < 1) {
+    throw new FactoryError('dispatcher.pre_merge.concurrency must be a whole number of at least 1');
+  }
+  if (!Number.isInteger(s.max_gate_failures) || s.max_gate_failures < 1) {
+    throw new FactoryError('dispatcher.pre_merge.max_gate_failures must be a whole number of at least 1');
   }
   if (!Array.isArray(s.baseline_reuse_roots) || s.baseline_reuse_roots.some((r) => typeof r !== 'string' || !/^[\w.-]+$/.test(r))) {
     throw new FactoryError('dispatcher.pre_merge.baseline_reuse_roots must be an array of top-level directory names');
@@ -239,7 +246,7 @@ export function runLogged(argv, cwd, logFile, { timeoutMs, signal, env = process
   });
 }
 
-function readLog(file) {
+export function readLog(file) {
   const size = fs.statSync(file).size;
   if (size <= MAX_LOG_BYTES) return fs.readFileSync(file, 'utf8');
   const fd = fs.openSync(file, 'r');
@@ -250,7 +257,7 @@ function readLog(file) {
   } finally { fs.closeSync(fd); }
 }
 
-function gateDir(ctx) { return path.join(ctx.stateDir, 'premerge'); }
+export function gateDir(ctx) { return path.join(ctx.stateDir, 'premerge'); }
 export function scratchRoot(ctx) { return path.resolve(ctx.root, ctx.config.dispatcher.worktree_root, '.premerge'); }
 
 /**
@@ -259,10 +266,10 @@ export function scratchRoot(ctx) { return path.resolve(ctx.root, ctx.config.disp
  * dry run, or an orphaned `make` left by a killed run — deleted each other's tree mid-run, and the
  * truncated output was judged and cached as main's baseline.
  */
-function runTag() { return `${process.pid}-${crypto.randomBytes(4).toString('hex')}`; }
+export function runTag() { return `${process.pid}-${crypto.randomBytes(4).toString('hex')}`; }
 
 /** @returns {Promise<string>} the identity (device:inode) of the new tree, for {@link assertTreeIntact} */
-async function addDetached(ctx, dir, ref) {
+export async function addDetached(ctx, dir, ref) {
   fs.rmSync(dir, { recursive: true, force: true });
   await git(ctx.root, ['worktree', 'prune']);
   fs.mkdirSync(path.dirname(dir), { recursive: true });
@@ -276,13 +283,13 @@ function treeIdentity(dir) {
 }
 
 /** A run whose tree was removed or replaced while it ran says nothing about the code: refuse to judge it. */
-function assertTreeIntact(dir, identity, log) {
+export function assertTreeIntact(dir, identity, log) {
   if (treeIdentity(dir) !== identity) {
     throw new FactoryError(`pre-merge: the scratch worktree ${dir} was removed or replaced while the command ran, so its output is not a verdict (${log})`);
   }
 }
 
-async function dropWorktree(ctx, dir) {
+export async function dropWorktree(ctx, dir) {
   await git(ctx.root, ['worktree', 'remove', '--force', dir]);
   fs.rmSync(dir, { recursive: true, force: true });
   await git(ctx.root, ['worktree', 'prune']);
@@ -493,73 +500,128 @@ export function planRenumber(mainNames, addedNames) {
 }
 
 /**
- * Run the numbering check on the merge result in `dir`. Returns a `blocked` verdict when it fails
- * (naming the number to renumber to), or null when it passes. A check that cannot run throws.
+ * Apply a renumber plan to the working tree in `dir` (git-mv each colliding migration to its free
+ * number) and rewrite every reference to the old file's stem in the files this merge touched
+ * (`mainSha`..HEAD), so a test or comment naming the migration does not go stale — the same two
+ * steps the blocked note (`blockedNote`) has always told a human to do by hand. Pure mechanical
+ * step: does not commit. Returns false (nothing staged) when the plan is empty or a `git mv` fails.
+ * @param {string} dir
+ * @param {{from: string, to: string}[]} plan
+ * @param {string} migrationsDir
+ * @param {string} mainSha
+ * @returns {Promise<boolean>}
+ */
+export async function applyMigrationRenumber(dir, plan, migrationsDir, mainSha) {
+  if (!plan.length) return false;
+  const stem = (name) => name.replace(/\.sql$/, '');
+  const touched = (await git(dir, ['diff', '--name-only', mainSha, 'HEAD'])).stdout.split('\n').map((l) => l.trim()).filter(Boolean);
+  for (const { from, to } of plan) {
+    const fromPath = `${migrationsDir}/${from}`;
+    const toPath = `${migrationsDir}/${to}`;
+    const mv = await git(dir, ['mv', fromPath, toPath]);
+    if (mv.code !== 0) return false;
+    const fromStem = stem(from);
+    const toStem = stem(to);
+    for (const file of touched) {
+      if (file === fromPath) continue; // already moved
+      const abs = path.join(dir, file);
+      if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) continue;
+      let text;
+      try { text = fs.readFileSync(abs, 'utf8'); } catch { continue; } // binary or unreadable: leave it
+      if (!text.includes(fromStem)) continue;
+      fs.writeFileSync(abs, text.split(fromStem).join(toStem));
+      const add = await git(dir, ['add', '--', file]);
+      if (add.code !== 0) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Run the numbering check on the merge result in `dir`. On failure, try the one-shot fix the
+ * blocked note has always described (renumber the clashing file, fix references, re-run): two
+ * parallel branches racing for the same next migration number is the expected case (T-1067's own
+ * comment), not a defect in either branch, so there is nothing for a human to design — just apply
+ * the plan `planRenumber` already computes and check the result is still green. Returns a `blocked`
+ * verdict when it fails and the fix did not clear it (naming the number to renumber to), or
+ * `{seconds, renumbered}` when it passes (`renumbered` is the plan actually applied, or null when
+ * none was needed). A check that cannot run throws.
  */
 async function checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { signal, run }) {
   const cfg = settings.numbering;
   const log = path.join(gateDir(ctx), `${subject.id}-${mainSha.slice(0, 12)}-${run}-numbering.log`);
   const started = Date.now();
-  const ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal });
-  const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  let ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal });
   if (ran.timedOut) throw new FactoryError(`pre-merge: the migration-numbering check on ${subject.label} timed out after ${cfg.timeout_seconds} s (${log})`);
   if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${subject.label} was stopped (${log})`);
-  if (ran.code === 0) { fs.appendFileSync(log, `\n# migration-numbering check passed in ${seconds} s\n`); return { seconds: Number(seconds) }; }
 
   const names = async (ref) => (await git(dir, ['ls-tree', '--name-only', ref, `${cfg.dir}/`])).stdout.split('\n').map((l) => path.basename(l.trim())).filter((n) => n.endsWith('.sql'));
-  const added = (await git(dir, ['diff', '--name-only', '--diff-filter=A', mainSha, 'HEAD', '--', `${cfg.dir}/`])).stdout
+  const added = async () => (await git(dir, ['diff', '--name-only', '--diff-filter=A', mainSha, 'HEAD', '--', `${cfg.dir}/`])).stdout
     .split('\n').map((l) => path.basename(l.trim())).filter((n) => n.endsWith('.sql'));
-  const plan = planRenumber(await names(mainSha), added);
-  const findings = plan.map((r) => `renumber ${cfg.dir}/${r.from} to ${r.to}`);
+  let plan = [];
+  let renumbered = null;
+  if (ran.code !== 0) {
+    plan = planRenumber(await names(mainSha), await added());
+    if (plan.length && await applyMigrationRenumber(dir, plan, cfg.dir, mainSha)) {
+      const commit = await git(dir, ['commit', '-m', `chore: migrations: auto-renumber ${plan.map((r) => `${r.from} -> ${r.to}`).join(', ')} (pre-merge gate, T-1067)`]);
+      if (commit.code === 0) {
+        // A fresh log file: `runLogged` truncates `log`, which would erase the first (failing) run's
+        // own output that the blocked note below may still need to quote.
+        const retryLog = log.replace(/\.log$/, '-retry.log');
+        ran = await runLogged(cfg.argv, dir, retryLog, { timeoutMs: cfg.timeout_seconds * 1000, signal });
+        if (ran.timedOut) throw new FactoryError(`pre-merge: the migration-numbering check on ${subject.label} timed out after ${cfg.timeout_seconds} s (${retryLog})`);
+        if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${subject.label} was stopped (${retryLog})`);
+        fs.appendFileSync(log, `\n# migration-numbering check failed; auto-renumbered ${plan.map((r) => `${r.from} -> ${r.to}`).join(', ')} and retried (${retryLog}, exit ${ran.code})\n`);
+        if (ran.code === 0) renumbered = plan;
+      }
+    }
+  }
+  const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  if (ran.code === 0) {
+    fs.appendFileSync(log, `\n# migration-numbering check passed in ${seconds} s${renumbered ? ' (after auto-renumber)' : ''}\n`);
+    return { seconds: Number(seconds), renumbered };
+  }
+
+  // Either the fix did not apply (a `git mv` failed, no commit) or the retry is still red: recompute
+  // the plan against whatever `dir` looks like now so the blocked note always names the real gap.
+  const finalPlan = renumbered ? plan : planRenumber(await names(mainSha), await added());
+  const findings = finalPlan.map((r) => `renumber ${cfg.dir}/${r.from} to ${r.to}`);
   const branch = subject.branches;
+  const main = ctx.config.dispatcher.main_branch;
+  // No clashing file of the branch: either main is already broken (a duplicate or gap landed without
+  // the gate) or the branch broke it some other way (a deleted or renamed migration). Main alone decides.
+  const mainBroken = finalPlan.length ? false : await mainFailsNumbering(ctx, settings, mainSha, { signal, run });
   return {
-    refused: true, status: 'blocked', mode: 'migration-numbering', findings, renumber: plan, log, seconds,
-    summary: plan.length
-      ? `${branch} adds migration number(s) that ${ctx.config.dispatcher.main_branch} already uses (or that now leave a gap): ${plan.map((r) => `${r.from} → ${r.to}`).join(', ')}`
-      : `the migration-numbering check fails on the merge of ${branch} into ${ctx.config.dispatcher.main_branch} but the branch adds no clashing file; read the log (a gap or a changed file name?)`,
+    refused: true, status: 'blocked', mode: 'migration-numbering', findings, renumber: finalPlan, log, seconds, mainSha, mainBroken,
+    summary: finalPlan.length
+      ? `${branch} adds migration number(s) that ${main} already uses (or that now leave a gap): ${finalPlan.map((r) => `${r.from} → ${r.to}`).join(', ')} (auto-renumber attempted and still red; read the log)`
+      : mainBroken
+        ? `${main} itself fails the migration-numbering check (a duplicate or a gap already on ${main}); ${branch} adds no clashing file, so the fix belongs on ${main}`
+        : `the migration-numbering check passes on ${main} alone but fails on the merge of ${branch}, which adds no clashing file; the branch breaks the numbering (a deleted or renamed migration?); read the log`,
   };
 }
 
-/**
- * Run `settings.fast_argv` on the merge result in `dir`, next to the real gate command, purely to
- * measure it: how long it takes and whether it agrees with the real gate's raw exit code. Never
- * throws and never changes the merge outcome — a fast-lane run that fails to start or times out is
- * recorded as `ok: false` and the real gate proceeds exactly as if `fast_argv` were unset.
- * @param {object} ctx
- * @param {object} settings
- * @param {string} dir the candidate worktree (already holds the merge result)
- * @param {{id: string}} subject
- * @param {{signal?: AbortSignal, run: string}} opts
- * @returns {Promise<{argv: string[], ok: boolean, code: number|null, seconds: number, log: string}|null>} null when `fast_argv` is unset
- */
-async function runFastLane(ctx, settings, dir, subject, { signal, run }) {
-  if (!settings.fast_argv) return null;
-  const log = path.join(gateDir(ctx), `${subject.id}-${run}-fastlane.log`);
-  const started = Date.now();
-  try {
-    const ran = await runLogged(settings.fast_argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
-    const seconds = Number(((Date.now() - started) / 1000).toFixed(1));
-    if (ran.aborted) return { argv: settings.fast_argv, ok: false, code: null, seconds, log };
-    if (ran.timedOut) { fs.appendFileSync(log, '\n# fast lane timed out\n'); return { argv: settings.fast_argv, ok: false, code: null, seconds, log }; }
-    return { argv: settings.fast_argv, ok: true, code: ran.code, seconds, log };
-  } catch (err) {
-    const seconds = Number(((Date.now() - started) / 1000).toFixed(1));
-    try { fs.appendFileSync(log, `\n# fast lane could not run: ${err.message}\n`); } catch { /* log unwritable: not the real gate's problem */ }
-    return { argv: settings.fast_argv, ok: false, code: null, seconds, log };
-  }
-}
+const mainNumbering = new Map(); // main commit → whether the numbering check fails on main alone
 
 /**
- * Whether the fast lane's verdict (pass/fail) matches the real gate's raw command exit code on the
- * same merge result. `null` when the fast lane did not run or could not complete, so there is
- * nothing to compare yet.
- * @param {{ok: boolean, code: number|null}|null} fastLane
- * @param {number} fullCode the real gate command's exit code (before the red-main ratchet)
- * @returns {boolean|null}
+ * Run the numbering check on `main` alone, once per main commit. A check that cannot finish throws,
+ * so the gate retries later instead of blaming anyone.
  */
-export function fastLaneAgreed(fastLane, fullCode) {
-  if (!fastLane?.ok || fastLane.code === null) return null;
-  return (fastLane.code === 0) === (fullCode === 0);
+async function mainFailsNumbering(ctx, settings, mainSha, { signal, run }) {
+  if (mainNumbering.has(mainSha)) return mainNumbering.get(mainSha);
+  const cfg = settings.numbering;
+  const dir = path.join(scratchRoot(ctx), `main-numbering-${mainSha.slice(0, 12)}-${run}`);
+  const log = path.join(gateDir(ctx), `main-${mainSha.slice(0, 12)}-${run}-numbering.log`);
+  await addDetached(ctx, dir, mainSha);
+  try {
+    const ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal });
+    if (ran.timedOut || ran.aborted) throw new FactoryError(`pre-merge: the migration-numbering check on ${mainSha.slice(0, 12)} alone did not finish (${log})`);
+    if (mainNumbering.size > 64) mainNumbering.clear();
+    mainNumbering.set(mainSha, ran.code !== 0);
+    return ran.code !== 0;
+  } finally {
+    await dropWorktree(ctx, dir);
+  }
 }
 
 /**
@@ -590,13 +652,20 @@ export async function runPreMergeGate(ctx, ticket, opts = {}) {
  * next train). The verdict is for the tickets in `members` only. `blocked` does not say which member
  * is at fault: the caller splits the train (`splitTrain`) and gates the halves.
  *
- * Statuses and throwing are as for `runPreMergeGate`; `conflict` means no member merged at all.
+ * Statuses and throwing are as for `runPreMergeGate`; `conflict` means no member merged at all. A
+ * A `pass` carries `mainSha`, the `main` commit this verdict was judged against: with more than one
+ * gate lane running at once (T-2210) a sibling lane can land first, so the caller must check `main`
+ * is still at `mainSha` before trusting the verdict enough to really merge. It also carries
+ * `renumber` (T-1067) when the numbering check only passed after this run auto-renumbered a
+ * colliding migration in its own scratch worktree: the caller must re-apply that same plan
+ * (`applyMigrationRenumber`) to the real merge, which redoes the merge from scratch and would
+ * otherwise reproduce the exact collision this run just fixed.
  *
  * @param {object} ctx
  * @param {{id: string, title: string}[]} tickets in merge order
  * @param {{signal?: AbortSignal, argv?: string[]}} [opts]
  * @returns {Promise<{status: 'pass'|'blocked'|'conflict', mode?: string, findings: string[], summary: string, log?: string, baseLog?: string,
- *   members: string[], conflicts: {id: string, detail: string, withMain: boolean}[]}>}
+ *   members: string[], conflicts: {id: string, detail: string, withMain: boolean}[], mainSha?: string, renumber?: {from: string, to: string}[]}>}
  */
 export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
   if (!tickets.length) throw new FactoryError('pre-merge: a train needs at least one ticket');
@@ -633,22 +702,29 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
 
     const subject = { id: name, label, branches: members.map(branchName).join(', ') };
     let numberingSeconds = null;
+    let renumber = null;
     if (settings.numbering) {
       const checked = await checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { signal, run });
       if (checked.refused) { const { refused, ...verdict } = checked; return { ...verdict, ...outcome }; }
       numberingSeconds = checked.seconds;
+      renumber = checked.renumbered;
     }
+    // Only this dry run's own worktree is auto-fixed above: the real merge (`mergeTicket`) redoes the
+    // merge from scratch on the real branches, so it reproduces the same collision unless the caller
+    // applies this identical, already-validated plan to the real checkout too (T-1067). `mainSha` is
+    // the base this verdict was judged against: with more than one gate lane in flight at once
+    // (T-2210) the caller must check `main` hasn't moved under it before trusting a `pass` enough to
+    // really merge.
+    const withRenumber = (verdict) => ({ ...verdict, mainSha, ...(renumber ? { renumber } : {}) });
     const withTiming = (text) => (numberingSeconds === null ? text : `${text}; migration numbering checked in ${numberingSeconds} s`);
     const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
     if (ran.timedOut) throw new FactoryError(`pre-merge: ${settings.argv.join(' ')} on ${label} timed out after ${settings.timeout_minutes} minutes (${log})`);
     if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${label} was stopped (${log})`);
     assertTreeIntact(dir, identity, log);
-    const fastLane = await runFastLane(ctx, settings, dir, subject, { signal, run });
-    const withFastLane = (verdict) => (fastLane ? { ...verdict, fastLane: { ...fastLane, agreed: fastLaneAgreed(fastLane, ran.code) } } : verdict);
     const headTree = (await git(dir, ['rev-parse', '--verify', '-q', 'HEAD^{tree}'])).stdout.trim() || null;
     if (ran.code === 0) {
       await recordBaseline(ctx, settings, headTree, { code: 0, findings: new Map(), log }, name);
-      return withFastLane({ status: 'pass', mode: 'green', findings: [], summary: withTiming(`${settings.argv.join(' ')} passed on the merge result`), log, ...outcome });
+      return withRenumber({ status: 'pass', mode: 'green', findings: [], summary: withTiming(`${settings.argv.join(' ')} passed on the merge result`), log, ...outcome });
     }
 
     const head = extractFindings(readLog(log), [fs.realpathSync(dir), dir]);
@@ -665,25 +741,25 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
     const total = (m) => [...m.values()].reduce((a, b) => a + b, 0);
     const lines = fresh.map((f) => (f.known ? `${f.key}  (${f.extra} more than the ${f.known} on ${main})` : f.extra > 1 ? `${f.key}  (${f.extra} times)` : f.key));
     if (base.code === 0) {
-      return withFastLane({
+      return {
         status: 'blocked', mode: 'main-green', findings: lines, log, baseLog: base.log, ...outcome,
         summary: `${main} is green and ${settings.argv.join(' ')} fails on the merge result${lines.length ? '' : ' with no recognisable finding line; read the log'}${reuse}`,
-      });
+      };
     }
     if (!head.size) {
-      return withFastLane({
+      return {
         status: 'blocked', mode: 'unrecognised', findings: [], log, baseLog: base.log, ...outcome,
         summary: `${settings.argv.join(' ')} fails on the merge result and the log has no recognisable finding line, so it cannot be compared with the red ${main}; read the log${reuse}`,
-      });
+      };
     }
     if (fresh.length) {
-      return withFastLane({
+      return {
         status: 'blocked', mode: 'new-findings', findings: lines, log, baseLog: base.log, ...outcome,
         summary: `${main} is red (${total(base.findings)} known findings) and the merge result adds ${lines.length} that ${main} does not have${reuse}`,
-      });
+      };
     }
     await recordBaseline(ctx, settings, headTree, { code: ran.code, findings: head, log }, name);
-    return withFastLane({
+    return withRenumber({
       status: 'pass', mode: 'ratchet', findings: [], log, baseLog: base.log, ...outcome,
       summary: withTiming(`${main} is red (${total(base.findings)} known findings); the merge result adds none (${total(head)} findings, all already on ${main})${reuse}`),
     });

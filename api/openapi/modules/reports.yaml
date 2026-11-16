@@ -2233,6 +2233,13 @@ components:
           pattern: "^[a-z][a-z0-9_]{0,63}$"
         parameters:
           $ref: modules/reports.yaml#/components/schemas/ReportRunParameters
+        timeZone:
+          type: string
+          maxLength: 64
+          minLength: 1
+          pattern: "^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$"
+          description: >-
+            The runner's IANA time zone, such as Europe/Berlin. PDF and HTML exports of the run show Time cells in it, with the zone abbreviation. Absent means UTC. It does not change the run's rows or digest.
     ReportExportCreate:
       description: >-
         Starts an export of the run in the path.
