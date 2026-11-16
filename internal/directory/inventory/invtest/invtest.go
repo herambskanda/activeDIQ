@@ -14,6 +14,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/filetime"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
+	"github.com/skenzeriq/activediq/internal/directory/dn"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
@@ -24,6 +25,28 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	"github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest"
 )
+
+// The seeded tree's DNs come from the dn package, never from concatenated text (FF-SP3).
+var (
+	domainDN     = mustDN(dn.Parse("DC=example,DC=test", dn.Strict))
+	people       = mustDN(dn.Child(domainDN, dn.OU, "People"))
+	psoContainer = mustDN(dn.Child(mustDN(dn.Child(domainDN, dn.CN, "System")), dn.CN, "Password Settings Container"))
+)
+
+func mustDN(d dn.DN, err error) dn.DN {
+	if err != nil {
+		panic(err)
+	}
+	return d
+}
+
+func dnText(parent dn.DN, t dn.RDNType, v string) string {
+	return mustDN(dn.Child(parent, t, v)).Render().Display()
+}
+
+func rdnText(t dn.RDNType, v string) string {
+	return mustDN(dn.Child(dn.DN{}, t, v)).Render().Display()
+}
 
 const Cred = "11111111-1111-4111-8111-111111111111"
 
@@ -185,7 +208,7 @@ func (u User) Obs() inventory.Observation {
 		anc = append(anc, inventory.GUID(Dom))
 	}
 	return inventory.Observation{Object: inventory.GUID(u.GUID), NC: inventory.GUID(Dom), Kind: k, Class: cl, State: inventory.ObjLive,
-		Parent: inventory.GUID(parent), Ancestry: anc, DN: "CN=" + u.Sam + ",OU=People,DC=example,DC=test", RDN: "CN=" + u.Sam,
+		Parent: inventory.GUID(parent), Ancestry: anc, DN: dnText(people, dn.CN, u.Sam), RDN: rdnText(dn.CN, u.Sam),
 		SID: SID(u.RID), SAMAccountName: u.Sam, UserAccountControl: u.UAC, InputsRead: u.Read,
 		LockoutTime: u.Lockout, PwdLastSet: u.PwdLastSet, AccountExpires: u.Expires, HasSPN: u.SPN,
 		PrimaryGroup: inventory.GUID(u.Primary), WhenCreated: Base.Add(-24 * time.Hour)}
@@ -194,8 +217,8 @@ func (u User) Obs() inventory.Observation {
 // Group is a group with the given direct members (users or groups).
 func Group(guid, name string, rid uint32, members ...string) inventory.Observation {
 	o := inventory.Observation{Object: inventory.GUID(guid), NC: inventory.GUID(Dom), Kind: inventory.KindGroup, Class: "group", State: inventory.ObjLive,
-		Parent: inventory.GUID(OU), Ancestry: []inventory.GUID{inventory.GUID(OU), inventory.GUID(Dom)}, DN: "CN=" + name + ",OU=People,DC=example,DC=test",
-		RDN: "CN=" + name, SID: SID(rid), SAMAccountName: name, MembersComplete: true}
+		Parent: inventory.GUID(OU), Ancestry: []inventory.GUID{inventory.GUID(OU), inventory.GUID(Dom)}, DN: dnText(people, dn.CN, name),
+		RDN: rdnText(dn.CN, name), SID: SID(rid), SAMAccountName: name, MembersComplete: true}
 	for _, m := range members {
 		o.Members = append(o.Members, inventory.GUID(m))
 	}
@@ -205,8 +228,8 @@ func Group(guid, name string, rid uint32, members ...string) inventory.Observati
 // PSOObj is the directory object of a PSO, Under the container Sys (outside the OU).
 func PSOObj(guid, name string) inventory.Observation {
 	return inventory.Observation{Object: inventory.GUID(guid), NC: inventory.GUID(Dom), Kind: inventory.KindOther, Class: "msDS-PasswordSettings", State: inventory.ObjLive,
-		Parent: inventory.GUID(Sys), Ancestry: []inventory.GUID{inventory.GUID(Sys), inventory.GUID(Dom)}, DN: "CN=" + name + ",CN=Password Settings Container,CN=System,DC=example,DC=test",
-		RDN: "CN=" + name}
+		Parent: inventory.GUID(Sys), Ancestry: []inventory.GUID{inventory.GUID(Sys), inventory.GUID(Dom)}, DN: dnText(psoContainer, dn.CN, name),
+		RDN: rdnText(dn.CN, name)}
 }
 
 // ScopeNC admits the whole naming context; ScopeOU only the OU subtree.
@@ -219,7 +242,7 @@ func (e *Env) ScopeOU(c inventory.ConnectionID) authz.ReadScope {
 }
 func OUObs(guid, name, parent string, anc ...string) inventory.Observation {
 	o := inventory.Observation{Object: inventory.GUID(guid), NC: inventory.GUID(Dom), Kind: inventory.KindOU, Class: "organizationalUnit", State: inventory.ObjLive,
-		Parent: inventory.GUID(parent), DN: "OU=" + name + ",DC=example,DC=test", RDN: "OU=" + name}
+		Parent: inventory.GUID(parent), DN: dnText(domainDN, dn.OU, name), RDN: rdnText(dn.OU, name)}
 	for _, a := range anc {
 		o.Ancestry = append(o.Ancestry, inventory.GUID(a))
 	}
