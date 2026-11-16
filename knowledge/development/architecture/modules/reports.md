@@ -1,7 +1,7 @@
 ---
 title: "Module: reports — contract for the definition AST, dataset registry, compiler and run record"
 date: 2026-10-30
-updated: 2026-11-04
+updated: 2026-11-15
 status: draft
 owner: heramb
 author: solution-architect
@@ -41,6 +41,7 @@ scope decision, not a platform asymmetry.
 | Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. **T-1105 added the two library reads** (`listReportDefinitions`, `getReportDefinition`, `modules/reports/definitions.go`, §3.6). The export operations are built in row B9 (T-0963); the other 9 operations answer 501 until B11 | §6, §9, row B4 |
 | Console screens (`web/src/modules/reports`) | **Built (T-0966, row B12 part 1; export and schedule are B12b, T-0902).** Routes `/reports` (library) and `/reports/<id>`; the run starts when the report opens and the grid reads `listReportRunRows` (500 a page, server sort, windowed DataGrid). Client state is the URL plus `use-definitions.ts` and `use-report-run.ts` (start, poll `getReportRun`, cancel, retry). The stale banner and header chip render `ReportFreshness.stale[]` (connection name, cause, age) and the hidden-group banner renders `ReportRun.hiddenGroups[]` (count, `locked` removes Show), all from the API (T-1074); the console derives neither. Open gaps: no report+object composite hit (T-1075), subject reports need an object picker (T-1076), live-stack check (T-1077) | §6, row B12 |
 | `platform/export` | CSV, XLSX and PDF encoders (HTML is `platform/htmlx`), `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150), the canonical `Digest`/`Digester` and `Unknown()`. **Built (T-0963, row B9):** `modules/reports/export` (service, `reports.export` job, About block), migration 0065, RP5 landed. **PDF and HTML built (T-0964, row B10)**, §7.1b | §7, rows B9, B10 |
+| `platform/chartimg` | **Decided, not built (ADR-0014, ratified 2026-11-15; build T-2135, fitness `fitness-chartimg` CI1–CI5 T-2134).** The one chart-image renderer: typed chart spec + stored run rows → `Scene` → PNG (`x/image/vector`, embedded Plex TTF, integer layout) and SVG. PDF embeds the PNG as a Flate image XObject, PNG export and inline mail image (`Content-ID`, no attachment fallback) use the same pixels, HTML export uses the SVG. Limits 2,400×1,600 px, 4 MiB, 5 s deadline, `GOMAXPROCS/2` concurrent; no network or filesystem | EB-5 §4.2, §6.3, §6.4, FR-GC-19, AC-GC-13 |
 | `platform/jobs` | Kinds, `ModeDefault` and `ModeManagedTx`, queue, leases, and the DM-44 `Schedule` value (T-0951: recurrence, IANA zone, DST rules, `Check` fires a missed run once). **The stored schedule table and the tick loop are not built** (T-0951 follow-up) | §8, row P4 |
 | `platform/notify` | **Built (T-0950).** `notify/mailaddr` (strict address parser), `notify/settings` (allowed recipient domains, SMTP relay; migration 0062), `notify/mail` (SMTP over egress), `notify/mailtest`, `notify/delivery` (DM-84 `Deliveries.Enqueue/ForSource/Get`, `Dispatcher.DispatchDue`), the `notify.settings.update` Action in `modules/notify`. **T-1004:** `notify/dispatchjob` (`notify.dispatch` job) runs `DispatchDue` per tenant; `compose/server` does not register it yet. **Not yet wired:** no `Renderer` per purpose (B11), no SMTP AUTH credentials. Terminal failure state is `given_up` | §7.2, §8, row P3 |
 | Per-DC read | **Built (T-0970, row P5).** `client.ConnectorPerDC` (`directory/client/perdc.go`) implements `report.PerDCReader` over the connector's `ReadPerDC` (`GRPCPerDCTransport`): one call per object, at most `PerDCConfig.InFlight` (default 8, max 64) in flight **per tenant** across every `Read`, `FanOut` (default 4) as `max_concurrency`, `Reads()` counter. Attributes and scope are the closed enums (an undefined value is refused before any RPC). The batch summary is the weakest object's (largest `DCsInScope`, smallest `DCsAnswered`, COMPLETE only if all were). Coverage is derived from the answers accepted: a DC whose values are missing, mistyped or out of range becomes an errored result (`incomplete_values`, `invalid_value`), and a stream that deviates from results-then-one-summary is `ErrReadProtocol`. Per-DC `Err` is the lower-case connector code, never its message. A stream-level `OBJECT_NOT_FOUND` is an object with no answers and PARTIAL. **The connector has no `ReadPerDC` handler yet** (`internal/connector/read` serves `Read` and `ScopedSearch` only), so the client is proved over a real gRPC hop against a scripted server, not Samba | §6.5, row P5 |
@@ -159,6 +160,7 @@ type Column struct {
     Sortable bool
     Default  bool            // shown when a definition names no columns (definitions normally do)
     Count    bool            // Derived only: counts other objects (member, subtree counts); RP11 compares it
+    Groupable, Numeric, Multi bool // grouping registry flags, rules in §3.2
     UnknownWhen ColumnID     // Derived non-enum only: the state column whose unknown_input_missing makes this cell "u" (§3.3, §6.2)
 }
 
@@ -210,9 +212,63 @@ type Value struct{ /* unexported: one typed value; constructors TextV, IntV, Boo
 - Relative-time operators take whole days. A definition parameter can set a floor (§3.5), for
   example 30 days on replicated logon.
 
-There is **no function, aggregate or grouping node at 2a**. Top N is a sort plus `Query.Top`. The
-2c builder adds grouping with an amendment to this page, so the type never names something that
-does not exist.
+There is **no function, aggregate or free-expression node**. Top N is a sort plus `Query.Top`. The one
+grouping construct is the closed `Group` node below (amended 2026-11-15, T-2107, for EB-5; spec
+[reports-eb5-grouping-charts](../../../product/specs/reports-eb5-grouping-charts.md) §3, Q1 confirmed).
+
+**The `Group` node (closed).** A `Query` carries at most one `*Group`, applied after `Where` and scope
+trimming (§4.3) and before sort. Everything in it is a registered ID or a typed constant; no field is text
+that reaches SQL.
+
+```go
+type Group struct {
+    Keys     []GroupKey     // 1..2 (ErrTooManyGroupKeys)
+    Measures []Measure      // 0..4 beyond the implicit count (ErrTooManyMeasures); count is always present
+    Having   *GroupFilter   // optional: one measure, Op in Eq/Ne/Lt/Le/Gt/Ge, typed Value
+    Sort     SortKey        // a key or a measure ID; the compiler appends the key tuple as tie-break
+}
+type GroupKey struct{ Column ColumnID; Bucket Bucket }   // Bucket only for TypeTime: BucketDay|Week|Month|Quarter|Year; else BucketNone
+type Measure  struct{ ID string; Fn MeasureFn; Column ColumnID } // Fn: FnCount (no Column), FnCountDistinct, FnMin, FnMax, FnSum, FnAvg
+type GroupFilter struct{ Measure string; Op Op; Value Value }
+```
+
+- **Key rules.** A key column must have `Groupable` (below), type enum, bool, text, GUID or time, and must not be
+  `Multi`. A `PerDC` column or a secret `JSONAttr` is never groupable (registry build refuses it). Bucketing
+  is `date_trunc` over a fixed enum keyword with the run's UTC time zone; the bucket never comes from text.
+- **Measure rules.** `FnMin`/`FnMax` accept `Numeric` or time columns; `FnSum`/`FnAvg` accept `Numeric` only;
+  `FnCountDistinct` accepts any `Groupable` column. `Measure.ID` is a generated `m1..m4`, never admin text.
+- **`(none)` key.** A NULL key value forms its own group; it is never dropped or merged. The compiler groups by
+  the raw key (so NULL is one group) and the group carries `KeyNone[i] = true` for the cell kind `none`; the label
+  "(none)" is presentation, not a stored value, so a real value spelled "(none)" cannot collide.
+- **1,000-group cut-off, N by window.** The compiler emits `count(*) OVER () AS group_total` over the grouped
+  relation, orders by `Group.Sort`, and applies `LIMIT 1000` (the run path passes the cap through
+  `Inputs.Limit`). `N` is read from `group_total` of the first row; the run header records `group_count = N`
+  and `groups_shown = min(N, 1000)`. The cut-off is never silent (spec FR-GC-05). `group_total` is computed
+  after `Having`, so N equals the groups the admin would see uncut.
+- **Output.** A grouped run's columns are the key columns, the measures, `_group_size`, in that order. Rows are
+  groups, not objects; digest, export and paging use the stored run as for any run (§6).
+- **Registry flags on `Column`** (added to the struct above):
+
+```go
+    Groupable bool   // may be a Group key or count_distinct target; false by default
+    Numeric   bool   // TypeInt (or a registered numeric derived/JSON column) usable by sum/avg/min/max
+    Multi     bool   // multi-valued (TypeTextList or a member-expanded column): never Groupable
+```
+
+  `NewRegistry` additionally refuses: `Groupable` with `Multi`; `Groupable` on `PerDC`, on a secret key, or on
+  a `Derived` column that carries `UnknownWhen` (an unknown cell cannot be a group value; revisit if the
+  spec needs it); `Numeric` on a type other than `TypeInt`; `Multi` on a non-`TypeTextList` column. `Count`
+  columns are `Numeric` and not `Groupable`.
+- **Compile-time checks** (`ErrBadGroup*`): unknown column, non-`Groupable` key, `Bucket` on a non-time key, a
+  measure function the column's flags do not allow, `Having` naming an absent measure, and a `Group` on a
+  dataset whose preset has `PerDCWhere` (per-DC columns are filled after the query, §6.5, so they cannot be
+  grouped).
+- **Drill-through (spec §3.4).** `report.DrillFilter(def, group)` returns a `Where` extension, never query
+  text: for each key, a non-NULL value yields `Cmp{Column, OpEq, Value}` (for a bucketed time key, a `>=`
+  and `<` pair over the bucket bounds); a **`(none)` key yields `Cmp{Column, OpAbsent}`, which compiles to
+  `IS NULL`** (and to the empty-string/zero sentinel check only where the registry declares one for that
+  column). The extension is ANDed to the definition's `Where` and run as a new ungrouped run under the same
+  scope.
 
 ### 3.3 Derived columns and fragments (spec §6.4, FR-09)
 
@@ -346,6 +402,14 @@ parent RDNs are not an exception to the masking rules; they are part of the obje
    disclosure rule above), or when any numeric aggregate column differs
    from the same aggregate computed with the out-of-scope objects deleted. Aggregate columns are
    those declared `Column.Count`.
+4. **Grouped runs (T-2107).** For every `Groupable` column and every `Numeric` column (and each bucket for a
+   time key), run the grouped query under the same `ReadScope`: a count, `count_distinct`, `min`, `max`, `sum`
+   and `avg` measure over each, with that column as a key (and one 2-key run per dataset). Fail when any
+   group key value or label holds a sentinel; when the set of groups, any group's `_group_size`, any measure,
+   `group_total` (N) or `object_count` differs from the same grouped query run with the out-of-scope
+   objects deleted; or when the `(none)` group's count differs the same way. A drill-through of every shown group
+   (including `(none)`, as `IS NULL`) must return exactly `_group_size` rows. Subtest name:
+   `<dataset>/grouped`.
 
 **The derived columns of `inventory.users` (row B3).** Each one is evaluated in the query. Each
 state column has a companion `<column>_reason` enum, which the UI shows on hover:
@@ -872,7 +936,7 @@ replicated-logon thresholds (spec §6.4) is `Min: 30` on USR-03's `days` paramet
     `exportFormats` is `[]` until B9 lands; `subjectKind` is `none`, `group` or `user` when a preset requires subjects and names their kind (GRP-02, GRP-03), or `object` when it names none; `freshnessKind` is `nc_watermark`, `policy_read` or `per_dc` from the dataset.
   - Test: `definitions_pg_test.go` (whole HTTP stack, response conformance on, both PostgreSQL versions).
 - **Wired in production (T-1104):** `compose/server.bootReport` adds `inventory.Datasets()` to the host under owner key
-  `inventory` (checked by `report.CheckTables` against `store/owners`); `buildReports` compiles the host's datasets with
+  `inventory` (checked by `report.CheckTables` against `store/owners`); the reports module (`wiring.go`, ready hook after the host is sealed) compiles the host's datasets with
   `reportsql.NewRegistry` over the live schema catalogue (`reportSchema`, a registered platform path: it runs before the
   install tenant exists) and passes `library.Load(library.Shipped(), …)` as `run.Catalog`. The placeholder catalogue that knew no definition is deleted.
 - **Tests.** `library/library_test.go` (`Test_reports_library_matches_spec`, `Test_reports_search_by_me_name`,
@@ -1117,9 +1181,9 @@ in memory** rather than filter through inventory.
   consistency GUID; `mail` for contacts and `dNSHostName` for computers, only when they are JSON strings):
   keys are built from named columns, never from the attribute bag, so a secret attribute cannot reach the
   index. Purged objects have no keys; deleted and out-of-scope objects keep theirs and rank after live ones.
-  Table `inventory_search_keys` (migration 0069): B-tree `(tenant_id, key_kind, key)`, RLS + FORCE; migration 0072
+  Table `inventory_search_keys` (migration 0069): B-tree `(tenant_id, key_kind, key)`, RLS + FORCE; migration 0074
   (T-1335) adds `key_id` (identity, `UNIQUE (tenant_id, key_id)`, never leaves a statement) and drops the GIN.
-  Table `inventory_search_trigrams` (migration 0073, `-- write-class: system`): `(tenant_id, trgm, key_id)`,
+  Table `inventory_search_trigrams` (migration 0074, `-- write-class: system`): `(tenant_id, trgm, key_id)`,
   primary key in that order, RLS + FORCE, no UPDATE or TRUNCATE for the runtime role. It holds the `show_trgm`
   postings of the name (1) and sam (3) keys only (`searchkey.Kind.FuzzyEligible`), kept equal to the keys by
   `inventory_search_trigrams_sync()` through three statement-level triggers (AFTER INSERT, DELETE, UPDATE with
@@ -1143,7 +1207,7 @@ in memory** rather than filter through inventory.
   never uses a trigram GIN; that is why the fuzzy probe reads a tenant-led B-tree of postings instead (ADR-0011
   rule 5a). `Test_search_plan_uses_the_indexes` and SE5 assert the plan, and
   `Test_search_fuzzy_reads_only_the_tenants_own_postings` proves that another tenant's size changes no row
-  examined. The hits join at the default W (10,000) is a separate plan question (T-1344). The per-script vectors (Latin with diacritics, Cyrillic, Greek, CJK) all
+  examined. The hits join probes `directory_objects` once per candidate (`cand c CROSS JOIN LATERAL (… WHERE tenant_id, connection_id, object_guid … LIMIT 1)`, T-1345), so at the default W (`inventory.DefaultSearchCeiling`) it is a nested loop of primary-key probes, not a hash join over a Seq Scan of every tenant's rows (PostgreSQL 18 chose that before); the plan tests and the isolation test run at both W=100 and the default, with tenant B ten times A. The per-script vectors (Latin with diacritics, Cyrillic, Greek, CJK) all
   match fuzzily on the bundled pg16 and pg18 images.
 
 ## 5. The compiler: `store/reportsql`
@@ -1580,7 +1644,7 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
 - **Run record.** `report_runs.per_dc` (progress while running; `complete`, `dcs_in_scope`, `dcs_answered`, `unreachable[{dc,error}]`, `read_at` when
   done). `Run.ColumnLabel` appends " (at least)" to value columns of a partial run; the API `coverage` has `label` and `unreachable`; the export
   header uses the same label and the About block gains a "DC coverage" line.
-- **Migration 0073** lets `report_run_rows` rows be deleted while the run is `running` (per-DC filtering removes rows).
+- **Migration 0076** lets `report_run_rows` rows be deleted while the run is `running` (per-DC filtering removes rows).
 - **Not wired yet.** `Service.PerDC` and `Service.PerDCDCs` are nil in `compose/server`; until the follow-ups land a per-DC run fails
   `connection_unavailable`. Needed: a `DCsInScope` on `client.ConnectorPerDC` and the wiring (directory-engineer), calibration of the cap and a
   500k-candidate timing (B13), the coverage label and "(at least)" header on screen (B12).
@@ -2020,7 +2084,7 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
   - Cancel is audited as `reports.run.failed` with Reason `cancelled`. Token principals (a Via chain) are
     refused at 2a (403). `too_many_report_jobs` is `errors[].code` on a 429.
   - Production wiring: compose passes the composed `*rbac.ReadScopes` (T-0916, the producer search shares)
-    to `buildReports`, which refuses to start without it; `noScopes` and its 503 `not-ready` fallback are gone
+    to the reports module, whose `Register` refuses to start without it (`ErrNoReadScopes`); `noScopes` and its 503 `not-ready` fallback are gone
     (T-1151). The handler still maps `run.ErrScopesUnavailable` to 503 for any other host that builds the
     service without a producer. The catalogue is the shipped library since T-1104 (an unknown id is 404
     `definition_not_found`).
@@ -2051,4 +2115,5 @@ threshold, the 10 MB limit) are confirmed by row B13, and the defaults apply unt
 - 2026-11-01 · T-0964 · row B10 built: `platform/export/pdf` (+ `pdftest`), `platform/htmlx`, PDF and HTML formats with
   caps of 5,000 and 20,000 rows, per-format `HardCap`, `FormatsFor`, `exportFormats` served by the API. As built:
   §7.1b. Follow-ups: the owner's time zone on a run; an embedded font for CJK in the PDF.
-- 2026-11-04 · T-0971 · row B8 built: per-DC run stages, read cap, coverage labels, `EvalPerDC`, USR-04 and PWD-03 (§6.5 "As built"); `DCCounter` port; migration 0073.
+- 2026-11-04 · T-0971 · row B8 built: per-DC run stages, read cap, coverage labels, `EvalPerDC`, USR-04 and PWD-03 (§6.5 "As built"); `DCCounter` port; migration 0076.
+- 2026-11-15 · T-2107 · §3.2 amended for EB-5: closed `Group` node, `Column.Groupable/Numeric/Multi`, 1,000-group cut-off with N by window count, `(none)` as `IS NULL` drill-through, RP11 extended to grouped runs. Follow-ups: build and fitness tickets (see T-2107 note).

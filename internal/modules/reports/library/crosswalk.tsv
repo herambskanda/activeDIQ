@@ -56,3 +56,13 @@ Recently Created OUs	ou-01	Organizational units	recently_created
 All Contacts	ctc-01	Contacts	all	
 Mail Enabled Contacts	ctc-01	Contacts	mail_enabled	
 Recently Created Contacts	ctc-01	Contacts	recently_created	
+Users with Cannot Change Password	pwd-04	Password change blocked	blocked	
+Recently Modified Users	usr-06	User changes	modified	
+Recently Deleted Users	usr-06	User changes	deleted	
+Recently Modified Groups	grp-05	Group changes	modified	
+Recently Deleted Groups	grp-05	Group changes	deleted	
+Recently Modified Computers	cmp-03	Computer changes	modified	
+Recently Deleted Computers	cmp-03	Computer changes	deleted	
+Recently Modified Contacts	ctc-02	Contact changes	modified	
+Recently Deleted Contacts	ctc-02	Contact changes	deleted	
+Recently Modified OUs	ou-02	OU changes	modified	
