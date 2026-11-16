@@ -46,7 +46,7 @@ const EXPECTED = {
   ops: [['in_progress', 'backend-engineer'], ['review', 'code-reviewer'], ['done', null]],
   spec: [['in_progress', 'backend-engineer'], ['review', 'solution-architect'], ['done', null]],
   design: [['in_progress', 'backend-engineer'], ['review', 'product-manager'], ['done', null]],
-  docs: [['in_progress', 'backend-engineer'], ['review', 'product-manager'], ['done', null]],
+  docs: [['in_progress', 'backend-engineer'], ['done', null]],
   video: [['in_progress', 'backend-engineer'], ['review', 'product-manager'], ['done', null]],
   research: [['in_progress', 'backend-engineer'], ['review', 'factory-director'], ['done', null]],
   proposal: [['in_progress', 'backend-engineer'], ['review', 'factory-director'], ['done', null]],
