@@ -150,12 +150,20 @@ func (in MemberInput) attrs() []step.Attr {
 	}
 }
 
+// memberDescriptors hold the identity and the one permission of each Action as constants, so the GM1
+// fitness check can read them statically; buildMember completes the rest of the Descriptor.
+var memberDescriptors = map[operation.ActionID]operation.Descriptor{
+	AddMemberID:    operation.Descriptor{ID: AddMemberID, Permission: PermAddMember},
+	NestGroupID:    operation.Descriptor{ID: NestGroupID, Permission: PermNestGroup},
+	RemoveMemberID: operation.Descriptor{ID: RemoveMemberID, Permission: PermRemoveMember},
+}
+
 func buildMember(p LifecyclePorts, sp memberSpec) (operation.Action, error) {
+	desc := memberDescriptors[sp.id]
+	desc.Version, desc.Input, desc.AuditKind = 1, "#/components/schemas/AdGroupMember", sp.audit
+	desc.Target, desc.TargetClass, desc.Reversibility = operation.TargetAD, classGroup, operation.Reversible
 	return operation.Define(operation.Typed[MemberInput, memberPayload, MemberOutcome]{
-		Descriptor: operation.Descriptor{
-			ID: sp.id, Version: 1, Permission: sp.perm, Input: "#/components/schemas/AdGroupMember",
-			Target: operation.TargetAD, TargetClass: classGroup, Reversibility: operation.Reversible, AuditKind: sp.audit,
-		},
+		Descriptor: desc,
 		Plan: func(ctx context.Context, pc operation.PlanContext, in MemberInput) ([]operation.TypedStep[memberPayload], error) {
 			if err := in.validate(sp); err != nil {
 				return nil, err
@@ -216,7 +224,8 @@ func buildMember(p LifecyclePorts, sp memberSpec) (operation.Action, error) {
 			if p.Writer == nil {
 				return MemberOutcome{}, errUnavailable
 			}
-			res, err := p.Writer.Write(ctx, s, client.WriteOp{DigestKind: sp.key, Target: tp.Plan.Target, Attrs: tp.Payload.Input.attrs()})
+			in := tp.Payload.Input
+			res, err := p.Writer.Write(ctx, s, client.WriteOp{DigestKind: sp.key, Target: in.groupRef(), Attrs: in.attrs()})
 			if err != nil {
 				return MemberOutcome{}, writeError(err, false)
 			}
