@@ -8,11 +8,6 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/directory"
-	"github.com/skenzeriq/activediq/internal/modules/compliance"
-	"github.com/skenzeriq/activediq/internal/modules/connections"
-	"github.com/skenzeriq/activediq/internal/modules/delegation"
-	"github.com/skenzeriq/activediq/internal/modules/inventory"
-	"github.com/skenzeriq/activediq/internal/modules/notify"
 	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
@@ -27,28 +22,28 @@ import (
 // and connection changes, IdP configuration, audit export and retention, break-glass use, authority
 // factor approval) are not listed, and each of those tickets adds its row and sets Descriptor.StepUp (or StepUpWhen when the row applies only to some inputs).
 var stepUpTable = map[operation.ActionID]string{
-	connections.Tier0OverrideActionID:     "The Tier-0 override acknowledgement (TM-D1)",
-	connections.HybridLinkConfirmActionID: "HybridLink confirmation (connections.hybrid_link.confirm)",
+	"connections.tier0_override.acknowledge": "The Tier-0 override acknowledgement (TM-D1)",
+	"connections.hybrid_link.confirm":        "HybridLink confirmation (connections.hybrid_link.confirm)",
 	// Declare writes a confirmed link directly, skipping proposed: the same cross-directory authority
 	// path as confirm, so it carries the same flag.
-	connections.HybridLinkDeclareActionID: "HybridLink declaration confirms without a proposal; same path as confirm",
+	"connections.hybrid_link.declare": "HybridLink declaration confirms without a proposal; same path as confirm",
 	// Re-confirming a correlation held for reconfirm_required (TM-D17 rule 4 (g)) is an irreversible
 	// cross-directory authority decision; it also requires a current tenant-owner.
-	connections.ReconfirmActionID:    "Correlation re-confirmation (TM-D17 rule 4 (g))",
-	inventory.SetDesignationActionID: "Designating or un-designating tier0 objects (§6.4)",
+	"connections.correlation.reconfirm": "Correlation re-confirmation (TM-D17 rule 4 (g))",
+	"inventory.tier0_designation.set":   "Designating or un-designating tier0 objects (§6.4)",
 	// Legal holds (T-0605): lifting one lets the next retention purge destroy evidence, and placing one
 	// withholds data from erasure; both are a compliance officer's act and need a fresh MFA.
-	compliance.SetHoldActionID:     "Placing a legal hold on a personal subject",
-	compliance.ReleaseHoldActionID: "Releasing a legal hold (lets the retention purge destroy evidence)",
+	"compliance.hold.set":     "Placing a legal hold on a personal subject",
+	"compliance.hold.release": "Releasing a legal hold (lets the retention purge destroy evidence)",
 	// notify.settings.update widens the allowed recipient domains and re-points the SMTP relay (TM-D30 SX-7).
-	notify.UpdateSettingsActionID: "Widening allowed recipient domains / re-pointing the SMTP relay (TM-D30 SX-7)",
+	"notify.settings.update": "Widening allowed recipient domains / re-pointing the SMTP relay (TM-D30 SX-7)",
 	// RBAC changes (§7.4): every role or assignment change is a step-up operation.
 	// Resetting a password is a credential change and needs the OTP-before-reset rule of ENH-09 (TM-D16).
-	"ad.user.resetPassword": "Password reset (TM-D16; ENH-09 OTP-before-reset)",
-	delegation.RoleCreateID: "RBAC change: creating a custom role",
-	delegation.RoleUpdateID: "RBAC change: editing a custom role's permissions",
-	delegation.GrantID:      "RBAC change: granting an assignment",
-	delegation.RevokeID:     "RBAC change: revoking an assignment",
+	"ad.user.resetPassword":        "Password reset (TM-D16; ENH-09 OTP-before-reset)",
+	"delegation.role.create":       "RBAC change: creating a custom role",
+	"delegation.role.update":       "RBAC change: editing a custom role's permissions",
+	"delegation.assignment.grant":  "RBAC change: granting an assignment",
+	"delegation.assignment.revoke": "RBAC change: revoking an assignment",
 }
 
 func catalogue(t *testing.T) []operation.Descriptor {
@@ -178,7 +173,7 @@ func Test_control_plane_flag_catalogue_matches_never_crosses(t *testing.T) {
 			flagged++
 		}
 	}
-	for _, id := range []operation.ActionID{delegation.RoleCreateID, delegation.RoleUpdateID, delegation.GrantID, delegation.RevokeID} {
+	for _, id := range []operation.ActionID{"delegation.role.create", "delegation.role.update", "delegation.assignment.grant", "delegation.assignment.revoke"} {
 		found := false
 		for _, d := range cat {
 			found = found || (d.ID == id && d.ControlPlane)
@@ -254,7 +249,7 @@ func Test_step_up_permissions_all_in_policy(t *testing.T) {
 }
 
 // The check bites on a fixture document: a routed StepUp permission without a row is reported, including
-// one that is not in moduleOperationPermissions (a built-in role permission); an unrouted one is not.
+// one that is a built-in role permission rather than a module contribution; an unrouted one is not.
 func Test_step_up_policy_gap_check_bites(t *testing.T) {
 	const fixture = `{"paths":{
 	 "/a":{"post":{"operationId":"a","tags":["t"],"x-permission":"a.do"}},
@@ -265,8 +260,8 @@ func Test_step_up_policy_gap_check_bites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(moduleOperationPermissions, "inventory.tier0_designation.manage") {
-		t.Fatal("fixture premise broken: the Tier-0 permission is now in moduleOperationPermissions")
+	if !slices.Contains(kernelPermissions(), "inventory.tier0_designation.manage") {
+		t.Fatal("fixture premise broken: the Tier-0 permission is no longer a built-in role permission")
 	}
 	cat := []operation.Descriptor{
 		{ID: "a.routed", Permission: "a.do", StepUp: true},

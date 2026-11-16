@@ -37,10 +37,14 @@ func migrationsFS(t *testing.T, keep func(name string) bool) fs.FS {
 // AC1: migration 0074 over a populated database. Two tenants with name, sam and other-kind keys exist before
 // the migration; afterwards the postings equal what show_trgm gives over the name and sam keys (non-zero),
 // the structure is as the ADR says, and the privileges are the runtime role's.
+// objectChangesMig is the T-1109 history table the object upsert writes to; it does not depend on the postings,
+// so the pre-0074 schema carries it and the populate step works.
+const objectChangesMig = "0077_inventory_object_changes.sql"
+
 func Test_migration_0074_builds_the_postings_over_a_populated_database(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		const mig = "0074_inventory_search_trigrams.sql"
-		e := setupFS(t, s, migrationsFS(t, func(n string) bool { return n < mig }))
+		e := setupFS(t, s, migrationsFS(t, func(n string) bool { return n < mig || n == objectChangesMig }))
 		e.hStructure(t, e.adA)
 		if _, err := e.populate(t, e.adA, hBase, sSrchUser(1, "praman", "Priya Raman"), sSrchUser(2, "jdoe", "Jóhn Döe")); err != nil {
 			t.Fatal(err)
@@ -160,5 +164,40 @@ func Test_migration_0074_builds_the_postings_over_a_populated_database(t *testin
 			t.Errorf("an index that does not lead with tenant_id: %s", ix)
 		}
 		t.Logf("%d postings over two tenants", total)
+	})
+}
+
+// T-1111 AC4: migration 0080 over a populated database. Incremental cursors go to resync_required with no
+// cookie, other states are untouched, and no inventory row changes, so the datasets keep serving.
+func Test_migration_0080_requires_a_resync_and_leaves_inventory_alone(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		const mig = "0081_sync_user_attribute_resync.sql"
+		e := setupFS(t, s, migrationsFS(t, func(n string) bool { return n < mig }))
+		e.hStructure(t, e.adA)
+		if _, err := e.populate(t, e.adA, hBase, sSrchUser(1, "praman", "Priya Raman")); err != nil {
+			t.Fatal(err)
+		}
+		for part, state := range map[string]string{hGUID(0xa1, 1): "incremental", hGUID(0xa1, 2): "initial_sync"} {
+			cols, vals := "", ""
+			if state == "incremental" {
+				cols, vals = ", cookie, last_full_sync_at", ", '\\x01', now()"
+			}
+			if err := e.exec(e.a, `INSERT INTO public.sync_cursors (tenant_id, connection_id, partition, state, lease_fencing_token`+cols+`)
+				SELECT tenant_id, id, $1, $2, 1`+vals+` FROM public.connections WHERE id = $3::uuid`, part, state, string(e.adA)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		before := e.ownerRun(t, e.a, `SELECT md5(string_agg(d::text, '|' ORDER BY object_guid)) FROM public.directory_objects d`)
+		if err := e.d.Apply(context.Background(), migrationsFS(t, func(n string) bool { return n == mig })); err != nil {
+			t.Fatal(err)
+		}
+		got := e.ownerRun(t, e.a, `SELECT partition || '=' || state || ':' || (cookie IS NULL)::text FROM public.sync_cursors ORDER BY partition`)
+		want := []string{hGUID(0xa1, 1) + "=resync_required:true", hGUID(0xa1, 2) + "=initial_sync:true"}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("cursors = %v, want %v", got, want)
+		}
+		if after := e.ownerRun(t, e.a, `SELECT md5(string_agg(d::text, '|' ORDER BY object_guid)) FROM public.directory_objects d`); after[0] != before[0] {
+			t.Error("the migration changed inventory rows")
+		}
 	})
 }
