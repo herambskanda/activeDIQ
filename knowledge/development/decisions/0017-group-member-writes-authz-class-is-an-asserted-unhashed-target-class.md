@@ -2,8 +2,10 @@
 title: "ADR-0017: Group-member write steps carry Target.Class=group as an asserted, unhashed class; the connector digest stays class-free"
 date: 2026-11-16
 updated: 2026-11-16
-status: proposed
-decision: none (technical; notice to be logged by the factory-director)
+status: ratified
+ratified_on: 2026-11-16
+ratified_by: factory-director
+decision: D-0038
 author: solution-architect
 kind: technical
 ticket: T-2214
@@ -13,7 +15,7 @@ fitness: GM1 (extended), GM5 (new) — neither in CI yet, so not `accepted`
 
 # ADR-0017: Group-member write steps carry `Target.Class=group` as an asserted, unhashed class
 
-**Status:** proposed 2026-11-16. Ratified when security-architect has read §Security; `accepted` when GM1 (extended) and GM5 run green in `make ci`.
+**Status:** ratified 2026-11-16 (D-0038). Security claim verified against `kinds_group.go:171` at review; security-architect reviews it again on T-2217. `accepted` when GM1 (extended) and GM5 run green in `make ci`.
 
 ## Context
 
