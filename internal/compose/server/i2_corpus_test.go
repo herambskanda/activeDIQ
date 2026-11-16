@@ -35,10 +35,12 @@ const i2Sentinel = "SENTINEL-i2-7f3a9c"
 // has no connector in this test (the boot has no directory services), so the fixture also names how
 // to build the same Action over a fake directory (i2Planners); both must exist for an ID.
 var i2Fixtures = map[operation.ActionID]func(sentinel string) operation.Input{
-	ad.ResetPasswordID: func(string) operation.Input { return i2JSON(ad.ResetInput{Target: i2Target, MustChangeAtNextLogon: true}) },
-	ad.UnlockID:        func(string) operation.Input { return i2JSON(ad.AccountInput{Target: i2Target}) },
-	ad.EnableID:        func(string) operation.Input { return i2JSON(ad.AccountInput{Target: i2Target}) },
-	ad.DisableID:       func(string) operation.Input { return i2JSON(ad.AccountInput{Target: i2Target}) },
+	ad.ResetPasswordID: func(string) operation.Input {
+		return i2JSON(ad.ResetInput{Target: i2Target, MustChangeAtNextLogon: true})
+	},
+	ad.UnlockID:  func(string) operation.Input { return i2JSON(ad.AccountInput{Target: i2Target}) },
+	ad.EnableID:  func(string) operation.Input { return i2JSON(ad.AccountInput{Target: i2Target}) },
+	ad.DisableID: func(string) operation.Input { return i2JSON(ad.AccountInput{Target: i2Target}) },
 	ad.CreateID: func(string) operation.Input {
 		return i2JSON(ad.CreateInput{ConnectionID: i2Conn, NamingContext: i2NC, ParentGuid: i2Parent, Enabled: true,
 			Attributes: map[string]string{"cn": "Ann Smith", "sAMAccountName": "asmith", "givenName": "Ann", "sn": "Smith"}, UPNSuffix: "example.test"})
@@ -46,10 +48,12 @@ var i2Fixtures = map[operation.ActionID]func(sentinel string) operation.Input{
 	ad.UpdateID: func(string) operation.Input {
 		return i2JSON(ad.UpdateInput{Target: i2Target, Set: map[string]string{"description": "new"}, Clear: []string{"title"}})
 	},
-	ad.DeleteID:  func(string) operation.Input { return i2JSON(ad.DeleteInput{Target: i2Target}) },
-	ad.MoveID:    func(string) operation.Input { return i2JSON(ad.MoveInput{Target: i2Target, NewParentGuid: i2Parent2}) },
-	ad.RenameID:  func(string) operation.Input { return i2JSON(ad.RenameInput{Target: i2Target, NewName: "Ann Jones"}) },
-	ad.RestoreID: func(string) operation.Input { return i2JSON(ad.RestoreInput{Target: i2Target, NewParentGuid: i2Parent, Name: "Ann Smith"}) },
+	ad.DeleteID: func(string) operation.Input { return i2JSON(ad.DeleteInput{Target: i2Target}) },
+	ad.MoveID:   func(string) operation.Input { return i2JSON(ad.MoveInput{Target: i2Target, NewParentGuid: i2Parent2}) },
+	ad.RenameID: func(string) operation.Input { return i2JSON(ad.RenameInput{Target: i2Target, NewName: "Ann Jones"}) },
+	ad.RestoreID: func(string) operation.Input {
+		return i2JSON(ad.RestoreInput{Target: i2Target, NewParentGuid: i2Parent, Name: "Ann Smith"})
+	},
 }
 
 const (
