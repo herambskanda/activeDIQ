@@ -710,7 +710,7 @@ I4 A DirSync cookie is reused only on the DC that issued it. On another DC it ma
 return everything, or be rejected with `0000203D`. All three outcomes end in `resync_required`
 ([DirSync](https://learn.microsoft.com/en-us/windows/win32/ad/polling-for-changes-using-the-dirsync-control)).
 I5 DirSync does not report the children of a moved or renamed parent. Their `dn` and `ancestry`
-are re-derived from the parent's new position, not awaited from the feed. I6 A Graph delta token
+are re-derived from the parent's new position, not awaited from the feed. Realised (T-0948, T-0988): on a move the inventory writer rewrites `ancestry`, then each descendant's `dn` (typed `dn.Rebase`, by RDN position, not a text replace) and its dn search key in the same transaction; an unrebasable dn becomes empty (unknown), never stale. I6 A Graph delta token
 expires after 7 days (`syncStateNotFound`), and `410 Gone` also means a full sync
 ([delta query](https://learn.microsoft.com/en-us/graph/delta-query-overview)). The AD reader
 contract (show-deleted control `1.2.840.113556.1.4.417` with DirSync, an `objectClass` filter
@@ -729,6 +729,8 @@ a Go matrix (`sync.CanTransition`) and the same matrix in a trigger; `paused` is
 `ResumeConnection` always sets `resync_required` and drops the cookie. The cookie is `sync.Cookie`, which prints as a
 placeholder under every fmt verb, slog and JSON; the `Cursor` view returned by `Get`/`List` has no cookie field. The DirSync
 cookie itself is first used by the DirSync ticket; slice 2 of T-1188 uses `state` and `last_full_sync_at`.
+**Realised so far (T-1196, I3).** The reconcile (`sync.Engine.Reconcile`, `inventory.Ingester.Reconcile`) lists every managed domain NC by `objectGUID` and diffs the union against `directory_objects` by GUID, so a cross-domain move is never a delete (DM-16.I1). Live rows no listing holds become `deleted`, never `purged` (a live search cannot see tombstones); a tombstone still absent after the caller's `PurgeAfter` becomes `purged`. The edges that end at them are removed and the closure follows in the same transaction. An incomplete listing writes nothing; a listing that does not hold its own NC head (an empty one included) is not authoritative and is refused; and a diff over 20 % of the live objects, of the forest or of any one naming context, is refused whole (`ErrMassDelete`).
+**Realised so far (T-1197, patch apply).** A DirSync `ObjectChange` is applied by the inventory writer's patch mode (`Ingester.ApplyPatches`; `sync.ChangeMapper` + `sync.Applier`), never as a snapshot: only the attributes the change names are written (a CLEARED one is absent-and-read), `VALUES_ADDED`/`REMOVED` of `member` are incremental edges, `DELETED`/`RECYCLED` set the state and keep GUID, parent and ancestry. The result is the same for every order of the changes and every batch split, and a replay changes nothing (CC-FEED-16). I5 is realised for `ancestry` only (re-derived from the stored parent row, and for all descendants when a parent arrives or changes); the descendants' display `dn` is not yet re-derived on a rename or move (follow-up). **Fails closed on membership (security review):** member edges are an authorization input, so a change that cannot be applied in full never leaves an edge active that it may have removed: a `VALUES_REMOVED` (or a whole `SET`) naming a member without a GUID, a change the mapper refuses, and a member change for a non-group each put the object's GUID in `NeedsRead` and, for a stored group, end its active `member` edges until a full read names them again. An unresolved add only under-grants and stays as it is.
 
 ### DM-20 Correlation · D · owner `directory/inventory`
 **Definition.** It asserts that an AD object and an Entra object are the same identity. Only a
@@ -2033,6 +2035,25 @@ collection.
 **Invariants.** I1 `tenant_id` and `component_id` are stamped from the client certificate; nothing in the
 payload names them (S1). I2 `(tenant_id, component_id, agent_seq)` is unique, so redelivery of an identical record is
 idempotent; the same seq with a different `content_sha256` is a divergence (alert, stored row kept). I3 `reported_dc_guid` is data to cross-check, never identity.
+
+### DM-90 MigrationProject · T · owner `modules/migration`
+**Definition.** One ManageEngine-to-activeDIQ migration effort of a tenant: the container its import jobs
+sit in. Created by an admin holding `migration.import` through the Action `migration.project.create`.
+**Key attributes:** `project_id` · `name` · `created_by` · `created_at` · `closed_at`.
+**Invariants.** I1 only the Action creates one; the runtime role cannot delete. I2 `created_by` is the
+real human requester of the chain, never the token that carried it.
+
+### DM-91 MigrationJob · T · owner `modules/migration`
+**Definition.** One intake of one source (a file upload; spec e2-11 §6.1) in a project. It records who
+submitted it, the source kind, the SHA-256 of the source, the ADMP build and the size, and starts in
+`quarantined`: nothing is parsed until a later stage releases it. A source over its size limit (spec §7)
+is recorded as `rejected` with the limit hit, having never been read.
+**Key attributes:** `job_id` · `project_id` · `actor` · `source_kind` · `source_sha256` · `admp_build` ·
+`size_bytes` · `state` · `limit_hit` · `created_at` · `finished_at`.
+**Invariants.** I1 `actor`, `source_kind`, `source_sha256`, `admp_build` and `size_bytes` never change
+after insert (trigger). I2 at most 3 active jobs (`quarantined`, `running`) per tenant and 1 per actor,
+checked under a per-tenant advisory lock. I3 `limit_hit` is set exactly when `state = rejected`, and a
+rejected job has no SHA-256 (nothing was read).
 
 ---
 

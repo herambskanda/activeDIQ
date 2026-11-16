@@ -1,0 +1,183 @@
+T-1102 root-cause probe · PostgreSQL 16.14 · 50,000-object seed (digest 8e30166c…) · GOMAXPROCS=4, DB container 4 CPU / 8 GB · 2026-11-02T09:29:32Z
+HTTP in-process, 20 queries per class, after 100 warm-up queries:
+HTTP admin exact median 503.57752ms max 755.779053ms
+HTTP scoped exact median 491.124961ms max 735.251322ms
+HTTP admin prefix median 499.67533ms max 772.946729ms
+HTTP scoped prefix median 465.841111ms max 500.329551ms
+HTTP admin fuzzy1 median 585.612687ms max 948.971261ms
+HTTP scoped fuzzy1 median 656.68998ms max 1.144777511s
+HTTP admin nomatch median 412.245938ms max 654.418196ms
+HTTP scoped nomatch median 416.807393ms max 542.346802ms
+HTTP admin oneletter median 28.684482ms max 204.357087ms
+HTTP scoped oneletter median 33.136887ms max 152.411682ms
+
+EXPLAIN (ANALYZE, BUFFERS) execution time of the handler's statement, with and without the fuzzy CTE (admin):
+PLAN admin exact "skrorsors10" fuzzy=true	Execution Time: 389.302 ms
+PLAN admin exact "skrorsors10" fuzzy=false	Execution Time: 1.132 ms
+PLAN admin prefix "jiazorn p" fuzzy=true	Execution Time: 374.806 ms
+PLAN admin prefix "jiazorn p" fuzzy=false	Execution Time: 0.907 ms
+PLAN admin fuzzy1 "dorirnl torprom" fuzzy=true	Execution Time: 470.013 ms
+PLAN admin fuzzy1 "dorirnl torprom" fuzzy=false	Execution Time: 0.888 ms
+PLAN admin nomatch "zx0946z" fuzzy=true	Execution Time: 312.563 ms
+PLAN admin nomatch "zx0946z" fuzzy=false	Execution Time: 1.213 ms
+PLAN admin oneletter "d" fuzzy=true	Execution Time: 19.945 ms
+PLAN admin oneletter "d" fuzzy=false	Execution Time: 21.125 ms
+Execution Time: 13.195 ms	
+
+Full plan, admin exact, with the fuzzy CTE:
+    probe_pg_test.go:49: ==== PLAN admin exact "skrorsors10" fuzzy=true
+Sort  (cost=13716.49..13716.50 rows=2 width=216) (actual time=388.234..388.390 rows=9 loops=1)
+  Sort Key: v.grp, v.cls, v.dead, v.dis, v.whole, v.klen, v.simr, v.nm COLLATE "C", v.connection_id, v.object_guid
+  Sort Method: quicksort  Memory: 26kB
+  Buffers: shared hit=7450
+  CTE m_exact
+    ->  Limit  (cost=0.43..25.38 rows=3 width=61) (actual time=0.064..0.122 rows=1 loops=1)
+          Buffers: shared hit=10
+          ->  Append  (cost=0.43..25.38 rows=3 width=61) (actual time=0.063..0.120 rows=1 loops=1)
+                Buffers: shared hit=10
+                ->  Limit  (cost=0.43..8.45 rows=1 width=61) (actual time=0.063..0.064 rows=1 loops=1)
+                      Buffers: shared hit=4
+                      ->  Index Scan using inventory_search_keys_by_key on inventory_search_keys k  (cost=0.43..8.45 rows=1 width=61) (actual time=0.062..0.063 rows=1 loops=1)
+                            Index Cond: ((tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid) AND (key_kind = 3) AND (key = 'skrorsors10'::text))
+                            Buffers: shared hit=4
+                ->  Limit  (cost=0.43..8.45 rows=1 width=61) (actual time=0.026..0.027 rows=0 loops=1)
+                      Buffers: shared hit=3
+                      ->  Index Scan using inventory_search_keys_by_key on inventory_search_keys k_1  (cost=0.43..8.45 rows=1 width=61) (actual time=0.026..0.026 rows=0 loops=1)
+                            Index Cond: ((tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid) AND (key_kind = 6) AND (key = 'skrorsors10'::text))
+                            Buffers: shared hit=3
+                ->  Limit  (cost=0.43..8.45 rows=1 width=61) (actual time=0.024..0.025 rows=0 loops=1)
+                      Buffers: shared hit=3
+                      ->  Index Scan using inventory_search_keys_by_key on inventory_search_keys k_2  (cost=0.43..8.45 rows=1 width=61) (actual time=0.024..0.024 rows=0 loops=1)
+                            Index Cond: ((tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid) AND (key_kind = 1) AND (key = 'skrorsors10'::text))
+                            Buffers: shared hit=3
+  CTE m_prefix
+    ->  Limit  (cost=0.43..50.77 rows=6 width=61) (actual time=0.021..0.147 rows=2 loops=1)
+          Buffers: shared hit=20
+          ->  Append  (cost=0.43..50.77 rows=6 width=61) (actual time=0.021..0.146 rows=2 loops=1)
+                Buffers: shared hit=20
+                ->  Limit  (cost=0.43..8.46 rows=1 width=61) (actual time=0.021..0.022 rows=1 loops=1)
+                      Buffers: shared hit=4
+                      ->  Index Scan using inventory_search_keys_by_key on inventory_search_keys k_3  (cost=0.43..8.46 rows=1 width=61) (actual time=0.020..0.021 rows=1 loops=1)
+                            Index Cond: ((tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid) AND (key_kind = 3) AND (key >= 'skrorsors10'::text) AND (key < 'skrorsors11'::text))
+                            Buffers: shared hit=4
+                ->  Limit  (cost=0.43..8.46 rows=1 width=61) (actual time=0.025..0.026 rows=0 loops=1)
+                      Buffers: shared hit=3
+                      ->  Index Scan using inventory_search_keys_by_key on inventory_search_keys k_4  (cost=0.43..8.46 rows=1 width=61) (actual time=0.025..0.025 rows=0 loops=1)
+                            Index Cond: ((tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid) AND (key_kind = 6) AND (key >= 'skrorsors10'::text) AND (key < 'skrorsors11'::text))
+                            Buffers: shared hit=3
+                ->  Limit  (cost=0.43..8.46 rows=1 width=61) (actual time=0.025..0.026 rows=1 loops=1)
+                      Buffers: shared hit=4
+                      ->  Index Scan using inventory_search_keys_by_key on inventory_search_keys k_5  (cost=0.43..8.46 rows=1 width=61) (actual time=0.024..0.025 rows=1 loops=1)
+                            Index Cond: ((tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid) AND (key_kind = 4) AND (key >= 'skrorsors10'::text) AND (key < 'skrorsors11'::text))
+                            Buffers: shared hit=4
+                ->  Limit  (cost=0.43..8.46 rows=1 width=61) (actual time=0.022..0.023 rows=0 loops=1)
+                      Buffers: shared hit=3
+                      ->  Index Scan using inventory_search_keys_by_key on inventory_search_keys k_6  (cost=0.43..8.46 rows=1 width=61) (actual time=0.022..0.022 rows=0 loops=1)
+                            Index Cond: ((tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid) AND (key_kind = 5) AND (key >= 'skrorsors10'::text) AND (key < 'skrorsors11'::text))
+                            Buffers: shared hit=3
+                ->  Limit  (cost=0.43..8.46 rows=1 width=61) (actual time=0.020..0.022 rows=0 loops=1)
+                      Buffers: shared hit=3
+                      ->  Index Scan using inventory_search_keys_by_key on inventory_search_keys k_7  (cost=0.43..8.46 rows=1 width=61) (actual time=0.020..0.021 rows=0 loops=1)
+                            Index Cond: ((tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid) AND (key_kind = 1) AND (key >= 'skrorsors10'::text) AND (key < 'skrorsors11'::text))
+                            Buffers: shared hit=3
+                ->  Limit  (cost=0.43..8.46 rows=1 width=61) (actual time=0.023..0.023 rows=0 loops=1)
+                      Buffers: shared hit=3
+                      ->  Index Scan using inventory_search_keys_by_key on inventory_search_keys k_8  (cost=0.43..8.46 rows=1 width=61) (actual time=0.022..0.023 rows=0 loops=1)
+                            Index Cond: ((tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid) AND (key_kind = 2) AND (key >= 'skrorsors10'::text) AND (key < 'skrorsors11'::text))
+                            Buffers: shared hit=3
+  CTE m_fuzzy
+    ->  Limit  (cost=1000.00..12407.47 rows=2568 width=61) (actual time=2.043..372.347 rows=417 loops=1)
+          Buffers: shared hit=5740
+          ->  Limit  (cost=1000.00..12407.47 rows=2568 width=61) (actual time=2.042..372.290 rows=417 loops=1)
+                Buffers: shared hit=5740
+                ->  Gather  (cost=1000.00..12407.47 rows=2568 width=61) (actual time=2.041..372.236 rows=417 loops=1)
+                      Workers Planned: 2
+                      Workers Launched: 2
+                      Buffers: shared hit=5740
+                      ->  Parallel Seq Scan on inventory_search_keys k_9  (cost=0.00..11150.67 rows=1070 width=61) (actual time=4.060..366.078 rows=139 loops=3)
+                            Filter: ((key_kind = ANY ('{1,2,3,4,5}'::integer[])) AND (tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid) AND ('skrorsors10'::text <% key))
+                            Rows Removed by Filter: 138528
+                            Buffers: shared hit=5740
+  CTE ceil
+    ->  Result  (cost=58.01..58.03 rows=1 width=4) (actual time=372.863..372.870 rows=1 loops=1)
+          Buffers: shared hit=5770
+          InitPlan 4 (returns $4)
+            ->  Aggregate  (cost=0.07..0.08 rows=1 width=8) (actual time=0.122..0.123 rows=1 loops=1)
+                  Buffers: shared hit=10
+                  ->  CTE Scan on m_exact m_exact_1  (cost=0.00..0.06 rows=3 width=0) (actual time=0.066..0.119 rows=1 loops=1)
+                        Buffers: shared hit=10
+          InitPlan 5 (returns $5)
+            ->  Aggregate  (cost=0.14..0.15 rows=1 width=8) (actual time=0.141..0.142 rows=1 loops=1)
+                  Buffers: shared hit=20
+                  ->  CTE Scan on m_prefix m_prefix_1  (cost=0.00..0.12 rows=6 width=0) (actual time=0.022..0.140 rows=2 loops=1)
+                        Buffers: shared hit=20
+          InitPlan 6 (returns $6)
+            ->  Aggregate  (cost=57.78..57.79 rows=1 width=8) (actual time=372.594..372.596 rows=1 loops=1)
+                  Buffers: shared hit=5740
+                  ->  CTE Scan on m_fuzzy m_fuzzy_1  (cost=0.00..51.36 rows=2568 width=0) (actual time=2.044..372.527 rows=417 loops=1)
+                        Buffers: shared hit=5740
+  ->  Nested Loop Left Join  (cost=1174.63..1174.83 rows=2 width=216) (actual time=388.102..388.221 rows=9 loops=1)
+        Buffers: shared hit=7450
+        ->  CTE Scan on ceil cl  (cost=0.00..0.02 rows=1 width=4) (actual time=372.865..372.867 rows=1 loops=1)
+              Buffers: shared hit=5770
+        ->  WindowAgg  (cost=1174.63..1174.75 rows=2 width=156) (actual time=15.223..15.330 rows=9 loops=1)
+              Run Condition: (row_number() OVER (?) <= 6)
+              Buffers: shared hit=1680
+              ->  Incremental Sort  (cost=1174.63..1174.68 rows=2 width=148) (actual time=15.200..15.244 rows=123 loops=1)
+                    Sort Key: v.grp, v.cls, v.dead, v.dis, v.whole, v.klen, v.simr, v.nm COLLATE "C", v.connection_id, v.object_guid
+                    Presorted Key: v.grp
+                    Full-sort Groups: 2  Sort Method: quicksort  Average Memory: 34kB  Peak Memory: 34kB
+                    Pre-sorted Groups: 1  Sort Method: quicksort  Average Memory: 41kB  Peak Memory: 41kB
+                    Buffers: shared hit=1680
+                    ->  Subquery Scan on v  (cost=1174.60..1174.62 rows=1 width=148) (actual time=14.625..14.765 rows=123 loops=1)
+                          Buffers: shared hit=1680
+                          ->  WindowAgg  (cost=1174.60..1174.62 rows=1 width=148) (actual time=14.622..14.716 rows=123 loops=1)
+                                Buffers: shared hit=1680
+                                ->  Sort  (cost=1174.60..1174.61 rows=1 width=140) (actual time=14.511..14.542 rows=123 loops=1)
+                                      Sort Key: h.grp
+                                      Sort Method: quicksort  Memory: 41kB
+                                      Buffers: shared hit=1680
+                                      ->  Subquery Scan on h  (cost=1174.57..1174.59 rows=1 width=140) (actual time=14.220..14.426 rows=123 loops=1)
+                                            Buffers: shared hit=1680
+                                            ->  Unique  (cost=1174.57..1174.58 rows=1 width=148) (actual time=14.216..14.373 rows=123 loops=1)
+                                                  Buffers: shared hit=1680
+                                                  ->  Sort  (cost=1174.57..1174.58 rows=1 width=148) (actual time=14.215..14.267 rows=420 loops=1)
+                                                        Sort Key: t.connection_id, t.object_guid, "*SELECT* 1".cls, (CASE WHEN ("*SELECT* 1".cls = 3) THEN (- word_similarity('skrorsors10'::text, "*SELECT* 1".key)) ELSE '0'::real END), (CASE WHEN (("*SELECT* 1".cls = 2) AND ("*SELECT* 1".key = ANY ('{skrorsors10,skrorsors10,skrorsors10,skrorsors10,skrorsors10,skrorsors10}'::text[]))) THEN 0 ELSE 1 END), (char_length("*SELECT* 1".key))
+                                                        Sort Method: quicksort  Memory: 85kB
+                                                        Buffers: shared hit=1680
+                                                        ->  Nested Loop  (cost=0.47..1174.56 rows=1 width=148) (actual time=0.081..12.975 rows=420 loops=1)
+                                                              Buffers: shared hit=1680
+                                                              ->  Append  (cost=0.04..85.91 rows=136 width=68) (actual time=0.013..0.550 rows=420 loops=1)
+                                                                    ->  Subquery Scan on "*SELECT* 1"  (cost=0.04..0.17 rows=3 width=68) (actual time=0.011..0.016 rows=1 loops=1)
+                                                                          ->  Result  (cost=0.04..0.14 rows=3 width=70) (actual time=0.010..0.014 rows=1 loops=1)
+                                                                                One-Time Filter: (($8 = 0) OR (1 < $9))
+                                                                                InitPlan 8 (returns $8)
+                                                                                  ->  CTE Scan on ceil  (cost=0.00..0.02 rows=1 width=4) (actual time=0.001..0.002 rows=1 loops=1)
+                                                                                InitPlan 9 (returns $9)
+                                                                                  ->  CTE Scan on ceil ceil_1  (cost=0.00..0.02 rows=1 width=4) (never executed)
+                                                                                ->  CTE Scan on m_exact  (cost=0.01..0.10 rows=3 width=64) (actual time=0.004..0.005 rows=1 loops=1)
+                                                                                      Filter: (key_kind = ANY ('{1,2,3,4,5,6,7,8,9,10}'::integer[]))
+                                                                    ->  Subquery Scan on "*SELECT* 2"  (cost=0.04..0.29 rows=5 width=68) (actual time=0.010..0.031 rows=2 loops=1)
+                                                                          ->  Result  (cost=0.04..0.24 rows=5 width=70) (actual time=0.009..0.028 rows=2 loops=1)
+                                                                                One-Time Filter: (($10 = 0) OR (2 < $11))
+                                                                                InitPlan 10 (returns $10)
+                                                                                  ->  CTE Scan on ceil ceil_2  (cost=0.00..0.02 rows=1 width=4) (actual time=0.000..0.001 rows=1 loops=1)
+                                                                                InitPlan 11 (returns $11)
+                                                                                  ->  CTE Scan on ceil ceil_3  (cost=0.00..0.02 rows=1 width=4) (never executed)
+                                                                                ->  CTE Scan on m_prefix  (cost=0.01..0.20 rows=5 width=64) (actual time=0.005..0.006 rows=2 loops=1)
+                                                                                      Filter: (key_kind = ANY ('{1,2,3,4,5,6,7,8,9,10}'::integer[]))
+                                                                    ->  Subquery Scan on "*SELECT* 3"  (cost=0.02..84.76 rows=128 width=68) (actual time=0.005..0.431 rows=417 loops=1)
+                                                                          ->  Result  (cost=0.02..83.48 rows=128 width=70) (actual time=0.004..0.330 rows=417 loops=1)
+                                                                                One-Time Filter: ($12 = 0)
+                                                                                InitPlan 12 (returns $12)
+                                                                                  ->  CTE Scan on ceil ceil_4  (cost=0.00..0.02 rows=1 width=4) (actual time=0.001..0.001 rows=1 loops=1)
+                                                                                ->  CTE Scan on m_fuzzy  (cost=0.00..83.46 rows=128 width=64) (actual time=0.001..0.198 rows=417 loops=1)
+                                                                                      Filter: (key_kind = ANY ('{1,2,3,4,5,6,7,8,9,10}'::integer[]))
+                                                              ->  Index Scan using directory_objects_by_guid on directory_objects t  (cost=0.42..7.99 rows=1 width=59) (actual time=0.005..0.005 rows=1 loops=420)
+                                                                    Index Cond: ((tenant_id = (NULLIF(current_setting('app.tenant_id'::text, true), ''::text))::uuid) AND (object_guid = "*SELECT* 1".object_guid))
+                                                                    Filter: (("*SELECT* 1".connection_id = connection_id) AND (kind = ANY ('{user,inetorgperson,group,computer,gmsa,contact}'::text[])) AND COALESCE((ancestry_complete AND (COALESCE(((connection_id = '5e05b2c8-c0ef-4c67-bbb5-db7d0587e3b7'::uuid) AND (nc_guid = '10000000-0000-4000-8000-000000000000'::uuid)), false) OR COALESCE(((connection_id = '43e3db06-e12f-40d9-a5c0-6b6997f983ae'::uuid) AND (nc_guid = '10000001-0000-4000-8000-000000000000'::uuid)), false))), false))
+                                                                    Buffers: shared hit=1680
+Planning:
+  Buffers: shared hit=9
+Planning Time: 4.165 ms
+Execution Time: 389.302 ms

@@ -503,3 +503,60 @@ func TestLoadReportsExpiredLeaf(t *testing.T) {
 		t.Fatalf("err = %v, want ErrExpired", err)
 	}
 }
+
+// T-1249: Load tells "no enrolment" apart from "state that exists and cannot be used", so a caller
+// never reports a refused ACL as "not enrolled".
+func TestLoadClassifiesAbsentApartFromUnusable(t *testing.T) {
+	d := tempParent(t)
+	if _, err := Load(filepath.Join(d, "missing")); !errors.Is(err, ErrAbsent) || !errors.Is(err, ErrState) || errors.Is(err, ErrUnsafe) {
+		t.Fatalf("missing dir = %v, want ErrAbsent (and ErrState), not ErrUnsafe", err)
+	}
+	if _, err := Load(filepath.Join(d, "missing")); errors.Is(err, ErrIncomplete) {
+		t.Fatal("a missing directory is not an enrolment in progress")
+	}
+	// A directory with some files but no leaf is mid-enrolment: still absent.
+	iss, m, dir := setup(t)
+	if _, err := Enroll(context.Background(), m, dir, iss.exchange); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, LeafFile)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); !errors.Is(err, ErrAbsent) || !errors.Is(err, ErrIncomplete) || !errors.Is(err, ErrState) {
+		t.Fatalf("no leaf = %v, want ErrAbsent and ErrIncomplete", err)
+	}
+	// Garbage in a file: unusable, not absent.
+	// Written through ownerfile so the file has the right owner/DACL on Windows too: the test must
+	// reach the parse failure, not an ACL refusal.
+	put(t, dir, LeafFile, []byte("not a pem"))
+	if _, err := Load(dir); !errors.Is(err, ErrState) || errors.Is(err, ErrAbsent) || errors.Is(err, ErrUnsafe) {
+		t.Fatalf("corrupt leaf = %v, want ErrState only", err)
+	}
+}
+
+func TestLoadClassifiesUnsafeApartFromAbsent(t *testing.T) {
+	if !runtimeUnix() {
+		t.Skip("the Windows equivalent is TestWindowsLoadRefusesWidenedState")
+	}
+	iss, m, dir := setup(t)
+	if _, err := Enroll(context.Background(), m, dir, iss.exchange); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); !errors.Is(err, ErrUnsafe) || !errors.Is(err, ErrState) || errors.Is(err, ErrAbsent) {
+		t.Fatalf("widened dir = %v, want ErrUnsafe", err)
+	}
+}
+
+func TestForAccountRefusedOffWindows(t *testing.T) {
+	if !runtimeUnix() {
+		t.Skip("Windows supports ForAccount")
+	}
+	iss, m, dir := setup(t)
+	if _, err := Enroll(context.Background(), m, dir, iss.exchange, ForAccount(`NT SERVICE\x`)); err == nil {
+		t.Fatal("ForAccount accepted on a platform where it cannot be honoured")
+	}
+	assertNothingPersisted(t, dir)
+}

@@ -51,3 +51,10 @@ func mapAD(err error, dc *connectorv1.DcIdentity) error {
 	r.Err.Dc = proto.Clone(dc).(*connectorv1.DcIdentity)
 	return r
 }
+
+// classNotAllowed: include_child_count on an object that is not an organizationalUnit or container.
+func classNotAllowed() error {
+	r := write.NewRefusal(connectorv1.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, connectorv1.RetryAdvice_RETRY_ADVICE_NEVER, "invalid request")
+	r.Err.Details = &connectorv1.ConnectorError_RejectedInput{RejectedInput: &connectorv1.RejectedInputDetails{RuleId: "ClassNotAllowed", Field: "include_child_count"}}
+	return r
+}

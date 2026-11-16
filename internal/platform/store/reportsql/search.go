@@ -20,11 +20,11 @@ import (
 // parameter, an identifier was checked against the schema and quoted once at registration, and the key
 // kinds, classes and groups are integer or string constants of this file.
 
-// SearchSource names the key table and the directory_objects anchor. inventory registers it once, as it
+// SearchSource names the key table, its trigram posting table and the directory_objects anchor. inventory registers it once, as it
 // registers datasets.
 type SearchSource struct {
-	keys    string
-	objects *anchor
+	keys, trigrams string
+	objects        *anchor
 	// quoted object columns the result reads
 	kind, state, enabled, display string
 	// recents is the quoted per-account recents table; "" until WithRecents (T-1130).
@@ -48,15 +48,24 @@ func (s SearchSource) WithRecents(sch Schema, table report.Ident) (SearchSource,
 }
 
 // NewSearchSource checks every identifier against the schema and quotes it once.
-func NewSearchSource(sch Schema, keyTable report.Ident, objects report.Anchor, kind, state, enabled, display report.Ident) (SearchSource, error) {
+func NewSearchSource(sch Schema, keyTable, trigramTable report.Ident, objects report.Anchor, kind, state, enabled, display report.Ident) (SearchSource, error) {
 	var s SearchSource
 	for _, c := range []struct {
 		col  string
 		want ColKind
-	}{{"tenant_id", KindGUID}, {"connection_id", KindGUID}, {"object_guid", KindGUID}, {"key_kind", KindInt}, {"key", KindText}, {"norm_version", KindInt}} {
+	}{{"tenant_id", KindGUID}, {"connection_id", KindGUID}, {"object_guid", KindGUID}, {"key_kind", KindInt}, {"key", KindText}, {"norm_version", KindInt}, {"key_id", KindInt}} {
 		k, ok := sch.Column(string(keyTable), c.col)
 		if !ok || k != c.want {
 			return s, fmt.Errorf("reportsql: search key table %q: column %q missing or not %s", keyTable, c.col, c.want)
+		}
+	}
+	for _, c := range []struct {
+		col  string
+		want ColKind
+	}{{"tenant_id", KindGUID}, {"trgm", KindText}, {"key_id", KindInt}} {
+		k, ok := sch.Column(string(trigramTable), c.col)
+		if !ok || k != c.want {
+			return s, fmt.Errorf("reportsql: search trigram table %q: column %q missing or not %s", trigramTable, c.col, c.want)
 		}
 	}
 	a, err := buildAnchor(sch, objects)
@@ -72,7 +81,7 @@ func NewSearchSource(sch Schema, keyTable report.Ident, objects report.Anchor, k
 		}
 		*c.dst = quote(c.col)
 	}
-	s.keys, s.objects = quote(keyTable), a
+	s.keys, s.trigrams, s.objects = quote(keyTable), quote(trigramTable), a
 	return s, nil
 }
 
@@ -170,7 +179,8 @@ type SearchQuery struct {
 // no entry (or an empty scope) is not searched at all.
 type SearchScopes map[authz.Permission]authz.ReadScope
 
-// fuzzyKinds is the partial trigram index's predicate; migration 0069 repeats it.
+// fuzzyKindList is the call's kinds that have trigram postings (searchkey.Kind.FuzzyEligible). Migration
+// 0074's trigger function builds postings for the same list.
 func fuzzyKindList(kinds []searchkey.Kind) string {
 	var parts []string
 	for _, k := range kinds {
@@ -181,7 +191,7 @@ func fuzzyKindList(kinds []searchkey.Kind) string {
 	return strings.Join(parts, ", ")
 }
 
-// FuzzyKindPredicate is the literal list the migration's partial index must carry.
+// FuzzyKindPredicate is the literal list the migration's trigger function must carry.
 func FuzzyKindPredicate() string { return fuzzyKindList(searchkey.AllKinds) }
 
 const tenantExpr = `NULLIF(current_setting('app.tenant_id', true), '')::uuid`
@@ -287,9 +297,21 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 			}
 		}
 		if list := fuzzyKindList(ks); list != "" {
-			// The list is a subset of the index predicate, so the planner can prove the partial index.
-			fuzzy = append(fuzzy, "(SELECT "+keyCols+" FROM public."+src.keys+" k WHERE k.tenant_id = "+tenantExpr+" AND k.key_kind IN ("+list+
-				") AND "+b.bind("text", q.Fuzzy)+" <% k.key LIMIT "+w1()+")")
+			// ADR-0011 rule 5a. Candidates: the key_ids holding at least the share t of the query's n
+			// trigrams, from the tenant-led posting B-tree. The share is pg_trgm's own GIN consistency rule
+			// for <%, a float4 division compared with the double threshold, so the set is a superset of the
+			// matches (never a ceil(t*n) in double, which is tighter at some thresholds). Recheck: one
+			// correlated lookup of the key per candidate, by (tenant_id, key_id), then <% as an ordinary
+			// filter over rows the policy admitted. A plain join could become a hash join over a Seq Scan
+			// of the key table; the LATERAL loop cannot.
+			qt := b.bind("text", q.Fuzzy)
+			thr := b.bind("float8", store.TrigramThresholdValue(float64(q.Threshold)))
+			cands := "SELECT p.key_id FROM public." + src.trigrams + " p WHERE p.tenant_id = " + tenantExpr +
+				" AND p.trgm = ANY (public.show_trgm(" + qt + ")) GROUP BY p.key_id" +
+				" HAVING count(*)::real / NULLIF(cardinality(public.show_trgm(" + qt + ")), 0)::real >= " + thr
+			fuzzy = append(fuzzy, "(SELECT r.connection_id, r.object_guid, r.key_kind, r.key FROM ("+cands+") c CROSS JOIN LATERAL (SELECT "+keyCols+
+				" FROM public."+src.keys+" k WHERE k.tenant_id = "+tenantExpr+" AND k.key_id = c.key_id AND k.key_kind IN ("+list+
+				") AND "+qt+" <% k.key LIMIT 1) r LIMIT "+w1()+")")
 		}
 	}
 	if q.Fuzzy == "" {
@@ -358,6 +380,11 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 		lo = "ARRAY[]::text[]"
 	}
 	t := func(col string) string { return "t." + col }
+	// The hits join probes directory_objects once per candidate (LATERAL ... LIMIT 1, as the fuzzy recheck
+	// does), so the plan is a nested loop of index probes by (tenant_id, connection, object) at every W.
+	// A plain join lets the planner, expecting ~3W candidate rows, hash-join them onto a Seq Scan of the
+	// table, which reads other tenants' rows (ADR-0011 rule 16). The scope is evaluated inside the probe.
+	objCols := strings.Join([]string{"t." + src.objects.conn, "t." + src.objects.obj, "t." + src.kind, "t." + src.state, "t." + src.enabled, "t." + src.display}, ", ")
 	live := "(" + t(src.state) + " IN ('live', 'active'))"
 	grp := "CASE WHEN " + t(src.kind) + " IN ('user', 'inetorgperson') THEN 1 WHEN " + t(src.kind) + " = 'group' THEN 2 WHEN " + t(src.kind) + " IN ('computer', 'gmsa') THEN 3 ELSE 4 END"
 	sb.WriteString(" hits AS (SELECT DISTINCT ON (t." + src.objects.conn + ", t." + src.objects.obj + ") t." + src.objects.conn + " AS connection_id, t." + src.objects.obj + " AS object_guid, " +
@@ -367,9 +394,9 @@ func CompileSearch(src SearchSource, q SearchQuery, scopes SearchScopes) (Query,
 		"CASE WHEN c.cls = 2 AND c.key = ANY(" + lo + ") THEN 0 ELSE 1 END AS whole, CASE WHEN c.cls = 2 THEN char_length(c.key) ELSE 0 END AS klen, " +
 		"CASE WHEN c.cls = 3 THEN 1000 - round((" + sim + ")::numeric * 1000)::int ELSE 0 END AS simr, " +
 		"(lower(COALESCE(" + t(src.display) + ", '')) COLLATE \"C\") AS nm, (" + sim + ")::real AS sim " +
-		"FROM cand c JOIN public." + src.objects.table + " t ON t." + "tenant_id" + " = " + tenantExpr + " AND t." + src.objects.conn + " = c.connection_id AND t." + src.objects.obj + " = c.object_guid " +
+		"FROM cand c CROSS JOIN LATERAL (SELECT " + objCols + " FROM public." + src.objects.table + " t WHERE t.tenant_id = " + tenantExpr + " AND t." + src.objects.conn + " = c.connection_id AND t." + src.objects.obj + " = c.object_guid " +
+		"AND " + t(src.kind) + " = ANY(" + b.bindList("text[]", kinds) + ") AND (" + scopeWhere + ") LIMIT 1) t " +
 		"LEFT JOIN rec rc ON rc.connection_id = c.connection_id AND rc.object_guid = c.object_guid " +
-		"WHERE " + t(src.kind) + " = ANY(" + b.bindList("text[]", kinds) + ") AND (" + scopeWhere + ") " +
 		"ORDER BY t." + src.objects.conn + ", t." + src.objects.obj + ", c.cls, CASE WHEN c.cls = 3 THEN -(" + sim + ") ELSE 0 END, CASE WHEN c.cls = 2 AND c.key = ANY(" + lo + ") THEN 0 ELSE 1 END, char_length(c.key)),")
 	rank := "band, rr, cls, dead, dis, whole, klen, simr, nm, connection_id, object_guid"
 	sb.WriteString(" visible AS (SELECT h.*, count(*) OVER (PARTITION BY grp) AS grp_n FROM hits h),")
