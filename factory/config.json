@@ -19,9 +19,11 @@
     "main_branch": "main",
     "pre_merge": {
       "enabled": true,
-      "argv": ["make", "-k", "ci-fast"],
-      "timeout_minutes": 60,
-      "train_size": 4,
+      "argv": ["make", "-k", "ci"],
+      "timeout_minutes": 180,
+      "train_size": 1,
+      "max_gate_failures": 2,
+      "concurrency": 1,
       "numbering": {
         "dir": "migrations",
         "argv": ["go", "test", "-count=1", "./migrations/", "-run", "^TestMigrationNumbersAreUniqueAndContiguous$"],

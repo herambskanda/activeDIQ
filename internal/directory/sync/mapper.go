@@ -156,6 +156,7 @@ var kindOfClass = []struct {
 	{"contact", inventory.KindContact},
 	{"foreignsecurityprincipal", inventory.KindFSP},
 	{"container", inventory.KindContainer},
+	{"printqueue", inventory.KindPrintQueue},
 }
 
 // Map maps one entry. A malformed entry is an *Error (errors.Is(err, ErrMalformed)); the caller counts
@@ -550,6 +551,11 @@ func (m *Mapper) bag(o *inventory.Observation, set attrSet) error {
 	if o.State == inventory.ObjLive && (o.Kind == inventory.KindUser || o.Kind == inventory.KindInetOrgPerson) {
 		bag[inventory.ReadMarkerKey] = readMarker(bag)
 	}
+	if o.Kind == inventory.KindPrintQueue {
+		if err := printQueueAttributes(bag, set); err != nil {
+			return err
+		}
+	}
 	if s, present, err := firstText(set, "description", 4096); err != nil {
 		return err
 	} else if present && s != "" {
@@ -768,4 +774,31 @@ func readMarker(bag map[string]any) map[string]any {
 		m[a.attr] = state
 	}
 	return m
+}
+
+// printQueueAttributes adds the attributes of a published printer (T-1719, reports-2-second-slice 7.2 and D13).
+// They are read for printQueue objects only, so a computer's own location never enters the bag. An
+// attribute the entry does not carry adds nothing; printColor and printDuplexSupported are tri-state
+// (true, false, absent). Nothing here is a secret (D8). description is read by bag().
+func printQueueAttributes(bag map[string]any, set attrSet) error {
+	for _, a := range []struct {
+		name string
+		max  int
+	}{{"printerName", 512}, {"serverName", 512}, {"uNCName", 1024}, {"printShareName", 512}, {"location", 512}, {"driverName", 512}} {
+		if s, present, err := text(set, a.name, a.max); err != nil {
+			return err
+		} else if present && s != "" {
+			bag[a.name] = s
+		}
+	}
+	for _, name := range []string{"printColor", "printDuplexSupported"} {
+		if b, present, err := boolean(set, name); err != nil {
+			return err
+		} else if present {
+			if a, _ := set.get(name); len(a.GetValues()) > 0 {
+				bag[name] = b
+			}
+		}
+	}
+	return nil
 }
