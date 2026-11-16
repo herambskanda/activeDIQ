@@ -1,7 +1,7 @@
 ---
 title: "Module: ad — account-state Actions (reset password, unlock, enable, disable)"
 date: 2026-11-07
-updated: 2026-11-07
+updated: 2026-11-15
 status: draft
 owner: heramb
 author: backend-engineer
@@ -75,6 +75,13 @@ ADM-038 restore.
 | `ad.user.rename` | `objects.user.move` (a modifyDN, TM-D19) | Reversible | Reversible (inverse: rename back) | `ad.object.rename` |
 | `ad.user.restore` | `objects.user.restore` | Lossy | Lossy iff a retained link value stays dormant, else Reversible | `ad.object.restore` |
 
+- **Ownership (ADR-0015 D2).** `ad` owns the create/modify Actions because it owns their target; `objects` owns
+  only the Template/NamingFormat definitions they consume and no directory-writing Action. Action IDs stay
+  `ad.<noun>.<verb>` (stable, in audit history).
+- **Plan order (ADR-0015 D1), fixed:** `pc.Templates.CheckTemplate` (TemplateGate, a kernel port bound to the
+  requester's chain by the Runner; refusal `template_not_permitted`), then `Template.CheckInput`, then
+  `NamingFormat.Render`, then the first directory read. `ad` never imports `rbac`; `planCreate` and the modify Plan
+  call the gate before `loadTemplate`.
 - **Create** validates the pinned Template (published, user, create, AD/hybrid, container allowed), applies
   `CheckInput`/`Effective`, renders the pinned NamingFormats (sAMAccountName, cn, displayName, UPN prefix +
   `upnSuffix`), reads the parent (a container, not Tier-0) and builds the digest attributes with

@@ -26,7 +26,7 @@ import {
 import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
 import { EMBARGO_TAG, orderDoneQueue } from './mergequeue.mjs';
-import { blockedNote, preMergeSettings, runPreMergeTrain, splitTrain } from './premerge.mjs';
+import { applyMigrationRenumber, blockedNote, preMergeSettings, runPreMergeTrain, splitTrain } from './premerge.mjs';
 import { postMergeVerifySettings, readKnownFindings, runPostMergeVerify } from './postmerge.mjs';
 import { git } from './git.mjs';
 import {
@@ -124,8 +124,8 @@ export class Dispatcher {
     this.lastTick = 0;
     this.lastHeartbeat = 0;
     this.wake = null;
-    this.gateRun = null; // the pre-merge gate + merge(s) in flight (one train at a time)
-    this.gateAbort = null;
+    this.gateLanes = []; // pre-merge gates + merge(s) in flight, each { ids, abort, run } (T-1297, T-2210: up to pre_merge.concurrency at once)
+    this.mergeLock = Promise.resolve(); // serializes real merges into ctx.root across lanes (T-2210): git allows only one merge in progress at a time
     this.gateRetryAt = new Map(); // ticket id → ms before which a gate that could not judge is not retried
     this.runGate = runPreMergeTrain; // (ctx, tickets[], {signal}) → verdict; replaceable in tests
     this.verifyRun = null; // post-merge ci-full check in flight (never blocks a merge)
@@ -154,6 +154,27 @@ export class Dispatcher {
     } catch (err) {
       this.report(key, `${key} failed: ${err.message}`);
       return undefined;
+    }
+  }
+
+  /**
+   * Run `fn` holding the sole lock on real merges into `ctx.root` (T-2210). With more than one gate
+   * lane in flight, each validates concurrently in its own scratch worktree — fine, those are
+   * isolated — but the real `git merge` always happens in the one shared checkout, which only
+   * supports one merge in progress at a time; without this, two lanes landing at once fail with
+   * "the main checkout is mid-merge", not a textual conflict. Callers that check-then-act (the
+   * staleness check in `gateGroup`) must do the whole check-and-merge inside one `fn`, not acquire
+   * the lock twice, or a sibling could land between the check and the act.
+   */
+  async withMergeLock(fn) {
+    const prior = this.mergeLock;
+    let release;
+    this.mergeLock = new Promise((resolve) => { release = resolve; });
+    await prior;
+    try {
+      return await fn();
+    } finally {
+      release();
     }
   }
 
@@ -221,7 +242,7 @@ export class Dispatcher {
   /** Take over runs a previous dispatcher left running. */
   adopt() {
     this.adopted = true;
-    updateDispatcherState(this.ctx, { merge_gate: null }); // a gate a previous dispatcher left in flight is gone
+    updateDispatcherState(this.ctx, { merge_gates: [] }); // any gate(s) a previous dispatcher left in flight are gone
     for (const run of listRecentRuns(this.ctx, 200)) {
       if (run.status === 'running' && !this.active.has(run.id)) this.active.set(run.id, run);
     }
@@ -429,8 +450,10 @@ export class Dispatcher {
     if (this.shared) return;
     const settings = preMergeSettings(this.ctx.config);
     const gated = settings.enabled;
-    if (gated && this.gateRun) return;
-    const done = listEntities(this.ctx, 'tickets').filter((t) => t.status === 'done');
+    const concurrency = gated ? settings.concurrency : 1;
+    if (gated && this.gateLanes.length >= concurrency) return;
+    const claimed = new Set(this.gateLanes.flatMap((lane) => lane.ids));
+    const done = listEntities(this.ctx, 'tickets').filter((t) => t.status === 'done' && !claimed.has(t.id));
     const code = (t) => isCodeType(this.ctx.config, t.type);
     const stranded = done.some((t) => !code(t)) ? await branchesAheadOfMain(this.ctx) : new Map();
     const pending = done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id)));
@@ -440,7 +463,7 @@ export class Dispatcher {
       if (this.stopping) return;
       if (this.holdEmbargoed(ticket)) continue;
       if (!gated || !code(ticket)) { // spec/docs branches carry no product code to gate
-        if (!train.length) await this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket));
+        if (!train.length) await this.guard(`merge ${ticket.id}`, () => this.withMergeLock(() => this.mergeOne(ticket)));
         continue;
       }
       if ((this.gateRetryAt.get(ticket.id) ?? 0) > this.#nowMs()) continue;
@@ -449,19 +472,26 @@ export class Dispatcher {
     }
     if (!train.length) return;
     const ids = train.map((t) => t.id);
-    this.gateAbort = new AbortController();
-    updateDispatcherState(this.ctx, { merge_gate: { ticket: ids[0], tickets: ids, started_at: nowIso(this.ctx) } });
-    this.gateRun = this.guard(`merge ${ids.join(', ')}`, () => this.gateGroup(train))
+    const lane = { ids, abort: new AbortController(), run: null };
+    const announce = () => updateDispatcherState(this.ctx, { merge_gates: this.gateLanes.map((l) => ({ tickets: l.ids, started_at: l.startedAt })) });
+    lane.startedAt = nowIso(this.ctx);
+    this.gateLanes.push(lane);
+    announce();
+    lane.run = this.guard(`merge ${ids.join(', ')}`, () => this.gateGroup(train, lane.abort.signal))
       .finally(() => {
-        this.gateRun = null; this.gateAbort = null; this.requestTick = true;
-        updateDispatcherState(this.ctx, { merge_gate: null });
+        this.gateLanes = this.gateLanes.filter((l) => l !== lane);
+        this.requestTick = true;
+        announce();
         this.wake?.();
       });
+    // Try to fill another lane in this same pass: the selection above already excludes this
+    // lane's tickets (`claimed`), so a second call picks a disjoint train, up to `concurrency`.
+    if (this.gateLanes.length < concurrency) await this.mergePass();
   }
 
-  /** Wait for a pre-merge gate in flight (tests, shutdown). */
+  /** Wait for every pre-merge gate in flight (tests, shutdown). */
   async gateIdle() {
-    while (this.gateRun) await this.gateRun;
+    while (this.gateLanes.length) await Promise.all(this.gateLanes.map((lane) => lane.run));
   }
 
   /**
@@ -539,13 +569,13 @@ export class Dispatcher {
    * the ticket that adds the findings is reopened. A member that conflicts with `main` is reopened
    * as before; one that conflicts with an earlier member stays `done` for the next train.
    */
-  async gateGroup(group) {
+  async gateGroup(group, signal) {
     const { ctx } = this;
     const main = ctx.config.dispatcher.main_branch;
     const ids = group.map((t) => t.id);
     let verdict;
     try {
-      verdict = await this.runGate(ctx, group, { signal: this.gateAbort?.signal });
+      verdict = await this.runGate(ctx, group, { signal });
     } catch (err) {
       // The gate could not judge (timeout, stop, worktree failure): never merge on that. Retry later.
       for (const id of ids) this.gateRetryAt.set(id, this.#nowMs() + 10 * 60_000);
@@ -565,7 +595,7 @@ export class Dispatcher {
     const memberIds = verdict.members ?? ids;
     for (const c of conflicts) {
       const ticket = group.find((t) => t.id === c.id);
-      if (c.withMain) { await this.mergeOne(ticket); continue; } // reports the conflict and reopens it
+      if (c.withMain) { await this.withMergeLock(() => this.mergeOne(ticket)); continue; } // reports the conflict and reopens it
       appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: c.id, text: `${c.id} conflicts with an earlier ticket in its merge train (${c.detail}); it stays done and waits for the next train` });
     }
     const members = group.filter((t) => memberIds.includes(t.id));
@@ -580,16 +610,81 @@ export class Dispatcher {
       }
       appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `pre-merge gate refused the train ${memberIds.join(', ')}: ${verdict.summary}; splitting it in halves to find the ticket that adds the findings` });
       const [first, second] = splitTrain(members);
-      await this.gateGroup(first);
-      if (!this.stopping) await this.gateGroup(second);
+      await this.gateGroup(first, signal);
+      if (!this.stopping) await this.gateGroup(second, signal);
       return;
     }
+    // With more than one gate lane in flight (pre_merge.concurrency), a sibling lane can land on
+    // `main` while this one was still running its own dry run: this verdict was judged against
+    // `verdict.mainSha`, not whatever `main` is now. The check and the merge happen inside one
+    // `withMergeLock` call per ticket — not checked, then separately merged — so a sibling cannot
+    // land in the gap between this lane's check and its own merge; whichever lane gets the lock
+    // first for a given main commit wins it, and the other correctly finds it stale on its turn.
+    // On a mismatch the remaining members are left `done` for a fresh gate run — never merged
+    // unvalidated. (With concurrency 1 this can never fire: nothing else can move main meanwhile.)
+    let expectedHead = verdict.mainSha;
+    let landedAll = true;
     for (const ticket of members) {
-      if (verdict.status === 'pass') {
-        appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} pre-merge gate passed (${verdict.mode})${train}: ${verdict.summary}` });
-      }
-      await this.mergeOne(ticket);
+      const merged = await this.withMergeLock(async () => {
+        if (!expectedHead) { await this.mergeOne(ticket); return true; } // no mainSha on the verdict: cannot check, merge as before
+        const head = (await git(ctx.root, ['rev-parse', 'HEAD'])).stdout.trim();
+        if (head !== expectedHead) {
+          appendEvent(ctx, {
+            actor: 'dispatcher', kind: 'dispatcher',
+            text: `${ticket.id}${train} not merged: ${main} moved under this gate run (validated at ${expectedHead.slice(0, 8)}, now at ${head.slice(0, 8)} — a concurrent gate lane likely landed first); left done for a fresh gate run`,
+          });
+          return false;
+        }
+        if (verdict.status === 'pass') {
+          appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} pre-merge gate passed (${verdict.mode})${train}: ${verdict.summary}` });
+        }
+        await this.mergeOne(ticket);
+        expectedHead = (await git(ctx.root, ['rev-parse', 'HEAD'])).stdout.trim();
+        return true;
+      });
+      if (!merged) { landedAll = false; break; }
     }
+    // Captured before any real merge of this group: `applyRenumberToMain` needs the same base the
+    // gate's dry run used, to find exactly the files this group's merges touched. Skipped unless
+    // every member actually landed (a staleness break above means the renumbered tree never fully
+    // formed on real main).
+    if (landedAll && verdict.renumber?.length) {
+      await this.withMergeLock(async () => {
+        const head = (await git(ctx.root, ['rev-parse', 'HEAD'])).stdout.trim();
+        if (head === expectedHead) { await this.applyRenumberToMain(verdict.renumber, memberIds, verdict.mainSha); return; }
+        appendEvent(ctx, {
+          actor: 'dispatcher', kind: 'dispatcher',
+          text: `${memberIds.join(', ')}: a sibling gate lane landed right after this group merged, before the gate's auto-renumber could be re-applied to ${main}; the next gate run on migrations fixes it again (T-1067)`,
+        });
+      });
+    }
+  }
+
+  /**
+   * Re-apply, on the real `main`, a migration renumber the pre-merge gate already validated in its
+   * own scratch worktree (T-1067): `mergeOne` redoes the merge for real from the raw ticket branches,
+   * so without this the exact collision the gate just fixed reappears on `main` itself. Alert-only
+   * on a mismatch (never reverts a merge that already landed): a human fixes it from the note.
+   */
+  async applyRenumberToMain(plan, ids, mainShaBeforeGroup) {
+    const { ctx } = this;
+    const main = ctx.config.dispatcher.main_branch;
+    const cfg = preMergeSettings(ctx.config).numbering;
+    const named = plan.map((r) => `${r.from} -> ${r.to}`).join(', ');
+    if (!cfg) { // numbering turned off between the gate run and here (config reload mid-tick): nothing to redo
+      appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `WARNING: ${ids.join(', ')} merged, but the gate's auto-renumber (${named}) could not be re-applied to ${main}: migration numbering is no longer configured. Fix ${main} by hand.` });
+      return;
+    }
+    const applied = await applyMigrationRenumber(ctx.root, plan, cfg.dir, mainShaBeforeGroup);
+    const commit = applied ? await git(ctx.root, ['commit', '-m', `chore: migrations: auto-renumber ${named} (pre-merge gate, T-1067)`]) : null;
+    if (!commit || commit.code !== 0) {
+      appendEvent(ctx, {
+        actor: 'dispatcher', kind: 'dispatcher',
+        text: `WARNING: ${ids.join(', ')} merged into ${main}, but re-applying the gate's auto-renumber (${named}) failed${commit ? ` (commit: ${commit.stderr.trim()})` : ''}; ${main} may now fail the migration-numbering check. Fix by hand: renumber ${cfg.dir}/${plan.map((r) => r.from).join(', ')}.`,
+      });
+      return;
+    }
+    appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `${ids.join(', ')}: re-applied the pre-merge gate's auto-renumber (${named}) on ${main} to avoid a migration-number collision (T-1067)` });
   }
 
   /**
@@ -767,7 +862,7 @@ export class Dispatcher {
     if (!this.daemon || this.stopping || this.reloaded) return false;
     const restart = this.restartRequested;
     if (!restart && ctx.config.dispatcher.auto_reload === false) return false;
-    if ((this.gateRun || this.verifyRun) && !restart) return false; // the next tick after it ends looks again
+    if ((this.gateLanes.length || this.verifyRun) && !restart) return false; // the next tick after it ends looks again
     const target = await mainSha(ctx);
     let reason = 'factory restart requested';
     if (!restart) {
@@ -786,8 +881,8 @@ export class Dispatcher {
       reason = `factory code changed on ${ctx.config.dispatcher.main_branch} (${change.files.slice(0, 3).join(', ')}${change.files.length > 3 ? `, +${change.files.length - 3} more` : ''})`;
     }
     this.restartRequested = false;
-    if (this.gateRun) { // restart only
-      this.gateAbort?.abort();
+    if (this.gateLanes.length) { // restart only
+      for (const lane of this.gateLanes) lane.abort.abort();
       await this.gateIdle();
     }
     if (this.verifyRun) { // restart only; a verify belongs to this process the same way a gate does
@@ -829,7 +924,7 @@ export class Dispatcher {
   stop() {
     if (this.stopping) this.forceStop = true;
     this.stopping = true;
-    this.gateAbort?.abort();
+    for (const lane of this.gateLanes) lane.abort.abort();
     this.verifyAbort?.abort();
     this.wake?.();
   }
