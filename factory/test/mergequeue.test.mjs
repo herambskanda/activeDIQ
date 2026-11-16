@@ -80,12 +80,16 @@ test('buildMergeQueue lists waiting in gate order, the gate in flight and the la
     const merged = await withBranch(f, { priority: 'P2', title: 'merged' });
     for (const t of [lo, hi, gated, merged]) finish(f, t);
     setTicketLinks(f.ctx, merged.id, { worktree: null, merged: '2026-11-01T12:00:00.000Z' });
-    const state = { merge_gate: { ticket: gated.id, started_at: '2026-11-01T12:30:00.000Z' } };
+    const state = { merge_gates: [{ ticket: gated.id, started_at: '2026-11-01T12:30:00.000Z' }] };
     assert.deepEqual(buildMergeQueue(f.ctx, state, true), {
-      waiting: [hi.id, lo.id], in_gate: { id: gated.id, ids: [gated.id], started_at: '2026-11-01T12:30:00.000Z' }, last_merged_at: '2026-11-01T12:00:00.000Z',
+      waiting: [hi.id, lo.id],
+      in_gate: { id: gated.id, ids: [gated.id], started_at: '2026-11-01T12:30:00.000Z' },
+      in_gates: [{ id: gated.id, ids: [gated.id], started_at: '2026-11-01T12:30:00.000Z' }],
+      last_merged_at: '2026-11-01T12:00:00.000Z',
     });
     const dead = buildMergeQueue(f.ctx, state, false);
     assert.equal(dead.in_gate, null, 'a gate record from a dead dispatcher is not shown');
+    assert.deepEqual(dead.in_gates, []);
     assert.deepEqual(dead.waiting, [hi.id, gated.id, lo.id]);
   } finally { f.cleanup(); }
 });
@@ -99,11 +103,12 @@ test('the dispatcher records the gate in flight in its state and clears it after
     const d = new Dispatcher(f.ctx);
     d.shared = false;
     let seen = null;
-    d.runGate = async () => { seen = readDispatcherState(f.ctx).merge_gate; return { status: 'pass', mode: 'stub', summary: 's' }; };
+    d.runGate = async () => { seen = readDispatcherState(f.ctx).merge_gates; return { status: 'pass', mode: 'stub', summary: 's' }; };
     await d.mergePass(); await d.gateIdle();
-    assert.equal(seen.ticket, t.id);
-    assert.match(seen.started_at, /^2026-11-01T/);
-    assert.equal(readDispatcherState(f.ctx).merge_gate, null);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].tickets[0], t.id);
+    assert.match(seen[0].started_at, /^2026-11-01T/);
+    assert.deepEqual(readDispatcherState(f.ctx).merge_gates, []);
   } finally { f.cleanup(); }
 });
 
@@ -119,9 +124,14 @@ test('GET /api/state carries merge_queue', async () => {
     };
     const lo = mk('lo', 'P3'); const hi = mk('hi', 'P0'); const gated = mk('gated', 'P1');
     f.ctx.now = () => new Date();
-    updateDispatcherState(f.ctx, { pid: process.pid, heartbeat: new Date().toISOString(), merge_gate: { ticket: gated.id, started_at: '2026-11-01T12:30:00.000Z' } });
+    updateDispatcherState(f.ctx, { pid: process.pid, heartbeat: new Date().toISOString(), merge_gates: [{ ticket: gated.id, started_at: '2026-11-01T12:30:00.000Z' }] });
     const s = await (await fetch(`http://127.0.0.1:${port}/api/state`)).json();
-    assert.deepEqual(s.merge_queue, { waiting: [hi.id, lo.id], in_gate: { id: gated.id, ids: [gated.id], started_at: '2026-11-01T12:30:00.000Z' }, last_merged_at: null });
+    assert.deepEqual(s.merge_queue, {
+      waiting: [hi.id, lo.id],
+      in_gate: { id: gated.id, ids: [gated.id], started_at: '2026-11-01T12:30:00.000Z' },
+      in_gates: [{ id: gated.id, ids: [gated.id], started_at: '2026-11-01T12:30:00.000Z' }],
+      last_merged_at: null,
+    });
   } finally {
     server.closeAllConnections();
     await new Promise((r) => server.close(r));

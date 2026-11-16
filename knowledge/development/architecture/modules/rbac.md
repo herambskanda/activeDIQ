@@ -154,6 +154,6 @@ Two additive constraints ride on an assignment (`migrations/0077`, tables `authz
   `plan_hash`. A site-hint read error fails the plan; it is not dropped.
 
 The sites belong to the assignment, so they apply to every operation the assignment holder plans, not per OU.
-`internal/modules/objects` calls `CheckTemplate` from its create/modify Actions when T-1631 adds them. Until then ADM-132's
-"blocked at Plan, before any directory read" (T-1600 AC1) is proven at gate level only; it is end-to-end once T-1631 lands
-(T-1631 carries an AC for the Action-level test).
+Template-consuming Actions do not import `rbac`: the Runner binds the request's chain into the kernel `TemplateGate`
+(`pc.Templates.CheckTemplate`), which `ad`'s create/modify Plans call first (ADR-0015 D1/D2). ADM-132's "blocked at Plan,
+before any directory read" is end-to-end once T-2142 lands the Action-level test.

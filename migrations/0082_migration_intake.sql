@@ -1,4 +1,4 @@
--- 0079_migration_intake: migration projects and import jobs (T-2060; spec e2-11 §6.1, §7; DM-90, DM-91).
+-- 0082_migration_intake: migration projects and import jobs (T-2060; spec e2-11 §6.1, §7; DM-90, DM-91).
 -- Owner: internal/modules/migration. Two tenant tables with forced RLS.
 --
 --   migration_projects  the container of one ManageEngine migration effort.

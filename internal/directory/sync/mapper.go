@@ -544,6 +544,9 @@ func (m *Mapper) bag(o *inventory.Observation, set attrSet) error {
 	if err := searchIdentifiers(bag, set); err != nil {
 		return err
 	}
+	if err := userAttributes(bag, set); err != nil {
+		return err
+	}
 	if s, present, err := firstText(set, "description", 4096); err != nil {
 		return err
 	} else if present && s != "" {
@@ -649,6 +652,89 @@ func searchIdentifiers(bag map[string]any, set attrSet) error {
 		}
 		if len(list) > 0 {
 			bag["sIDHistory"] = list[:min(len(list), maxSearchValues)]
+		}
+	}
+	return nil
+}
+
+// logonHoursLen is the size of the logonHours schedule: 168 bits, one per hour of the week.
+const logonHoursLen = 21
+
+// userAttributes adds the attributes the user-attribute reports read (T-1111, reports-2-second-slice D11).
+// An attribute the entry does not carry adds nothing. Binary values are never stored: a photo becomes
+// the flag hasThumbnailPhoto or hasJpegPhoto, and logonHours becomes its 168 bits as text, bit 0 first
+// (Sunday 00:00 UTC), '1' for an hour the account may log on. No secret is read here.
+func userAttributes(bag map[string]any, set attrSet) error {
+	for _, name := range []string{"msNPAllowDialin", "msRTCSIP-UserEnabled"} {
+		if b, present, err := boolean(set, name); err != nil {
+			return err
+		} else if present {
+			if a, _ := set.get(name); len(a.GetValues()) > 0 {
+				bag[name] = b
+			}
+		}
+	}
+	for _, a := range []struct {
+		name string
+		max  int
+	}{{"scriptPath", 260}, {"telephoneNumber", 64}, {"mobile", 64}} {
+		if s, present, err := text(set, a.name, a.max); err != nil {
+			return err
+		} else if present && s != "" {
+			bag[a.name] = s
+		}
+	}
+	if d, present, err := dnValue(set, "manager"); err != nil {
+		return err
+	} else if present && d != nil {
+		s, err := cleanText("manager", d.DisplayDn, maxDN)
+		if err != nil {
+			return err
+		}
+		if s != "" {
+			bag["manager"] = s
+		}
+	}
+	for _, p := range []struct{ attr, key string }{{"thumbnailPhoto", "hasThumbnailPhoto"}, {"jpegPhoto", "hasJpegPhoto"}} {
+		a, ok := set.get(p.attr)
+		if !ok {
+			continue
+		}
+		// Only whether a value exists: the bytes are dropped here and never leave this function.
+		vs, err := values(a, p.attr)
+		if err != nil {
+			return err
+		}
+		for _, v := range vs {
+			o, isOctets := v.GetValue().(*connectorv1.AttributeValue_Octets)
+			if !isOctets {
+				return refuse(p.attr, CodeType)
+			}
+			if len(o.Octets) > 0 {
+				bag[p.key] = true
+			}
+		}
+	}
+	if a, ok := set.get("logonHours"); ok {
+		v, err := one(a, "logonHours")
+		if err != nil {
+			return err
+		}
+		if v != nil {
+			o, isOctets := v.GetValue().(*connectorv1.AttributeValue_Octets)
+			if !isOctets {
+				return refuse("logonHours", CodeType)
+			}
+			if len(o.Octets) != logonHoursLen {
+				return refuse("logonHours", CodeRange)
+			}
+			bits := make([]byte, 0, logonHoursLen*8)
+			for _, b := range o.Octets {
+				for i := 0; i < 8; i++ {
+					bits = append(bits, '0'+(b>>i)&1)
+				}
+			}
+			bag["logonHours"] = string(bits)
 		}
 	}
 	return nil
