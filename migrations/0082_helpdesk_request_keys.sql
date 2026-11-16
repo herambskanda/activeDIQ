@@ -1,4 +1,4 @@
--- 0080_helpdesk_request_keys: idempotency keys of the help-desk caller-verification routes (T-2145; ENH-09 §4a C1,
+-- 0082_helpdesk_request_keys: idempotency keys of the help-desk caller-verification routes (T-2145; ENH-09 §4a C1,
 -- DM-38). Owner: internal/modules/helpdesk.
 --
 -- One row per (technician, operation, Idempotency-Key). It makes a retried POST safe: a retried issue never sends a second
