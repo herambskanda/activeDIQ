@@ -154,7 +154,7 @@ func TestConsoleAuthzOverRealRBAC(t *testing.T) {
 }
 
 // testCatalogue is the real catalogue plus "x", the placeholder permission some cases ask for.
-func testCatalogue() apihost.Permissions { return append(permissionCatalogue(), "x") }
+func testCatalogue() apihost.Permissions { return append(bootedCatalogue(), "x") }
 
 // The relying party is the public URL's origin: RP ID without the port, exactly one origin, nothing else.
 func TestWebAuthnRelyingPartyFromPublicURL(t *testing.T) {

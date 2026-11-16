@@ -67,15 +67,6 @@ func (j *jrig) exec(t *testing.T) (jobs.Result, error) {
 	return jobs.NewRunner(j.e.db, j.reg).Execute(context.Background(), cl[0])
 }
 
-func (e *env) jobStrings(t *testing.T, q string, args ...any) []string {
-	t.Helper()
-	out, err := e.d.OwnerStrings(context.Background(), q, args...)
-	if err != nil {
-		t.Fatalf("%s: %v", q, err)
-	}
-	return out
-}
-
 // query is e.d.OwnerStrings in the shape jobstest wants.
 func (e *env) query(sql string, args ...any) ([]string, error) {
 	return e.d.OwnerStrings(context.Background(), sql, args...)
@@ -124,7 +115,10 @@ func TestSyncFullJobFillsInventory(t *testing.T) {
 		if len(after.Watermarks) != 2 {
 			t.Fatalf("watermarks = %d, want one per domain NC", len(after.Watermarks))
 		}
-		live := e.jobStrings(t, `SELECT name FROM public.platform_leases WHERE name LIKE 'sync.cursor.%' AND expires_at > now()`)
+		live, err := jobstest.ActiveLeaseNames(e.query, "sync.cursor.%")
+		if err != nil {
+			t.Fatal(err)
+		}
 		if len(live) != 0 {
 			t.Fatalf("leases still held after the job: %v", live)
 		}
@@ -182,7 +176,10 @@ func TestSyncFullTwoNodesOneReader(t *testing.T) {
 		if !bytes.Contains(b.logs.Bytes(), []byte("lease held by another node")) {
 			t.Fatalf("B did not log the held lease:\n%s", b.logs)
 		}
-		holders := e.jobStrings(t, `SELECT holder FROM public.platform_leases WHERE name LIKE 'sync.cursor.%' AND expires_at > now() GROUP BY holder`)
+		holders, err := jobstest.ActiveLeaseHolders(e.query, "sync.cursor.%")
+		if err != nil {
+			t.Fatal(err)
+		}
 		if len(holders) != 1 || holders[0] != "node-a" {
 			t.Fatalf("lease holders = %v, want only node-a", holders)
 		}
@@ -280,7 +277,7 @@ func TestSyncFullRenewsAndAbortsOnLoss(t *testing.T) {
 		var once gosync.Once
 		f.onBatch = func() {
 			once.Do(func() {
-				if err := e.d.ExecOwner(context.Background(), `UPDATE public.platform_leases SET expires_at = now() - interval '1 second' WHERE name LIKE 'sync.cursor.%'`); err != nil {
+				if err := jobstest.ExpireLeases(e.d.ExecOwner, "sync.cursor.%"); err != nil {
 					t.Error(err)
 				}
 				time.Sleep(900 * time.Millisecond)
@@ -387,7 +384,10 @@ func TestSyncFullFaults(t *testing.T) {
 				t.Fatalf("a directory value reached the log:\n%s", b)
 			}
 		}
-		stored := e.jobStrings(t, `SELECT coalesce(error_code, '') FROM public.jobs WHERE kind = $1`, dsync.JobFull)
+		stored, err := jobstest.ErrorCodesByKind(e.query, dsync.JobFull)
+		if err != nil {
+			t.Fatal(err)
+		}
 		for _, s := range stored {
 			if bytes.Contains([]byte(s), []byte(leakSentinel)) {
 				t.Fatalf("a directory value reached the job row: %q", s)
@@ -421,7 +421,10 @@ func TestSyncFullRefusesAndRightsFailuresDoNotRetry(t *testing.T) {
 		if res, err := j.exec(t); err != nil || res != jobs.Discarded {
 			t.Fatalf("a rights refusal must be discarded, not retried: %v %v", res, err)
 		}
-		codes := e.jobStrings(t, `SELECT coalesce(error_code, '') FROM public.jobs WHERE kind = $1 AND state = 'discarded'`, dsync.JobFull)
+		codes, err := jobstest.ErrorCodesByState(e.query, dsync.JobFull, "discarded")
+		if err != nil {
+			t.Fatal(err)
+		}
 		if len(codes) != 1 || codes[0] != dsync.CodeInsufficient {
 			t.Fatalf("code = %v", codes)
 		}

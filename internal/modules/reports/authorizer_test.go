@@ -1,4 +1,4 @@
-package server
+package reports
 
 import (
 	"context"
@@ -29,7 +29,7 @@ func (f *fakeAz) Authorize(ctx context.Context, _ authority.Chain, p authz.Permi
 	return f.err
 }
 
-// reportsAuthz fails closed and asks at tenant scope (security review F3).
+// authorizer fails closed and asks at tenant scope (security review F3).
 func TestReportsAuthz(t *testing.T) {
 	tid := tenant.New()
 	chain := authority.Chain{Requester: authority.Principal{ID: "u1", Kind: authority.Human}}
@@ -47,7 +47,7 @@ func TestReportsAuthz(t *testing.T) {
 		{name: "allowed", az: &fakeAz{}, wantOK: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a := reportsAuthz{}
+			a := authorizer{}
 			if !tc.nilAz {
 				a.az = tc.az
 			}
@@ -72,7 +72,7 @@ func TestReportsAuthzWithoutPrincipalHasNoAuthorityFactor(t *testing.T) {
 	tid := tenant.New()
 	chain := authority.Chain{Requester: authority.Principal{ID: "u1", Kind: authority.Human}}
 	f := &fakeAz{}
-	if _, err := (reportsAuthz{az: f}).Allow(context.Background(), tid, chain, "reports.run"); err != nil {
+	if _, err := (authorizer{az: f}).Allow(context.Background(), tid, chain, "reports.run"); err != nil {
 		t.Fatal(err)
 	}
 	if authority.AuthorityFactorFrom(f.ctx) {
