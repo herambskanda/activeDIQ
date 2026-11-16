@@ -76,6 +76,11 @@ func Check(root string) ([]Violation, error) {
 		return nil, err
 	}
 	vs = append(vs, cat...)
+	ex, err := checkExemptions(root)
+	if err != nil {
+		return nil, err
+	}
+	vs = append(vs, ex...)
 	sort.Slice(vs, func(i, j int) bool {
 		if vs[i].Pos != vs[j].Pos {
 			return vs[i].Pos < vs[j].Pos
