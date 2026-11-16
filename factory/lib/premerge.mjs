@@ -252,6 +252,13 @@ export function readLog(file) {
 }
 
 export function gateDir(ctx) { return path.join(ctx.stateDir, 'premerge'); }
+/**
+ * Environment for every command the gate runs. The gate gets a Go build cache of its own under the
+ * state dir (T-2225): the default `~/.cache/go-build` is shared with every worker and any cleanup job,
+ * and an entry vanishing from it mid-run fails the run with "could not import ... no such file", which
+ * the gate then judges as real findings (T-0977: 343 phantom findings).
+ */
+export function gateEnv(ctx) { return { ...process.env, GOCACHE: path.join(ctx.stateDir, 'gocache') }; }
 export function scratchRoot(ctx) { return path.resolve(ctx.root, ctx.config.dispatcher.worktree_root, '.premerge'); }
 
 /**
@@ -448,7 +455,7 @@ async function baseline(ctx, settings, mainSha, mainTree, { signal }) {
   const log = path.join(gateDir(ctx), `baseline-${mainSha.slice(0, 12)}-${tag}-${run}.log`);
   const identity = await addDetached(ctx, dir, mainSha);
   try {
-    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
+    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx) });
     if (ran.aborted) throw new FactoryError(`pre-merge: the baseline run on main was stopped (${log})`);
     if (ran.timedOut) {
       const near = await nearestBaseline(ctx, mainTree, entries);
@@ -545,7 +552,7 @@ async function checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { s
   const cfg = settings.numbering;
   const log = path.join(gateDir(ctx), `${subject.id}-${mainSha.slice(0, 12)}-${run}-numbering.log`);
   const started = Date.now();
-  let ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal });
+  let ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal, env: gateEnv(ctx) });
   if (ran.timedOut) throw new FactoryError(`pre-merge: the migration-numbering check on ${subject.label} timed out after ${cfg.timeout_seconds} s (${log})`);
   if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${subject.label} was stopped (${log})`);
 
@@ -562,7 +569,7 @@ async function checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { s
         // A fresh log file: `runLogged` truncates `log`, which would erase the first (failing) run's
         // own output that the blocked note below may still need to quote.
         const retryLog = log.replace(/\.log$/, '-retry.log');
-        ran = await runLogged(cfg.argv, dir, retryLog, { timeoutMs: cfg.timeout_seconds * 1000, signal });
+        ran = await runLogged(cfg.argv, dir, retryLog, { timeoutMs: cfg.timeout_seconds * 1000, signal, env: gateEnv(ctx) });
         if (ran.timedOut) throw new FactoryError(`pre-merge: the migration-numbering check on ${subject.label} timed out after ${cfg.timeout_seconds} s (${retryLog})`);
         if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${subject.label} was stopped (${retryLog})`);
         fs.appendFileSync(log, `\n# migration-numbering check failed; auto-renumbered ${plan.map((r) => `${r.from} -> ${r.to}`).join(', ')} and retried (${retryLog}, exit ${ran.code})\n`);
@@ -682,7 +689,7 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
     // really merge.
     const withRenumber = (verdict) => ({ ...verdict, mainSha, ...(renumber ? { renumber } : {}) });
     const withTiming = (text) => (numberingSeconds === null ? text : `${text}; migration numbering checked in ${numberingSeconds} s`);
-    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
+    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx) });
     if (ran.timedOut) throw new FactoryError(`pre-merge: ${settings.argv.join(' ')} on ${label} timed out after ${settings.timeout_minutes} minutes (${log})`);
     if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${label} was stopped (${log})`);
     assertTreeIntact(dir, identity, log);
