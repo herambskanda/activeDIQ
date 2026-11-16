@@ -28,6 +28,7 @@
 - [sync mapper lessons](sync-mapper-lessons.md) — T-1189: allowlist gap, no DnValue.guid today, Samba UAC 546, capture recipe
 - [T-1203 schema lessons](lessons-t1203.md) — sync-list coverage test is offline, name-only entries, lab-up address-pool exhaustion
 - [extended-DN lessons](extdn-lessons.md) — T-1202: Samba extends entry name too, opt-in control, ParseLinkValue, slow bulk lab test
+- [ChangeFeed lessons](feed-lessons.md) — T-1194: Samba omits cn in DirSync, LDAP result 200 = unreachable, Feeder golden-list trap
 - [search meta lessons](search-meta-lessons.md) — T-1097: chips via users dataset + ExecAll, derivation fixture traps, Entra cloud-only rule
 - [sync cursor lessons](sync-cursor-lessons.md) — T-1190: fitness traps (tenant_id guard, SQL const, platform_leases), fencing limits
 - [sync engine lessons](sync-engine-lessons.md) — T-1191: RLS owner-update trap, lease release in rigs, per-NC lease, CompleteScan no cookie
@@ -35,9 +36,11 @@
 - [object write lessons](object-write-lessons.md) — T-1624: Samba ModifyDN deleteoldrdn, no Recycle Bin, stubGuard in lab tests
 - [write kinds lessons](write-kinds-lessons.md) — T-1623: writechange codec, h.ops test substitution needs testChange(), schema allow-list, sync tests hang
 - [account kinds lessons](account-kinds-lessons.md) — T-1583: leaf digest pkg, accountkind single definition, test-kind collision, T-1638 Windows lab
-- [sync mapper lessons](sync-mapper-lessons.md) — T-1189: allowlist gap, no DnValue.guid today, Samba UAC 546, capture recipe
-- [sync engine lessons](sync-engine-lessons.md) — T-1191: RLS owner-update trap, lease release in rigs, per-NC lease, CompleteScan no cookie
 - [reconcile lessons](reconcile-lessons.md) — T-1196: no CREATE TEMP for runtime role, fake listing flag, mutation checks, unmerged deps
+- [patch-apply lessons](patch-apply-lessons.md) — T-1197: link edge direction, permutation test cost/shape, mutation recipe
 - [replxml lessons](replxml-lessons.md) — T-1721: xml alloc per element vs 8x bound, RX2 assignment trap, one value per call, unverified names
 - [replstatus lessons](replstatus-lessons.md) — T-1723: protoc-less pb.go recipe, no-control read, RX6 comment trap, DC enumeration seam
 - [object changes lessons](object-changes-lessons.md) — T-1109: chg CTE in upsert, baseline rule, RowAnchor on current object, pre-existing red
+- [user attrs lessons](user-attrs-lessons.md) — T-1111: FORCE RLS lift in migration, change-history flood hazard, photo flags only
+- [descendant dn lessons](descendant-dn-lessons.md) — T-0988: dn pass before ancestry UPDATE, key delete/insert trap, dn.Rebase
+- [incremental cycle lessons](incremental-lessons.md) — T-1198: Reconcile moves fencing token, whole FeedCookie stored, deferFinish, patch-path dn gap

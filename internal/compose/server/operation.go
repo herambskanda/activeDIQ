@@ -40,7 +40,11 @@ func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveF
 		return nil, ErrNoFacts
 	}
 	ch := audit.NewChainer(db)
-	r, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: ch, Authz: authzr, Registry: reg, Facts: facts, Pinner: pinner, Component: "server"})
+	cfg := operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: ch, Authz: authzr, Registry: reg, Facts: facts, Pinner: pinner, Component: "server"}
+	if sh, ok := authzr.(operation.SiteHints); ok { // the rbac authorizer reads the assignments' site preferences (ADM-133)
+		cfg.Sites = sh
+	}
+	r, err := operation.NewRunner(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("server: operation runner: %w", err)
 	}
@@ -102,3 +106,5 @@ func rbacAuthorizer(db *store.DB, facts rbac.FactsReader) (*rbac.Authorizer, err
 	}
 	return az, nil
 }
+
+var _ operation.SiteHints = (*rbac.Authorizer)(nil)

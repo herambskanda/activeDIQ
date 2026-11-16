@@ -1,4 +1,0 @@
-ok  	github.com/skenzeriq/activediq/internal/platform/operation	211.379s
-ok  	github.com/skenzeriq/activediq/internal/platform/operation/operationtest	1.066s
-ok  	github.com/skenzeriq/activediq/internal/platform/operation/step	0.009s
-exit=0

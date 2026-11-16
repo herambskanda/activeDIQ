@@ -78,6 +78,7 @@ type Config struct {
 	Jobs       *jobs.Registry // enqueues the chunk jobs at approved -> queued
 	Keys       DEKSource      // seals transient secrets
 	Pinner     Pinner         // pins one writable DC per naming context (rule 5)
+	Sites      SiteHints      // optional: AD sites to prefer when pinning (ADM-133); nil: none
 	Settings   Settings       // tenant settings read by the kernel hold rules
 	Provenance Provenance     // the sock-puppet check of rule 8
 	Alerts     Alerter
