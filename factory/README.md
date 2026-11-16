@@ -348,7 +348,12 @@ claude -p "<rendered templates/worker-prompt.md>" \
   `main` itself it is reopened as before). Embargo hold and the could-not-judge retry apply per ticket.
   The gate judges exactly what it judged before; only how many tickets share a run changed. The dispatcher records the gate in flight in `state/dispatcher.json`
   (`merge_gate: {ticket, tickets, started_at}`, cleared on finish and on dispatcher start). Before the full run a cheap `pre_merge.numbering` check (the migration-number
-  test, T-1067) runs on the same merge result and refuses with the free number to renumber to. `factory premerge ID [-- CMD…]` is the dry run. Details:
+  test, T-1067) runs on the same merge result and refuses with the free number to renumber to. When it fails
+  but the branch adds no clashing file, the gate runs the same check on `main` alone (once per main commit):
+  `main` red too → `main` is broken (a duplicate or gap that landed without the gate), so the ticket is
+  **held** — left `done`, not reopened, no `gate_failures` strike — and not gated again until `main` moves,
+  with one pending `notice` decision while `main` stays broken; `main` green → the branch broke the
+  numbering itself (a deleted or renamed migration), so it is reopened and counts as a strike. `factory premerge ID [-- CMD…]` is the dry run. Details:
   `knowledge/development/standards/ci-gates.md`.
 - When a code-bearing ticket reaches `done` (and passes the gate), the dispatcher merges with
   `git merge --no-ff factory/<id>` in the main checkout. On conflict: `git merge --abort`, the
