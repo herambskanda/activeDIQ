@@ -323,7 +323,13 @@ claude -p "<rendered templates/worker-prompt.md>" \
   a gate that passes caches its merge-result run as the baseline of the next `main`; a fresh baseline that
   times out falls back to the nearest cached run, which may clear a merge result but never refuse one
   (otherwise the gate cannot judge and retries). A refused ticket is reopened for its
-  owner with the findings and log paths (`state/premerge/`). Every run gets its own scratch tree and
+  owner with the findings and log paths (`state/premerge/`), **up to `pre_merge.max_gate_failures`
+  times in a row (default 2, T-xxxx)**: the dispatcher counts consecutive refusals on `ticket.gate_failures`
+  (untouched by the normal per-stage `attempts`/`max_retries` reset, so it survives a reopen); on the
+  `max_gate_failures`th refusal it does not reopen the ticket again — it holds it `blocked` and opens a
+  `directional` CEO decision (`retry` / `escalate` / `cancel`) naming the ticket and the findings, so a
+  ticket can never bounce through the gate forever unseen. `ticket unblock [--to-ready]` on the decision's
+  resolution gives it a fresh `gate_failures` budget. Every run gets its own scratch tree and
   log, named with a per-run tag, so a dry run never touches the dispatcher's run. A run whose tree
   was removed or replaced while it ran is not a verdict and is not cached (T-0696). A gate that cannot judge (timeout,
   worktree error, vanished tree) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
@@ -342,7 +348,12 @@ claude -p "<rendered templates/worker-prompt.md>" \
   `main` itself it is reopened as before). Embargo hold and the could-not-judge retry apply per ticket.
   The gate judges exactly what it judged before; only how many tickets share a run changed. The dispatcher records the gate in flight in `state/dispatcher.json`
   (`merge_gate: {ticket, tickets, started_at}`, cleared on finish and on dispatcher start). Before the full run a cheap `pre_merge.numbering` check (the migration-number
-  test, T-1067) runs on the same merge result and refuses with the free number to renumber to. `factory premerge ID [-- CMD…]` is the dry run. Details:
+  test, T-1067) runs on the same merge result and refuses with the free number to renumber to. When it fails
+  but the branch adds no clashing file, the gate runs the same check on `main` alone (once per main commit):
+  `main` red too → `main` is broken (a duplicate or gap that landed without the gate), so the ticket is
+  **held** — left `done`, not reopened, no `gate_failures` strike — and not gated again until `main` moves,
+  with one pending `notice` decision while `main` stays broken; `main` green → the branch broke the
+  numbering itself (a deleted or renamed migration), so it is reopened and counts as a strike. `factory premerge ID [-- CMD…]` is the dry run. Details:
   `knowledge/development/standards/ci-gates.md`.
 - When a code-bearing ticket reaches `done` (and passes the gate), the dispatcher merges with
   `git merge --no-ff factory/<id>` in the main checkout. On conflict: `git merge --abort`, the
@@ -493,7 +504,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 - **Run:** `continuation`, `snapshot` (status, stage role and latest handoff at launch: how "no progress" is judged), `kill_reason` (`timeout` or `shutdown`), `error`; stderr is kept in `state/runs/<id>.err` next to `<id>.log`.
 - **State:** `state/board.json` and `state/dispatcher.json` hold pids; `state/board.log` and `state/dispatcher.log` capture the detached processes; `state/signals/rate-limit.json` is written by the `StopFailure` hook and read by the dispatcher.
 - **Environment:** `FACTORY_HOME`, `FACTORY_CLAUDE_BIN` (the executable to launch, default `claude`), `FACTORY_DEBUG=1` (stack traces).
-- **API:** `/api/state` also carries `company` and `dispatcher.pid`; ticket summaries include `waiting_on_merge` (ids of done dependencies not yet on main, ready tickets only), `summary`, `created`, `parity_refs`, `effort_override`, `held`, `stage_role` and `last_note`.
+- **API:** `/api/state` also carries `company` and `dispatcher.pid`; ticket summaries include `waiting_on_merge` (ids of done dependencies not yet on main, ready tickets only), `summary`, `created`, `parity_refs`, `effort_override`, `held`, `stage_role`, `last_note` and `gate_failures` (how many times in a row the pre-merge gate has refused this ticket; see `pre_merge.max_gate_failures` below).
 
 ### Where the runtime deliberately differs from, or extends, the reference
 

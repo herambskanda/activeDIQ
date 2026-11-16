@@ -64,6 +64,27 @@ var attributes = []string{
 	"employeeID",
 	"employeeNumber",
 	"sIDHistory",
+	// The user-attribute reports (T-1111). thumbnailPhoto and jpegPhoto are read only to learn that a value
+	// exists; the mapper never stores them. None is a secret.
+	"msNPAllowDialin",
+	"msRTCSIP-UserEnabled",
+	"logonHours",
+	"thumbnailPhoto",
+	"jpegPhoto",
+	"telephoneNumber",
+	"mobile",
+	"manager",
+	"scriptPath",
+	// The published-printers report (T-1719, reports-2-second-slice 7.2 and D13), read for printQueue objects
+	// only. description is already on the list. None is a secret.
+	"printerName",
+	"serverName",
+	"uNCName",
+	"printShareName",
+	"location",
+	"driverName",
+	"printColor",
+	"printDuplexSupported",
 }
 
 // Attributes returns a copy of the closed attribute list.

@@ -120,6 +120,11 @@
       "operation": "reverifyStepUp",
       "reason": "Refreshes the caller's own session MFA time from a TOTP code of the caller's own account; touches no other principal. One refusal shape (403 step-up-refused), class secret per principal, no freshness input.",
       "ref": "TM-D16"
+    },
+    {
+      "operation": "getConnectionSummary",
+      "reason": "Tenant-wide connection count (a number, no identity) so Home first-run renders for an administrator whose grant covers no connection; it reads no other principal and returns no connection detail.",
+      "ref": "TM-F-SESSION"
     }
   ],
   "largeBodies": [],
