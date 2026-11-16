@@ -23,6 +23,9 @@ export const GRANDFATHER_UNTIL = '6cb96d24d8d21c7bb211c6b296ad777fb9a02a44';
 export const KNOWN_EXCEPTIONS = Object.freeze([
   // T-1191 landed carrying T-1189's mapper (stacked by hand) while T-1189 itself was still in its own train.
   { sha: '1e0f197596cd', id: 'T-1191', dep: 'T-1189', reason: 'stacked by hand before T-1706 existed' },
+  // T-1101 (Ctrl+K palette) landed 2026-11-12 while T-1100 (/search page) was done but unmerged, against the
+  // reviewers' and QA's "merge T-1100 first" condition (T-2237). History cannot be reordered, so this one pair is recorded.
+  { sha: '1514a36ef', id: 'T-1101', dep: 'T-1100', reason: 'landed before T-1100 despite a merge-first condition; recorded by T-2237' },
 ]);
 
 /** The bound tests: id -> test file and the title prefix every subtest of that part carries. */
