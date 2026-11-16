@@ -1,17 +1,17 @@
 ---
 title: "Module: migration (intake)"
 date: 2026-11-14
-updated: 2026-11-14
+updated: 2026-11-16
 status: review
 owner: heramb
 author: backend-engineer
-ticket: T-2060
+ticket: T-2060, T-2062
 tier: server
 ---
 
 # Module `migration` — intake
 
-**Purpose.** The base every ManageEngine importer sits on (spec [e2-11](../../../product/specs/e2-11-migration-importer.md) §6.1, §7, §9): the migration project, the import job that starts `quarantined`, the size gate that decides before any byte is read, and the quotas. No format parser, proposal or UI yet.
+**Purpose.** The base every ManageEngine importer sits on (spec [e2-11](../../../product/specs/e2-11-migration-importer.md) §6.1, §7, §9): the migration project, the import job that starts `quarantined`, the size gate that decides before any byte is read, and the quotas. No format parser or UI yet.
 **Capabilities required:** none (importers need no directory access, spec §9). **Permission:** `migration.import` (not control-plane; the tenant may delegate it).
 
 ## Owned tables (migration 0082, both tenant tables with forced RLS, `config` write class)
@@ -33,6 +33,14 @@ tier: server
 - **Size gate** (`SizeGate`): decided from the declared size (Content-Length or stat) at Plan, before any read, hash or parse. 256 MiB for csv/xlsx/html, 4 GiB for `db_dump`. Over the limit, the job is stored `rejected` with `limit_hit` (`upload_size_256mib`, `upload_size_4gib`) and the caller gets `ErrSizeLimit`. A rejected job holds no quota.
 - **Quotas:** at most 3 active (`quarantined`, `running`) jobs per tenant and 1 per actor. Plan refuses early; Apply re-counts under a per-tenant `pg_advisory_xact_lock`, so concurrent submissions cannot exceed them (`migration_quota_concurrent`). Plan does not know the actor, so the user quota is an Apply refusal (audited as a failed step).
 - **Quarantine:** every accepted job is `quarantined`. Nothing releases it yet: scan, release and the parsers are later tickets.
+
+## Fidelity report and proposal store (T-2062, migration 0084)
+
+- `migration_fidelity` (DM-92): one row per parsed item (`exact`, `changed` + diff, `manual`, `not_supported` + reason code). `migration_proposals` (DM-93): one inert proposal per `exact`/`changed` item. Both tenant tables, forced RLS, insert-only for the runtime role. The proposal's class is part of its foreign key to the fidelity row, so the database itself refuses a proposal for a `manual` or `not_supported` item.
+- **Action `migration.fidelity.record`** (audit `migration.fidelity.recorded`, permission `migration.import`): takes every item of a *running* job once (`ErrJobNotRunning`, `ErrAlreadyRecorded`, `ErrNoSuchJob`). The importer *describes* items (`Item`); `Classify` decides server-side, in Plan. Precedence: never-imported (§6.4: tenant-owner, `authz.NeverCrosses`/platform-only permissions, tier0 or unresolvable scope, credential, raw SQL, open request → `not_supported`) > script body (`manual`, HTML-escaped bounded text, never audited) > the importer's declared class. An importer cannot declare `manual`.
+- **Tier0 fails closed.** `Tier0Resolver` decides whether a scope GUID is or sits under tier0; an error, a malformed GUID or no resolver at all makes the item `not_supported`. `Register` currently passes **no resolver**, so every directory-scoped grant is `not_supported` until the real resolver (tier0 designations, `ad-expert` on the set) is wired: follow-up ticket.
+- **Inert:** no authorisation path reads the two tables; test `proposal_is_inert` checks the evaluator's decision and `authz_assignments` are unchanged.
+- **CSV export:** `Service.ExportFidelityCSV` (requires `migration.import` via `Service.Authz`, deny by default) writes through the shared `export/csv` encoder, so formula leads are neutralised.
 
 ## Not here (follow-ups)
 
