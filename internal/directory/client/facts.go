@@ -28,6 +28,8 @@ type ObjectRead struct {
 	// Parent is the objectGUID of the parent container; empty when the object is the head of its
 	// naming context (it has no parent in the connection).
 	Parent string
+	// Children is set only by ConnectorReads.ChildCount (the delete preview); facts never ask.
+	Children ChildCount
 }
 
 // Reads is the connector's read half as the facts reader needs it: one object, live, on the pins.

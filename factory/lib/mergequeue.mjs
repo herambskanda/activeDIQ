@@ -42,25 +42,34 @@ export function orderDoneQueue(done, all) {
 
 /**
  * What the board shows: the done code tickets still to go through the gate (in gate order, not
- * counting the one in the gate), the ticket(s) in the gate (a merge train, T-1297, has several; `id` is the first), and when main last took a merge.
+ * counting ones already in a gate lane), the lane(s) in flight (T-1297's merge train has several
+ * tickets per lane; T-2210's `pre_merge.concurrency` can run more than one lane at once — `in_gate`
+ * is the first lane, for callers that only know about one; `in_gates` is all of them), and when
+ * main last took a merge.
  * @param {object} ctx
  * @param {object} dispatcherState result of readDispatcherState
  * @param {boolean} dispatcherAlive a stale gate record from a dead dispatcher is not shown
- * @returns {{waiting: string[], in_gate: {id: string, ids: string[], started_at: string}|null, last_merged_at: string|null}}
+ * @returns {{waiting: string[], in_gate: {id: string, ids: string[], started_at: string}|null,
+ *   in_gates: {id: string, ids: string[], started_at: string}[], last_merged_at: string|null}}
  */
 export function buildMergeQueue(ctx, dispatcherState, dispatcherAlive) {
   const all = listEntities(ctx, 'tickets');
-  const gate = dispatcherAlive ? dispatcherState.merge_gate ?? null : null;
-  const inGate = gate ? (gate.tickets?.length ? gate.tickets : [gate.ticket]) : [];
+  const lanes = dispatcherAlive ? dispatcherState.merge_gates ?? [] : [];
+  const inGates = lanes.map((gate) => {
+    const ids = gate.tickets?.length ? gate.tickets : [gate.ticket];
+    return { id: ids[0], ids, started_at: gate.started_at };
+  });
+  const claimed = new Set(inGates.flatMap((g) => g.ids));
   const waiting = orderDoneQueue(
     all.filter((t) => t.status === 'done' && isCodeType(ctx.config, t.type) && t.links?.worktree
-      && !(t.tags ?? []).includes(EMBARGO_TAG) && !inGate.includes(t.id)),
+      && !(t.tags ?? []).includes(EMBARGO_TAG) && !claimed.has(t.id)),
     all,
   ).map((t) => t.id);
   const merged = all.map((t) => t.links?.merged).filter(Boolean).sort();
   return {
     waiting,
-    in_gate: gate ? { id: inGate[0], ids: inGate, started_at: gate.started_at } : null,
+    in_gate: inGates[0] ?? null,
+    in_gates: inGates,
     last_merged_at: merged.at(-1) ?? null,
   };
 }
