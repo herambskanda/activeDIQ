@@ -106,7 +106,7 @@ func TestInitLocalAccountReadsActiveADConnections(t *testing.T) {
 
 		// T-1928: reports.run comes from the console-report-runner role over the same roots, so the report
 		// run path reads exactly the active connection's naming context; reports.export is not granted.
-		rr, err := txReadScopes{db: db, rs: rs}.ReadScope(ctx, ten, chain, "reports.run")
+		rr, err := boundScopes(t, db, rs).ReadScope(ctx, ten, chain, "reports.run")
 		if err != nil {
 			t.Fatalf("reports.run read scope: %v", err)
 		}
@@ -114,7 +114,7 @@ func TestInitLocalAccountReadsActiveADConnections(t *testing.T) {
 		if rr.Empty() || len(rg) != 1 || len(rg[0].Include) != 1 || rg[0].Include[0] != want {
 			t.Fatalf("reports.run grants = %+v, want the active connection's naming context %+v (reasons %v)", rg, want, rr.Reasons())
 		}
-		if ex, err := (txReadScopes{db: db, rs: rs}).ReadScope(ctx, ten, chain, "reports.export"); err == nil && !ex.Empty() {
+		if ex, err := boundScopes(t, db, rs).ReadScope(ctx, ten, chain, "reports.export"); err == nil && !ex.Empty() {
 			t.Fatalf("reports.export granted by init-local: %+v", ex.Terms())
 		}
 	})
