@@ -50,7 +50,7 @@ type Latest struct {
 const latestRuns = `SELECT id::text, definition_id, definition_version, definition_sha256, preset, params, query_hash,
   scope_fingerprint, runner_account::text, chain, schedule_id::text, rerun_of::text, state, failure_reason, attempt,
   scope_applied, freshness, per_dc, as_of, row_count, objects_checked, hidden_counts, digest, columns,
-  created_at, started_at, finished_at, expires_at FROM public.report_runs
+  created_at, started_at, finished_at, expires_at, runner_zone FROM public.report_runs
 WHERE runner_account = $1::uuid AND definition_id = $2 AND preset = $3
   AND state IN ('queued', 'running', 'succeeded', 'failed', 'expired')
 ORDER BY created_at DESC, id DESC LIMIT $4`
