@@ -24,14 +24,18 @@
 #   directory.read   searchDirectoryUsers (T-0668) and searchDirectory (T-1094, a POST read so the text stays out of URLs, ADR-0011 rule 15)
 #                    are ordinary permissioned reads: x-permission directory.read, no step-up, no anonymous or authenticated row,
 #                    rate class read. No row is stale or missing.
+#   connections.read listConnectionHealth (T-1834, modules/connections.yaml) is an ordinary permissioned read: x-permission connections.read, no step-up,
+#                    no anonymous or authenticated row, rate class read. Its rows carry no secret, so no secretResponses row. No row is stale or missing.
 #   reports.*        the 2a report operations (T-0866, modules/reports.yaml) are ordinary permissioned operations: one x-permission each,
 #                    no step-up row, no anonymous or authenticated row. reports.run: library, runs, run header, result paging.
 #                    reports.export: export, export record, download, delete a file; createReportExport also checks reports.run inside the
 #                    operation (modules/reports.md 6.6), one x-permission only. reports.schedule: own schedules (list, get, create,
 #                    update, pause, resume, delete, run now). reports.schedule.manage_all: reassignReportSchedule only; it is also checked
-#                    inside schedule operations for owner=any or another owner's schedule. reports.deliver.external is bound to NO operation:
-#                    it guards only the external-recipient case of a schedule write. TM 7.4 has no reports row, so no step-up is declared;
-#                    whether schedule writes with external recipients need one is open for security-architect (see T-0866).
+#                    inside schedule operations for owner=any, get, and pause of another owner's schedule (spec 8.5: see, pause, reassign).
+#                    Update, delete, resume and run now are owner-only; manage_all grants none of them (T-0893 R1, R2):
+#                    update, delete and resume answer a non-owner 404, or a manage_all holder 403 not_owner; run now answers any non-owner 404. reports.deliver.external
+#                    is bound to NO operation: it guards only the external-recipient case of a schedule write (create, update, resume).
+#                    TM 7.4 has no reports row. Step-up is conditional and in-operation (TM-D30, kernel predicate): no stepUp row.
 #   stepUp           one row per permission of the TM §7.4 table (TM-D16), named when its operation lands.
 #   largeBodies      none planned.
 
@@ -114,6 +118,12 @@ authenticated:
     ref: TM-F-SESSION
   - operation: getCsrfToken
     reason: Gives the caller's own session its CSRF value; touches no other principal.
+    ref: TM-F-SESSION
+  - operation: reverifyStepUp
+    reason: Refreshes the caller's own session MFA time from a TOTP code of the caller's own account; touches no other principal. One refusal shape (403 step-up-refused), class secret per principal, no freshness input.
+    ref: TM-D16
+  - operation: getConnectionSummary
+    reason: Tenant-wide connection count (a number, no identity) so Home first-run renders for an administrator whose grant covers no connection; it reads no other principal and returns no connection detail.
     ref: TM-F-SESSION
 nonApiRoutes:
   - method: GET

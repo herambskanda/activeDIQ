@@ -121,6 +121,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/step-up": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-verify the second factor of the calling console session (step-up, TM-D16)
+         * @description Lets a signed-in console session obtain the fresh multi-factor check that a step-up operation (operations whose permission is a stepUp row of policy.yaml, TM section 7.4) requires. The caller sends a TOTP code of the session's own account. Success answers 204 with no body: the server moves the session's MFA time forward, and the next step-up operation is judged against that server-side time alone. Nothing in the request or response carries, sets or reports freshness, and no client field can assert it. Only a console session can call this: an API token has no interactive second factor and is refused 401. Needs the CSRF header like any cookie-session mutation.
+         *     Every refusal has one shape, 403 /problems/step-up-refused: a wrong, replayed or paused code, no enrolled factor, an account that is no longer active and an exhausted failure budget are indistinguishable by status, body, headers and timing class. The response and the request name no enrolment, so a caller cannot learn which one matched. A refusal keeps the session's earlier MFA time as it was. A session that is revoked or expired is the ordinary 401 /problems/unauthenticated. The route is a guessing oracle for a stolen session, so it is limited per principal in the secret class, and the server also charges every failure to the account's enrolment budget. Every attempt is audited with the principal and the outcome, never the code.
+         *     Later addition, not in this version: WebAuthn re-verification. Only TOTP re-verifies today (authn.StepUp.Reverify); a WebAuthn variant will be an additive operation or an additive request member, announced in the changelog.
+         */
+        post: operations["reverifyStepUp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{connectionId}/takeover-attestation": {
         parameters: {
             query?: never;
@@ -154,6 +176,46 @@ export interface paths {
          * @description Sets attestation_max_age. A longer age widens the window in which a missed takeover-flag flip still counts as attested, so it needs the same permission and a fresh step-up as starting an attestation. The value is at most 90 days (7776000 seconds).
          */
         put: operations["setTakeoverAttestationMaxAge"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the health of the caller's connections
+         * @description Answers one row per directory connection in the caller's tenant that the caller may read, for the Home "Directory health" and "Needs you" panels. The row set is trimmed to the connections the caller's connections.read grant covers before anything is counted or ordered; a connection outside it is not in the answer and not in any total. Rows are ordered by displayName, then id, so the order is stable. state is synced (last sync inside its expected interval, every DC reachable), lagging (the last successful sync is older than the interval, or some but not all DCs are unreachable), dc_unreachable (no DC is reachable) or suspended (an administrator paused the connection). lastSyncAt is null and lagSeconds is null when the connection has never synced. The rows carry no credential, keytab, bind identity or service-account DN. A tenant with no connection answers 200 with an empty items list. A caller without connections.read gets 403 (never an empty list) and learns nothing about which connections exist; getConnectionSummary is the count any signed-in administrator may read.
+         */
+        get: operations["listConnectionHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Count the tenant's connections (Home first-run)
+         * @description Answers how many directory connections the caller's tenant has, and nothing else, so the console can tell a tenant that has not connected a directory yet (connectionCount 0, the Home first-run state) from one that has. Any signed-in administrator may call it: it needs no connections.read, because the first-run screen must render for an administrator whose grant covers no connection. The count is the whole tenant's, not trimmed to the caller's grant, and carries no name, id, state or other detail; the detail is listConnectionHealth, which needs connections.read. The three outcomes stay distinct: a tenant with no connection answers 200 with connectionCount 0 (never an error and never an empty list), an unauthenticated caller gets 401, and a caller without connections.read who calls listConnectionHealth gets 403 there, not an empty list.
+         */
+        get: operations["getConnectionSummary"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -360,7 +422,7 @@ export interface paths {
         };
         /**
          * Get an export's record
-         * @description Answers the export job: state, format, row count, size, file name, digest and expiry. Poll while the state is queued or running.
+         * @description Answers the export job: state, format, row count, size, file name, digest and expiry. Poll while the state is queued or running. Bound as downloadReportExport is (T-0893 R3; modules/reports.md 7.1, 7.2), because the record leaks the size of a result and the report's name in the file name. Two paths: the creator, with the run-read gate passing for its run (runner is the caller, current read scope equals the stored one), or the recipient of a delivery record (DM-84 Delivery) whose source is this export and whose recipient is the caller's account. Anyone else, with or without reports.export, gets 404 (401 when signed out). The row exists only to those two.
          */
         get: operations["getReportExport"];
         put?: never;
@@ -479,6 +541,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reports/runs/{runId}/policies/{policyId}/targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page the direct targets of one policy row of a run
+         * @description Reads a page of the objects one policy row of a stored policy run (SYS-01) applies to directly: for a fine-grained policy (PSO) the users and global security groups in its msDS-PSOAppliesTo, in scope. policyId is the rowKey of the policy row in the run's rows (the PSO's objectGUID, or the domain head's objectGUID for a domain policy). These are the direct targets, not the resultant set: which policy wins for one user is resolved per user (the Policy source column of the user reports) and is never answered here, and a target group is one entry, never its members. basis says so on every page. count is the number of direct targets in the caller's scope, the same number as the policy row's applies_to_count cell, and is never a count over the page. A domain policy has no direct targets (it governs every account of its domain unless a PSO overrides it): it answers 200 with count 0 and no targets. Order is by name, then objectGUID, stable; the cursor is bound to this run and policy. The result is stored and frozen with the run (ADR-0010 rule 3). The run-read gate is that of listReportRunRows, in the same order: runner equals the caller, otherwise 404; not expired, otherwise 410 report-result-expired; scope fingerprint unchanged, otherwise 409 with errors[].code scope_changed_rerun; succeeded, otherwise 409 with errors[].code run_not_ready or run_failed. A policyId that is not a policy row of the run (or whose run is not a policy report) is a 404.
+         */
+        get: operations["listReportRunPolicyTargets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/reports/runs/{runId}/retry": {
         parameters: {
             query?: never;
@@ -534,7 +616,7 @@ export interface paths {
         put?: never;
         /**
          * Create a schedule
-         * @description Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal ("Data leaves your organisation"), or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only. Scheduled data is what the owner can see, not what a recipient can see. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner, so a retried create is a 400 with code name_taken and changes nothing. Preview it first with previewCreateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
+         * @description Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal ("Data leaves your organisation"), or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only, and is checked against the caller, who is the owner, at write time and against the owner again at every fire (spec 8.4 check 3). Scheduled data is what the owner can see, not what a recipient can see. A write whose after-state has an external recipient steps up (TM-D30 SX-1): 401 StepUpRequired when the session has no fresh multi-factor check. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner, so a retried create is a 400 with code name_taken and changes nothing. Preview it first with previewCreateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         post: operations["createReportSchedule"];
         delete?: never;
@@ -557,13 +639,13 @@ export interface paths {
         get: operations["getReportSchedule"];
         /**
          * Replace a schedule's settings
-         * @description Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version. Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external address that is new or changed. Changing another owner's schedule additionally needs reports.schedule.manage_all. The scope refusals of create apply. Preview it first with previewUpdateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
+         * @description Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version. Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external address that is new or changed. reports.deliver.external is checked against the caller, who is the owner, at write time, and against the owner again at every fire; never against a stored field that differs from the caller. Owner-only (T-0893 R1): only the schedule's owner may update it, because the next fire runs under the owner's scope. A caller who is not the owner and lacks reports.schedule.manage_all gets 404; a reports.schedule.manage_all holder, who can see the schedule, gets 403 with errors[].code not_owner and the stored version is unchanged. manage_all grants no edit; to stop another owner's schedule it can pause it, or reassign it so that the new owner decides. The scope refusals of create apply. A write whose after-state has an external recipient steps up (TM-D30 SX-1): 401 StepUpRequired when the session has no fresh multi-factor check. Preview it first with previewUpdateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         put: operations["updateReportSchedule"];
         post?: never;
         /**
          * Delete a schedule
-         * @description Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire. Preview it first with previewDeleteReportSchedule (same parameters, including If-Match; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
+         * @description Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire. Owner-only (T-0893 R2): only the schedule's owner may delete it. A caller who is not the owner and lacks reports.schedule.manage_all gets 404; a reports.schedule.manage_all holder gets 403 with errors[].code not_owner and nothing changes. manage_all grants no delete; it can pause the schedule instead. Preview it first with previewDeleteReportSchedule (same parameters, including If-Match; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         delete: operations["deleteReportSchedule"];
         options?: never;
@@ -622,7 +704,7 @@ export interface paths {
         put?: never;
         /**
          * Preview deleting a schedule
-         * @description The dry run of deleteReportSchedule as the Action reports.schedule.delete (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. This Action has no plan refusal of its own; a gate denial is a 200 with outcome refused, never a problem. Same x-permission and parameters (including If-Match) as deleteReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         * @description The dry run of deleteReportSchedule as the Action reports.schedule.delete (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. This Action's only plan refusal is not_owner (a manage_all holder); a gate denial is also a 200 with outcome refused, never a problem. Same x-permission and parameters (including If-Match) as deleteReportSchedule; it has no body. Same owner-only rule: 404 for a non-owner without reports.schedule.manage_all; for a manage_all holder a 200 with outcome refused and blocked[].code not_owner, never a problem.
          */
         post: operations["previewDeleteReportSchedule"];
         delete?: never;
@@ -682,7 +764,7 @@ export interface paths {
         put?: never;
         /**
          * Preview resuming a schedule
-         * @description The dry run of resumeReportSchedule as the Action reports.schedule.resume (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code owner_only, report_scope_empty or report_scope_unsupported, never a problem; so is a gate denial. Resuming an active schedule is outcome no_change. Same x-permission and parameters as resumeReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         * @description The dry run of resumeReportSchedule as the Action reports.schedule.resume (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code not_owner, external_not_permitted, report_scope_empty or report_scope_unsupported, never a problem; so is a gate denial. Resuming an active schedule is outcome no_change. Same x-permission, parameters and body as resumeReportSchedule. Same owner-only rule as resumeReportSchedule: 404 for a non-owner without reports.schedule.manage_all; for a manage_all holder a 200 with outcome refused and blocked[].code not_owner.
          */
         post: operations["previewResumeReportSchedule"];
         delete?: never;
@@ -702,7 +784,7 @@ export interface paths {
         put?: never;
         /**
          * Preview replacing a schedule's settings
-         * @description The dry run of updateReportSchedule as the Action reports.schedule.update (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code report_scope_empty, report_scope_unsupported, external_not_permitted or name_taken, never a problem; so is a gate denial. Same x-permission, parameters (including If-Match) and body as updateReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+         * @description The dry run of updateReportSchedule as the Action reports.schedule.update (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up. A refusal the plan finds is a 200 with outcome refused and blocked[].code not_owner, report_scope_empty, report_scope_unsupported, external_not_permitted or name_taken, never a problem; so is a gate denial. Same x-permission, parameters (including If-Match) and body as updateReportSchedule, and the same owner-only rule: 404 for a non-owner without reports.schedule.manage_all; for a manage_all holder a 200 with outcome refused and blocked[].code not_owner, never a problem.
          */
         post: operations["previewUpdateReportSchedule"];
         delete?: never;
@@ -722,7 +804,7 @@ export interface paths {
         put?: never;
         /**
          * Resume a schedule
-         * @description Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this. Preview it first with previewResumeReportSchedule (same parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
+         * @description Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Owner-only, in the same form as update and delete: a caller who is not the owner and lacks reports.schedule.manage_all gets 404; a reports.schedule.manage_all holder, who can see the schedule, gets 403 with errors[].code not_owner and nothing changes. The owner decides after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this. Takes a body (T-0893 R5): confirmedExternal must equal every external recipient of the schedule, classified now against the current allowed recipient domains, so the new owner has seen the list that their wider scope will flow to; an empty array when there is none. A missing or different set is 400 with errors[].code external_not_confirmed. Delivering to an external recipient needs reports.deliver.external held by the caller, otherwise 403 with errors[].code external_not_permitted, as on create. Resuming a schedule with an external recipient steps up (TM-D30 SX-1): 401 StepUpRequired. Preview it first with previewResumeReportSchedule (same parameters and body; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle for undoReportScheduleOperation.
          */
         post: operations["resumeReportSchedule"];
         delete?: never;
@@ -762,7 +844,7 @@ export interface paths {
         put?: never;
         /**
          * Preview undoing a schedule change
-         * @description The dry run of undoing one reports.schedule.* operation (ADR-0004 rule 14): it plans the inverse, reports.schedule.restore, against the live schedule for the caller, with the checks of the transition it makes (modules/reports.md 8): undoing a pause resumes, so only the owner may (owner_only); undoing a reassignment needs reports.schedule.manage_all and leaves the schedule paused (lossy); restoring external recipients needs reports.deliver.external, lists them in requiredConfirmations and sets stepUpRequired (TM-D30 SX-1). A plan refusal is a 200 with outcome refused. It writes, persists and audits nothing. 404 when the operation is unknown, is not a reports.schedule.* operation, or its schedule is not visible to the caller. 409 operation-not-undoable when no inverse can be planned at all, errors[].code irreversible, already_undone, superseded (the schedule changed after this operation; undo the later change first) or not_finished.
+         * @description The dry run of undoing one reports.schedule.* operation (ADR-0004 rule 14): it plans the inverse, reports.schedule.restore, against the live schedule for the caller, with the checks of the transition it makes (modules/reports.md 8): undoing a pause resumes, so only the owner may (not_owner); undoing a reassignment needs reports.schedule.manage_all and leaves the schedule paused (lossy); restoring external recipients needs reports.deliver.external, lists them in requiredConfirmations and sets stepUpRequired (TM-D30 SX-1). A plan refusal is a 200 with outcome refused. It writes, persists and audits nothing. 404 when the operation is unknown, is not a reports.schedule.* operation, or its schedule is not visible to the caller. 409 operation-not-undoable when no inverse can be planned at all, errors[].code irreversible, already_undone, superseded (the schedule changed after this operation; undo the later change first) or not_finished.
          */
         post: operations["previewUndoReportScheduleOperation"];
         delete?: never;
@@ -782,7 +864,7 @@ export interface paths {
         put?: never;
         /**
          * Undo a schedule change
-         * @description Undoes one reports.schedule.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14, ADR-0005 rule 10). The undo is a new operation of the Action reports.schedule.restore, planned against the live schedule for the caller with the checks of the transition it makes, run inline, audited, and itself undoable. It restores the version before the operation: undoing a create archives the schedule, a delete restores it, an update restores the previous version, a pause resumes it (owner only), a resume pauses it, and a reassignment restores the previous owner with the schedule still paused. It sends nothing, and a fire that ran in between is not recalled. confirmations must repeat the requiredConfirmations of the undo preview (external recipients the undo restores); otherwise 400 with code external_not_confirmed. 403 when the inverse needs a permission the caller lacks (errors[].code external_not_permitted, owner_only, manage_all_required). 404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded, not_finished or plan_refused (the scope refusals of create). Undoing an operation that itself needed approval is always held (202). Step-up (TM-D30 SX-1): undoing a create, update or resume whose restored state has an external recipient needs a fresh MFA. An interactive caller without one is answered 401 step-up-required and nothing changes (401 unauthenticated without a session, as everywhere); an API token or an automation is held for an approval that carries step-up (202, holdReason step_up, SX-4). The undo preview says so in stepUpRequired.
+         * @description Undoes one reports.schedule.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14, ADR-0005 rule 10). The undo is a new operation of the Action reports.schedule.restore, planned against the live schedule for the caller with the checks of the transition it makes, run inline, audited, and itself undoable. It restores the version before the operation: undoing a create archives the schedule, a delete restores it, an update restores the previous version, a pause resumes it (owner only), a resume pauses it, and a reassignment restores the previous owner with the schedule still paused. It sends nothing, and a fire that ran in between is not recalled. confirmations must repeat the requiredConfirmations of the undo preview (external recipients the undo restores); otherwise 400 with code external_not_confirmed. 403 when the inverse needs a permission the caller lacks (errors[].code external_not_permitted, not_owner, manage_all_required). 404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded, not_finished or plan_refused (the scope refusals of create). Undoing an operation that itself needed approval is always held (202). Step-up (TM-D30 SX-1): undoing a create, update or resume whose restored state has an external recipient needs a fresh MFA. An interactive caller without one is answered 401 step-up-required and nothing changes (401 unauthenticated without a session, as everywhere); an API token or an automation is held for an approval that carries step-up (202, holdReason step_up, SX-4). The undo preview says so in stepUpRequired.
          */
         post: operations["undoReportScheduleOperation"];
         delete?: never;
@@ -850,7 +932,7 @@ export interface components {
         AssignmentRevoke: {
             assignmentId: components["schemas"]["DelegationId"];
         };
-        /** @description One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope. */
+        /** @description One scope root of an assignment (DM-35). exclude subtracts the subtree from the scope; ou_one_level is an include only and its guid is an OU, never the connection. */
         AssignmentRoot: {
             /** Format: uuid */
             connectionId: string;
@@ -863,13 +945,44 @@ export interface components {
          * @description What the root's guid names. The server refuses a kind it does not know.
          * @enum {string}
          */
-        AssignmentRootKind: "naming_context" | "ou_subtree" | "entra_tenant" | "tier0_scope" | "tenant" | (string & {});
+        AssignmentRootKind: "naming_context" | "ou_subtree" | "ou_one_level" | "entra_tenant" | "tier0_scope" | "tenant" | (string & {});
         /** @description Who holds the assignment, by kind. Exactly the members of its kind are accepted. */
         AssignmentSubject: components["schemas"]["SubjectAccount"] | components["schemas"]["SubjectGroup"] | components["schemas"]["SubjectAutomation"];
         /** @description The local break-glass account and its password. */
         BreakGlassPasswordRequest: {
             password: components["schemas"]["SecretInput"];
             username: string;
+        };
+        /** @description The health of one connection. Nothing here is a credential or an identity the connection binds as. */
+        ConnectionHealth: {
+            /** @description Domain controllers that answered the last probe. */
+            dcReachable: number;
+            /** @description Domain controllers known for the connection. */
+            dcTotal: number;
+            displayName: string;
+            /** Format: uuid */
+            id: string;
+            /** @description Seconds since the last successful sync, at the time of the answer. Null when it has never synced. */
+            lagSeconds: number | null;
+            /**
+             * Format: date-time
+             * @description The last successful sync, UTC. Null when the connection has never synced.
+             */
+            lastSyncAt: string | null;
+            state: components["schemas"]["ConnectionHealthState"];
+        };
+        /** @description One row per readable connection. Not paged, because a tenant has few connections; at most 256. */
+        ConnectionHealthList: {
+            items: components["schemas"]["ConnectionHealth"][];
+        };
+        /**
+         * @description synced, lagging (last sync older than its interval, or some DCs unreachable), dc_unreachable (no DC reachable) or suspended (paused by an administrator).
+         * @enum {string}
+         */
+        ConnectionHealthState: "synced" | "lagging" | "dc_unreachable" | "suspended" | (string & {});
+        /** @description How many connections the tenant has. A count only; no connection is identified. */
+        ConnectionSummary: {
+            connectionCount: number;
         };
         /** @description Which header carries the CSRF value and what it is. Named value, not token, because it is not a credential. */
         CsrfValue: {
@@ -936,7 +1049,7 @@ export interface components {
             disambiguator?: components["schemas"]["DirectorySearchDisambiguator"];
             displayName: string;
             distinguishedName: string;
-            /** @description The DNS name of the object's domain. The client shows it when the answer spans more than one. */
+            /** @description The DNS name of the object's domain, present only when the permitted hits of this answer span more than one domain; empty otherwise (and for an object whose DN holds no domain components). The client shows it when it is not empty. */
             domain: string;
             highlights: components["schemas"]["DirectorySearchHighlight"][];
             mail?: string;
@@ -1317,7 +1430,7 @@ export interface components {
             kind: "ReportCellInteger";
             value: string;
         };
-        /** @description The value can never exist for this object, as distinct from absent (not yet set). */
+        /** @description The value can never exist for this object, as distinct from absent (not yet set). In the SYS-01 policy columns it is the policy's own no-limit setting, read from 0 or the minimum signed 64-bit value by the 2a codec: in max_age it is "Never expires", in lockout_threshold "Never locks", in lockout_duration "Until an administrator unlocks". The column says which; no other policy column carries it. For a client that compares policies, such a cell is the loosest value of its column, not the smallest number: it is never an integer 0 and must not be ordered as one. */
         ReportCellNever: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -1357,11 +1470,11 @@ export interface components {
             label: string;
         };
         /**
-         * @description A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8).
+         * @description A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8). Policy columns (SYS-01, one row per policy, rowKey the policy GUID): policy_name (text); policy_kind (enum domain or pso, the ReportPolicyKindValue); precedence (integer, count; absent on the domain row); applies_to_count (integer, count of direct targets in the runner's scope, 0 for a PSO with none, absent on the domain row); applies_to_first (textList, the first two target names by name order, empty when none; the full list is listReportRunPolicyTargets); min_length, history_length, lockout_threshold (integer, count); max_age, min_age, lockout_duration, lockout_window (integer, seconds; max_age, lockout_threshold and lockout_duration are a never cell when the policy sets no limit, see ReportCellNever); complexity and reversible_encryption (boolean). A value that was not read is an unknown cell, never 0 or false. Deltas against the domain row are computed by the client from these typed cells (the unit is on the column); the server sends no delta text.
          * @enum {string}
          */
-        ReportColumnId: "name" | "logon_name" | "upn" | "status" | "domain" | "ou_path" | "manager" | "created" | "account_expires" | "days_to_expiry" | "last_logon" | "days_since" | "probable_service_account" | "real_last_logon" | "from_dc" | "dc_coverage" | "locked_out_since" | "lockout_ends" | "policy_source" | "data_as_of" | "password_last_set" | "password_expires" | "password_state" | "last_failed_logon" | "failures_on_dc" | "group_type" | "group_scope" | "direct_members" | "effective_members" | "managed_by" | "group" | "member" | "member_type" | "membership_kind" | "via" | "user" | "primary_group" | "dns_name" | "computer_type" | "operating_system" | "os_version" | "delegation" | "last_activity" | "activity_source" | "path" | "users" | "computers" | "groups" | "other_objects" | "objects_in_subtree" | "email";
-        /** @description A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes. */
+        ReportColumnId: "name" | "logon_name" | "upn" | "status" | "domain" | "ou_path" | "manager" | "created" | "account_expires" | "days_to_expiry" | "last_logon" | "days_since" | "probable_service_account" | "real_last_logon" | "from_dc" | "dc_coverage" | "locked_out_since" | "lockout_ends" | "policy_source" | "data_as_of" | "password_last_set" | "password_expires" | "password_state" | "last_failed_logon" | "failures_on_dc" | "group_type" | "group_scope" | "direct_members" | "effective_members" | "managed_by" | "group" | "member" | "member_type" | "membership_kind" | "via" | "user" | "primary_group" | "dns_name" | "computer_type" | "operating_system" | "os_version" | "delegation" | "last_activity" | "activity_source" | "path" | "users" | "computers" | "groups" | "other_objects" | "objects_in_subtree" | "email" | "policy_name" | "policy_kind" | "precedence" | "applies_to_count" | "applies_to_first" | "min_length" | "history_length" | "max_age" | "min_age" | "complexity" | "reversible_encryption" | "lockout_threshold" | "lockout_duration" | "lockout_window";
+        /** @description A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes. unit is present on an integer column that measures something, so a client can compare and format its cells without parsing text. */
         ReportColumnInfo: {
             choices: components["schemas"]["ReportChoice"][];
             defaultVisible: boolean;
@@ -1371,12 +1484,18 @@ export interface components {
             label: string;
             sortable: boolean;
             type: components["schemas"]["ReportColumnTypeValue"];
+            unit?: components["schemas"]["ReportColumnUnitValue"];
         };
         /**
          * @description What a column holds, which decides the operators it takes.
          * @enum {string}
          */
         ReportColumnTypeValue: "text" | "integer" | "boolean" | "time" | "enum" | (string & {});
+        /**
+         * @description What an integer column counts. count: a number of things (characters, remembered passwords, failed attempts, targets) or a rank (precedence). seconds: a length of time in whole seconds (maximum and minimum password age, lockout duration and observation window); the cell is the exact value, the console formats it.
+         * @enum {string}
+         */
+        ReportColumnUnitValue: "count" | "seconds" | (string & {});
         /**
          * @description A comparison of one column with one typed value. contains and starts_with are literal text matches: no wildcard or pattern character has a meaning.
          * @enum {string}
@@ -1387,6 +1506,10 @@ export interface components {
             complete: boolean;
             dcsAnswered: number;
             dcsInScope: number;
+            /** @description The header text, "Read from 2 of 3 DCs · 1 unreachable: dc2.example.test: timeout". */
+            label?: string;
+            /** @description The DCs that did not answer, each with the fixed code it gave (never driver text). Empty when coverage is complete. */
+            unreachable?: components["schemas"]["ReportUnreachableDc"][];
         };
         /** @description A report definition: an immutable AST over one registered dataset (FR-03, FR-05), shown as its presets, crosswalk and columns. exportFormats are the formats this installation can produce, and the console offers no others. subjectKind says whether the report requires groups or users (GRP-02, GRP-03). minScheduleIntervalHours is 24 for per-DC reports. */
         ReportDefinition: {
@@ -1672,6 +1795,104 @@ export interface components {
             /** Format: date-time */
             to: string;
         };
+        /** @description The container was read and holds no fine-grained policy: a real zero, true at readAt. Only the domain policy row exists for this domain. It is never sent for a container that could not be read. */
+        ReportPolicyDomainNoneExist: {
+            /** Format: uuid */
+            domainId: string;
+            domainName: string;
+            /** Format: uuid */
+            domainPolicyRowKey: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "none_exist";
+            /** Format: date-time */
+            readAt: string;
+        };
+        /** @description The read of one domain's Password Settings Container. Three kinds, never collapsed: readable (the container was read and holds at least one policy), none_exist (the container was read and is empty: a real zero) and unreadable (it could not be read, so how many policies exist is not known). */
+        ReportPolicyDomainRead: components["schemas"]["ReportPolicyDomainReadable"] | components["schemas"]["ReportPolicyDomainNoneExist"] | components["schemas"]["ReportPolicyDomainUnreadable"];
+        /** @description The container was read. psoCount is the number of fine-grained policies in it that the runner's scope shows, at least 1; the rows hold each of them. readAt is the policy sync read time. */
+        ReportPolicyDomainReadable: {
+            /** Format: uuid */
+            domainId: string;
+            domainName: string;
+            /** Format: uuid */
+            domainPolicyRowKey: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "readable";
+            psoCount: number;
+            /** Format: date-time */
+            readAt: string;
+        };
+        /** @description The container could not be read, so whether this domain has fine-grained policies is not known. containerName is the container as the console names it (Password Settings Container) and reason says why. readAt is when the attempt was made, absent when none was (reason not_read). The domain policy row is still present and is the only policy shown for this domain. */
+        ReportPolicyDomainUnreadable: {
+            containerName: string;
+            /** Format: uuid */
+            domainId: string;
+            domainName: string;
+            /** Format: uuid */
+            domainPolicyRowKey: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "unreadable";
+            /** Format: date-time */
+            readAt?: string;
+            reason: components["schemas"]["ReportPolicyUnreadableReasonValue"];
+        };
+        /**
+         * @description What a policy row is. domain: the domain's own policy, the baseline. pso: a fine-grained policy.
+         * @enum {string}
+         */
+        ReportPolicyKindValue: "domain" | "pso" | (string & {});
+        /** @description What a policy report (SYS-01) could read of the Password Settings Container, one entry per domain in the runner's scope, stored with the run and frozen. It exists so that a container that could not be read is never shown as a container that holds no policies (spec 7.1 rule 3, AC-S19): each domain is exactly one of three kinds, readable, none_exist or unreadable, and a client branches on kind and never infers one from another or from a missing row. domainsInScope is the number of entries; domainsReadable is the number of entries of kind readable or none_exist (the read succeeded); complete is true when every domain was read. When complete is false the rows hold the domain policy of every domain and the fine-grained policies of the readable ones only, and users of an unreadable domain may be governed by policies not shown. */
+        ReportPolicyReads: {
+            complete: boolean;
+            domains: components["schemas"]["ReportPolicyDomainRead"][];
+            domainsInScope: number;
+            domainsReadable: number;
+        };
+        /** @description One direct target of a policy: a user or a global security group, addressed by objectGUID. A group is one entry; its members are never listed here. */
+        ReportPolicyTarget: {
+            domain: string;
+            name: string;
+            /** Format: uuid */
+            objectGuid: string;
+            targetClass: components["schemas"]["ReportPolicyTargetClassValue"];
+        };
+        /**
+         * @description What a list of policy targets is. direct_targets: the objects the policy is applied to; never the resultant set.
+         * @enum {string}
+         */
+        ReportPolicyTargetBasisValue: "direct_targets" | (string & {});
+        /**
+         * @description The kind of object a PSO is applied to.
+         * @enum {string}
+         */
+        ReportPolicyTargetClassValue: "user" | "group" | (string & {});
+        /** @description A page of the direct targets of one policy row. basis is always direct_targets: the list is what the policy is applied to, not the resultant set, and says nothing about which policy governs a given user. count is the direct targets in the caller's scope, not the length of the page. policyName and kind repeat the policy row so the page stands alone. */
+        ReportPolicyTargetPage: {
+            basis: components["schemas"]["ReportPolicyTargetBasisValue"];
+            count: number;
+            kind: components["schemas"]["ReportPolicyKindValue"];
+            page: components["schemas"]["PageInfo"];
+            /** Format: uuid */
+            policyId: string;
+            policyName: string;
+            /** Format: uuid */
+            runId: string;
+            targets: components["schemas"]["ReportPolicyTarget"][];
+        };
+        /**
+         * @description Why a Password Settings Container could not be read. permission_denied: the connection account lacks the read right (Domain Admins hold it by default). container_absent: the container is not there, such as a domain below functional level 2008, and the report cannot tell it from an unreadable one. not_read: no read was attempted, such as a connection that was skipped.
+         * @enum {string}
+         */
+        ReportPolicyUnreadableReasonValue: "permission_denied" | "container_absent" | "not_read" | (string & {});
         /**
          * @description Whether a column has a value.
          * @enum {string}
@@ -1875,6 +2096,7 @@ export interface components {
             id: string;
             objectsChecked: number | null;
             parameters: components["schemas"]["ReportParametersView"];
+            policyReads?: components["schemas"]["ReportPolicyReads"];
             presetId: string | null;
             progress: components["schemas"]["ReportRunProgress"];
             /** Format: uuid */
@@ -1998,6 +2220,10 @@ export interface components {
             /** Format: uuid */
             ownerAccountId: string;
         };
+        /** @description The confirmation that resumes a schedule. confirmedExternal lists every external recipient of the schedule, classified now against the current allowed recipient domains (Data leaves your organisation); it must equal that set, and is an empty array when the schedule has none. It is how the owner, a new owner after a reassignment included, shows they saw who receives the data (T-0893 R5). */
+        ReportScheduleResume: {
+            confirmedExternal: string[];
+        };
         /**
          * @description active fires on its recurrence; paused does not.
          * @enum {string}
@@ -2056,6 +2282,11 @@ export interface components {
             connectionId: string;
             /** Format: uuid */
             guid: string;
+        };
+        /** @description A DC that did not answer a per-DC read. */
+        ReportUnreachableDc: {
+            dc: string;
+            error: string;
         };
         /** @description A typed filter value. Never an expression. */
         ReportValue: components["schemas"]["ReportValueText"] | components["schemas"]["ReportValueInteger"] | components["schemas"]["ReportValueBoolean"] | components["schemas"]["ReportValueTime"] | components["schemas"]["ReportValueEnum"];
@@ -2689,6 +2920,22 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description The step-up re-verification did not succeed. One answer for every cause (wrong, replayed or paused code, no enrolled factor, an account that is no longer active, a spent failure budget), so the response teaches a caller nothing about which enrolment exists or matched (TM-D16, TM-D30). It never carries a detail or an errors member. */
+        StepUpRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 403,
+                 *       "title": "Step-up verification refused",
+                 *       "type": "/problems/step-up-refused"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description A fresh multi-factor check is required */
         StepUpRequired: {
             headers: {
@@ -2779,6 +3026,8 @@ export interface components {
         PageCursor: components["schemas"]["Cursor"];
         /** @description The page size. */
         PageLimit: number;
+        /** @description The rowKey of a policy row of the run (a GUID). */
+        PolicyId: string;
         /** @description The request ID. It names the audit events of the change and makes a retry of a create safe. */
         RequiredIdempotencyKey: string;
         /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
@@ -2980,6 +3229,36 @@ export interface operations {
             501: components["responses"]["NotImplemented"];
         };
     };
+    reverifyStepUp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TotpCodeRequest"];
+            };
+        };
+        responses: {
+            /** @description The code was right. The session's MFA time is now; there is no body. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["StepUpRefused"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            501: components["responses"]["NotImplemented"];
+        };
+    };
     startTakeoverAttestation: {
         parameters: {
             query?: never;
@@ -3037,6 +3316,73 @@ export interface operations {
             404: components["responses"]["NotFound"];
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    listConnectionHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One health row per readable connection */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "items": [
+                     *         {
+                     *           "dcReachable": 2,
+                     *           "dcTotal": 3,
+                     *           "displayName": "corp.example.com",
+                     *           "id": "3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10",
+                     *           "lagSeconds": 1260,
+                     *           "lastSyncAt": "2026-11-12T08:14:03Z",
+                     *           "state": "lagging"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ConnectionHealthList"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getConnectionSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The number of connections in the tenant */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "connectionCount": 0
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ConnectionSummary"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };
@@ -3616,6 +3962,44 @@ export interface operations {
             500: components["responses"]["Internal"];
         };
     };
+    listReportRunPolicyTargets: {
+        parameters: {
+            query?: {
+                /** @description The nextCursor of the previous page. */
+                cursor?: components["parameters"]["PageCursor"];
+                /** @description The page size. */
+                limit?: components["parameters"]["PageLimit"];
+            };
+            header?: never;
+            path: {
+                /** @description The rowKey of a policy row of the run (a GUID). */
+                policyId: components["parameters"]["PolicyId"];
+                /** @description The run. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the policy's direct targets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportPolicyTargetPage"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["ReportResultExpired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
     retryReportRun: {
         parameters: {
             query?: never;
@@ -3756,7 +4140,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["Validation"];
-            401: components["responses"]["Unauthenticated"];
+            401: components["responses"]["StepUpRequired"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["ReportScopeUnsupported"];
@@ -3839,7 +4223,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["Validation"];
-            401: components["responses"]["Unauthenticated"];
+            401: components["responses"]["StepUpRequired"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["ReportScopeUnsupported"];
@@ -4103,7 +4487,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleResume"];
+            };
+        };
         responses: {
             /** @description The preview */
             200: {
@@ -4114,9 +4502,12 @@ export interface operations {
                     "application/json": components["schemas"]["OperationPreview"];
                 };
             };
+            400: components["responses"]["Validation"];
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };
@@ -4171,7 +4562,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportScheduleResume"];
+            };
+        };
         responses: {
             /** @description The schedule, active */
             200: {
@@ -4196,10 +4591,13 @@ export interface operations {
                     "application/json": components["schemas"]["OperationRef"];
                 };
             };
-            401: components["responses"]["Unauthenticated"];
+            400: components["responses"]["Validation"];
+            401: components["responses"]["StepUpRequired"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["ReportScopeUnsupported"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ReportScopeEmpty"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];

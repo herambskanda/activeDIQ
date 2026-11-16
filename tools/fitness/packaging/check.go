@@ -13,6 +13,8 @@ import (
 const (
 	winACL     = "packaging/windows/Set-ApiTlsDirAcl.ps1"
 	winTest    = "packaging/windows/Test-ApiTlsDirAcl.ps1"
+	winMsi     = "packaging/windows/msi/Server.wxs"
+	winDC      = "packaging/windows/Test-MsiRefusesDc.ps1"
 	linPrep    = "packaging/linux-oci/prepare-tls-dir.sh"
 	linCompose = "packaging/linux-oci/compose.tls.yaml"
 )
@@ -70,6 +72,23 @@ func Check(root string) []string {
 	forbid(&v, winTest, t, "'$Path'", "the probe script must not be built by interpolating the path")
 	need(&v, winTest, t, "ADIQ_PROBE_PATH", "the path must reach the probe as data")
 	need(&v, winTest, t, "read a file inside", "the probe must read a file, not only list")
+
+	// T-0635, TM-TB16-T1: the MSI refuses a domain controller before it changes anything.
+	if m := read(root, winMsi, &v); m != "" {
+		v = append(v, checkServerWxs(winMsi, []byte(m))...)
+	}
+	v = append(v, checkBuiltMsi(os.Getenv("ADIQ_SERVER_MSI"))...)
+	d := read(root, winDC, &v)
+	need(&v, winDC, d, "-ArgumentList $msiArgs", "msiexec arguments must be built as an array of separately quoted elements, never one interpolated string")
+	need(&v, winDC, d, "Assert-SafeMsiexecPath 'MsiPath' $MsiPath", "the MSI path must be validated (no quote, no leading / or -) before it reaches msiexec: Start-Process joins the array with spaces")
+	need(&v, winDC, d, "Assert-SafeMsiexecPath 'LogPath' $LogPath", "the log path must be validated before it reaches msiexec")
+	need(&v, winDC, d, "GetFullPath($MsiPath)", "the MSI path must be resolved to a full path before validation")
+	need(&v, winDC, d, `('"{0}"' -f $MsiPath)`, "the MSI path must be quoted explicitly: -ArgumentList does not quote")
+	need(&v, winDC, d, `('"{0}"' -f $LogPath)`, "the log path must be quoted explicitly: -ArgumentList does not quote")
+	forbid(&v, winDC, d, "$args", "$args is a PowerShell automatic variable")
+	need(&v, winDC, d, "1603", "the lab driver must assert the launch-condition exit code")
+	need(&v, winDC, d, "Get-HostObservation.ps1", "the lab driver must feed the TM-F-HOST evaluator")
+	need(&v, winDC, d, "DomainRole", "ProductType and DomainRole must agree on dc1")
 
 	p := read(root, linPrep, &v)
 	need(&v, linPrep, p, "! -type f", "non-regular entries must be refused")

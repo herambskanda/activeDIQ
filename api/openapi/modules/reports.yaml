@@ -7,8 +7,11 @@
 #   reports.schedule              own schedules: list, get, create, update, pause, resume, delete, run now
 #   reports.schedule.manage_all   reassign a schedule (the only operation bound to it)
 # Two checks sit inside an operation and are NOT a second x-permission: reports.deliver.external, needed only when a recipient is outside the
-# allowed recipient domains (schedule create and update); and reports.schedule.manage_all, needed only to list with owner=any or to act on another
-# owner's schedule. createReportExport is bound to reports.export and additionally checks reports.run inside the operation (modules/reports.md 6.6 check 1),
+# allowed recipient domains (schedule create, update and resume); and reports.schedule.manage_all, needed only to list with owner=any and to get,
+# pause or reassign another owner's schedule (spec 8.5: "see, pause and reassign"). Update, delete, resume and run now are OWNER-ONLY: manage_all
+# grants none of them, because a change to a schedule runs under the owner's wider scope at the next fire (T-0893 R1, R2). On update, delete and resume a non-owner
+# without manage_all gets 404 and a manage_all holder, who can see the schedule, gets 403 with errors[].code not_owner (their preview twins answer the holder 200 outcome
+# refused with blocked[].code not_owner); run now answers 404 to any non-owner, a manage_all holder included. createReportExport is bound to reports.export and additionally checks reports.run inside the operation (modules/reports.md 6.6 check 1),
 # the same pattern as manage_all. reports.deliver.external is bound to no operation. Schedule writes are Actions (ADR-0005 rule 10, reports.schedule.*);
 # runs, exports and deliveries are system bookkeeping and are not.
 #
@@ -345,6 +348,53 @@ paths:
           $ref: shared/problems.yaml#/components/responses/RateLimited
         "500":
           $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/runs/{runId}/policies/{policyId}/targets:
+    get:
+      tags: [reports]
+      operationId: listReportRunPolicyTargets
+      summary: Page the direct targets of one policy row of a run
+      description: >-
+        Reads a page of the objects one policy row of a stored policy run (SYS-01) applies to directly: for a fine-grained policy (PSO) the users and global security groups in its
+        msDS-PSOAppliesTo, in scope. policyId is the rowKey of the policy row in the run's rows (the PSO's objectGUID, or the domain head's objectGUID for a domain policy). These are the
+        direct targets, not the resultant set: which policy wins for one user is resolved per user (the Policy source column of the user reports) and is never answered here, and a target
+        group is one entry, never its members. basis says so on every page. count is the number of direct targets in the caller's scope, the same number as the policy row's applies_to_count cell,
+        and is never a count over the page. A domain policy has no direct targets (it governs every account of its domain unless a PSO overrides it): it answers 200 with count 0 and no targets.
+        Order is by name, then objectGUID, stable; the cursor is bound to this run and policy. The result is stored and frozen with the run (ADR-0010 rule 3). The run-read gate is that of listReportRunRows,
+        in the same order: runner equals the caller, otherwise 404; not expired, otherwise 410 report-result-expired; scope fingerprint unchanged, otherwise 409 with errors[].code scope_changed_rerun;
+        succeeded, otherwise 409 with errors[].code run_not_ready or run_failed. A policyId that is not a policy row of the run (or whose run is not a policy report) is a 404.
+      x-permission: reports.run
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-092]
+      parameters:
+        - $ref: modules/reports.yaml#/components/parameters/RunId
+        - $ref: modules/reports.yaml#/components/parameters/PolicyId
+        - $ref: shared/paging.yaml#/components/parameters/PageCursor
+        - $ref: shared/paging.yaml#/components/parameters/PageLimit
+      responses:
+        "200":
+          description: A page of the policy's direct targets
+          content:
+            application/json:
+              schema:
+                $ref: modules/reports.yaml#/components/schemas/ReportPolicyTargetPage
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "404":
+          $ref: shared/problems.yaml#/components/responses/NotFound
+        "409":
+          $ref: shared/problems.yaml#/components/responses/Conflict
+        "410":
+          $ref: shared/problems.yaml#/components/responses/ReportResultExpired
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
   /reports/runs/{runId}/exports:
     post:
       tags: [reports]
@@ -411,6 +461,9 @@ paths:
       summary: Get an export's record
       description: >-
         Answers the export job: state, format, row count, size, file name, digest and expiry. Poll while the state is queued or running.
+        Bound as downloadReportExport is (T-0893 R3; modules/reports.md 7.1, 7.2), because the record leaks the size of a result and the report's name in the file name. Two paths: the creator, with the
+        run-read gate passing for its run (runner is the caller, current read scope equals the stored one), or the recipient of a delivery record (DM-84 Delivery) whose source is this export and whose recipient is
+        the caller's account. Anyone else, with or without reports.export, gets 404 (401 when signed out). The row exists only to those two.
       x-permission: reports.export
       x-activediq-stability: preview
       x-activediq-limits:
@@ -546,8 +599,9 @@ paths:
         Creates a recurring run plus delivery, pinned to the definition version (spec 8.4). Creating a schedule is an Action (ADR-0005 rule 10, reports.schedule.create): it runs inline, has a
         preview diff, the gate, audit and undo, and the external-recipient confirmation is part of its preview. Operation permission: reports.schedule. Any recipient outside the tenant's allowed
         recipient domains is external; delivering to one additionally needs reports.deliver.external, and the addresses must be listed in confirmedExternal ("Data leaves your organisation"),
-        or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only. Scheduled data is what the owner
-        can see, not what a recipient can see. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner,
+        or the answer is 403 (with errors[].code external_not_permitted) or 400 (code external_not_confirmed). That second permission guards the external case only, and is checked against the
+        caller, who is the owner, at write time and against the owner again at every fire (spec 8.4 check 3). Scheduled data is what the owner
+        can see, not what a recipient can see. A write whose after-state has an external recipient steps up (TM-D30 SX-1): 401 StepUpRequired when the session has no fresh multi-factor check. The owner's scope is checked now: report-scope-empty or report-scope-unsupported refuses a schedule that could never deliver. The name is unique per owner,
         so a retried create is a 400 with code name_taken and changes nothing.
         Preview it first with previewCreateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle
         for undoReportScheduleOperation.
@@ -607,7 +661,7 @@ paths:
         "400":
           $ref: shared/problems.yaml#/components/responses/Validation
         "401":
-          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+          $ref: shared/problems.yaml#/components/responses/StepUpRequired
         "403":
           $ref: shared/problems.yaml#/components/responses/Forbidden
         "404":
@@ -669,7 +723,11 @@ paths:
       description: >-
         Replaces every writable setting, as the Action reports.schedule.update (ADR-0005 rule 10): preview diff against the current version, gate, audit, and undo that restores the previous version.
         Needs If-Match with the ETag read. The same external-recipient rule as create applies: reports.deliver.external guards the external case only, and the confirmation covers every external
-        address that is new or changed. Changing another owner's schedule additionally needs reports.schedule.manage_all. The scope refusals of create apply.
+        address that is new or changed. reports.deliver.external is checked against the caller, who is the owner, at write time, and against the owner again at every fire; never against a stored
+        field that differs from the caller. Owner-only (T-0893 R1): only the schedule's owner may update it, because the next fire runs under the owner's scope. A caller who is not the owner and lacks
+        reports.schedule.manage_all gets 404; a reports.schedule.manage_all holder, who can see the schedule, gets 403 with errors[].code not_owner and the stored version is unchanged. manage_all grants no edit;
+        to stop another owner's schedule it can pause it, or reassign it so that the new owner decides. The scope refusals of create apply. A write whose after-state has an external
+        recipient steps up (TM-D30 SX-1): 401 StepUpRequired when the session has no fresh multi-factor check.
         Preview it first with previewUpdateReportSchedule (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle
         for undoReportScheduleOperation.
       x-permission: reports.schedule
@@ -727,7 +785,7 @@ paths:
         "400":
           $ref: shared/problems.yaml#/components/responses/Validation
         "401":
-          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+          $ref: shared/problems.yaml#/components/responses/StepUpRequired
         "403":
           $ref: shared/problems.yaml#/components/responses/Forbidden
         "404":
@@ -754,6 +812,8 @@ paths:
       summary: Delete a schedule
       description: >-
         Deletes the schedule, as the Action reports.schedule.delete (ADR-0005 rule 10), with undo that restores it. Needs If-Match. Stored artefacts of earlier runs are kept until they expire.
+        Owner-only (T-0893 R2): only the schedule's owner may delete it. A caller who is not the owner and lacks reports.schedule.manage_all gets 404; a reports.schedule.manage_all holder gets 403 with
+        errors[].code not_owner and nothing changes. manage_all grants no delete; it can pause the schedule instead.
         Preview it first with previewDeleteReportSchedule (same parameters, including If-Match; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle
         for undoReportScheduleOperation.
       x-permission: reports.schedule
@@ -873,16 +933,26 @@ paths:
       operationId: resumeReportSchedule
       summary: Resume a schedule
       description: >-
-        Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Only the owner may, after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this.
-        Preview it first with previewResumeReportSchedule (same parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle
+        Resumes a paused schedule, as the Action reports.schedule.resume (ADR-0005 rule 10). Owner-only, in the same form as update and delete: a caller who is not the owner and lacks reports.schedule.manage_all gets 404; a reports.schedule.manage_all holder, who can see the schedule, gets 403 with errors[].code not_owner and nothing changes. The owner decides after seeing the recipient list; resuming re-checks the owner's scope, with the refusals of create. A reassigned schedule stays paused until its new owner does this.
+        Takes a body (T-0893 R5): confirmedExternal must equal every external recipient of the schedule, classified now against the current allowed recipient domains, so the new owner has seen the list
+        that their wider scope will flow to; an empty array when there is none. A missing or different set is 400 with errors[].code external_not_confirmed. Delivering to an external recipient needs
+        reports.deliver.external held by the caller, otherwise 403 with errors[].code external_not_permitted, as on create. Resuming a schedule with an external recipient steps up (TM-D30 SX-1): 401 StepUpRequired.
+        Preview it first with previewResumeReportSchedule (same parameters and body; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle
         for undoReportScheduleOperation.
       x-permission: reports.schedule
       x-activediq-stability: preview
       x-activediq-limits:
         class: write
+        maxBodyBytes: 8192
       x-activediq-parity: [ADM-101]
       parameters:
         - $ref: modules/reports.yaml#/components/parameters/ScheduleId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/reports.yaml#/components/schemas/ReportScheduleResume
       responses:
         "200":
           description: The schedule, active
@@ -920,14 +990,20 @@ paths:
             application/json:
               schema:
                 $ref: shared/operation.yaml#/components/schemas/OperationRef
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
         "401":
-          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+          $ref: shared/problems.yaml#/components/responses/StepUpRequired
         "403":
           $ref: shared/problems.yaml#/components/responses/Forbidden
         "404":
           $ref: shared/problems.yaml#/components/responses/NotFound
         "409":
           $ref: shared/problems.yaml#/components/responses/ReportScopeUnsupported
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
         "422":
           $ref: shared/problems.yaml#/components/responses/ReportScopeEmpty
         "429":
@@ -1107,8 +1183,8 @@ paths:
       description: >-
         The dry run of updateReportSchedule as the Action reports.schedule.update (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and
         answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up.
-        A refusal the plan finds is a 200 with outcome refused and blocked[].code report_scope_empty, report_scope_unsupported, external_not_permitted or name_taken, never a problem; so is a gate denial.
-        Same x-permission, parameters (including If-Match) and body as updateReportSchedule, and the same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+        A refusal the plan finds is a 200 with outcome refused and blocked[].code not_owner, report_scope_empty, report_scope_unsupported, external_not_permitted or name_taken, never a problem; so is a gate denial.
+        Same x-permission, parameters (including If-Match) and body as updateReportSchedule, and the same owner-only rule: 404 for a non-owner without reports.schedule.manage_all; for a manage_all holder a 200 with outcome refused and blocked[].code not_owner, never a problem.
       x-permission: reports.schedule
       x-activediq-stability: preview
       x-activediq-limits:
@@ -1159,8 +1235,8 @@ paths:
       description: >-
         The dry run of deleteReportSchedule as the Action reports.schedule.delete (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and
         answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up.
-        This Action has no plan refusal of its own; a gate denial is a 200 with outcome refused, never a problem.
-        Same x-permission and parameters (including If-Match) as deleteReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+        This Action's only plan refusal is not_owner (a manage_all holder); a gate denial is also a 200 with outcome refused, never a problem.
+        Same x-permission and parameters (including If-Match) as deleteReportSchedule; it has no body. Same owner-only rule: 404 for a non-owner without reports.schedule.manage_all; for a manage_all holder a 200 with outcome refused and blocked[].code not_owner, never a problem.
       x-permission: reports.schedule
       x-activediq-stability: preview
       x-activediq-limits:
@@ -1232,15 +1308,22 @@ paths:
       description: >-
         The dry run of resumeReportSchedule as the Action reports.schedule.resume (ADR-0004 rule 14): it plans the change against the live state, authorises it for the caller and asks the gate, and
         answers what the submit would do, the diff, reversibility, required confirmations and whether it can be undone. It writes, persists and audits nothing, and needs no step-up.
-        A refusal the plan finds is a 200 with outcome refused and blocked[].code owner_only, report_scope_empty or report_scope_unsupported, never a problem; so is a gate denial. Resuming an active schedule is outcome no_change.
-        Same x-permission and parameters as resumeReportSchedule; it has no body. Same visibility (another owner's schedule is 404 without reports.schedule.manage_all).
+        A refusal the plan finds is a 200 with outcome refused and blocked[].code not_owner, external_not_permitted, report_scope_empty or report_scope_unsupported, never a problem; so is a gate denial. Resuming an active schedule is outcome no_change.
+        Same x-permission, parameters and body as resumeReportSchedule. Same owner-only rule as resumeReportSchedule: 404 for a non-owner without reports.schedule.manage_all; for a manage_all holder a 200 with outcome refused and blocked[].code not_owner.
       x-permission: reports.schedule
       x-activediq-stability: preview
       x-activediq-limits:
         class: read
+        maxBodyBytes: 8192
       x-activediq-parity: [ADM-101]
       parameters:
         - $ref: modules/reports.yaml#/components/parameters/ScheduleId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: modules/reports.yaml#/components/schemas/ReportScheduleResume
       responses:
         "200":
           description: The preview
@@ -1248,12 +1331,18 @@ paths:
             application/json:
               schema:
                 $ref: shared/operation.yaml#/components/schemas/OperationPreview
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
         "401":
           $ref: shared/problems.yaml#/components/responses/Unauthenticated
         "403":
           $ref: shared/problems.yaml#/components/responses/Forbidden
         "404":
           $ref: shared/problems.yaml#/components/responses/NotFound
+        "413":
+          $ref: shared/problems.yaml#/components/responses/PayloadTooLarge
+        "415":
+          $ref: shared/problems.yaml#/components/responses/UnsupportedMediaType
         "429":
           $ref: shared/problems.yaml#/components/responses/RateLimited
         "500":
@@ -1317,7 +1406,7 @@ paths:
       summary: Preview undoing a schedule change
       description: >-
         The dry run of undoing one reports.schedule.* operation (ADR-0004 rule 14): it plans the inverse, reports.schedule.restore, against the live schedule for the caller, with the checks of
-        the transition it makes (modules/reports.md 8): undoing a pause resumes, so only the owner may (owner_only); undoing a reassignment needs reports.schedule.manage_all and leaves the
+        the transition it makes (modules/reports.md 8): undoing a pause resumes, so only the owner may (not_owner); undoing a reassignment needs reports.schedule.manage_all and leaves the
         schedule paused (lossy); restoring external recipients needs reports.deliver.external, lists them in requiredConfirmations and sets stepUpRequired (TM-D30 SX-1). A plan refusal is a 200 with outcome refused. It writes,
         persists and audits nothing. 404 when the operation is unknown, is not a reports.schedule.* operation, or its schedule is not visible to the caller. 409 operation-not-undoable when no
         inverse can be planned at all, errors[].code irreversible, already_undone, superseded (the schedule changed after this operation; undo the later change first) or not_finished.
@@ -1358,7 +1447,7 @@ paths:
         version before the operation: undoing a create archives the schedule, a delete restores it, an update restores the previous version, a pause resumes it (owner only), a resume pauses
         it, and a reassignment restores the previous owner with the schedule still paused. It sends nothing, and a fire that ran in between is not recalled. confirmations must repeat the
         requiredConfirmations of the undo preview (external recipients the undo restores); otherwise 400 with code external_not_confirmed. 403 when the inverse needs a permission the caller
-        lacks (errors[].code external_not_permitted, owner_only, manage_all_required). 404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone,
+        lacks (errors[].code external_not_permitted, not_owner, manage_all_required). 404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone,
         superseded, not_finished or plan_refused (the scope refusals of create). Undoing an operation that itself needed approval is always held (202).
         Step-up (TM-D30 SX-1): undoing a create, update or resume whose restored state has an external recipient needs a fresh MFA. An interactive caller
         without one is answered 401 step-up-required and nothing changes (401 unauthenticated without a session, as everywhere); an API token or an automation
@@ -1434,6 +1523,14 @@ components:
       in: path
       required: true
       description: The run.
+      schema:
+        type: string
+        format: uuid
+    PolicyId:
+      name: policyId
+      in: path
+      required: true
+      description: The rowKey of a policy row of the run (a GUID).
       schema:
         type: string
         format: uuid
@@ -1541,8 +1638,12 @@ components:
     ReportColumnId:
       description: >-
         A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8).
+        Policy columns (SYS-01, one row per policy, rowKey the policy GUID): policy_name (text); policy_kind (enum domain or pso, the ReportPolicyKindValue); precedence (integer, count; absent on the domain row); applies_to_count (integer, count of direct targets in the
+        runner's scope, 0 for a PSO with none, absent on the domain row); applies_to_first (textList, the first two target names by name order, empty when none; the full list is listReportRunPolicyTargets); min_length, history_length, lockout_threshold (integer, count);
+        max_age, min_age, lockout_duration, lockout_window (integer, seconds; max_age, lockout_threshold and lockout_duration are a never cell when the policy sets no limit, see ReportCellNever); complexity and reversible_encryption (boolean).
+        A value that was not read is an unknown cell, never 0 or false. Deltas against the domain row are computed by the client from these typed cells (the unit is on the column); the server sends no delta text.
       type: string
-      enum: [name, logon_name, upn, status, domain, ou_path, manager, created, account_expires, days_to_expiry, last_logon, days_since, probable_service_account, real_last_logon, from_dc, dc_coverage, locked_out_since, lockout_ends, policy_source, data_as_of, password_last_set, password_expires, password_state, last_failed_logon, failures_on_dc, group_type, group_scope, direct_members, effective_members, managed_by, group, member, member_type, membership_kind, via, user, primary_group, dns_name, computer_type, operating_system, os_version, delegation, last_activity, activity_source, path, users, computers, groups, other_objects, objects_in_subtree, email]
+      enum: [name, logon_name, upn, status, domain, ou_path, manager, created, account_expires, days_to_expiry, last_logon, days_since, probable_service_account, real_last_logon, from_dc, dc_coverage, locked_out_since, lockout_ends, policy_source, data_as_of, password_last_set, password_expires, password_state, last_failed_logon, failures_on_dc, group_type, group_scope, direct_members, effective_members, managed_by, group, member, member_type, membership_kind, via, user, primary_group, dns_name, computer_type, operating_system, os_version, delegation, last_activity, activity_source, path, users, computers, groups, other_objects, objects_in_subtree, email, policy_name, policy_kind, precedence, applies_to_count, applies_to_first, min_length, history_length, max_age, min_age, complexity, reversible_encryption, lockout_threshold, lockout_duration, lockout_window]
     ReportCategory:
       description: >-
         The six categories of the 2a library (spec 6.1).
@@ -2177,6 +2278,21 @@ components:
             type: string
             format: email
             maxLength: 254
+    ReportScheduleResume:
+      description: >-
+        The confirmation that resumes a schedule. confirmedExternal lists every external recipient of the schedule, classified now against the current allowed recipient domains (Data leaves your organisation);
+        it must equal that set, and is an empty array when the schedule has none. It is how the owner, a new owner after a reassignment included, shows they saw who receives the data (T-0893 R5).
+      type: object
+      required: [confirmedExternal]
+      additionalProperties: false
+      properties:
+        confirmedExternal:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            format: email
+            maxLength: 254
     ReportScheduleReassign:
       description: >-
         Hands a schedule to another account.
@@ -2206,6 +2322,13 @@ components:
       type: string
       x-activediq-enum: open
       enum: [text, integer, boolean, time, enum]
+    ReportColumnUnitValue:
+      description: >-
+        What an integer column counts. count: a number of things (characters, remembered passwords, failed attempts, targets) or a rank (precedence). seconds: a length of time in whole seconds (maximum and minimum password age,
+        lockout duration and observation window); the cell is the exact value, the console formats it.
+      type: string
+      x-activediq-enum: open
+      enum: [count, seconds]
     ReportFilterOperatorValue:
       description: >-
         An operator a column takes, or one a preset's filter uses. within_last, within_next and older_than carry the number of days as one integer value.
@@ -2342,7 +2465,7 @@ components:
           maxLength: 128
     ReportColumnInfo:
       description: >-
-        A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes.
+        A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes. unit is present on an integer column that measures something, so a client can compare and format its cells without parsing text.
       type: object
       required: [id, label, type, sortable, filterable, defaultVisible, filterOperators, choices]
       properties:
@@ -2367,6 +2490,8 @@ components:
           maxItems: 16
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportFilterOperatorValue
+        unit:
+          $ref: modules/reports.yaml#/components/schemas/ReportColumnUnitValue
         choices:
           type: array
           maxItems: 64
@@ -2676,6 +2801,30 @@ components:
           maximum: 100000
         complete:
           type: boolean
+        label:
+          type: string
+          maxLength: 1024
+          description: >-
+            The header text, "Read from 2 of 3 DCs · 1 unreachable: dc2.example.test: timeout".
+        unreachable:
+          type: array
+          maxItems: 50
+          description: >-
+            The DCs that did not answer, each with the fixed code it gave (never driver text). Empty when coverage is complete.
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportUnreachableDc
+    ReportUnreachableDc:
+      description: >-
+        A DC that did not answer a per-DC read.
+      type: object
+      required: [dc, error]
+      properties:
+        dc:
+          type: string
+          maxLength: 255
+        error:
+          type: string
+          maxLength: 64
     ReportSkippedConnection:
       description: >-
         A connection the run skipped.
@@ -2856,6 +3005,8 @@ components:
           format: uuid
         parameters:
           $ref: modules/reports.yaml#/components/schemas/ReportParametersView
+        policyReads:
+          $ref: modules/reports.yaml#/components/schemas/ReportPolicyReads
     ReportCell:
       description: >-
         One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n, unknown u).
@@ -2930,7 +3081,9 @@ components:
             maxLength: 4096
     ReportCellNever:
       description: >-
-        The value can never exist for this object, as distinct from absent (not yet set).
+        The value can never exist for this object, as distinct from absent (not yet set). In the SYS-01 policy columns it is the policy's own no-limit setting, read from 0 or the minimum signed 64-bit value by the 2a codec:
+        in max_age it is "Never expires", in lockout_threshold "Never locks", in lockout_duration "Until an administrator unlocks". The column says which; no other policy column carries it. For a client that compares policies, such a cell is
+        the loosest value of its column, not the smallest number: it is never an integer 0 and must not be ordered as one.
       type: object
       required: [kind]
       additionalProperties: false
@@ -2996,6 +3149,200 @@ components:
           maximum: 9007199254740991
         page:
           $ref: shared/paging.yaml#/components/schemas/PageInfo
+    ReportPolicyReads:
+      description: >-
+        What a policy report (SYS-01) could read of the Password Settings Container, one entry per domain in the runner's scope, stored with the run and frozen. It exists so that a container that could not be read is never
+        shown as a container that holds no policies (spec 7.1 rule 3, AC-S19): each domain is exactly one of three kinds, readable, none_exist or unreadable, and a client branches on kind and never infers one from another or from a
+        missing row. domainsInScope is the number of entries; domainsReadable is the number of entries of kind readable or none_exist (the read succeeded); complete is true when every domain was read. When complete is false
+        the rows hold the domain policy of every domain and the fine-grained policies of the readable ones only, and users of an unreadable domain may be governed by policies not shown.
+      type: object
+      required: [domainsInScope, domainsReadable, complete, domains]
+      additionalProperties: false
+      properties:
+        domainsInScope:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        domainsReadable:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        complete:
+          type: boolean
+        domains:
+          type: array
+          maxItems: 10000
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportPolicyDomainRead
+    ReportPolicyDomainRead:
+      description: >-
+        The read of one domain's Password Settings Container. Three kinds, never collapsed: readable (the container was read and holds at least one policy), none_exist (the container was read and is empty: a real zero) and
+        unreadable (it could not be read, so how many policies exist is not known).
+      oneOf:
+        - $ref: modules/reports.yaml#/components/schemas/ReportPolicyDomainReadable
+        - $ref: modules/reports.yaml#/components/schemas/ReportPolicyDomainNoneExist
+        - $ref: modules/reports.yaml#/components/schemas/ReportPolicyDomainUnreadable
+      discriminator:
+        propertyName: kind
+        mapping:
+          readable: "#/components/schemas/ReportPolicyDomainReadable"
+          none_exist: "#/components/schemas/ReportPolicyDomainNoneExist"
+          unreadable: "#/components/schemas/ReportPolicyDomainUnreadable"
+    ReportPolicyDomainReadable:
+      description: >-
+        The container was read. psoCount is the number of fine-grained policies in it that the runner's scope shows, at least 1; the rows hold each of them. readAt is the policy sync read time.
+      type: object
+      required: [kind, domainId, domainName, domainPolicyRowKey, readAt, psoCount]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: readable
+        domainId:
+          type: string
+          format: uuid
+        domainName:
+          type: string
+          maxLength: 255
+          minLength: 1
+        domainPolicyRowKey:
+          type: string
+          format: uuid
+        readAt:
+          type: string
+          format: date-time
+        psoCount:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+    ReportPolicyDomainNoneExist:
+      description: >-
+        The container was read and holds no fine-grained policy: a real zero, true at readAt. Only the domain policy row exists for this domain. It is never sent for a container that could not be read.
+      type: object
+      required: [kind, domainId, domainName, domainPolicyRowKey, readAt]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: none_exist
+        domainId:
+          type: string
+          format: uuid
+        domainName:
+          type: string
+          maxLength: 255
+          minLength: 1
+        domainPolicyRowKey:
+          type: string
+          format: uuid
+        readAt:
+          type: string
+          format: date-time
+    ReportPolicyDomainUnreadable:
+      description: >-
+        The container could not be read, so whether this domain has fine-grained policies is not known. containerName is the container as the console names it (Password Settings Container) and reason says why. readAt is when the
+        attempt was made, absent when none was (reason not_read). The domain policy row is still present and is the only policy shown for this domain.
+      type: object
+      required: [kind, domainId, domainName, domainPolicyRowKey, containerName, reason]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          const: unreadable
+        domainId:
+          type: string
+          format: uuid
+        domainName:
+          type: string
+          maxLength: 255
+          minLength: 1
+        domainPolicyRowKey:
+          type: string
+          format: uuid
+        containerName:
+          type: string
+          maxLength: 255
+          minLength: 1
+        reason:
+          $ref: modules/reports.yaml#/components/schemas/ReportPolicyUnreadableReasonValue
+        readAt:
+          type: string
+          format: date-time
+    ReportPolicyUnreadableReasonValue:
+      description: >-
+        Why a Password Settings Container could not be read. permission_denied: the connection account lacks the read right (Domain Admins hold it by default). container_absent: the container is not there, such as a domain below
+        functional level 2008, and the report cannot tell it from an unreadable one. not_read: no read was attempted, such as a connection that was skipped.
+      type: string
+      x-activediq-enum: open
+      enum: [permission_denied, container_absent, not_read]
+    ReportPolicyTargetPage:
+      description: >-
+        A page of the direct targets of one policy row. basis is always direct_targets: the list is what the policy is applied to, not the resultant set, and says nothing about which policy governs a given user. count is the
+        direct targets in the caller's scope, not the length of the page. policyName and kind repeat the policy row so the page stands alone.
+      type: object
+      required: [runId, policyId, policyName, kind, basis, count, targets, page]
+      additionalProperties: false
+      properties:
+        runId:
+          type: string
+          format: uuid
+        policyId:
+          type: string
+          format: uuid
+        policyName:
+          type: string
+          maxLength: 255
+        kind:
+          $ref: modules/reports.yaml#/components/schemas/ReportPolicyKindValue
+        basis:
+          $ref: modules/reports.yaml#/components/schemas/ReportPolicyTargetBasisValue
+        count:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        targets:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportPolicyTarget
+        page:
+          $ref: shared/paging.yaml#/components/schemas/PageInfo
+    ReportPolicyKindValue:
+      description: >-
+        What a policy row is. domain: the domain's own policy, the baseline. pso: a fine-grained policy.
+      type: string
+      x-activediq-enum: open
+      enum: [domain, pso]
+    ReportPolicyTargetBasisValue:
+      description: >-
+        What a list of policy targets is. direct_targets: the objects the policy is applied to; never the resultant set.
+      type: string
+      x-activediq-enum: open
+      enum: [direct_targets]
+    ReportPolicyTarget:
+      description: >-
+        One direct target of a policy: a user or a global security group, addressed by objectGUID. A group is one entry; its members are never listed here.
+      type: object
+      required: [objectGuid, name, targetClass, domain]
+      additionalProperties: false
+      properties:
+        objectGuid:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 256
+        targetClass:
+          $ref: modules/reports.yaml#/components/schemas/ReportPolicyTargetClassValue
+        domain:
+          type: string
+          maxLength: 255
+    ReportPolicyTargetClassValue:
+      description: >-
+        The kind of object a PSO is applied to.
+      type: string
+      x-activediq-enum: open
+      enum: [user, group]
     ReportExport:
       description: >-
         An export job and its stored file (DM-72.I3). When the run's result had expired, rerun is true, runId is the new run and rerunOfRunId the expired one; the file carries the new run's as_of.

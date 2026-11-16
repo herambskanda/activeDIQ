@@ -219,3 +219,33 @@ func scanRow(rs pgx.Rows, q Query) (report.Row, error) {
 	}
 	return row, nil
 }
+
+// ExecAll runs a compiled query that is known to be small and reads every row in one statement, without
+// a cursor. It is for a bounded lookup by key (search metadata, T-1097); a report run uses Exec. max is
+// the most rows it accepts: a longer answer is ErrTooManyRows and nothing is returned, so an unbounded
+// query cannot be buffered by mistake. The statement timeout of tx bounds it.
+func ExecAll(ctx context.Context, tx store.Tx, q Query, max int) ([]report.Row, error) {
+	if q.sql == "" || len(q.out) == 0 || q.search != nil || max < 1 {
+		return nil, ErrInvalidQuery
+	}
+	rs, err := tx.Query(ctx, string(q.sql), append([]any{pgx.QueryExecModeExec}, q.args...)...)
+	if err != nil {
+		return nil, wrapErr(ctx, err)
+	}
+	defer rs.Close()
+	var out []report.Row
+	for rs.Next() {
+		if len(out) == max {
+			return nil, ErrTooManyRows
+		}
+		row, err := scanRow(rs, q)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	if err := rs.Err(); err != nil {
+		return nil, wrapErr(ctx, err)
+	}
+	return out, nil
+}

@@ -14,7 +14,10 @@ param(
   [string]$ServiceName,
   [string]$InstallDir,
   [string[]]$ConfigPaths = @(),
-  [ValidateSet('', 'refused', 'installed')][string]$InstallerResult = ''
+  [ValidateSet('', 'refused', 'installed')][string]$InstallerResult = '',
+  # Where a refused install must have left nothing (T-0635): observed here, not taken on trust from InstallerResult.
+  [string]$ProbeInstallDir,
+  [string]$ProbeServiceName
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -23,10 +26,13 @@ $obs = [ordered]@{ profile = 'windows' }
 # DomainRole: 4 = backup DC, 5 = primary DC (Win32_ComputerSystem).
 $role = (Get-CimInstance Win32_ComputerSystem).DomainRole
 if ($InstallerResult -ne '') {
+  $left = $false
+  if ($ProbeInstallDir -and (Test-Path -LiteralPath $ProbeInstallDir)) { $left = $true }
+  if ($ProbeServiceName -and (Get-Service -Name $ProbeServiceName -ErrorAction SilentlyContinue)) { $left = $true }
   $obs.installer = [ordered]@{
     on_domain_controller = ($role -ge 4)
     refused              = ($InstallerResult -eq 'refused')
-    installed            = ($InstallerResult -eq 'installed')
+    installed            = (($InstallerResult -eq 'installed') -or $left)
   }
 }
 
@@ -55,7 +61,8 @@ if ($ServiceName) {
   try { $svcSid = (New-Object System.Security.Principal.NTAccount($acct)).Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { }
 }
 $files = @()
-if ($InstallDir) { $files += Get-FileObs $InstallDir 'binary' @($svcSid) }
+# A refused install leaves no directory: that is an unobserved ACL section (INACTIVE), not an error.
+if ($InstallDir -and (Test-Path -LiteralPath $InstallDir)) { $files += Get-FileObs $InstallDir 'binary' @($svcSid) }
 foreach ($p in $ConfigPaths) {
   $kind = if ((Get-Item -LiteralPath $p).PSIsContainer) { 'tls-dir' } else { 'config' }
   $files += Get-FileObs $p $kind @($svcSid)

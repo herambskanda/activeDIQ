@@ -18,6 +18,15 @@ import (
 type Verdict struct {
 	Tier0 bool
 	Bases []Basis
+	// Regrants are the groups a restore re-grants, by group: the retained memberOf values and the
+	// primary group (contract §8.10.3 kind 6 step 4, §8.10.9 R2). Set only on a clean restore verdict.
+	Regrants []Regrant
+}
+
+// Regrant is one group membership a restore brings back.
+type Regrant struct {
+	Group guid.GUID
+	DN    string // the group's DN as the DC sent it; display only
 }
 
 // Anchors are the identifiers of an object as re-read live, against which a correlation
@@ -77,13 +86,21 @@ func (d SessionDC) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error)
 // are all built over the one sess, so the DC whose identity rule 5 checks is the DC the reads and
 // writes reach. A binder on another session would re-open the TOCTOU rule 5 closes.
 func NewADProvider(sess *ad.Session, gc *ad.GCResolver, id *connectorv1.DirectoryIdentity, pins PinStore) *ADProvider {
-	return &ADProvider{
+	p := &ADProvider{
 		Dir:   tier0.SessionDirectory{S: sess, GC: gc},
 		ID:    id,
 		Pins:  pins,
 		Bound: SessionDC{S: sess},
 	}
+	if sess != nil {
+		p.Accounts = sess
+		p.Writes = sess
+	}
+	return p
 }
+
+// WriteDirectory is the session the object kinds write through (nil: those kinds answer unsupported).
+func (p *ADProvider) WriteDirectory() ObjectDirectory { return p.Writes }
 
 // sameSession is false when Dir and Bound are both session-backed but over different sessions.
 // Anything else (a test double on either side) is not a session mismatch.
@@ -154,6 +171,19 @@ type ADProvider struct {
 	Dynamic PropertyGuard
 	// Bound reports the DC the connector is bound to (rule 5). Nil refuses every write.
 	Bound DCBinder
+	// Writes runs the object writes (kinds 1 to 3). It must be over the same session as Dir and Bound.
+	Writes ObjectDirectory
+	// Accounts is the session the account kinds (T-1583) read and write on: the same session as Dir and
+	// Bound, so the DC whose identity rule 5 checks is the DC the write reaches. Nil: those kinds answer
+	// CAPABILITY_UNSUPPORTED.
+	Accounts AccountSession
+	// Self is the connector's own account (the identity of every step-7 read), by GUID or DN. Kind 6
+	// proves List Contents on Deleted Objects for this identity's token; unset, restore is refused
+	// with INSUFFICIENT_RIGHTS (TM-D33 rule 4).
+	Self dn.ObjectRef
+	// snapshot computes the tier0 set for the member cross-check of kind 6; nil means the AD
+	// classifier over Dir. Tests substitute it.
+	snapshot func(ctx context.Context, designated []guid.GUID) (*tier0.ADSet, error)
 }
 
 var _ Provider = (*ADProvider)(nil)

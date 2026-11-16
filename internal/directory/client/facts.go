@@ -28,6 +28,8 @@ type ObjectRead struct {
 	// Parent is the objectGUID of the parent container; empty when the object is the head of its
 	// naming context (it has no parent in the connection).
 	Parent string
+	// Children is set only by ConnectorReads.ChildCount (the delete preview); facts never ask.
+	Children ChildCount
 }
 
 // Reads is the connector's read half as the facts reader needs it: one object, live, on the pins.
@@ -61,7 +63,13 @@ func (c *ConnectorFacts) Facts(ctx context.Context, pins authority.Pins, q autho
 	if c == nil || c.reads == nil {
 		return authority.Facts{}, ErrNoReads
 	}
-	obj, err := c.reads.Object(ctx, pins, t, t.GUID, true)
+	// A target still to be created has no GUID: its facts are those of its planned parent, so scope,
+	// Tier-0 and ancestry are judged on the container it will land in, never on an empty GUID.
+	guid := t.GUID
+	if guid == "" {
+		guid = t.Parent
+	}
+	obj, err := c.reads.Object(ctx, pins, t, guid, true)
 	if err != nil {
 		return authority.Facts{}, fmt.Errorf("client: reading target: %w", err)
 	}
@@ -69,7 +77,7 @@ func (c *ConnectorFacts) Facts(ctx context.Context, pins authority.Pins, q autho
 	if !obj.Exists || !q.Ancestry {
 		return f, nil
 	}
-	seen := map[string]bool{t.GUID: true}
+	seen := map[string]bool{guid: true}
 	for parent := obj.Parent; parent != ""; {
 		if seen[parent] || len(f.Ancestors) >= maxAncestry {
 			return f, nil // a loop or an absurd depth: incomplete, which fails closed
