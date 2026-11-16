@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/writechange"
 	"github.com/skenzeriq/activediq/internal/modules/ad"
@@ -373,7 +374,7 @@ func TestMoveDestinationRecheckedAtApply(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Plan's own checks (target, destination) pass; the refusal arms for the Apply-time ones.
-		r2, err := operation.NewRunner(operation.Config{DB: fakeDB{}, Audit: sk, Authz: &armedAuthz{armAfter: 2, refuse: tc.refuse}, Registry: reg})
+		r2, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: fakeDB{}, Audit: sk, Authz: &armedAuthz{armAfter: 2, refuse: tc.refuse}, Registry: reg})
 		if err != nil {
 			t.Fatal(err)
 		}

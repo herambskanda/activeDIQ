@@ -217,7 +217,7 @@ func newSRig(t *testing.T, s *storetest.Server) *srig {
 	}
 	az.grants["carol/thing.write"], az.grants["carol/thing.base"] = true, true // no thing.restore
 	gate := &swapGate{g: PermissionOnly{}}
-	rn, err := NewRunner(Config{DB: db, Audit: ch, Authz: az, Registry: reg, Gate: gate, Component: "test"})
+	rn, err := NewRunner(Config{SecretAttr: testSecretAttr, DB: db, Audit: ch, Authz: az, Registry: reg, Gate: gate, Component: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}

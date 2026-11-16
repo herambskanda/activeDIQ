@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -157,7 +158,7 @@ func TestFamilyUndoAndPreview(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		rn, err := operation.NewRunner(operation.Config{DB: db, Audit: ch, Authz: grantAll{}, Registry: reg})
+		rn, err := operation.NewRunner(operation.Config{SecretAttr: secretattr.IsStatic, DB: db, Audit: ch, Authz: grantAll{}, Registry: reg})
 		if err != nil {
 			t.Fatal(err)
 		}

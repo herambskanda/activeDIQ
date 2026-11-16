@@ -3,8 +3,8 @@ package server
 import (
 	"errors"
 	"fmt"
-	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 
+	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
