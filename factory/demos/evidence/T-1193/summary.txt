@@ -1,0 +1,1 @@
+build 73898f338; go test -tags lab -run TestLabDirSync on fresh Samba (make lab-up) 6/6 PASS; GG-Big member count via ldbsearch=3000; safeprim: 3 pre-existing inventory violations only; OIDs only in connector/ad/scope/scope.go; go test ./internal/connector/... ./tools/analyzers/... ok

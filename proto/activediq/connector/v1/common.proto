@@ -191,6 +191,8 @@ enum Operation {
   // v1.1: the write group and the rights check.
   OPERATION_PLAN = 7;
   OPERATION_VERIFY_CONNECTION = 8;
+  // v1.3 (T-1124): per-DC replication status.
+  OPERATION_READ_REPLICATION_STATUS = 9;
   // Named in v1 (blueprint §7.1), shaped in v1.1 (write.proto). The number is kept.
   OPERATION_APPLY = 100;
   // Reserved names. No message shape yet.

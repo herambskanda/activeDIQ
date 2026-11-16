@@ -106,9 +106,11 @@ func Test_malformed_unrequested_attribute_is_not_examined(t *testing.T) {
 	}
 }
 
+// thumbnailPhoto is in the sync set since T-1111, but only as a presence flag: the mapper drops the bytes.
+// Test_map_user_attributes proves that; requesting it is therefore no longer an error.
 func Test_request_validation(t *testing.T) {
 	nc := inventory.GUID(gtext(domainNC))
-	for _, bad := range []string{"unicodePwd", "UNICODEPWD", "ms-Mcs-AdmPwd", "nTSecurityDescriptor", "supplementalCredentials", "*", "+", "thumbnailPhoto", "objectGUID"} {
+	for _, bad := range []string{"unicodePwd", "UNICODEPWD", "ms-Mcs-AdmPwd", "nTSecurityDescriptor", "supplementalCredentials", "*", "+", "objectGUID"} {
 		_, err := dirsync.NewMapper(dirsync.Config{NC: nc, Requested: []string{"objectClass", bad}})
 		if !errors.Is(err, dirsync.ErrNotAllowed) {
 			t.Errorf("Requested %q: err = %v, want ErrNotAllowed", bad, err)

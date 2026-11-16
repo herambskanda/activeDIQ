@@ -144,6 +144,12 @@ type Service struct {
 	Fresh   FreshnessSource
 	Now     func() time.Time
 	RowCap  int
+	// PerDC reads the DCs for USR-04 and PWD-03 and PerDCDCs counts them before the first read (reports.md
+	// §6.5); both are needed to run a per-DC report, and without them such a run fails connection_unavailable.
+	PerDC    report.PerDCReader
+	PerDCDCs report.DCCounter
+	// PerDCReadCap is the most per-object-per-DC reads one run may make (0: report.DefaultPerDCReadCap).
+	PerDCReadCap int
 	// Log receives the loss of a read_denied event (slog.Default when nil).
 	Log *slog.Logger
 }

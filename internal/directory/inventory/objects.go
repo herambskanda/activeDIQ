@@ -6,14 +6,17 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/skenzeriq/activediq/internal/directory/attr/guid"
 	"github.com/skenzeriq/activediq/internal/directory/attr/secretattr"
+	"github.com/skenzeriq/activediq/internal/directory/sd"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 )
 
 var _ = tablekind.Declare(tablekind.Table{Name: "public.directory_objects", Entity: "DM-16", Kind: tablekind.Directory})
+var _ = tablekind.Declare(tablekind.Table{Name: "public.directory_object_changes", Entity: "DM-18", Kind: tablekind.Directory, AppendOnly: true})
 
 // Kind is DM-16 `kind`.
 type Kind string
@@ -29,11 +32,13 @@ const (
 	KindContainer     Kind = "container"
 	KindGMSA          Kind = "gmsa"
 	KindFSP           Kind = "fsp"
-	KindOther         Kind = "other"
+	// KindPrintQueue is a published printer (printQueue), a child of its server's computer object (T-1719, D13).
+	KindPrintQueue Kind = "printqueue"
+	KindOther      Kind = "other"
 )
 
 var validKinds = map[Kind]bool{KindUser: true, KindInetOrgPerson: true, KindGroup: true, KindComputer: true, KindContact: true,
-	KindOU: true, KindContainer: true, KindGMSA: true, KindFSP: true, KindOther: true}
+	KindOU: true, KindContainer: true, KindGMSA: true, KindFSP: true, KindPrintQueue: true, KindOther: true}
 
 // ObjectState is the DM-16 lifecycle state. AD: live, deleted, recycled, purged, out_of_scope.
 // Entra: active, soft_deleted, purged.
@@ -175,6 +180,13 @@ type Observation struct {
 	// not stored.
 	HasSPN     *bool
 	InputsRead InputsRead
+
+	// PasswordChange is the Cannot Change Password state the sync classified from the DACL read path
+	// (sd.ClassifyPasswordChange, never a hand-parsed descriptor), and PasswordChangeAt is when that
+	// read happened. A zero PasswordChangeAt means no read was attempted: the state must then be the
+	// zero value (NotConfirmed). A failed read is recorded as NotConfirmed WITH a time. Users only.
+	PasswordChange   sd.PasswordChange
+	PasswordChangeAt time.Time
 
 	// PrimaryGroup is a user's primaryGroupID resolved to the group (DM-17.I2). Zero: none observed.
 	PrimaryGroup GUID
@@ -417,6 +429,17 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		attrs[i] = b
 	}
 
+	// History is recorded for AD only, and only once the connection has a completed pass: the first full
+	// pass is the baseline, not a flood of "created" rows (directory_object_changes).
+	record := false
+	if !entra {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM public.nc_sync_passes
+			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND last_pass_at IS NOT NULL)`,
+			string(connection)).Scan(&record); err != nil {
+			return out, writeErr("history baseline", err)
+		}
+	}
+
 	// The search keys of the objects this call wrote, replaced in this transaction after the loop.
 	keyed := map[GUID][]searchKeyRow{}
 	var keyOrder []GUID
@@ -446,6 +469,10 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		if len(o.ConsistencyGUID) > 0 {
 			cg = o.ConsistencyGUID
 		}
+		var pwState any
+		if !o.PasswordChangeAt.IsZero() {
+			pwState = o.PasswordChange.String()
+		}
 		var w written
 		err := tx.QueryRow(ctx, upsertObjectSQL,
 			string(connection), string(o.Object), nullGUID(o.NC), string(o.Kind), o.Class,
@@ -453,7 +480,8 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 			nullTime(o.LockoutTime), nullTime(o.PwdLastSet), nullTime(o.AccountExpires),
 			cg, string(attrs[i]), nullTime(o.WhenCreated), nullTime(o.WhenChanged), observed.UTC(), o.ObservedDSA, cloud, string(o.State),
 			syncEnabledVal, cloudManagedVal, nilIfEmpty(o.OnPremisesSecurityIdentifier), o.OnPremisesDomainName, nilIfEmpty(o.OnPremisesImmutableID),
-			o.UserAccountControl, o.PrimaryGroupID, nullTime(o.LastLogonTimestamp), o.HasSPN, int16(o.InputsRead)).
+			o.UserAccountControl, o.PrimaryGroupID, nullTime(o.LastLogonTimestamp), o.HasSPN, int16(o.InputsRead),
+			pwState, nullTime(o.PasswordChangeAt), record, noiseAttributes).
 			Scan(&w.inserted, &w.moved, &w.completeChanged)
 		if store.IsNoRows(err) {
 			out.Stale++
@@ -474,7 +502,7 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		// The row moved (its parent or chain changed) or its completeness changed, or it is new and
 		// descendants may be waiting for it: bring the rows below it up to date in this transaction.
 		if w.moved {
-			if err := rewriteDescendants(ctx, tx, connection, o.Object); err != nil {
+			if err := rewriteDescendants(ctx, tx, connection, o.Object, o.DN); err != nil {
 				return out, err
 			}
 		}
@@ -537,6 +565,15 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 	return out, nil
 }
 
+// noiseAttributes is the automatic-update set of reports-2-second-slice §4.1 rule 2: logon and
+// bad-password state, lockout and housekeeping, computer-driven updates. A change is automatic only
+// when every attribute it touched is listed (names are those of the stored attributes bag and typed
+// columns). Credential events (pwdLastSet) and security descriptors are deliberately not here.
+var noiseAttributes = []string{"lastLogonTimestamp", "lastLogon", "logonCount", "badPwdCount", "badPasswordTime",
+	"lockoutTime", "adminCount", "dSCorePropagationData", "operatingSystem", "operatingSystemVersion",
+	"operatingSystemServicePack", "operatingSystemHotfix", "dNSHostName", "servicePrincipalName",
+	"msDS-SupportedEncryptionTypes", "msDS-KeyVersionNumber"}
+
 // written is what one upsert reports about the row it wrote.
 type written struct {
 	inserted bool
@@ -557,14 +594,17 @@ type written struct {
 // A row with no parent and no NC (Entra) has no chain to be complete about, and is false. A stale
 // observation matches no row and returns no rows.
 const upsertObjectSQL = `WITH old AS (
-		SELECT parent_guid, ancestry, ancestry_complete FROM public.directory_objects
+		SELECT true AS present, parent_guid, ancestry, ancestry_complete, state, rdn, dn, sam_account_name, upn, display_name, enabled,
+			user_account_control, primary_group_id, lockout_time, pwd_last_set, account_expires, last_logon_timestamp, spn_present, attributes
+		FROM public.directory_objects
 		WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid AND object_guid = $2::uuid),
 	ins AS (
 		INSERT INTO public.directory_objects AS d (tenant_id, connection_id, object_guid, nc_guid, kind, object_class,
 			parent_guid, ancestry, dn, rdn, sid, sam_account_name, upn, display_name, enabled, lockout_time, pwd_last_set, account_expires,
 			consistency_guid, attributes, when_created, when_changed, observed_at, observed_dsa, cloud_seen_at, state,
 			on_prem_sync_enabled, on_prem_cloud_managed, on_prem_sid, on_prem_domain_name, on_prem_immutable_id, ancestry_complete,
-			user_account_control, primary_group_id, last_logon_timestamp, spn_present, inputs_read)
+			user_account_control, primary_group_id, last_logon_timestamp, spn_present, inputs_read,
+			password_change_state, password_change_at)
 		VALUES (NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, $3::uuid, $4, $5,
 			$6::uuid, $7::uuid[], $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25,
 			$26, $27, $28, $29, $30,
@@ -576,7 +616,8 @@ const upsertObjectSQL = `WITH old AS (
 					WHERE p.tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND p.connection_id = $1::uuid
 					AND p.object_guid = $6::uuid), false)
 			END,
-			$31::bigint, $32::bigint, $33::timestamptz, $34::boolean, $35::smallint)
+			$31::bigint, $32::bigint, $33::timestamptz, $34::boolean, $35::smallint,
+			$36::text, $37::timestamptz)
 		ON CONFLICT (tenant_id, connection_id, object_guid) DO UPDATE SET
 			nc_guid = EXCLUDED.nc_guid, kind = EXCLUDED.kind, object_class = EXCLUDED.object_class, parent_guid = EXCLUDED.parent_guid,
 			ancestry = EXCLUDED.ancestry, ancestry_complete = EXCLUDED.ancestry_complete, dn = EXCLUDED.dn, rdn = EXCLUDED.rdn, sid = EXCLUDED.sid,
@@ -590,9 +631,49 @@ const upsertObjectSQL = `WITH old AS (
 			on_prem_immutable_id = EXCLUDED.on_prem_immutable_id,
 			user_account_control = EXCLUDED.user_account_control, primary_group_id = EXCLUDED.primary_group_id,
 			last_logon_timestamp = EXCLUDED.last_logon_timestamp, spn_present = EXCLUDED.spn_present, inputs_read = EXCLUDED.inputs_read,
+			password_change_state = EXCLUDED.password_change_state, password_change_at = EXCLUDED.password_change_at,
 			cloud_seen_at = GREATEST(d.cloud_seen_at, EXCLUDED.cloud_seen_at)
 		WHERE d.observed_at <= EXCLUDED.observed_at
-		RETURNING (xmax = 0) AS inserted, d.parent_guid, d.ancestry, d.ancestry_complete)
+		RETURNING (xmax = 0) AS inserted, d.parent_guid, d.ancestry, d.ancestry_complete),
+	chg AS (
+		INSERT INTO public.directory_object_changes (tenant_id, connection_id, object_guid, change_kind, object_kind, attributes_changed,
+			automatic_only, name, sam_account_name, dn, observed_at)
+		SELECT NULLIF(current_setting('app.tenant_id', true), '')::uuid, $1::uuid, $2::uuid, c.kind, $4::text, c.attrs,
+			c.kind = 'edited' AND cardinality(c.attrs) > 0 AND c.attrs <@ $39::text[],
+			COALESCE(NULLIF(c.sam, ''), NULLIF(c.disp, ''), c.rdn, ''), COALESCE(c.sam, ''), COALESCE(c.dn, ''), $22::timestamptz
+		FROM ins
+		LEFT JOIN old ON true
+		CROSS JOIN LATERAL (SELECT COALESCE(old.present, false) AS had, $25::text IN ('deleted', 'recycled', 'purged') AS gone,
+			COALESCE(old.state, '') IN ('deleted', 'recycled', 'purged') AS was_gone) st
+		CROSS JOIN LATERAL (SELECT ARRAY(SELECT DISTINCT k FROM unnest(
+				ARRAY(SELECT k FROM (SELECT jsonb_object_keys(old.attributes) AS k UNION SELECT jsonb_object_keys($19::jsonb)) s
+					WHERE (old.attributes -> k) IS DISTINCT FROM ($19::jsonb -> k))
+				|| array_remove(ARRAY[
+					CASE WHEN old.sam_account_name IS DISTINCT FROM $11::text THEN 'sAMAccountName' END,
+					CASE WHEN old.upn IS DISTINCT FROM $12::text THEN 'userPrincipalName' END,
+					CASE WHEN old.display_name IS DISTINCT FROM $13::text THEN 'displayName' END,
+					CASE WHEN old.user_account_control IS DISTINCT FROM $31::bigint THEN 'userAccountControl' END,
+					CASE WHEN old.primary_group_id IS DISTINCT FROM $32::bigint THEN 'primaryGroupID' END,
+					CASE WHEN old.lockout_time IS DISTINCT FROM $15::timestamptz THEN 'lockoutTime' END,
+					CASE WHEN old.pwd_last_set IS DISTINCT FROM $16::timestamptz THEN 'pwdLastSet' END,
+					CASE WHEN old.account_expires IS DISTINCT FROM $17::timestamptz THEN 'accountExpires' END,
+					CASE WHEN old.last_logon_timestamp IS DISTINCT FROM $33::timestamptz THEN 'lastLogonTimestamp' END,
+					CASE WHEN old.spn_present IS DISTINCT FROM $34::boolean THEN 'servicePrincipalName' END
+				], NULL)) AS k ORDER BY k) AS attrs) d
+		CROSS JOIN LATERAL (SELECT CASE
+				WHEN NOT st.had THEN CASE WHEN NOT st.gone THEN 'created' END
+				WHEN st.gone THEN CASE WHEN NOT st.was_gone THEN 'deleted' END
+				WHEN st.was_gone THEN NULL
+				WHEN old.parent_guid IS DISTINCT FROM $6::uuid THEN 'moved'
+				WHEN old.rdn IS DISTINCT FROM $9::text THEN 'renamed'
+				WHEN cardinality(d.attrs) > 0 THEN 'edited' END AS kind) k0
+		CROSS JOIN LATERAL (SELECT k0.kind,
+				CASE WHEN k0.kind = 'deleted' THEN '{}'::text[] WHEN k0.kind = 'created' THEN '{}'::text[] ELSE d.attrs END AS attrs,
+				CASE WHEN k0.kind = 'deleted' THEN old.sam_account_name ELSE $11::text END AS sam,
+				CASE WHEN k0.kind = 'deleted' THEN old.display_name ELSE $13::text END AS disp,
+				CASE WHEN k0.kind = 'deleted' THEN old.rdn ELSE $9::text END AS rdn,
+				CASE WHEN k0.kind = 'deleted' THEN old.dn ELSE $8::text END AS dn) c
+		WHERE $38::boolean AND c.kind IS NOT NULL)
 	SELECT ins.inserted,
 		COALESCE((SELECT o.parent_guid IS DISTINCT FROM ins.parent_guid OR o.ancestry <> ins.ancestry FROM old o), false),
 		COALESCE((SELECT o.ancestry_complete <> ins.ancestry_complete FROM old o), false)
@@ -607,7 +688,12 @@ const upsertObjectSQL = `WITH old AS (
 //
 // Rows are found by ancestry (a grandchild whose parent is not yet synced is still below moved), so
 // this is a scan until the GIN index on ancestry (row B3) lands. It runs only for a row that moved.
-func rewriteDescendants(ctx context.Context, tx store.Tx, connection ConnectionID, moved GUID) error {
+// The dn snapshots of those rows follow in the same transaction (DM-16.I5, rewriteDescendantDNs).
+func rewriteDescendants(ctx context.Context, tx store.Tx, connection ConnectionID, moved GUID, movedDN string) error {
+	// The dn pass reads the chains, so it goes first: a chain too long to store is emptied below.
+	if err := rewriteDescendantDNs(ctx, tx, connection, moved, movedDN); err != nil {
+		return err
+	}
 	_, err := tx.Exec(ctx, `UPDATE public.directory_objects d SET
 			ancestry = CASE WHEN array_position(d.ancestry, $2::uuid) + cardinality(m.ancestry) <= 128
 				THEN d.ancestry[1:array_position(d.ancestry, $2::uuid)] || m.ancestry ELSE '{}' END,
@@ -664,6 +750,13 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 	}
 	if err := o.checkInputs(); err != nil {
 		return bad(err.Error())
+	}
+	if o.PasswordChangeAt.IsZero() && o.PasswordChange != sd.PasswordChangeNotConfirmed {
+		return bad("password change state without its read time")
+	}
+	if o.PasswordChange > sd.PasswordChangeNoDenyACE ||
+		(!o.PasswordChangeAt.IsZero() && o.Kind != KindUser && o.Kind != KindInetOrgPerson) {
+		return bad("password change state out of range or on a non-user")
 	}
 	if entra {
 		if len(o.OnPremisesSecurityIdentifier) != 0 && (len(o.OnPremisesSecurityIdentifier) < 8 || len(o.OnPremisesSecurityIdentifier) > 68) {
@@ -733,7 +826,7 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 			return bad("a secret attribute is never stored")
 		}
 	}
-	if len(o.DN) > 4096 || len(o.RDN) > 1024 || len(o.SAMAccountName) > 256 || len(o.UPN) > 1024 || len(o.DisplayName) > 1024 || len(o.ObservedDSA) > 256 {
+	if len(o.DN) > 4096 || utf8.RuneCountInString(o.RDN) > 1024 || utf8.RuneCountInString(o.SAMAccountName) > 256 || utf8.RuneCountInString(o.UPN) > 1024 || utf8.RuneCountInString(o.DisplayName) > 1024 || len(o.ObservedDSA) > 256 {
 		return bad("value too long")
 	}
 	// PostgreSQL text cannot hold NUL; refuse rather than let the database error carry the value.
@@ -750,15 +843,22 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 
 // removeUnseen marks the active attr edges of group that this cycle did not refresh (observed_at older
 // than the cycle) removed: the cycle read the whole membership.
-func (Writer) removeUnseen(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group GUID, observed time.Time) error {
+func (w Writer) removeUnseen(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group GUID, observed time.Time) error {
+	return w.endActiveEdges(ctx, tx, attr, connection, group, observed, false)
+}
+
+// endActiveEdges marks the active attr edges of group removed: those this cycle did not refresh (all false), or
+// every one of them (all true: a patch could not say which members the group has, so none is trusted until a
+// full read names them again; setEdge makes an edge active again).
+func (Writer) endActiveEdges(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group GUID, observed time.Time, all bool) error {
 	_, err := tx.Exec(ctx, `WITH edge AS (
 			UPDATE public.links SET state = 'removed', observed_at = $3
 			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-			AND source_guid = $2::uuid AND link_attr = $4 AND state = 'active' AND observed_at < $3
+			AND source_guid = $2::uuid AND link_attr = $4 AND state = 'active' AND ($5::boolean OR observed_at < $3)
 			RETURNING tenant_id, connection_id, source_guid)
 		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
 		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
-		string(connection), string(group), observed.UTC(), attr)
+		string(connection), string(group), observed.UTC(), attr, all)
 	if err != nil {
 		return writeErr("remove unseen "+attr, err)
 	}
