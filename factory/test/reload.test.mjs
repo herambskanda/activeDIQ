@@ -89,14 +89,15 @@ test('a merge gate in flight postpones the reload until it ends', async () => {
     await s.ready$();
     s.land('factory/lib/newcode.mjs');
     let end;
-    s.d.gateRun = new Promise((resolve) => { end = resolve; });
-    s.d.gateAbort = new AbortController();
+    const lane = { ids: ['T-stub'], abort: new AbortController() };
+    lane.run = new Promise((resolve) => { end = resolve; });
+    s.d.gateLanes = [lane];
     assert.equal(await s.d.maybeReload(), false);
     assert.equal(await s.d.maybeReload(), false);
-    assert.deepEqual([s.spawned.length, s.d.gateAbort.signal.aborted], [0, false], 'the gate is neither aborted nor replaced');
+    assert.deepEqual([s.spawned.length, lane.abort.signal.aborted], [0, false], 'the gate is neither aborted nor replaced');
     end();
-    await s.d.gateRun;
-    s.d.gateRun = null;
+    await lane.run;
+    s.d.gateLanes = [];
     assert.equal(await s.d.maybeReload(), true, 'one tick after the gate ends');
     assert.equal(s.spawned.length, 1);
   } finally { s.cleanup(); }
@@ -140,11 +141,12 @@ test('factory restart aborts a gate in flight and reloads at once, even with not
   const s = setup();
   try {
     await s.ready$();
-    s.d.gateAbort = new AbortController();
-    s.d.gateRun = new Promise((resolve) => { s.d.gateAbort.signal.addEventListener('abort', () => { s.d.gateRun = null; resolve(); }); });
+    const lane = { ids: ['T-stub'], abort: new AbortController() };
+    lane.run = new Promise((resolve) => { lane.abort.signal.addEventListener('abort', () => { s.d.gateLanes = s.d.gateLanes.filter((l) => l !== lane); resolve(); }); });
+    s.d.gateLanes = [lane];
     s.d.requestRestart();
     assert.equal(await s.d.maybeReload(), true);
-    assert.equal(s.d.gateAbort.signal.aborted, true);
+    assert.equal(lane.abort.signal.aborted, true);
     assert.equal(s.d.restartRequested, false);
     assert.match(events(s.ctx).find((t) => t.startsWith('reload:')), /factory restart requested/);
   } finally { s.cleanup(); }

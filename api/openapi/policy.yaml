@@ -24,6 +24,8 @@
 #   directory.read   searchDirectoryUsers (T-0668) and searchDirectory (T-1094, a POST read so the text stays out of URLs, ADR-0011 rule 15)
 #                    are ordinary permissioned reads: x-permission directory.read, no step-up, no anonymous or authenticated row,
 #                    rate class read. No row is stale or missing.
+#   connections.read listConnectionHealth (T-1834, modules/connections.yaml) is an ordinary permissioned read: x-permission connections.read, no step-up,
+#                    no anonymous or authenticated row, rate class read. Its rows carry no secret, so no secretResponses row. No row is stale or missing.
 #   reports.*        the 2a report operations (T-0866, modules/reports.yaml) are ordinary permissioned operations: one x-permission each,
 #                    no step-up row, no anonymous or authenticated row. reports.run: library, runs, run header, result paging.
 #                    reports.export: export, export record, download, delete a file; createReportExport also checks reports.run inside the
@@ -123,6 +125,9 @@ authenticated:
   - operation: reverifyStepUp
     reason: Refreshes the caller's own session MFA time from a TOTP code of the caller's own account; touches no other principal. One refusal shape (403 step-up-refused), class secret per principal, no freshness input.
     ref: TM-D16
+  - operation: getConnectionSummary
+    reason: Tenant-wide connection count (a number, no identity) so Home first-run renders for an administrator whose grant covers no connection; it reads no other principal and returns no connection detail.
+    ref: TM-F-SESSION
 nonApiRoutes:
   - method: GET
     path: /healthz

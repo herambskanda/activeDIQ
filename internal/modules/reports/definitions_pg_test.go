@@ -82,7 +82,7 @@ func defSetupExports(t *testing.T, s *storetest.Server, withLibrary, withExports
 	}
 	var rec apitest.Recorder
 	perms := apihost.Permissions{"reports.deliver.external", "reports.export", "reports.run", "reports.schedule", "reports.schedule.manage_all",
-		"directory.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read", "helpdesk.caller.verify"}
+		"directory.read", "connections.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read", "helpdesk.caller.verify"}
 	srv, err := apihost.Build(doc, apitest.Conform(&rec, h.Bind()), pol, perms, apihost.Ports{Authn: &door{allow: true}, Authz: &door{allow: true}, Limits: &door{}, StepUp: &door{}})
 	if err != nil {
 		t.Fatal(err)
