@@ -7,6 +7,7 @@ package server
 import (
 	"context"
 	jsonv2 "encoding/json/v2"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
+	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -22,6 +24,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/owners"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
@@ -64,6 +67,38 @@ func (rptDoor) AllowPrincipal(context.Context, string, apihost.Principal) (apiho
 }
 func (rptDoor) Fresh(context.Context, apihost.Principal) (bool, error) { return true, nil }
 
+// bootReportsForTest boots the generated module list over db with the kernel ports the reports module
+// builds its services from (ADR-0013), registers the job kinds the modules contributed on jreg and
+// returns the reports tag. scopes is the read-scope producer; nil leaves Deps without one, which the
+// module refuses at boot. It names no module: the tag and the kinds come from Contributions.
+func bootReportsForTest(ctx context.Context, db *store.DB, jreg *jobs.Registry, sink audit.Sink, scopes rbac.ReadScopeProducer) (apihost.TagHandlers, error) {
+	deps := platform.Deps{DB: db, Jobs: jreg, Audit: sink}
+	if scopes != nil {
+		deps.ReadScopes = &rbac.LateReadScopes{}
+		if err := deps.ReadScopes.Bind(scopes); err != nil {
+			return apihost.TagHandlers{}, err
+		}
+	}
+	c, _, err := bootModules(ctx, deps, capability.NewSet(), directoryServices(db), owners.Lookup)
+	if err != nil {
+		return apihost.TagHandlers{}, err
+	}
+	for _, j := range c.Jobs() {
+		if err := jreg.Register(j.Kind); err != nil {
+			return apihost.TagHandlers{}, err
+		}
+	}
+	for _, t := range c.API() {
+		if t.Tag() == "reports" {
+			return t, nil
+		}
+	}
+	return apihost.TagHandlers{}, errors.New("no reports tag contributed")
+}
+
+// reportRunKind is the job kind of a report run; the compose tests name it by string, not by module type.
+const reportRunKind = "reports.run"
+
 func TestReportsCatalogServesShippedLibrary(t *testing.T) {
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		ctx := context.Background()
@@ -103,10 +138,6 @@ func TestReportsCatalogServesShippedLibrary(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		_, host, err := bootReport(ctx, capability.NewSet(), directoryServices(db), owners.Lookup)
-		if err != nil {
-			t.Fatalf("bootReport: %v", err)
-		}
 		connID, err := authz.ParseObjectID(string(cid))
 		if err != nil {
 			t.Fatal(err)
@@ -117,9 +148,9 @@ func TestReportsCatalogServesShippedLibrary(t *testing.T) {
 		}
 		scope := authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermNamingContext, Connection: connID, Root: domID}}})
 		jreg := jobs.NewRegistry()
-		svc, tag, err := buildReports(ctx, db, host, jreg, rptSink{}, inventory.NewReader(db, nil), rptScopes{scope}, nil, "")
+		tag, err := bootReportsForTest(ctx, db, jreg, rptSink{}, rptScopes{scope})
 		if err != nil {
-			t.Fatalf("buildReports: %v", err)
+			t.Fatalf("boot reports: %v", err)
 		}
 		doc, err := apihost.LoadDocument()
 		if err != nil {
@@ -130,7 +161,7 @@ func TestReportsCatalogServesShippedLibrary(t *testing.T) {
 			t.Fatal(err)
 		}
 		perms := apihost.Permissions{"reports.run", "reports.export", "reports.schedule", "reports.schedule.manage_all", "reports.replication.read", "reports.replication.configure",
-			"reports.deliver.external", "directory.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}
+			"reports.deliver.external", "directory.read", "connections.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}
 		door := rptDoor{}
 		srv, err := apihost.Build(doc, []apihost.TagHandlers{tag}, pol, perms, apihost.Ports{Authn: door, Authz: door, Limits: door, StepUp: door})
 		if err != nil {
@@ -161,7 +192,7 @@ func TestReportsCatalogServesShippedLibrary(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, c := range cl {
-			if c.Kind != svc.Kind().Name {
+			if c.Kind != reportRunKind {
 				continue
 			}
 			if _, err := jobs.NewRunner(db, jreg).Execute(ctx, c); err != nil {

@@ -73,7 +73,7 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 			e.ten.String(), scpRunner, string(rbac.NamingContext), e.ad, scpDomA)
 
 		// The composition under test: the booted contributions, the authorizer, buildReadScopes, buildReports.
-		contrib, host, err := bootReport(ctx, capability.NewSet(capability.DirectoryAD, capability.DirectoryEntra, capability.TenantProvisioning), directoryServices(e.db), owners.Lookup)
+		contrib, _, err := bootReport(ctx, capability.NewSet(capability.DirectoryAD, capability.DirectoryEntra, capability.TenantProvisioning), directoryServices(e.db), owners.Lookup)
 		if err != nil {
 			t.Fatalf("bootReport: %v", err)
 		}
@@ -85,13 +85,13 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := buildReports(ctx, e.db, host, jobs.NewRegistry(), rptSink{}, inventory.NewReader(e.db, nil), nil, nil, ""); err == nil {
-			t.Fatal("buildReports accepted a nil read-scope producer")
+		if _, err := bootReportsForTest(ctx, e.db, jobs.NewRegistry(), rptSink{}, nil); err == nil {
+			t.Fatal("the reports module accepted an unbound read-scope producer")
 		}
 		jreg := jobs.NewRegistry()
-		svc, tag, err := buildReports(ctx, e.db, host, jreg, rptSink{}, inventory.NewReader(e.db, nil), rs, nil, "")
+		tag, err := bootReportsForTest(ctx, e.db, jreg, rptSink{}, rs)
 		if err != nil {
-			t.Fatalf("buildReports: %v", err)
+			t.Fatalf("boot reports: %v", err)
 		}
 		doc, err := apihost.LoadDocument()
 		if err != nil {
@@ -102,7 +102,7 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 			t.Fatal(err)
 		}
 		perms := apihost.Permissions{"reports.run", "reports.export", "reports.schedule", "reports.schedule.manage_all", "reports.replication.read", "reports.replication.configure",
-			"reports.deliver.external", "directory.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}
+			"reports.deliver.external", "directory.read", "connections.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}
 		door := rptDoor{}
 		srv, err := apihost.Build(doc, []apihost.TagHandlers{tag}, pol, perms, apihost.Ports{Authn: door, Authz: door, Limits: door, StepUp: door})
 		if err != nil {
@@ -139,7 +139,7 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, c := range cl {
-			if c.Kind != svc.Kind().Name {
+			if c.Kind != reportRunKind {
 				continue
 			}
 			if _, err := jobs.NewRunner(e.db, jreg).Execute(ctx, c); err != nil {

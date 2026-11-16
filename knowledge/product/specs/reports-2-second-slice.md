@@ -1,7 +1,7 @@
 ---
 title: "Spec: AD report library, second slice (reports-2a §6.3 'Not at 2a', including ADM-092)"
 date: 2026-10-31
-updated: 2026-11-07
+updated: 2026-11-15
 status: draft
 owner: heramb
 author: product-manager
@@ -51,6 +51,10 @@ duplicate report ships without the colliding value (§6.4, P7, follow-up filed);
 are refused with a stated reason and UTC is offered (§5.1, P8); hidden-group header counts are objects
 and say so (§4.1.2, §4.1.2a, AC-S02 reworded); policy rows for a runner who cannot read the domain head
 are replaced by a scope notice (§7.1 rule 6, P9). AC-S35 to AC-S38 added (38 in all).
+
+**Revision 7 (2026-11-15, T-1904, from security review T-1884 PR-3 and PR-4).** §7.1 rule 6 gains the
+hidden-PSO notice (fixed text, no count, carried in every export), and precedence is shown as a rank
+among visible rows with the stored value never exported (P10). AC-S39 added (39 in all); AC-S38 stands.
 
 **Revision 5 (2026-11-07, T-1722, from the T-1511 review).** §7.3 rule 5 now says DC error text is
 attacker-influenced (a compromised DC controls it, TM-X3) and is escaped by the same encoder; §7.3
@@ -517,6 +521,36 @@ Rules:
    targets only and is labelled "in your scope". The notice is carried in every export. Columns
    "stricter / weaker" are not computed for a runner without the head.
 
+   **Hidden fine-grained policies (T-1904, from security review PR-2 to PR-4 of
+   [policy-rows-and-replication-status-authz-review.md](../../development/architecture/policy-rows-and-replication-status-authz-review.md) §1.4).**
+   A runner can hold the domain head and still have an OU exclude in scope. A PSO is a row only if
+   its object is in scope and it has at least one in-scope direct target or no direct targets at
+   all; a PSO whose direct targets are all out of scope is not a row.
+   a. **Notice.** When one or more PSOs are hidden this way, the report shows, for that domain, the
+      fixed text: "Fine-grained policies that apply only to objects outside your scope are not
+      shown." It has no count, no name, no precedence and no domain name other than the one whose
+      rows are shown. It is shown whenever at least one PSO is hidden, and not when none is. It is
+      never worded "no policies" and never replaces rule 3's `pso_unreadable` banner (both can show;
+      different words). It is a third text, distinct from the head scope notice above, and an
+      OU-scoped runner (no head) sees only the head scope notice, not this one.
+   b. **Exports.** The notice is carried in every export (CSV, XLSX, PDF, HTML) and in scheduled
+      deliveries, as the head notice is: in CSV as a leading comment row, in the others in the
+      header block. It is computed at each run from the runner's scope at that run.
+   c. **Deltas.** "Stricter / weaker" is computed only for rows shown, always against the domain row.
+   d. **Precedence is shown as a rank, not the stored value (decision, product-manager).** The
+      column "Precedence rank" numbers the visible PSOs 1, 2, 3… in ascending order of stored
+      `msDS-PasswordSettingsPrecedence` (1 wins); PSOs with the same stored value share a rank and
+      show "tie". The stored value appears nowhere in the screen, API response or any export, so a gap
+      in numbering cannot reveal that a hidden PSO exists or where it ranks. Help text on the column:
+      "Order among the policies shown to you; not the stored precedence value." Why rank for
+      everyone, not stored value for those with nothing hidden: a column whose meaning changes with
+      the runner's scope or between two runs of the same schedule would be a trap for anyone who
+      compares exports. Cost: an administrator who needs the stored number reads it in Active
+      Directory Administrative Center; recorded as parity difference P10, and a stored-value option
+      for runners with no hidden PSOs is left to a later slice if customers ask.
+   e. **Not special-cased:** a PSO applied to Domain Admins or other Tier-0 principals is shown to a
+      runner who can read the head (PR-5, residual TM-R-PR1); no extra rule here.
+
 ### 7.2 SYS-02 Published printers (batch 10)
 
 | ID | Report | ME names | Dataset | Default columns |
@@ -613,6 +647,7 @@ ME's report "fetches the replication status of the selected domain controller(s)
 | P7 | Duplicate SPN report shows the count and the computer's SPN list, not the colliding value | Needs an unbannable per-SPN dataset; shipped as a stated gap (§6.4) |
 | P8 | Logon Hour Based Report refuses half-hour-offset zones and offers UTC | One local hour straddles two stored hours; no rounding (§5.1a) |
 | P9 | A runner without the domain head in scope sees a scope notice, not policy rows | Domain-wide settings are not owned by an OU (§7.1 rule 6) |
+| P10 | PSO precedence is shown as a rank among the visible rows; the stored value is not shown or exported; PSOs aimed only at out-of-scope objects are hidden behind a fixed notice | A gap in stored numbers or a visible name would disclose a PSO the runner's excludes withhold (§7.1 rule 6 a to d) |
 
 Amendments to reports-2a (to be folded into it by its owner, with the version note):
 - **A1 (§6.1 rule 6):** the Deleted presets of §4.1 list objects in lifecycle state deleted or
@@ -1066,6 +1101,25 @@ Then the OU administrator sees the scope notice and no policy row, value or PSO 
   container unreadable the `pso_unreadable` banner shows and the OU administrator still sees only the
   scope notice; neither view says "no policies"
 Evidence: UI recording; export files inspected; RP15 test
+
+AC-S39 (FR-S08, §7.1 rule 6 a to d)
+Given a domain with a domain policy and three PSOs: A (stored precedence 5, target in scope), B
+  (precedence 1, only target a group in an excluded OU) and C (precedence 10, no targets); and a
+  reporting administrator with the domain root in scope and that OU excluded
+When SYS-01 runs, and the result is exported to CSV, XLSX and PDF and delivered by a schedule
+Then the rows are the domain, A and C; the notice "Fine-grained policies that apply only to objects
+  outside your scope are not shown." appears once in the screen and in every export and delivery; the
+  Precedence rank column reads 1 for A and 2 for C and no stored value (5, 10) appears; B's name,
+  its precedence 1, its values and any count of hidden policies appear in no screen, API response,
+  export, header or audit detail; the stricter/weaker deltas are against the domain row
+When the exclude is removed and the run repeated
+Then B appears with rank 1, A rank 2, C rank 3, and the notice is absent
+When two visible PSOs share stored precedence
+Then they show the same rank and "tie"
+When the same runner's scope is an OU only, or the token is narrowed to an OU
+Then only the head scope notice shows and not this one
+Evidence: RP15 table test over API, export files and stored result; mutation test (predicate
+  "head in scope only") fails it; UI recording
 
 ## 16. Open questions
 
