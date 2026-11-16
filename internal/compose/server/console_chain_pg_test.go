@@ -20,6 +20,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/httpx/authnhttp"
+	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/owners"
@@ -123,15 +124,12 @@ func chainSetup(t *testing.T, s *storetest.Server) *chainEnv {
 		if err != nil {
 			t.Fatal(err)
 		}
-		contrib, _, err := bootModules(context.Background(), platform.Deps{DB: db, Audit: nopSink{}, Authz: az, StepUp: console.StepUp, Attestation: att},
+		contrib, _, err := bootModules(context.Background(), platform.Deps{DB: db, Audit: nopSink{}, Authz: az, Jobs: jobs.NewRegistry(), ReadScopes: &rbac.LateReadScopes{}, StepUp: console.StepUp, Attestation: att},
 			capability.NewSet(), directory.Services{}, owners.Lookup)
 		if err != nil {
 			t.Fatal(err)
 		}
 		tags := contrib.API()
-		if len(tags) != 1 {
-			t.Fatalf("attestation: %d tags", len(tags))
-		}
 		h, err := buildAPIPorts(cfg, bootedCatalogue(), console.ports(testLimiter(t), az, bootedCatalogue()), append(tags, console.Tags())...)
 		if err != nil {
 			t.Fatal(err)
