@@ -1,0 +1,3 @@
+ok  	github.com/skenzeriq/activediq/internal/connector/read	1.777s
+ok  	github.com/skenzeriq/activediq/internal/compose/connector	1.604s
+ok  	github.com/skenzeriq/activediq/internal/connector/ad	1.967s

@@ -107,10 +107,22 @@ func fxEnv(t *testing.T, mutate func(*runtimeEnv, *[]apihost.Route)) *runtimeEnv
 	if err != nil {
 		t.Fatal(err)
 	}
+	// fixtureBundle keeps the whole real embedded contract and only adds the synthetic fx* operations
+	// (T-2xxx), so Build validates every real operation's policy row too, not just the fx* ones. A
+	// hand-copied list of the real operations drifted the moment a new one landed (T-1488's
+	// reverifyStepUp broke every test below with no fx*-related change at all) and would drift again
+	// the same way next time; loading the real policy here instead means it never can.
+	real, err := apihost.LoadPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
 	env := &runtimeEnv{root: filepath.Join("..", "..", ".."), doc: doc, bundle: bundle, profiles: []string{"windows"},
-		policy: apihost.Policy{Hosts: map[string]string{"totp-enrolment": hostFor("totp-enrolment")}, Authenticated: []string{"fxMe", "signOut", "getCsrfToken", "getSession", "reverifyStepUp"},
-			Anonymous: []apihost.AnonymousRow{{Operation: "fxOpen", Gate: "none"}, {Operation: "getLiveness", Gate: "none"}, {Operation: "getReadiness", Gate: "none"},
-				{Operation: "signInBreakGlassPassword", Gate: "password"}, {Operation: "createWebAuthnSignInChallenge", Gate: "pending"}, {Operation: "verifyWebAuthnSignIn", Gate: "pending"}, {Operation: "verifyTotpSignIn", Gate: "pending"}, {Operation: "completeTakeoverAttestation", Gate: "none"}, {Operation: "claimFirstRunSetup", Gate: "secret"}}},
+		policy: apihost.Policy{Hosts: map[string]string{"totp-enrolment": hostFor("totp-enrolment")},
+			// fxOpen and fxMe lead their list (index 0 is fxOpen's row; some tests below mutate it by
+			// position) so the synthetic fixture keeps its own shape regardless of what the real policy
+			// contains or how its own order changes.
+			Authenticated: append([]string{"fxMe"}, real.Authenticated...),
+			Anonymous:     append([]apihost.AnonymousRow{{Operation: "fxOpen", Gate: "none"}}, real.Anonymous...)},
 		nonAPISrv: func(string) ([]string, bool) { return nil, false }}
 	rows := []apihost.Route{
 		fxRoute("fxOpen", "GET", "/fx/open", "anonymous", "anonymous", apihost.BodyNone, func() apihost.Input { return noInput{} }, nil),

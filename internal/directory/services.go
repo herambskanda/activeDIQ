@@ -3,6 +3,7 @@ package directory
 import (
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
+	"github.com/skenzeriq/activediq/internal/directory/inventory"
 )
 
 // Services is the set of directory services handed to every server module: the inventory's read
@@ -16,6 +17,8 @@ import (
 type Services struct {
 	// Connection is the connection registry (DM-10), the only writer of connections.
 	Connection *connection.Registry
+	// Inventory is the read API over the collected store (sync watermarks, freshness). Nil until wired.
+	Inventory *inventory.Reader
 	// AccountReader and AccountWriter are the connector's account read and write halves (ad module).
 	// Nil until the composition root wires a connector transport; the ad Actions then refuse every
 	// Plan and Apply instead of running without the directory.
