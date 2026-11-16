@@ -291,3 +291,77 @@ test('T-1353: landedCommit is null for a branch with work main lacks and for a m
     assert.equal(await landedCommit(f.ctx, 'T-9999'), null);
   } finally { f.cleanup(); }
 });
+
+test('T-2210: pre_merge.concurrency 2 runs two disjoint trains as separate gate lanes; both validate concurrently, and both eventually land', async () => {
+  const f = setup({ trainSize: 1 });
+  try {
+    f.ctx.config.dispatcher.pre_merge.concurrency = 2;
+    const a = await finished(f, 'a');
+    const b = await finished(f, 'b');
+    const d = dispatcher(f);
+    await d.mergePass(); // one call fills both lanes: the second's selection excludes the first's ticket
+    assert.equal(d.gateLanes.length, 2, 'both lanes launched concurrently from a single mergePass call');
+    await d.gateIdle();
+
+    // Both lanes judged the same starting main (launched together, before either could move it), so
+    // whichever finishes second finds main has already moved and is correctly left unmerged rather
+    // than landed unvalidated (the staleness guard) — this is the one case concurrency cannot avoid
+    // wasting a run on, since both lanes necessarily raced from an identical base.
+    const out = byId(f);
+    const landed = [a, b].filter((t) => out[t.id].links.merged);
+    assert.equal(landed.length, 1, 'exactly one of the two lands from the simultaneous launch; the other is left done, not reopened to a human');
+    assert.deepEqual(f.runs().sort(), [`cand-${a.id}`, `cand-${b.id}`].sort(), 'two separate gate invocations ran concurrently, not one combined train');
+    assert.deepEqual(d.gateLanes, [], 'both lanes cleared themselves when done');
+
+    // The one left behind is not stuck: a later gate run (now unopposed) judges it against the new
+    // main and lands it normally — concurrency's real win is pipelining a deep queue over time, not
+    // guaranteeing every simultaneous pair lands in the very first round.
+    await d.mergePass();
+    await d.gateIdle();
+    assert.ok(out[a.id] && byId(f)[a.id].links.merged, 'a merged (either in round 1 or the retry)');
+    assert.ok(byId(f)[b.id].links.merged, 'b merged too, by the retry if not round 1');
+  } finally { f.cleanup(); }
+});
+
+test('T-2210: concurrency 1 (the default) never launches a second lane even when more than one ticket is ready', async () => {
+  const f = setup({ trainSize: 1 });
+  try {
+    const a = await finished(f, 'a');
+    await finished(f, 'b');
+    const d = dispatcher(f);
+    await d.mergePass();
+    assert.equal(d.gateLanes.length, 1, 'default concurrency is 1');
+    assert.deepEqual(d.gateLanes[0].ids, [a.id]);
+    await d.gateIdle();
+  } finally { f.cleanup(); }
+});
+
+test('T-2210: a verdict judged against a main that a sibling lane has since moved is not merged blind', async () => {
+  const f = setup();
+  try {
+    const t = await finished(f, 'solo');
+    const d = dispatcher(f);
+    const staleMainSha = git(f.root, 'rev-parse', 'main');
+    // Simulate a sibling lane landing something else while this verdict was being judged: main moves,
+    // but this verdict (stubbed, as if the gate had already judged it green) still names the old sha.
+    fs.writeFileSync(path.join(f.root, 'sibling.txt'), 'from another lane\n');
+    commitAll(f.root, 'a sibling lane merged first');
+    assert.notEqual(git(f.root, 'rev-parse', 'main'), staleMainSha);
+
+    d.runGate = async () => ({ status: 'pass', mode: 'green', findings: [], summary: 'stubbed', mainSha: staleMainSha });
+    await d.gateGroup([t], undefined);
+    const out = byId(f);
+    assert.equal(out[t.id].links.merged, undefined, 'not merged: the verdict was for a main that has since moved');
+    assert.equal(out[t.id].status, 'done', 'left done for a fresh gate run, not reopened to a human');
+    assert.match(
+      readRecentEvents(f.ctx, 20).map((e) => e.text).join('\n'),
+      new RegExp(`${t.id}.*not merged.*moved under this gate run`),
+    );
+
+    // A fresh gate run (no staleness, since nothing moves again) merges it normally.
+    const d2 = dispatcher(f);
+    await d2.mergePass();
+    await d2.gateIdle();
+    assert.ok(byId(f)[t.id].links.merged, 'a later, non-stale gate run merges it fine');
+  } finally { f.cleanup(); }
+});
