@@ -32,11 +32,13 @@ const (
 	KindContainer     Kind = "container"
 	KindGMSA          Kind = "gmsa"
 	KindFSP           Kind = "fsp"
-	KindOther         Kind = "other"
+	// KindPrintQueue is a published printer (printQueue), a child of its server's computer object (T-1719, D13).
+	KindPrintQueue Kind = "printqueue"
+	KindOther      Kind = "other"
 )
 
 var validKinds = map[Kind]bool{KindUser: true, KindInetOrgPerson: true, KindGroup: true, KindComputer: true, KindContact: true,
-	KindOU: true, KindContainer: true, KindGMSA: true, KindFSP: true, KindOther: true}
+	KindOU: true, KindContainer: true, KindGMSA: true, KindFSP: true, KindPrintQueue: true, KindOther: true}
 
 // ObjectState is the DM-16 lifecycle state. AD: live, deleted, recycled, purged, out_of_scope.
 // Entra: active, soft_deleted, purged.
@@ -500,7 +502,7 @@ func (p Populator) Populate(ctx context.Context, tx store.Tx, connection Connect
 		// The row moved (its parent or chain changed) or its completeness changed, or it is new and
 		// descendants may be waiting for it: bring the rows below it up to date in this transaction.
 		if w.moved {
-			if err := rewriteDescendants(ctx, tx, connection, o.Object); err != nil {
+			if err := rewriteDescendants(ctx, tx, connection, o.Object, o.DN); err != nil {
 				return out, err
 			}
 		}
@@ -686,7 +688,12 @@ const upsertObjectSQL = `WITH old AS (
 //
 // Rows are found by ancestry (a grandchild whose parent is not yet synced is still below moved), so
 // this is a scan until the GIN index on ancestry (row B3) lands. It runs only for a row that moved.
-func rewriteDescendants(ctx context.Context, tx store.Tx, connection ConnectionID, moved GUID) error {
+// The dn snapshots of those rows follow in the same transaction (DM-16.I5, rewriteDescendantDNs).
+func rewriteDescendants(ctx context.Context, tx store.Tx, connection ConnectionID, moved GUID, movedDN string) error {
+	// The dn pass reads the chains, so it goes first: a chain too long to store is emptied below.
+	if err := rewriteDescendantDNs(ctx, tx, connection, moved, movedDN); err != nil {
+		return err
+	}
 	_, err := tx.Exec(ctx, `UPDATE public.directory_objects d SET
 			ancestry = CASE WHEN array_position(d.ancestry, $2::uuid) + cardinality(m.ancestry) <= 128
 				THEN d.ancestry[1:array_position(d.ancestry, $2::uuid)] || m.ancestry ELSE '{}' END,
@@ -836,15 +843,22 @@ func validateObservation(o *Observation, entra bool) ([]byte, error) {
 
 // removeUnseen marks the active attr edges of group that this cycle did not refresh (observed_at older
 // than the cycle) removed: the cycle read the whole membership.
-func (Writer) removeUnseen(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group GUID, observed time.Time) error {
+func (w Writer) removeUnseen(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group GUID, observed time.Time) error {
+	return w.endActiveEdges(ctx, tx, attr, connection, group, observed, false)
+}
+
+// endActiveEdges marks the active attr edges of group removed: those this cycle did not refresh (all false), or
+// every one of them (all true: a patch could not say which members the group has, so none is trusted until a
+// full read names them again; setEdge makes an edge active again).
+func (Writer) endActiveEdges(ctx context.Context, tx store.Tx, attr string, connection ConnectionID, group GUID, observed time.Time, all bool) error {
 	_, err := tx.Exec(ctx, `WITH edge AS (
 			UPDATE public.links SET state = 'removed', observed_at = $3
 			WHERE tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid AND connection_id = $1::uuid
-			AND source_guid = $2::uuid AND link_attr = $4 AND state = 'active' AND observed_at < $3
+			AND source_guid = $2::uuid AND link_attr = $4 AND state = 'active' AND ($5::boolean OR observed_at < $3)
 			RETURNING tenant_id, connection_id, source_guid)
 		INSERT INTO public.inventory_group_closure_dirty (tenant_id, connection_id, group_guid)
 		SELECT DISTINCT tenant_id, connection_id, source_guid FROM edge ON CONFLICT DO NOTHING`,
-		string(connection), string(group), observed.UTC(), attr)
+		string(connection), string(group), observed.UTC(), attr, all)
 	if err != nil {
 		return writeErr("remove unseen "+attr, err)
 	}

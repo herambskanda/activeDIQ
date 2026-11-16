@@ -1,6 +1,8 @@
-// Package jobstest is test support for code that runs the job worker against a real database. It owns the
-// one piece of SQL such tests need that the jobs package does not export: making claims lapse, which is
-// what the passing of a kind's lease would do. Never import it from product code.
+// Package jobstest is test support for code that runs the job worker against a real database. It owns
+// the SQL such tests need against public.jobs and public.platform_leases that the jobs package does not
+// export (ADR-0002 T5: those tables are registered-global, so only this package's owner,
+// internal/platform/jobs, and its own test support may reference them in SQL). Never import it from
+// product code.
 package jobstest
 
 import (
@@ -72,4 +74,40 @@ func CountForTenant(q Query, kind, tenantID string) (string, error) {
 		return "", err
 	}
 	return v[0], nil
+}
+
+// ErrorCodesByKind returns the error_code ("" when none) of every job of the kind, in any state.
+func ErrorCodesByKind(q Query, kind string) ([]string, error) {
+	return q(`SELECT coalesce(error_code, '') FROM public.jobs WHERE kind = $1`, kind)
+}
+
+// ErrorCodesByState returns the error_code ("" when none) of every job of the kind in the given state.
+func ErrorCodesByState(q Query, kind, state string) ([]string, error) {
+	return q(`SELECT coalesce(error_code, '') FROM public.jobs WHERE kind = $1 AND state = $2`, kind, state)
+}
+
+// JobArgText returns the text value at key in the args of every job of the kind.
+func JobArgText(q Query, kind, key string) ([]string, error) {
+	return q(`SELECT args->>$2 FROM public.jobs WHERE kind = $1`, kind, key)
+}
+
+// ActiveLeaseNames returns the names of the active (not yet expired) leases whose name matches the
+// SQL LIKE pattern.
+func ActiveLeaseNames(q Query, pattern string) ([]string, error) {
+	return q(`SELECT name FROM public.platform_leases WHERE name LIKE $1 AND expires_at > now()`, pattern)
+}
+
+// ActiveLeaseHolders returns the distinct holders of the active leases whose name matches the SQL
+// LIKE pattern.
+func ActiveLeaseHolders(q Query, pattern string) ([]string, error) {
+	return q(`SELECT holder FROM public.platform_leases WHERE name LIKE $1 AND expires_at > now() GROUP BY holder`, pattern)
+}
+
+// ExpireLeases makes every lease whose name matches the SQL LIKE pattern expire now, as if its
+// holder had stopped renewing it. Returns the error rather than failing the test, since a caller
+// running inside a callback on another goroutine (as a lease-theft test commonly does) must not
+// call t.Fatal.
+func ExpireLeases(exec Exec, pattern string) error {
+	return exec(context.Background(),
+		`UPDATE public.platform_leases SET expires_at = now() - interval '1 second' WHERE name LIKE $1`, pattern)
 }
