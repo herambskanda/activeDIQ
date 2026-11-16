@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 )
 
 // TrigramThreshold bounds pg_trgm.word_similarity_threshold: below 0.1 a fuzzy probe matches nearly
@@ -55,4 +56,15 @@ func TrigramThresholdValue(threshold float64) float64 {
 		return threshold
 	}
 	return v
+}
+
+// SetStatementTimeout raises or lowers tx's statement_timeout for the rest of the transaction it
+// runs in (transaction-local, so it ends with it): a diagnostic query such as EXPLAIN ANALYZE on a
+// scale fixture can run past the default. It is the one place this setting is written outside
+// WithTenant itself (ADR-0002 T5); the value is a bound parameter.
+func SetStatementTimeout(ctx context.Context, tx Tx, d time.Duration) error {
+	if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout', $1, true)`, fmt.Sprintf("%dms", d.Milliseconds())); err != nil {
+		return fmt.Errorf("store: set statement timeout: %w", err)
+	}
+	return nil
 }

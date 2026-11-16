@@ -26,6 +26,8 @@ authn_totp_failures	authn	system
 authn_webauthn_challenges	authn	system
 authn_webauthn_credentials	authn	config
 authz_assignment_roots	authz	config
+authz_assignment_sites	authz	config
+authz_assignment_templates	authz	config
 authz_assignments	authz	config
 authz_role_permissions	authz	config
 authz_roles	authz	config
@@ -43,6 +45,7 @@ directory_object_changes	inventory	system
 directory_objects	inventory	system
 enrollment_tokens	fleet	config
 fleet_ca	fleet	system
+helpdesk_caller_verifications	helpdesk	system
 hybrid_links	connection	config
 installation_keys	keys	system
 inventory_domain_policies	inventory	system
