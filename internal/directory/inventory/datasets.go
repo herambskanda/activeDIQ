@@ -54,6 +54,7 @@ var (
 )
 
 var enumLabels = map[string]string{
+	"observed": "Value observed", "not_observed": "No value observed (absent or unreadable)", "unknown_denied": "Unreadable (denied)",
 	"locked": "Locked out", "not_locked": "Not locked out", "not_applicable": "Not applicable",
 	"unknown_input_missing": "Unknown (input missing)",
 	"never_account_flag":    "Never expires (account flag)", "not_applicable_smartcard": "Not applicable (smartcard required)",
@@ -156,6 +157,7 @@ func usersDataset() report.Dataset {
 		state("probable_service_account_reason", "Service account reason", report.SQL(probableReasonSQL), "spn_set", "none"),
 	)
 	cols = append(cols, userAttributeColumns()...)
+	cols = append(cols, readStateColumns()...)
 	cols = append(cols, userPerDCColumns()...)
 	return report.Dataset{
 		ID:     DatasetUsers,
@@ -298,4 +300,32 @@ func userAttributeColumns() []report.Column {
 		derived("has_thumbnail_photo", "Has thumbnail photo", report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> 'hasThumbnailPhoto')::boolean, false)"), opsBool),
 		derived("has_jpeg_photo", "Has JPEG photo", report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> 'hasJpegPhoto')::boolean, false)"), opsBool),
 	}
+}
+
+// The per-attribute read marker the user sync writes under attributes.attrRead (T-2216, T-1112 AC2).
+// observed: the sync saw a value. not_observed: it saw none, which is absent OR unreadable (AD omits a
+// denied attribute exactly as it omits an empty one). unknown_denied is reserved for a DACL verdict
+// (T-2220) and is never written. A row with no marker (not yet resynced, or not a user) reads NULL.
+const (
+	ReadMarkerKey     = "attrRead"
+	ReadObserved      = "observed"
+	ReadNotObserved   = "not_observed"
+	ReadUnknownDenied = "unknown_denied"
+)
+
+// readStateColumns exposes one read-state column per marked attribute. Additive: no existing column moves.
+func readStateColumns() []report.Column {
+	var cols []report.Column
+	for _, a := range []struct{ id, label, key string }{
+		{"mail", "Email", "mail"}, {"employee_id", "Employee ID", "employeeID"}, {"department", "Department", "department"},
+		{"title", "Title", "title"}, {"company", "Company", "company"}, {"telephone_number", "Telephone number", "telephoneNumber"},
+		{"mobile", "Mobile", "mobile"}, {"description", "Description", "description"}, {"manager", "Manager", "manager"},
+		{"logon_script", "Logon script", "scriptPath"}, {"dialin_allowed", "Dial-in: allow access", "msNPAllowDialin"},
+		{"skype_enabled", "Skype/Lync enabled", "msRTCSIP-UserEnabled"}, {"logon_hours", "Logon hours", "logonHours"},
+		{"thumbnail_photo", "Thumbnail photo", "thumbnailPhoto"}, {"jpeg_photo", "JPEG photo", "jpegPhoto"},
+	} {
+		cols = append(cols, state(report.ColumnID(a.id+"_read_state"), a.label+": read state",
+			report.SQL("{t}.attributes -> '"+ReadMarkerKey+"' ->> '"+a.key+"'"), ReadObserved, ReadNotObserved, ReadUnknownDenied))
+	}
+	return cols
 }
