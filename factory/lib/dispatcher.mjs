@@ -29,6 +29,7 @@ import { EMBARGO_TAG, orderDoneQueue } from './mergequeue.mjs';
 import { applyMigrationRenumber, blockedNote, preMergeSettings, runPreMergeTrain, splitTrain } from './premerge.mjs';
 import { postMergeVerifySettings, readKnownFindings, runPostMergeVerify } from './postmerge.mjs';
 import { git } from './git.mjs';
+import { recordShadowSkip, runShadowGate, shadowGateSettings } from './shadowgate.mjs';
 import {
   awaitPredecessor, awaitSuccessor, factoryChange, mainSha, shortSha, spawnSuccessor, stopStaleGateChildren,
 } from './reload.mjs';
@@ -129,6 +130,9 @@ export class Dispatcher {
     this.gateRetryAt = new Map(); // ticket id → ms before which a gate that could not judge is not retried
     this.heldOnMain = new Map(); // ticket id → the broken main commit it waits on; retried once main moves
     this.runGate = runPreMergeTrain; // (ctx, tickets[], {signal}) → verdict; replaceable in tests
+    this.runShadow = runShadowGate; // (ctx, ticket, {mainSha, branchSha, verdict, signal}) → record; replaceable in tests
+    this.shadowRun = null; // shadow gate in flight (logs only, never blocks or decides anything)
+    this.shadowAbort = null;
     this.verifyRun = null; // post-merge ci-full check in flight (never blocks a merge)
     this.verifyAbort = null;
     this.nextVerifyAt = 0; // ms; the cooldown between verify runs
@@ -587,6 +591,36 @@ export class Dispatcher {
     }, { by: 'dispatcher' });
   }
 
+  /** The `main` and ticket-branch commits the real gate is about to judge (null when either is unreadable). */
+  async shadowBase(ticket) {
+    const { ctx } = this;
+    const rev = async (ref) => (await git(ctx.root, ['rev-parse', '--verify', '-q', ref])).stdout.trim();
+    const mainSha = await rev(`refs/heads/${ctx.config.dispatcher.main_branch}`);
+    const branchSha = await rev(`refs/heads/${branchName(ticket.id)}`);
+    return mainSha && branchSha ? { mainSha, branchSha } : null;
+  }
+
+  /**
+   * Replay the merge the real gate just judged through the shadow (tiered) gate. Fire and forget: the
+   * result goes to `state/shadow/results.jsonl` only, and nothing here changes a ticket, a merge or the
+   * queue. One shadow run at a time; a ticket that arrives while one is running is recorded as skipped.
+   */
+  startShadow(ticket, base, verdict) {
+    const { ctx } = this;
+    if (this.shadowRun) { recordShadowSkip(ctx, ticket, 'the shadow gate was still busy with an earlier ticket', verdict); return; }
+    this.shadowAbort = new AbortController();
+    this.shadowRun = (async () => {
+      try {
+        const rec = await this.runShadow(ctx, ticket, { ...base, verdict, signal: this.shadowAbort.signal });
+        appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', ticket: ticket.id, text: `shadow gate on ${ticket.id}: ${rec.status}${rec.agreement ? ` (${rec.agreement} with the real gate)` : ''} in ${rec.seconds}s. Logging only; does not affect any merge.` });
+      } catch (err) {
+        try { recordShadowSkip(ctx, ticket, `shadow gate could not run: ${err.message}`, verdict); } catch { /* the log is best effort */ }
+      } finally {
+        this.shadowRun = null; this.shadowAbort = null;
+      }
+    })();
+  }
+
   /**
    * Gate a train once and settle each member (T-1297): green merges every member in queue order,
    * one `--no-ff` merge commit each. Refused with more than one member: the train is split in halves
@@ -600,6 +634,8 @@ export class Dispatcher {
     const settings = preMergeSettings(ctx.config);
     const ids = group.map((t) => t.id);
     let verdict;
+    // What the real gate is about to judge, so the shadow gate can replay exactly that merge later.
+    const shadowBase = group.length === 1 && shadowGateSettings(ctx.config).enabled ? await this.shadowBase(group[0]) : null;
     try {
       verdict = await this.runGate(ctx, group, { signal });
     } catch (err) {
@@ -608,6 +644,7 @@ export class Dispatcher {
       throw err;
     }
     for (const id of ids) this.gateRetryAt.delete(id);
+    if (shadowBase) this.startShadow(group[0], shadowBase, verdict);
     if (verdict.fastLane) {
       const fl = verdict.fastLane;
       const result = fl.ok ? (fl.code === 0 ? 'passed' : `failed (exit ${fl.code})`) : 'could not complete';
@@ -936,6 +973,10 @@ export class Dispatcher {
       this.verifyAbort?.abort();
       await this.verifyIdle();
     }
+    if (this.shadowRun) { // restart only; the shadow gate runs in this process too
+      this.shadowAbort?.abort();
+      await this.shadowRun;
+    }
     const stale = await stopStaleGateChildren(ctx);
     const from = this.codeSha;
     const to = target ?? from;
@@ -973,6 +1014,7 @@ export class Dispatcher {
     this.stopping = true;
     for (const lane of this.gateLanes) lane.abort.abort();
     this.verifyAbort?.abort();
+    this.shadowAbort?.abort();
     this.wake?.();
   }
 

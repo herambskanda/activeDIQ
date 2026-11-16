@@ -377,6 +377,31 @@ claude -p "<rendered templates/worker-prompt.md>" \
 - If the repository has no commits, or `isolation` is `none`, workers run in the main checkout and
   `max_parallel` is forced to 1 for code-bearing types.
 
+### Shadow gate (`lib/shadowgate.mjs`, `dispatcher.shadow_gate`)
+
+A faster, tiered merge check that runs **beside** the real pre-merge gate and decides nothing. Off by
+default (`enabled: false`). When on, each time the real gate judges a single ticket the dispatcher
+replays that same merge (same `main` commit, same branch head) in its own scratch worktree and runs:
+
+- **Tier 1, every ticket:** `lint-go`, generated-code checks, `lint-api`, `fitness`, `secrets-scan`.
+- **Tier 2, only what the change touches:** Go tests for the changed packages and every package that
+  imports them (traced with `go list`; a change no package owns, or to `go.mod`, `Makefile`, `*.mk`,
+  `tools/ci/`, tests the whole module); `lint-web`, `test-web` and Playwright only when `web/`
+  changed; `vuln-scan` only when dependencies changed; `workflows-check` only when CI files changed.
+- **Tier 3** is the existing `post_merge_verify` (`make ci-full` on `main`).
+
+Steps are configurable (`dispatcher.shadow_gate.steps`: `name`, `tier`, `when` = `always|go|web|deps|workflows`,
+`argv`; `{go_packages}` in an argv expands to the affected packages). Every step is timed. One record
+per ticket goes to `state/shadow/results.jsonl` (logs under `state/shadow/logs/`); nothing reads a
+record to merge, refuse or reopen. One shadow run at a time: a ticket that arrives while one runs is
+recorded as `skipped`. A shadow that errors is recorded and never escapes.
+
+`factory/bin/shadow-report` summarises the records: agreement with the real gate, every **MISS** (the
+real gate refused and the shadow did not catch all of its findings), false alarms, time per ticket and
+per step. A pass on a red `main` that the shadow fails is `inconclusive` (findings already on `main`
+are not new). Exit code 1 when there is any miss. Switch the real gate only after a week with no miss.
+Test: `factory/test/shadowgate.test.mjs`.
+
 ## Board (`factory/board/`)
 
 `server.mjs` — Node `http`, bound to `127.0.0.1` only. Reads state on each request (cheap).

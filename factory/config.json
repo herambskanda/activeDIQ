@@ -30,6 +30,10 @@
         "timeout_seconds": 120
       }
     },
+    "shadow_gate": {
+      "enabled": false,
+      "step_timeout_minutes": 60
+    },
     "post_merge_verify": {
       "enabled": true,
       "argv": ["make", "-k", "ci-full"],
