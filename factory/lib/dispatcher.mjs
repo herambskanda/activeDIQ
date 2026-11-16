@@ -14,8 +14,8 @@ import { loadAgents } from './agents.mjs';
 import { checkLaunchPolicy } from './policy.mjs';
 import { isCodeType } from './flows.mjs';
 import { LogScanner, detectConnectivityError, detectRateLimit, resultKeyword } from './runlog.mjs';
-import { claimTicket, createTicket, doneDependencies, indexById, blockTicket, reopenTicket, setTicketLinks } from './tickets.mjs';
-import { applyAdvisoryDefaults } from './decisions.mjs';
+import { claimTicket, createTicket, doneDependencies, indexById, blockTicket, holdForDecision, reopenTicket, setTicketLinks } from './tickets.mjs';
+import { applyAdvisoryDefaults, createDecision } from './decisions.mjs';
 import { pollAdvisories } from './advisories.mjs';
 import { applyNoProgress } from './escalation.mjs';
 import { buildPrompt } from './prompt.mjs';
@@ -572,6 +572,7 @@ export class Dispatcher {
   async gateGroup(group, signal) {
     const { ctx } = this;
     const main = ctx.config.dispatcher.main_branch;
+    const settings = preMergeSettings(ctx.config);
     const ids = group.map((t) => t.id);
     let verdict;
     try {
@@ -605,7 +606,29 @@ export class Dispatcher {
       if (members.length === 1) {
         const [ticket] = members;
         appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merge refused by the pre-merge gate: ${verdict.summary}` });
-        reopenTicket(ctx, ticket.id, 'dispatcher', blockedNote(verdict, main));
+        // A numbering refusal that names no clashing file of the branch is main's fault, not the ticket's.
+        const blamesTicket = !(verdict.mode === 'migration-numbering' && !verdict.renumber?.length);
+        const failures = (ticket.gate_failures ?? 0) + (blamesTicket ? 1 : 0);
+        if (blamesTicket) updateEntity(ctx, 'tickets', ticket.id, (t) => { t.gate_failures = failures; });
+        const note = blockedNote(verdict, main);
+        if (blamesTicket && failures >= settings.max_gate_failures) {
+          holdForDecision(ctx, ticket.id, 'dispatcher',
+            `the pre-merge gate has refused this ${failures} times in a row; holding for a CEO decision instead of reopening it again. ${note}`);
+          createDecision(ctx, {
+            kind: 'directional',
+            title: `${ticket.id} keeps failing the merge gate`,
+            question: `${ticket.id} (${ticket.title}) has failed the full pre-merge test suite ${failures} times in a row. How should the factory proceed?`,
+            context: note,
+            options: [
+              { id: 'retry', label: 'One more try', summary: 'Unblock to ready with a fresh attempt and gate-failure budget; the owner takes another pass.' },
+              { id: 'escalate', label: 'Escalate the owner', summary: 'Unblock to ready, reassign to principal-engineer at high effort for the retry.' },
+              { id: 'cancel', label: 'Cancel the ticket', summary: 'The approach is not working; cancel rather than keep retrying.' },
+            ],
+            blocks: [ticket.id],
+          }, { by: 'dispatcher', force: true });
+          return;
+        }
+        reopenTicket(ctx, ticket.id, 'dispatcher', note);
         return;
       }
       appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `pre-merge gate refused the train ${memberIds.join(', ')}: ${verdict.summary}; splitting it in halves to find the ticket that adds the findings` });

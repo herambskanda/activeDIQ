@@ -155,6 +155,24 @@ test('when the auto-renumber cannot make the check pass again, the gate falls ba
   } finally { f.cleanup(); }
 });
 
+test('a numbering refusal that names no clashing file of the branch never counts toward max_gate_failures', async () => {
+  const f = setup();
+  try {
+    f.ctx.config.dispatcher.pre_merge.numbering.argv = ['node', '-e', 'process.exit(1)']; // main itself is red
+    const t = await finishedWith(f, 'innocent', []);
+    const d = new Dispatcher(f.ctx);
+    d.shared = false;
+    for (let round = 0; round < 3; round++) {
+      await d.mergePass(); await d.gateIdle();
+      const cur = Object.fromEntries(listEntities(f.ctx, 'tickets').map((x) => [x.id, x]))[t.id];
+      assert.equal(cur.status, 'in_progress', `round ${round + 1}: reopened, not held`);
+      assert.equal(cur.gate_failures ?? 0, 0, `round ${round + 1}: main's failure is not the ticket's strike`);
+      for (let i = 0; i < 3; i++) advanceTicket(f.ctx, t.id, 'w', 'ok');
+    }
+    assert.equal(listEntities(f.ctx, 'decisions').length, 0);
+  } finally { f.cleanup(); }
+});
+
 test('with no numbering configured the gate does not look at migrations', async () => {
   const f = setup({ numbering: false });
   try {
