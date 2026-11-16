@@ -119,7 +119,7 @@ var specs = []spec{
 		id: ResetPasswordID, key: accountkind.KeyResetPassword, perm: PermResetPassword,
 		schema: "#/components/schemas/AdUserResetPassword", audit: AuditPasswordReset,
 		reversibility: operation.Irreversible, stepUp: true, secret: true,
-		reason: "a password cannot be restored: the previous one is not readable; reset again to set another",
+		reason: "a password cannot be restored: the previous one is not readable — reset again to set another",
 		satisfied: func(p payload, st client.AccountState, claimedAt time.Time) (bool, error) {
 			if p.MustChange {
 				return st.PwdLastSet == "0", nil
