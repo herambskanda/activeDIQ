@@ -64,6 +64,17 @@ var attributes = []string{
 	"employeeID",
 	"employeeNumber",
 	"sIDHistory",
+	// The user-attribute reports (T-1111). thumbnailPhoto and jpegPhoto are read only to learn that a value
+	// exists; the mapper never stores them. None is a secret.
+	"msNPAllowDialin",
+	"msRTCSIP-UserEnabled",
+	"logonHours",
+	"thumbnailPhoto",
+	"jpegPhoto",
+	"telephoneNumber",
+	"mobile",
+	"manager",
+	"scriptPath",
 }
 
 // Attributes returns a copy of the closed attribute list.

@@ -1,7 +1,7 @@
 ---
 title: "Spec: Report builder grouping, charts and sharing (EB-5, ADM-097)"
 date: 2026-11-14
-updated: 2026-11-14
+updated: 2026-11-15
 status: draft
 owner: heramb
 author: product-manager
@@ -155,8 +155,10 @@ Set with `product-designer` (proposals until signed off). Absolute, as the ME co
 | Sharing (FR-GC-15…) | ✓ | ✓ | ✓ | ✓ | ✓ | ◐ | ✓ | ✓ |
 
 No DC-side component. Derived states needing policy remain `[LAB: Windows]` as in 2a §10. Server-side
-chart-image rendering (for PDF and mail) must run **identically on both profiles**; a renderer that only
-works on one OS is a defect (Q3).
+chart-image rendering (PDF, PNG and mail) runs **identically on both profiles**: one pure-Go in-process
+renderer, `platform/chartimg`, in the same binary on `windows` and `linux-oci`
+([ADR-0014](../../development/decisions/0014-chart-images-rendered-in-process-pure-go-no-browser.md), ratified
+2026-11-15, Q3 closed). A renderer that works on one OS is a defect (FR-GC-19, AC-GC-13).
 
 ## 6. Sharing a finished report (acceptance 3)
 
@@ -196,7 +198,10 @@ facts so a pasted chart is traceable. Caps, encoders and formula safety are 2a �
 
 A grouped report schedules and delivers exactly as 2a §8.4, including notify-only-if-data (a grouped
 run with zero groups counts as no data). The delivery email shows the table, with the chart as an
-image only if the renderer is on both profiles (Q3); otherwise an attachment.
+**inline image** on both profiles (`windows` and `linux-oci`; ADR-0014 decision 6). There is no
+attachment fallback: the renderer is on both profiles, so the branch does not exist. A run with a chart
+always yields the inline image; if rendering fails or times out, the delivery fails visibly for that run
+(counted as a failed delivery per 2a §8.4) rather than sending a mail without its chart.
 
 ## 7. Security and audit
 
@@ -341,8 +346,9 @@ Evidence: UI; API test
 AC-GC-13 (FR-GC-19)
 Given the same grouped report on the `windows` and `linux-oci` profiles
 When PDF and PNG are exported from identical data
-Then the images match within a pixel tolerance the architect sets
-Evidence: CI image comparison
+Then the images match within the ADR-0014 tolerance (byte-identical pixels windows/amd64 vs linux/amd64;
+linux/arm64 within 2/255 on ≤ 0.1 % of pixels, max 16/255)
+Evidence: CI image comparison (`fitness-chartimg`)
 
 AC-GC-14 (FR-GC-06, empty/error)
 Given a filter that matches no objects
@@ -369,8 +375,12 @@ Evidence: audit API
   `sum` and `avg` need column-level `Numeric` flags in the registry.
 - **Q2 (reporting-engineer):** is key cardinality available at save time (§7 d)? If not, drop that check and rely
   on the cap and preview limits.
-- **Q3 (solution-architect, devops-engineer):** chart-image rendering for PDF, PNG and mail on both profiles, and
-  the licence of any renderer (licence register, rule 9).
+- **Q3 (closed 2026-11-15, ADR-0014):** chart images for PDF, PNG and mail are drawn in-process by pure-Go
+  `platform/chartimg` on both profiles (x/image, BSD-3; embedded Plex TTF, SIL OFL). Mail embeds the PNG
+  inline; the attachment fallback is dropped (§6.4). AC-GC-13 tolerance: `windows/amd64` vs `linux/amd64`
+  byte-identical pixels; `linux/arm64` vs `linux/amd64` ≤ 2/255 per channel on ≤ 0.1 % of pixels and none
+  above 16/255 (`[PROPOSED]`, calibrated on first CI run, never loosened without an ADR amendment). Limit: glyphs
+  the embedded font lacks (e.g. CJK) draw as a notdef box; the table beside the chart carries the real text.
 - **Q4 (product-designer):** sign off the experience targets and the donut limit.
 - **Q5 (market-analyst, research ticket):** what ME offers for grouping and charts in custom reports, with task
   clicks. Until then no parity claim for grouping.
