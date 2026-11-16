@@ -16,7 +16,6 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
-	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/reportsql"
@@ -209,14 +208,6 @@ func PSOObj(guid, name string) inventory.Observation {
 		RDN: "CN=" + name}
 }
 
-// ScopeNC admits the whole naming context; ScopeOU only the OU subtree.
-func (e *Env) ScopeNC(c inventory.ConnectionID) authz.ReadScope {
-	return authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermNamingContext, Connection: RPID(string(c)), Root: RPID(Dom)}}})
-}
-
-func (e *Env) ScopeOU(c inventory.ConnectionID) authz.ReadScope {
-	return authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermSubtree, Connection: RPID(string(c)), Root: RPID(OU)}}})
-}
 func OUObs(guid, name, parent string, anc ...string) inventory.Observation {
 	o := inventory.Observation{Object: inventory.GUID(guid), NC: inventory.GUID(Dom), Kind: inventory.KindOU, Class: "organizationalUnit", State: inventory.ObjLive,
 		Parent: inventory.GUID(parent), DN: "OU=" + name + ",DC=example,DC=test", RDN: "OU=" + name}
