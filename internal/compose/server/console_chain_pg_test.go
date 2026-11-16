@@ -123,7 +123,7 @@ func chainSetup(t *testing.T, s *storetest.Server) *chainEnv {
 		if err != nil {
 			t.Fatal(err)
 		}
-		contrib, _, err := bootReportWith(context.Background(), platform.Deps{DB: db, Audit: nopSink{}, Authz: az, StepUp: console.StepUp, Attestation: att},
+		contrib, _, err := bootModules(context.Background(), platform.Deps{DB: db, Audit: nopSink{}, Authz: az, StepUp: console.StepUp, Attestation: att},
 			capability.NewSet(), directory.Services{}, owners.Lookup)
 		if err != nil {
 			t.Fatal(err)

@@ -400,7 +400,7 @@ test('when the gate cannot judge, the ticket stays done, unmerged, and is retrie
     assert.equal(cur.links.merged, undefined);
     assert.equal(git(f.root, 'rev-parse', 'main'), mainBefore);
     await d.mergePass();
-    assert.equal(d.gateRun, null, 'backing off: not retried at once');
+    assert.deepEqual(d.gateLanes, [], 'backing off: not retried at once');
   } finally { f.cleanup(); }
 });
 

@@ -23,7 +23,7 @@ func Test_attestation_unmounted_without_config(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, _, err := bootReportWith(context.Background(), platform.Deps{Audit: nopSink{}, Attestation: att}, capability.NewSet(), directory.Services{}, owners.Lookup)
+	c, _, err := bootModules(context.Background(), platform.Deps{Audit: nopSink{}, Attestation: att}, capability.NewSet(), directory.Services{}, owners.Lookup)
 	if err != nil || len(c.API()) != 0 {
 		t.Fatalf("tags %d err %v", len(c.API()), err)
 	}
@@ -37,7 +37,7 @@ func Test_attestation_routes_with_fail_closed_ports(t *testing.T) {
 	if err != nil || att.Origin != "https://diq.example.com" {
 		t.Fatalf("config %+v err %v", att, err)
 	}
-	c, _, err := bootReportWith(context.Background(), platform.Deps{Audit: nopSink{}, Attestation: att}, capability.NewSet(), directory.Services{}, owners.Lookup)
+	c, _, err := bootModules(context.Background(), platform.Deps{Audit: nopSink{}, Attestation: att}, capability.NewSet(), directory.Services{}, owners.Lookup)
 	if err != nil || len(c.API()) != 1 {
 		t.Fatalf("boot: %v", err)
 	}
