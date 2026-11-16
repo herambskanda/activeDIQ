@@ -12,6 +12,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	dsync "github.com/skenzeriq/activediq/internal/directory/sync"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/jobs/jobstest"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant/tenanttest"
@@ -36,12 +37,13 @@ func TestSyncSupervisorQueuesOnlyActiveADConnections(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		query := func(sql string, args ...any) ([]string, error) { return d.OwnerStrings(ctx, sql, args...) }
 		queued := func() string {
-			out, err := d.OwnerStrings(ctx, `SELECT count(*)::text FROM public.jobs WHERE kind = $1 AND state = 'available'`, dsync.JobFull)
-			if err != nil || len(out) != 1 {
-				t.Fatalf("count jobs: %v %v", out, err)
+			out, err := jobstest.CountQueued(query, dsync.JobFull)
+			if err != nil {
+				t.Fatalf("count jobs: %v", err)
 			}
-			return out[0]
+			return out
 		}
 
 		// Boot with zero connections: a no-op, no error.
@@ -94,7 +96,7 @@ func TestSyncSupervisorQueuesOnlyActiveADConnections(t *testing.T) {
 		if n, err := k.Supervisor.enqueueActive(ctx, tid); err != nil || n != 0 || queued() != "1" {
 			t.Fatalf("second pass: queued %d err %v rows %s", n, err, queued())
 		}
-		args, err := d.OwnerStrings(ctx, `SELECT args->>'connection' FROM public.jobs WHERE kind = $1`, dsync.JobFull)
+		args, err := jobstest.JobArgText(query, dsync.JobFull, "connection")
 		if err != nil || len(args) != 1 || args[0] != string(active.ID) {
 			t.Fatalf("the queued job is for %v, want only the active connection %s (%v)", args, active.ID, err)
 		}

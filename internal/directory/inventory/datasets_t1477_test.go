@@ -70,14 +70,14 @@ func Test_users_manager_and_ou_path(t *testing.T) {
 		if _, err := e.populate(t, e.adA, hBase, obs...); err != nil {
 			t.Fatal(err)
 		}
-		cols := []report.ColumnID{"sam_account_name", "manager_guid", "manager", "has_manager", "ou_path"}
+		cols := []report.ColumnID{"sam_account_name", "manager_guid", "manager_name", "has_manager", "ou_path"}
 		scoped := e.run(t, reg, hQuery{dataset: inventory.DatasetUsers, cols: cols, scope: e.scopeOU(e.adA), now: hBase})
 		r := scoped.rows
 		if _, ok := r[strings.ToLower(hGUID(1, 5))]; ok {
 			t.Error("root user is outside the OU scope")
 		}
 		w := r[strings.ToLower(hGUID(1, 1))]
-		if got := cellStr(w, "manager"); got != "boss" {
+		if got := cellStr(w, "manager_name"); got != "boss" {
 			t.Errorf("in-scope manager name = %q, want boss", got)
 		}
 		if got := cellStr(w, "manager_guid"); !strings.EqualFold(got, mIn) {
@@ -87,7 +87,7 @@ func Test_users_manager_and_ou_path(t *testing.T) {
 			t.Errorf("ou_path = %q", got)
 		}
 		o := r[strings.ToLower(hGUID(1, 3))]
-		if got := cellStr(o, "manager"); got != "(manager outside your scope)" {
+		if got := cellStr(o, "manager_name"); got != "(manager outside your scope)" {
 			t.Errorf("out-of-scope manager name = %q", got)
 		}
 		if got := cellStr(o, "manager_guid"); !strings.EqualFold(got, mOut) {
@@ -96,7 +96,7 @@ func Test_users_manager_and_ou_path(t *testing.T) {
 		if got := cellStr(r[strings.ToLower(hGUID(1, 2))], "has_manager"); got != "false" {
 			t.Errorf("has_manager = %q", got)
 		}
-		if got := cellStr(r[strings.ToLower(hGUID(1, 4))], "manager"); got != "(manager not in inventory)" {
+		if got := cellStr(r[strings.ToLower(hGUID(1, 4))], "manager_name"); got != "(manager not in inventory)" {
 			t.Errorf("ghost manager = %q", got)
 		}
 		// whole-NC scope: the root user has an empty chain
@@ -104,7 +104,7 @@ func Test_users_manager_and_ou_path(t *testing.T) {
 		if got := cellStr(all.rows[strings.ToLower(hGUID(1, 5))], "ou_path"); got != "" {
 			t.Errorf("root user ou_path = %q, want empty", got)
 		}
-		if got := cellStr(all.rows[strings.ToLower(hGUID(1, 3))], "manager"); got != "outsider" {
+		if got := cellStr(all.rows[strings.ToLower(hGUID(1, 3))], "manager_name"); got != "outsider" {
 			t.Errorf("manager with scope admitting it = %q", got)
 		}
 	})
