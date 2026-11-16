@@ -178,7 +178,7 @@ fitness-nightly: fitness-fuzz-nightly fitness-oracles-lab fitness-search-nightly
 SEARCH_LATENCY_OUT ?= $(CURDIR)/factory/demos/evidence/T-1102
 
 SEARCH_LATENCY_LOCK ?= $(CURDIR)/.search-latency.lock
-SEARCH_LATENCY_RUN = ACTIVEDIQ_SEARCH_LARGE_OBJECTS=50000 ACTIVEDIQ_SEARCH_LARGE_OUT=$(SEARCH_LATENCY_OUT) flock -n $(SEARCH_LATENCY_LOCK) go test -count=1 -timeout 90m -v ./internal/modules/search/latency
+SEARCH_LATENCY_RUN = ACTIVEDIQ_SEARCH_LARGE_OBJECTS=50000 ACTIVEDIQ_SEARCH_LARGE_OUT=$(SEARCH_LATENCY_OUT) flock -n $(SEARCH_LATENCY_LOCK) go test -count=1 -timeout 90m -v ./internal/modules/directory/latency
 
 search-latency: ## T-1102, ADR-0011 SE6 (nightly, large-dataset switch): universal search p95 <= 200 ms per class over 50,000 objects on PostgreSQL 16 and 18, unscoped and scoped, through the HTTP handler; needs Docker; a miss fails naming the class, caller, version and percentile; tables in $(SEARCH_LATENCY_OUT); holds an exclusive lock so two runs never overlap
 	$(SEARCH_LATENCY_RUN) -run '^TestSearchLatency50k$$'

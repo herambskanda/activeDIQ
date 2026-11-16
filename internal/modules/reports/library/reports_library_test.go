@@ -1,4 +1,4 @@
-package inventory_test
+package library_test
 
 // Library reports against the inventory datasets (T-0960, spec reports-2a AC-16, AC-17, AC-23). This file
 // lives here because the harness that writes a realistic inventory (env, hUser, populate) does. The

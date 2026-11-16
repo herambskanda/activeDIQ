@@ -3,7 +3,7 @@ package writechange
 import (
 	"fmt"
 
-	"github.com/skenzeriq/activediq/internal/platform/operation/step"
+	"github.com/skenzeriq/activediq/internal/platform/operation/digest"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -48,7 +48,7 @@ func edits(in []Edit) ([]*connectorv1.AttributeEdit, error) {
 
 // CreateAttrs returns the digest attributes of a user create. It goes through Encode, so the list is
 // the one the connector's Decode round-trips.
-func CreateAttrs(c CreateSpec) ([]step.Attr, error) {
+func CreateAttrs(c CreateSpec) ([]digest.Attr, error) {
 	ed, err := edits(c.Set)
 	if err != nil {
 		return nil, err
@@ -64,7 +64,7 @@ func CreateAttrs(c CreateSpec) ([]step.Attr, error) {
 }
 
 // UpdateAttrs returns the digest attributes of an update.
-func UpdateAttrs(in []Edit) ([]step.Attr, error) {
+func UpdateAttrs(in []Edit) ([]digest.Attr, error) {
 	ed, err := edits(in)
 	if err != nil {
 		return nil, err
@@ -76,7 +76,7 @@ func UpdateAttrs(in []Edit) ([]step.Attr, error) {
 // GroupMemberAttrs returns the digest attributes of kinds 11 and 12: the member's objectGUID (canonical
 // lower-case text) and the class the Action declared ("user", "computer", "contact" or "group"). It goes
 // through Encode, so the list is the one the connector's Decode round-trips.
-func GroupMemberAttrs(member, class string) ([]step.Attr, error) {
+func GroupMemberAttrs(member, class string) ([]digest.Attr, error) {
 	g, err := guidFromText(member)
 	if err != nil {
 		return nil, err

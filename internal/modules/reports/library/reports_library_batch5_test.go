@@ -1,4 +1,4 @@
-package inventory_test
+package library_test
 
 // Library batch 5: Recently Modified and Recently Deleted for users, groups, computers, contacts and OUs
 // (T-1110, reports-2-second-slice §4.1). The seed is changeWorld: one change per object kind at t1, a quiet

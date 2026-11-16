@@ -27,8 +27,8 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
+	"github.com/skenzeriq/activediq/internal/directory/search"
 	"github.com/skenzeriq/activediq/internal/modules/directory"
-	"github.com/skenzeriq/activediq/internal/modules/search"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
