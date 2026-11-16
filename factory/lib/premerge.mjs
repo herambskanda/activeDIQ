@@ -587,12 +587,41 @@ async function checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { s
   const finalPlan = renumbered ? plan : planRenumber(await names(mainSha), await added());
   const findings = finalPlan.map((r) => `renumber ${cfg.dir}/${r.from} to ${r.to}`);
   const branch = subject.branches;
+  const main = ctx.config.dispatcher.main_branch;
+  // No clashing file of the branch: either main is already broken (a duplicate or gap landed without
+  // the gate) or the branch broke it some other way (a deleted or renamed migration). Main alone decides.
+  const mainBroken = finalPlan.length ? false : await mainFailsNumbering(ctx, settings, mainSha, { signal, run });
   return {
-    refused: true, status: 'blocked', mode: 'migration-numbering', findings, renumber: finalPlan, log, seconds,
+    refused: true, status: 'blocked', mode: 'migration-numbering', findings, renumber: finalPlan, log, seconds, mainSha, mainBroken,
     summary: finalPlan.length
-      ? `${branch} adds migration number(s) that ${ctx.config.dispatcher.main_branch} already uses (or that now leave a gap): ${finalPlan.map((r) => `${r.from} → ${r.to}`).join(', ')} (auto-renumber attempted and still red; read the log)`
-      : `the migration-numbering check fails on the merge of ${branch} into ${ctx.config.dispatcher.main_branch} but the branch adds no clashing file; read the log (a gap or a changed file name?)`,
+      ? `${branch} adds migration number(s) that ${main} already uses (or that now leave a gap): ${finalPlan.map((r) => `${r.from} → ${r.to}`).join(', ')} (auto-renumber attempted and still red; read the log)`
+      : mainBroken
+        ? `${main} itself fails the migration-numbering check (a duplicate or a gap already on ${main}); ${branch} adds no clashing file, so the fix belongs on ${main}`
+        : `the migration-numbering check passes on ${main} alone but fails on the merge of ${branch}, which adds no clashing file; the branch breaks the numbering (a deleted or renamed migration?); read the log`,
   };
+}
+
+const mainNumbering = new Map(); // main commit → whether the numbering check fails on main alone
+
+/**
+ * Run the numbering check on `main` alone, once per main commit. A check that cannot finish throws,
+ * so the gate retries later instead of blaming anyone.
+ */
+async function mainFailsNumbering(ctx, settings, mainSha, { signal, run }) {
+  if (mainNumbering.has(mainSha)) return mainNumbering.get(mainSha);
+  const cfg = settings.numbering;
+  const dir = path.join(scratchRoot(ctx), `main-numbering-${mainSha.slice(0, 12)}-${run}`);
+  const log = path.join(gateDir(ctx), `main-${mainSha.slice(0, 12)}-${run}-numbering.log`);
+  await addDetached(ctx, dir, mainSha);
+  try {
+    const ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal });
+    if (ran.timedOut || ran.aborted) throw new FactoryError(`pre-merge: the migration-numbering check on ${mainSha.slice(0, 12)} alone did not finish (${log})`);
+    if (mainNumbering.size > 64) mainNumbering.clear();
+    mainNumbering.set(mainSha, ran.code !== 0);
+    return ran.code !== 0;
+  } finally {
+    await dropWorktree(ctx, dir);
+  }
 }
 
 /**
