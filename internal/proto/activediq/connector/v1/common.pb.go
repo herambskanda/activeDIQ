@@ -207,6 +207,8 @@ const (
 	// v1.1: the write group and the rights check.
 	Operation_OPERATION_PLAN              Operation = 7
 	Operation_OPERATION_VERIFY_CONNECTION Operation = 8
+	// v1.3 (T-1124): per-DC replication status.
+	Operation_OPERATION_READ_REPLICATION_STATUS Operation = 9
 	// Named in v1 (blueprint §7.1), shaped in v1.1 (write.proto). The number is kept.
 	Operation_OPERATION_APPLY Operation = 100
 	// Reserved names. No message shape yet.
@@ -226,23 +228,25 @@ var (
 		6:   "OPERATION_CHANGE_FEED",
 		7:   "OPERATION_PLAN",
 		8:   "OPERATION_VERIFY_CONNECTION",
+		9:   "OPERATION_READ_REPLICATION_STATUS",
 		100: "OPERATION_APPLY",
 		101: "OPERATION_READ_SECRET",
 		102: "OPERATION_VERIFY_USER",
 	}
 	Operation_value = map[string]int32{
-		"OPERATION_UNSPECIFIED":       0,
-		"OPERATION_DESCRIBE":          1,
-		"OPERATION_DESCRIBE_SCHEMA":   2,
-		"OPERATION_SCOPED_SEARCH":     3,
-		"OPERATION_READ":              4,
-		"OPERATION_READ_PER_DC":       5,
-		"OPERATION_CHANGE_FEED":       6,
-		"OPERATION_PLAN":              7,
-		"OPERATION_VERIFY_CONNECTION": 8,
-		"OPERATION_APPLY":             100,
-		"OPERATION_READ_SECRET":       101,
-		"OPERATION_VERIFY_USER":       102,
+		"OPERATION_UNSPECIFIED":             0,
+		"OPERATION_DESCRIBE":                1,
+		"OPERATION_DESCRIBE_SCHEMA":         2,
+		"OPERATION_SCOPED_SEARCH":           3,
+		"OPERATION_READ":                    4,
+		"OPERATION_READ_PER_DC":             5,
+		"OPERATION_CHANGE_FEED":             6,
+		"OPERATION_PLAN":                    7,
+		"OPERATION_VERIFY_CONNECTION":       8,
+		"OPERATION_READ_REPLICATION_STATUS": 9,
+		"OPERATION_APPLY":                   100,
+		"OPERATION_READ_SECRET":             101,
+		"OPERATION_VERIFY_USER":             102,
 	}
 )
 
@@ -1405,7 +1409,7 @@ const file_activediq_connector_v1_common_proto_rawDesc = "" +
 	"\fTimeSentinel\x12\x1d\n" +
 	"\x19TIME_SENTINEL_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12TIME_SENTINEL_ZERO\x10\x01\x12\x15\n" +
-	"\x11TIME_SENTINEL_MAX\x10\x02*\xc4\x02\n" +
+	"\x11TIME_SENTINEL_MAX\x10\x02*\xeb\x02\n" +
 	"\tOperation\x12\x19\n" +
 	"\x15OPERATION_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12OPERATION_DESCRIBE\x10\x01\x12\x1d\n" +
@@ -1415,7 +1419,8 @@ const file_activediq_connector_v1_common_proto_rawDesc = "" +
 	"\x15OPERATION_READ_PER_DC\x10\x05\x12\x19\n" +
 	"\x15OPERATION_CHANGE_FEED\x10\x06\x12\x12\n" +
 	"\x0eOPERATION_PLAN\x10\a\x12\x1f\n" +
-	"\x1bOPERATION_VERIFY_CONNECTION\x10\b\x12\x13\n" +
+	"\x1bOPERATION_VERIFY_CONNECTION\x10\b\x12%\n" +
+	"!OPERATION_READ_REPLICATION_STATUS\x10\t\x12\x13\n" +
 	"\x0fOPERATION_APPLY\x10d\x12\x19\n" +
 	"\x15OPERATION_READ_SECRET\x10e\x12\x19\n" +
 	"\x15OPERATION_VERIFY_USER\x10fBRZPgithub.com/skenzeriq/activediq/internal/proto/activediq/connector/v1;connectorv1b\x06proto3"

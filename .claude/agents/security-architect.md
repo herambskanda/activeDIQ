@@ -1,8 +1,8 @@
 ---
 name: security-architect
 description: "Use for threat models, Tier-0 security architecture (credential handling, privilege model, DC-side code, update signing), compliance mapping, and as the second reviewer of every ticket tagged security-sensitive. Owns whether activeDIQ is safe to install in a domain. Not for general code quality, structure or test review (use code-reviewer), AD semantics questions (use ad-expert), or architecture outside the security boundary (use solution-architect)."
-model: opus
-effort: high
+model: sonnet
+effort: medium
 tools: Read, Grep, Glob, Bash, Edit, Write, WebSearch, WebFetch, Agent
 skills:
   - factory-protocol

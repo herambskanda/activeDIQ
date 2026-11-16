@@ -63,6 +63,9 @@ type SearchRequest struct {
 	Filter     ldapfilter.Filter
 	Attributes []string // explicit names; "*" and "+" are refused
 	PageSize   uint32   // 0 = the session default; clamped to MaxPageSize
+	// ExtendedDN asks the DC for extended DNs (<GUID=…>;<SID=…>;dn) in DN-syntax values, so a link
+	// value carries the identity of its target. Entry.DN stays plain.
+	ExtendedDN bool
 }
 
 // Search streams every matching entry to fn, one page at a time; it never buffers the result set.
@@ -112,7 +115,11 @@ func (s *Session) search(ctx context.Context, req SearchRequest, deliver func([]
 		ps = MaxPageSize
 	}
 
-	return s.pages(ctx, base, scope, flt.String(), attrs, ps, deliver)
+	var extra []ldap.Control
+	if req.ExtendedDN {
+		extra = append(extra, extendedDN{})
+	}
+	return s.pagesWith(ctx, base, scope, flt.String(), attrs, ps, extra, deliver)
 }
 
 // SearchPages is Search delivering one whole page at a time. The session lock is NOT held while
@@ -252,8 +259,13 @@ func (s *Session) searchRaw(ctx context.Context, base string, scope int, filter 
 				return nil, fail(CodeInsufficientRights, "", nil)
 			case ldap.LDAPResultReferral:
 				return nil, fail(CodeUnexpectedReferral, "", nil)
+			case ldap.ErrorNetwork, ldap.LDAPResultUnavailable:
+				// 200 is go-ldap's own code for a dead or closed connection; it is not a server reply.
+				return nil, fail(CodeUnreachable, ldapCode(err), nil)
 			}
-			return nil, fail(CodeProtocol, ldapCode(err), nil)
+			f := fail(CodeProtocol, ldapCode(err), nil)
+			f.(*Error).result = int(le.ResultCode)
+			return nil, f
 		}
 		return nil, fail(CodeUnreachable, ldapCode(err), nil)
 	}
@@ -264,7 +276,7 @@ func (s *Session) searchRaw(ctx context.Context, base string, scope int, filter 
 }
 
 func toEntry(e *ldap.Entry) *Entry {
-	out := newEntry(e.DN)
+	out := newEntry(plainDN(e.DN))
 	for _, a := range e.Attributes {
 		out.attrs[strings.ToLower(a.Name)] = a.ByteValues
 	}

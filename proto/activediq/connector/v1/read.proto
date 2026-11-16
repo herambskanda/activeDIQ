@@ -92,6 +92,11 @@ message ReadRequest {
   bool include_tier0 = 7;
   // nTSecurityDescriptor and the SD-flags control come with T-0118; held for them.
   reserved 8 to 15;
+  // Also compute ReadHeader.child_count: the number of immediate children of this object
+  // (connector-contract.md §5.3a, T-1899). Only for a container class (organizationalUnit,
+  // container); any other class is INVALID_ARGUMENT. For the blocked-with-count preview of an
+  // OBJECT_DELETE of an OU and for nothing else (no screen shows it as a statistic, LF-39).
+  bool include_child_count = 16;
 }
 
 // The object with every attribute that fit in one DC response. A ranged attribute carries its
@@ -103,6 +108,17 @@ message ReadHeader {
   // the DC named in `observed`; a classification that cannot be decided fails the call rather than
   // arriving as tier0 = false (true or error).
   Tier0Verdict tier0 = 3;
+  // Present exactly when the request set include_child_count (§5.3a).
+  ChildCount child_count = 4;
+}
+
+// Immediate children of one container, counted by the connector with a one-level search that asks
+// for no attribute but the GUID. `count` stops at the connector's cap (1,000); `capped` says so.
+// It counts what the connector's identity can see; the DC alone decides whether the object is a
+// leaf (OBJECT_DELETE answers NotLeaf from the DC, not from this number).
+message ChildCount {
+  uint32 count = 1;
+  bool capped = 2;
 }
 
 // The connector's own Tier-0 answer for one object (threat-model §6.4), without the server-held

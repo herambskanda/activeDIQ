@@ -1,0 +1,3 @@
+<?xml version="1.0"?>
+<!DOCTYPE x [ <!ENTITY % pe SYSTEM "http://127.0.0.1:9/pe.dtd"> %pe; ]>
+<DS_REPL_NEIGHBOR><pszNamingContext>a</pszNamingContext></DS_REPL_NEIGHBOR>

@@ -1,0 +1,15 @@
+with-dc1-lock: dc1 is busy; waiting up to 3600s. Held by: user=khushi pid=1034535 branch=factory/T-1022 cwd=/home/khushi/AD/.activeDIQ-worktrees/T-1022 since=2026-11-12T10:58:32Z cmd=/usr/bin/python3 /home/khushi/AD/.activeDIQ-worktrees/T-1022/lab/windows/bin/svchost-verify --log factory/demos/evidence
+with-dc1-lock: holding dc1 lock /tmp/claude-1000/activediq-dc1.lock (pid 1073184, waited 87s)
+=== RUN   TestWindowsLabTopologySkipsExternalCrossRef
+    windows_lab_extcrossref_test.go:77: raw crossRef: nCName=["<GUID=dc724cd3-0b7e-402c-aa98-78541960cfb6>;DC=t1800ext,DC=example,DC=test"] systemFlags=[0] enabled=[]
+    windows_lab_extcrossref_test.go:93: listed: kind=1 head=DC=ForestDnsZones,DC=win,DC=activediq,DC=test dns="ForestDnsZones.win.activediq.test"
+    windows_lab_extcrossref_test.go:93: listed: kind=1 head=DC=DomainDnsZones,DC=win,DC=activediq,DC=test dns="DomainDnsZones.win.activediq.test"
+    windows_lab_extcrossref_test.go:93: listed: kind=3 head=CN=Configuration,DC=win,DC=activediq,DC=test dns="win.activediq.test"
+    windows_lab_extcrossref_test.go:93: listed: kind=4 head=CN=Schema,CN=Configuration,DC=win,DC=activediq,DC=test dns="win.activediq.test"
+    windows_lab_extcrossref_test.go:93: listed: kind=1 head=DC=t1800ext,DC=example,DC=test dns="t1800ext.example.test"
+    windows_lab_extcrossref_test.go:96: DEFECT: external crossRef listed as a naming context: {GUID:dc724cd3-0b7e-402c-aa98-78541960cfb6 Kind:1 Head:DC=t1800ext,DC=example,DC=test DNSName:t1800ext.example.test NetBIOSName: DomainSID:S-1-0 HasSID:false FunctionalLevel:0 HasFunctionalLevel:false}
+    windows_lab_extcrossref_test.go:93: listed: kind=2 head=DC=win,DC=activediq,DC=test dns="win.activediq.test"
+    windows_lab_extcrossref_test.go:101: expected failure, bug T-1805: Topology lists an external crossRef as an application naming context
+--- SKIP: TestWindowsLabTopologySkipsExternalCrossRef (0.24s)
+PASS
+ok  	github.com/skenzeriq/activediq/internal/connector/ad	0.260s

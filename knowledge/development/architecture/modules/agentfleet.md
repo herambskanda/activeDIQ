@@ -42,7 +42,7 @@ listener, outside an Operation, so the tables belong to the platform packages th
 | Action | `agentfleet.keyset.rotate` | Rotates the policy key now (`signer.Rotate`; ADR-0007 decision 6). Permission `agentfleet.keyset.rotate`; step-up; human-only; control-plane. Reason is a closed set (`suspected_exposure`, `backup_restored_to_new_host`, `early_scheduled`). Not the stolen-key anchor reset (decision 7, runbook follow-up) |
 
 Both permissions are in the built-in tenant-owner role and in the owner-role guard's allow-list
-(`migrations/0072_authz_tenant_owner_agentfleet.sql`, pinned equal to `rbac.BuiltInRoles` by a test), and
+(`migrations/0084_authz_tenant_owner_agentfleet.sql`, pinned equal to `rbac.BuiltInRoles` by a test), and
 the `agentfleet.` prefix is in `authz`'s never-crosses families. The signer arrives through
 `platform.Deps.AgentPolicy`; nil until T-0598 wires the DEK source, and the Actions then refuse every run
 (`signer.ErrNotConfigured`).

@@ -192,3 +192,24 @@ func IsDescendantOf(c, a DN) bool {
 
 func (d DN) Equal(o DN) bool          { return Equal(d, o) }
 func (d DN) IsDescendantOf(a DN) bool { return IsDescendantOf(d, a) }
+
+// Rebase keeps the first keep RDNs of d (leaf first) and puts onto's RDNs after them: the DN d has
+// once the ancestor that sat len-keep RDNs above it is replaced by onto. It is how the descendants of
+// a moved or renamed container follow it; the RDNs are values, never text, so a comma inside one
+// stays inside it. keep must be between 0 and d.Len(). The caps of Parse apply.
+func Rebase(d DN, keep int, onto DN) (DN, error) {
+	if keep < 0 || keep > len(d.rdns) {
+		return DN{}, fail(TooLong, -1)
+	}
+	if keep+len(onto.rdns) > MaxRDNs {
+		return DN{}, fail(TooLong, -1)
+	}
+	rdns := make([]RDN, 0, keep+len(onto.rdns))
+	rdns = append(rdns, d.rdns[:keep]...)
+	rdns = append(rdns, onto.rdns...)
+	out := DN{rdns: rdns}
+	if len(out.Render()) > MaxDNLen {
+		return DN{}, fail(TooLong, -1)
+	}
+	return out, nil
+}

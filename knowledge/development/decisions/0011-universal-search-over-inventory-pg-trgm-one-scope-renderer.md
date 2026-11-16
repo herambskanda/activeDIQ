@@ -1,11 +1,11 @@
 ---
 title: "ADR-0011: Universal search runs over the inventory with pg_trgm, and is trimmed in the same SQL statement by the one ReadScope renderer in store/reportsql"
 date: 2026-10-31
-updated: 2026-11-04
+updated: 2026-11-14
 status: ratified
 ratified_on: 2026-10-31
 ratified_by: factory-director
-decision: D-0014, D-0025
+decision: D-0014, D-0025, D-0034
 owner: heramb
 author: solution-architect
 kind: technical
@@ -29,6 +29,106 @@ was false as a factual claim about what 2 per loop allows. Rule 16 now states th
 accepted height leak. The rows-examined requirement (exactly equal) and SE5's plan-shape check are
 unchanged, so no fitness check weakens. The T-1335 test already implements this formula.
 Ratified by factory-director 2026-11-04 (notice D-0028).
+
+E2 (2026-11-04, T-1183, from the T-1096 and T-1100 builds and security-architect's T-1183 note).
+Both parts make a rule stricter or state what was built; no rule or fitness check weakens.
+- **`cursor_requires_type` is confirmed in the contract** (rule 12). A cursor pages one group, and
+  the MAC binds the type facet, so a cursor without `type` could never verify. It gets its own code
+  (rather than `cursor_invalid`) because the client's fix differs: send the type back, not search
+  again. It is a 400 `search-query-invalid` at `/cursor`, refused before anything is read
+  (`Test_cursor_is_bound_and_verified_before_anything_is_read`).
+- **Rule 15 names the cursor and the server-side guarantee.** A cursor holds the lower-cased display
+  name and GUIDs of the last hit (MAC'd, not encrypted), so it is kept out of the URL like refused
+  text, and redacted like `q` if it ever arrives in one. The server records the path only today
+  (apihost has no access-log or trace middleware), and the console sends `Referrer-Policy:
+  no-referrer`. `Test_console_search_query_never_reaches_a_log_line` (apihost) is the SE4 check.
+
+E3 (2026-11-14, T-2086, from the AD Explorer read API spec, `product/specs/ad-explorer-read-api.md` X3).
+Explorer (E-007) trims a directory tree with the same scope, so SE1's "one renderer" is widened from
+one entry point to a named set. This makes the check **stricter in the one place it widens**; nothing
+weakens.
+- **Decision.** `store/reportsql` gains a second exported statement entry, `CompileTree`, beside
+  `CompileSearch`. There is one renderer and three statements: report (`Compile`, `CompileCount`),
+  search (`CompileSearch`) and tree (`CompileTree`). All three fill the scope position with the
+  existing `planScope` and `scopeSQL` over the `directory_objects` anchor, so `ancestry_complete`,
+  the fail-closed rules, the 512-term cap (`ErrScopeTooLarge`) and `ScopeReasons` carry over unchanged
+  (rule 11). The producer is `rbac.ReadScopes.For(…, directory.read)`. No per-row `Admits`, no scope
+  copied into a column, no second renderer.
+- **SE1 now reads:** `reportsql.CompileSearch` **and** `reportsql.CompileTree` are called only from
+  `internal/directory/inventory`. `modules/explorer` reaches the tree statement through the
+  `inventory.Explorer` port, exactly as `modules/search` reaches `CompileSearch` through
+  `inventory.Search`, and the port takes the scope and returns trimmed rows, never ancestry to trim
+  with. The Go-level list is closed: a future statement entry (a third caller) needs its own
+  amendment and is not admitted by this one.
+- **Five additions to SE1**, all mechanical and typed (go/types plus SQL tokenising), none prose-only:
+  1. **Closed entry set, asserted.** SE1 computes, with go/types, the exported functions of
+     `store/reportsql` that can reach `planScope` or `scopeSQL` through the call graph; the set must
+     equal exactly `{Compile, CompileCount, CompileSearch, CompileTree}`. A fifth entry, or one of the four
+     missing, fails. Adding a statement is a new amendment that edits this list.
+  2. **Scope fragments have one emitter.** `planScope` and `scopeSQL` are each defined exactly once, in
+     `store/reportsql`; and only code reachable from those four entries may emit a scope fragment (a
+     function that writes the scope's term SQL, `ancestry` array overlap or `&&`, or calls the term
+     renderers, outside that call graph fails). This closes `scopeSQL2` and an inline
+     `ancestry && ARRAY[...]`. Files of `internal/directory/inventory` Explorer code and
+     `modules/explorer` hold no SQL text naming `ancestry`, `parent_guid` or `directory_objects`: the path
+     unnest/join and the roots test live only in the `CompileTree` template.
+  3. **The tree template reads `directory_objects` only.** It may not read `inventory_search_keys` or
+     `inventory_search_trigrams`, which stay readable only by the search template.
+  4. **The port leaks no ancestry (mechanical definition).** go/types cannot see admission, so SE1
+     enforces a *shape* deny-list over `inventory.Explorer` and the transitive closure of every type in
+     its method signatures (fields, methods, named types, embedded types):
+     (a) **Names.** No field, method or type whose name, case-folded with `_` removed, contains
+     `ancest`, `parentguid`, `parentid`, `lineage`, `trail` or `pathguids`.
+     (b) **Shapes.** No field, result or parameter of type `[]uuid.UUID`, `[]GUID`, `[N]uuid.UUID`,
+     `map[...]uuid.UUID` or a slice of a struct that carries a `uuid.UUID`, **except** the single field
+     `Path []ExplorerPathItem`.
+     (c) **Sole carrier.** `ExplorerPathItem` is the only type allowed to appear as a slice element and
+     carry a GUID; it is constructed (composite literal or `new`) in exactly one function,
+     `scanPathItem`, in `internal/directory/inventory`, whose only inputs are a `pgx.Rows` scan of the
+     `CompileTree` statement's output columns (the statement already trims, so every row is admitted).
+     Anything else constructing it fails.
+     The go/types check proves the port *cannot carry* an ancestor list; the oracle tests below carry the
+     behavioural proof that nothing unadmitted is returned. Named, in `fitness-explorer` EX10 and bound in
+     `fitness-search` SE3 (a missing, skipped or failing test fails the build, as for every bound test):
+     - `Test_explorer_hidden_ancestor_never_disclosed` (`./internal/directory/inventory`; subtests
+       `roots`, `node`, `path`, `children`, each on `pg16`/`pg18`): with an admitted subtree whose
+       parent chain is not admitted, the hidden ancestors' GUID, display name and DN are absent from the
+       whole serialised response and from logs of every one of the four operations. Fails on any
+       occurrence of the three strings.
+     - `Test_explorer_out_of_scope_child_never_returned` (same package and subtests `node`, `children`,
+       `path`): an out-of-scope child of an admitted node is not returned, not counted and not
+       cursor-addressable; asking for it by GUID answers exactly as a nonexistent one (EX8).
+     The spec's root test (X4) never returns a non-admitted parent's GUID; it only decides "this
+     admitted row is a root".
+  5. **Every addition has a failing self-test fixture** (runbook convention for static checks, T-1126),
+     named in `tools/fitness/search/check_test.go` and run by `make ci-proof`:
+     `closed_entry_set_fifth` (a `CompileFoo` reaching `scopeSQL`), `closed_entry_set_missing`,
+     `scope_second_emitter` (`scopeSQL2` and an inline `ancestry && ARRAY[...]`),
+     `explorer_sql_names_ancestry`, `tree_template_reads_search_keys`,
+     `port_leaks_ancestry_name`, `port_leaks_uuid_slice`, `pathitem_built_elsewhere`,
+     `compiletree_called_outside_inventory`, `connections_outside_allowlist`. Each must produce its own
+     finding; a fixture that passes fails the proof.
+- **`Connections()` allow-list, decided.** Spec §9 computes `asOf` as `inventory.Freshness` over
+  `ReadScope.Connections()`, so `internal/directory/inventory` is **added** to the allow-list, which
+  becomes `authz`, `reportsql`, `reports`, `reports/run`, `modules/search` and
+  `internal/directory/inventory`. `modules/explorer` is not added: it receives `asOf` from the port.
+  (The alternative, `CompileTree` returning the connection set in its `reportsql.Query`, was rejected:
+  it widens the statement's result for one label, when inventory already owns `Freshness`.)
+- **What does not change.** The `Terms`/`Token` rule, the RBAC-table and migration rules, SE2 to SE6,
+  `sqlconst` and RP1 (the statement is a `reportsql.Query` only that package can build). Rules 12 and
+  13 (work ceiling, refine state) govern search only; Explorer's own row-examined bound is EX6 of
+  `fitness-explorer`.
+- **Alternatives rejected.** (a) A tree renderer inside `inventory` or `modules/explorer`: a second
+  scope renderer, the PatchIQ clone failure. (b) Per-row `ReadScope.Admits`: N+1 and a second
+  evaluator that can drift from the SQL. (c) Generalising `CompileSearch` to take a tree mode: the
+  search statement's work ceiling and candidate stages are search-specific, and a mode switch hides a
+  second statement behind one name, which SE1 could not tell apart.
+- **Follow-ups.** T-2088 builds `CompileTree` (security-architect reviews). The `fitness-search` SE1
+  change and fixtures are ticketed to devops-engineer; EX1 in `fitness-explorer` (T-2091) is the
+  Explorer-side mirror and the two must agree. The blueprint, runbook and `ci-gates.md` rows are
+  updated with this amendment.
+Reworked 2026-11-14 after security-architect's AC2 review (closed set asserted, single emitter, port ancestry, `Connections()` decided). Revised again for the second review (mechanical deny-list, named oracle tests, named fixtures). Ratification waits on security-architect re-confirmation; `accepted` waits on the SE1 fixtures covering additions 1 to 5 and the two oracle tests (T-2094, T-2089).
+Ratified by factory-director 2026-11-14 (notice D-0034) after security-architect's AC2 confirmation (aacab51d4). E3 becomes `accepted` when T-2094's SE1 checks and fixtures run in `make ci`.
 
 **Revision 2 (2026-10-31, after the T-1093 review).** These are the changes in this revision:
 - **M1:** rule 7 now case-folds before the fold table.
@@ -534,15 +634,15 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
 
    | IA §5.2 shape | Served at 2a from | Key kinds (class) | Not served at 2a → follow-up |
    |---|---|---|---|
-   | Free text | `display_name`; `rdn` (cn) | `name` (prefix, fuzzy), `name_word` (prefix; rev 3: no longer fuzzy, §3a) | `givenName` + `sn` in both orders, `title`, `department` → **T-1129** (until then "Raman, Priya" matches a displayName or cn written in either order, through the comma swap and trigram order-insensitivity) |
+   | Free text | `display_name`; `rdn` (cn) | `name` (prefix, fuzzy), `name_word` (prefix; rev 3: no longer fuzzy, §3a) | Served since T-1129: `givenName` + `sn` in both orders (`name`, `name_word` keys), `title` and `department` (`org_text`, prefix, whole value and words) |
    | `sam`, `DOMAIN\sam`, `sam@dnsdomain` | `sam_account_name`; computers also without the trailing `$` | `sam` (exact, prefix, fuzzy) | The `DOMAIN\` and `@dnsdomain` parts narrow to the connection whose NetBIOS or DNS domain name matches, **if** the connection record holds that name (T-1095 confirms). Otherwise the domain part is dropped and `sam` matches in every connection. It is never an error |
-   | `x@y` | `upn`; contact `mail` (D3) | `upn`, `mail` (exact, prefix; rev 3: no longer fuzzy, §3a. A misspelt address finds its object through the `name` or `sam` key) | user `mail`, `proxyAddresses`, `mailNickname` → **T-1129** |
-   | Digits | none | | `employeeID`, `employeeNumber` → **T-1129**. Until then digits are matched as free text |
-   | `S-1-5-…` | `sid` (canonical string form) | `sid` (exact) | `sIDHistory` → **T-1129** |
+   | `x@y` | `upn`; contact `mail` (D3) | `upn`, `mail` (exact, prefix; rev 3: no longer fuzzy, §3a. A misspelt address finds its object through the `name` or `sam` key) | Served since T-1129: user `mail` (any kind), `proxyAddresses` of type smtp (`mail` key), `mailNickname` (`mail_nickname`, exact, prefix) |
+   | Digits | none | | T-1129: `employeeID`, `employeeNumber` (`employee_id`, exact, prefix; leading zeros kept) |
+   | `S-1-5-…` | `sid` (canonical string form) | `sid` (exact) | T-1129: `sIDHistory` (`sid_history`, exact) |
    | GUID, with or without braces | `object_guid`; `consistency_guid` (as a GUID and as base64) | `guid`, `consistency_guid` (exact) | The Entra object ID is indexed, but Entra objects are **admitted by no 2a scope kind**: they carry no `nc_guid`, and the 2a kinds are AD-only. They become findable when an Entra read-scope root kind exists → **T-1131** |
    | `CN=…,DC=…` | `dn` snapshot | `dn` (exact) | Descendants of a moved OU have stale `dn` keys until T-0988 lands. Rule 5 requires T-0988 to rewrite their keys too |
-   | Host name or FQDN | computer `rdn`/`sam` without `$`; `dNSHostName` | `name`, `dns_host` (exact, prefix) | `servicePrincipalName` values → **T-1129** |
-   | 8 hex characters (BitLocker key ID) | none | | `msFVE-RecoveryInformation` child CN only, **never** the recovery password; Entra-escrowed keys come from Graph → **T-1129**. **Gated by the BitLocker read permission, not `directory.read`** (below) |
+   | Host name or FQDN | computer `rdn`/`sam` without `$`; `dNSHostName` | `name`, `dns_host` (exact, prefix) | T-1129: `servicePrincipalName` values (`spn`, exact, prefix; the host part is also a `dns_host` key). At most 64 values per object are kept |
+   | 8 hex characters (BitLocker key ID) | none | | `msFVE-RecoveryInformation` child CN only, **never** the recovery password; Entra-escrowed keys come from Graph → **T-1931** (split from T-1129: the catalogue has no BitLocker permission yet, so the kind is not indexed). **Gated by the BitLocker read permission, not `directory.read`** (below) |
    | 48-digit recovery password | **refused**: 400, never echoed or logged (T-1096 AC5). It is recognised on the NFKC form (rule 7), so full-width digits and other scripts' digits are refused too. The browser also refuses it (IA §5.2) and never puts it in a URL | | |
 
    The shape is recognised in `searchkey.Classify` and is never passed through to SQL as a string
@@ -651,16 +751,23 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
     - **The cursor is opaque and bound to its query.** It carries the rank tuple of the last admitted
       hit and an HMAC-SHA256 under a server key. The MAC covers that tuple, the normalised query, the
       class set, the type facet and `ReadScope.Fingerprint()` of every scope passed. A cursor
-      presented with a different query, facet or scope, or with a bad MAC, is 400, and the request
-      reads nothing.
+      presented with a different query, facet or scope, or with a bad MAC, is 400
+      (`cursor_invalid`), and the request reads nothing. A cursor sent without its type facet is 400
+      `cursor_requires_type` at `/cursor`, before anything is read (amendment E2): the MAC binds the
+      facet, and the client's fix is to send the type back, not to search again.
     - **No frozen pages.** Search is not a frozen report run, so ADR-0010 does not apply. A page
       re-runs the statement, so pages may shift if the inventory changes in between.
-13. **The work per query is bounded, whatever the scope's shape (T-0995 class).** The values are
-    `[PROPOSED]`, and T-1102 measures and sets them:
+13. **The work per query is bounded, whatever the scope's shape (T-0995 class).** The work ceiling is
+    measured (T-1303); the other values are `[PROPOSED]`, and T-1102 measures and sets them:
     - **One statement.** At most one search statement per request, plus at most one batched metadata
       read keyed by the admitted GUIDs (T-1097). There are no per-hit queries.
-    - **The work ceiling W** (`MaxSearchMatches`). `[PROPOSED]` 10,000 matched key rows per class.
-      T-1102 sets it to the largest value at which a ceiling-sized class still meets rule 14's p95.
+    - **The work ceiling W** (`MaxSearchMatches`). 7,000 matched key rows per class.
+      It is the largest swept value at which a ceiling-sized class meets rule 14's p95 for both
+      callers on both versions in both T-1303 sweeps (50,000 objects, evidence
+      `factory/demos/evidence/T-1102/`). pg16 admin, the binding case: 188.1 ms and 193.1 ms at
+      7,000; 199.0 ms and 216.4 ms at 8,000; 196.2 ms and 225.1 ms at 9,000. pg18 passes up to
+      10,000. The margin at 7,000 on pg16 admin is 7 ms, so a re-measure after any
+      search-statement change must confirm it.
       W is a property of the tenant's data. It is not a cap on what a caller sees: below W every
       answer is complete, and above W every caller gets the refine state.
     - **Exact and prefix: rows examined ≤ W + 1 per class.** The B-tree is tenant-led and is read in
@@ -733,6 +840,15 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
       bar for back, forward and bookmarking. When that page is loaded straight from the server,
       the access log and the traces **redact `q` on every route**. The server records only the rune
       length, the recognised shape and the class set (T-1096).
+    - **Cursor (E2).** A "show all" cursor holds the lower-cased display name and GUIDs of the last
+      hit; it is MAC'd but not encrypted. The API carries it in the `POST` body. The console keeps
+      it in client or history state, **never in the URL**. A cursor that arrives in a URL is
+      redacted exactly like `q`.
+    - **Server today (E2).** apihost has no access-log or trace middleware, and its only request
+      log line (`render.go`, an unexpected error) records `r.URL.Path`, never the query string.
+      Any access log, trace exporter or request logger added later records the path and status
+      only, never `RawQuery`, `RequestURI` or `URL.String()`. The console answers with
+      `Referrer-Policy: no-referrer`, so the `/search` URL does not leave in a `Referer` header.
     - **Handler.** The search handler, its errors and its traces never echo the text. A refused
       query (rule 7) is logged only with its refusal reason.
     - **Browser.** The console never navigates to a URL holding a query the browser has refused
@@ -911,11 +1027,16 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
     in `internal/platform/store/reportsql`. Method values, method expressions and embedding count,
     as RP2 already checks.
   - **Who may use `Connections()`.** Outside `authz` and `reportsql`, `ReadScope.Connections()` is
-    allowed only in `internal/modules/reports/run` and `internal/modules/search`, where it labels
-    freshness.
+    allowed only in `internal/modules/reports/run`, `internal/modules/search` and
+    `internal/directory/inventory` (E3), where it labels freshness.
   - **`Admits` and `SearchRoots`** are called nowhere outside `authz`. Until T-1127 deletes them,
     `internal/directory/client/usersearch.go` is the one listed exception, reported as `pending`.
-  - **`reportsql.CompileSearch`** is called only from `internal/directory/inventory`.
+  - **`reportsql.CompileSearch` and `reportsql.CompileTree`** (E3) are called only from
+    `internal/directory/inventory`. The set of exported `reportsql` functions reaching `planScope`/`scopeSQL` equals exactly
+    those four entries (go/types); `planScope` and `scopeSQL` are each defined exactly once, in
+    `store/reportsql`, and only code reachable from the four entries emits scope fragments. The
+    `CompileTree` template reads `directory_objects` only. Explorer files hold no SQL naming
+    ancestry, `parent_guid` or `directory_objects`. `inventory.Explorer` and its result types pass the ancestry deny-list (names, uuid-slice shapes, `ExplorerPathItem` built only in `scanPathItem`), and the two oracle tests below are bound.
   - **Go code that names the RBAC tables.** These tables are `authz_assignments`,
     `authz_assignment_roots`, `authz_roles` and `authz_role_permissions`, plus any later
     `authz_*` table that the owners map assigns to `rbac`. No non-test Go SQL text names them
@@ -999,7 +1120,10 @@ in the nightly job. Each static check has a failing self-test fixture (T-1126).
     another script's digits, with and without dashes, is refused. It does not appear in the logs, in
     the traces or in the access log.
   - **Search text.** `q` on the console's `/search` route appears in no access-log or trace line;
-    only its length does (rule 15).
+    only its length does (rule 15). The same holds for a cursor in that URL, and the console
+    answers with `Referrer-Policy: no-referrer`. Bound test:
+    `Test_console_search_query_never_reaches_a_log_line` in `internal/platform/apihost` (E2;
+    mutation-checked: logging `r.URL.String()` or relaxing the referrer policy fails it).
   - **Folding.** Every row of rule 7's vector table folds the same way for keys and for queries.
     That includes the upper-case and lower-case pairs Ł/ł, Ø/ø and İ/i, and `ẞ`.
   - **`PrefixUpper`.** The U+D7FF and U+10FFFF edges give the bounds rule 8 states.

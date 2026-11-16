@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -35,12 +36,17 @@ type fakeConnector struct {
 	tier0    map[string]bool                               // verdict served when the request asks for one
 	noT0     bool                                          // leave the verdict out although asked
 	servedBy []byte                                        // DSA of the DC the header names; default: the pin
+	count    *connectorv1.ChildCount                       // served when the request asks for a count
+	failWith error                                         // returned by Read before anything else
 }
 
 func guidOf(s string) *connectorv1.Guid { b, _ := parseUUID(s); return &connectorv1.Guid{Value: b} }
 
 func (f *fakeConnector) Read(req *connectorv1.ReadRequest, s grpc.ServerStreamingServer[connectorv1.ReadResponse]) error {
 	f.got = append(f.got, req)
+	if f.failWith != nil {
+		return f.failWith
+	}
 	// Like read.Handler: a read without the served directory's identity is refused.
 	if want := guidOf(tNC).GetValue(); string(req.GetConnection().GetDirectoryIdentity().GetAdForest().GetForestRootNcGuid().GetValue()) != string(want) {
 		return status.Error(3, "directory identity")
@@ -73,6 +79,9 @@ func (f *fakeConnector) Read(req *connectorv1.ReadRequest, s grpc.ServerStreamin
 	}
 	if req.GetIncludeTier0() && !f.noT0 {
 		h.Tier0 = &connectorv1.Tier0Verdict{Tier0: f.tier0[g]}
+	}
+	if req.GetIncludeChildCount() {
+		h.ChildCount = f.count
 	}
 	for _, m := range []*connectorv1.ReadResponse{
 		{Event: &connectorv1.ReadResponse_Header{Header: h}},
@@ -273,5 +282,71 @@ func TestUnverifiedConnectionReadIsRefusedBeforeTheConnector(t *testing.T) {
 	}
 	if len(f.got) != 0 {
 		t.Fatal("connector reached")
+	}
+}
+
+// T-1261: a read that fails with a bare status keeps the code and none of the connector's text.
+func TestReadFailureCarriesNoStatusDescription(t *testing.T) {
+	const desc = "dial tcp 10.20.30.40:636: dc1.corp.example CN=Admin,DC=corp,DC=example"
+	r := setup(t, &fakeConnector{failWith: status.Error(14, desc)})
+	_, err := r.Object(ctxFor(tTenant, nil), nil, tgt, tUser, false)
+	var te *TransportError
+	if err == nil || !errors.As(err, &te) || te.Code != 14 {
+		t.Fatalf("got %#v, want a TransportError with the code", err)
+	}
+	for _, s := range []string{"dc1", "10.20.30.40", "CN=Admin", "corp.example"} {
+		if strings.Contains(err.Error(), s) {
+			t.Fatalf("error %q contains %q", err, s)
+		}
+	}
+}
+
+func TestChildCountAsksForItAndReturnsIt(t *testing.T) {
+	f := &fakeConnector{parents: map[string]string{tUser: ""}, count: &connectorv1.ChildCount{Count: 1000, Capped: true}}
+	r := setup(t, f)
+	got, err := r.ChildCount(ctxFor(tTenant, authority.DSAPins{tNC: tDSA}), authority.Pins{tNC: "dc1"}, tgt, tUser)
+	if err != nil || got != (ChildCount{Count: 1000, Capped: true}) {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if !f.got[0].GetIncludeChildCount() || f.got[0].GetIncludeTier0() {
+		t.Fatalf("request %v", f.got[0])
+	}
+	if string(f.got[0].GetDc().GetPinnedDsaGuid().GetValue()) != string(guidOf(tDSA).GetValue()) {
+		t.Fatal("not pinned")
+	}
+}
+
+func TestChildCountViolationsAndAbsence(t *testing.T) {
+	for name, c := range map[string]*connectorv1.ChildCount{
+		"missing":          nil,
+		"over the cap":     {Count: 1001},
+		"capped below cap": {Count: 10, Capped: true},
+	} {
+		f := &fakeConnector{parents: map[string]string{tUser: ""}, count: c}
+		_, err := setup(t, f).ChildCount(ctxFor(tTenant, authority.DSAPins{tNC: tDSA}), authority.Pins{tNC: "dc1"}, tgt, tUser)
+		if !errors.Is(err, ErrReadProtocol) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestChildCountNotAskedButServedIsAProtocolError(t *testing.T) {
+	f := &fakeConnector{parents: map[string]string{tUser: ""}, count: &connectorv1.ChildCount{Count: 2}}
+	f.mutate = func(g string) []*connectorv1.ReadResponse {
+		return []*connectorv1.ReadResponse{{Event: &connectorv1.ReadResponse_Header{Header: &connectorv1.ReadHeader{
+			Entry: &connectorv1.DirectoryEntry{ObjectGuid: guidOf(g)}, ChildCount: f.count,
+			Observed: &connectorv1.Observation{Dc: &connectorv1.DcIdentity{DsaGuid: guidOf(tDSA)}}}}},
+			{Event: &connectorv1.ReadResponse_Completed{Completed: &connectorv1.ReadCompleted{}}}}
+	}
+	_, err := setup(t, f).Object(ctxFor(tTenant, authority.DSAPins{tNC: tDSA}), authority.Pins{tNC: "dc1"}, tgt, tUser, false)
+	if !errors.Is(err, ErrReadProtocol) {
+		t.Fatal(err)
+	}
+}
+
+func TestChildCountOfMissingObjectIsAnError(t *testing.T) {
+	_, err := setup(t, &fakeConnector{parents: map[string]string{}}).ChildCount(ctxFor(tTenant, authority.DSAPins{tNC: tDSA}), authority.Pins{tNC: "dc1"}, tgt, tUser)
+	if !errors.Is(err, ErrReadNotFound) {
+		t.Fatal(err)
 	}
 }

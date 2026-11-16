@@ -5,8 +5,12 @@ package platform
 
 import (
 	"github.com/skenzeriq/activediq/internal/platform/agentpolicy/signer"
+	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
+	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
 // Deps is the set of kernel services handed to every server module: operation, audit, authz, jobs,
@@ -27,4 +31,18 @@ type Deps struct {
 	// AgentPolicy signs the policy and keysets of the host agents (ADR-0007). Nil until the composition
 	// root wires the tenant DEK source (T-0598); agentfleet's Actions then refuse every run.
 	AgentPolicy *signer.Signer
+	// DB is the store. Nil until wired; a module that needs it then registers nothing that would use it.
+	DB *store.DB
+	// Jobs is the job registry the worker runs (EP-5). Modules never register on it directly: they
+	// contribute kinds through Registrar.Job, and a module reads it only to enqueue.
+	Jobs *jobs.Registry
+	// Audit is the tamper-evident audit sink the module writes through.
+	Audit audit.Sink
+	// Authz is the shared RBAC authorizer, for checks a handler makes beyond its route permission.
+	Authz operation.Authorizer
+	// ReadScopes produces a caller's directory read scope. It is bound after Boot, from the EP-6
+	// evaluators the modules contribute; until then it refuses every call.
+	ReadScopes *rbac.LateReadScopes
+	// BlobDir is the directory of the file blob store; empty means no blob store is configured.
+	BlobDir string
 }
