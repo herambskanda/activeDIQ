@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/skenzeriq/activediq/internal/platform/fleet"
+	"github.com/skenzeriq/activediq/internal/platform/ownerfile"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
@@ -138,7 +139,7 @@ func setup(t *testing.T) (*issuer, Material, string) {
 	nil2t = t
 	ca, srv := newCA(t, "tenant client CA"), newCA(t, "installation server CA")
 	addr := serve(t, srv, true)
-	return &issuer{ca: ca, srv: srv, tid: tenant.New()}, Material{Address: addr, Token: "tok", Pin: srv.pin().String()}, filepath.Join(t.TempDir(), "state")
+	return &issuer{ca: ca, srv: srv, tid: tenant.New()}, Material{Address: addr, Token: "tok", Pin: srv.pin().String()}, filepath.Join(tempParent(t), "state")
 }
 
 func assertNothingPersisted(t *testing.T, dir string) {
@@ -196,7 +197,7 @@ func TestEnrollRefusesUnpinnedServers(t *testing.T) {
 	for name, addr := range cases {
 		t.Run(name, func(t *testing.T) {
 			iss := &issuer{ca: good, tid: tenant.New()}
-			dir := filepath.Join(t.TempDir(), "state")
+			dir := filepath.Join(tempParent(t), "state")
 			_, err := Enroll(context.Background(), Material{Address: addr, Token: "secret-token", Pin: good.pin().String()}, dir, iss.exchange)
 			if !errors.Is(err, ErrUntrustedServer) {
 				t.Fatalf("err = %v, want ErrUntrustedServer", err)
@@ -230,7 +231,7 @@ func TestSelfSignedServerRefused(t *testing.T) {
 	}()
 	_, port, _ := net.SplitHostPort(ln.Addr().String())
 	iss := &issuer{ca: good, tid: tenant.New()}
-	_, err := Enroll(context.Background(), Material{Address: net.JoinHostPort("127.0.0.1", port), Token: "t", Pin: good.pin().String()}, filepath.Join(t.TempDir(), "s"), iss.exchange)
+	_, err := Enroll(context.Background(), Material{Address: net.JoinHostPort("127.0.0.1", port), Token: "t", Pin: good.pin().String()}, filepath.Join(tempParent(t), "s"), iss.exchange)
 	if !errors.Is(err, ErrUntrustedServer) || iss.calls.Load() != 0 {
 		t.Fatalf("err = %v calls = %d", err, iss.calls.Load())
 	}
@@ -241,7 +242,7 @@ func TestRetryNeverFallsBack(t *testing.T) {
 	iss := &issuer{ca: good, tid: tenant.New()}
 	m := Material{Address: serve(t, other, true), Token: "t", Pin: good.pin().String()}
 	for i := 0; i < 3; i++ {
-		if _, err := Enroll(context.Background(), m, filepath.Join(t.TempDir(), "s"), iss.exchange); !errors.Is(err, ErrUntrustedServer) {
+		if _, err := Enroll(context.Background(), m, filepath.Join(tempParent(t), "s"), iss.exchange); !errors.Is(err, ErrUntrustedServer) {
 			t.Fatalf("attempt %d: %v", i, err)
 		}
 	}
@@ -371,6 +372,30 @@ func TestLoadRefusesUnsafeState(t *testing.T) {
 	}
 }
 
+// tempParent is a test directory the parent check accepts whatever the umask of the run (a umask of
+// 002 makes t.TempDir's subdirectories group-writable).
+func tempParent(t *testing.T) string {
+	t.Helper()
+	p := t.TempDir()
+	if err := os.Chmod(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// put replaces one state file through the held, verified directory (the production write path).
+func put(t *testing.T, dir, name string, data []byte) {
+	t.Helper()
+	d, err := ownerfile.OpenDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := d.WriteFile(name, data); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func runtimeUnix() bool { return filepath.Separator == '/' }
 
 // splice builds a server that presents the REAL (public) installation CA certificate in its chain
@@ -400,7 +425,7 @@ func serveSpliced(t *testing.T, real, attacker authority) string {
 func TestEnrollRefusesSplicedChain(t *testing.T) {
 	good, attacker := newCA(t, "installation CA"), newCA(t, "attacker CA")
 	iss := &issuer{ca: good, tid: tenant.New()}
-	dir := filepath.Join(t.TempDir(), "state")
+	dir := filepath.Join(tempParent(t), "state")
 	_, err := Enroll(context.Background(), Material{Address: serveSpliced(t, good, attacker), Token: "secret-token", Pin: good.pin().String()}, dir, iss.exchange)
 	if err == nil {
 		t.Fatal("spliced chain accepted")
@@ -477,4 +502,61 @@ func TestLoadReportsExpiredLeaf(t *testing.T) {
 	if _, err := Load(dir); !errors.Is(err, ErrExpired) {
 		t.Fatalf("err = %v, want ErrExpired", err)
 	}
+}
+
+// T-1249: Load tells "no enrolment" apart from "state that exists and cannot be used", so a caller
+// never reports a refused ACL as "not enrolled".
+func TestLoadClassifiesAbsentApartFromUnusable(t *testing.T) {
+	d := tempParent(t)
+	if _, err := Load(filepath.Join(d, "missing")); !errors.Is(err, ErrAbsent) || !errors.Is(err, ErrState) || errors.Is(err, ErrUnsafe) {
+		t.Fatalf("missing dir = %v, want ErrAbsent (and ErrState), not ErrUnsafe", err)
+	}
+	if _, err := Load(filepath.Join(d, "missing")); errors.Is(err, ErrIncomplete) {
+		t.Fatal("a missing directory is not an enrolment in progress")
+	}
+	// A directory with some files but no leaf is mid-enrolment: still absent.
+	iss, m, dir := setup(t)
+	if _, err := Enroll(context.Background(), m, dir, iss.exchange); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, LeafFile)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); !errors.Is(err, ErrAbsent) || !errors.Is(err, ErrIncomplete) || !errors.Is(err, ErrState) {
+		t.Fatalf("no leaf = %v, want ErrAbsent and ErrIncomplete", err)
+	}
+	// Garbage in a file: unusable, not absent.
+	// Written through ownerfile so the file has the right owner/DACL on Windows too: the test must
+	// reach the parse failure, not an ACL refusal.
+	put(t, dir, LeafFile, []byte("not a pem"))
+	if _, err := Load(dir); !errors.Is(err, ErrState) || errors.Is(err, ErrAbsent) || errors.Is(err, ErrUnsafe) {
+		t.Fatalf("corrupt leaf = %v, want ErrState only", err)
+	}
+}
+
+func TestLoadClassifiesUnsafeApartFromAbsent(t *testing.T) {
+	if !runtimeUnix() {
+		t.Skip("the Windows equivalent is TestWindowsLoadRefusesWidenedState")
+	}
+	iss, m, dir := setup(t)
+	if _, err := Enroll(context.Background(), m, dir, iss.exchange); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); !errors.Is(err, ErrUnsafe) || !errors.Is(err, ErrState) || errors.Is(err, ErrAbsent) {
+		t.Fatalf("widened dir = %v, want ErrUnsafe", err)
+	}
+}
+
+func TestForAccountRefusedOffWindows(t *testing.T) {
+	if !runtimeUnix() {
+		t.Skip("Windows supports ForAccount")
+	}
+	iss, m, dir := setup(t)
+	if _, err := Enroll(context.Background(), m, dir, iss.exchange, ForAccount(`NT SERVICE\x`)); err == nil {
+		t.Fatal("ForAccount accepted on a platform where it cannot be honoured")
+	}
+	assertNothingPersisted(t, dir)
 }

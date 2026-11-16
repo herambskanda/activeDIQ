@@ -10,6 +10,8 @@
   no Active Directory object is created or changed.
   No inbound firewall exception is installed: the agent has no listener and only dials out.
   No reboot is requested.
+  Flow: install starts the service UNENROLLED; it idles (event 103, warning) and picks up `agent enroll`
+  within a few seconds (polls every 5 s, T-0813/T-1249).
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="activeDIQ Agent" Manufacturer="skenzeriq" Version="$(var.Version)" UpgradeCode="6f3b8c1e-5d1a-4f6e-9a57-3c2b7d0e4a11" Scope="perMachine" InstallerVersion="500">
@@ -40,10 +42,9 @@
             <RequiredPrivilege Name="SeChangeNotifyPrivilege" />
           </ServiceConfig>
         </ServiceInstall>
-        <!-- No Start="install": at install time the agent is not enrolled, so it reaches Running and then exits.
-             Windows Installer treats that race as "service failed to start" (error 1920) and rolls the install
-             back (T-0648, lab). The service is start=auto and is started once, after `agent enroll`. -->
-        <ServiceControl Id="AgentServiceControl" Name="activeDIQAgent" Stop="both" Remove="uninstall" Wait="yes" />
+        <!-- Start="install" is safe since T-0813: an unenrolled agent idles (event 103) instead of exiting, so the
+             install no longer races into error 1920. It picks up `agent enroll` within a few seconds. -->
+        <ServiceControl Id="AgentServiceControl" Name="activeDIQAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
       </Component>
       <Component Id="SetupExe" Guid="*">
         <File Id="SetupExeFile" Source="$(var.SetupExe)" Name="agentsetup.exe" KeyPath="yes" />

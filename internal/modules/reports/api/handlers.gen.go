@@ -741,6 +741,108 @@ func (o ListReportDefinitions200) ResponseBody() any                { return o.B
 func (ListReportDefinitions200) ResponseHeaders() map[string]string { return nil }
 func (ListReportDefinitions200) isListReportDefinitionsOutput()     {}
 
+// ListReportRunPolicyTargetsInput is the decoded input of listReportRunPolicyTargets: path, query and header parameters, then the body.
+type ListReportRunPolicyTargetsInput struct {
+	RunID    apitypes.UUID    // path "runId"
+	PolicyID apitypes.UUID    // path "policyId"
+	Cursor   *apitypes.Cursor // query "cursor"
+	Limit    *int64           // query "limit"
+}
+
+func (in *ListReportRunPolicyTargetsInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("runId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("runId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("runId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.RunID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("runId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+	{
+		vs := []string{r.PathValue("policyId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("policyId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("policyId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.PolicyID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("policyId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+	{
+		vs := r.Query["cursor"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("cursor"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e apitypes.Cursor
+			e = apitypes.Cursor(s)
+			in.Cursor = &e
+		}
+	}
+	{
+		vs := r.Query["limit"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("limit"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e int64
+			if x, err := apitypes.ParseInt(s); err != nil {
+				errs.Add(apitypes.InQuery, jsontext.Pointer("limit"), apitypes.CodeType, "expected a valid value")
+			} else {
+				e = int64(x)
+			}
+			in.Limit = &e
+		}
+	}
+}
+
+func (in *ListReportRunPolicyTargetsInput) BodyTarget() any { return nil }
+
+func (in *ListReportRunPolicyTargetsInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	if in.Cursor != nil {
+		apitypes.CheckLen(errs, apitypes.InQuery, jsontext.Pointer("cursor"), string((*in.Cursor)), 1, 1024)
+	}
+	if in.Limit != nil {
+		apitypes.CheckInt(errs, apitypes.InQuery, jsontext.Pointer("limit"), int64((*in.Limit)), 1, 1000)
+	}
+}
+
+func (in *ListReportRunPolicyTargetsInput) DestroySecrets() {}
+
+// ListReportRunPolicyTargetsOutput is one of the responses listReportRunPolicyTargets declares. Errors are returned as the error value.
+type ListReportRunPolicyTargetsOutput interface {
+	apihost.Response
+	isListReportRunPolicyTargetsOutput()
+}
+
+// ListReportRunPolicyTargets200 is the 200 response.
+type ListReportRunPolicyTargets200 struct {
+	Body ReportPolicyTargetPage
+}
+
+func (ListReportRunPolicyTargets200) StatusCode() int                     { return 200 }
+func (o ListReportRunPolicyTargets200) ResponseBody() any                 { return o.Body }
+func (ListReportRunPolicyTargets200) ResponseHeaders() map[string]string  { return nil }
+func (ListReportRunPolicyTargets200) isListReportRunPolicyTargetsOutput() {}
+
 // ListReportRunRowsInput is the decoded input of listReportRunRows: path, query and header parameters, then the body.
 type ListReportRunRowsInput struct {
 	RunID  apitypes.UUID    // path "runId"
@@ -1348,6 +1450,7 @@ func (PreviewReassignReportSchedule200) isPreviewReassignReportScheduleOutput() 
 // PreviewResumeReportScheduleInput is the decoded input of previewResumeReportSchedule: path, query and header parameters, then the body.
 type PreviewResumeReportScheduleInput struct {
 	ScheduleID apitypes.UUID // path "scheduleId"
+	Body       ReportScheduleResume
 }
 
 func (in *PreviewResumeReportScheduleInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
@@ -1370,10 +1473,11 @@ func (in *PreviewResumeReportScheduleInput) BindRequest(r *apihost.Request, errs
 	}
 }
 
-func (in *PreviewResumeReportScheduleInput) BodyTarget() any { return nil }
+func (in *PreviewResumeReportScheduleInput) BodyTarget() any { return &in.Body }
 
 func (in *PreviewResumeReportScheduleInput) Validate(errs *apitypes.Errors) {
 	_ = errs
+	in.Body.Validate(jsontext.Pointer(""), errs)
 }
 
 func (in *PreviewResumeReportScheduleInput) DestroySecrets() {}
@@ -1608,6 +1712,7 @@ func (ReassignReportSchedule202) isReassignReportScheduleOutput() {}
 // ResumeReportScheduleInput is the decoded input of resumeReportSchedule: path, query and header parameters, then the body.
 type ResumeReportScheduleInput struct {
 	ScheduleID apitypes.UUID // path "scheduleId"
+	Body       ReportScheduleResume
 }
 
 func (in *ResumeReportScheduleInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
@@ -1630,10 +1735,11 @@ func (in *ResumeReportScheduleInput) BindRequest(r *apihost.Request, errs *apity
 	}
 }
 
-func (in *ResumeReportScheduleInput) BodyTarget() any { return nil }
+func (in *ResumeReportScheduleInput) BodyTarget() any { return &in.Body }
 
 func (in *ResumeReportScheduleInput) Validate(errs *apitypes.Errors) {
 	_ = errs
+	in.Body.Validate(jsontext.Pointer(""), errs)
 }
 
 func (in *ResumeReportScheduleInput) DestroySecrets() {}
@@ -1979,6 +2085,7 @@ type Handlers interface {
 	GetReportRun(ctx context.Context, in GetReportRunInput) (GetReportRunOutput, error)
 	GetReportSchedule(ctx context.Context, in GetReportScheduleInput) (GetReportScheduleOutput, error)
 	ListReportDefinitions(ctx context.Context, in ListReportDefinitionsInput) (ListReportDefinitionsOutput, error)
+	ListReportRunPolicyTargets(ctx context.Context, in ListReportRunPolicyTargetsInput) (ListReportRunPolicyTargetsOutput, error)
 	ListReportRunRows(ctx context.Context, in ListReportRunRowsInput) (ListReportRunRowsOutput, error)
 	ListReportRuns(ctx context.Context, in ListReportRunsInput) (ListReportRunsOutput, error)
 	ListReportSchedules(ctx context.Context, in ListReportSchedulesInput) (ListReportSchedulesOutput, error)
@@ -2196,6 +2303,22 @@ func Bind(h Handlers) apihost.TagHandlers {
 				return out, nil
 			}),
 		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "listReportRunPolicyTargets", Tag: "reports", Method: "GET", Path: "/reports/runs/{runId}/policies/{policyId}/targets",
+			Permission: "reports.run", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(ListReportRunPolicyTargetsInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.ListReportRunPolicyTargets(ctx, *in.(*ListReportRunPolicyTargetsInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("ListReportRunPolicyTargets returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "listReportRunRows", Tag: "reports", Method: "GET", Path: "/reports/runs/{runId}/rows",
 			Permission: "reports.run", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
 			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
@@ -2328,7 +2451,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "previewResumeReportSchedule", Tag: "reports", Method: "POST", Path: "/reports/schedules/{scheduleId}/previews/resume",
 			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
-			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Class: "read", MaxBody: 8192, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
 		},
 			func() apihost.Input { return new(PreviewResumeReportScheduleInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
@@ -2394,7 +2517,7 @@ func Bind(h Handlers) apihost.TagHandlers {
 		apihost.NewRoute(apihost.RouteMeta{
 			OperationID: "resumeReportSchedule", Tag: "reports", Method: "POST", Path: "/reports/schedules/{scheduleId}/resume",
 			Permission: "reports.schedule", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
-			Class: "write", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+			Class: "write", MaxBody: 8192, Body: apihost.BodyJSON, MediaType: "application/json", Secret: false,
 		},
 			func() apihost.Input { return new(ResumeReportScheduleInput) },
 			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {

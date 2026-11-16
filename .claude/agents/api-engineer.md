@@ -2,7 +2,7 @@
 name: api-engineer
 description: "Use for the public surface automation customers script against — OpenAPI contracts, REST endpoint implementation, generated SDKs, the activeDIQ PowerShell module, webhooks and API authentication/keys. Owns contract-first design, versioning and backward compatibility. Not for the domain logic behind endpoints (use backend-engineer), directory protocols (use directory-engineer), or UI screens that consume the API (use frontend-engineer)."
 model: sonnet
-effort: high
+effort: medium
 skills:
   - factory-protocol
   - handoff

@@ -439,3 +439,57 @@ func TestOIDTypedRDNsNormalise(t *testing.T) {
 		}
 	}
 }
+
+func TestParseLinkValue(t *testing.T) { // T-1202
+	const g = "0102030405060708090a0b0c0d0e0f10"
+	const s = "S-1-5-21-1-2-3-500"
+	v, err := ParseLinkValue("<GUID=" + g + ">;<SID=" + s + ">;CN=x\\, y,DC=y")
+	if err != nil || !v.HasGUID || v.GUID != testGUID || !v.HasSID || v.SID != testSID || v.DN != `CN=x\, y,DC=y` {
+		t.Fatalf("%+v %v", v, err)
+	}
+	v, err = ParseLinkValue("<GUID=" + g + ">;CN=x,DC=y") // no SID: not a principal
+	if err != nil || !v.HasGUID || v.HasSID || v.DN != "CN=x,DC=y" {
+		t.Fatalf("%+v %v", v, err)
+	}
+	v, err = ParseLinkValue("<SID=" + s + ">;CN=S-1-5-21-1-2-3-500,CN=ForeignSecurityPrincipals,DC=y") // no GUID: stays unset
+	if err != nil || v.HasGUID || !v.HasSID || v.SID != testSID {
+		t.Fatalf("%+v %v", v, err)
+	}
+	v, err = ParseLinkValue("CN=x,DC=y") // DC ignored the control: nothing is invented
+	if err != nil || v.HasGUID || v.HasSID || v.DN != "CN=x,DC=y" {
+		t.Fatalf("%+v %v", v, err)
+	}
+	for _, bad := range []string{
+		"<GUID=01>;CN=x", "<GUID=" + g + ">", "<GUID=" + g + ">;", "<SID=" + s + ">;<GUID=" + g + ">;CN=x",
+		"<GUID=" + g + ">;<GUID=" + g + ">;CN=x", "<FOO=1>;CN=x", "<GUID=" + g + ">CN=x", "<SID=nope>;CN=x",
+	} {
+		if _, err := ParseLinkValue(bad); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}
+
+func TestRebase(t *testing.T) {
+	d, err := Parse(`CN=Raman\, Priya,OU=Team\+A\,B,OU=Old,DC=x,DC=y`, Strict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onto, err := Parse(`OU=Old,OU=New\;Home,DC=x,DC=y`, Strict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Rebase(d, 2, onto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `CN=Raman\, Priya,OU=Team\+A\,B,OU=Old,OU=New\;Home,DC=x,DC=y`
+	if got.String() != want {
+		t.Fatalf("got %s want %s", got, want)
+	}
+	if again, _ := Rebase(got, 2, onto); again.String() != want {
+		t.Fatalf("not idempotent: %s", again)
+	}
+	if _, err := Rebase(d, 9, onto); err == nil {
+		t.Fatal("keep beyond Len must fail")
+	}
+}

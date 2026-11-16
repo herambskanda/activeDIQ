@@ -18,8 +18,9 @@ import (
 
 const (
 	// DefaultSearchCeiling is W: matched key rows per class above which a class is withheld and the
-	// caller is told to refine. [PROPOSED] 10,000; T-1102 measures and sets it.
-	DefaultSearchCeiling = 10000
+	// caller is told to refine. 7,000: the largest swept W whose ceiling-class p95 is under 200 ms for the
+	// admin and the scoped caller on pg16 and pg18 in both T-1303 sweeps (pg16 admin at 8,000 is 199.0 and 216.4 ms).
+	DefaultSearchCeiling = 7000
 	// searchThreshold is pg_trgm.word_similarity_threshold for the fuzzy class. Tuned on the 'Pryia Ramn'
 	// vector (T-1095): its word_similarity to 'priya raman' is 0.333 on pg16 and pg18, a transposition
 	// costing four trigrams, so 0.5 cannot find it; the nearest unrelated name measured ('praveen
@@ -51,6 +52,10 @@ type SearchResult = reportsql.SearchResult
 type Searcher struct {
 	src     reportsql.SearchSource
 	ceiling int
+	// users is the inventory.users dataset the status chips are derived through (T-1097): the one derivation
+	// of locked-out, password and account-expiry states, never a copy of its rules.
+	users    reportsql.Dataset
+	usersSrc report.Dataset
 }
 
 // SearcherOption configures a Searcher at construction.
@@ -62,13 +67,16 @@ func WithCeiling(w int) SearcherOption { return func(s *Searcher) { s.ceiling = 
 
 // NewSearcher registers the search source against the live schema, as the datasets are.
 func NewSearcher(sch reportsql.Schema, opts ...SearcherOption) (*Searcher, error) {
-	src, err := reportsql.NewSearchSource(sch, "inventory_search_keys", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
+	src, err := reportsql.NewSearchSource(sch, "inventory_search_keys", "inventory_search_trigrams", report.Anchor{ID: "t", Table: "directory_objects", Mode: report.RowAnchor,
 		Project: idents("object_guid"), Connection: "connection_id", NC: "nc_guid", Object: "object_guid", Parent: "parent_guid",
 		Ancestry: "ancestry", Complete: "ancestry_complete"}, "kind", "state", "enabled", "display_name")
 	if err != nil {
 		return nil, fmt.Errorf("inventory: search source: %w", err)
 	}
 	s := &Searcher{src: src, ceiling: DefaultSearchCeiling}
+	if err := s.registerUsers(sch); err != nil {
+		return nil, err
+	}
 	for _, o := range opts {
 		o(s)
 	}

@@ -124,6 +124,25 @@ func (f fakeSrc) ScopedSearch(_ context.Context, _ ad.ScopedRequest, fn func(*ad
 	return ad.ScopedResult{Returned: 1}, fn(f.entry().WithParent(rootGUID, true)) // ResolveParents: the real source resolves the parent (T-0694)
 }
 
+// fakeSrc is also a read.Feeder, so ChangeFeed is served (a source that is not one answers
+// CAPABILITY_UNSUPPORTED, which reads as Unimplemented). The probe never gets past request validation.
+func (fakeSrc) ManagesNC(context.Context, guid.GUID) (bool, error) { return true, nil }
+func (fakeSrc) CheckFeedAttributes([]string) error                 { return nil }
+func (fakeSrc) HighestCommittedUSN(context.Context) (int64, error) { return 1, nil }
+func (fakeSrc) DeletionLifetime(context.Context) (time.Duration, error) {
+	return 60 * 24 * time.Hour, nil
+}
+func (fakeSrc) DirSyncCycle(context.Context, ad.DirSyncRequest, func(ad.DirSyncPage) error) (ad.DirSyncPage, error) {
+	return ad.DirSyncPage{}, nil
+}
+
+func (fakeSrc) Topology(context.Context) (*ad.Topology, error) {
+	return &ad.Topology{
+		NamingContexts: []ad.NamingContext{{GUID: rootGUID, Kind: ad.NCDomain, Head: "DC=lab,DC=test"}},
+		Limits:         ad.ServerLimits{MaxPageSize: 1000, MaxValueRange: 1500},
+	}, nil
+}
+
 func readHandler(t *testing.T) *read.Handler {
 	t.Helper()
 	h, err := read.New(fakeSrc{})
@@ -284,6 +303,20 @@ func TestScopedSearchOverTunnelReturnsEntries(t *testing.T) {
 	}
 }
 
+// T-1258: Describe crosses the tunnel and reaches the read group's topology half.
+func TestDescribeOverTunnelServesNamingContextsAndLimits(t *testing.T) {
+	tn, ctx := newTunnel(t)
+	resp, err := v1.NewConnectorClient(tn.srv.Conn()).Describe(ctx, &v1.DescribeRequest{
+		Connection: &v1.ConnectionRef{ConnectionId: "c1", DirectoryIdentity: dirIdent}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ncs := resp.GetNamingContexts()
+	if len(ncs) != 1 || ncs[0].GetKind() != v1.NamingContextKind_NAMING_CONTEXT_KIND_DOMAIN || resp.GetLimits().GetMaxPageSize() != 1000 {
+		t.Fatalf("describe = %v", resp)
+	}
+}
+
 // AC2: a pinned Read crossing the tunnel equals the in-process handler's answer (only the
 // connector's receive clock differs).
 func TestReadOverTunnelMatchesInProcessHandler(t *testing.T) {
@@ -386,7 +419,7 @@ func TestBindingServesNothingForAnIdentityThatIsNotATenantConnector(t *testing.T
 // AC4: the golden list of Connector RPCs the tunnel serves. Adding a group to the mount means
 // adding it here; every other method stays Unimplemented over the tunnel.
 func TestTunnelServedRPCsAreTheGoldenList(t *testing.T) {
-	golden := map[string]bool{"VerifyConnection": true, "Read": true, "ScopedSearch": true, "Plan": true, "Apply": true}
+	golden := map[string]bool{"VerifyConnection": true, "Read": true, "ScopedSearch": true, "Describe": true, "ChangeFeed": true, "Plan": true, "Apply": true}
 	tn, ctx := newTunnel(t)
 	svc := v1.File_activediq_connector_v1_connector_proto.Services().ByName("Connector")
 	for i := 0; i < svc.Methods().Len(); i++ {
@@ -414,7 +447,7 @@ func TestTunnelServedRPCsAreTheGoldenList(t *testing.T) {
 			t.Errorf("%s: served=%v (err %v), golden=%v", name, served, err, golden[name])
 		}
 	}
-	if len(golden) != 5 {
+	if len(golden) != 7 {
 		t.Fatal("golden list changed without this test")
 	}
 }

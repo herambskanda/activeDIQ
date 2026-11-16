@@ -148,7 +148,7 @@ func overrideInForce(ctx context.Context, tx store.Tx, c Connection) (*Tier0Over
 	var cleared bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM public.connection_verifications v
 		WHERE v.connection_id = $1::uuid AND v.credential_id = $2::uuid AND v.completed_at > $3
-		  AND v.outcomes ->> $4 = 'pass')`,
+		  AND v.outcomes ->> $4 IN ('pass', 'warn'))`,
 		string(c.ID), string(c.CredentialID), o.AcknowledgedAt, string(overPrivilegeCheck(c.Kind))).Scan(&cleared); err != nil {
 		return nil, fmt.Errorf("connection: tier0 override: %w", err)
 	}

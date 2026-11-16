@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 )
 
 // TrigramThreshold bounds pg_trgm.word_similarity_threshold: below 0.1 a fuzzy probe matches nearly
@@ -13,6 +14,9 @@ const (
 	MaxTrigramThreshold = 1.0
 )
 
+// defaultTrigramThreshold is pg_trgm's own default, put back when the backend had no value to return to.
+const defaultTrigramThreshold = "0.6"
+
 // SetTrigramThreshold sets pg_trgm.word_similarity_threshold for the transaction tx runs in (it is
 // transaction-local, so it ends with it) and returns a function that puts the earlier value back for
 // whatever else the caller runs. It is the one place the setting is written (search rule SE2); the value
@@ -21,15 +25,46 @@ func SetTrigramThreshold(ctx context.Context, tx Tx, threshold float64) (restore
 	if !(threshold >= MinTrigramThreshold && threshold <= MaxTrigramThreshold) {
 		return nil, fmt.Errorf("store: trigram threshold %v outside %v..%v", threshold, MinTrigramThreshold, MaxTrigramThreshold)
 	}
+	// missing_ok: a backend that has not yet run a pg_trgm operator does not know the setting and,
+	// without the flag, raises 42704 before the connection can ever warm itself.
 	var prior string
-	if err := tx.QueryRow(ctx, `SELECT current_setting('pg_trgm.word_similarity_threshold')`).Scan(&prior); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT coalesce(current_setting('pg_trgm.word_similarity_threshold', true), '')`).Scan(&prior); err != nil {
 		return nil, fmt.Errorf("store: read trigram threshold: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`, strconv.FormatFloat(threshold, 'f', 3, 64)); err != nil {
+	if prior == "" {
+		prior = defaultTrigramThreshold
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`, trigramThresholdText(threshold)); err != nil {
 		return nil, fmt.Errorf("store: set trigram threshold: %w", err)
 	}
 	return func() {
 		// Best effort: a failed transaction is rolled back by the caller and the setting goes with it.
 		_, _ = tx.Exec(ctx, `SELECT set_config('pg_trgm.word_similarity_threshold', $1, true)`, prior)
 	}, nil
+}
+
+func trigramThresholdText(threshold float64) string {
+	return strconv.FormatFloat(threshold, 'f', 3, 64)
+}
+
+// TrigramThresholdValue is the double precision value that SetTrigramThreshold leaves in
+// pg_trgm.word_similarity_threshold for threshold: the number the fuzzy candidate bound of the search
+// template must compare with, so the bound and the <% recheck use one threshold (ADR-0011 rule 5a).
+func TrigramThresholdValue(threshold float64) float64 {
+	v, err := strconv.ParseFloat(trigramThresholdText(threshold), 64)
+	if err != nil {
+		return threshold
+	}
+	return v
+}
+
+// SetStatementTimeout raises or lowers tx's statement_timeout for the rest of the transaction it
+// runs in (transaction-local, so it ends with it): a diagnostic query such as EXPLAIN ANALYZE on a
+// scale fixture can run past the default. It is the one place this setting is written outside
+// WithTenant itself (ADR-0002 T5); the value is a bound parameter.
+func SetStatementTimeout(ctx context.Context, tx Tx, d time.Duration) error {
+	if _, err := tx.Exec(ctx, `SELECT set_config('statement_timeout', $1, true)`, fmt.Sprintf("%dms", d.Milliseconds())); err != nil {
+		return fmt.Errorf("store: set statement timeout: %w", err)
+	}
+	return nil
 }

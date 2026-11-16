@@ -142,7 +142,7 @@
     },
     {
       "package": "internal/directory/client",
-      "function": "ConnectorReads.Object",
+      "function": "ConnectorReads.request",
       "reason": "The tenant is read from the request context that the authority chain set (authority.TenantFrom), never from a request field; the parse only converts that server-set value to the typed ID for the connection lookup and fails closed (ADR-0002 rule 5).",
       "withPlatform": false,
       "mintsTenantID": true
@@ -174,6 +174,13 @@
       "reason": "Enrollment-token redemption runs before any identity exists, so the routing tenant is the prefix of the presented token. It is a request value, but it is only a lookup hint and grants nothing: the token is accepted only if the SHA-256 of the whole token (tenant prefix included) matches an unused row visible under that tenant's row-level security, and every failure is the same ErrTokenInvalid. Registered for security-architect review (ADR-0002 rule 5, DM-12.I2).",
       "withPlatform": false,
       "mintsTenantID": true
+    },
+    {
+      "package": "internal/modules/objects",
+      "function": "TestTenantIsolationAndNoTenant",
+      "reason": "Test: runs a transaction with no tenant context to prove that the Template and NamingFormat stores refuse it with ErrNoTenant before any SQL (DM-50, DM-51). It is in a _test.go file and ships in no binary.",
+      "withPlatform": true,
+      "mintsTenantID": false
     },
     {
       "package": "internal/platform/audit",
@@ -213,6 +220,31 @@
   ],
   "platformJobs": [],
   "probeValues": [
+    {
+      "column": "public.helpdesk_caller_verifications.factor",
+      "value": "email_otp",
+      "reason": "CHECK: factor is email_otp, sms_otp or totp; the probe row is an email OTP challenge."
+    },
+    {
+      "column": "public.helpdesk_caller_verifications.trigger",
+      "value": "sheet_open",
+      "reason": "CHECK: trigger is sheet_open or resend; the probe row is a sheet-open issue."
+    },
+    {
+      "column": "public.helpdesk_caller_verifications.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: helpdesk_cv_life ties expires_at to created_at (later, within 5 minutes); the probe row pins both to fixed instants."
+    },
+    {
+      "column": "public.helpdesk_caller_verifications.expires_at",
+      "value": "2000-01-01 00:05:00+00",
+      "reason": "CHECK: helpdesk_cv_life, see created_at; 5 minutes after the pinned created_at."
+    },
+    {
+      "column": "public.helpdesk_caller_verifications.code_mac",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: code_mac is exactly 32 bytes and present for every non-totp factor (helpdesk_cv_code); the probe row carries a 32-byte placeholder, not a real MAC."
+    },
     {
       "column": "public.personal_subject.salt",
       "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
@@ -259,6 +291,11 @@
       "reason": "INSERT trigger: an enrolment starts pending with an expiry (DM-37, ENH-09 \u00a75); the probe row is a pending enrolment."
     },
     {
+      "column": "public.authn_ad_attempts.key_hash",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: key_hash is exactly 32 bytes (authn_ad_attempts_key_hash_check, an HMAC-SHA256 digest, T-0197); the probe row carries a 32-byte placeholder, not a real HMAC."
+    },
+    {
       "column": "public.correlations.match",
       "value": "sid",
       "reason": "CHECK: match is anchor or sid; the probe row has no anchor, so sid, which needs only ad_sid (DM-20.I1)."
@@ -302,6 +339,36 @@
       "column": "public.connections.kind",
       "value": "entra_tenant",
       "reason": "CHECK: kind is ad_forest or entra_tenant; entra_tenant needs no transport_security (DM-10)."
+    },
+    {
+      "column": "public.objects_templates.object_kind",
+      "value": "user",
+      "reason": "CHECK: object_kind is user, group, computer, contact or ou (DM-50)."
+    },
+    {
+      "column": "public.objects_templates.state",
+      "value": "draft",
+      "reason": "CHECK: state is draft, published or archived, and published_at is set only when not a draft (objects_templates_published_at, DM-50); the probe row is a draft."
+    },
+    {
+      "column": "public.objects_templates.provider",
+      "value": "ad",
+      "reason": "CHECK: provider is ad, entra or hybrid (DM-50)."
+    },
+    {
+      "column": "public.objects_templates.purpose",
+      "value": "create",
+      "reason": "CHECK: purpose is create or modify (DM-50)."
+    },
+    {
+      "column": "public.objects_naming_formats.state",
+      "value": "draft",
+      "reason": "CHECK: state is draft, active or archived, and published_at is set only when not a draft (objects_naming_formats_published_at, DM-51); the probe row is a draft."
+    },
+    {
+      "column": "public.objects_naming_formats.purpose",
+      "value": "cn",
+      "reason": "CHECK: purpose is sAMAccountName, upnPrefix, cn, displayName or mailAlias (DM-51)."
     },
     {
       "column": "public.components.kind",
@@ -909,6 +976,16 @@
       "column": "public.nc_sync_passes.state",
       "value": "paused",
       "reason": "CHECK: nc_sync_passes_state_check restricts the feed state, and state 'ok' needs last_pass_at; the probe row is a paused feed (T-0949's table, unblocked here by T-0959)."
+    },
+    {
+      "column": "public.directory_object_changes.change_kind",
+      "value": "edited",
+      "reason": "CHECK: directory_object_changes_change_kind_check restricts the change kind to a fixed set; the probe row carries one valid kind (T-1109)."
+    },
+    {
+      "column": "public.directory_object_changes.object_kind",
+      "value": "user",
+      "reason": "CHECK: directory_object_changes_object_kind_check restricts the object kind to the DM-16 set; the probe row carries one valid kind (T-1109)."
     }
   ]
 }

@@ -243,6 +243,32 @@ mkdir -p "$opt/internal/directory/client"
 printf 'package client\n\ntype C struct{}\n\nfunc (c *C) Send() { c.sendApply() }\nfunc (c *C) sendApply() {}\n' >"$opt/internal/directory/client/c.go"
 rm -f "$opt/internal/modules/a/a.go"
 must_fail_with "fitness-operation O2 on an exported client method issuing a write RPC without a step.Step" 'O2 \[rule 2\] exported Send issues a connector-contract write RPC but has no step.Step parameter' "$opbin" -root "$opt"
+# O2 type-aware half (tools/analyzers/connwrite, T-1408): an exported alias of the generated client in
+# directory/client and a call of its Apply from another package, with no identifier of the client in the caller.
+mkdir -p "$opt/internal/proto/activediq/connector/v1" "$opt/internal/modules/a"
+printf 'package connectorv1\n\nimport "context"\n\ntype CallOption interface{}\ntype ApplyRequest struct{}\ntype ApplyResponse struct{}\ntype ConnectorClient interface {\n\tApply(ctx context.Context, in *ApplyRequest, opts ...CallOption) (*ApplyResponse, error)\n}\n' >"$opt/internal/proto/activediq/connector/v1/v1.go"
+printf 'package client\n\nimport connectorv1 "op.test/internal/proto/activediq/connector/v1"\n\ntype Connector = connectorv1.ConnectorClient\n' >"$opt/internal/directory/client/c.go"
+printf 'package a\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(c client.Connector) { _, _ = c.Apply(context.Background(), nil) }\n' >"$opt/internal/modules/a/a.go"
+must_fail_with "fitness-operation O2 on an exported alias of the generated client in directory/client" 'internal/directory/client/c.go:5: O2 \[rule 2\] exported type Connector is, aliases or embeds the generated connector-contract client' "$opbin" -root "$opt"
+must_fail_with "fitness-operation O2 on Apply called through the alias from another package" 'internal/modules/a/a.go:9: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+# A nested internal/ dir (idiomatic under cmd/) is not the top-level one: a package's place is its path below the
+# module root (security review of T-1408). The caller names no ConnectorClient identifier, only holds what a source returns.
+printf 'package client\n\nimport (\n\t"context"\n\n\tconnectorv1 "op.test/internal/proto/activediq/connector/v1"\n)\n\ntype Source interface {\n\tConnector(ctx context.Context) (connectorv1.ConnectorClient, error)\n}\n' >"$opt/internal/directory/client/c.go"
+rm -f "$opt/internal/modules/a/a.go"
+mkdir -p "$opt/cmd/server/internal/proto/evil"
+printf 'package evil\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(s client.Source) {\n\tcc, _ := s.Connector(context.Background())\n\t_, _ = cc.Apply(context.Background(), nil)\n}\n' >"$opt/cmd/server/internal/proto/evil/e.go"
+must_fail_with "fitness-operation O2 on Apply under a nested cmd/*/internal/proto directory" 'cmd/server/internal/proto/evil/e.go:11: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+rm -rf "$opt/cmd"
+# A real directory called proto_test is not internal/proto (only a genuine external test package loses its _test suffix).
+mkdir -p "$opt/internal/proto_test"
+printf 'package evil\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(s client.Source) {\n\tcc, _ := s.Connector(context.Background())\n\t_, _ = cc.Apply(context.Background(), nil)\n}\n' >"$opt/internal/proto_test/e.go"
+must_fail_with "fitness-operation O2 on Apply under a real internal/proto_test directory" 'internal/proto_test/e.go:11: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+rm -rf "$opt/internal/proto_test"
+# A //line directive must not make a non-test file pass for a _test.go (the real filename decides every allowance).
+mkdir -p "$opt/internal/compose/server"
+printf '//line zz_evil_test.go:1\npackage server\n\nimport (\n\t"context"\n\n\t"op.test/internal/directory/client"\n)\n\nfunc f(s client.Source) {\n\tcc, _ := s.Connector(context.Background())\n\t_, _ = cc.Apply(context.Background(), nil)\n}\n' >"$opt/internal/compose/server/zz_evil.go"
+must_fail_with "fitness-operation O2 on Apply in a non-test file carrying a //line zz_test.go directive" 'internal/compose/server/zz_evil.go:12: O2 \[rule 2\] the generated connector-contract client.s Apply write RPC is used outside' "$opbin" -root "$opt"
+rm -rf "$opt/internal/compose"
 rm -rf "$opt/internal/directory"
 rm -rf "$opt/internal/modules"
 must_pass "fitness-operation O9 on the repository itself" "$opbin" -root "$root"
@@ -779,6 +805,121 @@ must_fail_with "fitness-reports RP7 on a definition and its LOCK entry edited to
 # a bound test that is declared but whose binding is not landed, and one that is absent when landed, are
 # the tool's own tests (TestBoundTest*, TestDeclaredButNotLandedFails, TestRP11* in tools/fitness/reports/check_test.go).
 
+# --- fitness-search (ADR-0011 Fitness function SE1, SE2 and the bound tests SE3-SE6, T-1126), the real CLI ----
+# (-static-only: the bound tests run on PostgreSQL 16 and 18 in make fitness-search; the failing fixture of
+# every rule, including the bound-test refusals, is go test ./tools/fitness/search)
+srbin="$tmp/fitness-search"; go build -o "$srbin" ./tools/fitness/search
+sr="$tmp/sr"
+sr_put() { mkdir -p "$sr/$(dirname "$1")"; cat >"$sr/$1"; }
+fresh_sr() {
+  rm -rf "$sr"; mkdir -p "$sr"; printf 'module sr.test\n\ngo 1.22\n' >"$sr/go.mod"
+  sr_put internal/platform/authz/a.go <<'GO'
+package authz
+
+type ReadScope struct{ n int }
+
+func (s ReadScope) Terms() []int            { return nil }
+func (s ReadScope) Token() (int, bool)      { return 0, false }
+func (s ReadScope) Connections() []int      { return nil }
+func (s ReadScope) Admits(v int) bool       { return v > s.n }
+func (s ReadScope) SearchRoots(c int) []int { return nil }
+GO
+  sr_put internal/platform/store/like.go <<'GO'
+package store
+
+type LikePattern struct{ p string }
+GO
+  sr_put internal/platform/store/reportsql/scope.go <<'GO'
+package reportsql
+
+import "sr.test/internal/platform/authz"
+
+func scope(s authz.ReadScope) int { return len(s.Terms()) }
+GO
+  sr_put internal/platform/store/reportsql/search.go <<'GO'
+package reportsql
+
+type Search struct{}
+
+func (Search) CompileSearch() string {
+	return "SELECT k.object_guid FROM inventory_search_keys k WHERE k.key_kind = 1 AND " + "$1 <% k.key ORDER BY k.key <-> $1 LIMIT 10"
+}
+GO
+  sr_put internal/directory/inventory/inventory.go <<'GO'
+package inventory
+
+import "sr.test/internal/platform/store/reportsql"
+
+func Compile(s reportsql.Search) string { return s.CompileSearch() }
+GO
+  # the four listed exceptions (the real files exist on main); a stale one fails the job
+  sr_put internal/directory/client/usersearch.go <<'GO'
+package client
+
+import "sr.test/internal/platform/authz"
+
+func Live(s authz.ReadScope) bool { return s.Admits(1) }
+GO
+  sr_put internal/compose/server/localaccount.go <<'GO'
+package server
+
+const countRoles = "SELECT count(*) FROM public.authz_roles"
+GO
+  sr_put internal/directory/inventory/closure.go <<'GO'
+package inventory
+
+const privileged = "SELECT g.guid FROM groups g WHERE g.sid ~ '^S-1-5-21-.*-512$'"
+GO
+  sr_put tools/fitness/tenancy/probes.go <<'GO'
+package main
+
+const leak = "SELECT set_config('app.tenant_id', $1, $2)"
+GO
+  sr_put migrations/0001_base.sql <<'SQL'
+CREATE TABLE public.authz_roles (id int);
+CREATE TABLE public.inventory_search_keys (key text, key_kind int);
+CREATE INDEX k_trgm ON public.inventory_search_keys USING gin (key gin_trgm_ops);
+DROP INDEX public.k_trgm;
+DO $$ BEGIN RAISE EXCEPTION 'bad id % in authz_roles', 1; END $$;
+SQL
+}
+fresh_sr
+must_pass "fitness-search (clean tree, listed exceptions pending, the rest passing)" "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put internal/modules/reports/export/e.go <<'GO'
+package export
+
+import "sr.test/internal/platform/authz"
+
+func Leak(s authz.ReadScope) []int { return s.Terms() }
+GO
+must_fail_with "fitness-search SE1 on ReadScope.Terms outside authz and reportsql" 'internal/modules/reports/export/e.go:5 SE1 \[scope-renderer\]' "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put internal/modules/users/u.go <<'GO'
+package users
+
+import "sr.test/internal/platform/authz"
+
+func Mine(s authz.ReadScope) bool { return s.Admits(7) }
+GO
+must_fail_with "fitness-search SE1 on ReadScope.Admits outside authz (the second renderer)" 'internal/modules/users/u.go:5 SE1 \[scope-members\]' "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put internal/modules/search/s.go <<'GO'
+package search
+
+const q = "SELECT guid FROM inventory_objects WHERE sam ILIKE $1"
+GO
+must_fail_with "fitness-search SE2 on an ILIKE pattern in search SQL" 'internal/modules/search/s.go:3 SE2 \[pattern' "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put migrations/0002_trgm.sql <<'SQL'
+CREATE VIEW public.near AS SELECT a.key FROM public.inventory_search_keys a WHERE a.key % 'abc';
+SQL
+must_fail_with "fitness-search SE2 on a trigram operator in a migration (string literals and RAISE placeholders are not flagged)" 'migrations/0002_trgm.sql:1 SE2 \[trigram-operator\]' "$srbin" -root "$sr" -static-only
+fresh_sr; sr_put internal/modules/x/x.go <<'GO'
+package x
+
+const q = "SELECT set_config('pg_trgm.word_similarity_threshold', $1, false)"
+GO
+must_fail_with "fitness-search SE2 on a persistent set_config" 'internal/modules/x/x.go:3 SE2 \[set-config-persistent\]' "$srbin" -root "$sr" -static-only
+fresh_sr; rm "$sr/internal/directory/client/usersearch.go"
+must_fail_with "fitness-search on a listed exception that no longer matches anything (the list cannot rot)" 'usersearch.go:1 SE1 \[stale-exception\]' "$srbin" -root "$sr" -static-only
+
 fresh_sp_tree; sp_put internal/modules/users/u.go <<'GO'
 package users
 
@@ -1193,6 +1334,16 @@ host_case "plaintext listener" HOST-NO-PLAINTEXT-LISTENER 's/"plaintext_responds
 host_case "setup secret reusable" HOST-SETUP-SECRET-SINGLE-USE 's/"accepted_again": false/"accepted_again": true/'
 host_case "WER LocalDumps configured" HOST-NO-DUMPS 's/"wer_local_dumps": false/"wer_local_dumps": true/'
 host_case "remote DSN without TLS accepted" HOST-REMOTE-DSN-FULL-TLS 's/"mode": "disable", "remote": true, "accepted": false/"mode": "disable", "remote": true, "accepted": true/'
+
+# --- fitness-host p2-oci (T-1462, ADR-0002 P2 OCI half) -------------------------------------------
+# A deliberately broken migration must fail the run at step=migrations and name the profile. Needs Docker;
+# the build of the linux/amd64 image runs first, so this also proves the build step is reached.
+if docker info >/dev/null 2>&1; then
+  must_fail_with "fitness-host p2-oci on a broken migration" 'profile=linux-oci arch=amd64 postgres=16 step=migrations' \
+    go run ./tools/fitness/host p2-oci -repo "$root" -migrations "$root/tools/fitness/host/testdata/p2oci-broken-migrations" -profile linux-oci -arch amd64 -pg 16
+else
+  echo "SKIP: fitness-host p2-oci proof needs Docker (the gate itself, make fitness-profiles, fails without it)"
+fi
 
 # --- release tooling and workflows (T-0261) -----------------------------------------------------
 rt="$tmp/release"; mkdir -p "$rt"
@@ -1751,6 +1902,41 @@ sed -i 's/"S-5"/"S-6"/' "$ss/b/internal/platform/authn/sso/saml/c_test.go"
 must_fail_with "fitness-sso on a corpus record with no subtest" 'subtest-missing.*S-5' sso -root "$ss/b"
 sed -i 's/"S-6"/"S-5"/; s/t.Run(id, func(t \*testing.T) {})/t.Run(id, func(t *testing.T) { if id == "S-3" { t.Skip("x") } })/' "$ss/b/internal/platform/authn/sso/saml/c_test.go"
 must_fail_with "fitness-sso on a skipped corpus subtest" 'TestCorpus/S-3 .*subtest-skip' sso -root "$ss/b"
+
+# --- fitness-group-member (connector-contract §8.10.8 GM1-GM4, T-1916), the real CLI on throw-away trees ----
+gmbin="$tmp/fitness-group-member"; go build -o "$gmbin" ./tools/fitness/groupmember
+gm="$tmp/gm"
+for f in knowledge/development/architecture/connector-contract.md knowledge/development/architecture/threat-model.md \
+         internal/proto/activediq/connector/v1/reserved_test.go internal/directory/client/write_test.go internal/directory/client/write.go; do
+  mkdir -p "$gm/$(dirname "$f")"; cp "$f" "$gm/$f"
+done
+must_pass "fitness-group-member (clean tree)" "$gmbin" -root "$gm"
+cp "$gm/internal/directory/client/write_test.go" "$tmp/gm-write_test.go"
+sed -i 's/"ad.computer.resetAccount": true/"ad.bogus.kind": true/' "$gm/internal/directory/client/write_test.go"
+must_fail_with "fitness-group-member GM2 on a closed list that is not the thirteen keys" 'GM2: TestKindTableClosed accepts "ad.bogus.kind"' "$gmbin" -root "$gm"
+cp "$tmp/gm-write_test.go" "$gm/internal/directory/client/write_test.go"
+sed -i '/WRITE_KIND_GROUP_MEMBER_REMOVE: /d' "$gm/internal/proto/activediq/connector/v1/reserved_test.go"
+must_fail_with "fitness-group-member GM4 on a kind list that differs from section 8.10.1" 'GM4: TestWriteKindList lacks GROUP_MEMBER_REMOVE' "$gmbin" -root "$gm"
+git show HEAD:internal/proto/activediq/connector/v1/reserved_test.go >"$gm/internal/proto/activediq/connector/v1/reserved_test.go"
+sed -i 's/^reset_computer: unicodePwd\[computer\]$/reset_computer: unicodePwd/' "$gm/knowledge/development/architecture/threat-model.md"
+must_fail_with "fitness-group-member GM3 on a guarded block without the computer key" 'GM3: guarded-v1: reset_computer must be exactly unicodePwd\[computer\]' "$gmbin" -root "$gm"
+cp knowledge/development/architecture/threat-model.md "$gm/knowledge/development/architecture/threat-model.md"
+mkdir -p "$gm/internal/modules/ad"
+cat >"$gm/internal/modules/ad/g.go" <<'GO'
+package ad
+
+var d = operation.Descriptor{ID: "ad.group.addMember", Permission: "objects.group.add_member"}
+
+func plan() {
+	_ = step.Plan{Target: memberRef, Kind: "ad.group.addMember", Reversibility: 1}
+	_ = client.WriteOp{DigestKind: "ad.group.addMember", Target: memberRef}
+}
+GO
+must_fail_with "fitness-group-member GM1 on an Action whose authz Target is the member" 'GM1: authz Target "memberRef" names the member' "$gmbin" -root "$gm"
+sed -i 's/Permission: "objects.group.add_member"/Permission: "objects.user.update"/; s/memberRef/groupRef/g' "$gm/internal/modules/ad/g.go"
+must_fail_with "fitness-group-member GM1 on an Action declaring a non-group permission" 'GM1: Descriptor Permission "objects.user.update" is outside' "$gmbin" -root "$gm"
+sed -i 's/Permission: "objects.user.update"/Permission: "objects.group.nest"/' "$gm/internal/modules/ad/g.go"
+must_pass "fitness-group-member (group Action with the group permission and the group Target)" "$gmbin" -root "$gm"
 
 if [ "$fails" -ne 0 ]; then echo "ci-proof: $fails proof(s) failed" >&2; exit 1; fi
 echo "ci-proof: every gate rejects its violation and accepts clean input"

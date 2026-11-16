@@ -11,7 +11,9 @@
 --   subject         a console account (account_id), or a directory user as connection + objectGUID.
 -- Methods other than totp arrive with their own tickets; they get their own columns and checks.
 
--- write-class: authn_authenticator_enrollments system
+-- Class config (ADR-0005 rule 10, T-1221): enrolling a factor is a widening decision (a credential);
+-- the host CLI's enrolment is item 2, the end-user page item 10, sign-in's spent step item 1.
+-- write-class: authn_authenticator_enrollments config
 CREATE TABLE public.authn_authenticator_enrollments (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   id uuid NOT NULL DEFAULT gen_random_uuid(),

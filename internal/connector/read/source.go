@@ -3,6 +3,7 @@ package read
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/skenzeriq/activediq/internal/connector/ad"
 	"github.com/skenzeriq/activediq/internal/connector/write"
@@ -53,7 +54,7 @@ func (a *ADSource) BoundDC(ctx context.Context) (*connectorv1.DcIdentity, error)
 }
 
 func (a *ADSource) Read(ctx context.Context, id guid.GUID, attrs []string, maxValues int) (*ad.Entry, error) {
-	return a.sess.Read(ctx, dn.GUIDRef(id), attrs, ad.ReadOptions{MaxValues: maxValues})
+	return a.sess.Read(ctx, dn.GUIDRef(id), attrs, ad.ReadOptions{MaxValues: maxValues, ExtendedDN: true})
 }
 
 // Parent returns the parent's objectGUID. ok is false only for a naming-context head, which the
@@ -110,5 +111,111 @@ func (a *ADSource) ScopedSearch(ctx context.Context, req ad.ScopedRequest, fn fu
 	if !a.ok() {
 		return ad.ScopedResult{}, write.ErrNoBoundDC
 	}
+	req.ExtendedDN = true // DN-valued attributes carry the target's GUID and SID (T-1202)
 	return a.sess.ScopedSearch(ctx, req, fn)
+}
+
+// Feeder is the change-feed half of a Source (connector-contract §6). A Source without it answers
+// ChangeFeed with CAPABILITY_UNSUPPORTED.
+type Feeder interface {
+	// ManagesNC reports whether the connection manages the naming context with this objectGUID: the
+	// domain NC the bound DC serves, and nothing else (not Configuration, Schema or an application
+	// partition, which DirSync would otherwise follow).
+	ManagesNC(ctx context.Context, nc guid.GUID) (bool, error)
+	// CheckFeedAttributes refuses wildcards, read-only constructed attributes and SecretAttrs members
+	// before any request reaches the DC.
+	CheckFeedAttributes(names []string) error
+	// HighestCommittedUSN is the bound DC's highestCommittedUSN, read now.
+	HighestCommittedUSN(ctx context.Context) (int64, error)
+	// DeletionLifetime is the smaller of tombstoneLifetime and msDS-DeletedObjectLifetime.
+	DeletionLifetime(ctx context.Context) (time.Duration, error)
+	// DirSyncCycle runs DirSync responses from the request's cookie to the end of the cycle
+	// (ad.Session.DirSyncCycle semantics).
+	DirSyncCycle(ctx context.Context, req ad.DirSyncRequest, fn func(ad.DirSyncPage) error) (ad.DirSyncPage, error)
+}
+
+var _ Feeder = (*ADSource)(nil)
+
+func (a *ADSource) ManagesNC(ctx context.Context, nc guid.GUID) (bool, error) {
+	if !a.ok() {
+		return false, write.ErrNoBoundDC
+	}
+	dom, err := a.sess.DomainNCGUID(ctx)
+	if err != nil {
+		return false, err
+	}
+	return dom == nc, nil
+}
+
+func (a *ADSource) CheckFeedAttributes(names []string) error {
+	if !a.ok() {
+		return write.ErrNoBoundDC
+	}
+	return a.sess.CheckDirSyncAttributes(names)
+}
+
+func (a *ADSource) HighestCommittedUSN(ctx context.Context) (int64, error) {
+	if !a.ok() {
+		return 0, write.ErrNoBoundDC
+	}
+	return a.sess.HighestCommittedUSN(ctx)
+}
+
+func (a *ADSource) DeletionLifetime(ctx context.Context) (time.Duration, error) {
+	if !a.ok() {
+		return 0, write.ErrNoBoundDC
+	}
+	return a.sess.DeletionLifetime(ctx)
+}
+
+func (a *ADSource) DirSyncCycle(ctx context.Context, req ad.DirSyncRequest, fn func(ad.DirSyncPage) error) (ad.DirSyncPage, error) {
+	if !a.ok() {
+		return ad.DirSyncPage{}, write.ErrNoBoundDC
+	}
+	return a.sess.DirSyncCycle(ctx, req, fn)
+}
+
+// Describer is the optional topology half of a Source. A Source without it answers Describe with
+// CAPABILITY_UNSUPPORTED.
+type Describer interface {
+	// Topology reads the forest's naming contexts and the bound DC's paging limits on the one session.
+	Topology(ctx context.Context) (*ad.Topology, error)
+}
+
+var _ Describer = (*ADSource)(nil)
+
+func (a *ADSource) Topology(ctx context.Context) (*ad.Topology, error) {
+	if !a.ok() {
+		return nil, write.ErrNoBoundDC
+	}
+	return a.sess.Topology(ctx)
+}
+
+// ChildCounter is the optional child-count half of a Source (§5.3a). A Source without it answers a
+// request with include_child_count with CAPABILITY_UNSUPPORTED.
+type ChildCounter interface {
+	// CountChildren counts the immediate children of the object, at most limit (ad.Session.CountChildren).
+	CountChildren(ctx context.Context, id guid.GUID, limit uint32) (n uint32, capped bool, err error)
+}
+
+var _ ChildCounter = (*ADSource)(nil)
+
+func (a *ADSource) CountChildren(ctx context.Context, id guid.GUID, limit uint32) (uint32, bool, error) {
+	if !a.ok() {
+		return 0, false, write.ErrNoBoundDC
+	}
+	return a.sess.CountChildren(ctx, dn.GUIDRef(id), limit)
+}
+
+// IsSamba reports whether the bound DC's rootDSE names Samba as its vendor; it labels the
+// ReadReplicationStatus capability and gates nothing.
+func (a *ADSource) IsSamba(ctx context.Context) (bool, error) {
+	if !a.ok() {
+		return false, write.ErrNoBoundDC
+	}
+	rd, err := a.sess.RootDSE(ctx)
+	if err != nil {
+		return false, err
+	}
+	return rd.IsSamba(), nil
 }

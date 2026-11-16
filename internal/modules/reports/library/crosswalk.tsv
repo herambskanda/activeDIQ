@@ -14,7 +14,7 @@ Account Never Expires Users	usr-02	Account expiry	never
 Inactive Users	usr-03	Logon activity	inactive	
 Recently Logged on Users	usr-03	Logon activity	recent	
 Users Never Logged On	usr-03	Logon activity	never	
-Real Last Logon	usr-04	Real last logon	-	
+Real Last Logon	usr-04	Real last logon	real	
 Locked-out Users	usr-05	Locked-out users	locked_out	
 Password Expired Users	pwd-01	Password status	expired	
 Soon-to-expire User Passwords	pwd-01	Password status	soon	
@@ -22,7 +22,7 @@ Users with Password Never Expires	pwd-01	Password status	never
 Users with Change Password at Next Logon	pwd-01	Password status	must_change	
 Password Changed Users	pwd-02	Password age	changed	
 Password Unchanged Users	pwd-02	Password age	unchanged	
-Recent Logon Failures	pwd-03	Recent logon failures	-	
+Recent Logon Failures	pwd-03	Recent logon failures	recent	
 All Groups	grp-01	Groups	all	
 Security Groups	grp-01	Groups	security	
 Distribution Groups	grp-01	Groups	distribution	
@@ -56,3 +56,13 @@ Recently Created OUs	ou-01	Organizational units	recently_created
 All Contacts	ctc-01	Contacts	all	
 Mail Enabled Contacts	ctc-01	Contacts	mail_enabled	
 Recently Created Contacts	ctc-01	Contacts	recently_created	
+Users with Cannot Change Password	pwd-04	Password change blocked	blocked	
+Recently Modified Users	usr-06	User changes	modified	
+Recently Deleted Users	usr-06	User changes	deleted	
+Recently Modified Groups	grp-05	Group changes	modified	
+Recently Deleted Groups	grp-05	Group changes	deleted	
+Recently Modified Computers	cmp-03	Computer changes	modified	
+Recently Deleted Computers	cmp-03	Computer changes	deleted	
+Recently Modified Contacts	ctc-02	Contact changes	modified	
+Recently Deleted Contacts	ctc-02	Contact changes	deleted	
+Recently Modified OUs	ou-02	OU changes	modified	

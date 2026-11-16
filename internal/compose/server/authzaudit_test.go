@@ -127,7 +127,7 @@ func TestSearchWithoutDirectoryReadIs403AndAudited(t *testing.T) {
 	base := failClosedPorts(openLimiter{})
 	ports := apihost.Ports{Authn: sessionAuthn{pr}, Authz: newAudited(fixedAuthz{}, tx, sink), Limits: base.Limits, StepUp: base.StepUp}
 	boom := directory.Handlers{Connections: panicConns{}, Search: nil}
-	srv, err := apihost.Build(doc, []apihost.TagHandlers{boom.Bind()}, pol, permissionCatalogue(), ports)
+	srv, err := apihost.Build(doc, []apihost.TagHandlers{boom.Bind()}, pol, bootedCatalogue(), ports)
 	if err != nil {
 		t.Fatal(err)
 	}

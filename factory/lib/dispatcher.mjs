@@ -2,6 +2,8 @@
 // merges finished code tickets and launches new workers into free slots. It never calls a model and
 // never crashes on one bad file or one failed worker: every step is guarded and reported once.
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   appendEvent, drainBadFiles, getEntity, listEntities, listRecentRuns, localDate, newRunId, nowIso,
   pidAlive, putEntity, readControl, readDispatcherState, readRange, readRateLimitSignal, readTail, reloadConfig,
@@ -12,18 +14,25 @@ import { loadAgents } from './agents.mjs';
 import { checkLaunchPolicy } from './policy.mjs';
 import { isCodeType } from './flows.mjs';
 import { LogScanner, detectConnectivityError, detectRateLimit, resultKeyword } from './runlog.mjs';
-import { claimTicket, createTicket, blockTicket, reopenTicket, setTicketLinks } from './tickets.mjs';
+import { claimTicket, createTicket, doneDependencies, indexById, blockTicket, reopenTicket, setTicketLinks } from './tickets.mjs';
 import { applyAdvisoryDefaults } from './decisions.mjs';
 import { pollAdvisories } from './advisories.mjs';
 import { applyNoProgress } from './escalation.mjs';
 import { buildPrompt } from './prompt.mjs';
 import { buildWorkerArgs, launchWorker, runFiles, signalPid } from './launcher.mjs';
 import {
-  branchName, branchesAheadOfMain, cleanupWorktree, ensureWorktree, mergeTicket, repoState, usesSharedCheckout,
+  branchName, branchesAheadOfMain, cleanupWorktree, ensureWorktree, landedCommit, mergeTicket, repoState, unmergedBranches, usesSharedCheckout,
 } from './worktree.mjs';
 import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
-import { blockedNote, preMergeSettings, runPreMergeGate } from './premerge.mjs';
+import { EMBARGO_TAG, orderDoneQueue } from './mergequeue.mjs';
+import { applyMigrationRenumber, blockedNote, preMergeSettings, runPreMergeTrain, splitTrain } from './premerge.mjs';
+import { postMergeVerifySettings, readKnownFindings, runPostMergeVerify } from './postmerge.mjs';
+import { git } from './git.mjs';
+import {
+  awaitPredecessor, awaitSuccessor, factoryChange, mainSha, shortSha, spawnSuccessor, stopStaleGateChildren,
+} from './reload.mjs';
+import { restartBoard } from './lifecycle.mjs';
 
 export { selectCandidates, launchGate } from './candidates.mjs';
 
@@ -43,6 +52,7 @@ export function diskFreeBytes(dir) {
   }
 }
 
+const FACTORY_BIN = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'factory');
 const READ_CHUNK = 4 * 1024 * 1024;
 const NO_PID_GRACE_MS = 30_000;
 
@@ -61,6 +71,18 @@ export function loadState(ctx) {
   };
 }
 
+/**
+ * `loadState` plus the one thing only git knows: which done dependencies of ready tickets have a
+ * branch not yet on main (T-1266). Asks git only about those dependencies.
+ * @param {object} ctx
+ */
+export async function loadStateWithMerges(ctx) {
+  const state = loadState(ctx);
+  const ready = state.tickets.filter((t) => t.status === 'ready');
+  state.unmerged = await unmergedBranches(ctx, doneDependencies(ready, indexById(state.tickets)));
+  return state;
+}
+
 function madeProgress(snapshot, ticket) {
   return ticket.status !== snapshot.status
     || (ticket.stage_role ?? null) !== (snapshot.stage_role ?? null)
@@ -70,17 +92,23 @@ function madeProgress(snapshot, ticket) {
 const kTokens = (n) => `${Math.round((n ?? 0) / 1000)}k`;
 
 /** The dispatcher. Create one per process; call {@link Dispatcher#run}. */
-const EMBARGO_TAG = 'embargoed';
 const EMBARGO_REASON = 'tagged embargoed — held until fix day; remove the tag to merge (security-disclosure runbook §6)';
 
 export class Dispatcher {
   /**
    * @param {object} ctx
-   * @param {{spawnWorker?: typeof launchWorker}} [opts] spawnWorker is injectable for tests
+   * @param {{spawnWorker?: typeof launchWorker, reload?: object}} [opts] spawnWorker and the reload
+   *   steps (spawnSuccessor, restartBoard, readyTimeoutMs, bin) are injectable for tests
    */
-  constructor(ctx, { spawnWorker = launchWorker } = {}) {
+  constructor(ctx, { spawnWorker = launchWorker, reload = {} } = {}) {
     this.ctx = ctx;
     this.spawnWorker = spawnWorker;
+    this.reloadSteps = {
+      bin: FACTORY_BIN, spawnSuccessor, restartBoard, readyTimeoutMs: 20_000, ...reload,
+    };
+    this.codeSha = null; // the main commit whose factory code this process has loaded
+    this.restartRequested = false; // `factory restart` (SIGUSR2): reload now, aborting a gate in flight
+    this.reloaded = false; // handed over to a successor: exit without stopping workers
     this.active = new Map(); // runId → run record (running)
     this.children = new Map(); // runId → { child, exit } for workers this process started
     this.tails = new Map(); // runId → { scanner, offset, dirty, persistedAt }
@@ -96,9 +124,13 @@ export class Dispatcher {
     this.lastTick = 0;
     this.lastHeartbeat = 0;
     this.wake = null;
-    this.gateRun = null; // the pre-merge gate + merge in flight (one at a time)
-    this.gateAbort = null;
+    this.gateLanes = []; // pre-merge gates + merge(s) in flight, each { ids, abort, run } (T-1297, T-2210: up to pre_merge.concurrency at once)
+    this.mergeLock = Promise.resolve(); // serializes real merges into ctx.root across lanes (T-2210): git allows only one merge in progress at a time
     this.gateRetryAt = new Map(); // ticket id → ms before which a gate that could not judge is not retried
+    this.runGate = runPreMergeTrain; // (ctx, tickets[], {signal}) → verdict; replaceable in tests
+    this.verifyRun = null; // post-merge ci-full check in flight (never blocks a merge)
+    this.verifyAbort = null;
+    this.nextVerifyAt = 0; // ms; the cooldown between verify runs
   }
 
   // ---- bookkeeping ------------------------------------------------------------------------
@@ -122,6 +154,27 @@ export class Dispatcher {
     } catch (err) {
       this.report(key, `${key} failed: ${err.message}`);
       return undefined;
+    }
+  }
+
+  /**
+   * Run `fn` holding the sole lock on real merges into `ctx.root` (T-2210). With more than one gate
+   * lane in flight, each validates concurrently in its own scratch worktree — fine, those are
+   * isolated — but the real `git merge` always happens in the one shared checkout, which only
+   * supports one merge in progress at a time; without this, two lanes landing at once fail with
+   * "the main checkout is mid-merge", not a textual conflict. Callers that check-then-act (the
+   * staleness check in `gateGroup`) must do the whole check-and-merge inside one `fn`, not acquire
+   * the lock twice, or a sibling could land between the check and the act.
+   */
+  async withMergeLock(fn) {
+    const prior = this.mergeLock;
+    let release;
+    this.mergeLock = new Promise((resolve) => { release = resolve; });
+    await prior;
+    try {
+      return await fn();
+    } finally {
+      release();
     }
   }
 
@@ -162,6 +215,7 @@ export class Dispatcher {
       });
       await this.guard('security advisory poll', () => this.advisoryPoll());
       if (!this.stopping) await this.guard('merge', () => this.mergePass());
+      if (!this.stopping) await this.guard('post-merge verify', () => this.maybeVerifyMain());
       if (!this.stopping) await this.guard('launch', () => this.fill());
       if (this.daemon) this.heartbeat();
     } finally {
@@ -188,6 +242,7 @@ export class Dispatcher {
   /** Take over runs a previous dispatcher left running. */
   adopt() {
     this.adopted = true;
+    updateDispatcherState(this.ctx, { merge_gates: [] }); // any gate(s) a previous dispatcher left in flight are gone
     for (const run of listRecentRuns(this.ctx, 200)) {
       if (run.status === 'running' && !this.active.has(run.id)) this.active.set(run.id, run);
     }
@@ -380,40 +435,113 @@ export class Dispatcher {
   // ---- merging ----------------------------------------------------------------------------
 
   /**
+   * Finished tickets are taken in queue order (`orderDoneQueue`, T-1296): those a blocked or ready
+   * ticket waits on, then by priority, then the earliest done time.
+   *
    * Merge every finished ticket that has work on its branch: code tickets that still have a
    * worktree, and any other type whose `factory/<id>` branch has commits ahead of main (a spec
    * or docs ticket must never reach done with its commits stranded on a branch — T-0986).
    * With the pre-merge gate enabled (`dispatcher.pre_merge.enabled`) the gate runs CI on the
-   * merge result first, which takes minutes to an hour, so one ticket at a time goes through it
-   * in the background: this pass starts it and returns, and the ticket merges (or is reopened)
-   * when the gate finishes.
+   * merge result first, which takes minutes to an hour, so it judges a train of up to
+   * `pre_merge.train_size` tickets at once (T-1297) in the background: this pass starts it and
+   * returns, and each ticket merges (or is reopened) when the gate finishes.
    */
   async mergePass() {
     if (this.shared) return;
-    const gated = preMergeSettings(this.ctx.config).enabled;
-    if (gated && this.gateRun) return;
-    const done = listEntities(this.ctx, 'tickets').filter((t) => t.status === 'done');
+    const settings = preMergeSettings(this.ctx.config);
+    const gated = settings.enabled;
+    const concurrency = gated ? settings.concurrency : 1;
+    if (gated && this.gateLanes.length >= concurrency) return;
+    const claimed = new Set(this.gateLanes.flatMap((lane) => lane.ids));
+    const done = listEntities(this.ctx, 'tickets').filter((t) => t.status === 'done' && !claimed.has(t.id));
     const code = (t) => isCodeType(this.ctx.config, t.type);
     const stranded = done.some((t) => !code(t)) ? await branchesAheadOfMain(this.ctx) : new Map();
-    const finished = done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id)));
+    const pending = done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id)));
+    const finished = orderDoneQueue(await this.settleLanded(pending), listEntities(this.ctx, 'tickets'));
+    const train = [];
     for (const ticket of finished) {
       if (this.stopping) return;
       if (this.holdEmbargoed(ticket)) continue;
       if (!gated || !code(ticket)) { // spec/docs branches carry no product code to gate
-        await this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket));
+        if (!train.length) await this.guard(`merge ${ticket.id}`, () => this.withMergeLock(() => this.mergeOne(ticket)));
         continue;
       }
       if ((this.gateRetryAt.get(ticket.id) ?? 0) > this.#nowMs()) continue;
-      this.gateAbort = new AbortController();
-      this.gateRun = this.guard(`merge ${ticket.id}`, () => this.mergeOne(ticket, { gate: true }))
-        .finally(() => { this.gateRun = null; this.gateAbort = null; this.requestTick = true; this.wake?.(); });
-      return;
+      train.push(ticket);
+      if (train.length >= settings.train_size) break;
     }
+    if (!train.length) return;
+    const ids = train.map((t) => t.id);
+    const lane = { ids, abort: new AbortController(), run: null };
+    const announce = () => updateDispatcherState(this.ctx, { merge_gates: this.gateLanes.map((l) => ({ tickets: l.ids, started_at: l.startedAt })) });
+    lane.startedAt = nowIso(this.ctx);
+    this.gateLanes.push(lane);
+    announce();
+    lane.run = this.guard(`merge ${ids.join(', ')}`, () => this.gateGroup(train, lane.abort.signal))
+      .finally(() => {
+        this.gateLanes = this.gateLanes.filter((l) => l !== lane);
+        this.requestTick = true;
+        announce();
+        this.wake?.();
+      });
+    // Try to fill another lane in this same pass: the selection above already excludes this
+    // lane's tickets (`claimed`), so a second call picks a disjoint train, up to `concurrency`.
+    if (this.gateLanes.length < concurrency) await this.mergePass();
   }
 
-  /** Wait for a pre-merge gate in flight (tests, shutdown). */
+  /** Wait for every pre-merge gate in flight (tests, shutdown). */
   async gateIdle() {
-    while (this.gateRun) await this.gateRun;
+    while (this.gateLanes.length) await Promise.all(this.gateLanes.map((lane) => lane.run));
+  }
+
+  /**
+   * Start a post-merge `ci-full` check when `main` has moved since the last one and none is already
+   * running — never more than one at a time, and never while this dispatcher is stopping. It does
+   * not wait for the result: `tick` keeps merging and launching while it runs in the background.
+   */
+  async maybeVerifyMain() {
+    const { ctx } = this;
+    const settings = postMergeVerifySettings(ctx.config);
+    if (!settings.enabled || this.verifyRun || this.stopping) return;
+    if (this.#nowMs() < this.nextVerifyAt) return;
+    const sha = await mainSha(ctx);
+    if (!sha) return;
+    const known = readKnownFindings(ctx);
+    if (known?.sha === sha) return; // nothing has landed since the last check
+    this.verifyAbort = new AbortController();
+    this.verifyRun = this.guard('post-merge verify', () => this.runVerify(settings, sha, known?.sha ?? null))
+      .finally(() => {
+        this.verifyRun = null; this.verifyAbort = null;
+        this.nextVerifyAt = this.#nowMs() + settings.cooldown_minutes * 60_000;
+      });
+  }
+
+  /** Wait for a post-merge verify in flight (tests, shutdown). */
+  async verifyIdle() {
+    while (this.verifyRun) await this.verifyRun;
+  }
+
+  /**
+   * Run the post-merge check and, only when it finds something `ci-full` did not already have,
+   * post one loud, informational event naming the new findings and what landed since the last
+   * check. Never blocks a merge, never reverts one — this is a notice, not a gate.
+   */
+  async runVerify(settings, sha, previousSha) {
+    const { ctx } = this;
+    const result = await runPostMergeVerify(ctx, settings, sha, { signal: this.verifyAbort?.signal });
+    if (!result.newFindings.length) return;
+    let mergedSince = [];
+    if (previousSha) {
+      const log = await git(ctx.root, ['log', '--oneline', `${previousSha}..${sha}`]);
+      if (log.code === 0) mergedSince = log.stdout.trim().split('\n').filter(Boolean);
+    }
+    const shown = result.newFindings.slice(0, 10);
+    appendEvent(ctx, {
+      actor: 'dispatcher', kind: 'dispatcher',
+      text: `⚠ post-merge: ${settings.argv.join(' ')} on ${ctx.config.dispatcher.main_branch} at ${shortSha(sha)} found ${result.newFindings.length} finding(s) it did not have${previousSha ? ` at ${shortSha(previousSha)}` : ''}: ${shown.join('; ')}${result.newFindings.length > shown.length ? '; …' : ''}.`
+        + (mergedSince.length ? ` Landed since the last check: ${mergedSince.join(' | ')}.` : '')
+        + ` Logging only — no auto-revert, nothing is blocked. Log: ${result.log}`,
+    });
   }
 
   /**
@@ -434,29 +562,154 @@ export class Dispatcher {
     return true;
   }
 
-  async mergeOne(ticket, { gate = false } = {}) {
+  /**
+   * Gate a train once and settle each member (T-1297): green merges every member in queue order,
+   * one `--no-ff` merge commit each. Refused with more than one member: the train is split in halves
+   * and each half re-gated (the first merges before the second is gated on the new main), so only
+   * the ticket that adds the findings is reopened. A member that conflicts with `main` is reopened
+   * as before; one that conflicts with an earlier member stays `done` for the next train.
+   */
+  async gateGroup(group, signal) {
     const { ctx } = this;
     const main = ctx.config.dispatcher.main_branch;
-    if (gate) {
-      let verdict;
-      try {
-        verdict = await runPreMergeGate(ctx, ticket, { signal: this.gateAbort?.signal });
-      } catch (err) {
-        // The gate could not judge (timeout, stop, worktree failure): never merge on that. Retry later.
-        this.gateRetryAt.set(ticket.id, this.#nowMs() + 10 * 60_000);
-        throw err;
-      }
-      this.gateRetryAt.delete(ticket.id);
-      if (verdict.status === 'blocked') {
+    const ids = group.map((t) => t.id);
+    let verdict;
+    try {
+      verdict = await this.runGate(ctx, group, { signal });
+    } catch (err) {
+      // The gate could not judge (timeout, stop, worktree failure): never merge on that. Retry later.
+      for (const id of ids) this.gateRetryAt.set(id, this.#nowMs() + 10 * 60_000);
+      throw err;
+    }
+    for (const id of ids) this.gateRetryAt.delete(id);
+    if (verdict.fastLane) {
+      const fl = verdict.fastLane;
+      const result = fl.ok ? (fl.code === 0 ? 'passed' : `failed (exit ${fl.code})`) : 'could not complete';
+      const agreement = fl.agreed === null ? 'nothing to compare' : fl.agreed ? 'agreed with the full gate' : 'DISAGREED with the full gate';
+      appendEvent(ctx, {
+        actor: 'dispatcher', kind: 'dispatcher',
+        text: `fast lane (${fl.argv.join(' ')}) on ${ids.join(', ')} ${result} in ${fl.seconds}s — ${agreement}. Logging only; does not affect this merge. Log: ${fl.log}`,
+      });
+    }
+    const conflicts = verdict.conflicts ?? [];
+    const memberIds = verdict.members ?? ids;
+    for (const c of conflicts) {
+      const ticket = group.find((t) => t.id === c.id);
+      if (c.withMain) { await this.withMergeLock(() => this.mergeOne(ticket)); continue; } // reports the conflict and reopens it
+      appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: c.id, text: `${c.id} conflicts with an earlier ticket in its merge train (${c.detail}); it stays done and waits for the next train` });
+    }
+    const members = group.filter((t) => memberIds.includes(t.id));
+    if (!members.length) return;
+    const train = members.length > 1 ? ` (train of ${members.length}: ${memberIds.join(', ')})` : '';
+    if (verdict.status === 'blocked') {
+      if (members.length === 1) {
+        const [ticket] = members;
         appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merge refused by the pre-merge gate: ${verdict.summary}` });
         reopenTicket(ctx, ticket.id, 'dispatcher', blockedNote(verdict, main));
         return;
       }
-      if (verdict.status === 'pass') {
-        appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} pre-merge gate passed (${verdict.mode}): ${verdict.summary}` });
-      }
-      // a 'conflict' verdict falls through: mergeTicket reports and reopens it the usual way
+      appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `pre-merge gate refused the train ${memberIds.join(', ')}: ${verdict.summary}; splitting it in halves to find the ticket that adds the findings` });
+      const [first, second] = splitTrain(members);
+      await this.gateGroup(first, signal);
+      if (!this.stopping) await this.gateGroup(second, signal);
+      return;
     }
+    // With more than one gate lane in flight (pre_merge.concurrency), a sibling lane can land on
+    // `main` while this one was still running its own dry run: this verdict was judged against
+    // `verdict.mainSha`, not whatever `main` is now. The check and the merge happen inside one
+    // `withMergeLock` call per ticket — not checked, then separately merged — so a sibling cannot
+    // land in the gap between this lane's check and its own merge; whichever lane gets the lock
+    // first for a given main commit wins it, and the other correctly finds it stale on its turn.
+    // On a mismatch the remaining members are left `done` for a fresh gate run — never merged
+    // unvalidated. (With concurrency 1 this can never fire: nothing else can move main meanwhile.)
+    let expectedHead = verdict.mainSha;
+    let landedAll = true;
+    for (const ticket of members) {
+      const merged = await this.withMergeLock(async () => {
+        if (!expectedHead) { await this.mergeOne(ticket); return true; } // no mainSha on the verdict: cannot check, merge as before
+        const head = (await git(ctx.root, ['rev-parse', 'HEAD'])).stdout.trim();
+        if (head !== expectedHead) {
+          appendEvent(ctx, {
+            actor: 'dispatcher', kind: 'dispatcher',
+            text: `${ticket.id}${train} not merged: ${main} moved under this gate run (validated at ${expectedHead.slice(0, 8)}, now at ${head.slice(0, 8)} — a concurrent gate lane likely landed first); left done for a fresh gate run`,
+          });
+          return false;
+        }
+        if (verdict.status === 'pass') {
+          appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} pre-merge gate passed (${verdict.mode})${train}: ${verdict.summary}` });
+        }
+        await this.mergeOne(ticket);
+        expectedHead = (await git(ctx.root, ['rev-parse', 'HEAD'])).stdout.trim();
+        return true;
+      });
+      if (!merged) { landedAll = false; break; }
+    }
+    // Captured before any real merge of this group: `applyRenumberToMain` needs the same base the
+    // gate's dry run used, to find exactly the files this group's merges touched. Skipped unless
+    // every member actually landed (a staleness break above means the renumbered tree never fully
+    // formed on real main).
+    if (landedAll && verdict.renumber?.length) {
+      await this.withMergeLock(async () => {
+        const head = (await git(ctx.root, ['rev-parse', 'HEAD'])).stdout.trim();
+        if (head === expectedHead) { await this.applyRenumberToMain(verdict.renumber, memberIds, verdict.mainSha); return; }
+        appendEvent(ctx, {
+          actor: 'dispatcher', kind: 'dispatcher',
+          text: `${memberIds.join(', ')}: a sibling gate lane landed right after this group merged, before the gate's auto-renumber could be re-applied to ${main}; the next gate run on migrations fixes it again (T-1067)`,
+        });
+      });
+    }
+  }
+
+  /**
+   * Re-apply, on the real `main`, a migration renumber the pre-merge gate already validated in its
+   * own scratch worktree (T-1067): `mergeOne` redoes the merge for real from the raw ticket branches,
+   * so without this the exact collision the gate just fixed reappears on `main` itself. Alert-only
+   * on a mismatch (never reverts a merge that already landed): a human fixes it from the note.
+   */
+  async applyRenumberToMain(plan, ids, mainShaBeforeGroup) {
+    const { ctx } = this;
+    const main = ctx.config.dispatcher.main_branch;
+    const cfg = preMergeSettings(ctx.config).numbering;
+    const named = plan.map((r) => `${r.from} -> ${r.to}`).join(', ');
+    if (!cfg) { // numbering turned off between the gate run and here (config reload mid-tick): nothing to redo
+      appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `WARNING: ${ids.join(', ')} merged, but the gate's auto-renumber (${named}) could not be re-applied to ${main}: migration numbering is no longer configured. Fix ${main} by hand.` });
+      return;
+    }
+    const applied = await applyMigrationRenumber(ctx.root, plan, cfg.dir, mainShaBeforeGroup);
+    const commit = applied ? await git(ctx.root, ['commit', '-m', `chore: migrations: auto-renumber ${named} (pre-merge gate, T-1067)`]) : null;
+    if (!commit || commit.code !== 0) {
+      appendEvent(ctx, {
+        actor: 'dispatcher', kind: 'dispatcher',
+        text: `WARNING: ${ids.join(', ')} merged into ${main}, but re-applying the gate's auto-renumber (${named}) failed${commit ? ` (commit: ${commit.stderr.trim()})` : ''}; ${main} may now fail the migration-numbering check. Fix by hand: renumber ${cfg.dir}/${plan.map((r) => r.from).join(', ')}.`,
+      });
+      return;
+    }
+    appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `${ids.join(', ')}: re-applied the pre-merge gate's auto-renumber (${named}) on ${main} to avoid a migration-number collision (T-1067)` });
+  }
+
+  /**
+   * A done ticket whose branch is already an ancestor of main was merged by hand (T-1353): it must not
+   * take a slot in a gate train or merge again. Records it as merged at the commit that brought it in,
+   * removes its worktree and branch as a normal merge does, and returns the tickets still to merge.
+   */
+  async settleLanded(tickets) {
+    const { ctx } = this;
+    const main = ctx.config.dispatcher.main_branch;
+    const rest = [];
+    for (const ticket of tickets) {
+      const commit = this.stopping ? null : await landedCommit(ctx, ticket.id);
+      if (!commit) { rest.push(ticket); continue; }
+      const problems = await cleanupWorktree(ctx, ticket.id);
+      setTicketLinks(ctx, ticket.id, { worktree: null, held: null, merged: nowIso(ctx), merge_commit: commit });
+      appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} already on ${main} (${commit.slice(0, 8)}); recorded as merged without a gate run${problems.length ? `; cleanup: ${problems.join('; ')}` : ''}` });
+    }
+    return rest;
+  }
+
+  /** Merge one ticket's branch into main and clean up (the gate, if any, has already judged it). */
+  async mergeOne(ticket) {
+    const { ctx } = this;
+    const main = ctx.config.dispatcher.main_branch;
     const merged = await mergeTicket(ctx, ticket);
     if (merged.status === 'merged') {
       const problems = await cleanupWorktree(ctx, ticket.id);
@@ -476,7 +729,7 @@ export class Dispatcher {
     const { ctx } = this;
     const skip = new Set();
     for (let round = 0; round < 10 && !this.stopping; round++) {
-      const state = { ...loadState(ctx), sharedCheckout: this.shared, skip, disk_free_bytes: diskFreeBytes(ctx.root) };
+      const state = { ...(await loadStateWithMerges(ctx)), sharedCheckout: this.shared, skip, disk_free_bytes: diskFreeBytes(ctx.root) };
       const now = ctx.now();
       const gate = launchGate(state, now, ctx.config);
       if (gate) return this.#lastAction(`idle: ${gate}`);
@@ -533,7 +786,7 @@ export class Dispatcher {
     }
 
     let ticket = candidate.create ? this.materialize(candidate.create) : candidate.ticket;
-    if (ticket.status === 'ready') ticket = claimTicket(ctx, ticket.id);
+    if (ticket.status === 'ready') ticket = claimTicket(ctx, ticket.id, 'dispatcher', await unmergedBranches(ctx, ticket.depends_on ?? []));
 
     const isolated = isCodeType(config, ticket.type) && !this.shared;
     let cwd = ctx.root;
@@ -588,13 +841,91 @@ export class Dispatcher {
     return 'launched';
   }
 
+  // ---- reloading --------------------------------------------------------------------------
+
+  /** `factory restart`: reload at the next opportunity, aborting a merge gate in flight. */
+  requestRestart() {
+    this.restartRequested = true;
+    this.wake?.();
+  }
+
+  /**
+   * Reload this process onto the code now on disk when factory code (lib, bin, board) has landed on
+   * main since it started — or at once on `factory restart`. A merge gate in flight postpones an
+   * automatic reload (the gate's `make` belongs to this process); a restart aborts it. Workers are
+   * never signalled: a successor is started detached, announces itself, and adopts the runs once this
+   * process is gone. A successor that does not come up leaves this process running and is reported.
+   * @returns {Promise<boolean>} true when handed over (the loop must exit without a shutdown)
+   */
+  async maybeReload() {
+    const { ctx } = this;
+    if (!this.daemon || this.stopping || this.reloaded) return false;
+    const restart = this.restartRequested;
+    if (!restart && ctx.config.dispatcher.auto_reload === false) return false;
+    if ((this.gateLanes.length || this.verifyRun) && !restart) return false; // the next tick after it ends looks again
+    const target = await mainSha(ctx);
+    let reason = 'factory restart requested';
+    if (!restart) {
+      if (!target || !this.codeSha || target === this.codeSha) return false;
+      let change;
+      try {
+        change = await factoryChange(ctx, this.codeSha, target);
+      } catch (err) { // cannot tell what changed: reloading is cheap and safe, missing a change is not
+        change = { changed: true, files: [`(${err.message})`] };
+      }
+      if (!change.changed) { // knowledge/, product code…: nothing this process has loaded
+        this.codeSha = target;
+        updateDispatcherState(ctx, { code_sha: target });
+        return false;
+      }
+      reason = `factory code changed on ${ctx.config.dispatcher.main_branch} (${change.files.slice(0, 3).join(', ')}${change.files.length > 3 ? `, +${change.files.length - 3} more` : ''})`;
+    }
+    this.restartRequested = false;
+    if (this.gateLanes.length) { // restart only
+      for (const lane of this.gateLanes) lane.abort.abort();
+      await this.gateIdle();
+    }
+    if (this.verifyRun) { // restart only; a verify belongs to this process the same way a gate does
+      this.verifyAbort?.abort();
+      await this.verifyIdle();
+    }
+    const stale = await stopStaleGateChildren(ctx);
+    const from = this.codeSha;
+    const to = target ?? from;
+    const successor = this.reloadSteps.spawnSuccessor(ctx, this.reloadSteps.bin);
+    if (!(await awaitSuccessor(ctx, successor, { timeoutMs: this.reloadSteps.readyTimeoutMs }))) {
+      try { process.kill(successor, 'SIGTERM'); } catch { /* already gone */ }
+      this.codeSha = to; // do not retry the same commit every tick
+      updateDispatcherState(ctx, { code_sha: to });
+      appendEvent(ctx, {
+        actor: 'dispatcher', kind: 'dispatcher',
+        text: `reload to ${shortSha(to)} failed: the replacement dispatcher did not start (see state/dispatcher.log); still running the code from ${shortSha(from)} — fix main, then run: factory restart`,
+      });
+      return false;
+    }
+    let boardNote = '';
+    try {
+      const board = await this.reloadSteps.restartBoard(ctx, this.reloadSteps.bin);
+      boardNote = board ? `; board restarted (pid ${board.pid})` : '';
+    } catch (err) {
+      boardNote = `; board restart failed: ${err.message}`;
+    }
+    appendEvent(ctx, {
+      actor: 'dispatcher', kind: 'dispatcher',
+      text: `reload: ${reason}; main ${shortSha(from)} → ${shortSha(to)}; replacement dispatcher pid ${successor} adopts ${this.active.size} running worker(s) (none signalled)${stale.length ? `; stopped ${stale.length} stale gate process(es)` : ''}${boardNote}`,
+    });
+    this.reloaded = true;
+    return true;
+  }
+
   // ---- lifecycle --------------------------------------------------------------------------
 
   /** Ask the loop to stop; a second call skips the grace period. */
   stop() {
     if (this.stopping) this.forceStop = true;
     this.stopping = true;
-    this.gateAbort?.abort();
+    for (const lane of this.gateLanes) lane.abort.abort();
+    this.verifyAbort?.abort();
     this.wake?.();
   }
 
@@ -618,30 +949,48 @@ export class Dispatcher {
     const { ctx } = this;
     if (once) return this.tick();
 
+    if (process.env.FACTORY_REPLACES) {
+      const predecessor = Number(process.env.FACTORY_REPLACES);
+      delete process.env.FACTORY_REPLACES; // not for our workers or our own successor
+      const gone = await awaitPredecessor(predecessor, (patch) => updateDispatcherState(ctx, patch));
+      if (!gone) throw new FactoryError(`the dispatcher I replace (pid ${predecessor}) did not exit`);
+    }
     const existing = readDispatcherState(ctx);
     if (pidAlive(existing.pid) && existing.pid !== process.pid) throw new FactoryError(`a dispatcher is already running (pid ${existing.pid})`);
     this.daemon = true;
-    updateDispatcherState(ctx, { pid: process.pid, started: nowIso(ctx), heartbeat: nowIso(ctx), stopped: null });
-    appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `dispatcher started (pid ${process.pid})` });
+    this.codeSha = await mainSha(ctx);
+    await this.guard('stale gate sweep', () => stopStaleGateChildren(ctx)); // a gate's `make` a dead predecessor left behind
+    updateDispatcherState(ctx, { pid: process.pid, started: nowIso(ctx), heartbeat: nowIso(ctx), stopped: null, successor_ready: null, code_sha: this.codeSha });
+    appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `dispatcher started (pid ${process.pid}, factory code at ${shortSha(this.codeSha)})` });
     const onSignal = () => this.stop();
+    const onRestart = () => this.requestRestart();
     process.on('SIGTERM', onSignal);
     process.on('SIGINT', onSignal);
+    process.on('SIGUSR2', onRestart);
     try {
       while (!this.stopping) {
-        if (this.requestTick || this.#nowMs() - this.lastTick >= ctx.config.dispatcher.tick_seconds * 1000) {
+        const due = this.requestTick || this.#nowMs() - this.lastTick >= ctx.config.dispatcher.tick_seconds * 1000;
+        if (due || this.restartRequested) {
+          // The safe point: between ticks, before this tick can start another merge gate.
+          if (await this.guard('reload', () => this.maybeReload())) break;
+        }
+        if (due) {
           await this.tick();
         } else {
           await this.guard('poll', () => this.poll());
           if (this.#nowMs() - this.lastHeartbeat >= 10_000) this.heartbeat();
         }
-        if (!this.stopping) await this.sleep(setting(ctx.config, 'poll_seconds') * 1000);
+        if (!this.stopping && !this.restartRequested) await this.sleep(setting(ctx.config, 'poll_seconds') * 1000);
       }
-      await this.shutdown();
+      if (!this.reloaded) await this.shutdown();
     } finally {
       process.off('SIGTERM', onSignal);
       process.off('SIGINT', onSignal);
-      updateDispatcherState(ctx, { pid: null, stopped: nowIso(ctx), active: [...this.active.keys()] });
-      appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: 'dispatcher stopped' });
+      process.off('SIGUSR2', onRestart);
+      if (!this.reloaded) {
+        updateDispatcherState(ctx, { pid: null, stopped: nowIso(ctx), active: [...this.active.keys()] });
+        appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: 'dispatcher stopped' });
+      }
     }
     return undefined;
   }
@@ -666,6 +1015,7 @@ export class Dispatcher {
     }
     for (const run of [...this.active.values()]) await this.reap(run, { code: null, signal: 'SIGKILL' });
     await this.gateIdle();
+    await this.verifyIdle();
   }
 }
 
@@ -678,7 +1028,7 @@ export class Dispatcher {
 export async function planDryRun(ctx) {
   const repo = await repoState(ctx);
   const shared = usesSharedCheckout(ctx, repo);
-  const state = { ...loadState(ctx), sharedCheckout: shared, disk_free_bytes: diskFreeBytes(ctx.root) };
+  const state = { ...(await loadStateWithMerges(ctx)), sharedCheckout: shared, disk_free_bytes: diskFreeBytes(ctx.root) };
   const now = ctx.now();
   const gate = launchGate(state, now, ctx.config);
   const agents = loadAgents(ctx);

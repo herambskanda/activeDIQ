@@ -14,6 +14,6 @@ export CGO_ENABLED=0 GOOS=windows GOARCH=amd64
 go build -trimpath -o "$out/bin/activediq-agent.exe" ./cmd/agent
 go build -trimpath -o "$out/bin/agentsetup.exe" ./cmd/agentsetup
 dotnet tool install --global wix --version 5.0.2
-wix build packaging/windows/agent/Agent.wxs -arch x64 \
+wix build packaging/windows/agent/Agent.wxs -arch x64 -wx -sw1149 \
   -d "Version=$version" -d "AgentExe=$out/bin/activediq-agent.exe" -d "SetupExe=$out/bin/agentsetup.exe" \
   -o "$out/activediq-agent-$version.msi"
