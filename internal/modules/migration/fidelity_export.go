@@ -25,6 +25,9 @@ func (s *Service) ExportFidelityCSV(ctx context.Context, t tenant.ID, actor auth
 	if s.Authz == nil {
 		return export.RenderReport{}, ErrDenied
 	}
+	// Bind the tenant being read to ctx before authorising, as the runner does, so a tenant-scoped
+	// Authorizer evaluates the same tenant the rows come from and never one the caller's ctx carries.
+	ctx = authority.WithTenant(ctx, t.String())
 	ref := authority.TargetRef{GUID: jobID, Class: TargetClassJob}
 	if err := s.Authz.Authorize(ctx, actor, PermImport, ref, authority.Facts{}); err != nil {
 		return export.RenderReport{}, fmt.Errorf("%w: %s", ErrDenied, PermImport)

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/skenzeriq/activediq/internal/modules/migration"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
@@ -199,6 +200,27 @@ func TestFidelity(t *testing.T) {
 			}
 		})
 
+		t.Run("fidelity_export_binds_tenant", func(t *testing.T) {
+			e := setup(t, s)
+			job := e.running(t)
+			// An authorizer like rbac.Authorizer: denies without a tenant on ctx, permits only per tenant.
+			e.svc.Authz = tenantScoped{allow: e.tid.String()}
+			var buf bytes.Buffer
+			if _, err := e.svc.ExportFidelityCSV(ctx, e.tid, chain("ann"), job, &buf); err != nil {
+				t.Errorf("permitted export without tenant on ctx: %v", err)
+			}
+			// A ctx pre-set to another tenant is authorised against the tenant being read.
+			other := authority.WithTenant(ctx, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+			if _, err := e.svc.ExportFidelityCSV(other, e.tid, chain("ann"), job, &buf); err != nil {
+				t.Errorf("foreign tenant on ctx leaked into authorisation: %v", err)
+			}
+			// A user permitted only in tenant B is denied reading tenant A.
+			e.svc.Authz = tenantScoped{allow: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"}
+			if _, err := e.svc.ExportFidelityCSV(other, e.tid, chain("ann"), job, &buf); !errors.Is(err, migration.ErrDenied) {
+				t.Errorf("user permitted only in B read A: %v", err)
+			}
+		})
+
 		t.Run("fidelity_record_guards", func(t *testing.T) {
 			e := setup(t, s)
 			p := e.project(t)
@@ -235,4 +257,18 @@ func TestFidelity(t *testing.T) {
 			}
 		})
 	})
+}
+
+// tenantScoped permits migration.import only for the tenant on ctx, and denies when none is set.
+type tenantScoped struct{ allow string }
+
+func (tenantScoped) FactsQuery(_ authority.Chain, _ authz.Permission, t authority.TargetRef) authority.FactsQuery {
+	return authority.FactsQuery{Target: t}
+}
+
+func (a tenantScoped) Authorize(ctx context.Context, _ authority.Chain, p authz.Permission, _ authority.TargetRef, _ authority.Facts) error {
+	if tn, ok := authority.TenantFrom(ctx); ok && tn == a.allow && p == migration.PermImport {
+		return nil
+	}
+	return errors.New("not granted")
 }
