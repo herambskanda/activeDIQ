@@ -35,6 +35,15 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // T-1297: how many done tickets one gate run judges together (the merge train). 1 = one ticket
   // per run, as before the train.
   train_size: 4,
+  // T-2210: how many gate runs (each its own scratch worktree, train and real-merge sequence) may
+  // be in flight at once. 1 = the original single lane. Safe to raise once the gate command itself
+  // is fast: each lane's test run is fully isolated (its own worktree, its own throwaway Postgres
+  // container), and the real-merge step detects and refuses a stale verdict rather than landing a
+  // combination that was never actually tested (see `gateGroup`'s staleness check).
+  concurrency: 1,
+  // T-xxxx: how many times in a row the gate may refuse a ticket before the dispatcher stops
+  // reopening it to its owner and opens a CEO decision instead. 1 = escalate on the first refusal.
+  max_gate_failures: 2,
   // T-1378: reuse a cached run of the gate command on `main` when the tree differs from the one now
   // only in files under these top-level directories that no gate file mentions (computed from the
   // tree, see `readSurface`). They hold no gate code: knowledge base, agent memory, factory runtime
@@ -53,6 +62,12 @@ export function preMergeSettings(config) {
   }
   if (!Number.isInteger(s.train_size) || s.train_size < 1) {
     throw new FactoryError('dispatcher.pre_merge.train_size must be a whole number of at least 1');
+  }
+  if (!Number.isInteger(s.concurrency) || s.concurrency < 1) {
+    throw new FactoryError('dispatcher.pre_merge.concurrency must be a whole number of at least 1');
+  }
+  if (!Number.isInteger(s.max_gate_failures) || s.max_gate_failures < 1) {
+    throw new FactoryError('dispatcher.pre_merge.max_gate_failures must be a whole number of at least 1');
   }
   if (!Array.isArray(s.baseline_reuse_roots) || s.baseline_reuse_roots.some((r) => typeof r !== 'string' || !/^[\w.-]+$/.test(r))) {
     throw new FactoryError('dispatcher.pre_merge.baseline_reuse_roots must be an array of top-level directory names');
@@ -572,12 +587,41 @@ async function checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { s
   const finalPlan = renumbered ? plan : planRenumber(await names(mainSha), await added());
   const findings = finalPlan.map((r) => `renumber ${cfg.dir}/${r.from} to ${r.to}`);
   const branch = subject.branches;
+  const main = ctx.config.dispatcher.main_branch;
+  // No clashing file of the branch: either main is already broken (a duplicate or gap landed without
+  // the gate) or the branch broke it some other way (a deleted or renamed migration). Main alone decides.
+  const mainBroken = finalPlan.length ? false : await mainFailsNumbering(ctx, settings, mainSha, { signal, run });
   return {
-    refused: true, status: 'blocked', mode: 'migration-numbering', findings, renumber: finalPlan, log, seconds,
+    refused: true, status: 'blocked', mode: 'migration-numbering', findings, renumber: finalPlan, log, seconds, mainSha, mainBroken,
     summary: finalPlan.length
-      ? `${branch} adds migration number(s) that ${ctx.config.dispatcher.main_branch} already uses (or that now leave a gap): ${finalPlan.map((r) => `${r.from} → ${r.to}`).join(', ')} (auto-renumber attempted and still red; read the log)`
-      : `the migration-numbering check fails on the merge of ${branch} into ${ctx.config.dispatcher.main_branch} but the branch adds no clashing file; read the log (a gap or a changed file name?)`,
+      ? `${branch} adds migration number(s) that ${main} already uses (or that now leave a gap): ${finalPlan.map((r) => `${r.from} → ${r.to}`).join(', ')} (auto-renumber attempted and still red; read the log)`
+      : mainBroken
+        ? `${main} itself fails the migration-numbering check (a duplicate or a gap already on ${main}); ${branch} adds no clashing file, so the fix belongs on ${main}`
+        : `the migration-numbering check passes on ${main} alone but fails on the merge of ${branch}, which adds no clashing file; the branch breaks the numbering (a deleted or renamed migration?); read the log`,
   };
+}
+
+const mainNumbering = new Map(); // main commit → whether the numbering check fails on main alone
+
+/**
+ * Run the numbering check on `main` alone, once per main commit. A check that cannot finish throws,
+ * so the gate retries later instead of blaming anyone.
+ */
+async function mainFailsNumbering(ctx, settings, mainSha, { signal, run }) {
+  if (mainNumbering.has(mainSha)) return mainNumbering.get(mainSha);
+  const cfg = settings.numbering;
+  const dir = path.join(scratchRoot(ctx), `main-numbering-${mainSha.slice(0, 12)}-${run}`);
+  const log = path.join(gateDir(ctx), `main-${mainSha.slice(0, 12)}-${run}-numbering.log`);
+  await addDetached(ctx, dir, mainSha);
+  try {
+    const ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal });
+    if (ran.timedOut || ran.aborted) throw new FactoryError(`pre-merge: the migration-numbering check on ${mainSha.slice(0, 12)} alone did not finish (${log})`);
+    if (mainNumbering.size > 64) mainNumbering.clear();
+    mainNumbering.set(mainSha, ran.code !== 0);
+    return ran.code !== 0;
+  } finally {
+    await dropWorktree(ctx, dir);
+  }
 }
 
 /**
@@ -609,16 +653,19 @@ export async function runPreMergeGate(ctx, ticket, opts = {}) {
  * is at fault: the caller splits the train (`splitTrain`) and gates the halves.
  *
  * Statuses and throwing are as for `runPreMergeGate`; `conflict` means no member merged at all. A
- * `pass` carries `renumber` (T-1067) when the numbering check only passed after this run
- * auto-renumbered a colliding migration in its own scratch worktree: the caller must re-apply that
- * same plan (`applyMigrationRenumber`) to the real merge, which redoes the merge from scratch and
- * would otherwise reproduce the exact collision this run just fixed.
+ * A `pass` carries `mainSha`, the `main` commit this verdict was judged against: with more than one
+ * gate lane running at once (T-2210) a sibling lane can land first, so the caller must check `main`
+ * is still at `mainSha` before trusting the verdict enough to really merge. It also carries
+ * `renumber` (T-1067) when the numbering check only passed after this run auto-renumbered a
+ * colliding migration in its own scratch worktree: the caller must re-apply that same plan
+ * (`applyMigrationRenumber`) to the real merge, which redoes the merge from scratch and would
+ * otherwise reproduce the exact collision this run just fixed.
  *
  * @param {object} ctx
  * @param {{id: string, title: string}[]} tickets in merge order
  * @param {{signal?: AbortSignal, argv?: string[]}} [opts]
  * @returns {Promise<{status: 'pass'|'blocked'|'conflict', mode?: string, findings: string[], summary: string, log?: string, baseLog?: string,
- *   members: string[], conflicts: {id: string, detail: string, withMain: boolean}[], renumber?: {from: string, to: string}[]}>}
+ *   members: string[], conflicts: {id: string, detail: string, withMain: boolean}[], mainSha?: string, renumber?: {from: string, to: string}[]}>}
  */
 export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
   if (!tickets.length) throw new FactoryError('pre-merge: a train needs at least one ticket');
@@ -664,8 +711,11 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
     }
     // Only this dry run's own worktree is auto-fixed above: the real merge (`mergeTicket`) redoes the
     // merge from scratch on the real branches, so it reproduces the same collision unless the caller
-    // applies this identical, already-validated plan to the real checkout too (T-1067).
-    const withRenumber = (verdict) => (renumber ? { ...verdict, renumber } : verdict);
+    // applies this identical, already-validated plan to the real checkout too (T-1067). `mainSha` is
+    // the base this verdict was judged against: with more than one gate lane in flight at once
+    // (T-2210) the caller must check `main` hasn't moved under it before trusting a `pass` enough to
+    // really merge.
+    const withRenumber = (verdict) => ({ ...verdict, mainSha, ...(renumber ? { renumber } : {}) });
     const withTiming = (text) => (numberingSeconds === null ? text : `${text}; migration numbering checked in ${numberingSeconds} s`);
     const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
     if (ran.timedOut) throw new FactoryError(`pre-merge: ${settings.argv.join(' ')} on ${label} timed out after ${settings.timeout_minutes} minutes (${log})`);

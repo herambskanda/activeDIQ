@@ -221,6 +221,36 @@
   "platformJobs": [],
   "probeValues": [
     {
+      "column": "public.migration_jobs.state",
+      "value": "quarantined",
+      "reason": "CHECK: state is one of a closed set and ties limit_hit, source_sha256 and finished_at to it (migration_jobs_check*); the probe row is an ordinary quarantined job."
+    },
+    {
+      "column": "public.migration_jobs.limit_hit",
+      "null": true,
+      "reason": "CHECK: limit_hit is set exactly when the job is rejected; the probe row is quarantined, so it is NULL."
+    },
+    {
+      "column": "public.migration_jobs.finished_at",
+      "null": true,
+      "reason": "CHECK: finished_at is set exactly for a finished state; the probe row is quarantined, so it is NULL."
+    },
+    {
+      "column": "public.migration_jobs.source_sha256",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a SHA-256 is exactly 32 bytes (migration_jobs_source_sha256_check); the probe row carries a 32-byte placeholder."
+    },
+    {
+      "column": "public.migration_jobs.source_kind",
+      "value": "csv",
+      "reason": "CHECK: source_kind is one of a closed set of kinds."
+    },
+    {
+      "column": "public.migration_jobs.admp_build",
+      "value": "probe",
+      "reason": "CHECK: admp_build matches ^[A-Za-z0-9._-]{1,64}$."
+    },
+    {
       "column": "public.helpdesk_caller_verifications.factor",
       "value": "email_otp",
       "reason": "CHECK: factor is email_otp, sms_otp or totp; the probe row is an email OTP challenge."
