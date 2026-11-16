@@ -41,6 +41,9 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // container), and the real-merge step detects and refuses a stale verdict rather than landing a
   // combination that was never actually tested (see `gateGroup`'s staleness check).
   concurrency: 1,
+  // T-xxxx: how many times in a row the gate may refuse a ticket before the dispatcher stops
+  // reopening it to its owner and opens a CEO decision instead. 1 = escalate on the first refusal.
+  max_gate_failures: 2,
   // T-1378: reuse a cached run of the gate command on `main` when the tree differs from the one now
   // only in files under these top-level directories that no gate file mentions (computed from the
   // tree, see `readSurface`). They hold no gate code: knowledge base, agent memory, factory runtime
@@ -62,6 +65,9 @@ export function preMergeSettings(config) {
   }
   if (!Number.isInteger(s.concurrency) || s.concurrency < 1) {
     throw new FactoryError('dispatcher.pre_merge.concurrency must be a whole number of at least 1');
+  }
+  if (!Number.isInteger(s.max_gate_failures) || s.max_gate_failures < 1) {
+    throw new FactoryError('dispatcher.pre_merge.max_gate_failures must be a whole number of at least 1');
   }
   if (!Array.isArray(s.baseline_reuse_roots) || s.baseline_reuse_roots.some((r) => typeof r !== 'string' || !/^[\w.-]+$/.test(r))) {
     throw new FactoryError('dispatcher.pre_merge.baseline_reuse_roots must be an array of top-level directory names');
