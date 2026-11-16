@@ -222,7 +222,6 @@ func (labService) Execute(_ []string, _ <-chan svc.ChangeRequest, s chan<- svc.S
 	return false, 0
 }
 
-
 // pinFor reads the pin of the state directory as an administrator acting for the account.
 func pinFor(dir, acct string) (Pin, error) {
 	d, err := ownerfile.OpenDir(dir, ownerfile.ForAccount(acct))
