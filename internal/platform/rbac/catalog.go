@@ -47,7 +47,7 @@ func BuiltInRoles() []Role {
 			"connections.hybrid_link.confirm", "connections.takeover.attest", "operation.approve", "objects.user.reset_password", "objects.user.delete", "siem.destination.manage", "siem.destination.read", "directory.read", "reports.run"}},
 		// The tenant owner (ADM-126, DM-30.I4). Read-only, personal assignments only, never time-bounded
 		// (migration 0034). Beyond the DM-34.I1 rule that an owner holds every permission, it lists only
-		// what the operation catalogue has granted by name; migrations 0043 and 0074 allow-list the same set in
+		// what the operation catalogue has granted by name; migrations 0043 and 0082 allow-list the same set in
 		// the database, so a permission added here without it is refused at seed.
 		{Name: TenantOwnerRole, Tier: Tier1, Permissions: []authz.Permission{"connections.correlation.reconfirm", "agentfleet.policy.edit", "agentfleet.keyset.rotate"}},
 		{Name: "helpdesk-operator", Tier: Tier2, Permissions: []authz.Permission{"objects.user.reset_password", "directory.read"}},
