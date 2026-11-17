@@ -14,8 +14,8 @@ import { loadAgents } from './agents.mjs';
 import { checkLaunchPolicy } from './policy.mjs';
 import { isCodeType } from './flows.mjs';
 import { LogScanner, detectConnectivityError, detectRateLimit, resultKeyword } from './runlog.mjs';
-import { claimTicket, createTicket, doneDependencies, indexById, blockTicket, reopenTicket, setTicketLinks } from './tickets.mjs';
-import { applyAdvisoryDefaults } from './decisions.mjs';
+import { claimTicket, createTicket, doneDependencies, indexById, blockTicket, holdForDecision, reopenTicket, setTicketLinks } from './tickets.mjs';
+import { applyAdvisoryDefaults, createDecision } from './decisions.mjs';
 import { pollAdvisories } from './advisories.mjs';
 import { applyNoProgress } from './escalation.mjs';
 import { buildPrompt } from './prompt.mjs';
@@ -127,6 +127,7 @@ export class Dispatcher {
     this.gateLanes = []; // pre-merge gates + merge(s) in flight, each { ids, abort, run } (T-1297, T-2210: up to pre_merge.concurrency at once)
     this.mergeLock = Promise.resolve(); // serializes real merges into ctx.root across lanes (T-2210): git allows only one merge in progress at a time
     this.gateRetryAt = new Map(); // ticket id → ms before which a gate that could not judge is not retried
+    this.heldOnMain = new Map(); // ticket id → the broken main commit it waits on; retried once main moves
     this.runGate = runPreMergeTrain; // (ctx, tickets[], {signal}) → verdict; replaceable in tests
     this.verifyRun = null; // post-merge ci-full check in flight (never blocks a merge)
     this.verifyAbort = null;
@@ -458,8 +459,10 @@ export class Dispatcher {
     const stranded = done.some((t) => !code(t)) ? await branchesAheadOfMain(this.ctx) : new Map();
     const pending = done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id)));
     const finished = orderDoneQueue(await this.settleLanded(pending), listEntities(this.ctx, 'tickets'));
+    const head = this.heldOnMain.size ? await mainSha(this.ctx) : null;
     const train = [];
     for (const ticket of finished) {
+      if (head && this.heldOnMain.get(ticket.id) === head) continue;
       if (this.stopping) return;
       if (this.holdEmbargoed(ticket)) continue;
       if (!gated || !code(ticket)) { // spec/docs branches carry no product code to gate
@@ -563,6 +566,28 @@ export class Dispatcher {
   }
 
   /**
+   * Main itself fails the migration-numbering check (a duplicate or gap that landed without the gate):
+   * the refused tickets are not at fault, so they stay `done` with no strike and are not gated again
+   * until main moves. One notice tells the CEO while main stays broken.
+   */
+  holdForBrokenMain(members, verdict) {
+    const { ctx } = this;
+    const main = ctx.config.dispatcher.main_branch;
+    for (const ticket of members) {
+      this.heldOnMain.set(ticket.id, verdict.mainSha);
+      appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} held at the pre-merge gate, not reopened and no strike: ${verdict.summary}. It is gated again once ${main} changes.` });
+    }
+    const title = `${main} fails the migration-numbering check, so merges are held`;
+    if (listEntities(ctx, 'decisions').some((d) => d.status === 'pending' && d.title === title)) return;
+    createDecision(ctx, {
+      kind: 'notice',
+      title,
+      question: `${main} at ${shortSha(verdict.mainSha)} has a duplicate or a gap in its migration numbers, usually from a merge that skipped the pre-merge gate. Tickets reaching the gate are held (not sent back, no strike) until ${main} is fixed. Fix: renumber the migrations on ${main} so they are unique and contiguous.`,
+      context: verdict.summary,
+    }, { by: 'dispatcher' });
+  }
+
+  /**
    * Gate a train once and settle each member (T-1297): green merges every member in queue order,
    * one `--no-ff` merge commit each. Refused with more than one member: the train is split in halves
    * and each half re-gated (the first merges before the second is gated on the new main), so only
@@ -572,6 +597,7 @@ export class Dispatcher {
   async gateGroup(group, signal) {
     const { ctx } = this;
     const main = ctx.config.dispatcher.main_branch;
+    const settings = preMergeSettings(ctx.config);
     const ids = group.map((t) => t.id);
     let verdict;
     try {
@@ -602,10 +628,31 @@ export class Dispatcher {
     if (!members.length) return;
     const train = members.length > 1 ? ` (train of ${members.length}: ${memberIds.join(', ')})` : '';
     if (verdict.status === 'blocked') {
+      if (verdict.mainBroken) { this.holdForBrokenMain(members, verdict); return; }
       if (members.length === 1) {
         const [ticket] = members;
         appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merge refused by the pre-merge gate: ${verdict.summary}` });
-        reopenTicket(ctx, ticket.id, 'dispatcher', blockedNote(verdict, main));
+        const failures = (ticket.gate_failures ?? 0) + 1;
+        updateEntity(ctx, 'tickets', ticket.id, (t) => { t.gate_failures = failures; });
+        const note = blockedNote(verdict, main);
+        if (failures >= settings.max_gate_failures) {
+          holdForDecision(ctx, ticket.id, 'dispatcher',
+            `the pre-merge gate has refused this ${failures} times in a row; holding for a CEO decision instead of reopening it again. ${note}`);
+          createDecision(ctx, {
+            kind: 'directional',
+            title: `${ticket.id} keeps failing the merge gate`,
+            question: `${ticket.id} (${ticket.title}) has failed the full pre-merge test suite ${failures} times in a row. How should the factory proceed?`,
+            context: note,
+            options: [
+              { id: 'retry', label: 'One more try', summary: 'Unblock to ready with a fresh attempt and gate-failure budget; the owner takes another pass.' },
+              { id: 'escalate', label: 'Escalate the owner', summary: 'Unblock to ready, reassign to principal-engineer at high effort for the retry.' },
+              { id: 'cancel', label: 'Cancel the ticket', summary: 'The approach is not working; cancel rather than keep retrying.' },
+            ],
+            blocks: [ticket.id],
+          }, { by: 'dispatcher', force: true });
+          return;
+        }
+        reopenTicket(ctx, ticket.id, 'dispatcher', note);
         return;
       }
       appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `pre-merge gate refused the train ${memberIds.join(', ')}: ${verdict.summary}; splitting it in halves to find the ticket that adds the findings` });
