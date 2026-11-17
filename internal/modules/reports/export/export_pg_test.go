@@ -6,6 +6,7 @@ import (
 	"context"
 	stdcsv "encoding/csv"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -820,4 +821,56 @@ func TestFormatsForWideTables(t *testing.T) {
 	if got := export.FormatsFor(25); !slices.Equal(got, []export.Format{export.CSV, export.XLSX, export.HTML}) {
 		t.Errorf("25 columns: %v", got)
 	}
+}
+
+// T-1153 (reports-2a §8.3): PDF and HTML show Time cells in the zone the runner asked for, with its
+// abbreviation; a run without a zone shows UTC; the digest is the same either way; CSV stays UTC.
+func TestPageFormatsShowTimeInRunnersZone(t *testing.T) {
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		e := setup(t, s)
+		ctx := context.Background()
+		mk := func(zone string) run.Run {
+			r, _, err := e.runs.Create(ctx, run.CreateInput{Tenant: e.tid, Chain: chainOf(alice), DefinitionID: "tst-01",
+				Params: jsontext.Value(`{"columns":["sam","seen"]}`), Zone: zone})
+			if err != nil {
+				t.Fatalf("Create run (%q): %v", zone, err)
+			}
+			e.work()
+			return e.run(alice, r.ID)
+		}
+		berlin, utc := mk("Europe/Berlin"), mk("")
+		if berlin.ID == utc.ID {
+			t.Fatal("a run in another zone reused the UTC run")
+		}
+		if berlin.Zone != "Europe/Berlin" || utc.Zone != "" {
+			t.Fatalf("recorded zones %q, %q", berlin.Zone, utc.Zone)
+		}
+		if !bytes.Equal(berlin.Digest, utc.Digest) {
+			t.Fatal("the zone moved the run digest")
+		}
+		for _, f := range []export.Format{export.PDF, export.HTML} {
+			for _, c := range []struct {
+				r    run.Run
+				want string
+				not  string
+			}{{berlin, "2026-07-02 01:30:00 CEST", "23:30:00 UTC"}, {utc, "2026-07-01 23:30:00 UTC", "CEST"}} {
+				x := e.export(alice, c.r.ID, f)
+				body, _, err := e.download(alice, x.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(x.Digest, c.r.Digest) {
+					t.Errorf("%s %q: export digest differs from the run's", f, c.r.Zone)
+				}
+				shown := strings.Join(fileText(t, f, body), "\n")
+				if !strings.Contains(shown, c.want) || strings.Contains(shown, c.not) {
+					t.Errorf("%s run zone %q: want %q and not %q in:\n%.600s", f, c.r.Zone, c.want, c.not, shown)
+				}
+			}
+		}
+		// an unknown zone is refused before anything is stored
+		if _, _, err := e.runs.Create(ctx, run.CreateInput{Tenant: e.tid, Chain: chainOf(alice), DefinitionID: "tst-01", Zone: "Mars/Olympus"}); !errors.Is(err, run.ErrBadTimeZone) {
+			t.Errorf("unknown zone: %v", err)
+		}
+	})
 }

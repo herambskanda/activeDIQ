@@ -1,5 +1,5 @@
-// Package accountkind is the one definition of the four account write kinds of connector-contract
-// §8.10 (T-1583): reset password, unlock, enable, disable. The server (directory/client) derives the
+// Package accountkind is the one definition of the account write kinds of connector-contract
+// §8.10 (T-1583): reset password, unlock, enable, disable; kind 13 computer account reset (T-1913). The server (directory/client) derives the
 // typed WriteChange from a planned write's attributes with ChangeFromAttrs; the connector recomputes
 // the plan digest from the typed request with AttrsOf and Compute. Both sides use these functions and
 // nothing else, so what the digest covers is what the connector acts on (ADR-0005 rule 2).
@@ -21,6 +21,9 @@ const (
 	KeyUnlock        = "ad.user.unlock"
 	KeyEnable        = "ad.account.enable"
 	KeyDisable       = "ad.account.disable"
+	// KeyComputerReset is kind 13 (contract §8.10.3, v1.6): the connector generates the new machine
+	// password, so the kind has no attributes and no secret input.
+	KeyComputerReset = "ad.computer.resetAccount"
 )
 
 // Attribute names in the digest's Attrs.
@@ -58,6 +61,7 @@ var specs = []Spec{
 	{KeyUnlock, connectorv1.WriteKind_WRITE_KIND_USER_UNLOCK, []string{ClassUser}, []connectorv1.RightsFamily{r4}},
 	{KeyEnable, connectorv1.WriteKind_WRITE_KIND_ACCOUNT_ENABLE, []string{ClassUser, ClassComputer}, []connectorv1.RightsFamily{r4}},
 	{KeyDisable, connectorv1.WriteKind_WRITE_KIND_ACCOUNT_DISABLE, []string{ClassUser, ClassComputer}, []connectorv1.RightsFamily{r4}},
+	{KeyComputerReset, connectorv1.WriteKind_WRITE_KIND_COMPUTER_ACCOUNT_RESET, []string{ClassComputer}, []connectorv1.RightsFamily{r5}},
 }
 
 // Specs returns the four rows.
@@ -139,6 +143,11 @@ func ChangeFromAttrs(key string, attrs []digest.Attr) (*connectorv1.WriteChange,
 			return nil, ErrAttrs
 		}
 		return &connectorv1.WriteChange{Change: &connectorv1.WriteChange_AccountDisable{AccountDisable: &connectorv1.AccountDisable{}}}, nil
+	case KeyComputerReset:
+		if len(attrs) != 0 {
+			return nil, ErrAttrs
+		}
+		return &connectorv1.WriteChange{Change: &connectorv1.WriteChange_ComputerAccountReset{ComputerAccountReset: &connectorv1.ComputerAccountReset{}}}, nil
 	}
 	return nil, ErrAttrs
 }
@@ -167,6 +176,10 @@ func AttrsOf(key string, ch *connectorv1.WriteChange, hasSecret bool) ([]digest.
 		}
 	case KeyDisable:
 		if ch.GetAccountDisable() == nil || hasSecret {
+			return nil, ErrAttrs
+		}
+	case KeyComputerReset:
+		if ch.GetComputerAccountReset() == nil || hasSecret {
 			return nil, ErrAttrs
 		}
 	default:
