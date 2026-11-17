@@ -1695,6 +1695,12 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportValueEnum
       discriminator:
         propertyName: kind
+        mapping:
+          text: "#/components/schemas/ReportValueText"
+          integer: "#/components/schemas/ReportValueInteger"
+          boolean: "#/components/schemas/ReportValueBoolean"
+          time: "#/components/schemas/ReportValueTime"
+          enum: "#/components/schemas/ReportValueEnum"
     ReportValueText:
       description: >-
         Text compared literally. Control characters are refused.
@@ -1770,6 +1776,9 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportPeriodRange
       discriminator:
         propertyName: kind
+        mapping:
+          last_days: "#/components/schemas/ReportPeriodLastDays"
+          range: "#/components/schemas/ReportPeriodRange"
     ReportPeriodLastDays:
       description: >-
         The last n days, ending when the run starts. The presets offer 7, 30, 90, 180 and 365.
@@ -1842,6 +1851,16 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportRecurrenceCustomMonths
       discriminator:
         propertyName: kind
+        mapping:
+          hourly: "#/components/schemas/ReportRecurrenceHourly"
+          daily: "#/components/schemas/ReportRecurrenceDaily"
+          weekly: "#/components/schemas/ReportRecurrenceWeekly"
+          monthly_day: "#/components/schemas/ReportRecurrenceMonthlyDay"
+          monthly_last_day: "#/components/schemas/ReportRecurrenceMonthlyLastDay"
+          custom_hours: "#/components/schemas/ReportRecurrenceCustomHours"
+          custom_days: "#/components/schemas/ReportRecurrenceCustomDays"
+          custom_weeks: "#/components/schemas/ReportRecurrenceCustomWeeks"
+          custom_months: "#/components/schemas/ReportRecurrenceCustomMonths"
     ReportRecurrenceHourly:
       description: >-
         Every n hours at the given minute.
@@ -2013,6 +2032,12 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportFilterRelative
       discriminator:
         propertyName: kind
+        mapping:
+          group: "#/components/schemas/ReportFilterGroup"
+          compare: "#/components/schemas/ReportFilterCompare"
+          in: "#/components/schemas/ReportFilterIn"
+          presence: "#/components/schemas/ReportFilterPresence"
+          relative_time: "#/components/schemas/ReportFilterRelative"
     ReportFilterGroup:
       description: >-
         Filters combined by match.
@@ -2234,6 +2259,9 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportRecipientEmail
       discriminator:
         propertyName: kind
+        mapping:
+          account: "#/components/schemas/ReportRecipientAccount"
+          email: "#/components/schemas/ReportRecipientEmail"
     ReportScheduleWrite:
       description: >-
         The writable settings of a schedule. It runs the report, preset, filters, columns and scope as saved, pinned to the definition version. confirmedExternal lists the external addresses the caller confirmed in the preview (Data leaves your organisation); it must equal the set of external recipients that are new or changed.
@@ -2511,6 +2539,9 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportFilterConditionView
       discriminator:
         propertyName: kind
+        mapping:
+          group: "#/components/schemas/ReportFilterGroupView"
+          condition: "#/components/schemas/ReportFilterConditionView"
     ReportFilterGroupView:
       description: >-
         Filters combined by match.
@@ -3031,6 +3062,17 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportCellUnknown
       discriminator:
         propertyName: kind
+        mapping:
+          text: "#/components/schemas/ReportCellText"
+          integer: "#/components/schemas/ReportCellInteger"
+          guid: "#/components/schemas/ReportCellGuid"
+          textList: "#/components/schemas/ReportCellTextList"
+          never: "#/components/schemas/ReportCellNever"
+          boolean: "#/components/schemas/ReportValueBoolean"
+          time: "#/components/schemas/ReportValueTime"
+          enum: "#/components/schemas/ReportValueEnum"
+          absent: "#/components/schemas/ReportCellAbsent"
+          unknown: "#/components/schemas/ReportCellUnknown"
     ReportCellText:
       description: >-
         Text as stored in the directory, which may hold any character. Encoders neutralise it on export.
@@ -3462,6 +3504,9 @@ components:
         - $ref: modules/reports.yaml#/components/schemas/ReportRecipientEmailView
       discriminator:
         propertyName: kind
+        mapping:
+          account: "#/components/schemas/ReportRecipientAccountView"
+          email: "#/components/schemas/ReportRecipientEmailView"
     ReportLastRun:
       description: >-
         The latest fire.

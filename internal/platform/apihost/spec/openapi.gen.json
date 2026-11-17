@@ -2224,6 +2224,10 @@
       },
       "OperationTarget": {
         "discriminator": {
+          "mapping": {
+            "directory": "#/components/schemas/OperationTargetDirectory",
+            "store": "#/components/schemas/OperationTargetStore"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -2321,6 +2325,15 @@
       "OperationValue": {
         "description": "One side of a change, rendered by the Action for display. redacted stands for a secret or an erased personal value.",
         "discriminator": {
+          "mapping": {
+            "absent": "#/components/schemas/OperationValueAbsent",
+            "boolean": "#/components/schemas/OperationValueBoolean",
+            "integer": "#/components/schemas/OperationValueInteger",
+            "redacted": "#/components/schemas/OperationValueRedacted",
+            "text": "#/components/schemas/OperationValueText",
+            "textList": "#/components/schemas/OperationValueTextList",
+            "time": "#/components/schemas/OperationValueTime"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -2638,6 +2651,18 @@
       "ReportCell": {
         "description": "One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n, unknown u). unknown is shown rather than an inferred value when an input is missing (FR-09). absent is a missing value, distinct from empty text; never is a value that cannot occur, such as a last logon of an account that has never logged on.",
         "discriminator": {
+          "mapping": {
+            "absent": "#/components/schemas/ReportCellAbsent",
+            "boolean": "#/components/schemas/ReportValueBoolean",
+            "enum": "#/components/schemas/ReportValueEnum",
+            "guid": "#/components/schemas/ReportCellGuid",
+            "integer": "#/components/schemas/ReportCellInteger",
+            "never": "#/components/schemas/ReportCellNever",
+            "text": "#/components/schemas/ReportCellText",
+            "textList": "#/components/schemas/ReportCellTextList",
+            "time": "#/components/schemas/ReportValueTime",
+            "unknown": "#/components/schemas/ReportCellUnknown"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -3438,6 +3463,13 @@
       "ReportFilter": {
         "description": "A typed filter tree over registry columns. A node names a column from the closed list and a typed value; there is no expression, no raw LDAP, no SQL. The tree is at most four levels deep and 64 nodes; deeper is a 400 with code filter_too_complex. The server checks each operator and value against the column's type.",
         "discriminator": {
+          "mapping": {
+            "compare": "#/components/schemas/ReportFilterCompare",
+            "group": "#/components/schemas/ReportFilterGroup",
+            "in": "#/components/schemas/ReportFilterIn",
+            "presence": "#/components/schemas/ReportFilterPresence",
+            "relative_time": "#/components/schemas/ReportFilterRelative"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -3699,6 +3731,10 @@
       "ReportFilterView": {
         "description": "A filter as the server stores it. A condition's column is a registry column ID.",
         "discriminator": {
+          "mapping": {
+            "condition": "#/components/schemas/ReportFilterConditionView",
+            "group": "#/components/schemas/ReportFilterGroupView"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -3947,6 +3983,10 @@
       "ReportPeriod": {
         "description": "The period a report looks at. The server refuses a range whose to is not after from, or longer than ten years.",
         "discriminator": {
+          "mapping": {
+            "last_days": "#/components/schemas/ReportPeriodLastDays",
+            "range": "#/components/schemas/ReportPeriodRange"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -4372,6 +4412,10 @@
       "ReportRecipient": {
         "description": "Who receives the schedule's files.",
         "discriminator": {
+          "mapping": {
+            "account": "#/components/schemas/ReportRecipientAccount",
+            "email": "#/components/schemas/ReportRecipientEmail"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -4521,6 +4565,10 @@
       "ReportRecipientView": {
         "description": "A recipient as stored.",
         "discriminator": {
+          "mapping": {
+            "account": "#/components/schemas/ReportRecipientAccountView",
+            "email": "#/components/schemas/ReportRecipientEmailView"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -4536,6 +4584,17 @@
       "ReportRecurrence": {
         "description": "When a schedule fires, in the schedule's time zone. The minimum interval is one hour (spec 8.4).",
         "discriminator": {
+          "mapping": {
+            "custom_days": "#/components/schemas/ReportRecurrenceCustomDays",
+            "custom_hours": "#/components/schemas/ReportRecurrenceCustomHours",
+            "custom_months": "#/components/schemas/ReportRecurrenceCustomMonths",
+            "custom_weeks": "#/components/schemas/ReportRecurrenceCustomWeeks",
+            "daily": "#/components/schemas/ReportRecurrenceDaily",
+            "hourly": "#/components/schemas/ReportRecurrenceHourly",
+            "monthly_day": "#/components/schemas/ReportRecurrenceMonthlyDay",
+            "monthly_last_day": "#/components/schemas/ReportRecurrenceMonthlyLastDay",
+            "weekly": "#/components/schemas/ReportRecurrenceWeekly"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -5695,6 +5754,13 @@
       "ReportValue": {
         "description": "A typed filter value. Never an expression.",
         "discriminator": {
+          "mapping": {
+            "boolean": "#/components/schemas/ReportValueBoolean",
+            "enum": "#/components/schemas/ReportValueEnum",
+            "integer": "#/components/schemas/ReportValueInteger",
+            "text": "#/components/schemas/ReportValueText",
+            "time": "#/components/schemas/ReportValueTime"
+          },
           "propertyName": "kind"
         },
         "oneOf": [

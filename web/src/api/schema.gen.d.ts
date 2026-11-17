@@ -1406,7 +1406,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationTargetDirectory";
+            kind: "directory";
             /** Format: uuid */
             objectGuid: string | null;
         };
@@ -1416,7 +1416,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationTargetStore";
+            kind: "store";
             resource: string;
         };
         OperationUndoPlan: {
@@ -1434,14 +1434,14 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueAbsent";
+            kind: "absent";
         };
         OperationValueBoolean: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueBoolean";
+            kind: "boolean";
             value: boolean;
         };
         OperationValueInteger: {
@@ -1449,7 +1449,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueInteger";
+            kind: "integer";
             value: number;
         };
         OperationValueRedacted: {
@@ -1457,14 +1457,14 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueRedacted";
+            kind: "redacted";
         };
         OperationValueText: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueText";
+            kind: "text";
             value: string;
         };
         OperationValueTextList: {
@@ -1472,7 +1472,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueTextList";
+            kind: "textList";
             values: string[];
         };
         OperationValueTime: {
@@ -1480,7 +1480,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueTime";
+            kind: "time";
             /** Format: date-time */
             value: string;
         };
@@ -1542,7 +1542,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellAbsent";
+            kind: "absent";
         };
         /** @description An object GUID or other GUID attribute, canonical lower-case. */
         ReportCellGuid: {
@@ -1550,7 +1550,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellGuid";
+            kind: "guid";
             /** Format: uuid */
             value: string;
         };
@@ -1560,7 +1560,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellInteger";
+            kind: "integer";
             value: string;
         };
         /** @description The value can never exist for this object, as distinct from absent (not yet set). In the SYS-01 policy columns it is the policy's own no-limit setting, read from 0 or the minimum signed 64-bit value by the 2a codec: in max_age it is "Never expires", in lockout_threshold "Never locks", in lockout_duration "Until an administrator unlocks". The column says which; no other policy column carries it. For a client that compares policies, such a cell is the loosest value of its column, not the smallest number: it is never an integer 0 and must not be ordered as one. */
@@ -1569,7 +1569,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellNever";
+            kind: "never";
         };
         /** @description Text as stored in the directory, which may hold any character. Encoders neutralise it on export. */
         ReportCellText: {
@@ -1577,7 +1577,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellText";
+            kind: "text";
             value: string;
         };
         /** @description A multi-valued text attribute, in stored order. */
@@ -1586,7 +1586,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellTextList";
+            kind: "textList";
             value: string[];
         };
         /** @description A derived state whose input is missing (Unknown (input missing)). */
@@ -1595,7 +1595,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellUnknown";
+            kind: "unknown";
         };
         /** @description One value of an enum column: a stable ID and its label. */
         ReportChoice: {
@@ -1761,7 +1761,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterCompare";
+            kind: "compare";
             operator: components["schemas"]["ReportCompareOperator"];
             value: components["schemas"]["ReportValue"];
         };
@@ -1772,7 +1772,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterConditionView";
+            kind: "condition";
             operator: components["schemas"]["ReportFilterOperatorValue"];
             values: components["schemas"]["ReportValue"][];
         };
@@ -1783,7 +1783,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterGroup";
+            kind: "group";
             match: components["schemas"]["ReportFilterMatch"];
         };
         /** @description Filters combined by match. */
@@ -1793,7 +1793,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterGroupView";
+            kind: "group";
             match: components["schemas"]["ReportFilterMatchValue"];
         };
         /** @description One column equal to any of up to 50 values. */
@@ -1803,7 +1803,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterIn";
+            kind: "in";
             values: components["schemas"]["ReportValue"][];
         };
         /**
@@ -1828,7 +1828,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterPresence";
+            kind: "presence";
             presence: components["schemas"]["ReportPresence"];
         };
         /** @description A time column relative to the start of the run. */
@@ -1839,7 +1839,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterRelative";
+            kind: "relative_time";
             relation: components["schemas"]["ReportRelativeTime"];
         };
         /** @description A filter as the server stores it. A condition's column is a registry column ID. */
@@ -1914,7 +1914,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportPeriodLastDays";
+            kind: "last_days";
         };
         /** @description A custom range. */
         ReportPeriodRange: {
@@ -1924,7 +1924,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportPeriodRange";
+            kind: "range";
             /** Format: date-time */
             to: string;
         };
@@ -2052,7 +2052,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecipientAccount";
+            kind: "account";
         };
         /** @description An account recipient. */
         ReportRecipientAccountView: {
@@ -2065,7 +2065,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecipientAccountView";
+            kind: "account";
         };
         /** @description An e-mail address. Attachment only; a link is never offered for an address. An address outside the tenant's allowed recipient domains is external. */
         ReportRecipientEmail: {
@@ -2076,7 +2076,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecipientEmail";
+            kind: "email";
         };
         /** @description An e-mail recipient. external is judged against the allowed recipient domains now. */
         ReportRecipientEmailView: {
@@ -2089,7 +2089,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecipientEmailView";
+            kind: "email";
         };
         /** @description A recipient as stored. */
         ReportRecipientView: components["schemas"]["ReportRecipientAccountView"] | components["schemas"]["ReportRecipientEmailView"];
@@ -2102,7 +2102,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceCustomDays";
+            kind: "custom_days";
             /** Format: date-time */
             start: string;
         };
@@ -2113,7 +2113,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceCustomHours";
+            kind: "custom_hours";
             /** Format: date-time */
             start: string;
         };
@@ -2124,7 +2124,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceCustomMonths";
+            kind: "custom_months";
             /** Format: date-time */
             start: string;
         };
@@ -2135,7 +2135,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceCustomWeeks";
+            kind: "custom_weeks";
             /** Format: date-time */
             start: string;
         };
@@ -2145,7 +2145,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceDaily";
+            kind: "daily";
             time: string;
         };
         /** @description Every n hours at the given minute. */
@@ -2155,7 +2155,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceHourly";
+            kind: "hourly";
             minute: number;
         };
         /** @description On a day of the month at a local time. A month without the day runs on its last day. */
@@ -2165,7 +2165,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceMonthlyDay";
+            kind: "monthly_day";
             time: string;
         };
         /** @description On the last day of every month at a local time. */
@@ -2174,7 +2174,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceMonthlyLastDay";
+            kind: "monthly_last_day";
             time: string;
         };
         /** @description On weekdays (1 Monday to 7 Sunday) at a local time. */
@@ -2183,7 +2183,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceWeekly";
+            kind: "weekly";
             time: string;
             weekdays: number[];
         };
@@ -2431,7 +2431,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueBoolean";
+            kind: "boolean";
             value: boolean;
         };
         /** @description A stable ID from the column's choices, such as enabled or never_account_flag. The server checks it against the column. */
@@ -2440,7 +2440,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueEnum";
+            kind: "enum";
             value: string;
         };
         /** @description A whole number. */
@@ -2449,7 +2449,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueInteger";
+            kind: "integer";
             value: number;
         };
         /** @description Text compared literally. Control characters are refused. */
@@ -2458,7 +2458,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueText";
+            kind: "text";
             value: string;
         };
         /** @description An instant, RFC 3339. */
@@ -2467,7 +2467,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueTime";
+            kind: "time";
             /** Format: date-time */
             value: string;
         };
