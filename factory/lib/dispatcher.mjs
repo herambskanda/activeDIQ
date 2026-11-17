@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   appendEvent, drainBadFiles, getEntity, listEntities, listRecentRuns, localDate, newRunId, nowIso,
-  pidAlive, putEntity, readControl, readDispatcherState, readRange, readRateLimitSignal, readTail, reloadConfig,
+  pidAlive, putEntity, readControl, readDispatcherState, readMergeDrain, readRange, readRateLimitSignal, readTail, reloadConfig,
   updateDispatcherState, updateEntity,
 } from './store.mjs';
 import { FactoryError } from './errors.mjs';
@@ -129,6 +129,7 @@ export class Dispatcher {
     this.mergeLock = Promise.resolve(); // serializes real merges into ctx.root across lanes (T-2210): git allows only one merge in progress at a time
     this.gateRetryAt = new Map(); // ticket id → ms before which a gate that could not judge is not retried
     this.heldOnMain = new Map(); // ticket id → the broken main commit it waits on; retried once main moves
+    this.drainNoted = false; // a merge drain (`factory drain`) was last seen on; so its start and end are each reported once
     this.runGate = runPreMergeTrain; // (ctx, tickets[], {signal}) → verdict; replaceable in tests
     this.runShadow = runShadowGate; // (ctx, ticket, {mainSha, branchSha, verdict, signal}) → record; replaceable in tests
     this.shadowRun = null; // shadow gate in flight (logs only, never blocks or decides anything)
@@ -453,6 +454,7 @@ export class Dispatcher {
    */
   async mergePass() {
     if (this.shared) return;
+    if (this.mergeDrained()) return;
     const settings = preMergeSettings(this.ctx.config);
     const gated = settings.enabled;
     const concurrency = gated ? settings.concurrency : 1;
@@ -494,6 +496,23 @@ export class Dispatcher {
     // Try to fill another lane in this same pass: the selection above already excludes this
     // lane's tickets (`claimed`), so a second call picks a disjoint train, up to `concurrency`.
     if (this.gateLanes.length < concurrency) await this.mergePass();
+  }
+
+  /**
+   * True while `factory drain` is on: no new gate run and no automatic merge starts, so `main` stays
+   * put for a hand merge. A gate already in flight is untouched (it finishes and lands on its own,
+   * not through this pass). The start and the end (or expiry) of a drain are each reported once.
+   */
+  mergeDrained() {
+    const drain = readMergeDrain(this.ctx);
+    if (drain.on && !this.drainNoted) {
+      this.drainNoted = true;
+      appendEvent(this.ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `merge drain in force until ${drain.until}: no new gate run or automatic merge starts${this.gateLanes.length ? '; the gate run in flight finishes and lands' : ''}` });
+    } else if (!drain.on && this.drainNoted) {
+      this.drainNoted = false;
+      appendEvent(this.ctx, { actor: 'dispatcher', kind: 'dispatcher', text: drain.expired ? 'merge drain expired on its own; merging resumes' : 'merge drain over; merging resumes' });
+    }
+    return drain.on;
   }
 
   /** Wait for every pre-merge gate in flight (tests, shutdown). */

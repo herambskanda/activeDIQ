@@ -86,6 +86,7 @@ test('buildMergeQueue lists waiting in gate order, the gate in flight and the la
       in_gate: { id: gated.id, ids: [gated.id], started_at: '2026-11-01T12:30:00.000Z' },
       in_gates: [{ id: gated.id, ids: [gated.id], started_at: '2026-11-01T12:30:00.000Z' }],
       last_merged_at: '2026-11-01T12:00:00.000Z',
+      drain: null,
     });
     const dead = buildMergeQueue(f.ctx, state, false);
     assert.equal(dead.in_gate, null, 'a gate record from a dead dispatcher is not shown');
@@ -131,6 +132,7 @@ test('GET /api/state carries merge_queue', async () => {
       in_gate: { id: gated.id, ids: [gated.id], started_at: '2026-11-01T12:30:00.000Z' },
       in_gates: [{ id: gated.id, ids: [gated.id], started_at: '2026-11-01T12:30:00.000Z' }],
       last_merged_at: null,
+      drain: null,
     });
   } finally {
     server.closeAllConnections();
