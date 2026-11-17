@@ -265,9 +265,9 @@ func (s *Service) write(ctx context.Context, jt jobs.TenantTx, c jobs.Claimed, e
 	case XLSX:
 		f = xlsx.Format(xlsx.Options{Sheet: xlsx.ParseSheetName(def.Def.Title), Title: def.Def.Title, MaxRows: cap, About: s.about(r, def, q, e)})
 	case PDF:
-		f = pdf.Format(pdf.Options{Title: def.Def.Title, MaxRows: cap, About: s.about(r, def, q, e)})
+		f = pdf.Format(pdf.Options{Title: def.Def.Title, MaxRows: cap, About: s.about(r, def, q, e), Location: r.Location()})
 	case HTML:
-		f = htmlx.Format(htmlx.Options{Title: def.Def.Title, MaxRows: cap, About: s.about(r, def, q, e)})
+		f = htmlx.Format(htmlx.Options{Title: def.Def.Title, MaxRows: cap, About: s.about(r, def, q, e), Location: r.Location()})
 	default:
 		return blob.Info{}, "", &outcome{reason: run.FailInternal}
 	}

@@ -26,6 +26,8 @@ authn_totp_failures	authn	system
 authn_webauthn_challenges	authn	system
 authn_webauthn_credentials	authn	config
 authz_assignment_roots	authz	config
+authz_assignment_sites	authz	config
+authz_assignment_templates	authz	config
 authz_assignments	authz	config
 authz_role_permissions	authz	config
 authz_roles	authz	config
@@ -57,6 +59,8 @@ inventory_servers	invhost	config
 inventory_tier0_revisions	inventory	system
 jobs	jobs	system
 links	inventory	system
+migration_jobs	migration	config
+migration_projects	migration	config
 nc_sync_passes	inventory	system
 notify_deliveries	notify	system
 notify_settings	notify	config

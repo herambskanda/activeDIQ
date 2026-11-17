@@ -114,7 +114,7 @@ export function createTicket(ctx, input, by = 'cli') {
     id: null, title: title.trim(), type, status, priority, owner: owner.trim(), epic, milestone,
     depends_on, decisions, tags, parity_refs, summary, body, acceptance,
     links: { spec: null, branch: null, worktree: null, ...links },
-    effort_override: null, attempts: 0, escalations: 0, stage_role: null,
+    effort_override: null, attempts: 0, escalations: 0, gate_failures: 0, stage_role: null,
     handoff: { pending: false, latest: null }, result: null, notes: [],
     history: [], created: now, updated: now,
   };
@@ -268,6 +268,7 @@ export function unblockTicket(ctx, id, by, note, { toReady = false, waitingOn = 
     t.blocked_from = null;
     t.attempts = 0;
     t.escalations = 0;
+    t.gate_failures = 0;
     t.effort_override = null;
     if (toReady) t.handoff = { ...t.handoff, pending: false };
   });
@@ -305,6 +306,25 @@ export function reopenTicket(ctx, id, by, note) {
     t.escalations = 0;
     t.effort_override = null;
     t.result = null;
+  });
+}
+
+/**
+ * Hold a `done` ticket for a CEO decision instead of reopening it to its owner again: the
+ * pre-merge gate has refused it `pre_merge.max_gate_failures` times in a row (T-xxxx, the 2-run
+ * cap). Restored the same way as any other block — `unblock` or `unblock --to-ready`, both of
+ * which land it in `ready` with a fresh attempt and gate-failure budget.
+ * @param {object} ctx
+ * @param {string} id
+ * @param {string} by
+ * @param {string} note
+ */
+export function holdForDecision(ctx, id, by, note) {
+  return transition(ctx, id, by, note, 'blocked', (t) => {
+    if (t.status !== 'done') throw new FactoryError(`${id} is "${t.status}", not done`);
+    t.blocked_from = { status: 'ready', stage_role: null };
+    t.status = 'blocked';
+    t.stage_role = null;
   });
 }
 
@@ -423,7 +443,7 @@ export function summarizeTicket(t, waitingOnMerge = []) {
     tags: t.tags ?? [], parity_refs: t.parity_refs ?? [], decisions: t.decisions ?? [], depends_on: t.depends_on ?? [],
     held: t.links?.held ?? null, waiting_on_merge: waitingOnMerge,
     summary: t.summary ?? '', effort_override: t.effort_override ?? null,
-    attempts: t.attempts ?? 0, handoff: t.handoff ?? { pending: false, latest: null },
+    attempts: t.attempts ?? 0, gate_failures: t.gate_failures ?? 0, handoff: t.handoff ?? { pending: false, latest: null },
     created: t.created, updated: t.updated, last_note: last ? String(last.text).slice(0, 280) : null,
   };
 }
