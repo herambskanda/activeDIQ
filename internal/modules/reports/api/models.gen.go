@@ -2304,7 +2304,7 @@ func (v ReportDeliveryStateValue) Valid() bool {
 	return false
 }
 
-// ReportDetailActor: Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operationId is the handle of the operation.
+// ReportDetailActor: Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operation is the handle of the operation.
 type ReportDetailActor struct {
 	// Kind is the discriminator; exactly one variant pointer is set, the one Kind names.
 	Kind        string
@@ -2391,9 +2391,9 @@ func (u *ReportDetailActor) Validate(at jsontext.Pointer, errs *apitypes.Errors)
 
 // ReportDetailActorActiveDiq is the ReportDetailActorActiveDiq schema.
 type ReportDetailActorActiveDiq struct {
-	Kind        string        `json:"kind"`
-	OperationID apitypes.UUID `json:"operationId"`
-	Principal   string        `json:"principal"`
+	Kind      string        `json:"kind"`
+	Operation apitypes.UUID `json:"operation"`
+	Principal string        `json:"principal"`
 
 	p apitypes.Presence
 }
@@ -2427,7 +2427,7 @@ func (v *ReportDetailActorActiveDiq) UnmarshalJSONFrom(d *jsontext.Decoder) erro
 			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
 				return err
 			}
-		case "operationId":
+		case "operation":
 			null, err := apitypes.TakeNull(d)
 			if err != nil {
 				return err
@@ -2436,7 +2436,7 @@ func (v *ReportDetailActorActiveDiq) UnmarshalJSONFrom(d *jsontext.Decoder) erro
 			if null {
 				continue
 			}
-			if err := json.UnmarshalDecode(d, &v.OperationID); err != nil {
+			if err := json.UnmarshalDecode(d, &v.Operation); err != nil {
 				return err
 			}
 		case "principal":
@@ -2474,13 +2474,13 @@ func (v *ReportDetailActorActiveDiq) Validate(at jsontext.Pointer, errs *apitype
 			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
 		}
 	}
-	// operationId
+	// operation
 	if v.p.Decoded() {
 		if !v.p.Has(1) {
-			errs.Required(at, "operationId")
+			errs.Required(at, "operation")
 		}
 		if v.p.IsNull(1) {
-			errs.NullNotAllowed(at, "operationId")
+			errs.NullNotAllowed(at, "operation")
 		}
 	}
 	// principal

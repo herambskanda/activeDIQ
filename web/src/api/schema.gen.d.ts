@@ -1714,7 +1714,7 @@ export interface components {
          * @enum {string}
          */
         ReportDeliveryStateValue: "none_yet" | "queued" | "sent" | "failed" | "given_up" | (string & {});
-        /** @description Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operationId is the handle of the operation. */
+        /** @description Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operation is the handle of the operation. */
         ReportDetailActor: components["schemas"]["ReportDetailActorNotRecorded"] | components["schemas"]["ReportDetailActorActiveDiq"];
         ReportDetailActorActiveDiq: {
             /**
@@ -1723,7 +1723,7 @@ export interface components {
              */
             kind: "activediq";
             /** Format: uuid */
-            operationId: string;
+            operation: string;
             principal: string;
         };
         ReportDetailActorNotRecorded: {

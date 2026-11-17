@@ -3419,7 +3419,7 @@ components:
           $ref: modules/reports.yaml#/components/schemas/ReportDetailText
     ReportDetailActor:
       description: >-
-        Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operationId is the handle of the operation.
+        Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operation is the handle of the operation.
       oneOf:
         - $ref: modules/reports.yaml#/components/schemas/ReportDetailActorNotRecorded
         - $ref: modules/reports.yaml#/components/schemas/ReportDetailActorActiveDiq
@@ -3438,7 +3438,7 @@ components:
           const: notRecorded
     ReportDetailActorActiveDiq:
       type: object
-      required: [kind, principal, operationId]
+      required: [kind, principal, operation]
       additionalProperties: false
       properties:
         kind:
@@ -3447,7 +3447,7 @@ components:
         principal:
           type: string
           maxLength: 256
-        operationId:
+        operation:
           type: string
           format: uuid
     ReportDetailAttribute:

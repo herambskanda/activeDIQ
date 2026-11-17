@@ -3262,7 +3262,7 @@
         "x-activediq-tag": "reports"
       },
       "ReportDetailActor": {
-        "description": "Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operationId is the handle of the operation.",
+        "description": "Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operation is the handle of the operation.",
         "discriminator": {
           "mapping": {
             "activediq": "#/components/schemas/ReportDetailActorActiveDiq",
@@ -3287,7 +3287,7 @@
             "const": "activediq",
             "type": "string"
           },
-          "operationId": {
+          "operation": {
             "format": "uuid",
             "type": "string"
           },
@@ -3299,7 +3299,7 @@
         "required": [
           "kind",
           "principal",
-          "operationId"
+          "operation"
         ],
         "type": "object",
         "x-activediq-tag": "reports"

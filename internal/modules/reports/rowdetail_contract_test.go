@@ -71,7 +71,7 @@ func TestRowDetailEachKindCarriesExactlyItsFields(t *testing.T) {
 		},
 		"through activeDIQ": {
 			doc: `{"kind":"edited",` + detHead + detWhenOrigin + `,"valuesRecorded":false,"attributes":[{"name":"title","originAt":{"kind":"unknown"},"version":{"kind":"unknown"}}],` + detObject + `,
-			  "actor":{"kind":"activediq","principal":"ana.kowalska","operationId":"` + detOp + `"}}`,
+			  "actor":{"kind":"activediq","principal":"ana.kowalska","operation":"` + detOp + `"}}`,
 			kind: "edited", has: []string{"actor"},
 		},
 	}
@@ -109,7 +109,7 @@ func TestRowDetailEachKindCarriesExactlyItsFields(t *testing.T) {
 	}
 	// The one case with an actor names the principal and links the operation.
 	v, _, _ := readDetail(t, cases["through activeDIQ"].doc)
-	if a := v.Edited.Actor; a.Kind != "activediq" || a.Activediq == nil || a.Activediq.OperationID.String() != detOp {
+	if a := v.Edited.Actor; a.Kind != "activediq" || a.Activediq == nil || a.Activediq.Operation.String() != detOp {
 		t.Errorf("actor = %+v", a)
 	}
 }
