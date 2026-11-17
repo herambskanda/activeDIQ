@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { postMergeVerifySettings, readKnownFindings, runPostMergeVerify } from '../lib/postmerge.mjs';
 import { Dispatcher } from '../lib/dispatcher.mjs';
+import { gateEnv } from '../lib/premerge.mjs';
 import { listEntities, readRecentEvents } from '../lib/store.mjs';
 import { commitAll, git, initRepo, makeFactory } from './helpers.mjs';
 
@@ -238,4 +239,20 @@ test('raise_ticket: once the ticket is done a later regression opens a new one; 
 test('raise_ticket must be a boolean', () => {
   assert.throws(() => postMergeVerifySettings({ dispatcher: { post_merge_verify: { raise_ticket: 'yes' } } }), /raise_ticket/);
   assert.equal(postMergeVerifySettings({ dispatcher: {} }).raise_ticket, false);
+});
+
+// T-2225: the post-merge check runs the same long build as the gate; an entry evicted from the shared
+// ~/.cache/go-build mid-run would be reported as a new finding on main (and raise a P0).
+test('the post-merge check builds with the gate\'s own Go cache, not the shared one', async () => {
+  const f = setup({ gate: { argv: ['node', 'cache.mjs'] } });
+  try {
+    fs.writeFileSync(path.join(f.root, 'cache.mjs'), "console.log('GOCACHE=' + process.env.GOCACHE);\n");
+    commitAll(f.root, 'print the cache');
+    const prev = process.env.GOCACHE; process.env.GOCACHE = '/shared/go-build';
+    let result;
+    try { result = await runPostMergeVerify(f.ctx, postMergeVerifySettings(f.ctx.config), headSha(f)); } finally { if (prev === undefined) delete process.env.GOCACHE; else process.env.GOCACHE = prev; }
+    const text = fs.readFileSync(result.log, 'utf8');
+    assert.ok(text.includes(`GOCACHE=${gateEnv(f.ctx).GOCACHE}`), text);
+    assert.doesNotMatch(text, /\/shared\/go-build/);
+  } finally { f.cleanup(); }
 });
