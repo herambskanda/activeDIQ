@@ -549,7 +549,7 @@ func (m *Mapper) bag(o *inventory.Observation, set attrSet) error {
 		return err
 	}
 	if o.State == inventory.ObjLive && (o.Kind == inventory.KindUser || o.Kind == inventory.KindInetOrgPerson) {
-		bag[inventory.ReadMarkerKey] = readMarker(bag)
+		bag[inventory.ReadMarkerKey] = m.readMarker(bag)
 	}
 	if o.Kind == inventory.KindPrintQueue {
 		if err := printQueueAttributes(bag, set); err != nil {
@@ -763,10 +763,14 @@ var readMarkerAttrs = []struct{ attr, key string }{
 // the bag holds one (so an empty value is not observed, as everywhere else in the mapper),
 // inventory.ReadNotObserved when it does not. AD omits an attribute the account cannot read exactly as it
 // omits an empty one, so not_observed means "absent or unreadable", never "empty". ReadUnknownDenied is
-// reserved for a DACL evaluation (T-2220) and is not written here.
-func readMarker(bag map[string]any) map[string]any {
+// reserved for a DACL evaluation (T-2220) and is not written here. An attribute this mapper never requests
+// gets no marker: not read is not the same as read and not seen.
+func (mp *Mapper) readMarker(bag map[string]any) map[string]any {
 	m := make(map[string]any, len(readMarkerAttrs))
 	for _, a := range readMarkerAttrs {
+		if !mp.wanted[strings.ToLower(a.attr)] {
+			continue // never requested (a schema secret, or left off the request): this sync did not try to read it
+		}
 		state := inventory.ReadNotObserved
 		if _, ok := bag[a.key]; ok {
 			state = inventory.ReadObserved
