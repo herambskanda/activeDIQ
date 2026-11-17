@@ -133,12 +133,23 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
+	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
+	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
+	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default(), withPublicURL(cfg.PublicURL))
+	if err != nil {
+		return err
+	}
+	attest, err := attestationConfig(cfg) // zero without ACTIVEDIQ_ATTEST_CLIENT_ID: no attestation route mounts (ADR-0013)
+	if err != nil {
+		return err
+	}
 	// Boot the modules. Capabilities come from the deployment profile once config selects one; no module
 	// requires one yet. Modules build their services from these kernel ports in Register (ADR-0013); the
 	// read-scope producer is made from what they contribute, so it is bound after Boot.
 	jreg := jobs.NewRegistry()
 	lateScopes := &rbac.LateReadScopes{}
-	deps := platform.Deps{DB: db, Jobs: jreg, Audit: ok.Chainer, Authz: authzr, ReadScopes: lateScopes, BlobDir: cfg.BlobDir}
+	deps := platform.Deps{DB: db, Jobs: jreg, Audit: ok.Chainer, Authz: authzr, ReadScopes: lateScopes, BlobDir: cfg.BlobDir,
+		StepUp: console.StepUp, Attestation: attest}
 	dirSvc := directoryServices(db)
 	contrib, _, err := bootModules(ctx, deps, capability.NewSet(), dirSvc, owners.Lookup)
 	if err != nil {
@@ -153,12 +164,6 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	_ = tunnelDeps // handed to NewFleetService by the fleet listener (T-0717)
-	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
-	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
-	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default(), withPublicURL(cfg.PublicURL))
-	if err != nil {
-		return err
-	}
 	ownerWriter, err := buildOwnerAssignments(db, ok.Chainer, console.Sessions)
 	if err != nil {
 		return err
@@ -167,12 +172,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	// The TM-D17 attestation routes, when the install is configured for them. Built after the
-	// authorizer, which they share with the operation runner.
-	tags, err := buildAttestation(cfg, db, ok.Chainer, authzr, sessionStepUp{console.StepUp})
-	if err != nil {
-		return err
-	}
+	var tags []apihost.TagHandlers
 	// The SIEM destination routes (siem.destination.manage). The audit chainer is the store's sink.
 	siem, err := syslog.NewStore(db, ok.Chainer)
 	if err != nil {
@@ -430,6 +430,20 @@ func bootModules(ctx context.Context, deps platform.Deps, enabled capability.Set
 		return nil, nil, err
 	}
 	return c, host, nil
+}
+
+// attestationConfig turns the install's attestation settings into the kernel value modules read. With no
+// app registration it is zero and the connections module mounts no attestation route; with one, the public
+// URL must be a valid origin (the redirect URI is built on it).
+func attestationConfig(cfg config.Config) (platform.Attestation, error) {
+	if cfg.AttestClientID == "" {
+		return platform.Attestation{}, nil
+	}
+	po, err := config.ParsePublicURL(cfg.PublicURL)
+	if err != nil {
+		return platform.Attestation{}, fmt.Errorf("server: attestation redirect URI: %w", err)
+	}
+	return platform.Attestation{ClientID: cfg.AttestClientID, Origin: po.Origin}, nil
 }
 
 // seedModuleJobs runs each contributed job's Seed for the install tenant, in that tenant's transaction.

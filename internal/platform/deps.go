@@ -5,6 +5,7 @@ package platform
 
 import (
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
@@ -41,4 +42,16 @@ type Deps struct {
 	ReadScopes *rbac.LateReadScopes
 	// BlobDir is the directory of the file blob store; empty means no blob store is configured.
 	BlobDir string
+	// StepUp answers whether a console session is inside the step-up window (TM §7.4). Nil refuses.
+	StepUp *authn.StepUp
+	// Attestation configures the TM-D17 takeover attestation. Zero when the install has not set an app
+	// registration: the module then mounts no attestation route.
+	Attestation Attestation
+}
+
+// Attestation is the install's TM-D17 attestation configuration: the Entra app registration that carries
+// the delegated permission, and the canonical public origin its redirect URI is built on.
+type Attestation struct {
+	ClientID string // empty: attestation is not configured
+	Origin   string // canonical https origin, no trailing slash (config.ParsePublicURL)
 }
