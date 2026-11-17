@@ -1,4 +1,4 @@
--- 0080_authn_selfservice_enrolment: the end-user TOTP enrolment page, AN-5 (T-0205; ENH-09 spec T-0192 §6,
+-- 0085_authn_selfservice_enrolment: the end-user TOTP enrolment page, AN-5 (T-0205; ENH-09 spec T-0192 §6,
 -- threat model TM-TB1-T13). Owner: internal/platform/authn.
 --
 -- 1. authn_authenticator_enrollments gains the notice and cooling-off state of §5 and §6.5:

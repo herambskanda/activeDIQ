@@ -85,13 +85,15 @@ RETURNING id::text, connection_id::text, object_guid::text, existing_proved, enr
 
 // activeFactors lists the user's active TOTP enrolments.
 func activeFactors(ctx context.Context, tx store.Tx, t tenant.ID, ref DirectoryRef, lock bool) ([]string, error) {
-	q := `SELECT id::text FROM public.authn_authenticator_enrollments
+	const q = `SELECT id::text FROM public.authn_authenticator_enrollments
 WHERE tenant_id = $1::uuid AND connection_id = $2::uuid AND object_guid = $3::uuid AND method = 'totp' AND state = 'active'
 ORDER BY created_at, id`
+	const qLock = q + ` FOR UPDATE`
+	query := q
 	if lock {
-		q += ` FOR UPDATE`
+		query = qLock
 	}
-	rows, err := tx.Query(ctx, q, t.String(), ref.ConnectionID, ref.ObjectGUID)
+	rows, err := tx.Query(ctx, query, t.String(), ref.ConnectionID, ref.ObjectGUID)
 	if err != nil {
 		return nil, err
 	}
