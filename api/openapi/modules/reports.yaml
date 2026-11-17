@@ -3170,7 +3170,7 @@ components:
           minLength: 1
         cells:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportCell
     ReportRowPage:

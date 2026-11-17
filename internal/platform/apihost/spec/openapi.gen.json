@@ -4881,7 +4881,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportCell"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "rowKey": {

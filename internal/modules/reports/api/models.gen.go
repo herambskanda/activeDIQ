@@ -8546,7 +8546,7 @@ func (v *ReportRow) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 		}
 	}
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("cells"), len(v.Cells), 0, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("cells"), len(v.Cells), 0, 96, apitypes.CodeMaxItems)
 		for i := range v.Cells {
 			v.Cells[i].Validate(apitypes.Index(at.AppendToken("cells"), i), errs)
 		}
