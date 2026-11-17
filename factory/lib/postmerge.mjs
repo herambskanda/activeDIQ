@@ -18,6 +18,10 @@ export const POST_MERGE_VERIFY_DEFAULTS = Object.freeze({
   // How long to wait after one verify run ends before the next one may start, even if main moved
   // again in the meantime — a merge burst should not queue up a verify run per merge.
   cooldown_minutes: 15,
+  // A finding `main` did not have before is a regression nobody owns until someone is told. When on, the
+  // dispatcher also opens one P0 ticket for it (never more than one open at a time); the board event
+  // is posted either way. Off = the original notice-only behaviour.
+  raise_ticket: false,
 });
 
 /**
@@ -34,6 +38,9 @@ export function postMergeVerifySettings(config) {
   }
   if (!Number.isInteger(s.cooldown_minutes) || s.cooldown_minutes < 0) {
     throw new FactoryError('dispatcher.post_merge_verify.cooldown_minutes must be a whole number of at least 0');
+  }
+  if (typeof s.raise_ticket !== 'boolean') {
+    throw new FactoryError('dispatcher.post_merge_verify.raise_ticket must be true or false');
   }
   return s;
 }

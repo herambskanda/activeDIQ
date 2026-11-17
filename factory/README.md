@@ -402,6 +402,12 @@ per step. A pass on a red `main` that the shadow fails is `inconclusive` (findin
 are not new). Exit code 1 when there is any miss. Switch the real gate only after a week with no miss.
 Test: `factory/test/shadowgate.test.mjs`.
 
+`dispatcher.post_merge_verify.raise_ticket` (default `false`, on in the live config): when the scheduled
+`make -k ci-full` on `main` finds something it did not have at the previous check, the dispatcher also
+opens one `ready` P0 bug tagged `main-red` (findings, what landed since, the log). At most one such
+ticket is open at a time; a further red run while it is open only adds an event. Without it the
+check only posts a board event, which nobody owns.
+
 ## Board (`factory/board/`)
 
 `server.mjs` — Node `http`, bound to `127.0.0.1` only. Reads state on each request (cheap).

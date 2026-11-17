@@ -549,6 +549,31 @@ export class Dispatcher {
         + (mergedSince.length ? ` Landed since the last check: ${mergedSince.join(' | ')}.` : '')
         + ` Logging only — no auto-revert, nothing is blocked. Log: ${result.log}`,
     });
+    if (settings.raise_ticket) this.raiseMainRedTicket(sha, result, mergedSince);
+  }
+
+  /**
+   * `main` went red after merges landed: open one P0 bug so the regression has an owner instead of a
+   * line on the board. At most one such ticket is open at a time (tag `main-red`); a second red result
+   * while it is open is already covered by it, since it asks for `make ci-full` to pass on main.
+   */
+  raiseMainRedTicket(sha, result, mergedSince) {
+    const { ctx } = this;
+    const open = listEntities(ctx, 'tickets').find((t) => (t.tags ?? []).includes('main-red') && !['done', 'cancelled'].includes(t.status));
+    if (open) {
+      appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', ticket: open.id, text: `main is red again at ${shortSha(sha)}; ${open.id} is already open for it, so no second ticket was raised` });
+      return;
+    }
+    const main = ctx.config.dispatcher.main_branch;
+    const shown = result.newFindings.slice(0, 20);
+    const ticket = createTicket(ctx, {
+      title: `${main} is red: ${result.newFindings.length} new finding(s) in the scheduled full check at ${shortSha(sha)}`,
+      type: 'bug', owner: 'backend-engineer', priority: 'P0', status: 'ready', tags: ['main-red'],
+      summary: `The post-merge full check (${postMergeVerifySettings(ctx.config).argv.join(' ')}) on ${main} at ${shortSha(sha)} found ${result.newFindings.length} finding(s) it did not have at the previous check. ${main} stays red, so the merge gate keeps refusing tickets for faults that are not theirs, until this is fixed.`,
+      body: `New findings:\n${shown.map((f) => `- ${f}`).join('\n')}${result.newFindings.length > shown.length ? '\n- …' : ''}\n\nLanded since the last check:\n${mergedSince.length ? mergedSince.map((m) => `- ${m}`).join('\n') : '- (not known)'}\n\nLog: ${result.log}`,
+      acceptance: [`Each finding above is fixed (or shown to be a false positive and the check corrected), and the full check passes on ${main} with none of them.`, 'The cause is named: the ticket whose merge introduced it, and why the pre-merge gate did not catch it.'],
+    }, 'dispatcher');
+    appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} raised (P0): ${main} is red at ${shortSha(sha)}` });
   }
 
   /**

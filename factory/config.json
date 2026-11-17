@@ -31,14 +31,15 @@
       }
     },
     "shadow_gate": {
-      "enabled": false,
+      "enabled": true,
       "step_timeout_minutes": 60
     },
     "post_merge_verify": {
       "enabled": true,
       "argv": ["make", "-k", "ci-full"],
       "timeout_minutes": 150,
-      "cooldown_minutes": 15
+      "cooldown_minutes": 15,
+      "raise_ticket": true
     },
     "permission_mode": "auto",
     "rate_limit_backoff_minutes": 15,
