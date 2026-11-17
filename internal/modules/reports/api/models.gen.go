@@ -1719,7 +1719,7 @@ func (v *ReportDefinition) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 		}
 	}
 	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 96, apitypes.CodeMaxItems)
 		for i := range v.Columns {
 			v.Columns[i].Validate(apitypes.Index(at.AppendToken("columns"), i), errs)
 		}
@@ -4765,7 +4765,7 @@ func (v *ReportParametersView) Validate(at jsontext.Pointer, errs *apitypes.Erro
 		}
 	}
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 96, apitypes.CodeMaxItems)
 		for i := range v.Columns {
 			apitypes.CheckLen(errs, apitypes.InBody, apitypes.Index(at.AppendToken("columns"), i), string(v.Columns[i]), 0, 64)
 		}
@@ -6473,7 +6473,7 @@ func (v *ReportPreset) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 		}
 	}
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 96, apitypes.CodeMaxItems)
 		for i := range v.Columns {
 			apitypes.CheckLen(errs, apitypes.InBody, apitypes.Index(at.AppendToken("columns"), i), string(v.Columns[i]), 0, 64)
 		}
@@ -8672,7 +8672,7 @@ func (v *ReportRowPage) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 		}
 	}
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 96, apitypes.CodeMaxItems)
 		for i := range v.Columns {
 			v.Columns[i].Validate(apitypes.Index(at.AppendToken("columns"), i), errs)
 		}
@@ -9615,7 +9615,7 @@ func (v *ReportRunParameters) Validate(at jsontext.Pointer, errs *apitypes.Error
 		errs.NullNotAllowed(at, "columns")
 	}
 	if v.Columns != nil {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 1, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 1, 96, apitypes.CodeMaxItems)
 		for i := range v.Columns {
 			if !v.Columns[i].Valid() {
 				errs.Add(apitypes.InBody, apitypes.Index(at.AppendToken("columns"), i), apitypes.CodeEnum, "value is not one of the allowed values")

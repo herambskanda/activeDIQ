@@ -316,20 +316,28 @@ const (
 )
 
 // readStateColumns exposes one read-state column per marked attribute. Additive: no existing column moves.
+// Each fragment is a literal constant (RP1/FF-SP2): the key is spelled out, never joined in.
 func readStateColumns() []report.Column {
-	var cols []report.Column
-	for _, a := range []struct{ id, label, key string }{
-		{"mail", "Email", "mail"}, {"employee_id", "Employee ID", "employeeID"}, {"department", "Department", "department"},
-		{"title", "Title", "title"}, {"company", "Company", "company"}, {"telephone_number", "Telephone number", "telephoneNumber"},
-		{"mobile", "Mobile", "mobile"}, {"description", "Description", "description"}, {"manager", "Manager", "manager"},
-		{"logon_script", "Logon script", "scriptPath"}, {"dialin_allowed", "Dial-in: allow access", "msNPAllowDialin"},
-		{"skype_enabled", "Skype/Lync enabled", "msRTCSIP-UserEnabled"}, {"logon_hours", "Logon hours", "logonHours"},
-		{"thumbnail_photo", "Thumbnail photo", "thumbnailPhoto"}, {"jpeg_photo", "JPEG photo", "jpegPhoto"},
-	} {
-		cols = append(cols, state(report.ColumnID(a.id+"_read_state"), a.label+": read state",
-			report.SQL("{t}.attributes -> '"+ReadMarkerKey+"' ->> '"+a.key+"'"), ReadObserved, ReadNotObserved, ReadUnknownDenied))
+	rs := func(id, label string, sql report.Fragment) report.Column {
+		return state(report.ColumnID(id+"_read_state"), label+": read state", sql, ReadObserved, ReadNotObserved, ReadUnknownDenied)
 	}
-	return cols
+	return []report.Column{
+		rs("mail", "Email", report.SQL("{t}.attributes -> 'attrRead' ->> 'mail'")),
+		rs("employee_id", "Employee ID", report.SQL("{t}.attributes -> 'attrRead' ->> 'employeeID'")),
+		rs("department", "Department", report.SQL("{t}.attributes -> 'attrRead' ->> 'department'")),
+		rs("title", "Title", report.SQL("{t}.attributes -> 'attrRead' ->> 'title'")),
+		rs("company", "Company", report.SQL("{t}.attributes -> 'attrRead' ->> 'company'")),
+		rs("telephone_number", "Telephone number", report.SQL("{t}.attributes -> 'attrRead' ->> 'telephoneNumber'")),
+		rs("mobile", "Mobile", report.SQL("{t}.attributes -> 'attrRead' ->> 'mobile'")),
+		rs("description", "Description", report.SQL("{t}.attributes -> 'attrRead' ->> 'description'")),
+		rs("manager", "Manager", report.SQL("{t}.attributes -> 'attrRead' ->> 'manager'")),
+		rs("logon_script", "Logon script", report.SQL("{t}.attributes -> 'attrRead' ->> 'scriptPath'")),
+		rs("dialin_allowed", "Dial-in: allow access", report.SQL("{t}.attributes -> 'attrRead' ->> 'msNPAllowDialin'")),
+		rs("skype_enabled", "Skype/Lync enabled", report.SQL("{t}.attributes -> 'attrRead' ->> 'msRTCSIP-UserEnabled'")),
+		rs("logon_hours", "Logon hours", report.SQL("{t}.attributes -> 'attrRead' ->> 'logonHours'")),
+		rs("thumbnail_photo", "Thumbnail photo", report.SQL("{t}.attributes -> 'attrRead' ->> 'thumbnailPhoto'")),
+		rs("jpeg_photo", "JPEG photo", report.SQL("{t}.attributes -> 'attrRead' ->> 'jpegPhoto'")),
+	}
 }
 
 // printersDataset is the published printers (reports-2-second-slice 7.2, D13): the printQueue objects the

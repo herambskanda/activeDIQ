@@ -2159,7 +2159,7 @@ components:
         columns:
           type: array
           minItems: 1
-          maxItems: 64
+          maxItems: 96
           description: The columns shown and exported, in order. Replaces the preset's columns when present.
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportColumnId
@@ -2607,7 +2607,7 @@ components:
           maximum: 3660
         columns:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             type: string
             maxLength: 64
@@ -2684,7 +2684,7 @@ components:
             $ref: modules/reports.yaml#/components/schemas/ReportPreset
         columns:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportColumnInfo
         exportFormats:
@@ -2745,7 +2745,7 @@ components:
             $ref: modules/reports.yaml#/components/schemas/ReportFilterView
         columns:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             type: string
             maxLength: 64
@@ -3184,7 +3184,7 @@ components:
           format: uuid
         columns:
           type: array
-          maxItems: 64
+          maxItems: 96
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportColumnInfo
         rows:
