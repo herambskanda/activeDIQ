@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { postMergeVerifySettings, readKnownFindings, runPostMergeVerify } from '../lib/postmerge.mjs';
 import { Dispatcher } from '../lib/dispatcher.mjs';
-import { readRecentEvents } from '../lib/store.mjs';
+import { listEntities, readRecentEvents } from '../lib/store.mjs';
 import { commitAll, git, initRepo, makeFactory } from './helpers.mjs';
 
 const CHECK = `import fs from 'node:fs';
@@ -178,4 +178,64 @@ test('once the cooldown passes, a verify runs again, but a sha already known to 
     await verify(d);
     assert.equal(events(f).filter((t) => t.includes('post-merge')).length, 0, 'main did not move: nothing to verify, so no run and no event');
   } finally { f.cleanup(); }
+});
+
+// ---- a red main gets an owner: one P0 ticket (raise_ticket) ----------------------------------------------
+
+const mainRed = (f) => listEntities(f.ctx, 'tickets').filter((t) => (t.tags ?? []).includes('main-red'));
+
+async function goRed(f, d, violations, minute) {
+  writeViolations(f, violations);
+  commitAll(f.root, `violations ${minute}`);
+  f.ctx.now = () => new Date(Date.UTC(2026, 10, 1, 10, minute));
+  await verify(d);
+}
+
+test('raise_ticket: a new finding on main opens one ready P0 bug naming it; a second red run while it is open adds none', async () => {
+  const f = setup({ gate: { cooldown_minutes: 0, raise_ticket: true } });
+  try {
+    const d = dispatcher(f);
+    f.ctx.now = () => new Date(Date.UTC(2026, 10, 1, 10, 0));
+    await verify(d); // baseline
+    await goRed(f, d, [V('a.go', 1, 'bad thing')], 1);
+    const [t] = mainRed(f);
+    assert.equal(mainRed(f).length, 1);
+    assert.deepEqual([t.type, t.priority, t.status], ['bug', 'P0', 'ready']);
+    assert.match(t.body, /a\.go: P1 \(ADR-0002 fitness function\): bad thing/);
+    assert.match(t.body, /violations 1/, 'names what landed since the last check');
+    assert.ok(events(f).some((x) => x.includes(`${t.id} raised (P0)`)));
+
+    await goRed(f, d, [V('a.go', 1, 'bad thing'), V('b.go', 2, 'worse thing')], 2);
+    assert.equal(mainRed(f).length, 1, 'one open ticket covers it');
+    assert.ok(events(f).some((x) => /already open for it, so no second ticket/.test(x)));
+  } finally { f.cleanup(); }
+});
+
+test('raise_ticket: once the ticket is done a later regression opens a new one; off (the default) raises nothing', async () => {
+  const f = setup({ gate: { cooldown_minutes: 0, raise_ticket: true } });
+  try {
+    const d = dispatcher(f);
+    f.ctx.now = () => new Date(Date.UTC(2026, 10, 1, 10, 0));
+    await verify(d);
+    await goRed(f, d, [V('a.go', 1, 'bad thing')], 1);
+    const first = mainRed(f)[0];
+    const file = path.join(f.ctx.dir('tickets'), `${first.id}.json`);
+    fs.writeFileSync(file, JSON.stringify({ ...first, status: 'done' }));
+    await goRed(f, d, [V('a.go', 1, 'bad thing'), V('c.go', 3, 'new regression')], 2);
+    assert.equal(mainRed(f).length, 2);
+  } finally { f.cleanup(); }
+  const g = setup({ gate: { cooldown_minutes: 0 } });
+  try {
+    const d = dispatcher(g);
+    g.ctx.now = () => new Date(Date.UTC(2026, 10, 1, 10, 0));
+    await verify(d);
+    await goRed(g, d, [V('a.go', 1, 'bad thing')], 1);
+    assert.equal(mainRed(g).length, 0);
+    assert.ok(events(g).some((x) => x.includes('post-merge')), 'the board event is still posted');
+  } finally { g.cleanup(); }
+});
+
+test('raise_ticket must be a boolean', () => {
+  assert.throws(() => postMergeVerifySettings({ dispatcher: { post_merge_verify: { raise_ticket: 'yes' } } }), /raise_ticket/);
+  assert.equal(postMergeVerifySettings({ dispatcher: {} }).raise_ticket, false);
 });

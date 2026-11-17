@@ -323,7 +323,13 @@ claude -p "<rendered templates/worker-prompt.md>" \
   a gate that passes caches its merge-result run as the baseline of the next `main`; a fresh baseline that
   times out falls back to the nearest cached run, which may clear a merge result but never refuse one
   (otherwise the gate cannot judge and retries). A refused ticket is reopened for its
-  owner with the findings and log paths (`state/premerge/`). Every run gets its own scratch tree and
+  owner with the findings and log paths (`state/premerge/`), **up to `pre_merge.max_gate_failures`
+  times in a row (default 2, T-xxxx)**: the dispatcher counts consecutive refusals on `ticket.gate_failures`
+  (untouched by the normal per-stage `attempts`/`max_retries` reset, so it survives a reopen); on the
+  `max_gate_failures`th refusal it does not reopen the ticket again — it holds it `blocked` and opens a
+  `directional` CEO decision (`retry` / `escalate` / `cancel`) naming the ticket and the findings, so a
+  ticket can never bounce through the gate forever unseen. `ticket unblock [--to-ready]` on the decision's
+  resolution gives it a fresh `gate_failures` budget. Every run gets its own scratch tree and
   log, named with a per-run tag, so a dry run never touches the dispatcher's run. A run whose tree
   was removed or replaced while it ran is not a verdict and is not cached (T-0696). A gate that cannot judge (timeout,
   worktree error, vanished tree) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
@@ -342,7 +348,12 @@ claude -p "<rendered templates/worker-prompt.md>" \
   `main` itself it is reopened as before). Embargo hold and the could-not-judge retry apply per ticket.
   The gate judges exactly what it judged before; only how many tickets share a run changed. The dispatcher records the gate in flight in `state/dispatcher.json`
   (`merge_gate: {ticket, tickets, started_at}`, cleared on finish and on dispatcher start). Before the full run a cheap `pre_merge.numbering` check (the migration-number
-  test, T-1067) runs on the same merge result and refuses with the free number to renumber to. `factory premerge ID [-- CMD…]` is the dry run. Details:
+  test, T-1067) runs on the same merge result and refuses with the free number to renumber to. When it fails
+  but the branch adds no clashing file, the gate runs the same check on `main` alone (once per main commit):
+  `main` red too → `main` is broken (a duplicate or gap that landed without the gate), so the ticket is
+  **held** — left `done`, not reopened, no `gate_failures` strike — and not gated again until `main` moves,
+  with one pending `notice` decision while `main` stays broken; `main` green → the branch broke the
+  numbering itself (a deleted or renamed migration), so it is reopened and counts as a strike. `factory premerge ID [-- CMD…]` is the dry run. Details:
   `knowledge/development/standards/ci-gates.md`.
 - When a code-bearing ticket reaches `done` (and passes the gate), the dispatcher merges with
   `git merge --no-ff factory/<id>` in the main checkout. On conflict: `git merge --abort`, the
@@ -365,6 +376,37 @@ claude -p "<rendered templates/worker-prompt.md>" \
   pre-merge gate itself is untouched. Test: `factory/test/dep-merge.test.mjs`.
 - If the repository has no commits, or `isolation` is `none`, workers run in the main checkout and
   `max_parallel` is forced to 1 for code-bearing types.
+
+### Shadow gate (`lib/shadowgate.mjs`, `dispatcher.shadow_gate`)
+
+A faster, tiered merge check that runs **beside** the real pre-merge gate and decides nothing. Off by
+default (`enabled: false`). When on, each time the real gate judges a single ticket the dispatcher
+replays that same merge (same `main` commit, same branch head) in its own scratch worktree and runs:
+
+- **Tier 1, every ticket:** `lint-go`, generated-code checks, `lint-api`, `fitness`, `secrets-scan`.
+- **Tier 2, only what the change touches:** Go tests for the changed packages and every package that
+  imports them (traced with `go list`; a change no package owns, or to `go.mod`, `Makefile`, `*.mk`,
+  `tools/ci/`, tests the whole module); `lint-web`, `test-web` and Playwright only when `web/`
+  changed; `vuln-scan` only when dependencies changed; `workflows-check` only when CI files changed.
+- **Tier 3** is the existing `post_merge_verify` (`make ci-full` on `main`).
+
+Steps are configurable (`dispatcher.shadow_gate.steps`: `name`, `tier`, `when` = `always|go|web|deps|workflows`,
+`argv`; `{go_packages}` in an argv expands to the affected packages). Every step is timed. One record
+per ticket goes to `state/shadow/results.jsonl` (logs under `state/shadow/logs/`); nothing reads a
+record to merge, refuse or reopen. One shadow run at a time: a ticket that arrives while one runs is
+recorded as `skipped`. A shadow that errors is recorded and never escapes.
+
+`factory/bin/shadow-report` summarises the records: agreement with the real gate, every **MISS** (the
+real gate refused and the shadow did not catch all of its findings), false alarms, time per ticket and
+per step. A pass on a red `main` that the shadow fails is `inconclusive` (findings already on `main`
+are not new). Exit code 1 when there is any miss. Switch the real gate only after a week with no miss.
+Test: `factory/test/shadowgate.test.mjs`.
+
+`dispatcher.post_merge_verify.raise_ticket` (default `false`, on in the live config): when the scheduled
+`make -k ci-full` on `main` finds something it did not have at the previous check, the dispatcher also
+opens one `ready` P0 bug tagged `main-red` (findings, what landed since, the log). At most one such
+ticket is open at a time; a further red run while it is open only adds an event. Without it the
+check only posts a board event, which nobody owns.
 
 ## Board (`factory/board/`)
 
@@ -493,7 +535,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 - **Run:** `continuation`, `snapshot` (status, stage role and latest handoff at launch: how "no progress" is judged), `kill_reason` (`timeout` or `shutdown`), `error`; stderr is kept in `state/runs/<id>.err` next to `<id>.log`.
 - **State:** `state/board.json` and `state/dispatcher.json` hold pids; `state/board.log` and `state/dispatcher.log` capture the detached processes; `state/signals/rate-limit.json` is written by the `StopFailure` hook and read by the dispatcher.
 - **Environment:** `FACTORY_HOME`, `FACTORY_CLAUDE_BIN` (the executable to launch, default `claude`), `FACTORY_DEBUG=1` (stack traces).
-- **API:** `/api/state` also carries `company` and `dispatcher.pid`; ticket summaries include `waiting_on_merge` (ids of done dependencies not yet on main, ready tickets only), `summary`, `created`, `parity_refs`, `effort_override`, `held`, `stage_role` and `last_note`.
+- **API:** `/api/state` also carries `company` and `dispatcher.pid`; ticket summaries include `waiting_on_merge` (ids of done dependencies not yet on main, ready tickets only), `summary`, `created`, `parity_refs`, `effort_override`, `held`, `stage_role`, `last_note` and `gate_failures` (how many times in a row the pre-merge gate has refused this ticket; see `pre_merge.max_gate_failures` below).
 
 ### Where the runtime deliberately differs from, or extends, the reference
 
