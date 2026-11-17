@@ -11,6 +11,8 @@ const (
 	ProblemTypeDirectoryAccessDenied   = "/problems/directory-access-denied"
 	ProblemTypeDirectoryConstraint     = "/problems/directory-constraint"
 	ProblemTypeDirectoryUnavailable    = "/problems/directory-unavailable"
+	ProblemTypeExplorerQueryInvalid    = "/problems/explorer-query-invalid"
+	ProblemTypeExplorerUnavailable     = "/problems/explorer-unavailable"
 	ProblemTypeForbidden               = "/problems/forbidden"
 	ProblemTypeIdempotencyKeyReuse     = "/problems/idempotency-key-reuse"
 	ProblemTypeInternal                = "/problems/internal"
@@ -63,6 +65,16 @@ func DirectoryConstraint(detail string) *Problem {
 // DirectoryUnavailable builds a 503 /problems/directory-unavailable problem.
 func DirectoryUnavailable(detail string) *Problem {
 	return newProblem(ProblemTypeDirectoryUnavailable, "The directory is unavailable", 503, detail)
+}
+
+// ExplorerQueryInvalid builds a 400 /problems/explorer-query-invalid problem.
+func ExplorerQueryInvalid(detail string) *Problem {
+	return newProblem(ProblemTypeExplorerQueryInvalid, "The paging parameters cannot be used", 400, detail)
+}
+
+// ExplorerUnavailable builds a 503 /problems/explorer-unavailable problem.
+func ExplorerUnavailable(detail string) *Problem {
+	return newProblem(ProblemTypeExplorerUnavailable, "The directory is busy", 503, detail)
 }
 
 // Forbidden builds a 403 /problems/forbidden problem.
