@@ -331,7 +331,7 @@ claude -p "<rendered templates/worker-prompt.md>" \
   `max_gate_failures`th refusal it does not reopen the ticket again — it holds it `blocked` and opens a
   `directional` CEO decision (`retry` / `escalate` / `cancel`) naming the ticket and the findings, so a
   ticket can never bounce through the gate forever unseen. `ticket unblock [--to-ready]` on the decision's
-  resolution gives it a fresh `gate_failures` budget. Every run gets its own scratch tree and
+  resolution gives it a fresh `gate_failures` budget. P7 branch-name findings come from the repo's refs, not the candidate, so they never count as new unless the branch is the candidate's own (T-1422). Every run gets its own scratch tree and
   log, named with a per-run tag, so a dry run never touches the dispatcher's run. A run whose tree
   was removed or replaced while it ran is not a verdict and is not cached (T-0696). A gate that cannot judge (timeout,
   worktree error, vanished tree) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
