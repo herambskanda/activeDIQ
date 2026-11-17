@@ -93,7 +93,7 @@ func (e *env) tree(t *testing.T, q reportsql.TreeQuery) reportsql.TreeResult {
 	return res
 }
 
-func rdns(rs []reportsql.TreeNodeRow) []string {
+func treeRDNs(rs []reportsql.TreeNodeRow) []string {
 	out := []string{}
 	for _, r := range rs {
 		out = append(out, r.Rdn)
@@ -155,8 +155,8 @@ func Test_CompileTree_over_the_one_scope_renderer(t *testing.T) {
 		}
 		t.Run("children: containers first, then by lower(rdn); deleted, cloud, mid-repair and excluded are absent", func(t *testing.T) {
 			r := kids(nR, false, 50, 100, nil, scope)
-			if want := []string{"ou=a1", "ou=A2", "cn=u3", "cn=u4"}; !slices.Equal(rdns(r.Rows), want) || r.More {
-				t.Fatalf("got %v more=%v want %v", rdns(r.Rows), r.More, want)
+			if want := []string{"ou=a1", "ou=A2", "cn=u3", "cn=u4"}; !slices.Equal(treeRDNs(r.Rows), want) || r.More {
+				t.Fatalf("got %v more=%v want %v", treeRDNs(r.Rows), r.More, want)
 			}
 			if !r.Rows[0].HasChildren || r.Rows[1].HasChildren || r.Rows[2].HasChildren {
 				t.Fatalf("hasChildren: %+v", r.Rows)
@@ -164,8 +164,8 @@ func Test_CompileTree_over_the_one_scope_renderer(t *testing.T) {
 		})
 		t.Run("view=containers", func(t *testing.T) {
 			r := kids(nR, true, 50, 100, nil, scope)
-			if want := []string{"ou=a1", "ou=A2"}; !slices.Equal(rdns(r.Rows), want) {
-				t.Fatalf("got %v", rdns(r.Rows))
+			if want := []string{"ou=a1", "ou=A2"}; !slices.Equal(treeRDNs(r.Rows), want) {
+				t.Fatalf("got %v", treeRDNs(r.Rows))
 			}
 		})
 		t.Run("keyset pages union to the admitted children, no duplicate, none missing", func(t *testing.T) {
@@ -173,7 +173,7 @@ func Test_CompileTree_over_the_one_scope_renderer(t *testing.T) {
 			var after *reportsql.TreeAfter
 			for i := 0; i < 10; i++ {
 				r := kids(nR, false, 3, 100, after, scope)
-				all = append(all, rdns(r.Rows)...)
+				all = append(all, treeRDNs(r.Rows)...)
 				if !r.More {
 					break
 				}
@@ -186,33 +186,33 @@ func Test_CompileTree_over_the_one_scope_renderer(t *testing.T) {
 		t.Run("examination ceiling returns what it found with a cursor from the last examined row", func(t *testing.T) {
 			// examine 3: a1, a2 and u3 are read (excluded x sorts after a2 among containers: a1, A2, x), x is hidden.
 			r := kids(nR, false, 50, 3, nil, scope)
-			if want := []string{"ou=a1", "ou=A2"}; !slices.Equal(rdns(r.Rows), want) || !r.More || r.Resume == nil || r.Resume.Object != tg(nX) {
-				t.Fatalf("got %v more=%v resume=%+v", rdns(r.Rows), r.More, r.Resume)
+			if want := []string{"ou=a1", "ou=A2"}; !slices.Equal(treeRDNs(r.Rows), want) || !r.More || r.Resume == nil || r.Resume.Object != tg(nX) {
+				t.Fatalf("got %v more=%v resume=%+v", treeRDNs(r.Rows), r.More, r.Resume)
 			}
 		})
 		t.Run("a hidden parent has no children for the caller; the answer is empty, like a missing one", func(t *testing.T) {
 			for _, p := range []int{nX, nP, nD, 999} {
 				if r := kids(p, false, 50, 100, nil, scope); len(r.Rows) != 0 {
-					t.Fatalf("parent %d: %v", p, rdns(r.Rows))
+					t.Fatalf("parent %d: %v", p, treeRDNs(r.Rows))
 				}
 			}
 		})
 		t.Run("roots start at the scope root, never name the hidden ancestor", func(t *testing.T) {
 			r := e.tree(t, reportsql.TreeQuery{Op: reportsql.TreeRoots, Scope: scope})
-			if want := []string{"ou=r"}; !slices.Equal(rdns(r.Rows), want) {
-				t.Fatalf("got %v", rdns(r.Rows))
+			if want := []string{"ou=r"}; !slices.Equal(treeRDNs(r.Rows), want) {
+				t.Fatalf("got %v", treeRDNs(r.Rows))
 			}
 			if r.Rows[0].Parent != "" {
 				t.Fatalf("a root named its hidden parent %s", r.Rows[0].Parent)
 			}
 			r = e.tree(t, reportsql.TreeQuery{Op: reportsql.TreeRoots, Scope: authztest.ReadScope(authz.ScopeGrant{Include: []authz.ScopeTerm{{Kind: authz.TermNamingContext, Connection: rpID(c), Root: rpID(tg(1))}}})})
-			if want := []string{"dc=d"}; !slices.Equal(rdns(r.Rows), want) {
-				t.Fatalf("naming-context scope roots: %v", rdns(r.Rows))
+			if want := []string{"dc=d"}; !slices.Equal(treeRDNs(r.Rows), want) {
+				t.Fatalf("naming-context scope roots: %v", treeRDNs(r.Rows))
 			}
 		})
 		t.Run("node: path is the contiguous admitted run, a hidden ancestor ends it", func(t *testing.T) {
 			r := e.tree(t, reportsql.TreeQuery{Op: reportsql.TreeNode, Connection: c, Object: tg(nB1), Scope: scope})
-			if !r.Found || r.Rows[0].Rdn != "cn=b1" || !slices.Equal(rdns(r.Path), []string{"ou=r", "ou=a1"}) {
+			if !r.Found || r.Rows[0].Rdn != "cn=b1" || !slices.Equal(treeRDNs(r.Path), []string{"ou=r", "ou=a1"}) {
 				t.Fatalf("%+v", r)
 			}
 			if r.Path[0].Parent != "" || r.Path[1].Parent != tg(nR) || r.Rows[0].Parent != tg(nA1) {

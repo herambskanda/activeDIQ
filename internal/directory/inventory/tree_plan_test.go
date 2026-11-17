@@ -128,12 +128,12 @@ func Test_CompileTree_work_is_bounded(t *testing.T) {
 				switch {
 				case h <= we-10:
 					if len(r.Rows) != 3 || r.More {
-						t.Errorf("all three visible children expected: %v more=%v", rdns(r.Rows), r.More)
+						t.Errorf("all three visible children expected: %v more=%v", treeRDNs(r.Rows), r.More)
 					}
 				default:
 					// the ceiling stops the read among the hidden rows: nothing visible yet, a cursor to go on
 					if len(r.Rows) != 0 || !r.More || r.Resume == nil {
-						t.Errorf("ceiling: %v more=%v resume=%v", rdns(r.Rows), r.More, r.Resume)
+						t.Errorf("ceiling: %v more=%v resume=%v", treeRDNs(r.Rows), r.More, r.Resume)
 					}
 				}
 				treeWork(t, e.plan(t, reportsql.TreeQuery{Op: reportsql.TreeRoots, Scope: scope}), "roots")
