@@ -1,11 +1,13 @@
 package writechange_test
 
 import (
+	"reflect"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
 
 	"github.com/skenzeriq/activediq/internal/directory/writechange"
+	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 )
 
@@ -53,3 +55,50 @@ func TestDecodeRefusesWhatEncodeCannotProduce(t *testing.T) {
 		t.Fatal("unknown key accepted")
 	}
 }
+
+func TestGroupMemberKindsRoundTrip(t *testing.T) {
+	const m = "0a1b2c3d-0000-4000-8000-00000000abcd"
+	for _, key := range []string{writechange.KeyGroupMemberAdd, writechange.KeyGroupMemberRemove} {
+		for _, class := range []string{"user", "computer", "contact", "group"} {
+			attrs, err := writechange.GroupMemberAttrs(m, class)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ch, err := writechange.Decode(key, attrs)
+			if err != nil {
+				t.Fatalf("%s/%s: %v", key, class, err)
+			}
+			k2, back, err := writechange.Encode(ch)
+			if err != nil || k2 != key || !reflect.DeepEqual(back, attrs) {
+				t.Fatalf("%s/%s: %v %v %v", key, class, k2, back, err)
+			}
+		}
+	}
+}
+
+func TestGroupMemberDecodeRefusesAnythingElse(t *testing.T) {
+	const m = "0a1b2c3d-0000-4000-8000-00000000abcd"
+	good, _ := writechange.GroupMemberAttrs(m, "user")
+	bad := [][]step.Attr{
+		nil,
+		good[:1],
+		good[1:],
+		append(append([]step.Attr(nil), good...), good[0]),
+		append(append([]step.Attr(nil), good...), attr("~extra", "x")),
+		{attr(writechange.AttrMember, "0A1B2C3D-0000-4000-8000-00000000ABCD"), good[1]},
+		{attr(writechange.AttrMember, "not-a-guid"), good[1]},
+		{good[0], attr(writechange.AttrMemberClass, "organizationalUnit")},
+		{good[0], attr(writechange.AttrMemberClass, "foreignSecurityPrincipal")},
+		{{Name: writechange.AttrMember, Secret: true}, good[1]},
+	}
+	for i, a := range bad {
+		if _, err := writechange.Decode(writechange.KeyGroupMemberAdd, a); err == nil {
+			t.Errorf("case %d decoded", i)
+		}
+	}
+	if _, err := writechange.GroupMemberAttrs(m, "organizationalUnit"); err == nil {
+		t.Error("an OU is not a member class")
+	}
+}
+
+func attr(name, v string) step.Attr { return step.Attr{Name: name, Values: []string{v}} }

@@ -71,6 +71,28 @@
         },
         "x-activediq-tag": "platform.notify"
       },
+      "ExplorerConnectionId": {
+        "description": "Narrows to one AD connection.",
+        "in": "query",
+        "name": "connection_id",
+        "required": false,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerObjectGuid": {
+        "description": "The objectGUID of the container or object. A DN is never accepted.",
+        "in": "path",
+        "name": "objectGuid",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "directory"
+      },
       "ExportId": {
         "description": "The export.",
         "in": "path",
@@ -343,6 +365,47 @@
           }
         },
         "description": "The directory is unavailable"
+      },
+      "ExplorerCursorInvalid": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "errors": [
+                {
+                  "code": "cursor_invalid",
+                  "detail": "The cursor cannot be used. Start again from the first page.",
+                  "in": "query",
+                  "pointer": "cursor"
+                }
+              ],
+              "status": 400,
+              "title": "The paging parameters cannot be used",
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "type": "/problems/explorer-query-invalid"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The paging parameters cannot be used. errors[].code says why: cursor_invalid (bad, forged or mismatched cursor: a cursor from another node, view or scope; nothing is read), or a malformed limit or view. No DN or cursor content is echoed."
+      },
+      "ExplorerUnavailable": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "detail": "The directory is busy. Try again.",
+              "status": 503,
+              "title": "The directory is busy",
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "type": "/problems/explorer-unavailable"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Explorer could not finish in time"
       },
       "Forbidden": {
         "content": {
@@ -902,6 +965,109 @@
         "type": "object",
         "x-activediq-tag": "platform.authn"
       },
+      "ConnectionHealth": {
+        "additionalProperties": false,
+        "description": "The health of one connection. Nothing here is a credential or an identity the connection binds as.",
+        "properties": {
+          "dcReachable": {
+            "description": "Domain controllers that answered the last probe.",
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "dcTotal": {
+            "description": "Domain controllers known for the connection.",
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "displayName": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "lagSeconds": {
+            "description": "Seconds since the last successful sync, at the time of the answer. Null when it has never synced.",
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lastSyncAt": {
+            "description": "The last successful sync, UTC. Null when the connection has never synced.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ConnectionHealthState"
+          }
+        },
+        "required": [
+          "id",
+          "displayName",
+          "state",
+          "lastSyncAt",
+          "lagSeconds",
+          "dcReachable",
+          "dcTotal"
+        ],
+        "type": "object",
+        "x-activediq-tag": "connections"
+      },
+      "ConnectionHealthList": {
+        "additionalProperties": false,
+        "description": "One row per readable connection. Not paged, because a tenant has few connections; at most 256.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionHealth"
+            },
+            "maxItems": 256,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object",
+        "x-activediq-tag": "connections"
+      },
+      "ConnectionHealthState": {
+        "description": "synced, lagging (last sync older than its interval, or some DCs unreachable), dc_unreachable (no DC reachable) or suspended (paused by an administrator).",
+        "enum": [
+          "synced",
+          "lagging",
+          "dc_unreachable",
+          "suspended"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "connections"
+      },
+      "ConnectionSummary": {
+        "additionalProperties": false,
+        "description": "How many connections the tenant has. A count only; no connection is identified.",
+        "properties": {
+          "connectionCount": {
+            "maximum": 256,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "connectionCount"
+        ],
+        "type": "object",
+        "x-activediq-tag": "connections"
+      },
       "CsrfValue": {
         "description": "Which header carries the CSRF value and what it is. Named value, not token, because it is not a credential.",
         "properties": {
@@ -1299,6 +1465,247 @@
           "items"
         ],
         "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerChildren": {
+        "description": "One keyset page of admitted children. No count is returned.",
+        "properties": {
+          "asOf": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExplorerEntry"
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
+          "more": {
+            "description": "True when the page may not be the last, including a short page that stopped at the examination ceiling.",
+            "type": "boolean"
+          },
+          "nextCursor": {
+            "description": "Pass back unchanged for the next page. Null on the last page.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "more",
+          "asOf"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerEntry": {
+        "description": "One live AD object, the same shape in the tree and the table. Keyed by objectGuid; there is no DN. name is the RDN value (or the display name), never a path. parentGuid is the row's own parent read in the same statement as the row.",
+        "properties": {
+          "connectionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "hasChildren": {
+            "description": "For a container, whether an admitted live child exists; null for a leaf.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "isContainer": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ExplorerKind"
+          },
+          "name": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "objectClass": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "parentGuid": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "readOnly": {
+            "description": "True for a Tier-0 object; the console disables write actions on it.",
+            "type": "boolean"
+          },
+          "samAccountName": {
+            "description": "Empty when absent.",
+            "maxLength": 256,
+            "type": "string"
+          },
+          "tier0": {
+            "description": "True unless the inventory holds a classifier result saying otherwise (fails closed).",
+            "type": "boolean"
+          },
+          "upn": {
+            "description": "Empty when absent.",
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "whenChanged": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "objectGuid",
+          "connectionId",
+          "parentGuid",
+          "kind",
+          "objectClass",
+          "name",
+          "isContainer",
+          "hasChildren",
+          "tier0",
+          "readOnly",
+          "samAccountName",
+          "upn",
+          "enabled",
+          "whenChanged"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerKind": {
+        "description": "What the object is. Domain heads and built-in containers are other or container; isContainer, not kind, says whether it can hold children.",
+        "enum": [
+          "ou",
+          "container",
+          "user",
+          "inetorgperson",
+          "group",
+          "computer",
+          "contact",
+          "gmsa",
+          "fsp",
+          "other"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerNode": {
+        "description": "One node, the admitted path to it, and the freshness of the inventory behind them.",
+        "properties": {
+          "ambiguous": {
+            "description": "True when the GUID had more than one admitted live row and the newest was chosen. Absent otherwise.",
+            "type": "boolean"
+          },
+          "asOf": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "node": {
+            "$ref": "#/components/schemas/ExplorerEntry"
+          },
+          "path": {
+            "description": "Admitted live ancestors ending at the node's parent, root first. Empty when the node is a root.",
+            "items": {
+              "$ref": "#/components/schemas/ExplorerPathItem"
+            },
+            "maxItems": 128,
+            "type": "array"
+          }
+        },
+        "required": [
+          "node",
+          "path",
+          "asOf"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerPathItem": {
+        "description": "One admitted live ancestor, for the breadcrumb and for expanding the tree by GUID.",
+        "properties": {
+          "name": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectGuid",
+          "name"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerRoots": {
+        "description": "The containers the caller's scope admits as tree roots, with the freshness of the inventory behind them.",
+        "properties": {
+          "asOf": {
+            "description": "The oldest last-sync time of the connections the caller may read. Null when nothing has synced yet.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExplorerEntry"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "more": {
+            "description": "True when more than 500 roots exist; the console says to refine in Search. There is no cursor.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "more",
+          "asOf"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerView": {
+        "description": "containers is the tree level (containers only); all is the table (every kind).",
+        "enum": [
+          "containers",
+          "all"
+        ],
+        "type": "string",
         "x-activediq-tag": "directory"
       },
       "GUIDRef": {
@@ -5242,6 +5649,13 @@
             "minLength": 1,
             "pattern": "^[a-z][a-z0-9_]{0,63}$",
             "type": "string"
+          },
+          "timeZone": {
+            "description": "The runner's IANA time zone, such as Europe/Berlin. PDF and HTML exports of the run show Time cells in it, with the zone abbreviation. Absent means UTC. It does not change the run's rows or digest.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$",
+            "type": "string"
           }
         },
         "required": [
@@ -6902,6 +7316,108 @@
         "x-permission": "authenticated"
       }
     },
+    "/connections/health": {
+      "get": {
+        "description": "Answers one row per directory connection in the caller's tenant that the caller may read, for the Home \"Directory health\" and \"Needs you\" panels. The row set is trimmed to the connections the caller's connections.read grant covers before anything is counted or ordered; a connection outside it is not in the answer and not in any total. Rows are ordered by displayName, then id, so the order is stable. state is synced (last sync inside its expected interval, every DC reachable), lagging (the last successful sync is older than the interval, or some but not all DCs are unreachable), dc_unreachable (no DC is reachable) or suspended (an administrator paused the connection). lastSyncAt is null and lagSeconds is null when the connection has never synced. The rows carry no credential, keytab, bind identity or service-account DN. A tenant with no connection answers 200 with an empty items list. A caller without connections.read gets 403 (never an empty list) and learns nothing about which connections exist; getConnectionSummary is the count any signed-in administrator may read.",
+        "operationId": "listConnectionHealth",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "dcReachable": 2,
+                      "dcTotal": 3,
+                      "displayName": "corp.example.com",
+                      "id": "3f0c8a52-6a1e-4c1b-9d57-2a7b1e5c9a10",
+                      "lagSeconds": 1260,
+                      "lastSyncAt": "2026-11-12T08:14:03Z",
+                      "state": "lagging"
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionHealthList"
+                }
+              }
+            },
+            "description": "One health row per readable connection"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "List the health of the caller's connections",
+        "tags": [
+          "connections"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-002"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "connections.read"
+      }
+    },
+    "/connections/summary": {
+      "get": {
+        "description": "Answers how many directory connections the caller's tenant has, and nothing else, so the console can tell a tenant that has not connected a directory yet (connectionCount 0, the Home first-run state) from one that has. Any signed-in administrator may call it: it needs no connections.read, because the first-run screen must render for an administrator whose grant covers no connection. The count is the whole tenant's, not trimmed to the caller's grant, and carries no name, id, state or other detail; the detail is listConnectionHealth, which needs connections.read. The three outcomes stay distinct: a tenant with no connection answers 200 with connectionCount 0 (never an error and never an empty list), an unauthenticated caller gets 401, and a caller without connections.read who calls listConnectionHealth gets 403 there, not an empty list.",
+        "operationId": "getConnectionSummary",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "connectionCount": 0
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionSummary"
+                }
+              }
+            },
+            "description": "The number of connections in the tenant"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "Count the tenant's connections (Home first-run)",
+        "tags": [
+          "connections"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-002"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "authenticated"
+      }
+    },
     "/connections/takeover-attestation/callback": {
       "get": {
         "description": "The redirect URI of the attestation sign-in. No session or token is read: the single-use state issued by the start is the credential, and the tenant is the one the state names, used only to look the state up. A bad, expired or replayed state, a refused code, a token of another tenant and a failed read all answer the same 303 to the failed page, so the caller learns nothing about the cause (the cause is in the audit). Success answers 303 to the recorded page. The response carries no token and no directory value.",
@@ -7085,6 +7601,287 @@
         },
         "x-activediq-stability": "preview",
         "x-permission": "connections.takeover.attest"
+      }
+    },
+    "/directory/explorer/nodes/{objectGuid}": {
+      "get": {
+        "description": "One live container or object by objectGUID, with path: the admitted live ancestors ending at its parent, root first, so a deep link can expand the tree by GUID. If the parent is not admitted the node is itself a root and path is empty. A GUID that does not exist, is not live, is not an AD object or is not admitted by the caller's scope answers the same 404 with the same body (hidden is absent). connection_id picks one row in the transient case of a GUID live in two connections; without it ambiguous is true when two admitted live rows remained and the newest was chosen. No DN is returned.",
+        "operationId": "getExplorerNode",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExplorerObjectGuid"
+          },
+          {
+            "$ref": "#/components/parameters/ExplorerConnectionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "asOf": "2026-11-14T09:11:04Z",
+                  "node": {
+                    "connectionId": "0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64",
+                    "enabled": null,
+                    "hasChildren": true,
+                    "isContainer": true,
+                    "kind": "ou",
+                    "name": "Staff",
+                    "objectClass": "organizationalUnit",
+                    "objectGuid": "8a4e6f10-2c9b-4d35-b7e1-3f5a6b7c8d90",
+                    "parentGuid": "5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d",
+                    "readOnly": false,
+                    "samAccountName": "",
+                    "tier0": false,
+                    "upn": "",
+                    "whenChanged": "2026-11-10T08:02:51Z"
+                  },
+                  "path": [
+                    {
+                      "name": "corp",
+                      "objectGuid": "5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d"
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ExplorerNode"
+                }
+              }
+            },
+            "description": "The node, its path and the freshness of the inventory behind it"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ExplorerUnavailable"
+          }
+        },
+        "summary": "Get one Explorer node and its path",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-004"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
+      }
+    },
+    "/directory/explorer/nodes/{objectGuid}/children": {
+      "get": {
+        "description": "One keyset page of the live children the caller's scope admits, containers first, then by name (byte order), then objectGuid. view=containers gives the tree level, view=all the table. Scope is applied before the limit, the more flag and hasChildren: none of them reveals what is hidden, except that each request examines at most 5,000 child rows, so a page can be short with more true; the cursor then continues from the last row examined. There is no total count. A cursor is opaque, bound to the node, view, sort position and the caller's scope; any mismatch is 400 with code cursor_invalid and reads nothing. A node that is missing, not live or not admitted answers 404 (hidden is absent). 503 when the request cannot finish in 2 seconds, generic and with a trace ID.",
+        "operationId": "listExplorerChildren",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExplorerObjectGuid"
+          },
+          {
+            "$ref": "#/components/parameters/ExplorerConnectionId"
+          },
+          {
+            "description": "containers (the default) answers the tree level; all answers every kind, for the table.",
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ExplorerView"
+            }
+          },
+          {
+            "description": "The page size. 100 when absent.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The nextCursor of the previous page, with the same node, view and connection_id.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "asOf": "2026-11-14T09:11:04Z",
+                  "items": [
+                    {
+                      "connectionId": "0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64",
+                      "enabled": true,
+                      "hasChildren": null,
+                      "isContainer": false,
+                      "kind": "user",
+                      "name": "Pat Example",
+                      "objectClass": "user",
+                      "objectGuid": "3f9c1e52-7a4b-4d0e-9b1a-0c5e8d2a6f10",
+                      "parentGuid": "8a4e6f10-2c9b-4d35-b7e1-3f5a6b7c8d90",
+                      "readOnly": false,
+                      "samAccountName": "pexample",
+                      "tier0": false,
+                      "upn": "pexample@corp.example.test",
+                      "whenChanged": "2026-11-09T13:20:00Z"
+                    }
+                  ],
+                  "more": true,
+                  "nextCursor": "Y3Vyc29yLTAxLW9wYXF1ZS1leGFtcGxl"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ExplorerChildren"
+                }
+              }
+            },
+            "description": "One page of admitted children"
+          },
+          "400": {
+            "$ref": "#/components/responses/ExplorerCursorInvalid"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ExplorerUnavailable"
+          }
+        },
+        "summary": "List the children of an Explorer node",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-004"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
+      }
+    },
+    "/directory/explorer/roots": {
+      "get": {
+        "description": "The top of the AD Explorer tree for the caller (ADM-004, spec ad-explorer-read-api.md section 3). A root is a live container the caller's directory.read scope admits whose parent is absent, or is a live object the scope does not admit; a scoped technician's tree therefore starts at their scope roots and never names a hidden ancestor. Read from the inventory, not the live directory; AD connections only. Returns containers only, at most 500, with no cursor: when more exist, more is true and the console says to refine in Search. connection_id narrows to one connection. A connection the caller may not read is simply absent. 403 when the caller has no directory.read producer.",
+        "operationId": "listExplorerRoots",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExplorerConnectionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "asOf": "2026-11-14T09:11:04Z",
+                  "items": [
+                    {
+                      "connectionId": "0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64",
+                      "enabled": null,
+                      "hasChildren": true,
+                      "isContainer": true,
+                      "kind": "other",
+                      "name": "corp",
+                      "objectClass": "domainDNS",
+                      "objectGuid": "5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d",
+                      "parentGuid": null,
+                      "readOnly": true,
+                      "samAccountName": "",
+                      "tier0": true,
+                      "upn": "",
+                      "whenChanged": "2026-11-12T16:40:11Z"
+                    }
+                  ],
+                  "more": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ExplorerRoots"
+                }
+              }
+            },
+            "description": "The roots the caller's scope admits"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ExplorerUnavailable"
+          }
+        },
+        "summary": "List the Explorer roots",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-004"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
       }
     },
     "/directory/search": {
@@ -9986,7 +10783,7 @@
   ],
   "tags": [
     {
-      "description": "Directory connections. Attestation of an Entra connection's takeover protection (TM-D17), its maximum age, and the IdP callback.",
+      "description": "Directory connections. Attestation of an Entra connection's takeover protection (TM-D17), its maximum age, and the IdP callback. Connection health for the Home panels (connections.read).",
       "name": "connections"
     },
     {

@@ -11856,6 +11856,8 @@ type ReportRunCreate struct {
 	DefinitionVersion *int64               `json:"definitionVersion,omitzero"`
 	Parameters        *ReportRunParameters `json:"parameters,omitzero"`
 	PresetID          *string              `json:"presetId,omitzero"`
+	// The runner's IANA time zone, such as Europe/Berlin. PDF and HTML exports of the run show Time cells in it, with the zone abbreviation. Absent means UTC. It does not change the run's rows or digest.
+	TimeZone *string `json:"timeZone,omitzero"`
 
 	p apitypes.Presence
 }
@@ -11925,6 +11927,18 @@ func (v *ReportRunCreate) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.PresetID); err != nil {
 				return err
 			}
+		case "timeZone":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.TimeZone); err != nil {
+				return err
+			}
 		default:
 			return apitypes.UnknownMember(d)
 		}
@@ -11971,6 +11985,16 @@ func (v *ReportRunCreate) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("presetId"), string((*v.PresetID)), 1, 64)
 		if !pattern2.MatchString(string((*v.PresetID))) {
 			errs.Add(apitypes.InBody, at.AppendToken("presetId"), apitypes.CodePattern, "value does not match the required pattern")
+		}
+	}
+	// timeZone
+	if v.p.Decoded() && v.p.IsNull(4) {
+		errs.NullNotAllowed(at, "timeZone")
+	}
+	if v.TimeZone != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("timeZone"), string((*v.TimeZone)), 1, 64)
+		if !pattern6.MatchString(string((*v.TimeZone))) {
+			errs.Add(apitypes.InBody, at.AppendToken("timeZone"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
 }
@@ -13606,7 +13630,7 @@ func (v *ReportScheduleWrite) Validate(at jsontext.Pointer, errs *apitypes.Error
 	}
 	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("name"), string(v.Name), 1, 128)
-		if !pattern6.MatchString(string(v.Name)) {
+		if !pattern7.MatchString(string(v.Name)) {
 			errs.Add(apitypes.InBody, at.AppendToken("name"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -13674,7 +13698,7 @@ func (v *ReportScheduleWrite) Validate(at jsontext.Pointer, errs *apitypes.Error
 	}
 	if !v.p.Decoded() || (v.p.Has(9) && !v.p.IsNull(9)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("timeZone"), string(v.TimeZone), 1, 64)
-		if !pattern7.MatchString(string(v.TimeZone)) {
+		if !pattern6.MatchString(string(v.TimeZone)) {
 			errs.Add(apitypes.InBody, at.AppendToken("timeZone"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -14733,7 +14757,7 @@ var (
 	pattern3 = regexp.MustCompile("^[0-9a-f]{64}$")
 	pattern4 = regexp.MustCompile("^([01][0-9]|2[0-3]):[0-5][0-9]$")
 	pattern5 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9-]{1,63}$")
-	pattern6 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]+$")
-	pattern7 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$")
+	pattern6 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$")
+	pattern7 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]+$")
 	pattern8 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]*$")
 )
