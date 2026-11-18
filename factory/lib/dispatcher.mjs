@@ -29,6 +29,7 @@ import { EMBARGO_TAG, orderDoneQueue } from './mergequeue.mjs';
 import { applyMigrationRenumber, blockedNote, preMergeSettings, runPreMergeTrain, splitTrain, unreadMove } from './premerge.mjs';
 import { postMergeVerifySettings, readKnownFindings, runPostMergeVerify } from './postmerge.mjs';
 import { git } from './git.mjs';
+import { planDrop } from './culprit.mjs';
 import { recordShadowSkip, runShadowGate, shadowGateSettings } from './shadowgate.mjs';
 import {
   awaitPredecessor, awaitSuccessor, factoryChange, mainSha, shortSha, spawnSuccessor, stopStaleGateChildren,
@@ -672,6 +673,56 @@ export class Dispatcher {
    * the ticket that adds the findings is reopened. A member that conflicts with `main` is reopened
    * as before; one that conflicts with an earlier member stays `done` for the next train.
    */
+  /**
+   * A single ticket the pre-merge gate refused: count the strike and either reopen it with the findings or,
+   * at `max_gate_failures`, hold it for a CEO decision.
+   */
+  refuseTicket(ticket, verdict, settings, main) {
+    const { ctx } = this;
+    appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merge refused by the pre-merge gate: ${verdict.summary}` });
+    const failures = (ticket.gate_failures ?? 0) + 1;
+    updateEntity(ctx, 'tickets', ticket.id, (t) => { t.gate_failures = failures; });
+    const note = blockedNote(verdict, main);
+    if (failures >= settings.max_gate_failures) {
+      holdForDecision(ctx, ticket.id, 'dispatcher',
+        `the pre-merge gate has refused this ${failures} times in a row; holding for a CEO decision instead of reopening it again. ${note}`);
+      createDecision(ctx, {
+        kind: 'directional',
+        title: `${ticket.id} keeps failing the merge gate`,
+        question: `${ticket.id} (${ticket.title}) has failed the full pre-merge test suite ${failures} times in a row. How should the factory proceed?`,
+        context: note,
+        options: [
+          { id: 'retry', label: 'One more try', summary: 'Unblock to ready with a fresh attempt and gate-failure budget; the owner takes another pass.' },
+          { id: 'escalate', label: 'Escalate the owner', summary: 'Unblock to ready, reassign to principal-engineer at high effort for the retry.' },
+          { id: 'cancel', label: 'Cancel the ticket', summary: 'The approach is not working; cancel rather than keep retrying.' },
+        ],
+        blocks: [ticket.id],
+      }, { by: 'dispatcher', force: true });
+      return;
+    }
+    reopenTicket(ctx, ticket.id, 'dispatcher', note);
+  }
+
+  /**
+   * Merge plan 4.1: who to refuse and who to gate again after a refused train, or null (halve it). Each
+   * member's changed files are read against the main the verdict was judged on.
+   */
+  async planCulprits(members, verdict) {
+    const { ctx } = this;
+    const base = verdict.mainSha ?? ctx.config.dispatcher.main_branch;
+    try {
+      const withFiles = [];
+      for (const t of members) {
+        const diff = await git(ctx.root, ['diff', '--name-only', `${base}...refs/heads/${branchName(t.id)}`]);
+        if (diff.code !== 0) return null;
+        withFiles.push({ id: t.id, files: diff.stdout.split('\n').filter(Boolean) });
+      }
+      return planDrop(verdict.findings ?? [], withFiles);
+    } catch {
+      return null; // anything unexpected: halve, as before
+    }
+  }
+
   async gateGroup(group, signal) {
     const { ctx } = this;
     const main = ctx.config.dispatcher.main_branch;
@@ -711,29 +762,29 @@ export class Dispatcher {
     if (verdict.status === 'blocked') {
       if (verdict.mainBroken) { this.holdForBrokenMain(members, verdict); return; }
       if (members.length === 1) {
-        const [ticket] = members;
-        appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} merge refused by the pre-merge gate: ${verdict.summary}` });
-        const failures = (ticket.gate_failures ?? 0) + 1;
-        updateEntity(ctx, 'tickets', ticket.id, (t) => { t.gate_failures = failures; });
-        const note = blockedNote(verdict, main);
-        if (failures >= settings.max_gate_failures) {
-          holdForDecision(ctx, ticket.id, 'dispatcher',
-            `the pre-merge gate has refused this ${failures} times in a row; holding for a CEO decision instead of reopening it again. ${note}`);
-          createDecision(ctx, {
-            kind: 'directional',
-            title: `${ticket.id} keeps failing the merge gate`,
-            question: `${ticket.id} (${ticket.title}) has failed the full pre-merge test suite ${failures} times in a row. How should the factory proceed?`,
-            context: note,
-            options: [
-              { id: 'retry', label: 'One more try', summary: 'Unblock to ready with a fresh attempt and gate-failure budget; the owner takes another pass.' },
-              { id: 'escalate', label: 'Escalate the owner', summary: 'Unblock to ready, reassign to principal-engineer at high effort for the retry.' },
-              { id: 'cancel', label: 'Cancel the ticket', summary: 'The approach is not working; cancel rather than keep retrying.' },
-            ],
-            blocks: [ticket.id],
-          }, { by: 'dispatcher', force: true });
-          return;
+        this.refuseTicket(members[0], verdict, settings, main);
+        return;
+      }
+      const plan = settings.culprit_split ? await this.planCulprits(members, verdict) : null;
+      if (plan) {
+        const refuse = [...plan.drop.keys()];
+        const suspects = [...plan.suspect.keys()];
+        const parts = [
+          refuse.length ? `every new finding that names a file is in a file only ${refuse.join(', ')} changed, so refusing ${refuse.length > 1 ? 'them' : 'it'}` : null,
+          suspects.length ? `${suspects.join(', ')} changed the failing package and ${suspects.length > 1 ? 'are' : 'is'} gated alone afterwards` : null,
+          plan.keep.length ? `gating ${plan.keep.join(', ')} again` : null,
+        ].filter(Boolean);
+        appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `pre-merge gate refused the train ${memberIds.join(', ')}: ${verdict.summary}; ${parts.join('; ')}` });
+        for (const [id, own] of plan.drop) {
+          const ticket = members.find((t) => t.id === id);
+          this.refuseTicket(ticket, { ...verdict, findings: own, summary: `${verdict.summary} (in a train with ${memberIds.filter((m) => m !== id).join(', ')}; these findings are in files only ${id} changed)` }, settings, main);
         }
-        reopenTicket(ctx, ticket.id, 'dispatcher', note);
+        const rest = members.filter((t) => plan.keep.includes(t.id));
+        if (rest.length && !this.stopping) await this.gateGroup(rest, signal);
+        for (const id of suspects) {
+          if (this.stopping) break;
+          await this.gateGroup(members.filter((t) => t.id === id), signal); // its own verdict: a pass merges it, a refusal is its strike
+        }
         return;
       }
       appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `pre-merge gate refused the train ${memberIds.join(', ')}: ${verdict.summary}; splitting it in halves to find the ticket that adds the findings` });
