@@ -1,4 +1,4 @@
--- 0072_inventory_recent_objects: the objects an account opened recently (T-1130, ADR-0011 rule 8, IA 5.1/5.3).
+-- 0087_inventory_recent_objects: the objects an account opened recently (T-1130, ADR-0011 rule 8, IA 5.1/5.3).
 -- Owner: internal/directory/inventory, the only code that writes it; only the reportsql search template
 -- reads it (the empty palette, and the rank step after exact).
 --

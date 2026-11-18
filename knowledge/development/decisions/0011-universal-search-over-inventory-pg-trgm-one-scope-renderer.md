@@ -626,7 +626,7 @@ RLS and a non-owner role; warm cache; t = 0.5; SQL in `factory/demos/evidence/T-
    6. then `object_guid`, so the order is total and stable.
 
    **Recents (T-1130).** The IA's "the user's recent objects" step is built. `inventory_recent_objects`
-   (migration 0072; tenant table, forced RLS) keeps the newest 20 objects an account opened, keyed by
+   (migration 0087; tenant table, forced RLS) keeps the newest 20 objects an account opened, keyed by
    `(connection_id, object_guid)`, written by `inventory.Searcher.RecordOpened` when an object page is
    opened (human accounts only; a token has none). The template reads it in a CTE bound to the account and
    adds two leading rank terms, so the order of a group is `band` (0 exact, 1 recent, 2 other), then the

@@ -407,6 +407,11 @@ func accountOf(ch authority.Chain) string {
 	if ch.Requester.Kind != authority.Human {
 		return ""
 	}
+	// A requester id that is not a uuid has no recents (the store keys accounts by uuid): the search
+	// ranks without them rather than failing, since recents are a ranking hint and grant nothing.
+	if !inventory.IsAccountID(string(ch.Requester.ID)) {
+		return ""
+	}
 	return string(ch.Requester.ID)
 }
 

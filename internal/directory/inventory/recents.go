@@ -9,8 +9,11 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/reportsql"
+	"github.com/skenzeriq/activediq/internal/platform/tablekind"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
+
+var _ = tablekind.Declare(tablekind.Table{Name: "public.inventory_recent_objects", Entity: "DM-16", Kind: tablekind.Directory})
 
 // Per-account recent objects (T-1130, ADR-0011 rule 8). A row says an account opened an object page; it
 // grants nothing. Every read goes through reportsql, which trims by the account's current ReadScope in the
@@ -25,6 +28,9 @@ var ErrUnknownObject = errors.New("inventory: object not in the inventory")
 var uuidForm = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 func isUUID(s string) bool { return uuidForm.MatchString(s) }
+
+// IsAccountID reports whether s has the form the recents store accepts for an account.
+func IsAccountID(s string) bool { return isUUID(s) }
 
 const (
 	recentUpsert = `INSERT INTO public.inventory_recent_objects (tenant_id, account_id, connection_id, object_guid, opened_at)
