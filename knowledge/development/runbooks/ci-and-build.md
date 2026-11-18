@@ -25,6 +25,7 @@ by the targets: web packages by `npm ci`, gitleaks by `make secrets-install`.
 | Just lint / tests / fitness / build | `make lint`, `make test`, `make fitness`, `make build` |
 | Format everything in place | `make fmt` |
 | Prove the gates still fail on violations | `make ci-proof` |
+| The opt-in scale job (T-2008) | `make test-scale` (sets `ADIQ_SCALE_FULL=1`; `SCALE_TIMEOUT=45m` by default) |
 | List all targets | `make help` |
 
 ## Fresh clone
@@ -464,3 +465,11 @@ once its index is writable); every pending merge then proceeds on the next pass.
 - **M5** (`factory/bin/fitness-merge-order`) scans `git log --first-parent main` against `depends_on` in `factory/state/tickets/` (found via `FACTORY_STATE_DIR`, this tree, or the primary checkout). Without ticket data it prints `inactive`, not a pass. History up to `GRANDFATHER_UNTIL` (main at ratification, `6cb96d24d`) is not judged: it holds dependents merged before their dependency and reused ticket numbers. `KNOWN_EXCEPTIONS` records the exact (merge, dependency) pairs that landed after that, before T-1706 existed (T-1191 on T-1189, stacked by hand); each is exact and tested, and none is added without an ADR note.
 - **Accepting ADR-0012** needs every line green (no `pending`, no `inactive`) on main; flip the ADR then.
 - A violation line names the ticket, the merge SHA and the dependency; fix by landing the dependency first, never by editing the boundary.
+
+## Scale tests are a separate, opt-in job (T-2008)
+
+`internal/directory/inventory` runs about 93 database tests on PostgreSQL 16 and 18; with the three scale tests it hit the 600 s
+test timeout. `Test_group_member_counts_at_scale`, `Test_group_closure_fanout_is_bounded` and `Test_reports_library_batch2_at_scale`
+skip unless `ADIQ_SCALE_FULL=1` (`requireScaleFull` in `scale_gate_test.go`). `make ci` does not set it; the package currently takes ~900 s wall (wait-bound, not scale-test-bound; T-2047 trims the search_* tests; `make ci` uses -timeout 30m) and the 400 s target
+applies once T-2047 lands. Run the scale job with `make test-scale` (own timeout, `SCALE_TIMEOUT`); it is a prerequisite of `make fitness-nightly`, so the nightly job runs it (run it by hand before a release too)
+on the runner that has Docker or the embedded PostgreSQL. A new test that loads more than a few thousand objects calls `requireScaleFull`.
