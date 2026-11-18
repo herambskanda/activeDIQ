@@ -57,3 +57,41 @@ targetRules = ["generic-api-key"]
 paths = ['''^factory/demos/evidence/T-0577/qa[34]-linux-tests-[0-9a-f]+\.txt$''']
 regexTarget = "line"
 regexes = ['''api_token_id="" plan_digest="" tier0_revision=7 ''']
+
+# T-2239: four history-only generic-api-key findings (files since deleted from the tree). None is a
+# credential. Each entry is scoped to ONE rule AND the exact path AND the exact literal (condition = AND).
+# (1) alertjob.go line 4 is a Go doc comment: prose "authn, notify/delivery and jobs because ..." was read as key=value.
+[[allowlists]]
+description = "alertjob package doc comment prose (T-2239)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/platform/authn/alertjob/alertjob\.go$''']
+regexTarget = "line"
+regexes = ['''It sits above authn, notify/delivery and jobs because authn may import none of them''']
+
+# (2) Unit-test fixture: a made-up SMTP password for a fake "relay-user" against an in-process fake relay.
+[[allowlists]]
+description = "mail auth_test fake SMTP password fixture (T-2239)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/platform/notify/mail/auth_test\.go$''']
+regexTarget = "line"
+regexes = ['''authPass = "p4ss-w0rd-unique-7f3a"''']
+
+# (3) Unit-test fixture: made-up relay password used to assert it is never logged or returned.
+[[allowlists]]
+description = "notify credentials_test fake relay password fixture (T-2239)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/modules/notify/credentials_test\.go$''']
+regexTarget = "line"
+regexes = ['''relayPassword = "Sup3r-Secret-relay-pw-91c4"''']
+
+# (4) Same slog-field-name false positive as T-1162 (empty plan_digest), in the T-0537 evidence log.
+[[allowlists]]
+description = "T-0537 evidence log: empty plan_digest log field (T-2239)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^factory/demos/evidence/T-0537/linux-tests-main-[0-9a-f]+\.txt$''']
+regexTarget = "line"
+regexes = ['''api_token_id="" plan_digest="" tier0_revision=7 ''']

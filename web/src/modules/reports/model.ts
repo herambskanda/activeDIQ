@@ -105,7 +105,7 @@ export function hitHref(hit: Pick<Hit, "definitionId" | "presetId">): string {
   return `/reports/${encodeURIComponent(hit.definitionId)}${q}`;
 }
 
-type CompareOp = Extract<Filter, { kind: "ReportFilterCompare" }>["operator"];
+type CompareOp = Extract<Filter, { kind: "compare" }>["operator"];
 
 // ---- filters -----------------------------------------------------------------------------
 
@@ -180,13 +180,13 @@ export function filterProblem(
 function typedValue(column: ColumnInfo, value: string): Value {
   switch (column.type) {
     case "integer":
-      return { kind: "ReportValueInteger", value: Number(value) };
+      return { kind: "integer", value: Number(value) };
     case "boolean":
-      return { kind: "ReportValueBoolean", value: value === "true" };
+      return { kind: "boolean", value: value === "true" };
     case "enum":
-      return { kind: "ReportValueEnum", value };
+      return { kind: "enum", value };
     default:
-      return { kind: "ReportValueText", value };
+      return { kind: "text", value };
   }
 }
 
@@ -194,50 +194,50 @@ function typedValue(column: ColumnInfo, value: string): Value {
 export function toFilter(f: UserFilter, columns: readonly ColumnInfo[]): Filter | undefined {
   const column = columns.find((c) => c.id === f.column);
   if (!column) return undefined;
-  const id = f.column as Extract<Filter, { kind: "ReportFilterPresence" }>["column"];
+  const id = f.column as Extract<Filter, { kind: "presence" }>["column"];
   const v = f.value.trim();
   if (f.operator === "has_value" || f.operator === "empty") {
-    return { kind: "ReportFilterPresence", column: id, presence: f.operator };
+    return { kind: "presence", column: id, presence: f.operator };
   }
   if (DAYS.has(f.operator)) {
     return {
-      kind: "ReportFilterRelative",
+      kind: "relative_time",
       column: id,
       relation: f.operator as "within_last" | "within_next" | "older_than",
       days: Number(v),
     };
   }
   return {
-    kind: "ReportFilterCompare",
+    kind: "compare",
     column: id,
-    operator: f.operator as Extract<Filter, { kind: "ReportFilterCompare" }>["operator"],
+    operator: f.operator as Extract<Filter, { kind: "compare" }>["operator"],
     value: typedValue(column, v),
   };
 }
 
 /** A stored filter (a preset's, or a run's) as a request filter, so a preset's filters can be kept when others are added. */
 export function viewToFilter(v: FilterView): Filter | undefined {
-  if (v.kind === "ReportFilterGroupView") {
+  if (v.kind === "group") {
     const filters = v.filters.map(viewToFilter).filter((f): f is Filter => f !== undefined);
     const m = v.match as string;
     const match: "all" | "any" | "none" = m === "any" || m === "none" ? m : "all";
-    return { kind: "ReportFilterGroup", match, filters };
+    return { kind: "group", match, filters };
   }
-  const column = v.column as Extract<Filter, { kind: "ReportFilterPresence" }>["column"];
+  const column = v.column as Extract<Filter, { kind: "presence" }>["column"];
   const first = v.values[0];
   const op = v.operator as string; // an open enum: the cases below are the ones this console can send
   switch (op) {
     case "has_value":
     case "empty":
-      return { kind: "ReportFilterPresence", column, presence: op };
+      return { kind: "presence", column, presence: op };
     case "within_last":
     case "within_next":
     case "older_than":
-      return first?.kind === "ReportValueInteger"
-        ? { kind: "ReportFilterRelative", column, relation: op, days: first.value }
+      return first?.kind === "integer"
+        ? { kind: "relative_time", column, relation: op, days: first.value }
         : undefined;
     case "in":
-      return { kind: "ReportFilterIn", column, values: v.values };
+      return { kind: "in", column, values: v.values };
     case "equals":
     case "not_equals":
     case "less_than":
@@ -247,7 +247,7 @@ export function viewToFilter(v: FilterView): Filter | undefined {
     case "contains":
     case "starts_with":
       return first
-        ? { kind: "ReportFilterCompare", column, operator: op as CompareOp, value: first }
+        ? { kind: "compare", column, operator: op as CompareOp, value: first }
         : undefined;
     default:
       return undefined;
@@ -259,7 +259,7 @@ export const SERVICE_ACCOUNT_COLUMN = "probable_service_account";
 /** True when a stored filter tree tests `column` anywhere. */
 export function filtersTest(filters: readonly FilterView[], column: string): boolean {
   return filters.some((f) =>
-    f.kind === "ReportFilterGroupView" ? filtersTest(f.filters, column) : f.column === column,
+    f.kind === "group" ? filtersTest(f.filters, column) : f.column === column,
   );
 }
 
@@ -267,7 +267,7 @@ export function filtersTest(filters: readonly FilterView[], column: string): boo
 export function withoutColumn(filters: readonly FilterView[], column: string): FilterView[] {
   const out: FilterView[] = [];
   for (const f of filters) {
-    if (f.kind === "ReportFilterGroupView") {
+    if (f.kind === "group") {
       const inner = withoutColumn(f.filters, column);
       if (inner.length > 0) out.push({ ...f, filters: inner });
     } else if (f.column !== column) out.push(f);
@@ -360,7 +360,7 @@ export function buildRunBody(
   view: View,
 ) {
   const parameters: RunParameters = {};
-  if (view.days !== null) parameters.period = { kind: "ReportPeriodLastDays", days: view.days };
+  if (view.days !== null) parameters.period = { kind: "last_days", days: view.days };
   if (view.columns) parameters.columns = view.columns as NonNullable<RunParameters["columns"]>;
   if (view.filters.length > 0 || view.showServiceAccounts) {
     const base = preset?.filters ?? [];
@@ -485,23 +485,23 @@ export function failureText(reason: string, message: string): string {
  */
 export function cellText(cell: Cell, column: ColumnInfo | undefined): string {
   switch (cell.kind) {
-    case "ReportCellText":
-    case "ReportCellInteger":
-    case "ReportCellGuid":
+    case "text":
+    case "integer":
+    case "guid":
       return cell.value;
-    case "ReportCellTextList":
+    case "textList":
       return cell.value.join("; ");
-    case "ReportValueBoolean":
+    case "boolean":
       return cell.value ? "Yes" : "No";
-    case "ReportValueTime":
+    case "time":
       return formatTime(cell.value);
-    case "ReportValueEnum":
+    case "enum":
       return column?.choices.find((c) => c.id === cell.value)?.label ?? cell.value;
-    case "ReportCellAbsent":
+    case "absent":
       return "—";
-    case "ReportCellNever":
+    case "never":
       return "Never";
-    case "ReportCellUnknown":
+    case "unknown":
       return "Unknown (input missing)";
   }
 }

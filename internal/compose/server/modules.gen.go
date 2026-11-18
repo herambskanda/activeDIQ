@@ -11,6 +11,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/modules/delegation"
 	moddir "github.com/skenzeriq/activediq/internal/modules/directory"
 	"github.com/skenzeriq/activediq/internal/modules/inventory"
+	"github.com/skenzeriq/activediq/internal/modules/migration"
 	"github.com/skenzeriq/activediq/internal/modules/notify"
 	"github.com/skenzeriq/activediq/internal/modules/reports"
 	"github.com/skenzeriq/activediq/internal/platform"
@@ -28,6 +29,7 @@ func generatedModules(deps platform.Deps, dir directory.Services) []module.Entry
 		{ID: delegation.ModuleID, Module: delegation.New(deps, dir)},
 		{ID: moddir.ModuleID, Module: moddir.New(deps, dir)},
 		{ID: inventory.ModuleID, Module: inventory.New(deps, dir)},
+		{ID: migration.ModuleID, Module: migration.New(deps, dir)},
 		{ID: notify.ModuleID, Module: notify.New(deps, dir)},
 		{ID: reports.ModuleID, Module: reports.New(deps, dir)},
 	}
