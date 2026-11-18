@@ -27,6 +27,12 @@ type Pinner interface {
 	Pin(ctx context.Context, connection string, nc authority.NamingContextID, previous string) (DCPin, error)
 }
 
+// CredentialSource names the DM-11 credential row a connection is bound to (an ID, never material).
+// Directory-write step events carry it as credential_id so the chain alone joins an event to a DC log.
+type CredentialSource interface {
+	CredentialOf(ctx context.Context, t tenant.ID, connection string) (string, error)
+}
+
 // FallbackPinner is an optional Pinner capability: a writable DC other than exclude (matched by host,
 // case-insensitively, and by DSA GUID), for the server's Tier-0 re-read when the pinned DC cannot answer
 // (ADR-0005 rule 7). A Pinner without it has no fallback, and an unanswered re-read counts as tier0.

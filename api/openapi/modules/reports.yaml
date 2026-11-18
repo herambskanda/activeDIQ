@@ -191,6 +191,69 @@ paths:
           $ref: shared/problems.yaml#/components/responses/RateLimited
         "500":
           $ref: shared/problems.yaml#/components/responses/Internal
+  /reports/runs/latest:
+    get:
+      tags: [reports]
+      operationId: getLatestReportRun
+      summary: Get the caller's latest run of a report, for a Home widget
+      description: >-
+        Answers the one thing a Home widget needs (specs/home-report-widgets.md 3.2): the caller's own latest succeeded run of definitionId and presetId, or why there is none. It never creates a run.
+        The runner is the caller, taken from the principal; no parameter names another account, so a schedule owned by someone else that delivers to the caller never makes a candidate and the caller
+        sees never_run until they run it themselves. The latest succeeded run is preferred over a newer failed one; a newer queued or running run is reported as inFlight and the state is running.
+        state is one of current, stale_data (current and the freshness state is stale: asOf and freshness.stale name the connections), scope_changed (the caller's read scope differs from the one
+        the run was trimmed with: no rows and no count), expired (past expiresAt: no rows), running, failed (no earlier run is current; failure is on the run header), never_run, unavailable (the definition
+        or preset is not in the library). With rows=10 and a current run, table holds the first 10 rows of the definition's widget-profile columns (at most 5), read through the run-read gate
+        (run.ReadAccess, 6.6 checks 1 to 5); there is no second gate. rows is 0 or 10, anything else is a 400; rows=10 on a definition whose widget profile has no table view is a 400. The response never carries the digest, the parameters or
+        the scope text; getReportRun answers those. asOf is the freshness watermark of the run and is the age to show; it is never called live.
+      x-permission: reports.run
+      x-activediq-stability: preview
+      x-activediq-limits:
+        class: read
+      x-activediq-parity: [ADM-002]
+      parameters:
+        - name: definitionId
+          in: query
+          required: true
+          description: The report definition.
+          schema:
+            type: string
+            minLength: 2
+            maxLength: 64
+            pattern: "^[A-Za-z][A-Za-z0-9-]{1,63}$"
+        - name: presetId
+          in: query
+          required: false
+          description: The preset; absent means the definition's default preset.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: "^[a-z][a-z0-9_-]{0,63}$"
+        - name: rows
+          in: query
+          required: false
+          description: 0 (the default) answers the header only; 10 adds the first 10 rows of the widget table.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 10
+      responses:
+        "200":
+          description: The latest run state for the widget
+          content:
+            application/json:
+              schema:
+                $ref: modules/reports.yaml#/components/schemas/ReportLatestRun
+        "400":
+          $ref: shared/problems.yaml#/components/responses/Validation
+        "401":
+          $ref: shared/problems.yaml#/components/responses/Unauthenticated
+        "403":
+          $ref: shared/problems.yaml#/components/responses/Forbidden
+        "429":
+          $ref: shared/problems.yaml#/components/responses/RateLimited
+        "500":
+          $ref: shared/problems.yaml#/components/responses/Internal
   /reports/runs/{runId}:
     get:
       tags: [reports]
@@ -2701,6 +2764,30 @@ components:
           type: integer
           minimum: 1
           maximum: 720
+        widget:
+          $ref: modules/reports.yaml#/components/schemas/ReportWidgetProfile
+    ReportWidgetProfile:
+      description: >-
+        The views a Home widget may render for the report (specs/home-report-widgets.md 3.1). count is always allowed and is listed. tableColumns are the at most 5 columns of the table view, in order, and are
+        empty unless views holds table. trend plots the run's row count only. A definition without this member supports the count view only.
+      type: object
+      required: [views, tableColumns]
+      properties:
+        views:
+          type: array
+          maxItems: 3
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportWidgetView
+        tableColumns:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+            maxLength: 64
+    ReportWidgetView:
+      type: string
+      x-activediq-enum: open
+      enum: [count, table, trend]
     ReportDefinitionList:
       description: >-
         A page of the library.
@@ -3173,6 +3260,62 @@ components:
           maxItems: 96
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportCell
+    ReportLatestState:
+      description: >-
+        What a Home widget renders for the caller's latest run (specs/home-report-widgets.md 3.3).
+      type: string
+      x-activediq-enum: open
+      enum: [current, stale_data, scope_changed, expired, running, failed, never_run, unavailable]
+    ReportLatestTable:
+      description: >-
+        The first rows of a current run in the columns of the definition's widget profile, in the profile's order.
+      type: object
+      required: [columns, rows]
+      properties:
+        columns:
+          type: array
+          maxItems: 5
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportColumnInfo
+        rows:
+          type: array
+          maxItems: 10
+          items:
+            $ref: modules/reports.yaml#/components/schemas/ReportRow
+    ReportLatestRun:
+      description: >-
+        The caller's latest run of one report for a widget. runId, asOf, rowCount, finishedAt and expiresAt describe the run the state names and are null for never_run and unavailable.
+        rowCount is null when state is scope_changed, expired, failed or running without a current result. table is present only when rows=10 was asked and the state serves rows. inFlight is a newer queued or running run.
+        failure is the reason of a failed run.
+      type: object
+      required: [state, runId, asOf, rowCount, finishedAt, expiresAt]
+      properties:
+        state:
+          $ref: modules/reports.yaml#/components/schemas/ReportLatestState
+        runId:
+          type: [string, "null"]
+          format: uuid
+        asOf:
+          type: [string, "null"]
+          format: date-time
+        freshness:
+          $ref: modules/reports.yaml#/components/schemas/ReportFreshness
+        rowCount:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 9007199254740991
+        finishedAt:
+          type: [string, "null"]
+          format: date-time
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+        inFlight:
+          $ref: modules/reports.yaml#/components/schemas/ReportRunSummary
+        table:
+          $ref: modules/reports.yaml#/components/schemas/ReportLatestTable
+        failure:
+          $ref: modules/reports.yaml#/components/schemas/ReportFailure
     ReportRowPage:
       description: >-
         A page of a stored result. rowCount is the run's total after trimming.
