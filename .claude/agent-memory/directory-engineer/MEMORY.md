@@ -45,3 +45,4 @@
 - [descendant dn lessons](descendant-dn-lessons.md) — T-0988: dn pass before ancestry UPDATE, key delete/insert trap, dn.Rebase
 - [incremental cycle lessons](incremental-lessons.md) — T-1198: Reconcile moves fencing token, whole FeedCookie stored, deferFinish, patch-path dn gap
 - [printers lessons](printers-lessons.md) — T-1719: new kind = two CHECKs + resync, OU path is dn (RP11), lab seed without rng draws
+- [DC-log join lessons](dcjoin-lessons.md) — T-1636: smbcontrol all, runner ctx gaps, enable/disable skipped, lab rig recipe

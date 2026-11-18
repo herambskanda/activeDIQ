@@ -230,7 +230,7 @@ func build[In any](p ports, sp spec, target func(In) Target, mustChange func(In)
 				return Outcome{}, errUnavailable
 			}
 			pl := tp.Payload
-			res, err := p.writer.Write(ctx, s, client.WriteOp{
+			res, err := p.writer.Write(pinned(ctx, s, pl.Target), s, client.WriteOp{
 				DigestKind: sp.key, Target: pl.Target.ref(), Attrs: attrsOf(sp, pl),
 			})
 			if err != nil {

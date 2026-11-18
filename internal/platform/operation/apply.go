@@ -223,7 +223,8 @@ func (r *Runner) execute(ctx context.Context, t tenant.ID, tx txFunc, c *claimed
 			return err
 		}
 	}
-	wctx, cancel := context.WithCancelCause(ctx)
+	// The Action's directory calls resolve their connection under the tenant on the context.
+	wctx, cancel := context.WithCancelCause(authority.WithTenant(ctx, c.op.Tenant.String()))
 	defer cancel(nil)
 	r.renewLoop(wctx, cancel, t, tx, c)
 	tries := 1
@@ -303,7 +304,7 @@ func (r *Runner) renewLoop(ctx context.Context, cancel context.CancelCauseFunc, 
 // after-state in place means the write landed and the step is applied, not failed; the before-state
 // means it did not; anything unreadable leaves the step claimed for the reconciler.
 func (r *Runner) afterRetries(ctx context.Context, t tenant.ID, tx txFunc, c *claimed) error {
-	obs, err := c.act.(Observer).Observe(ctx, c.op.Pins, c.plan, c.claimedAt)
+	obs, err := c.act.(Observer).Observe(authority.WithTenant(ctx, c.op.Tenant.String()), c.op.Pins, c.plan, c.claimedAt)
 	switch {
 	case err != nil:
 		return nil // stays applying; the lease lapses and the reconciler decides
@@ -325,7 +326,7 @@ func (r *Runner) verifyAndRecord(ctx context.Context, t tenant.ID, tx txFunc, c 
 	var verr error
 	stp, revoke, merr := r.mintFor(c, c.attempt, secret.Secret{})
 	if merr == nil {
-		v, verr = c.act.Verify(ctx, stp, c.plan, out)
+		v, verr = c.act.Verify(authority.WithTenant(ctx, c.op.Tenant.String()), stp, c.plan, out)
 		revoke()
 	}
 	// Source 1, the connector's step-9 report: it counts at once and outranks every other reason,
