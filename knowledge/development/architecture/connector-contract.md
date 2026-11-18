@@ -620,6 +620,10 @@ as Basis *Default*. That breaks rule 10. So:
      A forest that puts `userParameters` in the filtered set (`searchFlags` 0x200) already makes it a
      SecretAttr (§3.7, `internal/connector/ad/secrets.go`). This condition covers a schema snapshot
      older than the RODC's set.
+- **Lab record (T-1762, Samba AD 4.x):** a live `sIDHistory` on the identity is in `TokenSet` (`TestLabADTokenSetSIDHistory`).
+  Samba's `tokenGroups` does **not** hold the `sIDHistory` of a group the user belongs to, and the exported set
+  does not either. Windows result for the same case, and `tokenGroups` vs the real access token, is **not yet
+  recorded** `[LAB: Windows]` (follow-up ticket); T-1763 item 2 must not treat Samba as proof for Windows.
 - **The answer maps to a state:**
   - `Yes`, not `Incomplete` and not `Anomalous`: `NOT_CONFIGURED`, `blob_reason: absent`.
   - `No`: `NOT_CONFIRMED`, `read_denied`.
