@@ -19,7 +19,7 @@
     "main_branch": "main",
     "pre_merge": {
       "enabled": true,
-      "argv": ["make", "-k", "ci"],
+      "argv": ["make", "-k", "-j2", "-O", "ci"],
       "timeout_minutes": 180,
       "train_size": 1,
       "max_gate_failures": 2,

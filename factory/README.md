@@ -315,7 +315,7 @@ claude -p "<rendered templates/worker-prompt.md>" \
   `main` on first claim and reused for every later stage of the same ticket.
 - A ticket tagged `embargoed` is never merged (security-disclosure runbook §6, public repo): the dispatcher records `links.held` + one event and the board shows "merge held"; removing the tag merges it on the next pass.
 - **Pre-merge gate** (`dispatcher.pre_merge`, T-0941): before it merges, the dispatcher builds
-  `main` + the branch in a scratch worktree and runs `pre_merge.argv` (`make -k ci`). Green merges.
+  `main` + the branch in a scratch worktree and runs `pre_merge.argv` (`make -k -j2 -O ci` since 2026-11-18: the quick and slow halves run side by side, output kept together per target, same 60 commands as `make -k ci`; set `["make","-k","ci"]` to go back). Green merges.
   Red while `main` is green is refused. Red while `main` is also red is refused only if the result
   has a finding `main` does not (multiset of check-and-message keys, line numbers removed; a newly
   red make target counts). **The baseline (T-1378)** is not run per `main` commit: the gate reuses a
