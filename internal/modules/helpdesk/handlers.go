@@ -99,13 +99,14 @@ func (h Handlers) sleep(ctx context.Context, d time.Duration) {
 // caller is the technician: the console session's tenant and account. A token, a missing principal or a bad
 // tenant is a bare 403.
 func caller(ctx context.Context) (tenant.ID, apihost.Principal, error) {
+	var none tenant.ID // the zero tenant accompanies every refusal
 	p, ok := apihost.PrincipalFrom(ctx)
 	if !ok || p.ID == "" || p.Kind != apihost.KindSession || p.SessionID == "" {
-		return tenant.ID{}, p, apitypes.Forbidden("")
+		return none, p, apitypes.Forbidden("")
 	}
 	t, err := tenantref.TenantFromText(p.Tenant)
 	if err != nil {
-		return tenant.ID{}, p, apitypes.Forbidden("")
+		return none, p, apitypes.Forbidden("")
 	}
 	return t, p, nil
 }
