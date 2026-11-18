@@ -29,6 +29,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/limiter"
 	"github.com/skenzeriq/activediq/internal/platform/module"
+	"github.com/skenzeriq/activediq/internal/platform/module/jobcontrib"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
@@ -205,7 +206,11 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	// The job kinds the modules contributed (EP-5) run on this registry; their seeds follow the tenant.
-	for _, j := range contrib.Jobs() {
+	cjobs, err := jobcontrib.All(contrib)
+	if err != nil {
+		return err
+	}
+	for _, j := range cjobs {
 		if err := jreg.Register(j.Kind); err != nil {
 			return fmt.Errorf("server: module job kind %s: %w", j.Kind.Name, err)
 		}
@@ -450,7 +455,11 @@ func attestationConfig(cfg config.Config) (platform.Attestation, error) {
 // The seeds are idempotent (keyed enqueues), so running them on every boot or on several nodes leaves one
 // cadence. A module starts no goroutine of its own.
 func seedModuleJobs(ctx context.Context, db *store.DB, c *module.Contributions, tid tenant.ID) error {
-	for _, j := range c.Jobs() {
+	cjobs, err := jobcontrib.All(c)
+	if err != nil {
+		return err
+	}
+	for _, j := range cjobs {
 		if j.Seed == nil {
 			continue
 		}
