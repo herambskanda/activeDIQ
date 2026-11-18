@@ -252,13 +252,9 @@ func (a *Authorizer) requesterAssignments(ctx context.Context, tn tenant.ID, cha
 // unrestricted assignment elsewhere. An error that is not a *TemplateError means the check could not be
 // made, and the caller treats it as a refusal.
 func (a *Authorizer) CheckTemplate(ctx context.Context, chain authority.Chain, perm authz.Permission, template string) error {
-	tid, ok := authority.TenantFrom(ctx)
-	if !ok {
-		return denied(ReasonNoTenant)
-	}
-	tn, err := tenant.Parse(tid)
+	tn, err := requestTenant(ctx)
 	if err != nil {
-		return denied(ReasonNoTenant)
+		return err
 	}
 	refuse := &TemplateError{Template: template, Reason: ReasonTemplateNotPermitted}
 	if !accountIDRe.MatchString(template) {
@@ -299,13 +295,9 @@ func (a *Authorizer) CheckTemplate(ctx context.Context, chain authority.Chain, p
 // It returns none when the source cannot read constraints: a site preference is a hint, so its absence
 // is not a refusal.
 func (a *Authorizer) PreferredSites(ctx context.Context, chain authority.Chain) ([]string, error) {
-	tid, ok := authority.TenantFrom(ctx)
-	if !ok {
-		return nil, denied(ReasonNoTenant)
-	}
-	tn, err := tenant.Parse(tid)
+	tn, err := requestTenant(ctx)
 	if err != nil {
-		return nil, denied(ReasonNoTenant)
+		return nil, err
 	}
 	cs, ok := a.src.(ConstraintSource)
 	if !ok {

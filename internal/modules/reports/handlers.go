@@ -104,6 +104,9 @@ func (h *Handlers) CreateReportRun(ctx context.Context, in api.CreateReportRunIn
 			return nil, apitypes.Validation("the parameters could not be read")
 		}
 	}
+	if in.Body.TimeZone != nil {
+		ci.Zone = *in.Body.TimeZone
+	}
 	r, _, err := h.Runs.Create(ctx, ci)
 	if err != nil {
 		return nil, h.problem(err)
@@ -340,6 +343,8 @@ func (h *Handlers) problem(err error) error {
 		return coded(apitypes.Conflict("the run did not produce a result"), apitypes.InBody, "", "run_failed", string(failed.Reason)+" ("+string(failed.State)+")")
 	case errors.As(err, &ve):
 		return coded(apitypes.Validation("the report parameters were refused"), apitypes.InBody, "parameters."+ve.Path, string(ve.Code), "")
+	case errors.Is(err, run.ErrBadTimeZone):
+		return coded(apitypes.Validation("that time zone is not known"), apitypes.InBody, "timeZone", "time_zone_unknown", "")
 	case errors.Is(err, run.ErrRunNotFound):
 		return coded(apitypes.NotFound("no such report run"), apitypes.InPath, "runId", "run_not_found", "")
 	case errors.Is(err, run.ErrDefinitionUnknown):
