@@ -54,6 +54,7 @@ export function formatStatus(s, nowMs) {
   const lines = [];
   const state = s.control.paused ? paint('yellow', `PAUSED${s.control.reason ? ` — ${s.control.reason}` : ''}`) : paint('green', 'RUNNING');
   lines.push(`${paint('bold', `${s.product} factory`)} · ${state}`);
+  if (s.merge_drain) lines.push(paint('yellow', `merge drain on until ${s.merge_drain.until}${s.merge_drain.reason ? ` — ${s.merge_drain.reason}` : ''}: no new gate run or automatic merge starts`));
 
   const d = s.dispatcher;
   if (d.alive) {
@@ -64,6 +65,10 @@ export function formatStatus(s, nowMs) {
   if (d.backoff_until) lines.push(`             backing off until ${d.backoff_until}`);
   lines.push(`board        ${s.board ? `${s.board.url} (pid ${s.board.pid})` : paint('dim', 'not running')}`);
 
+  if (s.merge_queue) {
+    const g = s.merge_queue.in_gates;
+    lines.push(`merge gate   ${g.length ? `in flight: ${g.map((x) => `${x.ids.join('+')} since ${x.started_at}`).join(' · ')}` : paint('dim', 'no gate run in flight')} · ${s.merge_queue.waiting} waiting`);
+  }
   lines.push(`active runs  ${s.active_runs.length ? `(${s.active_runs.length})` : paint('dim', 'none')}`);
   if (s.active_runs.length) {
     lines.push(table(s.active_runs.map((r) => [r.id, r.ticket, r.role, duration(r.elapsed_ms), `ctx ${k(r.context_tokens)}`])));

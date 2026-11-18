@@ -69,15 +69,16 @@ type Config struct {
 	// The fields below are used by the persisted Directory path. SubmitDirectory needs Jobs, Keys and
 	// Pinner (when an Action writes to AD); the others are optional.
 
-	Jobs       *jobs.Registry // enqueues the chunk jobs at approved -> queued
-	Keys       DEKSource      // seals transient secrets
-	Pinner     Pinner         // pins one writable DC per naming context (rule 5)
-	Sites      SiteHints      // optional: AD sites to prefer when pinning (ADM-133); nil: none
-	Settings   Settings       // tenant settings read by the kernel hold rules
-	Provenance Provenance     // the sock-puppet check of rule 8
-	Alerts     Alerter
-	Lease      time.Duration // a step claim's lease; default 2 minutes
-	Slots      int           // concurrent writes per (connection, DC); default 4
+	Jobs        *jobs.Registry   // enqueues the chunk jobs at approved -> queued
+	Keys        DEKSource        // seals transient secrets
+	Credentials CredentialSource // names the DM-11 credential of a connection for step audit events; required with Pinner
+	Pinner      Pinner           // pins one writable DC per naming context (rule 5)
+	Sites       SiteHints        // optional: AD sites to prefer when pinning (ADM-133); nil: none
+	Settings    Settings         // tenant settings read by the kernel hold rules
+	Provenance  Provenance       // the sock-puppet check of rule 8
+	Alerts      Alerter
+	Lease       time.Duration // a step claim's lease; default 2 minutes
+	Slots       int           // concurrent writes per (connection, DC); default 4
 	// Attempts is the transient-error attempt limit of one step; default 5. Backoff is the base delay.
 	Attempts int
 	Backoff  time.Duration
@@ -97,6 +98,9 @@ type Runner struct {
 func NewRunner(cfg Config) (*Runner, error) {
 	if cfg.DB == nil || cfg.Audit == nil || cfg.Authz == nil || cfg.Registry == nil {
 		return nil, fmt.Errorf("%w: runner needs DB, Audit, Authz and Registry", ErrInvalid)
+	}
+	if cfg.Pinner != nil && cfg.Credentials == nil {
+		return nil, fmt.Errorf("%w: a runner that writes to a directory needs a CredentialSource", ErrInvalid)
 	}
 	if cfg.Gate == nil {
 		cfg.Gate = PermissionOnly{}

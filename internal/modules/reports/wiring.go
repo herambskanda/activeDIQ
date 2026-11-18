@@ -17,6 +17,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/blob"
 	"github.com/skenzeriq/activediq/internal/platform/module"
+	"github.com/skenzeriq/activediq/internal/platform/module/jobcontrib"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
@@ -78,7 +79,7 @@ func (w *wiring) register(r *module.Registrar, m *Module) error {
 	if err := r.API(api.Bind(w.handlers)); err != nil {
 		return err
 	}
-	for _, j := range []module.Job{
+	for _, j := range []jobcontrib.Job{
 		{Kind: w.runs.Kind()},
 		{Kind: w.runs.RetentionKind(), Seed: func(ctx context.Context, tx store.Tx, tid tenant.ID) error {
 			return w.runs.ScheduleRetention(ctx, tx, tid)
