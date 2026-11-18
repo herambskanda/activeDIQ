@@ -71,6 +71,28 @@
         },
         "x-activediq-tag": "platform.notify"
       },
+      "ExplorerConnectionId": {
+        "description": "Narrows to one AD connection.",
+        "in": "query",
+        "name": "connection_id",
+        "required": false,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerObjectGuid": {
+        "description": "The objectGUID of the container or object. A DN is never accepted.",
+        "in": "path",
+        "name": "objectGuid",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "directory"
+      },
       "ExportId": {
         "description": "The export.",
         "in": "path",
@@ -322,6 +344,47 @@
           }
         },
         "description": "The directory is unavailable"
+      },
+      "ExplorerCursorInvalid": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "errors": [
+                {
+                  "code": "cursor_invalid",
+                  "detail": "The cursor cannot be used. Start again from the first page.",
+                  "in": "query",
+                  "pointer": "cursor"
+                }
+              ],
+              "status": 400,
+              "title": "The paging parameters cannot be used",
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "type": "/problems/explorer-query-invalid"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The paging parameters cannot be used. errors[].code says why: cursor_invalid (bad, forged or mismatched cursor: a cursor from another node, view or scope; nothing is read), or a malformed limit or view. No DN or cursor content is echoed."
+      },
+      "ExplorerUnavailable": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "detail": "The directory is busy. Try again.",
+              "status": 503,
+              "title": "The directory is busy",
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "type": "/problems/explorer-unavailable"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Explorer could not finish in time"
       },
       "Forbidden": {
         "content": {
@@ -1383,6 +1446,247 @@
         "type": "object",
         "x-activediq-tag": "directory"
       },
+      "ExplorerChildren": {
+        "description": "One keyset page of admitted children. No count is returned.",
+        "properties": {
+          "asOf": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExplorerEntry"
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
+          "more": {
+            "description": "True when the page may not be the last, including a short page that stopped at the examination ceiling.",
+            "type": "boolean"
+          },
+          "nextCursor": {
+            "description": "Pass back unchanged for the next page. Null on the last page.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "more",
+          "asOf"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerEntry": {
+        "description": "One live AD object, the same shape in the tree and the table. Keyed by objectGuid; there is no DN. name is the RDN value (or the display name), never a path. parentGuid is the row's own parent read in the same statement as the row.",
+        "properties": {
+          "connectionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "hasChildren": {
+            "description": "For a container, whether an admitted live child exists; null for a leaf.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "isContainer": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ExplorerKind"
+          },
+          "name": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "objectClass": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "parentGuid": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "readOnly": {
+            "description": "True for a Tier-0 object; the console disables write actions on it.",
+            "type": "boolean"
+          },
+          "samAccountName": {
+            "description": "Empty when absent.",
+            "maxLength": 256,
+            "type": "string"
+          },
+          "tier0": {
+            "description": "True unless the inventory holds a classifier result saying otherwise (fails closed).",
+            "type": "boolean"
+          },
+          "upn": {
+            "description": "Empty when absent.",
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "whenChanged": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "objectGuid",
+          "connectionId",
+          "parentGuid",
+          "kind",
+          "objectClass",
+          "name",
+          "isContainer",
+          "hasChildren",
+          "tier0",
+          "readOnly",
+          "samAccountName",
+          "upn",
+          "enabled",
+          "whenChanged"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerKind": {
+        "description": "What the object is. Domain heads and built-in containers are other or container; isContainer, not kind, says whether it can hold children.",
+        "enum": [
+          "ou",
+          "container",
+          "user",
+          "inetorgperson",
+          "group",
+          "computer",
+          "contact",
+          "gmsa",
+          "fsp",
+          "other"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerNode": {
+        "description": "One node, the admitted path to it, and the freshness of the inventory behind them.",
+        "properties": {
+          "ambiguous": {
+            "description": "True when the GUID had more than one admitted live row and the newest was chosen. Absent otherwise.",
+            "type": "boolean"
+          },
+          "asOf": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "node": {
+            "$ref": "#/components/schemas/ExplorerEntry"
+          },
+          "path": {
+            "description": "Admitted live ancestors ending at the node's parent, root first. Empty when the node is a root.",
+            "items": {
+              "$ref": "#/components/schemas/ExplorerPathItem"
+            },
+            "maxItems": 128,
+            "type": "array"
+          }
+        },
+        "required": [
+          "node",
+          "path",
+          "asOf"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerPathItem": {
+        "description": "One admitted live ancestor, for the breadcrumb and for expanding the tree by GUID.",
+        "properties": {
+          "name": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectGuid",
+          "name"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerRoots": {
+        "description": "The containers the caller's scope admits as tree roots, with the freshness of the inventory behind them.",
+        "properties": {
+          "asOf": {
+            "description": "The oldest last-sync time of the connections the caller may read. Null when nothing has synced yet.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExplorerEntry"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "more": {
+            "description": "True when more than 500 roots exist; the console says to refine in Search. There is no cursor.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "more",
+          "asOf"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerView": {
+        "description": "containers is the tree level (containers only); all is the table (every kind).",
+        "enum": [
+          "containers",
+          "all"
+        ],
+        "type": "string",
+        "x-activediq-tag": "directory"
+      },
       "GUIDRef": {
         "additionalProperties": false,
         "description": "A reference to a directory object by objectGUID. A DN is never a key.",
@@ -1920,6 +2224,10 @@
       },
       "OperationTarget": {
         "discriminator": {
+          "mapping": {
+            "directory": "#/components/schemas/OperationTargetDirectory",
+            "store": "#/components/schemas/OperationTargetStore"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -2017,6 +2325,15 @@
       "OperationValue": {
         "description": "One side of a change, rendered by the Action for display. redacted stands for a secret or an erased personal value.",
         "discriminator": {
+          "mapping": {
+            "absent": "#/components/schemas/OperationValueAbsent",
+            "boolean": "#/components/schemas/OperationValueBoolean",
+            "integer": "#/components/schemas/OperationValueInteger",
+            "redacted": "#/components/schemas/OperationValueRedacted",
+            "text": "#/components/schemas/OperationValueText",
+            "textList": "#/components/schemas/OperationValueTextList",
+            "time": "#/components/schemas/OperationValueTime"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -2334,6 +2651,18 @@
       "ReportCell": {
         "description": "One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n, unknown u). unknown is shown rather than an inferred value when an input is missing (FR-09). absent is a missing value, distinct from empty text; never is a value that cannot occur, such as a last logon of an account that has never logged on.",
         "discriminator": {
+          "mapping": {
+            "absent": "#/components/schemas/ReportCellAbsent",
+            "boolean": "#/components/schemas/ReportValueBoolean",
+            "enum": "#/components/schemas/ReportValueEnum",
+            "guid": "#/components/schemas/ReportCellGuid",
+            "integer": "#/components/schemas/ReportCellInteger",
+            "never": "#/components/schemas/ReportCellNever",
+            "text": "#/components/schemas/ReportCellText",
+            "textList": "#/components/schemas/ReportCellTextList",
+            "time": "#/components/schemas/ReportValueTime",
+            "unknown": "#/components/schemas/ReportCellUnknown"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -3236,6 +3565,13 @@
       "ReportFilter": {
         "description": "A typed filter tree over registry columns. A node names a column from the closed list and a typed value; there is no expression, no raw LDAP, no SQL. The tree is at most four levels deep and 64 nodes; deeper is a 400 with code filter_too_complex. The server checks each operator and value against the column's type.",
         "discriminator": {
+          "mapping": {
+            "compare": "#/components/schemas/ReportFilterCompare",
+            "group": "#/components/schemas/ReportFilterGroup",
+            "in": "#/components/schemas/ReportFilterIn",
+            "presence": "#/components/schemas/ReportFilterPresence",
+            "relative_time": "#/components/schemas/ReportFilterRelative"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -3497,6 +3833,10 @@
       "ReportFilterView": {
         "description": "A filter as the server stores it. A condition's column is a registry column ID.",
         "discriminator": {
+          "mapping": {
+            "condition": "#/components/schemas/ReportFilterConditionView",
+            "group": "#/components/schemas/ReportFilterGroupView"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -3817,6 +4157,10 @@
       "ReportPeriod": {
         "description": "The period a report looks at. The server refuses a range whose to is not after from, or longer than ten years.",
         "discriminator": {
+          "mapping": {
+            "last_days": "#/components/schemas/ReportPeriodLastDays",
+            "range": "#/components/schemas/ReportPeriodRange"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -4242,6 +4586,10 @@
       "ReportRecipient": {
         "description": "Who receives the schedule's files.",
         "discriminator": {
+          "mapping": {
+            "account": "#/components/schemas/ReportRecipientAccount",
+            "email": "#/components/schemas/ReportRecipientEmail"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -4391,6 +4739,10 @@
       "ReportRecipientView": {
         "description": "A recipient as stored.",
         "discriminator": {
+          "mapping": {
+            "account": "#/components/schemas/ReportRecipientAccountView",
+            "email": "#/components/schemas/ReportRecipientEmailView"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -4406,6 +4758,17 @@
       "ReportRecurrence": {
         "description": "When a schedule fires, in the schedule's time zone. The minimum interval is one hour (spec 8.4).",
         "discriminator": {
+          "mapping": {
+            "custom_days": "#/components/schemas/ReportRecurrenceCustomDays",
+            "custom_hours": "#/components/schemas/ReportRecurrenceCustomHours",
+            "custom_months": "#/components/schemas/ReportRecurrenceCustomMonths",
+            "custom_weeks": "#/components/schemas/ReportRecurrenceCustomWeeks",
+            "daily": "#/components/schemas/ReportRecurrenceDaily",
+            "hourly": "#/components/schemas/ReportRecurrenceHourly",
+            "monthly_day": "#/components/schemas/ReportRecurrenceMonthlyDay",
+            "monthly_last_day": "#/components/schemas/ReportRecurrenceMonthlyLastDay",
+            "weekly": "#/components/schemas/ReportRecurrenceWeekly"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -5716,6 +6079,13 @@
       "ReportValue": {
         "description": "A typed filter value. Never an expression.",
         "discriminator": {
+          "mapping": {
+            "boolean": "#/components/schemas/ReportValueBoolean",
+            "enum": "#/components/schemas/ReportValueEnum",
+            "integer": "#/components/schemas/ReportValueInteger",
+            "text": "#/components/schemas/ReportValueText",
+            "time": "#/components/schemas/ReportValueTime"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -5894,6 +6264,25 @@
         "type": "string",
         "writeOnly": true,
         "x-activediq-secret": true
+      },
+      "SessionInfo": {
+        "description": "What the calling session may do, as permission names only.",
+        "properties": {
+          "permissions": {
+            "description": "The catalogue permission names the session holds at tenant scope, sorted. Display only.",
+            "items": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "maxItems": 1024,
+            "type": "array"
+          }
+        },
+        "required": [
+          "permissions"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.authn"
       },
       "SetupClaimRequest": {
         "additionalProperties": false,
@@ -6686,6 +7075,50 @@
         "x-permission": "anonymous"
       }
     },
+    "/auth/session": {
+      "get": {
+        "description": "Answers the names of the catalogue permissions the calling console session holds at tenant scope, sorted, so the console can hide navigation the session could not use (for example Reports without reports.run). Names only: no scope, role or grant detail. It is display only; every operation still authorises the request itself and stays the authority. Needs a cookie session and no permission beyond it. The answer is never cached. Additive to the preview auth plane.",
+        "operationId": "getSession",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            },
+            "description": "The permission names this session holds."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "The permission names the calling session holds",
+        "tags": [
+          "platform.authn"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "authenticated"
+      }
+    },
     "/auth/step-up": {
       "post": {
         "description": "Lets a signed-in console session obtain the fresh multi-factor check that a step-up operation (operations whose permission is a stepUp row of policy.yaml, TM section 7.4) requires. The caller sends a TOTP code of the session's own account. Success answers 204 with no body: the server moves the session's MFA time forward, and the next step-up operation is judged against that server-side time alone. Nothing in the request or response carries, sets or reports freshness, and no client field can assert it. Only a console session can call this: an API token has no interactive second factor and is refused 401. Needs the CSRF header like any cookie-session mutation.\nEvery refusal has one shape, 403 /problems/step-up-refused: a wrong, replayed or paused code, no enrolled factor, an account that is no longer active and an exhausted failure budget are indistinguishable by status, body, headers and timing class. The response and the request name no enrolment, so a caller cannot learn which one matched. A refusal keeps the session's earlier MFA time as it was. A session that is revoked or expired is the ordinary 401 /problems/unauthenticated. The route is a guessing oracle for a stolen session, so it is limited per principal in the secret class, and the server also charges every failure to the account's enrolment budget. Every attempt is audited with the principal and the outcome, never the code.\nLater addition, not in this version: WebAuthn re-verification. Only TOTP re-verifies today (authn.StepUp.Reverify); a WebAuthn variant will be an additive operation or an additive request member, announced in the changelog.",
@@ -7032,6 +7465,287 @@
         },
         "x-activediq-stability": "preview",
         "x-permission": "connections.takeover.attest"
+      }
+    },
+    "/directory/explorer/nodes/{objectGuid}": {
+      "get": {
+        "description": "One live container or object by objectGUID, with path: the admitted live ancestors ending at its parent, root first, so a deep link can expand the tree by GUID. If the parent is not admitted the node is itself a root and path is empty. A GUID that does not exist, is not live, is not an AD object or is not admitted by the caller's scope answers the same 404 with the same body (hidden is absent). connection_id picks one row in the transient case of a GUID live in two connections; without it ambiguous is true when two admitted live rows remained and the newest was chosen. No DN is returned.",
+        "operationId": "getExplorerNode",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExplorerObjectGuid"
+          },
+          {
+            "$ref": "#/components/parameters/ExplorerConnectionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "asOf": "2026-11-14T09:11:04Z",
+                  "node": {
+                    "connectionId": "0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64",
+                    "enabled": null,
+                    "hasChildren": true,
+                    "isContainer": true,
+                    "kind": "ou",
+                    "name": "Staff",
+                    "objectClass": "organizationalUnit",
+                    "objectGuid": "8a4e6f10-2c9b-4d35-b7e1-3f5a6b7c8d90",
+                    "parentGuid": "5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d",
+                    "readOnly": false,
+                    "samAccountName": "",
+                    "tier0": false,
+                    "upn": "",
+                    "whenChanged": "2026-11-10T08:02:51Z"
+                  },
+                  "path": [
+                    {
+                      "name": "corp",
+                      "objectGuid": "5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d"
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ExplorerNode"
+                }
+              }
+            },
+            "description": "The node, its path and the freshness of the inventory behind it"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ExplorerUnavailable"
+          }
+        },
+        "summary": "Get one Explorer node and its path",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-004"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
+      }
+    },
+    "/directory/explorer/nodes/{objectGuid}/children": {
+      "get": {
+        "description": "One keyset page of the live children the caller's scope admits, containers first, then by name (byte order), then objectGuid. view=containers gives the tree level, view=all the table. Scope is applied before the limit, the more flag and hasChildren: none of them reveals what is hidden, except that each request examines at most 5,000 child rows, so a page can be short with more true; the cursor then continues from the last row examined. There is no total count. A cursor is opaque, bound to the node, view, sort position and the caller's scope; any mismatch is 400 with code cursor_invalid and reads nothing. A node that is missing, not live or not admitted answers 404 (hidden is absent). 503 when the request cannot finish in 2 seconds, generic and with a trace ID.",
+        "operationId": "listExplorerChildren",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExplorerObjectGuid"
+          },
+          {
+            "$ref": "#/components/parameters/ExplorerConnectionId"
+          },
+          {
+            "description": "containers (the default) answers the tree level; all answers every kind, for the table.",
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ExplorerView"
+            }
+          },
+          {
+            "description": "The page size. 100 when absent.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The nextCursor of the previous page, with the same node, view and connection_id.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "asOf": "2026-11-14T09:11:04Z",
+                  "items": [
+                    {
+                      "connectionId": "0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64",
+                      "enabled": true,
+                      "hasChildren": null,
+                      "isContainer": false,
+                      "kind": "user",
+                      "name": "Pat Example",
+                      "objectClass": "user",
+                      "objectGuid": "3f9c1e52-7a4b-4d0e-9b1a-0c5e8d2a6f10",
+                      "parentGuid": "8a4e6f10-2c9b-4d35-b7e1-3f5a6b7c8d90",
+                      "readOnly": false,
+                      "samAccountName": "pexample",
+                      "tier0": false,
+                      "upn": "pexample@corp.example.test",
+                      "whenChanged": "2026-11-09T13:20:00Z"
+                    }
+                  ],
+                  "more": true,
+                  "nextCursor": "Y3Vyc29yLTAxLW9wYXF1ZS1leGFtcGxl"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ExplorerChildren"
+                }
+              }
+            },
+            "description": "One page of admitted children"
+          },
+          "400": {
+            "$ref": "#/components/responses/ExplorerCursorInvalid"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ExplorerUnavailable"
+          }
+        },
+        "summary": "List the children of an Explorer node",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-004"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
+      }
+    },
+    "/directory/explorer/roots": {
+      "get": {
+        "description": "The top of the AD Explorer tree for the caller (ADM-004, spec ad-explorer-read-api.md section 3). A root is a live container the caller's directory.read scope admits whose parent is absent, or is a live object the scope does not admit; a scoped technician's tree therefore starts at their scope roots and never names a hidden ancestor. Read from the inventory, not the live directory; AD connections only. Returns containers only, at most 500, with no cursor: when more exist, more is true and the console says to refine in Search. connection_id narrows to one connection. A connection the caller may not read is simply absent. 403 when the caller has no directory.read producer.",
+        "operationId": "listExplorerRoots",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExplorerConnectionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "asOf": "2026-11-14T09:11:04Z",
+                  "items": [
+                    {
+                      "connectionId": "0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64",
+                      "enabled": null,
+                      "hasChildren": true,
+                      "isContainer": true,
+                      "kind": "other",
+                      "name": "corp",
+                      "objectClass": "domainDNS",
+                      "objectGuid": "5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d",
+                      "parentGuid": null,
+                      "readOnly": true,
+                      "samAccountName": "",
+                      "tier0": true,
+                      "upn": "",
+                      "whenChanged": "2026-11-12T16:40:11Z"
+                    }
+                  ],
+                  "more": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ExplorerRoots"
+                }
+              }
+            },
+            "description": "The roots the caller's scope admits"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ExplorerUnavailable"
+          }
+        },
+        "summary": "List the Explorer roots",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-004"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
       }
     },
     "/directory/search": {

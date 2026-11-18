@@ -24,6 +24,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/module/jobcontrib"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/owners"
@@ -83,7 +84,11 @@ func bootReportsForTest(ctx context.Context, db *store.DB, jreg *jobs.Registry, 
 	if err != nil {
 		return apihost.TagHandlers{}, err
 	}
-	for _, j := range c.Jobs() {
+	cjobs, err := jobcontrib.All(c)
+	if err != nil {
+		return apihost.TagHandlers{}, err
+	}
+	for _, j := range cjobs {
 		if err := jreg.Register(j.Kind); err != nil {
 			return apihost.TagHandlers{}, err
 		}

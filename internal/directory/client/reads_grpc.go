@@ -16,6 +16,7 @@ import (
 type Reader interface {
 	Describe(ctx context.Context, in *connectorv1.DescribeRequest, opts ...grpc.CallOption) (*connectorv1.DescribeResponse, error)
 	ScopedSearch(ctx context.Context, in *connectorv1.ScopedSearchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ScopedSearchResponse], error)
+	Read(ctx context.Context, in *connectorv1.ReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ReadResponse], error)
 }
 
 // ReaderSource yields the Reader that serves one connection.
@@ -46,6 +47,10 @@ type readOnly struct{ cc connectorv1.ConnectorClient }
 
 func (r readOnly) Describe(ctx context.Context, in *connectorv1.DescribeRequest, opts ...grpc.CallOption) (*connectorv1.DescribeResponse, error) {
 	return r.cc.Describe(ctx, in, opts...)
+}
+
+func (r readOnly) Read(ctx context.Context, in *connectorv1.ReadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ReadResponse], error) {
+	return r.cc.Read(ctx, in, opts...)
 }
 
 func (r readOnly) ScopedSearch(ctx context.Context, in *connectorv1.ScopedSearchRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[connectorv1.ScopedSearchResponse], error) {
