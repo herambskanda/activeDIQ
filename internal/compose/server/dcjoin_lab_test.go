@@ -241,26 +241,36 @@ func TestLabDCLogJoin(t *testing.T) {
 
 		// The DC log: only what this run added.
 		log := dockerExec(t, sc, "tail", "-c", "+"+strconv.Itoa(off+1), logPath)
-		changeLine := ""
-		for _, l := range strings.Split(log, "\n") {
-			if strings.Contains(l, "DSDB Change") && strings.Contains(l, "Modify") && strings.Contains(l, "unicodePwd") {
-				changeLine = l
-			}
-		}
-		if changeLine == "" {
-			t.Fatalf("no DSDB Change line for the disable in the DC log:\n%s", log)
-		}
+		// The live log also carries the DC's own background writes (its machine account's DNS updates) and
+		// other lab users', so the assertion is scoped to the lines that touch this write's target.
+		dn := strings.ToLower(r.plainDN)
+		var changeLines []string
 		sids := map[string]bool{}
 		for _, l := range strings.Split(log, "\n") {
-			if strings.Contains(l, "DSDB Change") || strings.Contains(l, "became") {
-				for _, m := range sidRE.FindAllString(l, -1) {
-					sids[m] = true
-				}
+			if !strings.Contains(l, "DSDB Change") || !strings.Contains(strings.ToLower(l), dn) {
+				continue
+			}
+			changeLines = append(changeLines, l)
+			for _, m := range sidRE.FindAllString(l, -1) {
+				sids[m] = true
 			}
 		}
-		if len(sids) != 1 || !sids[svcSID] {
-			t.Errorf("DC log names SIDs %v, want exactly the bound service account %s", sids, svcSID)
+		var pwdLine string
+		for _, l := range changeLines {
+			if strings.Contains(l, "Modify") && strings.Contains(l, "unicodePwd") {
+				pwdLine = l
+			}
 		}
+		if pwdLine == "" {
+			t.Fatalf("no DSDB Change line for the password reset of %s in the DC log:\n%s", r.plainDN, log)
+		}
+		if !strings.Contains(pwdLine, svcSID) {
+			t.Errorf("the unicodePwd Modify line does not name the bound service account %s: %s", svcSID, pwdLine)
+		}
+		if len(sids) != 1 || !sids[svcSID] {
+			t.Errorf("DC log lines touching the target name SIDs %v, want exactly the bound service account %s", sids, svcSID)
+		}
+		// No technician identifier or secret anywhere in what this run added to the log.
 		for _, bad := range []string{newPassword, r.helpdsk, strings.ToLower(r.helpdsk), "helpdesk"} {
 			if strings.Contains(log, bad) {
 				t.Errorf("DC log contains the technician identifier %q", bad)
