@@ -166,6 +166,28 @@ func TestReportsRunOverComposedReadScopes(t *testing.T) {
 			}
 		}
 
+		// The widget host's call: the runner's own latest run, header only, with no digest, parameters or scope text.
+		code, latest := do(scpRunner, "GET", "/api/v1/reports/runs/latest?definitionId=usr-01", "")
+		if code != http.StatusOK || latest["state"] != "current" || latest["runId"] != id || latest["rowCount"] != float64(3) || latest["asOf"] == nil {
+			t.Fatalf("latest: %d %v; want current, run %s, 3 rows", code, latest, id)
+		}
+		for _, k := range []string{"digest", "parameters", "scopeApplied", "table"} {
+			if _, has := latest[k]; has {
+				t.Errorf("latest carries %q", k)
+			}
+		}
+		// usr-01 has no widget profile, so it offers the count view only; rows are a 400, never a guess.
+		if code, body := do(scpRunner, "GET", "/api/v1/reports/runs/latest?definitionId=usr-01&rows=10", ""); code != http.StatusBadRequest {
+			t.Errorf("rows=10 without a table view: %d %v; want 400", code, body)
+		}
+		if code, _ := do(scpRunner, "GET", "/api/v1/reports/runs/latest?definitionId=usr-01&rows=7", ""); code != http.StatusBadRequest {
+			t.Errorf("rows=7: %d; want 400", code)
+		}
+		// Another account never sees the runner's run through it.
+		if code, other := do(scpNobody, "GET", "/api/v1/reports/runs/latest?definitionId=usr-01", ""); code == http.StatusOK && other["runId"] != nil {
+			t.Errorf("an unassigned account was handed run %v", other["runId"])
+		}
+
 		// Another account cannot read the run either.
 		if code, _ := do(scpNobody, "GET", "/api/v1/reports/runs/"+id+"/rows", ""); code == http.StatusOK {
 			t.Errorf("an unassigned account read another account's run rows")
