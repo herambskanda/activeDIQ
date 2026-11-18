@@ -262,17 +262,45 @@ const PROFILES_FAILED = 'FAILED fitness-profiles'; // the make target that runs 
 // ---- running the command -------------------------------------------------------------------
 
 /**
+ * Note how fast a log grows, so a step's time can be read back from it later (`factory/bin/gate-timing`).
+ * Every two seconds, when the log has grown, one `<ms since start>\t<bytes>` line goes to `<log>.timing`
+ * (about 30 KB for a 75-minute run). It only reads the log's size, never the gate's command, and any
+ * failure to write the note is swallowed: it must never fail or slow a gate run.
+ * @param {string} logFile
+ * @param {string[]} argv
+ * @param {number} [everyMs] sampling interval; a step's time is read to within this much
+ * @returns {() => void} stop (takes one last sample)
+ */
+export function startLogTiming(logFile, argv, everyMs = 2000) {
+  const file = `${logFile}.timing`;
+  const t0 = Date.now();
+  let last = -1;
+  const sample = () => {
+    try {
+      const size = fs.statSync(logFile).size;
+      if (size !== last) { last = size; fs.appendFileSync(file, `${Date.now() - t0}\t${size}\n`); }
+    } catch { /* the note is best effort */ }
+  };
+  try { fs.writeFileSync(file, `# start ${t0}\n# argv ${argv.join(' ')}\n0\t0\n`); } catch { return () => {}; }
+  const timer = setInterval(sample, everyMs);
+  timer.unref();
+  return () => { clearInterval(timer); sample(); };
+}
+
+/**
  * Run argv in cwd, both streams to `logFile`. Kills the whole process group on timeout or abort.
  * @returns {Promise<{code: number, timedOut: boolean, aborted: boolean}>}
  */
-export function runLogged(argv, cwd, logFile, { timeoutMs, signal, env = process.env } = {}) {
+export function runLogged(argv, cwd, logFile, { timeoutMs, signal, env = process.env, timing = false, timingEveryMs } = {}) {
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   const fd = fs.openSync(logFile, 'w');
+  const stopTiming = timing ? startLogTiming(logFile, argv, timingEveryMs) : () => {};
   return new Promise((resolve, reject) => {
     let child;
     try {
       child = spawn(argv[0], argv.slice(1), { cwd, env: { ...env, CI: '1' }, stdio: ['ignore', fd, fd], detached: true });
     } catch (err) {
+      stopTiming();
       fs.closeSync(fd);
       reject(new FactoryError(`could not start ${argv[0]}: ${err.message}`));
       return;
@@ -285,11 +313,11 @@ export function runLogged(argv, cwd, logFile, { timeoutMs, signal, env = process
     const onAbort = () => { aborted = true; stop(); };
     signal?.addEventListener('abort', onAbort, { once: true });
     child.on('error', (err) => {
-      clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
+      stopTiming(); clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
       reject(new FactoryError(`could not start ${argv[0]}: ${err.message}`));
     });
     child.on('close', (code) => {
-      clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
+      stopTiming(); clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
       resolve({ code: code ?? -1, timedOut, aborted });
     });
   });
@@ -536,7 +564,7 @@ async function baseline(ctx, settings, mainSha, mainTree, { signal }) {
   const log = path.join(gateDir(ctx), `baseline-${mainSha.slice(0, 12)}-${tag}-${run}.log`);
   const identity = await addDetached(ctx, dir, mainSha);
   try {
-    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx) });
+    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx), timing: true });
     if (ran.aborted) throw new FactoryError(`pre-merge: the baseline run on main was stopped (${log})`);
     if (ran.timedOut) {
       const near = await nearestBaseline(ctx, mainTree, entries);
@@ -799,7 +827,7 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
     // really merge.
     const withRenumber = (verdict) => ({ ...verdict, mainSha, ...(renumber ? { renumber } : {}) });
     const withTiming = (text) => (numberingSeconds === null ? text : `${text}; migration numbering checked in ${numberingSeconds} s`);
-    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx) });
+    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx), timing: true });
     if (ran.timedOut) throw new FactoryError(`pre-merge: ${settings.argv.join(' ')} on ${label} timed out after ${settings.timeout_minutes} minutes (${log})`);
     if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${label} was stopped (${log})`);
     assertTreeIntact(dir, identity, log);
