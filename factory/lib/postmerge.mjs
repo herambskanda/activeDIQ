@@ -93,7 +93,7 @@ export async function runPostMergeVerify(ctx, settings, mainSha, { signal } = {}
   try {
     // The gate's own Go build cache (T-2225): an entry evicted from the shared one mid-run would be reported
     // as a new finding on main, and `raise_ticket` turns that into a P0.
-    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx) });
+    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx), timing: true });
     if (ran.aborted) throw new FactoryError(`post-merge verify: the run on ${mainSha.slice(0, 12)} was stopped (${log})`);
     if (ran.timedOut) throw new FactoryError(`post-merge verify: ${settings.argv.join(' ')} on ${mainSha.slice(0, 12)} timed out after ${settings.timeout_minutes} minutes (${log})`);
     assertTreeIntact(dir, identity, log);
