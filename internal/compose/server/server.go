@@ -130,7 +130,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	ok, err := buildOperation(operation.HoldsMinter, db, dirClient, authzr, reg, pinner)
+	ok, err := buildOperation(operation.HoldsMinter, db, dirClient, authzr, reg, pinner, connectionCredentials{conns})
 	if err != nil {
 		return err
 	}
