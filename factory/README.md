@@ -21,6 +21,8 @@ factory/bin/factory status      # terminal summary
 factory/bin/factory pause       # stop launching new work (running workers finish)
 factory/bin/factory down        # stop dispatcher + board; running workers asked to hand off
 factory/bin/factory restart     # reload dispatcher + board on the code on disk; workers keep running and are adopted
+factory/bin/factory drain       # hold all merging for a hand merge to main (--minutes N, default 30, max 120; --reason R)
+factory/bin/factory undrain     # end the drain early
 factory/bin/factory doctor      # validate config, state, agents, model policy
 ```
 
@@ -313,7 +315,7 @@ claude -p "<rendered templates/worker-prompt.md>" \
   `main` on first claim and reused for every later stage of the same ticket.
 - A ticket tagged `embargoed` is never merged (security-disclosure runbook §6, public repo): the dispatcher records `links.held` + one event and the board shows "merge held"; removing the tag merges it on the next pass.
 - **Pre-merge gate** (`dispatcher.pre_merge`, T-0941): before it merges, the dispatcher builds
-  `main` + the branch in a scratch worktree and runs `pre_merge.argv` (`make -k ci`). Green merges.
+  `main` + the branch in a scratch worktree and runs `pre_merge.argv` (`make -k -j2 -O ci` since 2026-11-18: the quick and slow halves run side by side, output kept together per target, same 60 commands as `make -k ci`; set `["make","-k","ci"]` to go back). Green merges.
   Red while `main` is green is refused. Red while `main` is also red is refused only if the result
   has a finding `main` does not (multiset of check-and-message keys, line numbers removed; a newly
   red make target counts). **The baseline (T-1378)** is not run per `main` commit: the gate reuses a
@@ -329,7 +331,7 @@ claude -p "<rendered templates/worker-prompt.md>" \
   `max_gate_failures`th refusal it does not reopen the ticket again — it holds it `blocked` and opens a
   `directional` CEO decision (`retry` / `escalate` / `cancel`) naming the ticket and the findings, so a
   ticket can never bounce through the gate forever unseen. `ticket unblock [--to-ready]` on the decision's
-  resolution gives it a fresh `gate_failures` budget. Every run gets its own scratch tree and
+  resolution gives it a fresh `gate_failures` budget. P7 branch-name findings come from the repo's refs, not the candidate, so they never count as new unless the branch is the candidate's own (T-1422). Every run gets its own scratch tree and
   log, named with a per-run tag, so a dry run never touches the dispatcher's run. A run whose tree
   was removed or replaced while it ran is not a verdict and is not cached (T-0696). A gate that cannot judge (timeout,
   worktree error, vanished tree) merges nothing and retries after 10 minutes (every member of the train). Finished tickets go through the
@@ -376,6 +378,41 @@ claude -p "<rendered templates/worker-prompt.md>" \
   pre-merge gate itself is untouched. Test: `factory/test/dep-merge.test.mjs`.
 - If the repository has no commits, or `isolation` is `none`, workers run in the main checkout and
   `max_parallel` is forced to 1 for code-bearing types.
+  **Gate headroom (T-1617):** while a gate run is in flight (`merge_gates` in dispatcher state, one per gate lane) the dispatcher
+  holds `pre_merge.reserved_slots` (default 2) of the `max_parallel` worker slots back (`workerSlots` in
+  `lib/candidates.mjs`; always at least one remains), so raising `max_parallel` never starves the gate's
+  `make ci`. Running workers are not stopped; only new launches wait. `0` turns the reservation off.
+
+### Shadow gate (`lib/shadowgate.mjs`, `dispatcher.shadow_gate`)
+
+A faster, tiered merge check that runs **beside** the real pre-merge gate and decides nothing. Off by
+default (`enabled: false`). When on, each time the real gate judges a single ticket the dispatcher
+replays that same merge (same `main` commit, same branch head) in its own scratch worktree and runs:
+
+- **Tier 1, every ticket:** `lint-go`, generated-code checks, `lint-api`, `fitness`, `secrets-scan`.
+- **Tier 2, only what the change touches:** Go tests for the changed packages and every package that
+  imports them (traced with `go list`; a change no package owns, or to `go.mod`, `Makefile`, `*.mk`,
+  `tools/ci/`, tests the whole module); `lint-web`, `test-web` and Playwright only when `web/`
+  changed; `vuln-scan` only when dependencies changed; `workflows-check` only when CI files changed.
+- **Tier 3** is the existing `post_merge_verify` (`make ci-full` on `main`).
+
+Steps are configurable (`dispatcher.shadow_gate.steps`: `name`, `tier`, `when` = `always|go|web|deps|workflows`,
+`argv`; `{go_packages}` in an argv expands to the affected packages). Every step is timed. One record
+per ticket goes to `state/shadow/results.jsonl` (logs under `state/shadow/logs/`); nothing reads a
+record to merge, refuse or reopen. One shadow run at a time: a ticket that arrives while one runs is
+recorded as `skipped`. A shadow that errors is recorded and never escapes.
+
+`factory/bin/shadow-report` summarises the records: agreement with the real gate, every **MISS** (the
+real gate refused and the shadow did not catch all of its findings), false alarms, time per ticket and
+per step. A pass on a red `main` that the shadow fails is `inconclusive` (findings already on `main`
+are not new). Exit code 1 when there is any miss. Switch the real gate only after a week with no miss.
+Test: `factory/test/shadowgate.test.mjs`.
+
+`dispatcher.post_merge_verify.raise_ticket` (default `false`, on in the live config): when the scheduled
+`make -k ci-full` on `main` finds something it did not have at the previous check, the dispatcher also
+opens one `ready` P0 bug tagged `main-red` (findings, what landed since, the log). At most one such
+ticket is open at a time; a further red run while it is open only adds an event. Without it the
+check only posts a board event, which nobody owns.
 
 ## Board (`factory/board/`)
 
@@ -516,6 +553,12 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 - **Rate limits** are detected from an error result or stderr (`rate limit`, `usage limit`, `overloaded`, `429`), or from a `StopFailure` signal for the run's session; the signal also backs the dispatcher off when it comes from the CEO's own session (the limit is account-wide). No attempt is counted.
 - **Connectivity errors** (`EAI_AGAIN`, `ENOTFOUND`, `ECONNRESET`, `ETIMEDOUT`, "Can't reach the API server") in an error result or stderr are an outage on our side: no attempt, no escalation, no stage reassignment; the dispatcher backs off `connectivity_backoff_minutes` and the ticket is retried. The third consecutive one (across tickets) pauses dispatching for `api_unreachable_backoff_minutes` and logs one `api unreachable` event. Any run that ends otherwise resets the streak. A usage limit takes precedence.
 - **Spawn failure** (`claude` missing) backs off `launch_failure_backoff_minutes` and counts no attempt.
+- **Gate-first tag.** A done ticket tagged `gate-first` sorts to the very front of the merge line, ahead of waiting dependents and priority (`orderDoneQueue`; two tagged tickets keep the usual order between themselves). For a fix to the gate itself (a test that makes every run slow, a conflict hot spot) that would otherwise sit behind every ticket other work waits on. `ticket set ID tags=a,b,gate-first` **replaces** the tag list, so repeat the ticket's existing tags. Remove the tag when the ticket has merged.
+- **A move of `main` under a gate run (`pre_merge.keep_unread_moves`, default off).** A verdict judged on one `main` is not merged after `main` moved (a lane that landed first, a worker's commit): the run is discarded and the ticket re-gated, up to an hour of the lane. When the move touched only files no gate job reads, the verdict still holds. With the setting on, the ticket then merges and the event says `…but only N file(s) that no gate job reads; the verdict still holds, merging`. "Unread" is the test baseline reuse uses (`classifyChanges` over `baseline_reuse_roots`, minus any path a gate file mentions), made stricter for `factory/`: only `factory/reports/`, `factory/handoffs/` and `factory/demos/` count, because the gate's own factory tests read `factory/lib`, `bin`, `test` and `config.json`. A commit that cannot be diffed, or an empty move, is never unread. Off, the discard happens as before and the event names the setting. Why: the daily digest commits to `main` at 18:00 and lands inside one gate run a day; one such run (T-2232) was lost after 150 minutes.
+- **Culprit finder for a refused train (`pre_merge.culprit_split`, default off; only matters while `train_size` is above 1).** A refused train is normally halved until the ticket that adds the findings is alone: slow when several fail. With the setting on, `lib/culprit.mjs` maps each new finding to the one train member whose changed files it names. A finding at a file or directory only one member changed (a lint, architecture or static rule) is *certain*: that ticket is refused at once (reopened, one strike, with its own findings in the note) and the others are gated again once. A failing Go package or test is only *likely* (the other member may have broken an API it uses): that ticket is gated alone afterwards, so it gets its own verdict and an innocent ticket never takes a strike from a guess. Any finding that names no file, a file two members changed, a package nobody changed, or a test with no package line vetoes the whole plan and the train is halved as before. `FAILED <target>` roll-ups are ignored. The events say which path was taken. Replayed on the real Nov 13-14 train logs that still exist (3): one blame matched what halving later found (T-1947), two were correctly left to halving (a package both members touched; go-module-cache noise).
+- **Self-tuning train size (`pre_merge.train_size_max`, default 0 = off).** With 0 the fixed `train_size` is used. With 2 or more, `lib/trainsize.mjs` picks the size of each train from the last 20 per-ticket gate verdicts, read from the events (`pre-merge gate passed` = pass, `merge refused by the pre-merge gate` = fail; a migration-numbering refusal is main's collision and is not counted): pass rate 0.85 or better gives `train_size_max`, 0.6 or better gives 2, below that 1; fewer than 10 verdicts on record gives 2. A ticket that changes `go.mod`, `go.sum`, the `Makefile`, an `*.mk` file or `tools/ci/` (or whose files cannot be read) is always gated alone: it goes first when it is at the front and is skipped by a train that is already forming. A `merge train size is now N` event is logged when the size changes. Rollback: `train_size_max: 0`. Turn on in steps (plan 4.3): 2 for a day, then 4, then 6 if the rate holds; combine with `culprit_split` so a failure costs one extra run, not a halving.
+- **Where a gate run's time goes (`factory/bin/gate-timing <log>`).** The gate log has no timestamps, so nobody could say which of the ~60 commands of `make ci` takes the 75 minutes. Every gate and post-merge run now leaves `<log>.timing` next to its log: every 2 s, if the log grew, one `<ms since start>\t<bytes>` line (about 30 KB per run; best effort, a failure to write it never fails the run). `gate-timing` lists the commands of `make -n -k ci` (`--repo DIR`, default this checkout), finds the first line of the log that is exactly each command, turns that byte position into a time and prints a per-step table with the top 5. A serial run gives each step's own time; with `make -O` (side by side) make holds a target's output until it is done, so the table gives when each step *finished* and the gap since the previous one, the best a log can say when steps overlap. Resolution is the 2 s sampling, so read steps of a few seconds loosely. Silent (`@`) make lines are never echoed and are counted as not found. Runs from before the note have none.
+- **Merge drain (`factory drain`).** A gate run that finishes after `main` moved is discarded ("main moved under this gate run"), and `pause` does not stop the gate, so a hand merge to `main` during a run wastes up to an hour of the lane. `factory drain` writes `state/merge-drain.json` (its own file: `pause` rewrites `control.json` whole) and `mergePass` then starts no gate run and makes no automatic merge, gated or not, because both move `main`. A run already in flight is untouched: it finishes and lands, since that path does not go through `mergePass`. The drain always ends by itself at `until` (default 30 min, at most 120), so a forgotten drain cannot stall merging; a missing end time, a corrupt file or an expired drain all read as "not draining". The dispatcher reports the start and the end (or expiry) of a drain once each; `factory status` and `.merge_queue.drain` in the board state show it. Routine: `factory drain`, wait until `factory status` says `no gate run in flight`, merge by hand, `factory undrain`. `factory restart` is the way to abort a run that is already doomed.
 - **Self-reload (T-1336).** A daemon dispatcher remembers the `main` commit whose code it loaded (`code_sha` in `dispatcher.json`). At the start of each tick, if `main` moved and the diff touches `factory/lib`, `factory/bin` or `factory/board`, it reloads — a merge it made itself and a hand merge look the same. Commits that touch only `knowledge/`, `factory/test`, product code etc. move the baseline and reload nothing. The safe point is between ticks with no merge gate in flight (a gate's `make` belongs to this process, so the reload waits for it; an automatic reload never aborts one). The reload: stop stale `make` processes under `worktree_root/.premerge`; start the successor detached (`FACTORY_REPLACES=<pid>`), which loads the new code, announces itself (`successor_ready` in `dispatcher.json`) and waits for the old pid to be gone; restart the board (SIGTERM, then a detached `factory board --port <same port>`), so new state fields such as `merge_queue` show; log one `reload: … main <old12> → <new12> …` event; exit **without signalling workers or running the shutdown** — the successor's first tick adopts every `running` run. A successor that does not come up within 20 s is killed, the old dispatcher keeps running and logs `reload to <sha> failed …` once (it does not retry that commit; fix `main`, then `factory restart`). `factory restart` signals the dispatcher with SIGUSR2 and takes the same path immediately, aborting a gate in flight (its tickets stay `done` and are re-gated). A dispatcher older than this feature has no SIGUSR2 handler and dies from the signal; `restart` then starts a fresh one (workers are unaffected and adopted). A dispatcher also sweeps stale `.premerge` processes at start (Linux, via `/proc`). A foreground `factory run` that reloads leaves the terminal and continues detached; `run --once` never reloads.
 - **`factory run --once`** performs one tick and returns; workers it started keep running and are adopted by the next dispatcher.
 - **`factory feedback triage --done`** closes feedback that needs no ticket.

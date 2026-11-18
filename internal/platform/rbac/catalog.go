@@ -16,6 +16,8 @@ var (
 	_ = tablekind.Declare(tablekind.Table{Name: "public.authz_role_permissions", Entity: "DM-34", Kind: tablekind.Tenant})
 	_ = tablekind.Declare(tablekind.Table{Name: "public.authz_assignments", Entity: "DM-36", Kind: tablekind.Tenant})
 	_ = tablekind.Declare(tablekind.Table{Name: "public.authz_assignment_roots", Entity: "DM-35", Kind: tablekind.Tenant})
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authz_assignment_templates", Entity: "DM-36", Kind: tablekind.Tenant})
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authz_assignment_sites", Entity: "DM-36", Kind: tablekind.Tenant})
 )
 
 // Tier says where a role sits. A Tier-0 permission is held by tier 0 only.
