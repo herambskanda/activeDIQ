@@ -35,13 +35,13 @@ G
 expect_red "lint-go (unformatted Go file)" "not formatted" make -s lint-go
 
 f=$(ls internal/proto/*/*.go | head -1); echo "// stale" >>"$f"
-expect_red "gen-check (hand-edited generated proto code)" "." make -s gen-check
+expect_red "gen-check (hand-edited generated proto code)" "stale" make -s gen-check
 
 echo "zz_proof	config" >>internal/platform/store/owners/owners.gen.tsv
-expect_red "gen-modules-check (hand-edited owners map)" "." make -s gen-modules-check
+expect_red "gen-modules-check (hand-edited owners map)" "stale|hand-edited|current|owners" make -s gen-modules-check
 
 echo " " >>internal/platform/apihost/spec/openapi.gen.json
-expect_red "gen-api-check (hand-edited bundled contract)" "." make -s gen-api-check
+expect_red "gen-api-check (hand-edited bundled contract)" "stale|differ" make -s gen-api-check
 
 sed -i '0,/"operationId": *"[^"]*"/{s/"operationId": *"[^"]*",\?//}' internal/platform/apihost/spec/openapi.gen.json
 expect_red "lint-api (an operation without operationId)" "operationId|error|fail" make -s lint-api
