@@ -26,6 +26,8 @@
 #                    rate class read. No row is stale or missing.
 #   connections.read listConnectionHealth (T-1834, modules/connections.yaml) is an ordinary permissioned read: x-permission connections.read, no step-up,
 #                    no anonymous or authenticated row, rate class read. Its rows carry no secret, so no secretResponses row. No row is stale or missing.
+#   audit.read       listAuditEvents (T-2300, platform/audit.yaml) is an ordinary permissioned read: x-permission audit.read, no step-up, no anonymous
+#                    or authenticated row, rate class read. Events carry no attribute value or secret, so no secretResponses row. No row is stale or missing.
 #   reports.*        the 2a report operations (T-0866, modules/reports.yaml) are ordinary permissioned operations: one x-permission each,
 #                    no step-up row, no anonymous or authenticated row. reports.run: library, runs, run header, result paging.
 #                    reports.export: export, export record, download, delete a file; createReportExport also checks reports.run inside the

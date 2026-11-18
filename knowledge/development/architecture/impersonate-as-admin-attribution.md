@@ -148,3 +148,14 @@ Opened as T-1629, a separate build ticket for `backend-engineer`, `security-sens
    `audit.go:78`); the connector identity is the transport, reached via `Target.Connection` → DM-11.
 3. **AC 3:** one correlation gap (§5) found, so a build ticket is opened (§6). There is no privilege
    or mechanism gap, so no further build is needed beyond that ticket and the documentation.
+
+## 8. The read side (T-2300)
+
+`GET /api/v1/audit/events` (operation `listAuditEvents`, tag `platform.audit`, permission `audit.read`, held by
+`platform-administrator`) is how an auditor makes the §5 join: filters `dc`, `credentialId`, `target` (objectGUID),
+`from` / `to`, cursor paging; each event answers `requester`, `via`, `dc`, `credentialId`, `target`. The search is
+`audit.Search` (typed filters compared in Go over the parsed envelope, bounded by a 5,000-row scan per request, so a
+page may be short and still carry `nextCursor`); `internal/platform/audit/read` is the thin handler. Time filters apply
+to the chain's own commit time (`audit_event.at`, indexed by migration 0087), not the event's `At`. Each search records
+an `audit.queried` event with `filter_*` details (never `dc` / `credential_id`, so a search is not mistaken for a step).
+A caller without `audit.read` is refused with 403 and `authz.permission.denied` is chained (`auditedAuthz`).
