@@ -48,6 +48,9 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // T-xxxx: how many times in a row the gate may refuse a ticket before the dispatcher stops
   // reopening it to its owner and opens a CEO decision instead. 1 = escalate on the first refusal.
   max_gate_failures: 2,
+  // T-1617: agent worker slots held back from `max_parallel` while a gate run is in flight, so the
+  // gate's build/test run keeps CPU and disk headroom however high max_parallel is raised. 0 = off.
+  reserved_slots: 2,
   // T-1378: reuse a cached run of the gate command on `main` when the tree differs from the one now
   // only in files under these top-level directories that no gate file mentions (computed from the
   // tree, see `readSurface`). They hold no gate code: knowledge base, agent memory, factory runtime
@@ -81,6 +84,9 @@ export function preMergeSettings(config) {
   }
   if (typeof s.keep_unread_moves !== 'boolean') {
     throw new FactoryError('dispatcher.pre_merge.keep_unread_moves must be true or false');
+  }
+  if (!Number.isInteger(s.reserved_slots) || s.reserved_slots < 0) {
+    throw new FactoryError('dispatcher.pre_merge.reserved_slots must be a whole number, 0 or more');
   }
   if (!Array.isArray(s.baseline_reuse_roots) || s.baseline_reuse_roots.some((r) => typeof r !== 'string' || !/^[\w.-]+$/.test(r))) {
     throw new FactoryError('dispatcher.pre_merge.baseline_reuse_roots must be an array of top-level directory names');

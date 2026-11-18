@@ -378,6 +378,10 @@ claude -p "<rendered templates/worker-prompt.md>" \
   pre-merge gate itself is untouched. Test: `factory/test/dep-merge.test.mjs`.
 - If the repository has no commits, or `isolation` is `none`, workers run in the main checkout and
   `max_parallel` is forced to 1 for code-bearing types.
+  **Gate headroom (T-1617):** while a gate run is in flight (`merge_gates` in dispatcher state, one per gate lane) the dispatcher
+  holds `pre_merge.reserved_slots` (default 2) of the `max_parallel` worker slots back (`workerSlots` in
+  `lib/candidates.mjs`; always at least one remains), so raising `max_parallel` never starves the gate's
+  `make ci`. Running workers are not stopped; only new launches wait. `0` turns the reservation off.
 
 ### Shadow gate (`lib/shadowgate.mjs`, `dispatcher.shadow_gate`)
 
