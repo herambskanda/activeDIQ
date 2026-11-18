@@ -62,6 +62,11 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // the verdict still holds, so with this on the ticket merges instead of losing a 75-minute run.
   // Off by default: the move is always reported, and what it would have done is named.
   keep_unread_moves: false,
+  // Merge plan 4.1: when a train of 2+ tickets is refused, map each new finding to the one ticket whose
+  // changed files or package it names (`culprit.mjs`), refuse that ticket and gate the rest again,
+  // instead of halving. Falls back to halving whenever any finding cannot be blamed on exactly one
+  // ticket. Only matters while train_size is above 1. Off by default.
+  culprit_split: false,
 });
 
 /**
@@ -84,6 +89,9 @@ export function preMergeSettings(config) {
   }
   if (typeof s.keep_unread_moves !== 'boolean') {
     throw new FactoryError('dispatcher.pre_merge.keep_unread_moves must be true or false');
+  }
+  if (typeof s.culprit_split !== 'boolean') {
+    throw new FactoryError('dispatcher.pre_merge.culprit_split must be true or false');
   }
   if (!Number.isInteger(s.reserved_slots) || s.reserved_slots < 0) {
     throw new FactoryError('dispatcher.pre_merge.reserved_slots must be a whole number, 0 or more');
