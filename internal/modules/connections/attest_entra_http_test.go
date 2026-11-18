@@ -1,9 +1,8 @@
-package server
+package connections_test
 
-// Composition test: the module's attestation HTTP flow driven through the composed Entra adapters
-// (entra.OIDCIdP, entra.GraphReader), as the composition root wires them. It lives here, not under
-// internal/modules, next to the code that wires the attestation (attestation.go), because a module must not import internal/compose (ADR-0002 rule 1; T-0943).
-// Cases that need no adapter (TestWindowGate, TestStateTenant) stay in internal/modules/connections.
+// The module's attestation HTTP flow driven through the real Entra adapters (entra.OIDCIdP,
+// entra.GraphReader) the module builds. Cases that need no adapter (TestWindowGate, TestStateTenant)
+// are in attest_http_test.go.
 
 import (
 	"context"
@@ -12,17 +11,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/skenzeriq/activediq/internal/directory"
+	"github.com/skenzeriq/activediq/internal/platform"
+	"github.com/skenzeriq/activediq/internal/platform/module/moduletest"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/skenzeriq/activediq/internal/compose/server/entra"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/modules/connections"
+	"github.com/skenzeriq/activediq/internal/modules/connections/entra"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
@@ -268,7 +271,7 @@ func newAttHTTPEnv(t *testing.T, s *storetest.Server, gate connections.CallbackG
 		t.Fatal(err)
 	}
 	sp := attHTTPPorts{p: apihost.Principal{ID: "admin", Tenant: e.tid.String(), Kind: apihost.KindSession, SessionID: "sess"}}
-	srv, err := apihost.Build(doc, []apihost.TagHandlers{h.Bind()}, pol, bootedCatalogue(),
+	srv, err := apihost.Build(doc, []apihost.TagHandlers{h.Bind()}, pol, moduleCatalogue(t),
 		apihost.Ports{Authn: sp, Authz: sp, Limits: sp, StepUp: sp})
 	if err != nil {
 		t.Fatal(err)
@@ -395,4 +398,29 @@ func TestAttestCallbackIsRateLimited(t *testing.T) {
 			t.Fatal("a limited callback still wrote an audit row")
 		}
 	})
+}
+
+// moduleCatalogue admits every permission the contract names: this test drives the attestation flow, not
+// the catalogue (a Boot test over the generated modules owns that), so the catalogue is not the point. The
+// module's own permission must be in what it registers.
+func moduleCatalogue(t *testing.T) apihost.Permissions {
+	t.Helper()
+	c, err := moduletest.Register(connections.New(platform.Deps{}, directory.Services{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(c.Permissions(), connections.TakeoverAttestPermission) {
+		t.Fatal("the module does not register its attestation permission")
+	}
+	doc, err := apihost.LoadDocument()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cat apihost.Permissions
+	for _, op := range doc.Operations() {
+		if op.Permission != "" && !slices.Contains(cat, op.Permission) {
+			cat = append(cat, op.Permission)
+		}
+	}
+	return cat
 }
