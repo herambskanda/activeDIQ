@@ -304,6 +304,17 @@ func definitionView(rd run.Definition, exports bool) (api.ReportDefinition, erro
 	if d.PerDC != nil {
 		out.MinScheduleIntervalHours = minIntervalPerDC
 	}
+	if w := d.Widget; w != nil {
+		out.Widget = &api.ReportWidgetProfile{Views: []api.ReportWidgetView{api.ReportWidgetViewCount}, TableColumns: []string{}}
+		for _, v := range w.Views {
+			if v != report.WidgetCount {
+				out.Widget.Views = append(out.Widget.Views, api.ReportWidgetView(v))
+			}
+		}
+		for _, c := range w.TableColumns {
+			out.Widget.TableColumns = append(out.Widget.TableColumns, string(c))
+		}
+	}
 	for _, p := range d.Presets {
 		if p.Requires != nil {
 			// the objects are named by GUID; a preset that names their kind (group, user) says so
