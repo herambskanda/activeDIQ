@@ -30,6 +30,7 @@ import { applyMigrationRenumber, blockedNote, preMergeSettings, runPreMergeTrain
 import { postMergeVerifySettings, readKnownFindings, runPostMergeVerify } from './postmerge.mjs';
 import { git } from './git.mjs';
 import { planDrop } from './culprit.mjs';
+import { effectiveTrainSize, mustGoAlone } from './trainsize.mjs';
 import { recordShadowSkip, runShadowGate, shadowGateSettings } from './shadowgate.mjs';
 import {
   awaitPredecessor, awaitSuccessor, factoryChange, mainSha, shortSha, spawnSuccessor, stopStaleGateChildren,
@@ -128,6 +129,7 @@ export class Dispatcher {
     this.wake = null;
     this.gateLanes = []; // pre-merge gates + merge(s) in flight, each { ids, abort, run } (T-1297, T-2210: up to pre_merge.concurrency at once)
     this.mergeLock = Promise.resolve(); // serializes real merges into ctx.root across lanes (T-2210): git allows only one merge in progress at a time
+    this.lastTrainSize = null; // the train size last reported (pre_merge.train_size_max)
     this.gateRetryAt = new Map(); // ticket id → ms before which a gate that could not judge is not retried
     this.heldOnMain = new Map(); // ticket id → the broken main commit it waits on; retried once main moves
     this.drainNoted = false; // a merge drain (`factory drain`) was last seen on; so its start and end are each reported once
@@ -467,6 +469,11 @@ export class Dispatcher {
     const pending = done.filter((t) => (code(t) ? t.links?.worktree : stranded.has(t.id)));
     const finished = orderDoneQueue(await this.settleLanded(pending), listEntities(this.ctx, 'tickets'));
     const head = this.heldOnMain.size ? await mainSha(this.ctx) : null;
+    const size = effectiveTrainSize(this.ctx, settings);
+    if (settings.train_size_max >= 2 && size !== this.lastTrainSize) {
+      appendEvent(this.ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `merge train size is now ${size} (largest allowed ${settings.train_size_max}; it follows the pass rate of the last gate verdicts)` });
+      this.lastTrainSize = size;
+    }
     const train = [];
     for (const ticket of finished) {
       if (head && this.heldOnMain.get(ticket.id) === head) continue;
@@ -477,8 +484,13 @@ export class Dispatcher {
         continue;
       }
       if ((this.gateRetryAt.get(ticket.id) ?? 0) > this.#nowMs()) continue;
+      if (size > 1 && (await this.mustGateAlone(ticket))) { // go.mod, Makefile, *.mk, tools/ci: can break everyone else
+        if (train.length) continue; // it goes first, alone, once it is at the front
+        train.push(ticket);
+        break;
+      }
       train.push(ticket);
-      if (train.length >= settings.train_size) break;
+      if (train.length >= size) break;
     }
     if (!train.length) return;
     const ids = train.map((t) => t.id);
@@ -673,6 +685,17 @@ export class Dispatcher {
    * the ticket that adds the findings is reopened. A member that conflicts with `main` is reopened
    * as before; one that conflicts with an earlier member stays `done` for the next train.
    */
+  /** True when the ticket changes go.mod, the Makefile, an .mk file or tools/ci, or its files cannot be read. */
+  async mustGateAlone(ticket) {
+    const { ctx } = this;
+    try {
+      const diff = await git(ctx.root, ['diff', '--name-only', `${ctx.config.dispatcher.main_branch}...refs/heads/${branchName(ticket.id)}`]);
+      return diff.code !== 0 || mustGoAlone(diff.stdout.split('\n').filter(Boolean));
+    } catch {
+      return true;
+    }
+  }
+
   /**
    * A single ticket the pre-merge gate refused: count the strike and either reopen it with the findings or,
    * at `max_gate_failures`, hold it for a CEO decision.

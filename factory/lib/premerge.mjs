@@ -67,6 +67,10 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // instead of halving. Falls back to halving whenever any finding cannot be blamed on exactly one
   // ticket. Only matters while train_size is above 1. Off by default.
   culprit_split: false,
+  // Merge plan 4.2: 0 = off, `train_size` is used as is. 2 or more = the largest train the dispatcher may
+  // use; the size actually used follows the pass rate of the last 20 gate verdicts (`trainsize.mjs`):
+  // this many at 0.85 or better, 2 at 0.6 or better, 1 below. Rollback: 0.
+  train_size_max: 0,
 });
 
 /**
@@ -89,6 +93,9 @@ export function preMergeSettings(config) {
   }
   if (typeof s.keep_unread_moves !== 'boolean') {
     throw new FactoryError('dispatcher.pre_merge.keep_unread_moves must be true or false');
+  }
+  if (!Number.isInteger(s.train_size_max) || s.train_size_max < 0) {
+    throw new FactoryError('dispatcher.pre_merge.train_size_max must be a whole number, 0 (off) or more');
   }
   if (typeof s.culprit_split !== 'boolean') {
     throw new FactoryError('dispatcher.pre_merge.culprit_split must be true or false');
