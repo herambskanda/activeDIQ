@@ -26,7 +26,7 @@ import {
 import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
 import { EMBARGO_TAG, orderDoneQueue } from './mergequeue.mjs';
-import { applyMigrationRenumber, blockedNote, preMergeSettings, runPreMergeTrain, splitTrain } from './premerge.mjs';
+import { applyMigrationRenumber, blockedNote, preMergeSettings, runPreMergeTrain, splitTrain, unreadMove } from './premerge.mjs';
 import { postMergeVerifySettings, readKnownFindings, runPostMergeVerify } from './postmerge.mjs';
 import { git } from './git.mjs';
 import { recordShadowSkip, runShadowGate, shadowGateSettings } from './shadowgate.mjs';
@@ -757,11 +757,21 @@ export class Dispatcher {
         if (!expectedHead) { await this.mergeOne(ticket); return true; } // no mainSha on the verdict: cannot check, merge as before
         const head = (await git(ctx.root, ['rev-parse', 'HEAD'])).stdout.trim();
         if (head !== expectedHead) {
-          appendEvent(ctx, {
-            actor: 'dispatcher', kind: 'dispatcher',
-            text: `${ticket.id}${train} not merged: ${main} moved under this gate run (validated at ${expectedHead.slice(0, 8)}, now at ${head.slice(0, 8)} — a concurrent gate lane likely landed first); left done for a fresh gate run`,
-          });
-          return false;
+          // `main` moved under this verdict. A move that touched only files no gate job reads (the daily digest,
+          // agent memory, plan documents) leaves the verdict true; anything else, or the setting being off,
+          // discards it as before. The event always says which, so the setting can be judged on real data.
+          const move = await unreadMove(ctx, settings, expectedHead, head);
+          const moved = `${main} moved under this gate run (validated at ${expectedHead.slice(0, 8)}, now at ${head.slice(0, 8)}`;
+          const what = `${move.files.length} file(s)${move.files.length ? `: ${move.files.slice(0, 3).join(', ')}${move.files.length > 3 ? ', …' : ''}` : ''}`;
+          if (move.unread && settings.keep_unread_moves) {
+            appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `${ticket.id}${train}: ${moved}), but only ${what} that no gate job reads; the verdict still holds, merging` });
+          } else {
+            appendEvent(ctx, {
+              actor: 'dispatcher', kind: 'dispatcher',
+              text: `${ticket.id}${train} not merged: ${moved} — a concurrent gate lane likely landed first); left done for a fresh gate run${move.unread ? `. The move touched only ${what} that no gate job reads: set dispatcher.pre_merge.keep_unread_moves to keep such a verdict` : ''}`,
+            });
+            return false;
+          }
         }
         if (verdict.status === 'pass') {
           appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} pre-merge gate passed (${verdict.mode})${train}: ${verdict.summary}` });

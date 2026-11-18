@@ -53,6 +53,12 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // tree, see `readSurface`). They hold no gate code: knowledge base, agent memory, factory runtime
   // and prototypes. `[]` = always run a fresh baseline per main commit.
   baseline_reuse_roots: ['knowledge', '.claude', 'factory', 'garage'],
+  // A gate run that finishes after `main` moved is normally discarded and re-run ("main moved under
+  // this gate run"), because the verdict was for a main that no longer exists. When the move touched
+  // only files no gate job reads (the daily digest, agent memory, plan documents; see `unreadMove`)
+  // the verdict still holds, so with this on the ticket merges instead of losing a 75-minute run.
+  // Off by default: the move is always reported, and what it would have done is named.
+  keep_unread_moves: false,
 });
 
 /**
@@ -72,6 +78,9 @@ export function preMergeSettings(config) {
   }
   if (!Number.isInteger(s.max_gate_failures) || s.max_gate_failures < 1) {
     throw new FactoryError('dispatcher.pre_merge.max_gate_failures must be a whole number of at least 1');
+  }
+  if (typeof s.keep_unread_moves !== 'boolean') {
+    throw new FactoryError('dispatcher.pre_merge.keep_unread_moves must be true or false');
   }
   if (!Array.isArray(s.baseline_reuse_roots) || s.baseline_reuse_roots.some((r) => typeof r !== 'string' || !/^[\w.-]+$/.test(r))) {
     throw new FactoryError('dispatcher.pre_merge.baseline_reuse_roots must be an array of top-level directory names');
@@ -449,6 +458,32 @@ const asBaseline = (e, note, extra = {}) => ({ code: e.hit.code, findings: new M
 async function changedPaths(ctx, from, to) {
   const diff = await git(ctx.root, ['diff', '--name-only', '--no-renames', '-z', from, to], { timeoutMs: 120_000 });
   return diff.code === 0 ? diff.stdout.split('\0').filter(Boolean) : null;
+}
+
+// Under factory/, only these hold no code the gate runs. The rest (lib, bin, test, config) is read by
+// the factory's own tests that `make fitness` runs, so a move there always discards a verdict even when
+// the baseline-reuse rule would call it unread.
+const FACTORY_UNREAD = ['factory/reports/', 'factory/handoffs/', 'factory/demos/'];
+
+/**
+ * Did `main` move between `fromSha` (what a gate verdict was judged on) and `toSha` only in files no gate
+ * job reads? Same test as baseline reuse (`classifyChanges` over the paths a gate file mentions), made
+ * stricter for factory/: only reports, handoffs and demos count as unread there.
+ * @param {object} ctx
+ * @param {object} settings preMergeSettings
+ * @param {string} fromSha
+ * @param {string} toSha
+ * @returns {Promise<{unread: boolean, files: string[], read: string[]}>} `unread` is false when the diff cannot be read
+ */
+export async function unreadMove(ctx, settings, fromSha, toSha) {
+  const files = await changedPaths(ctx, fromSha, toSha);
+  if (!files) return { unread: false, files: [], read: ['(could not diff the two commits)'] };
+  const factoryRead = files.filter((p) => p.startsWith('factory/') && !FACTORY_UNREAD.some((d) => p.startsWith(d)));
+  if (factoryRead.length) return { unread: false, files, read: factoryRead.slice(0, 10) };
+  const roots = settings.baseline_reuse_roots;
+  const surface = await readSurface(ctx.root, toSha, roots);
+  const v = classifyChanges(files, roots, surface);
+  return { unread: v.reusable && files.length > 0, files, read: v.read };
 }
 
 /**

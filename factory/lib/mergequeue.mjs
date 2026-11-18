@@ -7,6 +7,14 @@ import { listEntities, readMergeDrain } from './store.mjs';
 /** A ticket with this tag is never merged (security-disclosure runbook §6). */
 export const EMBARGO_TAG = 'embargoed';
 
+/**
+ * A ticket with this tag goes to the very front of the merge line, ahead of waiting dependents and
+ * priority. For a fix to the gate itself (a test that makes every run slow, a conflict hot spot) that
+ * would otherwise sit behind every ticket other work waits on. A director sets it with
+ * `ticket set ID tags=...` (which replaces the tag list, so keep the existing tags).
+ */
+export const GATE_FIRST_TAG = 'gate-first';
+
 /** Lower sorts first. Unknown priorities go last. */
 function priorityRank(priority) {
   const n = Number(/^P(\d+)$/.exec(priority ?? '')?.[1]);
@@ -21,8 +29,9 @@ export function doneAtMs(ticket) {
 }
 
 /**
- * Order done tickets for the gate: (1) tickets that a blocked or ready ticket lists in `depends_on`,
- * then (2) priority, P0 first, then (3) the earliest done time, then ticket ID. Pure; does not mutate.
+ * Order done tickets for the gate: (0) tickets tagged `gate-first`, then (1) tickets that a blocked or
+ * ready ticket lists in `depends_on`, then (2) priority, P0 first, then (3) the earliest done time,
+ * then ticket ID. Pure; does not mutate.
  * @param {object[]} done done tickets to order
  * @param {object[]} all every ticket (to find the waiting dependents)
  * @returns {object[]}
@@ -32,7 +41,7 @@ export function orderDoneQueue(done, all) {
   for (const t of all) {
     if (t.status === 'blocked' || t.status === 'ready') for (const id of t.depends_on ?? []) awaited.add(id);
   }
-  const key = (t) => [awaited.has(t.id) ? 0 : 1, priorityRank(t.priority), doneAtMs(t)];
+  const key = (t) => [(t.tags ?? []).includes(GATE_FIRST_TAG) ? 0 : 1, awaited.has(t.id) ? 0 : 1, priorityRank(t.priority), doneAtMs(t)];
   return [...done].sort((a, b) => {
     const ka = key(a), kb = key(b);
     for (let i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return ka[i] - kb[i];
