@@ -41,6 +41,7 @@
 - [patch-apply lessons](patch-apply-lessons.md) — T-1197: link edge direction, permutation test cost/shape, mutation recipe
 - [replxml lessons](replxml-lessons.md) — T-1721: xml alloc per element vs 8x bound, RX2 assignment trap, one value per call, unverified names
 - [replstatus lessons](replstatus-lessons.md) — T-1723: protoc-less pb.go recipe, no-control read, RX6 comment trap, DC enumeration seam
+- [pwchange sync lessons](pwchange-sync-lessons.md) — T-1551: Read verdict field, memory-test fake trap, lab ACE-write GUID order
 - [object changes lessons](object-changes-lessons.md) — T-1109: chg CTE in upsert, baseline rule, RowAnchor on current object, pre-existing red
 - [user attrs lessons](user-attrs-lessons.md) — T-1111: FORCE RLS lift in migration, change-history flood hazard, photo flags only
 - [descendant dn lessons](descendant-dn-lessons.md) — T-0988: dn pass before ancestry UPDATE, key delete/insert trap, dn.Rebase

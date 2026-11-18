@@ -2797,6 +2797,27 @@ User-Change-Password deny ACEs for Everyone and SELF; four states, see safe-prim
 §14). The state is `NotConfirmed` exactly when the error is non-nil; the sync records "Not confirmed" and
 continues. One base read per user: `nTSecurityDescriptor` is not searchable in bulk (`constructedReadOnly`).
 
+### As served to the sync (T-1551)
+
+`ReadRequest.include_password_change` (field 17) asks for `ReadHeader.password_change`, a
+`PasswordChangeVerdict{state, object_guid, error_code}`. The connector classifies; **no descriptor byte
+crosses the contract**. A failed, withheld, malformed or out-of-order descriptor is not an error of the
+call: it is `state = NOT_CONFIRMED` with a fixed `error_code` (`read.PasswordChanger` is an optional
+`Source` half; without it the code is `CAPABILITY_UNSUPPORTED`). The AD sync (`directory/sync`,
+`engine_pwchange.go`) asks once per live `user`/`inetOrgPerson` of the main pass, pinned to the DC of the
+pre-scan, and stores `password_change_state` + `password_change_at` for **every** such user:
+
+- any failure (transport, status, no verdict, second header, `NOT_CONFIRMED`) stores `not_confirmed`
+  *with* the as-of time, never the previous value and never `no_deny_ace`;
+- a verdict whose `object_guid` is not the observed object (or a definite state without one) is refused
+  the same way, so a foreign state is never stored for the object;
+- the report counts outcomes by fixed key (`DomainReport.PasswordChange`) and the domain log line carries
+  `password_change.<outcome>` counts with the connector's error-code name, no descriptor and no message.
+
+Cost: one extra Read per user per full read, sequential in the main pass. A bounded-concurrency read is a
+follow-up. Samba proves the mechanics and the decode of what it stores; the Windows ACE shape and ACL
+ordering remain a Windows-lab test (T-1484).
+
 ## User search path (T-0669, walking skeleton 2/4)
 
 `GET /api/v1/directory/users` (`internal/modules/directory`) -> `client.UserSearch` -> gRPC
