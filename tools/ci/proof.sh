@@ -1809,7 +1809,7 @@ sso() { go run ./tools/fitness/sso "$@"; }
 mk_sso() {
   local d=$1; local c=$d/internal/platform/authn/sso/testdata/corpus
   mkdir -p "$d/knowledge/development/architecture" "$c/saml" "$d/internal/platform/authn/sso/saml" "$d/internal/platform/authn/sso/oidc"
-  printf 'module github.com/skenzeriq/activediq\n\ngo 1.27.3\n\nrequire (\n\tgithub.com/russellhaering/goxmldsig v1.6.1\n)\n' >"$d/go.mod"
+  printf 'module github.com/skenzeriq/activediq\n\ngo 1.27.4\n\nrequire (\n\tgithub.com/russellhaering/goxmldsig v1.6.1\n)\n' >"$d/go.mod"
   printf '## 4. OIDC checks\n\n| # | Check |\n| --- | --- |\n| OIDC-1 | a |\n| OIDC-2 | b |\n\n## 5. SAML checks\n\n| # | Check |\n| --- | --- |\n| SAML-1 | a |\n| SAML-2 | b |\n\n## 6. Shared\n\n| SSO-1 | c |\n' >"$d/knowledge/development/architecture/console-sso.md"
   printf 'package saml\n\nimport _ "github.com/russellhaering/goxmldsig"\n' >"$d/internal/platform/authn/sso/saml/s.go"
   local i=0 cls

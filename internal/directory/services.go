@@ -32,4 +32,8 @@ type Services struct {
 	// routes.
 	Source client.ConnectorSource
 	Reads  client.Reads
+	// PerDC is the per-DC read and DC count of the per-DC reports (USR-04, PWD-03); the reports module
+	// sets run.Service.PerDC and PerDCDCs from it. Nil until wired; a per-DC run then fails
+	// connection_unavailable.
+	PerDC *client.ConnectorPerDC
 }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/netip"
+	"slices"
 
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
@@ -30,7 +31,16 @@ type Handlers struct {
 	Password     PasswordCookieBeginner
 	SecondFactor TOTPCookieVerifier
 	WebAuthn     WebAuthnCookieVerifier
-	Log          *slog.Logger
+	// Permissions answers GET /auth/session. While nil the operation answers 501.
+	Permissions PermissionLister
+	Log         *slog.Logger
+}
+
+// PermissionLister names the permissions a session principal holds. compose implements it over the same
+// RBAC authorizer that gates every operation, so the list and the gate cannot disagree. It returns names
+// only, never scope or grant detail.
+type PermissionLister interface {
+	HeldPermissions(ctx context.Context, p apihost.Principal) ([]string, error)
 }
 
 var _ api.Handlers = Handlers{}
@@ -168,6 +178,29 @@ func (Handlers) GetCSRFToken(ctx context.Context, _ api.GetCSRFTokenInput) (api.
 		return nil, apitypes.Unauthenticated("")
 	}
 	return api.GetCSRFToken200{Body: api.CsrfValue{Header: CSRFHeader, Value: p.CSRF}}, nil
+}
+
+// GetSession answers the permission names the calling cookie session holds, sorted, for the console's
+// permission-aware navigation. It is display only: each operation authorises on its own. Only a cookie
+// session has an answer; any other principal, or none, is the same 401 as a missing session.
+func (h Handlers) GetSession(ctx context.Context, _ api.GetSessionInput) (api.GetSessionOutput, error) {
+	p, ok := apihost.PrincipalFrom(ctx)
+	if !ok || p.Kind != apihost.KindSession {
+		return nil, apitypes.Unauthenticated("")
+	}
+	if h.Permissions == nil {
+		return nil, apitypes.NotImplemented("")
+	}
+	names, err := h.Permissions.HeldPermissions(ctx, p)
+	if err != nil {
+		return nil, err // an infrastructure fault: the chain answers 500 without detail
+	}
+	names = slices.Clone(names)
+	slices.Sort(names)
+	if names == nil {
+		names = []string{}
+	}
+	return api.GetSession200{Body: api.SessionInfo{Permissions: names}}, nil
 }
 
 // ReverifyStepUp is the step-up re-verification (TM-D16). Its handler is T-0437; until then it answers 501

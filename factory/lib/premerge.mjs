@@ -48,11 +48,29 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // T-xxxx: how many times in a row the gate may refuse a ticket before the dispatcher stops
   // reopening it to its owner and opens a CEO decision instead. 1 = escalate on the first refusal.
   max_gate_failures: 2,
+  // T-1617: agent worker slots held back from `max_parallel` while a gate run is in flight, so the
+  // gate's build/test run keeps CPU and disk headroom however high max_parallel is raised. 0 = off.
+  reserved_slots: 2,
   // T-1378: reuse a cached run of the gate command on `main` when the tree differs from the one now
   // only in files under these top-level directories that no gate file mentions (computed from the
   // tree, see `readSurface`). They hold no gate code: knowledge base, agent memory, factory runtime
   // and prototypes. `[]` = always run a fresh baseline per main commit.
   baseline_reuse_roots: ['knowledge', '.claude', 'factory', 'garage'],
+  // A gate run that finishes after `main` moved is normally discarded and re-run ("main moved under
+  // this gate run"), because the verdict was for a main that no longer exists. When the move touched
+  // only files no gate job reads (the daily digest, agent memory, plan documents; see `unreadMove`)
+  // the verdict still holds, so with this on the ticket merges instead of losing a 75-minute run.
+  // Off by default: the move is always reported, and what it would have done is named.
+  keep_unread_moves: false,
+  // Merge plan 4.1: when a train of 2+ tickets is refused, map each new finding to the one ticket whose
+  // changed files or package it names (`culprit.mjs`), refuse that ticket and gate the rest again,
+  // instead of halving. Falls back to halving whenever any finding cannot be blamed on exactly one
+  // ticket. Only matters while train_size is above 1. Off by default.
+  culprit_split: false,
+  // Merge plan 4.2: 0 = off, `train_size` is used as is. 2 or more = the largest train the dispatcher may
+  // use; the size actually used follows the pass rate of the last 20 gate verdicts (`trainsize.mjs`):
+  // this many at 0.85 or better, 2 at 0.6 or better, 1 below. Rollback: 0.
+  train_size_max: 0,
 });
 
 /**
@@ -72,6 +90,18 @@ export function preMergeSettings(config) {
   }
   if (!Number.isInteger(s.max_gate_failures) || s.max_gate_failures < 1) {
     throw new FactoryError('dispatcher.pre_merge.max_gate_failures must be a whole number of at least 1');
+  }
+  if (typeof s.keep_unread_moves !== 'boolean') {
+    throw new FactoryError('dispatcher.pre_merge.keep_unread_moves must be true or false');
+  }
+  if (!Number.isInteger(s.train_size_max) || s.train_size_max < 0) {
+    throw new FactoryError('dispatcher.pre_merge.train_size_max must be a whole number, 0 (off) or more');
+  }
+  if (typeof s.culprit_split !== 'boolean') {
+    throw new FactoryError('dispatcher.pre_merge.culprit_split must be true or false');
+  }
+  if (!Number.isInteger(s.reserved_slots) || s.reserved_slots < 0) {
+    throw new FactoryError('dispatcher.pre_merge.reserved_slots must be a whole number, 0 or more');
   }
   if (!Array.isArray(s.baseline_reuse_roots) || s.baseline_reuse_roots.some((r) => typeof r !== 'string' || !/^[\w.-]+$/.test(r))) {
     throw new FactoryError('dispatcher.pre_merge.baseline_reuse_roots must be an array of top-level directory names');
@@ -253,17 +283,45 @@ const PROFILES_FAILED = 'FAILED fitness-profiles'; // the make target that runs 
 // ---- running the command -------------------------------------------------------------------
 
 /**
+ * Note how fast a log grows, so a step's time can be read back from it later (`factory/bin/gate-timing`).
+ * Every two seconds, when the log has grown, one `<ms since start>\t<bytes>` line goes to `<log>.timing`
+ * (about 30 KB for a 75-minute run). It only reads the log's size, never the gate's command, and any
+ * failure to write the note is swallowed: it must never fail or slow a gate run.
+ * @param {string} logFile
+ * @param {string[]} argv
+ * @param {number} [everyMs] sampling interval; a step's time is read to within this much
+ * @returns {() => void} stop (takes one last sample)
+ */
+export function startLogTiming(logFile, argv, everyMs = 2000) {
+  const file = `${logFile}.timing`;
+  const t0 = Date.now();
+  let last = -1;
+  const sample = () => {
+    try {
+      const size = fs.statSync(logFile).size;
+      if (size !== last) { last = size; fs.appendFileSync(file, `${Date.now() - t0}\t${size}\n`); }
+    } catch { /* the note is best effort */ }
+  };
+  try { fs.writeFileSync(file, `# start ${t0}\n# argv ${argv.join(' ')}\n0\t0\n`); } catch { return () => {}; }
+  const timer = setInterval(sample, everyMs);
+  timer.unref();
+  return () => { clearInterval(timer); sample(); };
+}
+
+/**
  * Run argv in cwd, both streams to `logFile`. Kills the whole process group on timeout or abort.
  * @returns {Promise<{code: number, timedOut: boolean, aborted: boolean}>}
  */
-export function runLogged(argv, cwd, logFile, { timeoutMs, signal, env = process.env } = {}) {
+export function runLogged(argv, cwd, logFile, { timeoutMs, signal, env = process.env, timing = false, timingEveryMs } = {}) {
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   const fd = fs.openSync(logFile, 'w');
+  const stopTiming = timing ? startLogTiming(logFile, argv, timingEveryMs) : () => {};
   return new Promise((resolve, reject) => {
     let child;
     try {
       child = spawn(argv[0], argv.slice(1), { cwd, env: { ...env, CI: '1' }, stdio: ['ignore', fd, fd], detached: true });
     } catch (err) {
+      stopTiming();
       fs.closeSync(fd);
       reject(new FactoryError(`could not start ${argv[0]}: ${err.message}`));
       return;
@@ -276,11 +334,11 @@ export function runLogged(argv, cwd, logFile, { timeoutMs, signal, env = process
     const onAbort = () => { aborted = true; stop(); };
     signal?.addEventListener('abort', onAbort, { once: true });
     child.on('error', (err) => {
-      clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
+      stopTiming(); clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
       reject(new FactoryError(`could not start ${argv[0]}: ${err.message}`));
     });
     child.on('close', (code) => {
-      clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
+      stopTiming(); clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
       resolve({ code: code ?? -1, timedOut, aborted });
     });
   });
@@ -451,6 +509,32 @@ async function changedPaths(ctx, from, to) {
   return diff.code === 0 ? diff.stdout.split('\0').filter(Boolean) : null;
 }
 
+// Under factory/, only these hold no code the gate runs. The rest (lib, bin, test, config) is read by
+// the factory's own tests that `make fitness` runs, so a move there always discards a verdict even when
+// the baseline-reuse rule would call it unread.
+const FACTORY_UNREAD = ['factory/reports/', 'factory/handoffs/', 'factory/demos/'];
+
+/**
+ * Did `main` move between `fromSha` (what a gate verdict was judged on) and `toSha` only in files no gate
+ * job reads? Same test as baseline reuse (`classifyChanges` over the paths a gate file mentions), made
+ * stricter for factory/: only reports, handoffs and demos count as unread there.
+ * @param {object} ctx
+ * @param {object} settings preMergeSettings
+ * @param {string} fromSha
+ * @param {string} toSha
+ * @returns {Promise<{unread: boolean, files: string[], read: string[]}>} `unread` is false when the diff cannot be read
+ */
+export async function unreadMove(ctx, settings, fromSha, toSha) {
+  const files = await changedPaths(ctx, fromSha, toSha);
+  if (!files) return { unread: false, files: [], read: ['(could not diff the two commits)'] };
+  const factoryRead = files.filter((p) => p.startsWith('factory/') && !FACTORY_UNREAD.some((d) => p.startsWith(d)));
+  if (factoryRead.length) return { unread: false, files, read: factoryRead.slice(0, 10) };
+  const roots = settings.baseline_reuse_roots;
+  const surface = await readSurface(ctx.root, toSha, roots);
+  const v = classifyChanges(files, roots, surface);
+  return { unread: v.reusable && files.length > 0, files, read: v.read };
+}
+
 /**
  * A cached run of the gate command that stands for `mainTree`: one on the same tree, or the newest
  * one on a tree that differs only in files the gate does not read.
@@ -501,7 +585,7 @@ async function baseline(ctx, settings, mainSha, mainTree, { signal }) {
   const log = path.join(gateDir(ctx), `baseline-${mainSha.slice(0, 12)}-${tag}-${run}.log`);
   const identity = await addDetached(ctx, dir, mainSha);
   try {
-    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx) });
+    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx), timing: true });
     if (ran.aborted) throw new FactoryError(`pre-merge: the baseline run on main was stopped (${log})`);
     if (ran.timedOut) {
       const near = await nearestBaseline(ctx, mainTree, entries);
@@ -764,7 +848,7 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
     // really merge.
     const withRenumber = (verdict) => ({ ...verdict, mainSha, ...(renumber ? { renumber } : {}) });
     const withTiming = (text) => (numberingSeconds === null ? text : `${text}; migration numbering checked in ${numberingSeconds} s`);
-    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx) });
+    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx), timing: true });
     if (ran.timedOut) throw new FactoryError(`pre-merge: ${settings.argv.join(' ')} on ${label} timed out after ${settings.timeout_minutes} minutes (${log})`);
     if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${label} was stopped (${log})`);
     assertTreeIntact(dir, identity, log);

@@ -175,7 +175,7 @@ worker's 90-minute run budget, so run it in the background (T-1217). Tests: `nod
 
 | Tool | Pin | Where |
 | --- | --- | --- |
-| Go | `go 1.27.3` in `go.mod` (the toolchain directive equals the go line, which `go mod tidy` collapses to one line); `GOTOOLCHAIN=auto` downloads it | `go.mod` |
+| Go | `go 1.27.4` in `go.mod` (the toolchain directive equals the go line, which `go mod tidy` collapses to one line); `GOTOOLCHAIN=auto` downloads it | `go.mod` |
 | Node packages | exact versions, lockfile, `npm ci` | `web/package.json`, `web/package-lock.json`, `web/.npmrc` |
 | gitleaks | 8.30.1, SHA-256 verified | `tools/secrets/` |
 | govulncheck | v1.9.0, `tool` directive and `go.sum` | `tools/vulntools/` |

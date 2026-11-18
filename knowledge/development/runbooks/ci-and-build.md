@@ -13,7 +13,7 @@ Standard: `knowledge/development/standards/ci-gates.md`. Layout: blueprint §1.
 
 ## Prerequisites
 
-`go` (any 1.21+; it downloads the pinned 1.27.3 toolchain on first use, so the machine needs
+`go` (any 1.21+; it downloads the pinned 1.27.4 toolchain on first use, so the machine needs
 network access once), `node` ≥ 22 with `npm`, `python3`, `make`, `bash`. Everything else is installed
 by the targets: web packages by `npm ci`, gitleaks by `make secrets-install`.
 
@@ -24,7 +24,10 @@ by the targets: web packages by `npm ci`, gitleaks by `make secrets-install`.
 | The full gate (what the merge needs) | `make ci` (about 25 s warm) |
 | Just lint / tests / fitness / build | `make lint`, `make test`, `make fitness`, `make build` |
 | Format everything in place | `make fmt` |
+| The cheap checks first (T-2313, <= 5 min, no Docker) | `make prescreen`: lint-go, gen-check, gen-modules-check, gen-api-check, lint-api, the Docker-free fitness rules (sso, proto, safeprim, corpus, objectid, grantbootstrap, disclosure, fleet-ca-scope, merge-order), workflows-check, secrets-scan, vuln-scan and the repo-scanning Go tests (`prescreen-gotests`). It runs every check and lists all red ones. Not part of `make ci`; `make ci` still runs everything |
+| Prove each prescreen check goes red on a violation | `make prescreen-proof` (clean tree needed, ~5 min, mutates and restores the tree) |
 | Prove the gates still fail on violations | `make ci-proof` |
+| The opt-in scale job (T-2008) | `make test-scale` (sets `ADIQ_SCALE_FULL=1`; `SCALE_TIMEOUT=45m` by default) |
 | List all targets | `make help` |
 
 ## Fresh clone
@@ -468,3 +471,22 @@ once its index is writable); every pending merge then proceeds on the next pass.
 ## fitness-modules (T-1869, ADR-0013)
 
 `make fitness-modules` is its own target and the first prerequisite of `make ci` and `make fitness`, so a failing earlier gate cannot hide it. It runs the import-rule checker (M3 rule 2.5, M7, and M11: an `exempt.json` entry targeting 2.5, M1, M2, M3, M6 or M9 fails, as does one without reason, ticket or a future expiry) and the M14 Boot test `Test_M14_*` in `internal/compose/server`. M14's `m14Pending` map lists the tags whose builder move (T-1865, T-1866, T-1867) has not landed; delete each entry in the move's change (a stale entry fails).
+## Scale tests are a separate, opt-in job (T-2008)
+
+`internal/directory/inventory` runs about 93 database tests on PostgreSQL 16 and 18; with the three scale tests it hit the 600 s
+test timeout. `Test_group_member_counts_at_scale`, `Test_group_closure_fanout_is_bounded` and `Test_reports_library_batch2_at_scale`
+skip unless `ADIQ_SCALE_FULL=1` (`requireScaleFull` in `scale_gate_test.go`). `make ci` does not set it; the package currently takes ~900 s wall (wait-bound, not scale-test-bound; T-2047 trims the search_* tests; `make ci` uses -timeout 30m) and the 400 s target
+applies once T-2047 lands. Run the scale job with `make test-scale` (own timeout, `SCALE_TIMEOUT`); it is a prerequisite of `make fitness-nightly`, so the nightly job runs it (run it by hand before a release too)
+on the runner that has Docker or the embedded PostgreSQL. A new test that loads more than a few thousand objects calls `requireScaleFull`.
+
+## `make prescreen` (T-2313, merge plan step 3.1)
+
+A fast first pass over the checks that need no Docker, so a simple mistake shows in minutes, not after
+the 35-50 minute `make ci`. Each check is a target `make ci` also runs, so prescreen only reorders work;
+it is deliberately not a prerequisite of `ci`, `ci-fast` or `ci-full` (it would run twice). Left out of
+prescreen because they need Docker or pwsh, or exceed the 5-minute budget: fitness-stack (cross-build
+matrix, 70-170 s), fitness-packaging, -tenancy, -domain-keys, -keys, -search, -operation, -audit,
+-host, -update-offline, -api, -reports, -agent-host, fuzz, lab tests, ci-proof, and `make test`.
+The check list is `PRESCREEN_FITNESS` and the `prescreen` recipe in `tools/ci/ci.mk`; add a check there
+only with a case in `tools/ci/prescreen-proof.sh` that makes it red. Judge a prescreen result against
+main's: `fitness-merge-order` is red on main today (M5: T-1101 merged before T-1100).
