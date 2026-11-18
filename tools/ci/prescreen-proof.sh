@@ -34,7 +34,7 @@ func  F( ) {}
 G
 expect_red "lint-go (unformatted Go file)" "not formatted" make -s lint-go
 
-f=$(ls internal/proto/*/*.go | head -1); echo "// stale" >>"$f"
+f=$(find internal/proto -name "*.go" | head -1); echo "// stale" >>"$f"
 expect_red "gen-check (hand-edited generated proto code)" "stale" make -s gen-check
 
 echo "zz_proof	config" >>internal/platform/store/owners/owners.gen.tsv
