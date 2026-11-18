@@ -115,7 +115,7 @@ func TestSyncFullJobFillsInventory(t *testing.T) {
 		if len(after.Watermarks) != 2 {
 			t.Fatalf("watermarks = %d, want one per domain NC", len(after.Watermarks))
 		}
-		live, err := jobstest.ActiveLeaseNames(e.query, "sync.cursor.%")
+		live, err := jobstest.ActiveLeaseNames(e.query, cursorLeases(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -176,7 +176,7 @@ func TestSyncFullTwoNodesOneReader(t *testing.T) {
 		if !bytes.Contains(b.logs.Bytes(), []byte("lease held by another node")) {
 			t.Fatalf("B did not log the held lease:\n%s", b.logs)
 		}
-		holders, err := jobstest.ActiveLeaseHolders(e.query, "sync.cursor.%")
+		holders, err := jobstest.ActiveLeaseHolders(e.query, cursorLeases(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -277,7 +277,7 @@ func TestSyncFullRenewsAndAbortsOnLoss(t *testing.T) {
 		var once gosync.Once
 		f.onBatch = func() {
 			once.Do(func() {
-				if err := jobstest.ExpireLeases(e.d.ExecOwner, "sync.cursor.%"); err != nil {
+				if err := jobstest.ExpireLeases(e.d.ExecOwner, cursorLeases(t)); err != nil {
 					t.Error(err)
 				}
 				time.Sleep(900 * time.Millisecond)
@@ -447,4 +447,14 @@ func TestRegisterJobsNeedsItsPorts(t *testing.T) {
 	if !errors.Is(err, dsync.ErrNotConfigured) {
 		t.Fatalf("RegisterJobs with nothing: %v", err)
 	}
+}
+
+// cursorLeases is the LIKE pattern matching every sync cursor lease name.
+func cursorLeases(t testing.TB) store.LikePattern {
+	t.Helper()
+	p, err := store.LikePattern{}.Prefix("sync.cursor.")
+	if err != nil {
+		t.Fatalf("cursor lease pattern: %v", err)
+	}
+	return p
 }

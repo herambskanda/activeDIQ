@@ -30,8 +30,9 @@ type Schema struct {
 	AddlFalse   bool
 	AddlTrue    bool
 	Items       *Schema
-	OneOf       []string // variant component names
-	Discr       string   // discriminator property name
+	OneOf       []string          // variant component names
+	Discr       string            // discriminator property name
+	Mapping     map[string]string // discriminator mapping: kind const -> variant component name
 	Min, Max    *int64
 	MinLen      *int
 	MaxLen      *int
@@ -393,6 +394,13 @@ func (p *parser) parseSchema(raw any, where string, top bool) *Schema {
 			p.fail(where, "oneOf needs a discriminator whose propertyName is \"kind\"")
 		} else {
 			s.Discr = "kind"
+			if mp, ok := disc["mapping"].(Doc); ok {
+				s.Mapping = map[string]string{}
+				for k, v := range mp {
+					ref, _ := v.(string)
+					s.Mapping[k] = ref[strings.LastIndex(ref, "/")+1:]
+				}
+			}
 			for k := range disc {
 				if k != "propertyName" && k != "mapping" {
 					p.fail(where, "discriminator key %q is outside the dialect", k)

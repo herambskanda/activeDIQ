@@ -423,3 +423,33 @@ components:
             type: /problems/report-row-cap-exceeded
             title: The result is over the row cap of the format
             status: 422
+    ExplorerCursorInvalid:
+      description: >-
+        The paging parameters cannot be used. errors[].code says why: cursor_invalid (bad, forged or mismatched cursor: a cursor from another node,
+        view or scope; nothing is read), or a malformed limit or view. No DN or cursor content is echoed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/explorer-query-invalid
+            title: The paging parameters cannot be used
+            status: 400
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736
+            errors:
+              - in: query
+                pointer: cursor
+                code: cursor_invalid
+                detail: The cursor cannot be used. Start again from the first page.
+    ExplorerUnavailable:
+      description: Explorer could not finish in time
+      content:
+        application/problem+json:
+          schema:
+            $ref: shared/problems.yaml#/components/schemas/Problem
+          example:
+            type: /problems/explorer-unavailable
+            title: The directory is busy
+            status: 503
+            detail: The directory is busy. Try again.
+            traceId: 4bf92f3577b34da6a3ce929d0e0e4736
