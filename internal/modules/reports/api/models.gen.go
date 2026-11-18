@@ -1487,6 +1487,7 @@ type ReportDefinition struct {
 	Presets                  []ReportPreset            `json:"presets"`
 	SubjectKind              string                    `json:"subjectKind"`
 	Version                  int64                     `json:"version"`
+	Widget                   *ReportWidgetProfile      `json:"widget,omitzero"`
 
 	p apitypes.Presence
 }
@@ -1676,6 +1677,18 @@ func (v *ReportDefinition) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.Version); err != nil {
 				return err
 			}
+		case "widget":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(14, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Widget); err != nil {
+				return err
+			}
 		default:
 			return apitypes.UnknownMember(d)
 		}
@@ -1855,6 +1868,13 @@ func (v *ReportDefinition) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 	}
 	if !v.p.Decoded() || (v.p.Has(13) && !v.p.IsNull(13)) {
 		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("version"), int64(v.Version), 1, 1000000)
+	}
+	// widget
+	if v.p.Decoded() && v.p.IsNull(14) {
+		errs.NullNotAllowed(at, "widget")
+	}
+	if v.Widget != nil {
+		(*v.Widget).Validate(at.AppendToken("widget"), errs)
 	}
 }
 
@@ -5424,6 +5444,309 @@ func (v ReportLastRunOutcome) Valid() bool {
 		return true
 	}
 	return false
+}
+
+// ReportLatestRun: The caller's latest run of one report for a widget. runId, asOf, rowCount, finishedAt and expiresAt describe the run the state names and are null for never_run and unavailable. rowCount is null when state is scope_changed, expired, failed or running without a current result. table is present only when rows=10 was asked and the state serves rows. inFlight is a newer queued or running run. failure is the reason of a failed run.
+type ReportLatestRun struct {
+	AsOf       *apitypes.Timestamp `json:"asOf"`
+	ExpiresAt  *apitypes.Timestamp `json:"expiresAt"`
+	Failure    *ReportFailure      `json:"failure,omitzero"`
+	FinishedAt *apitypes.Timestamp `json:"finishedAt"`
+	Freshness  *ReportFreshness    `json:"freshness,omitzero"`
+	InFlight   *ReportRunSummary   `json:"inFlight,omitzero"`
+	RowCount   *int64              `json:"rowCount"`
+	RunID      *apitypes.UUID      `json:"runId"`
+	State      ReportLatestState   `json:"state"`
+	Table      *ReportLatestTable  `json:"table,omitzero"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportLatestRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportLatestRun{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "asOf":
+			v.p.Mark(0, false)
+			if err := json.UnmarshalDecode(d, &v.AsOf); err != nil {
+				return err
+			}
+		case "expiresAt":
+			v.p.Mark(1, false)
+			if err := json.UnmarshalDecode(d, &v.ExpiresAt); err != nil {
+				return err
+			}
+		case "failure":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Failure); err != nil {
+				return err
+			}
+		case "finishedAt":
+			v.p.Mark(3, false)
+			if err := json.UnmarshalDecode(d, &v.FinishedAt); err != nil {
+				return err
+			}
+		case "freshness":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Freshness); err != nil {
+				return err
+			}
+		case "inFlight":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.InFlight); err != nil {
+				return err
+			}
+		case "rowCount":
+			v.p.Mark(6, false)
+			if err := json.UnmarshalDecode(d, &v.RowCount); err != nil {
+				return err
+			}
+		case "runId":
+			v.p.Mark(7, false)
+			if err := json.UnmarshalDecode(d, &v.RunID); err != nil {
+				return err
+			}
+		case "state":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(8, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.State); err != nil {
+				return err
+			}
+		case "table":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(9, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Table); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportLatestRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// asOf
+	if v.p.Decoded() && !v.p.Has(0) {
+		errs.Required(at, "asOf")
+	}
+	// expiresAt
+	if v.p.Decoded() && !v.p.Has(1) {
+		errs.Required(at, "expiresAt")
+	}
+	// failure
+	if v.p.Decoded() && v.p.IsNull(2) {
+		errs.NullNotAllowed(at, "failure")
+	}
+	if v.Failure != nil {
+		(*v.Failure).Validate(at.AppendToken("failure"), errs)
+	}
+	// finishedAt
+	if v.p.Decoded() && !v.p.Has(3) {
+		errs.Required(at, "finishedAt")
+	}
+	// freshness
+	if v.p.Decoded() && v.p.IsNull(4) {
+		errs.NullNotAllowed(at, "freshness")
+	}
+	if v.Freshness != nil {
+		(*v.Freshness).Validate(at.AppendToken("freshness"), errs)
+	}
+	// inFlight
+	if v.p.Decoded() && v.p.IsNull(5) {
+		errs.NullNotAllowed(at, "inFlight")
+	}
+	if v.InFlight != nil {
+		(*v.InFlight).Validate(at.AppendToken("inFlight"), errs)
+	}
+	// rowCount
+	if v.p.Decoded() && !v.p.Has(6) {
+		errs.Required(at, "rowCount")
+	}
+	if v.RowCount != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("rowCount"), int64((*v.RowCount)), 0, 9007199254740991)
+	}
+	// runId
+	if v.p.Decoded() && !v.p.Has(7) {
+		errs.Required(at, "runId")
+	}
+	// state
+	if v.p.Decoded() {
+		if !v.p.Has(8) {
+			errs.Required(at, "state")
+		}
+		if v.p.IsNull(8) {
+			errs.NullNotAllowed(at, "state")
+		}
+	}
+	// table
+	if v.p.Decoded() && v.p.IsNull(9) {
+		errs.NullNotAllowed(at, "table")
+	}
+	if v.Table != nil {
+		(*v.Table).Validate(at.AppendToken("table"), errs)
+	}
+}
+
+// ReportLatestState: What a Home widget renders for the caller's latest run (specs/home-report-widgets.md 3.3).
+type ReportLatestState string
+
+const (
+	ReportLatestStateCurrent      ReportLatestState = "current"
+	ReportLatestStateStaleData    ReportLatestState = "stale_data"
+	ReportLatestStateScopeChanged ReportLatestState = "scope_changed"
+	ReportLatestStateExpired      ReportLatestState = "expired"
+	ReportLatestStateRunning      ReportLatestState = "running"
+	ReportLatestStateFailed       ReportLatestState = "failed"
+	ReportLatestStateNeverRun     ReportLatestState = "never_run"
+	ReportLatestStateUnavailable  ReportLatestState = "unavailable"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportLatestState) Valid() bool {
+	switch v {
+	case ReportLatestStateCurrent, ReportLatestStateStaleData, ReportLatestStateScopeChanged, ReportLatestStateExpired, ReportLatestStateRunning, ReportLatestStateFailed, ReportLatestStateNeverRun, ReportLatestStateUnavailable:
+		return true
+	}
+	return false
+}
+
+// ReportLatestTable: The first rows of a current run in the columns of the definition's widget profile, in the profile's order.
+type ReportLatestTable struct {
+	Columns []ReportColumnInfo `json:"columns"`
+	Rows    []ReportRow        `json:"rows"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportLatestTable) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportLatestTable{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "columns":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Columns); err != nil {
+				return err
+			}
+		case "rows":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Rows); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportLatestTable) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// columns
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "columns")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "columns")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 5, apitypes.CodeMaxItems)
+		for i := range v.Columns {
+			v.Columns[i].Validate(apitypes.Index(at.AppendToken("columns"), i), errs)
+		}
+	}
+	// rows
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "rows")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "rows")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("rows"), len(v.Rows), 0, 10, apitypes.CodeMaxItems)
+		for i := range v.Rows {
+			v.Rows[i].Validate(apitypes.Index(at.AppendToken("rows"), i), errs)
+		}
+	}
 }
 
 // ReportMeName: An exact ManageEngine report name and the preset that answers it (spec 6.2).
@@ -14749,6 +15072,112 @@ func (v *ReportValueTime) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 			errs.NullNotAllowed(at, "value")
 		}
 	}
+}
+
+// ReportWidgetProfile: The views a Home widget may render for the report (specs/home-report-widgets.md 3.1). count is always allowed and is listed. tableColumns are the at most 5 columns of the table view, in order, and are empty unless views holds table. trend plots the run's row count only. A definition without this member supports the count view only.
+type ReportWidgetProfile struct {
+	TableColumns []string           `json:"tableColumns"`
+	Views        []ReportWidgetView `json:"views"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportWidgetProfile) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportWidgetProfile{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "tableColumns":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.TableColumns); err != nil {
+				return err
+			}
+		case "views":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Views); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportWidgetProfile) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// tableColumns
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "tableColumns")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "tableColumns")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("tableColumns"), len(v.TableColumns), 0, 5, apitypes.CodeMaxItems)
+		for i := range v.TableColumns {
+			apitypes.CheckLen(errs, apitypes.InBody, apitypes.Index(at.AppendToken("tableColumns"), i), string(v.TableColumns[i]), 0, 64)
+		}
+	}
+	// views
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "views")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "views")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("views"), len(v.Views), 0, 3, apitypes.CodeMaxItems)
+	}
+}
+
+// ReportWidgetView is the ReportWidgetView schema.
+type ReportWidgetView string
+
+const (
+	ReportWidgetViewCount ReportWidgetView = "count"
+	ReportWidgetViewTable ReportWidgetView = "table"
+	ReportWidgetViewTrend ReportWidgetView = "trend"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportWidgetView) Valid() bool {
+	switch v {
+	case ReportWidgetViewCount, ReportWidgetViewTable, ReportWidgetViewTrend:
+		return true
+	}
+	return false
 }
 
 var (

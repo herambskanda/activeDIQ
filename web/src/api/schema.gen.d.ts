@@ -121,6 +121,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The permission names the calling session holds
+         * @description Answers the names of the catalogue permissions the calling console session holds at tenant scope, sorted, so the console can hide navigation the session could not use (for example Reports without reports.run). Names only: no scope, role or grant detail. It is display only; every operation still authorises the request itself and stays the authority. Needs a cookie session and no permission beyond it. The answer is never cached. Additive to the preview auth plane.
+         */
+        get: operations["getSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/step-up": {
         parameters: {
             query?: never;
@@ -673,6 +693,26 @@ export interface paths {
          * @description The docked detail of one row of a change-history run (USR-06, GRP-05, CMP-03, CTC-02, OU-02: spec reports-2-second-slice 4.1, design 2). The rows read carries no per-row detail; this read does, for the row whose rowKey (the object GUID) is given. The body is exactly one of five kinds, chosen by kind: edited, membership, credential, permissions, removed (the Deleted presets). Every kind carries when, object and actor; the fields beyond those are the kind's own and no kind carries a field of another. A value the history does not hold (no originating time because the change was only observed, a replication version that was not recorded, a restore status the connection account cannot read) is a typed unknown, never an empty string, 0 or a guess (FR-09). Names only: no kind carries an old or new value, a password or a security descriptor (spec rule 3). actor is notRecorded for a native change (spec rule 6, DM-18.I3) and activediq, with the principal and the operation, only for a change made through activeDIQ. Scope: the object is shown only when its recorded ancestry is in the caller's read scope, otherwise 404 (the existence of an object outside scope is not disclosed). For a membership row the member names are paged and trimmed to the caller's scope: membership.names is one page of the side chosen by side (added by default), and addedCount, removedCount, addedOutOfScope and removedOutOfScope are totals over the whole change, never over the page; members outside scope are counted, never named. The cursor is bound to this run, row and side. The run-read gate is that of listReportRunRows, in the same order: runner equals the caller, otherwise 404; not expired, otherwise 410 report-result-expired; scope fingerprint unchanged, otherwise 409 with errors[].code scope_changed_rerun; succeeded, otherwise 409 with errors[].code run_not_ready or run_failed. A rowKey that is not a row of the run, or whose run is not a change-history report, is a 404. The result is stored and frozen with the run (ADR-0010 rule 3). Read-only; the detail offers no restore (restore is 2b, ADM-098).
          */
         get: operations["getReportRunRowDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the caller's latest run of a report, for a Home widget
+         * @description Answers the one thing a Home widget needs (specs/home-report-widgets.md 3.2): the caller's own latest succeeded run of definitionId and presetId, or why there is none. It never creates a run. The runner is the caller, taken from the principal; no parameter names another account, so a schedule owned by someone else that delivers to the caller never makes a candidate and the caller sees never_run until they run it themselves. The latest succeeded run is preferred over a newer failed one; a newer queued or running run is reported as inFlight and the state is running. state is one of current, stale_data (current and the freshness state is stale: asOf and freshness.stale name the connections), scope_changed (the caller's read scope differs from the one the run was trimmed with: no rows and no count), expired (past expiresAt: no rows), running, failed (no earlier run is current; failure is on the run header), never_run, unavailable (the definition or preset is not in the library). With rows=10 and a current run, table holds the first 10 rows of the definition's widget-profile columns (at most 5), read through the run-read gate (run.ReadAccess, 6.6 checks 1 to 5); there is no second gate. rows is 0 or 10, anything else is a 400; rows=10 on a definition whose widget profile has no table view is a 400. The response never carries the digest, the parameters or the scope text; getReportRun answers those. asOf is the freshness watermark of the run and is the age to show; it is never called live.
+         */
+        get: operations["getLatestReportRun"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1426,7 +1466,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationTargetDirectory";
+            kind: "directory";
             /** Format: uuid */
             objectGuid: string | null;
         };
@@ -1436,7 +1476,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationTargetStore";
+            kind: "store";
             resource: string;
         };
         OperationUndoPlan: {
@@ -1454,14 +1494,14 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueAbsent";
+            kind: "absent";
         };
         OperationValueBoolean: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueBoolean";
+            kind: "boolean";
             value: boolean;
         };
         OperationValueInteger: {
@@ -1469,7 +1509,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueInteger";
+            kind: "integer";
             value: number;
         };
         OperationValueRedacted: {
@@ -1477,14 +1517,14 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueRedacted";
+            kind: "redacted";
         };
         OperationValueText: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueText";
+            kind: "text";
             value: string;
         };
         OperationValueTextList: {
@@ -1492,7 +1532,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueTextList";
+            kind: "textList";
             values: string[];
         };
         OperationValueTime: {
@@ -1500,7 +1540,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueTime";
+            kind: "time";
             /** Format: date-time */
             value: string;
         };
@@ -1562,7 +1602,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellAbsent";
+            kind: "absent";
         };
         /** @description An object GUID or other GUID attribute, canonical lower-case. */
         ReportCellGuid: {
@@ -1570,7 +1610,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellGuid";
+            kind: "guid";
             /** Format: uuid */
             value: string;
         };
@@ -1580,7 +1620,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellInteger";
+            kind: "integer";
             value: string;
         };
         /** @description The value can never exist for this object, as distinct from absent (not yet set). In the SYS-01 policy columns it is the policy's own no-limit setting, read from 0 or the minimum signed 64-bit value by the 2a codec: in max_age it is "Never expires", in lockout_threshold "Never locks", in lockout_duration "Until an administrator unlocks". The column says which; no other policy column carries it. For a client that compares policies, such a cell is the loosest value of its column, not the smallest number: it is never an integer 0 and must not be ordered as one. */
@@ -1589,7 +1629,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellNever";
+            kind: "never";
         };
         /** @description Text as stored in the directory, which may hold any character. Encoders neutralise it on export. */
         ReportCellText: {
@@ -1597,7 +1637,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellText";
+            kind: "text";
             value: string;
         };
         /** @description A multi-valued text attribute, in stored order. */
@@ -1606,7 +1646,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellTextList";
+            kind: "textList";
             value: string[];
         };
         /** @description A derived state whose input is missing (Unknown (input missing)). */
@@ -1615,7 +1655,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellUnknown";
+            kind: "unknown";
         };
         /** @description One value of an enum column: a stable ID and its label. */
         ReportChoice: {
@@ -1680,6 +1720,7 @@ export interface components {
             presets: components["schemas"]["ReportPreset"][];
             subjectKind: string;
             version: number;
+            widget?: components["schemas"]["ReportWidgetProfile"];
         };
         /** @description A page of the library. */
         ReportDefinitionList: {
@@ -1835,7 +1876,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterCompare";
+            kind: "compare";
             operator: components["schemas"]["ReportCompareOperator"];
             value: components["schemas"]["ReportValue"];
         };
@@ -1846,7 +1887,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterConditionView";
+            kind: "condition";
             operator: components["schemas"]["ReportFilterOperatorValue"];
             values: components["schemas"]["ReportValue"][];
         };
@@ -1857,7 +1898,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterGroup";
+            kind: "group";
             match: components["schemas"]["ReportFilterMatch"];
         };
         /** @description Filters combined by match. */
@@ -1867,7 +1908,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterGroupView";
+            kind: "group";
             match: components["schemas"]["ReportFilterMatchValue"];
         };
         /** @description One column equal to any of up to 50 values. */
@@ -1877,7 +1918,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterIn";
+            kind: "in";
             values: components["schemas"]["ReportValue"][];
         };
         /**
@@ -1902,7 +1943,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterPresence";
+            kind: "presence";
             presence: components["schemas"]["ReportPresence"];
         };
         /** @description A time column relative to the start of the run. */
@@ -1913,7 +1954,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterRelative";
+            kind: "relative_time";
             relation: components["schemas"]["ReportRelativeTime"];
         };
         /** @description A filter as the server stores it. A condition's column is a registry column ID. */
@@ -1950,6 +1991,33 @@ export interface components {
          * @enum {string}
          */
         ReportLastRunOutcome: "sent" | "nothing_to_send" | "partly_failed" | "failed" | (string & {});
+        /** @description The caller's latest run of one report for a widget. runId, asOf, rowCount, finishedAt and expiresAt describe the run the state names and are null for never_run and unavailable. rowCount is null when state is scope_changed, expired, failed or running without a current result. table is present only when rows=10 was asked and the state serves rows. inFlight is a newer queued or running run. failure is the reason of a failed run. */
+        ReportLatestRun: {
+            /** Format: date-time */
+            asOf: string | null;
+            /** Format: date-time */
+            expiresAt: string | null;
+            failure?: components["schemas"]["ReportFailure"];
+            /** Format: date-time */
+            finishedAt: string | null;
+            freshness?: components["schemas"]["ReportFreshness"];
+            inFlight?: components["schemas"]["ReportRunSummary"];
+            rowCount: number | null;
+            /** Format: uuid */
+            runId: string | null;
+            state: components["schemas"]["ReportLatestState"];
+            table?: components["schemas"]["ReportLatestTable"];
+        };
+        /**
+         * @description What a Home widget renders for the caller's latest run (specs/home-report-widgets.md 3.3).
+         * @enum {string}
+         */
+        ReportLatestState: "current" | "stale_data" | "scope_changed" | "expired" | "running" | "failed" | "never_run" | "unavailable" | (string & {});
+        /** @description The first rows of a current run in the columns of the definition's widget profile, in the profile's order. */
+        ReportLatestTable: {
+            columns: components["schemas"]["ReportColumnInfo"][];
+            rows: components["schemas"]["ReportRow"][];
+        };
         /** @description One member added or removed, addressed by objectGUID. The name is the one last observed. */
         ReportMembershipName: {
             name: string;
@@ -2009,7 +2077,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportPeriodLastDays";
+            kind: "last_days";
         };
         /** @description A custom range. */
         ReportPeriodRange: {
@@ -2019,7 +2087,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportPeriodRange";
+            kind: "range";
             /** Format: date-time */
             to: string;
         };
@@ -2147,7 +2215,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecipientAccount";
+            kind: "account";
         };
         /** @description An account recipient. */
         ReportRecipientAccountView: {
@@ -2160,7 +2228,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecipientAccountView";
+            kind: "account";
         };
         /** @description An e-mail address. Attachment only; a link is never offered for an address. An address outside the tenant's allowed recipient domains is external. */
         ReportRecipientEmail: {
@@ -2171,7 +2239,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecipientEmail";
+            kind: "email";
         };
         /** @description An e-mail recipient. external is judged against the allowed recipient domains now. */
         ReportRecipientEmailView: {
@@ -2184,7 +2252,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecipientEmailView";
+            kind: "email";
         };
         /** @description A recipient as stored. */
         ReportRecipientView: components["schemas"]["ReportRecipientAccountView"] | components["schemas"]["ReportRecipientEmailView"];
@@ -2197,7 +2265,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceCustomDays";
+            kind: "custom_days";
             /** Format: date-time */
             start: string;
         };
@@ -2208,7 +2276,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceCustomHours";
+            kind: "custom_hours";
             /** Format: date-time */
             start: string;
         };
@@ -2219,7 +2287,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceCustomMonths";
+            kind: "custom_months";
             /** Format: date-time */
             start: string;
         };
@@ -2230,7 +2298,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceCustomWeeks";
+            kind: "custom_weeks";
             /** Format: date-time */
             start: string;
         };
@@ -2240,7 +2308,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceDaily";
+            kind: "daily";
             time: string;
         };
         /** @description Every n hours at the given minute. */
@@ -2250,7 +2318,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceHourly";
+            kind: "hourly";
             minute: number;
         };
         /** @description On a day of the month at a local time. A month without the day runs on its last day. */
@@ -2260,7 +2328,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceMonthlyDay";
+            kind: "monthly_day";
             time: string;
         };
         /** @description On the last day of every month at a local time. */
@@ -2269,7 +2337,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceMonthlyLastDay";
+            kind: "monthly_last_day";
             time: string;
         };
         /** @description On weekdays (1 Monday to 7 Sunday) at a local time. */
@@ -2278,7 +2346,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceWeekly";
+            kind: "weekly";
             time: string;
             weekdays: number[];
         };
@@ -2627,7 +2695,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueBoolean";
+            kind: "boolean";
             value: boolean;
         };
         /** @description A stable ID from the column's choices, such as enabled or never_account_flag. The server checks it against the column. */
@@ -2636,7 +2704,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueEnum";
+            kind: "enum";
             value: string;
         };
         /** @description A whole number. */
@@ -2645,7 +2713,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueInteger";
+            kind: "integer";
             value: number;
         };
         /** @description Text compared literally. Control characters are refused. */
@@ -2654,7 +2722,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueText";
+            kind: "text";
             value: string;
         };
         /** @description An instant, RFC 3339. */
@@ -2663,10 +2731,17 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueTime";
+            kind: "time";
             /** Format: date-time */
             value: string;
         };
+        /** @description The views a Home widget may render for the report (specs/home-report-widgets.md 3.1). count is always allowed and is listed. tableColumns are the at most 5 columns of the table view, in order, and are empty unless views holds table. trend plots the run's row count only. A definition without this member supports the count view only. */
+        ReportWidgetProfile: {
+            tableColumns: string[];
+            views: components["schemas"]["ReportWidgetView"][];
+        };
+        /** @enum {string} */
+        ReportWidgetView: "count" | "table" | "trend" | (string & {});
         /** @description Input of delegation.role.create. The caller chooses roleId, so a retry is the same role. A role is never deleted; empty it with delegation.role.update. */
         RoleCreate: {
             name: string;
@@ -2682,6 +2757,11 @@ export interface components {
         };
         /** @description A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request. */
         SecretInput: string;
+        /** @description What the calling session may do, as permission names only. */
+        SessionInfo: {
+            /** @description The catalogue permission names the session holds at tenant scope, sorted. Display only. */
+            permissions: string[];
+        };
         /** @description The one-time setup secret and the details of the first tenant owner. */
         SetupClaimRequest: {
             owner: components["schemas"]["SetupOwner"];
@@ -3606,6 +3686,30 @@ export interface operations {
             401: components["responses"]["SignInFailed"];
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            501: components["responses"]["NotImplemented"];
+        };
+    };
+    getSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The permission names this session holds. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionInfo"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
             501: components["responses"]["NotImplemented"];
@@ -4668,6 +4772,38 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             410: components["responses"]["ReportResultExpired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getLatestReportRun: {
+        parameters: {
+            query: {
+                /** @description The report definition. */
+                definitionId: string;
+                /** @description The preset; absent means the definition's default preset. */
+                presetId?: string;
+                /** @description 0 (the default) answers the header only; 10 adds the first 10 rows of the widget table. */
+                rows?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The latest run state for the widget */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportLatestRun"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };

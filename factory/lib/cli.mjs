@@ -5,7 +5,7 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { FactoryError, UsageError } from './errors.mjs';
 import {
-  EVENT_KINDS, appendEvent, ensureStateDirs, getEntity, listEntities, listRecentRuns, openStore, requireEntity, resolveHome, setControl,
+  EVENT_KINDS, appendEvent, ensureStateDirs, getEntity, listEntities, listRecentRuns, openStore, readMergeDrain, requireEntity, resolveHome, setControl, setMergeDrain,
 } from './store.mjs';
 import {
   addNote, advanceTicket, blockTicket, cancelTicket, createTicket, markReady, rejectTicket, setTicketFields, unblockTicket,
@@ -35,6 +35,7 @@ const BIN_PATH = path.join(FALLBACK_HOME, 'bin', 'factory');
 const USAGE = `usage: factory <command>
 
   up | down | status [--json] | pause [--reason R] | resume | doctor
+  drain [--minutes N] [--reason R] | undrain   hold all merging so a hand merge to main wastes no gate run (ends by itself, default 30 min, max 120)
   restart                           reload the dispatcher and board on the code now on disk; running workers are kept and adopted
   board [--port N]                  run the board in the foreground
   run [--once] [--dry-run]          run the dispatcher in the foreground
@@ -125,6 +126,17 @@ const COMMANDS = {
   resume: { options: { by: str }, run: (c) => {
     setControl(c.ctx, { paused: false, by: c.values.by ?? 'cli' });
     c.out('resumed');
+  } },
+  drain: { options: { minutes: str, reason: str, by: str }, run: (c) => {
+    const minutes = c.values.minutes === undefined ? undefined : Number(c.values.minutes);
+    const d = setMergeDrain(c.ctx, { on: true, ...(minutes === undefined ? {} : { minutes }), reason: c.values.reason ?? null, by: c.values.by ?? 'cli' });
+    c.out(`merge drain on until ${d.until}: no new gate run or automatic merge starts`);
+    c.out('a gate run already in flight finishes and lands; hand-merge to main only once `factory status` shows no gate in flight, then run `factory undrain`');
+  } },
+  undrain: { options: { by: str }, run: (c) => {
+    const was = readMergeDrain(c.ctx);
+    setMergeDrain(c.ctx, { on: false, by: c.values.by ?? 'cli' });
+    c.out(was.on ? 'merge drain off: merging resumes' : 'no merge drain was on');
   } },
   doctor: { options: {}, standalone: true, run: async (c) => {
     const { checks, failed } = await runDoctor(c.home);

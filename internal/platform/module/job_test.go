@@ -4,40 +4,38 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/capability"
-	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/module/moduletest"
-	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
-func kind(name string) jobs.Kind {
-	return jobs.Kind{Name: name, Timeout: time.Minute, Mode: jobs.ModeDefault, Run: func(context.Context, store.Tx, jobs.Claimed) error { return nil }}
-}
+// kind is a module.Job without the kernel types: module's tests import neither jobs, store nor tenant.
+type kind string
+
+func (k kind) JobName() string { return string(k) }
 
 func TestJobIsCollectedAndNamespaced(t *testing.T) {
 	m := &fake{id: "fake", register: func(r *module.Registrar) error {
-		if err := r.Job(module.Job{Kind: kind("fake.sweep")}); err != nil {
+		if err := r.Job(kind("fake.sweep")); err != nil {
 			return err
 		}
-		return r.Job(module.Job{Kind: kind("fake.other")})
+		return r.Job(kind("fake.other"))
 	}}
 	c, err := moduletest.Register(m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := c.Jobs(); len(got) != 2 || got[0].Kind.Name != "fake.sweep" {
+	if got := c.Jobs(); len(got) != 2 || got[0].JobName() != "fake.sweep" {
 		t.Fatalf("jobs = %v", got)
 	}
 	for name, reg := range map[string]func(r *module.Registrar) error{
-		"outside namespace": func(r *module.Registrar) error { return r.Job(module.Job{Kind: kind("other.sweep")}) },
+		"outside namespace": func(r *module.Registrar) error { return r.Job(kind("other.sweep")) },
 		"duplicate": func(r *module.Registrar) error {
-			if err := r.Job(module.Job{Kind: kind("fake.sweep")}); err != nil {
+			if err := r.Job(kind("fake.sweep")); err != nil {
 				return err
 			}
-			return r.Job(module.Job{Kind: kind("fake.sweep")})
+			return r.Job(kind("fake.sweep"))
 		},
 	} {
 		if _, err := moduletest.Register(&fake{id: "fake", register: reg}); err == nil {

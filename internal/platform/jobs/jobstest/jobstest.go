@@ -8,6 +8,8 @@ package jobstest
 import (
 	"context"
 	"testing"
+
+	"github.com/skenzeriq/activediq/internal/platform/store"
 )
 
 // Exec runs one statement as the database owner; storetest's Database.ExecOwner has this shape.
@@ -91,23 +93,30 @@ func JobArgText(q Query, kind, key string) ([]string, error) {
 	return q(`SELECT args->>$2 FROM public.jobs WHERE kind = $1`, kind, key)
 }
 
+// The lease queries are named constants passed directly as the SQL argument of their call, with the
+// store.LikePattern as an explicit argument, so fitness-search SE2 can verify the LIKE operand.
+const (
+	activeLeaseNamesSQL   = `SELECT name FROM public.platform_leases WHERE name LIKE $1 ESCAPE '\' AND expires_at > now()`
+	activeLeaseHoldersSQL = `SELECT holder FROM public.platform_leases WHERE name LIKE $1 ESCAPE '\' AND expires_at > now() GROUP BY holder`
+	expireLeasesSQL       = `UPDATE public.platform_leases SET expires_at = now() - interval '1 second' WHERE name LIKE $1 ESCAPE '\'`
+)
+
 // ActiveLeaseNames returns the names of the active (not yet expired) leases whose name matches the
-// SQL LIKE pattern.
-func ActiveLeaseNames(q Query, pattern string) ([]string, error) {
-	return q(`SELECT name FROM public.platform_leases WHERE name LIKE $1 AND expires_at > now()`, pattern)
+// LIKE pattern (escaped by store.LikePattern).
+func ActiveLeaseNames(q Query, pattern store.LikePattern) ([]string, error) {
+	return q(activeLeaseNamesSQL, pattern)
 }
 
 // ActiveLeaseHolders returns the distinct holders of the active leases whose name matches the SQL
 // LIKE pattern.
-func ActiveLeaseHolders(q Query, pattern string) ([]string, error) {
-	return q(`SELECT holder FROM public.platform_leases WHERE name LIKE $1 AND expires_at > now() GROUP BY holder`, pattern)
+func ActiveLeaseHolders(q Query, pattern store.LikePattern) ([]string, error) {
+	return q(activeLeaseHoldersSQL, pattern)
 }
 
-// ExpireLeases makes every lease whose name matches the SQL LIKE pattern expire now, as if its
+// ExpireLeases makes every lease whose name matches the LIKE pattern (escaped by store.LikePattern) expire now, as if its
 // holder had stopped renewing it. Returns the error rather than failing the test, since a caller
 // running inside a callback on another goroutine (as a lease-theft test commonly does) must not
 // call t.Fatal.
-func ExpireLeases(exec Exec, pattern string) error {
-	return exec(context.Background(),
-		`UPDATE public.platform_leases SET expires_at = now() - interval '1 second' WHERE name LIKE $1`, pattern)
+func ExpireLeases(exec Exec, pattern store.LikePattern) error {
+	return exec(context.Background(), expireLeasesSQL, pattern)
 }

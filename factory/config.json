@@ -19,8 +19,10 @@
     "main_branch": "main",
     "pre_merge": {
       "enabled": true,
-      "argv": ["make", "-k", "ci"],
+      "argv": ["make", "-k", "-j2", "-O", "ci"],
       "timeout_minutes": 180,
+      "reserved_slots": 2,
+      "keep_unread_moves": true,
       "train_size": 1,
       "max_gate_failures": 2,
       "concurrency": 1,
@@ -30,11 +32,16 @@
         "timeout_seconds": 120
       }
     },
+    "shadow_gate": {
+      "enabled": false,
+      "step_timeout_minutes": 60
+    },
     "post_merge_verify": {
       "enabled": true,
       "argv": ["make", "-k", "ci-full"],
       "timeout_minutes": 150,
-      "cooldown_minutes": 15
+      "cooldown_minutes": 15,
+      "raise_ticket": true
     },
     "permission_mode": "auto",
     "rate_limit_backoff_minutes": 15,

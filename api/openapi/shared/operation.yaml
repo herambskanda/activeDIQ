@@ -99,6 +99,14 @@ components:
         - $ref: shared/operation.yaml#/components/schemas/OperationValueAbsent
       discriminator:
         propertyName: kind
+        mapping:
+          text: "#/components/schemas/OperationValueText"
+          textList: "#/components/schemas/OperationValueTextList"
+          integer: "#/components/schemas/OperationValueInteger"
+          boolean: "#/components/schemas/OperationValueBoolean"
+          time: "#/components/schemas/OperationValueTime"
+          redacted: "#/components/schemas/OperationValueRedacted"
+          absent: "#/components/schemas/OperationValueAbsent"
     OperationValueText:
       type: object
       required: [kind, value]
@@ -156,6 +164,9 @@ components:
         - $ref: shared/operation.yaml#/components/schemas/OperationTargetDirectory
       discriminator:
         propertyName: kind
+        mapping:
+          store: "#/components/schemas/OperationTargetStore"
+          directory: "#/components/schemas/OperationTargetDirectory"
     OperationTargetStore:
       type: object
       required: [kind, resource, id]

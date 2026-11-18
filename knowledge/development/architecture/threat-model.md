@@ -2669,8 +2669,8 @@ contract is stale and fails A13, and an entry with a `host` fails until T-0018 l
 hostname-binding table. So the seed carries the non-API routes of AN-1 to AN-3, and the two AN-1
 operations entered with their contract (T-0034). AN-8 and AN-10
 (`signInBreakGlassPassword`, `createWebAuthnSignInChallenge`, `verifyWebAuthnSignIn`, `verifyTotpSignIn`)
-and the `authenticated` rows `signOut` and `getCsrfToken` entered with theirs (T-0193); their handlers
-answer 501 until the build tickets land (`getCsrfToken` is real since T-0854; `signOut` stays 501 until T-0802; `createWebAuthnSignInChallenge` and `verifyWebAuthnSignIn` are real once a `WebAuthnCookieVerifier` is supplied, T-0207: the challenge is consumed by the first assertion naming the pending sign-in, `webauthn_replay`; user verification is required; the signature counter must advance when the authenticator counts). The AN-8 failure is one `401 /problems/sign-in-failed` for
+and the `authenticated` rows `signOut` and `getCsrfToken` (and later `getSession`) entered with theirs (T-0193); their handlers
+answer 501 until the build tickets land (`getCsrfToken` is real since T-0854; `getSession` (T-1562, `authenticated`, display only) lists the catalogue permission names the cookie session holds at tenant scope; `signOut` stays 501 until T-0802; `createWebAuthnSignInChallenge` and `verifyWebAuthnSignIn` are real once a `WebAuthnCookieVerifier` is supplied, T-0207: the challenge is consumed by the first assertion naming the pending sign-in, `webauthn_replay`; user verification is required; the signature counter must advance when the authenticator counts). The AN-8 failure is one `401 /problems/sign-in-failed` for
 every cause (rule 2). AN-4, AN-5 and AN-7 enter with their operations. AN-5 and AN-7 also need their hostname binding
 from T-0018. AN-9 (`GET /auth/negotiate`) enters with its route mounting in T-0492 (console-sso.md §9). The file's header lists each pending row.
 

@@ -116,6 +116,19 @@ export function candidateKey(candidate) {
 }
 
 /**
+ * T-1617: worker slots available right now. While a pre-merge gate run is in flight
+ * (`state.dispatcher.merge_gates`, one entry per gate lane, T-2210), `pre_merge.reserved_slots` of the `max_parallel` slots are held back
+ * so the gate's own `make ci` is not starved of CPU/disk by agent builds. Always leaves one slot.
+ * Workers already running are never stopped; the cap only limits new launches.
+ */
+export function workerSlots(state, config) {
+  const max = config.dispatcher.max_parallel;
+  const reserved = config.dispatcher.pre_merge?.reserved_slots ?? 0;
+  if (!reserved || !state.dispatcher?.merge_gates?.length) return max;
+  return Math.max(1, max - reserved);
+}
+
+/**
  * Pick the candidates for the free worker slots, in this order:
  * 1. review, then qa tickets without a running session;
  * 2. in_progress tickets without a running session (handoff continuations first);
@@ -131,7 +144,7 @@ export function candidateKey(candidate) {
 export function selectCandidates(state, now, config) {
   if (launchGate(state, now, config)) return [];
   const running = state.runs.filter((r) => r.status === 'running');
-  const free = config.dispatcher.max_parallel - running.length;
+  const free = workerSlots(state, config) - running.length;
   if (free <= 0) return [];
 
   const busy = new Set(running.map((r) => r.ticket));
