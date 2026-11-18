@@ -2,7 +2,30 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: test-scale fitness-p2-oci gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci ci-fast ci-full gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly search-latency search-latency-pg16 search-latency-pg18 fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order fitness-group-member
+.PHONY: prescreen prescreen-proof test-scale fitness-p2-oci gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci ci-fast ci-full gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly search-latency search-latency-pg16 search-latency-pg18 fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order fitness-group-member
+
+# T-2313 (merge plan step 3.1): the cheap, Docker-free checks first. NOT a prerequisite of ci, ci-fast or
+# ci-full (it would run twice); every check below is also run by `make ci`. Nothing is removed from ci.
+# Not included on purpose (need Docker or pwsh, or too slow for 5 minutes): fitness-stack (cross-build matrix, 70-170 s), fitness-packaging, fitness-tenancy, -domain-keys,
+# -keys, -search, -operation, -audit, -host, -update-offline, -api, -reports, -agent-host, fuzz, lab tests, ci-proof.
+PRESCREEN_FITNESS = fitness-sso fitness-proto fitness-safeprim fitness-corpus fitness-objectid fitness-grantbootstrap fitness-disclosure fitness-fleet-ca-scope fitness-merge-order
+PRESCREEN_GOTESTS = TestOnlyPermitted|ImportedOnlyBy|TestRepository|TestMigrationNumbersAreUniqueAndContiguous
+
+prescreen: ## T-2313: the cheap Docker-free checks in <= 5 minutes, run before the 35-50 minute `make ci` (lint-go, generated-file checks, lint-api, static fitness rules, secrets-scan, vuln-scan, workflows-check, the repo-scanning Go tests); keeps going after a failure and lists every red check, exits non-zero if any. Not part of `make ci`
+	@fail=""; \
+	for t in lint-go gen-check gen-modules-check gen-api-check lint-api $(PRESCREEN_FITNESS) workflows-check secrets-scan vuln-scan prescreen-gotests; do \
+	  s=$$(date +%s); echo "== prescreen: $$t"; \
+	  if $(MAKE) --no-print-directory $$t; then r=ok; else r=FAILED; fail="$$fail $$t"; fi; \
+	  echo "== prescreen: $$t $$r ($$(( $$(date +%s) - s ))s)"; \
+	done; \
+	if [ -n "$$fail" ]; then echo "make prescreen: FAILED:$$fail"; exit 1; fi; echo "make prescreen: passed"
+
+.PHONY: prescreen-gotests
+prescreen-gotests: ## T-2313: the repo-scanning Go tests (TestOnlyPermitted*, *ImportedOnlyBy*, TestRepository*) and the migration-numbering test; package tests that need Docker skip or are not matched
+	go test -count=1 -p 3 -timeout 10m -run '$(PRESCREEN_GOTESTS)' ./internal/... ./tools/... ./migrations/...
+
+prescreen-proof: ## T-2313: prove every prescreen check goes red on a deliberate violation (mutates the work tree, restores it); ~10-15 min, run on demand and after changing prescreen; not part of `make ci`
+	tools/ci/prescreen-proof.sh
 
 ci: ci-fast ci-full ## Everything a merge needs: see ci-fast and ci-full
 	@echo "make ci: passed"
