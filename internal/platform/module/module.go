@@ -26,12 +26,9 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
-	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/report"
-	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/owners"
-	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // ID is a module's stable identifier. It is also its OpenAPI tag and its web module ID.
@@ -89,20 +86,21 @@ type Registrar struct {
 	seen    map[string]struct{}
 }
 
-// Job is one job kind a module contributes (EP-5). Kind.Name must start with "<moduleID>.". Seed, when
-// set, is called by the composition root once per boot for the install tenant, in that tenant's
-// transaction, after the tenant exists; it must be idempotent (a keyed enqueue). The module starts no
-// goroutine: the kernel's worker runs the kind and the kernel calls Seed.
-type Job struct {
-	Kind jobs.Kind
-	Seed func(ctx context.Context, tx store.Tx, tid tenant.ID) error
+// Job is one job kind a module contributes (EP-5). The concrete type is jobcontrib.Job; module names
+// only this interface so that it imports neither jobs, store nor tenant (ADR-0005 rule 13).
+// JobName is the kind's name and must start with "<moduleID>.".
+type Job interface {
+	JobName() string
 }
 
-// Job registers a job kind (EP-5) in the module's namespace.
+// Job registers a job kind (EP-5) in the module's namespace. Build it with jobcontrib.Job.
 func (r *Registrar) Job(j Job) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if err := r.claim("job", j.Kind.Name); err != nil {
+	if j == nil {
+		return fmt.Errorf("%w: nil job", ErrInvalid)
+	}
+	if err := r.claim("job", j.JobName()); err != nil {
 		return err
 	}
 	r.jobs = append(r.jobs, j)
@@ -262,7 +260,7 @@ type Contributions struct {
 	ready   []func(context.Context) error
 }
 
-// Jobs lists the job kinds modules registered, in boot order. compose/server registers them on the
+// Jobs lists the job kinds modules registered, in boot order; jobcontrib.All types them. compose/server registers them on the
 // job registry and runs each Seed for the install tenant.
 func (c *Contributions) Jobs() []Job { return append([]Job(nil), c.jobs...) }
 

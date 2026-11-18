@@ -3,6 +3,8 @@ package ad
 import (
 	"context"
 	"encoding/binary"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/go-ldap/ldap/v3"
@@ -180,5 +182,35 @@ func TestReadPasswordChange(t *testing.T) {
 				t.Fatal("GUID reported next to an error")
 			}
 		})
+	}
+}
+
+// TestReadPasswordChangeSendsTheSDFlagsControl (T-1551, AC3): the descriptor read carries the critical
+// SD_FLAGS control, whose value selects the DACL only. A SACL read would need SeSecurityPrivilege and
+// must never be asked for; the flags type has no SACL member.
+func TestReadPasswordChangeSendsTheSDFlagsControl(t *testing.T) {
+	obj := guid.GUID{0xC0, 15: 9}
+	up := startFakeUpstream(t, 0)
+	up.sdAttrs = map[string][][]byte{"objectGUID": {obj.Bytes()}, "nTSecurityDescriptor": {pwDenySD(t, "S-1-1-0", "S-1-5-10")}}
+	s, _ := faultSession(t, up.dial, injectPlan{skip: 1 << 30})
+	if _, got, err := s.ReadPasswordChange(context.Background(), dn.GUIDRef(obj)); err != nil || got != sd.PasswordChangeBlocked {
+		t.Fatalf("%v %v", got, err)
+	}
+	var sdReads int
+	for _, r := range up.searchLog() {
+		if !strings.HasPrefix(r.base, "<GUID=") {
+			continue
+		}
+		sdReads++
+		if !slices.Contains(r.controls, oidSDFlags) {
+			t.Fatalf("SD read controls = %v, want the SD_FLAGS control", r.controls)
+		}
+	}
+	if sdReads != 1 {
+		t.Fatalf("%d descriptor reads, want 1", sdReads)
+	}
+	f, err := NewSDFlags(SDDACL)
+	if err != nil || f.Value() != 4 {
+		t.Fatalf("DACL-only flags = %v %v, want 0x4", f.Value(), err)
 	}
 }
