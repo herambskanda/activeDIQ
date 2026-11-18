@@ -5,9 +5,9 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"github.com/skenzeriq/activediq/internal/platform/authority"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/secret"

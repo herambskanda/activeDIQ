@@ -47,6 +47,20 @@ type dirFake struct {
 	// live, when set, is what the Action's Apply reads as the target's facts before it re-checks, as
 	// client.Write does; otherwise Apply re-checks with bare "exists" facts.
 	live func(context.Context, authority.FactsQuery) (authority.Facts, error)
+	// ctxTenant records, per Action hook, the tenant on the context the runner passed (empty when none).
+	ctxTenant map[string]string
+}
+
+// seeTenant notes the tenant on a hook's context. The Action's directory calls resolve their connection
+// under it, so a hook that gets none fails every real write (T-1636).
+func (d *dirFake) seeTenant(ctx context.Context, hook string) {
+	tn, _ := authority.TenantFrom(ctx)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.ctxTenant == nil {
+		d.ctxTenant = map[string]string{}
+	}
+	d.ctxTenant[hook] = tn
 }
 
 func (d *dirFake) connID() string {
@@ -102,6 +116,7 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			return out, nil
 		},
 		Apply: func(ctx context.Context, s step.Step, p TypedStep[dirPayload]) (dirOut, error) {
+			d.seeTenant(ctx, "apply")
 			if err := s.Valid(); err != nil {
 				return dirOut{}, err
 			}
@@ -155,7 +170,8 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 			d.pwdSet[g] = time.Now()
 			return dirOut{GUID: g}, nil
 		},
-		Verify: func(_ context.Context, _ step.Step, p TypedStep[dirPayload], _ dirOut) (Verdict, error) {
+		Verify: func(ctx context.Context, _ step.Step, p TypedStep[dirPayload], _ dirOut) (Verdict, error) {
+			d.seeTenant(ctx, "verify")
 			if d.mode[p.Payload.GUID] == "defer" && d.mode["verified"] != "yes" {
 				return Verdict{}, ErrDeferVerify
 			}
@@ -181,7 +197,8 @@ func (d *dirFake) action(t *testing.T, id ActionID, stepUp, secretIn bool, class
 		},
 		Tier0:   func(o dirOut) []step.Tier0Finding { return o.Report },
 		Inverse: func(TypedStep[dirPayload], dirOut) (dirIn, error) { return dirIn{}, ErrIrreversible },
-		Observe: func(_ context.Context, _ authority.Pins, p TypedStep[dirPayload], claimedAt time.Time) (Observation, error) {
+		Observe: func(ctx context.Context, _ authority.Pins, p TypedStep[dirPayload], claimedAt time.Time) (Observation, error) {
+			d.seeTenant(ctx, "observe")
 			d.mu.Lock()
 			defer d.mu.Unlock()
 			g := p.Payload.GUID
@@ -1690,5 +1707,70 @@ func TestSitePreferenceReadFailureFailsPlan(t *testing.T) {
 		if st := p.opState(sub.Operation); st != "plan_failed" {
 			t.Fatalf("state = %s, want plan_failed", st)
 		}
+	})
+}
+
+// T-1636: every Action hook that reaches the directory runs under the operation's tenant on its context
+// (the connection is resolved from it). Without it the first real write failed outcome_unknown.
+func TestActionHooksRunUnderTheOperationsTenant(t *testing.T) {
+	want := func(t *testing.T, p *prig, hooks ...string) {
+		t.Helper()
+		for _, h := range hooks {
+			if got, ok := p.dir.ctxTenant[h]; !ok || got != p.tn.String() {
+				t.Errorf("%s hook ran with tenant %q (called %v), want %s", h, got, ok, p.tn)
+			}
+		}
+	}
+	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
+		t.Run("apply and verify", func(t *testing.T) {
+			p := newPRig(t, s, rigOpt{})
+			p.dir.set("g1", "old")
+			sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g1", Want: "new"}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.runChunks(sub.Operation)
+			want(t, p, "apply", "verify")
+		})
+		t.Run("observe after a transient apply", func(t *testing.T) {
+			p := newPRig(t, s, rigOpt{attempts: 3})
+			p.dir.set("a", "old")
+			p.dir.mode["a"] = "transient_after"
+			sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "new"}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.runChunks(sub.Operation)
+			want(t, p, "observe")
+		})
+		t.Run("reconcile observe", func(t *testing.T) {
+			p := newPRig(t, s, rigOpt{})
+			p.dir.set("g1", "old")
+			sub, err := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "g1", Want: "new"}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.claimOnly(sub.Operation)
+			p.dir.set("g1", "new")
+			p.lapse(sub.Operation)
+			if n, err := p.r.Reconcile(context.Background(), p.tn, p.r.txFor(p.tn), 10); err != nil || n != 1 {
+				t.Fatalf("reconcile = %d %v", n, err)
+			}
+			want(t, p, "observe", "verify")
+		})
+		t.Run("deferred verify", func(t *testing.T) {
+			p := newPRig(t, s, rigOpt{})
+			p.dir.mode["a"] = "defer"
+			sub, _ := p.r.SubmitDirectory(context.Background(), p.req(itemIn{GUID: "a", Want: "n"}))
+			p.runChunks(sub.Operation)
+			p.dir.mu.Lock()
+			p.dir.ctxTenant = nil
+			p.dir.mu.Unlock()
+			p.dir.mode["verified"] = "yes"
+			if err := p.r.Verify(context.Background(), p.tn, p.r.txFor(p.tn), string(sub.Operation)); err != nil {
+				t.Fatal(err)
+			}
+			want(t, p, "verify")
+		})
 	})
 }
