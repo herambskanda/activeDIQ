@@ -176,3 +176,17 @@ test('the board header line is built by the real app.js from merge_queue', async
     assert.match(src, /setText\(mq, mqText\)/);
   }
 });
+
+test('a gate-first ticket goes ahead of waiting dependents and of priority, and only that tag does', () => {
+  const done = (id, priority, ts, tags = []) => ({ id, priority, tags, status: 'done', history: [{ to: 'done', ts }] });
+  const p0 = done('T-0001', 'P0', '2026-11-01T09:00:00Z');
+  const awaited = done('T-0002', 'P3', '2026-11-01T11:00:00Z');      // low priority but another ticket waits on it
+  const first = done('T-0003', 'P3', '2026-11-01T12:00:00Z', ['gate-first']);
+  const lookalike = done('T-0004', 'P0', '2026-11-01T08:00:00Z', ['gate-first-ish', 'security-sensitive']);
+  const all = (extra) => [p0, awaited, first, lookalike, { id: 'T-0009', status: 'ready', depends_on: ['T-0002'] }, ...extra];
+  const ids = (list) => orderDoneQueue(list, all([])).map((t) => t.id);
+  assert.deepEqual(ids([p0, awaited, first, lookalike]), ['T-0003', 'T-0002', 'T-0004', 'T-0001'], 'tagged first, then the awaited one, then priority/time; a similar tag name does nothing');
+  assert.deepEqual(ids([p0, awaited, { ...first, tags: [] }, lookalike]), ['T-0002', 'T-0004', 'T-0001', 'T-0003'], 'without the tag it sorts last, as before');
+  const two = ids([{ ...first, id: 'T-0010', history: [{ to: 'done', ts: '2026-11-01T13:00:00Z' }] }, first]);
+  assert.deepEqual(two, ['T-0003', 'T-0010'], 'two tagged tickets keep the usual order between themselves (earliest done first)');
+});
