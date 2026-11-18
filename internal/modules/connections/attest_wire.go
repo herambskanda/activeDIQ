@@ -1,20 +1,16 @@
-package server
+package connections
 
 import (
 	"context"
 	"fmt"
 
-	"github.com/skenzeriq/activediq/internal/compose/config"
-	"github.com/skenzeriq/activediq/internal/compose/server/entra"
-	"github.com/skenzeriq/activediq/internal/modules/connections"
-	"github.com/skenzeriq/activediq/internal/platform/apihost"
-	"github.com/skenzeriq/activediq/internal/platform/audit"
+	"github.com/skenzeriq/activediq/internal/modules/connections/entra"
+	"github.com/skenzeriq/activediq/internal/platform"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/egress"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
-	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
@@ -27,33 +23,31 @@ const (
 	attestCallbackPath = "/api/v1/connections/takeover-attestation/callback"
 )
 
-// buildAttestation wires the TM-D17 attestation: the real token-exchange and Graph adapters over the
-// egress client, the shared authorizer, and the callback gate. It returns no tags when the install has not
-// configured an attestation app registration, so the routes stay unmounted.
-func buildAttestation(cfg config.Config, db *store.DB, sink audit.Sink, az operation.Authorizer, su connections.StepUp) ([]apihost.TagHandlers, error) {
-	if cfg.AttestClientID == "" {
-		return nil, nil
+// attestationHandlers wires the TM-D17 attestation: the real token-exchange and Graph adapters over the
+// egress client, the shared authorizer, and the callback gate. It returns false when the install has not
+// configured an attestation app registration, so the module registers no route for it.
+func attestationHandlers(deps platform.Deps) (*AttestHandlers, bool, error) {
+	if deps.Attestation.ClientID == "" {
+		return nil, false, nil
 	}
 	hc, err := egress.New(egress.Config{})
 	if err != nil {
-		return nil, fmt.Errorf("server: attestation egress: %w", err)
+		return nil, false, fmt.Errorf("connections: attestation egress: %w", err)
 	}
-	po, err := config.ParsePublicURL(cfg.PublicURL)
-	if err != nil {
-		return nil, fmt.Errorf("server: attestation redirect URI: %w", err)
+	if deps.Attestation.Origin == "" {
+		return nil, false, fmt.Errorf("connections: attestation needs the public origin for its redirect URI")
 	}
-	at, err := connections.NewAttester(connections.AttestConfig{
-		DB: db, Audit: sink, Authz: connectionAuthorizer{az}, StepUp: su,
-		IdP:      &entra.OIDCIdP{HTTP: hc, Authority: entraAuthority, ClientID: cfg.AttestClientID},
+	at, err := NewAttester(AttestConfig{
+		DB: deps.DB, Audit: deps.Audit, Authz: connectionAuthorizer{deps.Authz}, StepUp: sessionStepUp{deps.StepUp},
+		IdP:      &entra.OIDCIdP{HTTP: hc, Authority: entraAuthority, ClientID: deps.Attestation.ClientID},
 		Graph:    &entra.GraphReader{HTTP: hc, Base: graphBase},
-		ClientID: cfg.AttestClientID, RedirectURI: po.Origin + attestCallbackPath, Authority: entraAuthority,
+		ClientID: deps.Attestation.ClientID, RedirectURI: deps.Attestation.Origin + attestCallbackPath, Authority: entraAuthority,
 		Component: "connections",
 	})
 	if err != nil {
-		return nil, fmt.Errorf("server: attester: %w", err)
+		return nil, false, fmt.Errorf("connections: attester: %w", err)
 	}
-	h := &connections.AttestHandlers{Attester: at, Gate: &connections.WindowGate{}}
-	return []apihost.TagHandlers{h.Bind()}, nil
+	return &AttestHandlers{Attester: at, Gate: &WindowGate{}}, true, nil
 }
 
 // connectionAuthorizer adapts the operation Authorizer's two-step question to the single call the

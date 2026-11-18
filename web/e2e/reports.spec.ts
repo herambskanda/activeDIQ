@@ -17,10 +17,10 @@ const column = (id: string, label: string, type = "text") => ({
   filterOperators: ["equals", "contains"],
 });
 const svcFilter = {
-  kind: "ReportFilterConditionView",
+  kind: "condition",
   column: "probable_service_account",
   operator: "equals",
-  values: [{ kind: "ReportValueBoolean", value: false }],
+  values: [{ kind: "boolean", value: false }],
 };
 const definition = {
   id: "usr-03",
@@ -184,8 +184,8 @@ async function serve(page: Page, over: Partial<Server> = {}): Promise<Server> {
           rows: Array.from({ length: n }, (_, i) => ({
             rowKey: `r${start + i}`,
             cells: [
-              { kind: "ReportCellText", value: `User ${start + i}` },
-              { kind: "ReportCellInteger", value: String(start + i) },
+              { kind: "text", value: `User ${start + i}` },
+              { kind: "integer", value: String(start + i) },
             ],
           })),
         },

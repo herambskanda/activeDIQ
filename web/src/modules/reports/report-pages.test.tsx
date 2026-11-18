@@ -24,10 +24,10 @@ const column = (id: string, label: string, type = "text") => ({
   filterOperators: ["equals", "contains"],
 });
 const svcFilter = {
-  kind: "ReportFilterConditionView",
+  kind: "condition",
   column: "probable_service_account",
   operator: "equals",
-  values: [{ kind: "ReportValueBoolean", value: false }],
+  values: [{ kind: "boolean", value: false }],
 };
 const definition = {
   id: "usr-03",
@@ -101,8 +101,8 @@ const page = (rows: number, next: string | null = null) => ({
   rows: Array.from({ length: rows }, (_, i) => ({
     rowKey: `r${i}`,
     cells: [
-      { kind: "ReportCellText", value: i === 0 ? "<img src=x onerror=alert(1)>" : `User ${i}` },
-      { kind: "ReportCellInteger", value: String(i) },
+      { kind: "text", value: i === 0 ? "<img src=x onerror=alert(1)>" : `User ${i}` },
+      { kind: "integer", value: String(i) },
     ],
   })),
 });
@@ -246,7 +246,7 @@ describe("a report opens and runs without a Generate step", () => {
     await settle(0);
     const last = calls.filter((c) => c.method === "POST").at(-1)!;
     expect(JSON.parse(last.body).parameters.period).toEqual({
-      kind: "ReportPeriodLastDays",
+      kind: "last_days",
       days: 90,
     });
   });
