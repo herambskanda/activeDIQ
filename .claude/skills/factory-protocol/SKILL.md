@@ -129,6 +129,14 @@ evidence · docs and `knowledge/development/architecture/` updated if anything u
 structural changed · superseded code deleted · merged to `main` · two-line summary on the ticket.
 As owner you deliver the first, second, fifth and sixth before you advance.
 
+**Pre-screen before you advance (product code).** `make prescreen` (a few minutes: the cheap, Docker-free
+checks) must show no finding that `main` does not already have, run on your branch **after merging the
+current `main` into it**. Put its last lines and the time it took in your note. QA runs it again on its
+own and checks that line. It is cheap on purpose: a simple mistake caught here costs minutes, the same
+mistake caught by the merge gate costs a 35 to 50 minute run and a strike. It does not replace anything:
+the dispatcher still runs the full gate, and you still never run that yourself (section above). Tickets
+that change no product code (docs, factory runtime, skills) skip it.
+
 ## 10. Output rules — review blockers, not style
 
 - **No fake data.** The UI renders only API data. Fixtures live in tests, Storybook and the demo

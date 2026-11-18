@@ -60,6 +60,9 @@ func (m *Module) build() (*wiring, error) {
 	cat := &lateLibrary{}
 	svc := &run.Service{DB: d.DB, Jobs: d.Jobs, Scopes: d.ReadScopes, Audit: d.Audit, Catalog: cat, Codec: Codec{},
 		Fresh: inventoryFreshness{r: m.dir.Inventory}}
+	if pd := m.dir.PerDC; pd != nil { // a nil pointer in an interface would defeat the run's nil check
+		svc.PerDC, svc.PerDCDCs = pd, pd
+	}
 	exports := &export.Service{DB: d.DB, Jobs: d.Jobs, Runs: svc, Audit: d.Audit, Authz: authorizer{az: d.Authz}}
 	if d.BlobDir != "" {
 		bs, err := blob.NewFS(d.BlobDir)
