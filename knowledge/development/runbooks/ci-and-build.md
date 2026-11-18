@@ -406,6 +406,8 @@ A core MSI with no agent in it is still judged by rules 2-4 and the LocalSystem/
 it merges. Settings: `factory/config.json` `dispatcher.pre_merge` (`enabled`, `argv`,
 `timeout_minutes`, `baseline_reuse_roots`). Logs and the baseline cache: `factory/state/premerge/`.
 
+**Findings from repo refs (T-1422).** P7 lists the branches of the checkout, and the scratch worktree shares the main repo's refs, so a branch another session creates after the baseline was cached would read as a finding the merge result "adds". `excuseRefFindings` drops `branch X: P7 …` findings (and the `FAILED fitness-profiles` line, when no other profiles finding remains) from the comparison; the summary says `not counted, they come from the repository's refs`. The candidate's own `factory/<id>` branch is never excused, and P7 itself still fails in CI on `main`.
+
 **The baseline is reused, not re-run per `main` commit (T-1378).** When the merge result is red, the gate
 needs `make -k ci` findings of `main`. It takes them from a cached run (`baseline-*.json`) on the same
 tree, or on a tree that differs only in files under `knowledge/`, `.claude/`, `factory/`, `garage/` that
@@ -468,6 +470,6 @@ once its index is writable); every pending merge then proceeds on the next pass.
 
 `internal/directory/inventory` runs about 93 database tests on PostgreSQL 16 and 18; with the three scale tests it hit the 600 s
 test timeout. `Test_group_member_counts_at_scale`, `Test_group_closure_fanout_is_bounded` and `Test_reports_library_batch2_at_scale`
-skip unless `ADIQ_SCALE_FULL=1` (`requireScaleFull` in `scale_gate_test.go`). `make ci` does not set it; the package must stay
+skip unless `ADIQ_SCALE_FULL=1` (`requireScaleFull` in `scale_gate_test.go`). `make ci` does not set it; the package currently takes ~900 s wall (wait-bound, not scale-test-bound; T-2047 trims the search_* tests; `make ci` uses -timeout 30m) and the 400 s target
 under 400 s there. Run the scale job with `make test-scale` (own timeout, `SCALE_TIMEOUT`); it is a prerequisite of `make fitness-nightly`, so the nightly job runs it (run it by hand before a release too)
 on the runner that has Docker or the embedded PostgreSQL. A new test that loads more than a few thousand objects calls `requireScaleFull`.

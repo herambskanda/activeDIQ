@@ -29,10 +29,13 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/limiter"
 	"github.com/skenzeriq/activediq/internal/platform/module"
+	"github.com/skenzeriq/activediq/internal/platform/module/jobcontrib"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
+	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/report"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/owners"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // ErrNoDatabase is returned by Run when no database DSN is configured. The server has nothing to do
@@ -67,12 +70,6 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return fmt.Errorf("server: open store: %w", err)
 	}
 	defer db.Close()
-	// Capabilities come from the deployment profile once config selects one; no module requires
-	// one yet. The directory services are built from the store, so boot follows the open.
-	contrib, reportHost, err := bootReport(ctx, capability.NewSet(), directoryServices(db), owners.Lookup)
-	if err != nil {
-		return fmt.Errorf("server: boot modules: %w", err)
-	}
 	// The per-principal rate store and the limiter over it, mounted as the API's Limits port. A bad
 	// store/node combination, budget or contract fails startup here, before the listener opens.
 	ps, err := principalStore(cfg, db)
@@ -137,6 +134,28 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
+	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
+	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
+	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default(), withPublicURL(cfg.PublicURL))
+	if err != nil {
+		return err
+	}
+	attest, err := attestationConfig(cfg) // zero without ACTIVEDIQ_ATTEST_CLIENT_ID: no attestation route mounts (ADR-0013)
+	if err != nil {
+		return err
+	}
+	// Boot the modules. Capabilities come from the deployment profile once config selects one; no module
+	// requires one yet. Modules build their services from these kernel ports in Register (ADR-0013); the
+	// read-scope producer is made from what they contribute, so it is bound after Boot.
+	jreg := jobs.NewRegistry()
+	lateScopes := &rbac.LateReadScopes{}
+	deps := platform.Deps{DB: db, Jobs: jreg, Audit: ok.Chainer, Authz: authzr, ReadScopes: lateScopes, BlobDir: cfg.BlobDir,
+		StepUp: console.StepUp, Attestation: attest}
+	dirSvc := directoryServices(db)
+	contrib, _, err := bootModules(ctx, deps, capability.NewSet(), dirSvc, owners.Lookup)
+	if err != nil {
+		return fmt.Errorf("server: boot modules: %w", err)
+	}
 	// What Fleet.Tunnel needs, around the same hub the connector source reads through. The fleet
 	// listener that serves it (T-0716, T-0717) is not composed yet, so until it is no component can
 	// attach and a directory target fails closed at the tunnel (ErrNoEndpoint / UNAVAILABLE), never as
@@ -146,12 +165,6 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	_ = tunnelDeps // handed to NewFleetService by the fleet listener (T-0717)
-	// The console authentication stack: sessions, the cookie Authenticator and the step-up check. The
-	// tenant-owner writer shares its session store (it ends a changed owner's sessions).
-	console, err := buildConsole(db, ok.Chainer, keys.NewStore(kekp).KeySource(), slog.Default(), withPublicURL(cfg.PublicURL))
-	if err != nil {
-		return err
-	}
 	ownerWriter, err := buildOwnerAssignments(db, ok.Chainer, console.Sessions)
 	if err != nil {
 		return err
@@ -160,12 +173,7 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err != nil {
 		return err
 	}
-	// The TM-D17 attestation routes, when the install is configured for them. Built after the
-	// authorizer, which they share with the operation runner.
-	tags, err := buildAttestation(cfg, db, ok.Chainer, authzr, sessionStepUp{console.StepUp})
-	if err != nil {
-		return err
-	}
+	var tags []apihost.TagHandlers
 	// The SIEM destination routes (siem.destination.manage). The audit chainer is the store's sink.
 	siem, err := syslog.NewStore(db, ok.Chainer)
 	if err != nil {
@@ -194,19 +202,26 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 		return err
 	}
 	tags = append(tags, dirTag)
-	// The report run path (T-0959): the run service, its job kinds and its API. The job registry exists
-	// before the API is built so the kinds register with the handlers; the retention cadence is seeded
-	// once the tenant exists.
-	jreg := jobs.NewRegistry()
-	reportRuns, reportTag, err := buildReports(ctx, db, reportHost, jreg, ok.Chainer, inventory.NewReader(db, nil), readScopes, authzr, cfg.BlobDir)
+	if err := lateScopes.Bind(readScopes); err != nil {
+		return err
+	}
+	// The job kinds the modules contributed (EP-5) run on this registry; their seeds follow the tenant.
+	cjobs, err := jobcontrib.All(contrib)
 	if err != nil {
 		return err
 	}
-	tags = append(tags, reportTag)
+	for _, j := range cjobs {
+		if err := jreg.Register(j.Kind); err != nil {
+			return fmt.Errorf("server: module job kind %s: %w", j.Kind.Name, err)
+		}
+	}
 	// The sign-in plane: AN-8 for a local account, then AN-10 (TOTP, and WebAuthn when the public URL is
 	// set), which is the only way a console session is created.
 	tags = append(tags, console.Tags())
-	cat := permissionCatalogue()
+	cat := permissionCatalogue(contrib)
+	// Routes modules registered through Registrar.API are mounted alongside the hand-built ones
+	// until each builder moves into its module (ADR-0013 decision 3).
+	tags = append(tags, contrib.API()...)
 	if err := checkCatalogue(cat); err != nil {
 		return err
 	}
@@ -244,8 +259,8 @@ func Run(ctx context.Context, cfg config.Config, getenv func(string) string) err
 	if err := startThrottlePurge(ctx, db, jreg, console.Local, tid); err != nil {
 		return err
 	}
-	// The report retention cadence is seeded for the install tenant, like the throttle purge.
-	if err := startReportRetention(ctx, db, reportRuns, tid); err != nil {
+	// Module job seeds (such as the report retention cadence) run for the install tenant, like the throttle purge.
+	if err := seedModuleJobs(ctx, db, contrib, tid); err != nil {
 		return err
 	}
 	// Lab builds only (T-0684): create and activate the lab connections through the real activation path.
@@ -382,7 +397,7 @@ func runWorker(ctx context.Context, db *store.DB, reg *jobs.Registry, wcfg jobs.
 // directoryServices builds the directory services handed to every module: the connection registry,
 // the only writer of connections, backed by the store.
 func directoryServices(db *store.DB) directory.Services {
-	return directory.Services{Connection: connection.NewRegistry(db)}
+	return directory.Services{Connection: connection.NewRegistry(db), Inventory: inventory.NewReader(db, nil)}
 }
 
 // inventoryOwner is the owner key of the datasets internal/directory/inventory exports (row B3).
@@ -394,11 +409,19 @@ const inventoryOwner = "inventory"
 // export (inventory.Datasets(), row B3) are added to the host here too, under their package's key,
 // before the modules boot, and are checked by the same function.
 func bootReport(ctx context.Context, enabled capability.Set, dir directory.Services, ownerOf report.TableOwners) (*module.Contributions, *report.Host, error) {
+	return bootModules(ctx, platform.Deps{}, enabled, dir, ownerOf)
+}
+
+// bootModules is bootReport with the kernel ports the modules build their services from (ADR-0013).
+// After the host is sealed it runs the modules' ready hooks, which need the sealed datasets (the report
+// library resolves its definitions over them); a failing hook stops start-up.
+func bootModules(ctx context.Context, deps platform.Deps, enabled capability.Set, dir directory.Services, ownerOf report.TableOwners) (*module.Contributions, *report.Host, error) {
 	host := report.NewHost(ownerOf)
 	if err := host.Add(inventoryOwner, inventory.Datasets()...); err != nil {
 		return nil, nil, fmt.Errorf("server: report datasets: %w", err)
 	}
-	c, err := module.Boot(ctx, generatedModules(platform.Deps{Report: host}, dir), enabled, module.WithTableOwners(ownerOf))
+	deps.Report = host
+	c, err := module.Boot(ctx, generatedModules(deps, dir), enabled, module.WithTableOwners(ownerOf), module.WithKernelPermissions(kernelPermissions()))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -408,5 +431,44 @@ func bootReport(ctx context.Context, enabled capability.Set, dir directory.Servi
 		}
 	}
 	host.Seal()
+	if err := c.Ready(ctx); err != nil {
+		return nil, nil, err
+	}
 	return c, host, nil
+}
+
+// attestationConfig turns the install's attestation settings into the kernel value modules read. With no
+// app registration it is zero and the connections module mounts no attestation route; with one, the public
+// URL must be a valid origin (the redirect URI is built on it).
+func attestationConfig(cfg config.Config) (platform.Attestation, error) {
+	if cfg.AttestClientID == "" {
+		return platform.Attestation{}, nil
+	}
+	po, err := config.ParsePublicURL(cfg.PublicURL)
+	if err != nil {
+		return platform.Attestation{}, fmt.Errorf("server: attestation redirect URI: %w", err)
+	}
+	return platform.Attestation{ClientID: cfg.AttestClientID, Origin: po.Origin}, nil
+}
+
+// seedModuleJobs runs each contributed job's Seed for the install tenant, in that tenant's transaction.
+// The seeds are idempotent (keyed enqueues), so running them on every boot or on several nodes leaves one
+// cadence. A module starts no goroutine of its own.
+func seedModuleJobs(ctx context.Context, db *store.DB, c *module.Contributions, tid tenant.ID) error {
+	cjobs, err := jobcontrib.All(c)
+	if err != nil {
+		return err
+	}
+	for _, j := range cjobs {
+		if j.Seed == nil {
+			continue
+		}
+		sctx, cancel := context.WithTimeout(ctx, time.Minute)
+		err := db.WithTenant(sctx, tid, func(ctx context.Context, tx store.Tx) error { return j.Seed(ctx, tx, tid) })
+		cancel()
+		if err != nil {
+			return fmt.Errorf("server: seed job %s: %w", j.Kind.Name, err)
+		}
+	}
+	return nil
 }
