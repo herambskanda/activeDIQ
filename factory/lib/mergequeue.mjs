@@ -2,7 +2,7 @@
 // board shows of the line. One gate run takes 40-75 minutes, so the order matters: pick by ticket ID
 // and a P3 waits ahead of a P0 and ahead of a done ticket that blocked work is waiting on.
 import { isCodeType } from './flows.mjs';
-import { listEntities } from './store.mjs';
+import { listEntities, readMergeDrain } from './store.mjs';
 
 /** A ticket with this tag is never merged (security-disclosure runbook §6). */
 export const EMBARGO_TAG = 'embargoed';
@@ -45,12 +45,13 @@ export function orderDoneQueue(done, all) {
  * counting ones already in a gate lane), the lane(s) in flight (T-1297's merge train has several
  * tickets per lane; T-2210's `pre_merge.concurrency` can run more than one lane at once — `in_gate`
  * is the first lane, for callers that only know about one; `in_gates` is all of them), and when
- * main last took a merge.
+ * main last took a merge, and the merge drain when one is on (`factory drain`).
  * @param {object} ctx
  * @param {object} dispatcherState result of readDispatcherState
  * @param {boolean} dispatcherAlive a stale gate record from a dead dispatcher is not shown
  * @returns {{waiting: string[], in_gate: {id: string, ids: string[], started_at: string}|null,
- *   in_gates: {id: string, ids: string[], started_at: string}[], last_merged_at: string|null}}
+ *   in_gates: {id: string, ids: string[], started_at: string}[], last_merged_at: string|null,
+ *   drain: {until: string, reason: string|null, by: string|null}|null}}
  */
 export function buildMergeQueue(ctx, dispatcherState, dispatcherAlive) {
   const all = listEntities(ctx, 'tickets');
@@ -66,10 +67,12 @@ export function buildMergeQueue(ctx, dispatcherState, dispatcherAlive) {
     all,
   ).map((t) => t.id);
   const merged = all.map((t) => t.links?.merged).filter(Boolean).sort();
+  const drain = readMergeDrain(ctx);
   return {
     waiting,
     in_gate: inGates[0] ?? null,
     in_gates: inGates,
     last_merged_at: merged.at(-1) ?? null,
+    drain: drain.on ? { until: drain.until, reason: drain.reason, by: drain.by } : null,
   };
 }

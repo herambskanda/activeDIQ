@@ -107,6 +107,11 @@ grooming makes tickets ready. If the follow-up genuinely blocks you, block your 
   `feat fix test refactor docs chore ci perf`. Always end the subject with the ticket ID.
 - Never commit secrets, `.env*`, keys, tokens, lab passwords or customer data. If the guard hook
   blocks a write, it is right — fix the content, do not route around it.
+- Never run the full merge gate yourself: no bare `factory premerge <id>`, no `make ci` or
+  `make -k ci`. It takes ~75 min and competes for CPU and PostgreSQL with the dispatcher's live
+  gate, which then fails on load (pg18 "connection reset") and refuses an innocent ticket. Check
+  your work with the targeted job (`make fitness-safeprim`, `go test ./internal/<pkg>/...`) or
+  `factory premerge <id> -- <targeted command>`. Only the dispatcher runs the full gate.
 
 ## 8. Escalation
 

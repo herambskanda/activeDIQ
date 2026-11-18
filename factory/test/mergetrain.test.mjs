@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Dispatcher } from '../lib/dispatcher.mjs';
 import { preMergeSettings, splitTrain } from '../lib/premerge.mjs';
-import { advanceTicket, claimTicket, createTicket, setTicketLinks } from '../lib/tickets.mjs';
+import { advanceTicket, claimTicket, createTicket, setTicketLinks, unblockTicket } from '../lib/tickets.mjs';
 import { ensureWorktree, landedCommit } from '../lib/worktree.mjs';
 import { buildMergeQueue } from '../lib/mergequeue.mjs';
 import { listEntities, readRecentEvents } from '../lib/store.mjs';
@@ -124,6 +124,39 @@ for (const [name, main] of [['main green', {}], ['main red for an older finding'
     });
   }
 }
+
+test('a ticket that fails the gate twice in a row is held for a CEO decision instead of reopened a third time (max_gate_failures)', async () => {
+  const f = setup({ trainSize: 1 });
+  try {
+    const t = await finished(f, 'flaky', { 'violation-flaky.txt': 'CloudWidget names a deployment profile\n' });
+    const d = dispatcher(f);
+    await pass(d);
+    let out = byId(f);
+    assert.deepEqual([out[t.id].status, out[t.id].gate_failures], ['in_progress', 1], 'first refusal: reopened, with a gate-failure count of 1');
+
+    // Re-submit the still-broken branch through the owner/review/qa stages again.
+    for (let i = 0; i < 3; i++) advanceTicket(f.ctx, t.id, 'w', 'ok');
+    out = byId(f);
+    assert.equal(out[t.id].status, 'done');
+
+    await pass(d);
+    out = byId(f);
+    assert.deepEqual([out[t.id].status, out[t.id].gate_failures], ['blocked', 2], 'second refusal: held for a decision, not reopened a third time');
+    assert.equal(out[t.id].links.merged, undefined);
+    assert.match(out[t.id].notes.at(-1).text, /holding for a CEO decision/);
+
+    const decisions = listEntities(f.ctx, 'decisions');
+    assert.equal(decisions.length, 1);
+    assert.equal(decisions[0].kind, 'directional');
+    assert.deepEqual(decisions[0].blocks, [t.id]);
+    assert.deepEqual(decisions[0].options.map((o) => o.id), ['retry', 'escalate', 'cancel']);
+    assert.match(readRecentEvents(f.ctx, 80).map((e) => e.text).join('\n'), /keeps failing the merge gate/);
+
+    // Unblocking (as the CEO deciding "one more try" would trigger) gives it a fresh budget.
+    unblockTicket(f.ctx, t.id, 'ceo', 'retry', { toReady: true });
+    assert.equal(byId(f)[t.id].gate_failures, 0);
+  } finally { f.cleanup(); }
+});
 
 test('a text conflict between two train members: the later one stays done and waits for the next train, the others are gated and merge', async () => {
   const f = setup();

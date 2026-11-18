@@ -745,6 +745,19 @@ Each is in review under §3.3's own rule ("a dataset that needs another function
 - RP11 world gains an out-of-scope object with changes, a moved object and a deleted object whose last-known OU
   is out of scope; RP14 pins the grain, the noise rule (every attribute) and the version isolation.
 
+**(d2) Published printers: SYS-02 over `inventory.printers` (D13, T-1719).**
+
+- A dataset over `directory_objects`, not a new table: kind `printqueue` (migration 0082 widens the two kind
+  CHECKs and sends incremental cursors to a resync, so rows stored as `other` are reclassified by one full
+  read), `state = 'live'`, `t` the `RowAnchor`. A printQueue is a child of its server's computer object, so its
+  stored ancestry runs through the server and the server's OUs: scope is the server's ancestry, and a printer
+  whose server is not in the inventory has incomplete ancestry and grants nothing (2a §8.1).
+- The attributes are read for printQueue objects only (a computer's own `location` never enters the bag) and live
+  in the JSONB bag; `description` was already on the closed list. "OU path of the server" is the `dn` column
+  (`ou_path_is_dn`): a second column derived from the DN would name parent OUs outside the dn cell, which RP11 refuses.
+- Published is not installed: the row is the directory's record, `observed_at` is the as-of, and an empty
+  directory is zero rows with the sync's freshness label.
+
 **(e) Policy rows: SYS-01 over `inventory.policies` (D12).**
 
 - **Grain: one row per policy**: the domain policy of each NC, each `msDS-PasswordSettings`, and, when

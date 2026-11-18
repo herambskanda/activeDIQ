@@ -11,6 +11,8 @@ const (
 	DatasetComputers report.DatasetID = "inventory.computers"
 	// DatasetPrincipals is users and computers in one dataset, for GRP-04 (T-0962).
 	DatasetPrincipals report.DatasetID = "inventory.principals"
+	// DatasetPrinters is the published printers (printQueue objects) for SYS-02 (T-1719, D13).
+	DatasetPrinters report.DatasetID = "inventory.printers"
 )
 
 // SecretKey reports whether a JSON attribute key is a secret (D8, TM-TB15-T3): the one predicate the
@@ -21,7 +23,7 @@ func SecretKey(key string) bool { return secretKey(key) }
 // Datasets returns the datasets this package registers. compose/server hands them to report.NewHost
 // with the owner key "inventory" (boot refuses them until the table-owner map lists their tables).
 func Datasets() []report.Dataset {
-	return []report.Dataset{usersDataset(), computersDataset(), groupsDataset(), groupMembersDataset(), ousDataset(), contactsDataset(), principalsDataset(), objectChangesDataset()}
+	return []report.Dataset{usersDataset(), computersDataset(), groupsDataset(), groupMembersDataset(), ousDataset(), contactsDataset(), principalsDataset(), objectChangesDataset(), printersDataset()}
 }
 
 func idents(s ...string) []report.Ident {
@@ -297,5 +299,48 @@ func userAttributeColumns() []report.Column {
 			report.SQL("CASE WHEN {t}.attributes ->> 'logonHours' IS NULL THEN NULL ELSE position('0' in {t}.attributes ->> 'logonHours') > 0 END"), opsBool),
 		derived("has_thumbnail_photo", "Has thumbnail photo", report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> 'hasThumbnailPhoto')::boolean, false)"), opsBool),
 		derived("has_jpeg_photo", "Has JPEG photo", report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> 'hasJpegPhoto')::boolean, false)"), opsBool),
+	}
+}
+
+// printersDataset is the published printers (reports-2-second-slice 7.2, D13): the printQueue objects the
+// directory holds under their server's computer object. Published is not installed, and the row is the
+// directory's record as of the sync, so observed_at is a column the report shows as the as-of time. The
+// scope is the object's own ancestry, which runs through the server's computer object and its OUs: a
+// printer is trimmed by its server's ancestry, and an unknown ancestry grants nothing (reports-2a 8.1).
+func printersDataset() report.Dataset {
+	// The OU path of the server is the dn column: a printQueue's DN is CN=<queue>,CN=<server>,<server's OU path>,
+	// and the library's ou_path_is_dn convention shows the path from it. A second column derived from the
+	// DN would name the parent OUs outside the dn cell, which RP11 refuses.
+	cols := []report.Column{
+		attr("object_guid", "Object GUID", report.TypeGUID, "object_guid", opsGUID, false),
+		attr("connection_id", "Connection", report.TypeGUID, "connection_id", opsGUID, false),
+		attr("domain", "Domain (naming context)", report.TypeGUID, "nc_guid", opsGUID, true),
+		attr("dn", "Distinguished name", report.TypeText, "dn", opsText, false),
+		jsonText("printer_name", "Printer name", "printerName"),
+		jsonText("server_name", "Print server", "serverName"),
+		jsonText("unc_name", "Share / UNC path", "uNCName"),
+		jsonText("share_name", "Share name", "printShareName"),
+		jsonText("location", "Location", "location"),
+		jsonText("description", "Description", "description"),
+		jsonText("driver_name", "Driver", "driverName"),
+		jsonBool("color", "Colour", "printColor"),
+		jsonBool("duplex", "Duplex", "printDuplexSupported"),
+		attr("when_created", "Created", report.TypeTime, "when_created", opsTime, true),
+		attr("observed_at", "Observed at", report.TypeTime, "observed_at", opsTime, true),
+	}
+	for i := range cols {
+		switch cols[i].ID {
+		case "printer_name", "server_name", "unc_name", "location", "driver_name", "color", "duplex", "dn":
+			cols[i].Default = true
+		}
+	}
+	return report.Dataset{
+		ID:        DatasetPrinters,
+		Base:      report.Relation{Table: "directory_objects", Where: report.SQL("{t}.kind = 'printqueue' AND {t}.state = 'live'")},
+		RowKey:    report.SQL("{t}.object_guid"),
+		Anchors:   []report.Anchor{rowAnchorT()},
+		Columns:   cols,
+		Freshness: report.FreshNCWatermark,
+		Tables:    []string{"directory_objects"},
 	}
 }
