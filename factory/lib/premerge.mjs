@@ -10,6 +10,10 @@
 //    multiset keyed by a position-independent text, so an old finding that moves a line does not
 //    count and a new one in a red job cannot hide behind the old ones.
 //
+//  - Findings derived from the repository's refs, not the tree (P7 branch names), never count as new
+//    (T-1422, `excuseRefFindings`): the scratch worktree shares the main repo's refs, so another
+//    session's branch would otherwise refuse every candidate. The candidate's own branch still does.
+//
 // Nothing here edits the repository's checks; it only reads their output. Every subprocess runs
 // from an argument array, never a shell.
 import fs from 'node:fs';
@@ -49,6 +53,12 @@ export const PRE_MERGE_DEFAULTS = Object.freeze({
   // tree, see `readSurface`). They hold no gate code: knowledge base, agent memory, factory runtime
   // and prototypes. `[]` = always run a fresh baseline per main commit.
   baseline_reuse_roots: ['knowledge', '.claude', 'factory', 'garage'],
+  // A gate run that finishes after `main` moved is normally discarded and re-run ("main moved under
+  // this gate run"), because the verdict was for a main that no longer exists. When the move touched
+  // only files no gate job reads (the daily digest, agent memory, plan documents; see `unreadMove`)
+  // the verdict still holds, so with this on the ticket merges instead of losing a 75-minute run.
+  // Off by default: the move is always reported, and what it would have done is named.
+  keep_unread_moves: false,
 });
 
 /**
@@ -68,6 +78,9 @@ export function preMergeSettings(config) {
   }
   if (!Number.isInteger(s.max_gate_failures) || s.max_gate_failures < 1) {
     throw new FactoryError('dispatcher.pre_merge.max_gate_failures must be a whole number of at least 1');
+  }
+  if (typeof s.keep_unread_moves !== 'boolean') {
+    throw new FactoryError('dispatcher.pre_merge.keep_unread_moves must be true or false');
   }
   if (!Array.isArray(s.baseline_reuse_roots) || s.baseline_reuse_roots.some((r) => typeof r !== 'string' || !/^[\w.-]+$/.test(r))) {
     throw new FactoryError('dispatcher.pre_merge.baseline_reuse_roots must be an array of top-level directory names');
@@ -210,20 +223,84 @@ export function newFindings(base, head) {
   return out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 }
 
+/**
+ * Findings that come from the repository's refs, not from the candidate's tree (T-1422). P7 lists
+ * every branch of the checkout, and the scratch worktree shares the main repo's refs, so a branch
+ * another session creates after the baseline was cached shows up as a finding the candidate "adds".
+ * Such a finding is never new in the candidate-versus-baseline diff, unless the branch is the
+ * candidate's own: a ticket branch that is not main or factory/T-NNNN is the candidate's violation.
+ * P7 itself is untouched and keeps failing in CI on `main`.
+ *
+ * When every violation the profiles tool printed was excused, the `FAILED fitness-profiles` line its
+ * make target adds is excused with them. Another profiles violation (the tool tags its lines
+ * `(ADR-0002 fitness function)`) keeps it.
+ * @param {Map<string, number>} found
+ * @param {string[]} own the candidate's own branch names
+ * `ownKeys` are the candidate's own branch findings: the caller removes them from the baseline too, so
+ * they are new even when a baseline run, made after the branch existed, already lists them.
+ * @returns {{kept: Map<string, number>, excused: string[], ownKeys: string[]}}
+ */
+export function excuseRefFindings(found, own = []) {
+  const kept = new Map(found);
+  const excused = [];
+  const ownKeys = [];
+  for (const key of found.keys()) {
+    const m = REF_FINDING.exec(key);
+    if (!m) continue;
+    if (own.includes(m[1])) { ownKeys.push(key); continue; }
+    kept.delete(key);
+    excused.push(m[1]);
+  }
+  if (excused.length && ![...kept.keys()].some((k) => k.includes(PROFILES_TAG))) kept.delete(PROFILES_FAILED);
+  return { kept, excused: excused.sort(), ownKeys };
+}
+
+const REF_FINDING = /^branch (\S+): P7 \(ADR-0002 fitness function\)/;
+const PROFILES_TAG = '(ADR-0002 fitness function)'; // only tools/fitness/profiles prints it
+const PROFILES_FAILED = 'FAILED fitness-profiles'; // the make target that runs P7 (tools/ci/ci.mk)
+
 // ---- running the command -------------------------------------------------------------------
+
+/**
+ * Note how fast a log grows, so a step's time can be read back from it later (`factory/bin/gate-timing`).
+ * Every two seconds, when the log has grown, one `<ms since start>\t<bytes>` line goes to `<log>.timing`
+ * (about 30 KB for a 75-minute run). It only reads the log's size, never the gate's command, and any
+ * failure to write the note is swallowed: it must never fail or slow a gate run.
+ * @param {string} logFile
+ * @param {string[]} argv
+ * @param {number} [everyMs] sampling interval; a step's time is read to within this much
+ * @returns {() => void} stop (takes one last sample)
+ */
+export function startLogTiming(logFile, argv, everyMs = 2000) {
+  const file = `${logFile}.timing`;
+  const t0 = Date.now();
+  let last = -1;
+  const sample = () => {
+    try {
+      const size = fs.statSync(logFile).size;
+      if (size !== last) { last = size; fs.appendFileSync(file, `${Date.now() - t0}\t${size}\n`); }
+    } catch { /* the note is best effort */ }
+  };
+  try { fs.writeFileSync(file, `# start ${t0}\n# argv ${argv.join(' ')}\n0\t0\n`); } catch { return () => {}; }
+  const timer = setInterval(sample, everyMs);
+  timer.unref();
+  return () => { clearInterval(timer); sample(); };
+}
 
 /**
  * Run argv in cwd, both streams to `logFile`. Kills the whole process group on timeout or abort.
  * @returns {Promise<{code: number, timedOut: boolean, aborted: boolean}>}
  */
-export function runLogged(argv, cwd, logFile, { timeoutMs, signal, env = process.env } = {}) {
+export function runLogged(argv, cwd, logFile, { timeoutMs, signal, env = process.env, timing = false, timingEveryMs } = {}) {
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   const fd = fs.openSync(logFile, 'w');
+  const stopTiming = timing ? startLogTiming(logFile, argv, timingEveryMs) : () => {};
   return new Promise((resolve, reject) => {
     let child;
     try {
       child = spawn(argv[0], argv.slice(1), { cwd, env: { ...env, CI: '1' }, stdio: ['ignore', fd, fd], detached: true });
     } catch (err) {
+      stopTiming();
       fs.closeSync(fd);
       reject(new FactoryError(`could not start ${argv[0]}: ${err.message}`));
       return;
@@ -236,11 +313,11 @@ export function runLogged(argv, cwd, logFile, { timeoutMs, signal, env = process
     const onAbort = () => { aborted = true; stop(); };
     signal?.addEventListener('abort', onAbort, { once: true });
     child.on('error', (err) => {
-      clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
+      stopTiming(); clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
       reject(new FactoryError(`could not start ${argv[0]}: ${err.message}`));
     });
     child.on('close', (code) => {
-      clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
+      stopTiming(); clearTimeout(timer); signal?.removeEventListener('abort', onAbort); fs.closeSync(fd);
       resolve({ code: code ?? -1, timedOut, aborted });
     });
   });
@@ -258,6 +335,13 @@ export function readLog(file) {
 }
 
 export function gateDir(ctx) { return path.join(ctx.stateDir, 'premerge'); }
+/**
+ * Environment for every command the gate runs. The gate gets a Go build cache of its own under the
+ * state dir (T-2225): the default `~/.cache/go-build` is shared with every worker and any cleanup job,
+ * and an entry vanishing from it mid-run fails the run with "could not import ... no such file", which
+ * the gate then judges as real findings (T-0977: 343 phantom findings).
+ */
+export function gateEnv(ctx) { return { ...process.env, GOCACHE: path.join(ctx.stateDir, 'gocache') }; }
 export function scratchRoot(ctx) { return path.resolve(ctx.root, ctx.config.dispatcher.worktree_root, '.premerge'); }
 
 /**
@@ -404,6 +488,32 @@ async function changedPaths(ctx, from, to) {
   return diff.code === 0 ? diff.stdout.split('\0').filter(Boolean) : null;
 }
 
+// Under factory/, only these hold no code the gate runs. The rest (lib, bin, test, config) is read by
+// the factory's own tests that `make fitness` runs, so a move there always discards a verdict even when
+// the baseline-reuse rule would call it unread.
+const FACTORY_UNREAD = ['factory/reports/', 'factory/handoffs/', 'factory/demos/'];
+
+/**
+ * Did `main` move between `fromSha` (what a gate verdict was judged on) and `toSha` only in files no gate
+ * job reads? Same test as baseline reuse (`classifyChanges` over the paths a gate file mentions), made
+ * stricter for factory/: only reports, handoffs and demos count as unread there.
+ * @param {object} ctx
+ * @param {object} settings preMergeSettings
+ * @param {string} fromSha
+ * @param {string} toSha
+ * @returns {Promise<{unread: boolean, files: string[], read: string[]}>} `unread` is false when the diff cannot be read
+ */
+export async function unreadMove(ctx, settings, fromSha, toSha) {
+  const files = await changedPaths(ctx, fromSha, toSha);
+  if (!files) return { unread: false, files: [], read: ['(could not diff the two commits)'] };
+  const factoryRead = files.filter((p) => p.startsWith('factory/') && !FACTORY_UNREAD.some((d) => p.startsWith(d)));
+  if (factoryRead.length) return { unread: false, files, read: factoryRead.slice(0, 10) };
+  const roots = settings.baseline_reuse_roots;
+  const surface = await readSurface(ctx.root, toSha, roots);
+  const v = classifyChanges(files, roots, surface);
+  return { unread: v.reusable && files.length > 0, files, read: v.read };
+}
+
 /**
  * A cached run of the gate command that stands for `mainTree`: one on the same tree, or the newest
  * one on a tree that differs only in files the gate does not read.
@@ -454,7 +564,7 @@ async function baseline(ctx, settings, mainSha, mainTree, { signal }) {
   const log = path.join(gateDir(ctx), `baseline-${mainSha.slice(0, 12)}-${tag}-${run}.log`);
   const identity = await addDetached(ctx, dir, mainSha);
   try {
-    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
+    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx), timing: true });
     if (ran.aborted) throw new FactoryError(`pre-merge: the baseline run on main was stopped (${log})`);
     if (ran.timedOut) {
       const near = await nearestBaseline(ctx, mainTree, entries);
@@ -551,7 +661,7 @@ async function checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { s
   const cfg = settings.numbering;
   const log = path.join(gateDir(ctx), `${subject.id}-${mainSha.slice(0, 12)}-${run}-numbering.log`);
   const started = Date.now();
-  let ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal });
+  let ran = await runLogged(cfg.argv, dir, log, { timeoutMs: cfg.timeout_seconds * 1000, signal, env: gateEnv(ctx) });
   if (ran.timedOut) throw new FactoryError(`pre-merge: the migration-numbering check on ${subject.label} timed out after ${cfg.timeout_seconds} s (${log})`);
   if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${subject.label} was stopped (${log})`);
 
@@ -568,7 +678,7 @@ async function checkMigrationNumbering(ctx, settings, dir, mainSha, subject, { s
         // A fresh log file: `runLogged` truncates `log`, which would erase the first (failing) run's
         // own output that the blocked note below may still need to quote.
         const retryLog = log.replace(/\.log$/, '-retry.log');
-        ran = await runLogged(cfg.argv, dir, retryLog, { timeoutMs: cfg.timeout_seconds * 1000, signal });
+        ran = await runLogged(cfg.argv, dir, retryLog, { timeoutMs: cfg.timeout_seconds * 1000, signal, env: gateEnv(ctx) });
         if (ran.timedOut) throw new FactoryError(`pre-merge: the migration-numbering check on ${subject.label} timed out after ${cfg.timeout_seconds} s (${retryLog})`);
         if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${subject.label} was stopped (${retryLog})`);
         fs.appendFileSync(log, `\n# migration-numbering check failed; auto-renumbered ${plan.map((r) => `${r.from} -> ${r.to}`).join(', ')} and retried (${retryLog}, exit ${ran.code})\n`);
@@ -717,7 +827,7 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
     // really merge.
     const withRenumber = (verdict) => ({ ...verdict, mainSha, ...(renumber ? { renumber } : {}) });
     const withTiming = (text) => (numberingSeconds === null ? text : `${text}; migration numbering checked in ${numberingSeconds} s`);
-    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
+    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx), timing: true });
     if (ran.timedOut) throw new FactoryError(`pre-merge: ${settings.argv.join(' ')} on ${label} timed out after ${settings.timeout_minutes} minutes (${log})`);
     if (ran.aborted) throw new FactoryError(`pre-merge: the run for ${label} was stopped (${log})`);
     assertTreeIntact(dir, identity, log);
@@ -727,26 +837,29 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
       return withRenumber({ status: 'pass', mode: 'green', findings: [], summary: withTiming(`${settings.argv.join(' ')} passed on the merge result`), log, ...outcome });
     }
 
-    const head = extractFindings(readLog(log), [fs.realpathSync(dir), dir]);
+    const { kept: head, excused, ownKeys } = excuseRefFindings(extractFindings(readLog(log), [fs.realpathSync(dir), dir]), members.map(branchName));
+    const onlyExcused = excused.length > 0 && !head.size; // red solely because of other sessions' branches
     const base = await baseline(ctx, settings, mainSha, mainTree, { signal });
-    const reuse = `; baseline: ${base.note}`;
+    base.findings = new Map(base.findings);
+    for (const key of ownKeys) base.findings.delete(key); // the candidate's own branch is its violation, whoever listed it first
+    const reuse = `; baseline: ${base.note}${excused.length ? `; not counted, they come from the repository's refs and not the candidate (P7): branch ${excused.join(', ')}` : ''}`;
     if (base.stale) { // the baseline is an older tree: it can clear the merge result, never convict it
       const fresh = base.code === 0 ? [...head.keys()] : newFindings(base.findings, head).map((f) => f.key);
-      if (!head.size || fresh.length) {
+      if ((!head.size && !onlyExcused) || fresh.length) {
         const named = fresh.slice(0, 10).map((k) => `\n  - ${k}`).join('');
-        throw new FactoryError(`pre-merge: ${base.note}; ${head.size ? `${fresh.length} finding(s) of the merge result are not in it, so the gate cannot tell whether ${main} or the branch adds them${named}${fresh.length > 10 ? '\n  …' : ''}` : 'the merge result has no recognisable finding line'}. Logs: ${log}`);
+        throw new FactoryError(`pre-merge: ${base.note}; ${head.size || onlyExcused ? `${fresh.length} finding(s) of the merge result are not in it, so the gate cannot tell whether ${main} or the branch adds them${named}${fresh.length > 10 ? '\n  …' : ''}` : 'the merge result has no recognisable finding line'}. Logs: ${log}`);
       }
     }
     const fresh = newFindings(base.code === 0 ? new Map() : base.findings, head);
     const total = (m) => [...m.values()].reduce((a, b) => a + b, 0);
     const lines = fresh.map((f) => (f.known ? `${f.key}  (${f.extra} more than the ${f.known} on ${main})` : f.extra > 1 ? `${f.key}  (${f.extra} times)` : f.key));
-    if (base.code === 0) {
+    if (base.code === 0 && !onlyExcused) {
       return {
         status: 'blocked', mode: 'main-green', findings: lines, log, baseLog: base.log, ...outcome,
         summary: `${main} is green and ${settings.argv.join(' ')} fails on the merge result${lines.length ? '' : ' with no recognisable finding line; read the log'}${reuse}`,
       };
     }
-    if (!head.size) {
+    if (!head.size && !onlyExcused) {
       return {
         status: 'blocked', mode: 'unrecognised', findings: [], log, baseLog: base.log, ...outcome,
         summary: `${settings.argv.join(' ')} fails on the merge result and the log has no recognisable finding line, so it cannot be compared with the red ${main}; read the log${reuse}`,
@@ -761,7 +874,7 @@ export async function runPreMergeTrain(ctx, tickets, { signal, argv } = {}) {
     await recordBaseline(ctx, settings, headTree, { code: ran.code, findings: head, log }, name);
     return withRenumber({
       status: 'pass', mode: 'ratchet', findings: [], log, baseLog: base.log, ...outcome,
-      summary: withTiming(`${main} is red (${total(base.findings)} known findings); the merge result adds none (${total(head)} findings, all already on ${main})${reuse}`),
+      summary: withTiming(base.code === 0 ? `${main} is green; the merge result is red only for ${excused.length} branch finding(s) that are not the candidate's${reuse}` : `${main} is red (${total(base.findings)} known findings); the merge result adds none (${total(head)} findings, all already on ${main})${reuse}`),
     });
   } finally {
     await dropWorktree(ctx, dir);

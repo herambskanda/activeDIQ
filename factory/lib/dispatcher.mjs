@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   appendEvent, drainBadFiles, getEntity, listEntities, listRecentRuns, localDate, newRunId, nowIso,
-  pidAlive, putEntity, readControl, readDispatcherState, readRange, readRateLimitSignal, readTail, reloadConfig,
+  pidAlive, putEntity, readControl, readDispatcherState, readMergeDrain, readRange, readRateLimitSignal, readTail, reloadConfig,
   updateDispatcherState, updateEntity,
 } from './store.mjs';
 import { FactoryError } from './errors.mjs';
@@ -26,7 +26,7 @@ import {
 import { candidateKey, launchGate, selectCandidates } from './candidates.mjs';
 import { setting } from './settings.mjs';
 import { EMBARGO_TAG, orderDoneQueue } from './mergequeue.mjs';
-import { applyMigrationRenumber, blockedNote, preMergeSettings, runPreMergeTrain, splitTrain } from './premerge.mjs';
+import { applyMigrationRenumber, blockedNote, preMergeSettings, runPreMergeTrain, splitTrain, unreadMove } from './premerge.mjs';
 import { postMergeVerifySettings, readKnownFindings, runPostMergeVerify } from './postmerge.mjs';
 import { git } from './git.mjs';
 import { recordShadowSkip, runShadowGate, shadowGateSettings } from './shadowgate.mjs';
@@ -129,6 +129,7 @@ export class Dispatcher {
     this.mergeLock = Promise.resolve(); // serializes real merges into ctx.root across lanes (T-2210): git allows only one merge in progress at a time
     this.gateRetryAt = new Map(); // ticket id → ms before which a gate that could not judge is not retried
     this.heldOnMain = new Map(); // ticket id → the broken main commit it waits on; retried once main moves
+    this.drainNoted = false; // a merge drain (`factory drain`) was last seen on; so its start and end are each reported once
     this.runGate = runPreMergeTrain; // (ctx, tickets[], {signal}) → verdict; replaceable in tests
     this.runShadow = runShadowGate; // (ctx, ticket, {mainSha, branchSha, verdict, signal}) → record; replaceable in tests
     this.shadowRun = null; // shadow gate in flight (logs only, never blocks or decides anything)
@@ -453,6 +454,7 @@ export class Dispatcher {
    */
   async mergePass() {
     if (this.shared) return;
+    if (this.mergeDrained()) return;
     const settings = preMergeSettings(this.ctx.config);
     const gated = settings.enabled;
     const concurrency = gated ? settings.concurrency : 1;
@@ -494,6 +496,23 @@ export class Dispatcher {
     // Try to fill another lane in this same pass: the selection above already excludes this
     // lane's tickets (`claimed`), so a second call picks a disjoint train, up to `concurrency`.
     if (this.gateLanes.length < concurrency) await this.mergePass();
+  }
+
+  /**
+   * True while `factory drain` is on: no new gate run and no automatic merge starts, so `main` stays
+   * put for a hand merge. A gate already in flight is untouched (it finishes and lands on its own,
+   * not through this pass). The start and the end (or expiry) of a drain are each reported once.
+   */
+  mergeDrained() {
+    const drain = readMergeDrain(this.ctx);
+    if (drain.on && !this.drainNoted) {
+      this.drainNoted = true;
+      appendEvent(this.ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `merge drain in force until ${drain.until}: no new gate run or automatic merge starts${this.gateLanes.length ? '; the gate run in flight finishes and lands' : ''}` });
+    } else if (!drain.on && this.drainNoted) {
+      this.drainNoted = false;
+      appendEvent(this.ctx, { actor: 'dispatcher', kind: 'dispatcher', text: drain.expired ? 'merge drain expired on its own; merging resumes' : 'merge drain over; merging resumes' });
+    }
+    return drain.on;
   }
 
   /** Wait for every pre-merge gate in flight (tests, shutdown). */
@@ -738,11 +757,21 @@ export class Dispatcher {
         if (!expectedHead) { await this.mergeOne(ticket); return true; } // no mainSha on the verdict: cannot check, merge as before
         const head = (await git(ctx.root, ['rev-parse', 'HEAD'])).stdout.trim();
         if (head !== expectedHead) {
-          appendEvent(ctx, {
-            actor: 'dispatcher', kind: 'dispatcher',
-            text: `${ticket.id}${train} not merged: ${main} moved under this gate run (validated at ${expectedHead.slice(0, 8)}, now at ${head.slice(0, 8)} — a concurrent gate lane likely landed first); left done for a fresh gate run`,
-          });
-          return false;
+          // `main` moved under this verdict. A move that touched only files no gate job reads (the daily digest,
+          // agent memory, plan documents) leaves the verdict true; anything else, or the setting being off,
+          // discards it as before. The event always says which, so the setting can be judged on real data.
+          const move = await unreadMove(ctx, settings, expectedHead, head);
+          const moved = `${main} moved under this gate run (validated at ${expectedHead.slice(0, 8)}, now at ${head.slice(0, 8)}`;
+          const what = `${move.files.length} file(s)${move.files.length ? `: ${move.files.slice(0, 3).join(', ')}${move.files.length > 3 ? ', …' : ''}` : ''}`;
+          if (move.unread && settings.keep_unread_moves) {
+            appendEvent(ctx, { actor: 'dispatcher', kind: 'dispatcher', text: `${ticket.id}${train}: ${moved}), but only ${what} that no gate job reads; the verdict still holds, merging` });
+          } else {
+            appendEvent(ctx, {
+              actor: 'dispatcher', kind: 'dispatcher',
+              text: `${ticket.id}${train} not merged: ${moved} — a concurrent gate lane likely landed first); left done for a fresh gate run${move.unread ? `. The move touched only ${what} that no gate job reads: set dispatcher.pre_merge.keep_unread_moves to keep such a verdict` : ''}`,
+            });
+            return false;
+          }
         }
         if (verdict.status === 'pass') {
           appendEvent(ctx, { actor: 'dispatcher', kind: 'ticket', ticket: ticket.id, text: `${ticket.id} pre-merge gate passed (${verdict.mode})${train}: ${verdict.summary}` });

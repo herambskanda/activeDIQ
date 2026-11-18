@@ -2,7 +2,7 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: fitness-p2-oci gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci ci-fast ci-full gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly search-latency search-latency-pg16 search-latency-pg18 fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order fitness-group-member
+.PHONY: test-scale fitness-p2-oci gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci ci-fast ci-full gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly search-latency search-latency-pg16 search-latency-pg18 fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order fitness-group-member
 
 ci: ci-fast ci-full ## Everything a merge needs: see ci-fast and ci-full
 	@echo "make ci: passed"
@@ -49,6 +49,11 @@ test: test-go test-web ## Go and web unit tests
 
 test-go: web-install ## Go tests; package parallelism bounded (-p 3) because PG-backed packages each start an embedded PostgreSQL and starve under full parallelism (T-0550)
 	go test -count=1 -p 3 -timeout 30m ./...
+
+SCALE_TIMEOUT ?= 45m
+
+test-scale: ## T-2008: the opt-in scale job (ADIQ_SCALE_FULL=1): group_member_counts, closure fan-out budget and batch-2 reports at 25,000 objects on PostgreSQL 16 and 18, with its own timeout ($(SCALE_TIMEOUT)); not part of `make ci`, whose inventory run must stay under 400 s
+	ADIQ_SCALE_FULL=1 go test -count=1 -timeout $(SCALE_TIMEOUT) ./internal/directory/inventory -run 'Test_group_member_counts_at_scale|Test_group_closure_fanout_is_bounded|Test_reports_library_batch2_at_scale' -v
 
 test-web: web-install
 	npm --prefix web run --silent test
@@ -169,7 +174,7 @@ fitness-fuzz-nightly: ## T-0034: FF-SP5 nightly: every declared fuzz target for 
 	@mkdir -p $(SAFEPRIM_REPORTS)
 	go run ./tools/fitness/corpus -fuzz -nightly -parallel 4 -log $(SAFEPRIM_REPORTS)/fuzz.log
 
-fitness-nightly: fitness-fuzz-nightly fitness-oracles-lab fitness-search-nightly search-latency ## T-0034: the nightly job: FF-SP5 long fuzz, FF-SP6 Samba lab; the Windows rows are fitness-oracles-windows on the Windows lab (runbook safe-primitives-fitness.md)
+fitness-nightly: fitness-fuzz-nightly fitness-oracles-lab fitness-search-nightly search-latency test-scale ## T-0034, T-2008 (test-scale: inventory scale tests): the nightly job: FF-SP5 long fuzz, FF-SP6 Samba lab; the Windows rows are fitness-oracles-windows on the Windows lab (runbook safe-primitives-fitness.md)
 
 SEARCH_LATENCY_OUT ?= $(CURDIR)/factory/demos/evidence/T-1102
 

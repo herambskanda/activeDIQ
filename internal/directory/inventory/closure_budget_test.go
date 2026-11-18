@@ -27,6 +27,7 @@ func Test_closure_budget_is_the_declared_one(t *testing.T) {
 // each, their counts read Unknown and group_members says so. A change to the big group stays fast, the
 // outcome is the same when the groups are decided again, and room that frees up is used on the next refresh.
 func Test_group_closure_fanout_is_bounded(t *testing.T) {
+	requireScaleFull(t)
 	storetest.EachVersion(t, func(t *testing.T, s *storetest.Server) {
 		const users, k, rootBudget, connBudget = 600, 10, 1000, 2500
 		defer inventory.SetClosureBudget(rootBudget, connBudget)()

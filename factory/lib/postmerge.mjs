@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { FactoryError } from './errors.mjs';
 import {
-  addDetached, assertTreeIntact, dropWorktree, extractFindings, gateDir, newFindings, readLog, runLogged, runTag, scratchRoot,
+  addDetached, assertTreeIntact, dropWorktree, extractFindings, gateDir, gateEnv, newFindings, readLog, runLogged, runTag, scratchRoot,
 } from './premerge.mjs';
 
 export const POST_MERGE_VERIFY_DEFAULTS = Object.freeze({
@@ -91,7 +91,9 @@ export async function runPostMergeVerify(ctx, settings, mainSha, { signal } = {}
   const log = path.join(gateDir(ctx), `verify-${mainSha.slice(0, 12)}-${run}.log`);
   const identity = await addDetached(ctx, dir, mainSha);
   try {
-    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal });
+    // The gate's own Go build cache (T-2225): an entry evicted from the shared one mid-run would be reported
+    // as a new finding on main, and `raise_ticket` turns that into a P0.
+    const ran = await runLogged(settings.argv, dir, log, { timeoutMs: settings.timeout_minutes * 60_000, signal, env: gateEnv(ctx), timing: true });
     if (ran.aborted) throw new FactoryError(`post-merge verify: the run on ${mainSha.slice(0, 12)} was stopped (${log})`);
     if (ran.timedOut) throw new FactoryError(`post-merge verify: ${settings.argv.join(' ')} on ${mainSha.slice(0, 12)} timed out after ${settings.timeout_minutes} minutes (${log})`);
     assertTreeIntact(dir, identity, log);
