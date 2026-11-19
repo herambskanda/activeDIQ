@@ -1,0 +1,309 @@
+{
+  "id": "usr-11",
+  "version": 1,
+  "category": "users",
+  "title": "Attribute completeness",
+  "description": "Users with no value in a chosen attribute. The attribute is chosen from a closed list of registered columns, one preset each. An attribute the directory did not return reads as empty: Active Directory does not tell an empty attribute from one the sync account could not read.",
+  "dataset": "inventory.users",
+  "columns": [
+    "display_name",
+    "sam_account_name",
+    "domain",
+    "dn",
+    "mail",
+    "enabled"
+  ],
+  "sort": [
+    {
+      "column": "sam_account_name",
+      "dir": "asc"
+    }
+  ],
+  "caveats": [
+    "ou_path_is_dn",
+    "user_attribute_absent_or_unread"
+  ],
+  "presets": [
+    {
+      "id": "empty_mail",
+      "names": [
+        "Users With Empty Attributes"
+      ],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "mail",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "mail_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "mail",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_employee_id",
+      "names": [],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "employee_id",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "employee_id_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "employee_id",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_department",
+      "names": [],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "department",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "department_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "department",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_title",
+      "names": [],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "title",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "title_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "title",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_company",
+      "names": [],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "company",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "company_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "company",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_telephone_number",
+      "names": [],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "telephone_number",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "telephone_number_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "telephone_number",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_mobile",
+      "names": [],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "mobile",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "mobile_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "mobile",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_description",
+      "names": [],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "description",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "description_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "description",
+        "enabled"
+      ]
+    },
+    {
+      "id": "empty_manager",
+      "names": [],
+      "where": {
+        "and": [
+          {
+            "cmp": {
+              "col": "manager",
+              "op": "absent"
+            }
+          },
+          {
+            "cmp": {
+              "col": "manager_read_state",
+              "op": "eq",
+              "value": {
+                "enum": "not_observed"
+              }
+            }
+          }
+        ]
+      },
+      "columns": [
+        "display_name",
+        "sam_account_name",
+        "domain",
+        "dn",
+        "manager",
+        "enabled"
+      ]
+    }
+  ]
+}
