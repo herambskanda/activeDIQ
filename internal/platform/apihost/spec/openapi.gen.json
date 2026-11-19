@@ -3066,7 +3066,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportColumnInfo"
             },
-            "maxItems": 64,
+            "maxItems": 128,
             "type": "array"
           },
           "dataset": {

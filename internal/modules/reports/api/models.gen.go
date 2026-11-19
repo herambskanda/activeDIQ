@@ -1732,7 +1732,7 @@ func (v *ReportDefinition) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 		}
 	}
 	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 128, apitypes.CodeMaxItems)
 		for i := range v.Columns {
 			v.Columns[i].Validate(apitypes.Index(at.AppendToken("columns"), i), errs)
 		}

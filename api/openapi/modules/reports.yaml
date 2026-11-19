@@ -2747,7 +2747,7 @@ components:
             $ref: modules/reports.yaml#/components/schemas/ReportPreset
         columns:
           type: array
-          maxItems: 64
+          maxItems: 128
           items:
             $ref: modules/reports.yaml#/components/schemas/ReportColumnInfo
         exportFormats:
