@@ -22,6 +22,57 @@ sys.path.insert(0, os.path.join(REPO, "lab", "windows", "lib"))
 from dc1winrm import DC, load_env  # noqa: E402
 
 
+SETUP = r"""
+$ErrorActionPreference='Stop'
+$R='C:\lab\t1341'; $ACCT='NT SERVICE\diqT1341'
+sc.exe stop diqT1341 2>&1 | Out-Null; sc.exe delete diqT1341 2>&1 | Out-Null
+Remove-Item -Recurse -Force "$R\parent","$R\out" -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force "$R\parent","$R\out" | Out-Null
+sc.exe create diqT1341 binPath= "$R\dial.test.exe -test.run=NONE" start= demand obj= "$ACCT" | Out-Null
+sc.exe sidtype diqT1341 unrestricted | Out-Null
+# the trusted parent, as the installer makes it: protected, owner Administrators, service + SYSTEM + Administrators only
+icacls "$R\parent" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "${ACCT}:(OI)(CI)F" | Out-Null
+icacls "$R\out" /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "${ACCT}:(OI)(CI)M" | Out-Null
+icacls "$R" /grant "${ACCT}:(RX)" | Out-Null
+icacls "$R\dial.test.exe" /grant "${ACCT}:(RX)" | Out-Null
+'setup ok'
+"""
+
+RUNSVC = r"""
+$R='C:\lab\t1341'; $name='%(name)s'
+Remove-Item "$R\out\$name.txt" -ErrorAction SilentlyContinue
+sc.exe config diqT1341 binPath= "$R\dial.test.exe -test.run=^TestWindowsLabServiceSide$ -test.v -diq.out=$R\out\$name.txt -diq.dir=$R\parent\enrol" | Out-Null
+sc.exe start diqT1341 | Out-Null
+for($i=0;$i -lt 60;$i++){ Start-Sleep 1; if((sc.exe query diqT1341) -match 'STOPPED'){break} }
+if(Test-Path "$R\out\$name.txt"){ Get-Content "$R\out\$name.txt" } else { 'NO SERVICE OUTPUT'; sc.exe query diqT1341 }
+"""
+
+ELEVATED = r"""
+$id=[Security.Principal.WindowsIdentity]::GetCurrent(); $p=New-Object Security.Principal.WindowsPrincipal($id)
+"caller: $($id.Name)  elevated-admin: $($p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))"
+whoami /groups | Select-String 'Mandatory Label'
+"""
+
+GOTEST = r"""
+$R='C:\lab\t1341'
+& "$R\dial.test.exe" "-test.run=^%(test)s$" "-test.v" "-diq.account=NT SERVICE\diqT1341" "-diq.parent=$R\parent" 2>&1 | % { "$_" }
+"EXIT $LASTEXITCODE"
+"""
+
+REGRESSION = r"""
+# TestNoStoreOrSQL shells out to `go list`, and the DC has no Go toolchain: skipped here, run by `go test` on the build host.
+$R='C:\lab\t1341'
+foreach($t in 'ownerfile','dial'){ Push-Location $env:TEMP; & "$R\$t.test.exe" "-test.v" "-test.skip=^TestNoStoreOrSQL$" 2>&1 | % { "$_" } | Select-String -Pattern '^(--- FAIL|FAIL|PASS|ok)' | % { "${t}: $_" }; "$t EXIT $LASTEXITCODE"; Pop-Location }
+"""
+
+CLEAN = r"""
+$R='C:\lab\t1341'
+sc.exe stop diqT1341 2>&1 | Out-Null; sc.exe delete diqT1341 2>&1 | Out-Null
+Remove-Item -Recurse -Force $R -ErrorAction SilentlyContinue
+'cleaned'
+"""
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--log", required=True)
