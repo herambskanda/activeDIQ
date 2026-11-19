@@ -26,6 +26,7 @@ func (pending) GetReportRunRowDetail(context.Context, api.GetReportRunRowDetailI
 }
 
 var _ api.Handlers = (*Handlers)(nil)
+
 func (pending) GetReportReplicationThresholds(context.Context, api.GetReportReplicationThresholdsInput) (api.GetReportReplicationThresholdsOutput, error) {
 	return nil, apitypes.NotImplemented("not available yet (T-1744)")
 }
