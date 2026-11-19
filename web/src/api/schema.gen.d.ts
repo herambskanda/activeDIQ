@@ -121,6 +121,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The permission names the calling session holds
+         * @description Answers the names of the catalogue permissions the calling console session holds at tenant scope, sorted, so the console can hide navigation the session could not use (for example Reports without reports.run). Names only: no scope, role or grant detail. It is display only; every operation still authorises the request itself and stays the authority. Needs a cookie session and no permission beyond it. The answer is never cached. Additive to the preview auth plane.
+         */
+        get: operations["getSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/step-up": {
         parameters: {
             query?: never;
@@ -243,6 +263,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/directory/explorer/nodes/{objectGuid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get one Explorer node and its path
+         * @description One live container or object by objectGUID, with path: the admitted live ancestors ending at its parent, root first, so a deep link can expand the tree by GUID. If the parent is not admitted the node is itself a root and path is empty. A GUID that does not exist, is not live, is not an AD object or is not admitted by the caller's scope answers the same 404 with the same body (hidden is absent). connection_id picks one row in the transient case of a GUID live in two connections; without it ambiguous is true when two admitted live rows remained and the newest was chosen. No DN is returned.
+         */
+        get: operations["getExplorerNode"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/directory/explorer/nodes/{objectGuid}/children": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the children of an Explorer node
+         * @description One keyset page of the live children the caller's scope admits, containers first, then by name (byte order), then objectGuid. view=containers gives the tree level, view=all the table. Scope is applied before the limit, the more flag and hasChildren: none of them reveals what is hidden, except that each request examines at most 5,000 child rows, so a page can be short with more true; the cursor then continues from the last row examined. There is no total count. A cursor is opaque, bound to the node, view, sort position and the caller's scope; any mismatch is 400 with code cursor_invalid and reads nothing. A node that is missing, not live or not admitted answers 404 (hidden is absent). 503 when the request cannot finish in 2 seconds, generic and with a trace ID.
+         */
+        get: operations["listExplorerChildren"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/directory/explorer/roots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the Explorer roots
+         * @description The top of the AD Explorer tree for the caller (ADM-004, spec ad-explorer-read-api.md section 3). A root is a live container the caller's directory.read scope admits whose parent is absent, or is a live object the scope does not admit; a scoped technician's tree therefore starts at their scope roots and never names a hidden ancestor. Read from the inventory, not the live directory; AD connections only. Returns containers only, at most 500, with no cursor: when more exist, more is true and the console says to refine in Search. connection_id narrows to one connection. A connection the caller may not read is simply absent. 403 when the caller has no directory.read producer.
+         */
+        get: operations["listExplorerRoots"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/directory/search": {
         parameters: {
             query?: never;
@@ -322,6 +402,50 @@ export interface paths {
         get: operations["getReadiness"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/helpdesk/caller-verifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a verification code to the caller
+         * @description Sends a one-time code to the destination the directory holds for the target (email or SMS); the technician never supplies or sees an address, only a masked form. This is a user act, never made on page render. Opening the sheet again attaches to the technician's open challenge (reused true) and sends nothing; resend true is the only way to a second code and supersedes the first.
+         *     Idempotency-Key is required. A retry with the same key and body answers what the first attempt answered and sends nothing; the same key with a different body is refused 422 idempotency-key-reuse; a retry while the first request is still running is 409. Only a success is remembered, so a refused request is evaluated again on a retry.
+         *     Refusals. 422 caller-verification-unavailable is one answer, with identical status, body and timing class, for an unknown, disabled, out-of-scope, protected or self target and for a target with no held destination for the factor; it never says which. 429 caller-verification-limit with errors[].code quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges; try later). 502 caller-verification-delivery-failed when the message could not be sent: no code exists and the issue does not count. 429 rate-limited when the session or source address is over its limit. 403 for a token principal or a missing permission.
+         */
+        post: operations["issueCallerVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/helpdesk/caller-verifications/{challengeId}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the code the caller read back
+         * @description Checks the code against the challenge. Every attempt is charged before the code is compared, so three attempts at most are possible per challenge whatever the concurrency.
+         *     Every failure answers one 422 caller-verification-refused with the same status, body and timing class, whether the code was wrong, the attempts are used up, the challenge expired, was superseded or never existed, or belongs to another technician: a client cannot tell a wrong code from a cap. The code travels only in this body, never in a URL, and no response, log line or audit event repeats it.
+         *     Idempotency-Key is required. A retry with the same key and code replays the first answer, a pass or the refusal, and charges no second attempt; the same key with a different code is 422 idempotency-key-reuse.
+         */
+        post: operations["verifyCallerVerification"];
         delete?: never;
         options?: never;
         head?: never;
@@ -593,6 +717,46 @@ export interface paths {
          * @description Reads a page of the run's stored rows. Order is the run order, or sortBy with order, then the run order as the tie-break; the cursor is bound to the sort it was issued for and a cursor used with another sort is a 400. The total is the run's rowCount and is never a count over the rows. The result is stored and frozen (ADR-0010 rule 3): a page never reflects newer data. Cells of a derived state show unknown, never an inferred value (FR-09). Run-read gate (modules/reports.md 6.6, run.ReadAccess), in order: runner account equals the caller, otherwise 404; the run is not expired, otherwise 410 report-result-expired; the caller's current read scope fingerprint equals the one stored with the run, otherwise 409 with errors[].code scope_changed_rerun (the client creates a new run); the run has succeeded, otherwise 409 with errors[].code run_not_ready (queued or running) or run_failed (failed or cancelled, with the reason). The three 409 codes are separate and a client must branch on the code, not the status.
          */
         get: operations["listReportRunRows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/{runId}/rows/{rowKey}/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the detail of one change-history row of a run
+         * @description The docked detail of one row of a change-history run (USR-06, GRP-05, CMP-03, CTC-02, OU-02: spec reports-2-second-slice 4.1, design 2). The rows read carries no per-row detail; this read does, for the row whose rowKey (the object GUID) is given. The body is exactly one of five kinds, chosen by kind: edited, membership, credential, permissions, removed (the Deleted presets). Every kind carries when, object and actor; the fields beyond those are the kind's own and no kind carries a field of another. A value the history does not hold (no originating time because the change was only observed, a replication version that was not recorded, a restore status the connection account cannot read) is a typed unknown, never an empty string, 0 or a guess (FR-09). Names only: no kind carries an old or new value, a password or a security descriptor (spec rule 3). actor is notRecorded for a native change (spec rule 6, DM-18.I3) and activediq, with the principal and the operation, only for a change made through activeDIQ. Scope: the object is shown only when its recorded ancestry is in the caller's read scope, otherwise 404 (the existence of an object outside scope is not disclosed). For a membership row the member names are paged and trimmed to the caller's scope: membership.names is one page of the side chosen by side (added by default), and addedCount, removedCount, addedOutOfScope and removedOutOfScope are totals over the whole change, never over the page; members outside scope are counted, never named. The cursor is bound to this run, row and side. The run-read gate is that of listReportRunRows, in the same order: runner equals the caller, otherwise 404; not expired, otherwise 410 report-result-expired; scope fingerprint unchanged, otherwise 409 with errors[].code scope_changed_rerun; succeeded, otherwise 409 with errors[].code run_not_ready or run_failed. A rowKey that is not a row of the run, or whose run is not a change-history report, is a 404. The result is stored and frozen with the run (ADR-0010 rule 3). Read-only; the detail offers no restore (restore is 2b, ADM-098).
+         */
+        get: operations["getReportRunRowDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the caller's latest run of a report, for a Home widget
+         * @description Answers the one thing a Home widget needs (specs/home-report-widgets.md 3.2): the caller's own latest succeeded run of definitionId and presetId, or why there is none. It never creates a run. The runner is the caller, taken from the principal; no parameter names another account, so a schedule owned by someone else that delivers to the caller never makes a candidate and the caller sees never_run until they run it themselves. The latest succeeded run is preferred over a newer failed one; a newer queued or running run is reported as inFlight and the state is running. state is one of current, stale_data (current and the freshness state is stale: asOf and freshness.stale name the connections), scope_changed (the caller's read scope differs from the one the run was trimmed with: no rows and no count), expired (past expiresAt: no rows), running, failed (no earlier run is current; failure is on the run header), never_run, unavailable (the definition or preset is not in the library). With rows=10 and a current run, table holds the first 10 rows of the definition's widget-profile columns (at most 5), read through the run-read gate (run.ReadAccess, 6.6 checks 1 to 5); there is no second gate. rows is 0 or 10, anything else is a 400; rows=10 on a definition whose widget profile has no table view is a 400. The response never carries the digest, the parameters or the scope text; getReportRun answers those. asOf is the freshness watermark of the run and is the age to show; it is never called live.
+         */
+        get: operations["getLatestReportRun"];
         put?: never;
         post?: never;
         delete?: never;
@@ -953,6 +1117,36 @@ export interface components {
             password: components["schemas"]["SecretInput"];
             username: string;
         };
+        CallerVerificationChallenge: {
+            /** Format: uuid */
+            challengeId: string;
+            /** @description Where the code went, masked. The full address is never returned. */
+            destinationMasked: string;
+            /** Format: date-time */
+            expiresAt: string;
+            factor: components["schemas"]["CallerVerificationFactor"];
+            /** @description True when an open challenge was attached to, or this is a replay of an earlier identical request; nothing was sent now. */
+            reused: boolean;
+        };
+        /**
+         * @description How the caller was verified. Clients ignore values they do not know.
+         * @enum {string}
+         */
+        CallerVerificationFactor: "email_otp" | "sms_otp" | (string & {});
+        /**
+         * @description The factor a technician asks for. totp is reserved for the enrolment work and is not accepted until then.
+         * @enum {string}
+         */
+        CallerVerificationFactorSetting: "email_otp" | "sms_otp";
+        CallerVerified: {
+            /**
+             * Format: date-time
+             * @description Until when the challenge may authorise one reset or unlock for this target.
+             */
+            authorisedUntil: string;
+            /** Format: uuid */
+            challengeId: string;
+        };
         /** @description The health of one connection. Nothing here is a credential or an identity the connection binds as. */
         ConnectionHealth: {
             /** @description Domain controllers that answered the last probe. */
@@ -1114,6 +1308,79 @@ export interface components {
         DirectoryUserList: {
             items: components["schemas"]["DirectoryUser"][];
         };
+        /** @description One keyset page of admitted children. No count is returned. */
+        ExplorerChildren: {
+            /** Format: date-time */
+            asOf: string | null;
+            items: components["schemas"]["ExplorerEntry"][];
+            /** @description True when the page may not be the last, including a short page that stopped at the examination ceiling. */
+            more: boolean;
+            /** @description Pass back unchanged for the next page. Null on the last page. */
+            nextCursor: string | null;
+        };
+        /** @description One live AD object, the same shape in the tree and the table. Keyed by objectGuid; there is no DN. name is the RDN value (or the display name), never a path. parentGuid is the row's own parent read in the same statement as the row. */
+        ExplorerEntry: {
+            /** Format: uuid */
+            connectionId: string;
+            enabled: boolean | null;
+            /** @description For a container, whether an admitted live child exists; null for a leaf. */
+            hasChildren: boolean | null;
+            isContainer: boolean;
+            kind: components["schemas"]["ExplorerKind"];
+            name: string;
+            objectClass: string;
+            /** Format: uuid */
+            objectGuid: string;
+            /** Format: uuid */
+            parentGuid: string | null;
+            /** @description True for a Tier-0 object; the console disables write actions on it. */
+            readOnly: boolean;
+            /** @description Empty when absent. */
+            samAccountName: string;
+            /** @description True unless the inventory holds a classifier result saying otherwise (fails closed). */
+            tier0: boolean;
+            /** @description Empty when absent. */
+            upn: string;
+            /** Format: date-time */
+            whenChanged: string | null;
+        };
+        /**
+         * @description What the object is. Domain heads and built-in containers are other or container; isContainer, not kind, says whether it can hold children.
+         * @enum {string}
+         */
+        ExplorerKind: "ou" | "container" | "user" | "inetorgperson" | "group" | "computer" | "contact" | "gmsa" | "fsp" | "other" | (string & {});
+        /** @description One node, the admitted path to it, and the freshness of the inventory behind them. */
+        ExplorerNode: {
+            /** @description True when the GUID had more than one admitted live row and the newest was chosen. Absent otherwise. */
+            ambiguous?: boolean;
+            /** Format: date-time */
+            asOf: string | null;
+            node: components["schemas"]["ExplorerEntry"];
+            /** @description Admitted live ancestors ending at the node's parent, root first. Empty when the node is a root. */
+            path: components["schemas"]["ExplorerPathItem"][];
+        };
+        /** @description One admitted live ancestor, for the breadcrumb and for expanding the tree by GUID. */
+        ExplorerPathItem: {
+            name: string;
+            /** Format: uuid */
+            objectGuid: string;
+        };
+        /** @description The containers the caller's scope admits as tree roots, with the freshness of the inventory behind them. */
+        ExplorerRoots: {
+            /**
+             * Format: date-time
+             * @description The oldest last-sync time of the connections the caller may read. Null when nothing has synced yet.
+             */
+            asOf: string | null;
+            items: components["schemas"]["ExplorerEntry"][];
+            /** @description True when more than 500 roots exist; the console says to refine in Search. There is no cursor. */
+            more: boolean;
+        };
+        /**
+         * @description containers is the tree level (containers only); all is the table (every kind).
+         * @enum {string}
+         */
+        ExplorerView: "containers" | "all";
         /** @description A reference to a directory object by objectGUID. A DN is never a key. */
         GUIDRef: {
             /** Format: uuid */
@@ -1142,6 +1409,21 @@ export interface components {
          * @example 9007199254740993
          */
         Int64String: string;
+        IssueCallerVerificationRequest: {
+            /**
+             * Format: uuid
+             * @description The directory connection the caller's account belongs to.
+             */
+            connectionId: string;
+            factor: components["schemas"]["CallerVerificationFactorSetting"];
+            /**
+             * Format: uuid
+             * @description The caller's objectGUID. A DN is never accepted.
+             */
+            objectGuid: string;
+            /** @description True only for the explicit "Send a new code" act; it supersedes the open challenge. */
+            resend?: boolean;
+        };
         /** @description A long operation (bulk change). It reports progress and per-item results, and is resumable after a restart. */
         Job: {
             /** Format: date-time */
@@ -1273,7 +1555,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationTargetDirectory";
+            kind: "directory";
             /** Format: uuid */
             objectGuid: string | null;
         };
@@ -1283,7 +1565,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationTargetStore";
+            kind: "store";
             resource: string;
         };
         OperationUndoPlan: {
@@ -1301,14 +1583,14 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueAbsent";
+            kind: "absent";
         };
         OperationValueBoolean: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueBoolean";
+            kind: "boolean";
             value: boolean;
         };
         OperationValueInteger: {
@@ -1316,7 +1598,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueInteger";
+            kind: "integer";
             value: number;
         };
         OperationValueRedacted: {
@@ -1324,14 +1606,14 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueRedacted";
+            kind: "redacted";
         };
         OperationValueText: {
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueText";
+            kind: "text";
             value: string;
         };
         OperationValueTextList: {
@@ -1339,7 +1621,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueTextList";
+            kind: "textList";
             values: string[];
         };
         OperationValueTime: {
@@ -1347,7 +1629,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "OperationValueTime";
+            kind: "time";
             /** Format: date-time */
             value: string;
         };
@@ -1409,7 +1691,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellAbsent";
+            kind: "absent";
         };
         /** @description An object GUID or other GUID attribute, canonical lower-case. */
         ReportCellGuid: {
@@ -1417,7 +1699,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellGuid";
+            kind: "guid";
             /** Format: uuid */
             value: string;
         };
@@ -1427,7 +1709,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellInteger";
+            kind: "integer";
             value: string;
         };
         /** @description The value can never exist for this object, as distinct from absent (not yet set). In the SYS-01 policy columns it is the policy's own no-limit setting, read from 0 or the minimum signed 64-bit value by the 2a codec: in max_age it is "Never expires", in lockout_threshold "Never locks", in lockout_duration "Until an administrator unlocks". The column says which; no other policy column carries it. For a client that compares policies, such a cell is the loosest value of its column, not the smallest number: it is never an integer 0 and must not be ordered as one. */
@@ -1436,7 +1718,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellNever";
+            kind: "never";
         };
         /** @description Text as stored in the directory, which may hold any character. Encoders neutralise it on export. */
         ReportCellText: {
@@ -1444,7 +1726,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellText";
+            kind: "text";
             value: string;
         };
         /** @description A multi-valued text attribute, in stored order. */
@@ -1453,7 +1735,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellTextList";
+            kind: "textList";
             value: string[];
         };
         /** @description A derived state whose input is missing (Unknown (input missing)). */
@@ -1462,7 +1744,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportCellUnknown";
+            kind: "unknown";
         };
         /** @description One value of an enum column: a stable ID and its label. */
         ReportChoice: {
@@ -1527,6 +1809,7 @@ export interface components {
             presets: components["schemas"]["ReportPreset"][];
             subjectKind: string;
             version: number;
+            widget?: components["schemas"]["ReportWidgetProfile"];
         };
         /** @description A page of the library. */
         ReportDefinitionList: {
@@ -1561,6 +1844,60 @@ export interface components {
          * @enum {string}
          */
         ReportDeliveryStateValue: "none_yet" | "queued" | "sent" | "failed" | "given_up" | (string & {});
+        /** @description Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operation is the handle of the operation. */
+        ReportDetailActor: components["schemas"]["ReportDetailActorNotRecorded"] | components["schemas"]["ReportDetailActorActiveDiq"];
+        ReportDetailActorActiveDiq: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "activediq";
+            /** Format: uuid */
+            operation: string;
+            principal: string;
+        };
+        ReportDetailActorNotRecorded: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "notRecorded";
+        };
+        /** @description One attribute the change touched, with its name, the originating time and the replication version where recorded, each unknown where not. Never a value. */
+        ReportDetailAttribute: {
+            name: string;
+            originAt: components["schemas"]["ReportDetailTime"];
+            version: components["schemas"]["ReportDetailInteger"];
+        };
+        /**
+         * @description Where a time comes from. origin: the DC time of the change, from replication metadata (independent of the DC). observed: the time activeDIQ observed it. last_seen: the object as last observed before it left the feed.
+         * @enum {string}
+         */
+        ReportDetailBasisValue: "origin" | "observed" | "last_seen" | (string & {});
+        /** @description A whole number as a decimal string, or unknown when the history does not hold it. */
+        ReportDetailInteger: components["schemas"]["ReportCellInteger"] | components["schemas"]["ReportCellUnknown"];
+        /** @description The object the change is on. dn is the full distinguished name, an attribute of the object and never a key; the client addresses the object by objectGuid. For a removed row every field is as last seen by activeDIQ. logonName is absent for a kind without one (a group or OU). */
+        ReportDetailObject: {
+            dn: components["schemas"]["ReportDetailText"];
+            domain: string;
+            logonName: components["schemas"]["ReportDetailText"];
+            name: string;
+            /** Format: uuid */
+            objectGuid: string;
+            ouPath: components["schemas"]["ReportDetailText"];
+        };
+        /** @description Text, absent when the object has none, or unknown when it was not read. */
+        ReportDetailText: components["schemas"]["ReportCellText"] | components["schemas"]["ReportCellAbsent"] | components["schemas"]["ReportCellUnknown"];
+        /** @description An instant the history holds, or unknown when it does not. */
+        ReportDetailTime: components["schemas"]["ReportValueTime"] | components["schemas"]["ReportCellUnknown"];
+        /** @description When the change happened. changedAt is the originating time where the history holds one, else the observed time, and basis says which. observedAt is always the observation time. gapMinutes is the minutes between the previous observation and this one, unknown when there is no previous observation. observationBased is always true: several changes between two observations show as one. */
+        ReportDetailWhen: {
+            basis: components["schemas"]["ReportDetailBasisValue"];
+            changedAt: components["schemas"]["ReportDetailTime"];
+            gapMinutes: components["schemas"]["ReportDetailInteger"];
+            observationBased: boolean;
+            observedAt: components["schemas"]["ReportDetailTime"];
+        };
         /**
          * @description Why a succeeded run has no rows because of scope, as opposed to its filters. scope_grants_nothing: the runner's role covers no directory objects. unsupported_scope_kind: the role's scope uses a kind 2a reports cannot evaluate, so it grants nothing (fail closed).
          * @enum {string}
@@ -1628,7 +1965,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterCompare";
+            kind: "compare";
             operator: components["schemas"]["ReportCompareOperator"];
             value: components["schemas"]["ReportValue"];
         };
@@ -1639,7 +1976,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterConditionView";
+            kind: "condition";
             operator: components["schemas"]["ReportFilterOperatorValue"];
             values: components["schemas"]["ReportValue"][];
         };
@@ -1650,7 +1987,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterGroup";
+            kind: "group";
             match: components["schemas"]["ReportFilterMatch"];
         };
         /** @description Filters combined by match. */
@@ -1660,7 +1997,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterGroupView";
+            kind: "group";
             match: components["schemas"]["ReportFilterMatchValue"];
         };
         /** @description One column equal to any of up to 50 values. */
@@ -1670,7 +2007,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterIn";
+            kind: "in";
             values: components["schemas"]["ReportValue"][];
         };
         /**
@@ -1695,7 +2032,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterPresence";
+            kind: "presence";
             presence: components["schemas"]["ReportPresence"];
         };
         /** @description A time column relative to the start of the run. */
@@ -1706,7 +2043,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportFilterRelative";
+            kind: "relative_time";
             relation: components["schemas"]["ReportRelativeTime"];
         };
         /** @description A filter as the server stores it. A condition's column is a registry column ID. */
@@ -1743,6 +2080,54 @@ export interface components {
          * @enum {string}
          */
         ReportLastRunOutcome: "sent" | "nothing_to_send" | "partly_failed" | "failed" | (string & {});
+        /** @description The caller's latest run of one report for a widget. runId, asOf, rowCount, finishedAt and expiresAt describe the run the state names and are null for never_run and unavailable. rowCount is null when state is scope_changed, expired, failed or running without a current result. table is present only when rows=10 was asked and the state serves rows. inFlight is a newer queued or running run. failure is the reason of a failed run. */
+        ReportLatestRun: {
+            /** Format: date-time */
+            asOf: string | null;
+            /** Format: date-time */
+            expiresAt: string | null;
+            failure?: components["schemas"]["ReportFailure"];
+            /** Format: date-time */
+            finishedAt: string | null;
+            freshness?: components["schemas"]["ReportFreshness"];
+            inFlight?: components["schemas"]["ReportRunSummary"];
+            rowCount: number | null;
+            /** Format: uuid */
+            runId: string | null;
+            state: components["schemas"]["ReportLatestState"];
+            table?: components["schemas"]["ReportLatestTable"];
+        };
+        /**
+         * @description What a Home widget renders for the caller's latest run (specs/home-report-widgets.md 3.3).
+         * @enum {string}
+         */
+        ReportLatestState: "current" | "stale_data" | "scope_changed" | "expired" | "running" | "failed" | "never_run" | "unavailable" | (string & {});
+        /** @description The first rows of a current run in the columns of the definition's widget profile, in the profile's order. */
+        ReportLatestTable: {
+            columns: components["schemas"]["ReportColumnInfo"][];
+            rows: components["schemas"]["ReportRow"][];
+        };
+        /** @description One member added or removed, addressed by objectGUID. The name is the one last observed. */
+        ReportMembershipName: {
+            name: string;
+            /** Format: uuid */
+            objectGuid: string;
+        };
+        /** @description One page of in-scope member names of one side of a membership change, by name then objectGUID, stable. */
+        ReportMembershipNamePage: {
+            items: components["schemas"]["ReportMembershipName"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        /**
+         * @description Which side of a membership change to page. A closed request enum.
+         * @enum {string}
+         */
+        ReportMembershipSide: "added" | "removed";
+        /**
+         * @description Which side of a membership change a page of names is.
+         * @enum {string}
+         */
+        ReportMembershipSideValue: "added" | "removed" | (string & {});
         /** @description An exact ManageEngine report name and the preset that answers it (spec 6.2). */
         ReportMeName: {
             meName: string;
@@ -1781,7 +2166,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportPeriodLastDays";
+            kind: "last_days";
         };
         /** @description A custom range. */
         ReportPeriodRange: {
@@ -1791,7 +2176,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportPeriodRange";
+            kind: "range";
             /** Format: date-time */
             to: string;
         };
@@ -1919,7 +2304,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecipientAccount";
+            kind: "account";
         };
         /** @description An account recipient. */
         ReportRecipientAccountView: {
@@ -1932,7 +2317,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecipientAccountView";
+            kind: "account";
         };
         /** @description An e-mail address. Attachment only; a link is never offered for an address. An address outside the tenant's allowed recipient domains is external. */
         ReportRecipientEmail: {
@@ -1943,7 +2328,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecipientEmail";
+            kind: "email";
         };
         /** @description An e-mail recipient. external is judged against the allowed recipient domains now. */
         ReportRecipientEmailView: {
@@ -1956,7 +2341,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecipientEmailView";
+            kind: "email";
         };
         /** @description A recipient as stored. */
         ReportRecipientView: components["schemas"]["ReportRecipientAccountView"] | components["schemas"]["ReportRecipientEmailView"];
@@ -1969,7 +2354,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceCustomDays";
+            kind: "custom_days";
             /** Format: date-time */
             start: string;
         };
@@ -1980,7 +2365,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceCustomHours";
+            kind: "custom_hours";
             /** Format: date-time */
             start: string;
         };
@@ -1991,7 +2376,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceCustomMonths";
+            kind: "custom_months";
             /** Format: date-time */
             start: string;
         };
@@ -2002,7 +2387,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceCustomWeeks";
+            kind: "custom_weeks";
             /** Format: date-time */
             start: string;
         };
@@ -2012,7 +2397,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceDaily";
+            kind: "daily";
             time: string;
         };
         /** @description Every n hours at the given minute. */
@@ -2022,7 +2407,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceHourly";
+            kind: "hourly";
             minute: number;
         };
         /** @description On a day of the month at a local time. A month without the day runs on its last day. */
@@ -2032,7 +2417,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceMonthlyDay";
+            kind: "monthly_day";
             time: string;
         };
         /** @description On the last day of every month at a local time. */
@@ -2041,7 +2426,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceMonthlyLastDay";
+            kind: "monthly_last_day";
             time: string;
         };
         /** @description On weekdays (1 Monday to 7 Sunday) at a local time. */
@@ -2050,7 +2435,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportRecurrenceWeekly";
+            kind: "weekly";
             time: string;
             weekdays: number[];
         };
@@ -2059,10 +2444,111 @@ export interface components {
          * @enum {string}
          */
         ReportRelativeTime: "within_last" | "within_next" | "older_than";
+        /**
+         * @description What is known of a removed object. removed_restore_unknown: it left the feed, and whether it is a restorable tombstone, recycled or purged is not readable by the connection account and is never guessed from elapsed time.
+         * @enum {string}
+         */
+        ReportRestoreStateValue: "removed_restore_unknown" | (string & {});
+        /**
+         * @description Why the restore status is unknown. deleted_objects_not_readable: the connection account is least-privilege and cannot read CN=Deleted Objects; noSuchObject there is not proof the tombstone expired (spec rule 7).
+         * @enum {string}
+         */
+        ReportRestoreUnknownReasonValue: "deleted_objects_not_readable" | (string & {});
         /** @description One row of a stored result. rowKey is the object GUID or edge key; cells follow the page's columns. */
         ReportRow: {
             cells: components["schemas"]["ReportCell"][];
             rowKey: string;
+        };
+        /** @description The detail of one change-history row, exactly one of five kinds. A client branches on kind and on nothing else. */
+        ReportRowDetail: components["schemas"]["ReportRowDetailEdited"] | components["schemas"]["ReportRowDetailMembership"] | components["schemas"]["ReportRowDetailCredential"] | components["schemas"]["ReportRowDetailPermissions"] | components["schemas"]["ReportRowDetailRemoved"];
+        /** @description A credential event: a password was changed or reset, recognised from replication metadata. It carries no value and no attribute list beyond the fact (spec rule 2). */
+        ReportRowDetailCredential: {
+            actor: components["schemas"]["ReportDetailActor"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "credential";
+            object: components["schemas"]["ReportDetailObject"];
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            when: components["schemas"]["ReportDetailWhen"];
+        };
+        /** @description An edit (also a created, moved or renamed change, whose attributes are the ones it touched). attributes are names with originating time and version; valuesRecorded is always false (names only, old and new values are not recorded). */
+        ReportRowDetailEdited: {
+            actor: components["schemas"]["ReportDetailActor"];
+            attributes: components["schemas"]["ReportDetailAttribute"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "edited";
+            object: components["schemas"]["ReportDetailObject"];
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            valuesRecorded: boolean;
+            when: components["schemas"]["ReportDetailWhen"];
+        };
+        /** @description A membership change of a group. The four counts are totals over the whole change in the caller's scope or outside it; names is one page of the side asked for. A member outside the caller's scope is counted in addedOutOfScope or removedOutOfScope and never named. */
+        ReportRowDetailMembership: {
+            actor: components["schemas"]["ReportDetailActor"];
+            addedCount: number;
+            addedOutOfScope: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "membership";
+            names: components["schemas"]["ReportMembershipNamePage"];
+            object: components["schemas"]["ReportDetailObject"];
+            removedCount: number;
+            removedOutOfScope: number;
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            side: components["schemas"]["ReportMembershipSideValue"];
+            when: components["schemas"]["ReportDetailWhen"];
+        };
+        /** @description A permissions change, recognised from the replication metadata of nTSecurityDescriptor. descriptorRead is always false: no descriptor was read or compared, so the change cannot be told from inheritance or SDProp propagation (spec rule 2). */
+        ReportRowDetailPermissions: {
+            actor: components["schemas"]["ReportDetailActor"];
+            descriptorRead: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "permissions";
+            object: components["schemas"]["ReportDetailObject"];
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            when: components["schemas"]["ReportDetailWhen"];
+        };
+        /** @description A row of a Deleted preset. deletedAt is the time activeDIQ first observed the object gone and means on or before that time (onOrBefore is always true; no DC time is shown for a deletion that was not read). object is as last seen by activeDIQ. state and restorableUntil are the restore-status fields; restorableUntil is always the typed unknown (a time is never shown, because the connection account cannot read it and elapsed time is no proof) with restoreUnknownReason saying why; a later read that can know it is an additive change. There is no restore link in this read. */
+        ReportRowDetailRemoved: {
+            actor: components["schemas"]["ReportDetailActor"];
+            deletedAt: components["schemas"]["ReportDetailTime"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "removed";
+            object: components["schemas"]["ReportDetailObject"];
+            onOrBefore: boolean;
+            restorableUntil: components["schemas"]["ReportCellUnknown"];
+            restoreUnknownReason: components["schemas"]["ReportRestoreUnknownReasonValue"];
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            state: components["schemas"]["ReportRestoreStateValue"];
+            when: components["schemas"]["ReportDetailWhen"];
         };
         /** @description A page of a stored result. rowCount is the run's total after trimming. */
         ReportRowPage: {
@@ -2114,6 +2600,8 @@ export interface components {
             definitionVersion?: number;
             parameters?: components["schemas"]["ReportRunParameters"];
             presetId?: string;
+            /** @description The runner's IANA time zone, such as Europe/Berlin. PDF and HTML exports of the run show Time cells in it, with the zone abbreviation. Absent means UTC. It does not change the run's rows or digest. */
+            timeZone?: string;
         };
         /** @description A page of the caller's runs, newest first. */
         ReportRunList: {
@@ -2296,7 +2784,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueBoolean";
+            kind: "boolean";
             value: boolean;
         };
         /** @description A stable ID from the column's choices, such as enabled or never_account_flag. The server checks it against the column. */
@@ -2305,7 +2793,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueEnum";
+            kind: "enum";
             value: string;
         };
         /** @description A whole number. */
@@ -2314,7 +2802,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueInteger";
+            kind: "integer";
             value: number;
         };
         /** @description Text compared literally. Control characters are refused. */
@@ -2323,7 +2811,7 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueText";
+            kind: "text";
             value: string;
         };
         /** @description An instant, RFC 3339. */
@@ -2332,10 +2820,17 @@ export interface components {
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            kind: "ReportValueTime";
+            kind: "time";
             /** Format: date-time */
             value: string;
         };
+        /** @description The views a Home widget may render for the report (specs/home-report-widgets.md 3.1). count is always allowed and is listed. tableColumns are the at most 5 columns of the table view, in order, and are empty unless views holds table. trend plots the run's row count only. A definition without this member supports the count view only. */
+        ReportWidgetProfile: {
+            tableColumns: string[];
+            views: components["schemas"]["ReportWidgetView"][];
+        };
+        /** @enum {string} */
+        ReportWidgetView: "count" | "table" | "trend" | (string & {});
         /** @description Input of delegation.role.create. The caller chooses roleId, so a retry is the same role. A role is never deleted; empty it with delegation.role.update. */
         RoleCreate: {
             name: string;
@@ -2351,6 +2846,11 @@ export interface components {
         };
         /** @description A secret a client sends: a password, a token. It is write-only, never appears in a response, and is held in memory only as a secret.Secret that is destroyed after the request. */
         SecretInput: string;
+        /** @description What the calling session may do, as permission names only. */
+        SessionInfo: {
+            /** @description The catalogue permission names the session holds at tenant scope, sorted. Display only. */
+            permissions: string[];
+        };
         /** @description The one-time setup secret and the details of the first tenant owner. */
         SetupClaimRequest: {
             owner: components["schemas"]["SetupOwner"];
@@ -2441,6 +2941,10 @@ export interface components {
         TotpCodeRequest: {
             code: components["schemas"]["SecretInput"];
         };
+        /** @description The six digits the caller read back, held as a secret and destroyed after the request. */
+        VerifyCallerVerificationRequest: {
+            code: components["schemas"]["SecretInput"];
+        };
         /** @description The authenticator's assertion, each field base64url (RFC 4648 section 5) without padding. */
         WebAuthnAssertion: {
             authenticatorData: string;
@@ -2474,6 +2978,78 @@ export interface components {
         WebAuthnUserVerification: "required" | "preferred" | "discouraged" | (string & {});
     };
     responses: {
+        /** @description The code could not be delivered. No code exists, none is shown and the issue does not count against the limits. */
+        CallerVerificationDeliveryFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 502,
+                 *       "title": "The code could not be delivered",
+                 *       "type": "/problems/caller-verification-delivery-failed"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description A caller-verification limit was reached. errors[].code is quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges). */
+        CallerVerificationLimit: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "errors": [
+                 *         {
+                 *           "code": "quota",
+                 *           "detail": "The hourly limit of codes for this caller or technician is reached.",
+                 *           "in": "body",
+                 *           "pointer": "/"
+                 *         }
+                 *       ],
+                 *       "status": 429,
+                 *       "title": "The verification limit was reached",
+                 *       "type": "/problems/caller-verification-limit"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The verification was refused. One answer for a wrong code, used-up attempts, an expired, superseded, unknown or foreign challenge; it never says which and never repeats the code. */
+        CallerVerificationRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 422,
+                 *       "title": "The verification was refused",
+                 *       "type": "/problems/caller-verification-refused"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The caller cannot be verified. One answer for an unknown, disabled, out-of-scope, protected or own target and for a target with no held destination; it never says which. */
+        CallerVerificationUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 422,
+                 *       "title": "This caller cannot be verified",
+                 *       "type": "/problems/caller-verification-unavailable"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description The object already exists or the request conflicts */
         Conflict: {
             headers: {
@@ -2549,6 +3125,49 @@ export interface components {
                  *       "status": 503,
                  *       "title": "The directory is unavailable",
                  *       "type": "/problems/directory-unavailable"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The paging parameters cannot be used. errors[].code says why: cursor_invalid (bad, forged or mismatched cursor: a cursor from another node, view or scope; nothing is read), or a malformed limit or view. No DN or cursor content is echoed. */
+        ExplorerCursorInvalid: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "errors": [
+                 *         {
+                 *           "code": "cursor_invalid",
+                 *           "detail": "The cursor cannot be used. Start again from the first page.",
+                 *           "in": "query",
+                 *           "pointer": "cursor"
+                 *         }
+                 *       ],
+                 *       "status": 400,
+                 *       "title": "The paging parameters cannot be used",
+                 *       "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+                 *       "type": "/problems/explorer-query-invalid"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description Explorer could not finish in time */
+        ExplorerUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "detail": "The directory is busy. Try again.",
+                 *       "status": 503,
+                 *       "title": "The directory is busy",
+                 *       "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+                 *       "type": "/problems/explorer-unavailable"
                  *     }
                  */
                 "application/problem+json": components["schemas"]["Problem"];
@@ -3002,6 +3621,10 @@ export interface components {
         };
     };
     parameters: {
+        /** @description The challenge returned by issueCallerVerification. */
+        CallerVerificationChallengeId: string;
+        /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
+        CallerVerificationKey: string;
         /** @description The Entra connection. */
         ConnectionId: string;
         /** @description Only reports of this category. */
@@ -3014,12 +3637,18 @@ export interface components {
         DefinitionVersion: number;
         /** @description The destination. */
         DestinationId: string;
+        /** @description Narrows to one AD connection. */
+        ExplorerConnectionId: string;
+        /** @description The objectGUID of the container or object. A DN is never accepted. */
+        ExplorerObjectGuid: string;
         /** @description The export. */
         ExportId: string;
         /** @description Makes a mutating bulk call safe to retry. The same key with a different body is refused. */
         IdempotencyKey: string;
         /** @description The ETag of the version being changed; a stale value answers precondition-failed. */
         IfMatch: string;
+        /** @description Which side of a membership change the names are paged from. Absent is added. Ignored for a row that is not a membership change. */
+        MembershipSide: components["schemas"]["ReportMembershipSide"];
         /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
         OperationId: string;
         /** @description The nextCursor of the previous page. */
@@ -3032,6 +3661,8 @@ export interface components {
         RequiredIdempotencyKey: string;
         /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
         RequiredIfMatch: string;
+        /** @description The rowKey of a row of the run; for a change-history run, the object's GUID. */
+        RowKey: string;
         /** @description Only runs of this report definition. */
         RunDefinitionFilter: string;
         /** @description The run. */
@@ -3229,6 +3860,30 @@ export interface operations {
             501: components["responses"]["NotImplemented"];
         };
     };
+    getSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The permission names this session holds. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionInfo"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            501: components["responses"]["NotImplemented"];
+        };
+    };
     reverifyStepUp: {
         parameters: {
             query?: never;
@@ -3417,6 +4072,186 @@ export interface operations {
             500: components["responses"]["Internal"];
         };
     };
+    getExplorerNode: {
+        parameters: {
+            query?: {
+                /** @description Narrows to one AD connection. */
+                connection_id?: components["parameters"]["ExplorerConnectionId"];
+            };
+            header?: never;
+            path: {
+                /** @description The objectGUID of the container or object. A DN is never accepted. */
+                objectGuid: components["parameters"]["ExplorerObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The node, its path and the freshness of the inventory behind it */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "asOf": "2026-11-14T09:11:04Z",
+                     *       "node": {
+                     *         "connectionId": "0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64",
+                     *         "enabled": null,
+                     *         "hasChildren": true,
+                     *         "isContainer": true,
+                     *         "kind": "ou",
+                     *         "name": "Staff",
+                     *         "objectClass": "organizationalUnit",
+                     *         "objectGuid": "8a4e6f10-2c9b-4d35-b7e1-3f5a6b7c8d90",
+                     *         "parentGuid": "5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d",
+                     *         "readOnly": false,
+                     *         "samAccountName": "",
+                     *         "tier0": false,
+                     *         "upn": "",
+                     *         "whenChanged": "2026-11-10T08:02:51Z"
+                     *       },
+                     *       "path": [
+                     *         {
+                     *           "name": "corp",
+                     *           "objectGuid": "5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ExplorerNode"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            501: components["responses"]["NotImplemented"];
+            503: components["responses"]["ExplorerUnavailable"];
+        };
+    };
+    listExplorerChildren: {
+        parameters: {
+            query?: {
+                /** @description Narrows to one AD connection. */
+                connection_id?: components["parameters"]["ExplorerConnectionId"];
+                /** @description The nextCursor of the previous page, with the same node, view and connection_id. */
+                cursor?: string;
+                /** @description The page size. 100 when absent. */
+                limit?: number;
+                /** @description containers (the default) answers the tree level; all answers every kind, for the table. */
+                view?: components["schemas"]["ExplorerView"];
+            };
+            header?: never;
+            path: {
+                /** @description The objectGUID of the container or object. A DN is never accepted. */
+                objectGuid: components["parameters"]["ExplorerObjectGuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of admitted children */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "asOf": "2026-11-14T09:11:04Z",
+                     *       "items": [
+                     *         {
+                     *           "connectionId": "0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64",
+                     *           "enabled": true,
+                     *           "hasChildren": null,
+                     *           "isContainer": false,
+                     *           "kind": "user",
+                     *           "name": "Pat Example",
+                     *           "objectClass": "user",
+                     *           "objectGuid": "3f9c1e52-7a4b-4d0e-9b1a-0c5e8d2a6f10",
+                     *           "parentGuid": "8a4e6f10-2c9b-4d35-b7e1-3f5a6b7c8d90",
+                     *           "readOnly": false,
+                     *           "samAccountName": "pexample",
+                     *           "tier0": false,
+                     *           "upn": "pexample@corp.example.test",
+                     *           "whenChanged": "2026-11-09T13:20:00Z"
+                     *         }
+                     *       ],
+                     *       "more": true,
+                     *       "nextCursor": "Y3Vyc29yLTAxLW9wYXF1ZS1leGFtcGxl"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ExplorerChildren"];
+                };
+            };
+            400: components["responses"]["ExplorerCursorInvalid"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            501: components["responses"]["NotImplemented"];
+            503: components["responses"]["ExplorerUnavailable"];
+        };
+    };
+    listExplorerRoots: {
+        parameters: {
+            query?: {
+                /** @description Narrows to one AD connection. */
+                connection_id?: components["parameters"]["ExplorerConnectionId"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The roots the caller's scope admits */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "asOf": "2026-11-14T09:11:04Z",
+                     *       "items": [
+                     *         {
+                     *           "connectionId": "0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64",
+                     *           "enabled": null,
+                     *           "hasChildren": true,
+                     *           "isContainer": true,
+                     *           "kind": "other",
+                     *           "name": "corp",
+                     *           "objectClass": "domainDNS",
+                     *           "objectGuid": "5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d",
+                     *           "parentGuid": null,
+                     *           "readOnly": true,
+                     *           "samAccountName": "",
+                     *           "tier0": true,
+                     *           "upn": "",
+                     *           "whenChanged": "2026-11-12T16:40:11Z"
+                     *         }
+                     *       ],
+                     *       "more": false
+                     *     }
+                     */
+                    "application/json": components["schemas"]["ExplorerRoots"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+            501: components["responses"]["NotImplemented"];
+            503: components["responses"]["ExplorerUnavailable"];
+        };
+    };
     searchDirectory: {
         parameters: {
             query?: never;
@@ -3522,6 +4357,82 @@ export interface operations {
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
             503: components["responses"]["NotReady"];
+        };
+    };
+    issueCallerVerification: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
+                "Idempotency-Key": components["parameters"]["CallerVerificationKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueCallerVerificationRequest"];
+            };
+        };
+        responses: {
+            /** @description The challenge the technician sees. It never carries the code. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallerVerificationChallenge"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["CallerVerificationUnavailable"];
+            429: components["responses"]["CallerVerificationLimit"];
+            500: components["responses"]["Internal"];
+            502: components["responses"]["CallerVerificationDeliveryFailed"];
+        };
+    };
+    verifyCallerVerification: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
+                "Idempotency-Key": components["parameters"]["CallerVerificationKey"];
+            };
+            path: {
+                /** @description The challenge returned by issueCallerVerification. */
+                challengeId: components["parameters"]["CallerVerificationChallengeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyCallerVerificationRequest"];
+            };
+        };
+        responses: {
+            /** @description The caller is verified. The challenge may authorise one reset or unlock until authorisedUntil. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallerVerified"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["CallerVerificationRefused"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
         };
     };
     listSiemDestinations: {
@@ -4066,6 +4977,78 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             410: components["responses"]["ReportResultExpired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getReportRunRowDetail: {
+        parameters: {
+            query?: {
+                /** @description The nextCursor of the previous page. */
+                cursor?: components["parameters"]["PageCursor"];
+                /** @description The page size. */
+                limit?: components["parameters"]["PageLimit"];
+                /** @description Which side of a membership change the names are paged from. Absent is added. Ignored for a row that is not a membership change. */
+                side?: components["parameters"]["MembershipSide"];
+            };
+            header?: never;
+            path: {
+                /** @description The rowKey of a row of the run; for a change-history run, the object's GUID. */
+                rowKey: components["parameters"]["RowKey"];
+                /** @description The run. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The detail of the row */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRowDetail"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["ReportResultExpired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getLatestReportRun: {
+        parameters: {
+            query: {
+                /** @description The report definition. */
+                definitionId: string;
+                /** @description The preset; absent means the definition's default preset. */
+                presetId?: string;
+                /** @description 0 (the default) answers the header only; 10 adds the first 10 rows of the widget table. */
+                rows?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The latest run state for the widget */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportLatestRun"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
         };

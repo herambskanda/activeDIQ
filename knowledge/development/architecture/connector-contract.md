@@ -600,7 +600,13 @@ as Basis *Default*. That breaks rule 10. So:
   is safe. A missing deny-carrying SID gives a false *Yes*, and so a false `NOT_CONFIGURED`. T-1741
   exports that set as `TokenSet {IdentityGUID, DomainSID, Epoch, SIDs, Complete}`: the identity's
   `objectSid`, its `tokenGroups`, the implicit SIDs and its `sIDHistory`, recorded with the newest
-  clean rights check (§8.4). The principal is built from it with `WithObjectSID(target objectSid)`,
+  clean rights check (§8.4). **As built (T-1741):** `rights.TokenSet` is recorded by
+  `EpochState.CompleteWithTokens` only when the run's verdict is PASS, and `EpochState.TokenSet() (TokenSet, ok)`
+  returns a copy; `Epoch` is the run's `verification_id`. `ok` is false before any run in this process (the set is in
+  memory only, like the gate), after a run that did not pass, and after a failed `Complete`. `Complete` is
+  false when the domain SID cannot be derived, `tokenGroups` came back empty or a `sIDHistory` value did not decode.
+  `rights.PrincipalFromTokenSet(ts)` returns an `sd.Principal` that is Incomplete unless `Complete`. The
+  principal gets `WithObjectSID(target objectSid)`,
   so PRINCIPAL_SELF ACEs apply. The proof uses it only when **all** of these hold, and otherwise
   answers `readability_unknown`:
   1. The identity that bound this session (its object GUID) is the rights check's `IdentityGUID`.
@@ -614,6 +620,10 @@ as Basis *Default*. That breaks rule 10. So:
      A forest that puts `userParameters` in the filtered set (`searchFlags` 0x200) already makes it a
      SecretAttr (§3.7, `internal/connector/ad/secrets.go`). This condition covers a schema snapshot
      older than the RODC's set.
+- **Lab record (T-1762, Samba AD 4.x):** a live `sIDHistory` on the identity is in `TokenSet` (`TestLabADTokenSetSIDHistory`).
+  Samba's `tokenGroups` does **not** hold the `sIDHistory` of a group the user belongs to, and the exported set
+  does not either. Windows result for the same case, and `tokenGroups` vs the real access token, is **not yet
+  recorded** `[LAB: Windows]` (follow-up ticket); T-1763 item 2 must not treat Samba as proof for Windows.
 - **The answer maps to a state:**
   - `Yes`, not `Incomplete` and not `Anomalous`: `NOT_CONFIGURED`, `blob_reason: absent`.
   - `No`: `NOT_CONFIRMED`, `read_denied`.
@@ -2196,7 +2206,7 @@ policy-hints control, the `lockoutTime` and `userAccountControl` modify forms or
 semantics; those are `[UNVERIFIED]` until the Windows-lab ticket for CC-WK-19, 21, 24 and 26 runs.
 
 **Kinds 11 to 13 as built (T-1913, directory-engineer, 2026-11-13).** Operation-table rows and `kindTable` rows are wired together.
-- Kinds 11 and 12 live in `internal/connector/write/kinds_group.go`; their digest codec is `writechange` (`ad.group.addMember`, `ad.group.removeMember`; attributes `~member` = the member's objectGUID as canonical text and `~memberClass`; the target is the group and carries no class). They run through `ad.Tx`: two base-scope GUID reads (group: `objectClass`, `objectSid`, `groupType`, `tokenGroups`, `adminCount`; member: `objectClass`, `objectSid`, `primaryGroupID`, `memberOf`, `adminCount`), one `ModifyRequest` built by `ops.ModifyObject` (`add` or `delete` of the one member value, addressed `<GUID=group>`), and a read-after-write on the same DC. The group's `member` is never read. `state_digest` is `{group objectSid, groupType, group adminCount, member objectSid, member class, member parent DN, member adminCount}`; Tier-0 facts are not hashed because the guard re-reads them at step 7 on Apply (`TIER0_REFUSED` is the stronger answer), and the member's parent is hashed as its DN rather than its GUID (a rename of the parent OU fails the compare and re-plans, the conservative direction). `CrossDomainMemberUnsupported` compares the `DC=` suffix of the two DNs. A DC `unwillingToPerform` is `GroupScopeRule`; `attributeOrValueExists`/`noSuchAttribute` re-reads the member and answers `ALREADY_APPLIED` or `TARGET_CHANGED`.
+- Kinds 11 and 12 live in `internal/connector/write/kinds_group.go`; their digest codec is `writechange` (`ad.group.addMember`, `ad.group.removeMember`; attributes `~member` = the member's objectGUID as canonical text and `~memberClass`; the target is the group and the **digest carries no class**). **Amended (T-2214, ADR-0017, 2026-11-16):** `WriteOp.Target.Class` for kinds 11 and 12 must be empty or exactly `group`; the value is the kernel's authz class (`Descriptor.TargetClass=group`, GM1 text-identity) and is an unhashed assertion, never put on the wire or in the digest. The connector's live `objectClass` read of the group is the enforcement. Fitness GM5. They run through `ad.Tx`: two base-scope GUID reads (group: `objectClass`, `objectSid`, `groupType`, `tokenGroups`, `adminCount`; member: `objectClass`, `objectSid`, `primaryGroupID`, `memberOf`, `adminCount`), one `ModifyRequest` built by `ops.ModifyObject` (`add` or `delete` of the one member value, addressed `<GUID=group>`), and a read-after-write on the same DC. The group's `member` is never read. `state_digest` is `{group objectSid, groupType, group adminCount, member objectSid, member class, member parent DN, member adminCount}`; Tier-0 facts are not hashed because the guard re-reads them at step 7 on Apply (`TIER0_REFUSED` is the stronger answer), and the member's parent is hashed as its DN rather than its GUID (a rename of the parent OU fails the compare and re-plans, the conservative direction). `CrossDomainMemberUnsupported` compares the `DC=` suffix of the two DNs. A DC `unwillingToPerform` is `GroupScopeRule`; `attributeOrValueExists`/`noSuchAttribute` re-reads the member and answers `ALREADY_APPLIED` or `TARGET_CHANGED`.
 - Kind 13 is a fifth `accountkind` spec (`ad.computer.resetAccount`, class computer, rights family R5): `accountOp` is reused with its own `state_digest` (`{uSNChanged, pwdLastSet, userAccountControl, objectSid}`), preview (`pwdLastSet`, `lastLogonTimestamp`, `userAccountControl`, `operatingSystem`), `ClusterObject` test (SPN class `MSServerClusterMgmtAPI` or `MSClusterVirtualServer`) and sender `resetComputer`, which checks the verified-TLS proof first and only then draws 128 printable characters from `crypto/rand` (rejection sampling) and sends `replace unicodePwd` through the kind 7 sender without `pwdLastSet`. `ad.AccountState` gains `LastLogonTS`, `OperatingSystem` and `SPNs`, read for every account kind.
 - **Not done here, and why.** `guarded.ComputerReset()` and the `[object class]` key of the `guarded-v1` table (B1, B3, B4, GM3) have no code to extend: no `internal/directory/guarded` package exists in the tree. Follow-up T-1925 (backend-engineer) filed. The CC-WK-45..62 S cases are written as unit cases over a fake `groupTx` and the real refusal, digest and request code (`kinds_group_test.go`, `account_computer_test.go`); the lab (`-tags lab`) cases were not run because this worktree has no Docker, so the Samba proof of CC-WK-45..48, 50..53, 55..57 and 62 is still owed and T-1926 (test-engineer) carries the lab run and the Windows cases CC-WK-47, 51, 56 (ghost), 57, 58 and 59.
 - **Samba lab run (T-1913, `groupkinds_lab_test.go`, `-tags lab`).** Passed on Samba: CC-WK-45, 46, 48, 49, 53, 54, 55, 56 (remove race and Tier-0 nesting between Plan and Apply), 47 (Domain Admins, Account Operators, nested group), 52 (1,600-member group, unrelated membership change between Plan and Apply), 57 (`pwdLastSet` advances, `SecretInputMismatch`), 58 (user and contact target `ClassNotAllowed`; a DC target `TIER0_REFUSED` when `CN=DC1` exists). The lab found a bug fixed here: a contact has no `objectSid`, so the member read refused every contact member. **Not provable on Samba:** `NestingCycle` (Samba returns no `tokenGroups` for a group object) and `GroupScopeRule` (Samba's LDAP path accepts a domain-local group in a global group); both are unit cases and are Windows-lab cases for T-1926. Not run: CC-WK-59 (W), the proxy-log assertions of CC-WK-45/52, CC-WK-61 retry, CC-WK-62 dynamic-group guard, the old-machine-password secure-channel bind of CC-WK-57.
@@ -2790,6 +2800,27 @@ session, same DC) and calls `DACLWrite.VerifyAfter` (SD-R10). A mismatch is `sd.
 User-Change-Password deny ACEs for Everyone and SELF; four states, see safe-primitives-security-descriptor
 §14). The state is `NotConfirmed` exactly when the error is non-nil; the sync records "Not confirmed" and
 continues. One base read per user: `nTSecurityDescriptor` is not searchable in bulk (`constructedReadOnly`).
+
+### As served to the sync (T-1551)
+
+`ReadRequest.include_password_change` (field 17) asks for `ReadHeader.password_change`, a
+`PasswordChangeVerdict{state, object_guid, error_code}`. The connector classifies; **no descriptor byte
+crosses the contract**. A failed, withheld, malformed or out-of-order descriptor is not an error of the
+call: it is `state = NOT_CONFIRMED` with a fixed `error_code` (`read.PasswordChanger` is an optional
+`Source` half; without it the code is `CAPABILITY_UNSUPPORTED`). The AD sync (`directory/sync`,
+`engine_pwchange.go`) asks once per live `user`/`inetOrgPerson` of the main pass, pinned to the DC of the
+pre-scan, and stores `password_change_state` + `password_change_at` for **every** such user:
+
+- any failure (transport, status, no verdict, second header, `NOT_CONFIRMED`) stores `not_confirmed`
+  *with* the as-of time, never the previous value and never `no_deny_ace`;
+- a verdict whose `object_guid` is not the observed object (or a definite state without one) is refused
+  the same way, so a foreign state is never stored for the object;
+- the report counts outcomes by fixed key (`DomainReport.PasswordChange`) and the domain log line carries
+  `password_change.<outcome>` counts with the connector's error-code name, no descriptor and no message.
+
+Cost: one extra Read per user per full read, sequential in the main pass. A bounded-concurrency read is a
+follow-up. Samba proves the mechanics and the decode of what it stores; the Windows ACE shape and ACL
+ordering remain a Windows-lab test (T-1484).
 
 ## User search path (T-0669, walking skeleton 2/4)
 

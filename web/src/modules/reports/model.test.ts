@@ -42,10 +42,10 @@ const col = (id: string, type: string, extra: Partial<ColumnInfo> = {}): ColumnI
   ...extra,
 });
 const svc: FilterView = {
-  kind: "ReportFilterConditionView",
+  kind: "condition",
   column: "probable_service_account",
   operator: "equals",
-  values: [{ kind: "ReportValueBoolean", value: false }],
+  values: [{ kind: "boolean", value: false }],
 };
 
 describe("searchHits", () => {
@@ -123,8 +123,8 @@ describe("buildRunBody", () => {
     });
     expect(body.parameters?.filters).toHaveLength(2);
     expect(body.parameters?.filters?.[1]).toMatchObject({
-      kind: "ReportFilterCompare",
-      value: { kind: "ReportValueInteger", value: 10 },
+      kind: "compare",
+      value: { kind: "integer", value: 10 },
     });
   });
   it("drops only the service-account test when they are shown", () => {
@@ -141,7 +141,7 @@ describe("buildRunBody", () => {
       columns: ["name"],
     });
     expect(body.parameters).toEqual({
-      period: { kind: "ReportPeriodLastDays", days: 30 },
+      period: { kind: "last_days", days: 30 },
       columns: ["name"],
     });
   });
@@ -149,7 +149,7 @@ describe("buildRunBody", () => {
 
 describe("filters", () => {
   it("finds and removes a test of one column, even inside a group", () => {
-    const group: FilterView = { kind: "ReportFilterGroupView", match: "all", filters: [svc] };
+    const group: FilterView = { kind: "group", match: "all", filters: [svc] };
     expect(filtersTest([group], "probable_service_account")).toBe(true);
     expect(withoutColumn([group], "probable_service_account")).toEqual([]);
     expect(filtersTest([], "probable_service_account")).toBe(false);
@@ -165,7 +165,7 @@ describe("filters", () => {
     expect(
       toFilter({ column: "n", operator: "within_last", value: "7" }, [col("n", "time")]),
     ).toMatchObject({
-      kind: "ReportFilterRelative",
+      kind: "relative_time",
       days: 7,
     });
   });
@@ -174,13 +174,13 @@ describe("filters", () => {
 describe("cells", () => {
   const c = col("status", "enum", { choices: [{ id: "on", label: "Enabled" }] });
   it("renders every kind as plain text", () => {
-    expect(cellText({ kind: "ReportCellText", value: "<b>x</b>" }, undefined)).toBe("<b>x</b>");
-    expect(cellText({ kind: "ReportValueEnum", value: "on" }, c)).toBe("Enabled");
-    expect(cellText({ kind: "ReportCellTextList", value: ["a", "b"] }, undefined)).toBe("a; b");
-    expect(cellText({ kind: "ReportCellNever" }, undefined)).toBe("Never");
-    expect(cellText({ kind: "ReportCellAbsent" }, undefined)).toBe("—");
-    expect(cellText({ kind: "ReportCellUnknown" }, undefined)).toBe("Unknown (input missing)");
-    expect(cellText({ kind: "ReportValueBoolean", value: true }, undefined)).toBe("Yes");
+    expect(cellText({ kind: "text", value: "<b>x</b>" }, undefined)).toBe("<b>x</b>");
+    expect(cellText({ kind: "enum", value: "on" }, c)).toBe("Enabled");
+    expect(cellText({ kind: "textList", value: ["a", "b"] }, undefined)).toBe("a; b");
+    expect(cellText({ kind: "never" }, undefined)).toBe("Never");
+    expect(cellText({ kind: "absent" }, undefined)).toBe("—");
+    expect(cellText({ kind: "unknown" }, undefined)).toBe("Unknown (input missing)");
+    expect(cellText({ kind: "boolean", value: true }, undefined)).toBe("Yes");
   });
 });
 

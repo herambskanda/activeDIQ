@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Dispatcher } from '../lib/dispatcher.mjs';
-import { blockedNote, classifyChanges, extractFindings, findingKey, newFindings, readSurface, runPreMergeGate } from '../lib/premerge.mjs';
+import { blockedNote, classifyChanges, excuseRefFindings, extractFindings, findingKey, gateEnv, newFindings, readSurface, runPreMergeGate } from '../lib/premerge.mjs';
 import { advanceTicket, claimTicket, createTicket, setTicketLinks } from '../lib/tickets.mjs';
 import { ensureWorktree } from '../lib/worktree.mjs';
 import { listEntities, readRecentEvents } from '../lib/store.mjs';
@@ -181,6 +181,28 @@ test('the baseline run is cached per main commit', async () => {
     const again = await runPreMergeGate(f.ctx, await branchWith(f, 'T-0002', [OLD1, NEW1]));
     assert.equal(again.baseLog, baseLog, 'the cached baseline is used');
     assert.equal(fs.statSync(baseLog).mtimeMs, logMtime, 'not re-run');
+  } finally { f.cleanup(); }
+});
+
+// T-2225: the gate shared ~/.cache/go-build with every worker; an entry evicted mid-run was judged as findings.
+test('gate commands get a Go build cache of their own, not the shared one', async () => {
+  const f = setup({ gate: { argv: ['node', 'cache.mjs'] } });
+  try {
+    const env = gateEnv(f.ctx);
+    assert.equal(env.GOCACHE, path.join(f.ctx.stateDir, 'gocache'));
+    assert.equal(env.PATH, process.env.PATH, 'the rest of the environment passes through');
+    // The command the gate actually spawns sees it (baseline and candidate runs both write a log).
+    const t = await branchWith(f, 'T-0001', [], { 'cache.mjs': "console.log('GOCACHE=' + process.env.GOCACHE);\n" });
+    const prev = process.env.GOCACHE; process.env.GOCACHE = '/shared/go-build';
+    try { await runPreMergeGate(f.ctx, t); } finally { if (prev === undefined) delete process.env.GOCACHE; else process.env.GOCACHE = prev; }
+    const logs = fs.readdirSync(path.join(f.ctx.stateDir, 'premerge')).filter((n) => n.endsWith('.log'));
+    assert.ok(logs.length >= 1);
+    for (const n of logs) {
+      const text = fs.readFileSync(path.join(f.ctx.stateDir, 'premerge', n), 'utf8');
+      if (n.includes('numbering')) continue;
+      assert.match(text, new RegExp(`GOCACHE=${env.GOCACHE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), n);
+      assert.doesNotMatch(text, /\/shared\/go-build/);
+    }
   } finally { f.cleanup(); }
 });
 
@@ -400,7 +422,7 @@ test('when the gate cannot judge, the ticket stays done, unmerged, and is retrie
     assert.equal(cur.links.merged, undefined);
     assert.equal(git(f.root, 'rev-parse', 'main'), mainBefore);
     await d.mergePass();
-    assert.equal(d.gateRun, null, 'backing off: not retried at once');
+    assert.deepEqual(d.gateLanes, [], 'backing off: not retried at once');
   } finally { f.cleanup(); }
 });
 
@@ -589,4 +611,108 @@ test('through the gate, one violation added to any job is refused naming it, and
       assert.deepEqual([p.status, p.mode], ['pass', 'ratchet'], job);
     }
   } finally { f.cleanup(); }
+});
+
+// ---- findings that come from repo refs (T-1422) ------------------------------------------
+// P7 lists the branches of the checkout, and the gate's scratch worktree shares the main repo's refs.
+// refs-check.mjs does what `make fitness-profiles` does for P7: one finding per branch that is not
+// main or factory/T-NNNN, then the failed make target; violations.txt adds ordinary profile findings.
+
+const REFS_CHECK = `import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
+const heads = execFileSync('git', ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], { encoding: 'utf8' }).split('\\n').filter(Boolean);
+let bad = 0;
+const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8').split('\\n').filter(Boolean) : []);
+for (const l of read('violations.txt')) {
+  const [file, line, msg] = l.split('|');
+  console.error(\`\${file}:\${line}: P1 (ADR-0002 fitness function): \${msg}\`);
+  bad++;
+}
+for (const b of heads.filter((h) => !/^(main|factory\\/T-\\d+)$/.test(h))) {
+  console.error(\`branch \${b}: P7 (ADR-0002 fitness function): branch "\${b}" is not main or factory/T-NNNN; one codebase, no long-lived variant branches (ADR-0002 rule 1). Delete it, or rename the ticket branch\`);
+  bad++;
+}
+if (bad) {
+  console.error(\`fitness-profiles: \${bad} violation(s); rules: knowledge/development/decisions/0002-deployment-model.md (Fitness function)\`);
+  console.error('make: *** [tools/ci/ci.mk:83: fitness-profiles] Error 1');
+}
+process.exit(bad ? 1 : 0);
+`;
+
+function setupRefs({ main = [] } = {}) {
+  const f = setup({ main, gate: { argv: ['node', 'refs-check.mjs'] } });
+  fs.writeFileSync(path.join(f.root, 'refs-check.mjs'), REFS_CHECK);
+  commitAll(f.root, 'refs fixture');
+  return f;
+}
+
+const REF_LINE = (b) => `branch ${b}: P7 (ADR-0002 fitness function): branch "${b}" is not main or factory/T-NNNN; one codebase, no long-lived variant branches (ADR-0002 rule 1). Delete it, or rename the ticket branch`;
+
+test('excuseRefFindings drops branch findings and the profiles target they fail, keeps the candidate\'s own branch and other profile findings', () => {
+  const ref = (b) => findingKey(REF_LINE(b));
+  const target = findingKey('make: *** [tools/ci/ci.mk:83: fitness-profiles] Error 1');
+  const p1 = findingKey('internal/c/z.go:5: P1 (ADR-0002 fitness function): identifier "CloudThing" names a deployment profile');
+  const other = findingKey('make: *** [tools/ci/ci.mk:9: fitness-tenancy] Error 1');
+  const m = (...keys) => new Map(keys.map((k) => [k, 1]));
+
+  let r = excuseRefFindings(m(ref('ui/final-look'), ref('x/y'), target), ['factory/T-0001']);
+  assert.deepEqual([...r.kept.keys()], []);
+  assert.deepEqual(r.excused, ['ui/final-look', 'x/y']);
+
+  r = excuseRefFindings(m(ref('ui/final-look'), target, p1, other), []);
+  assert.deepEqual([...r.kept.keys()].sort(), [p1, target, other].sort(), 'a real profiles finding keeps its failed target');
+
+  r = excuseRefFindings(m(ref('factory/BAD-1'), target), ['factory/BAD-1']);
+  assert.deepEqual([...r.kept.keys()].sort(), [ref('factory/BAD-1'), target].sort(), "the candidate's own branch stays a finding");
+  assert.deepEqual(r.excused, []);
+
+  r = excuseRefFindings(m(target), []);
+  assert.deepEqual([...r.kept.keys()], [target], 'a failed target with no branch finding is untouched');
+});
+
+for (const mainViolations of [[], [OLD1]]) {
+  test(`a non-factory branch created after the cached baseline does not refuse a candidate that adds none (main ${mainViolations.length ? 'red' : 'green'})`, async () => {
+    const f = setupRefs({ main: mainViolations });
+    try {
+      // the first gate run caches the baseline for this main tree (a green pass records it too)
+      const first = await runPreMergeGate(f.ctx, await branchWith(f, 'T-0001', mainViolations));
+      assert.equal(first.status, 'pass');
+      git(f.root, 'branch', 'ui/final-look', 'main');
+      git(f.root, 'branch', 'T-1416-fix-boot-test', 'main');
+      const second = await runPreMergeGate(f.ctx, await branchWith(f, 'T-0002', mainViolations));
+      assert.equal(second.status, 'pass', `${second.summary}\n${second.findings.join('\n')}`);
+      assert.match(second.summary, /not counted.*T-1416-fix-boot-test, ui\/final-look/);
+    } finally { f.cleanup(); }
+  });
+}
+
+test('a stray branch does not hide a finding the candidate does add', async () => {
+  const f = setupRefs();
+  try {
+    await runPreMergeGate(f.ctx, await branchWith(f, 'T-0001', []));
+    git(f.root, 'branch', 'ui/final-look', 'main');
+    const v = await runPreMergeGate(f.ctx, await branchWith(f, 'T-0002', [NEW1]));
+    assert.equal(v.status, 'blocked');
+    const text = v.findings.join('\n');
+    assert.match(text, /CloudThing/);
+    assert.doesNotMatch(text, /ui\/final-look/);
+  } finally { f.cleanup(); }
+});
+
+test("a candidate whose own branch is not main or factory/T-NNNN is still refused by P7", async () => {
+  const f = setupRefs();
+  try {
+    await runPreMergeGate(f.ctx, await branchWith(f, 'T-0001', []));
+    git(f.root, 'branch', 'ui/final-look', 'main');
+    const v = await runPreMergeGate(f.ctx, await branchWith(f, 'BAD-1', []));
+    assert.equal(v.status, 'blocked');
+    const text = v.findings.join('\n');
+    assert.match(text, /branch factory\/BAD-1: P7/);
+    assert.doesNotMatch(text, /ui\/final-look/);
+  } finally { f.cleanup(); }
+});
+
+test('the make target that runs P7 is the one the gate knows', () => {
+  const mk = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'tools', 'ci', 'ci.mk'), 'utf8');
+  assert.match(mk, /^fitness-profiles:.*\n\tgo run \.\/tools\/fitness\/profiles\s*$/m);
 });

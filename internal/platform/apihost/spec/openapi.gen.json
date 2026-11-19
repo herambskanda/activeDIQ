@@ -1,6 +1,30 @@
 {
   "components": {
     "parameters": {
+      "CallerVerificationChallengeId": {
+        "description": "The challenge returned by issueCallerVerification.",
+        "in": "path",
+        "name": "challengeId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "helpdesk"
+      },
+      "CallerVerificationKey": {
+        "description": "Makes a retry safe. Honoured for 24 hours per technician and operation.",
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": true,
+        "schema": {
+          "maxLength": 128,
+          "minLength": 8,
+          "pattern": "^[A-Za-z0-9._~-]+$",
+          "type": "string"
+        },
+        "x-activediq-tag": "helpdesk"
+      },
       "ConnectionId": {
         "description": "The Entra connection.",
         "in": "path",
@@ -71,6 +95,28 @@
         },
         "x-activediq-tag": "platform.notify"
       },
+      "ExplorerConnectionId": {
+        "description": "Narrows to one AD connection.",
+        "in": "query",
+        "name": "connection_id",
+        "required": false,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerObjectGuid": {
+        "description": "The objectGUID of the container or object. A DN is never accepted.",
+        "in": "path",
+        "name": "objectGuid",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "directory"
+      },
       "ExportId": {
         "description": "The export.",
         "in": "path",
@@ -104,6 +150,16 @@
           "minLength": 1,
           "type": "string"
         }
+      },
+      "MembershipSide": {
+        "description": "Which side of a membership change the names are paged from. Absent is added. Ignored for a row that is not a membership change.",
+        "in": "query",
+        "name": "side",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/ReportMembershipSide"
+        },
+        "x-activediq-tag": "reports"
       },
       "OperationId": {
         "description": "The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered.",
@@ -167,6 +223,17 @@
         "schema": {
           "maxLength": 256,
           "minLength": 1,
+          "type": "string"
+        },
+        "x-activediq-tag": "reports"
+      },
+      "RowKey": {
+        "description": "The rowKey of a row of the run; for a change-history run, the object's GUID.",
+        "in": "path",
+        "name": "rowKey",
+        "required": true,
+        "schema": {
+          "format": "uuid",
           "type": "string"
         },
         "x-activediq-tag": "reports"
@@ -248,6 +315,74 @@
       }
     },
     "responses": {
+      "CallerVerificationDeliveryFailed": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 502,
+              "title": "The code could not be delivered",
+              "type": "/problems/caller-verification-delivery-failed"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The code could not be delivered. No code exists, none is shown and the issue does not count against the limits."
+      },
+      "CallerVerificationLimit": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "errors": [
+                {
+                  "code": "quota",
+                  "detail": "The hourly limit of codes for this caller or technician is reached.",
+                  "in": "body",
+                  "pointer": "/"
+                }
+              ],
+              "status": 429,
+              "title": "The verification limit was reached",
+              "type": "/problems/caller-verification-limit"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "A caller-verification limit was reached. errors[].code is quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges)."
+      },
+      "CallerVerificationRefused": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 422,
+              "title": "The verification was refused",
+              "type": "/problems/caller-verification-refused"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The verification was refused. One answer for a wrong code, used-up attempts, an expired, superseded, unknown or foreign challenge; it never says which and never repeats the code."
+      },
+      "CallerVerificationUnavailable": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 422,
+              "title": "This caller cannot be verified",
+              "type": "/problems/caller-verification-unavailable"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The caller cannot be verified. One answer for an unknown, disabled, out-of-scope, protected or own target and for a target with no held destination; it never says which."
+      },
       "Conflict": {
         "content": {
           "application/problem+json": {
@@ -322,6 +457,47 @@
           }
         },
         "description": "The directory is unavailable"
+      },
+      "ExplorerCursorInvalid": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "errors": [
+                {
+                  "code": "cursor_invalid",
+                  "detail": "The cursor cannot be used. Start again from the first page.",
+                  "in": "query",
+                  "pointer": "cursor"
+                }
+              ],
+              "status": 400,
+              "title": "The paging parameters cannot be used",
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "type": "/problems/explorer-query-invalid"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The paging parameters cannot be used. errors[].code says why: cursor_invalid (bad, forged or mismatched cursor: a cursor from another node, view or scope; nothing is read), or a malformed limit or view. No DN or cursor content is echoed."
+      },
+      "ExplorerUnavailable": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "detail": "The directory is busy. Try again.",
+              "status": 503,
+              "title": "The directory is busy",
+              "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
+              "type": "/problems/explorer-unavailable"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Explorer could not finish in time"
       },
       "Forbidden": {
         "content": {
@@ -881,6 +1057,77 @@
         "type": "object",
         "x-activediq-tag": "platform.authn"
       },
+      "CallerVerificationChallenge": {
+        "properties": {
+          "challengeId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "destinationMasked": {
+            "description": "Where the code went, masked. The full address is never returned.",
+            "maxLength": 256,
+            "type": "string"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "factor": {
+            "$ref": "#/components/schemas/CallerVerificationFactor"
+          },
+          "reused": {
+            "description": "True when an open challenge was attached to, or this is a replay of an earlier identical request; nothing was sent now.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "challengeId",
+          "factor",
+          "destinationMasked",
+          "expiresAt",
+          "reused"
+        ],
+        "type": "object",
+        "x-activediq-tag": "helpdesk"
+      },
+      "CallerVerificationFactor": {
+        "description": "How the caller was verified. Clients ignore values they do not know.",
+        "enum": [
+          "email_otp",
+          "sms_otp"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "helpdesk"
+      },
+      "CallerVerificationFactorSetting": {
+        "description": "The factor a technician asks for. totp is reserved for the enrolment work and is not accepted until then.",
+        "enum": [
+          "email_otp",
+          "sms_otp"
+        ],
+        "type": "string",
+        "x-activediq-tag": "helpdesk"
+      },
+      "CallerVerified": {
+        "properties": {
+          "authorisedUntil": {
+            "description": "Until when the challenge may authorise one reset or unlock for this target.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "challengeId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "challengeId",
+          "authorisedUntil"
+        ],
+        "type": "object",
+        "x-activediq-tag": "helpdesk"
+      },
       "ConnectionHealth": {
         "additionalProperties": false,
         "description": "The health of one connection. Nothing here is a credential or an identity the connection binds as.",
@@ -1383,6 +1630,247 @@
         "type": "object",
         "x-activediq-tag": "directory"
       },
+      "ExplorerChildren": {
+        "description": "One keyset page of admitted children. No count is returned.",
+        "properties": {
+          "asOf": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExplorerEntry"
+            },
+            "maxItems": 200,
+            "type": "array"
+          },
+          "more": {
+            "description": "True when the page may not be the last, including a short page that stopped at the examination ceiling.",
+            "type": "boolean"
+          },
+          "nextCursor": {
+            "description": "Pass back unchanged for the next page. Null on the last page.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "more",
+          "asOf"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerEntry": {
+        "description": "One live AD object, the same shape in the tree and the table. Keyed by objectGuid; there is no DN. name is the RDN value (or the display name), never a path. parentGuid is the row's own parent read in the same statement as the row.",
+        "properties": {
+          "connectionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "hasChildren": {
+            "description": "For a container, whether an admitted live child exists; null for a leaf.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "isContainer": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ExplorerKind"
+          },
+          "name": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "objectClass": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "parentGuid": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "readOnly": {
+            "description": "True for a Tier-0 object; the console disables write actions on it.",
+            "type": "boolean"
+          },
+          "samAccountName": {
+            "description": "Empty when absent.",
+            "maxLength": 256,
+            "type": "string"
+          },
+          "tier0": {
+            "description": "True unless the inventory holds a classifier result saying otherwise (fails closed).",
+            "type": "boolean"
+          },
+          "upn": {
+            "description": "Empty when absent.",
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "whenChanged": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "objectGuid",
+          "connectionId",
+          "parentGuid",
+          "kind",
+          "objectClass",
+          "name",
+          "isContainer",
+          "hasChildren",
+          "tier0",
+          "readOnly",
+          "samAccountName",
+          "upn",
+          "enabled",
+          "whenChanged"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerKind": {
+        "description": "What the object is. Domain heads and built-in containers are other or container; isContainer, not kind, says whether it can hold children.",
+        "enum": [
+          "ou",
+          "container",
+          "user",
+          "inetorgperson",
+          "group",
+          "computer",
+          "contact",
+          "gmsa",
+          "fsp",
+          "other"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerNode": {
+        "description": "One node, the admitted path to it, and the freshness of the inventory behind them.",
+        "properties": {
+          "ambiguous": {
+            "description": "True when the GUID had more than one admitted live row and the newest was chosen. Absent otherwise.",
+            "type": "boolean"
+          },
+          "asOf": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "node": {
+            "$ref": "#/components/schemas/ExplorerEntry"
+          },
+          "path": {
+            "description": "Admitted live ancestors ending at the node's parent, root first. Empty when the node is a root.",
+            "items": {
+              "$ref": "#/components/schemas/ExplorerPathItem"
+            },
+            "maxItems": 128,
+            "type": "array"
+          }
+        },
+        "required": [
+          "node",
+          "path",
+          "asOf"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerPathItem": {
+        "description": "One admitted live ancestor, for the breadcrumb and for expanding the tree by GUID.",
+        "properties": {
+          "name": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectGuid",
+          "name"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerRoots": {
+        "description": "The containers the caller's scope admits as tree roots, with the freshness of the inventory behind them.",
+        "properties": {
+          "asOf": {
+            "description": "The oldest last-sync time of the connections the caller may read. Null when nothing has synced yet.",
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ExplorerEntry"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "more": {
+            "description": "True when more than 500 roots exist; the console says to refine in Search. There is no cursor.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "more",
+          "asOf"
+        ],
+        "type": "object",
+        "x-activediq-tag": "directory"
+      },
+      "ExplorerView": {
+        "description": "containers is the tree level (containers only); all is the table (every kind).",
+        "enum": [
+          "containers",
+          "all"
+        ],
+        "type": "string",
+        "x-activediq-tag": "directory"
+      },
       "GUIDRef": {
         "additionalProperties": false,
         "description": "A reference to a directory object by objectGUID. A DN is never a key.",
@@ -1461,6 +1949,35 @@
         "maxLength": 20,
         "pattern": "^-?[0-9]{1,19}$",
         "type": "string"
+      },
+      "IssueCallerVerificationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "connectionId": {
+            "description": "The directory connection the caller's account belongs to.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "factor": {
+            "$ref": "#/components/schemas/CallerVerificationFactorSetting"
+          },
+          "objectGuid": {
+            "description": "The caller's objectGUID. A DN is never accepted.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "resend": {
+            "description": "True only for the explicit \"Send a new code\" act; it supersedes the open challenge.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connectionId",
+          "objectGuid",
+          "factor"
+        ],
+        "type": "object",
+        "x-activediq-tag": "helpdesk"
       },
       "Job": {
         "description": "A long operation (bulk change). It reports progress and per-item results, and is resumable after a restart.",
@@ -1920,6 +2437,10 @@
       },
       "OperationTarget": {
         "discriminator": {
+          "mapping": {
+            "directory": "#/components/schemas/OperationTargetDirectory",
+            "store": "#/components/schemas/OperationTargetStore"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -2017,6 +2538,15 @@
       "OperationValue": {
         "description": "One side of a change, rendered by the Action for display. redacted stands for a secret or an erased personal value.",
         "discriminator": {
+          "mapping": {
+            "absent": "#/components/schemas/OperationValueAbsent",
+            "boolean": "#/components/schemas/OperationValueBoolean",
+            "integer": "#/components/schemas/OperationValueInteger",
+            "redacted": "#/components/schemas/OperationValueRedacted",
+            "text": "#/components/schemas/OperationValueText",
+            "textList": "#/components/schemas/OperationValueTextList",
+            "time": "#/components/schemas/OperationValueTime"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -2334,6 +2864,18 @@
       "ReportCell": {
         "description": "One typed cell; the kinds map one to one onto report.Cell in modules/reports.md 6.2 (text s, integer i, boolean b, time t, enum e, guid g, textList l, absent a, never n, unknown u). unknown is shown rather than an inferred value when an input is missing (FR-09). absent is a missing value, distinct from empty text; never is a value that cannot occur, such as a last logon of an account that has never logged on.",
         "discriminator": {
+          "mapping": {
+            "absent": "#/components/schemas/ReportCellAbsent",
+            "boolean": "#/components/schemas/ReportValueBoolean",
+            "enum": "#/components/schemas/ReportValueEnum",
+            "guid": "#/components/schemas/ReportCellGuid",
+            "integer": "#/components/schemas/ReportCellInteger",
+            "never": "#/components/schemas/ReportCellNever",
+            "text": "#/components/schemas/ReportCellText",
+            "textList": "#/components/schemas/ReportCellTextList",
+            "time": "#/components/schemas/ReportValueTime",
+            "unknown": "#/components/schemas/ReportCellUnknown"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -2737,7 +3279,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportColumnInfo"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "dataset": {
@@ -2791,6 +3333,9 @@
             "maximum": 1000000,
             "minimum": 1,
             "type": "integer"
+          },
+          "widget": {
+            "$ref": "#/components/schemas/ReportWidgetProfile"
           }
         },
         "required": [
@@ -2934,6 +3479,225 @@
         ],
         "type": "string",
         "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailActor": {
+        "description": "Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operation is the handle of the operation.",
+        "discriminator": {
+          "mapping": {
+            "activediq": "#/components/schemas/ReportDetailActorActiveDiq",
+            "notRecorded": "#/components/schemas/ReportDetailActorNotRecorded"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportDetailActorNotRecorded"
+          },
+          {
+            "$ref": "#/components/schemas/ReportDetailActorActiveDiq"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailActorActiveDiq": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "activediq",
+            "type": "string"
+          },
+          "operation": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "principal": {
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "principal",
+          "operation"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailActorNotRecorded": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "notRecorded",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailAttribute": {
+        "additionalProperties": false,
+        "description": "One attribute the change touched, with its name, the originating time and the replication version where recorded, each unknown where not. Never a value.",
+        "properties": {
+          "name": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "originAt": {
+            "$ref": "#/components/schemas/ReportDetailTime"
+          },
+          "version": {
+            "$ref": "#/components/schemas/ReportDetailInteger"
+          }
+        },
+        "required": [
+          "name",
+          "originAt",
+          "version"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailBasisValue": {
+        "description": "Where a time comes from. origin: the DC time of the change, from replication metadata (independent of the DC). observed: the time activeDIQ observed it. last_seen: the object as last observed before it left the feed.",
+        "enum": [
+          "origin",
+          "observed",
+          "last_seen"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailInteger": {
+        "description": "A whole number as a decimal string, or unknown when the history does not hold it.",
+        "discriminator": {
+          "mapping": {
+            "integer": "#/components/schemas/ReportCellInteger",
+            "unknown": "#/components/schemas/ReportCellUnknown"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportCellInteger"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellUnknown"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailObject": {
+        "additionalProperties": false,
+        "description": "The object the change is on. dn is the full distinguished name, an attribute of the object and never a key; the client addresses the object by objectGuid. For a removed row every field is as last seen by activeDIQ. logonName is absent for a kind without one (a group or OU).",
+        "properties": {
+          "dn": {
+            "$ref": "#/components/schemas/ReportDetailText"
+          },
+          "domain": {
+            "maxLength": 255,
+            "type": "string"
+          },
+          "logonName": {
+            "$ref": "#/components/schemas/ReportDetailText"
+          },
+          "name": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "ouPath": {
+            "$ref": "#/components/schemas/ReportDetailText"
+          }
+        },
+        "required": [
+          "objectGuid",
+          "name",
+          "logonName",
+          "domain",
+          "ouPath",
+          "dn"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailText": {
+        "description": "Text, absent when the object has none, or unknown when it was not read.",
+        "discriminator": {
+          "mapping": {
+            "absent": "#/components/schemas/ReportCellAbsent",
+            "text": "#/components/schemas/ReportCellText",
+            "unknown": "#/components/schemas/ReportCellUnknown"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportCellText"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellAbsent"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellUnknown"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailTime": {
+        "description": "An instant the history holds, or unknown when it does not.",
+        "discriminator": {
+          "mapping": {
+            "time": "#/components/schemas/ReportValueTime",
+            "unknown": "#/components/schemas/ReportCellUnknown"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportValueTime"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellUnknown"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailWhen": {
+        "additionalProperties": false,
+        "description": "When the change happened. changedAt is the originating time where the history holds one, else the observed time, and basis says which. observedAt is always the observation time. gapMinutes is the minutes between the previous observation and this one, unknown when there is no previous observation. observationBased is always true: several changes between two observations show as one.",
+        "properties": {
+          "basis": {
+            "$ref": "#/components/schemas/ReportDetailBasisValue"
+          },
+          "changedAt": {
+            "$ref": "#/components/schemas/ReportDetailTime"
+          },
+          "gapMinutes": {
+            "$ref": "#/components/schemas/ReportDetailInteger"
+          },
+          "observationBased": {
+            "type": "boolean"
+          },
+          "observedAt": {
+            "$ref": "#/components/schemas/ReportDetailTime"
+          }
+        },
+        "required": [
+          "changedAt",
+          "basis",
+          "observedAt",
+          "gapMinutes",
+          "observationBased"
+        ],
+        "type": "object",
         "x-activediq-tag": "reports"
       },
       "ReportEmptyReason": {
@@ -3134,6 +3898,13 @@
       "ReportFilter": {
         "description": "A typed filter tree over registry columns. A node names a column from the closed list and a typed value; there is no expression, no raw LDAP, no SQL. The tree is at most four levels deep and 64 nodes; deeper is a 400 with code filter_too_complex. The server checks each operator and value against the column's type.",
         "discriminator": {
+          "mapping": {
+            "compare": "#/components/schemas/ReportFilterCompare",
+            "group": "#/components/schemas/ReportFilterGroup",
+            "in": "#/components/schemas/ReportFilterIn",
+            "presence": "#/components/schemas/ReportFilterPresence",
+            "relative_time": "#/components/schemas/ReportFilterRelative"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -3395,6 +4166,10 @@
       "ReportFilterView": {
         "description": "A filter as the server stores it. A condition's column is a registry column ID.",
         "discriminator": {
+          "mapping": {
+            "condition": "#/components/schemas/ReportFilterConditionView",
+            "group": "#/components/schemas/ReportFilterGroupView"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -3519,6 +4294,113 @@
         "x-activediq-enum": "open",
         "x-activediq-tag": "reports"
       },
+      "ReportLatestRun": {
+        "description": "The caller's latest run of one report for a widget. runId, asOf, rowCount, finishedAt and expiresAt describe the run the state names and are null for never_run and unavailable. rowCount is null when state is scope_changed, expired, failed or running without a current result. table is present only when rows=10 was asked and the state serves rows. inFlight is a newer queued or running run. failure is the reason of a failed run.",
+        "properties": {
+          "asOf": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure": {
+            "$ref": "#/components/schemas/ReportFailure"
+          },
+          "finishedAt": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "freshness": {
+            "$ref": "#/components/schemas/ReportFreshness"
+          },
+          "inFlight": {
+            "$ref": "#/components/schemas/ReportRunSummary"
+          },
+          "rowCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "runId": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReportLatestState"
+          },
+          "table": {
+            "$ref": "#/components/schemas/ReportLatestTable"
+          }
+        },
+        "required": [
+          "state",
+          "runId",
+          "asOf",
+          "rowCount",
+          "finishedAt",
+          "expiresAt"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportLatestState": {
+        "description": "What a Home widget renders for the caller's latest run (specs/home-report-widgets.md 3.3).",
+        "enum": [
+          "current",
+          "stale_data",
+          "scope_changed",
+          "expired",
+          "running",
+          "failed",
+          "never_run",
+          "unavailable"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportLatestTable": {
+        "description": "The first rows of a current run in the columns of the definition's widget profile, in the profile's order.",
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ReportColumnInfo"
+            },
+            "maxItems": 5,
+            "type": "array"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ReportRow"
+            },
+            "maxItems": 10,
+            "type": "array"
+          }
+        },
+        "required": [
+          "columns",
+          "rows"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
       "ReportMeName": {
         "description": "An exact ManageEngine report name and the preset that answers it (spec 6.2).",
         "properties": {
@@ -3536,6 +4418,67 @@
           "presetId"
         ],
         "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportMembershipName": {
+        "additionalProperties": false,
+        "description": "One member added or removed, addressed by objectGUID. The name is the one last observed.",
+        "properties": {
+          "name": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectGuid",
+          "name"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportMembershipNamePage": {
+        "additionalProperties": false,
+        "description": "One page of in-scope member names of one side of a membership change, by name then objectGUID, stable.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReportMembershipName"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportMembershipSide": {
+        "description": "Which side of a membership change to page. A closed request enum.",
+        "enum": [
+          "added",
+          "removed"
+        ],
+        "type": "string",
+        "x-activediq-tag": "reports"
+      },
+      "ReportMembershipSideValue": {
+        "description": "Which side of a membership change a page of names is.",
+        "enum": [
+          "added",
+          "removed"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
         "x-activediq-tag": "reports"
       },
       "ReportOuRef": {
@@ -3570,7 +4513,7 @@
               "maxLength": 64,
               "type": "string"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "connectionIds": {
@@ -3643,6 +4586,10 @@
       "ReportPeriod": {
         "description": "The period a report looks at. The server refuses a range whose to is not after from, or longer than ten years.",
         "discriminator": {
+          "mapping": {
+            "last_days": "#/components/schemas/ReportPeriodLastDays",
+            "range": "#/components/schemas/ReportPeriodRange"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -4018,7 +4965,7 @@
               "maxLength": 64,
               "type": "string"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "filters": {
@@ -4068,6 +5015,10 @@
       "ReportRecipient": {
         "description": "Who receives the schedule's files.",
         "discriminator": {
+          "mapping": {
+            "account": "#/components/schemas/ReportRecipientAccount",
+            "email": "#/components/schemas/ReportRecipientEmail"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -4217,6 +5168,10 @@
       "ReportRecipientView": {
         "description": "A recipient as stored.",
         "discriminator": {
+          "mapping": {
+            "account": "#/components/schemas/ReportRecipientAccountView",
+            "email": "#/components/schemas/ReportRecipientEmailView"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -4232,6 +5187,17 @@
       "ReportRecurrence": {
         "description": "When a schedule fires, in the schedule's time zone. The minimum interval is one hour (spec 8.4).",
         "discriminator": {
+          "mapping": {
+            "custom_days": "#/components/schemas/ReportRecurrenceCustomDays",
+            "custom_hours": "#/components/schemas/ReportRecurrenceCustomHours",
+            "custom_months": "#/components/schemas/ReportRecurrenceCustomMonths",
+            "custom_weeks": "#/components/schemas/ReportRecurrenceCustomWeeks",
+            "daily": "#/components/schemas/ReportRecurrenceDaily",
+            "hourly": "#/components/schemas/ReportRecurrenceHourly",
+            "monthly_day": "#/components/schemas/ReportRecurrenceMonthlyDay",
+            "monthly_last_day": "#/components/schemas/ReportRecurrenceMonthlyLastDay",
+            "weekly": "#/components/schemas/ReportRecurrenceWeekly"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -4511,6 +5477,24 @@
         "type": "string",
         "x-activediq-tag": "reports"
       },
+      "ReportRestoreStateValue": {
+        "description": "What is known of a removed object. removed_restore_unknown: it left the feed, and whether it is a restorable tombstone, recycled or purged is not readable by the connection account and is never guessed from elapsed time.",
+        "enum": [
+          "removed_restore_unknown"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRestoreUnknownReasonValue": {
+        "description": "Why the restore status is unknown. deleted_objects_not_readable: the connection account is least-privilege and cannot read CN=Deleted Objects; noSuchObject there is not proof the tombstone expired (spec rule 7).",
+        "enum": [
+          "deleted_objects_not_readable"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
       "ReportRow": {
         "description": "One row of a stored result. rowKey is the object GUID or edge key; cells follow the page's columns.",
         "properties": {
@@ -4518,7 +5502,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportCell"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "rowKey": {
@@ -4534,6 +5518,290 @@
         "type": "object",
         "x-activediq-tag": "reports"
       },
+      "ReportRowDetail": {
+        "description": "The detail of one change-history row, exactly one of five kinds. A client branches on kind and on nothing else.",
+        "discriminator": {
+          "mapping": {
+            "credential": "#/components/schemas/ReportRowDetailCredential",
+            "edited": "#/components/schemas/ReportRowDetailEdited",
+            "membership": "#/components/schemas/ReportRowDetailMembership",
+            "permissions": "#/components/schemas/ReportRowDetailPermissions",
+            "removed": "#/components/schemas/ReportRowDetailRemoved"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportRowDetailEdited"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRowDetailMembership"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRowDetailCredential"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRowDetailPermissions"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRowDetailRemoved"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportRowDetailCredential": {
+        "additionalProperties": false,
+        "description": "A credential event: a password was changed or reset, recognised from replication metadata. It carries no value and no attribute list beyond the fact (spec rule 2).",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ReportDetailActor"
+          },
+          "kind": {
+            "const": "credential",
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/ReportDetailObject"
+          },
+          "rowKey": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "when": {
+            "$ref": "#/components/schemas/ReportDetailWhen"
+          }
+        },
+        "required": [
+          "kind",
+          "runId",
+          "rowKey",
+          "when",
+          "object",
+          "actor"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRowDetailEdited": {
+        "additionalProperties": false,
+        "description": "An edit (also a created, moved or renamed change, whose attributes are the ones it touched). attributes are names with originating time and version; valuesRecorded is always false (names only, old and new values are not recorded).",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ReportDetailActor"
+          },
+          "attributes": {
+            "items": {
+              "$ref": "#/components/schemas/ReportDetailAttribute"
+            },
+            "maxItems": 256,
+            "type": "array"
+          },
+          "kind": {
+            "const": "edited",
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/ReportDetailObject"
+          },
+          "rowKey": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "valuesRecorded": {
+            "type": "boolean"
+          },
+          "when": {
+            "$ref": "#/components/schemas/ReportDetailWhen"
+          }
+        },
+        "required": [
+          "kind",
+          "runId",
+          "rowKey",
+          "when",
+          "attributes",
+          "valuesRecorded",
+          "object",
+          "actor"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRowDetailMembership": {
+        "additionalProperties": false,
+        "description": "A membership change of a group. The four counts are totals over the whole change in the caller's scope or outside it; names is one page of the side asked for. A member outside the caller's scope is counted in addedOutOfScope or removedOutOfScope and never named.",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ReportDetailActor"
+          },
+          "addedCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "addedOutOfScope": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "membership",
+            "type": "string"
+          },
+          "names": {
+            "$ref": "#/components/schemas/ReportMembershipNamePage"
+          },
+          "object": {
+            "$ref": "#/components/schemas/ReportDetailObject"
+          },
+          "removedCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "removedOutOfScope": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rowKey": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "side": {
+            "$ref": "#/components/schemas/ReportMembershipSideValue"
+          },
+          "when": {
+            "$ref": "#/components/schemas/ReportDetailWhen"
+          }
+        },
+        "required": [
+          "kind",
+          "runId",
+          "rowKey",
+          "when",
+          "side",
+          "addedCount",
+          "removedCount",
+          "addedOutOfScope",
+          "removedOutOfScope",
+          "names",
+          "object",
+          "actor"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRowDetailPermissions": {
+        "additionalProperties": false,
+        "description": "A permissions change, recognised from the replication metadata of nTSecurityDescriptor. descriptorRead is always false: no descriptor was read or compared, so the change cannot be told from inheritance or SDProp propagation (spec rule 2).",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ReportDetailActor"
+          },
+          "descriptorRead": {
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "permissions",
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/ReportDetailObject"
+          },
+          "rowKey": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "when": {
+            "$ref": "#/components/schemas/ReportDetailWhen"
+          }
+        },
+        "required": [
+          "kind",
+          "runId",
+          "rowKey",
+          "when",
+          "descriptorRead",
+          "object",
+          "actor"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRowDetailRemoved": {
+        "additionalProperties": false,
+        "description": "A row of a Deleted preset. deletedAt is the time activeDIQ first observed the object gone and means on or before that time (onOrBefore is always true; no DC time is shown for a deletion that was not read). object is as last seen by activeDIQ. state and restorableUntil are the restore-status fields; restorableUntil is always the typed unknown (a time is never shown, because the connection account cannot read it and elapsed time is no proof) with restoreUnknownReason saying why; a later read that can know it is an additive change. There is no restore link in this read.",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ReportDetailActor"
+          },
+          "deletedAt": {
+            "$ref": "#/components/schemas/ReportDetailTime"
+          },
+          "kind": {
+            "const": "removed",
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/ReportDetailObject"
+          },
+          "onOrBefore": {
+            "type": "boolean"
+          },
+          "restorableUntil": {
+            "$ref": "#/components/schemas/ReportCellUnknown"
+          },
+          "restoreUnknownReason": {
+            "$ref": "#/components/schemas/ReportRestoreUnknownReasonValue"
+          },
+          "rowKey": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReportRestoreStateValue"
+          },
+          "when": {
+            "$ref": "#/components/schemas/ReportDetailWhen"
+          }
+        },
+        "required": [
+          "kind",
+          "runId",
+          "rowKey",
+          "when",
+          "deletedAt",
+          "onOrBefore",
+          "state",
+          "restorableUntil",
+          "restoreUnknownReason",
+          "object",
+          "actor"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
       "ReportRowPage": {
         "description": "A page of a stored result. rowCount is the run's total after trimming.",
         "properties": {
@@ -4541,7 +5809,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportColumnInfo"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "page": {
@@ -4755,6 +6023,13 @@
             "minLength": 1,
             "pattern": "^[a-z][a-z0-9_]{0,63}$",
             "type": "string"
+          },
+          "timeZone": {
+            "description": "The runner's IANA time zone, such as Europe/Berlin. PDF and HTML exports of the run show Time cells in it, with the zone abbreviation. Absent means UTC. It does not change the run's rows or digest.",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$",
+            "type": "string"
           }
         },
         "required": [
@@ -4793,7 +6068,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportColumnId"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "minItems": 1,
             "type": "array"
           },
@@ -5384,6 +6659,13 @@
       "ReportValue": {
         "description": "A typed filter value. Never an expression.",
         "discriminator": {
+          "mapping": {
+            "boolean": "#/components/schemas/ReportValueBoolean",
+            "enum": "#/components/schemas/ReportValueEnum",
+            "integer": "#/components/schemas/ReportValueInteger",
+            "text": "#/components/schemas/ReportValueText",
+            "time": "#/components/schemas/ReportValueTime"
+          },
           "propertyName": "kind"
         },
         "oneOf": [
@@ -5508,6 +6790,42 @@
         "type": "object",
         "x-activediq-tag": "reports"
       },
+      "ReportWidgetProfile": {
+        "description": "The views a Home widget may render for the report (specs/home-report-widgets.md 3.1). count is always allowed and is listed. tableColumns are the at most 5 columns of the table view, in order, and are empty unless views holds table. trend plots the run's row count only. A definition without this member supports the count view only.",
+        "properties": {
+          "tableColumns": {
+            "items": {
+              "maxLength": 64,
+              "type": "string"
+            },
+            "maxItems": 5,
+            "type": "array"
+          },
+          "views": {
+            "items": {
+              "$ref": "#/components/schemas/ReportWidgetView"
+            },
+            "maxItems": 3,
+            "type": "array"
+          }
+        },
+        "required": [
+          "views",
+          "tableColumns"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportWidgetView": {
+        "enum": [
+          "count",
+          "table",
+          "trend"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
       "RoleCreate": {
         "additionalProperties": false,
         "description": "Input of delegation.role.create. The caller chooses roleId, so a retry is the same role. A role is never deleted; empty it with delegation.role.update.",
@@ -5562,6 +6880,25 @@
         "type": "string",
         "writeOnly": true,
         "x-activediq-secret": true
+      },
+      "SessionInfo": {
+        "description": "What the calling session may do, as permission names only.",
+        "properties": {
+          "permissions": {
+            "description": "The catalogue permission names the session holds at tenant scope, sorted. Display only.",
+            "items": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "maxItems": 1024,
+            "type": "array"
+          }
+        },
+        "required": [
+          "permissions"
+        ],
+        "type": "object",
+        "x-activediq-tag": "platform.authn"
       },
       "SetupClaimRequest": {
         "additionalProperties": false,
@@ -5820,6 +7157,20 @@
         ],
         "type": "object",
         "x-activediq-tag": "platform.authn"
+      },
+      "VerifyCallerVerificationRequest": {
+        "additionalProperties": false,
+        "description": "The six digits the caller read back, held as a secret and destroyed after the request.",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/SecretInput"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object",
+        "x-activediq-tag": "helpdesk"
       },
       "WebAuthnAssertion": {
         "additionalProperties": false,
@@ -6354,6 +7705,50 @@
         "x-permission": "anonymous"
       }
     },
+    "/auth/session": {
+      "get": {
+        "description": "Answers the names of the catalogue permissions the calling console session holds at tenant scope, sorted, so the console can hide navigation the session could not use (for example Reports without reports.run). Names only: no scope, role or grant detail. It is display only; every operation still authorises the request itself and stays the authority. Needs a cookie session and no permission beyond it. The answer is never cached. Additive to the preview auth plane.",
+        "operationId": "getSession",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInfo"
+                }
+              }
+            },
+            "description": "The permission names this session holds."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "summary": "The permission names the calling session holds",
+        "tags": [
+          "platform.authn"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-stability": "preview",
+        "x-permission": "authenticated"
+      }
+    },
     "/auth/step-up": {
       "post": {
         "description": "Lets a signed-in console session obtain the fresh multi-factor check that a step-up operation (operations whose permission is a stepUp row of policy.yaml, TM section 7.4) requires. The caller sends a TOTP code of the session's own account. Success answers 204 with no body: the server moves the session's MFA time forward, and the next step-up operation is judged against that server-side time alone. Nothing in the request or response carries, sets or reports freshness, and no client field can assert it. Only a console session can call this: an API token has no interactive second factor and is refused 401. Needs the CSRF header like any cookie-session mutation.\nEvery refusal has one shape, 403 /problems/step-up-refused: a wrong, replayed or paused code, no enrolled factor, an account that is no longer active and an exhausted failure budget are indistinguishable by status, body, headers and timing class. The response and the request name no enrolment, so a caller cannot learn which one matched. A refusal keeps the session's earlier MFA time as it was. A session that is revoked or expired is the ordinary 401 /problems/unauthenticated. The route is a guessing oracle for a stolen session, so it is limited per principal in the secret class, and the server also charges every failure to the account's enrolment budget. Every attempt is audited with the principal and the outcome, never the code.\nLater addition, not in this version: WebAuthn re-verification. Only TOTP re-verifies today (authn.StepUp.Reverify); a WebAuthn variant will be an additive operation or an additive request member, announced in the changelog.",
@@ -6700,6 +8095,287 @@
         },
         "x-activediq-stability": "preview",
         "x-permission": "connections.takeover.attest"
+      }
+    },
+    "/directory/explorer/nodes/{objectGuid}": {
+      "get": {
+        "description": "One live container or object by objectGUID, with path: the admitted live ancestors ending at its parent, root first, so a deep link can expand the tree by GUID. If the parent is not admitted the node is itself a root and path is empty. A GUID that does not exist, is not live, is not an AD object or is not admitted by the caller's scope answers the same 404 with the same body (hidden is absent). connection_id picks one row in the transient case of a GUID live in two connections; without it ambiguous is true when two admitted live rows remained and the newest was chosen. No DN is returned.",
+        "operationId": "getExplorerNode",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExplorerObjectGuid"
+          },
+          {
+            "$ref": "#/components/parameters/ExplorerConnectionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "asOf": "2026-11-14T09:11:04Z",
+                  "node": {
+                    "connectionId": "0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64",
+                    "enabled": null,
+                    "hasChildren": true,
+                    "isContainer": true,
+                    "kind": "ou",
+                    "name": "Staff",
+                    "objectClass": "organizationalUnit",
+                    "objectGuid": "8a4e6f10-2c9b-4d35-b7e1-3f5a6b7c8d90",
+                    "parentGuid": "5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d",
+                    "readOnly": false,
+                    "samAccountName": "",
+                    "tier0": false,
+                    "upn": "",
+                    "whenChanged": "2026-11-10T08:02:51Z"
+                  },
+                  "path": [
+                    {
+                      "name": "corp",
+                      "objectGuid": "5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d"
+                    }
+                  ]
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ExplorerNode"
+                }
+              }
+            },
+            "description": "The node, its path and the freshness of the inventory behind it"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ExplorerUnavailable"
+          }
+        },
+        "summary": "Get one Explorer node and its path",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-004"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
+      }
+    },
+    "/directory/explorer/nodes/{objectGuid}/children": {
+      "get": {
+        "description": "One keyset page of the live children the caller's scope admits, containers first, then by name (byte order), then objectGuid. view=containers gives the tree level, view=all the table. Scope is applied before the limit, the more flag and hasChildren: none of them reveals what is hidden, except that each request examines at most 5,000 child rows, so a page can be short with more true; the cursor then continues from the last row examined. There is no total count. A cursor is opaque, bound to the node, view, sort position and the caller's scope; any mismatch is 400 with code cursor_invalid and reads nothing. A node that is missing, not live or not admitted answers 404 (hidden is absent). 503 when the request cannot finish in 2 seconds, generic and with a trace ID.",
+        "operationId": "listExplorerChildren",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExplorerObjectGuid"
+          },
+          {
+            "$ref": "#/components/parameters/ExplorerConnectionId"
+          },
+          {
+            "description": "containers (the default) answers the tree level; all answers every kind, for the table.",
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ExplorerView"
+            }
+          },
+          {
+            "description": "The page size. 100 when absent.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "The nextCursor of the previous page, with the same node, view and connection_id.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "asOf": "2026-11-14T09:11:04Z",
+                  "items": [
+                    {
+                      "connectionId": "0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64",
+                      "enabled": true,
+                      "hasChildren": null,
+                      "isContainer": false,
+                      "kind": "user",
+                      "name": "Pat Example",
+                      "objectClass": "user",
+                      "objectGuid": "3f9c1e52-7a4b-4d0e-9b1a-0c5e8d2a6f10",
+                      "parentGuid": "8a4e6f10-2c9b-4d35-b7e1-3f5a6b7c8d90",
+                      "readOnly": false,
+                      "samAccountName": "pexample",
+                      "tier0": false,
+                      "upn": "pexample@corp.example.test",
+                      "whenChanged": "2026-11-09T13:20:00Z"
+                    }
+                  ],
+                  "more": true,
+                  "nextCursor": "Y3Vyc29yLTAxLW9wYXF1ZS1leGFtcGxl"
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ExplorerChildren"
+                }
+              }
+            },
+            "description": "One page of admitted children"
+          },
+          "400": {
+            "$ref": "#/components/responses/ExplorerCursorInvalid"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ExplorerUnavailable"
+          }
+        },
+        "summary": "List the children of an Explorer node",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-004"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
+      }
+    },
+    "/directory/explorer/roots": {
+      "get": {
+        "description": "The top of the AD Explorer tree for the caller (ADM-004, spec ad-explorer-read-api.md section 3). A root is a live container the caller's directory.read scope admits whose parent is absent, or is a live object the scope does not admit; a scoped technician's tree therefore starts at their scope roots and never names a hidden ancestor. Read from the inventory, not the live directory; AD connections only. Returns containers only, at most 500, with no cursor: when more exist, more is true and the console says to refine in Search. connection_id narrows to one connection. A connection the caller may not read is simply absent. 403 when the caller has no directory.read producer.",
+        "operationId": "listExplorerRoots",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ExplorerConnectionId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "asOf": "2026-11-14T09:11:04Z",
+                  "items": [
+                    {
+                      "connectionId": "0b6f2c9e-18a4-4d73-8e5a-7c3d9f1e2a64",
+                      "enabled": null,
+                      "hasChildren": true,
+                      "isContainer": true,
+                      "kind": "other",
+                      "name": "corp",
+                      "objectClass": "domainDNS",
+                      "objectGuid": "5d1c8e2a-3b7f-4c60-a9d4-0e1f2a3b4c5d",
+                      "parentGuid": null,
+                      "readOnly": true,
+                      "samAccountName": "",
+                      "tier0": true,
+                      "upn": "",
+                      "whenChanged": "2026-11-12T16:40:11Z"
+                    }
+                  ],
+                  "more": false
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/ExplorerRoots"
+                }
+              }
+            },
+            "description": "The roots the caller's scope admits"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "501": {
+            "$ref": "#/components/responses/NotImplemented"
+          },
+          "503": {
+            "$ref": "#/components/responses/ExplorerUnavailable"
+          }
+        },
+        "summary": "List the Explorer roots",
+        "tags": [
+          "directory"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-004"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "directory.read"
       }
     },
     "/directory/search": {
@@ -7081,6 +8757,186 @@
         "x-activediq-scope": "platform",
         "x-activediq-stability": "stable",
         "x-permission": "anonymous"
+      }
+    },
+    "/helpdesk/caller-verifications": {
+      "post": {
+        "description": "Sends a one-time code to the destination the directory holds for the target (email or SMS); the technician never supplies or sees an address, only a masked form. This is a user act, never made on page render. Opening the sheet again attaches to the technician's open challenge (reused true) and sends nothing; resend true is the only way to a second code and supersedes the first.\nIdempotency-Key is required. A retry with the same key and body answers what the first attempt answered and sends nothing; the same key with a different body is refused 422 idempotency-key-reuse; a retry while the first request is still running is 409. Only a success is remembered, so a refused request is evaluated again on a retry.\nRefusals. 422 caller-verification-unavailable is one answer, with identical status, body and timing class, for an unknown, disabled, out-of-scope, protected or self target and for a target with no held destination for the factor; it never says which. 429 caller-verification-limit with errors[].code quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges; try later). 502 caller-verification-delivery-failed when the message could not be sent: no code exists and the issue does not count. 429 rate-limited when the session or source address is over its limit. 403 for a token principal or a missing permission.",
+        "operationId": "issueCallerVerification",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CallerVerificationKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "open": {
+                  "summary": "Open the sheet for a caller",
+                  "value": {
+                    "connectionId": "5b0e7c1a-3d2f-4a6b-8c9d-1e2f3a4b5c6d",
+                    "factor": "email_otp",
+                    "objectGuid": "3f9c1e52-7a4b-4d0e-9b1a-0c5e8d2a6f10"
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/IssueCallerVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "sent": {
+                    "value": {
+                      "challengeId": "8a1d6f40-2b7e-4c93-a5d1-7e0b9c3f2a64",
+                      "destinationMasked": "p***@corp.example.test",
+                      "expiresAt": "2026-11-15T09:15:00Z",
+                      "factor": "email_otp",
+                      "reused": false
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CallerVerificationChallenge"
+                }
+              }
+            },
+            "description": "The challenge the technician sees. It never carries the code."
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/CallerVerificationUnavailable"
+          },
+          "429": {
+            "$ref": "#/components/responses/CallerVerificationLimit"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "502": {
+            "$ref": "#/components/responses/CallerVerificationDeliveryFailed"
+          }
+        },
+        "summary": "Send a verification code to the caller",
+        "tags": [
+          "helpdesk"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-parity": [
+          "ADM-136"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "helpdesk.caller.verify"
+      }
+    },
+    "/helpdesk/caller-verifications/{challengeId}/verify": {
+      "post": {
+        "description": "Checks the code against the challenge. Every attempt is charged before the code is compared, so three attempts at most are possible per challenge whatever the concurrency.\nEvery failure answers one 422 caller-verification-refused with the same status, body and timing class, whether the code was wrong, the attempts are used up, the challenge expired, was superseded or never existed, or belongs to another technician: a client cannot tell a wrong code from a cap. The code travels only in this body, never in a URL, and no response, log line or audit event repeats it.\nIdempotency-Key is required. A retry with the same key and code replays the first answer, a pass or the refusal, and charges no second attempt; the same key with a different code is 422 idempotency-key-reuse.",
+        "operationId": "verifyCallerVerification",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CallerVerificationChallengeId"
+          },
+          {
+            "$ref": "#/components/parameters/CallerVerificationKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "code": {
+                  "value": {
+                    "code": "042917"
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/VerifyCallerVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallerVerified"
+                }
+              }
+            },
+            "description": "The caller is verified. The challenge may authorise one reset or unlock until authorisedUntil."
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/CallerVerificationRefused"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Check the code the caller read back",
+        "tags": [
+          "helpdesk"
+        ],
+        "x-activediq-limits": {
+          "class": "secret",
+          "maxBodyBytes": 256
+        },
+        "x-activediq-parity": [
+          "ADM-136"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "helpdesk.caller.verify"
       }
     },
     "/notify/siem-destinations": {
@@ -7701,6 +9557,88 @@
         "x-permission": "reports.run"
       }
     },
+    "/reports/runs/latest": {
+      "get": {
+        "description": "Answers the one thing a Home widget needs (specs/home-report-widgets.md 3.2): the caller's own latest succeeded run of definitionId and presetId, or why there is none. It never creates a run. The runner is the caller, taken from the principal; no parameter names another account, so a schedule owned by someone else that delivers to the caller never makes a candidate and the caller sees never_run until they run it themselves. The latest succeeded run is preferred over a newer failed one; a newer queued or running run is reported as inFlight and the state is running. state is one of current, stale_data (current and the freshness state is stale: asOf and freshness.stale name the connections), scope_changed (the caller's read scope differs from the one the run was trimmed with: no rows and no count), expired (past expiresAt: no rows), running, failed (no earlier run is current; failure is on the run header), never_run, unavailable (the definition or preset is not in the library). With rows=10 and a current run, table holds the first 10 rows of the definition's widget-profile columns (at most 5), read through the run-read gate (run.ReadAccess, 6.6 checks 1 to 5); there is no second gate. rows is 0 or 10, anything else is a 400; rows=10 on a definition whose widget profile has no table view is a 400. The response never carries the digest, the parameters or the scope text; getReportRun answers those. asOf is the freshness watermark of the run and is the age to show; it is never called live.",
+        "operationId": "getLatestReportRun",
+        "parameters": [
+          {
+            "description": "The report definition.",
+            "in": "query",
+            "name": "definitionId",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 2,
+              "pattern": "^[A-Za-z][A-Za-z0-9-]{1,63}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The preset; absent means the definition's default preset.",
+            "in": "query",
+            "name": "presetId",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_-]{0,63}$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "0 (the default) answers the header only; 10 adds the first 10 rows of the widget table.",
+            "in": "query",
+            "name": "rows",
+            "required": false,
+            "schema": {
+              "maximum": 10,
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportLatestRun"
+                }
+              }
+            },
+            "description": "The latest run state for the widget"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Get the caller's latest run of a report, for a Home widget",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-002"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.run"
+      }
+    },
     "/reports/runs/{runId}": {
       "get": {
         "description": "Answers the run record: state, as_of, the freshness label, row count, digest, scope applied, parameters and any failure. Poll this while the state is queued or running. Run-read gate (modules/reports.md 6.6, run.ReadAccess), in order: the run must belong to the caller (runner account equals the caller; the schedule's owner for a scheduled run), otherwise 404, which does not say whether the run exists; and the caller's current read scope must equal the scope the run was trimmed with, otherwise 409 with errors[].code scope_changed_rerun and the client creates a new run. A scope revoke or a narrower token therefore stops reads at once. reports.schedule.manage_all never opens a run. An expired run stays readable as a record with state expired; its rows are gone (ADR-0010). A failed run answers 200 with its state and failure.",
@@ -8080,6 +10018,77 @@
         },
         "x-activediq-parity": [
           "ADM-099"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.run"
+      }
+    },
+    "/reports/runs/{runId}/rows/{rowKey}/detail": {
+      "get": {
+        "description": "The docked detail of one row of a change-history run (USR-06, GRP-05, CMP-03, CTC-02, OU-02: spec reports-2-second-slice 4.1, design 2). The rows read carries no per-row detail; this read does, for the row whose rowKey (the object GUID) is given. The body is exactly one of five kinds, chosen by kind: edited, membership, credential, permissions, removed (the Deleted presets). Every kind carries when, object and actor; the fields beyond those are the kind's own and no kind carries a field of another. A value the history does not hold (no originating time because the change was only observed, a replication version that was not recorded, a restore status the connection account cannot read) is a typed unknown, never an empty string, 0 or a guess (FR-09). Names only: no kind carries an old or new value, a password or a security descriptor (spec rule 3). actor is notRecorded for a native change (spec rule 6, DM-18.I3) and activediq, with the principal and the operation, only for a change made through activeDIQ. Scope: the object is shown only when its recorded ancestry is in the caller's read scope, otherwise 404 (the existence of an object outside scope is not disclosed). For a membership row the member names are paged and trimmed to the caller's scope: membership.names is one page of the side chosen by side (added by default), and addedCount, removedCount, addedOutOfScope and removedOutOfScope are totals over the whole change, never over the page; members outside scope are counted, never named. The cursor is bound to this run, row and side. The run-read gate is that of listReportRunRows, in the same order: runner equals the caller, otherwise 404; not expired, otherwise 410 report-result-expired; scope fingerprint unchanged, otherwise 409 with errors[].code scope_changed_rerun; succeeded, otherwise 409 with errors[].code run_not_ready or run_failed. A rowKey that is not a row of the run, or whose run is not a change-history report, is a 404. The result is stored and frozen with the run (ADR-0010 rule 3). Read-only; the detail offers no restore (restore is 2b, ADM-098).",
+        "operationId": "getReportRunRowDetail",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          },
+          {
+            "$ref": "#/components/parameters/RowKey"
+          },
+          {
+            "$ref": "#/components/parameters/MembershipSide"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportRowDetail"
+                }
+              }
+            },
+            "description": "The detail of the row"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "410": {
+            "$ref": "#/components/responses/ReportResultExpired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Read the detail of one change-history row of a run",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-092"
         ],
         "x-activediq-stability": "preview",
         "x-permission": "reports.run"
@@ -9540,6 +11549,10 @@
     {
       "description": "Read-only directory queries. Universal search (grouped, ranked, trimmed to the caller's scope) and user search by plain text; permission directory.read.",
       "name": "directory"
+    },
+    {
+      "description": "Help-desk caller verification. A technician issues a one-time code to the caller's held contact factor and checks what the caller reads back; POST only, CSRF-protected, idempotent. Permission helpdesk.caller.verify.",
+      "name": "helpdesk"
     },
     {
       "description": "Sign-in, second factor and sign-out for the console. A first factor yields a pending sign-in; only the second factor creates a session.",

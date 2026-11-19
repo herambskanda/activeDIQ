@@ -1487,6 +1487,7 @@ type ReportDefinition struct {
 	Presets                  []ReportPreset            `json:"presets"`
 	SubjectKind              string                    `json:"subjectKind"`
 	Version                  int64                     `json:"version"`
+	Widget                   *ReportWidgetProfile      `json:"widget,omitzero"`
 
 	p apitypes.Presence
 }
@@ -1676,6 +1677,18 @@ func (v *ReportDefinition) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.Version); err != nil {
 				return err
 			}
+		case "widget":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(14, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Widget); err != nil {
+				return err
+			}
 		default:
 			return apitypes.UnknownMember(d)
 		}
@@ -1719,7 +1732,7 @@ func (v *ReportDefinition) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 		}
 	}
 	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 96, apitypes.CodeMaxItems)
 		for i := range v.Columns {
 			v.Columns[i].Validate(apitypes.Index(at.AppendToken("columns"), i), errs)
 		}
@@ -1855,6 +1868,13 @@ func (v *ReportDefinition) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 	}
 	if !v.p.Decoded() || (v.p.Has(13) && !v.p.IsNull(13)) {
 		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("version"), int64(v.Version), 1, 1000000)
+	}
+	// widget
+	if v.p.Decoded() && v.p.IsNull(14) {
+		errs.NullNotAllowed(at, "widget")
+	}
+	if v.Widget != nil {
+		(*v.Widget).Validate(at.AppendToken("widget"), errs)
 	}
 }
 
@@ -2302,6 +2322,997 @@ func (v ReportDeliveryStateValue) Valid() bool {
 		return true
 	}
 	return false
+}
+
+// ReportDetailActor: Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operation is the handle of the operation.
+type ReportDetailActor struct {
+	// Kind is the discriminator; exactly one variant pointer is set, the one Kind names.
+	Kind        string
+	Activediq   *ReportDetailActorActiveDiq
+	NotRecorded *ReportDetailActorNotRecorded
+}
+
+// UnmarshalJSONFrom reads the value, takes its kind, and decodes the variant with the caller's
+// options, so the variant's own strict decoder applies.
+func (u *ReportDetailActor) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*u = ReportDetailActor{}
+	val, err := d.ReadValue()
+	if err != nil {
+		return err
+	}
+	prefix := d.StackPointer()
+	kind, err := apitypes.UnionKind(prefix, val)
+	if err != nil {
+		return err
+	}
+	switch kind {
+	case "activediq":
+		var x ReportDetailActorActiveDiq
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Activediq = kind, &x
+	case "notRecorded":
+		var x ReportDetailActorNotRecorded
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.NotRecorded = kind, &x
+	default:
+		return apitypes.UnknownKind(prefix)
+	}
+	return nil
+}
+
+// MarshalJSONTo writes the one variant that is set, with its kind.
+func (u ReportDetailActor) MarshalJSONTo(e *jsontext.Encoder) error {
+	n := 0
+	if u.Activediq != nil {
+		n++
+	}
+	if u.NotRecorded != nil {
+		n++
+	}
+	if n != 1 {
+		return apitypes.ErrUnionVariants
+	}
+	switch {
+	case u.Activediq != nil:
+		c := *u.Activediq
+		c.Kind = "activediq"
+		return json.MarshalEncode(e, &c)
+	case u.NotRecorded != nil:
+		c := *u.NotRecorded
+		c.Kind = "notRecorded"
+		return json.MarshalEncode(e, &c)
+	}
+	return nil
+}
+
+// Validate validates the variant that is set.
+func (u *ReportDetailActor) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	switch u.Kind {
+	case "activediq":
+		if u.Activediq == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Activediq.Validate(at, errs)
+	case "notRecorded":
+		if u.NotRecorded == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.NotRecorded.Validate(at, errs)
+	default:
+		errs.AddBody(at.AppendToken("kind"), apitypes.CodeKind, "unknown kind")
+	}
+}
+
+// ReportDetailActorActiveDiq is the ReportDetailActorActiveDiq schema.
+type ReportDetailActorActiveDiq struct {
+	Kind      string        `json:"kind"`
+	Operation apitypes.UUID `json:"operation"`
+	Principal string        `json:"principal"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportDetailActorActiveDiq) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportDetailActorActiveDiq{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "operation":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Operation); err != nil {
+				return err
+			}
+		case "principal":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Principal); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportDetailActorActiveDiq) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "activediq" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+	// operation
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "operation")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "operation")
+		}
+	}
+	// principal
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "principal")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "principal")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("principal"), string(v.Principal), 0, 256)
+	}
+}
+
+// ReportDetailActorNotRecorded is the ReportDetailActorNotRecorded schema.
+type ReportDetailActorNotRecorded struct {
+	Kind string `json:"kind"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportDetailActorNotRecorded) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportDetailActorNotRecorded{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportDetailActorNotRecorded) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		if v.Kind != "notRecorded" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+}
+
+// ReportDetailAttribute: One attribute the change touched, with its name, the originating time and the replication version where recorded, each unknown where not. Never a value.
+type ReportDetailAttribute struct {
+	Name     string              `json:"name"`
+	OriginAt ReportDetailTime    `json:"originAt"`
+	Version  ReportDetailInteger `json:"version"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportDetailAttribute) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportDetailAttribute{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "name":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Name); err != nil {
+				return err
+			}
+		case "originAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.OriginAt); err != nil {
+				return err
+			}
+		case "version":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Version); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportDetailAttribute) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// name
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "name")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "name")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("name"), string(v.Name), 0, 256)
+	}
+	// originAt
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "originAt")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "originAt")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		v.OriginAt.Validate(at.AppendToken("originAt"), errs)
+	}
+	// version
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "version")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "version")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		v.Version.Validate(at.AppendToken("version"), errs)
+	}
+}
+
+// ReportDetailBasisValue: Where a time comes from. origin: the DC time of the change, from replication metadata (independent of the DC). observed: the time activeDIQ observed it. last_seen: the object as last observed before it left the feed.
+type ReportDetailBasisValue string
+
+const (
+	ReportDetailBasisValueOrigin   ReportDetailBasisValue = "origin"
+	ReportDetailBasisValueObserved ReportDetailBasisValue = "observed"
+	ReportDetailBasisValueLastSeen ReportDetailBasisValue = "last_seen"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportDetailBasisValue) Valid() bool {
+	switch v {
+	case ReportDetailBasisValueOrigin, ReportDetailBasisValueObserved, ReportDetailBasisValueLastSeen:
+		return true
+	}
+	return false
+}
+
+// ReportDetailInteger: A whole number as a decimal string, or unknown when the history does not hold it.
+type ReportDetailInteger struct {
+	// Kind is the discriminator; exactly one variant pointer is set, the one Kind names.
+	Kind    string
+	Integer *ReportCellInteger
+	Unknown *ReportCellUnknown
+}
+
+// UnmarshalJSONFrom reads the value, takes its kind, and decodes the variant with the caller's
+// options, so the variant's own strict decoder applies.
+func (u *ReportDetailInteger) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*u = ReportDetailInteger{}
+	val, err := d.ReadValue()
+	if err != nil {
+		return err
+	}
+	prefix := d.StackPointer()
+	kind, err := apitypes.UnionKind(prefix, val)
+	if err != nil {
+		return err
+	}
+	switch kind {
+	case "integer":
+		var x ReportCellInteger
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Integer = kind, &x
+	case "unknown":
+		var x ReportCellUnknown
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Unknown = kind, &x
+	default:
+		return apitypes.UnknownKind(prefix)
+	}
+	return nil
+}
+
+// MarshalJSONTo writes the one variant that is set, with its kind.
+func (u ReportDetailInteger) MarshalJSONTo(e *jsontext.Encoder) error {
+	n := 0
+	if u.Integer != nil {
+		n++
+	}
+	if u.Unknown != nil {
+		n++
+	}
+	if n != 1 {
+		return apitypes.ErrUnionVariants
+	}
+	switch {
+	case u.Integer != nil:
+		c := *u.Integer
+		c.Kind = "integer"
+		return json.MarshalEncode(e, &c)
+	case u.Unknown != nil:
+		c := *u.Unknown
+		c.Kind = "unknown"
+		return json.MarshalEncode(e, &c)
+	}
+	return nil
+}
+
+// Validate validates the variant that is set.
+func (u *ReportDetailInteger) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	switch u.Kind {
+	case "integer":
+		if u.Integer == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Integer.Validate(at, errs)
+	case "unknown":
+		if u.Unknown == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Unknown.Validate(at, errs)
+	default:
+		errs.AddBody(at.AppendToken("kind"), apitypes.CodeKind, "unknown kind")
+	}
+}
+
+// ReportDetailObject: The object the change is on. dn is the full distinguished name, an attribute of the object and never a key; the client addresses the object by objectGuid. For a removed row every field is as last seen by activeDIQ. logonName is absent for a kind without one (a group or OU).
+type ReportDetailObject struct {
+	DN         ReportDetailText `json:"dn"`
+	Domain     string           `json:"domain"`
+	LogonName  ReportDetailText `json:"logonName"`
+	Name       string           `json:"name"`
+	ObjectGUID apitypes.UUID    `json:"objectGuid"`
+	OUPath     ReportDetailText `json:"ouPath"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportDetailObject) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportDetailObject{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "dn":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DN); err != nil {
+				return err
+			}
+		case "domain":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Domain); err != nil {
+				return err
+			}
+		case "logonName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.LogonName); err != nil {
+				return err
+			}
+		case "name":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Name); err != nil {
+				return err
+			}
+		case "objectGuid":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ObjectGUID); err != nil {
+				return err
+			}
+		case "ouPath":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.OUPath); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportDetailObject) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// dn
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "dn")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "dn")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		v.DN.Validate(at.AppendToken("dn"), errs)
+	}
+	// domain
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "domain")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "domain")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("domain"), string(v.Domain), 0, 255)
+	}
+	// logonName
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "logonName")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "logonName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		v.LogonName.Validate(at.AppendToken("logonName"), errs)
+	}
+	// name
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "name")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "name")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("name"), string(v.Name), 0, 1024)
+	}
+	// objectGuid
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "objectGuid")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "objectGuid")
+		}
+	}
+	// ouPath
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "ouPath")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "ouPath")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(5) && !v.p.IsNull(5)) {
+		v.OUPath.Validate(at.AppendToken("ouPath"), errs)
+	}
+}
+
+// ReportDetailText: Text, absent when the object has none, or unknown when it was not read.
+type ReportDetailText struct {
+	// Kind is the discriminator; exactly one variant pointer is set, the one Kind names.
+	Kind    string
+	Absent  *ReportCellAbsent
+	Text    *ReportCellText
+	Unknown *ReportCellUnknown
+}
+
+// UnmarshalJSONFrom reads the value, takes its kind, and decodes the variant with the caller's
+// options, so the variant's own strict decoder applies.
+func (u *ReportDetailText) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*u = ReportDetailText{}
+	val, err := d.ReadValue()
+	if err != nil {
+		return err
+	}
+	prefix := d.StackPointer()
+	kind, err := apitypes.UnionKind(prefix, val)
+	if err != nil {
+		return err
+	}
+	switch kind {
+	case "absent":
+		var x ReportCellAbsent
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Absent = kind, &x
+	case "text":
+		var x ReportCellText
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Text = kind, &x
+	case "unknown":
+		var x ReportCellUnknown
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Unknown = kind, &x
+	default:
+		return apitypes.UnknownKind(prefix)
+	}
+	return nil
+}
+
+// MarshalJSONTo writes the one variant that is set, with its kind.
+func (u ReportDetailText) MarshalJSONTo(e *jsontext.Encoder) error {
+	n := 0
+	if u.Absent != nil {
+		n++
+	}
+	if u.Text != nil {
+		n++
+	}
+	if u.Unknown != nil {
+		n++
+	}
+	if n != 1 {
+		return apitypes.ErrUnionVariants
+	}
+	switch {
+	case u.Absent != nil:
+		c := *u.Absent
+		c.Kind = "absent"
+		return json.MarshalEncode(e, &c)
+	case u.Text != nil:
+		c := *u.Text
+		c.Kind = "text"
+		return json.MarshalEncode(e, &c)
+	case u.Unknown != nil:
+		c := *u.Unknown
+		c.Kind = "unknown"
+		return json.MarshalEncode(e, &c)
+	}
+	return nil
+}
+
+// Validate validates the variant that is set.
+func (u *ReportDetailText) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	switch u.Kind {
+	case "absent":
+		if u.Absent == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Absent.Validate(at, errs)
+	case "text":
+		if u.Text == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Text.Validate(at, errs)
+	case "unknown":
+		if u.Unknown == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Unknown.Validate(at, errs)
+	default:
+		errs.AddBody(at.AppendToken("kind"), apitypes.CodeKind, "unknown kind")
+	}
+}
+
+// ReportDetailTime: An instant the history holds, or unknown when it does not.
+type ReportDetailTime struct {
+	// Kind is the discriminator; exactly one variant pointer is set, the one Kind names.
+	Kind    string
+	Time    *ReportValueTime
+	Unknown *ReportCellUnknown
+}
+
+// UnmarshalJSONFrom reads the value, takes its kind, and decodes the variant with the caller's
+// options, so the variant's own strict decoder applies.
+func (u *ReportDetailTime) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*u = ReportDetailTime{}
+	val, err := d.ReadValue()
+	if err != nil {
+		return err
+	}
+	prefix := d.StackPointer()
+	kind, err := apitypes.UnionKind(prefix, val)
+	if err != nil {
+		return err
+	}
+	switch kind {
+	case "time":
+		var x ReportValueTime
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Time = kind, &x
+	case "unknown":
+		var x ReportCellUnknown
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Unknown = kind, &x
+	default:
+		return apitypes.UnknownKind(prefix)
+	}
+	return nil
+}
+
+// MarshalJSONTo writes the one variant that is set, with its kind.
+func (u ReportDetailTime) MarshalJSONTo(e *jsontext.Encoder) error {
+	n := 0
+	if u.Time != nil {
+		n++
+	}
+	if u.Unknown != nil {
+		n++
+	}
+	if n != 1 {
+		return apitypes.ErrUnionVariants
+	}
+	switch {
+	case u.Time != nil:
+		c := *u.Time
+		c.Kind = "time"
+		return json.MarshalEncode(e, &c)
+	case u.Unknown != nil:
+		c := *u.Unknown
+		c.Kind = "unknown"
+		return json.MarshalEncode(e, &c)
+	}
+	return nil
+}
+
+// Validate validates the variant that is set.
+func (u *ReportDetailTime) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	switch u.Kind {
+	case "time":
+		if u.Time == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Time.Validate(at, errs)
+	case "unknown":
+		if u.Unknown == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Unknown.Validate(at, errs)
+	default:
+		errs.AddBody(at.AppendToken("kind"), apitypes.CodeKind, "unknown kind")
+	}
+}
+
+// ReportDetailWhen: When the change happened. changedAt is the originating time where the history holds one, else the observed time, and basis says which. observedAt is always the observation time. gapMinutes is the minutes between the previous observation and this one, unknown when there is no previous observation. observationBased is always true: several changes between two observations show as one.
+type ReportDetailWhen struct {
+	Basis            ReportDetailBasisValue `json:"basis"`
+	ChangedAt        ReportDetailTime       `json:"changedAt"`
+	GapMinutes       ReportDetailInteger    `json:"gapMinutes"`
+	ObservationBased bool                   `json:"observationBased"`
+	ObservedAt       ReportDetailTime       `json:"observedAt"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportDetailWhen) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportDetailWhen{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "basis":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Basis); err != nil {
+				return err
+			}
+		case "changedAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ChangedAt); err != nil {
+				return err
+			}
+		case "gapMinutes":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.GapMinutes); err != nil {
+				return err
+			}
+		case "observationBased":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ObservationBased); err != nil {
+				return err
+			}
+		case "observedAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ObservedAt); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportDetailWhen) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// basis
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "basis")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "basis")
+		}
+	}
+	// changedAt
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "changedAt")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "changedAt")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		v.ChangedAt.Validate(at.AppendToken("changedAt"), errs)
+	}
+	// gapMinutes
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "gapMinutes")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "gapMinutes")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		v.GapMinutes.Validate(at.AppendToken("gapMinutes"), errs)
+	}
+	// observationBased
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "observationBased")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "observationBased")
+		}
+	}
+	// observedAt
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "observedAt")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "observedAt")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(4) && !v.p.IsNull(4)) {
+		v.ObservedAt.Validate(at.AppendToken("observedAt"), errs)
+	}
 }
 
 // ReportEmptyReason: Why a succeeded run has no rows because of scope, as opposed to its filters. scope_grants_nothing: the runner's role covers no directory objects. unsupported_scope_kind: the role's scope uses a kind 2a reports cannot evaluate, so it grants nothing (fail closed).
@@ -4435,6 +5446,309 @@ func (v ReportLastRunOutcome) Valid() bool {
 	return false
 }
 
+// ReportLatestRun: The caller's latest run of one report for a widget. runId, asOf, rowCount, finishedAt and expiresAt describe the run the state names and are null for never_run and unavailable. rowCount is null when state is scope_changed, expired, failed or running without a current result. table is present only when rows=10 was asked and the state serves rows. inFlight is a newer queued or running run. failure is the reason of a failed run.
+type ReportLatestRun struct {
+	AsOf       *apitypes.Timestamp `json:"asOf"`
+	ExpiresAt  *apitypes.Timestamp `json:"expiresAt"`
+	Failure    *ReportFailure      `json:"failure,omitzero"`
+	FinishedAt *apitypes.Timestamp `json:"finishedAt"`
+	Freshness  *ReportFreshness    `json:"freshness,omitzero"`
+	InFlight   *ReportRunSummary   `json:"inFlight,omitzero"`
+	RowCount   *int64              `json:"rowCount"`
+	RunID      *apitypes.UUID      `json:"runId"`
+	State      ReportLatestState   `json:"state"`
+	Table      *ReportLatestTable  `json:"table,omitzero"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportLatestRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportLatestRun{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "asOf":
+			v.p.Mark(0, false)
+			if err := json.UnmarshalDecode(d, &v.AsOf); err != nil {
+				return err
+			}
+		case "expiresAt":
+			v.p.Mark(1, false)
+			if err := json.UnmarshalDecode(d, &v.ExpiresAt); err != nil {
+				return err
+			}
+		case "failure":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Failure); err != nil {
+				return err
+			}
+		case "finishedAt":
+			v.p.Mark(3, false)
+			if err := json.UnmarshalDecode(d, &v.FinishedAt); err != nil {
+				return err
+			}
+		case "freshness":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Freshness); err != nil {
+				return err
+			}
+		case "inFlight":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.InFlight); err != nil {
+				return err
+			}
+		case "rowCount":
+			v.p.Mark(6, false)
+			if err := json.UnmarshalDecode(d, &v.RowCount); err != nil {
+				return err
+			}
+		case "runId":
+			v.p.Mark(7, false)
+			if err := json.UnmarshalDecode(d, &v.RunID); err != nil {
+				return err
+			}
+		case "state":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(8, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.State); err != nil {
+				return err
+			}
+		case "table":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(9, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Table); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportLatestRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// asOf
+	if v.p.Decoded() && !v.p.Has(0) {
+		errs.Required(at, "asOf")
+	}
+	// expiresAt
+	if v.p.Decoded() && !v.p.Has(1) {
+		errs.Required(at, "expiresAt")
+	}
+	// failure
+	if v.p.Decoded() && v.p.IsNull(2) {
+		errs.NullNotAllowed(at, "failure")
+	}
+	if v.Failure != nil {
+		(*v.Failure).Validate(at.AppendToken("failure"), errs)
+	}
+	// finishedAt
+	if v.p.Decoded() && !v.p.Has(3) {
+		errs.Required(at, "finishedAt")
+	}
+	// freshness
+	if v.p.Decoded() && v.p.IsNull(4) {
+		errs.NullNotAllowed(at, "freshness")
+	}
+	if v.Freshness != nil {
+		(*v.Freshness).Validate(at.AppendToken("freshness"), errs)
+	}
+	// inFlight
+	if v.p.Decoded() && v.p.IsNull(5) {
+		errs.NullNotAllowed(at, "inFlight")
+	}
+	if v.InFlight != nil {
+		(*v.InFlight).Validate(at.AppendToken("inFlight"), errs)
+	}
+	// rowCount
+	if v.p.Decoded() && !v.p.Has(6) {
+		errs.Required(at, "rowCount")
+	}
+	if v.RowCount != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("rowCount"), int64((*v.RowCount)), 0, 9007199254740991)
+	}
+	// runId
+	if v.p.Decoded() && !v.p.Has(7) {
+		errs.Required(at, "runId")
+	}
+	// state
+	if v.p.Decoded() {
+		if !v.p.Has(8) {
+			errs.Required(at, "state")
+		}
+		if v.p.IsNull(8) {
+			errs.NullNotAllowed(at, "state")
+		}
+	}
+	// table
+	if v.p.Decoded() && v.p.IsNull(9) {
+		errs.NullNotAllowed(at, "table")
+	}
+	if v.Table != nil {
+		(*v.Table).Validate(at.AppendToken("table"), errs)
+	}
+}
+
+// ReportLatestState: What a Home widget renders for the caller's latest run (specs/home-report-widgets.md 3.3).
+type ReportLatestState string
+
+const (
+	ReportLatestStateCurrent      ReportLatestState = "current"
+	ReportLatestStateStaleData    ReportLatestState = "stale_data"
+	ReportLatestStateScopeChanged ReportLatestState = "scope_changed"
+	ReportLatestStateExpired      ReportLatestState = "expired"
+	ReportLatestStateRunning      ReportLatestState = "running"
+	ReportLatestStateFailed       ReportLatestState = "failed"
+	ReportLatestStateNeverRun     ReportLatestState = "never_run"
+	ReportLatestStateUnavailable  ReportLatestState = "unavailable"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportLatestState) Valid() bool {
+	switch v {
+	case ReportLatestStateCurrent, ReportLatestStateStaleData, ReportLatestStateScopeChanged, ReportLatestStateExpired, ReportLatestStateRunning, ReportLatestStateFailed, ReportLatestStateNeverRun, ReportLatestStateUnavailable:
+		return true
+	}
+	return false
+}
+
+// ReportLatestTable: The first rows of a current run in the columns of the definition's widget profile, in the profile's order.
+type ReportLatestTable struct {
+	Columns []ReportColumnInfo `json:"columns"`
+	Rows    []ReportRow        `json:"rows"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportLatestTable) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportLatestTable{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "columns":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Columns); err != nil {
+				return err
+			}
+		case "rows":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Rows); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportLatestTable) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// columns
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "columns")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "columns")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 5, apitypes.CodeMaxItems)
+		for i := range v.Columns {
+			v.Columns[i].Validate(apitypes.Index(at.AppendToken("columns"), i), errs)
+		}
+	}
+	// rows
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "rows")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "rows")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("rows"), len(v.Rows), 0, 10, apitypes.CodeMaxItems)
+		for i := range v.Rows {
+			v.Rows[i].Validate(apitypes.Index(at.AppendToken("rows"), i), errs)
+		}
+	}
+}
+
 // ReportMeName: An exact ManageEngine report name and the preset that answers it (spec 6.2).
 type ReportMeName struct {
 	MeName   string `json:"meName"`
@@ -4517,6 +5831,216 @@ func (v *ReportMeName) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("presetId"), string(v.PresetID), 0, 64)
 	}
+}
+
+// ReportMembershipName: One member added or removed, addressed by objectGUID. The name is the one last observed.
+type ReportMembershipName struct {
+	Name       string        `json:"name"`
+	ObjectGUID apitypes.UUID `json:"objectGuid"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportMembershipName) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportMembershipName{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "name":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Name); err != nil {
+				return err
+			}
+		case "objectGuid":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ObjectGUID); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportMembershipName) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// name
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "name")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "name")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("name"), string(v.Name), 0, 1024)
+	}
+	// objectGuid
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "objectGuid")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "objectGuid")
+		}
+	}
+}
+
+// ReportMembershipNamePage: One page of in-scope member names of one side of a membership change, by name then objectGUID, stable.
+type ReportMembershipNamePage struct {
+	Items []ReportMembershipName `json:"items"`
+	Page  apitypes.PageInfo      `json:"page"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportMembershipNamePage) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportMembershipNamePage{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "items":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Items); err != nil {
+				return err
+			}
+		case "page":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Page); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportMembershipNamePage) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// items
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "items")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "items")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("items"), len(v.Items), 0, 1000, apitypes.CodeMaxItems)
+		for i := range v.Items {
+			v.Items[i].Validate(apitypes.Index(at.AppendToken("items"), i), errs)
+		}
+	}
+	// page
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "page")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "page")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		v.Page.Validate(at.AppendToken("page"), errs)
+	}
+}
+
+// ReportMembershipSide: Which side of a membership change to page. A closed request enum.
+type ReportMembershipSide string
+
+const (
+	ReportMembershipSideAdded   ReportMembershipSide = "added"
+	ReportMembershipSideRemoved ReportMembershipSide = "removed"
+)
+
+// Valid reports whether v is one of the closed set of values.
+func (v ReportMembershipSide) Valid() bool {
+	switch v {
+	case ReportMembershipSideAdded, ReportMembershipSideRemoved:
+		return true
+	}
+	return false
+}
+
+// Validate records a violation when v is not in the set.
+func (v ReportMembershipSide) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	if !v.Valid() {
+		errs.AddBody(at, apitypes.CodeEnum, "value is not one of the allowed values")
+	}
+}
+
+// ReportMembershipSideValue: Which side of a membership change a page of names is.
+type ReportMembershipSideValue string
+
+const (
+	ReportMembershipSideValueAdded   ReportMembershipSideValue = "added"
+	ReportMembershipSideValueRemoved ReportMembershipSideValue = "removed"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportMembershipSideValue) Valid() bool {
+	switch v {
+	case ReportMembershipSideValueAdded, ReportMembershipSideValueRemoved:
+		return true
+	}
+	return false
 }
 
 // ReportOuRef: An organizational unit by connection and objectGUID, never by DN. oneLevel false includes the whole subtree.
@@ -4765,7 +6289,7 @@ func (v *ReportParametersView) Validate(at jsontext.Pointer, errs *apitypes.Erro
 		}
 	}
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 96, apitypes.CodeMaxItems)
 		for i := range v.Columns {
 			apitypes.CheckLen(errs, apitypes.InBody, apitypes.Index(at.AppendToken("columns"), i), string(v.Columns[i]), 0, 64)
 		}
@@ -6473,7 +7997,7 @@ func (v *ReportPreset) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 		}
 	}
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 96, apitypes.CodeMaxItems)
 		for i := range v.Columns {
 			apitypes.CheckLen(errs, apitypes.InBody, apitypes.Index(at.AppendToken("columns"), i), string(v.Columns[i]), 0, 64)
 		}
@@ -8478,6 +10002,40 @@ func (v ReportRelativeTime) Validate(at jsontext.Pointer, errs *apitypes.Errors)
 	}
 }
 
+// ReportRestoreStateValue: What is known of a removed object. removed_restore_unknown: it left the feed, and whether it is a restorable tombstone, recycled or purged is not readable by the connection account and is never guessed from elapsed time.
+type ReportRestoreStateValue string
+
+const (
+	ReportRestoreStateValueRemovedRestoreUnknown ReportRestoreStateValue = "removed_restore_unknown"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportRestoreStateValue) Valid() bool {
+	switch v {
+	case ReportRestoreStateValueRemovedRestoreUnknown:
+		return true
+	}
+	return false
+}
+
+// ReportRestoreUnknownReasonValue: Why the restore status is unknown. deleted_objects_not_readable: the connection account is least-privilege and cannot read CN=Deleted Objects; noSuchObject there is not proof the tombstone expired (spec rule 7).
+type ReportRestoreUnknownReasonValue string
+
+const (
+	ReportRestoreUnknownReasonValueDeletedObjectsNotReadable ReportRestoreUnknownReasonValue = "deleted_objects_not_readable"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportRestoreUnknownReasonValue) Valid() bool {
+	switch v {
+	case ReportRestoreUnknownReasonValueDeletedObjectsNotReadable:
+		return true
+	}
+	return false
+}
+
 // ReportRow: One row of a stored result. rowKey is the object GUID or edge key; cells follow the page's columns.
 type ReportRow struct {
 	Cells  []ReportCell `json:"cells"`
@@ -8546,7 +10104,7 @@ func (v *ReportRow) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 		}
 	}
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("cells"), len(v.Cells), 0, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("cells"), len(v.Cells), 0, 96, apitypes.CodeMaxItems)
 		for i := range v.Cells {
 			v.Cells[i].Validate(apitypes.Index(at.AppendToken("cells"), i), errs)
 		}
@@ -8562,6 +10120,1386 @@ func (v *ReportRow) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("rowKey"), string(v.RowKey), 1, 128)
+	}
+}
+
+// ReportRowDetail: The detail of one change-history row, exactly one of five kinds. A client branches on kind and on nothing else.
+type ReportRowDetail struct {
+	// Kind is the discriminator; exactly one variant pointer is set, the one Kind names.
+	Kind        string
+	Credential  *ReportRowDetailCredential
+	Edited      *ReportRowDetailEdited
+	Membership  *ReportRowDetailMembership
+	Permissions *ReportRowDetailPermissions
+	Removed     *ReportRowDetailRemoved
+}
+
+// UnmarshalJSONFrom reads the value, takes its kind, and decodes the variant with the caller's
+// options, so the variant's own strict decoder applies.
+func (u *ReportRowDetail) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*u = ReportRowDetail{}
+	val, err := d.ReadValue()
+	if err != nil {
+		return err
+	}
+	prefix := d.StackPointer()
+	kind, err := apitypes.UnionKind(prefix, val)
+	if err != nil {
+		return err
+	}
+	switch kind {
+	case "credential":
+		var x ReportRowDetailCredential
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Credential = kind, &x
+	case "edited":
+		var x ReportRowDetailEdited
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Edited = kind, &x
+	case "membership":
+		var x ReportRowDetailMembership
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Membership = kind, &x
+	case "permissions":
+		var x ReportRowDetailPermissions
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Permissions = kind, &x
+	case "removed":
+		var x ReportRowDetailRemoved
+		if err := json.Unmarshal(val, &x, d.Options()); err != nil {
+			return apitypes.Rebase(prefix, err)
+		}
+		u.Kind, u.Removed = kind, &x
+	default:
+		return apitypes.UnknownKind(prefix)
+	}
+	return nil
+}
+
+// MarshalJSONTo writes the one variant that is set, with its kind.
+func (u ReportRowDetail) MarshalJSONTo(e *jsontext.Encoder) error {
+	n := 0
+	if u.Credential != nil {
+		n++
+	}
+	if u.Edited != nil {
+		n++
+	}
+	if u.Membership != nil {
+		n++
+	}
+	if u.Permissions != nil {
+		n++
+	}
+	if u.Removed != nil {
+		n++
+	}
+	if n != 1 {
+		return apitypes.ErrUnionVariants
+	}
+	switch {
+	case u.Credential != nil:
+		c := *u.Credential
+		c.Kind = "credential"
+		return json.MarshalEncode(e, &c)
+	case u.Edited != nil:
+		c := *u.Edited
+		c.Kind = "edited"
+		return json.MarshalEncode(e, &c)
+	case u.Membership != nil:
+		c := *u.Membership
+		c.Kind = "membership"
+		return json.MarshalEncode(e, &c)
+	case u.Permissions != nil:
+		c := *u.Permissions
+		c.Kind = "permissions"
+		return json.MarshalEncode(e, &c)
+	case u.Removed != nil:
+		c := *u.Removed
+		c.Kind = "removed"
+		return json.MarshalEncode(e, &c)
+	}
+	return nil
+}
+
+// Validate validates the variant that is set.
+func (u *ReportRowDetail) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	switch u.Kind {
+	case "credential":
+		if u.Credential == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Credential.Validate(at, errs)
+	case "edited":
+		if u.Edited == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Edited.Validate(at, errs)
+	case "membership":
+		if u.Membership == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Membership.Validate(at, errs)
+	case "permissions":
+		if u.Permissions == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Permissions.Validate(at, errs)
+	case "removed":
+		if u.Removed == nil {
+			errs.AddBody(at, apitypes.CodeKind, "kind names a variant that is not set")
+			return
+		}
+		u.Removed.Validate(at, errs)
+	default:
+		errs.AddBody(at.AppendToken("kind"), apitypes.CodeKind, "unknown kind")
+	}
+}
+
+// ReportRowDetailCredential: A credential event: a password was changed or reset, recognised from replication metadata. It carries no value and no attribute list beyond the fact (spec rule 2).
+type ReportRowDetailCredential struct {
+	Actor  ReportDetailActor  `json:"actor"`
+	Kind   string             `json:"kind"`
+	Object ReportDetailObject `json:"object"`
+	RowKey apitypes.UUID      `json:"rowKey"`
+	RunID  apitypes.UUID      `json:"runId"`
+	When   ReportDetailWhen   `json:"when"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportRowDetailCredential) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportRowDetailCredential{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "actor":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Actor); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "object":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Object); err != nil {
+				return err
+			}
+		case "rowKey":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RowKey); err != nil {
+				return err
+			}
+		case "runId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RunID); err != nil {
+				return err
+			}
+		case "when":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.When); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportRowDetailCredential) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// actor
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "actor")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "actor")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		v.Actor.Validate(at.AppendToken("actor"), errs)
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		if v.Kind != "credential" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+	// object
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "object")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "object")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		v.Object.Validate(at.AppendToken("object"), errs)
+	}
+	// rowKey
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "rowKey")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "rowKey")
+		}
+	}
+	// runId
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "runId")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "runId")
+		}
+	}
+	// when
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "when")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "when")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(5) && !v.p.IsNull(5)) {
+		v.When.Validate(at.AppendToken("when"), errs)
+	}
+}
+
+// ReportRowDetailEdited: An edit (also a created, moved or renamed change, whose attributes are the ones it touched). attributes are names with originating time and version; valuesRecorded is always false (names only, old and new values are not recorded).
+type ReportRowDetailEdited struct {
+	Actor          ReportDetailActor       `json:"actor"`
+	Attributes     []ReportDetailAttribute `json:"attributes"`
+	Kind           string                  `json:"kind"`
+	Object         ReportDetailObject      `json:"object"`
+	RowKey         apitypes.UUID           `json:"rowKey"`
+	RunID          apitypes.UUID           `json:"runId"`
+	ValuesRecorded bool                    `json:"valuesRecorded"`
+	When           ReportDetailWhen        `json:"when"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportRowDetailEdited) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportRowDetailEdited{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "actor":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Actor); err != nil {
+				return err
+			}
+		case "attributes":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Attributes); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "object":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Object); err != nil {
+				return err
+			}
+		case "rowKey":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RowKey); err != nil {
+				return err
+			}
+		case "runId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RunID); err != nil {
+				return err
+			}
+		case "valuesRecorded":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ValuesRecorded); err != nil {
+				return err
+			}
+		case "when":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(7, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.When); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportRowDetailEdited) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// actor
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "actor")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "actor")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		v.Actor.Validate(at.AppendToken("actor"), errs)
+	}
+	// attributes
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "attributes")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "attributes")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("attributes"), len(v.Attributes), 0, 256, apitypes.CodeMaxItems)
+		for i := range v.Attributes {
+			v.Attributes[i].Validate(apitypes.Index(at.AppendToken("attributes"), i), errs)
+		}
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		if v.Kind != "edited" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+	// object
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "object")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "object")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		v.Object.Validate(at.AppendToken("object"), errs)
+	}
+	// rowKey
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "rowKey")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "rowKey")
+		}
+	}
+	// runId
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "runId")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "runId")
+		}
+	}
+	// valuesRecorded
+	if v.p.Decoded() {
+		if !v.p.Has(6) {
+			errs.Required(at, "valuesRecorded")
+		}
+		if v.p.IsNull(6) {
+			errs.NullNotAllowed(at, "valuesRecorded")
+		}
+	}
+	// when
+	if v.p.Decoded() {
+		if !v.p.Has(7) {
+			errs.Required(at, "when")
+		}
+		if v.p.IsNull(7) {
+			errs.NullNotAllowed(at, "when")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(7) && !v.p.IsNull(7)) {
+		v.When.Validate(at.AppendToken("when"), errs)
+	}
+}
+
+// ReportRowDetailMembership: A membership change of a group. The four counts are totals over the whole change in the caller's scope or outside it; names is one page of the side asked for. A member outside the caller's scope is counted in addedOutOfScope or removedOutOfScope and never named.
+type ReportRowDetailMembership struct {
+	Actor             ReportDetailActor         `json:"actor"`
+	AddedCount        int64                     `json:"addedCount"`
+	AddedOutOfScope   int64                     `json:"addedOutOfScope"`
+	Kind              string                    `json:"kind"`
+	Names             ReportMembershipNamePage  `json:"names"`
+	Object            ReportDetailObject        `json:"object"`
+	RemovedCount      int64                     `json:"removedCount"`
+	RemovedOutOfScope int64                     `json:"removedOutOfScope"`
+	RowKey            apitypes.UUID             `json:"rowKey"`
+	RunID             apitypes.UUID             `json:"runId"`
+	Side              ReportMembershipSideValue `json:"side"`
+	When              ReportDetailWhen          `json:"when"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportRowDetailMembership) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportRowDetailMembership{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "actor":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Actor); err != nil {
+				return err
+			}
+		case "addedCount":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.AddedCount); err != nil {
+				return err
+			}
+		case "addedOutOfScope":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.AddedOutOfScope); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "names":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Names); err != nil {
+				return err
+			}
+		case "object":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Object); err != nil {
+				return err
+			}
+		case "removedCount":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RemovedCount); err != nil {
+				return err
+			}
+		case "removedOutOfScope":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(7, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RemovedOutOfScope); err != nil {
+				return err
+			}
+		case "rowKey":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(8, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RowKey); err != nil {
+				return err
+			}
+		case "runId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(9, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RunID); err != nil {
+				return err
+			}
+		case "side":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(10, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Side); err != nil {
+				return err
+			}
+		case "when":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(11, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.When); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportRowDetailMembership) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// actor
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "actor")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "actor")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		v.Actor.Validate(at.AppendToken("actor"), errs)
+	}
+	// addedCount
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "addedCount")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "addedCount")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("addedCount"), int64(v.AddedCount), 0, 9007199254740991)
+	}
+	// addedOutOfScope
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "addedOutOfScope")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "addedOutOfScope")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("addedOutOfScope"), int64(v.AddedOutOfScope), 0, 9007199254740991)
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		if v.Kind != "membership" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+	// names
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "names")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "names")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(4) && !v.p.IsNull(4)) {
+		v.Names.Validate(at.AppendToken("names"), errs)
+	}
+	// object
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "object")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "object")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(5) && !v.p.IsNull(5)) {
+		v.Object.Validate(at.AppendToken("object"), errs)
+	}
+	// removedCount
+	if v.p.Decoded() {
+		if !v.p.Has(6) {
+			errs.Required(at, "removedCount")
+		}
+		if v.p.IsNull(6) {
+			errs.NullNotAllowed(at, "removedCount")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(6) && !v.p.IsNull(6)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("removedCount"), int64(v.RemovedCount), 0, 9007199254740991)
+	}
+	// removedOutOfScope
+	if v.p.Decoded() {
+		if !v.p.Has(7) {
+			errs.Required(at, "removedOutOfScope")
+		}
+		if v.p.IsNull(7) {
+			errs.NullNotAllowed(at, "removedOutOfScope")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(7) && !v.p.IsNull(7)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("removedOutOfScope"), int64(v.RemovedOutOfScope), 0, 9007199254740991)
+	}
+	// rowKey
+	if v.p.Decoded() {
+		if !v.p.Has(8) {
+			errs.Required(at, "rowKey")
+		}
+		if v.p.IsNull(8) {
+			errs.NullNotAllowed(at, "rowKey")
+		}
+	}
+	// runId
+	if v.p.Decoded() {
+		if !v.p.Has(9) {
+			errs.Required(at, "runId")
+		}
+		if v.p.IsNull(9) {
+			errs.NullNotAllowed(at, "runId")
+		}
+	}
+	// side
+	if v.p.Decoded() {
+		if !v.p.Has(10) {
+			errs.Required(at, "side")
+		}
+		if v.p.IsNull(10) {
+			errs.NullNotAllowed(at, "side")
+		}
+	}
+	// when
+	if v.p.Decoded() {
+		if !v.p.Has(11) {
+			errs.Required(at, "when")
+		}
+		if v.p.IsNull(11) {
+			errs.NullNotAllowed(at, "when")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(11) && !v.p.IsNull(11)) {
+		v.When.Validate(at.AppendToken("when"), errs)
+	}
+}
+
+// ReportRowDetailPermissions: A permissions change, recognised from the replication metadata of nTSecurityDescriptor. descriptorRead is always false: no descriptor was read or compared, so the change cannot be told from inheritance or SDProp propagation (spec rule 2).
+type ReportRowDetailPermissions struct {
+	Actor          ReportDetailActor  `json:"actor"`
+	DescriptorRead bool               `json:"descriptorRead"`
+	Kind           string             `json:"kind"`
+	Object         ReportDetailObject `json:"object"`
+	RowKey         apitypes.UUID      `json:"rowKey"`
+	RunID          apitypes.UUID      `json:"runId"`
+	When           ReportDetailWhen   `json:"when"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportRowDetailPermissions) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportRowDetailPermissions{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "actor":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Actor); err != nil {
+				return err
+			}
+		case "descriptorRead":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DescriptorRead); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "object":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Object); err != nil {
+				return err
+			}
+		case "rowKey":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RowKey); err != nil {
+				return err
+			}
+		case "runId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RunID); err != nil {
+				return err
+			}
+		case "when":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.When); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportRowDetailPermissions) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// actor
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "actor")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "actor")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		v.Actor.Validate(at.AppendToken("actor"), errs)
+	}
+	// descriptorRead
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "descriptorRead")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "descriptorRead")
+		}
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		if v.Kind != "permissions" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+	// object
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "object")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "object")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		v.Object.Validate(at.AppendToken("object"), errs)
+	}
+	// rowKey
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "rowKey")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "rowKey")
+		}
+	}
+	// runId
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "runId")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "runId")
+		}
+	}
+	// when
+	if v.p.Decoded() {
+		if !v.p.Has(6) {
+			errs.Required(at, "when")
+		}
+		if v.p.IsNull(6) {
+			errs.NullNotAllowed(at, "when")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(6) && !v.p.IsNull(6)) {
+		v.When.Validate(at.AppendToken("when"), errs)
+	}
+}
+
+// ReportRowDetailRemoved: A row of a Deleted preset. deletedAt is the time activeDIQ first observed the object gone and means on or before that time (onOrBefore is always true; no DC time is shown for a deletion that was not read). object is as last seen by activeDIQ. state and restorableUntil are the restore-status fields; restorableUntil is always the typed unknown (a time is never shown, because the connection account cannot read it and elapsed time is no proof) with restoreUnknownReason saying why; a later read that can know it is an additive change. There is no restore link in this read.
+type ReportRowDetailRemoved struct {
+	Actor                ReportDetailActor               `json:"actor"`
+	DeletedAt            ReportDetailTime                `json:"deletedAt"`
+	Kind                 string                          `json:"kind"`
+	Object               ReportDetailObject              `json:"object"`
+	OnOrBefore           bool                            `json:"onOrBefore"`
+	RestorableUntil      ReportCellUnknown               `json:"restorableUntil"`
+	RestoreUnknownReason ReportRestoreUnknownReasonValue `json:"restoreUnknownReason"`
+	RowKey               apitypes.UUID                   `json:"rowKey"`
+	RunID                apitypes.UUID                   `json:"runId"`
+	State                ReportRestoreStateValue         `json:"state"`
+	When                 ReportDetailWhen                `json:"when"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportRowDetailRemoved) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportRowDetailRemoved{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "actor":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Actor); err != nil {
+				return err
+			}
+		case "deletedAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DeletedAt); err != nil {
+				return err
+			}
+		case "kind":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Kind); err != nil {
+				return err
+			}
+		case "object":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Object); err != nil {
+				return err
+			}
+		case "onOrBefore":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.OnOrBefore); err != nil {
+				return err
+			}
+		case "restorableUntil":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RestorableUntil); err != nil {
+				return err
+			}
+		case "restoreUnknownReason":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RestoreUnknownReason); err != nil {
+				return err
+			}
+		case "rowKey":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(7, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RowKey); err != nil {
+				return err
+			}
+		case "runId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(8, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RunID); err != nil {
+				return err
+			}
+		case "state":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(9, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.State); err != nil {
+				return err
+			}
+		case "when":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(10, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.When); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportRowDetailRemoved) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// actor
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "actor")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "actor")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		v.Actor.Validate(at.AppendToken("actor"), errs)
+	}
+	// deletedAt
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "deletedAt")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "deletedAt")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		v.DeletedAt.Validate(at.AppendToken("deletedAt"), errs)
+	}
+	// kind
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "kind")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "kind")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		if v.Kind != "removed" {
+			errs.Add(apitypes.InBody, at.AppendToken("kind"), apitypes.CodeConst, "wrong value")
+		}
+	}
+	// object
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "object")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "object")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
+		v.Object.Validate(at.AppendToken("object"), errs)
+	}
+	// onOrBefore
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "onOrBefore")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "onOrBefore")
+		}
+	}
+	// restorableUntil
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "restorableUntil")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "restorableUntil")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(5) && !v.p.IsNull(5)) {
+		v.RestorableUntil.Validate(at.AppendToken("restorableUntil"), errs)
+	}
+	// restoreUnknownReason
+	if v.p.Decoded() {
+		if !v.p.Has(6) {
+			errs.Required(at, "restoreUnknownReason")
+		}
+		if v.p.IsNull(6) {
+			errs.NullNotAllowed(at, "restoreUnknownReason")
+		}
+	}
+	// rowKey
+	if v.p.Decoded() {
+		if !v.p.Has(7) {
+			errs.Required(at, "rowKey")
+		}
+		if v.p.IsNull(7) {
+			errs.NullNotAllowed(at, "rowKey")
+		}
+	}
+	// runId
+	if v.p.Decoded() {
+		if !v.p.Has(8) {
+			errs.Required(at, "runId")
+		}
+		if v.p.IsNull(8) {
+			errs.NullNotAllowed(at, "runId")
+		}
+	}
+	// state
+	if v.p.Decoded() {
+		if !v.p.Has(9) {
+			errs.Required(at, "state")
+		}
+		if v.p.IsNull(9) {
+			errs.NullNotAllowed(at, "state")
+		}
+	}
+	// when
+	if v.p.Decoded() {
+		if !v.p.Has(10) {
+			errs.Required(at, "when")
+		}
+		if v.p.IsNull(10) {
+			errs.NullNotAllowed(at, "when")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(10) && !v.p.IsNull(10)) {
+		v.When.Validate(at.AppendToken("when"), errs)
 	}
 }
 
@@ -8672,7 +11610,7 @@ func (v *ReportRowPage) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 		}
 	}
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 0, 96, apitypes.CodeMaxItems)
 		for i := range v.Columns {
 			v.Columns[i].Validate(apitypes.Index(at.AppendToken("columns"), i), errs)
 		}
@@ -9241,6 +12179,8 @@ type ReportRunCreate struct {
 	DefinitionVersion *int64               `json:"definitionVersion,omitzero"`
 	Parameters        *ReportRunParameters `json:"parameters,omitzero"`
 	PresetID          *string              `json:"presetId,omitzero"`
+	// The runner's IANA time zone, such as Europe/Berlin. PDF and HTML exports of the run show Time cells in it, with the zone abbreviation. Absent means UTC. It does not change the run's rows or digest.
+	TimeZone *string `json:"timeZone,omitzero"`
 
 	p apitypes.Presence
 }
@@ -9310,6 +12250,18 @@ func (v *ReportRunCreate) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.PresetID); err != nil {
 				return err
 			}
+		case "timeZone":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.TimeZone); err != nil {
+				return err
+			}
 		default:
 			return apitypes.UnknownMember(d)
 		}
@@ -9356,6 +12308,16 @@ func (v *ReportRunCreate) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("presetId"), string((*v.PresetID)), 1, 64)
 		if !pattern2.MatchString(string((*v.PresetID))) {
 			errs.Add(apitypes.InBody, at.AppendToken("presetId"), apitypes.CodePattern, "value does not match the required pattern")
+		}
+	}
+	// timeZone
+	if v.p.Decoded() && v.p.IsNull(4) {
+		errs.NullNotAllowed(at, "timeZone")
+	}
+	if v.TimeZone != nil {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("timeZone"), string((*v.TimeZone)), 1, 64)
+		if !pattern6.MatchString(string((*v.TimeZone))) {
+			errs.Add(apitypes.InBody, at.AppendToken("timeZone"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
 }
@@ -9591,7 +12553,7 @@ func (v *ReportRunParameters) Validate(at jsontext.Pointer, errs *apitypes.Error
 		errs.NullNotAllowed(at, "columns")
 	}
 	if v.Columns != nil {
-		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 1, 64, apitypes.CodeMaxItems)
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("columns"), len(v.Columns), 1, 96, apitypes.CodeMaxItems)
 		for i := range v.Columns {
 			if !v.Columns[i].Valid() {
 				errs.Add(apitypes.InBody, apitypes.Index(at.AppendToken("columns"), i), apitypes.CodeEnum, "value is not one of the allowed values")
@@ -10991,7 +13953,7 @@ func (v *ReportScheduleWrite) Validate(at jsontext.Pointer, errs *apitypes.Error
 	}
 	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("name"), string(v.Name), 1, 128)
-		if !pattern6.MatchString(string(v.Name)) {
+		if !pattern7.MatchString(string(v.Name)) {
 			errs.Add(apitypes.InBody, at.AppendToken("name"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -11059,7 +14021,7 @@ func (v *ReportScheduleWrite) Validate(at jsontext.Pointer, errs *apitypes.Error
 	}
 	if !v.p.Decoded() || (v.p.Has(9) && !v.p.IsNull(9)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("timeZone"), string(v.TimeZone), 1, 64)
-		if !pattern7.MatchString(string(v.TimeZone)) {
+		if !pattern6.MatchString(string(v.TimeZone)) {
 			errs.Add(apitypes.InBody, at.AppendToken("timeZone"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -12112,13 +15074,119 @@ func (v *ReportValueTime) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 }
 
+// ReportWidgetProfile: The views a Home widget may render for the report (specs/home-report-widgets.md 3.1). count is always allowed and is listed. tableColumns are the at most 5 columns of the table view, in order, and are empty unless views holds table. trend plots the run's row count only. A definition without this member supports the count view only.
+type ReportWidgetProfile struct {
+	TableColumns []string           `json:"tableColumns"`
+	Views        []ReportWidgetView `json:"views"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportWidgetProfile) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportWidgetProfile{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "tableColumns":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.TableColumns); err != nil {
+				return err
+			}
+		case "views":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Views); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportWidgetProfile) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// tableColumns
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "tableColumns")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "tableColumns")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("tableColumns"), len(v.TableColumns), 0, 5, apitypes.CodeMaxItems)
+		for i := range v.TableColumns {
+			apitypes.CheckLen(errs, apitypes.InBody, apitypes.Index(at.AppendToken("tableColumns"), i), string(v.TableColumns[i]), 0, 64)
+		}
+	}
+	// views
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "views")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "views")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("views"), len(v.Views), 0, 3, apitypes.CodeMaxItems)
+	}
+}
+
+// ReportWidgetView is the ReportWidgetView schema.
+type ReportWidgetView string
+
+const (
+	ReportWidgetViewCount ReportWidgetView = "count"
+	ReportWidgetViewTable ReportWidgetView = "table"
+	ReportWidgetViewTrend ReportWidgetView = "trend"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportWidgetView) Valid() bool {
+	switch v {
+	case ReportWidgetViewCount, ReportWidgetViewTable, ReportWidgetViewTrend:
+		return true
+	}
+	return false
+}
+
 var (
 	pattern1 = regexp.MustCompile("^-?[0-9]{1,19}$")
 	pattern2 = regexp.MustCompile("^[a-z][a-z0-9_]{0,63}$")
 	pattern3 = regexp.MustCompile("^[0-9a-f]{64}$")
 	pattern4 = regexp.MustCompile("^([01][0-9]|2[0-3]):[0-5][0-9]$")
 	pattern5 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9-]{1,63}$")
-	pattern6 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]+$")
-	pattern7 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$")
+	pattern6 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$")
+	pattern7 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]+$")
 	pattern8 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]*$")
 )
