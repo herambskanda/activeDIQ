@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-
-	"github.com/jackc/pgx/v5"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -92,7 +90,7 @@ WHERE tenant_id = $1::uuid AND connection_id = $2::uuid AND object_guid = $3::uu
 ORDER BY created_at, id`
 	const qLock = q + ` FOR UPDATE`
 	var (
-		rows pgx.Rows
+		rows rowIter
 		err  error
 	)
 	if lock {
@@ -341,4 +339,12 @@ WHERE tenant_id = $1::uuid AND id = $2::uuid AND state = 'active'`, t.String(), 
 	}
 	res.NoticeSent = sent
 	return res, nil
+}
+
+// rowIter is the part of a result set activeFactors reads; it keeps the driver type out of this package.
+type rowIter interface {
+	Next() bool
+	Scan(dest ...any) error
+	Close()
+	Err() error
 }
