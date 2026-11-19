@@ -581,6 +581,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reports/managers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Find managers to run a manager report for
+         * @description The picker list of USR-12 Manager Based Users (reports-2 second slice 6.1, 11): users, inside the caller's read scope, who have at least one direct report, matching q. The pick is carried back as a ReportSubjectRef (connectionId and objectGUID, never a DN) in ReportRunParameters.subjects of a definition whose subjectKind is manager; no new parameter shape is needed. q is literal text matched against name and logon name: nothing from it is placed in a directory query as syntax, and a wildcard or filter character has no meaning. An absent or empty q lists the managers in a stable order (display name, then objectGUID), so the picker can show recent or first managers before the admin types. Two managers with the same display name are told apart by logonName and ouPath, never by order. directReports counts the direct reports inside the caller's scope. The list is read from the inventory (a link edge), not from a live directory read, and the run-time freshness label applies to the report, not to this list. A scope that grants nothing answers an empty page.
+         */
+        get: operations["listReportManagers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/replication/thresholds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the DC replication status thresholds
+         * @description The tenant's thresholds that turn a replication link's last-success age into a status in SYS-03 DC Replication Status (reports-2 second slice 7.3.3). They are the tenant's setting, not the run's: a run pins the values it used in ReportRun.replication.thresholds and its stored statuses never change when this is edited. Before anyone edits them, isDefault is true and the values are the product defaults (defaults). The ETag is the version for updateReportReplicationThresholds.
+         */
+        get: operations["getReportReplicationThresholds"];
+        /**
+         * Set the DC replication status thresholds
+         * @description Replaces both thresholds, as the Action reports.replication.thresholds.update (ADR-0005 rule 10): preview diff, gate, audit, and undo that restores the previous values. Needs If-Match with the ETag read. The warning threshold must be shorter than the failing threshold, otherwise 400 with errors[].code thresholds_not_ordered; each is 5 minutes to 30 days, otherwise 400. A change applies to runs that start after it; it never rewrites a stored run. It widens no directory right and reads no directory. Preview it first with previewUpdateReportReplicationThresholds (same body and parameters; nothing is written). The ActiveDIQ-Operation-Id it answers is the undo handle.
+         */
+        put: operations["updateReportReplicationThresholds"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/replication/thresholds/operations/{operationId}/previews/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview undoing a thresholds change
+         * @description The dry run of undoing one reports.replication.thresholds.* operation (ADR-0004 rule 14): it plans the inverse, reports.replication.thresholds.restore, against the live thresholds for the caller. A plan refusal is a 200 with outcome refused. It writes, persists and audits nothing. 404 when the operation is unknown or is not a reports.replication.thresholds.* operation. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded (the thresholds changed after this operation; undo the later change first) or not_finished.
+         */
+        post: operations["previewUndoReportReplicationThresholdsOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/replication/thresholds/operations/{operationId}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a thresholds change
+         * @description Undoes one reports.replication.thresholds.* operation, named by the ActiveDIQ-Operation-Id its write answered (ADR-0004 rule 14, ADR-0005 rule 10). The undo is a new operation of the Action reports.replication.thresholds.restore, planned against the live thresholds for the caller, run inline, audited, and itself undoable. It restores the values before the operation; runs already stored are not touched. 404 as for the preview. 409 operation-not-undoable with errors[].code irreversible, already_undone, superseded, not_finished or plan_refused. Undoing an operation that itself needed approval is always held (202).
+         */
+        post: operations["undoReportReplicationThresholdsOperation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/replication/thresholds/previews/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview setting the DC replication status thresholds
+         * @description The dry run of updateReportReplicationThresholds as the Action reports.replication.thresholds.update (ADR-0004 rule 14): it plans the change against the live values, authorises it for the caller and asks the gate, and answers the diff, reversibility and whether it can be undone. It writes, persists and audits nothing. A refusal the plan finds, such as thresholds_not_ordered, is a 200 with outcome refused and blocked[].code, never a problem. Same x-permission, parameters (including If-Match) and body as updateReportReplicationThresholds.
+         */
+        post: operations["previewUpdateReportReplicationThresholds"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/reports/runs": {
         parameters: {
             query?: never;
@@ -1752,10 +1856,10 @@ export interface components {
             label: string;
         };
         /**
-         * @description A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8). Policy columns (SYS-01, one row per policy, rowKey the policy GUID): policy_name (text); policy_kind (enum domain or pso, the ReportPolicyKindValue); precedence (integer, count; absent on the domain row); applies_to_count (integer, count of direct targets in the runner's scope, 0 for a PSO with none, absent on the domain row); applies_to_first (textList, the first two target names by name order, empty when none; the full list is listReportRunPolicyTargets); min_length, history_length, lockout_threshold (integer, count); max_age, min_age, lockout_duration, lockout_window (integer, seconds; max_age, lockout_threshold and lockout_duration are a never cell when the policy sets no limit, see ReportCellNever); complexity and reversible_encryption (boolean). A value that was not read is an unknown cell, never 0 or false. Deltas against the domain row are computed by the client from these typed cells (the unit is on the column); the server sends no delta text.
+         * @description A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8). Policy columns (SYS-01, one row per policy, rowKey the policy GUID): policy_name (text); policy_kind (enum domain or pso, the ReportPolicyKindValue); precedence (integer, count; absent on the domain row); applies_to_count (integer, count of direct targets in the runner's scope, 0 for a PSO with none, absent on the domain row); applies_to_first (textList, the first two target names by name order, empty when none; the full list is listReportRunPolicyTargets); min_length, history_length, lockout_threshold (integer, count); max_age, min_age, lockout_duration, lockout_window (integer, seconds; max_age, lockout_threshold and lockout_duration are a never cell when the policy sets no limit, see ReportCellNever); complexity and reversible_encryption (boolean). A value that was not read is an unknown cell, never 0 or false. Deltas against the domain row are computed by the client from these typed cells (the unit is on the column); the server sends no delta text. SYS-03 DC Replication Status (reports-2 second slice 7.3) adds ten ids, one row per destination DC, partition and partner (source DC), and reuses domain and status. Cell kinds, in this order: domain_controller text (the destination DC's DNS host name); domain text; partition text (the naming context's name, never a DN); partner_dc text (the source DC's DNS host name); last_attempt time; last_success time, or never when replication has never succeeded; consecutive_failures integer; last_error_code integer (the error the DC reports, a Win32 or replication error number such as 8524); last_error text (the meaning of the code, or the DC's message, escaped like any text); status enum (ReportReplicationStatusValue); lingering_risk enum (ReportLingeringRiskValue; the column's label never says detected); read_at time (when this DC was read). A value the DC did not return is absent, never a default, and its row's status is not_reported. A DC that did not answer has one row: domain_controller, domain, status not_reported, last_error text from the coverage error, read_at, and absent in every other cell. The status column of SYS-03 takes the choices of ReportReplicationStatusValue, and sorting by it orders by severity, failing first.
          * @enum {string}
          */
-        ReportColumnId: "name" | "logon_name" | "upn" | "status" | "domain" | "ou_path" | "manager" | "created" | "account_expires" | "days_to_expiry" | "last_logon" | "days_since" | "probable_service_account" | "real_last_logon" | "from_dc" | "dc_coverage" | "locked_out_since" | "lockout_ends" | "policy_source" | "data_as_of" | "password_last_set" | "password_expires" | "password_state" | "last_failed_logon" | "failures_on_dc" | "group_type" | "group_scope" | "direct_members" | "effective_members" | "managed_by" | "group" | "member" | "member_type" | "membership_kind" | "via" | "user" | "primary_group" | "dns_name" | "computer_type" | "operating_system" | "os_version" | "delegation" | "last_activity" | "activity_source" | "path" | "users" | "computers" | "groups" | "other_objects" | "objects_in_subtree" | "email" | "policy_name" | "policy_kind" | "precedence" | "applies_to_count" | "applies_to_first" | "min_length" | "history_length" | "max_age" | "min_age" | "complexity" | "reversible_encryption" | "lockout_threshold" | "lockout_duration" | "lockout_window";
+        ReportColumnId: "name" | "logon_name" | "upn" | "status" | "domain" | "ou_path" | "manager" | "created" | "account_expires" | "days_to_expiry" | "last_logon" | "days_since" | "probable_service_account" | "real_last_logon" | "from_dc" | "dc_coverage" | "locked_out_since" | "lockout_ends" | "policy_source" | "data_as_of" | "password_last_set" | "password_expires" | "password_state" | "last_failed_logon" | "failures_on_dc" | "group_type" | "group_scope" | "direct_members" | "effective_members" | "managed_by" | "group" | "member" | "member_type" | "membership_kind" | "via" | "user" | "primary_group" | "dns_name" | "computer_type" | "operating_system" | "os_version" | "delegation" | "last_activity" | "activity_source" | "path" | "users" | "computers" | "groups" | "other_objects" | "objects_in_subtree" | "email" | "policy_name" | "policy_kind" | "precedence" | "applies_to_count" | "applies_to_first" | "min_length" | "history_length" | "max_age" | "min_age" | "complexity" | "reversible_encryption" | "lockout_threshold" | "lockout_duration" | "lockout_window" | "domain_controller" | "partition" | "partner_dc" | "last_attempt" | "last_success" | "consecutive_failures" | "last_error_code" | "last_error" | "lingering_risk" | "read_at";
         /** @description A column of a definition, or of one run (a label can change with the run, such as Last logon (at least)). filterOperators are the operators the column takes. unit is present on an integer column that measures something, so a client can compare and format its cells without parsing text. */
         ReportColumnInfo: {
             choices: components["schemas"]["ReportChoice"][];
@@ -1783,16 +1887,40 @@ export interface components {
          * @enum {string}
          */
         ReportCompareOperator: "equals" | "not_equals" | "less_than" | "less_or_equal" | "greater_than" | "greater_or_equal" | "contains" | "starts_with";
-        /** @description How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5). */
+        /** @description How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5). dcsInScope counts every DC in the runner's scope, including those a cap left unread. dcsAnswered counts the DCs that gave data. complete is true only when every DC in scope answered: it is false when any DC did not answer or when notReadByCap is above zero, and zero DCs answered is coverage, never an empty result. unanswered, notReadByCap and readCap are set by SYS-03 DC Replication Status (reports-2 second slice 7.3) and may be absent on other per-DC reports. unanswered lists the DCs that were read and gave no data, each with its reason and error, in DNS-name order; dcsAnswered plus the length of unanswered plus notReadByCap equals dcsInScope. A DC not read because of readCap has no row and no entry in unanswered; only the count is given, and the console says Narrow the scope. SYS-03 reads at most readCap DCs (100) and reads them in DNS-name order; it does not refuse the run, unlike the read cap of USR-04 and PWD-03 (failure reason per_dc_read_cap_exceeded). */
         ReportDcCoverage: {
             complete: boolean;
             dcsAnswered: number;
             dcsInScope: number;
             /** @description The header text, "Read from 2 of 3 DCs · 1 unreachable: dc2.example.test: timeout". */
             label?: string;
+            notReadByCap?: number;
+            readCap?: number;
+            unanswered?: components["schemas"]["ReportDcUnanswered"][];
             /** @description The DCs that did not answer, each with the fixed code it gave (never driver text). Empty when coverage is complete. */
             unreachable?: components["schemas"]["ReportUnreachableDc"][];
         };
+        /** @description Why a DC gave no data. code is a stable slug to branch on, such as connection_refused, dns_failure or tls_untrusted; message is fixed text for the code. Neither carries a DN, LDAP result text, a stack trace or a secret. */
+        ReportDcError: {
+            code: string;
+            message: string;
+        };
+        /** @description A DC in scope that was read and gave no replication data: one entry of the Did not answer band. dc is the DC's DNS host name. rowKey is the key of this DC's row in the stored result (status not_reported), so the band and the grid, the export and the digest agree. readAt is when the read was tried. */
+        ReportDcUnanswered: {
+            /** Format: uuid */
+            connectionId: string;
+            dc: string;
+            error: components["schemas"]["ReportDcError"];
+            /** Format: date-time */
+            readAt: string;
+            reason: components["schemas"]["ReportDcUnansweredReason"];
+            rowKey: string;
+        };
+        /**
+         * @description Why a DC in scope gave no replication data. unreachable: no connection could be made. timed_out: the read passed its time limit. tls_failed: the TLS handshake or certificate check failed. access_denied: the connection account could not bind or read. right_not_granted: the optional replication-monitoring right is not granted (reports-2 second slice 13). attributes_not_returned: the DC answered and returned no replication values. decode_refused: the connector's safe decoder refused the DC's value.
+         * @enum {string}
+         */
+        ReportDcUnansweredReason: "unreachable" | "timed_out" | "tls_failed" | "access_denied" | "right_not_granted" | "attributes_not_returned" | "decode_refused" | (string & {});
         /** @description A report definition: an immutable AST over one registered dataset (FR-03, FR-05), shown as its presets, crosswalk and columns. exportFormats are the formats this installation can produce, and the console offers no others. subjectKind says whether the report requires groups or users (GRP-02, GRP-03). minScheduleIntervalHours is 24 for per-DC reports. */
         ReportDefinition: {
             alsoKnownAs: components["schemas"]["ReportMeName"][];
@@ -2106,6 +2234,27 @@ export interface components {
         ReportLatestTable: {
             columns: components["schemas"]["ReportColumnInfo"][];
             rows: components["schemas"]["ReportRow"][];
+        };
+        /**
+         * @description The lingering-object risk indicator of SYS-03 (7.3.4). at_risk: a partner's last success is older than the forest's tombstone lifetime. no_indication: it is not. not_reported: the last success or the tombstone lifetime is not known. This is an indicator, never a detection: no label, text or value says that lingering objects were detected.
+         * @enum {string}
+         */
+        ReportLingeringRiskValue: "at_risk" | "no_indication" | "not_reported" | (string & {});
+        /** @description A user with at least one direct report, offered by the manager picker. Two with the same displayName differ in logonName or ouPath. connectionId and guid are what ReportSubjectRef carries back. */
+        ReportManagerCandidate: {
+            /** Format: uuid */
+            connectionId: string;
+            directReports: number;
+            displayName: string;
+            /** Format: uuid */
+            guid: string;
+            logonName: string;
+            ouPath: string;
+        };
+        /** @description A page of managers, ordered by display name then objectGUID. */
+        ReportManagerList: {
+            items: components["schemas"]["ReportManagerCandidate"][];
+            page: components["schemas"]["PageInfo"];
         };
         /** @description One member added or removed, addressed by objectGUID. The name is the one last observed. */
         ReportMembershipName: {
@@ -2444,6 +2593,44 @@ export interface components {
          * @enum {string}
          */
         ReportRelativeTime: "within_last" | "within_next" | "older_than";
+        /** @description How many rows of the run have one status. */
+        ReportReplicationStatusCount: {
+            count: number;
+            status: components["schemas"]["ReportReplicationStatusValue"];
+        };
+        /**
+         * @description The derived status of one SYS-03 row (reports-2 second slice 7.3.3). healthy: the last success is within the warning threshold and there are no consecutive failures. warning: no failures, and the last success is older than the warning threshold and not older than the failing threshold. failing: consecutive failures above zero, or a last success older than the failing threshold. not_reported: the DC did not answer, or answered without the value; it is never healthy and never a count of problems. unreachable is not a status: an unreachable DC is not_reported, with its reason and error in the coverage block. Severity, for sort order, is failing, warning, not_reported, healthy.
+         * @enum {string}
+         */
+        ReportReplicationStatusValue: "healthy" | "warning" | "failing" | "not_reported" | (string & {});
+        /** @description What a SYS-03 run adds to its header, present only on a run of DC Replication Status (absent on every other report). thresholds are the values the run applied, pinned when it started. statusCounts has one entry for each of failing, warning, healthy and not_reported, in that order, zeros included, and counts the run's stored rows; their sum is rowCount, so the chips All, Failing, Warning, Healthy and Not reported are filters on the status column with these counts. A DC that did not answer has a row with status not_reported, so it is counted there and never under healthy. tombstoneLifetimeDays is the tombstone lifetime the risk indicator was judged against (the shortest of the forests in scope); null when it was not read, and then every lingering_risk cell is not_reported. nextReadAllowedAfter is when the 1 hour floor of reports-2a 8.4 lets the next run read the DCs; null until the run has started. */
+        ReportReplicationSummary: {
+            /** Format: date-time */
+            nextReadAllowedAfter: string | null;
+            statusCounts: components["schemas"]["ReportReplicationStatusCount"][];
+            thresholds: components["schemas"]["ReportReplicationThresholdPair"];
+            tombstoneLifetimeDays: number | null;
+        };
+        /** @description A pair of thresholds in seconds. */
+        ReportReplicationThresholdPair: {
+            failingAfterSeconds: number;
+            warningAfterSeconds: number;
+        };
+        /** @description The tenant's SYS-03 thresholds in seconds. defaults are the product defaults (1 hour warning, 24 hours failing; [PROPOSED] in reports-2 second slice 7.3.3 until ad-expert and reporting-engineer confirm), so a client can offer Reset. isDefault is true while nobody has set values. updatedAt and updatedBy are absent while isDefault. */
+        ReportReplicationThresholds: {
+            defaults: components["schemas"]["ReportReplicationThresholdPair"];
+            failingAfterSeconds: number;
+            isDefault: boolean;
+            /** Format: date-time */
+            updatedAt?: string;
+            updatedBy?: components["schemas"]["JobActor"];
+            warningAfterSeconds: number;
+        };
+        /** @description Both thresholds of SYS-03 DC Replication Status, in seconds. warningAfterSeconds must be less than failingAfterSeconds. Both are required: a write replaces the pair. */
+        ReportReplicationThresholdsWrite: {
+            failingAfterSeconds: number;
+            warningAfterSeconds: number;
+        };
         /**
          * @description What is known of a removed object. removed_restore_unknown: it left the feed, and whether it is a restorable tombstone, recycled or purged is not readable by the connection account and is never guessed from elapsed time.
          * @enum {string}
@@ -2585,6 +2772,7 @@ export interface components {
             policyReads?: components["schemas"]["ReportPolicyReads"];
             presetId: string | null;
             progress: components["schemas"]["ReportRunProgress"];
+            replication?: components["schemas"]["ReportReplicationSummary"];
             /** Format: uuid */
             rerunOf?: string;
             rowCount: number | null;
@@ -3679,7 +3867,7 @@ export interface components {
         PolicyId: string;
         /** @description The request ID. It names the audit events of the change and makes a retry of a create safe. */
         RequiredIdempotencyKey: string;
-        /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+        /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
         RequiredIfMatch: string;
         /** @description The rowKey of a row of the run; for a change-history run, the object's GUID. */
         RowKey: string;
@@ -4731,6 +4919,227 @@ export interface operations {
             500: components["responses"]["Internal"];
         };
     };
+    listReportManagers: {
+        parameters: {
+            query?: {
+                /** @description The nextCursor of the previous page. */
+                cursor?: components["parameters"]["PageCursor"];
+                /** @description The page size. */
+                limit?: components["parameters"]["PageLimit"];
+                /** @description Literal text to match in the display name or logon name. Up to 256 characters; control characters are refused. */
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of managers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportManagerList"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getReportReplicationThresholds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The thresholds */
+            200: {
+                headers: {
+                    ETag: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportReplicationThresholds"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    updateReportReplicationThresholds: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportReplicationThresholdsWrite"];
+            };
+        };
+        responses: {
+            /** @description The thresholds as stored */
+            200: {
+                headers: {
+                    /** @description The operation that made this change; the undo handle. */
+                    "ActiveDIQ-Operation-Id": string;
+                    ETag: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportReplicationThresholds"];
+                };
+            };
+            /** @description Held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet; it applies when approved */
+            202: {
+                headers: {
+                    /** @description The held operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUndoReportReplicationThresholdsOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview of the undo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["OperationNotUndoable"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    undoReportReplicationThresholdsOperation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
+                operationId: components["parameters"]["OperationId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationUndoRequest"];
+            };
+        };
+        responses: {
+            /** @description The undo operation; undoes names the operation it undid */
+            200: {
+                headers: {
+                    /** @description The undo operation. Undoing it re-applies the original change. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            /** @description The undo is held for approval by the gate or a kernel hold (ADR-0005 rule 8); holdReason says which. Nothing changed yet */
+            202: {
+                headers: {
+                    /** @description The held undo operation. */
+                    "ActiveDIQ-Operation-Id": string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationRef"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["OperationNotUndoable"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    previewUpdateReportReplicationThresholds: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
+                "If-Match": components["parameters"]["RequiredIfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportReplicationThresholdsWrite"];
+            };
+        };
+        responses: {
+            /** @description The preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationPreview"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            412: components["responses"]["PreconditionFailed"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            428: components["responses"]["PreconditionRequired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
     listReportRuns: {
         parameters: {
             query?: {
@@ -5187,7 +5596,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
                 "If-Match": components["parameters"]["RequiredIfMatch"];
             };
             path: {
@@ -5243,7 +5652,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
                 "If-Match": components["parameters"]["RequiredIfMatch"];
             };
             path: {
@@ -5287,7 +5696,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
                 "If-Match": components["parameters"]["RequiredIfMatch"];
             };
             path: {
@@ -5383,7 +5792,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
                 "If-Match": components["parameters"]["RequiredIfMatch"];
             };
             path: {
@@ -5444,7 +5853,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
                 "If-Match": components["parameters"]["RequiredIfMatch"];
             };
             path: {
@@ -5519,7 +5928,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                /** @description The ETag of the schedule version being changed. A stale value answers precondition-failed; an absent one precondition-required. */
+                /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
                 "If-Match": components["parameters"]["RequiredIfMatch"];
             };
             path: {

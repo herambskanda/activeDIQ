@@ -1648,6 +1648,23 @@ A stored run holds rows trimmed to one account's scope at one moment. Holding `r
   (reuse window, job limit) with `rerun_of` = the source run. A source in `queued` or `running` is a 409
   `run_in_progress`.
 
+- **SYS-03 contract (T-1720; implementation T-1743, T-1744, T-1745).** `api/openapi/modules/reports.yaml` carries, for DC
+  Replication Status: ten new `ReportColumnId` values (`domain_controller`, `partition`, `partner_dc`, `last_attempt`,
+  `last_success`, `consecutive_failures`, `last_error_code`, `last_error`, `lingering_risk`, `read_at`; `domain` and
+  `status` are reused); `ReportRun.coverage` extended with optional `unanswered[]` (DC, reason, error code and fixed
+  message, row key, read time), `notReadByCap` and `readCap` (100); and `ReportRun.replication` (pinned thresholds,
+  `statusCounts` for failing, warning, healthy and not_reported in that order, `tombstoneLifetimeDays`,
+  `nextReadAllowedAfter`). A DC that did not answer is **both** an `unanswered` entry and one stored row with status
+  `not_reported`, so exports and the digest cannot drop it, and it is counted under not_reported, never healthy. A DC
+  left unread by the cap has no row, only the `notReadByCap` count. SYS-03 reads at most 100 DCs, in DNS-name order,
+  and does not refuse the run (the USR-04/PWD-03 cap refuses with `per_dc_read_cap_exceeded`). The status `status`
+  sort is by severity (failing, warning, not_reported, healthy). Two permissions, distinct from `reports.run`:
+  `reports.replication.read` (thresholds read; also checked inside `createReportRun` for the SYS-03 definition, like
+  the export check of `reports.run`) and `reports.replication.configure` (thresholds Action
+  `reports.replication.thresholds.update` with preview twin and undo pair `…restore`). The thresholds are a tenant
+  setting; a run pins the values it used. `listReportManagers` (`GET /reports/managers`) is the USR-12 picker list; the
+  pick travels as the existing `ReportSubjectRef`. Until the owning rows land the new operations answer 501 from `pending.go`.
+
 **Test RP9** (row B4, listed by T-0873): `Test_run_read_bound_to_runner_and_scope`:
 - a second account holding `reports.run` and `reports.export` gets 404 on GET, page and export
   create of the first account's run, by ID;

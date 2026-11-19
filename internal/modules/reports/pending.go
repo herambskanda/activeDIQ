@@ -7,9 +7,9 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitypes"
 )
 
-// pending answers the operations whose rows of modules/reports.md 12 have not landed. They are in the contract
-// and mounted, and until their row lands they answer 501 not-implemented rather than a made-up body. Each row
-// deletes its methods here.
+// pending answers the operations whose rows of modules/reports.md 12 have not landed: the SYS-03 thresholds (T-1744) and the manager picker (T-1745).
+// They are in the contract and mounted, and until their row
+// lands they answer 501 not-implemented rather than a made-up body. Each row deletes its methods here.
 type pending struct{}
 
 // ListReportRunPolicyTargets (T-1718) is in the contract ahead of the policy dataset (T-1114, inventory.policies).
@@ -26,3 +26,26 @@ func (pending) GetReportRunRowDetail(context.Context, api.GetReportRunRowDetailI
 }
 
 var _ api.Handlers = (*Handlers)(nil)
+func (pending) GetReportReplicationThresholds(context.Context, api.GetReportReplicationThresholdsInput) (api.GetReportReplicationThresholdsOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (T-1744)")
+}
+
+func (pending) UpdateReportReplicationThresholds(context.Context, api.UpdateReportReplicationThresholdsInput) (api.UpdateReportReplicationThresholdsOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (T-1744)")
+}
+
+func (pending) PreviewUpdateReportReplicationThresholds(context.Context, api.PreviewUpdateReportReplicationThresholdsInput) (api.PreviewUpdateReportReplicationThresholdsOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (T-1744)")
+}
+
+func (pending) UndoReportReplicationThresholdsOperation(context.Context, api.UndoReportReplicationThresholdsOperationInput) (api.UndoReportReplicationThresholdsOperationOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (T-1744)")
+}
+
+func (pending) PreviewUndoReportReplicationThresholdsOperation(context.Context, api.PreviewUndoReportReplicationThresholdsOperationInput) (api.PreviewUndoReportReplicationThresholdsOperationOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (T-1744)")
+}
+
+func (pending) ListReportManagers(context.Context, api.ListReportManagersInput) (api.ListReportManagersOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (T-1745)")
+}
