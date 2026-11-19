@@ -533,6 +533,7 @@ Git behaviour (worktrees, merge, conflict) is tested against real repositories i
 | `api_unreachable_backoff_minutes` | 5 | dispatch pause once `api_unreachable_threshold` consecutive runs hit connectivity errors |
 | `api_unreachable_threshold` | 3 | consecutive connectivity failures (any tickets) that count as an outage |
 | `blocked_retriage_hours` | 6 | a blocked ticket is offered to triage again after this long |
+| `hold_ready` | false | `true` starts no new work: ready tickets and grooming are held, while review, qa, rework, continuations, triage and the digest still run (needs `factory restart`) |
 | `auto_reload` | true | `false` switches off the automatic reload when factory code lands on `main` (`factory restart` still works) |
 
 ### Fields and files beyond the reference above
