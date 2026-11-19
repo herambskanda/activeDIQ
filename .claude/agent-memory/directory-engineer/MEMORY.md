@@ -46,4 +46,5 @@
 - [user attrs lessons](user-attrs-lessons.md) — T-1111: FORCE RLS lift in migration, change-history flood hazard, photo flags only
 - [descendant dn lessons](descendant-dn-lessons.md) — T-0988: dn pass before ancestry UPDATE, key delete/insert trap, dn.Rebase
 - [incremental cycle lessons](incremental-lessons.md) — T-1198: Reconcile moves fencing token, whole FeedCookie stored, deferFinish, patch-path dn gap
+- [per-DC count lessons](perdc-count-lessons.md) — T-1499: Describe-based DCsInScope, Services.PerDC wiring, reports tests hang without Postgres
 - [printers lessons](printers-lessons.md) — T-1719: new kind = two CHECKs + resync, OU path is dn (RP11), lab seed without rng draws
