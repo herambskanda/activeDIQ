@@ -56,6 +56,7 @@ var (
 )
 
 var enumLabels = map[string]string{
+	"observed": "Value observed", "not_observed": "No value observed (absent or unreadable)", "unknown_denied": "Unreadable (denied)",
 	"locked": "Locked out", "not_locked": "Not locked out", "not_applicable": "Not applicable",
 	"unknown_input_missing": "Unknown (input missing)",
 	"never_account_flag":    "Never expires (account flag)", "not_applicable_smartcard": "Not applicable (smartcard required)",
@@ -158,6 +159,7 @@ func usersDataset() report.Dataset {
 		state("probable_service_account_reason", "Service account reason", report.SQL(probableReasonSQL), "spn_set", "none"),
 	)
 	cols = append(cols, userAttributeColumns()...)
+	cols = append(cols, readStateColumns()...)
 	cols = append(cols, userPerDCColumns()...)
 	return report.Dataset{
 		ID:     DatasetUsers,
@@ -299,6 +301,42 @@ func userAttributeColumns() []report.Column {
 			report.SQL("CASE WHEN {t}.attributes ->> 'logonHours' IS NULL THEN NULL ELSE position('0' in {t}.attributes ->> 'logonHours') > 0 END"), opsBool),
 		derived("has_thumbnail_photo", "Has thumbnail photo", report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> 'hasThumbnailPhoto')::boolean, false)"), opsBool),
 		derived("has_jpeg_photo", "Has JPEG photo", report.TypeBool, report.SQL("COALESCE(({t}.attributes ->> 'hasJpegPhoto')::boolean, false)"), opsBool),
+	}
+}
+
+// The per-attribute read marker the user sync writes under attributes.attrRead (T-2216, T-1112 AC2).
+// observed: the sync saw a value. not_observed: it saw none, which is absent OR unreadable (AD omits a
+// denied attribute exactly as it omits an empty one). unknown_denied is reserved for a DACL verdict
+// (T-2220) and is never written. A row with no marker (not yet resynced, or not a user) reads NULL.
+const (
+	ReadMarkerKey     = "attrRead"
+	ReadObserved      = "observed"
+	ReadNotObserved   = "not_observed"
+	ReadUnknownDenied = "unknown_denied"
+)
+
+// readStateColumns exposes one read-state column per marked attribute. Additive: no existing column moves.
+// Each fragment is a literal constant (RP1/FF-SP2): the key is spelled out, never joined in.
+func readStateColumns() []report.Column {
+	rs := func(id, label string, sql report.Fragment) report.Column {
+		return state(report.ColumnID(id+"_read_state"), label+": read state", sql, ReadObserved, ReadNotObserved, ReadUnknownDenied)
+	}
+	return []report.Column{
+		rs("mail", "Email", report.SQL("{t}.attributes -> 'attrRead' ->> 'mail'")),
+		rs("employee_id", "Employee ID", report.SQL("{t}.attributes -> 'attrRead' ->> 'employeeID'")),
+		rs("department", "Department", report.SQL("{t}.attributes -> 'attrRead' ->> 'department'")),
+		rs("title", "Title", report.SQL("{t}.attributes -> 'attrRead' ->> 'title'")),
+		rs("company", "Company", report.SQL("{t}.attributes -> 'attrRead' ->> 'company'")),
+		rs("telephone_number", "Telephone number", report.SQL("{t}.attributes -> 'attrRead' ->> 'telephoneNumber'")),
+		rs("mobile", "Mobile", report.SQL("{t}.attributes -> 'attrRead' ->> 'mobile'")),
+		rs("description", "Description", report.SQL("{t}.attributes -> 'attrRead' ->> 'description'")),
+		rs("manager", "Manager", report.SQL("{t}.attributes -> 'attrRead' ->> 'manager'")),
+		rs("logon_script", "Logon script", report.SQL("{t}.attributes -> 'attrRead' ->> 'scriptPath'")),
+		rs("dialin_allowed", "Dial-in: allow access", report.SQL("{t}.attributes -> 'attrRead' ->> 'msNPAllowDialin'")),
+		rs("skype_enabled", "Skype/Lync enabled", report.SQL("{t}.attributes -> 'attrRead' ->> 'msRTCSIP-UserEnabled'")),
+		rs("logon_hours", "Logon hours", report.SQL("{t}.attributes -> 'attrRead' ->> 'logonHours'")),
+		rs("thumbnail_photo", "Thumbnail photo", report.SQL("{t}.attributes -> 'attrRead' ->> 'thumbnailPhoto'")),
+		rs("jpeg_photo", "JPEG photo", report.SQL("{t}.attributes -> 'attrRead' ->> 'jpegPhoto'")),
 	}
 }
 

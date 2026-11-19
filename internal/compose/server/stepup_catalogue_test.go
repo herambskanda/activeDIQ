@@ -39,7 +39,9 @@ var stepUpTable = map[operation.ActionID]string{
 	"notify.settings.update": "Widening allowed recipient domains / re-pointing the SMTP relay (TM-D30 SX-7)",
 	// RBAC changes (§7.4): every role or assignment change is a step-up operation.
 	// Resetting a password is a credential change and needs the OTP-before-reset rule of ENH-09 (TM-D16).
-	"ad.user.resetPassword":        "Password reset (TM-D16; ENH-09 OTP-before-reset)",
+	"ad.user.resetPassword": "Password reset (TM-D16; ENH-09 OTP-before-reset)",
+	// A computer account reset takes the machine off the domain and cannot be undone (TM-D28 class reset_computer, §7.4).
+	"ad.computer.resetAccount":     "Computer account reset (TM-D28 reset_computer; no default grant)",
 	"delegation.role.create":       "RBAC change: creating a custom role",
 	"delegation.role.update":       "RBAC change: editing a custom role's permissions",
 	"delegation.assignment.grant":  "RBAC change: granting an assignment",
@@ -144,6 +146,27 @@ func groupTargetViolations(cat []operation.Descriptor) []string {
 func Test_group_membership_actions_target_the_group(t *testing.T) {
 	if bad := groupTargetViolations(catalogue(t)); len(bad) > 0 {
 		t.Errorf("group-membership Actions without TargetClass \"group\": %v", bad)
+	}
+}
+
+// T-1586 AC1: the membership Actions are in the catalogue, so the fitness check above covers them, and
+// the permission each declares is the one the connector contract §8.10.3 fixes (GM1).
+func Test_group_membership_actions_are_in_the_catalogue(t *testing.T) {
+	want := map[operation.ActionID]authz.Permission{
+		"ad.group.addMember":    "objects.group.add_member",
+		"ad.group.nestGroup":    "objects.group.nest",
+		"ad.group.removeMember": "objects.group.remove_member",
+	}
+	for _, d := range catalogue(t) {
+		if p, ok := want[d.ID]; ok {
+			if d.Permission != p || d.TargetClass != "group" {
+				t.Errorf("%s: permission %s class %q", d.ID, d.Permission, d.TargetClass)
+			}
+			delete(want, d.ID)
+		}
+	}
+	for id := range want {
+		t.Errorf("%s is not registered", id)
 	}
 }
 

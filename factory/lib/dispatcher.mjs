@@ -46,6 +46,9 @@ export { selectCandidates, launchGate } from './candidates.mjs';
  * @param {string} dir
  * @returns {number|null}
  */
+/** At most this many conflicting tickets are reopened in one merge pass, so a long run of them cannot start a burst of reworks. */
+const MAX_CONFLICT_REOPENS_PER_PASS = 5;
+
 export function diskFreeBytes(dir) {
   try {
     const st = fs.statfsSync(dir);
@@ -475,6 +478,8 @@ export class Dispatcher {
       this.lastTrainSize = size;
     }
     const train = [];
+    let stack = this.ctx.config.dispatcher.main_branch; // main plus the train so far (a commit once a ticket is in); null if it cannot be built
+    let reopened = 0;
     for (const ticket of finished) {
       if (head && this.heldOnMain.get(ticket.id) === head) continue;
       if (this.stopping) return;
@@ -484,13 +489,22 @@ export class Dispatcher {
         continue;
       }
       if ((this.gateRetryAt.get(ticket.id) ?? 0) > this.#nowMs()) continue;
+      if (size > 1) { // a ticket that does not merge cleanly with main would take a slot and give nothing back
+        if (reopened >= MAX_CONFLICT_REOPENS_PER_PASS) { if (await this.conflictsWithMain(ticket)) continue; }
+        else if (await this.reopenIfConflicting(ticket)) { reopened++; continue; }
+      }
       if (size > 1 && (await this.mustGateAlone(ticket))) { // go.mod, Makefile, *.mk, tools/ci: can break everyone else
         if (train.length) continue; // it goes first, alone, once it is at the front
         train.push(ticket);
         break;
       }
+      // Does it fit on top of the tickets already in this train? Two tickets that each merge cleanly with main can still
+      // clash with each other (the same generated API files, say): the second would be left out of the run, so the train
+      // would be one ticket. Such a ticket stays done and waits; the next clean one takes the slot.
+      if (size > 1 && train.length && stack && (await this.conflictDetail(ticket, stack)) !== null) continue;
       train.push(ticket);
       if (train.length >= size) break;
+      if (size > 1 && stack) stack = await this.stackOn(stack, ticket);
     }
     if (!train.length) return;
     const ids = train.map((t) => t.id);
@@ -685,6 +699,64 @@ export class Dispatcher {
    * the ticket that adds the findings is reopened. A member that conflicts with `main` is reopened
    * as before; one that conflicts with an earlier member stays `done` for the next train.
    */
+  /**
+   * The commit that is `base` with the ticket's branch merged in, built with git plumbing only (`merge-tree`, then
+   * `commit-tree`): nothing is checked out, no ref moves, the new commit is unreferenced. Null when the merge
+   * conflicts or git fails. Used to ask whether a ticket fits on top of the tickets already in a train.
+   */
+  async stackOn(base, ticket) {
+    const { ctx } = this;
+    try {
+      const r = await git(ctx.root, ['merge-tree', '--write-tree', base, `refs/heads/${branchName(ticket.id)}`]);
+      if (r.code !== 0) return null;
+      const tree = r.stdout.trim().split('\n')[0];
+      const c = await git(ctx.root, ['-c', 'user.name=factory', '-c', 'user.email=factory@localhost', 'commit-tree', tree,
+        '-p', base, '-p', `refs/heads/${branchName(ticket.id)}`, '-m', `train stack ${ticket.id}`]);
+      return c.code === 0 ? c.stdout.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** True when merging the ticket's branch into main would conflict right now. Read-only: nothing is merged. */
+  async conflictsWithMain(ticket) {
+    return (await this.conflictDetail(ticket)) !== null;
+  }
+
+  /** The git conflict lines (at most 6) when the branch conflicts with main, else null. Read-only. */
+  async conflictDetail(ticket, against = this.ctx.config.dispatcher.main_branch) {
+    const { ctx } = this;
+    try {
+      const r = await git(ctx.root, ['merge-tree', '--write-tree', against, `refs/heads/${branchName(ticket.id)}`]);
+      if (r.code !== 1) return null; // 0 = clean; anything else is a git error, not a known conflict
+      // A missing branch also exits 1 (with an error on stderr and no conflict lines), so a conflict is only
+      // what git says it is: at least one CONFLICT line.
+      const lines = r.stdout.split('\n').filter((l) => /^CONFLICT/.test(l)).slice(0, 6);
+      return lines.length ? lines.join(' | ') : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Merge plan 4.3: a ticket that conflicts with main is reopened for its owner now, as the single-ticket path
+   * does, instead of being put in a train, where it takes a slot and is only reopened after the whole gate run.
+   * Never merges anything: the check is `git merge-tree`, and the reopen needs the conflict to be found again
+   * under the merge lock, so main moving in between cannot turn this into an untested merge.
+   * @returns {Promise<boolean>} true when the ticket was reopened
+   */
+  async reopenIfConflicting(ticket) {
+    if (!(await this.conflictsWithMain(ticket))) return false;
+    return this.withMergeLock(async () => {
+      const detail = await this.conflictDetail(ticket);
+      if (detail === null) return false;
+      const { ctx } = this;
+      const main = ctx.config.dispatcher.main_branch;
+      reopenTicket(ctx, ticket.id, 'dispatcher', `merging ${branchName(ticket.id)} into ${main} conflicted (${detail}). Merge ${main} into the branch, resolve the conflicts, re-run the tests and advance again.${ticket.links?.worktree ? '' : ` This ${ticket.type} ticket works in the main checkout, so do the merge in a temporary worktree: git worktree add <dir> ${branchName(ticket.id)}.`}`);
+      return true;
+    });
+  }
+
   /** True when the ticket changes go.mod, the Makefile, an .mk file or tools/ci, or its files cannot be read. */
   async mustGateAlone(ticket) {
     const { ctx } = this;
