@@ -18,19 +18,16 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/compose/config"
 	"github.com/skenzeriq/activediq/internal/connector/labadmin"
-	"github.com/skenzeriq/activediq/internal/directory"
 	"github.com/skenzeriq/activediq/internal/directory/client"
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/platform/apihost"
 	"github.com/skenzeriq/activediq/internal/platform/apihost/apitest"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authority"
-	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
 	"github.com/skenzeriq/activediq/internal/platform/keys"
 	"github.com/skenzeriq/activediq/internal/platform/secret"
 	"github.com/skenzeriq/activediq/internal/platform/store"
-	"github.com/skenzeriq/activediq/internal/platform/store/owners"
 	"github.com/skenzeriq/activediq/internal/platform/store/storetest"
 	"github.com/skenzeriq/activediq/internal/platform/tenant"
 	"github.com/skenzeriq/activediq/internal/testlab"
@@ -129,23 +126,12 @@ func newLabDirectory(t *testing.T, s *storetest.Server) *labDirectory {
 		t.Fatal(err)
 	}
 	// The producer the composed server uses (T-0916): rbac.ReadScopes over the authorizer and the booted
-	// modules' evaluators, behind a tenant transaction. Nothing here is granted by the test.
-	contrib, _, err := bootReport(ctx, capability.NewSet(capability.DirectoryAD, capability.DirectoryEntra, capability.TenantProvisioning), directory.Services{}, owners.Lookup)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// modules' evaluators, behind a tenant transaction, bound after Boot. Nothing here is granted by the test.
 	az, err := rbacAuthorizer(db, noFacts{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rs, err := buildReadScopes(az, contrib)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tag, err := buildDirectory(ctx, db, conns, src, reads, txReadScopes{db: db, rs: rs})
-	if err != nil {
-		t.Fatal(err)
-	}
+	tags := bootDirectoryRoutes(ctx, t, db, conns, src, reads, az)
 	doc, err := apihost.LoadDocument()
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +142,7 @@ func newLabDirectory(t *testing.T, s *storetest.Server) *labDirectory {
 	}
 	account := &atomic.Pointer[string]{}
 	lp := labPorts{tenant: tid.String(), account: account}
-	srv, err := apihost.Build(doc, []apihost.TagHandlers{tag}, pol, apitest.Catalogue(doc),
+	srv, err := apihost.Build(doc, tags, pol, apitest.Catalogue(doc),
 		apihost.Ports{Authn: lp, Authz: lp, Limits: lp, StepUp: lp})
 	if err != nil {
 		t.Fatal(err)
