@@ -768,5 +768,5 @@ and `WIN_LAB_DC_ADDR`. The fixture users stay on dc1 for ADUC comparison (spec V
 `lab/windows/bin/with-dc1-lock -- make lab-test-sync-windows` (needs `WIN_LAB_DC_ADDR`, `WIN_LAB_ENV`, `WIN_LAB_CA`; pywinrm). Reads
 `rangeUpper` from dc1's schema NC, then creates a throwaway non-admin `t1880creator` and, as it, a MachineAccountQuota computer `T1880PC`
 (both deleted at the end and before the run), writes lone surrogates over raw LDAPS, ADSI and SAMR (`lab/windows/bin/t1880-surrogate-write`
-over WinRM; the password goes in `T1880_CREATOR_PW`, never argv) and runs the sync mapper on what LDAP returns. Findings and the verdict for
+over WinRM; the password goes on stdin, never argv or the environment) and logs the bytes LDAP returns; the mapper side (CodeBadText on those bytes, bounds at the measured rangeUpper) is pinned offline in `internal/directory/sync/bounds_windows_evidence_test.go`. Findings and the verdict for
 T-1713: `knowledge/development/domain/sync-refusal-bounds.md`.

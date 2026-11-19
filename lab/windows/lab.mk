@@ -18,7 +18,7 @@ windows-lab-status: ## VM state and connection details
 lab-test-connector-windows: ## internal/connector/ad against dc1 over LDAPS (tags lab,windowslab); log in knowledge/development/runbooks/windows-lab-runs/
 	$(WINLAB) test-connector
 lab-test-sync-windows: ## T-1880: Windows rangeUpper + unpaired-surrogate hiding path (run as: lab/windows/bin/with-dc1-lock -- make lab-test-sync-windows; needs WIN_LAB_DC_ADDR)
-	go test -count=1 -v -tags 'lab windowslab' -run 'Test_windowslab_' ./internal/directory/sync/
+	go test -count=1 -v -tags 'lab windowslab' -run 'Test_windowslab_' ./internal/connector/ad/
 lab-test-windows-unit: ## Offline proof of the Windows lab tooling and the dc1 lock wrapper (no KVM needed)
 	python3 -m unittest discover -s lab/windows/tests -p 'test_*.py' -v
 	bash lab/windows/tests/test_with_dc1_lock.sh

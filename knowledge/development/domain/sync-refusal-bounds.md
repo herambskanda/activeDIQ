@@ -73,7 +73,7 @@ whole observations, so a placeholder would blank an already-stored object's stat
 ## Windows lab evidence (T-1880, dc1, 2026-11-13)
 
 `lab/windows/bin/with-dc1-lock -- make lab-test-sync-windows` (tags `lab windowslab`,
-`schema_bounds_windows_lab_test.go`, writer `lab/windows/bin/t1880-surrogate-write`). Log:
+`internal/connector/ad/schema_bounds_windows_lab_test.go` (mapper side: `internal/directory/sync/bounds_windows_evidence_test.go`), writer `lab/windows/bin/t1880-surrogate-write`). Log:
 `runbooks/windows-lab-runs/T-1880-schema-bounds-surrogate-20261113.log.txt`.
 
 **AC1, rangeUpper on Windows (WS2025 schema NC):** sAMAccountName 256, userPrincipalName 1024, displayName 256,
