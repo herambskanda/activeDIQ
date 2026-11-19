@@ -15,6 +15,7 @@ authn_authenticator_enrollments	authn	config
 authn_authority_approvals	authn	config
 authn_authority_challenges	authn	system
 authn_authority_notices	authn	system
+authn_enrolment_sessions	authn	system
 authn_local_credentials	authn	config
 authn_pending_signins	authn	system
 authn_saml_replay	authn	system
