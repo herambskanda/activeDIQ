@@ -95,3 +95,16 @@ targetRules = ["generic-api-key"]
 paths = ['''^factory/demos/evidence/T-0537/linux-tests-main-[0-9a-f]+\.txt$''']
 regexTarget = "line"
 regexes = ['''api_token_id="" plan_digest="" tier0_revision=7 ''']
+
+# T-2356: internal/platform/authn/enrolhttp_test.go (T-2125, commit c168e5dc) asserts the TOTP setup key
+# against the base32 demo secret JBSWY3DPEHPK3PXP, the "Hello!\xDE\xAD\xBE\xEF" example key used throughout
+# public otpauth / Google Authenticator documentation. It is a published fake, not a credential. The finding
+# is already in history (rewrite not allowed), so this is scoped to ONE rule AND this exact file AND this exact
+# literal (condition = AND): any other value planted in the file, or this value elsewhere, is still scanned.
+[[allowlists]]
+description = "authn enrolhttp_test published TOTP demo key (T-2356)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/platform/authn/enrolhttp_test\.go$''']
+regexTarget = "match"
+regexes = ['''JBSWY3DPEHPK3PXP''']
