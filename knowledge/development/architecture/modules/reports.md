@@ -1926,7 +1926,7 @@ Consequences:
 
 ### 8.1 As built (T-0965, row B11)
 
-Package `internal/modules/reports/schedule`, migration `0088_report_schedules.sql`, handlers `reports/schedules.go`.
+Package `internal/modules/reports/schedule`, migration `0090_report_schedules.sql`, handlers `reports/schedules.go`.
 
 - **Store (DM-73).** `report_schedules` (current version), `report_schedule_versions` (`content` is the
   AFTER-image of each version; undo restores one), `report_schedule_recipients` (current version only),
