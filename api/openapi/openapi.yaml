@@ -37,6 +37,8 @@ tags:
     description: Canned reports. The library, runs over a frozen result, paging and export of a stored run, and schedules with delivery. Permissions reports.run, reports.export, reports.schedule and reports.schedule.manage_all.
   - name: helpdesk
     description: Help-desk caller verification. A technician issues a one-time code to the caller's held contact factor and checks what the caller reads back; POST only, CSRF-protected, idempotent. Permission helpdesk.caller.verify.
+  - name: objects
+    description: Directory object writes. Create, change, move, rename, delete, restore, reset and membership Actions of users, groups, computers, contacts and OUs, each with a preview twin and a per-class undo pair; permissions objects.<class>.<verb>. Also the read-only Action catalogue.
 components:
   securitySchemes:
     bearer:
