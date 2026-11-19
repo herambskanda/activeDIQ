@@ -71,6 +71,13 @@
       "mintsTenantID": false
     },
     {
+      "package": "internal/modules/reports",
+      "function": "schema",
+      "reason": "Module start-up compiles the report datasets against the public schema catalogue (pg_class, pg_attribute) before the install tenant exists, so the read runs outside a tenant context under WithPlatform. The catalogue is identical for every tenant and holds names and types only, never a tenant row; the result is the immutable schema the SQL registry checks identifiers against (T-1104, ADR-0013).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
       "package": "internal/platform/jobs",
       "function": "Claim",
       "reason": "Claim must see every tenant's runnable jobs, so it runs outside a tenant context under WithPlatform; the caller then runs each body in the job's own tenant (ADR-0002 Jobs row).",
@@ -156,7 +163,7 @@
     },
     {
       "package": "internal/platform/rbac",
-      "function": "Authorizer.Authorize",
+      "function": "requestTenant",
       "reason": "The tenant is read from the request context that the authority chain's authentication step set (authority.TenantFrom), never from a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
       "withPlatform": false,
       "mintsTenantID": true
