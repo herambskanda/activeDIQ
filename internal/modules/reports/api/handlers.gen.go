@@ -709,6 +709,126 @@ func (o GetReportRun200) ResponseBody() any                { return o.Body }
 func (GetReportRun200) ResponseHeaders() map[string]string { return nil }
 func (GetReportRun200) isGetReportRunOutput()              {}
 
+// GetReportRunRowDetailInput is the decoded input of getReportRunRowDetail: path, query and header parameters, then the body.
+type GetReportRunRowDetailInput struct {
+	RunID  apitypes.UUID         // path "runId"
+	RowKey apitypes.UUID         // path "rowKey"
+	Side   *ReportMembershipSide // query "side"
+	Cursor *apitypes.Cursor      // query "cursor"
+	Limit  *int64                // query "limit"
+}
+
+func (in *GetReportRunRowDetailInput) BindRequest(r *apihost.Request, errs *apitypes.Errors) {
+	_ = r
+	{
+		vs := []string{r.PathValue("runId")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("runId"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("runId"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.RunID = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("runId"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+	{
+		vs := []string{r.PathValue("rowKey")}
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InPath, jsontext.Pointer("rowKey"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			if x, err := apitypes.ParseUUID(s); err != nil {
+				errs.Add(apitypes.InPath, jsontext.Pointer("rowKey"), apitypes.CodeType, "expected a valid value")
+			} else {
+				in.RowKey = apitypes.UUID(x)
+			}
+		default:
+			errs.Add(apitypes.InPath, jsontext.Pointer("rowKey"), apitypes.CodeRequired, "required parameter is missing")
+		}
+	}
+	{
+		vs := r.Query["side"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("side"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e ReportMembershipSide
+			e = ReportMembershipSide(s)
+			in.Side = &e
+		}
+	}
+	{
+		vs := r.Query["cursor"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("cursor"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e apitypes.Cursor
+			e = apitypes.Cursor(s)
+			in.Cursor = &e
+		}
+	}
+	{
+		vs := r.Query["limit"]
+		switch {
+		case len(vs) > 1:
+			errs.Add(apitypes.InQuery, jsontext.Pointer("limit"), apitypes.CodeType, "parameter must not repeat")
+		case len(vs) == 1 && vs[0] != "":
+			s := vs[0]
+			var e int64
+			if x, err := apitypes.ParseInt(s); err != nil {
+				errs.Add(apitypes.InQuery, jsontext.Pointer("limit"), apitypes.CodeType, "expected a valid value")
+			} else {
+				e = int64(x)
+			}
+			in.Limit = &e
+		}
+	}
+}
+
+func (in *GetReportRunRowDetailInput) BodyTarget() any { return nil }
+
+func (in *GetReportRunRowDetailInput) Validate(errs *apitypes.Errors) {
+	_ = errs
+	if in.Side != nil {
+		if !(*in.Side).Valid() {
+			errs.Add(apitypes.InQuery, jsontext.Pointer("side"), apitypes.CodeEnum, "value is not one of the allowed values")
+		}
+	}
+	if in.Cursor != nil {
+		apitypes.CheckLen(errs, apitypes.InQuery, jsontext.Pointer("cursor"), string((*in.Cursor)), 1, 1024)
+	}
+	if in.Limit != nil {
+		apitypes.CheckInt(errs, apitypes.InQuery, jsontext.Pointer("limit"), int64((*in.Limit)), 1, 1000)
+	}
+}
+
+func (in *GetReportRunRowDetailInput) DestroySecrets() {}
+
+// GetReportRunRowDetailOutput is one of the responses getReportRunRowDetail declares. Errors are returned as the error value.
+type GetReportRunRowDetailOutput interface {
+	apihost.Response
+	isGetReportRunRowDetailOutput()
+}
+
+// GetReportRunRowDetail200 is the 200 response.
+type GetReportRunRowDetail200 struct {
+	Body ReportRowDetail
+}
+
+func (GetReportRunRowDetail200) StatusCode() int                    { return 200 }
+func (o GetReportRunRowDetail200) ResponseBody() any                { return o.Body }
+func (GetReportRunRowDetail200) ResponseHeaders() map[string]string { return nil }
+func (GetReportRunRowDetail200) isGetReportRunRowDetailOutput()     {}
+
 // GetReportScheduleInput is the decoded input of getReportSchedule: path, query and header parameters, then the body.
 type GetReportScheduleInput struct {
 	ScheduleID apitypes.UUID // path "scheduleId"
@@ -2559,6 +2679,7 @@ type Handlers interface {
 	GetReportExport(ctx context.Context, in GetReportExportInput) (GetReportExportOutput, error)
 	GetReportReplicationThresholds(ctx context.Context, in GetReportReplicationThresholdsInput) (GetReportReplicationThresholdsOutput, error)
 	GetReportRun(ctx context.Context, in GetReportRunInput) (GetReportRunOutput, error)
+	GetReportRunRowDetail(ctx context.Context, in GetReportRunRowDetailInput) (GetReportRunRowDetailOutput, error)
 	GetReportSchedule(ctx context.Context, in GetReportScheduleInput) (GetReportScheduleOutput, error)
 	ListReportDefinitions(ctx context.Context, in ListReportDefinitionsInput) (ListReportDefinitionsOutput, error)
 	ListReportManagers(ctx context.Context, in ListReportManagersInput) (ListReportManagersOutput, error)
@@ -2780,6 +2901,22 @@ func Bind(h Handlers) apihost.TagHandlers {
 				}
 				if out == nil {
 					return nil, fmt.Errorf("GetReportRun returned no output and no error")
+				}
+				return out, nil
+			}),
+		apihost.NewRoute(apihost.RouteMeta{
+			OperationID: "getReportRunRowDetail", Tag: "reports", Method: "GET", Path: "/reports/runs/{runId}/rows/{rowKey}/detail",
+			Permission: "reports.run", Anonymous: "", Scope: "tenant", Stability: "preview", Deprecated: false, Sunset: "",
+			Class: "read", MaxBody: 0, Body: apihost.BodyNone, MediaType: "", Secret: false,
+		},
+			func() apihost.Input { return new(GetReportRunRowDetailInput) },
+			func(ctx context.Context, in apihost.Input) (apihost.Response, error) {
+				out, err := h.GetReportRunRowDetail(ctx, *in.(*GetReportRunRowDetailInput))
+				if err != nil {
+					return nil, err
+				}
+				if out == nil {
+					return nil, fmt.Errorf("GetReportRunRowDetail returned no output and no error")
 				}
 				return out, nil
 			}),

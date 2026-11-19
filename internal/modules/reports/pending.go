@@ -19,6 +19,12 @@ func (pending) ListReportRunPolicyTargets(context.Context, api.ListReportRunPoli
 	return nil, apitypes.NotImplemented("not available yet (policy dataset, T-1114)")
 }
 
+// GetReportRunRowDetail (T-1717) is in the contract ahead of the read behind it (T-2117). Until then the honest
+// answer is 501, not an empty or invented detail a client would read as "no attributes changed".
+func (pending) GetReportRunRowDetail(context.Context, api.GetReportRunRowDetailInput) (api.GetReportRunRowDetailOutput, error) {
+	return nil, apitypes.NotImplemented("not available yet (change-history row detail, T-2117)")
+}
+
 var _ api.Handlers = (*Handlers)(nil)
 
 func (pending) GetReportSchedule(context.Context, api.GetReportScheduleInput) (api.GetReportScheduleOutput, error) {

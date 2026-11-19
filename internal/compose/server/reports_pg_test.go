@@ -166,7 +166,7 @@ func TestReportsCatalogServesShippedLibrary(t *testing.T) {
 			t.Fatal(err)
 		}
 		perms := apihost.Permissions{"reports.run", "reports.export", "reports.schedule", "reports.schedule.manage_all", "reports.replication.read", "reports.replication.configure",
-			"reports.deliver.external", "directory.read", "connections.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}
+			"reports.deliver.external", "directory.read", "connections.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read", "helpdesk.caller.verify"}
 		door := rptDoor{}
 		srv, err := apihost.Build(doc, []apihost.TagHandlers{tag}, pol, perms, apihost.Ports{Authn: door, Authz: door, Limits: door, StepUp: door})
 		if err != nil {

@@ -408,6 +408,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/helpdesk/caller-verifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a verification code to the caller
+         * @description Sends a one-time code to the destination the directory holds for the target (email or SMS); the technician never supplies or sees an address, only a masked form. This is a user act, never made on page render. Opening the sheet again attaches to the technician's open challenge (reused true) and sends nothing; resend true is the only way to a second code and supersedes the first.
+         *     Idempotency-Key is required. A retry with the same key and body answers what the first attempt answered and sends nothing; the same key with a different body is refused 422 idempotency-key-reuse; a retry while the first request is still running is 409. Only a success is remembered, so a refused request is evaluated again on a retry.
+         *     Refusals. 422 caller-verification-unavailable is one answer, with identical status, body and timing class, for an unknown, disabled, out-of-scope, protected or self target and for a target with no held destination for the factor; it never says which. 429 caller-verification-limit with errors[].code quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges; try later). 502 caller-verification-delivery-failed when the message could not be sent: no code exists and the issue does not count. 429 rate-limited when the session or source address is over its limit. 403 for a token principal or a missing permission.
+         */
+        post: operations["issueCallerVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/helpdesk/caller-verifications/{challengeId}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the code the caller read back
+         * @description Checks the code against the challenge. Every attempt is charged before the code is compared, so three attempts at most are possible per challenge whatever the concurrency.
+         *     Every failure answers one 422 caller-verification-refused with the same status, body and timing class, whether the code was wrong, the attempts are used up, the challenge expired, was superseded or never existed, or belongs to another technician: a client cannot tell a wrong code from a cap. The code travels only in this body, never in a URL, and no response, log line or audit event repeats it.
+         *     Idempotency-Key is required. A retry with the same key and code replays the first answer, a pass or the refusal, and charges no second attempt; the same key with a different code is 422 idempotency-key-reuse.
+         */
+        post: operations["verifyCallerVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/notify/siem-destinations": {
         parameters: {
             query?: never;
@@ -777,6 +821,26 @@ export interface paths {
          * @description Reads a page of the run's stored rows. Order is the run order, or sortBy with order, then the run order as the tie-break; the cursor is bound to the sort it was issued for and a cursor used with another sort is a 400. The total is the run's rowCount and is never a count over the rows. The result is stored and frozen (ADR-0010 rule 3): a page never reflects newer data. Cells of a derived state show unknown, never an inferred value (FR-09). Run-read gate (modules/reports.md 6.6, run.ReadAccess), in order: runner account equals the caller, otherwise 404; the run is not expired, otherwise 410 report-result-expired; the caller's current read scope fingerprint equals the one stored with the run, otherwise 409 with errors[].code scope_changed_rerun (the client creates a new run); the run has succeeded, otherwise 409 with errors[].code run_not_ready (queued or running) or run_failed (failed or cancelled, with the reason). The three 409 codes are separate and a client must branch on the code, not the status.
          */
         get: operations["listReportRunRows"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/reports/runs/{runId}/rows/{rowKey}/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the detail of one change-history row of a run
+         * @description The docked detail of one row of a change-history run (USR-06, GRP-05, CMP-03, CTC-02, OU-02: spec reports-2-second-slice 4.1, design 2). The rows read carries no per-row detail; this read does, for the row whose rowKey (the object GUID) is given. The body is exactly one of five kinds, chosen by kind: edited, membership, credential, permissions, removed (the Deleted presets). Every kind carries when, object and actor; the fields beyond those are the kind's own and no kind carries a field of another. A value the history does not hold (no originating time because the change was only observed, a replication version that was not recorded, a restore status the connection account cannot read) is a typed unknown, never an empty string, 0 or a guess (FR-09). Names only: no kind carries an old or new value, a password or a security descriptor (spec rule 3). actor is notRecorded for a native change (spec rule 6, DM-18.I3) and activediq, with the principal and the operation, only for a change made through activeDIQ. Scope: the object is shown only when its recorded ancestry is in the caller's read scope, otherwise 404 (the existence of an object outside scope is not disclosed). For a membership row the member names are paged and trimmed to the caller's scope: membership.names is one page of the side chosen by side (added by default), and addedCount, removedCount, addedOutOfScope and removedOutOfScope are totals over the whole change, never over the page; members outside scope are counted, never named. The cursor is bound to this run, row and side. The run-read gate is that of listReportRunRows, in the same order: runner equals the caller, otherwise 404; not expired, otherwise 410 report-result-expired; scope fingerprint unchanged, otherwise 409 with errors[].code scope_changed_rerun; succeeded, otherwise 409 with errors[].code run_not_ready or run_failed. A rowKey that is not a row of the run, or whose run is not a change-history report, is a 404. The result is stored and frozen with the run (ADR-0010 rule 3). Read-only; the detail offers no restore (restore is 2b, ADM-098).
+         */
+        get: operations["getReportRunRowDetail"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1157,6 +1221,36 @@ export interface components {
             password: components["schemas"]["SecretInput"];
             username: string;
         };
+        CallerVerificationChallenge: {
+            /** Format: uuid */
+            challengeId: string;
+            /** @description Where the code went, masked. The full address is never returned. */
+            destinationMasked: string;
+            /** Format: date-time */
+            expiresAt: string;
+            factor: components["schemas"]["CallerVerificationFactor"];
+            /** @description True when an open challenge was attached to, or this is a replay of an earlier identical request; nothing was sent now. */
+            reused: boolean;
+        };
+        /**
+         * @description How the caller was verified. Clients ignore values they do not know.
+         * @enum {string}
+         */
+        CallerVerificationFactor: "email_otp" | "sms_otp" | (string & {});
+        /**
+         * @description The factor a technician asks for. totp is reserved for the enrolment work and is not accepted until then.
+         * @enum {string}
+         */
+        CallerVerificationFactorSetting: "email_otp" | "sms_otp";
+        CallerVerified: {
+            /**
+             * Format: date-time
+             * @description Until when the challenge may authorise one reset or unlock for this target.
+             */
+            authorisedUntil: string;
+            /** Format: uuid */
+            challengeId: string;
+        };
         /** @description The health of one connection. Nothing here is a credential or an identity the connection binds as. */
         ConnectionHealth: {
             /** @description Domain controllers that answered the last probe. */
@@ -1419,6 +1513,21 @@ export interface components {
          * @example 9007199254740993
          */
         Int64String: string;
+        IssueCallerVerificationRequest: {
+            /**
+             * Format: uuid
+             * @description The directory connection the caller's account belongs to.
+             */
+            connectionId: string;
+            factor: components["schemas"]["CallerVerificationFactorSetting"];
+            /**
+             * Format: uuid
+             * @description The caller's objectGUID. A DN is never accepted.
+             */
+            objectGuid: string;
+            /** @description True only for the explicit "Send a new code" act; it supersedes the open challenge. */
+            resend?: boolean;
+        };
         /** @description A long operation (bulk change). It reports progress and per-item results, and is resumable after a restart. */
         Job: {
             /** Format: date-time */
@@ -1863,6 +1972,60 @@ export interface components {
          * @enum {string}
          */
         ReportDeliveryStateValue: "none_yet" | "queued" | "sent" | "failed" | "given_up" | (string & {});
+        /** @description Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operation is the handle of the operation. */
+        ReportDetailActor: components["schemas"]["ReportDetailActorNotRecorded"] | components["schemas"]["ReportDetailActorActiveDiq"];
+        ReportDetailActorActiveDiq: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "activediq";
+            /** Format: uuid */
+            operation: string;
+            principal: string;
+        };
+        ReportDetailActorNotRecorded: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "notRecorded";
+        };
+        /** @description One attribute the change touched, with its name, the originating time and the replication version where recorded, each unknown where not. Never a value. */
+        ReportDetailAttribute: {
+            name: string;
+            originAt: components["schemas"]["ReportDetailTime"];
+            version: components["schemas"]["ReportDetailInteger"];
+        };
+        /**
+         * @description Where a time comes from. origin: the DC time of the change, from replication metadata (independent of the DC). observed: the time activeDIQ observed it. last_seen: the object as last observed before it left the feed.
+         * @enum {string}
+         */
+        ReportDetailBasisValue: "origin" | "observed" | "last_seen" | (string & {});
+        /** @description A whole number as a decimal string, or unknown when the history does not hold it. */
+        ReportDetailInteger: components["schemas"]["ReportCellInteger"] | components["schemas"]["ReportCellUnknown"];
+        /** @description The object the change is on. dn is the full distinguished name, an attribute of the object and never a key; the client addresses the object by objectGuid. For a removed row every field is as last seen by activeDIQ. logonName is absent for a kind without one (a group or OU). */
+        ReportDetailObject: {
+            dn: components["schemas"]["ReportDetailText"];
+            domain: string;
+            logonName: components["schemas"]["ReportDetailText"];
+            name: string;
+            /** Format: uuid */
+            objectGuid: string;
+            ouPath: components["schemas"]["ReportDetailText"];
+        };
+        /** @description Text, absent when the object has none, or unknown when it was not read. */
+        ReportDetailText: components["schemas"]["ReportCellText"] | components["schemas"]["ReportCellAbsent"] | components["schemas"]["ReportCellUnknown"];
+        /** @description An instant the history holds, or unknown when it does not. */
+        ReportDetailTime: components["schemas"]["ReportValueTime"] | components["schemas"]["ReportCellUnknown"];
+        /** @description When the change happened. changedAt is the originating time where the history holds one, else the observed time, and basis says which. observedAt is always the observation time. gapMinutes is the minutes between the previous observation and this one, unknown when there is no previous observation. observationBased is always true: several changes between two observations show as one. */
+        ReportDetailWhen: {
+            basis: components["schemas"]["ReportDetailBasisValue"];
+            changedAt: components["schemas"]["ReportDetailTime"];
+            gapMinutes: components["schemas"]["ReportDetailInteger"];
+            observationBased: boolean;
+            observedAt: components["schemas"]["ReportDetailTime"];
+        };
         /**
          * @description Why a succeeded run has no rows because of scope, as opposed to its filters. scope_grants_nothing: the runner's role covers no directory objects. unsupported_scope_kind: the role's scope uses a kind 2a reports cannot evaluate, so it grants nothing (fail closed).
          * @enum {string}
@@ -2093,6 +2256,27 @@ export interface components {
             items: components["schemas"]["ReportManagerCandidate"][];
             page: components["schemas"]["PageInfo"];
         };
+        /** @description One member added or removed, addressed by objectGUID. The name is the one last observed. */
+        ReportMembershipName: {
+            name: string;
+            /** Format: uuid */
+            objectGuid: string;
+        };
+        /** @description One page of in-scope member names of one side of a membership change, by name then objectGUID, stable. */
+        ReportMembershipNamePage: {
+            items: components["schemas"]["ReportMembershipName"][];
+            page: components["schemas"]["PageInfo"];
+        };
+        /**
+         * @description Which side of a membership change to page. A closed request enum.
+         * @enum {string}
+         */
+        ReportMembershipSide: "added" | "removed";
+        /**
+         * @description Which side of a membership change a page of names is.
+         * @enum {string}
+         */
+        ReportMembershipSideValue: "added" | "removed" | (string & {});
         /** @description An exact ManageEngine report name and the preset that answers it (spec 6.2). */
         ReportMeName: {
             meName: string;
@@ -2447,10 +2631,111 @@ export interface components {
             failingAfterSeconds: number;
             warningAfterSeconds: number;
         };
+        /**
+         * @description What is known of a removed object. removed_restore_unknown: it left the feed, and whether it is a restorable tombstone, recycled or purged is not readable by the connection account and is never guessed from elapsed time.
+         * @enum {string}
+         */
+        ReportRestoreStateValue: "removed_restore_unknown" | (string & {});
+        /**
+         * @description Why the restore status is unknown. deleted_objects_not_readable: the connection account is least-privilege and cannot read CN=Deleted Objects; noSuchObject there is not proof the tombstone expired (spec rule 7).
+         * @enum {string}
+         */
+        ReportRestoreUnknownReasonValue: "deleted_objects_not_readable" | (string & {});
         /** @description One row of a stored result. rowKey is the object GUID or edge key; cells follow the page's columns. */
         ReportRow: {
             cells: components["schemas"]["ReportCell"][];
             rowKey: string;
+        };
+        /** @description The detail of one change-history row, exactly one of five kinds. A client branches on kind and on nothing else. */
+        ReportRowDetail: components["schemas"]["ReportRowDetailEdited"] | components["schemas"]["ReportRowDetailMembership"] | components["schemas"]["ReportRowDetailCredential"] | components["schemas"]["ReportRowDetailPermissions"] | components["schemas"]["ReportRowDetailRemoved"];
+        /** @description A credential event: a password was changed or reset, recognised from replication metadata. It carries no value and no attribute list beyond the fact (spec rule 2). */
+        ReportRowDetailCredential: {
+            actor: components["schemas"]["ReportDetailActor"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "credential";
+            object: components["schemas"]["ReportDetailObject"];
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            when: components["schemas"]["ReportDetailWhen"];
+        };
+        /** @description An edit (also a created, moved or renamed change, whose attributes are the ones it touched). attributes are names with originating time and version; valuesRecorded is always false (names only, old and new values are not recorded). */
+        ReportRowDetailEdited: {
+            actor: components["schemas"]["ReportDetailActor"];
+            attributes: components["schemas"]["ReportDetailAttribute"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "edited";
+            object: components["schemas"]["ReportDetailObject"];
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            valuesRecorded: boolean;
+            when: components["schemas"]["ReportDetailWhen"];
+        };
+        /** @description A membership change of a group. The four counts are totals over the whole change in the caller's scope or outside it; names is one page of the side asked for. A member outside the caller's scope is counted in addedOutOfScope or removedOutOfScope and never named. */
+        ReportRowDetailMembership: {
+            actor: components["schemas"]["ReportDetailActor"];
+            addedCount: number;
+            addedOutOfScope: number;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "membership";
+            names: components["schemas"]["ReportMembershipNamePage"];
+            object: components["schemas"]["ReportDetailObject"];
+            removedCount: number;
+            removedOutOfScope: number;
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            side: components["schemas"]["ReportMembershipSideValue"];
+            when: components["schemas"]["ReportDetailWhen"];
+        };
+        /** @description A permissions change, recognised from the replication metadata of nTSecurityDescriptor. descriptorRead is always false: no descriptor was read or compared, so the change cannot be told from inheritance or SDProp propagation (spec rule 2). */
+        ReportRowDetailPermissions: {
+            actor: components["schemas"]["ReportDetailActor"];
+            descriptorRead: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "permissions";
+            object: components["schemas"]["ReportDetailObject"];
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            when: components["schemas"]["ReportDetailWhen"];
+        };
+        /** @description A row of a Deleted preset. deletedAt is the time activeDIQ first observed the object gone and means on or before that time (onOrBefore is always true; no DC time is shown for a deletion that was not read). object is as last seen by activeDIQ. state and restorableUntil are the restore-status fields; restorableUntil is always the typed unknown (a time is never shown, because the connection account cannot read it and elapsed time is no proof) with restoreUnknownReason saying why; a later read that can know it is an additive change. There is no restore link in this read. */
+        ReportRowDetailRemoved: {
+            actor: components["schemas"]["ReportDetailActor"];
+            deletedAt: components["schemas"]["ReportDetailTime"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "removed";
+            object: components["schemas"]["ReportDetailObject"];
+            onOrBefore: boolean;
+            restorableUntil: components["schemas"]["ReportCellUnknown"];
+            restoreUnknownReason: components["schemas"]["ReportRestoreUnknownReasonValue"];
+            /** Format: uuid */
+            rowKey: string;
+            /** Format: uuid */
+            runId: string;
+            state: components["schemas"]["ReportRestoreStateValue"];
+            when: components["schemas"]["ReportDetailWhen"];
         };
         /** @description A page of a stored result. rowCount is the run's total after trimming. */
         ReportRowPage: {
@@ -2844,6 +3129,10 @@ export interface components {
         TotpCodeRequest: {
             code: components["schemas"]["SecretInput"];
         };
+        /** @description The six digits the caller read back, held as a secret and destroyed after the request. */
+        VerifyCallerVerificationRequest: {
+            code: components["schemas"]["SecretInput"];
+        };
         /** @description The authenticator's assertion, each field base64url (RFC 4648 section 5) without padding. */
         WebAuthnAssertion: {
             authenticatorData: string;
@@ -2877,6 +3166,78 @@ export interface components {
         WebAuthnUserVerification: "required" | "preferred" | "discouraged" | (string & {});
     };
     responses: {
+        /** @description The code could not be delivered. No code exists, none is shown and the issue does not count against the limits. */
+        CallerVerificationDeliveryFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 502,
+                 *       "title": "The code could not be delivered",
+                 *       "type": "/problems/caller-verification-delivery-failed"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description A caller-verification limit was reached. errors[].code is quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges). */
+        CallerVerificationLimit: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "errors": [
+                 *         {
+                 *           "code": "quota",
+                 *           "detail": "The hourly limit of codes for this caller or technician is reached.",
+                 *           "in": "body",
+                 *           "pointer": "/"
+                 *         }
+                 *       ],
+                 *       "status": 429,
+                 *       "title": "The verification limit was reached",
+                 *       "type": "/problems/caller-verification-limit"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The verification was refused. One answer for a wrong code, used-up attempts, an expired, superseded, unknown or foreign challenge; it never says which and never repeats the code. */
+        CallerVerificationRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 422,
+                 *       "title": "The verification was refused",
+                 *       "type": "/problems/caller-verification-refused"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The caller cannot be verified. One answer for an unknown, disabled, out-of-scope, protected or own target and for a target with no held destination; it never says which. */
+        CallerVerificationUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 422,
+                 *       "title": "This caller cannot be verified",
+                 *       "type": "/problems/caller-verification-unavailable"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description The object already exists or the request conflicts */
         Conflict: {
             headers: {
@@ -3448,6 +3809,10 @@ export interface components {
         };
     };
     parameters: {
+        /** @description The challenge returned by issueCallerVerification. */
+        CallerVerificationChallengeId: string;
+        /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
+        CallerVerificationKey: string;
         /** @description The Entra connection. */
         ConnectionId: string;
         /** @description Only reports of this category. */
@@ -3470,6 +3835,8 @@ export interface components {
         IdempotencyKey: string;
         /** @description The ETag of the version being changed; a stale value answers precondition-failed. */
         IfMatch: string;
+        /** @description Which side of a membership change the names are paged from. Absent is added. Ignored for a row that is not a membership change. */
+        MembershipSide: components["schemas"]["ReportMembershipSide"];
         /** @description The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered. */
         OperationId: string;
         /** @description The nextCursor of the previous page. */
@@ -3482,6 +3849,8 @@ export interface components {
         RequiredIdempotencyKey: string;
         /** @description The ETag of the version being changed (a schedule, or the replication thresholds). A stale value answers precondition-failed; an absent one precondition-required. */
         RequiredIfMatch: string;
+        /** @description The rowKey of a row of the run; for a change-history run, the object's GUID. */
+        RowKey: string;
         /** @description Only runs of this report definition. */
         RunDefinitionFilter: string;
         /** @description The run. */
@@ -4176,6 +4545,82 @@ export interface operations {
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
             503: components["responses"]["NotReady"];
+        };
+    };
+    issueCallerVerification: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
+                "Idempotency-Key": components["parameters"]["CallerVerificationKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueCallerVerificationRequest"];
+            };
+        };
+        responses: {
+            /** @description The challenge the technician sees. It never carries the code. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallerVerificationChallenge"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["CallerVerificationUnavailable"];
+            429: components["responses"]["CallerVerificationLimit"];
+            500: components["responses"]["Internal"];
+            502: components["responses"]["CallerVerificationDeliveryFailed"];
+        };
+    };
+    verifyCallerVerification: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
+                "Idempotency-Key": components["parameters"]["CallerVerificationKey"];
+            };
+            path: {
+                /** @description The challenge returned by issueCallerVerification. */
+                challengeId: components["parameters"]["CallerVerificationChallengeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyCallerVerificationRequest"];
+            };
+        };
+        responses: {
+            /** @description The caller is verified. The challenge may authorise one reset or unlock until authorisedUntil. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallerVerified"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["CallerVerificationRefused"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
         };
     };
     listSiemDestinations: {
@@ -4933,6 +5378,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReportRowPage"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            410: components["responses"]["ReportResultExpired"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
+        };
+    };
+    getReportRunRowDetail: {
+        parameters: {
+            query?: {
+                /** @description The nextCursor of the previous page. */
+                cursor?: components["parameters"]["PageCursor"];
+                /** @description The page size. */
+                limit?: components["parameters"]["PageLimit"];
+                /** @description Which side of a membership change the names are paged from. Absent is added. Ignored for a row that is not a membership change. */
+                side?: components["parameters"]["MembershipSide"];
+            };
+            header?: never;
+            path: {
+                /** @description The rowKey of a row of the run; for a change-history run, the object's GUID. */
+                rowKey: components["parameters"]["RowKey"];
+                /** @description The run. */
+                runId: components["parameters"]["RunId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The detail of the row */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportRowDetail"];
                 };
             };
             400: components["responses"]["Validation"];

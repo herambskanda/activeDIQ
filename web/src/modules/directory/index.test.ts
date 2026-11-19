@@ -12,4 +12,8 @@ describe("directory module", () => {
     expect(entry?.keywords.length).toBeGreaterThan(0);
     expect(got.routes.map((r) => r.path)).toContain(entry?.route);
   });
+
+  it("registers the full search results page that Show all opens", () => {
+    expect(got.routes.map((r) => r.path)).toContain("/search");
+  });
 });
