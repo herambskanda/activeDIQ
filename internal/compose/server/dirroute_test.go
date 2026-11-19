@@ -64,17 +64,17 @@ func (s *searchInput) BodyTarget() any                                { return &
 func (s *searchInput) Validate(*apitypes.Errors)                      {}
 func (s *searchInput) DestroySecrets()                                {}
 
-// directoryTag is the directory tag as the contract declares it (both operations), with users as the
-// handler of GET /directory/users; universal search is not the subject of these tests and answers 404.
+// directoryTag is the directory tag as the contract declares it (every operation), with users as the
+// handler of GET /directory/users; universal search and the Explorer reads are not the subject of these
+// tests and answer 404.
 func directoryTag(users func(context.Context, apihost.Input) (apihost.Response, error)) apihost.TagHandlers {
+	notFound := func(context.Context, apihost.Input) (apihost.Response, error) { return nil, apitypes.NotFound("") }
 	explorer := func(id, path string) apihost.Route {
 		return apihost.NewRoute(apihost.RouteMeta{
 			OperationID: id, Tag: "directory", Method: "GET", Path: path,
 			Permission: "directory.read", Scope: "tenant", Stability: "preview",
 			Class: "read", Body: apihost.BodyNone,
-		},
-			func() apihost.Input { return usersInput{} },
-			func(context.Context, apihost.Input) (apihost.Response, error) { return nil, apitypes.NotFound("") })
+		}, func() apihost.Input { return usersInput{} }, notFound)
 	}
 	return apihost.NewTagHandlers("directory",
 		explorer("getExplorerNode", "/directory/explorer/nodes/{objectGuid}"),

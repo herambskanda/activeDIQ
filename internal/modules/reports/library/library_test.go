@@ -121,6 +121,34 @@ var specRows = []specRow{
 		filters: map[string][]string{"modified": {"change_kind", "object_kind", "observed_at"}, "deleted": {"change_kind", "object_kind", "observed_at"}},
 		deviations: []string{"OU path is shown by the dn column (T-1041)", "Changed at and Deleted at are the observed time (Basis: observed): the dataset has no originating time yet",
 			"credential-event, permissions-changed and membership change kinds, Restorable until and the Observed-at-versus-Changed-at pair wait for the DM-18 metadata ingest"}},
+	// ---- batch 6 (T-1112)
+	{id: "usr-07", title: "Sign-in and access settings", category: report.CategoryUsers, dataset: "inventory.users",
+		presets: map[string][]string{"dialin_allow": {"Dial-in Allow Access"}, "dialin_deny": {"Dial-in Deny Access"}, "smartcard": {"Smart Card Enabled Users"},
+			"logon_hours": {"Logon Hour Based Report"}},
+		// Name, Logon name, Domain, OU path, Dial-in access, Status
+		columns: []string{"display_name", "sam_account_name", "domain", "dn", "dialin_allowed", "enabled"},
+		filters: map[string][]string{"dialin_allow": {"dialin_allowed"}, "dialin_deny": {"dialin_allowed"}, "smartcard": {"smartcard_required"}, "logon_hours": {"logon_hours_restricted"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "Permitted hours is the 168-bit logon_hours text; the mode, days, hours and time-zone parameters wait for T-2206",
+			"without-presets list only users whose sync observed the attribute as absent (read marker, T-2216); a denied attribute still looks absent until T-2220: header caveat user_attribute_absent_or_unread"}},
+	{id: "usr-08", title: "Profile settings", category: report.CategoryUsers, dataset: "inventory.users",
+		presets: map[string][]string{"photo_with": {"Photo Based Reports"}, "photo_without": nil, "script_with": {"Users With Logon Script"}, "script_without": {"Users Without Logon Script"}},
+		// Name, Logon name, Domain, OU path, Has photo, Status
+		columns:    []string{"display_name", "sam_account_name", "domain", "dn", "has_photo", "enabled"},
+		filters:    map[string][]string{"photo_with": {"has_photo"}, "photo_without": {"has_photo"}, "script_with": {"logon_script"}, "script_without": {"logon_script"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "without-presets list only users whose sync observed the attribute as absent (read marker, T-2216); a denied attribute still looks absent until T-2220: header caveat user_attribute_absent_or_unread"}},
+	{id: "usr-09", title: "Skype for Business / Lync", category: report.CategoryUsers, dataset: "inventory.users",
+		presets:    map[string][]string{"enabled": {"Skype for Business/Lync Enabled Users"}, "disabled": {"Skype for Business/Lync Disabled Users"}},
+		columns:    []string{"display_name", "sam_account_name", "domain", "dn", "skype_enabled", "enabled"},
+		filters:    map[string][]string{"enabled": {"skype_enabled"}, "disabled": {"skype_enabled"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "the 'Schema extension not present' header waits for schema detection (T-2207): header caveat skype_schema_not_checked"}},
+	{id: "usr-11", title: "Attribute completeness", category: report.CategoryUsers, dataset: "inventory.users",
+		presets: map[string][]string{"empty_mail": {"Users With Empty Attributes"}, "empty_employee_id": nil, "empty_department": nil, "empty_title": nil, "empty_company": nil,
+			"empty_telephone_number": nil, "empty_mobile": nil, "empty_description": nil, "empty_manager": nil},
+		columns: []string{"display_name", "sam_account_name", "domain", "dn", "mail", "enabled"},
+		filters: map[string][]string{"empty_mail": {"mail"}, "empty_employee_id": {"employee_id"}, "empty_department": {"department"}, "empty_title": {"title"}, "empty_company": {"company"},
+			"empty_telephone_number": {"telephone_number"}, "empty_mobile": {"mobile"}, "empty_description": {"description"}, "empty_manager": {"manager"}},
+		deviations: []string{"OU path is shown by the dn column (T-1041)", "one preset per attribute of the closed list instead of a picker, and no any/all of several (T-2209)",
+			"Users With Duplicate Attributes is a pending crosswalk name until the engine has a duplicate count (T-2205)", "display name is not in the list yet: it has no stored empty state"}},
 	{id: "grp-01", title: "Groups", category: report.CategoryGroups, dataset: "inventory.groups",
 		presets: map[string][]string{"all": {"All Groups"}, "security": {"Security Groups"}, "distribution": {"Distribution Groups"}, "type_scope": {"Group Type and Scope"},
 			"no_members": {"Groups Without Members"}, "managed": {"Managed Groups"}, "unmanaged": {"Unmanaged Groups"}, "top": {"Top N Big Groups"},
@@ -220,7 +248,10 @@ func Test_reports_library_matches_spec(t *testing.T) {
 				if !stated {
 					t.Errorf("%s/%s: the spec row states no filter columns for this preset", row.id, pid)
 				}
-				if got := filterColumns(p.Where); !slices.Equal(got, want) {
+				// The read-state guard (T-2216, T-1112 AC2) is not a spec filter column: it only keeps a
+				// user whose attribute was never read from being listed as lacking it.
+				got := slices.DeleteFunc(filterColumns(p.Where), func(c string) bool { return strings.HasSuffix(c, "_read_state") })
+				if !slices.Equal(got, want) {
 					t.Errorf("%s/%s: the filter reads %v, the spec row says %v", row.id, pid, got, want)
 				}
 			}
@@ -236,8 +267,8 @@ func Test_reports_library_matches_spec(t *testing.T) {
 		}
 	}
 	// The crosswalk answers every ME name of 6.2: 54.
-	if n := len(l.Names()); n != 64 {
-		t.Errorf("crosswalk lists %d names, spec 6.2 says 54 plus the second slice (1 PWD-04, 9 batch 5)", n)
+	if n := len(l.Names()); n != 75 {
+		t.Errorf("crosswalk lists %d names, spec 6.2 says 54 plus the second slice (1 PWD-04, 9 batch 5, 11 batch 6)", n)
 	}
 }
 
