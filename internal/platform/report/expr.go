@@ -12,7 +12,7 @@ const (
 	MaxExprNodes  = 64
 	MaxInValues   = 1000
 	MaxSortKeys   = 4
-	MaxQueryCols  = 64
+	MaxQueryCols  = 96
 	maxDaysNumber = 3660
 )
 

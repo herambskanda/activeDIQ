@@ -84,7 +84,7 @@ type RunParams struct {
 // way is not Valid and the compiler refuses it.
 type Query struct {
 	Dataset    DatasetID
-	Columns    []ColumnID // 1..64; output order is export order is digest order
+	Columns    []ColumnID // 1..96; output order is export order is digest order
 	Where      Expr       // SQL part: no PerDC column appears
 	PerDCWhere Expr       // per-DC part: only PerDC columns
 	Hidden     []HiddenGroup

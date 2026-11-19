@@ -3279,7 +3279,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportColumnInfo"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "dataset": {
@@ -4513,7 +4513,7 @@
               "maxLength": 64,
               "type": "string"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "connectionIds": {
@@ -4965,7 +4965,7 @@
               "maxLength": 64,
               "type": "string"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "filters": {
@@ -5502,7 +5502,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportCell"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "rowKey": {
@@ -5809,7 +5809,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportColumnInfo"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "page": {
@@ -6068,7 +6068,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportColumnId"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "minItems": 1,
             "type": "array"
           },
