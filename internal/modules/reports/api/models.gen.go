@@ -919,7 +919,7 @@ func (v *ReportChoice) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 }
 
-// ReportColumnId: A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8). Policy columns (SYS-01, one row per policy, rowKey the policy GUID): policy_name (text); policy_kind (enum domain or pso, the ReportPolicyKindValue); precedence (integer, count; absent on the domain row); applies_to_count (integer, count of direct targets in the runner's scope, 0 for a PSO with none, absent on the domain row); applies_to_first (textList, the first two target names by name order, empty when none; the full list is listReportRunPolicyTargets); min_length, history_length, lockout_threshold (integer, count); max_age, min_age, lockout_duration, lockout_window (integer, seconds; max_age, lockout_threshold and lockout_duration are a never cell when the policy sets no limit, see ReportCellNever); complexity and reversible_encryption (boolean). A value that was not read is an unknown cell, never 0 or false. Deltas against the domain row are computed by the client from these typed cells (the unit is on the column); the server sends no delta text.
+// ReportColumnId: A column of the dataset registry (DM-70) that a 2a report carries. Closed: a column name that is not listed is refused, and a column the chosen definition does not carry is a 400 with code column_not_available. The registry holds no secret attribute (D8). Policy columns (SYS-01, one row per policy, rowKey the policy GUID): policy_name (text); policy_kind (enum domain or pso, the ReportPolicyKindValue); precedence (integer, count; absent on the domain row); applies_to_count (integer, count of direct targets in the runner's scope, 0 for a PSO with none, absent on the domain row); applies_to_first (textList, the first two target names by name order, empty when none; the full list is listReportRunPolicyTargets); min_length, history_length, lockout_threshold (integer, count); max_age, min_age, lockout_duration, lockout_window (integer, seconds; max_age, lockout_threshold and lockout_duration are a never cell when the policy sets no limit, see ReportCellNever); complexity and reversible_encryption (boolean). A value that was not read is an unknown cell, never 0 or false. Deltas against the domain row are computed by the client from these typed cells (the unit is on the column); the server sends no delta text. SYS-03 DC Replication Status (reports-2 second slice 7.3) adds ten ids, one row per destination DC, partition and partner (source DC), and reuses domain and status. Cell kinds, in this order: domain_controller text (the destination DC's DNS host name); domain text; partition text (the naming context's name, never a DN); partner_dc text (the source DC's DNS host name); last_attempt time; last_success time, or never when replication has never succeeded; consecutive_failures integer; last_error_code integer (the error the DC reports, a Win32 or replication error number such as 8524); last_error text (the meaning of the code, or the DC's message, escaped like any text); status enum (ReportReplicationStatusValue); lingering_risk enum (ReportLingeringRiskValue; the column's label never says detected); read_at time (when this DC was read). A value the DC did not return is absent, never a default, and its row's status is not_reported. A DC that did not answer has one row: domain_controller, domain, status not_reported, last_error text from the coverage error, read_at, and absent in every other cell. The status column of SYS-03 takes the choices of ReportReplicationStatusValue, and sorting by it orders by severity, failing first.
 type ReportColumnId string
 
 const (
@@ -988,12 +988,22 @@ const (
 	ReportColumnIdLockoutThreshold       ReportColumnId = "lockout_threshold"
 	ReportColumnIdLockoutDuration        ReportColumnId = "lockout_duration"
 	ReportColumnIdLockoutWindow          ReportColumnId = "lockout_window"
+	ReportColumnIdDomainController       ReportColumnId = "domain_controller"
+	ReportColumnIdPartition              ReportColumnId = "partition"
+	ReportColumnIdPartnerDc              ReportColumnId = "partner_dc"
+	ReportColumnIdLastAttempt            ReportColumnId = "last_attempt"
+	ReportColumnIdLastSuccess            ReportColumnId = "last_success"
+	ReportColumnIdConsecutiveFailures    ReportColumnId = "consecutive_failures"
+	ReportColumnIdLastErrorCode          ReportColumnId = "last_error_code"
+	ReportColumnIdLastError              ReportColumnId = "last_error"
+	ReportColumnIdLingeringRisk          ReportColumnId = "lingering_risk"
+	ReportColumnIdReadAt                 ReportColumnId = "read_at"
 )
 
 // Valid reports whether v is one of the closed set of values.
 func (v ReportColumnId) Valid() bool {
 	switch v {
-	case ReportColumnIdName, ReportColumnIdLogonName, ReportColumnIdUPN, ReportColumnIdStatus, ReportColumnIdDomain, ReportColumnIdOUPath, ReportColumnIdManager, ReportColumnIdCreated, ReportColumnIdAccountExpires, ReportColumnIdDaysToExpiry, ReportColumnIdLastLogon, ReportColumnIdDaysSince, ReportColumnIdProbableServiceAccount, ReportColumnIdRealLastLogon, ReportColumnIdFromDc, ReportColumnIdDcCoverage, ReportColumnIdLockedOutSince, ReportColumnIdLockoutEnds, ReportColumnIdPolicySource, ReportColumnIdDataAsOf, ReportColumnIdPasswordLastSet, ReportColumnIdPasswordExpires, ReportColumnIdPasswordState, ReportColumnIdLastFailedLogon, ReportColumnIdFailuresOnDc, ReportColumnIdGroupType, ReportColumnIdGroupScope, ReportColumnIdDirectMembers, ReportColumnIdEffectiveMembers, ReportColumnIdManagedBy, ReportColumnIdGroup, ReportColumnIdMember, ReportColumnIdMemberType, ReportColumnIdMembershipKind, ReportColumnIdVia, ReportColumnIdUser, ReportColumnIdPrimaryGroup, ReportColumnIdDnsName, ReportColumnIdComputerType, ReportColumnIdOperatingSystem, ReportColumnIdOsVersion, ReportColumnIdDelegation, ReportColumnIdLastActivity, ReportColumnIdActivitySource, ReportColumnIdPath, ReportColumnIdUsers, ReportColumnIdComputers, ReportColumnIdGroups, ReportColumnIdOtherObjects, ReportColumnIdObjectsInSubtree, ReportColumnIdEmail, ReportColumnIdPolicyName, ReportColumnIdPolicyKind, ReportColumnIdPrecedence, ReportColumnIdAppliesToCount, ReportColumnIdAppliesToFirst, ReportColumnIdMinLength, ReportColumnIdHistoryLength, ReportColumnIdMaxAge, ReportColumnIdMinAge, ReportColumnIdComplexity, ReportColumnIdReversibleEncryption, ReportColumnIdLockoutThreshold, ReportColumnIdLockoutDuration, ReportColumnIdLockoutWindow:
+	case ReportColumnIdName, ReportColumnIdLogonName, ReportColumnIdUPN, ReportColumnIdStatus, ReportColumnIdDomain, ReportColumnIdOUPath, ReportColumnIdManager, ReportColumnIdCreated, ReportColumnIdAccountExpires, ReportColumnIdDaysToExpiry, ReportColumnIdLastLogon, ReportColumnIdDaysSince, ReportColumnIdProbableServiceAccount, ReportColumnIdRealLastLogon, ReportColumnIdFromDc, ReportColumnIdDcCoverage, ReportColumnIdLockedOutSince, ReportColumnIdLockoutEnds, ReportColumnIdPolicySource, ReportColumnIdDataAsOf, ReportColumnIdPasswordLastSet, ReportColumnIdPasswordExpires, ReportColumnIdPasswordState, ReportColumnIdLastFailedLogon, ReportColumnIdFailuresOnDc, ReportColumnIdGroupType, ReportColumnIdGroupScope, ReportColumnIdDirectMembers, ReportColumnIdEffectiveMembers, ReportColumnIdManagedBy, ReportColumnIdGroup, ReportColumnIdMember, ReportColumnIdMemberType, ReportColumnIdMembershipKind, ReportColumnIdVia, ReportColumnIdUser, ReportColumnIdPrimaryGroup, ReportColumnIdDnsName, ReportColumnIdComputerType, ReportColumnIdOperatingSystem, ReportColumnIdOsVersion, ReportColumnIdDelegation, ReportColumnIdLastActivity, ReportColumnIdActivitySource, ReportColumnIdPath, ReportColumnIdUsers, ReportColumnIdComputers, ReportColumnIdGroups, ReportColumnIdOtherObjects, ReportColumnIdObjectsInSubtree, ReportColumnIdEmail, ReportColumnIdPolicyName, ReportColumnIdPolicyKind, ReportColumnIdPrecedence, ReportColumnIdAppliesToCount, ReportColumnIdAppliesToFirst, ReportColumnIdMinLength, ReportColumnIdHistoryLength, ReportColumnIdMaxAge, ReportColumnIdMinAge, ReportColumnIdComplexity, ReportColumnIdReversibleEncryption, ReportColumnIdLockoutThreshold, ReportColumnIdLockoutDuration, ReportColumnIdLockoutWindow, ReportColumnIdDomainController, ReportColumnIdPartition, ReportColumnIdPartnerDc, ReportColumnIdLastAttempt, ReportColumnIdLastSuccess, ReportColumnIdConsecutiveFailures, ReportColumnIdLastErrorCode, ReportColumnIdLastError, ReportColumnIdLingeringRisk, ReportColumnIdReadAt:
 		return true
 	}
 	return false
@@ -1320,13 +1330,16 @@ func (v ReportCompareOperator) Validate(at jsontext.Pointer, errs *apitypes.Erro
 	}
 }
 
-// ReportDcCoverage: How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5).
+// ReportDcCoverage: How many DCs answered a per-DC report. A partial coverage makes the maximum a lower bound (spec 6.5). dcsInScope counts every DC in the runner's scope, including those a cap left unread. dcsAnswered counts the DCs that gave data. complete is true only when every DC in scope answered: it is false when any DC did not answer or when notReadByCap is above zero, and zero DCs answered is coverage, never an empty result. unanswered, notReadByCap and readCap are set by SYS-03 DC Replication Status (reports-2 second slice 7.3) and may be absent on other per-DC reports. unanswered lists the DCs that were read and gave no data, each with its reason and error, in DNS-name order; dcsAnswered plus the length of unanswered plus notReadByCap equals dcsInScope. A DC not read because of readCap has no row and no entry in unanswered; only the count is given, and the console says Narrow the scope. SYS-03 reads at most readCap DCs (100) and reads them in DNS-name order; it does not refuse the run, unlike the read cap of USR-04 and PWD-03 (failure reason per_dc_read_cap_exceeded).
 type ReportDcCoverage struct {
 	Complete    bool  `json:"complete"`
 	DcsAnswered int64 `json:"dcsAnswered"`
 	DcsInScope  int64 `json:"dcsInScope"`
 	// The header text, "Read from 2 of 3 DCs · 1 unreachable: dc2.example.test: timeout".
-	Label *string `json:"label,omitzero"`
+	Label        *string              `json:"label,omitzero"`
+	NotReadByCap *int64               `json:"notReadByCap,omitzero"`
+	ReadCap      *int64               `json:"readCap,omitzero"`
+	Unanswered   []ReportDcUnanswered `json:"unanswered,omitzero"`
 	// The DCs that did not answer, each with the fixed code it gave (never driver text). Empty when coverage is complete.
 	Unreachable []ReportUnreachableDc `json:"unreachable,omitzero"`
 
@@ -1398,12 +1411,48 @@ func (v *ReportDcCoverage) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.Label); err != nil {
 				return err
 			}
-		case "unreachable":
+		case "notReadByCap":
 			null, err := apitypes.TakeNull(d)
 			if err != nil {
 				return err
 			}
 			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.NotReadByCap); err != nil {
+				return err
+			}
+		case "readCap":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ReadCap); err != nil {
+				return err
+			}
+		case "unanswered":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(6, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Unanswered); err != nil {
+				return err
+			}
+		case "unreachable":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(7, null)
 			if null {
 				continue
 			}
@@ -1459,8 +1508,32 @@ func (v *ReportDcCoverage) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 	if v.Label != nil {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("label"), string((*v.Label)), 0, 1024)
 	}
-	// unreachable
+	// notReadByCap
 	if v.p.Decoded() && v.p.IsNull(4) {
+		errs.NullNotAllowed(at, "notReadByCap")
+	}
+	if v.NotReadByCap != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("notReadByCap"), int64((*v.NotReadByCap)), 0, 100000)
+	}
+	// readCap
+	if v.p.Decoded() && v.p.IsNull(5) {
+		errs.NullNotAllowed(at, "readCap")
+	}
+	if v.ReadCap != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("readCap"), int64((*v.ReadCap)), 1, 100000)
+	}
+	// unanswered
+	if v.p.Decoded() && v.p.IsNull(6) {
+		errs.NullNotAllowed(at, "unanswered")
+	}
+	if v.Unanswered != nil {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("unanswered"), len(v.Unanswered), 0, 1000, apitypes.CodeMaxItems)
+		for i := range v.Unanswered {
+			v.Unanswered[i].Validate(apitypes.Index(at.AppendToken("unanswered"), i), errs)
+		}
+	}
+	// unreachable
+	if v.p.Decoded() && v.p.IsNull(7) {
 		errs.NullNotAllowed(at, "unreachable")
 	}
 	if v.Unreachable != nil {
@@ -1469,6 +1542,291 @@ func (v *ReportDcCoverage) Validate(at jsontext.Pointer, errs *apitypes.Errors) 
 			v.Unreachable[i].Validate(apitypes.Index(at.AppendToken("unreachable"), i), errs)
 		}
 	}
+}
+
+// ReportDcError: Why a DC gave no data. code is a stable slug to branch on, such as connection_refused, dns_failure or tls_untrusted; message is fixed text for the code. Neither carries a DN, LDAP result text, a stack trace or a secret.
+type ReportDcError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportDcError) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportDcError{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "code":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Code); err != nil {
+				return err
+			}
+		case "message":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Message); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportDcError) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// code
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "code")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "code")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("code"), string(v.Code), 1, 64)
+		if !pattern3.MatchString(string(v.Code)) {
+			errs.Add(apitypes.InBody, at.AppendToken("code"), apitypes.CodePattern, "value does not match the required pattern")
+		}
+	}
+	// message
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "message")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "message")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("message"), string(v.Message), 0, 512)
+	}
+}
+
+// ReportDcUnanswered: A DC in scope that was read and gave no replication data: one entry of the Did not answer band. dc is the DC's DNS host name. rowKey is the key of this DC's row in the stored result (status not_reported), so the band and the grid, the export and the digest agree. readAt is when the read was tried.
+type ReportDcUnanswered struct {
+	ConnectionID apitypes.UUID            `json:"connectionId"`
+	Dc           string                   `json:"dc"`
+	Error        ReportDcError            `json:"error"`
+	ReadAt       apitypes.Timestamp       `json:"readAt"`
+	Reason       ReportDcUnansweredReason `json:"reason"`
+	RowKey       string                   `json:"rowKey"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportDcUnanswered) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportDcUnanswered{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "connectionId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ConnectionID); err != nil {
+				return err
+			}
+		case "dc":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Dc); err != nil {
+				return err
+			}
+		case "error":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Error); err != nil {
+				return err
+			}
+		case "readAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ReadAt); err != nil {
+				return err
+			}
+		case "reason":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Reason); err != nil {
+				return err
+			}
+		case "rowKey":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.RowKey); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportDcUnanswered) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// connectionId
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "connectionId")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "connectionId")
+		}
+	}
+	// dc
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "dc")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "dc")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("dc"), string(v.Dc), 1, 253)
+	}
+	// error
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "error")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "error")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		v.Error.Validate(at.AppendToken("error"), errs)
+	}
+	// readAt
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "readAt")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "readAt")
+		}
+	}
+	// reason
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "reason")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "reason")
+		}
+	}
+	// rowKey
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "rowKey")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "rowKey")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(5) && !v.p.IsNull(5)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("rowKey"), string(v.RowKey), 1, 128)
+	}
+}
+
+// ReportDcUnansweredReason: Why a DC in scope gave no replication data. unreachable: no connection could be made. timed_out: the read passed its time limit. tls_failed: the TLS handshake or certificate check failed. access_denied: the connection account could not bind or read. right_not_granted: the optional replication-monitoring right is not granted (reports-2 second slice 13). attributes_not_returned: the DC answered and returned no replication values. decode_refused: the connector's safe decoder refused the DC's value.
+type ReportDcUnansweredReason string
+
+const (
+	ReportDcUnansweredReasonUnreachable           ReportDcUnansweredReason = "unreachable"
+	ReportDcUnansweredReasonTimedOut              ReportDcUnansweredReason = "timed_out"
+	ReportDcUnansweredReasonTLSFailed             ReportDcUnansweredReason = "tls_failed"
+	ReportDcUnansweredReasonAccessDenied          ReportDcUnansweredReason = "access_denied"
+	ReportDcUnansweredReasonRightNotGranted       ReportDcUnansweredReason = "right_not_granted"
+	ReportDcUnansweredReasonAttributesNotReturned ReportDcUnansweredReason = "attributes_not_returned"
+	ReportDcUnansweredReasonDecodeRefused         ReportDcUnansweredReason = "decode_refused"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportDcUnansweredReason) Valid() bool {
+	switch v {
+	case ReportDcUnansweredReasonUnreachable, ReportDcUnansweredReasonTimedOut, ReportDcUnansweredReasonTLSFailed, ReportDcUnansweredReasonAccessDenied, ReportDcUnansweredReasonRightNotGranted, ReportDcUnansweredReasonAttributesNotReturned, ReportDcUnansweredReasonDecodeRefused:
+		return true
+	}
+	return false
 }
 
 // ReportDefinition: A report definition: an immutable AST over one registered dataset (FR-03, FR-05), shown as its presets, crosswalk and columns. exportFormats are the formats this installation can produce, and the console offers no others. subjectKind says whether the report requires groups or users (GRP-02, GRP-03). minScheduleIntervalHours is 24 for per-DC reports.
@@ -3552,7 +3910,7 @@ func (v *ReportExport) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if v.Digest != nil {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("digest"), string((*v.Digest)), 0, 64)
-		if !pattern3.MatchString(string((*v.Digest))) {
+		if !pattern4.MatchString(string((*v.Digest))) {
 			errs.Add(apitypes.InBody, at.AppendToken("digest"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -5746,6 +6104,290 @@ func (v *ReportLatestTable) Validate(at jsontext.Pointer, errs *apitypes.Errors)
 		for i := range v.Rows {
 			v.Rows[i].Validate(apitypes.Index(at.AppendToken("rows"), i), errs)
 		}
+	}
+}
+
+// ReportLingeringRiskValue: The lingering-object risk indicator of SYS-03 (7.3.4). at_risk: a partner's last success is older than the forest's tombstone lifetime. no_indication: it is not. not_reported: the last success or the tombstone lifetime is not known. This is an indicator, never a detection: no label, text or value says that lingering objects were detected.
+type ReportLingeringRiskValue string
+
+const (
+	ReportLingeringRiskValueAtRisk       ReportLingeringRiskValue = "at_risk"
+	ReportLingeringRiskValueNoIndication ReportLingeringRiskValue = "no_indication"
+	ReportLingeringRiskValueNotReported  ReportLingeringRiskValue = "not_reported"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportLingeringRiskValue) Valid() bool {
+	switch v {
+	case ReportLingeringRiskValueAtRisk, ReportLingeringRiskValueNoIndication, ReportLingeringRiskValueNotReported:
+		return true
+	}
+	return false
+}
+
+// ReportManagerCandidate: A user with at least one direct report, offered by the manager picker. Two with the same displayName differ in logonName or ouPath. connectionId and guid are what ReportSubjectRef carries back.
+type ReportManagerCandidate struct {
+	ConnectionID  apitypes.UUID `json:"connectionId"`
+	DirectReports int64         `json:"directReports"`
+	DisplayName   string        `json:"displayName"`
+	GUID          apitypes.UUID `json:"guid"`
+	LogonName     string        `json:"logonName"`
+	OUPath        string        `json:"ouPath"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportManagerCandidate) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportManagerCandidate{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "connectionId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ConnectionID); err != nil {
+				return err
+			}
+		case "directReports":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DirectReports); err != nil {
+				return err
+			}
+		case "displayName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.DisplayName); err != nil {
+				return err
+			}
+		case "guid":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.GUID); err != nil {
+				return err
+			}
+		case "logonName":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.LogonName); err != nil {
+				return err
+			}
+		case "ouPath":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.OUPath); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportManagerCandidate) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// connectionId
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "connectionId")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "connectionId")
+		}
+	}
+	// directReports
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "directReports")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "directReports")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("directReports"), int64(v.DirectReports), 1, 1000000)
+	}
+	// displayName
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "displayName")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "displayName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("displayName"), string(v.DisplayName), 0, 256)
+	}
+	// guid
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "guid")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "guid")
+		}
+	}
+	// logonName
+	if v.p.Decoded() {
+		if !v.p.Has(4) {
+			errs.Required(at, "logonName")
+		}
+		if v.p.IsNull(4) {
+			errs.NullNotAllowed(at, "logonName")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(4) && !v.p.IsNull(4)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("logonName"), string(v.LogonName), 0, 256)
+	}
+	// ouPath
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "ouPath")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "ouPath")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(5) && !v.p.IsNull(5)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("ouPath"), string(v.OUPath), 0, 1024)
+	}
+}
+
+// ReportManagerList: A page of managers, ordered by display name then objectGUID.
+type ReportManagerList struct {
+	Items []ReportManagerCandidate `json:"items"`
+	Page  apitypes.PageInfo        `json:"page"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportManagerList) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportManagerList{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "items":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.Items); err != nil {
+				return err
+			}
+		case "page":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Page); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportManagerList) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// items
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "items")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "items")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("items"), len(v.Items), 0, 1000, apitypes.CodeMaxItems)
+		for i := range v.Items {
+			v.Items[i].Validate(apitypes.Index(at.AppendToken("items"), i), errs)
+		}
+	}
+	// page
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "page")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "page")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		v.Page.Validate(at.AppendToken("page"), errs)
 	}
 }
 
@@ -9540,7 +10182,7 @@ func (v *ReportRecurrenceDaily) Validate(at jsontext.Pointer, errs *apitypes.Err
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("time"), string(v.Time), 5, 5)
-		if !pattern4.MatchString(string(v.Time)) {
+		if !pattern5.MatchString(string(v.Time)) {
 			errs.Add(apitypes.InBody, at.AppendToken("time"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -9765,7 +10407,7 @@ func (v *ReportRecurrenceMonthlyDay) Validate(at jsontext.Pointer, errs *apitype
 	}
 	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("time"), string(v.Time), 5, 5)
-		if !pattern4.MatchString(string(v.Time)) {
+		if !pattern5.MatchString(string(v.Time)) {
 			errs.Add(apitypes.InBody, at.AppendToken("time"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -9854,7 +10496,7 @@ func (v *ReportRecurrenceMonthlyLastDay) Validate(at jsontext.Pointer, errs *api
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("time"), string(v.Time), 5, 5)
-		if !pattern4.MatchString(string(v.Time)) {
+		if !pattern5.MatchString(string(v.Time)) {
 			errs.Add(apitypes.InBody, at.AppendToken("time"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -9956,7 +10598,7 @@ func (v *ReportRecurrenceWeekly) Validate(at jsontext.Pointer, errs *apitypes.Er
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("time"), string(v.Time), 5, 5)
-		if !pattern4.MatchString(string(v.Time)) {
+		if !pattern5.MatchString(string(v.Time)) {
 			errs.Add(apitypes.InBody, at.AppendToken("time"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -9999,6 +10641,553 @@ func (v ReportRelativeTime) Valid() bool {
 func (v ReportRelativeTime) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	if !v.Valid() {
 		errs.AddBody(at, apitypes.CodeEnum, "value is not one of the allowed values")
+	}
+}
+
+// ReportReplicationStatusCount: How many rows of the run have one status.
+type ReportReplicationStatusCount struct {
+	Count  int64                        `json:"count"`
+	Status ReportReplicationStatusValue `json:"status"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportReplicationStatusCount) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportReplicationStatusCount{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "count":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Count); err != nil {
+				return err
+			}
+		case "status":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Status); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportReplicationStatusCount) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// count
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "count")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "count")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("count"), int64(v.Count), 0, 9007199254740991)
+	}
+	// status
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "status")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "status")
+		}
+	}
+}
+
+// ReportReplicationStatusValue: The derived status of one SYS-03 row (reports-2 second slice 7.3.3). healthy: the last success is within the warning threshold and there are no consecutive failures. warning: no failures, and the last success is older than the warning threshold and not older than the failing threshold. failing: consecutive failures above zero, or a last success older than the failing threshold. not_reported: the DC did not answer, or answered without the value; it is never healthy and never a count of problems. unreachable is not a status: an unreachable DC is not_reported, with its reason and error in the coverage block. Severity, for sort order, is failing, warning, not_reported, healthy.
+type ReportReplicationStatusValue string
+
+const (
+	ReportReplicationStatusValueHealthy     ReportReplicationStatusValue = "healthy"
+	ReportReplicationStatusValueWarning     ReportReplicationStatusValue = "warning"
+	ReportReplicationStatusValueFailing     ReportReplicationStatusValue = "failing"
+	ReportReplicationStatusValueNotReported ReportReplicationStatusValue = "not_reported"
+)
+
+// Valid reports whether v is a value this build knows. Clients and responses may carry others
+// (the enum is open), so no generated code rejects an unknown value.
+func (v ReportReplicationStatusValue) Valid() bool {
+	switch v {
+	case ReportReplicationStatusValueHealthy, ReportReplicationStatusValueWarning, ReportReplicationStatusValueFailing, ReportReplicationStatusValueNotReported:
+		return true
+	}
+	return false
+}
+
+// ReportReplicationSummary: What a SYS-03 run adds to its header, present only on a run of DC Replication Status (absent on every other report). thresholds are the values the run applied, pinned when it started. statusCounts has one entry for each of failing, warning, healthy and not_reported, in that order, zeros included, and counts the run's stored rows; their sum is rowCount, so the chips All, Failing, Warning, Healthy and Not reported are filters on the status column with these counts. A DC that did not answer has a row with status not_reported, so it is counted there and never under healthy. tombstoneLifetimeDays is the tombstone lifetime the risk indicator was judged against (the shortest of the forests in scope); null when it was not read, and then every lingering_risk cell is not_reported. nextReadAllowedAfter is when the 1 hour floor of reports-2a 8.4 lets the next run read the DCs; null until the run has started.
+type ReportReplicationSummary struct {
+	NextReadAllowedAfter  *apitypes.Timestamp            `json:"nextReadAllowedAfter"`
+	StatusCounts          []ReportReplicationStatusCount `json:"statusCounts"`
+	Thresholds            ReportReplicationThresholdPair `json:"thresholds"`
+	TombstoneLifetimeDays *int64                         `json:"tombstoneLifetimeDays"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportReplicationSummary) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportReplicationSummary{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "nextReadAllowedAfter":
+			v.p.Mark(0, false)
+			if err := json.UnmarshalDecode(d, &v.NextReadAllowedAfter); err != nil {
+				return err
+			}
+		case "statusCounts":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.StatusCounts); err != nil {
+				return err
+			}
+		case "thresholds":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Thresholds); err != nil {
+				return err
+			}
+		case "tombstoneLifetimeDays":
+			v.p.Mark(3, false)
+			if err := json.UnmarshalDecode(d, &v.TombstoneLifetimeDays); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportReplicationSummary) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// nextReadAllowedAfter
+	if v.p.Decoded() && !v.p.Has(0) {
+		errs.Required(at, "nextReadAllowedAfter")
+	}
+	// statusCounts
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "statusCounts")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "statusCounts")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("statusCounts"), len(v.StatusCounts), 0, 16, apitypes.CodeMaxItems)
+		for i := range v.StatusCounts {
+			v.StatusCounts[i].Validate(apitypes.Index(at.AppendToken("statusCounts"), i), errs)
+		}
+	}
+	// thresholds
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "thresholds")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "thresholds")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		v.Thresholds.Validate(at.AppendToken("thresholds"), errs)
+	}
+	// tombstoneLifetimeDays
+	if v.p.Decoded() && !v.p.Has(3) {
+		errs.Required(at, "tombstoneLifetimeDays")
+	}
+	if v.TombstoneLifetimeDays != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("tombstoneLifetimeDays"), int64((*v.TombstoneLifetimeDays)), 1, 36500)
+	}
+}
+
+// ReportReplicationThresholdPair: A pair of thresholds in seconds.
+type ReportReplicationThresholdPair struct {
+	FailingAfterSeconds int64 `json:"failingAfterSeconds"`
+	WarningAfterSeconds int64 `json:"warningAfterSeconds"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportReplicationThresholdPair) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportReplicationThresholdPair{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "failingAfterSeconds":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.FailingAfterSeconds); err != nil {
+				return err
+			}
+		case "warningAfterSeconds":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.WarningAfterSeconds); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportReplicationThresholdPair) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// failingAfterSeconds
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "failingAfterSeconds")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "failingAfterSeconds")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("failingAfterSeconds"), int64(v.FailingAfterSeconds), 300, 2592000)
+	}
+	// warningAfterSeconds
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "warningAfterSeconds")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "warningAfterSeconds")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("warningAfterSeconds"), int64(v.WarningAfterSeconds), 300, 2592000)
+	}
+}
+
+// ReportReplicationThresholds: The tenant's SYS-03 thresholds in seconds. defaults are the product defaults (1 hour warning, 24 hours failing; [PROPOSED] in reports-2 second slice 7.3.3 until ad-expert and reporting-engineer confirm), so a client can offer Reset. isDefault is true while nobody has set values. updatedAt and updatedBy are absent while isDefault.
+type ReportReplicationThresholds struct {
+	Defaults            ReportReplicationThresholdPair `json:"defaults"`
+	FailingAfterSeconds int64                          `json:"failingAfterSeconds"`
+	IsDefault           bool                           `json:"isDefault"`
+	UpdatedAt           *apitypes.Timestamp            `json:"updatedAt,omitzero"`
+	UpdatedBy           *apitypes.JobActor             `json:"updatedBy,omitzero"`
+	WarningAfterSeconds int64                          `json:"warningAfterSeconds"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportReplicationThresholds) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportReplicationThresholds{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "defaults":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Defaults); err != nil {
+				return err
+			}
+		case "failingAfterSeconds":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.FailingAfterSeconds); err != nil {
+				return err
+			}
+		case "isDefault":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.IsDefault); err != nil {
+				return err
+			}
+		case "updatedAt":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.UpdatedAt); err != nil {
+				return err
+			}
+		case "updatedBy":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.UpdatedBy); err != nil {
+				return err
+			}
+		case "warningAfterSeconds":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(5, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.WarningAfterSeconds); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportReplicationThresholds) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// defaults
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "defaults")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "defaults")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		v.Defaults.Validate(at.AppendToken("defaults"), errs)
+	}
+	// failingAfterSeconds
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "failingAfterSeconds")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "failingAfterSeconds")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("failingAfterSeconds"), int64(v.FailingAfterSeconds), 300, 2592000)
+	}
+	// isDefault
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "isDefault")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "isDefault")
+		}
+	}
+	// updatedAt
+	if v.p.Decoded() && v.p.IsNull(3) {
+		errs.NullNotAllowed(at, "updatedAt")
+	}
+	// updatedBy
+	if v.p.Decoded() && v.p.IsNull(4) {
+		errs.NullNotAllowed(at, "updatedBy")
+	}
+	if v.UpdatedBy != nil {
+		(*v.UpdatedBy).Validate(at.AppendToken("updatedBy"), errs)
+	}
+	// warningAfterSeconds
+	if v.p.Decoded() {
+		if !v.p.Has(5) {
+			errs.Required(at, "warningAfterSeconds")
+		}
+		if v.p.IsNull(5) {
+			errs.NullNotAllowed(at, "warningAfterSeconds")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(5) && !v.p.IsNull(5)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("warningAfterSeconds"), int64(v.WarningAfterSeconds), 300, 2592000)
+	}
+}
+
+// ReportReplicationThresholdsWrite: Both thresholds of SYS-03 DC Replication Status, in seconds. warningAfterSeconds must be less than failingAfterSeconds. Both are required: a write replaces the pair.
+type ReportReplicationThresholdsWrite struct {
+	FailingAfterSeconds int64 `json:"failingAfterSeconds"`
+	WarningAfterSeconds int64 `json:"warningAfterSeconds"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportReplicationThresholdsWrite) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportReplicationThresholdsWrite{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "failingAfterSeconds":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.FailingAfterSeconds); err != nil {
+				return err
+			}
+		case "warningAfterSeconds":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.WarningAfterSeconds); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportReplicationThresholdsWrite) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// failingAfterSeconds
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "failingAfterSeconds")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "failingAfterSeconds")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("failingAfterSeconds"), int64(v.FailingAfterSeconds), 300, 2592000)
+	}
+	// warningAfterSeconds
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "warningAfterSeconds")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "warningAfterSeconds")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("warningAfterSeconds"), int64(v.WarningAfterSeconds), 300, 2592000)
 	}
 }
 
@@ -11686,6 +12875,7 @@ type ReportRun struct {
 	PolicyReads        *ReportPolicyReads        `json:"policyReads,omitzero"`
 	PresetID           *string                   `json:"presetId"`
 	Progress           ReportRunProgress         `json:"progress"`
+	Replication        *ReportReplicationSummary `json:"replication,omitzero"`
 	RerunOf            *apitypes.UUID            `json:"rerunOf,omitzero"`
 	RowCount           *int64                    `json:"rowCount"`
 	ScopeApplied       *string                   `json:"scopeApplied"`
@@ -11899,7 +13089,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err := json.UnmarshalDecode(d, &v.Progress); err != nil {
 				return err
 			}
-		case "rerunOf":
+		case "replication":
 			null, err := apitypes.TakeNull(d)
 			if err != nil {
 				return err
@@ -11908,16 +13098,28 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if null {
 				continue
 			}
+			if err := json.UnmarshalDecode(d, &v.Replication); err != nil {
+				return err
+			}
+		case "rerunOf":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(20, null)
+			if null {
+				continue
+			}
 			if err := json.UnmarshalDecode(d, &v.RerunOf); err != nil {
 				return err
 			}
 		case "rowCount":
-			v.p.Mark(20, false)
+			v.p.Mark(21, false)
 			if err := json.UnmarshalDecode(d, &v.RowCount); err != nil {
 				return err
 			}
 		case "scopeApplied":
-			v.p.Mark(21, false)
+			v.p.Mark(22, false)
 			if err := json.UnmarshalDecode(d, &v.ScopeApplied); err != nil {
 				return err
 			}
@@ -11926,7 +13128,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(22, null)
+			v.p.Mark(23, null)
 			if null {
 				continue
 			}
@@ -11934,7 +13136,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 				return err
 			}
 		case "startedAt":
-			v.p.Mark(23, false)
+			v.p.Mark(24, false)
 			if err := json.UnmarshalDecode(d, &v.StartedAt); err != nil {
 				return err
 			}
@@ -11943,7 +13145,7 @@ func (v *ReportRun) UnmarshalJSONFrom(d *jsontext.Decoder) error {
 			if err != nil {
 				return err
 			}
-			v.p.Mark(24, null)
+			v.p.Mark(25, null)
 			if null {
 				continue
 			}
@@ -12021,7 +13223,7 @@ func (v *ReportRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if v.Digest != nil {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("digest"), string((*v.Digest)), 0, 64)
-		if !pattern3.MatchString(string((*v.Digest))) {
+		if !pattern4.MatchString(string((*v.Digest))) {
 			errs.Add(apitypes.InBody, at.AppendToken("digest"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -12125,19 +13327,26 @@ func (v *ReportRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	if !v.p.Decoded() || (v.p.Has(18) && !v.p.IsNull(18)) {
 		v.Progress.Validate(at.AppendToken("progress"), errs)
 	}
-	// rerunOf
+	// replication
 	if v.p.Decoded() && v.p.IsNull(19) {
+		errs.NullNotAllowed(at, "replication")
+	}
+	if v.Replication != nil {
+		(*v.Replication).Validate(at.AppendToken("replication"), errs)
+	}
+	// rerunOf
+	if v.p.Decoded() && v.p.IsNull(20) {
 		errs.NullNotAllowed(at, "rerunOf")
 	}
 	// rowCount
-	if v.p.Decoded() && !v.p.Has(20) {
+	if v.p.Decoded() && !v.p.Has(21) {
 		errs.Required(at, "rowCount")
 	}
 	if v.RowCount != nil {
 		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("rowCount"), int64((*v.RowCount)), 0, 9007199254740991)
 	}
 	// scopeApplied
-	if v.p.Decoded() && !v.p.Has(21) {
+	if v.p.Decoded() && !v.p.Has(22) {
 		errs.Required(at, "scopeApplied")
 	}
 	if v.ScopeApplied != nil {
@@ -12145,29 +13354,29 @@ func (v *ReportRun) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	// skippedConnections
 	if v.p.Decoded() {
-		if !v.p.Has(22) {
+		if !v.p.Has(23) {
 			errs.Required(at, "skippedConnections")
 		}
-		if v.p.IsNull(22) {
+		if v.p.IsNull(23) {
 			errs.NullNotAllowed(at, "skippedConnections")
 		}
 	}
-	if !v.p.Decoded() || (v.p.Has(22) && !v.p.IsNull(22)) {
+	if !v.p.Decoded() || (v.p.Has(23) && !v.p.IsNull(23)) {
 		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("skippedConnections"), len(v.SkippedConnections), 0, 64, apitypes.CodeMaxItems)
 		for i := range v.SkippedConnections {
 			v.SkippedConnections[i].Validate(apitypes.Index(at.AppendToken("skippedConnections"), i), errs)
 		}
 	}
 	// startedAt
-	if v.p.Decoded() && !v.p.Has(23) {
+	if v.p.Decoded() && !v.p.Has(24) {
 		errs.Required(at, "startedAt")
 	}
 	// state
 	if v.p.Decoded() {
-		if !v.p.Has(24) {
+		if !v.p.Has(25) {
 			errs.Required(at, "state")
 		}
-		if v.p.IsNull(24) {
+		if v.p.IsNull(25) {
 			errs.NullNotAllowed(at, "state")
 		}
 	}
@@ -12282,7 +13491,7 @@ func (v *ReportRunCreate) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if !v.p.Decoded() || (v.p.Has(0) && !v.p.IsNull(0)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("definitionId"), string(v.DefinitionID), 2, 64)
-		if !pattern5.MatchString(string(v.DefinitionID)) {
+		if !pattern6.MatchString(string(v.DefinitionID)) {
 			errs.Add(apitypes.InBody, at.AppendToken("definitionId"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -12316,7 +13525,7 @@ func (v *ReportRunCreate) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if v.TimeZone != nil {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("timeZone"), string((*v.TimeZone)), 1, 64)
-		if !pattern6.MatchString(string((*v.TimeZone))) {
+		if !pattern7.MatchString(string((*v.TimeZone))) {
 			errs.Add(apitypes.InBody, at.AppendToken("timeZone"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -13931,7 +15140,7 @@ func (v *ReportScheduleWrite) Validate(at jsontext.Pointer, errs *apitypes.Error
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("definitionId"), string(v.DefinitionID), 2, 64)
-		if !pattern5.MatchString(string(v.DefinitionID)) {
+		if !pattern6.MatchString(string(v.DefinitionID)) {
 			errs.Add(apitypes.InBody, at.AppendToken("definitionId"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -13953,7 +15162,7 @@ func (v *ReportScheduleWrite) Validate(at jsontext.Pointer, errs *apitypes.Error
 	}
 	if !v.p.Decoded() || (v.p.Has(3) && !v.p.IsNull(3)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("name"), string(v.Name), 1, 128)
-		if !pattern7.MatchString(string(v.Name)) {
+		if !pattern8.MatchString(string(v.Name)) {
 			errs.Add(apitypes.InBody, at.AppendToken("name"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -14021,7 +15230,7 @@ func (v *ReportScheduleWrite) Validate(at jsontext.Pointer, errs *apitypes.Error
 	}
 	if !v.p.Decoded() || (v.p.Has(9) && !v.p.IsNull(9)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("timeZone"), string(v.TimeZone), 1, 64)
-		if !pattern6.MatchString(string(v.TimeZone)) {
+		if !pattern7.MatchString(string(v.TimeZone)) {
 			errs.Add(apitypes.InBody, at.AppendToken("timeZone"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -14985,7 +16194,7 @@ func (v *ReportValueText) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
 		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("value"), string(v.Value), 0, 256)
-		if !pattern8.MatchString(string(v.Value)) {
+		if !pattern9.MatchString(string(v.Value)) {
 			errs.Add(apitypes.InBody, at.AppendToken("value"), apitypes.CodePattern, "value does not match the required pattern")
 		}
 	}
@@ -15183,10 +16392,11 @@ func (v ReportWidgetView) Valid() bool {
 var (
 	pattern1 = regexp.MustCompile("^-?[0-9]{1,19}$")
 	pattern2 = regexp.MustCompile("^[a-z][a-z0-9_]{0,63}$")
-	pattern3 = regexp.MustCompile("^[0-9a-f]{64}$")
-	pattern4 = regexp.MustCompile("^([01][0-9]|2[0-3]):[0-5][0-9]$")
-	pattern5 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9-]{1,63}$")
-	pattern6 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$")
-	pattern7 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]+$")
-	pattern8 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]*$")
+	pattern3 = regexp.MustCompile("^[a-z][a-z0-9_.-]{0,63}$")
+	pattern4 = regexp.MustCompile("^[0-9a-f]{64}$")
+	pattern5 = regexp.MustCompile("^([01][0-9]|2[0-3]):[0-5][0-9]$")
+	pattern6 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9-]{1,63}$")
+	pattern7 = regexp.MustCompile("^[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}$")
+	pattern8 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]+$")
+	pattern9 = regexp.MustCompile("^[^\\x00-\\x1f\\x7f]*$")
 )
