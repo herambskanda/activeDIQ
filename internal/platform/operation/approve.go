@@ -150,7 +150,7 @@ func (r *Runner) approve(ctx context.Context, t tenant.ID, opID, planHash, viaRe
 	for i, sr := range rows {
 		steps[i] = sr.Plan
 	}
-	if err := r.checkApprover(ctx, op, ap, d.StepUp || worst(steps) == Irreversible); err != nil {
+	if err := r.checkApprover(ctx, op, ap, d.NeedsStepUp(Input(op.Input)) || worst(steps) == Irreversible); err != nil {
 		return Submission{}, err
 	}
 	if err := r.requireApproverScope(ctx, op, targets, ap.Principal); err != nil {

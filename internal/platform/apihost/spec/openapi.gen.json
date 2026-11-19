@@ -1,6 +1,30 @@
 {
   "components": {
     "parameters": {
+      "CallerVerificationChallengeId": {
+        "description": "The challenge returned by issueCallerVerification.",
+        "in": "path",
+        "name": "challengeId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "x-activediq-tag": "helpdesk"
+      },
+      "CallerVerificationKey": {
+        "description": "Makes a retry safe. Honoured for 24 hours per technician and operation.",
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": true,
+        "schema": {
+          "maxLength": 128,
+          "minLength": 8,
+          "pattern": "^[A-Za-z0-9._~-]+$",
+          "type": "string"
+        },
+        "x-activediq-tag": "helpdesk"
+      },
       "ConnectionId": {
         "description": "The Entra connection.",
         "in": "path",
@@ -127,6 +151,16 @@
           "type": "string"
         }
       },
+      "MembershipSide": {
+        "description": "Which side of a membership change the names are paged from. Absent is added. Ignored for a row that is not a membership change.",
+        "in": "query",
+        "name": "side",
+        "required": false,
+        "schema": {
+          "$ref": "#/components/schemas/ReportMembershipSide"
+        },
+        "x-activediq-tag": "reports"
+      },
       "OperationId": {
         "description": "The operation to undo: the value of the ActiveDIQ-Operation-Id header that the Action-backed write answered.",
         "in": "path",
@@ -189,6 +223,17 @@
         "schema": {
           "maxLength": 256,
           "minLength": 1,
+          "type": "string"
+        },
+        "x-activediq-tag": "reports"
+      },
+      "RowKey": {
+        "description": "The rowKey of a row of the run; for a change-history run, the object's GUID.",
+        "in": "path",
+        "name": "rowKey",
+        "required": true,
+        "schema": {
+          "format": "uuid",
           "type": "string"
         },
         "x-activediq-tag": "reports"
@@ -270,6 +315,74 @@
       }
     },
     "responses": {
+      "CallerVerificationDeliveryFailed": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 502,
+              "title": "The code could not be delivered",
+              "type": "/problems/caller-verification-delivery-failed"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The code could not be delivered. No code exists, none is shown and the issue does not count against the limits."
+      },
+      "CallerVerificationLimit": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "errors": [
+                {
+                  "code": "quota",
+                  "detail": "The hourly limit of codes for this caller or technician is reached.",
+                  "in": "body",
+                  "pointer": "/"
+                }
+              ],
+              "status": 429,
+              "title": "The verification limit was reached",
+              "type": "/problems/caller-verification-limit"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "A caller-verification limit was reached. errors[].code is quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges)."
+      },
+      "CallerVerificationRefused": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 422,
+              "title": "The verification was refused",
+              "type": "/problems/caller-verification-refused"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The verification was refused. One answer for a wrong code, used-up attempts, an expired, superseded, unknown or foreign challenge; it never says which and never repeats the code."
+      },
+      "CallerVerificationUnavailable": {
+        "content": {
+          "application/problem+json": {
+            "example": {
+              "status": 422,
+              "title": "This caller cannot be verified",
+              "type": "/problems/caller-verification-unavailable"
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The caller cannot be verified. One answer for an unknown, disabled, out-of-scope, protected or own target and for a target with no held destination; it never says which."
+      },
       "Conflict": {
         "content": {
           "application/problem+json": {
@@ -943,6 +1056,77 @@
         ],
         "type": "object",
         "x-activediq-tag": "platform.authn"
+      },
+      "CallerVerificationChallenge": {
+        "properties": {
+          "challengeId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "destinationMasked": {
+            "description": "Where the code went, masked. The full address is never returned.",
+            "maxLength": 256,
+            "type": "string"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "factor": {
+            "$ref": "#/components/schemas/CallerVerificationFactor"
+          },
+          "reused": {
+            "description": "True when an open challenge was attached to, or this is a replay of an earlier identical request; nothing was sent now.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "challengeId",
+          "factor",
+          "destinationMasked",
+          "expiresAt",
+          "reused"
+        ],
+        "type": "object",
+        "x-activediq-tag": "helpdesk"
+      },
+      "CallerVerificationFactor": {
+        "description": "How the caller was verified. Clients ignore values they do not know.",
+        "enum": [
+          "email_otp",
+          "sms_otp"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "helpdesk"
+      },
+      "CallerVerificationFactorSetting": {
+        "description": "The factor a technician asks for. totp is reserved for the enrolment work and is not accepted until then.",
+        "enum": [
+          "email_otp",
+          "sms_otp"
+        ],
+        "type": "string",
+        "x-activediq-tag": "helpdesk"
+      },
+      "CallerVerified": {
+        "properties": {
+          "authorisedUntil": {
+            "description": "Until when the challenge may authorise one reset or unlock for this target.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "challengeId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "challengeId",
+          "authorisedUntil"
+        ],
+        "type": "object",
+        "x-activediq-tag": "helpdesk"
       },
       "ConnectionHealth": {
         "additionalProperties": false,
@@ -1765,6 +1949,35 @@
         "maxLength": 20,
         "pattern": "^-?[0-9]{1,19}$",
         "type": "string"
+      },
+      "IssueCallerVerificationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "connectionId": {
+            "description": "The directory connection the caller's account belongs to.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "factor": {
+            "$ref": "#/components/schemas/CallerVerificationFactorSetting"
+          },
+          "objectGuid": {
+            "description": "The caller's objectGUID. A DN is never accepted.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "resend": {
+            "description": "True only for the explicit \"Send a new code\" act; it supersedes the open challenge.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "connectionId",
+          "objectGuid",
+          "factor"
+        ],
+        "type": "object",
+        "x-activediq-tag": "helpdesk"
       },
       "Job": {
         "description": "A long operation (bulk change). It reports progress and per-item results, and is resumable after a restart.",
@@ -3066,7 +3279,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportColumnInfo"
             },
-            "maxItems": 128,
+            "maxItems": 96,
             "type": "array"
           },
           "dataset": {
@@ -3266,6 +3479,225 @@
         ],
         "type": "string",
         "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailActor": {
+        "description": "Who made the change. notRecorded: the directory does not hold it (spec rule 6). activediq: the change was made through activeDIQ, so the principal and the operation are known; operation is the handle of the operation.",
+        "discriminator": {
+          "mapping": {
+            "activediq": "#/components/schemas/ReportDetailActorActiveDiq",
+            "notRecorded": "#/components/schemas/ReportDetailActorNotRecorded"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportDetailActorNotRecorded"
+          },
+          {
+            "$ref": "#/components/schemas/ReportDetailActorActiveDiq"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailActorActiveDiq": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "activediq",
+            "type": "string"
+          },
+          "operation": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "principal": {
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "principal",
+          "operation"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailActorNotRecorded": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "notRecorded",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailAttribute": {
+        "additionalProperties": false,
+        "description": "One attribute the change touched, with its name, the originating time and the replication version where recorded, each unknown where not. Never a value.",
+        "properties": {
+          "name": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "originAt": {
+            "$ref": "#/components/schemas/ReportDetailTime"
+          },
+          "version": {
+            "$ref": "#/components/schemas/ReportDetailInteger"
+          }
+        },
+        "required": [
+          "name",
+          "originAt",
+          "version"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailBasisValue": {
+        "description": "Where a time comes from. origin: the DC time of the change, from replication metadata (independent of the DC). observed: the time activeDIQ observed it. last_seen: the object as last observed before it left the feed.",
+        "enum": [
+          "origin",
+          "observed",
+          "last_seen"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailInteger": {
+        "description": "A whole number as a decimal string, or unknown when the history does not hold it.",
+        "discriminator": {
+          "mapping": {
+            "integer": "#/components/schemas/ReportCellInteger",
+            "unknown": "#/components/schemas/ReportCellUnknown"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportCellInteger"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellUnknown"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailObject": {
+        "additionalProperties": false,
+        "description": "The object the change is on. dn is the full distinguished name, an attribute of the object and never a key; the client addresses the object by objectGuid. For a removed row every field is as last seen by activeDIQ. logonName is absent for a kind without one (a group or OU).",
+        "properties": {
+          "dn": {
+            "$ref": "#/components/schemas/ReportDetailText"
+          },
+          "domain": {
+            "maxLength": 255,
+            "type": "string"
+          },
+          "logonName": {
+            "$ref": "#/components/schemas/ReportDetailText"
+          },
+          "name": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "ouPath": {
+            "$ref": "#/components/schemas/ReportDetailText"
+          }
+        },
+        "required": [
+          "objectGuid",
+          "name",
+          "logonName",
+          "domain",
+          "ouPath",
+          "dn"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailText": {
+        "description": "Text, absent when the object has none, or unknown when it was not read.",
+        "discriminator": {
+          "mapping": {
+            "absent": "#/components/schemas/ReportCellAbsent",
+            "text": "#/components/schemas/ReportCellText",
+            "unknown": "#/components/schemas/ReportCellUnknown"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportCellText"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellAbsent"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellUnknown"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailTime": {
+        "description": "An instant the history holds, or unknown when it does not.",
+        "discriminator": {
+          "mapping": {
+            "time": "#/components/schemas/ReportValueTime",
+            "unknown": "#/components/schemas/ReportCellUnknown"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportValueTime"
+          },
+          {
+            "$ref": "#/components/schemas/ReportCellUnknown"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportDetailWhen": {
+        "additionalProperties": false,
+        "description": "When the change happened. changedAt is the originating time where the history holds one, else the observed time, and basis says which. observedAt is always the observation time. gapMinutes is the minutes between the previous observation and this one, unknown when there is no previous observation. observationBased is always true: several changes between two observations show as one.",
+        "properties": {
+          "basis": {
+            "$ref": "#/components/schemas/ReportDetailBasisValue"
+          },
+          "changedAt": {
+            "$ref": "#/components/schemas/ReportDetailTime"
+          },
+          "gapMinutes": {
+            "$ref": "#/components/schemas/ReportDetailInteger"
+          },
+          "observationBased": {
+            "type": "boolean"
+          },
+          "observedAt": {
+            "$ref": "#/components/schemas/ReportDetailTime"
+          }
+        },
+        "required": [
+          "changedAt",
+          "basis",
+          "observedAt",
+          "gapMinutes",
+          "observationBased"
+        ],
+        "type": "object",
         "x-activediq-tag": "reports"
       },
       "ReportEmptyReason": {
@@ -3988,6 +4420,67 @@
         "type": "object",
         "x-activediq-tag": "reports"
       },
+      "ReportMembershipName": {
+        "additionalProperties": false,
+        "description": "One member added or removed, addressed by objectGUID. The name is the one last observed.",
+        "properties": {
+          "name": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "objectGuid": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "objectGuid",
+          "name"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportMembershipNamePage": {
+        "additionalProperties": false,
+        "description": "One page of in-scope member names of one side of a membership change, by name then objectGUID, stable.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReportMembershipName"
+            },
+            "maxItems": 1000,
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportMembershipSide": {
+        "description": "Which side of a membership change to page. A closed request enum.",
+        "enum": [
+          "added",
+          "removed"
+        ],
+        "type": "string",
+        "x-activediq-tag": "reports"
+      },
+      "ReportMembershipSideValue": {
+        "description": "Which side of a membership change a page of names is.",
+        "enum": [
+          "added",
+          "removed"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
       "ReportOuRef": {
         "additionalProperties": false,
         "description": "An organizational unit by connection and objectGUID, never by DN. oneLevel false includes the whole subtree.",
@@ -4020,7 +4513,7 @@
               "maxLength": 64,
               "type": "string"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "connectionIds": {
@@ -4472,7 +4965,7 @@
               "maxLength": 64,
               "type": "string"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "filters": {
@@ -4984,6 +5477,24 @@
         "type": "string",
         "x-activediq-tag": "reports"
       },
+      "ReportRestoreStateValue": {
+        "description": "What is known of a removed object. removed_restore_unknown: it left the feed, and whether it is a restorable tombstone, recycled or purged is not readable by the connection account and is never guessed from elapsed time.",
+        "enum": [
+          "removed_restore_unknown"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRestoreUnknownReasonValue": {
+        "description": "Why the restore status is unknown. deleted_objects_not_readable: the connection account is least-privilege and cannot read CN=Deleted Objects; noSuchObject there is not proof the tombstone expired (spec rule 7).",
+        "enum": [
+          "deleted_objects_not_readable"
+        ],
+        "type": "string",
+        "x-activediq-enum": "open",
+        "x-activediq-tag": "reports"
+      },
       "ReportRow": {
         "description": "One row of a stored result. rowKey is the object GUID or edge key; cells follow the page's columns.",
         "properties": {
@@ -4991,7 +5502,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportCell"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "rowKey": {
@@ -5007,6 +5518,290 @@
         "type": "object",
         "x-activediq-tag": "reports"
       },
+      "ReportRowDetail": {
+        "description": "The detail of one change-history row, exactly one of five kinds. A client branches on kind and on nothing else.",
+        "discriminator": {
+          "mapping": {
+            "credential": "#/components/schemas/ReportRowDetailCredential",
+            "edited": "#/components/schemas/ReportRowDetailEdited",
+            "membership": "#/components/schemas/ReportRowDetailMembership",
+            "permissions": "#/components/schemas/ReportRowDetailPermissions",
+            "removed": "#/components/schemas/ReportRowDetailRemoved"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReportRowDetailEdited"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRowDetailMembership"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRowDetailCredential"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRowDetailPermissions"
+          },
+          {
+            "$ref": "#/components/schemas/ReportRowDetailRemoved"
+          }
+        ],
+        "x-activediq-tag": "reports"
+      },
+      "ReportRowDetailCredential": {
+        "additionalProperties": false,
+        "description": "A credential event: a password was changed or reset, recognised from replication metadata. It carries no value and no attribute list beyond the fact (spec rule 2).",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ReportDetailActor"
+          },
+          "kind": {
+            "const": "credential",
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/ReportDetailObject"
+          },
+          "rowKey": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "when": {
+            "$ref": "#/components/schemas/ReportDetailWhen"
+          }
+        },
+        "required": [
+          "kind",
+          "runId",
+          "rowKey",
+          "when",
+          "object",
+          "actor"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRowDetailEdited": {
+        "additionalProperties": false,
+        "description": "An edit (also a created, moved or renamed change, whose attributes are the ones it touched). attributes are names with originating time and version; valuesRecorded is always false (names only, old and new values are not recorded).",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ReportDetailActor"
+          },
+          "attributes": {
+            "items": {
+              "$ref": "#/components/schemas/ReportDetailAttribute"
+            },
+            "maxItems": 256,
+            "type": "array"
+          },
+          "kind": {
+            "const": "edited",
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/ReportDetailObject"
+          },
+          "rowKey": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "valuesRecorded": {
+            "type": "boolean"
+          },
+          "when": {
+            "$ref": "#/components/schemas/ReportDetailWhen"
+          }
+        },
+        "required": [
+          "kind",
+          "runId",
+          "rowKey",
+          "when",
+          "attributes",
+          "valuesRecorded",
+          "object",
+          "actor"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRowDetailMembership": {
+        "additionalProperties": false,
+        "description": "A membership change of a group. The four counts are totals over the whole change in the caller's scope or outside it; names is one page of the side asked for. A member outside the caller's scope is counted in addedOutOfScope or removedOutOfScope and never named.",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ReportDetailActor"
+          },
+          "addedCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "addedOutOfScope": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "membership",
+            "type": "string"
+          },
+          "names": {
+            "$ref": "#/components/schemas/ReportMembershipNamePage"
+          },
+          "object": {
+            "$ref": "#/components/schemas/ReportDetailObject"
+          },
+          "removedCount": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "removedOutOfScope": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rowKey": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "side": {
+            "$ref": "#/components/schemas/ReportMembershipSideValue"
+          },
+          "when": {
+            "$ref": "#/components/schemas/ReportDetailWhen"
+          }
+        },
+        "required": [
+          "kind",
+          "runId",
+          "rowKey",
+          "when",
+          "side",
+          "addedCount",
+          "removedCount",
+          "addedOutOfScope",
+          "removedOutOfScope",
+          "names",
+          "object",
+          "actor"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRowDetailPermissions": {
+        "additionalProperties": false,
+        "description": "A permissions change, recognised from the replication metadata of nTSecurityDescriptor. descriptorRead is always false: no descriptor was read or compared, so the change cannot be told from inheritance or SDProp propagation (spec rule 2).",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ReportDetailActor"
+          },
+          "descriptorRead": {
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "permissions",
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/ReportDetailObject"
+          },
+          "rowKey": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "when": {
+            "$ref": "#/components/schemas/ReportDetailWhen"
+          }
+        },
+        "required": [
+          "kind",
+          "runId",
+          "rowKey",
+          "when",
+          "descriptorRead",
+          "object",
+          "actor"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportRowDetailRemoved": {
+        "additionalProperties": false,
+        "description": "A row of a Deleted preset. deletedAt is the time activeDIQ first observed the object gone and means on or before that time (onOrBefore is always true; no DC time is shown for a deletion that was not read). object is as last seen by activeDIQ. state and restorableUntil are the restore-status fields; restorableUntil is always the typed unknown (a time is never shown, because the connection account cannot read it and elapsed time is no proof) with restoreUnknownReason saying why; a later read that can know it is an additive change. There is no restore link in this read.",
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ReportDetailActor"
+          },
+          "deletedAt": {
+            "$ref": "#/components/schemas/ReportDetailTime"
+          },
+          "kind": {
+            "const": "removed",
+            "type": "string"
+          },
+          "object": {
+            "$ref": "#/components/schemas/ReportDetailObject"
+          },
+          "onOrBefore": {
+            "type": "boolean"
+          },
+          "restorableUntil": {
+            "$ref": "#/components/schemas/ReportCellUnknown"
+          },
+          "restoreUnknownReason": {
+            "$ref": "#/components/schemas/ReportRestoreUnknownReasonValue"
+          },
+          "rowKey": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReportRestoreStateValue"
+          },
+          "when": {
+            "$ref": "#/components/schemas/ReportDetailWhen"
+          }
+        },
+        "required": [
+          "kind",
+          "runId",
+          "rowKey",
+          "when",
+          "deletedAt",
+          "onOrBefore",
+          "state",
+          "restorableUntil",
+          "restoreUnknownReason",
+          "object",
+          "actor"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
       "ReportRowPage": {
         "description": "A page of a stored result. rowCount is the run's total after trimming.",
         "properties": {
@@ -5014,7 +5809,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportColumnInfo"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "type": "array"
           },
           "page": {
@@ -5273,7 +6068,7 @@
             "items": {
               "$ref": "#/components/schemas/ReportColumnId"
             },
-            "maxItems": 64,
+            "maxItems": 96,
             "minItems": 1,
             "type": "array"
           },
@@ -6362,6 +7157,20 @@
         ],
         "type": "object",
         "x-activediq-tag": "platform.authn"
+      },
+      "VerifyCallerVerificationRequest": {
+        "additionalProperties": false,
+        "description": "The six digits the caller read back, held as a secret and destroyed after the request.",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/SecretInput"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object",
+        "x-activediq-tag": "helpdesk"
       },
       "WebAuthnAssertion": {
         "additionalProperties": false,
@@ -7950,6 +8759,186 @@
         "x-permission": "anonymous"
       }
     },
+    "/helpdesk/caller-verifications": {
+      "post": {
+        "description": "Sends a one-time code to the destination the directory holds for the target (email or SMS); the technician never supplies or sees an address, only a masked form. This is a user act, never made on page render. Opening the sheet again attaches to the technician's open challenge (reused true) and sends nothing; resend true is the only way to a second code and supersedes the first.\nIdempotency-Key is required. A retry with the same key and body answers what the first attempt answered and sends nothing; the same key with a different body is refused 422 idempotency-key-reuse; a retry while the first request is still running is 409. Only a success is remembered, so a refused request is evaluated again on a retry.\nRefusals. 422 caller-verification-unavailable is one answer, with identical status, body and timing class, for an unknown, disabled, out-of-scope, protected or self target and for a target with no held destination for the factor; it never says which. 429 caller-verification-limit with errors[].code quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges; try later). 502 caller-verification-delivery-failed when the message could not be sent: no code exists and the issue does not count. 429 rate-limited when the session or source address is over its limit. 403 for a token principal or a missing permission.",
+        "operationId": "issueCallerVerification",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CallerVerificationKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "open": {
+                  "summary": "Open the sheet for a caller",
+                  "value": {
+                    "connectionId": "5b0e7c1a-3d2f-4a6b-8c9d-1e2f3a4b5c6d",
+                    "factor": "email_otp",
+                    "objectGuid": "3f9c1e52-7a4b-4d0e-9b1a-0c5e8d2a6f10"
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/IssueCallerVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "sent": {
+                    "value": {
+                      "challengeId": "8a1d6f40-2b7e-4c93-a5d1-7e0b9c3f2a64",
+                      "destinationMasked": "p***@corp.example.test",
+                      "expiresAt": "2026-11-15T09:15:00Z",
+                      "factor": "email_otp",
+                      "reused": false
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/CallerVerificationChallenge"
+                }
+              }
+            },
+            "description": "The challenge the technician sees. It never carries the code."
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/CallerVerificationUnavailable"
+          },
+          "429": {
+            "$ref": "#/components/responses/CallerVerificationLimit"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          },
+          "502": {
+            "$ref": "#/components/responses/CallerVerificationDeliveryFailed"
+          }
+        },
+        "summary": "Send a verification code to the caller",
+        "tags": [
+          "helpdesk"
+        ],
+        "x-activediq-limits": {
+          "class": "write",
+          "maxBodyBytes": 1024
+        },
+        "x-activediq-parity": [
+          "ADM-136"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "helpdesk.caller.verify"
+      }
+    },
+    "/helpdesk/caller-verifications/{challengeId}/verify": {
+      "post": {
+        "description": "Checks the code against the challenge. Every attempt is charged before the code is compared, so three attempts at most are possible per challenge whatever the concurrency.\nEvery failure answers one 422 caller-verification-refused with the same status, body and timing class, whether the code was wrong, the attempts are used up, the challenge expired, was superseded or never existed, or belongs to another technician: a client cannot tell a wrong code from a cap. The code travels only in this body, never in a URL, and no response, log line or audit event repeats it.\nIdempotency-Key is required. A retry with the same key and code replays the first answer, a pass or the refusal, and charges no second attempt; the same key with a different code is 422 idempotency-key-reuse.",
+        "operationId": "verifyCallerVerification",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CallerVerificationChallengeId"
+          },
+          {
+            "$ref": "#/components/parameters/CallerVerificationKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "code": {
+                  "value": {
+                    "code": "042917"
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/VerifyCallerVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CallerVerified"
+                }
+              }
+            },
+            "description": "The caller is verified. The challenge may authorise one reset or unlock until authorisedUntil."
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/CallerVerificationRefused"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Check the code the caller read back",
+        "tags": [
+          "helpdesk"
+        ],
+        "x-activediq-limits": {
+          "class": "secret",
+          "maxBodyBytes": 256
+        },
+        "x-activediq-parity": [
+          "ADM-136"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "helpdesk.caller.verify"
+      }
+    },
     "/notify/siem-destinations": {
       "get": {
         "description": "Answers every destination of the tenant, oldest first. A tenant has a handful of destinations, so the list is not paged.",
@@ -9029,6 +10018,77 @@
         },
         "x-activediq-parity": [
           "ADM-099"
+        ],
+        "x-activediq-stability": "preview",
+        "x-permission": "reports.run"
+      }
+    },
+    "/reports/runs/{runId}/rows/{rowKey}/detail": {
+      "get": {
+        "description": "The docked detail of one row of a change-history run (USR-06, GRP-05, CMP-03, CTC-02, OU-02: spec reports-2-second-slice 4.1, design 2). The rows read carries no per-row detail; this read does, for the row whose rowKey (the object GUID) is given. The body is exactly one of five kinds, chosen by kind: edited, membership, credential, permissions, removed (the Deleted presets). Every kind carries when, object and actor; the fields beyond those are the kind's own and no kind carries a field of another. A value the history does not hold (no originating time because the change was only observed, a replication version that was not recorded, a restore status the connection account cannot read) is a typed unknown, never an empty string, 0 or a guess (FR-09). Names only: no kind carries an old or new value, a password or a security descriptor (spec rule 3). actor is notRecorded for a native change (spec rule 6, DM-18.I3) and activediq, with the principal and the operation, only for a change made through activeDIQ. Scope: the object is shown only when its recorded ancestry is in the caller's read scope, otherwise 404 (the existence of an object outside scope is not disclosed). For a membership row the member names are paged and trimmed to the caller's scope: membership.names is one page of the side chosen by side (added by default), and addedCount, removedCount, addedOutOfScope and removedOutOfScope are totals over the whole change, never over the page; members outside scope are counted, never named. The cursor is bound to this run, row and side. The run-read gate is that of listReportRunRows, in the same order: runner equals the caller, otherwise 404; not expired, otherwise 410 report-result-expired; scope fingerprint unchanged, otherwise 409 with errors[].code scope_changed_rerun; succeeded, otherwise 409 with errors[].code run_not_ready or run_failed. A rowKey that is not a row of the run, or whose run is not a change-history report, is a 404. The result is stored and frozen with the run (ADR-0010 rule 3). Read-only; the detail offers no restore (restore is 2b, ADM-098).",
+        "operationId": "getReportRunRowDetail",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RunId"
+          },
+          {
+            "$ref": "#/components/parameters/RowKey"
+          },
+          {
+            "$ref": "#/components/parameters/MembershipSide"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportRowDetail"
+                }
+              }
+            },
+            "description": "The detail of the row"
+          },
+          "400": {
+            "$ref": "#/components/responses/Validation"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "410": {
+            "$ref": "#/components/responses/ReportResultExpired"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/Internal"
+          }
+        },
+        "summary": "Read the detail of one change-history row of a run",
+        "tags": [
+          "reports"
+        ],
+        "x-activediq-limits": {
+          "class": "read"
+        },
+        "x-activediq-parity": [
+          "ADM-092"
         ],
         "x-activediq-stability": "preview",
         "x-permission": "reports.run"
@@ -10489,6 +11549,10 @@
     {
       "description": "Read-only directory queries. Universal search (grouped, ranked, trimmed to the caller's scope) and user search by plain text; permission directory.read.",
       "name": "directory"
+    },
+    {
+      "description": "Help-desk caller verification. A technician issues a one-time code to the caller's held contact factor and checks what the caller reads back; POST only, CSRF-protected, idempotent. Permission helpdesk.caller.verify.",
+      "name": "helpdesk"
     },
     {
       "description": "Sign-in, second factor and sign-out for the console. A first factor yields a pending sign-in; only the second factor creates a session.",
