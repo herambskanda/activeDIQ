@@ -2,7 +2,30 @@
 # Standard: knowledge/development/standards/ci-gates.md · Runbook: knowledge/development/runbooks/ci-and-build.md
 # Every gate below has a failing run proving it catches a violation: `make ci-proof` (part of `make ci`).
 
-.PHONY: fitness-p2-oci gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci ci-fast ci-full gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly search-latency search-latency-pg16 search-latency-pg18 fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order fitness-group-member
+.PHONY: prescreen prescreen-proof test-scale fitness-p2-oci gen-modules gen-modules-check fitness-sso fitness-reports fitness-search fitness-search-nightly fitness-fleet-ca-scope fitness-objectid fitness-grantbootstrap ci ci-fast ci-full gen-proto gen-check lint lint-go lint-web fmt test test-go test-web fitness fitness-stack fitness-tenancy fitness-domain-keys fitness-profiles fitness-proto fitness-safeprim fitness-corpus fitness-oracles fitness-api fitness-oracles-windows fitness-oracles-lab fitness-fuzz-nightly fitness-nightly search-latency search-latency-pg16 search-latency-pg18 fuzz-saml build build-web web-install ci-proof fitness-operation fitness-audit fitness-disclosure fitness-packaging fitness-host fitness-agent-host fitness-built-msi fitness-update fitness-update-offline fitness-keys fitness-fleet-ca-scope workflows-check fitness-merge-order fitness-group-member
+
+# T-2313 (merge plan step 3.1): the cheap, Docker-free checks first. NOT a prerequisite of ci, ci-fast or
+# ci-full (it would run twice); every check below is also run by `make ci`. Nothing is removed from ci.
+# Not included on purpose (need Docker or pwsh, or too slow for 5 minutes): fitness-stack (cross-build matrix, 70-170 s), fitness-packaging, fitness-tenancy, -domain-keys,
+# -keys, -search, -operation, -audit, -host, -update-offline, -api, -reports, -agent-host, fuzz, lab tests, ci-proof.
+PRESCREEN_FITNESS = fitness-sso fitness-proto fitness-safeprim fitness-corpus fitness-objectid fitness-grantbootstrap fitness-disclosure fitness-fleet-ca-scope fitness-merge-order
+PRESCREEN_GOTESTS = TestOnlyPermitted|ImportedOnlyBy|TestRepository|TestMigrationNumbersAreUniqueAndContiguous
+
+prescreen: ## T-2313: the cheap Docker-free checks in <= 5 minutes, run before the 35-50 minute `make ci` (lint-go, generated-file checks, lint-api, static fitness rules, secrets-scan, vuln-scan, workflows-check, the repo-scanning Go tests); keeps going after a failure and lists every red check, exits non-zero if any. Not part of `make ci`
+	@fail=""; \
+	for t in lint-go gen-check gen-modules-check gen-api-check lint-api $(PRESCREEN_FITNESS) workflows-check secrets-scan vuln-scan prescreen-gotests; do \
+	  s=$$(date +%s); echo "== prescreen: $$t"; \
+	  if $(MAKE) --no-print-directory $$t; then r=ok; else r=FAILED; fail="$$fail $$t"; fi; \
+	  echo "== prescreen: $$t $$r ($$(( $$(date +%s) - s ))s)"; \
+	done; \
+	if [ -n "$$fail" ]; then echo "make prescreen: FAILED:$$fail"; exit 1; fi; echo "make prescreen: passed"
+
+.PHONY: prescreen-gotests
+prescreen-gotests: ## T-2313: the repo-scanning Go tests (TestOnlyPermitted*, *ImportedOnlyBy*, TestRepository*) and the migration-numbering test; package tests that need Docker skip or are not matched
+	go test -count=1 -p 3 -timeout 10m -run '$(PRESCREEN_GOTESTS)' ./internal/... ./tools/... ./migrations/...
+
+prescreen-proof: ## T-2313: prove every prescreen check goes red on a deliberate violation (mutates the work tree, restores it); ~10-15 min, run on demand and after changing prescreen; not part of `make ci`
+	tools/ci/prescreen-proof.sh
 
 ci: ci-fast ci-full ## Everything a merge needs: see ci-fast and ci-full
 	@echo "make ci: passed"
@@ -49,6 +72,11 @@ test: test-go test-web ## Go and web unit tests
 
 test-go: web-install ## Go tests; package parallelism bounded (-p 3) because PG-backed packages each start an embedded PostgreSQL and starve under full parallelism (T-0550)
 	go test -count=1 -p 3 -timeout 30m ./...
+
+SCALE_TIMEOUT ?= 45m
+
+test-scale: ## T-2008: the opt-in scale job (ADIQ_SCALE_FULL=1): group_member_counts, closure fan-out budget and batch-2 reports at 25,000 objects on PostgreSQL 16 and 18, with its own timeout ($(SCALE_TIMEOUT)); not part of `make ci`, whose inventory run must stay under 400 s
+	ADIQ_SCALE_FULL=1 go test -count=1 -timeout $(SCALE_TIMEOUT) ./internal/directory/inventory -run 'Test_group_member_counts_at_scale|Test_group_closure_fanout_is_bounded|Test_reports_library_batch2_at_scale' -v
 
 test-web: web-install
 	npm --prefix web run --silent test
@@ -169,7 +197,7 @@ fitness-fuzz-nightly: ## T-0034: FF-SP5 nightly: every declared fuzz target for 
 	@mkdir -p $(SAFEPRIM_REPORTS)
 	go run ./tools/fitness/corpus -fuzz -nightly -parallel 4 -log $(SAFEPRIM_REPORTS)/fuzz.log
 
-fitness-nightly: fitness-fuzz-nightly fitness-oracles-lab fitness-search-nightly search-latency ## T-0034: the nightly job: FF-SP5 long fuzz, FF-SP6 Samba lab; the Windows rows are fitness-oracles-windows on the Windows lab (runbook safe-primitives-fitness.md)
+fitness-nightly: fitness-fuzz-nightly fitness-oracles-lab fitness-search-nightly search-latency test-scale ## T-0034, T-2008 (test-scale: inventory scale tests): the nightly job: FF-SP5 long fuzz, FF-SP6 Samba lab; the Windows rows are fitness-oracles-windows on the Windows lab (runbook safe-primitives-fitness.md)
 
 SEARCH_LATENCY_OUT ?= $(CURDIR)/factory/demos/evidence/T-1102
 

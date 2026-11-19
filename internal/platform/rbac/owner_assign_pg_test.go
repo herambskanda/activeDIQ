@@ -316,7 +316,7 @@ func TestGrantedOwnerHoldsTheTenantRoot(t *testing.T) {
 }
 
 // ownerPermCount is the number of permissions the catalogue gives the tenant-owner role; the seed must
-// write exactly those (the database guard allow-lists the same set, migrations 0043 and 0074).
+// write exactly those (the database guard allow-lists the same set, migrations 0043 and 0090).
 func ownerPermCount() int {
 	for _, r := range BuiltInRoles() {
 		if r.Name == TenantOwnerRole {

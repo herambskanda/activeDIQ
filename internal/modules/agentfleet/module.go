@@ -12,7 +12,7 @@
 //
 // It contributes two Actions (actions.go): edit the addc password and event policy, and rotate the
 // policy key ahead of schedule. Their permissions are in the tenant-owner role and the owner-role
-// database guard (migration 0082).
+// database guard (migration 0090).
 package agentfleet
 
 import (

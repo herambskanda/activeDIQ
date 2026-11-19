@@ -274,6 +274,6 @@ func TestTenantOwnerRoleGrantsReconfirmAndOtherRolesDoNot(t *testing.T) {
 	slices.Sort(got)
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
-		t.Errorf("tenant-owner holds %v; migrations 0043 and 0074 allow-list exactly %v", got, want)
+		t.Errorf("tenant-owner holds %v; migrations 0043 and 0090 allow-list exactly %v", got, want)
 	}
 }

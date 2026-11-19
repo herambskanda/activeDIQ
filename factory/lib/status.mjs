@@ -3,10 +3,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  listEntities, listRecentRuns, localDate, pidAlive, readControl, readDispatcherState, readJson,
+  listEntities, listRecentRuns, localDate, pidAlive, readControl, readDispatcherState, readJson, readMergeDrain,
 } from './store.mjs';
 import { STATUSES } from './flows.mjs';
 import { openCeoDecisions } from './decisions.mjs';
+import { buildMergeQueue } from './mergequeue.mjs';
 
 const HEARTBEAT_ALIVE_MS = 60_000;
 
@@ -66,7 +67,9 @@ export function buildStatus(ctx) {
     product: ctx.config.product,
     limits: { daily_run_cap: ctx.config.dispatcher.daily_run_cap, max_parallel: ctx.config.dispatcher.max_parallel },
     control: readControl(ctx),
+    merge_drain: (() => { const d = readMergeDrain(ctx); return d.on ? { until: d.until, reason: d.reason, by: d.by } : null; })(),
     dispatcher: dispatcherInfo(ctx),
+    merge_queue: (() => { const q = buildMergeQueue(ctx, readDispatcherState(ctx), dispatcherInfo(ctx).alive); return { waiting: q.waiting.length, in_gates: q.in_gates, last_merged_at: q.last_merged_at }; })(),
     board,
     active_runs: listRecentRuns(ctx, 100).filter((r) => r.status === 'running').map((r) => ({
       id: r.id, ticket: r.ticket, role: r.role, started: r.started,

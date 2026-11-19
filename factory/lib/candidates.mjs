@@ -116,6 +116,19 @@ export function candidateKey(candidate) {
 }
 
 /**
+ * T-1617: worker slots available right now. While a pre-merge gate run is in flight
+ * (`state.dispatcher.merge_gates`, one entry per gate lane, T-2210), `pre_merge.reserved_slots` of the `max_parallel` slots are held back
+ * so the gate's own `make ci` is not starved of CPU/disk by agent builds. Always leaves one slot.
+ * Workers already running are never stopped; the cap only limits new launches.
+ */
+export function workerSlots(state, config) {
+  const max = config.dispatcher.max_parallel;
+  const reserved = config.dispatcher.pre_merge?.reserved_slots ?? 0;
+  if (!reserved || !state.dispatcher?.merge_gates?.length) return max;
+  return Math.max(1, max - reserved);
+}
+
+/**
  * Pick the candidates for the free worker slots, in this order:
  * 1. review, then qa tickets without a running session;
  * 2. in_progress tickets without a running session (handoff continuations first);
@@ -131,7 +144,7 @@ export function candidateKey(candidate) {
 export function selectCandidates(state, now, config) {
   if (launchGate(state, now, config)) return [];
   const running = state.runs.filter((r) => r.status === 'running');
-  const free = config.dispatcher.max_parallel - running.length;
+  const free = workerSlots(state, config) - running.length;
   if (free <= 0) return [];
 
   const busy = new Set(running.map((r) => r.ticket));
@@ -155,9 +168,12 @@ export function selectCandidates(state, now, config) {
 
   // dispatcher.only_milestone (CEO scope lock): only that milestone's ready tickets are launched. Work already
   // in flight (review, qa, in_progress) finishes either way, and meta tickets (triage, grooming) are unaffected.
+  // dispatcher.hold_ready (merge plan 4.4): no NEW work starts. Ready tickets and the grooming ticket (which makes
+  // more ready tickets) are held; review, qa, rework, continuations, triage and the digest still run.
+  const hold = config.dispatcher.hold_ready === true;
   const only = config.dispatcher.only_milestone ?? null;
   const pool = state.tickets
-    .filter((t) => t.status === 'ready' && idle(t))
+    .filter((t) => t.status === 'ready' && idle(t) && !hold)
     .filter((t) => only === null || t.milestone === only)
     .filter((t) => {
       const b = claimBlockers(t, tickets, decisions, unmerged);
@@ -165,6 +181,7 @@ export function selectCandidates(state, now, config) {
     })
     .map((t) => ({ sort: t, candidate: { kind: 'ready', ticket: t, role: t.owner, stage: 'in_progress', continuation: false } }));
   for (const p of metaProposals(state, now, config)) {
+    if (hold && p.kind === 'grooming') continue;
     const candidate = { kind: 'meta', ticket: null, create: p, role: p.owner, stage: 'in_progress', continuation: false };
     if (!skip.has(candidateKey(candidate))) {
       pool.push({ sort: { priority: p.priority, created: now.toISOString(), id: candidateKey(candidate) }, candidate });

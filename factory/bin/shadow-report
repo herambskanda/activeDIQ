@@ -1,0 +1,22 @@
+#!/usr/bin/env node
+// Summarise the shadow gate's records (state/shadow/results.jsonl): did the tiered checks ever pass
+// a ticket the real gate refused, and how long does each step take? Read-only.
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { readShadowResults, summarizeShadow } from '../lib/shadowgate.mjs';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ctx = { stateDir: process.env.FACTORY_STATE_DIR ?? path.join(root, 'state') };
+const records = readShadowResults(ctx);
+const s = summarizeShadow(records);
+const mins = (n) => (n === null ? 'n/a' : `${(n / 60).toFixed(1)} min`);
+console.log(`Shadow gate: ${s.tickets} ticket(s) recorded, ${s.judged} judged, ${s.skipped} skipped`);
+console.log(`  agree ${s.agree} · MISS ${s.misses.length} · false alarm ${s.falseAlarms} · inconclusive (main red) ${s.inconclusive} · not comparable ${s.notComparable}`);
+console.log(`  time per ticket: median ${mins(s.seconds.median)}, mean ${mins(s.seconds.mean)}, p90 ${mins(s.seconds.p90)}`);
+for (const m of s.misses) console.log(`  MISS ${m.ticket}: real gate ${m.old.status}, shadow ${m.status}, caught ${m.caught}; failed steps: ${(m.steps ?? []).filter((x) => x.code).map((x) => x.name).join(', ') || 'none'}`);
+if (s.steps.length) {
+  console.log('  step                tier  runs  mean      fails');
+  for (const e of s.steps) console.log(`  ${e.name.padEnd(19)} ${String(e.tier).padEnd(5)} ${String(e.runs).padEnd(5)} ${mins(e.mean).padEnd(9)} ${e.fails}`);
+}
+console.log(s.misses.length ? 'VERDICT: not safe to switch; fix the misses and keep shadowing.' : s.judged ? 'VERDICT: no misses so far (judge only once enough tickets have been compared).' : 'VERDICT: no data yet.');
+process.exit(s.misses.length ? 1 : 0);
