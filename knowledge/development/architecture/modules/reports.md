@@ -38,7 +38,7 @@ scope decision, not a platform asymmetry.
 | `internal/platform/store/reportsql` | **Built (T-0957, row B2).** `NewRegistry`, `Compile`, `CompileCount`, `Exec`, `Count`, the scope and narrowing renderers, SQL vectors (FF-SP4) and RP6. `sqlconst` (FF-SP2) lets a value of type `reportsql.CompiledSQL` reach `Exec` and `string(x)` of one is a constant for it. Deviations in §5 | §5, row B2, RP1, RP6 |
 | Directory read-scope producer | **Built (T-0880, T-0881, T-0882).** `authz.ReadScope` and the EP-6 `ScopeEvaluator` host (T-0880), the `ou_one_level` root kind (T-0881), and the one producer `rbac.ReadScopes.For` with the read oracle `authz.Evaluator.AuthorizeRead` (T-0882). The old per-object post-filter over candidates, which had no callers, is deleted. **Wired in `compose/server` (T-0916, `readscopes.go`):** `rbac.OwnerStatus` over `authn_accounts` (active only), `rbac.ObjectConnections` over `directory_objects` (one connection, else ok=false), `buildReadScopes(authorizer, module.Contributions)`, and `txReadScopes` (opens the tenant tx) for `directory.ReadScopes`; search and report runs both receive it | §4 |
 | Inventory rows | `directory_objects` (migration 0033) holds `connection_id`, `object_guid`, `nc_guid`, `parent_guid`, `ancestry uuid[]`, `kind`, `state`, `lockout_time`, `pwd_last_set`, `account_expires`, `attributes jsonb`, `observed_at`. Links are in `links` (0012). **Row B3 (T-0958, migration 0061) added** the GIN index `directory_objects_by_ancestry`, the D7 inputs (`user_account_control`, `primary_group_id`, `last_logon_timestamp`, `spn_present`, `inputs_read`) and the D4 tables `inventory_domain_policies`, `inventory_psos`, `inventory_pso_applies`. **Row B6 (T-0961, migration 0068) added** the group closure `inventory_group_members` and its dirty set `inventory_group_closure_dirty`. Row P2 (T-0948, migration 0059) is built: `Populate` takes a per-(tenant, connection) advisory lock and refuses non-READ COMMITTED transactions (DM-16.I10); `ancestry_complete` is derived by the writer on every upsert (`objects.go`, `upsertObjectSQL`), a move rewrites every descendant's `ancestry` in the same transaction (`rewriteDescendants`, found by `ancestry @>` until B3's GIN index) and `repairCompleteness` walks `parent_guid` to set or clear the flag below a row that arrived or changed Row P1 (T-0949, migration 0063) is built: `nc_sync_passes` (one row per tenant, connection, NC) holds `last_pass_at` and `state` (`ok`, `resync_required`, `paused`). `Writer.RecordPass` sets the pass as-of (start of the read) in the cycle's transaction and `Ingest` calls it on the last batch for each `Cycle.PassNCs`, so a quiet domain is fresh; `Writer.MarkNC` records resync or pause; `Reader.Freshness` returns `[]report.NCWatermark` and the `report.Label` result, with `DefaultStalenessThreshold` = 60 min | §3.4, §4.5, rows P1, **P2**, B3, B6 |
-| Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. **T-1105 added the two library reads** (`listReportDefinitions`, `getReportDefinition`, `modules/reports/definitions.go`, §3.6). The export operations are built in row B9 (T-0963); the other 9 operations answer 501 until B11 | §6, §9, row B4 |
+| Run path (`modules/reports`, `modules/reports/run`) | **Built (T-0959, row B4).** Migration 0064 (`report_runs`, `report_run_rows`, both guard triggers) and 0065 (`report_runs_insert_guard`: a run is born queued, attempt 0, no result; T-1061), `run.Service` (`Create`, `Cancel`, `Retry`, `Read`/`ReadAccess`, `Page`, `List`), the `reports.run` and retention job kinds, the six run operations of the API, RP4 and RP9 landed. **T-1105 added the two library reads** (`listReportDefinitions`, `getReportDefinition`, `modules/reports/definitions.go`, §3.6). The export operations are built in row B9 (T-0963); the schedule operations are built in row B11 (T-0965, §8.1); only `listReportRunPolicyTargets` answers 501 | §6, §9, row B4 |
 | Console screens (`web/src/modules/reports`) | **Built (T-0966, row B12 part 1; export and schedule are B12b, T-0902).** Routes `/reports` (library) and `/reports/<id>`; the run starts when the report opens and the grid reads `listReportRunRows` (500 a page, server sort, windowed DataGrid). Client state is the URL plus `use-definitions.ts` and `use-report-run.ts` (start, poll `getReportRun`, cancel, retry). The stale banner and header chip render `ReportFreshness.stale[]` (connection name, cause, age) and the hidden-group banner renders `ReportRun.hiddenGroups[]` (count, `locked` removes Show), all from the API (T-1074); the console derives neither. Open gaps: no report+object composite hit (T-1075), subject reports use the ds `ObjectPicker` (`subjects.tsx`; GUIDs in the URL as `s=`; T-1076) and the ds `Link`, live-stack check (T-1077) | §6, row B12 |
 | `platform/export` | CSV, XLSX and PDF encoders (HTML is `platform/htmlx`), `export.Cell`, `Source`, `Run`, `RunToBlob` (T-0150), the canonical `Digest`/`Digester` and `Unknown()`. **Built (T-0963, row B9):** `modules/reports/export` (service, `reports.export` job, About block), migration 0065, RP5 landed. **PDF and HTML built (T-0964, row B10)**, §7.1b | §7, rows B9, B10 |
 | `platform/chartimg` | **Decided, not built (ADR-0014, ratified 2026-11-15; build T-2135, fitness `fitness-chartimg` CI1–CI5 T-2134).** The one chart-image renderer: typed chart spec + stored run rows → `Scene` → PNG (`x/image/vector`, embedded Plex TTF, integer layout) and SVG. PDF embeds the PNG as a Flate image XObject, PNG export and inline mail image (`Content-ID`, no attachment fallback) use the same pixels, HTML export uses the SVG. Limits 2,400×1,600 px, 4 MiB, 5 s deadline, `GOMAXPROCS/2` concurrent; no network or filesystem | EB-5 §4.2, §6.3, §6.4, FR-GC-19, AC-GC-13 |
@@ -1898,6 +1898,41 @@ Consequences:
 - **Allowed recipient domains (spec Q3, decided here).** This is a tenant setting owned by
   `platform/notify` beside the SMTP settings (row P3), changed by a `notify.settings.update`
   Action. Any later mail sender reuses it. Reports only read it.
+
+### 8.1 As built (T-0965, row B11)
+
+Package `internal/modules/reports/schedule`, migration `0088_report_schedules.sql`, handlers `reports/schedules.go`.
+
+- **Store (DM-73).** `report_schedules` (current version), `report_schedule_versions` (`content` is the
+  AFTER-image of each version; undo restores one), `report_schedule_recipients` (current version only),
+  `report_schedule_fires` (unique `(schedule, due_at)` = the idempotency key; `run_id`, `exports`,
+  `recipients`, `scope_applied`). `recurrence` holds the API-shape recurrence, converted to the DM-44
+  `jobs.Schedule` by `Recurrence.Jobs`. Schedules are archived, never deleted.
+- **Actions.** `reports.schedule.{create,update,pause,resume,reassign,delete,restore}`. Input = the request body
+  plus `scheduleId`. The inverse of every write is `restore` (modes `version`, `archive`, `reassign_back`). Plan
+  holds the rules: owner-only edit (R1), `manage_all` pauses and reassigns, external recipients confirmed and
+  stepped up (SX-1/SX-6), `reports.deliver.external`, the per-DC floor (AC-38), non-empty owner scope (AC-31/32).
+- **Jobs.** `reports.schedule.tick` (seeded per tenant, every minute) turns due schedules into fire rows and moves
+  `next_run_at`; a schedule missed for several periods fires once (coalesce). `reports.schedule.fire` is staged,
+  because run and export are jobs: (1) owner checks (active, `reports.run`, non-empty scope; a failure pauses the
+  schedule as the system, audits `system_paused`, tells the tenant owners, sends nothing); (2) the run as the
+  owner, recording its scope (AC-30); (3) one export per format needed; (4) per-recipient re-evaluation with the
+  settings in force now, each failing alone with a stable reason (`account_address_external`,
+  `address_became_external`, `owner_external_not_permitted`, `no_address`, `recipient_not_active`,
+  `format_unavailable`, `format_not_attachable`, `attachment_too_large`), audited `delivery_failed`; (5) one DM-84
+  Delivery per recipient (attachments: one message, `RequireInternal`; links: one per format, which is what the RP10
+  authority reads). Zero rows with `notifyOnlyIfData` is `nothing_to_send`. A step that must wait re-enqueues the
+  fire 10 s on; a fire older than 30 min fails `run_timeout`. A crash repeats a step, never a send (delivery
+  dedup key `<fire>:<ordinal>`).
+- **Handlers.** The 17 schedule operations; previews are `Runner.PreviewStore` with the external set classified
+  server-side; `not_owner` is 403 for a `manage_all` holder and 404 for anyone who cannot see the schedule;
+  `runReportScheduleNow` is owner-only.
+- **Renderer.** `schedule.Renderer` renders purposes `reports.schedule.delivery` and `reports.schedule.paused`
+  (reads the blob by export id at send time). **No `notify.dispatch` Dispatcher is composed anywhere yet**: mail
+  does not leave until P3/P4 wires it with these renderers.
+- **Not built / deviations.** No ZIP of several attachments (one attachment per format); the HTML format is
+  link-only (the mailer cannot attach it); the per-DC daily limit is checked at write time only; formats against
+  the column count are not checked at write time (a bad format fails alone at fire time).
 
 ## 9. Fitness functions
 

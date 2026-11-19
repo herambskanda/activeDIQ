@@ -10879,6 +10879,62 @@ func (v *ReportSchedule) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
 	}
 }
 
+// ReportScheduleDelete: The input of the Action reports.schedule.delete: the schedule to archive. It has no request body; the id is the path parameter.
+type ReportScheduleDelete struct {
+	ScheduleID apitypes.UUID `json:"scheduleId"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportScheduleDelete) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportScheduleDelete{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "scheduleId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ScheduleID); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportScheduleDelete) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// scheduleId
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "scheduleId")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "scheduleId")
+		}
+	}
+}
+
 // ReportScheduleList: A page of schedules.
 type ReportScheduleList struct {
 	Items []ReportSchedule  `json:"items"`
@@ -10990,6 +11046,62 @@ func (v ReportScheduleOwner) Validate(at jsontext.Pointer, errs *apitypes.Errors
 	}
 }
 
+// ReportSchedulePause: The input of the Action reports.schedule.pause: the schedule to pause. It has no request body; the id is the path parameter.
+type ReportSchedulePause struct {
+	ScheduleID apitypes.UUID `json:"scheduleId"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportSchedulePause) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportSchedulePause{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "scheduleId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ScheduleID); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportSchedulePause) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// scheduleId
+	if v.p.Decoded() {
+		if !v.p.Has(0) {
+			errs.Required(at, "scheduleId")
+		}
+		if v.p.IsNull(0) {
+			errs.NullNotAllowed(at, "scheduleId")
+		}
+	}
+}
+
 // ReportScheduleReassign: Hands a schedule to another account.
 type ReportScheduleReassign struct {
 	OwnerAccountID apitypes.UUID `json:"ownerAccountId"`
@@ -11043,6 +11155,159 @@ func (v *ReportScheduleReassign) Validate(at jsontext.Pointer, errs *apitypes.Er
 		if v.p.IsNull(0) {
 			errs.NullNotAllowed(at, "ownerAccountId")
 		}
+	}
+}
+
+// ReportScheduleRestore: The input of the Action reports.schedule.restore, the inverse of every other schedule Action. Clients never send it: undoReportScheduleOperation builds it from the operation it undoes.
+type ReportScheduleRestore struct {
+	ConfirmedExternal []string `json:"confirmedExternal,omitzero"`
+	Expect            int64    `json:"expect"`
+	// version, archive or reassign_back.
+	Mode       string        `json:"mode"`
+	ScheduleID apitypes.UUID `json:"scheduleId"`
+	Version    *int64        `json:"version,omitzero"`
+
+	p apitypes.Presence
+}
+
+// UnmarshalJSONFrom decodes the object strictly: member names match exactly and an unknown
+// member is an error. Nested values decode through the caller's options.
+func (v *ReportScheduleRestore) UnmarshalJSONFrom(d *jsontext.Decoder) error {
+	*v = ReportScheduleRestore{}
+	v.p.Begin()
+	if err := apitypes.ObjectStart(d); err != nil {
+		return err
+	}
+	for {
+		name, ok, err := apitypes.NextMember(d)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+		switch name {
+		case "confirmedExternal":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(0, null)
+			if null {
+				continue
+			}
+			if err := apitypes.DecodeArray(d, &v.ConfirmedExternal); err != nil {
+				return err
+			}
+		case "expect":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(1, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Expect); err != nil {
+				return err
+			}
+		case "mode":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(2, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Mode); err != nil {
+				return err
+			}
+		case "scheduleId":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(3, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.ScheduleID); err != nil {
+				return err
+			}
+		case "version":
+			null, err := apitypes.TakeNull(d)
+			if err != nil {
+				return err
+			}
+			v.p.Mark(4, null)
+			if null {
+				continue
+			}
+			if err := json.UnmarshalDecode(d, &v.Version); err != nil {
+				return err
+			}
+		default:
+			return apitypes.UnknownMember(d)
+		}
+	}
+}
+
+// Validate records every violation of the object's schema under at: missing required members,
+// null on a non-nullable member, bounds, patterns and closed enums.
+func (v *ReportScheduleRestore) Validate(at jsontext.Pointer, errs *apitypes.Errors) {
+	// confirmedExternal
+	if v.p.Decoded() && v.p.IsNull(0) {
+		errs.NullNotAllowed(at, "confirmedExternal")
+	}
+	if v.ConfirmedExternal != nil {
+		apitypes.CheckCount(errs, apitypes.InBody, at.AppendToken("confirmedExternal"), len(v.ConfirmedExternal), 0, 50, apitypes.CodeMaxItems)
+		for i := range v.ConfirmedExternal {
+			apitypes.CheckLen(errs, apitypes.InBody, apitypes.Index(at.AppendToken("confirmedExternal"), i), string(v.ConfirmedExternal[i]), 0, 254)
+			if !apitypes.CheckEmail(string(v.ConfirmedExternal[i])) {
+				errs.Add(apitypes.InBody, apitypes.Index(at.AppendToken("confirmedExternal"), i), apitypes.CodeFormat, "expected an e-mail address")
+			}
+		}
+	}
+	// expect
+	if v.p.Decoded() {
+		if !v.p.Has(1) {
+			errs.Required(at, "expect")
+		}
+		if v.p.IsNull(1) {
+			errs.NullNotAllowed(at, "expect")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(1) && !v.p.IsNull(1)) {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("expect"), int64(v.Expect), 1, 1000000)
+	}
+	// mode
+	if v.p.Decoded() {
+		if !v.p.Has(2) {
+			errs.Required(at, "mode")
+		}
+		if v.p.IsNull(2) {
+			errs.NullNotAllowed(at, "mode")
+		}
+	}
+	if !v.p.Decoded() || (v.p.Has(2) && !v.p.IsNull(2)) {
+		apitypes.CheckLen(errs, apitypes.InBody, at.AppendToken("mode"), string(v.Mode), 0, 16)
+	}
+	// scheduleId
+	if v.p.Decoded() {
+		if !v.p.Has(3) {
+			errs.Required(at, "scheduleId")
+		}
+		if v.p.IsNull(3) {
+			errs.NullNotAllowed(at, "scheduleId")
+		}
+	}
+	// version
+	if v.p.Decoded() && v.p.IsNull(4) {
+		errs.NullNotAllowed(at, "version")
+	}
+	if v.Version != nil {
+		apitypes.CheckInt(errs, apitypes.InBody, at.AppendToken("version"), int64((*v.Version)), 1, 1000000)
 	}
 }
 

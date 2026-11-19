@@ -5589,6 +5589,21 @@
         "type": "object",
         "x-activediq-tag": "reports"
       },
+      "ReportScheduleDelete": {
+        "additionalProperties": false,
+        "description": "The input of the Action reports.schedule.delete: the schedule to archive. It has no request body; the id is the path parameter.",
+        "properties": {
+          "scheduleId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduleId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
       "ReportScheduleList": {
         "description": "A page of schedules.",
         "properties": {
@@ -5619,6 +5634,21 @@
         "type": "string",
         "x-activediq-tag": "reports"
       },
+      "ReportSchedulePause": {
+        "additionalProperties": false,
+        "description": "The input of the Action reports.schedule.pause: the schedule to pause. It has no request body; the id is the path parameter.",
+        "properties": {
+          "scheduleId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheduleId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
       "ReportScheduleReassign": {
         "additionalProperties": false,
         "description": "Hands a schedule to another account.",
@@ -5630,6 +5660,47 @@
         },
         "required": [
           "ownerAccountId"
+        ],
+        "type": "object",
+        "x-activediq-tag": "reports"
+      },
+      "ReportScheduleRestore": {
+        "additionalProperties": false,
+        "description": "The input of the Action reports.schedule.restore, the inverse of every other schedule Action. Clients never send it: undoReportScheduleOperation builds it from the operation it undoes.",
+        "properties": {
+          "confirmedExternal": {
+            "items": {
+              "format": "email",
+              "maxLength": 254,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          "expect": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "mode": {
+            "description": "version, archive or reassign_back.",
+            "maxLength": 16,
+            "type": "string"
+          },
+          "scheduleId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "maximum": 1000000,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scheduleId",
+          "mode",
+          "expect"
         ],
         "type": "object",
         "x-activediq-tag": "reports"

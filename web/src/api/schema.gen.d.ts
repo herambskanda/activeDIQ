@@ -2408,6 +2408,11 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        /** @description The input of the Action reports.schedule.delete: the schedule to archive. It has no request body; the id is the path parameter. */
+        ReportScheduleDelete: {
+            /** Format: uuid */
+            scheduleId: string;
+        };
         /** @description A page of schedules. */
         ReportScheduleList: {
             items: components["schemas"]["ReportSchedule"][];
@@ -2418,10 +2423,25 @@ export interface components {
          * @enum {string}
          */
         ReportScheduleOwner: "me" | "any";
+        /** @description The input of the Action reports.schedule.pause: the schedule to pause. It has no request body; the id is the path parameter. */
+        ReportSchedulePause: {
+            /** Format: uuid */
+            scheduleId: string;
+        };
         /** @description Hands a schedule to another account. */
         ReportScheduleReassign: {
             /** Format: uuid */
             ownerAccountId: string;
+        };
+        /** @description The input of the Action reports.schedule.restore, the inverse of every other schedule Action. Clients never send it: undoReportScheduleOperation builds it from the operation it undoes. */
+        ReportScheduleRestore: {
+            confirmedExternal?: string[];
+            expect: number;
+            /** @description version, archive or reassign_back. */
+            mode: string;
+            /** Format: uuid */
+            scheduleId: string;
+            version?: number;
         };
         /** @description The confirmation that resumes a schedule. confirmedExternal lists every external recipient of the schedule, classified now against the current allowed recipient domains (Data leaves your organisation); it must equal that set, and is an empty array when the schedule has none. It is how the owner, a new owner after a reassignment included, shows they saw who receives the data (T-0893 R5). */
         ReportScheduleResume: {

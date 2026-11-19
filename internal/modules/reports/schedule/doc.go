@@ -1,5 +1,6 @@
 // Package schedule is the report schedule (T-0965; modules/reports.md §8, row B11; DM-73): the stored
-// schedule, its versions and recipients, the reports.schedule.* Actions and the reports.schedule.fire job.
+// schedule, its versions and recipients, the reports.schedule.* Actions, the reports.schedule.tick and reports.schedule.fire jobs (fire.go) and the
+// delivery Renderer (render.go).
 //
 // A schedule is data in four tables. Writes are Actions (ADR-0005 rule 10); a fire is a job, not an Action.
 package schedule
