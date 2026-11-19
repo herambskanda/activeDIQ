@@ -16,6 +16,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/operation/step"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // ActionID names an Action, "<owner>.<noun>.<verb>", for example "objects.user.create". It is stable
@@ -225,6 +226,11 @@ type PlanContext struct {
 	Tx    store.Tx    // the runner opens it READ ONLY; Plan has no way to commit or roll it back
 	Facts PinnedFacts // reads on a clone of the request's pins; Plan cannot choose a DC (rule 5)
 	Pins  authority.Pins
+	// Tenant and Actor are who the plan is for: the requester's chain as the runner received it, for the
+	// rules of an Action that depend on the caller (an owner-only write, TM-D30 R1). They never widen
+	// authorisation: the runner authorises every target on its own.
+	Tenant tenant.ID
+	Actor  authority.Chain
 }
 
 // PinnedFacts reads live facts on the operation's pins. It has no pins parameter, so a Plan cannot

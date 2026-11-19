@@ -366,7 +366,7 @@ func (u *run) planSteps(ctx context.Context) ([]StepPlan, error) {
 			return fmt.Errorf("plan transaction: %w", err)
 		}
 		var perr error
-		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: u.pinnedFacts(), Pins: maps.Clone(u.req.Pins)}, u.req.Input)
+		steps, perr = u.act.Plan(ctx, PlanContext{Tx: tx, Facts: u.pinnedFacts(), Pins: maps.Clone(u.req.Pins), Tenant: u.req.Tenant, Actor: u.req.Actor}, u.req.Input)
 		return perr
 	})
 	if err != nil {
