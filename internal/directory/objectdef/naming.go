@@ -1,4 +1,4 @@
-package objects
+package objectdef
 
 import (
 	"errors"
@@ -430,3 +430,6 @@ func (f NamingFormat) Candidate(base string, attempt int, lim Limits) (string, e
 	}
 	return name, nil
 }
+
+// Violation returns the ViolationError for field; the store uses it to refuse a publish.
+func Violation(field, format string, a ...any) error { return violation(field, format, a...) }

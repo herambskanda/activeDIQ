@@ -1,4 +1,4 @@
-package inventory_test
+package library_test
 
 // Library batch 4: PWD-04, Users with Cannot Change Password (T-1107, reports-2-second-slice AC-S04, AC-S05).
 // The seed carries the stored four-valued descriptor state (T-1472). The expected sets are written from the

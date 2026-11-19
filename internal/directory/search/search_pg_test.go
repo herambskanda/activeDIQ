@@ -15,7 +15,7 @@ import (
 
 	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
-	"github.com/skenzeriq/activediq/internal/modules/search"
+	"github.com/skenzeriq/activediq/internal/directory/search"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
 	"github.com/skenzeriq/activediq/internal/platform/store"
