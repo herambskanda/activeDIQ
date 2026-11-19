@@ -33,7 +33,7 @@ func (*Module) Requires() []capability.ID { return nil }
 // Register implements module.Module. A module with no store in its Deps registers only its
 // permissions: it does not hand the host a route it cannot serve.
 func (m *Module) Register(r *module.Registrar) error {
-	for _, p := range []authz.Permission{RunPermission, ExportPermission, SchedulePermission, ScheduleManageAllPermission, DeliverExternalPermission} {
+	for _, p := range []authz.Permission{RunPermission, ExportPermission, SchedulePermission, ScheduleManageAllPermission, DeliverExternalPermission, ReplicationReadPermission, ReplicationConfigurePermission} {
 		if err := r.Permission(p); err != nil {
 			return err
 		}

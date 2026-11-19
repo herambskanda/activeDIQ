@@ -655,3 +655,40 @@ func pageView(p run.Page) (api.ReportRowPage, error) {
 	out.Page = apitypes.PageInfo{NextCursor: strp(p.Next)}
 	return out, nil
 }
+
+// latestView renders the widget answer. The header describes the run the state names; the row count and
+// the table appear only when the run is the caller's current-scope succeeded result. The digest, the
+// parameters and the scope text are not part of it.
+func latestView(l run.Latest, now time.Time) (api.ReportLatestRun, error) {
+	out := api.ReportLatestRun{State: api.ReportLatestState(l.State)}
+	if l.InFlight != nil {
+		sv := summaryView(run.Item{Run: *l.InFlight}, now)
+		out.InFlight = &sv
+	}
+	r := l.Run
+	if r == nil {
+		return out, nil
+	}
+	id := uuid(r.ID.String())
+	out.RunID, out.AsOf, out.FinishedAt, out.ExpiresAt = &id, tsp(r.AsOf), tsp(r.FinishedAt), tsp(r.ExpiresAt)
+	if r.State == run.StateFailed {
+		out.Failure = failure(*r)
+	}
+	if r.State != run.StateSucceeded && r.State != run.StateExpired {
+		return out, nil // a queued, running or failed run has no result, so no freshness or count
+	}
+	fr := freshness(*r)
+	out.Freshness = &fr
+	if !l.Serves {
+		return out, nil
+	}
+	out.RowCount = r.RowCount
+	if l.Columns != nil || l.Rows != nil {
+		pv, err := pageView(run.Page{Run: *r, Columns: l.Columns, Rows: l.Rows})
+		if err != nil {
+			return api.ReportLatestRun{}, err
+		}
+		out.Table = &api.ReportLatestTable{Columns: pv.Columns, Rows: pv.Rows}
+	}
+	return out, nil
+}

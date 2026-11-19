@@ -21,6 +21,7 @@ import (
 	connectorv1 "github.com/skenzeriq/activediq/internal/proto/activediq/connector/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // A Step can only be minted by the operation runner, so the tests obtain one the production way: a
@@ -688,10 +689,29 @@ func TestKindsElevenToThirteenRowsAndDerive(t *testing.T) {
 		len(got.GetMember().GetValue()) != 16 {
 		t.Fatalf("change %v", w.change)
 	}
-	// A class on the group target, or a stray attribute, is refused.
-	op.Target.Class = "group"
-	if _, err := op.derive(); err == nil {
-		t.Error("a class on the group target was accepted")
+	// GM5 (ADR-0017, see also TestGM5GroupMemberClassAssertion): the asserted class "group" is accepted and changes nothing on the wire; any other
+	// class is refused.
+	for _, k := range []string{"ad.group.addMember", "ad.group.removeMember"} {
+		a := WriteOp{DigestKind: k, Target: authority.TargetRef{Connection: "c1", GUID: objGUID, NC: ncGUID}, Attrs: attrs}
+		base, err := a.derive()
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.Target.Class = "group"
+		withClass, err := a.derive()
+		if err != nil {
+			t.Fatalf("%s: class group refused: %v", k, err)
+		}
+		if !proto.Equal(base.change, withClass.change) || !proto.Equal(base.target, withClass.target) || base.kind != withClass.kind ||
+			!proto.Equal(base.conn, withClass.conn) {
+			t.Errorf("%s: wire differs with the asserted class", k)
+		}
+		for _, bad := range []string{"user", "computer", "contact", "Group", "none"} {
+			a.Target.Class = bad
+			if _, err := a.derive(); !errors.Is(err, ErrInvalidOp) {
+				t.Errorf("%s: class %q: %v, want ErrInvalidOp", k, bad, err)
+			}
+		}
 	}
 	op.Target.Class = ""
 	op.Attrs = append(append([]step.Attr(nil), attrs...), step.Attr{Name: "description", Values: []string{"x"}})
@@ -715,5 +735,30 @@ func TestKindsElevenToThirteenRowsAndDerive(t *testing.T) {
 	reset.Attrs = []step.Attr{{Name: "x", Values: []string{"y"}}}
 	if err := reset.deriveChange(&w); err != ErrKindAttrs {
 		t.Errorf("attrs: %v", err)
+	}
+}
+
+// TestGM5GroupMemberClassAssertion is GM5 (i)/(ii) of ADR-0017 in isolation: kinds 11 and 12 take an
+// empty or "group" class and derive the same wire; every other class is ErrInvalidOp.
+func TestGM5GroupMemberClassAssertion(t *testing.T) {
+	attrs, err := writechange.GroupMemberAttrs("0a1b2c3d-0000-4000-8000-00000000abcd", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"ad.group.addMember", "ad.group.removeMember"} {
+		op := WriteOp{DigestKind: k, Target: authority.TargetRef{Connection: "c1", GUID: objGUID, NC: ncGUID}, Attrs: attrs}
+		a, err := op.derive()
+		if err != nil {
+			t.Fatal(err)
+		}
+		op.Target.Class = "group"
+		b, err := op.derive()
+		if err != nil || !proto.Equal(a.change, b.change) || !proto.Equal(a.target, b.target) {
+			t.Fatalf("%s: wire differs or refused: %v", k, err)
+		}
+		op.Target.Class = "user"
+		if _, err := op.derive(); !errors.Is(err, ErrInvalidOp) {
+			t.Errorf("%s: user class: %v", k, err)
+		}
 	}
 }

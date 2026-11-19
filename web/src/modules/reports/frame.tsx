@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 
 import "./reports.css";
+import { Link } from "../../ds/components";
 import type { ApiClient } from "./api";
-import { Link } from "./link";
+
 import { ReportSearch } from "./search";
 
 /** The reports screens' page: the title, the way back to the library and the `/` search. */
@@ -14,7 +15,7 @@ export function ReportsFrame({
   readonly children: ReactNode;
 }) {
   return (
-    <main className="diq-page rp-page">
+    <div className="diq-page rp-page">
       <header className="rp-head">
         <h1 className="diq-page__title rp-head__title">
           <Link to="/reports">Reports</Link>
@@ -22,6 +23,6 @@ export function ReportsFrame({
         <ReportSearch client={client} />
       </header>
       {children}
-    </main>
+    </div>
   );
 }
