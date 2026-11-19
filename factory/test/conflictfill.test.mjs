@@ -152,3 +152,66 @@ test('a git error (a ticket with no branch) is not a conflict: nothing is reopen
     assert.equal(await d.reopenIfConflicting({ id: 'T-9999', type: 'build', links: {} }), false);
   } finally { f.cleanup(); }
 });
+
+// Two tickets that each merge cleanly with main but clash with each other must not share a train.
+const pairFile = (f, title, text) => finished(f, title, { 'pair.txt': text });
+
+test('size 2: two tickets that clash with each other do not share a train; the next clean ticket takes the second slot', async () => {
+  const f = setup({ max: 2 });
+  try {
+    const a = await pairFile(f, 'first of a clashing pair', 'from a\n');
+    const b = await pairFile(f, 'second of a clashing pair', 'from b\n');
+    const c = await finished(f, 'clean');
+    const d = dispatcher(f);
+    await pass(d);
+    assert.deepEqual(trains(f), [`cand-train-${a.id}+${c.id}`], 'the train skipped b');
+    assert.deepEqual(mergedOrder(f), [a.id, c.id]);
+    assert.equal(byId(f)[b.id].status, 'done', 'b waits, untouched, with no strike');
+    assert.equal(byId(f)[b.id].gate_failures ?? 0, 0);
+    await pass(d); // a is on main now, so b conflicts with main and is reopened by the earlier check
+    assert.equal(byId(f)[b.id].status, 'in_progress');
+  } finally { f.cleanup(); }
+});
+
+test('size 2: tickets that touch different files still share a train', async () => {
+  const f = setup({ max: 2 });
+  try {
+    const a = await pairFile(f, 'one', 'from a\n');
+    const b = await finished(f, 'two', { 'other.txt': 'from b\n' });
+    await pass(dispatcher(f));
+    assert.deepEqual(trains(f), [`cand-train-${a.id}+${b.id}`]);
+    assert.deepEqual(mergedOrder(f), [a.id, b.id]);
+  } finally { f.cleanup(); }
+});
+
+test('size 2: if the train so far cannot be stacked, the check is skipped and the gate run still handles the clash as before', async () => {
+  const f = setup({ max: 2 });
+  try {
+    const a = await pairFile(f, 'one', 'from a\n');
+    const b = await pairFile(f, 'two', 'from b\n');
+    const d = dispatcher(f);
+    d.stackOn = async () => null;
+    await pass(d);
+    assert.deepEqual(trains(f), [`cand-train-${a.id}+${b.id}`]);
+    assert.deepEqual(mergedOrder(f), [a.id], 'b was left out by the run itself');
+    assert.equal(byId(f)[b.id].status, 'done');
+  } finally { f.cleanup(); }
+});
+
+test('stacking a ticket is read-only: no ref moves and nothing is checked out', async () => {
+  const f = setup({ max: 2 });
+  try {
+    const a = await pairFile(f, 'one', 'from a\n');
+    const d = dispatcher(f);
+    const refs = () => git(f.root, 'for-each-ref', '--format=%(refname) %(objectname)');
+    const before = [refs(), git(f.root, 'rev-parse', 'HEAD'), git(f.root, 'status', '--porcelain', '--untracked-files=no')];
+    const oid = await d.stackOn('main', byId(f)[a.id]);
+    assert.match(oid, /^[0-9a-f]{40}$/);
+    assert.deepEqual([refs(), git(f.root, 'rev-parse', 'HEAD'), git(f.root, 'status', '--porcelain', '--untracked-files=no')], before);
+    assert.equal(await d.stackOn('main', { id: 'T-9999' }), null, 'a missing branch gives null');
+    const b = await pairFile(f, 'clashes with one', 'from b\n');
+    const onA = await d.stackOn('main', byId(f)[a.id]);
+    assert.equal(await d.stackOn(onA, byId(f)[b.id]), null, 'a ticket that clashes with the stack cannot be stacked');
+    assert.notEqual(await d.conflictDetail(byId(f)[b.id], onA), null, 'and conflictDetail says so against the stack');
+  } finally { f.cleanup(); }
+});

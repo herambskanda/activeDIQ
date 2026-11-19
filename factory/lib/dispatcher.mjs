@@ -478,6 +478,7 @@ export class Dispatcher {
       this.lastTrainSize = size;
     }
     const train = [];
+    let stack = this.ctx.config.dispatcher.main_branch; // main plus the train so far (a commit once a ticket is in); null if it cannot be built
     let reopened = 0;
     for (const ticket of finished) {
       if (head && this.heldOnMain.get(ticket.id) === head) continue;
@@ -497,8 +498,13 @@ export class Dispatcher {
         train.push(ticket);
         break;
       }
+      // Does it fit on top of the tickets already in this train? Two tickets that each merge cleanly with main can still
+      // clash with each other (the same generated API files, say): the second would be left out of the run, so the train
+      // would be one ticket. Such a ticket stays done and waits; the next clean one takes the slot.
+      if (size > 1 && train.length && stack && (await this.conflictDetail(ticket, stack)) !== null) continue;
       train.push(ticket);
       if (train.length >= size) break;
+      if (size > 1 && stack) stack = await this.stackOn(stack, ticket);
     }
     if (!train.length) return;
     const ids = train.map((t) => t.id);
@@ -693,17 +699,35 @@ export class Dispatcher {
    * the ticket that adds the findings is reopened. A member that conflicts with `main` is reopened
    * as before; one that conflicts with an earlier member stays `done` for the next train.
    */
+  /**
+   * The commit that is `base` with the ticket's branch merged in, built with git plumbing only (`merge-tree`, then
+   * `commit-tree`): nothing is checked out, no ref moves, the new commit is unreferenced. Null when the merge
+   * conflicts or git fails. Used to ask whether a ticket fits on top of the tickets already in a train.
+   */
+  async stackOn(base, ticket) {
+    const { ctx } = this;
+    try {
+      const r = await git(ctx.root, ['merge-tree', '--write-tree', base, `refs/heads/${branchName(ticket.id)}`]);
+      if (r.code !== 0) return null;
+      const tree = r.stdout.trim().split('\n')[0];
+      const c = await git(ctx.root, ['-c', 'user.name=factory', '-c', 'user.email=factory@localhost', 'commit-tree', tree,
+        '-p', base, '-p', `refs/heads/${branchName(ticket.id)}`, '-m', `train stack ${ticket.id}`]);
+      return c.code === 0 ? c.stdout.trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** True when merging the ticket's branch into main would conflict right now. Read-only: nothing is merged. */
   async conflictsWithMain(ticket) {
     return (await this.conflictDetail(ticket)) !== null;
   }
 
   /** The git conflict lines (at most 6) when the branch conflicts with main, else null. Read-only. */
-  async conflictDetail(ticket) {
+  async conflictDetail(ticket, against = this.ctx.config.dispatcher.main_branch) {
     const { ctx } = this;
-    const main = ctx.config.dispatcher.main_branch;
     try {
-      const r = await git(ctx.root, ['merge-tree', '--write-tree', main, `refs/heads/${branchName(ticket.id)}`]);
+      const r = await git(ctx.root, ['merge-tree', '--write-tree', against, `refs/heads/${branchName(ticket.id)}`]);
       if (r.code !== 1) return null; // 0 = clean; anything else is a git error, not a known conflict
       // A missing branch also exits 1 (with an error on stderr and no conflict lines), so a conflict is only
       // what git says it is: at least one CONFLICT line.
