@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+
+	"github.com/jackc/pgx/v5"
 	"time"
 
 	"github.com/skenzeriq/activediq/internal/platform/audit"
@@ -89,11 +91,15 @@ func activeFactors(ctx context.Context, tx store.Tx, t tenant.ID, ref DirectoryR
 WHERE tenant_id = $1::uuid AND connection_id = $2::uuid AND object_guid = $3::uuid AND method = 'totp' AND state = 'active'
 ORDER BY created_at, id`
 	const qLock = q + ` FOR UPDATE`
-	query := q
+	var (
+		rows pgx.Rows
+		err  error
+	)
 	if lock {
-		query = qLock
+		rows, err = tx.Query(ctx, qLock, t.String(), ref.ConnectionID, ref.ObjectGUID)
+	} else {
+		rows, err = tx.Query(ctx, q, t.String(), ref.ConnectionID, ref.ObjectGUID)
 	}
-	rows, err := tx.Query(ctx, query, t.String(), ref.ConnectionID, ref.ObjectGUID)
 	if err != nil {
 		return nil, err
 	}

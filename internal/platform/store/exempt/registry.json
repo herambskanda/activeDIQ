@@ -286,6 +286,11 @@
       "reason": "CHECK: see created_at; 5 minutes after the pinned created_at."
     },
     {
+      "column": "public.authn_enrolment_sessions.handle_hash",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: handle_hash is a 32-byte SHA-256 digest; the probe row pins a 32-byte value."
+    },
+    {
       "column": "public.personal_subject.salt",
       "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
       "reason": "CHECK: a subject salt is exactly 32 bytes (personal_subject_salt_check, ADR-0005 rule 12); the probe row carries a 32-byte placeholder, not a real salt."
