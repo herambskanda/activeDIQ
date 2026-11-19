@@ -24,10 +24,14 @@ const (
 	// TargetClassTenant is the tenant store root itself (GUID is the tenant ID). Only a tenant-wide
 	// root covers it: it is the target of an operation scoped to the whole tenant.
 	TargetClassTenant = "tenant"
+	// TargetClassReportSchedule is one report schedule (DM-73; GUID is the schedule ID). Authorised like any
+	// store row, under a tenant-wide root; it is its own class so an undo of one schedule's change is
+	// superseded only by a later change of that schedule.
+	TargetClassReportSchedule = "report_schedule"
 )
 
 // storeClasses are the target classes authorised as rows of activeDIQ's own store.
-var storeClasses = []string{TargetClassRole, TargetClassAssignment, TargetClassTenant, "settings"}
+var storeClasses = []string{TargetClassRole, TargetClassAssignment, TargetClassTenant, TargetClassReportSchedule, "settings"}
 
 func isStoreClass(c string) bool { return slices.Contains(storeClasses, c) }
 
