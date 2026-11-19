@@ -67,6 +67,8 @@ type ReadScopes interface {
 // Index is the inventory search port (ADR-0011 rule 11). *inventory.Searcher implements it.
 type Index interface {
 	Search(ctx context.Context, tx store.Tx, tid tenant.ID, scopes reportsql.SearchScopes, req inventory.SearchRequest) (inventory.SearchResult, error)
+	Recents(ctx context.Context, tx store.Tx, tid tenant.ID, scopes reportsql.SearchScopes, account string, types []reportsql.SearchType, groupLimit int) (inventory.SearchResult, error)
+	RecordOpened(ctx context.Context, tx store.Tx, tid tenant.ID, account, connection, object string, now time.Time) error
 	SearchMetadata(ctx context.Context, tx store.Tx, tid tenant.ID, scope authz.ReadScope, now time.Time, hits []reportsql.SearchHit) (map[inventory.SearchRef]inventory.SearchMeta, error)
 }
 
@@ -268,7 +270,7 @@ func (s *Service) Search(ctx context.Context, c Call) (Result, error) {
 	var meta map[inventory.SearchRef]inventory.SearchMeta
 	err = s.DB.WithTenant(ctx, c.Tenant, func(ctx context.Context, tx store.Tx) error {
 		var err error
-		res, err = s.Index.Search(ctx, tx, c.Tenant, scopes, inventory.SearchRequest{Text: c.Text, Types: types, GroupLimit: limit, After: after})
+		res, err = s.Index.Search(ctx, tx, c.Tenant, scopes, inventory.SearchRequest{Text: c.Text, Types: types, GroupLimit: limit, After: after, Account: accountOf(c.Chain)})
 		if err != nil {
 			return err
 		}
@@ -279,6 +281,13 @@ func (s *Service) Search(ctx context.Context, c Call) (Result, error) {
 		return Result{}, s.indexError(ctx, err)
 	}
 
+	return s.assemble(ctx, c, scopes, types, prepared, bind, sent, res, meta)
+}
+
+// assemble turns an index answer into the grouped result: freshness, presentation, counts and the next
+// cursor of each group that has more.
+func (s *Service) assemble(ctx context.Context, c Call, scopes reportsql.SearchScopes, types []reportsql.SearchType, prepared string, bind cursorBinding, sent int, res inventory.SearchResult, meta map[inventory.SearchRef]inventory.SearchMeta) (Result, error) {
+	var err error
 	out := Result{Refine: res.Refine}
 	if s.Fresh != nil {
 		var conns []authz.ObjectID
@@ -390,4 +399,84 @@ func dedupe(in []authz.ObjectID) []authz.ObjectID {
 		}
 	}
 	return out
+}
+
+// accountOf is the account recents belong to: the human behind the session. A token or automation has none,
+// so it neither writes nor ranks by recents.
+func accountOf(ch authority.Chain) string {
+	if ch.Requester.Kind != authority.Human {
+		return ""
+	}
+	// A requester id that is not a uuid has no recents (the store keys accounts by uuid): the search
+	// ranks without them rather than failing, since recents are a ranking hint and grant nothing.
+	if !inventory.IsAccountID(string(ch.Requester.ID)) {
+		return ""
+	}
+	return string(ch.Requester.ID)
+}
+
+// Recent answers the empty palette: the objects the caller opened recently, newest first, grouped by type
+// and trimmed by the caller's current read scope in the statement (T-1130). Nothing is invented: a caller with
+// no recents, no account, or no scope gets empty groups.
+func (s *Service) Recent(ctx context.Context, c Call) (Result, error) {
+	if s == nil || s.Index == nil || s.DB == nil {
+		return Result{}, ErrUnavailable
+	}
+	scopes, err := s.scopes(ctx, c)
+	if err != nil {
+		return Result{}, err
+	}
+	types := reportsql.AllSearchTypes
+	if c.Type != 0 {
+		types = []reportsql.SearchType{c.Type}
+	}
+	account := accountOf(c.Chain)
+	if sc := scopes[ReadPermission]; sc.Empty() || account == "" {
+		return emptyResult(types, 0, false), nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.timeout())
+	defer cancel()
+	var res inventory.SearchResult
+	var meta map[inventory.SearchRef]inventory.SearchMeta
+	// The whole list is read (it is bounded by reportsql.MaxRecents), so no group has a "more".
+	err = s.DB.WithTenant(ctx, c.Tenant, func(ctx context.Context, tx store.Tx) error {
+		var err error
+		if res, err = s.Index.Recents(ctx, tx, c.Tenant, scopes, account, types, reportsql.MaxRecents); err != nil {
+			return err
+		}
+		meta, err = s.Index.SearchMetadata(ctx, tx, c.Tenant, scopes[ReadPermission], s.now(), res.Hits)
+		return err
+	})
+	if err != nil {
+		return Result{}, s.indexError(ctx, err)
+	}
+	return s.assemble(ctx, c, scopes, types, "", cursorBinding{}, 0, res, meta)
+}
+
+// RecordOpened remembers that the caller opened an object page. The page's own authorisation has already
+// happened; a caller without an account (a token) records nothing.
+func (s *Service) RecordOpened(ctx context.Context, tid tenant.ID, ch authority.Chain, connection, object string) error {
+	if s == nil || s.Index == nil || s.DB == nil {
+		return ErrUnavailable
+	}
+	account := accountOf(ch)
+	if account == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.timeout())
+	defer cancel()
+	err := s.DB.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) error {
+		return s.Index.RecordOpened(ctx, tx, tid, account, connection, object, s.now())
+	})
+	if err != nil {
+		return s.indexError(ctx, err)
+	}
+	return nil
+}
+
+func (s *Service) timeout() time.Duration {
+	if s.Timeout > 0 {
+		return s.Timeout
+	}
+	return DefaultTimeout
 }

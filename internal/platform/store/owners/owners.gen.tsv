@@ -46,6 +46,7 @@ directory_objects	inventory	system
 enrollment_tokens	fleet	config
 fleet_ca	fleet	system
 helpdesk_caller_verifications	helpdesk	system
+helpdesk_request_keys	helpdesk	system
 hybrid_links	connection	config
 installation_keys	keys	system
 inventory_domain_policies	inventory	system
@@ -53,6 +54,7 @@ inventory_group_closure_dirty	inventory	system
 inventory_group_members	inventory	system
 inventory_pso_applies	inventory	system
 inventory_psos	inventory	system
+inventory_recent_objects	inventory	system
 inventory_search_keys	inventory	system
 inventory_search_trigrams	inventory	system
 inventory_servers	invhost	config
