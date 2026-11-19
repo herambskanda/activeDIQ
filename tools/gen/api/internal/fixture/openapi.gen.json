@@ -279,6 +279,12 @@
       "Rule": {
         "description": "A recursive discriminated union on kind.",
         "discriminator": {
+          "mapping": {
+            "and": "#/components/schemas/RuleAnd",
+            "equals": "#/components/schemas/RuleEquals",
+            "not": "#/components/schemas/RuleNot",
+            "or": "#/components/schemas/RuleOr"
+          },
           "propertyName": "kind"
         },
         "oneOf": [

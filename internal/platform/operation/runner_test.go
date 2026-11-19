@@ -441,6 +441,104 @@ func TestStepUpRequired(t *testing.T) {
 	}
 }
 
+// TM-D30: StepUpWhen over the validated Input, through the same RunStore path as the static flag.
+func TestStepUpWhen(t *testing.T) {
+	run := func(pred func(Input) (bool, error), name string, fresh bool) (error, int) {
+		applied := 0
+		db := &fakeDB{}
+		a := behaviour{verifyOK: true, applied: &applied}.action(t, db).(defined[in, payload, out])
+		a.t.Descriptor.StepUpWhen = pred
+		reg, err := NewRegistry(a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, _ := NewRunner(Config{DB: db, Audit: sink{}, Authz: &authzFake{}, Registry: reg})
+		rq := req()
+		rq.Input = Input(`{"Name":"` + name + `"}`)
+		rq.FreshStepUp = fresh
+		_, err = r.RunStore(context.Background(), rq)
+		return err, applied
+	}
+	external := func(i Input) (bool, error) { return strings.Contains(string(i), "ext"), nil }
+	if err, n := run(external, "ext", false); !errors.Is(err, ErrDenied) || n != 0 {
+		t.Errorf("predicate true, no step-up: err=%v applied=%d", err, n)
+	}
+	if err, n := run(external, "ext", true); err != nil || n != 1 {
+		t.Errorf("predicate true, fresh: err=%v applied=%d", err, n)
+	}
+	if err, n := run(external, "internal", false); err != nil || n != 1 {
+		t.Errorf("predicate false: err=%v applied=%d", err, n)
+	}
+	boom := func(Input) (bool, error) { return false, errors.New("boom") }
+	if err, n := run(boom, "internal", false); !errors.Is(err, ErrDenied) || n != 0 {
+		t.Errorf("predicate error must fail closed: err=%v applied=%d", err, n)
+	}
+	if err, n := run(boom, "internal", true); err != nil || n != 1 {
+		t.Errorf("predicate error, fresh: err=%v applied=%d", err, n)
+	}
+}
+
+func TestNeedsStepUp(t *testing.T) {
+	yes := func(Input) (bool, error) { return true, nil }
+	no := func(Input) (bool, error) { return false, nil }
+	cases := map[string]struct {
+		d    Descriptor
+		in   Input
+		want bool
+	}{
+		"static false":            {Descriptor{}, Input(`{}`), false},
+		"static true":             {Descriptor{StepUp: true}, nil, true},
+		"predicate true":          {Descriptor{StepUpWhen: yes}, Input(`{}`), true},
+		"predicate false":         {Descriptor{StepUpWhen: no}, Input(`{}`), false},
+		"error is required":       {Descriptor{StepUpWhen: func(Input) (bool, error) { return false, errors.New("x") }}, Input(`{}`), true},
+		"panic is required":       {Descriptor{StepUpWhen: func(Input) (bool, error) { panic("x") }}, Input(`{}`), true},
+		"no input is required":    {Descriptor{StepUpWhen: no}, nil, true},
+		"empty input is required": {Descriptor{StepUpWhen: no}, Input{}, true},
+	}
+	for name, c := range cases {
+		if got := c.d.NeedsStepUp(c.in); got != c.want {
+			t.Errorf("%s: got %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+// A predicate gets a copy of the Input: one that writes to its argument must not change the bytes
+// Plan plans and the kernel persists (TM-D30 SX-3).
+func TestNeedsStepUpPredicateCannotMutateInput(t *testing.T) {
+	d := Descriptor{StepUpWhen: func(in Input) (bool, error) {
+		for i := range in {
+			in[i] = 'x'
+		}
+		return false, nil
+	}}
+	in := Input(`{"to":"x@evil.example"}`)
+	want := string(in)
+	d.NeedsStepUp(in)
+	if string(in) != want {
+		t.Fatalf("predicate changed the caller's Input: %s", in)
+	}
+}
+
+func TestKernelHoldStepUpWhen(t *testing.T) {
+	token := authority.Chain{Requester: authority.Principal{ID: "t", Kind: authority.APIToken}}
+	d := Descriptor{StepUpWhen: func(i Input) (bool, error) { return string(i) == "yes", nil }}
+	for name, c := range map[string]struct {
+		in    Input
+		fresh bool
+		want  HoldReason
+	}{
+		"true, token":  {Input("yes"), false, HoldStepUp},
+		"true, fresh":  {Input("yes"), true, HoldNone},
+		"false, token": {Input("no"), false, HoldNone},
+		"no input":     {nil, false, HoldStepUp},
+	} {
+		got := kernelHold(holdInput{d: d, input: c.in, req: Request{Actor: token, FreshStepUp: c.fresh}})
+		if got != c.want {
+			t.Errorf("%s: got %q, want %q", name, got, c.want)
+		}
+	}
+}
+
 func TestRequestAndTargetValidation(t *testing.T) {
 	r, db := newRunner(t, behaviour{verifyOK: true}, nil, factsFake{}, sink{})
 	bad := req()
@@ -498,6 +596,9 @@ func TestRegistry(t *testing.T) {
 		"audit kind": func(d *Descriptor) { d.AuditKind = "" },
 		"class":      func(d *Descriptor) { d.Reversibility = "" },
 		"target":     func(d *Descriptor) { d.Target = "" },
+		"step-up flag and predicate": func(d *Descriptor) {
+			d.StepUp, d.StepUpWhen = true, func(Input) (bool, error) { return true, nil }
+		},
 	} {
 		d := bad
 		mut(&d)

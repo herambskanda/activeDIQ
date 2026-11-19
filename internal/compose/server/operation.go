@@ -1,16 +1,19 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
 	"github.com/skenzeriq/activediq/internal/directory/client"
+	"github.com/skenzeriq/activediq/internal/directory/connection"
 	"github.com/skenzeriq/activediq/internal/directory/inventory"
 	"github.com/skenzeriq/activediq/internal/platform/audit"
 	"github.com/skenzeriq/activediq/internal/platform/authn"
 	"github.com/skenzeriq/activediq/internal/platform/operation"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
+	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // ErrNoMinter is returned at boot when the operation package does not hold the step minter: a write
@@ -31,7 +34,7 @@ type operationKernel struct {
 // asserts the minter first, installs the chainer's commit hook on db (once, as the store opens), and
 // hands the runner the chainer as its audit.Sink, the directory client as its LiveFacts and the
 // authorizer, and the DC pinner (nil: an AD-target plan then fails closed, no DC is pinned). Any missing piece fails boot.
-func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveFacts, authzr operation.Authorizer, reg *operation.Registry, pinner operation.Pinner) (*operationKernel, error) {
+func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveFacts, authzr operation.Authorizer, reg *operation.Registry, pinner operation.Pinner, creds operation.CredentialSource) (*operationKernel, error) {
 	if !holdsMinter() {
 		return nil, ErrNoMinter
 	}
@@ -39,7 +42,7 @@ func buildOperation(holdsMinter func() bool, db *store.DB, facts operation.LiveF
 		return nil, ErrNoFacts
 	}
 	ch := audit.NewChainer(db)
-	cfg := operation.Config{DB: db, Audit: ch, Authz: authzr, Registry: reg, Facts: facts, Pinner: pinner, Component: "server"}
+	cfg := operation.Config{DB: db, Audit: ch, Authz: authzr, Registry: reg, Facts: facts, Pinner: pinner, Credentials: creds, Component: "server"}
 	if sh, ok := authzr.(operation.SiteHints); ok { // the rbac authorizer reads the assignments' site preferences (ADM-133)
 		cfg.Sites = sh
 	}
@@ -107,6 +110,18 @@ func rbacAuthorizer(db *store.DB, facts rbac.FactsReader) (*rbac.Authorizer, err
 		return nil, fmt.Errorf("server: rbac authorizer: %w", err)
 	}
 	return az, nil
+}
+
+// connectionCredentials is the operation CredentialSource over the connection registry: the DM-11
+// credential ID the connection is bound to. It reads the ID only, never the credential.
+type connectionCredentials struct{ conns client.ConnectionSource }
+
+func (c connectionCredentials) CredentialOf(ctx context.Context, t tenant.ID, id string) (string, error) {
+	cn, err := c.conns.Get(ctx, t, connection.ID(id))
+	if err != nil {
+		return "", err
+	}
+	return string(cn.CredentialID), nil
 }
 
 var _ operation.SiteHints = (*rbac.Authorizer)(nil)

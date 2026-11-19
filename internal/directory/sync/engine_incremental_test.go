@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -212,10 +213,15 @@ func TestIncrementalFirstSyncPrimesReadsThenResumes(t *testing.T) {
 	})
 }
 
+var pwChangeAtRE = regexp.MustCompile(`"password_change_at": "[^"]*"`)
+
 // norm makes the dumps of two databases comparable: the tenant and connection ids differ between them.
 func norm(e *env, d string) string {
 	d = strings.ReplaceAll(d, e.a.String(), "TENANT")
-	return strings.ReplaceAll(d, string(e.conn), "CONN")
+	d = strings.ReplaceAll(d, string(e.conn), "CONN")
+	// password_change_at is the wall-clock "as of" stamp the engine puts on every Cannot Change
+	// Password read (T-1551); two runs never share it. The state beside it stays compared.
+	return pwChangeAtRE.ReplaceAllString(d, `"password_change_at": "AS-OF"`)
 }
 
 // TestIncrementalCrashBetweenBatchesResumesFromTheStoredCookie is acceptance 2: the context ends after batch 1

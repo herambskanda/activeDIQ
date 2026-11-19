@@ -46,6 +46,20 @@ type fakeIndex struct {
 	gotScope reportsql.SearchScopes
 	gotReq   inventory.SearchRequest
 	res      inventory.SearchResult
+	// recents and opened record the T-1130 calls.
+	recents []string
+	opened  []string
+}
+
+func (f *fakeIndex) Recents(_ context.Context, _ store.Tx, _ tenant.ID, s reportsql.SearchScopes, account string, _ []reportsql.SearchType, _ int) (inventory.SearchResult, error) {
+	f.gotScope = s
+	f.recents = append(f.recents, account)
+	return f.res, nil
+}
+
+func (f *fakeIndex) RecordOpened(_ context.Context, _ store.Tx, _ tenant.ID, account, connection, object string, _ time.Time) error {
+	f.opened = append(f.opened, account+"/"+connection+"/"+object)
+	return nil
 }
 
 func (f *fakeIndex) Search(_ context.Context, _ store.Tx, _ tenant.ID, s reportsql.SearchScopes, r inventory.SearchRequest) (inventory.SearchResult, error) {
@@ -230,5 +244,53 @@ func Test_cursor_is_bound_and_verified_before_anything_is_read(t *testing.T) {
 	}
 	if ix.searches != 0 {
 		t.Error("a bad cursor reached the index")
+	}
+}
+
+const humanAccount = "0b2f6a52-7c1e-4a63-9a4e-5d1f0f8a9c10"
+
+func humanChain() authority.Chain {
+	return authority.Chain{Requester: authority.Principal{ID: humanAccount, Kind: authority.Human}}
+}
+
+// T-1130: the empty palette reads the human's recents under the producer's scope; a token has none and
+// reads nothing; opening a page records for the human only.
+func Test_recents_belong_to_the_human_behind_the_session(t *testing.T) {
+	var logs bytes.Buffer
+	sc, ix := &fakeScopes{scope: oneOU()}, &fakeIndex{}
+	svc, _ := newSvc(t, sc, ix, &logs)
+	ctx := context.Background()
+	if _, err := svc.Recent(ctx, search.Call{Chain: humanChain()}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ix.recents) != 1 || ix.recents[0] != humanAccount {
+		t.Fatalf("recents read for %v, want the human account", ix.recents)
+	}
+	tok := authority.Chain{Requester: authority.Principal{ID: humanAccount, Kind: authority.Human}, Via: []authority.Principal{{ID: "tok", Kind: authority.APIToken}}}
+	if _, err := svc.Recent(ctx, search.Call{Chain: tok}); err != nil {
+		t.Fatal(err)
+	}
+	tokenOnly := authority.Chain{Requester: authority.Principal{ID: "tok", Kind: authority.APIToken}}
+	res, err := svc.Recent(ctx, search.Call{Chain: tokenOnly})
+	if err != nil || len(ix.recents) != 2 {
+		t.Fatalf("a non-human requester read recents: err=%v reads=%d", err, len(ix.recents))
+	}
+	for _, g := range res.Groups {
+		if len(g.Items) != 0 {
+			t.Fatalf("invented recents: %+v", g)
+		}
+	}
+	if err := svc.RecordOpened(ctx, tenant.ID{}, humanChain(), "c", "o"); err != nil || len(ix.opened) != 1 || ix.opened[0] != humanAccount+"/c/o" {
+		t.Fatalf("RecordOpened: err=%v opened=%v", err, ix.opened)
+	}
+	if err := svc.RecordOpened(ctx, tenant.ID{}, tokenOnly, "c", "o"); err != nil || len(ix.opened) != 1 {
+		t.Fatalf("a token recorded a recent: err=%v opened=%v", err, ix.opened)
+	}
+	// Search ranks by the same account.
+	if _, err := svc.Search(ctx, search.Call{Chain: humanChain(), Text: "pri"}); err != nil {
+		t.Fatal(err)
+	}
+	if ix.gotReq.Account != humanAccount {
+		t.Fatalf("search account %q", ix.gotReq.Account)
 	}
 }

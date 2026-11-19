@@ -27,6 +27,12 @@ type Pinner interface {
 	Pin(ctx context.Context, connection string, nc authority.NamingContextID, previous string) (DCPin, error)
 }
 
+// CredentialSource names the DM-11 credential row a connection is bound to (an ID, never material).
+// Directory-write step events carry it as credential_id so the chain alone joins an event to a DC log.
+type CredentialSource interface {
+	CredentialOf(ctx context.Context, t tenant.ID, connection string) (string, error)
+}
+
 // FallbackPinner is an optional Pinner capability: a writable DC other than exclude (matched by host,
 // case-insensitively, and by DSA GUID), for the server's Tier-0 re-read when the pinned DC cannot answer
 // (ADR-0005 rule 7). A Pinner without it has no fallback, and an unanswered re-read counts as tier0.
@@ -138,7 +144,7 @@ func (r *Runner) SubmitDirectory(ctx context.Context, req Request) (Submission, 
 		return Submission{}, fmt.Errorf("%w: secrets supplied do not match the action's SecretInput", ErrInvalid)
 	}
 	u := &run{r: r, req: req, act: act, d: d, eventID: r.cfg.NewID()}
-	if d.StepUp && !req.FreshStepUp && canStepUp(req.Actor) {
+	if !req.FreshStepUp && canStepUp(req.Actor) && d.NeedsStepUp(req.Input) {
 		// An interactive human who has not stepped up is refused; a token or automation is held (rule 8).
 		return Submission{}, u.recordFailure(ctx, u.denied("step_up_required", ErrStepUpRequired))
 	}
@@ -609,7 +615,7 @@ func (r *Runner) route(ctx context.Context, t tenant.ID, opID string) (Submissio
 			return sub, fmt.Errorf("%w: reading tenant settings: %w", ErrGate, err)
 		}
 	}
-	hold := kernelHold(holdInput{d: d, req: Request{Actor: op.Chain, Origin: op.Origin, MaxObjects: op.MaxObjects,
+	hold := kernelHold(holdInput{d: d, input: Input(op.Input), req: Request{Actor: op.Chain, Origin: op.Origin, MaxObjects: op.MaxObjects,
 		FreshStepUp: op.StepUpFresh, UndoNeededApproval: op.Hold == HoldUndoNeededAppr}, items: len(rows),
 		worst: worst(steps), irrevSetting: irrev})
 	route, gerr := r.cfg.Gate.Route(ctx, PlanSummary{Action: d, Steps: steps, PlanHash: op.PlanHash,

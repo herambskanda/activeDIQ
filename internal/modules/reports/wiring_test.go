@@ -19,7 +19,7 @@ func TestUnconfiguredModuleRegistersOnlyPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.API()) != 0 || len(c.Jobs()) != 0 || len(c.Permissions()) != 5 {
+	if len(c.API()) != 0 || len(c.Jobs()) != 0 || len(c.Permissions()) != 7 {
 		t.Fatalf("api %d jobs %d permissions %d", len(c.API()), len(c.Jobs()), len(c.Permissions()))
 	}
 }

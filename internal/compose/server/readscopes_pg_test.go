@@ -137,7 +137,7 @@ func TestBuildReadScopesComposed(t *testing.T) {
 		e.local(t, off, "disabled")
 		for name, id := range map[string]string{"disabled": off, "unknown": ghost} {
 			chain := authority.Chain{Requester: authority.Principal{ID: authority.PrincipalID(id), Kind: authority.Human}}
-			got, err := txReadScopes{db: e.db, rs: rs}.ReadScope(context.Background(), e.ten, chain, "directory.read")
+			got, err := boundScopes(t, e.db, rs).ReadScope(context.Background(), e.ten, chain, "directory.read")
 			if !errors.Is(err, authz.ErrOwnerDead) {
 				t.Errorf("%s owner: ReadScope = %+v, %v; want ErrOwnerDead", name, got, err)
 			}

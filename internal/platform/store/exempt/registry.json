@@ -64,9 +64,16 @@
       "mintsTenantID": true
     },
     {
-      "package": "internal/compose/server",
-      "function": "reportSchema",
-      "reason": "Start-up compiles the report datasets against the public schema catalogue (pg_class, pg_attribute) before the install tenant exists, so the read runs outside a tenant context under WithPlatform. The catalogue is identical for every tenant and holds names and types only, never a tenant row; the result is the immutable schema the SQL registry checks identifiers against (T-1104).",
+      "package": "internal/modules/directory",
+      "function": "catalogSchema",
+      "reason": "Start-up compiles the report datasets against the public schema catalogue (pg_class, pg_attribute) before the install tenant exists, so the read runs outside a tenant context under WithPlatform. The catalogue is identical for every tenant and holds names and types only, never a tenant row; the result is the immutable schema the search index compiles its SQL identifiers against (T-1104, T-1865, ADR-0013).",
+      "withPlatform": true,
+      "mintsTenantID": false
+    },
+    {
+      "package": "internal/modules/reports",
+      "function": "schema",
+      "reason": "Module start-up compiles the report datasets against the public schema catalogue (pg_class, pg_attribute) before the install tenant exists, so the read runs outside a tenant context under WithPlatform. The catalogue is identical for every tenant and holds names and types only, never a tenant row; the result is the immutable schema the SQL registry checks identifiers against (T-1104, ADR-0013).",
       "withPlatform": true,
       "mintsTenantID": false
     },
@@ -156,7 +163,7 @@
     },
     {
       "package": "internal/platform/rbac",
-      "function": "Authorizer.Authorize",
+      "function": "requestTenant",
       "reason": "The tenant is read from the request context that the authority chain's authentication step set (authority.TenantFrom), never from a request field; the parse only converts that server-set value to the typed ID and fails closed (ADR-0002 rule 5).",
       "withPlatform": false,
       "mintsTenantID": true
@@ -221,6 +228,36 @@
   "platformJobs": [],
   "probeValues": [
     {
+      "column": "public.migration_jobs.state",
+      "value": "quarantined",
+      "reason": "CHECK: state is one of a closed set and ties limit_hit, source_sha256 and finished_at to it (migration_jobs_check*); the probe row is an ordinary quarantined job."
+    },
+    {
+      "column": "public.migration_jobs.limit_hit",
+      "null": true,
+      "reason": "CHECK: limit_hit is set exactly when the job is rejected; the probe row is quarantined, so it is NULL."
+    },
+    {
+      "column": "public.migration_jobs.finished_at",
+      "null": true,
+      "reason": "CHECK: finished_at is set exactly for a finished state; the probe row is quarantined, so it is NULL."
+    },
+    {
+      "column": "public.migration_jobs.source_sha256",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a SHA-256 is exactly 32 bytes (migration_jobs_source_sha256_check); the probe row carries a 32-byte placeholder."
+    },
+    {
+      "column": "public.migration_jobs.source_kind",
+      "value": "csv",
+      "reason": "CHECK: source_kind is one of a closed set of kinds."
+    },
+    {
+      "column": "public.migration_jobs.admp_build",
+      "value": "probe",
+      "reason": "CHECK: admp_build matches ^[A-Za-z0-9._-]{1,64}$."
+    },
+    {
       "column": "public.helpdesk_caller_verifications.factor",
       "value": "email_otp",
       "reason": "CHECK: factor is email_otp, sms_otp or totp; the probe row is an email OTP challenge."
@@ -244,6 +281,26 @@
       "column": "public.helpdesk_caller_verifications.code_mac",
       "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
       "reason": "CHECK: code_mac is exactly 32 bytes and present for every non-totp factor (helpdesk_cv_code); the probe row carries a 32-byte placeholder, not a real MAC."
+    },
+    {
+      "column": "public.authn_enrolment_sessions.created_at",
+      "value": "2000-01-01 00:00:00+00",
+      "reason": "CHECK: expires_at is later than created_at and within 10 minutes of it; the probe row pins both to fixed instants."
+    },
+    {
+      "column": "public.authn_enrolment_sessions.expires_at",
+      "value": "2000-01-01 00:05:00+00",
+      "reason": "CHECK: see created_at; 5 minutes after the pinned created_at."
+    },
+    {
+      "column": "public.authn_enrolment_sessions.handle_hash",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: handle_hash is a 32-byte SHA-256 digest; the probe row pins a 32-byte value."
+    },
+    {
+      "column": "public.authn_enrolment_sessions.proof",
+      "value": "password",
+      "reason": "CHECK: proof is one of password or kerberos; the probe row pins password."
     },
     {
       "column": "public.personal_subject.salt",
@@ -986,6 +1043,26 @@
       "column": "public.directory_object_changes.object_kind",
       "value": "user",
       "reason": "CHECK: directory_object_changes_object_kind_check restricts the object kind to the DM-16 set; the probe row carries one valid kind (T-1109)."
+    },
+    {
+      "column": "public.helpdesk_request_keys.request_mac",
+      "value": "\\x7070707070707070707070707070707070707070707070707070707070707070",
+      "reason": "CHECK: a request MAC is exactly 32 bytes (helpdesk_request_keys_request_mac_check); the probe row carries a 32-byte placeholder."
+    },
+    {
+      "column": "public.helpdesk_request_keys.operation",
+      "value": "issue",
+      "reason": "CHECK: helpdesk_rk_operation restricts operation to issue or verify; the probe row is an issue key."
+    },
+    {
+      "column": "public.helpdesk_request_keys.idem_key",
+      "value": "probe-idem-key-01",
+      "reason": "CHECK: an idempotency key matches ^[A-Za-z0-9._~-]{8,128}$."
+    },
+    {
+      "column": "public.helpdesk_request_keys.state",
+      "value": "pending",
+      "reason": "CHECK: helpdesk_rk_state/helpdesk_rk_done: pending carries no completed_at; the probe row is pending."
     }
   ]
 }
