@@ -95,3 +95,14 @@ targetRules = ["generic-api-key"]
 paths = ['''^factory/demos/evidence/T-0537/linux-tests-main-[0-9a-f]+\.txt$''']
 regexTarget = "line"
 regexes = ['''api_token_id="" plan_digest="" tier0_revision=7 ''']
+
+# T-2351: history-only generic-api-key finding in the T-2125 enrolment HTTP test (file since removed from the
+# tree). The literal is the public base32 demo seed "JBSWY3DPEHPK3PXP" (the one in every TOTP tutorial),
+# asserted against the fake enrolment response; not a credential. Scoped to rule AND path AND literal.
+[[allowlists]]
+description = "enrolhttp_test public demo TOTP seed fixture (T-2351)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^internal/platform/authn/enrolhttp_test\.go$''']
+regexTarget = "line"
+regexes = ['''seed\.SetupKey != "JBSWY3DPEHPK3PXP"''']

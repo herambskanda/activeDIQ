@@ -621,6 +621,7 @@ ME's report "fetches the replication status of the selected domain controller(s)
    using Microsoft's documented error meanings. Wording is `ad-expert`'s; no remedy text ships
    without a source.
 8. **No "Trigger replication" button.** ME has one `[ME-HELP]`; that is a write, a 2b Action.
+9. **Contract (T-1720).** The columns, the per-DC coverage (a Did-not-answer entry **and** a `not_reported` row for each unanswered DC; the cap count for DCs left unread), the status counts, the thresholds read and edit, and the manager picker list are in `api/openapi/modules/reports.yaml` (additive only). The cap reads the first 100 DCs by DNS name and does not refuse the run; the status column sorts by severity (failing, warning, not reported, healthy); SYS-03 is gated by `reports.replication.read`, threshold edits by `reports.replication.configure`.
 
 ## 8. Kept out of this slice
 

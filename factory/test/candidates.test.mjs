@@ -275,6 +275,20 @@ test('only_milestone launches just that milestone\'s ready tickets but still res
   assert.ok(open.includes('T-0020'));
 });
 
+test('hold_ready starts no ready ticket or grooming but still runs review, rework and the digest', () => {
+  const t = [
+    ticket({ id: 'T-0030', priority: 'P0' }),
+    ticket({ id: 'T-0031', status: 'review' }),
+    ticket({ id: 'T-0032', status: 'in_progress' }),
+    ticket({ id: 'T-0033', status: 'backlog' }),
+  ];
+  const wide = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 6 } };
+  const open = ids(pick(state({ tickets: t }), EVENING, wide));
+  assert.ok(open.includes('T-0030') && open.includes('meta:grooming'));
+  const held = ids(pick(state({ tickets: t }), EVENING, { ...wide, dispatcher: { ...wide.dispatcher, hold_ready: true } }));
+  assert.deepEqual(held.sort(), ['T-0031', 'T-0032', 'meta:digest']);
+});
+
 test('T-1617: a gate run in flight holds reserved_slots back from max_parallel', () => {
   const c = { ...config, dispatcher: { ...config.dispatcher, max_parallel: 4, pre_merge: { ...config.dispatcher.pre_merge, reserved_slots: 2 } } };
   const t = ['T-7001', 'T-7002', 'T-7003', 'T-7004'].map((id) => ticket({ id }));
