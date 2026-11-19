@@ -33,7 +33,7 @@ func TestMain(m *testing.M) { os.Exit(storetest.Main(m)) }
 // ---- fakes: a directory, a pinner, settings, provenance, alerts, keys, a gate ----
 
 type dirFake struct {
-	tpl        string // when set, Plan asks pc.Templates about this Template first
+	tpl        string                    // when set, Plan asks pc.Templates about this Template first
 	stepUpWhen func(Input) (bool, error) // optional TM-D30 predicate for the action it builds
 	mu         sync.Mutex
 	val        map[string]string
