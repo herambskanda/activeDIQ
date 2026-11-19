@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/skenzeriq/activediq/internal/modules/directory"
-	"github.com/skenzeriq/activediq/internal/platform/authority"
 	"github.com/skenzeriq/activediq/internal/platform/authz"
 	"github.com/skenzeriq/activediq/internal/platform/module"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
@@ -97,26 +95,4 @@ func buildReadScopes(az *rbac.Authorizer, c *module.Contributions) (*rbac.ReadSc
 		return nil, fmt.Errorf("server: read scopes: %w", err)
 	}
 	return rs, nil
-}
-
-// The composition root's producer is what the directory module asks for (T-0987: buildDirectory gets it).
-var _ directory.ReadScopes = txReadScopes{}
-
-// txReadScopes adapts rbac.ReadScopes, which reads in a caller's transaction, to directory.ReadScopes,
-// which has none: it opens the tenant transaction the producer needs.
-type txReadScopes struct {
-	db *store.DB
-	rs *rbac.ReadScopes
-}
-
-func (s txReadScopes) ReadScope(ctx context.Context, tid tenant.ID, chain authority.Chain, perm authz.Permission) (authz.ReadScope, error) {
-	var out authz.ReadScope
-	err := s.db.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) (err error) {
-		out, err = s.rs.For(ctx, tx, tid, chain, perm)
-		return err
-	})
-	if err != nil {
-		return authz.ReadScope{}, err
-	}
-	return out, nil
 }

@@ -6,39 +6,65 @@ package apitypes
 // constructor's result, or a plain error, which renders as /problems/internal.
 
 const (
-	ProblemTypeConflict                = "/problems/conflict"
-	ProblemTypeCSRFFailed              = "/problems/csrf-failed"
-	ProblemTypeDirectoryAccessDenied   = "/problems/directory-access-denied"
-	ProblemTypeDirectoryConstraint     = "/problems/directory-constraint"
-	ProblemTypeDirectoryUnavailable    = "/problems/directory-unavailable"
-	ProblemTypeForbidden               = "/problems/forbidden"
-	ProblemTypeIdempotencyKeyReuse     = "/problems/idempotency-key-reuse"
-	ProblemTypeInternal                = "/problems/internal"
-	ProblemTypeMalformedRequest        = "/problems/malformed-request"
-	ProblemTypeMethodNotAllowed        = "/problems/method-not-allowed"
-	ProblemTypeNotFound                = "/problems/not-found"
-	ProblemTypeNotImplemented          = "/problems/not-implemented"
-	ProblemTypeNotReady                = "/problems/not-ready"
-	ProblemTypeOperationNotUndoable    = "/problems/operation-not-undoable"
-	ProblemTypePasswordPolicyViolation = "/problems/password-policy-violation"
-	ProblemTypePayloadTooLarge         = "/problems/payload-too-large"
-	ProblemTypePreconditionFailed      = "/problems/precondition-failed"
-	ProblemTypePreconditionRequired    = "/problems/precondition-required"
-	ProblemTypeRateLimited             = "/problems/rate-limited"
-	ProblemTypeReportResultExpired     = "/problems/report-result-expired"
-	ProblemTypeReportRowCapExceeded    = "/problems/report-row-cap-exceeded"
-	ProblemTypeReportScopeEmpty        = "/problems/report-scope-empty"
-	ProblemTypeReportScopeUnsupported  = "/problems/report-scope-unsupported"
-	ProblemTypeSearchQueryInvalid      = "/problems/search-query-invalid"
-	ProblemTypeSearchUnavailable       = "/problems/search-unavailable"
-	ProblemTypeSetupRefused            = "/problems/setup-refused"
-	ProblemTypeSignInFailed            = "/problems/sign-in-failed"
-	ProblemTypeStepUpRefused           = "/problems/step-up-refused"
-	ProblemTypeStepUpRequired          = "/problems/step-up-required"
-	ProblemTypeUnauthenticated         = "/problems/unauthenticated"
-	ProblemTypeUnsupportedMediaType    = "/problems/unsupported-media-type"
-	ProblemTypeValidation              = "/problems/validation"
+	ProblemTypeCallerVerificationDeliveryFailed = "/problems/caller-verification-delivery-failed"
+	ProblemTypeCallerVerificationLimit          = "/problems/caller-verification-limit"
+	ProblemTypeCallerVerificationRefused        = "/problems/caller-verification-refused"
+	ProblemTypeCallerVerificationUnavailable    = "/problems/caller-verification-unavailable"
+	ProblemTypeConflict                         = "/problems/conflict"
+	ProblemTypeCSRFFailed                       = "/problems/csrf-failed"
+	ProblemTypeDirectoryAccessDenied            = "/problems/directory-access-denied"
+	ProblemTypeDirectoryConstraint              = "/problems/directory-constraint"
+	ProblemTypeDirectoryUnavailable             = "/problems/directory-unavailable"
+	ProblemTypeExplorerQueryInvalid             = "/problems/explorer-query-invalid"
+	ProblemTypeExplorerUnavailable              = "/problems/explorer-unavailable"
+	ProblemTypeForbidden                        = "/problems/forbidden"
+	ProblemTypeIdempotencyKeyReuse              = "/problems/idempotency-key-reuse"
+	ProblemTypeInternal                         = "/problems/internal"
+	ProblemTypeMalformedRequest                 = "/problems/malformed-request"
+	ProblemTypeMethodNotAllowed                 = "/problems/method-not-allowed"
+	ProblemTypeNotFound                         = "/problems/not-found"
+	ProblemTypeNotImplemented                   = "/problems/not-implemented"
+	ProblemTypeNotReady                         = "/problems/not-ready"
+	ProblemTypeOperationNotUndoable             = "/problems/operation-not-undoable"
+	ProblemTypePasswordPolicyViolation          = "/problems/password-policy-violation"
+	ProblemTypePayloadTooLarge                  = "/problems/payload-too-large"
+	ProblemTypePreconditionFailed               = "/problems/precondition-failed"
+	ProblemTypePreconditionRequired             = "/problems/precondition-required"
+	ProblemTypeRateLimited                      = "/problems/rate-limited"
+	ProblemTypeReportResultExpired              = "/problems/report-result-expired"
+	ProblemTypeReportRowCapExceeded             = "/problems/report-row-cap-exceeded"
+	ProblemTypeReportScopeEmpty                 = "/problems/report-scope-empty"
+	ProblemTypeReportScopeUnsupported           = "/problems/report-scope-unsupported"
+	ProblemTypeSearchQueryInvalid               = "/problems/search-query-invalid"
+	ProblemTypeSearchUnavailable                = "/problems/search-unavailable"
+	ProblemTypeSetupRefused                     = "/problems/setup-refused"
+	ProblemTypeSignInFailed                     = "/problems/sign-in-failed"
+	ProblemTypeStepUpRefused                    = "/problems/step-up-refused"
+	ProblemTypeStepUpRequired                   = "/problems/step-up-required"
+	ProblemTypeUnauthenticated                  = "/problems/unauthenticated"
+	ProblemTypeUnsupportedMediaType             = "/problems/unsupported-media-type"
+	ProblemTypeValidation                       = "/problems/validation"
 )
+
+// CallerVerificationDeliveryFailed builds a 502 /problems/caller-verification-delivery-failed problem.
+func CallerVerificationDeliveryFailed(detail string) *Problem {
+	return newProblem(ProblemTypeCallerVerificationDeliveryFailed, "The code could not be delivered", 502, detail)
+}
+
+// CallerVerificationLimit builds a 429 /problems/caller-verification-limit problem.
+func CallerVerificationLimit(detail string) *Problem {
+	return newProblem(ProblemTypeCallerVerificationLimit, "The verification limit was reached", 429, detail)
+}
+
+// CallerVerificationRefused builds a 422 /problems/caller-verification-refused problem.
+func CallerVerificationRefused(detail string) *Problem {
+	return newProblem(ProblemTypeCallerVerificationRefused, "The verification was refused", 422, detail)
+}
+
+// CallerVerificationUnavailable builds a 422 /problems/caller-verification-unavailable problem.
+func CallerVerificationUnavailable(detail string) *Problem {
+	return newProblem(ProblemTypeCallerVerificationUnavailable, "This caller cannot be verified", 422, detail)
+}
 
 // Conflict builds a 409 /problems/conflict problem.
 func Conflict(detail string) *Problem {
@@ -63,6 +89,16 @@ func DirectoryConstraint(detail string) *Problem {
 // DirectoryUnavailable builds a 503 /problems/directory-unavailable problem.
 func DirectoryUnavailable(detail string) *Problem {
 	return newProblem(ProblemTypeDirectoryUnavailable, "The directory is unavailable", 503, detail)
+}
+
+// ExplorerQueryInvalid builds a 400 /problems/explorer-query-invalid problem.
+func ExplorerQueryInvalid(detail string) *Problem {
+	return newProblem(ProblemTypeExplorerQueryInvalid, "The paging parameters cannot be used", 400, detail)
+}
+
+// ExplorerUnavailable builds a 503 /problems/explorer-unavailable problem.
+func ExplorerUnavailable(detail string) *Problem {
+	return newProblem(ProblemTypeExplorerUnavailable, "The directory is busy", 503, detail)
 }
 
 // Forbidden builds a 403 /problems/forbidden problem.

@@ -16,6 +16,8 @@ var (
 	_ = tablekind.Declare(tablekind.Table{Name: "public.authz_role_permissions", Entity: "DM-34", Kind: tablekind.Tenant})
 	_ = tablekind.Declare(tablekind.Table{Name: "public.authz_assignments", Entity: "DM-36", Kind: tablekind.Tenant})
 	_ = tablekind.Declare(tablekind.Table{Name: "public.authz_assignment_roots", Entity: "DM-35", Kind: tablekind.Tenant})
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authz_assignment_templates", Entity: "DM-36", Kind: tablekind.Tenant})
+	_ = tablekind.Declare(tablekind.Table{Name: "public.authz_assignment_sites", Entity: "DM-36", Kind: tablekind.Tenant})
 )
 
 // Tier says where a role sits. A Tier-0 permission is held by tier 0 only.
@@ -44,13 +46,13 @@ func BuiltInRoles() []Role {
 	return []Role{
 		{Name: "tier0-administrator", Tier: Tier0, Permissions: []authz.Permission{"inventory.tier0_designation.manage"}},
 		{Name: "platform-administrator", Tier: Tier1, Permissions: []authz.Permission{
-			"connections.hybrid_link.confirm", "connections.takeover.attest", "operation.approve", "objects.user.reset_password", "objects.user.delete", "siem.destination.manage", "siem.destination.read", "directory.read", "reports.run"}},
+			"connections.hybrid_link.confirm", "connections.takeover.attest", "operation.approve", "objects.user.reset_password", "objects.user.delete", "siem.destination.manage", "siem.destination.read", "directory.read", "reports.run", "helpdesk.caller.verify"}},
 		// The tenant owner (ADM-126, DM-30.I4). Read-only, personal assignments only, never time-bounded
 		// (migration 0034). Beyond the DM-34.I1 rule that an owner holds every permission, it lists only
-		// what the operation catalogue has granted by name; migration 0043 allow-lists the same set in
+		// what the operation catalogue has granted by name; migrations 0043 and 0090 allow-list the same set in
 		// the database, so a permission added here without it is refused at seed.
-		{Name: TenantOwnerRole, Tier: Tier1, Permissions: []authz.Permission{"connections.correlation.reconfirm"}},
-		{Name: "helpdesk-operator", Tier: Tier2, Permissions: []authz.Permission{"objects.user.reset_password", "directory.read"}},
+		{Name: TenantOwnerRole, Tier: Tier1, Permissions: []authz.Permission{"connections.correlation.reconfirm", "agentfleet.policy.edit", "agentfleet.keyset.rotate"}},
+		{Name: "helpdesk-operator", Tier: Tier2, Permissions: []authz.Permission{"objects.user.reset_password", "directory.read", "helpdesk.caller.verify"}},
 	}
 }
 
