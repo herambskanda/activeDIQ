@@ -139,7 +139,20 @@ func declares(dir, name string) (bool, string, error) {
 
 // Render returns the bytes of the two generated files for the module path modPath.
 func Render(modPath string, l Lists) (server, agent []byte) {
-	imp := func(p string) string { return "\t\"" + modPath + "/" + p + "\"\n" }
+	// A module named like a package the file already imports (internal/directory) is aliased "mod"+id.
+	alias := func(id string) string {
+		if id == "directory" {
+			return "mod" + id
+		}
+		return id
+	}
+	imp := func(p string) string {
+		a := ""
+		if strings.HasPrefix(p, "internal/modules/") && alias(path.Base(p)) != path.Base(p) {
+			a = alias(path.Base(p)) + " "
+		}
+		return "\t" + a + "\"" + modPath + "/" + p + "\"\n"
+	}
 	var b bytes.Buffer
 	b.WriteString(Header + "\n\npackage server\n\nimport (\n")
 	imports := []string{"internal/directory", "internal/platform", "internal/platform/module"}
@@ -155,7 +168,7 @@ func Render(modPath string, l Lists) (server, agent []byte) {
 	b.WriteString("// same two values (ADR-0003 rules 3 and 4).\n")
 	b.WriteString("func generatedModules(deps platform.Deps, dir directory.Services) []module.Entry {\n\treturn []module.Entry{\n")
 	for _, id := range l.Server {
-		fmt.Fprintf(&b, "\t\t{ID: %s.ModuleID, Module: %s.New(deps, dir)},\n", id, id)
+		fmt.Fprintf(&b, "\t\t{ID: %s.ModuleID, Module: %s.New(deps, dir)},\n", alias(id), alias(id))
 	}
 	b.WriteString("\t}\n}\n")
 	server = b.Bytes()

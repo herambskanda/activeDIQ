@@ -41,6 +41,8 @@ type SearchRequest struct {
 	GroupLimit int
 	// After, when set, is a verified keyset position (the caller checks its MAC).
 	After *reportsql.SearchAfter
+	// Account, when set, ranks the account's recent objects above the other non-exact hits (T-1130).
+	Account string
 }
 
 // SearchResult is reportsql's: trimmed hits, the refine state, and counts only when they are exact.
@@ -73,6 +75,9 @@ func NewSearcher(sch reportsql.Schema, opts ...SearcherOption) (*Searcher, error
 	if err != nil {
 		return nil, fmt.Errorf("inventory: search source: %w", err)
 	}
+	if src, err = src.WithRecents(sch, "inventory_recent_objects"); err != nil {
+		return nil, fmt.Errorf("inventory: search source: %w", err)
+	}
 	s := &Searcher{src: src, ceiling: DefaultSearchCeiling}
 	if err := s.registerUsers(sch); err != nil {
 		return nil, err
@@ -86,6 +91,21 @@ func NewSearcher(sch reportsql.Schema, opts ...SearcherOption) (*Searcher, error
 	return s, nil
 }
 
+// checkTenant proves tid is the tenant the transaction is bound to.
+func checkTenant(ctx context.Context, tx store.Tx, tid tenant.ID) error {
+	if tid.IsZero() {
+		return ErrNoTenant
+	}
+	var ok bool
+	if err := tx.QueryRow(ctx, `SELECT NULLIF(current_setting('app.tenant_id', true), '') = $1`, tid.String()).Scan(&ok); err != nil {
+		return fmt.Errorf("inventory: tenant context: %w", err)
+	}
+	if !ok {
+		return ErrNoTenant
+	}
+	return nil
+}
+
 // Search answers exact, prefix and fuzzy lookups over the tenant's users, groups, computers and contacts,
 // trimmed to scopes in the statement itself. tx is the caller's tenant transaction (its statement timeout
 // is the safety net of rule 13); tid must be the tenant of tx. Search text is never logged or echoed.
@@ -93,21 +113,17 @@ func (s *Searcher) Search(ctx context.Context, tx store.Tx, tid tenant.ID, scope
 	if s == nil {
 		return SearchResult{}, ErrNotConfigured
 	}
-	if tid.IsZero() {
-		return SearchResult{}, ErrNoTenant
+	if err := checkTenant(ctx, tx, tid); err != nil {
+		return SearchResult{}, err
 	}
-	var ok bool
-	if err := tx.QueryRow(ctx, `SELECT NULLIF(current_setting('app.tenant_id', true), '') = $1`, tid.String()).Scan(&ok); err != nil {
-		return SearchResult{}, fmt.Errorf("inventory: tenant context: %w", err)
-	}
-	if !ok {
-		return SearchResult{}, ErrNoTenant
+	if req.Account != "" && !isUUID(req.Account) {
+		return SearchResult{}, ErrNoAccount
 	}
 	p, err := searchkey.Classify(req.Text)
 	if err != nil {
 		return SearchResult{}, fmt.Errorf("%w: %w", ErrSearchRefused, err)
 	}
-	q := reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, Types: req.Types, GroupLimit: req.GroupLimit, Ceiling: s.ceiling, After: req.After, Threshold: searchThreshold}
+	q := reportsql.SearchQuery{Exact: p.Exact, Prefix: p.Prefix, Fuzzy: p.Fuzzy, Types: req.Types, GroupLimit: req.GroupLimit, Ceiling: s.ceiling, After: req.After, Threshold: searchThreshold, Account: req.Account}
 	if q.GroupLimit == 0 {
 		q.GroupLimit = 5
 	}

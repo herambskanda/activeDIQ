@@ -9,9 +9,6 @@ no-page delegation
 no-page directory
 no-page helpdesk
 no-page inventory
-no-page search
 # Pages that describe platform packages, not modules. Cleared with the same ticket.
 no-module keys
 no-module rbac
-# ad.planCreate loads a Template without pc.Templates.CheckTemplate. Cleared by T-2142 (ADR-0015 D1/D2).
-tg2 internal/modules/ad/lifecycle.go:planCreate

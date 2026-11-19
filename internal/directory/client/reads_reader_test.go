@@ -16,7 +16,7 @@ func TestReaderIsReadOnly(t *testing.T) {
 		got = append(got, typ.Method(i).Name)
 	}
 	sort.Strings(got)
-	want := []string{"Describe", "ScopedSearch"}
+	want := []string{"Describe", "Read", "ScopedSearch"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("client.Reader methods = %v, want exactly %v", got, want)
 	}

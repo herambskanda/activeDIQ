@@ -156,6 +156,7 @@ var kindOfClass = []struct {
 	{"contact", inventory.KindContact},
 	{"foreignsecurityprincipal", inventory.KindFSP},
 	{"container", inventory.KindContainer},
+	{"printqueue", inventory.KindPrintQueue},
 }
 
 // Map maps one entry. A malformed entry is an *Error (errors.Is(err, ErrMalformed)); the caller counts
@@ -547,6 +548,14 @@ func (m *Mapper) bag(o *inventory.Observation, set attrSet) error {
 	if err := userAttributes(bag, set); err != nil {
 		return err
 	}
+	if o.State == inventory.ObjLive && (o.Kind == inventory.KindUser || o.Kind == inventory.KindInetOrgPerson) {
+		bag[inventory.ReadMarkerKey] = m.readMarker(bag)
+	}
+	if o.Kind == inventory.KindPrintQueue {
+		if err := printQueueAttributes(bag, set); err != nil {
+			return err
+		}
+	}
 	if s, present, err := firstText(set, "description", 4096); err != nil {
 		return err
 	} else if present && s != "" {
@@ -735,6 +744,64 @@ func userAttributes(bag map[string]any, set attrSet) error {
 				}
 			}
 			bag["logonHours"] = string(bits)
+		}
+	}
+	return nil
+}
+
+// readMarkerAttrs maps each attribute whose read-state the user-attribute reports expose (T-2216, T-1112)
+// to the bag key the mapper stores it under. The marker is keyed by ldapDisplayName.
+var readMarkerAttrs = []struct{ attr, key string }{
+	{"mail", "mail"}, {"employeeID", "employeeID"}, {"department", "department"}, {"title", "title"},
+	{"company", "company"}, {"telephoneNumber", "telephoneNumber"}, {"mobile", "mobile"}, {"description", "description"},
+	{"manager", "manager"}, {"scriptPath", "scriptPath"}, {"msNPAllowDialin", "msNPAllowDialin"},
+	{"msRTCSIP-UserEnabled", "msRTCSIP-UserEnabled"}, {"logonHours", "logonHours"},
+	{"thumbnailPhoto", "hasThumbnailPhoto"}, {"jpegPhoto", "hasJpegPhoto"},
+}
+
+// readMarker records, per attribute, whether this sync observed a stored value: inventory.ReadObserved when
+// the bag holds one (so an empty value is not observed, as everywhere else in the mapper),
+// inventory.ReadNotObserved when it does not. AD omits an attribute the account cannot read exactly as it
+// omits an empty one, so not_observed means "absent or unreadable", never "empty". ReadUnknownDenied is
+// reserved for a DACL evaluation (T-2220) and is not written here. An attribute this mapper never requests
+// gets no marker: not read is not the same as read and not seen.
+func (mp *Mapper) readMarker(bag map[string]any) map[string]any {
+	m := make(map[string]any, len(readMarkerAttrs))
+	for _, a := range readMarkerAttrs {
+		if !mp.wanted[strings.ToLower(a.attr)] {
+			continue // never requested (a schema secret, or left off the request): this sync did not try to read it
+		}
+		state := inventory.ReadNotObserved
+		if _, ok := bag[a.key]; ok {
+			state = inventory.ReadObserved
+		}
+		m[a.attr] = state
+	}
+	return m
+}
+
+// printQueueAttributes adds the attributes of a published printer (T-1719, reports-2-second-slice 7.2 and D13).
+// They are read for printQueue objects only, so a computer's own location never enters the bag. An
+// attribute the entry does not carry adds nothing; printColor and printDuplexSupported are tri-state
+// (true, false, absent). Nothing here is a secret (D8). description is read by bag().
+func printQueueAttributes(bag map[string]any, set attrSet) error {
+	for _, a := range []struct {
+		name string
+		max  int
+	}{{"printerName", 512}, {"serverName", 512}, {"uNCName", 1024}, {"printShareName", 512}, {"location", 512}, {"driverName", 512}} {
+		if s, present, err := text(set, a.name, a.max); err != nil {
+			return err
+		} else if present && s != "" {
+			bag[a.name] = s
+		}
+	}
+	for _, name := range []string{"printColor", "printDuplexSupported"} {
+		if b, present, err := boolean(set, name); err != nil {
+			return err
+		} else if present {
+			if a, _ := set.get(name); len(a.GetValues()) > 0 {
+				bag[name] = b
+			}
 		}
 	}
 	return nil

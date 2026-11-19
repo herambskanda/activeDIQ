@@ -86,6 +86,11 @@ func Check(root string) ([]Violation, error) {
 		return nil, err
 	}
 	vs = append(vs, m3a...)
+	ex, err := checkExemptions(root)
+	if err != nil {
+		return nil, err
+	}
+	vs = append(vs, ex...)
 	sort.Slice(vs, func(i, j int) bool {
 		if vs[i].Pos != vs[j].Pos {
 			return vs[i].Pos < vs[j].Pos
@@ -386,7 +391,8 @@ func checkWeb(root string) ([]Violation, error) {
 					target = path.Clean(path.Join(path.Dir(rel), spec))
 				}
 				toModules := under(target, "web/src/modules") || strings.HasPrefix(target, "src/modules") || strings.HasPrefix(target, "@/modules")
-				if toModules && !(layer == "app" && path.Base(target) == "modules.gen") {
+				// The generated list itself is the one file that names web modules (blueprint §2.2 rule 5).
+				if toModules && !(layer == "app" && path.Base(target) == "modules.gen") && rel != "web/src/app/modules.gen.ts" {
 					vs = append(vs, Violation{Rule: "2.8", Pos: fmt.Sprintf("%s:%d", rel, n+1), Msg: fmt.Sprintf("web/src/%s imports %q; app and ds never import web/src/modules (only app may import the generated modules.gen)", layer, spec)})
 				}
 			}

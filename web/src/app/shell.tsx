@@ -353,7 +353,6 @@ export function Shell({
           type="button"
           className="diq-shell__search"
           data-testid="top-bar-search"
-          aria-label="Search"
           onClick={openPalette}
         >
           <span className="diq-shell__search-placeholder">

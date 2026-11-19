@@ -24,6 +24,7 @@ import (
 	"github.com/skenzeriq/activediq/internal/platform/authz/authztest"
 	"github.com/skenzeriq/activediq/internal/platform/capability"
 	"github.com/skenzeriq/activediq/internal/platform/jobs"
+	"github.com/skenzeriq/activediq/internal/platform/module/jobcontrib"
 	"github.com/skenzeriq/activediq/internal/platform/rbac"
 	"github.com/skenzeriq/activediq/internal/platform/store"
 	"github.com/skenzeriq/activediq/internal/platform/store/owners"
@@ -83,7 +84,11 @@ func bootReportsForTest(ctx context.Context, db *store.DB, jreg *jobs.Registry, 
 	if err != nil {
 		return apihost.TagHandlers{}, err
 	}
-	for _, j := range c.Jobs() {
+	cjobs, err := jobcontrib.All(c)
+	if err != nil {
+		return apihost.TagHandlers{}, err
+	}
+	for _, j := range cjobs {
 		if err := jreg.Register(j.Kind); err != nil {
 			return apihost.TagHandlers{}, err
 		}
@@ -160,8 +165,8 @@ func TestReportsCatalogServesShippedLibrary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		perms := apihost.Permissions{"reports.run", "reports.export", "reports.schedule", "reports.schedule.manage_all",
-			"reports.deliver.external", "directory.read", "connections.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read"}
+		perms := apihost.Permissions{"reports.run", "reports.export", "reports.schedule", "reports.schedule.manage_all", "reports.replication.read", "reports.replication.configure",
+			"reports.deliver.external", "directory.read", "connections.read", "connections.takeover.attest", "siem.destination.manage", "siem.destination.read", "helpdesk.caller.verify"}
 		door := rptDoor{}
 		srv, err := apihost.Build(doc, []apihost.TagHandlers{tag}, pol, perms, apihost.Ports{Authn: door, Authz: door, Limits: door, StepUp: door})
 		if err != nil {
