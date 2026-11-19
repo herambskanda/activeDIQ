@@ -56,6 +56,58 @@ var i2Fixtures = map[operation.ActionID]func(sentinel string) operation.Input{
 	},
 }
 
+func init() {
+	for _, c := range []string{"group", "computer", "contact", "ou"} {
+		c := c
+		g := i2ClassGuid[c]
+		tg := ad.Target{ConnectionID: i2Conn, ObjectGUID: g, NamingContext: i2NC}
+		i2Fixtures[operation.ActionID("ad."+c+".create")] = func(string) operation.Input {
+			in := ad.ObjectCreateInput{ConnectionID: i2Conn, NamingContext: i2NC, ParentGuid: i2Parent, Name: "Fixture One",
+				Attributes: map[string]string{"description": "new"}}
+			if c == "group" {
+				in.GroupScope = "global"
+			}
+			return i2JSON(in)
+		}
+		i2Fixtures[operation.ActionID("ad."+c+".update")] = func(string) operation.Input {
+			return i2JSON(ad.UpdateInput{Target: tg, Set: map[string]string{"description": "new"}})
+		}
+		i2Fixtures[operation.ActionID("ad."+c+".delete")] = func(string) operation.Input { return i2JSON(ad.DeleteInput{Target: tg}) }
+		i2Fixtures[operation.ActionID("ad."+c+".move")] = func(string) operation.Input {
+			return i2JSON(ad.MoveInput{Target: tg, NewParentGuid: i2Parent2})
+		}
+		i2Fixtures[operation.ActionID("ad."+c+".rename")] = func(string) operation.Input {
+			return i2JSON(ad.RenameInput{Target: tg, NewName: "Fixture Two"})
+		}
+		i2Fixtures[operation.ActionID("ad."+c+".restore")] = func(string) operation.Input {
+			return i2JSON(ad.RestoreInput{Target: tg, NewParentGuid: i2Parent, Name: "Fixture One"})
+		}
+	}
+	tc := ad.Target{ConnectionID: i2Conn, ObjectGUID: i2ClassGuid["computer"], NamingContext: i2NC}
+	i2Fixtures[ad.ComputerResetID] = func(string) operation.Input { return i2JSON(ad.AccountInput{Target: tc}) }
+	member := func(class string) func(string) operation.Input {
+		return func(string) operation.Input {
+			return i2JSON(ad.MemberInput{ConnectionID: i2Conn, NamingContext: i2NC, GroupGuid: i2ClassGuid["group"], MemberGuid: i2Obj, MemberClass: class})
+		}
+	}
+	i2Fixtures[ad.AddMemberID] = member("user")
+	i2Fixtures[ad.RemoveMemberID] = member("user")
+	i2Fixtures[ad.NestGroupID] = func(string) operation.Input {
+		return i2JSON(ad.MemberInput{ConnectionID: i2Conn, NamingContext: i2NC, GroupGuid: i2ClassGuid["group"], MemberGuid: i2ClassGuid["group2"], MemberClass: "group"})
+	}
+}
+
+// i2ClassGuid is the object GUID of the live fixture object of each non-user class.
+var i2ClassGuid = map[string]string{
+	"group":    "33333333-3333-4333-8333-333333333333",
+	"computer": "44444444-4444-4444-8444-444444444444",
+	"contact":  "55555555-5555-4555-8555-555555555555",
+	"ou":       "66666666-6666-4666-8666-666666666666",
+	"group2":   "77777777-7777-4777-8777-777777777777",
+}
+
+var i2ClassLive = map[string]string{"group": "group", "computer": "computer", "contact": "contact", "ou": "organizationalUnit", "group2": "group"}
+
 const (
 	i2Conn    = "conn-1"
 	i2NC      = "11111111-1111-4111-8111-111111111111"
@@ -78,11 +130,24 @@ func i2JSON(v any) operation.Input {
 // deleted user. It holds no identity, so any identity in a diff came from the Plan's own context.
 type i2Dir struct{}
 
-func (i2Dir) Account(context.Context, authority.Pins, authority.TargetRef) (client.AccountState, error) {
+func (i2Dir) Account(_ context.Context, _ authority.Pins, t authority.TargetRef) (client.AccountState, error) {
+	if t.GUID == i2ClassGuid["computer"] {
+		return client.AccountState{Exists: true, Class: "computer", UserAccountControl: "4096", PwdLastSet: "133400000000000000"}, nil
+	}
 	return client.AccountState{Exists: true, Class: "user", UserAccountControl: "66048", LockoutTime: "133500000000000000", PwdLastSet: "133400000000000000"}, nil
 }
 
 func (i2Dir) Object(_ context.Context, _ authority.Pins, t authority.TargetRef, _ []string, deleted bool) (client.ObjectState, error) {
+	for c, g := range i2ClassGuid {
+		if t.GUID == g {
+			st := client.ObjectState{Exists: true, Class: i2ClassLive[c], Parent: i2Parent, RDN: "Fixture One", Deleted: deleted,
+				Attrs: map[string][]string{"description": {"old"}, "info": {"x"}}}
+			if deleted {
+				st.LastKnownParent, st.LastKnownRDN = i2Parent, "Fixture One"
+			}
+			return st, nil
+		}
+	}
 	switch t.GUID {
 	case i2Parent, i2Parent2:
 		if deleted {
@@ -100,6 +165,16 @@ func (i2Dir) Object(_ context.Context, _ authority.Pins, t authority.TargetRef, 
 	return client.ObjectState{}, nil
 }
 
+func (i2Dir) DirectMember(context.Context, authority.Pins, authority.TargetRef, authority.TargetRef) (bool, error) {
+	return false, nil
+}
+
+func (d i2Dir) ObjectWithChildCount(ctx context.Context, pins authority.Pins, t authority.TargetRef) (client.ObjectState, error) {
+	st, err := d.Object(ctx, pins, t, nil, false)
+	st.ChildCount = &client.ChildCount{}
+	return st, err
+}
+
 func (i2Dir) RecycleBin(context.Context, authority.Pins, authority.NamingContextID) (bool, error) {
 	return true, nil
 }
@@ -115,7 +190,11 @@ func i2Planners() (map[operation.ActionID]operation.Action, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, a := range append(as, ls...) {
+	ms, err := ad.MemberActions(ad.LifecyclePorts{Reader: i2Dir{}})
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range append(append(as, ls...), ms...) {
 		out[a.Describe().ID] = a
 	}
 	return out, nil

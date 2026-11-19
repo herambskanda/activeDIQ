@@ -408,6 +408,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/helpdesk/caller-verifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a verification code to the caller
+         * @description Sends a one-time code to the destination the directory holds for the target (email or SMS); the technician never supplies or sees an address, only a masked form. This is a user act, never made on page render. Opening the sheet again attaches to the technician's open challenge (reused true) and sends nothing; resend true is the only way to a second code and supersedes the first.
+         *     Idempotency-Key is required. A retry with the same key and body answers what the first attempt answered and sends nothing; the same key with a different body is refused 422 idempotency-key-reuse; a retry while the first request is still running is 409. Only a success is remembered, so a refused request is evaluated again on a retry.
+         *     Refusals. 422 caller-verification-unavailable is one answer, with identical status, body and timing class, for an unknown, disabled, out-of-scope, protected or self target and for a target with no held destination for the factor; it never says which. 429 caller-verification-limit with errors[].code quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges; try later). 502 caller-verification-delivery-failed when the message could not be sent: no code exists and the issue does not count. 429 rate-limited when the session or source address is over its limit. 403 for a token principal or a missing permission.
+         */
+        post: operations["issueCallerVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/helpdesk/caller-verifications/{challengeId}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the code the caller read back
+         * @description Checks the code against the challenge. Every attempt is charged before the code is compared, so three attempts at most are possible per challenge whatever the concurrency.
+         *     Every failure answers one 422 caller-verification-refused with the same status, body and timing class, whether the code was wrong, the attempts are used up, the challenge expired, was superseded or never existed, or belongs to another technician: a client cannot tell a wrong code from a cap. The code travels only in this body, never in a URL, and no response, log line or audit event repeats it.
+         *     Idempotency-Key is required. A retry with the same key and code replays the first answer, a pass or the refusal, and charges no second attempt; the same key with a different code is 422 idempotency-key-reuse.
+         */
+        post: operations["verifyCallerVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/notify/siem-destinations": {
         parameters: {
             query?: never;
@@ -1073,6 +1117,36 @@ export interface components {
             password: components["schemas"]["SecretInput"];
             username: string;
         };
+        CallerVerificationChallenge: {
+            /** Format: uuid */
+            challengeId: string;
+            /** @description Where the code went, masked. The full address is never returned. */
+            destinationMasked: string;
+            /** Format: date-time */
+            expiresAt: string;
+            factor: components["schemas"]["CallerVerificationFactor"];
+            /** @description True when an open challenge was attached to, or this is a replay of an earlier identical request; nothing was sent now. */
+            reused: boolean;
+        };
+        /**
+         * @description How the caller was verified. Clients ignore values they do not know.
+         * @enum {string}
+         */
+        CallerVerificationFactor: "email_otp" | "sms_otp" | (string & {});
+        /**
+         * @description The factor a technician asks for. totp is reserved for the enrolment work and is not accepted until then.
+         * @enum {string}
+         */
+        CallerVerificationFactorSetting: "email_otp" | "sms_otp";
+        CallerVerified: {
+            /**
+             * Format: date-time
+             * @description Until when the challenge may authorise one reset or unlock for this target.
+             */
+            authorisedUntil: string;
+            /** Format: uuid */
+            challengeId: string;
+        };
         /** @description The health of one connection. Nothing here is a credential or an identity the connection binds as. */
         ConnectionHealth: {
             /** @description Domain controllers that answered the last probe. */
@@ -1335,6 +1409,21 @@ export interface components {
          * @example 9007199254740993
          */
         Int64String: string;
+        IssueCallerVerificationRequest: {
+            /**
+             * Format: uuid
+             * @description The directory connection the caller's account belongs to.
+             */
+            connectionId: string;
+            factor: components["schemas"]["CallerVerificationFactorSetting"];
+            /**
+             * Format: uuid
+             * @description The caller's objectGUID. A DN is never accepted.
+             */
+            objectGuid: string;
+            /** @description True only for the explicit "Send a new code" act; it supersedes the open challenge. */
+            resend?: boolean;
+        };
         /** @description A long operation (bulk change). It reports progress and per-item results, and is resumable after a restart. */
         Job: {
             /** Format: date-time */
@@ -2852,6 +2941,10 @@ export interface components {
         TotpCodeRequest: {
             code: components["schemas"]["SecretInput"];
         };
+        /** @description The six digits the caller read back, held as a secret and destroyed after the request. */
+        VerifyCallerVerificationRequest: {
+            code: components["schemas"]["SecretInput"];
+        };
         /** @description The authenticator's assertion, each field base64url (RFC 4648 section 5) without padding. */
         WebAuthnAssertion: {
             authenticatorData: string;
@@ -2885,6 +2978,78 @@ export interface components {
         WebAuthnUserVerification: "required" | "preferred" | "discouraged" | (string & {});
     };
     responses: {
+        /** @description The code could not be delivered. No code exists, none is shown and the issue does not count against the limits. */
+        CallerVerificationDeliveryFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 502,
+                 *       "title": "The code could not be delivered",
+                 *       "type": "/problems/caller-verification-delivery-failed"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description A caller-verification limit was reached. errors[].code is quota (the hourly issue limit of the target or the technician) or paused (too many failed challenges). */
+        CallerVerificationLimit: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "errors": [
+                 *         {
+                 *           "code": "quota",
+                 *           "detail": "The hourly limit of codes for this caller or technician is reached.",
+                 *           "in": "body",
+                 *           "pointer": "/"
+                 *         }
+                 *       ],
+                 *       "status": 429,
+                 *       "title": "The verification limit was reached",
+                 *       "type": "/problems/caller-verification-limit"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The verification was refused. One answer for a wrong code, used-up attempts, an expired, superseded, unknown or foreign challenge; it never says which and never repeats the code. */
+        CallerVerificationRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 422,
+                 *       "title": "The verification was refused",
+                 *       "type": "/problems/caller-verification-refused"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description The caller cannot be verified. One answer for an unknown, disabled, out-of-scope, protected or own target and for a target with no held destination; it never says which. */
+        CallerVerificationUnavailable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "status": 422,
+                 *       "title": "This caller cannot be verified",
+                 *       "type": "/problems/caller-verification-unavailable"
+                 *     }
+                 */
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description The object already exists or the request conflicts */
         Conflict: {
             headers: {
@@ -3456,6 +3621,10 @@ export interface components {
         };
     };
     parameters: {
+        /** @description The challenge returned by issueCallerVerification. */
+        CallerVerificationChallengeId: string;
+        /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
+        CallerVerificationKey: string;
         /** @description The Entra connection. */
         ConnectionId: string;
         /** @description Only reports of this category. */
@@ -4188,6 +4357,82 @@ export interface operations {
             429: components["responses"]["RateLimited"];
             500: components["responses"]["Internal"];
             503: components["responses"]["NotReady"];
+        };
+    };
+    issueCallerVerification: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
+                "Idempotency-Key": components["parameters"]["CallerVerificationKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueCallerVerificationRequest"];
+            };
+        };
+        responses: {
+            /** @description The challenge the technician sees. It never carries the code. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallerVerificationChallenge"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["CallerVerificationUnavailable"];
+            429: components["responses"]["CallerVerificationLimit"];
+            500: components["responses"]["Internal"];
+            502: components["responses"]["CallerVerificationDeliveryFailed"];
+        };
+    };
+    verifyCallerVerification: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Makes a retry safe. Honoured for 24 hours per technician and operation. */
+                "Idempotency-Key": components["parameters"]["CallerVerificationKey"];
+            };
+            path: {
+                /** @description The challenge returned by issueCallerVerification. */
+                challengeId: components["parameters"]["CallerVerificationChallengeId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerifyCallerVerificationRequest"];
+            };
+        };
+        responses: {
+            /** @description The caller is verified. The challenge may authorise one reset or unlock until authorisedUntil. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallerVerified"];
+                };
+            };
+            400: components["responses"]["Validation"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["CallerVerificationRefused"];
+            429: components["responses"]["RateLimited"];
+            500: components["responses"]["Internal"];
         };
     };
     listSiemDestinations: {
