@@ -113,6 +113,7 @@ type rig struct {
 	tn  tenant.ID
 	env *schedule.Env
 	db  *store.DB
+	ch  audit.Sink
 }
 
 func newRig(t *testing.T, srv *storetest.Server) *rig {
@@ -165,7 +166,7 @@ func newRig(t *testing.T, srv *storetest.Server) *rig {
 	if err := d.ExecOwner(ctx, `UPDATE public.tenant_settings SET value = value WHERE false`); err != nil {
 		_ = err // the allowed domains default to none: every address is external
 	}
-	return &rig{t: t, r: rn, tn: tn, env: env, db: db}
+	return &rig{t: t, r: rn, tn: tn, env: env, db: db, ch: ch}
 }
 
 func human(id string) authority.Chain {

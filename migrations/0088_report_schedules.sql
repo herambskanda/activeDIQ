@@ -3,8 +3,9 @@
 -- tables: RLS with FORCE and a tenant-led key.
 --
 --   report_schedules            one recurring run plus delivery. owner_account is the authority every fire runs
---                               under (DM-73.I1); recurrence is the DM-44 value (platform/jobs.Schedule).
---   report_schedule_versions    the full before-image of each version (header and recipients), for undo
+--                               under (DM-73.I1); recurrence is the API-shape recurrence
+--                               (converted to the DM-44 jobs.Schedule by Recurrence.Jobs).
+--   report_schedule_versions    the AFTER-image of each version (header and recipients: what that version wrote), for undo
 --                               (reports.schedule.restore). Immutable: a version is never edited or deleted.
 --   report_schedule_recipients  the recipients of the CURRENT version: an account or an address, formats,
 --                               attachment or link.
@@ -55,7 +56,7 @@ CREATE TABLE public.report_schedule_versions (
   tenant_id uuid NOT NULL REFERENCES public.tenants (id),
   schedule_id uuid NOT NULL,
   version integer NOT NULL CHECK (version >= 1),
-  -- the whole schedule as it was at this version: header, recipients and confirmed-external set
+  -- the whole schedule as this version wrote it: header, recipients and confirmed-external set
   content jsonb NOT NULL CHECK (jsonb_typeof(content) = 'object' AND octet_length(content::text) <= 262144),
   written_by uuid NOT NULL,
   written_at timestamptz NOT NULL DEFAULT now(),
@@ -96,6 +97,8 @@ CREATE TABLE public.report_schedule_fires (
   row_count bigint CHECK (row_count >= 0),
   -- per recipient: {ordinal, outcome: queued|failed, reason} (the Delivery rows carry the later state)
   recipients jsonb NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(recipients) = 'array'),
+  -- the exports made for this fire, format -> export id; the fire job stages run, exports and delivery
+  exports jsonb NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(exports) = 'object'),
   created_at timestamptz NOT NULL DEFAULT now(),
   finished_at timestamptz,
   PRIMARY KEY (tenant_id, schedule_id, due_at),

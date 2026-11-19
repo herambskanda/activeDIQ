@@ -214,3 +214,34 @@ func subset(a, of []string) bool {
 	}
 	return true
 }
+
+// CanManageAll reports whether the chain holds reports.schedule.manage_all (the view and the pause of every
+// owner's schedules; never the edit, R1).
+func (e *Env) CanManageAll(ctx context.Context, tid tenant.ID, c authority.Chain) (bool, error) {
+	return e.allow(ctx, tid, c, e.Perm.ManageAll)
+}
+
+// Columns returns the column ids the schedule's report shows: the preset's, after the stored parameters.
+func (e *Env) Columns(s Schedule) []string {
+	def, ok := e.Catalog.Definition(s.DefinitionID, s.DefinitionVersion)
+	if !ok {
+		return []string{}
+	}
+	raw := s.Params
+	if len(raw) == 0 {
+		raw = []byte(`{}`)
+	}
+	rp, err := e.Codec.Decode(raw, def.Def)
+	if err != nil {
+		return []string{}
+	}
+	q, err := report.Resolve(def.Def, s.Preset, rp, def.Dataset)
+	if err != nil {
+		return []string{}
+	}
+	out := make([]string, len(q.Columns))
+	for i, c := range q.Columns {
+		out[i] = string(c)
+	}
+	return out
+}
