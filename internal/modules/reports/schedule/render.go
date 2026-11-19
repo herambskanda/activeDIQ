@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"github.com/skenzeriq/activediq/internal/modules/reports/export"
+	"github.com/skenzeriq/activediq/internal/platform/authn/tenantref"
 	"github.com/skenzeriq/activediq/internal/platform/blob"
 	"github.com/skenzeriq/activediq/internal/platform/notify/delivery"
 	"github.com/skenzeriq/activediq/internal/platform/notify/mail"
 	"github.com/skenzeriq/activediq/internal/platform/store"
-	"github.com/skenzeriq/activediq/internal/platform/tenant"
 )
 
 // Renderer renders the two purposes a schedule makes: the delivery of a fire and the notice that a schedule
@@ -44,12 +44,12 @@ func (r Renderer) Render(ctx context.Context, tx store.Tx, d delivery.Delivery) 
 	default:
 		return delivery.Content{}, errRender
 	}
-	var tid tenant.ID
 	var raw string
 	if err := tx.QueryRow(ctx, `SELECT COALESCE(current_setting('app.tenant_id', true), '')`).Scan(&raw); err != nil {
 		return delivery.Content{}, err
 	}
-	if tid, err = tenant.Parse(raw); err != nil {
+	tid, err := tenantref.TenantFromText(raw)
+	if err != nil {
 		return delivery.Content{}, errRender
 	}
 	c := delivery.Content{Subject: "activeDIQ report: " + s.Name}

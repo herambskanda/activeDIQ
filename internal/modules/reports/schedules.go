@@ -563,10 +563,10 @@ func (h *Handlers) PreviewUpdateReportSchedule(ctx context.Context, in api.Previ
 }
 
 // target resolves the path schedule for a write or a preview: the caller must see it (404 otherwise).
-func (h *Handlers) target(ctx context.Context, id apitypes.UUID) (*Schedules, tenant.ID, schedule.Schedule, error) {
-	sd, err := h.sched()
+func (h *Handlers) target(ctx context.Context, id apitypes.UUID) (sd *Schedules, tid tenant.ID, _ schedule.Schedule, err error) {
+	sd, err = h.sched()
 	if err != nil {
-		return nil, tenant.ID{}, schedule.Schedule{}, err
+		return nil, tid, schedule.Schedule{}, err
 	}
 	tid, c, err := h.caller(ctx)
 	if err != nil {

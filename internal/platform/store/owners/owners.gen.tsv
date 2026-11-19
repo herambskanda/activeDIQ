@@ -81,6 +81,10 @@ platform_rate_buckets	limiter	system
 report_exports	reports	system
 report_run_rows	reports	system
 report_runs	reports	system
+report_schedule_fires	report	system
+report_schedule_recipients	report	config
+report_schedule_versions	report	config
+report_schedules	report	config
 sync_cursors	sync	system
 tenant_keys	keys	system
 tenants	tenant	system

@@ -25,6 +25,9 @@ const cols = `id::text, name, definition_id, definition_version, COALESCE(preset
   owner_account::text, notify_only_if_data, confirmed_external, state, COALESCE(pause_reason, ''), version, next_run_at,
   last_fire_at, created_by::text, created_at, updated_at`
 
+const selectSchedule = `SELECT ` + cols + ` FROM public.report_schedules WHERE id = $1::uuid`
+const selectScheduleForUpdate = selectSchedule + ` FOR UPDATE`
+
 func scan(row interface{ Scan(...any) error }) (Schedule, error) {
 	var s Schedule
 	var params, rec []byte
@@ -69,11 +72,13 @@ func (st Store) Get(ctx context.Context, tx store.Tx, id string, forUpdate bool)
 	if !uuidRe.MatchString(id) {
 		return Schedule{}, ErrNotFound
 	}
-	q := `SELECT ` + cols + ` FROM public.report_schedules WHERE id = $1::uuid`
+	var row interface{ Scan(...any) error }
 	if forUpdate {
-		q += ` FOR UPDATE`
+		row = tx.QueryRow(ctx, selectScheduleForUpdate, id)
+	} else {
+		row = tx.QueryRow(ctx, selectSchedule, id)
 	}
-	s, err := scan(tx.QueryRow(ctx, q, id))
+	s, err := scan(row)
 	if store.IsNoRows(err) {
 		return Schedule{}, ErrNotFound
 	}
