@@ -114,6 +114,7 @@ type rig struct {
 	env *schedule.Env
 	db  *store.DB
 	ch  audit.Sink
+	d   *storetest.Database
 }
 
 func newRig(t *testing.T, srv *storetest.Server) *rig {
@@ -121,6 +122,9 @@ func newRig(t *testing.T, srv *storetest.Server) *rig {
 	ctx := context.Background()
 	d := srv.NewDatabase(t)
 	d.Migrate(t)
+	if err := d.ExecOwner(ctx, objectsDDL); err != nil {
+		t.Fatal(err)
+	}
 	db, err := store.Open(ctx, store.Config{DSN: d.AppDSN()})
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +170,7 @@ func newRig(t *testing.T, srv *storetest.Server) *rig {
 	if err := d.ExecOwner(ctx, `UPDATE public.tenant_settings SET value = value WHERE false`); err != nil {
 		_ = err // the allowed domains default to none: every address is external
 	}
-	return &rig{t: t, r: rn, tn: tn, env: env, db: db, ch: ch}
+	return &rig{t: t, r: rn, tn: tn, env: env, db: db, ch: ch, d: d}
 }
 
 func human(id string) authority.Chain {
