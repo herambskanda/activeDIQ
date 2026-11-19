@@ -48,6 +48,17 @@ type Authorizer interface {
 	Allow(ctx context.Context, tid tenant.ID, c authority.Chain, permission authz.Permission) (bool, error)
 }
 
+// LinkAuthority is what authorises a delivery-link download (reports.md 7.2): the DM-84 Delivery row written
+// at fire time, and the recipient's current standing. compose/server implements it over notify's
+// Deliveries.ForSource and the account store, so reports never read another module's tables.
+type LinkAuthority interface {
+	// SentTo reports whether the export was sent, as a link, to this account (a DM-84 Delivery row with
+	// source ("report_export", export id) and the account as recipient). It runs under RLS in tx's tenant.
+	SentTo(ctx context.Context, tx store.Tx, exportID ID, account string) (bool, error)
+	// Active reports whether the account exists and is enabled.
+	Active(ctx context.Context, tx store.Tx, tid tenant.ID, account string) (bool, error)
+}
+
 // CapError is an export refused for its size (FR-18): the row count, the format's cap and the formats that
 // would take the result. Nothing is written when it is returned: no row, no job, no file.
 type CapError struct {
@@ -95,6 +106,10 @@ const (
 	MaxPolls  = 480
 )
 
+// ExportPerm is reports.export, which a delivery-link recipient must hold at download time (FR-24). The
+// module's ExportPermission is the same value; a test keeps them equal.
+const ExportPerm authz.Permission = "reports.export"
+
 // Component is the audit component of every event here.
 const Component = "reports"
 
@@ -110,6 +125,9 @@ type Service struct {
 	Audit audit.Sink
 	// Authz checks reports.run on Create (see Authorizer).
 	Authz Authorizer
+	// Links authorises a delivery-link download by someone other than the creator (reports.md 7.2). Nil
+	// means no link is ever served: every non-creator is refused, so the path fails closed.
+	Links LinkAuthority
 	Now   func() time.Time
 	// Caps lowers the row cap of a format below its HardCap. A value above it, or zero, is ignored.
 	Caps map[Format]int64
@@ -454,6 +472,41 @@ func (s *Service) denied(ctx context.Context, tid tenant.ID, c authority.Chain, 
 	}
 }
 
+// linkCheck authorises a non-creator by the delivery row (reports.md 7.2): a Delivery of this export to this
+// account, the account enabled, and reports.export held now. It returns "" when authorised, otherwise the
+// name of the check that failed ("delivery", "account", "permission"). The recipient's own scope is not
+// consulted: the owner's view was sent to them on purpose.
+func (s *Service) linkCheck(ctx context.Context, tid tenant.ID, c authority.Chain, id ID) (string, error) {
+	if s.Links == nil || s.Authz == nil || c.Requester.Kind != authority.Human {
+		return "delivery", nil
+	}
+	account := string(c.Requester.ID)
+	var sent, active bool
+	if err := s.DB.WithTenant(ctx, tid, func(ctx context.Context, tx store.Tx) (err error) {
+		if sent, err = s.Links.SentTo(ctx, tx, id, account); err != nil || !sent {
+			return err
+		}
+		active, err = s.Links.Active(ctx, tx, tid, account)
+		return err
+	}); err != nil {
+		return "", fmt.Errorf("export: link authority: %w", err)
+	}
+	switch {
+	case !sent:
+		return "delivery", nil
+	case !active:
+		return "account", nil
+	}
+	ok, err := s.Authz.Allow(ctx, tid, c, ExportPerm)
+	if err != nil {
+		return "", fmt.Errorf("export: authorize: %w", err)
+	}
+	if !ok {
+		return "permission", nil
+	}
+	return "", nil
+}
+
 // Download opens the file of the caller's own export (spec §8.3; reports.md §7.1). Order of checks: the
 // export exists, the caller made it, it has not expired, it succeeded, and the caller's read scope is still
 // the one the run was made under (the one gate, run.Service.Read). Each refusal is audited as
@@ -474,10 +527,19 @@ func (s *Service) Download(ctx context.Context, tid tenant.ID, c authority.Chain
 		return nil, ErrExportNotFound
 	case err != nil:
 		return nil, err
-	case e.CreatedBy != string(c.Requester.ID):
-		s.denied(ctx, tid, c, id, "creator")
-		return nil, ErrExportNotFound
-	case e.Expired(s.now()):
+	}
+	// The creator reads under the one gate. Anyone else is authorised by the DM-84 Delivery row alone
+	// (7.2): checked before expiry or state, so a stranger learns nothing about an export they were not sent.
+	isCreator := e.CreatedBy == string(c.Requester.ID)
+	if !isCreator {
+		if check, err := s.linkCheck(ctx, tid, c, id); err != nil {
+			return nil, err
+		} else if check != "" {
+			s.denied(ctx, tid, c, id, check)
+			return nil, ErrExportNotFound
+		}
+	}
+	if e.Expired(s.now()) {
 		s.denied(ctx, tid, c, id, "expired")
 		return nil, ErrExportExpired
 	}
@@ -490,11 +552,13 @@ func (s *Service) Download(ctx context.Context, tid tenant.ID, c authority.Chain
 		s.denied(ctx, tid, c, id, "state")
 		return nil, ErrExportNotReady
 	}
-	if err := s.Runs.Read(ctx, tid, run.OpExportDownload, e.RunID, c, run.CheckScope, nil); err != nil {
-		if errors.Is(err, run.ErrScopeChanged) {
-			s.denied(ctx, tid, c, id, "scope")
+	if isCreator {
+		if err := s.Runs.Read(ctx, tid, run.OpExportDownload, e.RunID, c, run.CheckScope, nil); err != nil {
+			if errors.Is(err, run.ErrScopeChanged) {
+				s.denied(ctx, tid, c, id, "scope")
+			}
+			return nil, err
 		}
-		return nil, err
 	}
 	rc, _, err := s.Blob.Get(ctx, tid, e.BlobKey)
 	if errors.Is(err, blob.ErrNotFound) {
